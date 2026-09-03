@@ -358,6 +358,9 @@ impl BuildCommand {
                     );
                     Global::exit(1);
                 }
+
+                this_transpiler.options.compile_entry_point_name =
+                    bun_paths::basename(outfile).into();
             }
         }
 
@@ -799,20 +802,8 @@ impl BuildCommand {
 
             if output_dir.is_empty() && !outfile.is_empty() && will_be_one_file {
                 output_dir = bun_core::dirname(outfile).unwrap_or(b".");
-                if ctx.bundler_options.compile {
-                    // If the first output file happens to be a client-side chunk imported server-side
-                    // then don't rename it to something else, since an HTML
-                    // import manifest might depend on the file path being the
-                    // one we think it should be.
-                    for f in output_files.iter_mut() {
-                        if f.output_kind == options::OutputKind::EntryPoint
-                            && f.side.unwrap_or(options::Side::Server) == options::Side::Server
-                        {
-                            f.dest_path = bun_paths::basename(outfile).into();
-                            break;
-                        }
-                    }
-                } else {
+                // With --compile, the bundler already named the entry point's chunk after the outfile.
+                if !ctx.bundler_options.compile {
                     output_files[0].dest_path = bun_paths::basename(outfile).into();
                 }
             }
@@ -1292,17 +1283,8 @@ pub(crate) fn collect_compile_assets(
     let entry_name = bun_paths::basename(outfile);
 
     let mut seen: StringArrayHashMap<()> = StringArrayHashMap::new();
-    let mut skipped_main_entry = false;
     for f in out.iter() {
         if !f.output_kind.is_file_in_standalone_mode() {
-            continue;
-        }
-        // First server EntryPoint is later renamed to basename(outfile); covered by `entry_name`.
-        if !skipped_main_entry
-            && f.output_kind == options::OutputKind::EntryPoint
-            && f.side.unwrap_or(options::Side::Server) == options::Side::Server
-        {
-            skipped_main_entry = true;
             continue;
         }
         let _ = seen.put(strings::remove_leading_dot_slash(&f.dest_path), ());

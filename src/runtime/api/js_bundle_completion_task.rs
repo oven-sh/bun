@@ -38,7 +38,9 @@ use bun_sys::Dir;
 #[cfg(not(windows))]
 use bun_sys::OpenDirOptions;
 
-use crate::api::js_bundler::js_bundler::{Config as JSBundlerConfig, Plugin, PluginJscExt};
+use crate::api::js_bundler::js_bundler::{
+    CompileOptions, Config as JSBundlerConfig, Plugin, PluginJscExt,
+};
 use crate::api::output_file_jsc::OutputFileJsc as _;
 use crate::node::fs::{self as node_fs, NodeFS, args as fs_args};
 use crate::node::types::{FileSystemFlags, PathLike, PathOrFileDescriptor, StringOrBuffer};
@@ -189,6 +191,45 @@ fn opt_box(s: &[u8]) -> Option<Box<[u8]>> {
     }
 }
 
+/// The absolute path of the executable that `compile` writes. It is absolute
+/// so that the PE metadata operations work. A Windows target gets `.exe`
+/// when the name does not end with it.
+fn executable_path(config: &JSBundlerConfig, compile: &CompileOptions) -> Box<[u8]> {
+    let mut outbuf = paths::path_buffer_pool::get();
+    // SAFETY: `FileSystem::instance()` is the process-lifetime singleton
+    // initialized during VM startup before any `Bun.build` is reachable.
+    let top_level_dir = bun_resolver::fs::FileSystem::get().top_level_dir;
+    let outdir_slice = &config.outdir.list;
+    let outfile_slice = &compile.outfile.list;
+    let joined: &[u8] = if !outdir_slice.is_empty() {
+        join_abs_string_buf::<platform::Auto>(
+            top_level_dir,
+            &mut outbuf[..],
+            &[outdir_slice, outfile_slice],
+        )
+    } else if paths::is_absolute(outfile_slice) {
+        outfile_slice
+    } else {
+        // For relative paths, ensure we make them absolute relative to the current working directory
+        join_abs_string_buf::<platform::Auto>(top_level_dir, &mut outbuf[..], &[outfile_slice])
+    };
+    if compile.compile_target.os == OperatingSystem::Windows && !joined.ends_with(b".exe") {
+        let mut v = Vec::with_capacity(joined.len() + 4);
+        v.extend_from_slice(joined);
+        v.extend_from_slice(b".exe");
+        v.into_boxed_slice()
+    } else {
+        Box::from(joined)
+    }
+}
+
+/// The executable embeds its entry point at `/$bunfs/root/<name>`. Like the
+/// CLI, which takes the name before it adds `.exe`, the name has no `.exe`.
+fn executable_entry_point_name(executable_path: &[u8]) -> &[u8] {
+    let basename = paths::basename(executable_path);
+    basename.strip_suffix(b".exe").unwrap_or(basename)
+}
+
 impl JSBundleCompletionTask {
     /// Returns true if the promises were handled and resolved from
     /// BundlePlugin.ts; false means the caller should resolve immediately.
@@ -289,51 +330,11 @@ impl JSBundleCompletionTask {
             return CompileResult::fail(CompileErrorReason::NoEntryPoint);
         };
 
-        let mut outbuf = paths::path_buffer_pool::get();
-        // SAFETY: `FileSystem::instance()` is the process-lifetime singleton
-        // initialized during VM startup before any `Bun.build` is reachable.
-        let top_level_dir = bun_resolver::fs::FileSystem::get().top_level_dir;
-
-        // Always get an absolute path for the outfile to ensure it works
-        // correctly with PE metadata operations.
-        // Add .exe extension for Windows targets if not already present.
-        let full_outfile_path: Box<[u8]> = {
-            let outdir_slice = &self.config.outdir.list;
-            let outfile_slice = &compile_options.outfile.list;
-            let joined: &[u8] = if !outdir_slice.is_empty() {
-                join_abs_string_buf::<platform::Auto>(
-                    top_level_dir,
-                    &mut outbuf[..],
-                    &[outdir_slice, outfile_slice],
-                )
-            } else if paths::is_absolute(outfile_slice) {
-                outfile_slice
-            } else {
-                // For relative paths, ensure we make them absolute relative to the current working directory
-                join_abs_string_buf::<platform::Auto>(
-                    top_level_dir,
-                    &mut outbuf[..],
-                    &[outfile_slice],
-                )
-            };
-            if compile_options.compile_target.os == OperatingSystem::Windows
-                && !joined.ends_with(b".exe")
-            {
-                let mut v = Vec::with_capacity(joined.len() + 4);
-                v.extend_from_slice(joined);
-                v.extend_from_slice(b".exe");
-                v.into_boxed_slice()
-            } else {
-                Box::from(joined)
-            }
-        };
+        let full_outfile_path = executable_path(&self.config, compile_options);
 
         let dirname: &[u8] = paths::dirname(&full_outfile_path).unwrap_or(b".");
         let basename: &[u8] = paths::basename(&full_outfile_path);
-
-        // Key the entry point at /$bunfs/root/<basename> like the CLI (which renames before appending .exe).
-        let entry_key = basename.strip_suffix(b".exe").unwrap_or(basename);
-        output_files[entry_point_index].dest_path = Box::from(entry_key);
+        let entry_key = executable_entry_point_name(&full_outfile_path);
 
         if !compile_options.assets.is_empty() {
             if let Err(msg) = crate::cli::build_command::collect_compile_assets(
@@ -1039,6 +1040,10 @@ impl CompletionStruct for JSBundleCompletionTask {
         if compile_to_standalone_html {
             transpiler.options.compile_mode = options::CompileMode::StandaloneHtml;
             config.compile = None;
+        }
+        if let Some(compile) = &config.compile {
+            transpiler.options.compile_entry_point_name =
+                Box::from(executable_entry_point_name(&executable_path(config, compile)));
         }
         // `BundleOptions.{banner,footer}` are `Cow<'static, [u8]>`; clone into
         // Owned so the static bound holds without tying `&mut self` to `'a`.

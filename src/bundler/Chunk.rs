@@ -275,6 +275,36 @@ impl Chunk {
         self.entry_point.is_entry_point()
     }
 
+    /// The `OutputFile::output_kind` of this chunk in an in-memory build.
+    pub(crate) fn output_kind(
+        &self,
+        entry_point_kinds: &[crate::EntryPoint::Kind],
+    ) -> options::OutputKind {
+        if matches!(self.content, Content::Css(_)) {
+            options::OutputKind::Asset
+        } else if self.entry_point.is_entry_point() {
+            entry_point_kinds[self.entry_point.source_index() as usize].output_kind()
+        } else {
+            options::OutputKind::Chunk
+        }
+    }
+
+    /// The `OutputFile::side` of this chunk in an in-memory build.
+    pub(crate) fn output_side(&self, ast_targets: &[options::Target]) -> options::Side {
+        if matches!(self.content, Content::Css(_))
+            || self
+                .flags
+                .contains(Flags::IS_BROWSER_CHUNK_FROM_SERVER_BUILD)
+        {
+            options::Side::Client
+        } else {
+            match ast_targets[self.entry_point.source_index() as usize] {
+                options::Target::Browser => options::Side::Client,
+                _ => options::Side::Server,
+            }
+        }
+    }
+
     /// Stable short name for this chunk in generated code: its final content hash, as `[hash]` prints it.
     pub(crate) fn id(&self) -> [u8; CHUNK_ID_LEN] {
         bun_core::fmt::truncated_hash32_bytes(

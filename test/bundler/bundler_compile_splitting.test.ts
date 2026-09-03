@@ -1,6 +1,24 @@
-import { describe, expect } from "bun:test";
+import { describe, expect, test } from "bun:test";
+import { bunEnv, tempDir } from "harness";
 import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { itBundled } from "./expectBundled";
+
+// `main.ts` loads `tool.ts` at run time, and `tool.ts` loads the main entry point back with `import()` and `require()`.
+const entryPointImportedBack = {
+  "main.ts": /* js */ `
+    export const who = "main";
+    console.log("main ran");
+    const s = (x: string) => x;
+    import(s("./tool.ts"))
+      .then(async tool => console.log(await tool.viaImport(), tool.viaRequire()))
+      .catch(e => console.log(String(e).split("\\n")[0]));
+  `,
+  "tool.ts": /* js */ `
+    export const viaImport = async () => (await import("./main.ts")).who;
+    export const viaRequire = () => require("./main.ts").who;
+  `,
+};
 
 describe("bundler", () => {
   describe("compile with splitting", () => {
@@ -523,5 +541,40 @@ describe("bundler", () => {
         },
       });
     }
+
+    // The executable embeds the main entry point at `/$bunfs/root/<outfile>`. Another entry point's `import()` and
+    // `require()` of it must name that path, and must get the module that already ran, not a second copy.
+    itBundled("compile/splitting/ImportMainEntryPointFromOtherEntryPoint", {
+      backend: "cli",
+      compile: true,
+      splitting: true,
+      files: entryPointImportedBack,
+      entryPointsRaw: ["./main.ts", "./tool.ts"],
+      outfile: "dist/out",
+      run: { file: "dist/out", stdout: "main ran\nmain main" },
+    });
+
+    test("Bun.build: import() and require() of the main entry point from another entry point", async () => {
+      using dir = tempDir("compile-splitting-import-main", entryPointImportedBack);
+      const result = await Bun.build({
+        entrypoints: [join(String(dir), "main.ts"), join(String(dir), "tool.ts")],
+        compile: { outfile: join(String(dir), "dist", "out") },
+        splitting: true,
+      });
+      expect(result.logs).toEqual([]);
+      expect(result.success).toBe(true);
+
+      await using proc = Bun.spawn({
+        cmd: [result.outputs[0].path],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stdout).toBe("main ran\nmain main\n");
+      expect(stderr).toBe("");
+      expect(exitCode).toBe(0);
+    });
   });
 });

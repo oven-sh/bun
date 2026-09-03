@@ -1340,6 +1340,10 @@ pub struct BundleOptions<'a> {
     pub debugger: bool,
 
     pub compile_mode: CompileMode,
+    /// `CompileMode::Executable`: the executable embeds its entry point at
+    /// `/$bunfs/root/<compile_entry_point_name>`. The chunk of that entry point
+    /// gets this name, so other chunks import the entry point by this name.
+    pub compile_entry_point_name: Box<[u8]>,
     pub metafile: bool,
     /// Path to write JSON metafile (for Bun.build API)
     pub metafile_json_path: Box<[u8]>,
@@ -1535,6 +1539,7 @@ impl<'a> BundleOptions<'a> {
             code_coverage: self.code_coverage,
             debugger: self.debugger,
             compile_mode: self.compile_mode,
+            compile_entry_point_name: self.compile_entry_point_name.clone(),
             metafile: self.metafile,
             metafile_json_path: self.metafile_json_path.clone(),
             metafile_markdown_path: self.metafile_markdown_path.clone(),
@@ -1781,6 +1786,7 @@ impl<'a> BundleOptions<'a> {
             code_coverage: false,
             debugger: false,
             compile_mode: CompileMode::None,
+            compile_entry_point_name: Box::default(),
             metafile: false,
             metafile_json_path: Box::default(),
             metafile_markdown_path: Box::default(),

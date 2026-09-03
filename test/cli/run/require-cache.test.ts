@@ -38,7 +38,7 @@ describe.concurrent("require.cache", () => {
     expect(exitCode).toBe(0);
   });
 
-  // The leak fixtures measure retained bytes through leak-fixture-memory.cjs.
+  // The leak fixtures measure retained bytes through leak-metric.cjs.
   // ASAN builds read them from the sanitizer allocator. JSC memory is
   // libpas-backed and invisible to it unless Malloc=1 makes WebKit use system
   // malloc. Leak detection stays off: with Malloc=1, LSan misreports
@@ -46,13 +46,13 @@ describe.concurrent("require.cache", () => {
   const leakFixtureEnv = isASAN
     ? { ...bunEnv, Malloc: "1", ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "detect_leaks=0"].filter(Boolean).join(":") }
     : bunEnv;
-  const leakFixtureMemory = join(import.meta.dir, "leak-fixture-memory.cjs");
+  const leakMetric = join(import.meta.dir, "leak-metric.cjs");
 
   // On a build where neither allocator metric sees JSC memory, the helper
   // falls back to RSS. Fail instead, so that no lane goes back to RSS unseen.
   test("the leak fixtures measure live bytes, not RSS", async () => {
     await using proc = Bun.spawn({
-      cmd: [bunExe(), "-e", `console.log(require(${JSON.stringify(leakFixtureMemory)}).metric)`],
+      cmd: [bunExe(), "-e", `console.log(require(${JSON.stringify(leakMetric)}).metric)`],
       env: leakFixtureEnv,
       stderr: "inherit",
     });
@@ -96,7 +96,7 @@ describe.concurrent("require.cache", () => {
   // retained per load. Pass esm: true for a top-level-await fixture.
   function leakFixture({ load, esm, limitBytesPerLoad }: { load: string; esm: boolean; limitBytesPerLoad: number }) {
     return `
-      const memory = require(${JSON.stringify(leakFixtureMemory)});
+      const memory = require(${JSON.stringify(leakMetric)});
       const { heapStats } = require("bun:jsc");
       const path = require.resolve("./index.js");
       const types = ${JSON.stringify(MODULE_CELL_TYPES)};

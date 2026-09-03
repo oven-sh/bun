@@ -1,4 +1,4 @@
-const memory = require("./leak-fixture-memory.cjs");
+const memory = require("./leak-metric.cjs");
 const dest = require.resolve("./leak-fixture-small-ast.js");
 const count = memory.iterations(10_000);
 // require() appends every new Module to the parent's children list, as in

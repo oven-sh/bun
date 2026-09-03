@@ -1,6 +1,6 @@
 import { createRequire } from "node:module";
 const require = createRequire(import.meta.url);
-const memory = require("./leak-fixture-memory.cjs");
+const memory = require("./leak-metric.cjs");
 const dest = await import.meta.resolve("./esm-leak-fixture-large-ast.mjs");
 const count = memory.iterations(50);
 

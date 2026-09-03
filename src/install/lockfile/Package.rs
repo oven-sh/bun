@@ -126,6 +126,38 @@ fn invalid_trusted_dependencies(
     crate::Error::InvalidPackageJSON
 }
 
+/// A declared `trustedDependencies` (even `[]`) replaces the default list, so the set becomes `Some` as soon as the field exists.
+pub(crate) fn parse_append_trusted_dependencies(
+    trusted_dependencies: &mut Option<TrustedDependenciesSet>,
+    log: &mut bun_ast::Log,
+    source: &bun_ast::Source,
+    json: Expr,
+    bump: &bun_alloc::Arena,
+) -> crate::Result<()> {
+    let Some(q) = json.as_property(b"trustedDependencies") else {
+        return Ok(());
+    };
+    let count = match &q.expr.data {
+        ExprData::EArray(arr) => arr.items.len_u32() as usize,
+        ExprData::EArrayJSON(arr) => arr.get().items().len(),
+        _ => return Err(invalid_trusted_dependencies(log, source, q.loc)),
+    };
+    let trusted = trusted_dependencies.get_or_insert_with(Default::default);
+    trusted.ensure_unused_capacity(count)?;
+    if let Some(mut items) = q.expr.as_array() {
+        while let Some(item) = items.next() {
+            let Some(name) = item.as_string(bump) else {
+                return Err(invalid_trusted_dependencies(log, source, q.loc));
+            };
+            trusted.put_assume_capacity(
+                semver::string::Builder::string_hash(name) as TruncatedPackageNameHash,
+                Box::<[u8]>::from(name),
+            );
+        }
+    }
+    Ok(())
+}
+
 // `SemverIntType` defaults to `u64`, the only instantiation the lockfile/PM
 // call sites name unqualified.
 //
@@ -2503,29 +2535,13 @@ impl Package<u64> {
         }
 
         if FEATURES.trusted_dependencies {
-            if let Some(q) = json.as_property(b"trustedDependencies") {
-                let count = match &q.expr.data {
-                    ExprData::EArray(arr) => arr.items.len_u32() as usize,
-                    ExprData::EArrayJSON(arr) => arr.get().items().len(),
-                    _ => return Err(invalid_trusted_dependencies(log, source, q.loc)),
-                };
-                if lockfile.trusted_dependencies.is_none() {
-                    lockfile.trusted_dependencies = Some(Default::default());
-                }
-                let trusted = lockfile.trusted_dependencies.as_mut().unwrap();
-                trusted.ensure_unused_capacity(count)?;
-                if let Some(mut items) = q.expr.as_array() {
-                    while let Some(item) = items.next() {
-                        let Some(name) = item.as_string(&bump) else {
-                            return Err(invalid_trusted_dependencies(log, source, q.loc));
-                        };
-                        trusted.put_assume_capacity(
-                            semver::string::Builder::string_hash(name) as TruncatedPackageNameHash,
-                            Box::<[u8]>::from(name),
-                        );
-                    }
-                }
-            }
+            parse_append_trusted_dependencies(
+                &mut lockfile.trusted_dependencies,
+                log,
+                source,
+                json,
+                &bump,
+            )?;
         }
 
         if FEATURES.is_main {

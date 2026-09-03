@@ -56,12 +56,13 @@ test("node:dgram close() inside 'message' handler stops remaining batch datagram
     .split("\n")
     .filter(l => l && !l.startsWith("WARNING: ASAN interferes"))
     .join("\n");
-  const trace = JSON.parse(stdout.trim());
   // The socket closes on the first datagram. Node ordering: 'close' event
   // first, then the close() callback (both via queueMicrotask in dgram.ts).
-  expect({ stderr, trace }).toEqual({
+  // stdout stays a string so that a child error shows up in stderr here
+  // instead of as a JSON.parse failure on empty output.
+  expect({ stderr, stdout }).toEqual({
     stderr: "",
-    trace: ["message:0", "closeEvent", "closeCallback"],
+    stdout: JSON.stringify(["message:0", "closeEvent", "closeCallback"]) + "\n",
   });
   expect(exitCode).toBe(0);
 });

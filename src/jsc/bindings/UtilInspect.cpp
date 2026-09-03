@@ -70,7 +70,7 @@ extern "C" JSC::EncodedJSValue JSC__JSValue__callCustomInspectFunction(
 
 // util.inspect does not call a custom inspect function on a prototype object. It finds one with
 // `Object.getOwnPropertyDescriptor(value, "constructor")?.value?.prototype === value`.
-extern "C" bool JSC__JSValue__isPrototypeObject(JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue encodedValue)
+extern "C" [[ZIG_EXPORT(check_slow)]] bool JSC__JSValue__isPrototypeObject(JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue encodedValue)
 {
     JSValue value = JSValue::decode(encodedValue);
     auto& vm = JSC::getVM(globalObject);

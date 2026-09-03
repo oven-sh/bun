@@ -1,6 +1,7 @@
 // this file is compatible with jest to test node.js' util.inspect as well as bun's
 
 const util = require("util");
+const vm = require("vm");
 
 test("util.inspect.custom exists", () => {
   expect(util.inspect.custom).toEqual(Symbol.for("nodejs.util.inspect.custom"));
@@ -370,8 +371,8 @@ describe("Web Streams [nodejs.util.inspect.custom]", () => {
   });
 });
 
-// The native inspect.custom of these classes throws ERR_INVALID_THIS when `this` is not an
-// instance. Bun.inspect and console.log must not call it with the prototype as `this`.
+// The inspect.custom of these classes throws ERR_INVALID_THIS when `this` is not an instance.
+// Bun.inspect and console.log must not call it with the prototype as `this`.
 test.each([
   "CompressionStream",
   "DecompressionStream",
@@ -379,8 +380,12 @@ test.each([
   "TextDecoderStream",
   "BroadcastChannel",
   "Buffer",
-])("Bun.inspect formats %s.prototype without its inspect.custom", className => {
-  const prototype = globalThis[className].prototype;
+  "vm.Module",
+  "vm.SourceTextModule",
+  "vm.SyntheticModule",
+])("Bun.inspect formats %s.prototype without its inspect.custom", path => {
+  const className = path.replace("vm.", "");
+  const { prototype } = path.startsWith("vm.") ? vm[className] : globalThis[className];
   expect(prototype[customSymbol]).toBeFunction();
   expect(() => prototype[customSymbol].call(prototype, 2, {})).toThrow(
     expect.objectContaining({ code: "ERR_INVALID_THIS" }),

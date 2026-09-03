@@ -1,6 +1,9 @@
 import { describe, expect, test } from "bun:test";
 import { isASAN, rss } from "harness";
 
+// CI sets BUN_GARBAGE_COLLECTOR_LEVEL=1. Then each matcher call requests a GC,
+// and on the macOS arm64 runners each GC takes about 35 ms. So a test with a
+// loop collects its results and calls a matcher once, after the loop.
 describe("Structured Clone Fast Path", () => {
   test("structuredClone should work with empty object", () => {
     const object = {};
@@ -27,46 +30,65 @@ describe("Structured Clone Fast Path", () => {
     expect(cloned).toStrictEqual("");
   });
 
-  const deOptimizations = [
+  // An accessor, a non-enumerable property, or a non-configurable property
+  // sends the object to the slow path. Object.create() makes a property
+  // non-enumerable unless the descriptor says otherwise.
+  test.each([
     {
-      get accessor() {
-        return 1;
+      name: "an enumerable getter",
+      input: {
+        get accessor() {
+          return 1;
+        },
       },
+      expected: { accessor: 1 },
     },
-    Object.create(Object.prototype, {
-      data: {
-        value: 1,
-        writable: false,
-        configurable: false,
-      },
-    }),
-    Object.create(Object.prototype, {
-      data: {
-        value: 1,
-        writable: true,
-        configurable: false,
-      },
-    }),
-    Object.create(Object.prototype, {
-      data: {
-        get: () => 1,
-        configurable: true,
-      },
-    }),
-    Object.create(Object.prototype, {
-      data: {
-        set: () => {},
-        enumerable: true,
-        configurable: true,
-      },
-    }),
-  ];
-
-  for (const deOptimization of deOptimizations) {
-    test("structuredCloneDeOptimization", () => {
-      structuredClone(deOptimization);
-    });
-  }
+    {
+      name: "a non-configurable read-only data property",
+      input: Object.create(Object.prototype, {
+        data: {
+          value: 1,
+          writable: false,
+          configurable: false,
+        },
+      }),
+      expected: {},
+    },
+    {
+      name: "a non-configurable writable data property",
+      input: Object.create(Object.prototype, {
+        data: {
+          value: 1,
+          writable: true,
+          configurable: false,
+        },
+      }),
+      expected: {},
+    },
+    {
+      name: "a non-enumerable getter",
+      input: Object.create(Object.prototype, {
+        data: {
+          get: () => 1,
+          configurable: true,
+        },
+      }),
+      expected: {},
+    },
+    {
+      name: "an enumerable setter without a getter",
+      input: Object.create(Object.prototype, {
+        data: {
+          set: () => {},
+          enumerable: true,
+          configurable: true,
+        },
+      }),
+      expected: { data: undefined },
+    },
+  ])("structuredClone of an object with $name", ({ input, expected }) => {
+    expect(structuredClone(input)).toStrictEqual(expected);
+  });
 
   test("structuredClone should use a constant amount of memory for string inputs", () => {
     const clones: Array<string> = [];
@@ -131,11 +153,8 @@ describe("Structured Clone Fast Path", () => {
   });
 
   test("structuredClone should work with array of special numbers", () => {
-    const cloned = structuredClone([-0, NaN, Infinity, -Infinity]);
-    expect(Object.is(cloned[0], -0)).toBe(true);
-    expect(cloned[1]).toBeNaN();
-    expect(cloned[2]).toBe(Infinity);
-    expect(cloned[3]).toBe(-Infinity);
+    // toEqual() compares numbers with Object.is(), so -0 does not match 0.
+    expect(structuredClone([-0, NaN, Infinity, -Infinity])).toEqual([-0, NaN, Infinity, -Infinity]);
   });
 
   test("structuredClone should work with large array of numbers", () => {
@@ -197,10 +216,9 @@ describe("Structured Clone Fast Path", () => {
   test("structuredClone should fallback for arrays with holes", () => {
     const input = [1, , 3]; // sparse
     const cloned = structuredClone(input);
-    // structured clone spec: holes become undefined
-    expect(cloned[0]).toBe(1);
-    expect(cloned[1]).toBe(undefined);
-    expect(cloned[2]).toBe(3);
+    // A hole stays a hole. toStrictEqual() does not match a hole to undefined.
+    expect(cloned).toStrictEqual([1, , 3]);
+    expect(1 in cloned).toBe(false);
   });
 
   test("structuredClone should work with array of doubles", () => {
@@ -257,12 +275,10 @@ describe("Structured Clone Fast Path", () => {
   });
 
   test("structuredClone of array with deleted element (hole via delete)", () => {
-    const input = [1, 2, 3];
-    delete (input as any)[1];
+    const input: (number | undefined)[] = [1, 2, 3];
+    delete input[1];
     const cloned = structuredClone(input);
-    expect(cloned[0]).toBe(1);
-    expect(cloned[1]).toBe(undefined);
-    expect(cloned[2]).toBe(3);
+    expect(cloned).toStrictEqual([1, , 3]);
     expect(1 in cloned).toBe(false); // holes remain holes after structuredClone
   });
 
@@ -271,18 +287,13 @@ describe("Structured Clone Fast Path", () => {
     input.length = 6;
     const cloned = structuredClone(input);
     expect(cloned.length).toBe(6);
-    expect(cloned[0]).toBe(1);
-    expect(cloned[1]).toBe(2);
-    expect(cloned[2]).toBe(3);
-    expect(cloned[3]).toBe(undefined);
+    // Indexes 3 to 5 are holes in the input and in the clone.
+    expect(cloned).toStrictEqual(input);
   });
 
   test("structuredClone of single element arrays", () => {
-    expect(structuredClone([42])).toEqual([42]);
-    expect(structuredClone([3.14])).toEqual([3.14]);
-    expect(structuredClone(["hello"])).toEqual(["hello"]);
-    expect(structuredClone([true])).toEqual([true]);
-    expect(structuredClone([null])).toEqual([null]);
+    const inputs = [[42], [3.14], ["hello"], [true], [null]];
+    expect(inputs.map(input => structuredClone(input))).toEqual(inputs);
   });
 
   test("structuredClone of array with named properties on Int32 array", () => {
@@ -370,13 +381,10 @@ describe("Structured Clone Fast Path", () => {
     clones[5][1] = 888;
     // All other clones and the original should be unaffected
     expect(input).toEqual([1, 2, 3]);
-    for (let i = 1; i < 10; i++) {
-      if (i === 5) {
-        expect(clones[i]).toEqual([1, 888, 3]);
-      } else {
-        expect(clones[i]).toEqual([1, 2, 3]);
-      }
-    }
+    const expected = Array.from({ length: 10 }, () => [1, 2, 3]);
+    expected[0][0] = 999;
+    expected[5][1] = 888;
+    expect(clones).toEqual(expected);
   });
 
   test("structuredClone of Array subclass loses subclass identity", () => {
@@ -398,12 +406,9 @@ describe("Structured Clone Fast Path", () => {
   test("structuredClone of array with only undefined values", () => {
     const input = [undefined, undefined, undefined];
     const cloned = structuredClone(input);
-    expect(cloned).toEqual([undefined, undefined, undefined]);
-    expect(cloned.length).toBe(3);
+    expect(cloned).toStrictEqual([undefined, undefined, undefined]);
     // Ensure they are actual values, not holes
-    expect(0 in cloned).toBe(true);
-    expect(1 in cloned).toBe(true);
-    expect(2 in cloned).toBe(true);
+    expect(Object.keys(cloned)).toEqual(["0", "1", "2"]);
   });
 
   test("structuredClone of array with only null values", () => {
@@ -414,26 +419,20 @@ describe("Structured Clone Fast Path", () => {
 
   test("structuredClone of dense double array preserves -0 and NaN", () => {
     const input = [-0, NaN, -0, NaN];
-    const cloned = structuredClone(input);
-    expect(Object.is(cloned[0], -0)).toBe(true);
-    expect(cloned[1]).toBeNaN();
-    expect(Object.is(cloned[2], -0)).toBe(true);
-    expect(cloned[3]).toBeNaN();
+    // toEqual() compares numbers with Object.is(), so -0 does not match 0.
+    expect(structuredClone(input)).toEqual([-0, NaN, -0, NaN]);
   });
 
   test("structuredClone on object with simple properties can exceed JSFinalObject::maxInlineCapacity", () => {
-    let largeValue = {};
+    const largeValue: Record<string, number> = {};
     for (let i = 0; i < 100; i++) {
       largeValue["property" + i] = i;
     }
+    const expected = Array(100).fill(largeValue);
 
-    for (let i = 0; i < 100; i++) {
-      expect(structuredClone(largeValue)).toStrictEqual(largeValue);
-    }
+    expect(Array.from({ length: 100 }, () => structuredClone(largeValue))).toStrictEqual(expected);
     Bun.gc(true);
-    for (let i = 0; i < 100; i++) {
-      expect(structuredClone(largeValue)).toStrictEqual(largeValue);
-    }
+    expect(Array.from({ length: 100 }, () => structuredClone(largeValue))).toStrictEqual(expected);
   });
 
   // === DenseArray fast path edge case tests ===
@@ -455,11 +454,7 @@ describe("Structured Clone Fast Path", () => {
 
   test("objects with special number property values", () => {
     const input = [{ a: NaN, b: Infinity, c: -Infinity, d: -0 }];
-    const cloned = structuredClone(input);
-    expect(cloned[0].a).toBeNaN();
-    expect(cloned[0].b).toBe(Infinity);
-    expect(cloned[0].c).toBe(-Infinity);
-    expect(Object.is(cloned[0].d, -0)).toBe(true);
+    expect(structuredClone(input)).toEqual([{ a: NaN, b: Infinity, c: -Infinity, d: -0 }]);
   });
 
   test("objects with null and undefined property values", () => {
@@ -468,9 +463,7 @@ describe("Structured Clone Fast Path", () => {
       { a: null, b: undefined },
     ];
     const cloned = structuredClone(input);
-    expect(cloned).toEqual(input);
-    expect(cloned[0].a).toBeNull();
-    expect(cloned[0].b).toBeUndefined();
+    expect(cloned).toStrictEqual(input);
     expect("b" in cloned[0]).toBe(true);
   });
 
@@ -537,7 +530,7 @@ describe("Structured Clone Fast Path", () => {
   test("fallback: array with Map", () => {
     const input = [new Map([["key", "value"]])];
     const cloned = structuredClone(input);
-    expect(cloned[0].get("key")).toBe("value");
+    expect(cloned).toEqual([new Map([["key", "value"]])]);
   });
 
   test("fallback: array with Set", () => {
@@ -550,16 +543,16 @@ describe("Structured Clone Fast Path", () => {
     const obj = Object.defineProperty({}, "x", { get: () => 42, enumerable: true, configurable: true });
     const input = [obj];
     const cloned = structuredClone(input);
-    expect(cloned[0].x).toBe(42);
+    expect(cloned).toEqual([{ x: 42 }]);
   });
 
   test("fallback: object with non-enumerable property in array", () => {
     const obj = Object.defineProperty({ a: 1 }, "hidden", { value: 2, enumerable: false });
     const input = [obj];
     const cloned = structuredClone(input);
-    expect(cloned[0].a).toBe(1);
+    expect(cloned).toEqual([{ a: 1 }]);
     // non-enumerable property should not be cloned by structuredClone
-    expect(cloned[0].hidden).toBeUndefined();
+    expect(Object.getOwnPropertyNames(cloned[0])).toEqual(["a"]);
   });
 
   test("frozen objects in array produce non-frozen clones", () => {
@@ -632,8 +625,9 @@ describe("Structured Clone Fast Path", () => {
     new Uint8Array(buf).set([1, 2, 3, 4, 5, 6, 7, 8]);
     const input = [{ a: 1 }, buf];
     const cloned = structuredClone(input);
-    expect(cloned[0]).toEqual({ a: 1 });
-    expect(new Uint8Array(cloned[1] as ArrayBuffer)).toEqual(new Uint8Array([1, 2, 3, 4, 5, 6, 7, 8]));
+    // toEqual() fails unless cloned[1] is an ArrayBuffer with the same bytes.
+    expect(cloned).toEqual(input);
+    expect(cloned[1]).not.toBe(buf);
   });
 
   test("fallback: object created with Object.create(null) in array", () => {
@@ -642,8 +636,9 @@ describe("Structured Clone Fast Path", () => {
     obj.b = "hello";
     const input = [obj];
     const cloned = structuredClone(input);
-    expect(cloned[0].a).toBe(1);
-    expect(cloned[0].b).toBe("hello");
+    expect(cloned).toEqual([{ a: 1, b: "hello" }]);
+    // toEqual() ignores the prototype. The clone gets Object.prototype.
+    expect(Object.getPrototypeOf(cloned[0])).toBe(Object.prototype);
   });
 
   test("fallback: class instance in array", () => {
@@ -663,8 +658,6 @@ describe("Structured Clone Fast Path", () => {
     ];
     const cloned = structuredClone(input);
     expect(cloned).toEqual(input);
-    expect(cloned[0].enabled).toBe(true);
-    expect(cloned[1].visible).toBe(true);
   });
 
   test("object with only string values in array", () => {
@@ -709,8 +702,6 @@ describe("Structured Clone Fast Path", () => {
     ];
     const cloned = structuredClone(input);
     expect(cloned).toEqual(input);
-    expect(cloned[0].data.length).toBe(10000);
-    expect(cloned[1].data.length).toBe(10000);
   });
 
   test("objects with unicode property names and values", () => {
@@ -755,8 +746,8 @@ describe("Structured Clone Fast Path", () => {
     const input = [obj];
     // structuredClone should handle this correctly (Symbols are not cloned)
     const cloned = structuredClone(input);
-    expect(cloned[0].a).toBe(1);
-    expect(cloned[0][sym]).toBeUndefined();
+    expect(cloned).toEqual([{ a: 1 }]);
+    expect(Object.getOwnPropertySymbols(cloned[0])).toEqual([]);
   });
 
   test("fallback: object with BigInt property value in array", () => {
@@ -773,12 +764,10 @@ describe("Structured Clone Fast Path", () => {
       if (i % 10 === 0) Bun.gc(true);
     }
     Bun.gc(true);
-    // Verify all clones are still valid after GC
-    for (const clone of clones) {
-      expect(clone.length).toBe(100);
-      expect(clone[0]).toEqual({ id: 0, name: "item-0", flag: true });
-      expect(clone[99]).toEqual({ id: 99, name: "item-99", flag: false });
-    }
+    // Verify that every clone is still valid after GC. toEqual() ignores extra
+    // trailing undefined slots, so the lengths get their own check.
+    expect(clones.map(clone => clone.length)).toEqual(Array(50).fill(100));
+    expect(clones).toEqual(Array(50).fill(input));
   });
 
   test("structuredClone of array of objects does not crash under repeated GC", () => {
@@ -787,11 +776,16 @@ describe("Structured Clone Fast Path", () => {
       name: `item-${i}`,
       active: i % 2 === 0,
     }));
+    // The loop keeps no clone, so the GC can free each one. A matcher call
+    // requests a GC, so the loop checks each clone without one.
+    // Bun.deepEquals() ignores extra trailing undefined slots, as toEqual() does.
+    const mismatches: unknown[] = [];
     for (let i = 0; i < 200; i++) {
       const cloned = structuredClone(input);
-      expect(cloned.length).toBe(50);
+      if (cloned.length !== input.length || !Bun.deepEquals(cloned, input)) mismatches.push(cloned);
       if (i % 20 === 0) Bun.gc(true);
     }
+    expect(mismatches).toEqual([]);
   });
 
   test("SerializedScriptValue can be deserialized multiple times (postMessage to two ports)", async () => {
@@ -850,8 +844,8 @@ describe("Structured Clone Fast Path", () => {
   test("fallback: array containing both simple objects and TypedArray", () => {
     const input = [{ a: 1 }, new Uint8Array([1, 2, 3])];
     const cloned = structuredClone(input);
-    expect(cloned[0]).toEqual({ a: 1 });
-    expect(new Uint8Array(cloned[1] as any)).toEqual(new Uint8Array([1, 2, 3]));
+    // toEqual() fails unless cloned[1] is a Uint8Array with the same bytes.
+    expect(cloned).toEqual([{ a: 1 }, new Uint8Array([1, 2, 3])]);
   });
 
   test("fallback: array containing object with function-like structure", () => {

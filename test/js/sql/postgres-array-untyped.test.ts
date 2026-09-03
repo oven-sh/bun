@@ -96,6 +96,14 @@ describe("untyped sql.array", () => {
     });
   });
 
+  test("an unmapped type oid binds untyped", async () => {
+    expect(await captureBind(sql => sql`SELECT ${sql.array([1, 2], 999999)}`)).toEqual({
+      query: "SELECT $1 ",
+      oids: [0],
+      params: ['{"1","2"}'],
+    });
+  });
+
   test("null elements are NULL and buffers are hex bytea", async () => {
     expect(await captureBind(sql => sql`SELECT ${sql.array(["a", null, undefined, Buffer.from("hi")])}`)).toEqual({
       query: "SELECT $1 ",

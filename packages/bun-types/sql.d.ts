@@ -781,7 +781,7 @@ declare module "bun" {
      * await sql`SELECT * FROM users WHERE id = ANY(${sql.array(uuids)})`;
      * ```
      */
-    array(values: any[], typeNameOrTypeID?: number | ArrayType): SQLArrayParameter;
+    array(values: any[] | NodeJS.TypedArray, typeNameOrTypeID?: number | ArrayType): SQLArrayParameter;
 
     /**
      * Begins a new transaction.

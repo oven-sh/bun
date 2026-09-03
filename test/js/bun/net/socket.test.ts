@@ -4706,3 +4706,53 @@ it("concurrent end() on two allowHalfOpen TLS peers closes both sockets", async 
 
   await Promise.all([serverClosed.promise, clientClosed.promise]);
 });
+
+describe("a fatal TLS alert that arrives after the handshake", () => {
+  // A TLS 1.3 server checks the client certificate after the client's
+  // handshake is done, so its certificate_required alert arrives after the
+  // client's handshake callback. Returns the client's events up to 'close'.
+  async function rejectedClientEvents(withErrorHandler: boolean) {
+    const events: string[] = [];
+    const closed = Promise.withResolvers<void>();
+    using server = Bun.listen({
+      hostname: "127.0.0.1",
+      port: 0,
+      tls: { key: tls.key, cert: tls.cert, ca: tls.cert, requestCert: true, rejectUnauthorized: true },
+      socket: {
+        data() {},
+        error() {},
+      },
+    });
+    await Bun.connect({
+      hostname: "127.0.0.1",
+      port: server.port,
+      tls: { ca: tls.cert },
+      socket: {
+        handshake: (socket, success) => events.push(`handshake ${success} ${socket.getTLSVersion()}`),
+        data: () => events.push("data"),
+        error: withErrorHandler
+          ? (_socket, err) => events.push(`error ${(err as Error & { code?: string }).code}`)
+          : undefined,
+        close: (_socket, err) => {
+          events.push(`close ${err}`);
+          closed.resolve();
+        },
+      },
+    });
+    await closed.promise;
+    return events;
+  }
+
+  it("reaches the error handler before close", async () => {
+    expect(await rejectedClientEvents(true)).toEqual([
+      "handshake true TLSv1.3",
+      "error ERR_SSL_TLSV1_ALERT_CERTIFICATE_REQUIRED",
+      "close undefined",
+    ]);
+  });
+
+  it("only closes a socket that has no error handler", async () => {
+    // The peer's alert must not become an uncaught exception in this process.
+    expect(await rejectedClientEvents(false)).toEqual(["handshake true TLSv1.3", "close undefined"]);
+  });
+});

@@ -1322,9 +1322,11 @@ it("SNICallback runs even when the requested servername matches the bind hostnam
   });
   server.listen(0, "localhost");
   await once(server, "listening");
-  const port = (server.address() as AddressInfo).port;
-  // host: "localhost" defaults servername to "localhost" - the bind hostname.
-  const client = connect({ port, host: "localhost", rejectUnauthorized: false });
+  // Dial the address that the listener bound to: `localhost` can resolve to
+  // another address family for connect() than it did for listen(). The
+  // servername is still the bind hostname.
+  const { address, port } = server.address() as AddressInfo;
+  const client = connect({ port, host: address, servername: "localhost", rejectUnauthorized: false });
   await once(client, "secureConnect");
   expect(sniCalls).toBe(1);
   // The peer certificate must be the SNICallback's RSA cert, not COMMON_CERT.
@@ -2682,6 +2684,148 @@ describe("pauseOnConnect", () => {
     } finally {
       server.close();
       probe.close();
+    }
+  });
+});
+
+describe("fatal TLS error after the handshake", () => {
+  // A TLS 1.3 application_data record whose payload does not authenticate.
+  function badRecord() {
+    const payload = Buffer.alloc(32, 0xab);
+    return Buffer.concat([Buffer.from([0x17, 0x03, 0x03, 0x00, payload.length]), payload]);
+  }
+
+  // Records the accepted socket's events until 'close'. Node emits the error
+  // without a destroy, so 'end' and close(false) follow it.
+  function recordEvents(socket: TLSSocket, events: string[], closed: PromiseWithResolvers<void>) {
+    socket.on("data", chunk => events.push(`data ${chunk}`));
+    socket.on("error", (err: Error & { code?: string }) => events.push(`error ${err.code}`));
+    socket.on("end", () => events.push("end"));
+    socket.on("close", hadError => {
+      events.push(`close ${hadError}`);
+      closed.resolve();
+    });
+  }
+
+  // A TCP relay from the client to the server. `tamper` gets each chunk that
+  // the client sends, with its index, and returns the bytes to forward.
+  async function startRelay(serverPort: number, tamper: (chunk: Buffer, index: number) => Buffer) {
+    const relay = net.createServer(downstream => {
+      const upstream = net.connect(serverPort, "127.0.0.1");
+      upstream.pipe(downstream);
+      let index = 0;
+      downstream.on("data", chunk => upstream.write(tamper(chunk, index++)));
+      downstream.on("close", () => upstream.destroy());
+      downstream.on("error", () => {});
+      upstream.on("error", () => {});
+    });
+    await once(relay.listen(0, "127.0.0.1"), "listening");
+    return relay;
+  }
+
+  it("reports a record that does not decrypt as an 'error' on the accepted socket", async () => {
+    const events: string[] = [];
+    const closed = Promise.withResolvers<void>();
+    let error: (Error & { library?: string; reason?: string }) | undefined;
+    const server = createServer(COMMON_CERT, socket => {
+      recordEvents(socket, events, closed);
+      socket.once("error", err => (error = err));
+      // The client sends the bad record when this arrives, so the server's
+      // handshake is complete by then.
+      socket.write("hello");
+    });
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    const raw = net.connect((server.address() as AddressInfo).port, "127.0.0.1");
+    raw.on("error", () => {});
+    const client = connect({ socket: raw, rejectUnauthorized: false });
+    client.on("error", () => {});
+    client.once("data", () => raw.write(badRecord()));
+    try {
+      await closed.promise;
+      expect(events).toEqual(["error ERR_SSL_DECRYPTION_FAILED_OR_BAD_RECORD_MAC", "end", "close false"]);
+      expect({ library: error?.library, reason: error?.reason }).toEqual({
+        library: "SSL routines",
+        reason: "DECRYPTION_FAILED_OR_BAD_RECORD_MAC",
+      });
+    } finally {
+      client.destroy();
+      raw.destroy();
+      server.close();
+    }
+  });
+
+  it("delivers the data that arrives with the bad record before the 'error'", async () => {
+    const events: string[] = [];
+    const closed = Promise.withResolvers<void>();
+    const server = createServer(COMMON_CERT, socket => {
+      recordEvents(socket, events, closed);
+      socket.write("hello");
+    });
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    // The relay appends the bad record to the client's next write, so the
+    // server reads both in one read.
+    let appendBadRecord = false;
+    const relay = await startRelay((server.address() as AddressInfo).port, chunk => {
+      if (!appendBadRecord) return chunk;
+      appendBadRecord = false;
+      return Buffer.concat([chunk, badRecord()]);
+    });
+    const client = connect({
+      port: (relay.address() as AddressInfo).port,
+      host: "127.0.0.1",
+      rejectUnauthorized: false,
+    });
+    client.on("error", () => {});
+    try {
+      await once(client, "data");
+      appendBadRecord = true;
+      client.write("ping");
+      await closed.promise;
+      expect(events).toEqual(["data ping", "error ERR_SSL_DECRYPTION_FAILED_OR_BAD_RECORD_MAC", "end", "close false"]);
+    } finally {
+      client.destroy();
+      relay.close();
+      server.close();
+    }
+  });
+
+  it("reports the handshake and then the 'error' when one read holds the Finished and the bad record", async () => {
+    const events: string[] = [];
+    const closed = Promise.withResolvers<void>();
+    const server = createServer({ ...COMMON_CERT, minVersion: "TLSv1.3" }, socket => {
+      events.push("secureConnection");
+      recordEvents(socket, events, closed);
+    });
+    server.on("tlsClientError", (err: Error & { code?: string }) => {
+      events.push(`tlsClientError ${err.code}`);
+      closed.resolve();
+    });
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    // The client's second write is the flight that ends with its Finished. The
+    // relay appends the bad record to it, so the server's handshake completes
+    // in the same read that fails.
+    const relay = await startRelay((server.address() as AddressInfo).port, (chunk, index) =>
+      index === 1 ? Buffer.concat([chunk, badRecord()]) : chunk,
+    );
+    const client = connect({
+      port: (relay.address() as AddressInfo).port,
+      host: "127.0.0.1",
+      rejectUnauthorized: false,
+      minVersion: "TLSv1.3",
+    });
+    client.on("error", () => {});
+    try {
+      await closed.promise;
+      expect(events).toEqual([
+        "secureConnection",
+        "error ERR_SSL_DECRYPTION_FAILED_OR_BAD_RECORD_MAC",
+        "end",
+        "close false",
+      ]);
+    } finally {
+      client.destroy();
+      relay.close();
+      server.close();
     }
   });
 });

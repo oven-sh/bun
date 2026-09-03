@@ -449,9 +449,8 @@ describe("bundler", () => {
       });
     }
 
-    // The executable keys the entry point's module at `/$bunfs/root/<outfile>`,
-    // so nothing may fold into the entry's own chunk; chunks shared between
-    // `import()` targets still fold into the first target's chunk.
+    // In an executable, nothing folds into the entry's own chunk; chunks shared
+    // between `import()` targets still fold into the first target's chunk.
     itBundled("compile/splitting/MinChunkSizeKeepsEntryChunkImportable", {
       compile: true,
       splitting: true,

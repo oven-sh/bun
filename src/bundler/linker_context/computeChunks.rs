@@ -632,7 +632,7 @@ pub(crate) fn compute_chunks(
         {
             compile_entry_point_pending = false;
             chunk.template = PathTemplate {
-                data: Box::from(&b"[name]"[..]),
+                data: Box::from(&b"./[name]"[..]),
                 placeholder: Placeholder {
                     name: bv2.transpiler().options.compile_entry_point_name.clone(),
                     ..Default::default()

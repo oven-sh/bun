@@ -721,26 +721,68 @@ fn select_importers(manager: &PackageManager, original_cwd: &[u8]) -> Option<Sel
     })
 }
 
+/// The dependency types an install lays out for local and for remote packages; `--production` / `--omit` narrow them.
+type InstallFeatures = (Features, Features);
+
+fn install_features(manager: &PackageManager) -> InstallFeatures {
+    (
+        manager.options.local_package_features,
+        manager.options.remote_package_features,
+    )
+}
+
+/// Every dependency type an install can lay out, whatever `--production` / `--omit` say for this run.
+fn full_install_features((mut local, mut remote): InstallFeatures) -> InstallFeatures {
+    local.dev_dependencies = true;
+    for features in [&mut local, &mut remote] {
+        features.optional_dependencies = true;
+        features.peer_dependencies = true;
+    }
+    (local, remote)
+}
+
+fn with_install_features<T>(
+    manager: &mut PackageManager,
+    (local, remote): InstallFeatures,
+    f: impl FnOnce(&mut PackageManager) -> T,
+) -> T {
+    let saved = install_features(manager);
+    manager.options.local_package_features = local;
+    manager.options.remote_package_features = remote;
+    let result = f(manager);
+    (
+        manager.options.local_package_features,
+        manager.options.remote_package_features,
+    ) = saved;
+    result
+}
+
 /// The tree the lockfile saves (`Lockfile::resolve`), held while `manager.lockfile` carries the install tree.
 struct SavedTree {
     trees: tree::List,
     hoisted_dependencies: Vec<DependencyID>,
 }
 
-/// Hoists `manager.lockfile` into the tree an install lays out for every workspace (`Lockfile::filter`):
-/// the self-contained barrier applied, disabled and bundled dependencies left out. Returns the tree it replaced.
-fn hoist_install_tree(manager: &mut PackageManager) -> Result<SavedTree, tree::SubtreeError> {
+/// Hoists `manager.lockfile` into the tree an install of `features` lays out for every workspace
+/// (`Lockfile::filter`): the self-contained barrier applied, disabled and bundled dependencies left out.
+/// Returns the tree it replaced.
+fn hoist_install_tree(
+    manager: &mut PackageManager,
+    features: InstallFeatures,
+) -> Result<SavedTree, tree::SubtreeError> {
     let saved = SavedTree {
         trees: core::mem::take(&mut manager.lockfile.buffers.trees),
         hoisted_dependencies: core::mem::take(&mut manager.lockfile.buffers.hoisted_dependencies),
     };
-    let pm: *mut PackageManager = manager;
-    // SAFETY: same split as `PackageManager::load_lockfile_from_cwd` — `lockfile` is its own `Box` allocation and the Filter builder only reads `manager.options`/`subcommand`/`summary`.
-    let result = unsafe {
-        let lf: *mut Lockfile = &raw mut *(*pm).lockfile;
-        let log: *mut bun_ast::Log = (*pm).log;
-        (*lf).hoist::<{ tree::BuilderMethod::Filter }>(&mut *log, Some(&*pm), true, &[], None)
-    };
+    let result = with_install_features(manager, features, |manager| {
+        let pm: *mut PackageManager = manager;
+        // SAFETY: same split as `PackageManager::load_lockfile_from_cwd` — `lockfile` is its own `Box` allocation and the Filter builder only reads `manager.options`/`subcommand`/`summary`.
+        unsafe {
+            let lf: *mut Lockfile = &raw mut *(*pm).lockfile;
+            let log: *mut bun_ast::Log = (*pm).log;
+            (*lf).hoist::<{ tree::BuilderMethod::Filter }>(&mut *log, Some(&*pm), true, &[], None)
+        }
+    });
     match result {
         Ok(_) => Ok(saved),
         Err(err) => {
@@ -1084,7 +1126,7 @@ fn plan_hoisted(
         return;
     }
 
-    if hoist_install_tree(manager).is_err() {
+    if hoist_install_tree(manager, install_features(manager)).is_err() {
         manager.crash();
     }
 
@@ -1263,9 +1305,11 @@ fn has_bundled_deps(lockfile: &Lockfile, pkg_id: PackageID) -> bool {
 /// Hoisted post-install pass for dedupe / audit fix / update (install_with_manager.rs): removes the copies
 /// `before` placed in a nested or workspace `node_modules` that the install now provides from an ancestor.
 /// The folders are compared with the install tree, not the lockfile's: only the install tree applies the
-/// self-contained barrier, so only it says what a self-contained workspace keeps.
+/// self-contained barrier, so only it says what a self-contained workspace keeps. The tree carries every
+/// dependency type, so a copy under a dependency that `--production` / `--omit` skipped this run stays.
 pub(crate) fn remove_collapsed_copies(manager: &mut PackageManager, before: &Lockfile) {
-    let Ok(saved) = hoist_install_tree(manager) else {
+    let Ok(saved) = hoist_install_tree(manager, full_install_features(install_features(manager)))
+    else {
         return;
     };
     plan_and_remove_collapsed_copies(manager, before);
@@ -1661,37 +1705,17 @@ fn wanted_packages(manager: &PackageManager, selection: Option<&Selection>) -> D
     wanted
 }
 
-type StoreFeatures = (Features, Features);
-
-fn full_store_features((mut local, mut remote): StoreFeatures) -> StoreFeatures {
-    local.dev_dependencies = true;
-    for features in [&mut local, &mut remote] {
-        features.optional_dependencies = true;
-        features.peer_dependencies = true;
-    }
-    (local, remote)
-}
-
-fn build_store_with(manager: &mut PackageManager, (local, remote): StoreFeatures) -> Store {
-    let saved = (
-        manager.options.local_package_features,
-        manager.options.remote_package_features,
-    );
-    manager.options.local_package_features = local;
-    manager.options.remote_package_features = remote;
-    let store = build_store(
-        &*manager,
-        &manager.lockfile,
-        true,
-        &[],
-        None,
-        Timings::Quiet,
-    );
-    (
-        manager.options.local_package_features,
-        manager.options.remote_package_features,
-    ) = saved;
-    handle_oom(store)
+fn build_store_with(manager: &mut PackageManager, features: InstallFeatures) -> Store {
+    with_install_features(manager, features, |manager| {
+        handle_oom(build_store(
+            &*manager,
+            &manager.lockfile,
+            true,
+            &[],
+            None,
+            Timings::Quiet,
+        ))
+    })
 }
 
 fn push_store_entry_names(
@@ -1725,11 +1749,8 @@ fn store_entry_names(manager: &mut PackageManager, wanted: &DynamicBitSet) -> Ve
     if manager.lockfile.packages.len() == 0 {
         return Vec::new();
     }
-    let own: StoreFeatures = (
-        manager.options.local_package_features,
-        manager.options.remote_package_features,
-    );
-    let full = full_store_features(own);
+    let own = install_features(manager);
+    let full = full_install_features(own);
     let mut names: Vec<Box<[u8]>> = Vec::new();
     for features in [Some(full), (own != full).then_some(own)]
         .into_iter()

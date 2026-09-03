@@ -58,9 +58,9 @@ bun publish --dry-run
 </ParamField>
 
 <ParamField path="-r, --recursive" type="boolean">
-  Publish every workspace package, dependencies first. A private package and a version that is already on the registry
-  are skipped. A rejected package is reported and the run continues, then `bun publish` exits with code 1. Needs a
-  `bun.lock`.
+  Pack every workspace package, then publish them dependencies first. A private package and a version that is already
+  on the registry are skipped. If one pack fails, nothing is published. A rejected package is reported and the run
+  continues, then `bun publish` exits with code 1. Needs a `bun.lock`.
 
 ```sh terminal icon="terminal"
 bun publish --recursive

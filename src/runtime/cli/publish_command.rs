@@ -689,7 +689,7 @@ impl PublishCommand {
         1
     }
 
-    /// `-r` / `--filter`: publish each selected workspace package, dependencies first. Exits 1 at the end if any failed.
+    /// `-r` / `--filter`: pack every selected workspace package, then publish them dependencies first.
     fn exec_workspaces(
         ctx: Command::Context,
         manager: &mut PackageManager,
@@ -739,12 +739,20 @@ impl PublishCommand {
                 .collect()
         };
 
-        // `pack` writes each package's `publishConfig` into these; restored before every package.
+        // `pack` writes each package's `publishConfig` into these. Each package packs and
+        // publishes with the flag values plus its own `publishConfig`.
         let cli_tag = manager.options.publish_config.tag;
         let cli_access = manager.options.publish_config.access;
 
-        let mut attempted: usize = 0;
-        let mut failed: Vec<Box<[u8]>> = Vec::new();
+        struct Packed<'m> {
+            member: &'m Member,
+            context: Context<'static, true>,
+            tag: &'static [u8],
+            access: Option<Access>,
+        }
+
+        // Phase 1: pack every eligible package. A pack failure ends the run before any publish.
+        let mut packed: Vec<Packed<'_>> = Vec::new();
         for member in &members {
             manager.options.publish_config.tag = cli_tag;
             manager.options.publish_config.access = cli_access;
@@ -780,15 +788,37 @@ impl PublishCommand {
                     continue;
                 }
                 Err(err) => {
-                    Self::report_pack_error(err);
-                    attempted += 1;
-                    failed.push(member.name.clone());
-                    continue;
+                    let code = Self::report_pack_error(err);
+                    Output::err_generic(
+                        "failed to pack {}, nothing was published",
+                        (bstr::BStr::new(&member.name),),
+                    );
+                    Global::exit(code);
                 }
             };
-            attempted += 1;
-
             let _ = bun_sys::unlink(&context.abs_tarball_path);
+            packed.push(Packed {
+                member,
+                context,
+                tag: manager.options.publish_config.tag,
+                access: manager.options.publish_config.access,
+            });
+        }
+
+        // Phase 2: publish in the same order, dependencies first.
+        let attempted = packed.len();
+        let mut failed: Vec<Box<[u8]>> = Vec::new();
+        for Packed {
+            member,
+            context,
+            tag,
+            access,
+        } in packed
+        {
+            manager.options.publish_config.tag = tag;
+            manager.options.publish_config.access = access;
+
+            bun_core::prettyln!("\n<b><magenta>{}<r>", bstr::BStr::new(&member.name));
 
             match Self::publish::<true>(&context) {
                 Ok(Published::Yes) => {}

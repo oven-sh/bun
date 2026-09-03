@@ -1583,26 +1583,47 @@ describe("--recursive", () => {
     expect(exitCode).toBe(0);
   });
 
-  test("continues after a failing lifecycle script", async () => {
+  test("packs everything before it publishes anything", async () => {
     using mock = mockRegistry();
-    // `a` fails before the publish, `b` fails after it.
+    // `c` is packed last. Its failing prepublishOnly must keep `a` and `b` off the registry.
     const packageDir = await workspace(
-      "rec-script",
+      "rec-packfail",
       `http://localhost:${mock.server.port}/`,
       {},
-      { a: { prepublishOnly: "exit 3" }, b: { postpublish: "exit 4" } },
+      { c: { prepublishOnly: "exit 3" } },
     );
 
     const { out, err, exitCode } = await publish(env, packageDir, "-r");
     expect(err).toContain('script "prepublishOnly" exited with code 3');
+    expect(err).toContain("error: failed to pack rec-packfail-c, nothing was published");
+    expect(err).toMatch(/\$ echo prepublishOnly rec-packfail-a[\s\S]*\$ echo prepublishOnly rec-packfail-b/);
+    expect(mock.puts).toEqual([]);
+    expect(out).not.toContain(" + rec-packfail-");
+    expect(exitCode).toBe(3);
+  });
+
+  test("continues after a failing postpublish script", async () => {
+    using mock = mockRegistry();
+    const packageDir = await workspace(
+      "rec-script",
+      `http://localhost:${mock.server.port}/`,
+      {},
+      { b: { postpublish: "exit 4" } },
+    );
+
+    const { out, err, exitCode } = await publish(env, packageDir, "-r");
     expect(err).toContain('script "postpublish" exited with code 4');
-    expect(err).toContain("error: failed to publish 2 of 3 packages: rec-script-a, rec-script-b");
-    expect(mock.puts).toEqual(["rec-script-b@1.0.0", "rec-script-c@1.0.0"]);
-    expect(out.match(/ \+ rec-script-\w+@1\.0\.0/g)).toEqual([" + rec-script-b@1.0.0", " + rec-script-c@1.0.0"]);
+    expect(err).toContain("error: failed to publish 1 of 3 packages: rec-script-b");
+    expect(mock.puts).toEqual(["rec-script-a@1.0.0", "rec-script-b@1.0.0", "rec-script-c@1.0.0"]);
+    expect(out.match(/ \+ rec-script-\w+@1\.0\.0/g)).toEqual([
+      " + rec-script-a@1.0.0",
+      " + rec-script-b@1.0.0",
+      " + rec-script-c@1.0.0",
+    ]);
     expect(exitCode).toBe(1);
   });
 
-  test.skipIf(isWindows)("continues after a lifecycle script that was killed", async () => {
+  test.skipIf(isWindows)("a lifecycle script that was killed publishes nothing", async () => {
     using mock = mockRegistry();
     // SIGKILL, not SIGSEGV: a core file from the shell would fail the CI job.
     const packageDir = await workspace(
@@ -1614,10 +1635,10 @@ describe("--recursive", () => {
 
     const { out, err, exitCode } = await publish(env, packageDir, "-r");
     expect(err).toContain('script "prepack" was terminated by signal');
-    expect(err).toContain("error: failed to publish 1 of 3 packages: rec-signal-a");
-    expect(mock.puts).toEqual(["rec-signal-b@1.0.0", "rec-signal-c@1.0.0"]);
-    expect(out.match(/ \+ rec-signal-\w+@1\.0\.0/g)).toEqual([" + rec-signal-b@1.0.0", " + rec-signal-c@1.0.0"]);
-    expect(exitCode).toBe(1);
+    expect(err).toContain("error: failed to pack rec-signal-a, nothing was published");
+    expect(mock.puts).toEqual([]);
+    expect(out).not.toContain(" + rec-signal-");
+    expect(exitCode).toBe(137);
   });
 
   test.skipIf(isWindows)("stops the run when a lifecycle script is told to stop", async () => {

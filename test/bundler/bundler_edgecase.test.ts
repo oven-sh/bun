@@ -3611,6 +3611,57 @@ describe("bundler", () => {
       api.expectFile("/out.js").toContain("var arguments = 1;");
     },
   });
+
+  // Without code splitting, each entry point gets its own output file, even when
+  // entry points import each other. Each file runs its modules in the order that
+  // its own entry point imports them, so it prints what the unbundled entry prints.
+  itBundled("edgecase/EntryPointsImportEachOther", {
+    files: {
+      "/a.ts": /* ts */ `
+        import { b } from "./b.ts";
+        export function a() { return "a"; }
+        console.log("a runs, b() is", b());
+      `,
+      "/b.ts": /* ts */ `
+        import { a } from "./a.ts";
+        export function b() { return "b"; }
+        console.log("b runs, a() is", a());
+      `,
+    },
+    entryPoints: ["/a.ts", "/b.ts"],
+    outdir: "/out",
+    run: [
+      { file: "/out/a.js", stdout: "b runs, a() is a\na runs, b() is b" },
+      { file: "/out/b.js", stdout: "a runs, b() is b\nb runs, a() is a" },
+    ],
+  });
+  itBundled("edgecase/EntryPointImportsEntryPointModuleOrder", {
+    files: {
+      "/a.ts": `import "./c.ts"; import "./b.ts"; console.log("a");`,
+      "/b.ts": `import "./d.ts"; console.log("b");`,
+      "/c.ts": `console.log("c");`,
+      "/d.ts": `console.log("d");`,
+    },
+    entryPoints: ["/a.ts", "/b.ts"],
+    outdir: "/out",
+    run: [
+      { file: "/out/a.js", stdout: "c\nd\nb\na" },
+      { file: "/out/b.js", stdout: "d\nb" },
+    ],
+  });
+  itBundled("edgecase/CSSEntryPointsImportEachOther", {
+    files: {
+      "/a.css": `@import "./b.css"; .a { color: red }`,
+      "/b.css": `@import "./a.css"; .b { color: blue }`,
+    },
+    entryPoints: ["/a.css", "/b.css"],
+    outdir: "/out",
+    minifyWhitespace: true,
+    onAfterBundle(api) {
+      api.expectFile("/out/a.css").toEqualIgnoringWhitespace(".b{color:#00f}.a{color:red}");
+      api.expectFile("/out/b.css").toEqualIgnoringWhitespace(".a{color:red}.b{color:#00f}");
+    },
+  });
 });
 
 for (const backend of ["api", "cli"] as const) {

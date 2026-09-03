@@ -401,6 +401,26 @@ describe("bundler", () => {
       },
     });
   }
+  // Two entry points that import() each other: the executable runs the first one.
+  itBundled("compile/EntryPointsImportEachOther", {
+    compile: true,
+    files: {
+      "/main.ts": /* js */ `
+        import("./plugin.ts").then(plugin => console.log("main loaded", plugin.name));
+      `,
+      "/plugin.ts": /* js */ `
+        export const name = "plugin";
+        export const loadMain = () => import("./main.ts");
+      `,
+    },
+    entryPointsRaw: ["./main.ts", "./plugin.ts"],
+    outfile: "dist/out",
+    run: {
+      stdout: "main loaded plugin",
+      file: "dist/out",
+      setCwd: true,
+    },
+  });
   // https://github.com/oven-sh/bun/issues/8697
   itBundled("compile/EmbeddedFileOutfile", {
     compile: true,

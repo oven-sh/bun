@@ -104,6 +104,42 @@ pub mod js_meta {
     pub type ProbablyTypescriptType = ArrayHashMap<Ref, (), AutoContext, AstAlloc>;
     pub type SortedAndFilteredExportAliases = AstVec<Box<[u8], AstAlloc>>;
     pub type CjsExportCopies = AstVec<Ref>;
+    /// Union, per file, of the export names its importers can observe: named
+    /// static imports, tracked `import()` / `require()` reads. `None` until an
+    /// importer is seen; `All` once any importer can see the whole namespace
+    /// (sticky). Keys borrow parser-arena strings; nothing is copied.
+    #[derive(Default)]
+    pub enum DynamicImportReferencedAliases {
+        #[default]
+        None,
+        Partial(ArrayHashMap<&'static [u8], (), AutoContext, AstAlloc>),
+        All,
+    }
+    impl DynamicImportReferencedAliases {
+        pub fn merge_all(&mut self) {
+            *self = Self::All;
+        }
+        pub fn insert(&mut self, alias: &'static [u8]) {
+            match self {
+                Self::All => {}
+                Self::None => {
+                    let mut set =
+                        ArrayHashMap::<&'static [u8], (), AutoContext, AstAlloc>::default();
+                    bun_core::handle_oom(set.put(alias, ()));
+                    *self = Self::Partial(set);
+                }
+                Self::Partial(set) => bun_core::handle_oom(set.put(alias, ())),
+            }
+        }
+        pub fn merge_partial(&mut self, aliases: &[bun_ast::StoreStr]) {
+            if aliases.is_empty() && matches!(self, Self::None) {
+                *self = Self::Partial(Default::default());
+            }
+            for a in aliases {
+                self.insert(a.slice());
+            }
+        }
+    }
     pub type TopLevelSymbolToParts = bun_ast::ast_result::TopLevelSymbolToParts;
 
     #[derive(Clone, Copy, Default)]
@@ -127,7 +163,10 @@ pub mod js_meta {
         pub top_level_symbol_to_parts_overlay: TopLevelSymbolToParts,
         pub cjs_export_copies: CjsExportCopies,
         pub wrapper_part_index: Index,
-        pub entry_point_part_index: Index,
+        pub dynamic_import_referenced_aliases: DynamicImportReferencedAliases,
+        /// The parameter of the setters on a lifted CommonJS module's namespace
+        /// object (`set: (value) => $foo = value`). `Ref::NONE` for other files.
+        pub lifted_setter_param: Ref,
         pub flags: Flags,
     }
 
@@ -142,7 +181,8 @@ pub mod js_meta {
                 top_level_symbol_to_parts_overlay: TopLevelSymbolToParts::default(),
                 cjs_export_copies: AstAlloc::vec(),
                 wrapper_part_index: Index::default(),
-                entry_point_part_index: Index::default(),
+                dynamic_import_referenced_aliases: DynamicImportReferencedAliases::default(),
+                lifted_setter_param: Ref::NONE,
                 flags: Flags::default(),
             }
         }
@@ -158,7 +198,8 @@ pub mod js_meta {
             top_level_symbol_to_parts_overlay: TopLevelSymbolToParts,
             cjs_export_copies: CjsExportCopies,
             wrapper_part_index: Index,
-            entry_point_part_index: Index,
+            dynamic_import_referenced_aliases: DynamicImportReferencedAliases,
+            lifted_setter_param: Ref,
             flags: Flags,
         }
     }
@@ -216,6 +257,7 @@ pub struct LinkerGraph<'a> {
     // const_values: bun_ast::Ast::ConstValuesMap,
     /// This is for cross-module inlining of TypeScript enum constants
     pub(crate) ts_enums: bun_ast::ast_result::TsEnumsMap,
+    pub(crate) import_member_bindings: bun_ast::ast_result::ImportMemberBindings,
 }
 
 // SAFETY: `LinkerGraph` is shared read-mostly across worker threads during
@@ -276,6 +318,7 @@ impl Default for LinkerGraph<'_> {
             stable_source_indices: Vec::new(),
             is_scb_bitset: BitSet::default(),
             ts_enums: bun_ast::ast_result::TsEnumsMap::default(),
+            import_member_bindings: bun_ast::ast_result::ImportMemberBindings::default(),
         }
     }
 }

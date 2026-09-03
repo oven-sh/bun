@@ -6,7 +6,7 @@ use core::fmt;
 use bun_alloc::Arena as Bump;
 
 use bun_alloc::AllocError;
-use bun_collections::VecExt;
+use bun_collections::{VecExt, index_sort};
 use bun_core::strings;
 
 use crate::{Expr, ExprNodeIndex, ExprNodeList, G, OptionalChain, Ref, StoreRef};
@@ -124,7 +124,7 @@ impl Array {
                 debug_assert!(matches!(item.data, crate::expr::Data::EString(_)));
             }
         }
-        self.items.slice_mut().sort_by(array_sorter_is_less_than);
+        index_sort::sort_slice_by(self.items.slice_mut(), array_sorter_is_less_than);
     }
 }
 
@@ -313,6 +313,12 @@ pub struct Dot {
     /// unwrapped if the resulting value is unused. Unwrapping means discarding
     /// the call target but keeping any arguments with side effects.
     pub call_can_be_unwrapped_if_unused: CallUnwrap,
+
+    /// `target` is an `EImportIdentifier` and this read was counted in
+    /// `Part::import_symbol_property_uses` instead of as a use of the import,
+    /// so the linker may bind it straight to the export it names
+    /// (`LinkerGraph::import_member_bindings`).
+    pub is_import_property_use: bool,
 }
 impl Default for Dot {
     fn default() -> Self {
@@ -323,6 +329,7 @@ impl Default for Dot {
             optional_chain: None,
             can_be_removed_if_unused: false,
             call_can_be_unwrapped_if_unused: CallUnwrap::Never,
+            is_import_property_use: false,
         }
     }
 }
@@ -330,6 +337,8 @@ pub struct Index {
     pub index: ExprNodeIndex,
     pub target: ExprNodeIndex,
     pub optional_chain: Option<OptionalChain>,
+    /// See `Dot::is_import_property_use`.
+    pub is_import_property_use: bool,
 }
 
 pub struct Arrow {
@@ -991,7 +1000,6 @@ pub struct JsonTape {
     prop_value_locs: Vec<crate::Loc, TapeAlloc>,
     item_locs: Vec<crate::Loc, TapeAlloc>,
     str_chunks: Vec<Vec<u8, TapeAlloc>, TapeAlloc>,
-    str_used: usize,
     pub encoding: StrEncoding,
 }
 
@@ -1014,7 +1022,6 @@ impl JsonTape {
             prop_value_locs: Vec::new_in(alloc),
             item_locs: Vec::new_in(alloc),
             str_chunks: Vec::new_in(alloc),
-            str_used: 0,
             encoding: StrEncoding::Utf8,
         }
     }
@@ -1061,7 +1068,7 @@ impl JsonTape {
         (first, rows.len() as u32)
     }
 
-    /// Copy decoded string bytes into the tape; chunks never move once handed out.
+    /// Copy decoded string bytes into the tape; chunks grow only within capacity and so never move.
     pub fn alloc_str(&mut self, bytes: &[u8]) -> Str {
         self.alloc_str_join(bytes, b"")
     }
@@ -1072,26 +1079,21 @@ impl JsonTape {
         let fits = self
             .str_chunks
             .last()
-            .is_some_and(|c| c.len() - self.str_used >= len);
+            .is_some_and(|c| c.capacity() - c.len() >= len);
         if !fits {
             let cap = len.max(Self::STR_CHUNK);
-            let mut chunk: Vec<u8, TapeAlloc> = Vec::with_capacity_in(cap, self.alloc());
-            chunk.resize(cap, 0);
+            let chunk: Vec<u8, TapeAlloc> = Vec::with_capacity_in(cap, self.alloc());
             self.str_chunks.push(chunk);
-            self.str_used = 0;
         }
         let chunk = self.str_chunks.last_mut().expect("chunk pushed above");
-        let out = &mut chunk[self.str_used..self.str_used + len];
+        let start = chunk.len();
         if len <= 32 {
-            for (o, &c) in out.iter_mut().zip(a.iter().chain(b)) {
-                *o = c;
-            }
+            chunk.extend(a.iter().chain(b));
         } else {
-            out[..a.len()].copy_from_slice(a);
-            out[a.len()..].copy_from_slice(b);
+            chunk.extend_from_slice(a);
+            chunk.extend_from_slice(b);
         }
-        self.str_used += len;
-        Str::new(out)
+        Str::new(&chunk[start..])
     }
 
     /// The row buffers, for a reader that resolves spans itself.
@@ -1341,14 +1343,6 @@ pub enum SetError {
 }
 bun_core::impl_tag_error!(SetError);
 bun_core::oom_from_alloc!(SetError);
-impl From<SetError> for crate::Error {
-    fn from(e: SetError) -> Self {
-        match e {
-            SetError::OutOfMemory => crate::Error::Alloc(bun_alloc::AllocError),
-            SetError::Clobber => crate::Error::Clobber,
-        }
-    }
-}
 
 // ── live Object accessor surface ───────────────────────────────────────────
 // Adapted to the current `Vec` API (`append(v)`, `slice()`, `slice_mut()`).
@@ -1527,15 +1521,11 @@ impl Object {
                 ));
             }
         }
-        self.properties
-            .slice_mut()
-            .sort_by(object_sorter_is_less_than);
+        index_sort::sort_slice_by(self.properties.slice_mut(), object_sorter_is_less_than);
     }
 
     pub fn package_json_sort(&mut self) {
-        self.properties
-            .slice_mut()
-            .sort_by(package_json_sort_is_less_than);
+        index_sort::sort_slice_by(self.properties.slice_mut(), package_json_sort_is_less_than);
     }
 }
 
@@ -1703,6 +1693,23 @@ pub struct EString {
 }
 // Also exported as `String`; `EString` avoids colliding with bun_core::String.
 pub use EString as String;
+
+/// [`EString::flattened`] result: the node itself, or an owned copy when a rope was flattened.
+pub enum Flattened<'a> {
+    Borrowed(&'a EString),
+    Owned(EString),
+}
+
+impl core::ops::Deref for Flattened<'_> {
+    type Target = EString;
+    #[inline]
+    fn deref(&self) -> &EString {
+        match self {
+            Flattened::Borrowed(s) => s,
+            Flattened::Owned(s) => s,
+        }
+    }
+}
 
 impl Default for EString {
     fn default() -> Self {
@@ -1894,10 +1901,28 @@ impl EString {
         true
     }
 
+    /// Flatten in place. Parser only; shared-AST readers use [`Self::flattened`].
     pub fn resolve_rope_if_needed(&mut self, bump: &Bump) {
         if self.next.is_none() || !self.is_utf8() {
             return;
         }
+        self.data = Str::new(self.flatten_rope(bump));
+        self.next = None;
+    }
+
+    /// `self` if not a rope, else a copy flattened into `bump`. Never writes to `self`.
+    pub fn flattened(&self, bump: &Bump) -> Flattened<'_> {
+        if self.next.is_none() || !self.is_utf8() {
+            return Flattened::Borrowed(self);
+        }
+        let mut copy = self.shallow_clone();
+        copy.data = Str::new(self.flatten_rope(bump));
+        copy.next = None;
+        Flattened::Owned(copy)
+    }
+
+    /// The rope's bytes, concatenated into a fresh `bump` slice.
+    fn flatten_rope<'b>(&self, bump: &'b Bump) -> &'b [u8] {
         let mut bytes = bun_alloc::ArenaVec::<u8>::with_capacity_in(self.rope_len as usize, bump);
         bytes.extend_from_slice(&self.data);
         let mut str_ = self.next;
@@ -1905,8 +1930,7 @@ impl EString {
             bytes.extend_from_slice(&part.get().data);
             str_ = part.get().next;
         }
-        self.data = Str::new(bytes.into_bump_slice());
-        self.next = None;
+        bytes.into_bump_slice()
     }
 
     /// Return UTF-8 bytes, transcoding if UTF-16.
@@ -2391,17 +2415,24 @@ pub struct If {
     pub no: ExprNodeIndex,
 }
 
+pub enum UnwrappedRequireMarker {}
+/// Index into the parser's `imports_to_convert_from_require`.
+pub type UnwrappedRequireIndex = bun_core::GenericIndex<u32, UnwrappedRequireMarker>;
+pub type UnwrappedRequireIndexOptional =
+    bun_core::GenericIndexOptional<u32, UnwrappedRequireMarker>;
+
 #[derive(Clone, Copy)]
 pub struct RequireString {
     pub import_record_index: u32,
 
-    pub unwrapped_id: u32,
+    /// Set when `unwrap_commonjs_to_esm` turned this `require()` into an import.
+    pub unwrapped_id: UnwrappedRequireIndexOptional,
 }
 impl Default for RequireString {
     fn default() -> Self {
         Self {
             import_record_index: 0,
-            unwrapped_id: u32::MAX,
+            unwrapped_id: UnwrappedRequireIndexOptional::NONE,
         }
     }
 }
@@ -2423,6 +2454,12 @@ pub struct Import {
     pub expr: ExprNodeIndex,
     pub options: ExprNodeIndex,
     pub import_record_index: u32,
+    /// When bundling a string-literal `import("...")`, this is the synthetic
+    /// namespace symbol minted by `transpose_import`. Property accesses /
+    /// destructuring of the awaited result are recorded under this ref so the
+    /// linker can tree-shake unused exports of the importee. `Ref::NONE` when
+    /// not bundling or the specifier is non-constant.
+    pub namespace_ref: Ref,
     // TODO:
     // Comments inside "import()" expressions have special meaning for Webpack.
     // Preserving comments inside these expressions makes it possible to use

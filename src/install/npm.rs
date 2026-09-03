@@ -5,7 +5,7 @@ use crate::Error;
 use crate::bun_json as JSON;
 use crate::bun_schema::api;
 use bun_alloc::AllocError;
-use bun_collections::{HashMap, IdentityContext, StringSet};
+use bun_collections::{HashMap, IdentityContext, StringSet, index_sort};
 use bun_core::{Global, Output, fmt as bun_fmt};
 use bun_core::{MutableString, strings};
 use bun_dotenv::Loader as DotEnv;
@@ -17,6 +17,7 @@ use bun_url::{OwnedURL, URL};
 use bun_wyhash::Wyhash11;
 
 use crate::bin::{self, Bin};
+use crate::bun_fs::FileSystem;
 use crate::external_slice::ExternalPackageNameHashList;
 use crate::integrity::Integrity;
 use crate::{
@@ -159,7 +160,6 @@ pub fn whoami(manager: &mut PackageManager) -> Result<Vec<u8>, WhoamiError> {
         headers.entries,
         header_buf,
         b"",
-        None,
         None,
         http::FetchRedirect::Follow,
     );
@@ -375,7 +375,6 @@ pub mod registry {
                 'outer: {
                     if registry.password.is_empty() {
                         let mut pathname: &[u8] = url.pathname;
-                        // defer { url.pathname = pathname; url.path = pathname; } — applied below
                         let mut needs_to_check_slash = true;
                         while let Some(colon) = strings::last_index_of_char(pathname, b':') {
                             let mut segment = &pathname[colon + 1..];
@@ -1356,22 +1355,10 @@ pub mod package_manifest {
             cache_dir: Fd,
         ) -> Result<(), Error> {
             let file_id = Wyhash11::hash(0, this.name());
-            let mut dest_path_buf = [0u8; 512 + 64];
+            let mut tmp_path_buf = [0u8; 64];
+            let tmp_path = FileSystem::tmpname(b"npm", &mut tmp_path_buf, bun_core::fast_random())?;
             let mut out_path_buf =
                 [0u8; ("18446744073709551615".len() * 2) + "_".len() + ".npm".len() + 1];
-            let mut dest_path_stream = bun_io::FixedBufferStream::new_mut(&mut dest_path_buf);
-            let file_id_hex_fmt = bun_fmt::hex_int_lower::<16>(file_id);
-            let hex_timestamp: usize =
-                usize::try_from(bun_core::time::milli_timestamp().max(0)).expect("int cast");
-            let hex_timestamp_fmt = bun_fmt::hex_int_lower::<16>(hex_timestamp as u64);
-            write!(
-                dest_path_stream,
-                "{}.npm-{}",
-                file_id_hex_fmt, hex_timestamp_fmt
-            )?;
-            dest_path_stream.write_byte(0)?;
-            let pos = dest_path_stream.pos;
-            let tmp_path = bun_core::ZStr::from_buf_mut(&mut dest_path_buf, pos - 1);
             let out_path = Self::manifest_file_name(&mut out_path_buf, file_id, scope)?;
             Self::write_file(this, scope, tmp_path, tmpdir, cache_dir, out_path)
         }
@@ -1507,6 +1494,16 @@ pub struct FindResult<'a> {
     pub(crate) package: &'a PackageVersion,
 }
 
+impl FindResult<'_> {
+    /// The tarball URL the registry advertised for this version (empty when the manifest omitted it).
+    pub fn tarball_url(&self, manifest: &PackageManifest) -> Vec<u8> {
+        self.package
+            .tarball_url
+            .slice(&manifest.string_buf)
+            .to_vec()
+    }
+}
+
 impl PackageManifest {
     pub(crate) fn find_by_version(&self, version: Semver::Version) -> Option<FindResult<'_>> {
         let list = if !version.tag.has_pre() {
@@ -1523,6 +1520,23 @@ impl PackageManifest {
             version: keys[index as usize],
             package: &values[index as usize],
         })
+    }
+
+    /// Published release versions, oldest first (prereleases excluded), as sorted at serialization time.
+    pub fn release_versions(&self) -> &[Semver::Version] {
+        self.pkg.releases.keys.get(&self.versions)
+    }
+
+    /// `(tag, version)` pairs of the dist-tags.
+    pub fn dist_tags(&self) -> impl Iterator<Item = (&[u8], Semver::Version)> + '_ {
+        let versions = self.pkg.dist_tags.versions.get(&self.versions);
+        self.pkg
+            .dist_tags
+            .tags
+            .get(&self.external_strings)
+            .iter()
+            .zip(versions)
+            .map(|(t, &v)| (t.slice(&self.string_buf), v))
     }
 
     pub fn find_by_dist_tag(&self, tag: &[u8]) -> Option<FindResult<'_>> {
@@ -3087,104 +3101,69 @@ impl PackageManifest {
         //
         // The tricky part about this code is we need to sort two different arrays.
         // To do that, we create a 3rd array, containing indices into the other 2 arrays.
-        // Creating a 3rd array is expensive! But mostly expensive if the size of the integers is large
-        // Most packages don't have > 65,000 versions
-        // So instead of having a hardcoded limit of how many packages we can sort, we ask
-        //    > "How many bytes do we need to store the indices?"
-        // We decide what size of integer to use based on that.
-        let how_many_bytes_to_store_indices: usize = match max_versions_count {
-            // log2(0) == Infinity
-            0 => 0,
-            // log2(1) == 0
-            1 => 1,
-            n => {
-                // ceil(log2_int_ceil(n) / 8)
-                let bits = (usize::BITS - (n - 1).leading_zeros()) as usize;
-                bits.div_ceil(8)
-            }
-        };
+        {
+            let mut all_indices: Vec<u32> = vec![0; max_versions_count];
+            let mut all_cloned_versions: Vec<Semver::Version> =
+                vec![Semver::Version::default(); max_versions_count];
+            let mut all_cloned_packages: Vec<PackageVersion> =
+                vec![PackageVersion::default(); max_versions_count];
 
-        // A macro expands
-        // the 1..=8 byte cases. Could collapse to a single usize path if profiling allows.
-        macro_rules! sort_with_int {
-            ($Int:ty) => {{
-                type Int = $Int;
+            let releases_list = [result.pkg.releases, result.pkg.prereleases];
 
-                let mut all_indices: Vec<Int> = vec![0 as Int; max_versions_count];
-                let mut all_cloned_versions: Vec<Semver::Version> =
-                    vec![Semver::Version::default(); max_versions_count];
-                let mut all_cloned_packages: Vec<PackageVersion> =
-                    vec![PackageVersion::default(); max_versions_count];
+            for release_i in 0..2usize {
+                let release = releases_list[release_i];
+                let len = release.keys.len as usize;
+                let indices = &mut all_indices[..len];
+                let cloned_packages = &mut all_cloned_packages[..len];
+                let cloned_versions = &mut all_cloned_versions[..len];
+                // `ExternalSlice` offsets index into `versioned_packages` /
+                // `all_semver_versions`, both fully-initialised `Box<[T]>`s
+                // (created via `vec![Default; n].into_boxed_slice()` above),
+                // so safe slice indexing suffices. The two boxes are
+                // distinct allocations so the two `&mut` borrows do not
+                // overlap.
+                let versioned_packages_ =
+                    &mut versioned_packages[release.values.off as usize..][..len];
+                let semver_versions_ = &mut all_semver_versions[release.keys.off as usize..][..len];
+                cloned_packages.copy_from_slice(versioned_packages_);
+                cloned_versions.copy_from_slice(semver_versions_);
 
-                let releases_list = [result.pkg.releases, result.pkg.prereleases];
+                for (i, dest) in indices.iter_mut().enumerate() {
+                    *dest = i as u32;
+                }
 
-                for release_i in 0..2usize {
-                    let release = releases_list[release_i];
-                    let len = release.keys.len as usize;
-                    let indices = &mut all_indices[..len];
-                    let cloned_packages = &mut all_cloned_packages[..len];
-                    let cloned_versions = &mut all_cloned_versions[..len];
-                    // `ExternalSlice` offsets index into `versioned_packages` /
-                    // `all_semver_versions`, both fully-initialised `Box<[T]>`s
-                    // (created via `vec![Default; n].into_boxed_slice()` above),
-                    // so safe slice indexing suffices. The two boxes are
-                    // distinct allocations so the two `&mut` borrows do not
-                    // overlap.
-                    let versioned_packages_ =
-                        &mut versioned_packages[release.values.off as usize..][..len];
-                    let semver_versions_ =
-                        &mut all_semver_versions[release.keys.off as usize..][..len];
-                    cloned_packages.copy_from_slice(versioned_packages_);
-                    cloned_versions.copy_from_slice(semver_versions_);
+                let string_bytes = string_builder.allocated_slice();
+                index_sort::sort_indices(indices, &mut |left, right| {
+                    cloned_versions[left as usize].order(
+                        cloned_versions[right as usize],
+                        string_bytes,
+                        string_bytes,
+                    )
+                });
+                debug_assert_eq!(indices.len(), versioned_packages_.len());
+                debug_assert_eq!(indices.len(), semver_versions_.len());
+                for ((i, pkg), version) in indices
+                    .iter()
+                    .copied()
+                    .zip(versioned_packages_.iter_mut())
+                    .zip(semver_versions_.iter_mut())
+                {
+                    *pkg = cloned_packages[i as usize];
+                    *version = cloned_versions[i as usize];
+                }
 
-                    for (i, dest) in indices.iter_mut().enumerate() {
-                        *dest = i as Int;
-                    }
-
-                    let string_bytes = string_builder.allocated_slice();
-                    indices.sort_by(|&left, &right| {
-                        cloned_versions[left as usize].order(
-                            cloned_versions[right as usize],
-                            string_bytes,
-                            string_bytes,
-                        )
-                    });
-                    debug_assert_eq!(indices.len(), versioned_packages_.len());
-                    debug_assert_eq!(indices.len(), semver_versions_.len());
-                    for ((i, pkg), version) in indices
-                        .iter()
-                        .copied()
-                        .zip(versioned_packages_.iter_mut())
-                        .zip(semver_versions_.iter_mut())
-                    {
-                        *pkg = cloned_packages[i as usize];
-                        *version = cloned_versions[i as usize];
-                    }
-
-                    if cfg!(debug_assertions) {
-                        if cloned_versions.len() > 1 {
-                            // Sanity check:
-                            // When reading the versions, we iterate through the
-                            // list backwards to choose the highest matching
-                            // version
-                            let first = semver_versions_[0];
-                            let second = semver_versions_[1];
-                            let order = second.order(first, string_bytes, string_bytes);
-                            debug_assert!(order == core::cmp::Ordering::Greater);
-                        }
+                if cfg!(debug_assertions) {
+                    if cloned_versions.len() > 1 {
+                        // Sanity check:
+                        // When reading the versions, we iterate through the
+                        // list backwards to choose the highest matching
+                        // version
+                        let first = semver_versions_[0];
+                        let second = semver_versions_[1];
+                        let order = second.order(first, string_bytes, string_bytes);
+                        debug_assert!(order == core::cmp::Ordering::Greater);
                     }
                 }
-            }};
-        }
-
-        match how_many_bytes_to_store_indices {
-            1 => sort_with_int!(u8),
-            2 => sort_with_int!(u16),
-            3 => sort_with_int!(u32),
-            4 => sort_with_int!(u32),
-            5..=8 => sort_with_int!(u64),
-            _ => {
-                debug_assert!(max_versions_count == 0);
             }
         }
 

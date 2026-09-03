@@ -5,12 +5,12 @@ function generate(name: string) {
     name,
     construct: true,
     noConstructor: false,
-    finalize: true,
+    refCounted: true,
     configurable: false,
     estimatedSize: true,
     klass: {},
     JSType: "0b11101110",
-    values: ["writeCallback", "errorCallback", "dictionary", "pendingInput", "pendingOutput", "writeResult"],
+    values: ["writeCallback", "errorCallback", "pendingInput", "pendingOutput", "writeResult"],
 
     proto: {
       init: { fn: "init" },

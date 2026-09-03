@@ -317,9 +317,10 @@ for (;;) {
 // Mirror of HostClient but NUL-framed JSON instead of binary. One socketpair
 // — the child gets the peer end dup'd to fd 3 AND fd 4 (Chrome reads fd 3,
 // writes fd 4; both hit our socket). Adopted into usockets for onData;
-// writes go through the same fd via direct write(). Socketpair not two
+// writes go through the same fd via us_socket_write. Socketpair not two
 // pipes because usockets' bsd_recv calls recv() which fails ENOTSOCK on a
 // pipe — the error was misread as EOF and onClose fired before any data.
+// Windows has no inheritable sockets: ChromeProcess.rs drives two libuv pipes instead and everything from onData on is shared.
 //
 // pending maps CDP id → {methodTag, slot selector, weak view}. Promises
 // live in the WriteBarrier slots on JSWebView (visitChildren marks them);
@@ -410,15 +411,18 @@ public:
     // close() can cancel (m_pending.removeIf erases the id, drain skips).
     void send(uint32_t cdpId, Command&& cmd);
 
-    // Called from usockets onData. Parses complete NUL-delimited messages
+    // Both transports' receive path: parses complete NUL-delimited messages
     // out of rx, dispatches each to handleMessage.
     void onData(const char* data, int length);
     void onWritable();
     void onClose();
 
+    // `bun test --isolate` retires `global`: its views close, their promises reject, a spawned Chrome dies.
+    void retireGlobal(Zig::GlobalObject* global);
+
     Zig::GlobalObject* m_global = nullptr;
     TransportMode m_mode = TransportMode::None;
-    // Pipe mode: usockets-adopted socketpair fd.
+    // POSIX pipe mode: the usockets-adopted socketpair fd. Null on Windows.
     us_socket_t* m_readSock = nullptr;
     // WebSocket mode: RefPtr keeps the WebCore::WebSocket alive across
     // the singleton's lifetime. The WebSocket's native callbacks point

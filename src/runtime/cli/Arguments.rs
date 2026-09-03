@@ -74,21 +74,6 @@ macro_rules! maybe_debug_params {
     };
 }
 
-// `bun_crash_handler::VERBOSE_ERROR_TRACE` gates extra crash diagnostics.
-// Expose the flag in crash-trace builds (debug/test/asan).
-const VERBOSE_ERROR_TRACE_PARAMS: &[ParamType] = &[parse_param!(
-    "--verbose-error-trace             Dump error return traces"
-)];
-macro_rules! maybe_verbose_error_trace {
-    () => {
-        if bun_core::env::SHOW_CRASH_TRACE {
-            VERBOSE_ERROR_TRACE_PARAMS
-        } else {
-            &[] as &[ParamType]
-        }
-    };
-}
-
 const BASE_PARAMS_: &[ParamType] = concat_params!(
     maybe_debug_params!(),
     &[
@@ -104,7 +89,6 @@ const BASE_PARAMS_: &[ParamType] = concat_params!(
         ),
         parse_param!("-h, --help                        Display this menu and exit"),
     ],
-    maybe_verbose_error_trace!(),
     &[parse_param!("<POS>...")],
 );
 
@@ -293,7 +277,10 @@ const RUNTIME_PARAMS_: &[ParamType] = &[
     parse_param!("--redis-preconnect                Preconnect to $REDIS_URL at startup"),
     parse_param!("--sql-preconnect                  Preconnect to PostgreSQL at startup"),
     parse_param!(
-        "--no-addons                       Throw an error if process.dlopen is called, and disable export condition \"node-addons\""
+        "--no-addons                       Throw an error if process.dlopen or bun:ffi cc() is called, and disable export condition \"node-addons\""
+    ),
+    parse_param!(
+        "--no-ffi-cc                       Throw an error if bun:ffi cc() is called (disables the C compiler)"
     ),
     parse_param!(
         "--unhandled-rejections <STR>      One of \"strict\", \"throw\", \"warn\", \"none\", or \"warn-with-error-code\""
@@ -444,6 +431,9 @@ pub(crate) const BUILD_ONLY_PARAMS: &[ParamType] = concat_params!(
         ),
         parse_param!("--bytecode                       Use a bytecode cache"),
         parse_param!(
+            "--bytecode-depth <NUMBER>        How many levels of nested functions to compile to bytecode ahead of time. Defaults to all"
+        ),
+        parse_param!(
             "--watch                          Automatically restart the process on file change"
         ),
         parse_param!(
@@ -477,6 +467,15 @@ pub(crate) const BUILD_ONLY_PARAMS: &[ParamType] = concat_params!(
         ),
         parse_param!("--splitting                      Enable code splitting"),
         parse_param!(
+            "--no-split-require               With --splitting and --target bun: keep a require()'d ESM file in the calling chunk instead of emitting a chunk loaded at the call"
+        ),
+        parse_param!(
+            "--no-module-preload              With --splitting and --target browser: don't emit <link rel=modulepreload> for the chunks an entry or import() loads"
+        ),
+        parse_param!(
+            "--min-chunk-size <INT>           With --splitting, also fold side-effect-free chunks smaller than this many source bytes into a chunk more entry points load. Default: 0 (off); 16384 is a good value for browser builds"
+        ),
+        parse_param!(
             "--public-path <STR>              A prefix to be appended to any import paths in bundled code"
         ),
         parse_param!(
@@ -509,6 +508,9 @@ pub(crate) const BUILD_ONLY_PARAMS: &[ParamType] = concat_params!(
         parse_param!("--no-bundle                      Transpile file only, do not bundle"),
         parse_param!(
             "--emit-dce-annotations           Re-emit DCE annotations in bundles. Enabled by default unless --minify-whitespace is passed."
+        ),
+        parse_param!(
+            "--no-deprecated-namespace-object-setters  Make bundled module namespace objects getter-only (the default in a future release)"
         ),
         parse_param!("--minify                         Enable all minification flags"),
         parse_param!("--minify-syntax                  Minify syntax and inline data"),
@@ -763,7 +765,7 @@ pub(crate) static Bun__Node__UseSystemCA: core::sync::atomic::AtomicBool =
 // their private helpers moved to `bun_bunfig::arguments` so `bun_install` can
 // call them without a tier-6 dependency. Re-export here so existing
 // `crate::cli::arguments::load_config*` callers are unaffected.
-pub use bun_bunfig::arguments::{load_config, load_config_path, load_config_with_cmd_args};
+pub use bun_bunfig::arguments::{load_config_path, load_config_with_cmd_args};
 
 /// node aliases `-pe` to `--print --eval` as a whole token (node_options.cc):
 /// it can't be a short in either runtime, being ambiguous with `-p` carrying
@@ -819,11 +821,6 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
         }
     }
 
-    // See `maybe_verbose_error_trace!` above.
-    if bun_core::env::SHOW_CRASH_TRACE && args.flag(b"--verbose-error-trace") {
-        bun_crash_handler::VERBOSE_ERROR_TRACE.store(true, core::sync::atomic::Ordering::Relaxed);
-    }
-
     // ── --cwd ────────────────────────────────────────────────────────────────
     // `api::TransformOptions.absolute_working_dir` is `Option<Box<[u8]>>`,
     // so we dupe into a plain `Box<[u8]>`.
@@ -836,9 +833,10 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
         } else {
             bun_core::getcwd(&mut outbuf)?.as_bytes()
         };
-        let out = resolve_path::join_abs::<platform::Loose>(base, cwd_arg);
-        // `chdir` wants a NUL-terminated path; `join_abs` returns a borrowed
-        // slice into a threadlocal buffer, so dupe-Z once and reuse for both
+        let mut spill = Vec::new();
+        let out =
+            resolve_path::join_abs_string_spill::<platform::Loose>(base, &mut spill, &[cwd_arg]);
+        // `chdir` wants a NUL-terminated path, so dupe-Z once and reuse for both
         // the `chdir` arg and the stored `absolute_working_dir`.
         let out_z = bun_core::ZBox::from_bytes(out);
         if let bun_sys::Result::Err(err) = bun_sys::chdir(&out_z) {
@@ -963,17 +961,14 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
         });
     }
 
-    opts.tsconfig_override = if let Some(ts) = args.option(b"--tsconfig-override") {
-        Some(
-            resolve_path::join_abs_string::<platform::Auto>(
-                ctx.args.absolute_working_dir.as_deref().unwrap(),
-                &[ts],
-            )
-            .into(),
-        )
-    } else {
-        None
-    };
+    opts.tsconfig_override = args.option(b"--tsconfig-override").map(|ts| {
+        let mut spill = Vec::new();
+        Box::from(resolve_path::join_abs_string_spill::<platform::Auto>(
+            ctx.args.absolute_working_dir.as_deref().unwrap(),
+            &mut spill,
+            &[ts],
+        ))
+    });
 
     opts.main_fields = slice_to_owned(args.options(b"--main-fields"));
     // we never actually supported inject.
@@ -1100,9 +1095,13 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
         }
 
         if args.flag(b"--no-addons") {
-            // used for disabling process.dlopen and
+            // used for disabling process.dlopen and bun:ffi cc(), and
             // for disabling export condition "node-addons"
             opts.allow_addons = Some(false);
+        }
+
+        if args.flag(b"--no-ffi-cc") {
+            opts.allow_ffi_cc = Some(false);
         }
 
         if let Some(unhandled_rejections) = args.option(b"--unhandled-rejections") {
@@ -1576,13 +1575,6 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
                 };
             }
         }
-
-        if let Some(define) = &opts.define {
-            if !define.keys.is_empty() {
-                bun_jsc::runtime_transpiler_cache::IS_DISABLED
-                    .store(true, std::sync::atomic::Ordering::Relaxed);
-            }
-        }
     }
 
     if matches!(
@@ -1786,7 +1778,8 @@ fn parse_test_command_options(args: &clap::Args<clap::Help>, ctx: Context<'_>) {
 
     if let Some(reporter) = args.option(b"--reporter") {
         if reporter == b"junit" {
-            if ctx.test_options.reporter_outfile.is_none() {
+            // A `--parallel` worker only collects for the coordinator's file.
+            if ctx.test_options.reporter_outfile.is_none() && !args.flag(b"--test-worker") {
                 Output::err_generic(
                     "--reporter=junit requires --reporter-outfile [file] to specify where to save the XML report",
                     (),
@@ -1882,7 +1875,7 @@ fn parse_test_command_options(args: &clap::Args<clap::Help>, ctx: Context<'_>) {
     if let Some(name_pattern) = args.option(b"--test-name-pattern") {
         ctx.test_options.test_filter_pattern = Some(name_pattern.into());
         let regex = match RegularExpression::init(
-            bun_core::String::from_bytes(name_pattern),
+            &bun_core::String::from_bytes(name_pattern),
             RegexFlags::None,
         ) {
             Ok(r) => r,
@@ -2040,6 +2033,18 @@ fn parse_build_command_options(
 ) {
     ctx.bundler_options.transform_only = args.flag(b"--no-bundle");
     ctx.bundler_options.bytecode = args.flag(b"--bytecode");
+    if let Some(depth) = args.option(b"--bytecode-depth") {
+        ctx.bundler_options.bytecode_depth = match strings::parse_int::<u32>(depth, 10) {
+            Ok(v) => v,
+            Err(_) => {
+                Output::err_generic(
+                    "Invalid value for --bytecode-depth: \"{}\". Must be a non-negative integer\n",
+                    format_args!("{}", BStr::new(depth)),
+                );
+                Global::exit(1);
+            }
+        };
+    }
 
     let production = args.flag(b"--production");
 
@@ -2086,6 +2091,8 @@ fn parse_build_command_options(
 
     ctx.bundler_options.emit_dce_annotations =
         args.flag(b"--emit-dce-annotations") || !ctx.bundler_options.minify_whitespace;
+    ctx.bundler_options.deprecated_namespace_object_setters =
+        !args.flag(b"--no-deprecated-namespace-object-setters");
 
     if !args.options(b"--external").is_empty() {
         opts.external = slice_to_owned(args.options(b"--external"));
@@ -2542,6 +2549,30 @@ fn parse_build_command_options(
 
     if args.flag(b"--splitting") {
         ctx.bundler_options.code_splitting = true;
+    }
+    if args.flag(b"--no-split-require") {
+        ctx.bundler_options.split_require = false;
+    }
+    if args.flag(b"--no-module-preload") {
+        ctx.bundler_options.module_preload = false;
+    }
+
+    if let Some(size_str) = args.option(b"--min-chunk-size") {
+        let min_chunk_size = match strings::parse_int::<u64>(size_str, 10) {
+            Ok(v) => v,
+            Err(_) => {
+                Output::err_generic(
+                    "Invalid value for --min-chunk-size: \"{}\". Must be a non-negative integer\n",
+                    format_args!("{}", BStr::new(size_str)),
+                );
+                Global::exit(1);
+            }
+        };
+        if min_chunk_size > 0 && !ctx.bundler_options.code_splitting {
+            Output::err_generic("--min-chunk-size requires --splitting", ());
+            Global::crash();
+        }
+        ctx.bundler_options.min_chunk_size = Some(min_chunk_size);
     }
 
     for (flag, slot) in [

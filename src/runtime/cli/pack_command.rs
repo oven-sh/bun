@@ -25,7 +25,7 @@ use bun_paths::{self as path, PathBuffer, SEP_STR};
 // borrow_subslice/length live on `cow_slice::CowSliceZ`).
 use bun_ptr::cow_slice::CowSlice;
 type CowString = CowSlice<u8>;
-use crate::cli::run_command::RunCommand;
+use crate::cli::run_command::{ConfigureEnvOptions, RunCommand};
 use bun_core::ZBox;
 use bun_core::{ZStr, strings};
 use bun_paths::resolve_path;
@@ -382,15 +382,6 @@ pub(crate) struct PackQueueItem {
     optional: bool,
 }
 
-impl Default for PackQueueItem {
-    fn default() -> Self {
-        Self {
-            path: ZBox::from_bytes(b""),
-            optional: false,
-        }
-    }
-}
-
 // `bun_collections` has no `PriorityQueue`; wrap `BinaryHeap` with a reversed `Ord`
 // (BinaryHeap is a max-heap, so invert `strings::order` to pop smallest first).
 impl Ord for PackQueueItem {
@@ -425,6 +416,14 @@ impl PackQueue {
     }
     fn remove_or_null(&mut self) -> Option<PackQueueItem> {
         self.heap.pop()
+    }
+    /// `(relative path, optional)` ascending, consuming the queue; a `bin` entry is optional (it may not exist).
+    pub(crate) fn into_paths(mut self) -> Vec<(ZBox, bool)> {
+        let mut out = Vec::with_capacity(self.heap.len());
+        while let Some(item) = self.heap.pop() {
+            out.push((item.path, item.optional));
+        }
+        out
     }
 }
 
@@ -889,14 +888,15 @@ fn iterate_bundled_deps(
             continue;
         }
 
-        let _entry_name = entry.name.slice_u8();
+        let entry_name = entry.name.slice_u8();
 
-        if strings::starts_with_char(_entry_name, b'@') {
-            let concat = entry_subpath(b"node_modules", _entry_name)?;
+        if strings::starts_with_char(entry_name, b'@') {
+            let scope_name = entry_name;
+            let scope_subpath = entry_subpath(b"node_modules", scope_name)?;
 
-            let scoped_dir: Dir = match dir_open_dir_z(
+            let scope_dir: Dir = match dir_open_dir_z(
                 root_dir,
-                &concat,
+                &scope_subpath,
                 bun_sys::OpenDirOptions {
                     iterate: true,
                     ..Default::default()
@@ -906,32 +906,32 @@ fn iterate_bundled_deps(
                 Err(_) => continue,
             };
 
-            let mut scoped_iter = DirIterator::iterate(Fd::from_std_dir(&scoped_dir));
-            while let Some(sub_entry) = scoped_iter.next().ok().flatten() {
-                let entry_name = entry_subpath(_entry_name, sub_entry.name.slice_u8())?;
+            let mut scope_iter = DirIterator::iterate(Fd::from_std_dir(&scope_dir));
+            while let Some(scope_entry) = scope_iter.next().ok().flatten() {
+                let dep_name = entry_subpath(scope_name, scope_entry.name.slice_u8())?;
 
                 let Some(dep) = bundled_deps.iter_mut().find(|dep| {
                     debug_assert!(dep.from_root_package_json);
-                    strings::eql_long(entry_name.as_bytes(), &dep.name, true)
+                    strings::eql_long(dep_name.as_bytes(), &dep.name, true)
                 }) else {
                     continue;
                 };
 
-                let entry_subpath_ = entry_subpath(b"node_modules", entry_name.as_bytes())?;
+                let dep_subpath = entry_subpath(b"node_modules", dep_name.as_bytes())?;
 
-                let dedupe_entry = dedupe.get_or_put(entry_subpath_.as_bytes())?;
+                let dedupe_entry = dedupe.get_or_put(dep_subpath.as_bytes())?;
                 dep.was_packed = true;
                 if dedupe_entry.found_existing {
                     // already got to it in `add_bundled_dep` below
                     continue;
                 }
 
-                let subdir = open_subdir(&dir, entry_name.as_bytes(), &entry_subpath_);
+                let subdir = open_subdir(&dir, dep_name.as_bytes(), &dep_subpath);
                 add_bundled_dep(
                     stats,
                     log,
                     root_dir,
-                    DirInfo(subdir, entry_subpath_.as_bytes().into(), 2),
+                    DirInfo(subdir, dep_subpath.as_bytes().into(), 2),
                     &mut bundled_pack_queue,
                     &mut dedupe,
                     &mut additional_bundled_deps,
@@ -939,29 +939,29 @@ fn iterate_bundled_deps(
                 )?;
             }
         } else {
-            let entry_name = _entry_name;
+            let dep_name = entry_name;
             let Some(dep) = bundled_deps.iter_mut().find(|dep| {
                 debug_assert!(dep.from_root_package_json);
-                strings::eql_long(entry_name, &dep.name, true)
+                strings::eql_long(dep_name, &dep.name, true)
             }) else {
                 continue;
             };
 
-            let entry_subpath_ = entry_subpath(b"node_modules", entry_name)?;
+            let dep_subpath = entry_subpath(b"node_modules", dep_name)?;
 
-            let dedupe_entry = dedupe.get_or_put(entry_subpath_.as_bytes())?;
+            let dedupe_entry = dedupe.get_or_put(dep_subpath.as_bytes())?;
             dep.was_packed = true;
             if dedupe_entry.found_existing {
                 // already got to it in `add_bundled_dep` below
                 continue;
             }
 
-            let subdir = open_subdir(&dir, entry_name, &entry_subpath_);
+            let subdir = open_subdir(&dir, dep_name, &dep_subpath);
             add_bundled_dep(
                 stats,
                 log,
                 root_dir,
-                DirInfo(subdir, entry_subpath_.as_bytes().into(), 2),
+                DirInfo(subdir, dep_subpath.as_bytes().into(), 2),
                 &mut bundled_pack_queue,
                 &mut dedupe,
                 &mut additional_bundled_deps,
@@ -1451,7 +1451,7 @@ enum BinType {
     Dir,
 }
 
-struct BinInfo {
+pub(crate) struct BinInfo {
     path: ZBox,
     ty: BinType,
 }
@@ -1889,6 +1889,117 @@ fn opt_pack_gzip_level(m: &PackageManager) -> Option<&[u8]> {
 // `Some` only when FOR_PUBLISH == true.
 pub(crate) type PackReturn<'a, const FOR_PUBLISH: bool> = Option<Publish::Context<'a, true>>;
 
+/// Everything `bun pm pack` would put in the tarball besides package.json: bins, then either the `files` list or
+/// the whole tree minus ignores. Shared with `bun pm diff`, whose local side is "what would be published".
+pub(crate) fn published_files(
+    root_dir: &Dir,
+    json_root: &Expr,
+    bump: &bun_alloc::Arena,
+    log_level: LogLevel,
+) -> Result<(PackQueue, Vec<BinInfo>), AllocError> {
+    let mut pack_queue: PackQueue = new_pack_queue();
+    let bins = get_package_bins(json_root)?;
+
+    for bin in &bins {
+        match bin.ty {
+            BinType::File => {
+                pack_queue.add(PackQueueItem {
+                    path: ZBox::from_bytes(bin.path.as_bytes()),
+                    optional: true,
+                })?;
+            }
+            BinType::Dir => {
+                let bin_dir = match dir_open_dir_z(
+                    root_dir,
+                    &bin.path,
+                    bun_sys::OpenDirOptions {
+                        iterate: true,
+                        ..Default::default()
+                    },
+                ) {
+                    Ok(d) => d,
+                    Err(_) => {
+                        // non-existent bins are ignored
+                        continue;
+                    }
+                };
+
+                iterate_project_tree(
+                    &mut pack_queue,
+                    &[],
+                    DirInfo(bin_dir, bin.path.as_bytes().into(), 2),
+                    log_level,
+                )?;
+            }
+        }
+    }
+
+    'iterate_project_tree: {
+        if let Some(files) = json_root.get(b"files") {
+            'files_error: {
+                if let Some(mut files_array) = files.as_array() {
+                    let mut includes: Vec<Pattern> = Vec::new();
+                    let mut excludes: Vec<Pattern> = Vec::new();
+
+                    let mut path_buf = PathBuffer::uninit();
+                    while let Some(files_entry) = files_array.next() {
+                        if let Some(file_entry_str) = files_entry.as_string(bump) {
+                            let normalized = resolve_path::normalize_buf::<
+                                resolve_path::platform::Posix,
+                            >(
+                                file_entry_str, &mut path_buf
+                            );
+                            let Some(parsed) = Pattern::from_utf8(normalized)? else {
+                                continue;
+                            };
+                            if parsed.flags.contains(PatternFlags::NEGATED) {
+                                #[cold]
+                                fn push_exclude(v: &mut Vec<Pattern>, p: Pattern) {
+                                    v.push(p);
+                                }
+                                // most "files" entries are not exclusions.
+                                push_exclude(&mut excludes, parsed);
+                            } else {
+                                includes.push(parsed);
+                            }
+
+                            continue;
+                        }
+
+                        break 'files_error;
+                    }
+
+                    iterate_included_project_tree(
+                        &mut pack_queue,
+                        &bins,
+                        &includes,
+                        &excludes,
+                        root_dir,
+                        log_level,
+                    )?;
+                    break 'iterate_project_tree;
+                }
+            }
+
+            Output::err_generic(
+                "expected `files` to be an array of string values",
+                format_args!(""),
+            );
+            Global::crash();
+        } else {
+            // pack from project root
+            iterate_project_tree(
+                &mut pack_queue,
+                &bins,
+                DirInfo(Dir::from_fd(root_dir.fd), Box::from(&b""[..]), 1),
+                log_level,
+            )?;
+        }
+    }
+
+    Ok((pack_queue, bins))
+}
+
 pub(crate) fn pack<const FOR_PUBLISH: bool>(
     ctx: &mut Context<'_>,
     abs_package_json_path: &ZStr,
@@ -2007,8 +2118,10 @@ pub(crate) fn pack<const FOR_PUBLISH: bool>(
         &mut *ctx.command_ctx,
         &mut this_transpiler,
         Some(pm_env(ctx.manager)),
-        ctx.manager.options.log_level != LogLevel::Silent,
-        false,
+        ConfigureEnvOptions {
+            log_errors: ctx.manager.options.log_level != LogLevel::Silent,
+            store_root_fd: false,
+        },
     ) {
         if matches!(err, crate::Error::Alloc(_)) {
             return Err(PackError::OutOfMemory);
@@ -2263,106 +2376,7 @@ pub(crate) fn pack<const FOR_PUBLISH: bool>(
         None => get_bundled_deps(&json.root, "bundleDependencies")?.unwrap_or_default(),
     };
 
-    let mut pack_queue: PackQueue = new_pack_queue();
-
-    let bins = get_package_bins(&json.root)?;
-
-    for bin in &bins {
-        match bin.ty {
-            BinType::File => {
-                pack_queue.add(PackQueueItem {
-                    path: ZBox::from_bytes(bin.path.as_bytes()),
-                    optional: true,
-                })?;
-            }
-            BinType::Dir => {
-                let bin_dir = match dir_open_dir_z(
-                    &root_dir,
-                    &bin.path,
-                    bun_sys::OpenDirOptions {
-                        iterate: true,
-                        ..Default::default()
-                    },
-                ) {
-                    Ok(d) => d,
-                    Err(_) => {
-                        // non-existent bins are ignored
-                        continue;
-                    }
-                };
-
-                iterate_project_tree(
-                    &mut pack_queue,
-                    &[],
-                    DirInfo(bin_dir, bin.path.as_bytes().into(), 2),
-                    log_level,
-                )?;
-            }
-        }
-    }
-
-    'iterate_project_tree: {
-        if let Some(files) = json.root.get(b"files") {
-            'files_error: {
-                if let Some(mut files_array) = files.as_array() {
-                    let mut includes: Vec<Pattern> = Vec::new();
-                    let mut excludes: Vec<Pattern> = Vec::new();
-
-                    let mut path_buf = PathBuffer::uninit();
-                    while let Some(files_entry) = files_array.next() {
-                        if let Some(file_entry_str) = files_entry.as_string(bump) {
-                            let normalized = resolve_path::normalize_buf::<
-                                resolve_path::platform::Posix,
-                            >(
-                                file_entry_str, &mut path_buf
-                            );
-                            let Some(parsed) = Pattern::from_utf8(normalized)? else {
-                                continue;
-                            };
-                            if parsed.flags.contains(PatternFlags::NEGATED) {
-                                #[cold]
-                                fn push_exclude(v: &mut Vec<Pattern>, p: Pattern) {
-                                    v.push(p);
-                                }
-                                // most "files" entries are not exclusions.
-                                push_exclude(&mut excludes, parsed);
-                            } else {
-                                includes.push(parsed);
-                            }
-
-                            continue;
-                        }
-
-                        break 'files_error;
-                    }
-
-                    iterate_included_project_tree(
-                        &mut pack_queue,
-                        &bins,
-                        &includes,
-                        &excludes,
-                        &root_dir,
-                        log_level,
-                    )?;
-                    break 'iterate_project_tree;
-                }
-            }
-
-            Output::err_generic(
-                "expected `files` to be an array of string values",
-                format_args!(""),
-            );
-            Global::crash();
-        } else {
-            // pack from project root
-            iterate_project_tree(
-                &mut pack_queue,
-                &bins,
-                DirInfo(Dir::from_fd(root_dir.fd), Box::from(&b""[..]), 1),
-                log_level,
-            )?;
-        }
-    }
+    let (mut pack_queue, bins) = published_files(&root_dir, &json.root, bump, log_level)?;
 
     let mut bundled_pack_queue = iterate_bundled_deps(
         &mut ctx.bundled_deps,
@@ -3950,7 +3964,7 @@ pub mod bindings {
             return Err(global.throw(format_args!("expected tarball path string argument")));
         }
 
-        let tarball_path_str = bun_core::OwnedString::new(args[0].to_bun_string(global)?);
+        let tarball_path_str = args[0].to_bun_string(global)?;
 
         let tarball_path = tarball_path_str.to_utf8();
 
@@ -3997,7 +4011,7 @@ pub mod bindings {
 
         struct EntryInfo {
             pathname: BunString,
-            kind: BunString,
+            kind: bun_sys::FileKind,
             perm: bun_sys::Mode,
             contents: Option<BunString>,
         }
@@ -4091,7 +4105,7 @@ pub mod bindings {
 
                     let mut entry_info = EntryInfo {
                         pathname: pathname_string,
-                        kind: BunString::static_(file_kind_tag(kind)),
+                        kind,
                         perm,
                         contents: None,
                     };
@@ -4142,13 +4156,17 @@ pub mod bindings {
 
         let entries = JSArray::create_empty(global, entries_info.len())?;
 
-        for (i, entry) in entries_info.iter().enumerate() {
+        for (i, entry) in entries_info.into_iter().enumerate() {
             let obj = JSValue::create_empty_object(global, 0);
-            obj.put(global, b"pathname", entry.pathname.to_js(global)?);
-            obj.put(global, b"kind", entry.kind.to_js(global)?);
+            obj.put(global, b"pathname", entry.pathname.into_js(global)?);
+            let kind = match entry.kind {
+                bun_sys::FileKind::Unknown => global.common_strings().unknown(),
+                kind => BunString::static_(file_kind_tag(kind)).to_js(global)?,
+            };
+            obj.put(global, b"kind", kind);
             obj.put(global, b"perm", JSValue::js_number(f64::from(entry.perm)));
-            if let Some(contents) = &entry.contents {
-                obj.put(global, b"contents", contents.to_js(global)?);
+            if let Some(contents) = entry.contents {
+                obj.put(global, b"contents", contents.into_js(global)?);
             }
             entries.put_index(global, u32::try_from(i).expect("int cast"), obj)?;
         }
@@ -4156,7 +4174,7 @@ pub mod bindings {
         let result = JSValue::create_empty_object(global, 4);
         result.put(global, b"entries", entries);
         result.put(global, b"size", JSValue::js_number(tarball.len() as f64));
-        result.put(global, b"shasum", shasum_str.to_js(global)?);
+        result.put(global, b"shasum", shasum_str.into_js(global)?);
         result.put(global, b"integrity", integrity_value);
 
         Ok(result)

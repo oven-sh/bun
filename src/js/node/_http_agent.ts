@@ -9,7 +9,6 @@ const { isIP } = require("internal/net/isIP");
 const kOnKeylog = Symbol("onkeylog");
 const kRequestOptions = Symbol("requestOptions");
 const kRequestAsyncResource = Symbol("requestAsyncResource");
-const { AsyncResource } = require("node:async_hooks");
 
 function freeSocketErrorListener(err) {
   const socket = this;
@@ -257,7 +256,7 @@ Agent.prototype.addRequest = function addRequest(req, options, port /* legacy */
     // Used to create sockets for pending requests from different origin
     req[kRequestOptions] = options;
     // Used to capture the original async context.
-    req[kRequestAsyncResource] = new AsyncResource("QueuedRequest");
+    req[kRequestAsyncResource] = new (require("node:async_hooks").AsyncResource)("QueuedRequest");
 
     this.requests[name].push(req);
   }

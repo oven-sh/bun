@@ -3,7 +3,7 @@ use bun_alloc::ArenaVecExt as _;
 use core::sync::atomic::AtomicUsize;
 
 use bun_alloc::Arena; // bumpalo::Bump re-export
-use bun_collections::{ArrayHashMap, AutoBitSet, VecExt};
+use bun_collections::{ArrayHashMap, AutoBitSet, VecExt, index_sort};
 use bun_core::strings;
 use bun_paths::{PathBuffer, resolve_path};
 use bun_sourcemap::SourceMapPieces;
@@ -18,6 +18,7 @@ use crate::{BundleV2, Chunk, Index, IndexInt, LinkerContext};
 use super::find_all_imported_parts_in_js_order::find_all_imported_parts_in_js_order;
 use super::find_imported_css_files_in_js_order::find_imported_css_files_in_js_order;
 use super::find_imported_files_in_css_order::find_imported_files_in_css_order;
+use super::merge_small_chunks::merge_small_chunks;
 
 #[inline(always)]
 fn make_flags(has_html_chunk: bool, is_browser_chunk_from_server_build: bool) -> chunk::Flags {
@@ -87,6 +88,15 @@ pub(crate) fn compute_chunks(
     // Create chunks for entry points
     for (entry_id_, &source_index) in entry_source_indices.iter().enumerate() {
         let entry_bit = entry_id_ as chunk::EntryPointId;
+
+        // An `import()` target that no live code references gets no chunk.
+        if !this.graph.files_live.is_set(source_index as usize) {
+            debug_assert!(
+                this.graph.files.items_entry_point_kind()[source_index as usize]
+                    == crate::EntryPoint::Kind::DynamicImport
+            );
+            continue;
+        }
 
         // reshaped for borrowck — set the bit through a scoped &mut, then keep an
         // owned clone so the `this.graph.files` borrow does not span the helper calls below
@@ -281,6 +291,37 @@ pub(crate) fn compute_chunks(
             }
         }
     }
+    if code_splitting {
+        let min_chunk_size = this.options.min_chunk_size;
+        merge_small_chunks(this, temp, min_chunk_size)?;
+    }
+    let css_asts = this.graph.ast.items_css();
+    let ast_targets = this.graph.ast.items_target();
+
+    // Files with at least one part that will be printed. A file with none
+    // (nothing survived tree shaking, or only bare imports of unwrapped files
+    // did) gets no code-splitting chunk: it would be an empty file, and two
+    // such chunks share a content hash.
+    let contributes_code = {
+        let mut bits = AutoBitSet::init_empty(this.graph.files.len())?;
+        let parts = this.graph.ast.items_parts();
+        let reachable: &[Index] = if this.graph.code_splitting {
+            this.graph.reachable_files.slice()
+        } else {
+            &[]
+        };
+        for source_index in reachable {
+            let i = source_index.get() as usize;
+            let parts_live = &this.graph.parts_live[i];
+            if parts[i].as_slice().iter().enumerate().any(|(p, part)| {
+                parts_live.is_set(p) && this.should_include_part(source_index.get(), part)
+            }) {
+                bits.set(i);
+            }
+        }
+        bits
+    };
+
     // reshaped for borrowck — re-borrow file_entry_bits after the loop above mutated it
     let file_entry_bits: &mut [AutoBitSet] = this.graph.files.items_entry_bits_mut();
 
@@ -297,6 +338,9 @@ pub(crate) fn compute_chunks(
                     }
 
                     if this.graph.code_splitting {
+                        if !contributes_code.is_set(source_index.get() as usize) {
+                            continue;
+                        }
                         let js_chunk_key =
                             temp.alloc_slice_copy(entry_bits.bytes(this.graph.entry_points.len()));
                         let js_chunk_entry = js_chunks.get_or_put(js_chunk_key)?;
@@ -421,7 +465,7 @@ pub(crate) fn compute_chunks(
         }
 
         let ctx = ChunkSortContext { chunks: &js_chunks };
-        sorted_keys.sort_by(|a, b| {
+        index_sort::sort_slice_by(&mut sorted_keys, |a, b| {
             if ctx.less_than(a, b) {
                 core::cmp::Ordering::Less
             } else if ctx.less_than(b, a) {
@@ -457,7 +501,7 @@ pub(crate) fn compute_chunks(
 
         if css_chunks.count() > 0 {
             let sorted_css_keys: &mut [u64] = temp.alloc_slice_copy(css_chunks.keys());
-            sorted_css_keys.sort_unstable();
+            index_sort::sort_slice_unstable_by(sorted_css_keys, |a, b| a.cmp(b));
 
             // A map from the index in `css_chunks` to it's final index in `sorted_chunks`
             let remapped_css_indexes: &mut [u32] =
@@ -526,7 +570,7 @@ pub(crate) fn compute_chunks(
 
     let unique_key_item_len = chunk::UNIQUE_KEY_LEN;
     let mut unique_key_builder =
-        bun_core::StringBuilder::init_capacity(unique_key_item_len * chunks.len());
+        bun_core::StringBuilder::init_capacity(unique_key_item_len * chunks.len() * 2);
     // `unique_key_buf` aliases the builder's backing buffer and
     // every `chunk.unique_key` is a slice into it: the builder never
     // reallocates after `init_capacity`, so each `fmt()` returns a stable subslice
@@ -562,6 +606,16 @@ pub(crate) fn compute_chunks(
         // before the transfer, `sorted_chunks` is dropped alongside the builder,
         // so no dangling slice escapes.
         chunk.unique_key = unsafe { bun_ptr::detach_lifetime_ref::<[u8]>(written) };
+        let written = unique_key_builder.fmt(format_args!(
+            "{}",
+            chunk::UniqueKey {
+                prefix: unique_key,
+                kind: chunk::QueryKind::ChunkId,
+                index: chunk_id as u32,
+            },
+        ));
+        // SAFETY: as for `unique_key`.
+        chunk.id_key = unsafe { bun_ptr::detach_lifetime_ref::<[u8]>(written) };
         if this.unique_key_prefix.is_empty() {
             this.unique_key_prefix = chunk.unique_key[..prefix_len].into();
         }
@@ -625,13 +679,7 @@ pub(crate) fn compute_chunks(
         if chunk.template.needs(PlaceholderField::Target) {
             // Determine the target from the AST of the entry point source
             let chunk_target = ast_targets[chunk.entry_point.source_index() as usize];
-            chunk.template.placeholder.target = match chunk_target {
-                Target::Browser => b"browser".to_vec().into_boxed_slice(),
-                Target::Bun => b"bun".to_vec().into_boxed_slice(),
-                Target::Node => b"node".to_vec().into_boxed_slice(),
-                Target::BunMacro => b"macro".to_vec().into_boxed_slice(),
-                Target::ServerComponentsSsr => b"ssr".to_vec().into_boxed_slice(),
-            };
+            chunk.template.placeholder.target = chunk_target.naming_placeholder().into();
         }
 
         if chunk.template.needs(PlaceholderField::Dir) {

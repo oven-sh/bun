@@ -138,7 +138,7 @@ The following `FFIType` values are supported.
 | i8            | `int8_t`              | `int8_t`                        |
 | i16           | `int16_t`             | `int16_t`                       |
 | i32           | `int32_t`             | `int32_t`, `int`                |
-| i64           | `int64_t`             | `int64_t`                       |
+| i64           | `int64_t`             | `int64_t`, `isize`              |
 | i64_fast      | `int64_t`             |                                 |
 | u8            | `uint8_t`             | `uint8_t`                       |
 | u16           | `uint16_t`            | `uint16_t`                      |
@@ -341,7 +341,7 @@ When you're done with a `JSCallback`, call `close()` to free the memory.
 
 `JSCallback` has experimental support for thread-safe callbacks. You need this if you pass a callback function into a different thread from the one that created it. Enable it with the optional `threadsafe` parameter.
 
-Thread-safe callbacks can be invoked from **any thread** — including threads spawned by your native library that Bun is not otherwise aware of. The engine copies the C arguments on the calling thread and marshals the invocation onto the JavaScript thread. There it converts the arguments (64-bit integers and pointers arrive as exact BigInts) and runs your function. Because the invocation is asynchronous from C's point of view, the value returned to the C caller is unspecified. You may declare a non-`void` `returns` (the example below uses `"bool"`), but the C side must treat a thread-safe callback as returning `void` and ignore its return value.
+Thread-safe callbacks can be invoked from **any thread** — including threads spawned by your native library that Bun is not otherwise aware of. The engine copies the C arguments on the calling thread and marshals the invocation onto the JavaScript thread. There it converts the arguments exactly as for an ordinary callback (`i64`/`u64`/`usize` arguments arrive as BigInts; pointers arrive as numbers) and runs your function. Because the invocation is asynchronous from C's point of view, the value returned to the C caller is unspecified. You may declare a non-`void` `returns` (the example below uses `"bool"`), but the C side must treat a thread-safe callback as returning `void` and ignore its return value.
 
 ```ts
 const searchIterator = new JSCallback((ptr, length) => /hello/.test(new CString(ptr, 0, Number(length))), {

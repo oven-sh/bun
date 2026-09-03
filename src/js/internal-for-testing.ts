@@ -36,7 +36,9 @@ export const highwayStringsForTesting: (
     | "indexOfAny"
     | "lastIndexOfAny"
     | "memmem"
-    | "memrmem",
+    | "memrmem"
+    | "memmem16"
+    | "memrmem16",
   haystack: Uint8Array,
   arg: number | Uint8Array,
 ) => number = $newCppFunction("highway_strings_testing.cpp", "Bun__highwayStringsForTesting", 3);
@@ -183,15 +185,6 @@ export const npm_manifest_test_helpers = $rust("npm.rs", "PackageManifest.bindin
    */
   parseManifest: (manifestFileName: string, registryUrl: string) => any;
 };
-
-// Like npm-package-arg, sort of https://www.npmjs.com/package/npm-package-arg
-export type Dependency = any;
-export const npa: (name: string) => Dependency = $newRustFunction("dependency.rs", "fromJS", 1);
-
-export const npmTag: (
-  name: string,
-) => undefined | "npm" | "dist_tag" | "tarball" | "folder" | "symlink" | "workspace" | "git" | "github" =
-  $newRustFunction("dependency.rs", "Version.Tag.inferFromJS", 1);
 
 export const readTarball: (tarball: string) => any = $newRustFunction("pack_command.rs", "bindings.jsReadTarball", 1);
 
@@ -541,14 +534,6 @@ export function getWebStreamState(stream: ReadableStream | WritableStream): {
   }
 }
 
-export const fs = require("node:fs/promises").$data;
-
-export const fsStreamInternals = {
-  writeStreamFastPath(str) {
-    return str[require("internal/fs/streams").kWriteStreamFastPath];
-  },
-};
-
 export const arrayBufferViewHasBuffer = $newCppFunction(
   "InternalForTesting.cpp",
   "jsFunction_arrayBufferViewHasBuffer",
@@ -564,7 +549,6 @@ export const timerInternals = {
 export const dgramInternals = {
   newRawSocketFd: $newRustFunction("udp_socket.rs", "jsDgramNewSocketFd", 2),
   closeRawFd: $newRustFunction("udp_socket.rs", "jsDgramCloseFd", 1),
-  isFdAdopted: $newRustFunction("udp_socket.rs", "jsDgramIsFdAdopted", 1),
 };
 
 export const decodeURIComponentSIMD = $newCppFunction(
@@ -654,6 +638,15 @@ export const socketFaultInjection = {
   /** Disarm all fault rules. */
   clear: $newRustFunction("runtime/socket/socket.rs", "TestingAPIs.jsClearSocketFaults", 0) as () => void,
 };
+
+export const namedPipeInternals = {
+  /**
+   * Live native contexts behind sockets over Windows named pipes: one per
+   * connecting or connected `Bun.connect({ unix: "\\\\.\\pipe\\..." })` socket and
+   * one per accepted pipe client. Always 0 on other platforms.
+   */
+  liveCount: $newRustFunction("runtime/socket/socket.rs", "TestingAPIs.jsNamedPipeContextLiveCount", 0) as () => number,
+};
 type SerializationContext = "worker" | "window" | "postMessage" | "default";
 export const structuredCloneAdvanced: (
   value: any,
@@ -663,13 +656,17 @@ export const structuredCloneAdvanced: (
   serializationContext: SerializationContext,
 ) => any = $newCppFunction("StructuredClone.cpp", "jsFunctionStructuredCloneAdvanced", 5);
 
-export const lsanDoLeakCheck = $newCppFunction("InternalForTesting.cpp", "jsFunction_lsanDoLeakCheck", 1);
-
 export const isASANEnabled: () => boolean = $newCppFunction("InternalForTesting.cpp", "jsFunction_isASANEnabled", 0);
 
-export const BunString_toThreadSafeRefCountDelta: () => number = $newCppFunction(
+export const BunString_threadIsolatedCopyRefCountDelta: () => number = $newCppFunction(
   "InternalForTesting.cpp",
-  "jsFunction_BunString_toThreadSafeRefCountDelta",
+  "jsFunction_BunString_threadIsolatedCopyRefCountDelta",
+  0,
+);
+
+export const BunString_makeThreadShareableRefCountDelta: () => number = $newCppFunction(
+  "InternalForTesting.cpp",
+  "jsFunction_BunString_makeThreadShareableRefCountDelta",
   0,
 );
 
@@ -691,8 +688,37 @@ export const isMemoryPressureWatcherInstalled: () => boolean = $newCppFunction(
   0,
 );
 
-export const getEventLoopStats: () => { activeTasks: number; concurrentRef: number; numPolls: number } =
-  $newRustFunction("event_loop.rs", "getActiveTasks", 0);
+// `parallelism` threads each spawn `iterations` no-op threads through bun's own pthread_create,
+// writing every failure to `fd`. Returns the first failing errno, or with `detach` 0 as soon as
+// every loop runs; a detached loop also writes to `fd` when it runs out of iterations.
+export const spawnThreadsForTesting: (iterations: number, fd: number, parallelism: number, detach?: boolean) => number =
+  $newCppFunction("InternalForTesting.cpp", "jsFunction_spawnThreadsForTesting", 4);
+
+// True when the installed watcher registered a real OS source (a PSI trigger
+// on Linux). The watcher installs silently without one when the kernel
+// refuses the trigger, so isMemoryPressureWatcherInstalled() cannot tell.
+export const memoryPressureWatcherHasOsBackend: () => boolean = $newRustFunction(
+  "memory_pressure.rs",
+  "jsWatcherHasOsBackend",
+  0,
+);
+
+// The exact bytes Bun writes to /proc/pressure/memory to arm its trigger.
+// null where there is no PSI backend (everything except Linux).
+export const memoryPressurePsiTrigger: () => Buffer | null = $newRustFunction("memory_pressure.rs", "jsPsiTrigger", 0);
+
+export const getEventLoopStats: () => {
+  activeTasks: number;
+  tasks: number;
+  immediateTasks: number;
+  concurrentTasksEmpty: boolean;
+  concurrentRef: number;
+  numPolls: number;
+  loopActive: boolean;
+  eventLoopAlive: boolean;
+  /** usockets/libuv loop iterations so far (us_internal_loop_pre count). */
+  iteration: number;
+} = $newRustFunction("event_loop.rs", "getActiveTasks", 0);
 
 export const hostedGitInfo = {
   parseUrl: $newRustFunction("hosted_git_info.rs", "TestingAPIs.jsParseUrl", 1),
@@ -708,12 +734,6 @@ export const translateUVErrorToE: (code: number) => string | undefined = $newRus
 export const translateNtStatusToE: (status: number) => string | undefined = $newRustFunction(
   "sys.rs",
   "TestingAPIs.translateNtStatusToE",
-  1,
-);
-
-export const sysErrorNameFromLibuv: (errno: number) => string | undefined = $newRustFunction(
-  "sys/Error.rs",
-  "TestingAPIs.sysErrorNameFromLibuv",
   1,
 );
 
@@ -743,6 +763,20 @@ export const dnsCacheSeed = $newRustFunction("runtime/dns_jsc/dns.rs", "internal
   addresses: string[],
 ) => number[];
 
+/** Whether the connect-path resolver answers `hostname` with the loopback addresses itself instead of asking getaddrinfo. */
+export const dnsIsLocalhostName = $newRustFunction(
+  "runtime/dns_jsc/dns.rs",
+  "internal.isLocalhostNameForTesting",
+  1,
+) as (hostname: string) => boolean;
+
+/** Whether a getaddrinfo() answer made of `addresses` makes the connect-path resolver retry without AI_ADDRCONFIG. */
+export const dnsIsAllLoopbackOfOneFamily = $newRustFunction(
+  "runtime/dns_jsc/dns.rs",
+  "internal.isAllLoopbackOfOneFamilyForTesting",
+  1,
+) as (addresses: string[]) => boolean;
+
 export const fetchH2Internals = {
   liveCounts: $newRustFunction("http/H2Client.rs", "TestingAPIs.liveCounts", 0) as () => {
     sessions: number;
@@ -769,3 +803,19 @@ export const byteStreamInternals = {
     stream: ReadableStream,
   ) => void,
 };
+
+// How many internal modules (node:fs etc.) this process created from bytecode embedded by `bun build --compile
+// --bytecode` instead of parsing their source.
+export const internalModulesLoadedFromBytecode: () => number = $newCppFunction(
+  "InternalModuleRegistry.cpp",
+  "jsInternalModulesLoadedFromBytecode",
+  0,
+);
+
+// The bytecode `bun build --compile --bytecode` embeds for a builtin module, plus the external string table it embeds
+// beside it: internal module number `index` (null past the last), or `source` written in builtin syntax (@-intrinsics,
+// a function expression) compiled under `name`.
+export const internalModuleBytecode: {
+  (index: number): { name: string; bytecode: Uint8Array; strings: Uint8Array } | null;
+  (source: string, name: string): { name: string; bytecode: Uint8Array; strings: Uint8Array };
+} = $newCppFunction("InternalModuleRegistry.cpp", "jsInternalModuleBytecode", 2);

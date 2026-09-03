@@ -27,7 +27,6 @@ export const isLinux = process.platform === "linux" || isAndroid;
 export const isFreeBSD = process.platform === "freebsd";
 export const isPosix = isMacOS || isLinux || isFreeBSD;
 
-export const isArm64 = process.arch === "arm64";
 export const isX64 = process.arch === "x64";
 
 /**
@@ -562,32 +561,6 @@ export function getRepository(cwd) {
 }
 
 /**
- * @returns {string | undefined}
- */
-export function getPullRequestRepository() {
-  if (isBuildkite) {
-    const repository = getEnv("BUILDKITE_PULL_REQUEST_REPO", false);
-    if (repository) {
-      return parseGitRepository(repository);
-    }
-  }
-}
-
-/**
- * @param {string} [cwd]
- * @returns {string | undefined}
- */
-export function getRepositoryOwner(cwd) {
-  const repository = getRepository(cwd);
-  if (repository) {
-    const [owner] = repository.split("/");
-    if (owner) {
-      return owner;
-    }
-  }
-}
-
-/**
  * @param {string} [cwd]
  * @returns {string | undefined}
  */
@@ -1073,51 +1046,6 @@ export function which(command, options = {}) {
 }
 
 /**
- * @typedef {object} GitRef
- * @property {string} [repository]
- * @property {string} [commit]
- */
-
-/**
- * @param {string} [cwd]
- * @param {string | GitRef} [base]
- * @param {string | GitRef} [head]
- * @returns {Promise<string[] | undefined>}
- */
-export async function getChangedFiles(cwd, base, head) {
-  const repository = getRepository(cwd);
-  head ||= getCommit(cwd);
-  base ||= `${head}^1`;
-
-  const url = new URL(`repos/${repository}/compare/${base}...${head}`, getGithubApiUrl());
-  const { error, body } = await curl(url, { json: true });
-
-  if (error) {
-    console.warn("Failed to list changed files:", error);
-    return;
-  }
-
-  const { files } = body;
-  return files.filter(({ status }) => !/removed|unchanged/i.test(status)).map(({ filename }) => filename);
-}
-
-/**
- * @param {string} filename
- * @returns {boolean}
- */
-export function isDocumentation(filename) {
-  if (/^(docs|bench|examples|misctools|\.vscode)/.test(filename)) {
-    return true;
-  }
-
-  if (!/^(src|test|vendor)/.test(filename) && /\.(md|txt)$/.test(filename)) {
-    return true;
-  }
-
-  return false;
-}
-
-/**
  * @returns {string | undefined}
  */
 export function getBuildId() {
@@ -1209,91 +1137,6 @@ export function getBootstrapVersion(os) {
     return parseInt(version);
   }
   return 0;
-}
-
-/**
- * @typedef {object} BuildArtifact
- * @property {string} [job]
- * @property {string} filename
- * @property {string} url
- */
-
-/**
- * @returns {Promise<BuildArtifact[] | undefined>}
- */
-export async function getBuildArtifacts() {
-  const buildId = await getBuildkiteBuildNumber();
-  if (buildId) {
-    return getBuildkiteArtifacts(buildId);
-  }
-}
-
-/**
- * @returns {Promise<number | undefined>}
- */
-export async function getBuildkiteBuildNumber() {
-  if (isBuildkite) {
-    const number = parseInt(getEnv("BUILDKITE_BUILD_NUMBER", false));
-    if (!isNaN(number)) {
-      return number;
-    }
-  }
-
-  const repository = getRepository();
-  const commit = getCommit();
-  if (!repository || !commit) {
-    return;
-  }
-
-  const url = new URL(`repos/${repository}/commits/${commit}/statuses`, getGithubApiUrl());
-  const { status, error, body } = await curl(url, { json: true });
-  if (status === 404) {
-    return;
-  }
-  if (error) {
-    throw error;
-  }
-
-  for (const { target_url: url } of body) {
-    const { hostname, pathname } = new URL(url);
-    if (hostname === "buildkite.com") {
-      const buildId = parseInt(pathname.split("/").pop());
-      if (!isNaN(buildId)) {
-        return buildId;
-      }
-    }
-  }
-}
-
-/**
- * @param {string} buildId
- * @returns {Promise<BuildArtifact[]>}
- */
-export async function getBuildkiteArtifacts(buildId) {
-  const orgId = getEnv("BUILDKITE_ORGANIZATION_SLUG", false) || "bun";
-  const pipelineId = getEnv("BUILDKITE_PIPELINE_SLUG", false) || "bun";
-  const { jobs } = await curlSafe(`https://buildkite.com/${orgId}/${pipelineId}/builds/${buildId}.json`, {
-    json: true,
-  });
-
-  const artifacts = await Promise.all(
-    jobs.map(async ({ id: jobId, step_key: jobKey }) => {
-      const artifacts = await curlSafe(
-        `https://buildkite.com/organizations/${orgId}/pipelines/${pipelineId}/builds/${buildId}/jobs/${jobId}/artifacts`,
-        { json: true },
-      );
-
-      return artifacts.map(({ path, url }) => {
-        return {
-          job: jobKey,
-          filename: path,
-          url: new URL(url, "https://buildkite.com/").toString(),
-        };
-      });
-    }),
-  );
-
-  return artifacts.flat();
 }
 
 /**
@@ -1398,25 +1241,6 @@ export function stripAnsi(string) {
  * @param {string} string
  * @returns {string}
  */
-export function escapeYaml(string) {
-  if (/[:"{}[\],&*#?|\-<>=!%@`]/.test(string)) {
-    return `"${string.replace(/"/g, '\\"')}"`;
-  }
-  return string;
-}
-
-/**
- * @param {string} string
- * @returns {string}
- */
-export function escapeGitHubAction(string) {
-  return string.replace(/%/g, "%25").replace(/\r/g, "%0D").replace(/\n/g, "%0A");
-}
-
-/**
- * @param {string} string
- * @returns {string}
- */
 export function unescapeGitHubAction(string) {
   return string.replace(/%25/g, "%").replace(/%0D/g, "\r").replace(/%0A/g, "\n");
 }
@@ -1449,6 +1273,68 @@ export function escapeCodeBlock(string) {
  */
 export function escapePowershell(string) {
   return string.replace(/'/g, "''").replace(/`/g, "``");
+}
+
+/**
+ * @param {string} string
+ * @returns {string}
+ */
+function unescapeXml(string) {
+  return string
+    .replace(/&#(\d+);/g, (_, code) => String.fromCharCode(Number(code)))
+    .replace(/&quot;/g, '"')
+    .replace(/&apos;/g, "'")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&amp;/g, "&");
+}
+
+/**
+ * @typedef {object} JunitFileSuite
+ * @property {number} failures failed tests in the whole file, describe blocks included
+ * @property {number} seconds wall clock of the whole file, loading it included
+ * @property {{ name: string, message: string }[]} cases the failed tests, in report order
+ */
+
+/**
+ * Reads the report written by `bun test --reporter=junit` into one entry per test file,
+ * keyed by the path the reporter printed (relative to the directory `bun test` ran in)
+ * with `/` separators.
+ *
+ * The reporter writes one `<testsuite>` named after each file and, nested inside it, one
+ * more `<testsuite>` per describe block. All of them carry the same `file` attribute, but
+ * only the file's own suite counts the failures of the whole file (the describe blocks'
+ * counts roll up into it) and times the file as a whole (a describe block's `time` is the
+ * sum of its tests, which over-counts `describe.concurrent`), so the nested suites are
+ * skipped.
+ *
+ * @param {string} xml
+ * @returns {Map<string, JunitFileSuite>}
+ */
+export function parseJunitFileSuites(xml) {
+  const attribute = (attributes, name) => new RegExp(`\\s${name}="([^"]*)"`).exec(attributes)?.[1];
+  const keyOf = file => unescapeXml(file).replaceAll("\\", "/");
+  /** @type {Map<string, JunitFileSuite>} */
+  const files = new Map();
+  for (const [, attributes] of xml.matchAll(/<testsuite\b([^>]*)>/g)) {
+    const file = attribute(attributes, "file");
+    if (!file || attribute(attributes, "name") !== file) continue;
+    files.set(keyOf(file), {
+      failures: Number(attribute(attributes, "failures") ?? 0),
+      seconds: Number(attribute(attributes, "time") ?? 0),
+      cases: [],
+    });
+  }
+  for (const [, caseAttributes, failureAttributes] of xml.matchAll(/<testcase\b([^>]*)>\s*<failure\b([^>]*)>/g)) {
+    const file = attribute(caseAttributes, "file");
+    const entry = file && files.get(keyOf(file));
+    if (!entry) continue;
+    entry.cases.push({
+      name: unescapeXml(attribute(caseAttributes, "name") ?? "(unnamed)"),
+      message: unescapeXml(attribute(failureAttributes, "message") ?? ""),
+    });
+  }
+  return files;
 }
 
 /**
@@ -1525,17 +1411,6 @@ export function parseBoolean(value) {
   }
   if (/^(false|no|0|off)$/i.test(value)) {
     return false;
-  }
-}
-
-/**
- * @param {string} value
- * @returns {number | undefined}
- */
-export function parseNumber(value) {
-  const number = Number(value);
-  if (!isNaN(number)) {
-    return number;
   }
 }
 
@@ -1669,174 +1544,6 @@ export function getAbiVersion() {
 }
 
 /**
- * @typedef {object} Target
- * @property {"darwin" | "linux" | "windows"} os
- * @property {"x64" | "aarch64"} arch
- * @property {"musl"} [abi]
- * @property {boolean} [baseline]
- * @property {boolean} profile
- * @property {string} label
- */
-
-/**
- * @param {string} string
- * @returns {Target}
- */
-export function parseTarget(string) {
-  const os = parseOs(string);
-  const arch = parseArch(string);
-  const abi = os === "linux" && string.includes("-musl") ? "musl" : undefined;
-  const baseline = arch === "x64" ? string.includes("-baseline") : undefined;
-  const profile = string.includes("-profile");
-
-  let label = `${os}-${arch}`;
-  if (abi) {
-    label += `-${abi}`;
-  }
-  if (baseline) {
-    label += "-baseline";
-  }
-  if (profile) {
-    label += "-profile";
-  }
-
-  return { label, os, arch, abi, baseline, profile };
-}
-
-/**
- * @param {string} target
- * @param {string} [release]
- * @returns {Promise<URL>}
- */
-export async function getTargetDownloadUrl(target, release) {
-  const { label, os, arch, abi, baseline } = parseTarget(target);
-  const baseUrl = "https://pub-5e11e972747a44bf9aaf9394f185a982.r2.dev/releases/";
-  const filename = `bun-${label}.zip`;
-
-  const exists = async url => {
-    const { status } = await curl(url, { method: "HEAD" });
-    return status !== 404;
-  };
-
-  if (!release || /^(stable|latest|canary)$/i.test(release)) {
-    const tag = release === "canary" ? "canary" : "latest";
-    const url = new URL(`${tag}/${filename}`, baseUrl);
-    if (await exists(url)) {
-      return url;
-    }
-  }
-
-  if (/^(bun-v|v)?(\d+\.\d+\.\d+)$/i.test(release)) {
-    const [, major, minor, patch] = /(\d+)\.(\d+)\.(\d+)/i.exec(release);
-    const url = new URL(`bun-v${major}.${minor}.${patch}/${filename}`, baseUrl);
-    if (await exists(url)) {
-      return url;
-    }
-  }
-
-  if (/^https?:\/\//i.test(release) && (await exists(release))) {
-    return new URL(release);
-  }
-
-  if (release.length === 40 && /^[0-9a-f]{40}$/i.test(release)) {
-    const releaseUrl = new URL(`${release}/${filename}`, baseUrl);
-    if (await exists(releaseUrl)) {
-      return releaseUrl;
-    }
-
-    const canaryUrl = new URL(`${release}-canary/${filename}`, baseUrl);
-    if (await exists(canaryUrl)) {
-      return canaryUrl;
-    }
-
-    const statusUrl = new URL(`repos/oven-sh/bun/commits/${release}/status`, getGithubApiUrl());
-    const { error, body } = await curl(statusUrl, { json: true });
-    if (error) {
-      throw new Error(`Failed to fetch commit status: ${release}`, { cause: error });
-    }
-
-    const { statuses } = body;
-    const buildUrls = new Set();
-    for (const { target_url: url } of statuses) {
-      const { hostname, origin, pathname } = new URL(url);
-      if (hostname === "buildkite.com") {
-        buildUrls.add(`${origin}${pathname}.json`);
-      }
-    }
-
-    const buildkiteUrl = new URL("https://buildkite.com/");
-    for (const url of buildUrls) {
-      const { status, error, body } = await curl(url, { json: true });
-      if (status === 404) {
-        continue;
-      }
-      if (error) {
-        throw new Error(`Failed to fetch build: ${url}`, { cause: error });
-      }
-
-      const { jobs } = body;
-      const job = jobs.find(
-        ({ step_key: key }) =>
-          key &&
-          key.includes("build-bun") &&
-          key.includes(os) &&
-          key.includes(arch) &&
-          (!baseline || key.includes("baseline")) &&
-          (!abi || key.includes(abi)),
-      );
-      if (!job) {
-        continue;
-      }
-
-      const { base_path: jobPath } = job;
-      const artifactsUrl = new URL(`${jobPath}/artifacts`, buildkiteUrl);
-      {
-        const { error, body } = await curl(artifactsUrl, { json: true });
-        if (error) {
-          continue;
-        }
-
-        for (const { url, file_name: name } of body) {
-          if (name === filename) {
-            return new URL(url, artifactsUrl);
-          }
-        }
-      }
-    }
-  }
-
-  throw new Error(`Failed to find release: ${release}`);
-}
-
-/**
- * @param {string} target
- * @param {string} [release]
- * @returns {Promise<string>}
- */
-export async function downloadTarget(target, release) {
-  const url = await getTargetDownloadUrl(target, release);
-  const { error, body } = await curl(url, { arrayBuffer: true });
-  if (error) {
-    throw new Error(`Failed to download target: ${target} at ${release}`, { cause: error });
-  }
-
-  const tmpPath = mkdtempSync(join(tmpdir(), "bun-download-"));
-  const zipPath = join(tmpPath, "bun.zip");
-
-  writeFileSync(zipPath, new Uint8Array(body));
-  const unzipPath = await unzip(zipPath, tmpPath);
-
-  for (const entry of readdirSync(unzipPath, { recursive: true, encoding: "utf-8" })) {
-    const exePath = join(unzipPath, entry);
-    if (/bun(?:\.exe)?$/i.test(entry)) {
-      return exePath;
-    }
-  }
-
-  throw new Error(`Failed to find bun executable: ${unzipPath}`);
-}
-
-/**
  * @returns {string}
  */
 export function getTailscale() {
@@ -1930,30 +1637,6 @@ export function getUsernameForDistro(distro) {
     return "ec2-user";
   }
   throw new Error(`Unsupported distro: ${distro}`);
-}
-
-/**
- * @typedef {object} User
- * @property {string} username
- * @property {number} uid
- * @property {number} gid
- */
-
-/**
- * @param {string} username
- * @returns {Promise<User>}
- */
-export async function getUser(username) {
-  if (isWindows) {
-    throw new Error("TODO: Windows");
-  }
-
-  const [uid, gid] = await Promise.all([
-    spawnSafe(["id", "-u", username]).then(({ stdout }) => parseInt(stdout.trim())),
-    spawnSafe(["id", "-g", username]).then(({ stdout }) => parseInt(stdout.trim())),
-  ]);
-
-  return { username, uid, gid };
 }
 
 /**
@@ -3101,6 +2784,86 @@ export function endGroup() {
   }
   // when a file exits with an ASAN error, there is no trailing newline so we add one here to make sure `console.group()` detection doesn't get broken in CI.
   console.log();
+}
+
+/**
+ * Creates a filter for the live output of one child process stream, for the CI log.
+ *
+ * The runner spawns every `bun test` with GITHUB_ACTIONS=true so that bun prints each
+ * failure as a `::error` workflow command it can parse, and the file headers as
+ * `::group::` commands. Those lines are for the parser, not for the log: GitHub renders
+ * them as annotations, Buildkite prints them verbatim. So outside GitHub Actions every
+ * line that starts with `::` is dropped. In GitHub Actions the group commands are dropped
+ * (the runner groups the log itself) and the rest is kept for GitHub to render. In
+ * Buildkite a line that starts with one of its group markers (`--- `) is defused too.
+ *
+ * The output arrives in pipe-sized chunks, and bun writes a `::error` line as many small
+ * writes, so a chunk usually ends in the middle of one. An incomplete last line that
+ * starts with `::`, or that is so far only the start of a marker, is held back until
+ * the rest of it arrives. `end()` returns what is still held back when the stream ends.
+ *
+ * @param {object} [options]
+ * @param {boolean} [options.github] the runner itself runs in GitHub Actions
+ * @param {boolean} [options.buildkite] the runner itself runs in Buildkite
+ * @returns {((chunk: string) => string) & { end: () => string }} the text to write for each chunk
+ */
+export function createLiveOutputFilter({ github = isGithubAction, buildkite = isBuildkite } = {}) {
+  const ansi = /(?:\u001b\[[0-9;]*[a-zA-Z])*/.source;
+  const command = `^${ansi}::${github ? "(?:end)?group::" : ""}.*`;
+  const commands = new RegExp(`${command}(?:\r\n|\r|\n)`, "gm");
+  const lastCommand = new RegExp(`${command}\r?$`);
+  const groupMarkers = /^(?:---|\+\+\+|~~~|\^\^\^) /gm;
+  const markers = buildkite ? ["::", "--- ", "+++ ", "~~~ ", "^^^ "] : ["::"];
+
+  /** @param {string} line an incomplete line */
+  const holdBack = line => {
+    const visible = stripAnsi(line);
+    return (
+      visible.startsWith("::") || markers.some(marker => marker.length > visible.length && marker.startsWith(visible))
+    );
+  };
+
+  let pending = "";
+  let atLineStart = true;
+  const filter = chunk => {
+    let text = pending + chunk;
+    const startsLine = atLineStart;
+
+    // A trailing \r may be the first half of a \r\n, so the line it ends is not complete yet.
+    // Once written, the next chunk starts a line either way: the \n of a \r\n is an empty one.
+    const endsWithCR = text.endsWith("\r");
+    const searchEnd = endsWithCR ? text.length - 2 : text.length - 1;
+    const lastLineStart = Math.max(text.lastIndexOf("\n", searchEnd), text.lastIndexOf("\r", searchEnd)) + 1;
+    const lastLine = text.slice(lastLineStart);
+    if (lastLine && (lastLineStart > 0 || startsLine) && holdBack(lastLine)) {
+      pending = lastLine;
+      text = text.slice(0, lastLineStart);
+      atLineStart = true;
+    } else {
+      pending = "";
+      if (text) atLineStart = endsWithCR || lastLineStart === text.length;
+    }
+
+    // A chunk that starts in the middle of a line continues a line that was already written.
+    let head = "";
+    if (!startsLine) {
+      const end = /\r\n|\r|\n/.exec(text);
+      const split = end ? end.index + end[0].length : text.length;
+      head = text.slice(0, split);
+      text = text.slice(split);
+    }
+
+    text = text.replace(commands, "");
+    if (buildkite) text = text.replace(groupMarkers, " ");
+    return head + text;
+  };
+  filter.end = () => {
+    const text = pending;
+    pending = "";
+    atLineStart = true;
+    return text.replace(lastCommand, "");
+  };
+  return filter;
 }
 
 export function printEnvironment() {

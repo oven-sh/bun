@@ -1,5 +1,7 @@
 ```bash
-npm install
+# run from this directory. bench/ has its own package.json and bun.lock,
+# the repo root does not install benchmark dependencies such as mitata.
+bun install
 
 bun run ffi
 bun run log

@@ -592,12 +592,6 @@ impl QuicStream {
         self.this_value.with_mut(|r| r.downgrade());
     }
 
-    #[expect(
-        clippy::boxed_local,
-        reason = "codegen's host_fn_finalize calls this as `|b| QuicStream::finalize(b)` and requires `self: Box<Self>`"
-    )]
-    pub(crate) fn finalize(self: Box<Self>) {}
-
     pub(crate) fn get_reader(&self, _g: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
         self.with_state(|s| s.has_reader = 1);
         Ok(frame.this())
@@ -1021,8 +1015,10 @@ pub(super) unsafe extern "C" fn on_stream_read(ctx: *mut c_void, s: *mut lsquic:
         return;
     };
     if ctx.is_null() {
-        let mut buf = [0u8; 4096];
-        while stream.read(&mut buf) > 0 {}
+        let mut stack_buf = bun_core::vec::UninitBuf::<4096>::uninit();
+        // SAFETY: lsquic only stores into the slice and the drained bytes are never read back.
+        let buf = unsafe { stack_buf.as_bytes_mut() };
+        while stream.read(buf) > 0 {}
         return;
     }
     // SAFETY: `ctx` is the live QuicStream we returned from on_new_stream.
@@ -1074,10 +1070,12 @@ pub(super) unsafe extern "C" fn on_stream_read(ctx: *mut c_void, s: *mut lsquic:
     if stream.received_early_data() {
         qs.with_state(|s| s.received_early_data = 1);
     }
-    let mut buf = [0u8; 16 * 1024];
+    let mut stack_buf = bun_core::vec::UninitBuf::<{ 16 * 1024 }>::uninit();
+    // SAFETY: lsquic is the only writer of `buf`; each iteration reads back only `buf[..n]`.
+    let buf = unsafe { stack_buf.as_bytes_mut() };
     let mut got_any = false;
     loop {
-        let n = stream.read(&mut buf);
+        let n = stream.read(buf);
         match n {
             n if n > 0 => {
                 qs.push_inbound(&buf[..n as usize], false);

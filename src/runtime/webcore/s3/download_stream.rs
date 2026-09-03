@@ -70,18 +70,30 @@ impl S3HttpDownloadStreamingTask {
         self.state.store(state.0, Ordering::Relaxed);
     }
 
-    fn report_progress(&mut self, state: State) {
+    /// The chunk callback runs JS, which reaches back into this task through the stream
+    /// wrapper's pointer (`pause_receive`, `poll_ref`). No borrow of `this` may span that call,
+    /// so this takes the raw pointer and scopes every access to its statement.
+    ///
+    /// # Safety
+    /// `this` is live and exclusively accessed by this thread for the duration of the call
+    /// (`on_response`).
+    unsafe fn report_progress(this: *mut Self, state: State) {
         let has_more = state.has_more();
         let failed = match state.status_code() {
             200 | 204 | 206 => state.request_error() != 0,
             _ => true,
         };
+        // SAFETY: fn contract; `callback` and `callback_context` are set once, before the task
+        // is queued.
+        let (callback, callback_context) =
+            unsafe { ((*this).callback, (*this).callback_context.as_ptr().cast()) };
         bun_core::scoped_log!(
             S3,
             "reportProgres failed: {} has_more: {} len: {}",
             failed,
             has_more,
-            self.reported_response_buffer.list.len()
+            // SAFETY: fn contract.
+            unsafe { (*this).reported_response_buffer.list.len() }
         );
 
         if failed {
@@ -92,10 +104,13 @@ impl S3HttpDownloadStreamingTask {
             let mut code: &[u8] = b"UnknownError";
             let mut message: &[u8] = b"an unexpected error has occurred";
             let parsed;
-            if let Some(req_err) = self.request_error {
+            // SAFETY: fn contract.
+            if let Some(req_err) = unsafe { (*this).request_error } {
                 code = req_err.name().as_bytes();
             } else {
-                let bytes = self.reported_response_buffer.list.as_slice();
+                // SAFETY: fn contract; the buffer is not touched again before the callback
+                // returns, and `message` is not used after it.
+                let bytes = unsafe { (*this).reported_response_buffer.list.as_slice() };
                 if !bytes.is_empty() {
                     message = bytes;
                 }
@@ -105,27 +120,26 @@ impl S3HttpDownloadStreamingTask {
                     message = error.message.as_deref().unwrap_or(message);
                 }
             }
-            (self.callback)(
+            callback(
                 &empty,
                 false,
                 Some(S3Error { code, message }),
-                self.callback_context.as_ptr().cast(),
+                callback_context,
             );
             return;
         }
 
         // dont report empty chunks if we have more data to read
-        if !has_more || self.reported_response_buffer.list.len() > 0 {
+        // SAFETY: fn contract.
+        if !has_more || unsafe { (*this).reported_response_buffer.list.len() } > 0 {
             // `core::mem::take` transfers ownership of the buffer, leaving an
             // empty MutableString behind.
-            let chunk = core::mem::take(&mut self.reported_response_buffer);
-            (self.callback)(
-                &chunk,
-                has_more,
-                None,
-                self.callback_context.as_ptr().cast(),
-            );
-            self.reported_response_buffer.reset();
+            // SAFETY: fn contract; the borrow ends with the statement.
+            let chunk = unsafe { core::mem::take(&mut (*this).reported_response_buffer) };
+            callback(&chunk, has_more, None, callback_context);
+            // SAFETY: fn contract; the callback does not free the task, `on_response` does,
+            // after this returns.
+            unsafe { (*this).reported_response_buffer.reset() };
         }
     }
 
@@ -169,8 +183,8 @@ impl S3HttpDownloadStreamingTask {
                     .store(false, Ordering::Relaxed)
             };
         }
-        // SAFETY: as above; exclusive borrow scoped to the call.
-        unsafe { (*this).report_progress(state) };
+        // SAFETY: as above.
+        unsafe { Self::report_progress(this, state) };
     }
 
     /// this function is only called from the http callback in the HTTPThread and returns true if we
@@ -247,6 +261,15 @@ impl S3HttpDownloadStreamingTask {
         );
 
         result.body_into(&mut self.reported_response_buffer.list);
+        // Only a body that is being delivered can be resumed: the wrapper resumes as JS takes
+        // chunks. An error body is collected whole before it is reported, with no chunk
+        // delivered in between, so pausing it would never be undone.
+        if !is_done
+            && !wait_until_done
+            && self.reported_response_buffer.list.len() >= bun_http::signals::BODY_HIGH_WATER_MARK
+        {
+            self.signal_store.pause_receive();
+        }
         if should_enqueue {
             if self.reported_response_buffer.list.is_empty() && !is_done {
                 return false;
@@ -351,6 +374,13 @@ impl S3HttpDownloadStreamingTask {
         unsafe {
             (*this).signal_store.aborted.store(true, Ordering::Relaxed);
             bun_http::http_thread().schedule_shutdown((*this).http.assume_init_ref());
+        }
+    }
+
+    /// A consumer took bytes: undo a pause from either side of the hop.
+    pub(crate) fn resume_receive(&self) {
+        if self.signal_store.unpause_receive() {
+            bun_http::http_thread().schedule_receive_resume(self.async_http_id);
         }
     }
 

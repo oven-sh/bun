@@ -118,7 +118,9 @@ bitflags::bitflags! {
 
         const REMOVE_OVERWRITTEN_FUNCTION_DECLARATION = 1 << 4;
 
-        /// Used in HMR to decide when live binding code is needed.
+        /// The file assigns this variable after its declaration (or a mapped
+        /// `arguments` object can). Set on the root of the symbol's link
+        /// chain. Read by HMR live bindings and the printer's same-target fold.
         const HAS_BEEN_ASSIGNED_TO = 1 << 5;
     }
 }
@@ -224,6 +226,13 @@ impl Symbol {
     #[inline]
     pub fn has_link(&self) -> bool {
         self.link.get().is_valid()
+    }
+
+    /// An import item the linker merged into the export it names. A local
+    /// that a hoisting merge links has no import item status.
+    #[inline]
+    pub fn is_bound_import_item(&self) -> bool {
+        self.import_item_status != ImportItemStatus::None && self.has_link()
     }
 }
 
@@ -543,14 +552,6 @@ impl Map {
             debug_assert!(idx < (*inner).len());
             &*(*inner).as_ptr().add(idx)
         })
-    }
-
-    pub fn init(source_count: usize) -> Map {
-        let mut v: NestedList = Vec::with_capacity(source_count);
-        v.resize_with(source_count, Vec::new);
-        Map {
-            symbols_for_source: v,
-        }
     }
 
     // Takes ownership of `list` and boxes it into a one-element NestedList.

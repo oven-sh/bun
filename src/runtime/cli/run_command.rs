@@ -80,14 +80,18 @@ pub struct ExecCfg {
     pub(crate) allow_fast_run_for_extensions: bool,
 }
 
-impl Default for ExecCfg {
-    fn default() -> Self {
-        Self {
-            bin_dirs_only: false,
-            log_errors: true,
-            allow_fast_run_for_extensions: true,
-        }
-    }
+/// Per-caller knobs for [`RunCommand::configure_env_for_run`] and
+/// [`RunCommand::configure_env_for_run_without_linker`].
+#[derive(Clone, Copy)]
+pub(crate) struct ConfigureEnvOptions {
+    /// Report a current directory that cannot be read on stderr. When `false`
+    /// it is only returned, as [`crate::Error::CouldntReadCurrentDirectory`].
+    pub(crate) log_errors: bool,
+    /// Keep the current directory's fd open on the returned `DirInfo` (only
+    /// that one: the resolver's `store_fd` is turned back off right after),
+    /// for callers that go on to read files through it, like `bunx` resolving
+    /// a package's `bin`.
+    pub(crate) store_root_fd: bool,
 }
 
 pub(crate) struct RunCommand;
@@ -389,6 +393,8 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         // in the meantime we don't need to free it.
         let envp = env.map.create_null_delimited_env_map()?;
 
+        #[cfg(windows)]
+        bun_spawn::ctrl_c::install();
         let spawn_result = match sync::spawn(&sync::Options {
             argv,
             argv0: Some(shell_bin.as_ptr().cast::<::core::ffi::c_char>()),
@@ -458,6 +464,14 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
 
                         Global::raise_ignoring_panic_handler(sig);
                     }
+                }
+
+                // cmd.exe exits 0 after abandoning a line whose command was Ctrl+C'd.
+                #[cfg(windows)]
+                if exit_code.raw == bun_sys::windows::STATUS_CONTROL_C_EXIT
+                    || (bun_spawn::ctrl_c::take_received() && exit_code.raw == 0)
+                {
+                    bun_spawn::ctrl_c::exit_like_child();
                 }
 
                 if exit_code.code != 0 {
@@ -541,10 +555,9 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         ctx: &mut ContextData,
         this_transpiler: &mut ::core::mem::MaybeUninit<Transpiler<'static>>,
         env: Option<*mut DotEnv::Loader>,
-        log_errors: bool,
-        store_root_fd: bool,
+        opts: ConfigureEnvOptions,
     ) -> crate::Result<bun_resolver::DirInfoRef> {
-        Self::configure_env_for_run_impl(ctx, this_transpiler, env, log_errors, store_root_fd, true)
+        Self::configure_env_for_run_impl(ctx, this_transpiler, env, opts, true)
     }
 
     /// Like [`Self::configure_env_for_run`] but does **not** construct the
@@ -555,17 +568,9 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         ctx: &mut ContextData,
         this_transpiler: &mut ::core::mem::MaybeUninit<Transpiler<'static>>,
         env: Option<*mut DotEnv::Loader>,
-        log_errors: bool,
-        store_root_fd: bool,
+        opts: ConfigureEnvOptions,
     ) -> crate::Result<bun_resolver::DirInfoRef> {
-        Self::configure_env_for_run_impl(
-            ctx,
-            this_transpiler,
-            env,
-            log_errors,
-            store_root_fd,
-            false,
-        )
+        Self::configure_env_for_run_impl(ctx, this_transpiler, env, opts, false)
     }
 
     /// `configure_linker()` + `load_tsconfig_json` setup, factored into a
@@ -587,8 +592,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         ctx: &mut ContextData,
         this_transpiler: &mut ::core::mem::MaybeUninit<Transpiler<'static>>,
         env: Option<*mut DotEnv::Loader>,
-        log_errors: bool,
-        store_root_fd: bool,
+        opts: ConfigureEnvOptions,
         with_linker: bool,
     ) -> crate::Result<bun_resolver::DirInfoRef> {
         let args = ctx.args.clone();
@@ -609,7 +613,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
 
         this_transpiler.resolver.care_about_bin_folder = true;
         this_transpiler.resolver.care_about_scripts = true;
-        this_transpiler.resolver.store_fd = store_root_fd;
+        this_transpiler.resolver.store_fd = opts.store_root_fd;
 
         // Bundler-linker + JSX-runtime config: only callers that actually
         // transpile through this `Transpiler` need it. `configure_linker`'s
@@ -625,7 +629,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         let root_dir_info: bun_resolver::DirInfoRef =
             match this_transpiler.resolver.read_dir_info(top_level_dir) {
                 Err(err) => {
-                    if !log_errors {
+                    if !opts.log_errors {
                         return Err(crate::Error::CouldntReadCurrentDirectory);
                     }
                     // SAFETY: `ctx.log` set in `create_context_data` (single-
@@ -944,7 +948,11 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         // dispatch hooks (`jsc_hooks::install_jsc_hooks`) are installed by
         // `main.rs` before `Cli::start`, so `VirtualMachine::init` already sees
         // a populated `RuntimeHooks` table.
-        bun_jsc::initialize(ctx.runtime_options.eval.eval_and_print);
+        bun_jsc::initialize(bun_jsc::InitializeOptions {
+            eval_mode: ctx.runtime_options.eval.eval_and_print,
+            one_shot: bun_jsc::is_one_shot_eval_invocation(),
+            ..Default::default()
+        });
         bun_ast::initialize_store();
 
         let vm_ptr = VirtualMachine::init(VmInitOptions {
@@ -1061,7 +1069,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
             if !tz.is_empty() {
                 let _ = vm
                     .global()
-                    .set_time_zone(&bun_jsc::zig_string::ZigString::init(tz));
+                    .set_time_zone(&bun_core::EncodedSlice::from_bytes(tz));
             }
         }
 
@@ -1112,8 +1120,12 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
     ) -> crate::Result<()> {
         use bun_standalone_graph::StandaloneModuleGraph::Flags as GraphFlags;
 
-        bun_jsc::initialize(false);
+        // argv belongs to the compiled program, so a `-e` or `-p` in it is not ours.
+        bun_jsc::initialize(bun_jsc::InitializeOptions::default());
         bun_analytics::features::standalone_executable.fetch_add(1, Ordering::Relaxed);
+        if graph.flags.contains(GraphFlags::CROSS_COMPILED_BYTECODE) {
+            bun_analytics::features::cross_compiled_bytecode.fetch_add(1, Ordering::Relaxed);
+        }
         bun_ast::initialize_store();
 
         // Load bunfig.toml unless disabled by compile flags. Config loading
@@ -1451,8 +1463,12 @@ impl Run<'_> {
             Err(err) => entry_point_load_failed(vm, &err.into()),
         }
 
-        // don't run the GC if we don't actually need to
-        if vm.is_event_loop_alive() || vm.event_loop_ref().tick_concurrent_with_count() > 0 {
+        // Drop what transpiling and linking the entry graph left behind before settling into the event loop. A
+        // standalone executable has no transpiler garbage, and its unlinked code blocks came from the embedded bytecode
+        // cache — deleting them here only means decoding them again on first call — so leave its heap to the collector.
+        if vm.standalone_module_graph.is_none()
+            && (vm.is_event_loop_alive() || vm.event_loop_ref().tick_concurrent_with_count() > 0)
+        {
             vm.global().vm().release_weak_refs();
             // `bun_alloc::Arena` has no per-heap collect to run alongside this
             // GC; it would only be a memory-usage hint, not correctness.
@@ -1546,7 +1562,11 @@ impl Run<'_> {
         }
 
         vm.on_unhandled_rejection = Run::on_unhandled_rejection_before_close;
-        vm.global().handle_rejected_promises();
+        let _ = vm.global().handle_rejected_promises();
+        // The loop stopped on an uncaught error: Node's fatal-exception exit, not a drain.
+        if vm.unhandled_error_counter > 0 {
+            vm.exit_handler.requested = true;
+        }
         vm.on_exit();
 
         if ANY_UNHANDLED.load(Ordering::Relaxed) {
@@ -1616,6 +1636,7 @@ fn dump_build_error(vm: &mut VirtualMachine) {
 )]
 fn exit_with_unhandled_note(vm: &mut VirtualMachine) -> ! {
     vm.exit_handler.exit_code = 1;
+    vm.exit_handler.requested = true;
     vm.on_exit();
     if ANY_UNHANDLED.load(Ordering::Relaxed) {
         bun_sourcemap::SavedSourceMap::MissingSourceMapNoteInfo::print();
@@ -2064,6 +2085,10 @@ impl RunCommand {
         // in the meantime we don't need to free it.
         let envp = env.map.create_null_delimited_env_map()?;
 
+        // POSIX forwards signals inside `sync::spawn`; on Windows the child shares
+        // our console and gets Ctrl+C itself, we just have to outlive it.
+        #[cfg(windows)]
+        bun_spawn::ctrl_c::install();
         let spawn_result = match sync::spawn(&sync::Options {
             argv,
             argv0: Some(executable_z.as_ptr().cast::<c_char>()),
@@ -2189,6 +2214,11 @@ impl RunCommand {
                             }
 
                             Global::raise_ignoring_panic_handler(sc);
+                        }
+
+                        #[cfg(windows)]
+                        if exit_code.raw == bun_sys::windows::STATUS_CONTROL_C_EXIT {
+                            bun_spawn::ctrl_c::exit_like_child();
                         }
 
                         let code = exit_code.code;
@@ -2319,8 +2349,10 @@ impl RunCommand {
             ctx,
             this_transpiler,
             None,
-            log_errors,
-            false,
+            ConfigureEnvOptions {
+                log_errors,
+                store_root_fd: false,
+            },
         )?;
         // SAFETY: `configure_env_for_run_without_linker` returned `Ok`, so the
         // slot is fully initialized via `MaybeUninit::write`.
@@ -3326,9 +3358,7 @@ impl RunCommand {
         // hyperlinks when colors are on. Light/dark detected from env.
         let colors = Output::enable_ansi_colors_stdout();
         let columns: u16 = 'brk: {
-            // Output.terminal_size is never populated; query stdout
-            // directly. Honor COLUMNS so piped output and tests can
-            // pin a width.
+            // Honor COLUMNS so piped output and tests can pin a width.
             if let Some(env) = bun_core::getenv_z(bun_core::zstr!("COLUMNS")) {
                 if let Ok(n) = bun_core::fmt::parse_int::<u16>(env, 10) {
                     if n > 0 {

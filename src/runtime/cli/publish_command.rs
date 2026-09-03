@@ -602,16 +602,7 @@ impl PublishCommand {
             };
 
             if let Err(err) = Self::publish::<false>(&context) {
-                match err {
-                    PublishError::OutOfMemory => bun_core::out_of_memory(),
-                    PublishError::NeedAuth => {
-                        Output::err_generic(
-                            "missing authentication (run <cyan>`bunx npm login`<r>)",
-                            (),
-                        );
-                        Global::crash();
-                    }
-                }
+                err.report_and_crash();
             }
 
             bun_core::prettyln!(
@@ -661,16 +652,7 @@ impl PublishCommand {
         let _ = bun_sys::unlink(&context.abs_tarball_path);
 
         if let Err(err) = Self::publish::<true>(&context) {
-            match err {
-                PublishError::OutOfMemory => bun_core::out_of_memory(),
-                PublishError::NeedAuth => {
-                    Output::err_generic(
-                        "missing authentication (run <cyan>`bunx npm login`<r>)",
-                        (),
-                    );
-                    Global::crash();
-                }
-            }
+            err.report_and_crash();
         }
 
         bun_core::prettyln!(
@@ -832,7 +814,6 @@ impl PublishCommand {
             headers.content.written_slice(),
             b"",
             None,
-            None,
             http::FetchRedirect::Follow,
         );
 
@@ -958,7 +939,6 @@ impl PublishCommand {
             publish_headers.content.written_slice(),
             publish_req_body,
             None,
-            None,
             http::FetchRedirect::Follow,
         );
 
@@ -1051,7 +1031,6 @@ impl PublishCommand {
                     otp_headers.entries,
                     otp_headers.content.written_slice(),
                     publish_req_body,
-                    None,
                     None,
                     http::FetchRedirect::Follow,
                 );
@@ -1281,7 +1260,6 @@ impl PublishCommand {
                         auth_headers.entries.clone()?,
                         auth_headers.content.written_slice(),
                         b"",
-                        None,
                         None,
                         http::FetchRedirect::Follow,
                     );
@@ -2103,6 +2081,18 @@ pub(crate) enum PublishError {
     NeedAuth,
 }
 bun_core::oom_from_alloc!(PublishError);
+
+impl PublishError {
+    fn report_and_crash(self) -> ! {
+        match self {
+            PublishError::OutOfMemory => bun_core::out_of_memory(),
+            PublishError::NeedAuth => {
+                Output::err_generic("missing authentication (run <cyan>`bunx npm login`<r>)", ());
+                Global::crash();
+            }
+        }
+    }
+}
 
 #[derive(thiserror::Error, Debug, strum::IntoStaticStr)]
 pub(crate) enum GetOTPError {

@@ -28,7 +28,277 @@ declare module "bun" {
   type ReadableStreamReader<T> = ReadableStreamDefaultReader<T>;
   type Transferable = ArrayBuffer | MessagePort;
   type MessageEventSource = Bun.__internal.UseLibDomIfAvailable<"MessageEventSource", undefined>;
-  type Encoding = "utf-8" | "windows-1252" | "utf-16";
+  /**
+   * An encoding label from the WHATWG Encoding Standard, as accepted by the
+   * `TextDecoder` constructor.
+   *
+   * The labels of the `replacement` encoding are excluded: the `TextDecoder`
+   * constructor rejects them with a `RangeError`.
+   *
+   * @see https://encoding.spec.whatwg.org/#names-and-labels
+   */
+  type Encoding =
+    // utf-8
+    | "unicode-1-1-utf-8"
+    | "unicode11utf8"
+    | "unicode20utf8"
+    | "utf-8"
+    | "utf8"
+    | "x-unicode20utf8"
+    // ibm866
+    | "866"
+    | "cp866"
+    | "csibm866"
+    | "ibm866"
+    // iso-8859-2
+    | "csisolatin2"
+    | "iso-8859-2"
+    | "iso-ir-101"
+    | "iso8859-2"
+    | "iso88592"
+    | "iso_8859-2"
+    | "iso_8859-2:1987"
+    | "l2"
+    | "latin2"
+    // iso-8859-3
+    | "csisolatin3"
+    | "iso-8859-3"
+    | "iso-ir-109"
+    | "iso8859-3"
+    | "iso88593"
+    | "iso_8859-3"
+    | "iso_8859-3:1988"
+    | "l3"
+    | "latin3"
+    // iso-8859-4
+    | "csisolatin4"
+    | "iso-8859-4"
+    | "iso-ir-110"
+    | "iso8859-4"
+    | "iso88594"
+    | "iso_8859-4"
+    | "iso_8859-4:1988"
+    | "l4"
+    | "latin4"
+    // iso-8859-5
+    | "csisolatincyrillic"
+    | "cyrillic"
+    | "iso-8859-5"
+    | "iso-ir-144"
+    | "iso8859-5"
+    | "iso88595"
+    | "iso_8859-5"
+    | "iso_8859-5:1988"
+    // iso-8859-6
+    | "arabic"
+    | "asmo-708"
+    | "csiso88596e"
+    | "csiso88596i"
+    | "csisolatinarabic"
+    | "ecma-114"
+    | "iso-8859-6"
+    | "iso-8859-6-e"
+    | "iso-8859-6-i"
+    | "iso-ir-127"
+    | "iso8859-6"
+    | "iso88596"
+    | "iso_8859-6"
+    | "iso_8859-6:1987"
+    // iso-8859-7
+    | "csisolatingreek"
+    | "ecma-118"
+    | "elot_928"
+    | "greek"
+    | "greek8"
+    | "iso-8859-7"
+    | "iso-ir-126"
+    | "iso8859-7"
+    | "iso88597"
+    | "iso_8859-7"
+    | "iso_8859-7:1987"
+    | "sun_eu_greek"
+    // iso-8859-8
+    | "csiso88598e"
+    | "csisolatinhebrew"
+    | "hebrew"
+    | "iso-8859-8"
+    | "iso-8859-8-e"
+    | "iso-ir-138"
+    | "iso8859-8"
+    | "iso88598"
+    | "iso_8859-8"
+    | "iso_8859-8:1988"
+    | "visual"
+    // iso-8859-8-i
+    | "csiso88598i"
+    | "iso-8859-8-i"
+    | "logical"
+    // iso-8859-10
+    | "csisolatin6"
+    | "iso-8859-10"
+    | "iso-ir-157"
+    | "iso8859-10"
+    | "iso885910"
+    | "l6"
+    | "latin6"
+    // iso-8859-13
+    | "iso-8859-13"
+    | "iso8859-13"
+    | "iso885913"
+    // iso-8859-14
+    | "iso-8859-14"
+    | "iso8859-14"
+    | "iso885914"
+    // iso-8859-15
+    | "csisolatin9"
+    | "iso-8859-15"
+    | "iso8859-15"
+    | "iso885915"
+    | "iso_8859-15"
+    | "l9"
+    // iso-8859-16
+    | "iso-8859-16"
+    // koi8-r
+    | "cskoi8r"
+    | "koi"
+    | "koi8"
+    | "koi8-r"
+    | "koi8_r"
+    // koi8-u
+    | "koi8-ru"
+    | "koi8-u"
+    // macintosh
+    | "csmacintosh"
+    | "mac"
+    | "macintosh"
+    | "x-mac-roman"
+    // windows-874
+    | "dos-874"
+    | "iso-8859-11"
+    | "iso8859-11"
+    | "iso885911"
+    | "tis-620"
+    | "windows-874"
+    // windows-1250
+    | "cp1250"
+    | "windows-1250"
+    | "x-cp1250"
+    // windows-1251
+    | "cp1251"
+    | "windows-1251"
+    | "x-cp1251"
+    // windows-1252
+    | "ansi_x3.4-1968"
+    | "ascii"
+    | "cp1252"
+    | "cp819"
+    | "csisolatin1"
+    | "ibm819"
+    | "iso-8859-1"
+    | "iso-ir-100"
+    | "iso8859-1"
+    | "iso88591"
+    | "iso_8859-1"
+    | "iso_8859-1:1987"
+    | "l1"
+    | "latin1"
+    | "us-ascii"
+    | "windows-1252"
+    | "x-cp1252"
+    // windows-1253
+    | "cp1253"
+    | "windows-1253"
+    | "x-cp1253"
+    // windows-1254
+    | "cp1254"
+    | "csisolatin5"
+    | "iso-8859-9"
+    | "iso-ir-148"
+    | "iso8859-9"
+    | "iso88599"
+    | "iso_8859-9"
+    | "iso_8859-9:1989"
+    | "l5"
+    | "latin5"
+    | "windows-1254"
+    | "x-cp1254"
+    // windows-1255
+    | "cp1255"
+    | "windows-1255"
+    | "x-cp1255"
+    // windows-1256
+    | "cp1256"
+    | "windows-1256"
+    | "x-cp1256"
+    // windows-1257
+    | "cp1257"
+    | "windows-1257"
+    | "x-cp1257"
+    // windows-1258
+    | "cp1258"
+    | "windows-1258"
+    | "x-cp1258"
+    // x-mac-cyrillic
+    | "x-mac-cyrillic"
+    | "x-mac-ukrainian"
+    // gbk
+    | "chinese"
+    | "csgb2312"
+    | "csiso58gb231280"
+    | "gb2312"
+    | "gb_2312"
+    | "gb_2312-80"
+    | "gbk"
+    | "iso-ir-58"
+    | "x-gbk"
+    // gb18030
+    | "gb18030"
+    // big5
+    | "big5"
+    | "big5-hkscs"
+    | "cn-big5"
+    | "csbig5"
+    | "x-x-big5"
+    // euc-jp
+    | "cseucpkdfmtjapanese"
+    | "euc-jp"
+    | "x-euc-jp"
+    // iso-2022-jp
+    | "csiso2022jp"
+    | "iso-2022-jp"
+    // shift_jis
+    | "csshiftjis"
+    | "ms932"
+    | "ms_kanji"
+    | "shift-jis"
+    | "shift_jis"
+    | "sjis"
+    | "windows-31j"
+    | "x-sjis"
+    // euc-kr
+    | "cseuckr"
+    | "csksc56011987"
+    | "euc-kr"
+    | "iso-ir-149"
+    | "korean"
+    | "ks_c_5601-1987"
+    | "ks_c_5601-1989"
+    | "ksc5601"
+    | "ksc_5601"
+    | "windows-949"
+    // utf-16be
+    | "unicodefffe"
+    | "utf-16be"
+    // utf-16le
+    | "csunicode"
+    | "iso-10646-ucs-2"
+    | "ucs-2"
+    | "unicode"
+    | "unicodefeff"
+    | "utf-16"
+    | "utf-16le"
+    // x-user-defined
+    | "x-user-defined";
   type UncaughtExceptionOrigin = "uncaughtException" | "unhandledRejection";
   type MultipleResolveType = "resolve" | "reject";
   type BeforeExitListener = (code: number) => void;
@@ -1864,7 +2134,7 @@ declare module "bun" {
    */
   function write(
     destination: BunFile | S3File | PathLike,
-    input: Blob | NodeJS.TypedArray | ArrayBufferLike | string | BlobPart[] | Archive,
+    input: Blob | NodeJS.TypedArray | ArrayBufferLike | string | BlobPart[] | Archive | ReadableStream,
     options?: {
       /**
        * If writing to a PathLike, set the permissions of the file.
@@ -1882,19 +2152,20 @@ declare module "bun" {
   ): Promise<number>;
 
   /**
-   * Persist a {@link Response} body to disk.
+   * Persist a {@link Response} or {@link Request} body to disk. The body is
+   * streamed into the file as it arrives.
    *
    * @param destination The file to write to. If the file doesn't exist, it is
    * created; if it does, it is overwritten. If `input` is smaller than
    * `destination`, `destination` is truncated.
-   * @param input The `Response` whose body is written
+   * @param input The `Response` or `Request` whose body is written
    * @param options Options for the write
    *
    * @returns A promise that resolves with the number of bytes written.
    */
   function write(
     destination: BunFile,
-    input: Response,
+    input: Response | Request,
     options?: {
       /**
        * If `true`, create the parent directory if it doesn't exist.
@@ -1908,17 +2179,18 @@ declare module "bun" {
   ): Promise<number>;
 
   /**
-   * Persist a {@link Response} body to disk.
+   * Persist a {@link Response} or {@link Request} body to disk. The body is
+   * streamed into the file as it arrives.
    *
    * @param destinationPath The file path to write to. If the file doesn't
    * exist, it is created; if it does, it is overwritten. If `input` is
    * smaller than the existing file, the file is truncated.
-   * @param input The `Response` whose body is written
+   * @param input The `Response` or `Request` whose body is written
    * @returns A promise that resolves with the number of bytes written.
    */
   function write(
     destinationPath: PathLike,
-    input: Response,
+    input: Response | Request,
     options?: {
       /**
        * If `true`, create the parent directory if it doesn't exist.
@@ -2470,7 +2742,7 @@ declare module "bun" {
      * @param options - The options to use for the write.
      */
     write(
-      data: string | ArrayBufferView | ArrayBuffer | SharedArrayBuffer | Request | Response | BunFile,
+      data: string | ArrayBufferView | ArrayBuffer | SharedArrayBuffer | Request | Response | BunFile | ReadableStream,
       options?: { highWaterMark?: number },
     ): Promise<number>;
 
@@ -2903,6 +3175,45 @@ declare module "bun" {
     splitting?: boolean;
 
     /**
+     * With `splitting` and `target: "bun"`, every `require()` of a bundled ES
+     * module is a chunk boundary too. The call stays synchronous: it is
+     * emitted as `import.meta.require("./chunk-…js")` and the chunk is
+     * evaluated when the call runs, so a `require()` inside a function that
+     * never runs costs nothing at startup. Set to `false` to keep such
+     * modules inlined in the calling chunk. No effect for other targets.
+     *
+     * @default true
+     */
+    splitRequire?: boolean;
+
+    /**
+     * With `splitting`, chunks that are always loaded together are folded
+     * into one (for example, code shared by an entry point and a module it
+     * `import()`s lives in the entry point's chunk). This option additionally
+     * folds chunks whose combined source size is below this many bytes and
+     * whose modules have no top-level side effects into a chunk loaded by a
+     * superset of their importers, so fewer modules are loaded at runtime.
+     * Nothing lazy becomes eager and no side effect runs earlier; the chunk
+     * that absorbs a folded chunk exports the symbols other chunks import
+     * from it. Requires `splitting: true`. CLI: `--min-chunk-size`. For browser
+     * builds, where every chunk is a request, 16384 is a good value.
+     *
+     * @default 0 (disabled)
+     */
+    minChunkSize?: number;
+
+    /**
+     * With `splitting` and `target: "browser"`, HTML entrypoints get a
+     * `<link rel="modulepreload">` for every chunk their script statically
+     * imports, and each `import()` first adds one for every chunk its target
+     * statically imports, so a chunk's dependencies download in parallel
+     * instead of one import depth per round trip. CLI: `--no-module-preload`.
+     *
+     * @default true
+     */
+    modulePreload?: boolean;
+
+    /**
      * List of entrypoints, usually file paths
      */
     entrypoints: string[];
@@ -3046,6 +3357,19 @@ declare module "bun" {
     emitDCEAnnotations?: boolean;
 
     /**
+     * Give bundled module namespace objects (`import * as ns`, `export * as ns`)
+     * a setter per export, so assigning `ns.foo = value` is silently accepted
+     * (reads still return the module's binding) instead of throwing like a
+     * real module namespace object. When `false`, namespace objects are
+     * getter-only.
+     *
+     * @deprecated This exists for backwards compatibility and will be removed
+     * (behaving as `false`) in a future release.
+     * @default true
+     */
+    deprecatedNamespaceObjectSetters?: boolean;
+
+    /**
      * Whether to enable tree-shaking (removal of unreferenced top-level
      * declarations and unused exports). Defaults to `true`. Set to `false` to
      * keep dead code in the output for debugging or test fixtures.
@@ -3079,6 +3403,17 @@ declare module "bun" {
      * @default false
      */
     bytecode?: boolean;
+
+    /**
+     * How many levels of nested functions to compile to bytecode ahead of time.
+     * `0` compiles only each module's top-level code; nested functions past the
+     * limit are compiled from source when first called. Lower values make the
+     * bytecode smaller at the cost of some startup work.
+     *
+     * Must be a non-negative integer. Only used when `bytecode: true`.
+     * @default undefined (all nested functions)
+     */
+    bytecodeDepth?: number;
 
     /**
      * Add a banner to the bundled code such as "use client";
@@ -4739,6 +5074,26 @@ declare module "bun" {
      * Immediately terminates the connection
      */
     terminate(): void;
+
+    /**
+     * Stops reading from the underlying socket, so the peer sees TCP
+     * backpressure instead of the client buffering in memory. Messages
+     * already received may still be dispatched. A pause before the
+     * connection opens takes effect once it does.
+     * @returns `true` if the socket was paused (or will be on open), `false` if there is no socket to pause
+     */
+    pause(): boolean;
+
+    /**
+     * Resumes reading from the underlying socket after `pause()`.
+     * @returns `true` if the socket was resumed (or will be on open), `false` if there is no socket to resume
+     */
+    resume(): boolean;
+
+    /**
+     * Whether the connection is currently paused via `pause()`.
+     */
+    readonly isPaused: boolean;
 
     /**
      * Registers an event handler of a specific event type on the WebSocket.
@@ -9025,8 +9380,9 @@ declare module "bun" {
        * constructor returns; `await view.navigate(otherUrl)` or any other
        * operation waits for it to complete first.
        *
-       * Equivalent to calling `view.navigate(url)` immediately after
-       * construction.
+       * Starts the same navigation `view.navigate(url)` would, but its
+       * promise stays internal: a failure never surfaces as a rejection.
+       * Set {@link WebView.onNavigationFailed} to observe it.
        */
       url?: string;
       /** Capture page-side `console.*` calls. See {@link ConsoleCapture}. */
@@ -9347,6 +9703,11 @@ declare module "bun" {
     /**
      * Close the view and release its WebContent process. After close,
      * all methods throw. Idempotent.
+     *
+     * Pending operations reject with `Error("WebView closed")`. The
+     * rejections are marked as handled: a promise you hold still rejects
+     * catchably, but a pending operation nothing holds never triggers
+     * `unhandledRejection`.
      */
     close(): void;
 

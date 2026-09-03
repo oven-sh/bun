@@ -26,6 +26,12 @@ pub struct Entry {
     pub(crate) name: Box<[u8]>,
     pub(crate) version: Option<Box<[u8]>>,
     pub(crate) name_loc: bun_ast::Loc,
+    /// `"installConfig": { "hoistingLimits": "workspaces" }` — this workspace's
+    /// node_modules must be self-contained (see `Lockfile::self_contained_workspaces`).
+    pub(crate) hoisting_limits: bool,
+    /// An `installConfig.hoistingLimits` value other than "workspaces" or "none", kept so
+    /// the caller can warn about it (outside `process_names_array`'s log window).
+    pub(crate) unsupported_hoisting_limits: Option<Box<[u8]>>,
 }
 
 impl WorkspaceMap {
@@ -41,6 +47,30 @@ impl WorkspaceMap {
 
     pub(crate) fn values(&self) -> &[Entry] {
         self.map.values()
+    }
+
+    /// Mark the workspaces listed in the root manifest's `workspaces.selfContained`
+    /// (by relative path or by package name) as self-contained. Returns the entries
+    /// that matched no workspace, for the caller to warn about.
+    pub(crate) fn mark_self_contained<'l>(&mut self, list: &[&'l [u8]]) -> Vec<&'l [u8]> {
+        let keys: Vec<Box<[u8]>> = self.map.keys().to_vec();
+        let mut matched = vec![false; list.len()];
+        for (i, entry) in self.map.values_mut().iter_mut().enumerate() {
+            let path = strings::without_trailing_slash(&keys[i]);
+            for (j, item) in list.iter().enumerate() {
+                let item = strings::without_trailing_slash(item);
+                let item = item.strip_prefix(b"./").unwrap_or(item);
+                if item == path || item == &*entry.name {
+                    entry.hoisting_limits = true;
+                    matched[j] = true;
+                }
+            }
+        }
+        list.iter()
+            .zip(matched)
+            .filter(|(_, m)| !m)
+            .map(|(item, _)| *item)
+            .collect()
     }
 
     pub(crate) fn count(&self) -> usize {
@@ -67,6 +97,8 @@ impl WorkspaceMap {
             name: value.name,
             version: value.version,
             name_loc: value.name_loc,
+            hoisting_limits: value.hoisting_limits,
+            unsupported_hoisting_limits: value.unsupported_hoisting_limits,
         };
         Ok(())
     }
@@ -152,9 +184,27 @@ fn process_workspace_name(
         .as_string_cloned(&scratch)?
         .ok_or(crate::Error::MissingPackageName)?;
 
+    let hoisting_limits: Option<Box<[u8]>> = match workspace_json
+        .root
+        .get(b"installConfig")
+        .and_then(|c| c.get(b"hoistingLimits"))
+    {
+        Some(h) => Some(match h.as_string_cloned(&scratch)? {
+            Some(v) => Box::<[u8]>::from(v),
+            // present but not a string
+            None => Box::<[u8]>::from(&b"<non-string>"[..]),
+        }),
+        None => None,
+    };
     let entry = Entry {
         name: Box::<[u8]>::from(name),
         name_loc: name_expr.loc,
+        hoisting_limits: hoisting_limits.as_deref() == Some(b"workspaces".as_slice()),
+        unsupported_hoisting_limits: match hoisting_limits {
+            // "none" is yarn's default: no limit, which is how every workspace hoists
+            Some(v) if !matches!(&*v, b"workspaces" | b"none") => Some(v),
+            _ => None,
+        },
         version: 'brk: {
             if let Some(version_expr) = workspace_json.root.get(b"version") {
                 if let Some(version) = version_expr.as_string_cloned(&scratch)? {
@@ -354,6 +404,8 @@ impl WorkspaceMap {
                     name: workspace_entry.name,
                     name_loc: workspace_entry.name_loc,
                     version: workspace_entry.version,
+                    hoisting_limits: workspace_entry.hoisting_limits,
+                    unsupported_hoisting_limits: workspace_entry.unsupported_hoisting_limits,
                 },
             )?;
         }
@@ -402,7 +454,7 @@ impl WorkspaceMap {
                             loc,
                             "Failed to run workspace pattern <b>{}<r> due to error <b>{}<r>",
                             BStr::new(user_pattern),
-                            <&'static str>::from(e.get_errno()),
+                            BStr::new(e.name()),
                         );
                         return Err(crate::Error::GlobError);
                     }
@@ -418,7 +470,7 @@ impl WorkspaceMap {
                         loc,
                         "Failed to run workspace pattern <b>{}<r> due to error <b>{}<r>",
                         BStr::new(user_pattern),
-                        <&'static str>::from(e.get_errno()),
+                        BStr::new(e.name()),
                     );
                     return Err(crate::Error::GlobError);
                 }
@@ -434,7 +486,7 @@ impl WorkspaceMap {
                                 loc,
                                 "Failed to run workspace pattern <b>{}<r> due to error <b>{}<r>",
                                 BStr::new(user_pattern),
-                                <&'static str>::from(e.get_errno()),
+                                BStr::new(e.name()),
                             );
                             return Err(crate::Error::GlobError);
                         }
@@ -548,6 +600,9 @@ impl WorkspaceMap {
                             name: workspace_entry.name,
                             version: workspace_entry.version,
                             name_loc: workspace_entry.name_loc,
+                            hoisting_limits: workspace_entry.hoisting_limits,
+                            unsupported_hoisting_limits: workspace_entry
+                                .unsupported_hoisting_limits,
                         },
                     )?;
                 }

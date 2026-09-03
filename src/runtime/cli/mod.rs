@@ -4,8 +4,6 @@
 //! against lower-tier crates. `Command::start()` (full dispatch) and
 //! per-command exec bodies live in the sibling `*_command.rs` modules.
 
-use core::cell::Cell;
-
 use bun_core::strings;
 use bun_core::{self as bun, Global, Output};
 use bun_core::{pretty, pretty_error, pretty_errorln};
@@ -356,6 +354,12 @@ pub mod pack_command;
 pub(crate) mod patch_command;
 #[path = "patch_commit_command.rs"]
 pub(crate) mod patch_commit_command;
+#[path = "pm_diff_command.rs"]
+pub mod pm_diff_command;
+pub mod pm_diff_normalize;
+pub mod pm_diff_profile;
+pub mod pm_diff_relayout;
+pub mod pm_diff_semantic;
 #[path = "pm_licenses_command.rs"]
 pub(crate) mod pm_licenses_command;
 #[path = "pm_pkg_command.rs"]
@@ -489,10 +493,6 @@ fn cli_dupe_z(s: &[u8]) -> *const core::ffi::c_char {
     buf.as_ptr().cast::<core::ffi::c_char>()
 }
 
-thread_local! {
-    pub(crate) static IS_MAIN_THREAD: Cell<bool> = const { Cell::new(false) };
-}
-
 /// This is set `true` during `Command.which()` if argv0 is "node", in which the CLI is going
 /// to pretend to be node.js by always choosing RunCommand with a relative filepath.
 ///
@@ -539,7 +539,7 @@ pub mod cli {
         bun_core::RacyCell::new(core::mem::MaybeUninit::uninit());
 
     /// `#[inline(never)]`: this is the first Rust call after `main()` (see
-    /// `src/bun_bin/lib.rs`) and the head of the `bun <file>` / `bun run`
+    /// `src/runtime/bin_entry/mod.rs`) and the head of the `bun <file>` / `bun run`
     /// startup chain. It must stay a concrete symbol so lld's
     /// `--symbol-ordering-file` (`src/startup.order`) can cluster it — and the
     /// callees it walks (`Command::start` → `which` → `create_context_data` →
@@ -549,12 +549,8 @@ pub mod cli {
     /// shared with bundler/install/css/panic-format bodies.
     #[inline(never)]
     pub fn start() {
-        IS_MAIN_THREAD.with(|c| c.set(true));
-        // Mirror the threadlocal into the crash-handler crate's global so
         // `bun_crash_handler::cli_state::is_main_thread()` (used to print the
-        // `panic(main thread): …` header) returns true on this thread. The
-        // crash handler lives in a lower tier and can't read `IS_MAIN_THREAD`
-        // directly, so it compares against a stored OS tid instead.
+        // `panic(main thread): …` header) compares against a stored OS tid.
         bun_crash_handler::cli_state::set_main_thread_id(bun_threading::current_thread_id());
         bun_core::set_start_time(bun_core::time::nano_timestamp());
         // SAFETY: single-threaded process startup
@@ -566,7 +562,7 @@ pub mod cli {
         // SAFETY: single-threaded process startup; `mimalloc` is already init.
         unsafe { (*super::CLI_ARENA.get()).write(bun_alloc::Arena::new()) };
 
-        // (The panic hook is installed by `bun_crash_handler::init()` in bun_bin.)
+        // (The panic hook is installed by `bun_crash_handler::init()` in `bin_entry::main`.)
         // SAFETY: just initialized above; single-threaded for the lifetime of `log`.
         let log = unsafe { (*LOG_.get()).assume_init_mut() };
         if let Err(err) = Command::start(log) {
@@ -578,7 +574,7 @@ pub mod cli {
             let _ = log.print(std::ptr::from_mut::<bun_core::io::Writer>(
                 bun_core::Output::error_writer(),
             ));
-            bun_crash_handler::handle_root_error(err, None);
+            bun_crash_handler::handle_root_error(err);
         }
     }
 }
@@ -785,8 +781,6 @@ pub use reserved_command as ReservedCommand;
 // ─── Command (Tag + which() + dispatch skeleton) ─────────────────────────────
 pub mod command {
     use super::*;
-    // Self-referential alias so `crate::command::Command` resolves.
-    pub use super::Command;
 
     /// Collect `bun::argv()` into an indexable slice of `&'static ZStr`.
     /// `Argv` only exposes `.get(i)` / `.iter() -> &[u8]`; several call
@@ -1349,7 +1343,7 @@ pub mod command {
         let offset_for_passthrough: usize;
 
         let ctx: &mut ContextData = 'brk: {
-            // The entry point (`bun_bin::main`) defers argv
+            // The entry point (`bin_entry::main`) defers argv
             // init to `bun_core::argv()`'s lazy `Once`, so force that init
             // now — otherwise `bun_options_argc()` reads 0 here and the
             // standalone executable silently drops `BUN_OPTIONS` flags.

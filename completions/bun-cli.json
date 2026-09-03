@@ -1903,7 +1903,7 @@
         },
         {
           "name": "linker",
-          "description": "Prune a node_modules installed with the given linker (one of \"isolated\" or \"hoisted\")",
+          "description": "Linker to assume when node_modules mixes isolated and hoisted installs (one of \"isolated\" or \"hoisted\")",
           "hasValue": true,
           "valueType": "val",
           "required": false,
@@ -4370,7 +4370,14 @@
     },
     {
       "name": "no-addons",
-      "description": "Throw an error if process.dlopen is called, and disable export condition \"node-addons\"",
+      "description": "Throw an error if process.dlopen or bun:ffi cc() is called, and disable export condition \"node-addons\"",
+      "hasValue": false,
+      "required": false,
+      "multiple": false
+    },
+    {
+      "name": "no-ffi-cc",
+      "description": "Throw an error if bun:ffi cc() is called (disables the C compiler)",
       "hasValue": false,
       "required": false,
       "multiple": false

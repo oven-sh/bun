@@ -29,6 +29,32 @@ describe("FFI viewSource", () => {
     expect((err as TypeError).message).toContain("bogus_type");
   });
 
+  // Reading the descriptors can run user code; what it throws is what the
+  // caller sees, and a rejected descriptor is never mistaken for source.
+  test.each(["args", "returns"])("rethrows what a %s getter throws", property => {
+    const boom = new Error(`boom from ${property}`);
+    const descriptor = { args: ["i32"], returns: "i32" } as Record<string, unknown>;
+    Object.defineProperty(descriptor, property, {
+      get() {
+        throw boom;
+      },
+    });
+    expect(thrown(() => viewSource({ foo: descriptor as any }))).toBe(boom);
+    expect(thrown(() => viewSource({ ok: { args: [], returns: "void" }, foo: descriptor as any }))).toBe(boom);
+  });
+
+  test("rethrows what a symbols getter throws", () => {
+    const boom = new Error("boom from symbols");
+    const symbols = {};
+    Object.defineProperty(symbols, "foo", {
+      enumerable: true,
+      get() {
+        throw boom;
+      },
+    });
+    expect(thrown(() => viewSource(symbols as any))).toBe(boom);
+  });
+
   test.each([null, undefined, 42])("throws on non-object options argument %p", value => {
     const err = thrown(() => viewSource(value as any));
     expect(err).toBeInstanceOf(TypeError);

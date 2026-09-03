@@ -889,6 +889,52 @@ describe("Bun.Image", () => {
     }
   });
 
+  // Fixtures are 64×48 gradients whose pixel formula is asserted below.
+  describe.skipIf(!isMacOS)("HEIC decode via ImageIO", () => {
+    const fixture = (name: string) => join(import.meta.dir, "fixtures", name);
+    async function gradientError(name: string, pixelOf: (x: number, y: number) => [number, number, number]) {
+      const { w, h, data } = decodePngRaw(await new Bun.Image(fixture(name)).png().bytes());
+      expect([w, h]).toEqual([64, 48]);
+      let sum = 0;
+      for (let y = 0; y < h; y++)
+        for (let x = 0; x < w; x++) {
+          const i = (y * w + x) * 4;
+          const [r, g, b] = pixelOf(x, y);
+          sum += Math.abs(data[i] - r) + Math.abs(data[i + 1] - g) + Math.abs(data[i + 2] - b);
+        }
+      return sum / (w * h * 3);
+    }
+
+    test("8-bit HEIC decodes to the source gradient", async () => {
+      expect(await new Bun.Image(fixture("gradient-8bit.heic")).metadata()).toMatchObject({
+        width: 64,
+        height: 48,
+        format: "heic",
+      });
+      expect(await gradientError("gradient-8bit.heic", (x, y) => [x * 4, y * 5, 128])).toBeLessThan(4);
+    });
+
+    test("10-bit HEIC decodes to the source gradient", async () => {
+      // Encoded from a 16-bit source, so ImageIO hands back a packed 10-bit CGImage that vImage cannot convert.
+      expect(
+        await gradientError("gradient-10bit.heic", (x, y) => [
+          Math.floor((x * 255) / 64),
+          Math.floor((y * 255) / 48),
+          128,
+        ]),
+      ).toBeLessThan(4);
+    });
+
+    test("HEIC with an undecodable HEVC payload rejects instead of returning black pixels", async () => {
+      // The 8-bit fixture with its mdat scrambled: the container parses, the HEVC decode fails.
+      const img = new Bun.Image(fixture("gradient-corrupt-hevc.heic"));
+      expect(await img.metadata()).toMatchObject({ width: 64, height: 48, format: "heic" });
+      await expect(new Bun.Image(fixture("gradient-corrupt-hevc.heic")).png().bytes()).rejects.toMatchObject({
+        code: "ERR_IMAGE_DECODE_FAILED",
+      });
+    });
+  });
+
   // @intFromFloat on NaN/Inf is UB; these used to abort the process.
   test("non-finite / huge numeric inputs are clamped by coerceInt", async () => {
     // rotate: coerceInt clamps to ±1e15, neither of which is a multiple of 90,
@@ -1044,6 +1090,31 @@ describe("Bun.Image", () => {
       expect((await out3.bytes())[0]).toBe(0x89);
       // 4. fs error propagates from Bun.write, not the Image layer.
       await expect(new Bun.Image(cornersPng).png().write(String(dir))).rejects.toThrow();
+    });
+
+    test(".write(dest) refuses the Blob destinations Bun.write refuses, with the same error", async () => {
+      using dir = tempDir("image-write-blob-dest", { "src.png": Buffer.from(cornersPng) });
+      const caught = async (fn: () => unknown): Promise<any> => {
+        try {
+          await fn();
+        } catch (e) {
+          return e;
+        }
+        throw new Error("did not throw or reject");
+      };
+      const errorShape = (e: any) => ({ name: e.name, code: e.code, message: e.message });
+      // A Blob backed by bytes and a Blob with no store at all. Bun.write()
+      // throws for both; .write() used to hand them to the file write path
+      // unchecked, which aborted the process for the byte-backed one.
+      for (const dest of [new Blob(["not a file"]), new Blob([])] as any[]) {
+        const expected = await caught(() => Bun.write(dest, "x"));
+        // An in-memory source and a Bun.file() source enter the pipeline
+        // through different schedulers; both deliver to the same write step.
+        for (const source of [cornersPng, Bun.file(join(String(dir), "src.png"))]) {
+          const actual = await caught(() => new Bun.Image(source).png().write(dest));
+          expect(errorShape(actual)).toEqual(errorShape(expected));
+        }
+      }
     });
 
     test(".toBase64() produces valid base64", async () => {

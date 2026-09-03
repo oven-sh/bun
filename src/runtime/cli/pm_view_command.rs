@@ -129,7 +129,6 @@ pub(crate) fn view(
         header_buf,
         b"",
         http_proxy,
-        None,
         http::FetchRedirect::Follow,
     );
     req.client.flags.reject_unauthorized = manager.tls_reject_unauthorized();
@@ -207,11 +206,7 @@ pub(crate) fn view(
                         // Parse as semver query and find best version
                         let sliced_literal = Semver::SlicedString::init(version, version);
                         let query = Semver::query::parse(version, sliced_literal)?;
-                        // `defer query.deinit()` — handled by Drop
-                        // Use the same pattern as outdated_command: findBestVersion(query.head, string_buf)
-                        if let Some(result) =
-                            parsed_manifest.find_best_version(&query, &parsed_manifest.string_buf)
-                        {
+                        if let Some(result) = parsed_manifest.find_best_version(&query, version) {
                             break 'brk2 result.version;
                         }
                     }

@@ -1,6 +1,7 @@
 use crate::lockfile::package::PackageColumns as _;
 use bun_ptr::detach_lifetime;
 use core::mem::ManuallyDrop;
+use core::ptr::NonNull;
 use core::sync::atomic::Ordering;
 
 use crate::bun_fs::FileSystem;
@@ -15,6 +16,7 @@ use crate::_folder_resolver::{
     self as FolderResolution, FolderResolution as FolderResolutionValue, GlobalOrRelative,
     PackageWorkspaceSearchPathFormatter,
 };
+use crate::dependency;
 use crate::dependency::{DependencyExt as _, TagExt as _, VersionExt as _};
 use crate::lockfile::PackageIndexEntry;
 use crate::lockfile::package::Package;
@@ -26,11 +28,9 @@ use crate::package_manager_real::{
 };
 use crate::package_manager_task as Task;
 use crate::patch_install::EnqueueAfterState;
-use crate::repository_real::RepositoryExt as _;
 use crate::resolution::{
     NpmVersionInfo as ResolutionNpmValue, Tag as ResolutionTag, TaggedValue as ResolutionTagged,
 };
-use crate::{ManifestLoad, dependency};
 use bun_install::NetworkTask;
 use bun_install::{
     self as install, Behavior, Dependency, DependencyID, ExtractTarball, Features, Integrity, Npm,
@@ -158,6 +158,18 @@ pub fn enqueue_tarball_for_download(
     if this.network_task_has_failed(task_id) {
         return Err(EnqueueTarballForDownloadError::AlreadyFailed);
     }
+    if this.options.offline == crate::package_manager_real::options::OfflineMode::Offline {
+        let is_required = this.lockfile.buffers.dependencies[dependency_id as usize]
+            .behavior
+            .is_required();
+        let name = this
+            .lockfile
+            .str(&this.lockfile.packages.get(package_id as usize).name)
+            .to_vec();
+        if offline_tarball_miss(this, task_id, &name, is_required) {
+            return Err(EnqueueTarballForDownloadError::Offline);
+        }
+    }
     let task_queue = this.task_queue.get_or_put(task_id)?;
     if !task_queue.found_existing {
         *task_queue.value_ptr = TaskCallbackList::default();
@@ -239,6 +251,16 @@ pub fn enqueue_tarball_for_reading(
     this.task_batch.push(ThreadPool::Batch::from(task));
 }
 
+/// Outcome of `enqueue_git_for_checkout`.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum GitEnqueueResult {
+    /// a task was queued (or joined an existing one); completion arrives via the task queue
+    Queued,
+    /// `--offline` and the repository is not cached: nothing was queued (already reported
+    /// if required); the caller must count the package as failed/skipped itself
+    OfflineMiss,
+}
+
 pub fn enqueue_git_for_checkout(
     this: &mut PackageManager,
     dependency_id: DependencyID,
@@ -246,7 +268,7 @@ pub fn enqueue_git_for_checkout(
     resolution: &Resolution,
     task_context: TaskCallbackContext,
     patch_name_and_version_hash: Option<u64>,
-) {
+) -> GitEnqueueResult {
     // SAFETY: caller passes `resolution.tag == Git`; the `git` arm is the
     // active union field. Copy out so the value no longer borrows
     // `*resolution` while `*this` is mutably reborrowed below.
@@ -261,6 +283,16 @@ pub fn enqueue_git_for_checkout(
     let clone_id = Task::Id::for_git_clone(url);
     let resolved = this.lockfile.str_detached(&repository.resolved);
     let checkout_id = Task::Id::for_git_checkout(url, resolved);
+    // --offline: decide before any queue registration, so an optional miss leaves
+    // nothing behind and a later required edge still reaches the report
+    if this.git_repositories.get(&clone_id).is_none() {
+        let is_required = this.lockfile.buffers.dependencies[dependency_id as usize]
+            .behavior
+            .is_required();
+        if offline_git_miss(this, clone_id, alias, is_required) {
+            return GitEnqueueResult::OfflineMiss;
+        }
+    }
     let checkout_queue = this
         .task_queue
         .get_or_put(checkout_id)
@@ -272,7 +304,7 @@ pub fn enqueue_git_for_checkout(
     checkout_queue.value_ptr.push(task_context);
 
     if checkout_queue.found_existing {
-        return;
+        return GitEnqueueResult::Queued;
     }
 
     if let Some(repo_fd) = this.git_repositories.get(&clone_id).copied() {
@@ -286,7 +318,7 @@ pub fn enqueue_git_for_checkout(
             resolved,
             patch_name_and_version_hash,
         );
-        this.task_batch.push(ThreadPool::Batch::from(task));
+        this.enqueue_git_task(task);
     } else {
         let clone_queue = this.task_queue.get_or_put(clone_id).expect("unreachable");
         if !clone_queue.found_existing {
@@ -298,13 +330,90 @@ pub fn enqueue_git_for_checkout(
             .push(TaskCallbackContext::Dependency(dependency_id));
 
         if clone_queue.found_existing {
-            return;
+            return GitEnqueueResult::Queued;
         }
 
         let dep = this.lockfile.buffers.dependencies[dependency_id as usize].clone();
         let task = enqueue_git_clone(this, clone_id, alias, &repository, &dep, resolution, None);
-        this.task_batch.push(ThreadPool::Batch::from(task));
+        this.enqueue_git_task(task);
     }
+    GitEnqueueResult::Queued
+}
+
+/// Under `--offline`, an install-phase request for a package that is not in the cache
+/// (these helpers are only reached after the cache lookup missed): report it once if
+/// required, skip if optional, and never register a task nobody will complete.
+fn offline_tarball_miss(
+    this: &mut PackageManager,
+    task_id: Task::Id,
+    name: &[u8],
+    is_required: bool,
+) -> bool {
+    if this.options.offline != crate::package_manager_real::options::OfflineMode::Offline {
+        return false;
+    }
+    if is_required && !this.network_task_has_failed(task_id) {
+        // reserve + mark failed so later dependents take the already-failed path
+        let _ = this.has_created_network_task(task_id, true);
+        this.mark_network_task_failed(task_id);
+        let _ = this.log_mut().add_error_fmt(
+            None,
+            bun_ast::Loc::EMPTY,
+            format_args!(
+                "--offline: \"{}\" is not in the cache",
+                bstr::BStr::new(name)
+            ),
+        );
+    }
+    true
+}
+
+/// Under `--offline`, a git dependency whose clone is not already in the cache cannot
+/// be installed: report it (once, and only if some edge requires it) instead of
+/// spawning `git`. Returns true when the clone must not be enqueued.
+fn offline_git_miss(
+    this: &mut PackageManager,
+    clone_id: Task::Id,
+    name: &[u8],
+    is_required: bool,
+) -> bool {
+    if this.options.offline != crate::package_manager_real::options::OfflineMode::Offline {
+        return false;
+    }
+    let mut folder = Vec::with_capacity(24);
+    {
+        use std::io::Write;
+        let _ = write!(
+            folder,
+            "{}.git",
+            bun_core::fmt::hex_int_lower::<16>(clone_id.get())
+        );
+    }
+    let cache_dir = package_manager_real::get_cache_directory(this);
+    let cached = bun_sys::directory_exists_at(cache_dir, &bun_core::ZBox::from_bytes(&folder))
+        .unwrap_or(false);
+    if cached {
+        return false;
+    }
+    if is_required {
+        if !this.network_task_has_failed(clone_id) {
+            // reserve + mark failed: reported once, later dependents see the failure
+            let _ = this.has_created_network_task(clone_id, true);
+            this.mark_network_task_failed(clone_id);
+            let _ = this.log_mut().add_error_fmt(
+                None,
+                bun_ast::Loc::EMPTY,
+                format_args!(
+                    "--offline: git repository for \"{}\" is not in the cache",
+                    bstr::BStr::new(name)
+                ),
+            );
+        }
+    } else {
+        // let a later required edge on the same repository report it
+        let _ = this.network_dedupe_map.remove(&clone_id);
+    }
+    true
 }
 
 /// # Safety
@@ -356,6 +465,14 @@ pub fn enqueue_package_for_download(
     let task_id = Task::Id::for_npm_package(name, version);
     if this.network_task_has_failed(task_id) {
         return Err(EnqueuePackageForDownloadError::AlreadyFailed);
+    }
+    {
+        let is_required = this.lockfile.buffers.dependencies[dependency_id as usize]
+            .behavior
+            .is_required();
+        if offline_tarball_miss(this, task_id, name, is_required) {
+            return Err(EnqueuePackageForDownloadError::Offline);
+        }
     }
     let task_queue = this.task_queue.get_or_put(task_id)?;
     if !task_queue.found_existing {
@@ -479,6 +596,10 @@ pub fn enqueue_dependency_to_root(
                 // raw `*mut` — `sleep_until`
                 // also receives this pointer, so `&mut` here would alias.
                 manager: *mut PackageManager,
+                // `sleep_until` ticks the JS event loop, and JS run there can
+                // swap `manager.log` and leave it pointing at a dead stack
+                // `Log`. `is_done` re-asserts this snapshot before each poll.
+                log: *mut bun_ast::Log,
             }
             impl Closure {
                 fn is_done(&mut self) -> bool {
@@ -486,6 +607,7 @@ pub fn enqueue_dependency_to_root(
                     // below; `sleep_until`/`tick_raw` hold no `&mut` across
                     // this callback, so this is the unique live borrow.
                     let manager = unsafe { &mut *self.manager };
+                    manager.log = self.log;
                     if manager.pending_task_count() > 0 {
                         // All callbacks void: `VoidRunTasksCallbacks` (below)
                         // has `Ctx = ()` and every `HAS_* = false`.
@@ -522,6 +644,7 @@ pub fn enqueue_dependency_to_root(
             let mut closure = Closure {
                 err: None,
                 manager: mgr,
+                log: this.log,
             };
             // SAFETY: `mgr` derived from the live exclusive `this` borrow;
             // `sleep_until` + `tick_raw` hold no `&mut PackageManager` across
@@ -1042,7 +1165,6 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                                             &name_str,
                                             name_hash,
                                             Some(&mut expired),
-                                            ManifestLoad::LoadFromMemoryFallbackToDisk,
                                             needs_extended_manifest,
                                         )
                                     } {
@@ -1129,12 +1251,43 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                                         }
 
                                         // Was it recent enough to just load it without the network call?
-                                        if this.options.enable.manifest_cache_control() && !expired
+                                        // (`--prefer-offline` / `--offline` load cached manifests as fresh
+                                        // regardless of age — see `DiskCacheCtx::accept_expired` — so they
+                                        // take this branch too; an entry still marked expired here needs
+                                        // the extended manifest and must be fetched.)
+                                        if !expired
+                                            && (this.options.enable.manifest_cache_control()
+                                                || this.options.offline
+                                                    != crate::package_manager_real::options::OfflineMode::Online)
                                         {
                                             let _ = this.network_dedupe_map.remove(&task_id);
                                             continue 'retry_from_manifests_ptr;
                                         }
                                     }
+                                }
+
+                                if this.options.offline
+                                    == crate::package_manager_real::options::OfflineMode::Offline
+                                {
+                                    // Optional/peer edges are skipped like any other unavailable
+                                    // optional dependency (and release the reservation so a later
+                                    // *required* edge on the same package still reports it); a
+                                    // required edge reports once and marks the task failed so
+                                    // later dependents take the already-failed path.
+                                    if dependency.behavior.is_required() {
+                                        this.mark_network_task_failed(task_id);
+                                        let _ = this.log_mut().add_error_fmt(
+                                            None,
+                                            bun_ast::Loc::EMPTY,
+                                            format_args!(
+                                                "--offline: no cached manifest for \"{}\" (run once online, or use --prefer-offline)",
+                                                bstr::BStr::new(&name_str),
+                                            ),
+                                        );
+                                    } else {
+                                        let _ = this.network_dedupe_map.remove(&task_id);
+                                    }
+                                    return Ok(());
                                 }
 
                                 if verbose_install() {
@@ -1248,14 +1401,42 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                 };
                 let resolved = match pinned {
                     Some(resolved) => resolved,
-                    None => Repository::find_commit(
-                        this.env_mut(),
-                        this.log_mut(),
-                        repo_fd,
-                        alias,
-                        this.lockfile.str(&dep.committish),
-                        clone_id,
-                    )?,
+                    None => {
+                        // Waits on a `git log` task; `run_tasks` fills `git_commits` and re-enters here.
+                        let committish = this.lockfile.str_detached(&dep.committish);
+                        let commit_id = Task::Id::for_git_commit(url, committish);
+                        match this.git_commits.get(&commit_id) {
+                            Some(resolved) => resolved.clone(),
+                            None => {
+                                let entry = this
+                                    .task_queue
+                                    .get_or_put_context(commit_id, ())
+                                    .expect("unreachable");
+                                if !entry.found_existing {
+                                    *entry.value_ptr = TaskCallbackList::default();
+                                }
+                                entry.value_ptr.push(ctx);
+
+                                if dependency.behavior.is_peer() && !install_peer {
+                                    this.peer_dependencies.write_item(id)?;
+                                    return Ok(());
+                                }
+
+                                if this.has_created_network_task(
+                                    commit_id,
+                                    dependency.behavior.is_required(),
+                                ) {
+                                    return Ok(());
+                                }
+
+                                let task = enqueue_git_commit(
+                                    this, commit_id, clone_id, alias, url, committish,
+                                );
+                                this.enqueue_git_task(task);
+                                return Ok(());
+                            }
+                        }
+                    }
                 };
                 let checkout_id = Task::Id::for_git_checkout(url, &resolved);
 
@@ -1298,7 +1479,7 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                     &resolved,
                     None,
                 );
-                this.task_batch.push(ThreadPool::Batch::from(task));
+                this.enqueue_git_task(task);
             } else {
                 let entry = this
                     .task_queue
@@ -1319,9 +1500,12 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                 if this.has_created_network_task(clone_id, dependency.behavior.is_required()) {
                     return Ok(());
                 }
+                if offline_git_miss(this, clone_id, alias, dependency.behavior.is_required()) {
+                    return Ok(());
+                }
 
                 let task = enqueue_git_clone(this, clone_id, alias, &dep, dependency, &res, None);
-                this.task_batch.push(ThreadPool::Batch::from(task));
+                this.enqueue_git_task(task);
             }
             Ok(())
         }
@@ -1384,7 +1568,7 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                 }
             }
 
-            if let Some(network_task) = run_tasks::generate_network_task_for_tarball(
+            let generated = match run_tasks::generate_network_task_for_tarball(
                 this,
                 task_id,
                 &url,
@@ -1398,7 +1582,12 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                 },
                 None,
                 crate::network_task::Authorization::NoAuthorization,
-            )? {
+            ) {
+                // --offline miss: already reported (if required) / skipped (if optional)
+                Err(crate::network_task::ForTarballError::Offline) => return Ok(()),
+                other => other?,
+            };
+            if let Some(network_task) = generated {
                 // reshaped for borrowck — see `enqueue_tarball_for_download`.
                 let nt: *mut NetworkTask = network_task;
                 enqueue_network_task(this, nt);
@@ -1615,7 +1804,7 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                     // immediately so the `&mut *this` borrow ends before
                     // `enqueue_network_task(this, …)` reborrows it (NLL).
                     let network_task: Option<*mut NetworkTask> =
-                        run_tasks::generate_network_task_for_tarball(
+                        match run_tasks::generate_network_task_for_tarball(
                             this,
                             task_id,
                             url,
@@ -1629,8 +1818,11 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                             },
                             None,
                             crate::network_task::Authorization::NoAuthorization,
-                        )?
-                        .map(std::ptr::from_mut::<NetworkTask>);
+                        ) {
+                            // --offline miss: already reported / skipped
+                            Err(crate::network_task::ForTarballError::Offline) => return Ok(()),
+                            other => other?.map(std::ptr::from_mut::<NetworkTask>),
+                        };
                     if let Some(network_task) = network_task {
                         enqueue_network_task(this, network_task);
                     }
@@ -1735,7 +1927,7 @@ fn enqueue_git_clone(
     res: &Resolution,
     // if patched then we need to do apply step after network task is done
     patch_name_and_version_hash: Option<u64>,
-) -> *mut ThreadPool::Task {
+) -> NonNull<Task::Task<'static>> {
     // Build the `Task` value *before* claiming a hive slot. Several initializers
     // below (`.expect()`, `.unwrap()`, `panic!`) can unwind; doing them with the
     // slot already claimed would leave a claimed-but-uninit `Task` (which carries
@@ -1774,7 +1966,6 @@ fn enqueue_git_clone(
                     &mut crate::network_task::filename_store_appender(),
                 )
                 .expect("unreachable"),
-                env: crate::repository::SharedEnv::get(this.env_mut()),
                 res: *res,
             }),
         },
@@ -1798,9 +1989,46 @@ fn enqueue_git_clone(
         },
         ..Task::uninit()
     };
-    let task = this.preallocated_resolve_tasks.get_init(value).as_ptr();
-    // SAFETY: `get_init` just fully initialized the slot.
-    unsafe { &raw mut (*task).threadpool_task }
+    this.preallocated_resolve_tasks.get_init(value)
+}
+
+/// `git log`: resolves `committish` in the bare repository of `clone_id`.
+fn enqueue_git_commit(
+    this: &mut PackageManager,
+    task_id: Task::Id,
+    clone_id: Task::Id,
+    name: &[u8],
+    url: &[u8],
+    committish: &[u8],
+) -> NonNull<Task::Task<'static>> {
+    let value = Task::Task {
+        package_manager: Some(bun_ptr::ParentRef::from_ref_mut(&mut *this)),
+        log: bun_ast::Log::init(),
+        tag: crate::package_manager_task::Tag::GitCommit,
+        request: crate::package_manager_task::Request {
+            git_commit: ManuallyDrop::new(crate::package_manager_task::GitCommitRequest {
+                clone_id,
+                name: StringOrTinyString::init_append_if_needed(
+                    name,
+                    &mut crate::network_task::filename_store_appender(),
+                )
+                .expect("unreachable"),
+                url: StringOrTinyString::init_append_if_needed(
+                    url,
+                    &mut crate::network_task::filename_store_appender(),
+                )
+                .expect("unreachable"),
+                committish: StringOrTinyString::init_append_if_needed(
+                    committish,
+                    &mut crate::network_task::filename_store_appender(),
+                )
+                .expect("unreachable"),
+            }),
+        },
+        id: task_id,
+        ..Task::uninit()
+    };
+    this.preallocated_resolve_tasks.get_init(value)
 }
 
 pub fn enqueue_git_checkout(
@@ -1813,7 +2041,7 @@ pub fn enqueue_git_checkout(
     resolved: &[u8],
     // if patched then we need to do apply step after network task is done
     patch_name_and_version_hash: Option<u64>,
-) -> *mut ThreadPool::Task {
+) -> NonNull<Task::Task<'static>> {
     // The patched-dependency entry can be missing (or its hash not yet
     // computed) when install state went stale — e.g. the patch was removed
     // from package.json, leaving the hash only in
@@ -1857,7 +2085,6 @@ pub fn enqueue_git_checkout(
                         &mut crate::network_task::filename_store_appender(),
                     )
                     .expect("unreachable"),
-                    env: crate::repository::SharedEnv::get(this.env_mut()),
                 }),
             },
             apply_patch_task: if let Some((h, patch_hash)) = patch {
@@ -1882,9 +2109,7 @@ pub fn enqueue_git_checkout(
             ..Task::uninit()
         }
     };
-    let task = this.preallocated_resolve_tasks.get_init(task_value);
-    // SAFETY: `task` points to a freshly initialized pool slot.
-    unsafe { &raw mut (*task.as_ptr()).threadpool_task }
+    this.preallocated_resolve_tasks.get_init(task_value)
 }
 
 fn enqueue_local_tarball(
@@ -1903,31 +2128,18 @@ fn enqueue_local_tarball(
     // other dependencies (e.g. `appendPackage` / `StringBuilder.allocate`
     // in `Package.fromNPM`).
     let mut abs_buf = PathBuffer::uninit();
-    let (tarball_path, normalize): (&[u8], bool) = 'tarball_path: {
-        let workspace_pkg_id = this
-            .lockfile
-            .get_workspace_pkg_if_workspace_dep(dependency_id);
-        if workspace_pkg_id == invalid_package_id {
-            break 'tarball_path (path, true);
-        }
-
-        let workspace_res = this.lockfile.packages.items_resolution()[workspace_pkg_id as usize];
-        if workspace_res.tag != ResolutionTag::Workspace {
-            break 'tarball_path (path, true);
-        }
-
-        // Construct an absolute path to the tarball.
-        // Normally tarball paths are always relative to the root directory, but if a
-        // workspace depends on a tarball path, it should be relative to the workspace.
-        let workspace_str = *workspace_res.workspace();
-        let workspace_path = workspace_str.slice(this.lockfile.buffers.string_bytes.as_slice());
-        let joined = Path::resolve_path::join_abs_string_buf::<Path::platform::Auto>(
-            FileSystem::instance().top_level_dir(),
-            &mut abs_buf,
-            &[workspace_path, path],
-        );
-        break 'tarball_path (joined, false);
-    };
+    let (tarball_path, normalize): (&[u8], bool) =
+        match local_tarball_base_dir(&this.lockfile, dependency_id, path) {
+            None => (path, true),
+            Some(base_dir) => (
+                Path::resolve_path::join_abs_string_buf::<Path::platform::Auto>(
+                    FileSystem::instance().top_level_dir(),
+                    &mut abs_buf,
+                    &[base_dir, path],
+                ),
+                false,
+            ),
+        };
 
     // Build the `Task` value *before* claiming a hive slot — the `.expect()`s
     // below can unwind, and `Task` carries drop glue. See `enqueue_git_clone`.
@@ -1961,6 +2173,7 @@ fn enqueue_local_tarball(
                     .expect("unreachable"),
                     skip_verify: false,
                     in_trusted_dependencies: false,
+                    github_resolved: StringOrTinyString::init(b""),
                 },
                 tarball_path: StringOrTinyString::init_append_if_needed(
                     tarball_path,
@@ -1976,6 +2189,33 @@ fn enqueue_local_tarball(
     let task = this.preallocated_resolve_tasks.get_init(value).as_ptr();
     // SAFETY: `get_init` just fully initialized the slot.
     unsafe { &raw mut (*task).threadpool_task }
+}
+
+/// The workspace or `file:` folder directory that `path` is relative to; `None` is the top-level dir.
+fn local_tarball_base_dir<'a>(
+    lockfile: &'a Lockfile::Lockfile,
+    dependency_id: DependencyID,
+    path: &[u8],
+) -> Option<&'a [u8]> {
+    let declared = &lockfile.buffers.dependencies[dependency_id as usize].version;
+    let declared_by_parent = declared.tag == dependency::version::Tag::Tarball
+        && matches!(
+            &declared.tarball().uri,
+            dependency::tarball::Uri::Local(declared_path) if lockfile.str(declared_path) == path
+        );
+    if !declared_by_parent {
+        // Overrides, resolutions and catalogs are all written in the root package.json.
+        return None;
+    }
+
+    let declarer = lockfile.get_parent_pkg_of_dependency(dependency_id)?;
+    let declarer_res = &lockfile.packages.items_resolution()[declarer as usize];
+    let base_dir = match declarer_res.tag {
+        ResolutionTag::Workspace => declarer_res.workspace(),
+        ResolutionTag::Folder => declarer_res.folder(),
+        _ => return None,
+    };
+    Some(lockfile.str(base_dir))
 }
 
 fn update_name_and_name_hash_from_version_replacement(
@@ -2460,7 +2700,6 @@ fn get_or_put_resolved_package(
                 scope.get(),
                 name_str,
                 name_hash,
-                ManifestLoad::LoadFromMemoryFallbackToDisk,
                 needs_ext,
             ) else {
                 return Ok(None); // manifest might still be downloading. This feels unreliable.
@@ -2999,7 +3238,7 @@ impl PackageManager {
         resolution: &Resolution,
         task_context: TaskCallbackContext,
         patch_name_and_version_hash: Option<u64>,
-    ) {
+    ) -> GitEnqueueResult {
         enqueue_git_for_checkout(
             self,
             dependency_id,

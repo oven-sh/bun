@@ -5,7 +5,7 @@
 
 # ----------------------------------------------------------------------------
 # Bun's Highway SVE/SVE2 targets. Gate: hwy::SupportedTargets via getauxval(AT_HWCAP).
-# (161 symbols)
+# (168 symbols)
 # ----------------------------------------------------------------------------
 _ZN3bun10N_SVE2_12810MemMemImplEPKhmS2_m                                      [SVE]
 _ZN3bun10N_SVE2_12811MemRMemImplEPKhmS2_m                                     [SVE]
@@ -170,11 +170,16 @@ _ZN3bun9N_SVE_25646IndexOfInterestingCharacterInStringLiteralImplEPKhmh       [S
 _ZN3bun9N_SVE_25646IndexOfNeedsEscapeForJavaScriptStringImplQuoteEPKhmh       [SVE]
 _ZN3bun9N_SVE_25649IndexOfInterestingCharacterInMultilineCommentImplEPKhm     [SVE]
 _ZN3bun9N_SVE_25649IndexOfNeedsEscapeForJavaScriptStringImplBacktickEPKhmh    [SVE]
+_ZN3bun10N_SVE2_12811BSwap16ImplEPhm                                           [SVE]
+_ZN3bun10N_SVE2_12811BSwap32ImplEPhm                                           [SVE]
+_ZN3bun10N_SVE2_12811BSwap64ImplEPhm                                           [SVE]
+_ZN3bun10N_SVE2_128L12MemMemSearchILb0EtEEmPKT0_mS4_mmmPm                      [SVE]
+_ZN3bun10N_SVE2_128L12MemMemSearchILb1EtEEmPKT0_mS4_mmmPm                      [SVE]
 
 
 # ----------------------------------------------------------------------------
 # Bun source-map VLQ decoder (src/jsc/bindings/highway_sourcemap.cpp).
-# Gate: HWY_DYNAMIC_DISPATCH via hwy::SupportedTargets. (8 symbols)
+# Gate: BUN_HWY_DISPATCH (highway_dispatch.h) via hwy::SupportedTargets. (8 symbols)
 # ----------------------------------------------------------------------------
 _ZN3bun5N_SVE15CountDelimsImplEPKhm                                           [SVE]
 _ZN3bun5N_SVE17ParseMappingsImplEPKhmPiS3_S3_S3_miS3_Pm                       [SVE]
@@ -196,7 +201,7 @@ _ZN3hwy3armL26DetectAdditionalSveTargetsEl  [SVE]
 # ----------------------------------------------------------------------------
 # compiler-rt outline atomics. Each helper has both LSE and LDXR/STXR paths;
 # __aarch64_have_lse_atomics (= AT_HWCAP & HWCAP_ATOMICS) picks at runtime.
-# (54 symbols)
+# (56 symbols)
 # ----------------------------------------------------------------------------
 __aarch64_cas1_acq        [LSE]
 __aarch64_cas1_acq_rel    [LSE]
@@ -224,6 +229,7 @@ __aarch64_ldclr1_acq_rel  [LSE]
 __aarch64_ldclr1_relax    [LSE]
 __aarch64_ldclr2_acq_rel  [LSE]
 __aarch64_ldclr4_acq_rel  [LSE]
+__aarch64_ldclr4_relax    [LSE]
 __aarch64_ldclr8_acq_rel  [LSE]
 __aarch64_ldclr8_rel      [LSE]
 __aarch64_ldclr8_relax    [LSE]
@@ -283,7 +289,7 @@ adler32_arm_neon_dotprod  [DotProd]
 
 
 # ----------------------------------------------------------------------------
-# Bun.Image highway kernels (image_resize.cpp). Gate: HWY_DYNAMIC_DISPATCH ->
+# Bun.Image highway kernels (image_resize.cpp). Gate: BUN_HWY_DISPATCH ->
 # hwy::SupportedTargets() via getauxval(AT_HWCAP). Same gate as the
 # highway_strings.cpp block above.
 # (5 symbols)

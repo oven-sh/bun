@@ -19,9 +19,9 @@
 use core::ffi::c_int;
 use core::ptr::{self, NonNull};
 
-use bun_jsc::ZigStringJsc as _;
-use bun_jsc::zig_string::ZigString as JscZigString;
-use bun_jsc::{ErrorCode, JSGlobalObject, JSUint8Array, JSValue, Strong};
+use bun_core::EncodedSlice;
+use bun_jsc::EncodedSliceJsc as _;
+use bun_jsc::{ErrorCode, JSGlobalObject, JSUint8Array, JSValue, PinnedArrayBuffer, Strong};
 
 use bun_brotli::c as brotli;
 use bun_zlib as zlib;
@@ -64,13 +64,23 @@ impl Format {
 const CHUNK: usize = 16 * 1024;
 
 /// Room for one codec call: grows `out` by up to [`CHUNK`], clamped to `cap`.
-fn spare(out: &mut Vec<u8>, cap: usize) -> &mut [core::mem::MaybeUninit<u8>] {
+fn spare(out: &mut Vec<u8>, cap: usize) -> Result<&mut [core::mem::MaybeUninit<u8>], CodecError> {
     debug_assert!(out.len() < cap);
     let budget = cap - out.len();
-    out.reserve(budget.min(CHUNK));
+    out.try_reserve(budget.min(CHUNK))
+        .map_err(|_| CodecError::OutOfMemory)?;
     let spare = out.spare_capacity_mut();
     let len = spare.len().min(budget);
-    &mut spare[..len]
+    Ok(&mut spare[..len])
+}
+
+/// `CodecError` for a `ZSTD_isError` return value.
+fn zstd_error(rc: usize, message: &'static str) -> CodecError {
+    if zstd::ZSTD_getErrorCode(rc) == zstd::ZSTD_error_memory_allocation {
+        CodecError::OutOfMemory
+    } else {
+        CodecError::Message(message)
+    }
 }
 
 /// The rest of a chunk (or flush) whose last step stopped at the output cap.
@@ -167,6 +177,8 @@ impl Drop for CompressionStreamCoder {
 #[derive(Clone, Copy)]
 enum CodecError {
     TrailingJunk,
+    /// The output buffer or the codec's own state could not be allocated.
+    OutOfMemory,
     Message(&'static str),
     /// Brotli decoder error; `BrotliDecoderErrorString` (static C string).
     /// Surfaced as TypeError with `.code = "ERR_" + <this>` for node:zlib compat.
@@ -351,7 +363,7 @@ impl CompressionStreamCoder {
                     };
                     s.next_in = remaining.as_ptr();
                     s.avail_in = take as u32;
-                    let spare = spare(out, cap);
+                    let spare = spare(out, cap)?;
                     s.next_out = spare.as_mut_ptr().cast();
                     s.avail_out = spare.len().min(u32::MAX as usize) as u32;
                     let before = s.avail_out;
@@ -367,6 +379,7 @@ impl CompressionStreamCoder {
                     match rc {
                         zlib::ReturnCode::Ok | zlib::ReturnCode::BufError => {}
                         zlib::ReturnCode::StreamEnd => return Ok(Progress::Done),
+                        zlib::ReturnCode::MemError => return Err(CodecError::OutOfMemory),
                         _ => return Err(CodecError::Message("deflate failed")),
                     }
                     if s.avail_out != 0 && remaining.is_empty() {
@@ -410,7 +423,7 @@ impl CompressionStreamCoder {
                     };
                     s.next_in = remaining.as_ptr();
                     s.avail_in = take as u32;
-                    let spare = spare(out, cap);
+                    let spare = spare(out, cap)?;
                     s.next_out = spare.as_mut_ptr().cast();
                     s.avail_out = spare.len().min(u32::MAX as usize) as u32;
                     let before = s.avail_out;
@@ -447,6 +460,7 @@ impl CompressionStreamCoder {
                         zlib::ReturnCode::NeedDict => {
                             return Err(CodecError::Message("Missing dictionary"));
                         }
+                        zlib::ReturnCode::MemError => return Err(CodecError::OutOfMemory),
                         _ => return Err(CodecError::Message("inflate failed")),
                     }
                     if s.avail_out != 0 && remaining.is_empty() {
@@ -471,7 +485,7 @@ impl CompressionStreamCoder {
                             consumed: input.len() - avail_in,
                         });
                     }
-                    let spare = spare(out, cap);
+                    let spare = spare(out, cap)?;
                     let mut next_out: *mut u8 = spare.as_mut_ptr().cast();
                     let mut avail_out: usize = spare.len();
                     let before = avail_out;
@@ -514,7 +528,7 @@ impl CompressionStreamCoder {
                             consumed: input.len() - avail_in,
                         });
                     }
-                    let spare = spare(out, cap);
+                    let spare = spare(out, cap)?;
                     let mut next_out: *mut u8 = spare.as_mut_ptr().cast();
                     let mut avail_out: usize = spare.len();
                     let before = avail_out;
@@ -548,10 +562,13 @@ impl CompressionStreamCoder {
                         }
                         brotli::BrotliDecoderResult::needs_more_output => {}
                         brotli::BrotliDecoderResult::err => {
-                            // SAFETY: `p` is a live decoder; the error string is a
-                            // static C string owned by the brotli library.
+                            // SAFETY: `p` is a live decoder.
+                            let ec = brotli::BrotliDecoderGetErrorCode(unsafe { &*p.as_ptr() });
+                            if ec.is_alloc_failure() {
+                                return Err(CodecError::OutOfMemory);
+                            }
+                            // SAFETY: the error string is a static C string owned by the brotli library.
                             let code = unsafe {
-                                let ec = brotli::BrotliDecoderGetErrorCode(&*p.as_ptr());
                                 core::ffi::CStr::from_ptr(brotli::BrotliDecoderErrorString(ec))
                             };
                             return Err(CodecError::Brotli(
@@ -575,7 +592,7 @@ impl CompressionStreamCoder {
                             consumed: input_buf.pos,
                         });
                     }
-                    let spare = spare(out, cap);
+                    let spare = spare(out, cap)?;
                     let mut output_buf = zstd::ZSTD_outBuffer {
                         dst: spare.as_mut_ptr().cast(),
                         size: spare.len(),
@@ -595,7 +612,7 @@ impl CompressionStreamCoder {
                     // bytes.
                     unsafe { out.set_len(out.len() + output_buf.pos) };
                     if zstd::ZSTD_isError(remaining) != 0 {
-                        return Err(CodecError::Message("zstd encode failed"));
+                        return Err(zstd_error(remaining, "zstd encode failed"));
                     }
                     if input_buf.pos == input_buf.size && (!finish || remaining == 0) {
                         return Ok(Progress::Done);
@@ -642,7 +659,7 @@ impl CompressionStreamCoder {
                             consumed: input_buf.pos,
                         });
                     }
-                    let spare = spare(out, cap);
+                    let spare = spare(out, cap)?;
                     let mut output_buf = zstd::ZSTD_outBuffer {
                         dst: spare.as_mut_ptr().cast(),
                         size: spare.len(),
@@ -661,7 +678,7 @@ impl CompressionStreamCoder {
                     // bytes.
                     unsafe { out.set_len(out.len() + output_buf.pos) };
                     if zstd::ZSTD_isError(remaining) != 0 {
-                        return Err(CodecError::Message("zstd decode failed"));
+                        return Err(zstd_error(remaining, "zstd decode failed"));
                     }
                     if remaining == 0 {
                         self.ended = true;
@@ -679,28 +696,14 @@ impl CompressionStreamCoder {
     }
 }
 
-/// A chunk's bytes for the pool thread: a pinned ArrayBuffer's backing
-/// store (its pin/protect is the paired [`PinnedChunk`] on the JS side) or an
-/// owned copy.
+/// A chunk's bytes for the pool thread: what the paired [`PinnedArrayBuffer`] on the JS side keeps valid, or an owned copy.
 pub(crate) enum AsyncInput {
     Pinned { ptr: *const u8, len: usize },
     Owned(Vec<u8>),
 }
-// SAFETY: `Pinned.ptr` is a backing store pinned + protected by the paired
-// `PinnedChunk` for as long as the job lives; read only under the pool borrow.
+// SAFETY: `Pinned.ptr` points at bytes the paired `PinnedArrayBuffer` keeps
+// valid for as long as the job lives; read only under the pool borrow.
 unsafe impl Send for AsyncInput {}
-
-/// The pin + GC protection on a chunk whose bytes went to the pool; released
-/// on drop (JS thread, with the job's Js side).
-pub(crate) struct PinnedChunk(JSValue);
-// SAFETY: pin/protect on a heap cell; gone with the heap.
-unsafe impl bun_jsc::job::JsAffine for PinnedChunk {}
-impl Drop for PinnedChunk {
-    fn drop(&mut self) {
-        self.0.unpin_array_buffer();
-        self.0.unprotect();
-    }
-}
 
 impl AsyncInput {
     /// JS thread: pin `chunk` if it is a pinnable ArrayBuffer/view, else copy `fallback`.
@@ -708,21 +711,18 @@ impl AsyncInput {
         global: &JSGlobalObject,
         chunk: JSValue,
         fallback: &[u8],
-    ) -> (Self, Option<PinnedChunk>) {
-        if let Some(buf) = chunk.as_pinned_arraybuffer(global) {
-            // A resizable non-shared backing can `mprotect()` pages out on
-            // `resize()`; pinning does not block that, so spill to a copy.
-            if buf.resizable && !buf.shared {
-                chunk.unpin_array_buffer();
-                return (Self::Owned(fallback.to_vec()), None);
-            }
-            chunk.protect();
+    ) -> (Self, Option<PinnedArrayBuffer>) {
+        // Continuation steps pass no chunk.
+        if !chunk.is_cell() {
+            return (Self::Owned(fallback.to_vec()), None);
+        }
+        if let Some(buf) = PinnedArrayBuffer::root_read_only(global, chunk) {
             return (
                 Self::Pinned {
                     ptr: buf.ptr,
                     len: buf.byte_len,
                 },
-                Some(PinnedChunk(chunk)),
+                Some(buf),
             );
         }
         (Self::Owned(fallback.to_vec()), None)
@@ -799,11 +799,12 @@ pub extern "C" fn CompressionStreamCoder__transform(
     let result = match unsafe { (*this).step(slice, finish, &mut out) } {
         Ok(has_more) => {
             *more = has_more;
-            if out.is_empty() {
+            let chunk = if out.is_empty() {
                 JSUint8Array::create_empty(global)
             } else {
                 JSUint8Array::from_bytes_copy(global, &out)
-            }
+            };
+            bun_jsc::to_js_host_fn_result(global, chunk)
         }
         Err(e) => {
             *more = false;
@@ -823,11 +824,12 @@ fn codec_error_to_js(global: &JSGlobalObject, e: &CodecError) -> JSValue {
                 format_args!("Trailing junk found after the end of the compressed stream"),
             )
             .to_js(),
+        CodecError::OutOfMemory => global.create_out_of_memory_error(),
         CodecError::Message(msg) => global.create_type_error_instance(format_args!("{msg}")),
         CodecError::Brotli(detail) => {
             let code = format!("ERR_{detail}");
             let err = global.create_type_error_instance(format_args!("brotli decode failed"));
-            let code_js = JscZigString::init(code.as_bytes()).to_js(global);
+            let code_js = EncodedSlice::latin1(code.as_bytes()).to_js(global);
             err.put(global, b"code", code_js);
             let cause = global.create_error_instance(format_args!("{detail}"));
             cause.put(global, b"code", code_js);
@@ -914,25 +916,15 @@ unsafe extern "C" {
 /// One step of a large `CompressionStream`/`DecompressionStream` chunk, run
 /// off the JS thread.
 pub struct CompressionAsyncCtx {
-    /// Holds one coder reference (taken in `CompressionStreamCoder__transformAsync`,
-    /// released by `Drop`); see [`CompressionStreamCoder::ref_count`]. TransformStream
-    /// serializes writes, so nothing else touches it while the pool has it.
-    coder: *mut CompressionStreamCoder,
+    /// See [`CompressionStreamCoder::ref_count`]. TransformStream serializes
+    /// writes, so nothing else touches the coder while the pool has it.
+    coder: bun_ptr::RefPtr<CompressionStreamCoder>,
     /// Empty on a continuation step: the coder holds the chunk's tail.
     input: AsyncInput,
     finish: bool,
     out: Vec<u8>,
     more: bool,
     error: Option<CodecError>,
-}
-
-impl Drop for CompressionAsyncCtx {
-    fn drop(&mut self) {
-        // SAFETY: `coder` was ref'd in `CompressionStreamCoder__transformAsync`; this ctx owns that
-        // reference and drops it exactly once (in `then`, or when the job is
-        // released unrun).
-        unsafe { bun_ptr::ThreadSafeRefCount::<CompressionStreamCoder>::deref(self.coder) };
-    }
 }
 
 // SAFETY: the coder is `ThreadSafeRefCounted` and only touched by whoever holds
@@ -946,7 +938,7 @@ pub struct CompressionAsyncJs {
     /// and its `m_codecPromise` WriteBarrier keeps the pending
     /// transform-algorithm promise alive.
     stream: Strong,
-    _pin: Option<PinnedChunk>,
+    _pin: Option<PinnedArrayBuffer>,
 }
 
 impl bun_jsc::JobContext for CompressionAsyncCtx {
@@ -956,7 +948,8 @@ impl bun_jsc::JobContext for CompressionAsyncCtx {
     fn run(this: &mut Self, done: bun_jsc::Completion<Self>) -> Option<bun_jsc::Completion<Self>> {
         // SAFETY: `coder` is kept alive by the reference this ctx holds (the
         // cell's finalizer only releases its own); see the field doc.
-        match unsafe { (*this.coder).step(this.input.slice(), this.finish, &mut this.out) } {
+        match unsafe { (*this.coder.as_ptr()).step(this.input.slice(), this.finish, &mut this.out) }
+        {
             Ok(more) => this.more = more,
             Err(e) => this.error = Some(e),
         }
@@ -1009,14 +1002,12 @@ pub extern "C" fn CompressionStreamCoder__transformAsync(
         unsafe { core::slice::from_raw_parts(input, input_len) }
     };
     let (input, pin) = AsyncInput::new(global, chunk, fallback);
-    // SAFETY: `this` is the live coder owned by the calling JS cell; the ctx
-    // takes its own reference (see `CompressionStreamCoder::ref_count`).
-    unsafe { bun_ptr::ThreadSafeRefCount::<CompressionStreamCoder>::ref_(this) };
     let cx = global.js_thread();
     bun_jsc::Job::<CompressionAsyncCtx>::schedule(
         &cx,
         CompressionAsyncCtx {
-            coder: this,
+            // SAFETY: `this` is the live coder owned by the calling JS cell.
+            coder: unsafe { bun_ptr::RefPtr::init_ref(this) },
             input,
             finish,
             out: Vec::new(),

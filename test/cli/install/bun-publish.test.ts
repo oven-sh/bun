@@ -1636,7 +1636,7 @@ describe("--recursive", () => {
       stdout: "pipe",
       stderr: "pipe",
     });
-    const [err] = await Promise.all([proc.stderr.text(), proc.exited]);
+    const [, err] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(err).toContain('script "prepack" was terminated by signal SIGTERM');
     expect(err).not.toContain("failed to publish");
     expect(mock.puts).toEqual([]);

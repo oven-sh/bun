@@ -116,9 +116,6 @@ bitflags::bitflags! {
         /// Renaming can also break any identifier used inside a "with" statement.
         const MUST_NOT_BE_RENAMED = 1 << 2;
 
-        /// A `var` of the same name merged into this function declaration.
-        const REDECLARED_BY_VAR = 1 << 3;
-
         const REMOVE_OVERWRITTEN_FUNCTION_DECLARATION = 1 << 4;
 
         /// The file assigns this variable after its declaration (or a mapped
@@ -154,7 +151,6 @@ macro_rules! symbol_flag_accessors {
 symbol_flag_accessors! {
     must_start_with_capital_letter_for_jsx, set_must_start_with_capital_letter_for_jsx => MUST_START_WITH_CAPITAL_LETTER_FOR_JSX;
     must_not_be_renamed, set_must_not_be_renamed => MUST_NOT_BE_RENAMED;
-    redeclared_by_var, set_redeclared_by_var => REDECLARED_BY_VAR;
     remove_overwritten_function_declaration, set_remove_overwritten_function_declaration => REMOVE_OVERWRITTEN_FUNCTION_DECLARATION;
     has_been_assigned_to, set_has_been_assigned_to => HAS_BEEN_ASSIGNED_TO;
     called_as_method, set_called_as_method => CALLED_AS_METHOD;

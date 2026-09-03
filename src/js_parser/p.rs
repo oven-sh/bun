@@ -3517,9 +3517,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             {
                                 // Silently merge this symbol into the existing symbol
                                 self.symbols[symbol_idx].link.set(member_in_scope.ref_);
-                                if Symbol::is_kind_function(existing_kind) {
-                                    self.symbols[existing_idx].set_redeclared_by_var(true);
-                                }
                                 // `StringHashMap` get_or_put already stores the key on insert and
                                 // cannot hand out `&mut K` (see StringHashMapGetOrPut docs), so
                                 // no key write is needed here.
@@ -5031,16 +5028,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     // If these are both functions, remove the overwritten declaration
                     if kind.is_function() && existing_kind.is_function() {
                         self.symbols[symbol_idx].set_remove_overwritten_function_declaration(true);
-                    } else if kind.is_function() {
-                        self.symbols[ref_.inner_index() as usize].set_redeclared_by_var(true);
-                    }
-
-                    // "var foo; function foo() {}" or "function foo() {} var foo;"
-                    if self.current_scope == self.module_scope
+                    } else if self.current_scope == self.module_scope
                         && ((existing_kind == js_ast::symbol::Kind::Hoisted && kind.is_function())
                             || (existing_kind.is_function()
                                 && kind == js_ast::symbol::Kind::Hoisted))
                     {
+                        // "var foo; function foo() {}" or "function foo() {} var foo;"
                         self.has_top_level_function_merged_with_var = true;
                     }
                 }
@@ -5764,12 +5757,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             let ignores_this = match export.decl_value {
                 CommonJSExportValue::Other => false,
                 CommonJSExportValue::FunctionIgnoringThis => true,
-                // An assignment or a `var` of the same name can change `name`.
+                // An assignment can change `name`. A `var` of the same name can too,
+                // but `has_top_level_function_merged_with_var` keeps that file wrapped.
                 CommonJSExportValue::Identifier(binding) => {
                     let symbol = &self.symbols[binding.inner_index() as usize];
                     symbol.kind.is_function()
                         && symbol.call_ignores_this()
-                        && !symbol.redeclared_by_var()
                         && !symbol.has_been_assigned_to()
                 }
             };

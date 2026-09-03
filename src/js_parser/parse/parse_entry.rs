@@ -1236,6 +1236,10 @@ impl<'a> Parser<'a> {
             struct PerRecord {
                 escaped: bool,
                 aliases: Vec<bun_ast::StoreStr>,
+                items: Vec<bun_ast::ast_result::DynamicImportItem>,
+                /// A name is read some other way (a `{...rest}` copy, a local
+                /// that stays one), so the call's value must hold it.
+                needs_value: bool,
             }
             let mut by_record: bun_collections::ArrayHashMap<u32, PerRecord> = Default::default();
             // A namespace ref is listed once per registration and once per
@@ -1300,8 +1304,41 @@ impl<'a> Parser<'a> {
                             continue;
                         }
                     }
-                    rec.aliases
-                        .push(bun_ast::StoreStr::new(arena.alloc_slice_copy(key)));
+                    let alias = bun_ast::StoreStr::new(arena.alloc_slice_copy(key));
+                    rec.aliases.push(alias);
+                    let is_require_marker = p
+                        .import_records
+                        .items()
+                        .get(import_record_id as usize)
+                        .is_some_and(|record| crate::p::is_require_marker(record, key));
+                    // A read off `ns` (an item already), or a local a pattern
+                    // binds. Assigning to either, or reaching the local through
+                    // a hoisting merge or a direct `eval`, keeps the read as
+                    // written.
+                    let is_item = local.is_valid()
+                        && !is_require_marker
+                        && (p.is_import_item.contains_key(&local)
+                            || p.dynamic_import_destructured_locals.contains_key(&local))
+                        && !p.symbols[ns_ref.inner_index() as usize].has_been_assigned_to()
+                        && p.dynamic_import_namespace_locals
+                            .get(&ns_ref)
+                            .is_none_or(|records| records.len() == 1)
+                        && {
+                            let symbol = &p.symbols[local.inner_index() as usize];
+                            !symbol.has_been_assigned_to()
+                                && !symbol.has_link()
+                                && !symbol.must_not_be_renamed()
+                                && !p.named_imports.contains(&local)
+                        };
+                    if is_item {
+                        rec.items.push(bun_ast::ast_result::DynamicImportItem {
+                            local,
+                            alias,
+                            namespace_ref: ns_ref,
+                        });
+                    } else {
+                        rec.needs_value = true;
+                    }
                 }
             }
 
@@ -1313,12 +1350,19 @@ impl<'a> Parser<'a> {
                 }
                 rec.aliases.sort_by(|a, b| a.slice().cmp(b.slice()));
                 rec.aliases.dedup_by(|a, b| a.slice() == b.slice());
-                let aliases = &rec.aliases;
-                let alias_slice = arena
-                    .alloc_slice_fill_with::<bun_ast::StoreStr, _>(aliases.len(), |j| aliases[j]);
+                let aliases = arena.alloc_slice_copy(&rec.aliases);
+                let items = arena.alloc_slice_copy(&rec.items);
                 bun_core::handle_oom(
-                    p.dynamic_import_aliases
-                        .put(import_record_id, bun_ast::StoreSlice::new(alias_slice)),
+                    p.dynamic_import_aliases.put(
+                        import_record_id,
+                        bun_ast::ast_result::DynamicImportUse {
+                            aliases: bun_ast::StoreSlice::new(aliases),
+                            items: bun_ast::StoreSlice::new(items),
+                            needs_namespace_object: rec.needs_value
+                                || p.dynamic_import_needs_object
+                                    .contains_key(&import_record_id),
+                        },
+                    ),
                 );
             }
         }

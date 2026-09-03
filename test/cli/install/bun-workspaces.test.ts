@@ -1,12 +1,13 @@
 import { file, spawn, write } from "bun";
 import { install_test_helpers } from "bun:internal-for-testing";
 import { afterAll, beforeAll, describe, expect, setDefaultTimeout, test } from "bun:test";
-import { mkdirSync, rmSync, writeFileSync } from "fs";
+import { mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "fs";
 import { cp, exists, mkdir, rm } from "fs/promises";
 import {
   assertManifestsPopulated,
   bunEnv as baseEnv,
   bunExe,
+  isWindows,
   readdirSorted,
   runBunInstall,
   toMatchNodeModulesAt,
@@ -2669,4 +2670,67 @@ describe("packages whose version label is longer than 512 bytes", () => {
       '#! /usr/bin/env node\n\nconsole.log("patched baz");\n',
     );
   });
+});
+
+// A hardlink install leaves hardlinks of cache files in each node_modules it writes.
+// After only the root node_modules is removed, the next install does not delete
+// anything first, so a workspace's own node_modules still holds those hardlinks. A copy
+// over them must replace the files. Writing through them empties the cache files.
+test.concurrent("a copyfile install over a workspace's hardlinked files does not empty the cache", async () => {
+  using ctx = await setupTest();
+  const { packageDir, packageJson, env } = ctx;
+  await Promise.all([
+    write(
+      packageJson,
+      JSON.stringify({ name: "foo", workspaces: ["packages/*"], dependencies: { "no-deps": "1.0.0" } }),
+    ),
+    write(
+      join(packageDir, "packages", "pkg1", "package.json"),
+      JSON.stringify({ name: "pkg1", version: "1.0.0", dependencies: { "no-deps": "2.0.0" } }),
+    ),
+  ]);
+
+  async function install(backend: "hardlink" | "copyfile") {
+    await using proc = spawn({
+      cmd: [bunExe(), "install", `--backend=${backend}`],
+      cwd: packageDir,
+      stdout: "pipe",
+      stderr: "pipe",
+      env,
+    });
+    const [, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(err).not.toContain("error:");
+    expect(exitCode).toBe(0);
+  }
+
+  const readJson = (path: string) => {
+    expect(statSync(path).size).toBeGreaterThan(0);
+    return JSON.parse(readFileSync(path, "utf8"));
+  };
+
+  const nestedPkgJson = join(packageDir, "packages", "pkg1", "node_modules", "no-deps", "package.json");
+  await install("hardlink");
+  expect(readJson(nestedPkgJson)).toEqual({ name: "no-deps", version: "2.0.0" });
+  if (!isWindows) {
+    expect(statSync(nestedPkgJson).nlink).toBeGreaterThan(1);
+  }
+
+  await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
+  await install("copyfile");
+
+  expect(readJson(nestedPkgJson)).toEqual({ name: "no-deps", version: "2.0.0" });
+  expect(readJson(join(packageDir, "node_modules", "no-deps", "package.json"))).toEqual({
+    name: "no-deps",
+    version: "1.0.0",
+  });
+  if (!isWindows) {
+    // a new file, not the cache file's inode
+    expect(statSync(nestedPkgJson).nlink).toBe(1);
+  }
+
+  const cacheDir = join(packageDir, ".bun-cache");
+  const cached = (await readdirSorted(cacheDir)).filter(name => name.startsWith("no-deps@2.0.0@"));
+  expect(cached).toHaveLength(1);
+  expect(readJson(join(cacheDir, cached[0], "package.json"))).toEqual({ name: "no-deps", version: "2.0.0" });
+  expect(statSync(join(cacheDir, cached[0], "index.js")).size).toBeGreaterThan(0);
 });

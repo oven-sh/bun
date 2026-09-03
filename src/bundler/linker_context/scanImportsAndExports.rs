@@ -1544,9 +1544,8 @@ impl<'a> ExportStarContext<'a> {
         self.source_index_stack.push(source_index);
         let stack_end_pos = self.source_index_stack.len();
 
-        // The export star of a lifted CommonJS file was `module.exports = ns`:
-        // it re-exports the whole namespace, `default` included. A real
-        // `export *` anywhere on the chain from the target drops it again.
+        // A lifted file's export star was `module.exports = ns`, which hands over
+        // `default` too. A real `export *` on the chain from the target drops it.
         let reexports_default = self.source_index_stack[..stack_end_pos].iter().all(|i| {
             col_ref!(self.ast_flags)[*i as usize].contains(AstFlags::COMMONJS_LIFTED_TO_ESM)
         });

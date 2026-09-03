@@ -382,19 +382,32 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
 
         let mut mark_for_replace: bool = false;
+        let mut replace_keeps_stmt: bool = false;
 
         let orig_dead = p.is_control_flow_dead;
         if p.options.features.replace_exports.count() > 0 {
             if let Some(entry) = p.options.features.replace_exports.get_ptr(b"default") {
-                p.is_control_flow_dead =
-                    p.options.features.dead_code_elimination && !entry.is_replace();
+                // Every entry kind discards the exported value, so nothing it references is a use.
+                if p.options.features.dead_code_elimination {
+                    p.is_control_flow_dead = true;
+                }
                 mark_for_replace = true;
+                replace_keeps_stmt = entry.is_replace();
             }
         }
 
         macro_rules! restore_dead {
             () => {
                 p.is_control_flow_dead = orig_dead;
+            };
+        }
+
+        // The statement a `Replace` entry keeps is live; only its old value was dead.
+        macro_rules! discarded_value_visited {
+            () => {
+                if replace_keeps_stmt {
+                    restore_dead!();
+                }
             };
         }
 
@@ -424,6 +437,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 p.react_compiler_candidate_name = None;
                 p.react_compiler_in_react_hoc = false;
                 p.decorator_class_name = prev_decorator_class_name;
+                discarded_value_visited!();
 
                 if p.is_control_flow_dead {
                     restore_dead!();
@@ -606,6 +620,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         let open_parens_loc = func.func.open_parens_loc;
                         func.func = p.visit_func(core::mem::take(&mut func.func), open_parens_loc);
                         p.react_compiler_candidate_name = None;
+                        discarded_value_visited!();
 
                         if p.is_control_flow_dead {
                             p.react_refresh.hook_ctx_storage = prev;
@@ -775,6 +790,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     StmtData::SClass(mut class_ref) => {
                         let class: &mut S::Class = &mut *class_ref;
                         let _ = p.visit_class(s2_loc, &mut class.class, data.default_name.ref_);
+                        discarded_value_visited!();
 
                         if p.is_control_flow_dead {
                             restore_dead!();
@@ -795,6 +811,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             ) = entry
                             {
                                 data.value = js_ast::StmtOrExpr::Expr(replace_expr);
+                                stmts.push(*stmt);
                             } else {
                                 let _ = p.inject_replacement_export(
                                     stmts,
@@ -802,10 +819,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                     bun_ast::Loc::EMPTY,
                                     &entry,
                                 );
-                                restore_dead!();
-                                record_on_exit!();
-                                return Ok(());
                             }
+                            restore_dead!();
+                            record_on_exit!();
+                            return Ok(());
                         }
 
                         if !data.default_name.ref_.is_symbol() {

@@ -296,10 +296,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             .features
                             .replace_exports
                             .get_ptr(name)
-                            .map(|r| (bun_ptr::BackRef::new(r), r.is_replace()));
-                        if let Some((ptr, is_replace)) = found {
+                            .map(bun_ptr::BackRef::new);
+                        if let Some(ptr) = found {
                             replacement = Some(ptr);
-                            if self.options.features.dead_code_elimination && !is_replace {
+                            // Every entry kind discards this initializer, so nothing it references is a use.
+                            if self.options.features.dead_code_elimination {
                                 self.is_control_flow_dead = true;
                             }
                         }

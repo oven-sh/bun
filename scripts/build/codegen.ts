@@ -25,10 +25,16 @@
  * of the step one build late. That is why emitBindgen/emitBindgenV2 declare
  * the per-file Generated*.h headers and not just the .cpp that gets compiled.
  *
- * Files nothing compiles may stay undeclared (.d.ts twins, bundle-modules'
- * eval/ dir, JSSink.lut.txt consumed within its own step). The remaining
- * #included exception is BunBuiltinNames+extras.h from bundle-functions.ts,
- * reached through the PCH.
+ * The same goes for generated files the Rust side include!s or embeds
+ * (include_str! under bun_codegen_embed, i.e. non-debug profiles): declared,
+ * and in `rustInputs` for the profiles that embed them, which is what
+ * re-invokes cargo in the run that changed them (emitBakeCodegen, and the
+ * eval/ bundles in emitJsModules).
+ *
+ * Files nothing compiles or embeds may stay undeclared (.d.ts twins,
+ * JSSink.lut.txt consumed within its own step). The remaining #included
+ * exception is BunBuiltinNames+extras.h from bundle-functions.ts, reached
+ * through the PCH.
  */
 
 import { spawnSync } from "node:child_process";
@@ -193,10 +199,10 @@ export interface CodegenOutputs {
   /** All codegen outputs — use for phony target `codegen`. */
   all: string[];
 
-  /** Outputs the cargo step depends on (generated .rs that gets `include!`d). */
+  /** Outputs the cargo step depends on: generated .rs that gets `include!`d, files release builds embed. */
   rustInputs: string[];
 
-  /** Outputs the cargo step needs to exist but doesn't embed (debug bake runtime). */
+  /** Outputs the cargo step needs to exist but doesn't embed (files debug builds load at runtime). */
   rustOrderOnly: string[];
 
   /** Generated .cpp files. Compiled alongside handwritten C++ in bun.ts. */
@@ -750,7 +756,7 @@ function emitCppBind({ n, cfg, sources, o, dirStamp }: Ctx): void {
   o.rustInputs.push(outputRs);
 }
 
-function emitJsModules({ n, cfg, sources, o, dirStamp }: Ctx): void {
+export function emitJsModules({ n, cfg, sources, o, dirStamp }: Ctx): void {
   const script = resolve(cfg.cwd, "src", "codegen", "bundle-modules.ts");
 
   // InternalModuleRegistry.cpp is read by the script (for a sanity check).
@@ -785,8 +791,16 @@ function emitJsModules({ n, cfg, sources, o, dirStamp }: Ctx): void {
     o.internalModulesBin,
   ];
 
+  // The script also bundles each src/js/eval/*.ts to eval/<name>. Like the
+  // bake bundles these are embedded by release builds (run_command.rs) and
+  // read at runtime by debug builds, so they are routed the way
+  // emitBakeCodegen routes its outputs.
+  const evalOutputs = sources.js
+    .filter(src => src.endsWith(".ts") && dirname(src).replace(/\\/g, "/").endsWith("/src/js/eval"))
+    .map(src => resolve(cfg.codegenDir, "eval", basename(src)));
+
   n.build({
-    outputs,
+    outputs: [...outputs, ...evalOutputs],
     rule: "codegen",
     inputs: [script, ...sources.js, ...sources.jsCodegen, extraInput, errorCodeInput],
     orderOnlyInputs: [dirStamp],
@@ -799,10 +813,15 @@ function emitJsModules({ n, cfg, sources, o, dirStamp }: Ctx): void {
     },
   });
 
-  o.all.push(...outputs);
+  o.all.push(...outputs, ...evalOutputs);
   o.rustInputs.push(...outputs);
   o.cppSources.push(outputs[0]!); // WebCoreJSBuiltins.cpp
   o.cppHeaders.push(...outputs.filter(p => p.endsWith(".h")));
+  if (cfg.debug) {
+    o.rustOrderOnly.push(...evalOutputs);
+  } else {
+    o.rustInputs.push(...evalOutputs);
+  }
 }
 
 function emitBakeCodegen({ n, cfg, sources, o, dirStamp }: Ctx): void {
@@ -846,7 +865,7 @@ function emitBakeCodegen({ n, cfg, sources, o, dirStamp }: Ctx): void {
   }
 }
 
-/** Exported (with emitBindgen) for test/internal/build-codegen-declared-outputs.test.ts. */
+/** Exported (with emitBindgen and emitJsModules) for test/internal/build-codegen-declared-outputs.test.ts. */
 export function emitBindgenV2({ n, cfg, sources, o, dirStamp }: Ctx): void {
   const script = resolve(cfg.cwd, "src", "codegen", "bindgenv2", "script.ts");
 

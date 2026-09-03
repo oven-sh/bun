@@ -2068,8 +2068,7 @@ impl<'a> Lexer<'a> {
     fn scan_single_line_comment(&mut self) {
         // PERF: keep the source slice register-resident — see `next_codepoint_with`.
         let contents: &[u8] = self.contents;
-        // `__PURE__` must be the first word of a `//` comment. Only the first
-        // `#` / `@` can qualify.
+        // Only the first `#` / `@` of a `//` comment can start a `__PURE__` annotation.
         let mut first_marker = true;
         loop {
             // Find index of newline (ASCII/Unicode), non-ASCII, '#', or '@'.

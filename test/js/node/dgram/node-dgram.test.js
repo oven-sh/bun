@@ -14,12 +14,18 @@ test("node:dgram close() inside 'message' handler stops remaining batch datagram
       `
       import dgram from "node:dgram";
       const trace = [];
+      const closed = Promise.withResolvers();
       const rx = dgram.createSocket("udp4");
       await new Promise(r => rx.bind(0, "127.0.0.1", r));
       const port = rx.address().port;
       rx.on("message", d => {
         trace.push("message:" + d.toString());
-        if (d.toString() === "0") rx.close(() => trace.push("closeCallback"));
+        if (d.toString() === "0") {
+          rx.close(() => {
+            trace.push("closeCallback");
+            closed.resolve();
+          });
+        }
       });
       rx.on("close", () => trace.push("closeEvent"));
       const tx = dgram.createSocket("udp4");
@@ -31,7 +37,10 @@ test("node:dgram close() inside 'message' handler stops remaining batch datagram
       for (let i = 0; i < 16; i++) {
         await new Promise(r => tx.send(String(i), port, "127.0.0.1", r));
       }
-      // Let any queued 'message' / 'close' events drain.
+      // Loopback delivery is asynchronous on macOS, so wait for the close
+      // itself, not for a number of loop turns. Then give a replay of the rest
+      // of the batch a few turns to show up in the trace.
+      await closed.promise;
       for (let i = 0; i < 8; i++) await new Promise(r => setImmediate(r));
       tx.close();
       console.log(JSON.stringify(trace));

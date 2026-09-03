@@ -339,8 +339,8 @@ impl FileResponseStream {
                     },
                     self.as_ptr(),
                 );
-                // `false` alone does not stop the reader. `on_writable` unpauses
-                // it, and `pause()` does not call back into this object.
+                // SAFETY: reader entry point; `pause()` does not call back into
+                // this object.
                 self.reader_mut().pause();
                 false
             }

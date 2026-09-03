@@ -118,8 +118,7 @@ impl BufferedReaderVTable {
         self.link().has_on_read_chunk()
     }
 
-    /// Delivers one chunk. Returning false ends only the current read loop.
-    /// A parent that wants no more chunks until it resumes calls `pause()`.
+    /// Returning false ends only the current read loop. To stop the reader, call `pause()`.
     fn on_read_chunk(&self, chunk: Chunk<'_>, has_more: ReadState) -> bool {
         self.link().on_read_chunk(chunk, has_more)
     }

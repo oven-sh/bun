@@ -3341,9 +3341,7 @@ impl H2FrameParser {
         }
     }
 
-    /// One code unit per byte, as node builds the ALTSVC and ORIGIN strings:
-    /// https://github.com/nodejs/node/blob/v26.3.0/src/node_http2.cc#L1665-L1666
-    /// https://github.com/nodejs/node/blob/v26.3.0/src/node_http2.cc#L1689
+    /// https://github.com/nodejs/node/blob/v26.3.0/src/node_http2.cc#L1665-L1689
     fn latin1_to_js(&self, payload: &[u8]) -> JsResult<JSValue> {
         let global = self.handlers.get().global();
         bun_core::String::clone_latin1(payload).into_js(&global)
@@ -4763,10 +4761,8 @@ impl H2FrameParser {
             return Ok(JSValue::UNDEFINED);
         }
 
-        // node writes each origin with `WriteOneByteV2`:
         // https://github.com/nodejs/node/blob/v26.3.0/src/node_http2.cc#L486-L489
         if origin_arg.is_string() {
-            // No copy: the view keeps the string alive while `write()` runs transport JS.
             let origin_view = origin_arg.to_js_string_view(global_object)?;
             let origin_bytes = header_value_bytes(&origin_view);
             let slice: &[u8] = &origin_bytes;
@@ -4881,9 +4877,7 @@ impl H2FrameParser {
                 return Ok(JSValue::UNDEFINED);
             }
         }
-        // node writes both strings with `WriteOneByteV2`:
         // https://github.com/nodejs/node/blob/v26.3.0/src/node_http2.cc#L3233-L3239
-        // No copy: the views keep the strings alive while `write()` runs transport JS.
         let origin_bytes = origin_view.as_ref().map(header_value_bytes);
         let value_bytes = value_view.as_ref().map(header_value_bytes);
         this.send_alt_svc(

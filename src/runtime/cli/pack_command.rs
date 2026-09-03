@@ -2010,6 +2010,13 @@ pub(crate) fn pack<const FOR_PUBLISH: bool>(
     let manager_ptr: *mut PackageManager = &raw mut *ctx.manager;
     let log_level = ctx.manager.options.log_level;
     let bump = pack_bump();
+
+    let (workspace_root_name, workspace_root_version) = read_workspace_root_name_and_version(
+        manager_ptr,
+        ctx.lockfile,
+        abs_package_json_path.as_bytes(),
+    );
+
     // Note: `workspace_package_json_cache` and `log` are disjoint fields on
     // `PackageManager`; route through raw-pointer field projections so the
     // two `&mut` borrows don't conflict.
@@ -2332,7 +2339,12 @@ pub(crate) fn pack<const FOR_PUBLISH: bool>(
     }
 
     // Create the edited package.json content after lifecycle scripts have run
-    let edited_package_json = edit_root_package_json(ctx.lockfile, json)?;
+    let edited_package_json = edit_root_package_json(
+        ctx.lockfile,
+        &workspace_root_name,
+        &workspace_root_version,
+        json,
+    )?;
 
     let root_dir: Dir = 'root_dir: {
         let mut path_buf = PathBuffer::uninit();
@@ -3293,10 +3305,49 @@ fn add_archive_entry(
     Ok(entry.clear())
 }
 
+fn read_workspace_root_name_and_version(
+    manager_ptr: *mut PackageManager,
+    lockfile: Option<&Lockfile>,
+    abs_package_json_path: &[u8],
+) -> (Box<[u8]>, Box<[u8]>) {
+    use bun_install::package_manager::ROOT_PACKAGE_JSON_PATH;
+    if lockfile.is_none() {
+        return (Box::default(), Box::default());
+    }
+    // SAFETY: ROOT_PACKAGE_JSON_PATH is set during PackageManager::init on the main thread.
+    let root_path: &[u8] = unsafe { ROOT_PACKAGE_JSON_PATH.read() }.as_bytes();
+    if root_path.is_empty() || root_path == abs_package_json_path {
+        return (Box::default(), Box::default());
+    }
+    let entry = match pm_workspace_cache(manager_ptr).get_with_path(
+        pm_log(manager_ptr),
+        root_path,
+        WorkspacePackageJSONCache::GetJSONOptions::default(),
+    ) {
+        WorkspacePackageJSONCache::GetResult::Entry(e) => e,
+        _ => return (Box::default(), Box::default()),
+    };
+    let name_expr = entry.root.get(b"name");
+    let name = name_expr
+        .as_ref()
+        .and_then(|e| e.as_utf8_string_literal())
+        .map(Box::<[u8]>::from)
+        .unwrap_or_default();
+    let version_expr = entry.root.get(b"version");
+    let version = version_expr
+        .as_ref()
+        .and_then(|e| e.as_utf8_string_literal())
+        .map(Box::<[u8]>::from)
+        .unwrap_or_default();
+    (name, version)
+}
+
 /// Strips workspace and catalog protocols from dependency versions then
 /// returns the printed json
 fn edit_root_package_json(
     maybe_lockfile: Option<&Lockfile>,
+    workspace_root_name: &[u8],
+    workspace_root_version: &[u8],
     json: &mut WorkspacePackageJSONCache::MapEntry,
 ) -> Result<Box<[u8]>, AllocError> {
     use bun_install_types::DependencyGroup;
@@ -3352,6 +3403,12 @@ fn edit_root_package_json(
                                     }
                                 };
 
+                                let prefix: &[u8] = match c {
+                                    b'^' => b"^",
+                                    b'~' => b"~",
+                                    b'*' => b"",
+                                    _ => unreachable!(),
+                                };
                                 let resolved = 'failed_to_resolve: {
                                     // find the current workspace version and append to package spec without `workspace:`
                                     let Some(lockfile) = maybe_lockfile else {
@@ -3360,13 +3417,22 @@ fn edit_root_package_json(
                                     let Some(workspace_version) = lockfile.workspace_versions.get(
                                         &Semver::string::Builder::string_hash(dependency_name),
                                     ) else {
+                                        if !workspace_root_version.is_empty()
+                                            && dependency_name == workspace_root_name
+                                        {
+                                            let tmp = format!(
+                                                "{}{}",
+                                                bstr::BStr::new(prefix),
+                                                bstr::BStr::new(workspace_root_version),
+                                            );
+                                            let data = pack_bump().alloc_slice_copy(tmp.as_bytes());
+                                            dependency.value = Some(Expr::init(
+                                                E::EString::init(data),
+                                                Default::default(),
+                                            ));
+                                            break 'failed_to_resolve true;
+                                        }
                                         break 'failed_to_resolve false;
-                                    };
-                                    let prefix: &[u8] = match c {
-                                        b'^' => b"^",
-                                        b'~' => b"~",
-                                        b'*' => b"",
-                                        _ => unreachable!(),
                                     };
                                     // Format on the heap then copy into the
                                     // pack arena; `EString::init` erases the

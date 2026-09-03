@@ -1734,6 +1734,7 @@ impl Package<u64> {
         dependencies_count: u32,
         tag: Option<dependency::version::Tag>,
         workspace_ver: Option<SemverVersion>,
+        root_name_hash: PackageNameHash,
         external_alias: ExternalString,
         version: &[u8],
         key_loc: bun_ast::Loc,
@@ -1914,6 +1915,14 @@ impl Package<u64> {
                 }
             }
             dependency::version::Tag::Workspace => 'workspace: {
+                if workspace_path.is_none()
+                    && tag.is_none()
+                    && root_name_hash != 0
+                    && name_hash == root_name_hash
+                {
+                    // `workspace:` dep naming the root package; resolved to id 0 later.
+                    break 'workspace;
+                }
                 if let Some(path) = workspace_path {
                     if let Some(range) = &workspace_range {
                         if let Some(ver) = workspace_version {
@@ -2776,6 +2785,11 @@ impl Package<u64> {
 
         total_dependencies_count = 0;
 
+        if FEATURES.is_main {
+            pm.workspace_root_name_hash = self.name_hash;
+        }
+        let root_name_hash = pm.workspace_root_name_hash;
+
         for group in &dependency_groups {
             if group.behavior.is_workspace() {
                 let mut seen_workspace_names: ArrayHashMap<
@@ -2939,6 +2953,7 @@ impl Package<u64> {
                         total_dependencies_count,
                         Some(dependency::version::Tag::Workspace),
                         workspace_version,
+                        root_name_hash,
                         external_name,
                         path_,
                         bun_ast::Loc::EMPTY,
@@ -2986,6 +3001,7 @@ impl Package<u64> {
                             total_dependencies_count,
                             None,
                             None,
+                            root_name_hash,
                             external_name,
                             version,
                             key_loc,
@@ -3036,6 +3052,7 @@ impl Package<u64> {
                 total_dependencies_count,
                 None,
                 None,
+                root_name_hash,
                 external_name,
                 b"*",
                 bun_ast::Loc::EMPTY,

@@ -851,6 +851,44 @@ describe.concurrent("workspaces", () => {
     },
   );
 
+  for (const { input, expected } of [
+    { input: "workspace:*", expected: "2.3.4" },
+    { input: "workspace:^", expected: "^2.3.4" },
+    { input: "workspace:~", expected: "~2.3.4" },
+  ]) {
+    test(`replaces workspace: protocol naming the root package: ${input}`, async () => {
+      await Promise.all([
+        write(
+          join(packageDir, "package.json"),
+          JSON.stringify({
+            name: "pack-workspace-root",
+            version: "2.3.4",
+            workspaces: ["pkgs/*"],
+          }),
+        ),
+        write(
+          join(packageDir, "pkgs", "pkg1", "package.json"),
+          JSON.stringify({
+            name: "pkg1",
+            version: "1.0.0",
+            dependencies: { "pack-workspace-root": input },
+          }),
+        ),
+      ]);
+
+      await runBunInstall(bunEnv, packageDir);
+      await pack(join(packageDir, "pkgs", "pkg1"), bunEnv);
+
+      const tarball = readTarball(join(packageDir, "pkgs", "pkg1", "pkg1-1.0.0.tgz"));
+      expect(tarball.entries).toMatchObject([{ "pathname": "package/package.json" }]);
+      expect(JSON.parse(tarball.entries[0].contents)).toEqual({
+        name: "pkg1",
+        version: "1.0.0",
+        dependencies: { "pack-workspace-root": expected },
+      });
+    });
+  }
+
   test("fails gracefully when workspace version fails to resolve", async () => {
     using dir = tempDir("pack-workspace-protocol-fail", {
       "package.json": JSON.stringify({

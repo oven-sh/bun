@@ -112,7 +112,7 @@ function rootInstallNinja(partial: PartialConfig, tc: Toolchain = toolchain): { 
   emitRootInstall(n, cfg);
   // A long build line continues on the next line after a trailing `$`.
   const text = n.toString().replace(/\$\n\s*/g, "");
-  const edge = text.split("\n").find(line => line.startsWith("build ") && line.includes("stamps/install_"));
+  const edge = text.split("\n").find(line => line.startsWith("build ") && /stamps[\\/]install_/.test(line));
   return { rule: edge?.match(/: (\S+) /)?.[1] ?? "", text };
 }
 

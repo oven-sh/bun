@@ -5552,6 +5552,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         parts: &mut ListManaged<'a, js_ast::Part>,
         stmts: &'a mut [Stmt],
     ) -> Result<(), crate::Error> {
+        // Uses recorded outside a part's visit (the parse pass resolving
+        // decorator-metadata types) belong to no part.
+        self.part_uses.clear();
+        self.part_generation += 1;
         self.declared_symbols.clear_retaining_capacity();
         self.scopes_for_current_part.clear();
         self.import_records_for_current_part.clear();

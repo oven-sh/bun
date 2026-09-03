@@ -220,12 +220,6 @@ impl Default for Config {
 }
 
 impl ThreadPool {
-    pub fn max_threads(&self) -> u32 {
-        self.max_threads
-    }
-}
-
-impl ThreadPool {
     /// Statically initialize the thread pool using the configuration.
     pub fn init(config: Config) -> ThreadPool {
         ThreadPool {

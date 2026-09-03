@@ -133,7 +133,7 @@ describe.if(isPosix)("terminal signal reflects the crash cause", () => {
 // The report header names the CPU features the crash handler detected. On
 // x86_64 that detection uses cpuid directly (CPUFeatures.cpp). Every supported
 // x64 CPU has SSE4.2 and POPCNT, since the baseline build targets Nehalem.
-// AVX, AVX2 and AVX-512 are optional, and the report lists them in that order.
+// AVX is optional. AVX2 and AVX-512 are reported only with AVX, and after it.
 test.if(isPosix)("the crash report lists the CPU features", async () => {
   await using proc = Bun.spawn({
     cmd: [bunExe(), path.join(import.meta.dir, "fixture-crash.js"), "panic", "--debug-crash-handler-use-trace-string"],
@@ -144,7 +144,7 @@ test.if(isPosix)("the crash report lists the CPU features", async () => {
 
   const cpuLine = stderr.split("\n").find(line => line.startsWith("CPU: "));
   if (process.arch === "x64") {
-    expect(cpuLine).toMatch(/^CPU: sse42 popcnt( avx)?( avx2)?( avx512)?$/);
+    expect(cpuLine).toMatch(/^CPU: sse42 popcnt(?: avx(?: avx2)?(?: avx512)?)?$/);
   } else {
     expect(cpuLine).toMatch(/^CPU: neon fp( \w+)*$/);
   }

@@ -1300,9 +1300,18 @@ pub(crate) fn scan_imports_and_exports(
                             Index::source(source_index),
                         )?;
                         uses.ast_flags[id].insert(AstFlags::USES_EXPORTS_REF);
-                        ast.import_records[id].as_mut_slice()[import_record_index as usize]
-                            .flags
-                            .insert(ImportRecordFlags::CALLS_RUNTIME_RE_EXPORT_FN);
+                        let flags = &mut ast.import_records[id].as_mut_slice()
+                            [import_record_index as usize]
+                            .flags;
+                        flags.insert(ImportRecordFlags::CALLS_RUNTIME_RE_EXPORT_FN);
+                        // `convert_stmts_for_chunk` prints an external one as
+                        // `import * as ns`, and the printer names `ns` only for
+                        // a record that contains an import star.
+                        if !rec_source_index.is_valid()
+                            && output_format.keep_es6_import_export_syntax()
+                        {
+                            flags.insert(ImportRecordFlags::CONTAINS_IMPORT_STAR);
+                        }
                         re_export_uses += 1;
                     }
                 }

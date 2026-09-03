@@ -11,7 +11,8 @@ use crate::bun_renamer as renamer;
 use crate::bun_renamer::{ChunkRenamer, MinifyRenamer, NumberRenamer, StableSymbolCount};
 use crate::chunk::Content;
 use crate::js_meta;
-use crate::{Chunk, LinkerContext, StableRef, WrapKind};
+use crate::options::Format;
+use crate::{Chunk, Index, LinkerContext, StableRef, WrapKind};
 
 /// TODO: investigate if we need to parallelize this function
 /// esbuild does parallelize it.
@@ -319,6 +320,7 @@ pub(crate) unsafe fn rename_symbols_in_chunk(
     }
 
     let mut sorted: Vec<u32> = Vec::new();
+    let is_dev_server = c.options.output_format == Format::InternalBakeDev;
 
     // Renamed in a second pass, once every top-level symbol in the chunk is
     // in the root scope. Interleaving the passes let a nested local shadow a
@@ -329,6 +331,34 @@ pub(crate) unsafe fn rename_symbols_in_chunk(
         let wrap = all_flags[source_index as usize].wrap;
         // Need `&mut [Part]` for `add_top_level_declared_symbols`.
         let parts: &mut [Part] = all_parts[source_index as usize].as_mut_slice();
+
+        // DevServer gives every module its own closure, so its top level is not the chunk's.
+        if is_dev_server && !Index::source(source_index).is_runtime() {
+            let module_scope = &all_module_scopes[source_index as usize];
+            let file_scope = r.push_scope_under_root(module_scope.members.count());
+            let parts_live = &c.graph.parts_live[source_index as usize];
+            for (part_index, part) in parts.iter_mut().enumerate() {
+                if !parts_live.is_set(part_index) {
+                    continue;
+                }
+
+                // SAFETY: `file_scope` is live until the `put_scope` below.
+                unsafe { r.add_declared_symbols_to_scope(file_scope, &mut part.declared_symbols) };
+                for scope in part.scopes.iter() {
+                    // SAFETY: each `*mut Scope` is a valid arena-allocated scope.
+                    r.assign_names_recursive_with_number_scope(
+                        file_scope,
+                        unsafe { &**scope },
+                        source_index,
+                        &mut sorted,
+                    );
+                }
+            }
+            // SAFETY: `file_scope` came from `push_scope_under_root` above and
+            // every scope opened under it is already back in the pool.
+            unsafe { r.put_scope(file_scope) };
+            continue;
+        }
 
         match wrap {
             // Modules wrapped in a CommonJS closure look like this:

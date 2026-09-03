@@ -800,6 +800,43 @@ impl NumberRenamer {
         });
     }
 
+    /// Open a scope under [`Self::root`] for symbols that print inside a wrapper
+    /// function instead of at the chunk's top level. Pair with [`Self::put_scope`].
+    pub fn push_scope_under_root(&mut self, capacity: usize) -> *mut NumberScope {
+        let root: *mut NumberScope = &raw mut self.root;
+        self.number_scope_pool
+            .get_init(NumberScope {
+                // SAFETY: `root` points at a field of `self`, so it is non-null
+                // and outlives every scope handed out here.
+                parent: Some(unsafe { bun_ptr::ParentRef::from_raw_mut(root) }),
+                name_counts: NameCountMap::with_capacity_and_hasher(capacity, Default::default()),
+            })
+            .as_ptr()
+    }
+
+    /// # Safety
+    /// `scope` must come from [`Self::push_scope_under_root`], every scope
+    /// opened under it must already be back in the pool, and `scope` must not
+    /// be used afterwards.
+    pub unsafe fn put_scope(&mut self, scope: *mut NumberScope) {
+        // SAFETY: guaranteed by this function's safety contract.
+        unsafe { self.number_scope_pool.put(scope) };
+    }
+
+    /// # Safety
+    /// `scope` must be a live scope from [`Self::push_scope_under_root`].
+    pub unsafe fn add_declared_symbols_to_scope(
+        &mut self,
+        scope: *mut NumberScope,
+        declared_symbols: &mut js_ast::DeclaredSymbolList,
+    ) {
+        js_ast::DeclaredSymbol::for_each_top_level_symbol(declared_symbols, self, |r, ref_| {
+            // SAFETY: `scope` is live for the whole call (fn safety doc), and
+            // `assign_name` does not reach it through `r`.
+            r.assign_name(unsafe { &mut *scope }, ref_)
+        });
+    }
+
     pub fn name_for_symbol(&self, ref_: Ref) -> &[u8] {
         if ref_.is_source_contents_slice() {
             unreachable!("Unexpected unbound symbol!\n{}", ref_);

@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isASAN, tempDir } from "harness";
 import type { BlobOptions } from "node:buffer";
 import type { BinaryLike } from "node:crypto";
+import { appendFileSync } from "node:fs";
 import path from "node:path";
 
 test("blob: imports have sourcemapped stacktraces", async () => {
@@ -764,6 +765,122 @@ describe("file-backed slice bounds are respected when streaming and serving", ()
       expect(file.size).toBe(size);
       expectWindow(await collect(file.stream()), 0, size);
     });
+  });
+});
+
+// A negative index counts back from the end of the file. Every case slices a
+// fresh Bun.file(): nothing has read its .size, so slice() has to find the end.
+describe("Bun.file(path).slice() with a negative index", () => {
+  const content = "abcdefghijklmnopqrstuvwxyz";
+  const cases: [start: number, end: number | undefined, expected: string][] = [
+    [-5, undefined, "vwxyz"],
+    [0, -1, "abcdefghijklmnopqrstuvwxy"],
+    [1, -1, "bcdefghijklmnopqrstuvwxy"],
+    [-5, -2, "vwx"],
+    [-100, undefined, content],
+    [-100, -1, "abcdefghijklmnopqrstuvwxy"],
+    [0, -100, ""],
+    [-Infinity, undefined, content],
+  ];
+
+  test.each(cases)("slice(%p, %p)", async (start, end, expected) => {
+    using dir = tempDir("blob-file-slice-negative", { "data.txt": content });
+    const slice = () => Bun.file(`${dir}/data.txt`).slice(start, end);
+    expect(await new Blob([content]).slice(start, end).text()).toBe(expected);
+    expect({
+      size: slice().size,
+      text: await slice().text(),
+      bytes: Buffer.from(await slice().bytes()).toString(),
+      stream: await new Response(slice().stream()).text(),
+      response: await new Response(slice()).text(),
+    }).toEqual({
+      size: expected.length,
+      text: expected,
+      bytes: expected,
+      stream: expected,
+      response: expected,
+    });
+  });
+
+  test("a slice with an offset and an unknown end", async () => {
+    using dir = tempDir("blob-file-slice-negative", { "data.txt": content });
+    const file = () => Bun.file(`${dir}/data.txt`);
+    expect({
+      tail: await file().slice(3).slice(-5).text(),
+      inner: await file().slice(3).slice(1, -1).text(),
+      twice: await file().slice(1, -1).slice(1, -1).text(),
+    }).toEqual({
+      tail: "vwxyz",
+      inner: "efghijklmnopqrstuvwxy",
+      twice: "cdefghijklmnopqrstuvwx",
+    });
+  });
+
+  test("Bun.serve sends the window", async () => {
+    using dir = tempDir("blob-file-slice-negative", { "data.txt": content });
+    await using server = Bun.serve({
+      port: 0,
+      fetch: () => new Response(Bun.file(`${dir}/data.txt`).slice(-5)),
+    });
+    const res = await fetch(server.url);
+    expect({
+      body: await res.text(),
+      length: res.headers.get("content-length"),
+      status: res.status,
+    }).toEqual({
+      body: "vwxyz",
+      length: "5",
+      status: 206,
+    });
+  });
+
+  test("fetch() and FormData upload the window", async () => {
+    using dir = tempDir("blob-file-slice-negative", { "data.txt": content });
+    await using server = Bun.serve({
+      port: 0,
+      fetch: async req =>
+        new Response(req.url.endsWith("/form") ? await (await req.formData()).get("file")!.text() : await req.text()),
+    });
+    const form = new FormData();
+    form.append("file", Bun.file(`${dir}/data.txt`).slice(-5));
+    expect({
+      body: await (await fetch(server.url, { method: "POST", body: Bun.file(`${dir}/data.txt`).slice(-5) })).text(),
+      form: await (await fetch(new URL("/form", server.url), { method: "POST", body: form })).text(),
+    }).toEqual({ body: "vwxyz", form: "vwxyz" });
+  });
+
+  // slice() does not cache its stat in the store. So the parent Bun.file still
+  // sees the whole file after it grows.
+  test("the parent Bun.file still sees a later append", async () => {
+    using dir = tempDir("blob-file-slice-negative", { "data.txt": content });
+    const file = Bun.file(`${dir}/data.txt`);
+    const tail = file.slice(-5);
+    appendFileSync(`${dir}/data.txt`, "0123456789");
+    expect({
+      tail: await tail.text(),
+      stream: (await Bun.readableStreamToBytes(new Response(file).body!)).length,
+      size: file.size,
+      text: await file.text(),
+    }).toEqual({
+      tail: "vwxyz",
+      stream: 36,
+      size: 36,
+      text: content + "0123456789",
+    });
+  });
+
+  // slice() handles an index that is not a number in the same way for every Blob.
+  test("an object index gives the same bytes as an in-memory Blob", async () => {
+    using dir = tempDir("blob-file-slice-negative", { "data.txt": content });
+    const index = { valueOf: () => -5 } as unknown as number;
+    expect(await Bun.file(`${dir}/data.txt`).slice(index).text()).toBe(await new Blob([content]).slice(index).text());
+  });
+
+  test("a missing file still rejects with ENOENT", async () => {
+    using dir = tempDir("blob-file-slice-negative", {});
+    const slice = Bun.file(`${dir}/missing.txt`).slice(-5);
+    expect(slice.size).toBe(Bun.file(`${dir}/missing.txt`).size);
+    await expect(slice.text()).rejects.toMatchObject({ code: "ENOENT" });
   });
 });
 

@@ -1929,11 +1929,6 @@ impl BlobExt for Blob {
             return Ok(unsafe { BlobExt::to_js(&*ptr, global_this) });
         }
 
-        // If the optional start parameter is not used as a parameter, let relativeStart be 0.
-        let mut relative_start: i64 = 0;
-        // If the optional end parameter is not used, let relativeEnd be size.
-        let mut relative_end: i64 = i64::try_from(self.size.get()).expect("int cast");
-
         // Mutate the fixed-3 args array in place to shift the string arg into [2].
         if args[0].is_string() {
             args[2] = args[0];
@@ -1945,31 +1940,34 @@ impl BlobExt for Blob {
         }
 
         let mut args_iter = jsc::ArgumentsSlice::init(global_this.bun_vm(), &arguments_[..3]);
-        if let Some(start_) = args_iter.next_eat() {
-            if start_.is_number() {
-                let start = start_.to_int64();
-                if start < 0 {
-                    relative_start = (start
-                        .wrapping_add(i64::try_from(self.size.get()).expect("int cast")))
-                    .max(0);
-                } else {
-                    relative_start = start.min(i64::try_from(self.size.get()).expect("int cast"));
-                }
-            }
-        }
+        let start = args_iter
+            .next_eat()
+            .filter(|v| v.is_number())
+            .map(|v| v.to_int64());
+        let end = args_iter
+            .next_eat()
+            .filter(|v| v.is_number())
+            .map(|v| v.to_int64());
 
-        if let Some(end_) = args_iter.next_eat() {
-            if end_.is_number() {
-                let end = end_.to_int64();
-                if end < 0 {
-                    relative_end = (end
-                        .wrapping_add(i64::try_from(self.size.get()).expect("int cast")))
-                    .max(0);
-                } else {
-                    relative_end = end.min(i64::try_from(self.size.get()).expect("int cast"));
-                }
-            }
-        }
+        let size = if start.is_some_and(|i| i < 0) || end.is_some_and(|i| i < 0) {
+            size_for_relative_index(self)
+        } else {
+            self.size.get()
+        };
+        let size = i64::try_from(size).expect("int cast");
+
+        // If the optional start parameter is not used as a parameter, let relativeStart be 0.
+        let relative_start = match start {
+            Some(start) if start < 0 => start.wrapping_add(size).max(0),
+            Some(start) => start.min(size),
+            None => 0,
+        };
+        // If the optional end parameter is not used, let relativeEnd be size.
+        let relative_end = match end {
+            Some(end) if end < 0 => end.wrapping_add(size).max(0),
+            Some(end) => end.min(size),
+            None => size,
+        };
 
         let mut content_type = BlobContentType::default();
         if let Some(content_type_) = args_iter.next_eat() {
@@ -6003,44 +6001,63 @@ fn window_size(current: SizeType, available: SizeType) -> SizeType {
     }
 }
 
+/// The size that a negative `slice()` index counts back from. Until something
+/// stats a `Bun.file()`, its end is unknown: `offset + size` reaches
+/// `MAX_SIZE`, and counting back from that sentinel gives an offset near 2^52.
+/// So count back from the current size of a regular file. The stat is not
+/// cached in the store, so what `.size` and reads of the parent see does not
+/// change. A pipe or a device has no end and keeps the unknown size.
+fn size_for_relative_index(blob: &Blob) -> SizeType {
+    let (offset, size) = (blob.offset.get(), blob.size.get());
+    if offset.saturating_add(size) < MAX_SIZE {
+        return size;
+    }
+    let Some(store) = blob.store.get() else {
+        return size;
+    };
+    let store::Data::File(file) = &store.data else {
+        return size;
+    };
+    match stat_file(&file.pathlike) {
+        bun_sys::Result::Ok(stat) if bun_sys::S::ISREG(stat.st_mode as _) => {
+            (((stat.st_size.max(0)) as u64) as SizeType).saturating_sub(offset)
+        }
+        bun_sys::Result::Ok(_) => size,
+        // `.size` reports 0 for a missing file. A read still rejects with the
+        // open error.
+        bun_sys::Result::Err(_) => 0,
+    }
+}
+
+/// `stat()` the path or `fstat()` the fd of a file store.
+fn stat_file(pathlike: &PathOrFileDescriptor<'_>) -> bun_sys::Result<bun_sys::Stat> {
+    match pathlike {
+        PathOrFileDescriptor::Path(path) => {
+            let mut buffer = bun_paths::PathBuffer::uninit();
+            bun_sys::stat(path.slice_z(&mut buffer))
+        }
+        PathOrFileDescriptor::Fd(fd) => bun_sys::fstat(*fd),
+    }
+}
+
 /// resolve file stat like size, last_modified
 fn resolve_file_stat(store: &RefPtr<Store>) {
     // `Store::data_mut` encapsulates the raw-pointer deref under the
     // `RefPtr<Store>` liveness invariant; the caller holds the only ref across
     // this call, so an exclusive borrow is sound.
     let file = Store::data_mut(store).as_file_mut();
-    match &file.pathlike {
-        PathOrFileDescriptor::Path(path) => {
-            let mut buffer = bun_paths::PathBuffer::uninit();
-            match bun_sys::stat(path.slice_z(&mut buffer)) {
-                bun_sys::Result::Ok(stat) => {
-                    file.max_size = if bun_sys::S::ISREG(stat.st_mode as _) || stat.st_size > 0 {
-                        ((stat.st_size.max(0)) as u64) as SizeType
-                    } else {
-                        MAX_SIZE
-                    };
-                    file.mode = stat.st_mode as bun_sys::Mode;
-                    file.seekable = Some(bun_sys::S::ISREG(stat.st_mode as _));
-                    file.last_modified = stat_to_js_mtime(&stat);
-                }
-                // the file may not exist yet. That's okay.
-                _ => {}
-            }
-        }
-        PathOrFileDescriptor::Fd(fd) => match bun_sys::fstat(*fd) {
-            bun_sys::Result::Ok(stat) => {
-                file.max_size = if bun_sys::S::ISREG(stat.st_mode as _) || stat.st_size > 0 {
-                    ((stat.st_size.max(0)) as u64) as SizeType
-                } else {
-                    MAX_SIZE
-                };
-                file.mode = stat.st_mode as bun_sys::Mode;
-                file.seekable = Some(bun_sys::S::ISREG(stat.st_mode as _));
-                file.last_modified = stat_to_js_mtime(&stat);
-            }
-            _ => {}
-        },
-    }
+    // the file may not exist yet. That's okay.
+    let bun_sys::Result::Ok(stat) = stat_file(&file.pathlike) else {
+        return;
+    };
+    file.max_size = if bun_sys::S::ISREG(stat.st_mode as _) || stat.st_size > 0 {
+        ((stat.st_size.max(0)) as u64) as SizeType
+    } else {
+        MAX_SIZE
+    };
+    file.mode = stat.st_mode as bun_sys::Mode;
+    file.seekable = Some(bun_sys::S::ISREG(stat.st_mode as _));
+    file.last_modified = stat_to_js_mtime(&stat);
 }
 
 // ──────────────────────────────────────────────────────────────────────────

@@ -527,7 +527,7 @@ fn alloc_buf(_arena: DynAlloc, n: usize) -> Result<Vec<u8>, AllocError> {
 fn additional_output_file_index(f: &AdditionalFile) -> usize {
     match *f {
         AdditionalFile::OutputFile(i) => i as usize,
-        AdditionalFile::SourceIndex(_) => {
+        AdditionalFile::SourceIndex => {
             unreachable!("asset additional_files entry must be .output_file")
         }
     }

@@ -29,7 +29,7 @@ pub enum AsyncState {
     Exec {
         child: Option<NodeId>,
     },
-    Done(ExitCode),
+    Done,
 }
 
 impl Async {
@@ -90,7 +90,7 @@ impl Async {
                         NextAction::SpawnChild
                     }
                 }
-                AsyncState::Done(_) => NextAction::Finish,
+                AsyncState::Done => NextAction::Finish,
             }
         };
         match action {
@@ -137,11 +137,11 @@ impl Async {
         interp: &Interpreter,
         this: NodeId,
         child: NodeId,
-        exit_code: ExitCode,
+        _exit_code: ExitCode,
     ) -> Yield {
         log!("Async {} childDone", this);
         interp.deinit_node(child);
-        interp.as_async_mut(this).state = AsyncState::Done(exit_code);
+        interp.as_async_mut(this).state = AsyncState::Done;
         Self::enqueue_self(interp, this);
         Yield::suspended()
     }

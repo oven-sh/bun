@@ -1406,7 +1406,6 @@ pub enum EnqueueResult {
         package_id: PackageID,
         resolution: Resolution,
     },
-    Pending(DependencyID),
     NotFound,
     Failure(bun_core::Error),
 }

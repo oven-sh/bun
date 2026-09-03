@@ -877,11 +877,7 @@ impl AnyRoute {
                         limit
                     )));
                 }
-                return Ok(Some(AnyRoute::FrameworkRouter(
-                    FrameworkRouter::TypeIndex::init(
-                        u8::try_from(init_ctx.framework_router_list.len() - 1).expect("int cast"),
-                    ),
-                )));
+                return Ok(Some(AnyRoute::FrameworkRouter));
             }
         }
 

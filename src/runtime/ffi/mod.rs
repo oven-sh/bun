@@ -23,11 +23,6 @@ pub mod ffi {
 #[path = "FFIObject.rs"]
 pub mod ffi_object_draft;
 
-// Canonical name (re-exported by `runtime::api`
-// as `FFIObject`); the module itself still lives under the draft name because
-// `api/BunObject.rs` references `crate::ffi::ffi_object_draft::getter`.
-pub use ffi_object_draft as ffi_object;
-
 // ─── DOMCall slowpath C-ABI exports ──────────────────────────────────────────
 // The C++ DOMJIT side expects a `<class>__<fn>__slowpath` export with
 // signature `slowpath(global, this, args_ptr, args_len)`. The bodies live in

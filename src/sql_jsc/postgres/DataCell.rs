@@ -11,7 +11,7 @@ use bun_sql::shared::data::Data;
 use bun_sql::shared::sql_query_result_mode::SQLQueryResultMode as PostgresSQLQueryResultMode;
 
 pub(crate) use crate::shared::sql_data_cell::SQLDataCell;
-pub use crate::shared::sql_data_cell::{Array, Flags, Raw, Tag, TypedArray, Value};
+pub use crate::shared::sql_data_cell::{Array, Flags, Tag, TypedArray, Value};
 
 type Result<T, E = AnyPostgresError> = core::result::Result<T, E>;
 

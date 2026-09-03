@@ -2772,8 +2772,7 @@ pub mod bv2_impl {
                     let additional_files: &mut bun_alloc::AstVec<crate::AdditionalFile> =
                         &mut self.graph.input_files.items_additional_files_mut()
                             [source_index.get() as usize];
-                    additional_files
-                        .push(crate::AdditionalFile::SourceIndex(task.source_index.get()));
+                    additional_files.push(crate::AdditionalFile::SourceIndex);
                     self.graph.input_files.items_side_effects_mut()[source_index.get() as usize] =
                         bun_ast::SideEffects::NoSideEffectsPureData;
                     self.graph.estimated_file_loader_count += 1;
@@ -2884,8 +2883,7 @@ pub mod bv2_impl {
                     let additional_files: &mut bun_alloc::AstVec<crate::AdditionalFile> =
                         &mut self.graph.input_files.items_additional_files_mut()
                             [source_index.get() as usize];
-                    additional_files
-                        .push(crate::AdditionalFile::SourceIndex(task.source_index.get()));
+                    additional_files.push(crate::AdditionalFile::SourceIndex);
                     self.graph.input_files.items_side_effects_mut()[source_index.get() as usize] =
                         bun_ast::SideEffects::NoSideEffectsPureData;
                     self.graph.estimated_file_loader_count += 1;
@@ -3755,8 +3753,7 @@ pub mod bv2_impl {
                     let additional_files: &mut bun_alloc::AstVec<crate::AdditionalFile> =
                         &mut self.graph.input_files.items_additional_files_mut()
                             [source_index.get() as usize];
-                    additional_files
-                        .push(crate::AdditionalFile::SourceIndex(task.source_index.get()));
+                    additional_files.push(crate::AdditionalFile::SourceIndex);
                     self.graph.input_files.items_side_effects_mut()[source_index.get() as usize] =
                         bun_ast::SideEffects::NoSideEffectsPureData;
                     self.graph.estimated_file_loader_count += 1;
@@ -3854,7 +3851,7 @@ pub mod bv2_impl {
                     let additional_files: &mut bun_alloc::AstVec<crate::AdditionalFile> =
                         &mut self.graph.input_files.items_additional_files_mut()
                             [source_index.get() as usize];
-                    additional_files.push(crate::AdditionalFile::SourceIndex(source_index.get()));
+                    additional_files.push(crate::AdditionalFile::SourceIndex);
                     self.graph.input_files.items_side_effects_mut()[source_index.get() as usize] =
                         bun_ast::SideEffects::NoSideEffectsPureData;
                     self.graph.estimated_file_loader_count += 1;
@@ -4627,8 +4624,7 @@ pub mod bv2_impl {
                         let additional_files: &mut bun_alloc::AstVec<crate::AdditionalFile> =
                             &mut this.graph.input_files.items_additional_files_mut()
                                 [source_index.get() as usize];
-                        let _ = additional_files
-                            .push(crate::AdditionalFile::SourceIndex(source_index.get()));
+                        let _ = additional_files.push(crate::AdditionalFile::SourceIndex);
                         this.graph.input_files.items_side_effects_mut()
                             [source_index.get() as usize] =
                             bun_ast::SideEffects::NoSideEffectsPureData;
@@ -5013,9 +5009,7 @@ pub mod bv2_impl {
                                         crate::AdditionalFile,
                                     > = &mut this.graph.input_files.items_additional_files_mut()
                                         [source_index.get() as usize];
-                                    additional_files.push(crate::AdditionalFile::SourceIndex(
-                                        task.source_index.get(),
-                                    ));
+                                    additional_files.push(crate::AdditionalFile::SourceIndex);
                                     this.graph.input_files.items_side_effects_mut()
                                         [source_index.get() as usize] =
                                         bun_ast::SideEffects::NoSideEffectsPureData;
@@ -5406,7 +5400,7 @@ pub mod bv2_impl {
                 b"metafile.md".as_slice()
             }),
             output_path: Box::<[u8]>::from(file_path),
-            data: crate::output_file::OptionsData::Saved(content.len()),
+            data: crate::output_file::OptionsData::Saved,
             output_kind,
             is_executable: false,
             side: None,
@@ -6932,9 +6926,7 @@ pub mod bv2_impl {
                         let additional_files: &mut bun_alloc::AstVec<crate::AdditionalFile> =
                             &mut self.graph.input_files.items_additional_files_mut()
                                 [importer_source_index as usize];
-                        additional_files.push(crate::AdditionalFile::SourceIndex(
-                            new_task.source_index.get(),
-                        ));
+                        additional_files.push(crate::AdditionalFile::SourceIndex);
                         self.graph.input_files.items_side_effects_mut()
                             [new_task.source_index.get() as usize] =
                             bun_ast::SideEffects::NoSideEffectsPureData;
@@ -6944,12 +6936,10 @@ pub mod bv2_impl {
                     self.graph.pool().schedule(new_task);
                 } else {
                     if loader.should_copy_for_bundling() {
-                        // SAFETY: value_ptr is valid (see above).
-                        let existing_idx = unsafe { *value_ptr };
                         let additional_files: &mut bun_alloc::AstVec<crate::AdditionalFile> =
                             &mut self.graph.input_files.items_additional_files_mut()
                                 [importer_source_index as usize];
-                        additional_files.push(crate::AdditionalFile::SourceIndex(existing_idx));
+                        additional_files.push(crate::AdditionalFile::SourceIndex);
                         self.graph.estimated_file_loader_count += 1;
                     }
 

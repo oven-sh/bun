@@ -84,7 +84,6 @@
 #include "IDLTypes.h"
 #include "ImportMetaObject.h"
 #include "JS2Native.h"
-#include "JSAbortAlgorithm.h"
 #include "JSAbortController.h"
 #include "JSAbortSignal.h"
 #include "streams/JSCompressionStream.h"
@@ -1611,22 +1610,6 @@ extern "C" JSC::EncodedJSValue Bun__createTypedArrayForCopy(JSC::JSGlobalObject*
     return {};
 }
 
-JSC_DECLARE_HOST_FUNCTION(functionCreateUninitializedArrayBuffer);
-JSC_DEFINE_HOST_FUNCTION(functionCreateUninitializedArrayBuffer,
-    (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
-{
-    size_t len = static_cast<size_t>(JSC__JSValue__toInt64(JSC::JSValue::encode(callFrame->argument(0))));
-    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
-    auto arrayBuffer = JSC::ArrayBuffer::tryCreateUninitialized(len, 1);
-
-    if (!arrayBuffer) [[unlikely]] {
-        JSC::throwOutOfMemoryError(globalObject, scope);
-        return {};
-    }
-
-    RELEASE_AND_RETURN(scope, JSValue::encode(JSC::JSArrayBuffer::create(globalObject->vm(), globalObject->arrayBufferStructure(JSC::ArrayBufferSharingMode::Default), WTF::move(arrayBuffer))));
-}
-
 static inline JSC::EncodedJSValue jsFunctionAddEventListenerBody(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, Zig::GlobalObject* castedThis)
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
@@ -1764,92 +1747,11 @@ JSC_DEFINE_HOST_FUNCTION(functionNavigatorGetHardwareConcurrency, (JSC::JSGlobal
     return JSValue::encode(JSC::jsNumber(WTF::numberOfProcessorCores()));
 }
 
-JSC_DECLARE_HOST_FUNCTION(makeGetterTypeErrorForBuiltins);
-JSC_DECLARE_HOST_FUNCTION(makeDOMExceptionForBuiltins);
-JSC_DECLARE_HOST_FUNCTION(isAbortSignal);
 JSC_DECLARE_HOST_FUNCTION(jsBunPeekPromiseStatus);
 JSC_DECLARE_HOST_FUNCTION(jsBunPeekPromiseSettledValue);
 JSC_DECLARE_HOST_FUNCTION(jsBunPokePromiseAsHandled);
 JSC_DECLARE_HOST_FUNCTION(jsWebStreamClosedPromise);
 JSC_DECLARE_HOST_FUNCTION(jsWebStreamControllerError);
-
-JSC_DEFINE_HOST_FUNCTION(makeGetterTypeErrorForBuiltins, (JSGlobalObject * globalObject, CallFrame* callFrame))
-{
-    ASSERT(callFrame);
-    ASSERT(callFrame->argumentCount() == 2);
-    VM& vm = globalObject->vm();
-    DeferTermination deferScope(vm);
-    auto scope = DECLARE_THROW_SCOPE(vm);
-
-    auto interfaceName = callFrame->uncheckedArgument(0).getString(globalObject);
-    RETURN_IF_EXCEPTION(scope, {});
-    auto attributeName = callFrame->uncheckedArgument(1).getString(globalObject);
-    RETURN_IF_EXCEPTION(scope, {});
-
-    auto error = static_cast<ErrorInstance*>(createTypeError(globalObject, JSC::makeDOMAttributeGetterTypeErrorMessage(interfaceName.utf8().data(), attributeName)));
-    error->setNativeGetterTypeError();
-    return JSValue::encode(error);
-}
-
-JSC_DEFINE_HOST_FUNCTION(makeDOMExceptionForBuiltins, (JSGlobalObject * globalObject, CallFrame* callFrame))
-{
-    ASSERT(callFrame);
-    ASSERT(callFrame->argumentCount() == 2);
-
-    auto& vm = JSC::getVM(globalObject);
-    DeferTermination deferScope(vm);
-    auto scope = DECLARE_THROW_SCOPE(vm);
-
-    auto codeValue = callFrame->uncheckedArgument(0).getString(globalObject);
-    RETURN_IF_EXCEPTION(scope, {});
-
-    auto message = callFrame->uncheckedArgument(1).getString(globalObject);
-    RETURN_IF_EXCEPTION(scope, {});
-
-    ExceptionCode code { TypeError };
-    if (codeValue == "AbortError"_s)
-        code = AbortError;
-    auto value = createDOMException(globalObject, code, message);
-
-    EXCEPTION_ASSERT(!scope.exception() || vm.hasPendingTerminationException());
-
-    return JSValue::encode(value);
-}
-
-JSC_DEFINE_HOST_FUNCTION(addAbortAlgorithmToSignal, (JSGlobalObject * globalObject, CallFrame* callFrame))
-{
-    ASSERT(callFrame);
-    ASSERT(callFrame->argumentCount() == 2);
-
-    auto& vm = JSC::getVM(globalObject);
-    auto* abortSignal = dynamicDowncast<JSAbortSignal>(callFrame->uncheckedArgument(0));
-    if (!abortSignal) [[unlikely]]
-        return JSValue::encode(JSValue(JSC::JSValue::JSFalse));
-
-    Ref<AbortAlgorithm> abortAlgorithm = JSAbortAlgorithm::create(vm, callFrame->uncheckedArgument(1).getObject());
-
-    auto algorithmIdentifier = AbortSignal::addAbortAlgorithmToSignal(abortSignal->wrapped(), WTF::move(abortAlgorithm));
-    return JSValue::encode(JSC::jsNumber(algorithmIdentifier));
-}
-
-JSC_DEFINE_HOST_FUNCTION(removeAbortAlgorithmFromSignal, (JSGlobalObject*, CallFrame* callFrame))
-{
-    ASSERT(callFrame);
-    ASSERT(callFrame->argumentCount() == 2);
-
-    auto* abortSignal = dynamicDowncast<JSAbortSignal>(callFrame->uncheckedArgument(0));
-    if (!abortSignal) [[unlikely]]
-        return JSValue::encode(JSValue(JSC::JSValue::JSFalse));
-
-    AbortSignal::removeAbortAlgorithmFromSignal(abortSignal->wrapped(), callFrame->uncheckedArgument(1).asUInt32());
-    return JSValue::encode(JSC::jsUndefined());
-}
-
-JSC_DEFINE_HOST_FUNCTION(isAbortSignal, (JSGlobalObject*, CallFrame* callFrame))
-{
-    ASSERT(callFrame->argumentCount() == 1);
-    return JSValue::encode(jsBoolean(callFrame->uncheckedArgument(0).inherits<JSAbortSignal>()));
-}
 
 // JSPromise lost its JSInternalFieldObjectImpl<2> layout in WebKit, so the
 // @getPromiseInternalField/@putPromiseInternalField bytecode intrinsics that
@@ -2851,11 +2753,6 @@ void GlobalObject::addBuiltinGlobals(JSC::VM& vm)
         JSC::EncodedJSValue(JSC_HOST_CALL_ATTRIBUTES* function)(JSC::JSGlobalObject*, JSC::CallFrame*);
     };
     static constexpr PrivateFunction privateFunctions[] = {
-        { BuiltinName::k_makeGetterTypeError, 2, makeGetterTypeErrorForBuiltins },
-        { BuiltinName::k_makeDOMException, 2, makeDOMExceptionForBuiltins },
-        { BuiltinName::k_addAbortAlgorithmToSignal, 2, addAbortAlgorithmToSignal },
-        { BuiltinName::k_removeAbortAlgorithmFromSignal, 2, removeAbortAlgorithmFromSignal },
-        { BuiltinName::k_isAbortSignal, 1, isAbortSignal },
         { BuiltinName::k_peekPromiseStatus, 1, jsBunPeekPromiseStatus },
         { BuiltinName::k_peekPromiseSettledValue, 1, jsBunPeekPromiseSettledValue },
         { BuiltinName::k_pokePromiseAsHandled, 1, jsBunPokePromiseAsHandled },
@@ -2895,7 +2792,6 @@ void GlobalObject::addBuiltinGlobals(JSC::VM& vm)
 
     putDirectBuiltinFunction(vm, this, builtinNames.overridableRequirePrivateName(), commonJSOverridableRequireCodeGenerator(vm), 0);
 
-    putDirectNativeFunction(vm, this, builtinNames.createUninitializedArrayBufferPrivateName(), 1, functionCreateUninitializedArrayBuffer, ImplementationVisibility::Public, NoIntrinsic, PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly);
     putDirectNativeFunction(vm, this, builtinNames.resolveSyncPrivateName(), 1, functionImportMeta__resolveSyncPrivate, ImplementationVisibility::Public, NoIntrinsic, PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly);
     putDirectNativeFunction(vm, this, builtinNames.createInternalModuleByIdPrivateName(), 1, InternalModuleRegistry::jsCreateInternalModuleById, ImplementationVisibility::Public, NoIntrinsic, PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly);
 

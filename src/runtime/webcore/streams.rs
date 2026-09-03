@@ -486,7 +486,6 @@ impl Writable {
 
 #[derive(Copy, Clone)]
 pub struct IntoArray {
-    pub value: JSValue,
     pub(crate) len: BlobSizeType,
 }
 

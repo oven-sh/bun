@@ -84,7 +84,7 @@ pub enum PromptBehaviour {
     #[default]
     Never,
     /// `-I`, `--interactive=once`
-    Once { removed_count: u32 },
+    Once,
     /// `-i`, `--interactive=always`
     Always,
 }
@@ -527,7 +527,7 @@ impl Rm {
                     RmParseFlag::ContinueParsing
                 }
                 b"--interactive=once" => {
-                    opts.prompt_behaviour = PromptBehaviour::Once { removed_count: 0 };
+                    opts.prompt_behaviour = PromptBehaviour::Once;
                     RmParseFlag::ContinueParsing
                 }
                 b"--interactive=always" => {
@@ -546,7 +546,7 @@ impl Rm {
                 b'r' | b'R' => opts.recursive = true,
                 b'v' => opts.verbose = true,
                 b'd' => opts.remove_empty_dirs = true,
-                b'i' => opts.prompt_behaviour = PromptBehaviour::Once { removed_count: 0 },
+                b'i' => opts.prompt_behaviour = PromptBehaviour::Once,
                 b'I' => opts.prompt_behaviour = PromptBehaviour::Always,
                 _ => return RmParseFlag::IllegalOptionWithFlag,
             }

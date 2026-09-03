@@ -2426,7 +2426,6 @@ pub mod internal {
 
     pub enum DNSRequestOwner {
         Socket(*mut ConnectingSocket),           // FFI
-        Prefetch(*mut Loop),                     // FFI
         Quic(*mut bun_http::H3::PendingConnect), // BORROW_PARAM
     }
 
@@ -2443,7 +2442,6 @@ pub mod internal {
                 DNSRequestOwner::Socket(socket) => unsafe {
                     us_internal_dns_callback_threadsafe(*socket, req)
                 },
-                DNSRequestOwner::Prefetch(_) => freeaddrinfo(req, 0),
                 // SAFETY: `pc` is the live PendingConnect borrowed for the lifetime of the request.
                 DNSRequestOwner::Quic(pc) => unsafe {
                     bun_http::H3::PendingConnect::on_dns_resolved_threadsafe(*pc)
@@ -2459,7 +2457,6 @@ pub mod internal {
         #[allow(clippy::not_unsafe_ptr_arg_deref)]
         pub(crate) fn notify(&self, req: *mut Request) {
             match self {
-                DNSRequestOwner::Prefetch(_) => freeaddrinfo(req, 0),
                 // SAFETY: `socket` is the live usockets handle stored when the request was registered.
                 DNSRequestOwner::Socket(socket) => unsafe {
                     us_internal_dns_callback(*socket, req)

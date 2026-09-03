@@ -607,19 +607,17 @@ impl ByteStream {
                         self.pending.with_mut(|p| p.result = streams::Result::Done);
                     }
                 } else {
-                    let v = self.value();
+                    self.value();
                     self.pending.with_mut(|p| {
                         p.result = streams::Result::IntoArrayAndDone(IntoArray {
-                            value: v,
                             len: to_copy_len as blob::SizeType, // @truncate
                         });
                     });
                 }
             } else {
-                let v = self.value();
+                self.value();
                 self.pending.with_mut(|p| {
                     p.result = streams::Result::IntoArray(IntoArray {
-                        value: v,
                         len: to_copy_len as blob::SizeType, // @truncate
                     });
                 });
@@ -752,13 +750,11 @@ impl ByteStream {
                 self.done.set(true);
 
                 return streams::Result::IntoArrayAndDone(IntoArray {
-                    value: view,
                     len: to_write as blob::SizeType, // @truncate
                 });
             }
 
             return streams::Result::IntoArray(IntoArray {
-                value: view,
                 len: to_write as blob::SizeType, // @truncate
             });
         }

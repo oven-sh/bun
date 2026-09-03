@@ -15,8 +15,6 @@ use crate::shared::sql_data_cell::{Flags as SQLDataCellFlags, SQLDataCell};
 
 use super::decode_binary_value::{self, decode_binary_value};
 
-pub use bun_sql::mysql::protocol::ResultSetHeader as Header;
-
 bun_core::declare_scope!(MySQLResultSet, visible);
 
 pub(crate) struct Row<'a> {

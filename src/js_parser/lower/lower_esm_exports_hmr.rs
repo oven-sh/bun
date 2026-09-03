@@ -471,7 +471,7 @@ impl<'a> ConvertESMExportsForHmr<'a> {
                     // Note: the concrete `P` always carries `symbol_uses`;
                     // once a `ParserLike` trait is introduced for
                     // AstBuilder, that variant should override this to a no-op.
-                    p.symbol_uses.swap_remove(&namespace_ref);
+                    p.forget_part_use(namespace_ref);
                 }
             }
             if stmt.star_name_loc.is_empty() {

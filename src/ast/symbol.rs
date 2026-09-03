@@ -650,11 +650,6 @@ impl Map {
         }
     }
 
-    /// Equivalent to followSymbols in esbuild.
-    ///
-    /// An iterative two-phase walk so the per-hop work is just two raw
-    /// pointer adds and a load — no call frame, no `Option` unwrap, no
-    /// repeated tag/null guards. Every node on the path from `ref_` to the
     /// The symbol whose name the printer writes for a reference to `ref_`:
     /// `follow`, then through `namespace_alias` (an import that prints as a
     /// property of its namespace object prints that object's symbol).
@@ -670,6 +665,11 @@ impl Map {
         ref_
     }
 
+    /// Equivalent to followSymbols in esbuild.
+    ///
+    /// An iterative two-phase walk so the per-hop work is just two raw
+    /// pointer adds and a load — no call frame, no `Option` unwrap, no
+    /// repeated tag/null guards. Every node on the path from `ref_` to the
     /// union-find root has its `link` rewritten to the root (full path
     /// compression).
     pub fn follow(&self, ref_: Ref) -> Ref {

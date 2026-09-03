@@ -9,7 +9,7 @@ use bun_ast::{Part, Ref, SlotCounts};
 
 use crate::bun_renamer as renamer;
 use crate::bun_renamer::{
-    ChunkRenamer, MinifyRenamer, NumberRenamer, ScopeUses, StableSymbolCount,
+    ChunkRenamer, MinifyRenamer, NestedRenamer, NumberRenamer, ScopeUses, StableSymbolCount,
 };
 use crate::chunk::Content;
 use crate::js_meta;
@@ -88,8 +88,7 @@ pub(crate) unsafe fn rename_symbols_in_chunk(
         module_ref_col,
         nested_slot_counts_col,
         cjs_export_copies_col,
-        scope_uses_col,
-    ): (_, &[js_meta::Flags], _, _, _, _, _, _, _, _, _, _) = unsafe {
+    ): (_, &[js_meta::Flags], _, _, _, _, _, _, _, _, _) = unsafe {
         (
             &mut *ast.module_scope,
             &*meta.flags,
@@ -102,7 +101,6 @@ pub(crate) unsafe fn rename_symbols_in_chunk(
             &*ast.module_ref,
             &*ast.nested_scope_slot_counts,
             &*meta.cjs_export_copies,
-            &*ast.scope_uses,
         )
     };
 
@@ -322,8 +320,6 @@ pub(crate) unsafe fn rename_symbols_in_chunk(
         r.add_top_level_symbol(stable_ref.r#ref);
     }
 
-    let mut sorted: Vec<u32> = Vec::new();
-
     // Renamed in a second pass, once every top-level symbol in the chunk is
     // in the root scope. Interleaving the passes let a nested local shadow a
     // later part's top-level symbol (#41054).
@@ -442,9 +438,14 @@ pub(crate) unsafe fn rename_symbols_in_chunk(
             }
 
             r.add_top_level_declared_symbols(&mut part.declared_symbols);
-            // `Part.scopes: StoreSlice<*mut Scope>` — safe `Deref` to `&[*mut Scope]`.
-            for scope in part.scopes.iter() {
-                nested_scopes.push((source_index, (*scope).cast_const()));
+            // `part.scopes` lists every scope visited for the part; the walk
+            // below recurses, so only the module scope's children go in.
+            for &scope in part.scopes.iter() {
+                // SAFETY: live arena-allocated scope (see below).
+                let parent = unsafe { (*scope).parent };
+                if parent.is_some_and(|parent| parent.parent.is_none()) {
+                    nested_scopes.push((source_index, scope.cast_const()));
+                }
             }
         }
     }
@@ -455,33 +456,75 @@ pub(crate) unsafe fn rename_symbols_in_chunk(
         r.add_top_level_symbol(copy);
     }
 
-    // `nested_scopes` is grouped by file.
-    for group in nested_scopes.chunk_by(|a, b| a.0 == b.0) {
-        let source_index = group[0].0;
-        let uses = ScopeUses::new(
-            source_index,
-            &scope_uses_col[source_index as usize],
-            all_parts[source_index as usize].as_slice(),
-            &c.graph.parts_live[source_index as usize],
-            // SAFETY: `symbols` points to the live `c.graph.symbols`; read-only here.
-            unsafe { &*symbols },
-        );
-        for &(_, scope) in group {
-            // Raw pointer for borrowck: `assign_names_*` takes `&mut r` plus
-            // `r.root`, and never reaches `self.root` through `self`.
-            let root: *mut renamer::NumberScope = core::ptr::addr_of_mut!(r.root);
-            // SAFETY: each `scope` is a live arena-allocated scope collected
-            // above; nothing mutates those scopes in between.
-            r.assign_names_recursive_with_number_scope(
-                root,
-                unsafe { &*scope },
-                source_index,
-                &mut sorted,
-                &uses,
-            );
-            r.number_scope_pool.hive.used = bun_collections::hive_array::HiveBitSet::init_empty();
+    chunk.nested_scopes_to_rename = nested_scopes;
+    Ok(ChunkRenamer::Number(r))
+}
+
+/// One `NestedRenamer` task: the nested scopes of one file of one chunk.
+pub(crate) struct NestedRenameTask {
+    pub chunk_index: u32,
+    /// Range into `chunk.nested_scopes_to_rename`.
+    pub scopes: core::ops::Range<u32>,
+    pub names: Option<renamer::NestedNames>,
+}
+
+pub(crate) fn nested_rename_tasks(chunks: &[Chunk]) -> Vec<NestedRenameTask> {
+    let mut tasks = Vec::new();
+    for (chunk_index, chunk) in chunks.iter().enumerate() {
+        let scopes = &chunk.nested_scopes_to_rename;
+        let mut start = 0;
+        for group in scopes.chunk_by(|a, b| a.0 == b.0) {
+            let end = start + group.len();
+            tasks.push(NestedRenameTask {
+                chunk_index: chunk_index as u32,
+                scopes: start as u32..end as u32,
+                names: None,
+            });
+            start = end;
         }
     }
+    tasks
+}
 
-    Ok(ChunkRenamer::Number(r))
+// CONCURRENCY: `each_ptr` callback, one task per (chunk, file). Reads the
+// chunk's `NumberRenamer` (complete for top-level symbols; not written until
+// every task has finished) and `graph.{ast,symbols,parts_live}`; writes only
+// `task.names`.
+pub(crate) fn run_nested_rename_task(
+    ctx: &crate::linker_context_mod::GenerateChunkCtx,
+    task: *mut NestedRenameTask,
+    _task_index: usize,
+) {
+    // SAFETY: `each_ptr` hands us a unique `*mut NestedRenameTask`.
+    let task = unsafe { &mut *task };
+    let c: &LinkerContext<'_> = &ctx.c;
+    let chunk = &ctx.chunks[task.chunk_index as usize];
+    let ChunkRenamer::Number(root) = &chunk.renamer else {
+        unreachable!()
+    };
+    let scopes =
+        &chunk.nested_scopes_to_rename[task.scopes.start as usize..task.scopes.end as usize];
+    let source_index = scopes[0].0;
+    let ast = c.graph.ast.split_raw();
+    // SAFETY: read-only column views; see `rename_symbols_in_chunk`.
+    let (parts, scope_uses) = unsafe {
+        (
+            &(&(*ast.parts))[source_index as usize],
+            &(&(*ast.scope_uses))[source_index as usize],
+        )
+    };
+    let uses = ScopeUses::new(
+        source_index,
+        scope_uses,
+        parts.as_slice(),
+        &c.graph.parts_live[source_index as usize],
+        &c.graph.symbols,
+    );
+    let mut nested = NestedRenamer::new(root, &uses, source_index);
+    let mut sorted: Vec<u32> = Vec::new();
+    for &(_, scope) in scopes {
+        // SAFETY: live arena-allocated scope (see `rename_symbols_in_chunk`).
+        nested.assign_names_recursive(unsafe { &*scope }, &mut sorted);
+    }
+    task.names = Some(nested.into_names());
 }

@@ -311,7 +311,17 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
 
     pub(crate) has_called_runtime: bool,
 
+    /// The current part's symbol uses, built from `part_uses` when the part
+    /// is done (`take_symbol_uses`); empty while visiting.
     pub(crate) symbol_uses: SymbolUseMap,
+    /// The current part's uses in first-use order. By symbol inner index,
+    /// `part_use_generation[i] == part_generation` says symbol `i` has a live
+    /// entry at `part_uses[part_use_index[i]]`. One dense lookup per reference
+    /// instead of one hash-map probe.
+    pub(crate) part_uses: Vec<(Ref, js_ast::symbol::Use)>,
+    pub(crate) part_use_generation: Vec<u32>,
+    pub(crate) part_use_index: Vec<u32>,
+    pub(crate) part_generation: u32,
     pub(crate) declared_symbols: bun_ast::DeclaredSymbolList,
     pub(crate) runtime_imports: RuntimeImports,
 
@@ -2031,6 +2041,58 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 
+    /// The current part's use entry for `ref_`, created if absent.
+    fn part_use(&mut self, ref_: Ref) -> &mut js_ast::symbol::Use {
+        let i = ref_.inner_index() as usize;
+        if i >= self.part_use_generation.len() {
+            let len = self.symbols.len();
+            self.part_use_generation.resize(len, 0);
+            self.part_use_index.resize(len, 0);
+        }
+        if self.part_use_generation[i] != self.part_generation {
+            self.part_use_generation[i] = self.part_generation;
+            self.part_use_index[i] = self.part_uses.len() as u32;
+            self.part_uses.push((ref_, js_ast::symbol::Use::default()));
+        }
+        &mut self.part_uses[self.part_use_index[i] as usize].1
+    }
+
+    fn existing_part_use(&mut self, ref_: Ref) -> Option<&mut js_ast::symbol::Use> {
+        let i = ref_.inner_index() as usize;
+        if self.part_use_generation.get(i).copied() != Some(self.part_generation) {
+            return None;
+        }
+        Some(&mut self.part_uses[self.part_use_index[i] as usize].1)
+    }
+
+    /// Drop the current part's uses of `ref_`.
+    pub(crate) fn forget_part_use(&mut self, ref_: Ref) {
+        if let Some(generation) = self
+            .part_use_generation
+            .get_mut(ref_.inner_index() as usize)
+        {
+            *generation = 0;
+        }
+    }
+
+    /// The current part's uses as a map; starts the next part.
+    pub(crate) fn take_symbol_uses(&mut self) -> Result<SymbolUseMap, bun_alloc::AllocError> {
+        let mut map = core::mem::take(&mut self.symbol_uses);
+        map.clear_retaining_capacity();
+        map.ensure_total_capacity(self.part_uses.len())?;
+        for (at, &(ref_, use_)) in self.part_uses.iter().enumerate() {
+            let i = ref_.inner_index() as usize;
+            if self.part_use_generation[i] == self.part_generation
+                && self.part_use_index[i] as usize == at
+            {
+                map.put_assume_capacity(ref_, use_);
+            }
+        }
+        self.part_uses.clear();
+        self.part_generation += 1;
+        Ok(map)
+    }
+
     /// `scope_use = false`: the reference can never be captured by renaming
     /// another binding (an unbound global, whose name every scope already
     /// avoids), so `scope_uses` skips it.
@@ -2044,12 +2106,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         if !self.is_control_flow_dead {
             debug_assert!(self.symbols.len() > ref_.inner_index() as usize);
             self.symbols[ref_.inner_index() as usize].use_count_estimate += 1;
-            // `get_or_put` zero-initializes the slot on insert (`Use::default()`).
-            self.symbol_uses
-                .get_or_put(ref_)
-                .expect("unreachable")
-                .value_ptr
-                .add_scoped(1);
+            self.part_use(ref_).add_scoped(1);
             if scope_use {
                 self.record_scope_use(ref_);
             }
@@ -5489,9 +5546,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         parts: &mut ListManaged<'a, js_ast::Part>,
         stmts: &'a mut [Stmt],
     ) -> Result<(), crate::Error> {
-        // Reuse the memory if possible
-        // This is reusable if the last part turned out to be dead
-        self.symbol_uses.clear_retaining_capacity();
         self.declared_symbols.clear_retaining_capacity();
         self.scopes_for_current_part.clear();
         self.import_records_for_current_part.clear();
@@ -5558,9 +5612,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             let final_stmts = bun_ast::StoreSlice::from_bump(part_stmts);
             let can_be_removed_if_unused = self.stmts_can_be_removed_if_unused(final_stmts.slice());
 
+            let symbol_uses = self.take_symbol_uses()?;
             parts.push(js_ast::Part {
                 stmts: final_stmts,
-                symbol_uses: core::mem::take(&mut self.symbol_uses),
+                symbol_uses,
                 import_symbol_property_uses: {
                     let m = core::mem::take(&mut self.import_symbol_property_uses);
                     if m.is_empty() {
@@ -5596,11 +5651,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             // `symbol_uses` / `import_symbol_property_uses` were already reset
             // to empty by `core::mem::take` above; no second assignment needed.
             self.had_commonjs_named_exports_this_visit = false;
-        } else if self.declared_symbols.len() > 0 || self.symbol_uses.count() > 0 {
+        } else if self.declared_symbols.len() > 0 || !self.part_uses.is_empty() {
             // if the part is dead, invalidate all the usage counts
+            let symbol_uses = self.take_symbol_uses()?;
             self.clear_symbol_usages_from_dead_part(&js_ast::Part {
                 declared_symbols: self.declared_symbols.clone()?,
-                symbol_uses: self.symbol_uses.clone()?,
+                symbol_uses,
                 ..Default::default()
             });
             self.declared_symbols.clear_retaining_capacity();
@@ -6604,7 +6660,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         if self.is_revisit_for_substitution {
             return true;
         }
-        let Some(use_) = self.symbol_uses.get_mut(&base) else {
+        let Some(use_) = self.existing_part_use(base) else {
             return false;
         };
         use_.subtract(1);
@@ -6630,14 +6686,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 [r#ref.inner_index() as usize]
                 .use_count_estimate
                 .saturating_sub(1);
-            let Some(mut use_) = self.symbol_uses.get(&r#ref).copied() else {
-                return;
-            };
-            use_.subtract(1);
-            if use_.count_estimate() == 0 {
-                let _ = self.symbol_uses.swap_remove(&r#ref);
-            } else {
-                self.symbol_uses.put_assume_capacity(r#ref, use_);
+            if let Some(use_) = self.existing_part_use(r#ref) {
+                use_.subtract(1);
+                if use_.count_estimate() == 0 {
+                    self.forget_part_use(r#ref);
+                }
             }
         }
 
@@ -9689,6 +9742,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             is_file_considered_to_have_esm_exports: false,
             has_called_runtime: false,
             symbol_uses,
+            part_uses: Vec::new(),
+            part_use_generation: Vec::new(),
+            part_use_index: Vec::new(),
+            part_generation: 1,
             declared_symbols: Default::default(),
             runtime_imports: RuntimeImports::default(),
             imports_to_convert_from_require: BumpVec::new_in(arena),

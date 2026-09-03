@@ -605,7 +605,7 @@ impl<'a> Parser<'a> {
         });
         let part = js_ast::Part {
             stmts: stmts.into(),
-            symbol_uses: core::mem::take(&mut p.symbol_uses),
+            symbol_uses: p.take_symbol_uses()?,
             ..Default::default()
         };
         let mut parts = BumpVec::with_capacity_in(2, p.arena);

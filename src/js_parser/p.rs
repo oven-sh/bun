@@ -345,6 +345,8 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     pub(crate) commonjs_named_exports: bun_ast::ast_result::CommonJSNamedExports,
     pub(crate) commonjs_named_exports_deoptimized: bool,
     pub(crate) commonjs_module_exports_assigned_deoptimized: bool,
+    /// Uses of `module` that became `module.exports` and stay in its use count.
+    pub(crate) module_exports_rewrite_count: u32,
     pub(crate) commonjs_named_exports_needs_conversion: u32,
     pub(crate) had_commonjs_named_exports_this_visit: bool,
     pub(crate) commonjs_replacement_stmts: StmtNodeList,
@@ -9514,6 +9516,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             unwrap_all_requires,
             commonjs_named_exports: Default::default(),
             commonjs_module_exports_assigned_deoptimized: false,
+            module_exports_rewrite_count: 0,
             commonjs_named_exports_needs_conversion: u32::MAX,
             had_commonjs_named_exports_this_visit: false,
             commonjs_replacement_stmts: js_ast::StmtNodeList::EMPTY,

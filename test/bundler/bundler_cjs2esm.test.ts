@@ -2011,4 +2011,41 @@ describe("bundler", () => {
       { file: "/out/b.js", stdout: "b false" },
     ],
   });
+  itBundled("cjs2esm/OtherModuleMemberKeepsWrapper", {
+    files: {
+      "/entry.js": /* js */ `
+        import lib, * as ns from "lib";
+        console.log(lib.addHook(), ns.hot, lib.self === lib);
+      `,
+      "/node_modules/lib/index.js": /* js */ `
+        const Module = module.constructor.length > 1 ? module.constructor : null;
+        exports.addHook = function addHook() { return typeof Module; };
+        exports.hot = typeof module.hot;
+        exports.self = module.exports;
+      `,
+    },
+    cjs2esm: {
+      unhandled: ["/node_modules/lib/index.js"],
+    },
+    run: {
+      stdout: "object undefined true",
+    },
+  });
+  itBundled("cjs2esm/ModuleExportsMemberStillLifts", {
+    files: {
+      "/entry.js": /* js */ `
+        import lib, * as ns from "lib";
+        console.log(lib.x, ns.y, lib.main);
+      `,
+      "/node_modules/lib/index.js": /* js */ `
+        module.exports.x = 1;
+        exports.y = module.exports.x + 1;
+        exports.main = require.main === module;
+      `,
+    },
+    cjs2esm: true,
+    run: {
+      stdout: "1 2 false",
+    },
+  });
 });

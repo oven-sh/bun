@@ -1550,6 +1550,101 @@ describe("bundler", () => {
     },
     run: { file: "/out/entry.js", stdout: "true true true patched patched" },
   });
+  // A module in the unwrap list that assigns `module.exports` is not lifted and
+  // keeps its `__commonJS` wrapper, so its chunk is `export default require_x()`.
+  // A cross-chunk `import()` of it needs the same `__toESM` as any other
+  // CommonJS chunk, or the named exports are `undefined`.
+  itBundled("cjs2esm/DynamicImportSplittingOfWrappedCommonJS", {
+    files: {
+      "/entry.js": /* js */ `
+        import React from "react";
+        const m = await import("react");
+        console.log(m.useState(1)[0], m.version, m.default === React, typeof m.default.useState);
+      `,
+      "/node_modules/react/package.json": /* json */ `
+        { "name": "react", "version": "19.0.0", "main": "index.js" }
+      `,
+      "/node_modules/react/index.js": /* js */ `
+        'use strict';
+        if (globalThis.USE_PROD) {
+          module.exports = require('./cjs/react.production.js');
+        } else {
+          module.exports = require('./cjs/react.development.js');
+        }
+      `,
+      "/node_modules/react/cjs/react.production.js": /* js */ `
+        'use strict';
+        function useState(initial) {
+          return [initial, function setState() {}];
+        }
+        exports.useState = useState;
+        exports.version = "production";
+      `,
+      "/node_modules/react/cjs/react.development.js": /* js */ `
+        'use strict';
+        function useState(initial) {
+          return [initial, function setState() {}];
+        }
+        exports.useState = useState;
+        exports.version = "development";
+      `,
+    },
+    outdir: "/out",
+    splitting: true,
+    onAfterBundle(api) {
+      api.expectFile("/out/entry.js").toContain("__toESM(m.default");
+    },
+    run: {
+      file: "/out/entry.js",
+      stdout: "1 development true function",
+    },
+  });
+  // The same for a lifted module that the linker wraps again, because the
+  // target of its `module.exports = require()` stays CommonJS.
+  itBundled("cjs2esm/DynamicImportSplittingOfRewrappedLiftedCommonJS", {
+    files: {
+      "/entry.js": /* js */ `
+        const m = await import("react-dom");
+        console.log(m.version, m.default.version);
+      `,
+      "/node_modules/react-dom/index.js": /* js */ `
+        console.log('side effect');
+        module.exports = require('./impl');
+      `,
+      "/node_modules/react-dom/impl.js": /* js */ `
+        module.exports = function render() { return "rendered"; };
+        module.exports.version = "19.0.0";
+      `,
+    },
+    outdir: "/out",
+    splitting: true,
+    minifySyntax: true,
+    run: {
+      file: "/out/entry.js",
+      stdout: "side effect\n19.0.0 19.0.0",
+    },
+  });
+  // Outside the unwrap list too: the `exports.foo = ...` of "./lib.js" are
+  // lifted, but a `require()` of it makes it CommonJS again.
+  itBundled("cjs2esm/DynamicImportSplittingOfRequiredLiftedCommonJS", {
+    files: {
+      "/entry.js": /* js */ `
+        const lib = require("./lib.js");
+        const m = await import("./lib.js");
+        console.log(lib.foo, m.foo, m.default === lib);
+      `,
+      "/lib.js": /* js */ `
+        exports.foo = "foo";
+        exports.bar = "bar";
+      `,
+    },
+    outdir: "/out",
+    splitting: true,
+    run: {
+      file: "/out/entry.js",
+      stdout: "foo foo true",
+    },
+  });
   // `import()` of a lifted CommonJS module resolves to a view of its namespace
   // whose `default` is the namespace itself (`module.exports`), as in Node.
   // https://github.com/oven-sh/bun/issues/14061

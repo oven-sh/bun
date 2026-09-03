@@ -570,7 +570,7 @@ pub(crate) fn compute_chunks(
 
     let unique_key_item_len = chunk::UNIQUE_KEY_LEN;
     let mut unique_key_builder =
-        bun_core::StringBuilder::init_capacity(unique_key_item_len * chunks.len());
+        bun_core::StringBuilder::init_capacity(unique_key_item_len * chunks.len() * 2);
     // `unique_key_buf` aliases the builder's backing buffer and
     // every `chunk.unique_key` is a slice into it: the builder never
     // reallocates after `init_capacity`, so each `fmt()` returns a stable subslice
@@ -606,6 +606,16 @@ pub(crate) fn compute_chunks(
         // before the transfer, `sorted_chunks` is dropped alongside the builder,
         // so no dangling slice escapes.
         chunk.unique_key = unsafe { bun_ptr::detach_lifetime_ref::<[u8]>(written) };
+        let written = unique_key_builder.fmt(format_args!(
+            "{}",
+            chunk::UniqueKey {
+                prefix: unique_key,
+                kind: chunk::QueryKind::ChunkId,
+                index: chunk_id as u32,
+            },
+        ));
+        // SAFETY: as for `unique_key`.
+        chunk.id_key = unsafe { bun_ptr::detach_lifetime_ref::<[u8]>(written) };
         if this.unique_key_prefix.is_empty() {
             this.unique_key_prefix = chunk.unique_key[..prefix_len].into();
         }

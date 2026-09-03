@@ -63,7 +63,9 @@ it("Bun.hash.xxHash64() reads a large Number seed exactly", () => {
     Bun.hash.xxHash64(input, 2n ** 64n - 1n),
     Bun.hash.xxHash64(input, 2n ** 64n - 1n),
   ]);
-  expect([-1.5, NaN].map(seed => Bun.hash.xxHash64(input, seed))).toEqual([
+  // -1 is an int32, -1.5 is a double. Both negative paths read as 0.
+  expect([-1, -1.5, NaN].map(seed => Bun.hash.xxHash64(input, seed))).toEqual([
+    Bun.hash.xxHash64(input, 0),
     Bun.hash.xxHash64(input, 0),
     Bun.hash.xxHash64(input, 0),
   ]);

@@ -4425,12 +4425,13 @@ uint64_t JSC__JSValue__toUInt64NoTruncate(JSC::EncodedJSValue val)
         }
     }
 
+    // Saturating: NaN and negatives read as 0, values at or above 2^64 as UINT64_MAX.
     if (value.isInt32()) {
-        return static_cast<uint64_t>(value.asInt32());
+        int32_t i = value.asInt32();
+        return i < 0 ? 0 : static_cast<uint64_t>(i);
     }
     ASSERT(value.isDouble());
 
-    // Saturating: NaN and negatives read as 0, values at or above 2^64 as UINT64_MAX.
     double number = value.asDouble();
     if (!(number >= 0.0))
         return 0;

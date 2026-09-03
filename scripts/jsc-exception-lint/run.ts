@@ -333,15 +333,24 @@ function summaryHeader(project: string, extraFlag: string): string[] {
 
 // Drop the rows the signature convention already implies and the `why`
 // column, and sort, so the committed file is small and its diffs are stable.
+// A row without the seventh column counts as not implied, so the trim never
+// drops data.
 function trimSummaries(fullPath: string, header: string[]): string {
   const rows = new Set<string>();
   for (const line of readFileSync(fullPath, "utf8").split("\n")) {
     if (!line) continue;
     const cols = line.split("\t");
-    if (cols.length < 7 || cols[6] === "1") continue;
+    if (cols.length < 5 || cols[6] === "1") continue;
     rows.add(cols.slice(0, 5).join("\t"));
   }
   return [...header.map(h => `# ${h}`), ...[...rows].sort()].join("\n") + "\n";
+}
+
+// True when `path` exists and is newer than every file in `inputs`.
+function newerThan(path: string, inputs: string[]): boolean {
+  if (!existsSync(path)) return false;
+  const mtime = statSync(path).mtimeMs;
+  return inputs.every(input => statSync(input).mtimeMs <= mtime);
 }
 
 async function main() {
@@ -359,11 +368,17 @@ async function main() {
   if (updateSummaries) {
     // JavaScriptCore summaries: three passes over its sources, cached in the
     // build dir per WebKit version, then trimmed into the committed file.
+    //
+    // The cache name has the WebKit version only. The tool and nothrow.txt
+    // shape the result too, so a cache older than either of them came from
+    // another tool (an older export format, other conventions): it is not
+    // used, and the committed file is left as it is.
     const wkSummaries = join(outDir, `webkit-summaries-${wkVersion}.tsv`);
+    const wkCacheInputs = [bin, nothrow];
     const committedVersion = existsSync(committedWebKit)
       ? readFileSync(committedWebKit, "utf8").match(/^# webkit ([0-9a-f]+)/)?.[1]
       : undefined;
-    if (recomputeWebKit || (!existsSync(wkSummaries) && committedVersion !== wkVersion)) {
+    if (recomputeWebKit || (!newerThan(wkSummaries, wkCacheInputs) && committedVersion !== wkVersion)) {
       const wkDir = webkitCompileDb(bindingsEntry);
       const wkFiles = loadCompileCommands(wkDir).map(e => e.file);
       // Each round resolves one more level of cross-file calls: a function
@@ -392,12 +407,16 @@ async function main() {
         previous = merged;
       }
     }
-    if (existsSync(wkSummaries)) {
+    if (newerThan(wkSummaries, wkCacheInputs)) {
       writeFileSync(
         committedWebKit,
         trimSummaries(wkSummaries, [`webkit ${wkVersion}`, ...summaryHeader("JavaScriptCore", "--webkit")]),
       );
       console.error(`wrote ${relative(repo, committedWebKit)}`);
+    } else if (existsSync(wkSummaries)) {
+      console.error(
+        `kept ${relative(repo, committedWebKit)}: the cached JavaScriptCore summaries are older than the tool or nothrow.txt; run with --webkit to recompute them`,
+      );
     }
     imports.push(committedWebKit);
     if (webkitOnly) return;

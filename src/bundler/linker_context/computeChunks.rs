@@ -622,10 +622,7 @@ pub(crate) fn compute_chunks(
             this.unique_key_prefix = chunk.unique_key[..prefix_len].into();
         }
 
-        // `StandaloneModuleGraph::to_bytes` embeds the first server-side entry
-        // point file as the executable's entry point, under its output path.
-        // With the name set here, the paths that other chunks print for this
-        // chunk (`import()`, `require()`, module records) name that module.
+        // The same file that `StandaloneModuleGraph::to_bytes` embeds as the entry point.
         if compile_entry_point_pending
             && this.chunk_output_kind(chunk) == OutputKind::EntryPoint
             && this.chunk_side(chunk) == Side::Server

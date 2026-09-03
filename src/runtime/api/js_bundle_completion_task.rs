@@ -191,9 +191,7 @@ fn opt_box(s: &[u8]) -> Option<Box<[u8]>> {
     }
 }
 
-/// The absolute path of the executable that `compile` writes. It is absolute
-/// so that the PE metadata operations work. A Windows target gets `.exe`
-/// when the name does not end with it.
+/// Absolute, because the PE metadata operations need an absolute path.
 fn executable_path(config: &JSBundlerConfig, compile: &CompileOptions) -> Box<[u8]> {
     let mut outbuf = paths::path_buffer_pool::get();
     // SAFETY: `FileSystem::instance()` is the process-lifetime singleton
@@ -223,8 +221,7 @@ fn executable_path(config: &JSBundlerConfig, compile: &CompileOptions) -> Box<[u
     }
 }
 
-/// The executable embeds its entry point at `/$bunfs/root/<name>`. Like the
-/// CLI, which takes the name before it adds `.exe`, the name has no `.exe`.
+/// Without `.exe`, as in the CLI.
 fn executable_entry_point_name(executable_path: &[u8]) -> &[u8] {
     let basename = paths::basename(executable_path);
     basename.strip_suffix(b".exe").unwrap_or(basename)

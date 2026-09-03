@@ -1184,8 +1184,6 @@ impl BuildCommand {
     }
 }
 
-/// The outfile that `--compile` writes. For an empty name, `.`, `..` and
-/// `../`, it is `index`.
 fn compile_outfile(outfile: &[u8]) -> &[u8] {
     if outfile.is_empty() || outfile == b"." || outfile == b".." || outfile == b"../" {
         b"index"

@@ -31,7 +31,6 @@
     "ci:slowest": "bun scripts/ci-slowest-tests.ts",
     "ci:parallel-allowlist": "node scripts/update-parallel-allowlist.mjs",
     "pr:comments": "bun scripts/pr-comments.ts",
-    "lock:npm": "bun scripts/bun-lock-to-package-lock.ts",
     "watch": "cargo watch -x 'check --workspace --message-format=short'",
     "watch-windows": "cargo watch -x \"check --workspace --target x86_64-pc-windows-msvc --message-format=short\"",
     "bd:v": "bun scripts/build.ts --profile=debug",

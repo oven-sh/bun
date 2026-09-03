@@ -158,18 +158,14 @@ export function registerCodegenRules(n: Ninja, cfg: Config): void {
   });
   n.pool("bun_install", 1);
 
-  // `--root-package-manager=npm` installs the root package.json with `npm ci`
-  // from package-lock.json, which `bun run lock:npm` writes from bun.lock.
-  // `npm ci` replaces node_modules, so a tree that `bun install` wrote does
-  // not get in the way. On Windows, npm is a batch file, and `call` returns
-  // to this line.
+  // `--root-package-manager=npm` installs the root package.json with `npm ci`.
+  // npm-ci.ts writes package-lock.json from bun.lock for the duration of the
+  // install and deletes it after. `npm ci` replaces node_modules, so a tree
+  // that `bun install` wrote does not get in the way.
   if (cfg.npm !== undefined) {
-    const npm = q(cfg.npm);
-    const args = "ci --include=dev --no-audit --no-fund";
+    const npmCi = `${cfg.jsRuntime} ${q(resolve(cfg.cwd, "scripts", "build", "npm-ci.ts"))} ${q(cfg.npm)} $dir`;
     n.rule("npm_install", {
-      command: hostWin
-        ? `cmd /c "cd /d $dir && call ${npm} ${args} && ${touch} $stamp"`
-        : `cd $dir && ${npm} ${args} && ${touch} $stamp`,
+      command: hostWin ? `cmd /c "${npmCi} && ${touch} $stamp"` : `${npmCi} && ${touch} $stamp`,
       description: "npm install $dir",
       restat: true,
       pool: "bun_install",
@@ -359,8 +355,8 @@ function emitBunInstall(
   assert(depPackageJsons.length > 0, `package.json has no dependencies: ${pkgDir}/package.json`);
 
   const pkgJson = resolve(pkgDir, "package.json");
-  const lockfile = resolve(pkgDir, rule === "npm_install" ? "package-lock.json" : "bun.lock");
-  // The lockfile is optional (some packages might not have one yet), but if it
+  const lockfile = resolve(pkgDir, "bun.lock");
+  // bun.lock is optional (some packages might not have one yet), but if it
   // exists it MUST be an input — lockfile bumps reinstall.
   const inputs = [pkgJson];
   try {
@@ -381,6 +377,7 @@ function emitBunInstall(
     implicitOutputs: depPackageJsons,
     rule,
     inputs,
+    implicitInputs: rule === "npm_install" ? [resolve(cfg.cwd, "scripts", "build", "npm-ci.ts")] : [],
     orderOnlyInputs: [resolve(cfg.buildDir, "stamps", ".dir")],
     // stamp must be absolute — the command `cd $dir && ... && touch $stamp`
     // runs from $dir, not from buildDir. n.rel() would break that.

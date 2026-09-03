@@ -1174,27 +1174,34 @@ describe("spyOn", () => {
       expect(fn).not.toHaveBeenCalled();
     });
 
-    test("spyOn works with indexed properties that hold a non-function value", () => {
-      const arr = [];
-      arr[0] = 42;
+    test.each([
+      [
+        "an array",
+        () => {
+          const arr = [];
+          arr[0] = 42;
+          return arr;
+        },
+      ],
+      ["an array literal", () => [42]],
+      ["an object", () => ({ 0: 42 })],
+    ])("spyOn works with an indexed property that holds a non-function value on %s", (_, makeTarget) => {
+      const target = makeTarget();
+      const fn = spyOn(target, 0);
+      expect(fn).not.toHaveBeenCalled();
+      expect(target[0]).toBe(42);
+      expect(fn).toHaveBeenCalledTimes(1);
 
-      for (const target of [arr, [42], { 0: 42 }]) {
-        const fn = spyOn(target, 0);
-        expect(fn).not.toHaveBeenCalled();
-        expect(target[0]).toBe(42);
-        expect(fn).toHaveBeenCalledTimes(1);
+      target[0] = 1;
+      expect(fn).toHaveBeenCalledTimes(2);
+      expect(fn.mock.calls[1]).toEqual([1]);
+      expect(target[0]).toBe(42);
 
-        target[0] = 1;
-        expect(fn).toHaveBeenCalledTimes(2);
-        expect(fn.mock.calls[1]).toEqual([1]);
-        expect(target[0]).toBe(42);
-
-        fn.mockRestore();
-        expect(fn).not.toHaveBeenCalled();
-        expect(target[0]).toBe(42);
-        target[0] = 1;
-        expect(target[0]).toBe(1);
-      }
+      fn.mockRestore();
+      expect(fn).not.toHaveBeenCalled();
+      expect(target[0]).toBe(42);
+      target[0] = 1;
+      expect(target[0]).toBe(1);
     });
 
     test("spyOn twice on a missing indexed property throws instead of crashing", () => {

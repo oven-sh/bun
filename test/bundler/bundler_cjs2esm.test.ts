@@ -1432,6 +1432,106 @@ describe("bundler", () => {
       stdout: "expr arrow decl expr decl nested",
     },
   });
+  // A call of `exports.name()` in the file itself passes `module.exports` as `this`.
+  // The entry uses named imports, so only those calls keep the namespace object.
+  itBundled("cjs2esm/SelfMethodCallKeepsThis", {
+    files: {
+      "/entry.js": /* js */ `
+        import { internal, viaModule, viaTag } from "./lib.cjs";
+        console.log(internal(), viaModule(), viaTag());
+      `,
+      "/lib.cjs": /* js */ `
+        exports.parse = function (s) { return this._helper(s); };
+        exports._helper = function (s) { return "helped:" + s; };
+        exports.tag = function (strings) { return this._helper(strings[0]); };
+        exports.internal = function () { return exports.parse("in"); };
+        exports.viaModule = function () { return module.exports.parse("module"); };
+        exports.viaTag = function () { return exports.tag\`tag\`; };
+      `,
+    },
+    cjs2esm: true,
+    onAfterBundle(api) {
+      const out = api.readFile("/out.js");
+      expect(out).toContain('return exports_lib.parse("in");');
+      expect(out).toContain("console.log($internal(), $viaModule(), $viaTag());");
+    },
+    run: {
+      stdout: "helped:in helped:module helped:tag",
+    },
+  });
+  itBundled("cjs2esm/SelfMethodCallWithoutThisBindsDirectly", {
+    files: {
+      "/entry.js": /* js */ `
+        import { run } from "./lib.cjs";
+        console.log(run());
+      `,
+      "/lib.cjs": /* js */ `
+        exports.free = function (s) { return "free:" + s; };
+        exports.run = function () { return exports.free("x"); };
+        exports.unused = function () { return this.free("y"); };
+      `,
+    },
+    cjs2esm: true,
+    onAfterBundle(api) {
+      const out = api.readFile("/out.js");
+      expect(out).toContain('$free("x")');
+      expect(out).not.toContain("exports_lib");
+    },
+    run: {
+      stdout: "free:x",
+    },
+  });
+  itBundled("cjs2esm/SelfMethodCallInUnusedExportKeepsNoNamespace", {
+    files: {
+      "/entry.js": /* js */ `
+        import { parse } from "./lib.cjs";
+        console.log(typeof parse);
+      `,
+      "/lib.cjs": /* js */ `
+        exports.parse = function (s) { return this._helper(s); };
+        exports._helper = function (s) { return "helped:" + s; };
+        exports.run = function () { return exports.parse("x"); };
+        exports.other = "tree-shaken";
+      `,
+    },
+    cjs2esm: true,
+    onAfterBundle(api) {
+      const out = api.readFile("/out.js");
+      // Only the call in `run` needs the namespace object, and `run` is unused.
+      expect(out).not.toContain("exports_lib");
+      expect(out).not.toContain("tree-shaken");
+    },
+    run: {
+      stdout: "function",
+    },
+  });
+  itBundled("cjs2esm/SelfMethodCallNextToAReadKeepsNoNamespace", {
+    files: {
+      "/entry.js": /* js */ `
+        import { mixed } from "./lib.cjs";
+        console.log(mixed());
+      `,
+      "/lib.cjs": /* js */ `
+        exports.parse = function (s) { return this._helper(s); };
+        exports._helper = function (s) { return "helped:" + s; };
+        exports.run = function () { return exports.parse("x"); };
+        exports.pure = function (f) { return typeof f; };
+        exports.mixed = function () { return exports.pure(exports.parse); };
+        exports.other = "tree-shaken";
+      `,
+    },
+    cjs2esm: true,
+    onAfterBundle(api) {
+      const out = api.readFile("/out.js");
+      // `mixed` reads `parse` and calls `pure`. Neither needs the namespace object.
+      expect(out).toContain("return $pure($parse);");
+      expect(out).not.toContain("exports_lib");
+      expect(out).not.toContain("tree-shaken");
+    },
+    run: {
+      stdout: "function",
+    },
+  });
   itBundled("cjs2esm/DefaultImportJsxClassicRuntime", {
     files: {
       "/entry.jsx": /* jsx */ `

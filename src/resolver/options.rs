@@ -138,6 +138,16 @@ impl BundleOptions {
             ExtOrder::MainField => &self.main_field_extension_order,
         }
     }
+
+    /// The extensions `Resolver::check_relative_path` tries, in order, on a
+    /// path imported with `kind`. A path inside `node_modules` has its own order.
+    pub fn path_extension_order(
+        &self,
+        kind: bun_ast::ImportKind,
+        in_node_modules: bool,
+    ) -> &[Box<[u8]>] {
+        self.ext_order_slice(self.extension_order.kind(kind, in_node_modules))
+    }
 }
 
 pub mod bundle_options {

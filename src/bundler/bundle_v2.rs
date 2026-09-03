@@ -932,51 +932,91 @@ pub mod bv2_impl {
                 /// joined against `dirname(source_file)` (with Windows
                 /// drive-letter / separator normalization).
                 ///
-                /// `arena` is the build's bump arena (`BundleV2::arena()`);
-                /// the matched key is copied into it so the returned
-                /// `bun_resolver::Result`'s `Path<'static>` borrows arena memory
-                /// (lives for the entire build pass) instead of the map's key
-                /// storage.
+                /// `arena` is the build's bump arena (`BundleV2::arena()`), see
+                /// [`Self::result_for_key`].
                 pub(crate) fn resolve(
                     &self,
                     arena: &bun_alloc::Arena,
                     source_file: &[u8],
                     specifier: &[u8],
                 ) -> Option<bun_resolver::Result> {
+                    let (key, _) = self.find(source_file, specifier, None)?;
+                    Some(Self::result_for_key(arena, key))
+                }
+
+                /// [`Self::resolve`] for an import. A relative or absolute
+                /// specifier that names no key also matches the keys that the
+                /// disk resolver tries for it, see [`Self::probe`].
+                ///
+                /// A probed key that names a file on disk returns `None`, so the
+                /// import takes the disk route as it did before the probe. The
+                /// disk resolver then picks the file, the file gets its
+                /// directory's `tsconfig.json` and `package.json`, and the parse
+                /// task reads the contents from the map (`Self::get`).
+                pub(crate) fn resolve_import(
+                    &self,
+                    arena: &bun_alloc::Arena,
+                    resolver: &mut bun_resolver::Resolver<'_>,
+                    source_dir: &[u8],
+                    source_file: &[u8],
+                    specifier: &[u8],
+                    kind: ImportKind,
+                ) -> Option<bun_resolver::Result> {
+                    let (key, probed) =
+                        self.find(source_file, specifier, Some((&resolver.opts, kind)))?;
+                    if probed {
+                        // The key names a file on disk when the disk resolver finds
+                        // the key itself. Through a symlink it finds another path.
+                        if let Ok(disk) = resolver.resolve(source_dir, key, kind) {
+                            // Compare in the spelling of the keys (`file_map_from_js`).
+                            let mut disk_path = disk.path_pair.primary.text.to_vec();
+                            bun_paths::resolve_path::dangerously_convert_path_to_posix_in_place::<u8>(
+                                &mut disk_path,
+                            );
+                            if disk_path == key {
+                                return None;
+                            }
+                        }
+                    }
+                    Some(Self::result_for_key(arena, key))
+                }
+
+                /// The key that `specifier` names from `source_file`, and whether
+                /// [`Self::probe`] found it. `import` holds the resolver options
+                /// and the import kind. Without it, only an exact key matches.
+                fn find(
+                    &self,
+                    source_file: &[u8],
+                    specifier: &[u8],
+                    import: Option<(&bun_resolver::options::BundleOptions, ImportKind)>,
+                ) -> Option<(&[u8], bool)> {
                     if self.map.is_empty() {
                         return None;
                     }
 
-                    // SAFETY: ARENA — `arena` is the build-pass bump arena
-                    // (never freed before the `Result` is consumed); detaching the
-                    // borrow lifetime matches the established `Path<'static>`
-                    // convention used throughout `bun_resolver` (PORTING.md
-                    // §Lifetimes: ARENA → `&'bump T`).
-                    let dupe = |key: &[u8]| -> &'static [u8] {
-                        // SAFETY: see ARENA note above — bytes live in the build-pass arena.
-                        unsafe { bun_ptr::detach_lifetime(arena.alloc_slice_copy(key)) }
+                    // The keys use `/` separators (`file_map_from_js`).
+                    let mut specifier_buf = bun_paths::path_buffer_pool::get();
+                    let posix_specifier: &[u8] = if cfg!(windows) {
+                        bun_paths::resolve_path::path_to_posix_buf(specifier, &mut **specifier_buf)
+                    } else {
+                        specifier
                     };
 
                     // Direct key match (must use `getKey` to return the map-owned
                     // key, not the parameter).
-                    #[cfg(not(windows))]
-                    if let Some((key, _)) = self.map.get_key_value(specifier) {
-                        return Some(Self::result_for_key(dupe(key.as_ref())));
-                    }
-                    #[cfg(windows)]
-                    {
-                        let mut buf = bun_paths::path_buffer_pool::get();
-                        let normalized =
-                            bun_paths::resolve_path::path_to_posix_buf(specifier, &mut **buf);
-                        if let Some((key, _)) = self.map.get_key_value(normalized) {
-                            return Some(Self::result_for_key(dupe(key.as_ref())));
-                        }
+                    if let Some((key, _)) = self.map.get_key_value(posix_specifier) {
+                        return Some((&**key, false));
                     }
 
-                    // Also try joining a relative specifier against the importer's
-                    // directory. Relative = not posix-absolute and not Windows
-                    // drive-absolute (e.g. `C:/`).
-                    if !specifier.is_empty() && !bun_paths::is_absolute_loose(specifier) {
+                    // `path` is the file the specifier names.
+                    let mut buf = bun_paths::path_buffer_pool::get();
+                    let path: &[u8] = if bun_paths::is_absolute_loose(specifier) {
+                        posix_specifier
+                    } else if !specifier.is_empty() {
+                        // Also try joining a relative specifier against the importer's
+                        // directory. Relative = not posix-absolute and not Windows
+                        // drive-absolute (e.g. `C:/`).
+                        //
                         // `source_file` may itself be relative (e.g. on Windows
                         // when the bundler stores paths relative to cwd).
                         let mut abs_source_buf = bun_paths::path_buffer_pool::get();
@@ -995,7 +1035,6 @@ pub mod bv2_impl {
                             &mut **source_file_buf,
                         );
 
-                        let mut buf = bun_paths::path_buffer_pool::get();
                         let source_dir = bun_paths::resolve_path::dirname::<
                             bun_paths::platform::Posix,
                         >(normalized_source_file);
@@ -1032,20 +1071,101 @@ pub mod bv2_impl {
                         }
                         let joined = &buf[0..joined_len];
                         if let Some((key, _)) = self.map.get_key_value(joined) {
-                            return Some(Self::result_for_key(dupe(key.as_ref())));
+                            return Some((&**key, false));
+                        }
+                        joined
+                    } else {
+                        return None;
+                    };
+
+                    let (options, kind) = import?;
+                    // A bare specifier names a package, not a file.
+                    if !bun_paths::is_absolute_loose(specifier)
+                        && bun_paths::is_package_path_not_absolute(specifier)
+                    {
+                        return None;
+                    }
+                    let key = self.probe(path, specifier, options, kind)?;
+                    Some((key, true))
+                }
+
+                /// The key the disk resolver finds for `specifier` when no key
+                /// equals `path`, the file that `specifier` names.
+                /// `Resolver::check_relative_path` tries the same names in the
+                /// same order: `path` with each extension, the TypeScript rewrite
+                /// of its extension (`a.js` to `a.ts`), then `path/index` with
+                /// each extension. A specifier that names a directory (`./lib/`)
+                /// tries only the index names.
+                fn probe(
+                    &self,
+                    path: &[u8],
+                    specifier: &[u8],
+                    options: &bun_resolver::options::BundleOptions,
+                    kind: ImportKind,
+                ) -> Option<&[u8]> {
+                    let in_node_modules = bun_core::strings::contains(path, b"/node_modules/");
+                    let extension_order = options.path_extension_order(kind, in_node_modules);
+                    let mut candidate: Vec<u8> = Vec::with_capacity(path.len() + 16);
+
+                    if !bun_resolver::Resolver::import_path_names_directory(specifier) {
+                        for ext in extension_order {
+                            if let Some(key) = self.key_for(&mut candidate, &[path, &ext[..]]) {
+                                return Some(key);
+                            }
+                        }
+
+                        let name_start =
+                            bun_core::strings::last_index_of_char(path, b'/').map_or(0, |i| i + 1);
+                        if let Some(dot) =
+                            bun_core::strings::last_index_of_char(&path[name_start..], b'.')
+                        {
+                            let (stem, ext) = path.split_at(name_start + dot);
+                            for &new_ext in
+                                bun_resolver::rewritten_file_extensions(ext, || in_node_modules)
+                            {
+                                if let Some(key) = self.key_for(&mut candidate, &[stem, new_ext]) {
+                                    return Some(key);
+                                }
+                            }
                         }
                     }
 
+                    let dir = path.strip_suffix(b"/").unwrap_or(path);
+                    for ext in extension_order {
+                        if let Some(key) =
+                            self.key_for(&mut candidate, &[dir, &b"/index"[..], &ext[..]])
+                        {
+                            return Some(key);
+                        }
+                    }
                     None
                 }
 
-                /// Build a `bun_resolver::Result` for a matched key. `key` must
-                /// already satisfy `'static` — see [`resolve`], which copies the
-                /// map-owned key into the build's bump arena before calling here so
-                /// the resulting `Path<'static>` borrows arena memory rather than
-                /// forging a `'static` from a map borrow.
+                /// The map's copy of the key that `parts` spell when joined.
+                /// `candidate` is scratch space.
+                fn key_for(&self, candidate: &mut Vec<u8>, parts: &[&[u8]]) -> Option<&[u8]> {
+                    candidate.clear();
+                    for part in parts {
+                        candidate.extend_from_slice(part);
+                    }
+                    self.map
+                        .get_key_value(candidate.as_slice())
+                        .map(|(key, _)| &**key)
+                }
+
+                /// Build a `bun_resolver::Result` for a matched key. The key is
+                /// copied into `arena`, the build's bump arena, so the returned
+                /// `Path<'static>` borrows arena memory (lives for the entire
+                /// build pass) instead of the map's key storage.
                 #[inline]
-                fn result_for_key(key: &'static [u8]) -> bun_resolver::Result {
+                fn result_for_key(arena: &bun_alloc::Arena, key: &[u8]) -> bun_resolver::Result {
+                    // SAFETY: ARENA — `arena` is the build-pass bump arena
+                    // (never freed before the `Result` is consumed); detaching the
+                    // borrow lifetime matches the established `Path<'static>`
+                    // convention used throughout `bun_resolver` (PORTING.md
+                    // §Lifetimes: ARENA → `&'bump T`).
+                    let key: &'static [u8] =
+                        unsafe { bun_ptr::detach_lifetime(arena.alloc_slice_copy(key)) };
                     bun_resolver::Result {
                         path_pair: bun_resolver::PathPair {
                             primary: crate::bun_fs::Path::init_with_namespace(key, b"file"),
@@ -2352,10 +2472,14 @@ pub mod bv2_impl {
 
             // Check the FileMap first for in-memory files
             if let Some(file_map) = self.file_map {
-                if let Some(_file_map_result) = file_map.resolve(
+                if let Some(_file_map_result) = file_map.resolve_import(
                     self.arena(),
+                    // SAFETY: see `transpiler` note above.
+                    unsafe { &mut (*transpiler).resolver },
+                    source_dir,
                     &import_record.source_file,
                     &import_record.specifier,
+                    import_record.kind,
                 ) {
                     let file_map_result = _file_map_result;
                     let mut path_primary = file_map_result.path_pair.primary;
@@ -6382,9 +6506,14 @@ pub mod bv2_impl {
 
                 // Check the FileMap first for in-memory files
                 if let Some(file_map) = self.file_map {
-                    if let Some(_file_map_result) =
-                        file_map.resolve(self.arena(), source.path.text, import_record.path.text)
-                    {
+                    if let Some(_file_map_result) = file_map.resolve_import(
+                        self.arena(),
+                        &mut transpiler.resolver,
+                        source_dir,
+                        source.path.text,
+                        import_record.path.text,
+                        import_record.kind,
+                    ) {
                         let mut file_map_result = _file_map_result;
                         let mut path_primary = file_map_result.path_pair.primary;
                         let import_record_loader = import_record.loader.unwrap_or_else(|| {

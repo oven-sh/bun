@@ -1999,7 +1999,7 @@ impl<'a> Resolver<'a> {
 
     /// Whether an import specifier explicitly names a directory: a trailing
     /// separator, `.`, `..`, or a path ending in `/.` or `/..`.
-    fn import_path_names_directory(import_path: &[u8]) -> bool {
+    pub fn import_path_names_directory(import_path: &[u8]) -> bool {
         let Some(&last) = import_path.last() else {
             return false;
         };
@@ -6745,7 +6745,7 @@ pub fn module_type_from_ext(ext: &[u8]) -> Option<options::ModuleType> {
 /// is esbuild's `rewrittenFileExtensions` table plus Bun's `.js` → `.mts`
 /// (oven-sh/bun#12580). `inside_node_modules` gates only `.mjs` and `.cjs`:
 /// `DISABLE_AUTO_JS_TO_TS_IN_NODE_MODULES` never applied to `.js`/`.jsx`.
-fn rewritten_file_extensions(
+pub fn rewritten_file_extensions(
     ext: &[u8],
     inside_node_modules: impl Fn() -> bool,
 ) -> &'static [&'static [u8]] {

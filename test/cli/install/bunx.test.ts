@@ -840,6 +840,109 @@ console.log("EXECUTED: multi-tool-alt (alternate binary)");
   });
 });
 
+// `bunx pkg@latest` (any dist-tag) used to spawn `bun add pkg@latest
+// --no-cache --force`. `--force` re-installs every package in the cached tree
+// on every invocation, which is slow on Windows (per-file copy + AV scanning;
+// issues #41211, #23597). Only `--no-cache` is needed for a dist-tag: it
+// re-fetches the manifest, and `bun add pkg@tag` re-installs the package when
+// the tag moved (#4981).
+describe("bunx dist-tag cache", () => {
+  let port: number;
+
+  beforeAll(() => {
+    dummyBeforeAll();
+    port = getPort()!;
+  });
+
+  afterAll(() => {
+    dummyAfterAll();
+  });
+
+  beforeEach(async () => {
+    await dummyBeforeEach();
+  });
+
+  async function makeTarball(tgzDir: string, name: string, version: string) {
+    const pkgRoot = tmpdirSync();
+    const packageDir = join(pkgRoot, "package");
+    await mkdir(packageDir, { recursive: true });
+    await writeFile(
+      join(packageDir, "package.json"),
+      JSON.stringify({ name, version, bin: { [name]: "cli.js" } }),
+    );
+    await writeFile(join(packageDir, "cli.js"), `#!/usr/bin/env node\nconsole.log(${JSON.stringify(`${name} ${version}`)});\n`);
+    chmodSync(join(packageDir, "cli.js"), 0o755);
+    await Bun.$`cd ${pkgRoot} && tar -czf ${join(tgzDir, `${name}-${version}.tgz`)} package`;
+  }
+
+  const runBunx = async (...args: string[]): Promise<[err: string, out: string, exited: number]> => {
+    const subprocess = spawn({
+      cmd: [bunExe(), "x", ...args],
+      cwd: x_dir,
+      stdout: "pipe",
+      stdin: "inherit",
+      stderr: "pipe",
+      env: {
+        ...env,
+        npm_config_registry: `http://localhost:${port}/`,
+      },
+    });
+    return Promise.all([subprocess.stderr.text(), subprocess.stdout.text(), subprocess.exited]);
+  };
+
+  // The bunx cache dir is $TMPDIR/bunx-<uid>-<pkg>@latest; resolve it by
+  // globbing so the test does not depend on how the uid is derived per OS.
+  function findBunxCacheDir(pkg: string): string {
+    const match = readdirSync(env.TMPDIR!).filter(d => d.startsWith("bunx-") && d.endsWith(`-${pkg}@latest`));
+    expect(match).toHaveLength(1);
+    return join(env.TMPDIR!, match[0]);
+  }
+
+  it("a warm @latest run does not re-install the cached packages", async () => {
+    const pkg = "dist-keep-pkg";
+    const tgzDir = tmpdirSync();
+    await makeTarball(tgzDir, pkg, "1.0.0");
+    setHandler(dummyRegistry([], { "1.0.0": { bin: { [pkg]: "cli.js" }, as: "1.0.0" }, latest: "1.0.0" }, 0, tgzDir));
+
+    let [err, out, exited] = await runBunx(`${pkg}@latest`);
+    expect(out).toContain(`${pkg} 1.0.0`);
+    expect(exited).toBe(0);
+
+    // Plant a marker inside the cached package. A `--force` re-install
+    // replaces the package directory and deletes it.
+    const marker = join(findBunxCacheDir(pkg), "node_modules", pkg, "MARKER");
+    await writeFile(marker, "keep");
+
+    [err, out, exited] = await runBunx(`${pkg}@latest`);
+    expect(out).toContain(`${pkg} 1.0.0`);
+    expect(exited).toBe(0);
+    expect(await Bun.file(marker).exists()).toBe(true);
+  });
+
+  it("a @latest run picks up a newly published latest version", async () => {
+    const pkg = "dist-move-pkg";
+    const tgzDir = tmpdirSync();
+    await makeTarball(tgzDir, pkg, "1.0.0");
+    await makeTarball(tgzDir, pkg, "1.1.0");
+    const versions = {
+      "1.0.0": { bin: { [pkg]: "cli.js" }, as: "1.0.0" },
+      "1.1.0": { bin: { [pkg]: "cli.js" }, as: "1.1.0" },
+    };
+    setHandler(dummyRegistry([], { ...versions, latest: "1.0.0" }, 0, tgzDir));
+
+    let [err, out, exited] = await runBunx(`${pkg}@latest`);
+    expect(out).toContain(`${pkg} 1.0.0`);
+    expect(exited).toBe(0);
+
+    // The dist-tag moves; the next run must install and run 1.1.0.
+    setHandler(dummyRegistry([], { ...versions, latest: "1.1.0" }, 0, tgzDir));
+
+    [err, out, exited] = await runBunx(`${pkg}@latest`);
+    expect(out).toContain(`${pkg} 1.1.0`);
+    expect(exited).toBe(0);
+  });
+});
+
 // Regression: `bunx @scope/name` guesses the bin name as `name` (the
 // unscoped portion), then searched the full system $PATH with it. When
 // `name` happened to match an unrelated system binary — e.g.

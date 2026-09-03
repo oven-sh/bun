@@ -123,6 +123,28 @@ pub(crate) type VersionHashMap =
 pub(crate) type PatchedDependenciesMap =
     ArrayHashMap<PackageNameAndVersionHash, PatchedDep, ArrayIdentityContextU64>;
 
+/// The workspace an npm range links to instead of the registry: the workspace named like the
+/// package when the range is `*` or satisfies the workspace's version. The package.json parser,
+/// the resolver, and `--filter` ordering all decide with this so the edges they produce agree.
+pub(crate) fn linked_workspace(
+    link_workspace_packages: bool,
+    workspace_paths: &NameHashMap,
+    workspace_versions: &VersionHashMap,
+    name_hash: PackageNameHash,
+    range: &Semver::query::Group,
+    buf: &[u8],
+) -> Option<SemverString> {
+    if !link_workspace_packages {
+        return None;
+    }
+    let path = *workspace_paths.get(&name_hash)?;
+    if range.is_star() {
+        return Some(path);
+    }
+    let version = *workspace_versions.get(&name_hash)?;
+    range.satisfies(version, buf, buf).then_some(path)
+}
+
 pub(crate) type StringPool = bun_semver::string::StringPool;
 
 pub(crate) type MetaHash = [u8; 32]; // Sha512T256.digest_length
@@ -706,6 +728,8 @@ impl Lockfile {
         if cfg!(debug_assertions) {
             self.verify_data().expect("lockfile data is corrupt");
         }
+
+        self.tag_workspace_links();
 
         LoadResult::Ok(LoadResultOk {
             lockfile: self,
@@ -2059,6 +2083,43 @@ impl Lockfile {
     #[inline]
     pub(crate) fn mark_loaded_packages(&mut self) {
         self.loaded_package_count = self.packages.len() as PackageID;
+    }
+
+    /// Gives every edge that resolved to a workspace package the shape `Package::parse` gives it:
+    /// an npm range `linked_workspace` links becomes a workspace edge, and a `workspace:` edge
+    /// points at the workspace's path rather than the text after the protocol. A lockfile read from
+    /// disk (bun.lock, bun.lockb, or a migrated foreign lockfile) records only the literal, so every
+    /// loader finishes with this to agree with a reparse of the same package.json. Other tags
+    /// (`catalog:`, dist tags, folders) keep their parsed shape, as they do in `Package::parse`.
+    pub(crate) fn tag_workspace_links(&mut self) {
+        let pkg_resolutions = self.packages.items_resolution();
+        for (dep, &pkg_id) in self
+            .buffers
+            .dependencies
+            .iter_mut()
+            .zip(self.buffers.resolutions.iter())
+        {
+            if !matches!(
+                dep.version.tag,
+                dependency::Tag::Npm | dependency::Tag::Workspace
+            ) || pkg_id as usize >= pkg_resolutions.len()
+            {
+                continue;
+            }
+            let res = &pkg_resolutions[pkg_id as usize];
+            if res.tag != ResolutionTag::Workspace {
+                continue;
+            }
+            // Whole-struct assign so `DependencyVersion::Drop` frees the npm chain.
+            let literal = dep.version.literal;
+            dep.version = DependencyVersion {
+                tag: dependency::Tag::Workspace,
+                literal,
+                value: dependency::Value {
+                    workspace: *res.workspace(),
+                },
+            };
+        }
     }
 
     /// Record that package `id` was appended via an exact-version dependency

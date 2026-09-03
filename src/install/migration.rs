@@ -64,11 +64,7 @@ pub fn detect_and_load_other_lockfile<'a>(
                 }
             };
 
-        if matches!(migrate_result, LoadResult::Ok { .. }) {
-            report_migrated(manager, log, &timer, "package-lock.json");
-        }
-
-        return migrate_result;
+        return migrated(migrate_result, manager, log, &timer, "package-lock.json");
     }
 
     'yarn: {
@@ -88,11 +84,7 @@ pub fn detect_and_load_other_lockfile<'a>(
             }
         };
 
-        if matches!(migrate_result, LoadResult::Ok { .. }) {
-            report_migrated(manager, log, &timer, "yarn.lock");
-        }
-
-        return migrate_result;
+        return migrated(migrate_result, manager, log, &timer, "yarn.lock");
     }
 
     'pnpm: {
@@ -155,11 +147,7 @@ pub fn detect_and_load_other_lockfile<'a>(
             }
         };
 
-        if matches!(migrate_result, LoadResult::Ok { .. }) {
-            report_migrated(manager, log, &timer, "pnpm-lock.yaml");
-        }
-
-        return migrate_result;
+        return migrated(migrate_result, manager, log, &timer, "pnpm-lock.yaml");
     }
 
     LoadResult::NotFound
@@ -225,15 +213,20 @@ fn pnpm_lockfile_version(data: &[u8]) -> &[u8] {
     b"< 7"
 }
 
-fn report_migrated(
+fn migrated<'a>(
+    result: LoadResult<'a>,
     manager: &PackageManager,
     log: &mut bun_ast::Log,
     timer: &std::time::Instant,
     lockfile_name: &str,
-) {
+) -> LoadResult<'a> {
+    let LoadResult::Ok(ok) = result else {
+        return result;
+    };
+    ok.lockfile.tag_workspace_links();
     if manager.options.log_level.is_silent() {
         log.reset();
-        return;
+        return LoadResult::Ok(ok);
     }
     if log.warnings > 0 && !log.has_errors() {
         let _ = log.print(std::ptr::from_mut(Output::error_writer()));
@@ -242,6 +235,7 @@ fn report_migrated(
     Output::print_elapsed(timer.elapsed().as_nanos() as f64 / 1_000_000.0);
     bun_core::pretty_errorln!(" <d>migrated lockfile from <r><green>{}<r>", lockfile_name);
     Output::flush();
+    LoadResult::Ok(ok)
 }
 
 fn migrate_npm_lockfile<'a>(

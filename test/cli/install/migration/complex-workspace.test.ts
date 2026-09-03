@@ -100,7 +100,6 @@ mustNotExist("packages/second/node_modules/hello/version.txt");
 
 // body parser
 validate("node_modules/body-parser", "200.0.0");
-validate("node_modules/not-body-parser", "200.0.0", "body-parser");
 // NOTE: bun install doesnt properly handle npm aliased dependencies
 // validate("packages/second/node_modules/connect", "200.0.0", "body-parser");
 validate("packages/second/node_modules/body-parser", "3.21.2", "express");

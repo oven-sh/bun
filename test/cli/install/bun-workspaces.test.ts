@@ -312,6 +312,37 @@ test.concurrent("successfully installs workspace when path already exists in nod
   });
 });
 
+// A "*" locked to a registry package moves to a workspace of that name once one exists, and back
+// to the registry once it is gone: the lockfile edge records which one it linked.
+test.concurrent("star dep follows a same-name workspace being added and removed", async () => {
+  using ctx = await setupTest();
+  const { packageDir, env } = ctx;
+  const installed = () => file(join(packageDir, "node_modules", "no-deps", "package.json")).json();
+  const writeRoot = (workspaces: string[]) =>
+    write(
+      join(packageDir, "package.json"),
+      JSON.stringify({ name: "root", workspaces, dependencies: { "no-deps": "*" } }),
+    );
+
+  await Promise.all([writeRoot(["app1"]), write(join(packageDir, "app1", "package.json"), JSON.stringify({ name: "app1" }))]);
+  let { exited } = await runBunInstall(env, packageDir);
+  expect(await exited).toBe(0);
+  expect((await installed()).version).toBe("2.0.0");
+
+  await Promise.all([
+    writeRoot(["app1", "no-deps"]),
+    write(join(packageDir, "no-deps", "package.json"), JSON.stringify({ name: "no-deps", version: "9.9.9" })),
+  ]);
+  ({ exited } = await runBunInstall(env, packageDir));
+  expect(await exited).toBe(0);
+  expect((await installed()).version).toBe("9.9.9");
+
+  await writeRoot(["app1"]);
+  ({ exited } = await runBunInstall(env, packageDir));
+  expect(await exited).toBe(0);
+  expect((await installed()).version).toBe("2.0.0");
+});
+
 test.concurrent("adding workspace in workspace edits package.json with correct version (workspace:*)", async () => {
   using ctx = await setupTest();
   const { packageDir, env } = ctx;

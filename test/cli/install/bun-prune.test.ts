@@ -575,6 +575,54 @@ test.concurrent("workspaces: prunes workspace folders, keeps workspace links, ru
   expect(existsSync(join(nm, "a-dep"))).toBeFalse();
 });
 
+// #40393: these ranges link to the workspace at install time, so bun.lock records a workspace
+// edge; reparsing package.json must produce the same edge instead of reporting it as changed.
+test.concurrent.each([
+  { range: "* on a versionless workspace", deps: { package1: "*" }, pkg1: {}, checked: 2 },
+  { range: "* on a prerelease workspace", deps: { package1: "*" }, pkg1: { version: "1.0.0-alpha" }, checked: 2 },
+  // the alias is a third link, node_modules/aliased
+  { range: "npm:@* on a versionless workspace", deps: { aliased: "npm:package1@*" }, pkg1: {}, checked: 3 },
+  { range: "catalog: on a workspace", deps: { package1: "catalog:" }, pkg1: { version: "1.0.0" }, checked: 2 },
+  { range: "workspace: alias of a workspace", deps: { aliased: "workspace:package1@*" }, pkg1: {}, checked: 3 },
+])("workspaces: $range is in sync", async ({ deps, pkg1, checked }) => {
+  const { packageDir: dir, packageJson } = await registry.createTestDir();
+  await Promise.all([
+    write(
+      packageJson,
+      JSON.stringify({ name: "root", workspaces: { packages: ["app1", "package1"], catalog: { package1: "^1.0.0" } } }),
+    ),
+    write(join(dir, "app1", "package.json"), JSON.stringify({ name: "app1", dependencies: deps })),
+    write(join(dir, "package1", "package.json"), JSON.stringify({ name: "package1", ...pkg1 })),
+  ]);
+  await runBunInstall(installEnv(dir), dir);
+
+  const { stdout, stderr, exitCode } = await prune(dir);
+  expect(normalizeBunSnapshot(stderr)).not.toContain(OUT_OF_SYNC);
+  expect(out(stdout)).toBe(`${BANNER}\n\n${NOTHING(checked, 1)}`);
+  expect(exitCode).toBe(0);
+});
+
+// The link is to a path: relocating the workspace changes the edge until bun install rewrites bun.lock.
+test.concurrent("workspaces: * on a relocated versionless workspace is out of sync", async () => {
+  const { packageDir: dir, packageJson } = await registry.createTestDir();
+  await Promise.all([
+    write(packageJson, JSON.stringify({ name: "root", workspaces: ["app1", "package1"] })),
+    write(join(dir, "app1", "package.json"), JSON.stringify({ name: "app1", dependencies: { package1: "*" } })),
+    write(join(dir, "package1", "package.json"), JSON.stringify({ name: "package1" })),
+  ]);
+  await runBunInstall(installEnv(dir), dir);
+
+  renameSync(join(dir, "package1"), join(dir, "moved"));
+  await write(packageJson, JSON.stringify({ name: "root", workspaces: ["app1", "moved"] }));
+  expectRefused(await prune(dir));
+
+  await runBunInstall(installEnv(dir), dir);
+  const { stdout, stderr, exitCode } = await prune(dir);
+  expect(normalizeBunSnapshot(stderr)).not.toContain(OUT_OF_SYNC);
+  expect(out(stdout)).toBe(`${BANNER}\n\n${NOTHING(2, 1)}`);
+  expect(exitCode).toBe(0);
+});
+
 test.concurrent("keeps dependencies bundled inside a package", async () => {
   const dir = await setup({ name: "foo", dependencies: { "bundled-transitive": "1.0.0" } });
   const bundled = join(dir, "node_modules", "bundled-transitive", "node_modules", "no-deps", "package.json");

@@ -754,6 +754,28 @@ test.concurrent("workspace package edge is re-pointed when run from the workspac
   await runBunInstall(installEnv(packageDir), packageDir, { frozenLockfile: true });
 });
 
+// #40393: these ranges link to the workspace at install time, so bun.lock records a workspace
+// edge; reparsing package.json must produce the same edge instead of reporting it as changed.
+test.concurrent.each([
+  { range: "* on a versionless workspace", deps: { package1: "*" }, pkg1: {} },
+  { range: "* on a prerelease workspace", deps: { package1: "*" }, pkg1: { version: "1.0.0-alpha" } },
+  { range: "npm:@* on a versionless workspace", deps: { aliased: "npm:package1@*" }, pkg1: {} },
+  { range: "catalog: on a workspace", deps: { package1: "catalog:" }, pkg1: { version: "1.0.0" } },
+  { range: "workspace: alias of a workspace", deps: { aliased: "workspace:package1@*" }, pkg1: {} },
+])("$range is in sync", async ({ deps, pkg1 }) => {
+  const { packageDir, packageJson } = await registry.createTestDir();
+  await Promise.all([
+    write(
+      packageJson,
+      JSON.stringify({ name: "root", workspaces: { packages: ["app1", "package1"], catalog: { package1: "^1.0.0" } } }),
+    ),
+    write(join(packageDir, "app1", "package.json"), JSON.stringify({ name: "app1", dependencies: deps })),
+    write(join(packageDir, "package1", "package.json"), JSON.stringify({ name: "package1", ...pkg1 })),
+  ]);
+  await runBunInstall(installEnv(packageDir), packageDir);
+  await expectAlreadyDeduplicated(packageDir, 3);
+});
+
 test.concurrent("corrupt bun.lock fails without rewriting it", async () => {
   const { packageDir, packageJson } = await registry.createTestDir();
   await write(packageJson, JSON.stringify({ name: "foo", dependencies: { "no-deps": "1.0.0" } }));

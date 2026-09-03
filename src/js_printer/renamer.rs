@@ -551,9 +551,8 @@ pub struct NumberRenamer {
     // See `NoOpRenamer.symbols` — non-owning view.
     pub(crate) symbols: ManuallyDrop<symbol::Map>,
     pub(crate) names: Box<[Vec<NameStr>]>,
-    /// Backs renamed-name slices written into `names` and interned keys;
-    /// plus the arenas of absorbed `NestedRenamer`s.
-    pub(crate) arenas: Vec<Bump>,
+    /// Backs top-level renamed-name slices in `names` and interned keys.
+    pub(crate) arena: Bump,
     /// Every name seen in the chunk's root scope → index into `slots`.
     ids: NameIds,
     /// By name id: who holds that name in the root scope.
@@ -618,7 +617,8 @@ enum NameUse {
 /// The name table a binding is checked against: the chunk's root scope
 /// (`NumberRenamer`) or one file's nested scopes over it (`NestedRenamer`).
 trait NameScopes {
-    fn arena(&self) -> &Bump;
+    /// Copies a made-up name (`foo2`) somewhere that outlives printing.
+    fn keep_name(&self, name: &[u8]) -> NameStr;
     /// Serial number of the scope being named.
     fn scope(&self) -> u32;
     fn id_of(&self, name: &[u8]) -> Option<u32>;
@@ -664,7 +664,7 @@ trait NameScopes {
             let name = if unchanged {
                 input_name
             } else {
-                NameStr::new(self.arena().alloc_slice_copy(name))
+                self.keep_name(name)
             };
             let id = match id {
                 Some(id) => id,
@@ -711,7 +711,7 @@ trait NameScopes {
                         },
                     },
                 );
-                let renamed = NameStr::new(self.arena().alloc_slice_copy(candidate.slice()));
+                let renamed = self.keep_name(candidate.slice());
                 let candidate_id = match candidate_id {
                     Some(id) => id,
                     None => self.intern(renamed),
@@ -783,8 +783,8 @@ fn store_name(names: &mut Vec<NameStr>, inner_index: u32, name: NameStr) {
 }
 
 impl NameScopes for NumberRenamer {
-    fn arena(&self) -> &Bump {
-        &self.arenas[0]
+    fn keep_name(&self, name: &[u8]) -> NameStr {
+        NameStr::new(self.arena.alloc_slice_copy(name))
     }
     fn scope(&self) -> u32 {
         ROOT_SCOPE
@@ -825,7 +825,7 @@ impl NumberRenamer {
         let mut r = Box::new(NumberRenamer {
             symbols: ManuallyDrop::new(symbols),
             names,
-            arenas: vec![Bump::new()],
+            arena: Bump::new(),
             ids: NameIds::with_capacity_and_hasher(
                 root_names.len() + symbol_count / 4,
                 Default::default(),
@@ -834,7 +834,7 @@ impl NumberRenamer {
         });
         // `root_names` owns its keys and is dropped by the caller; copy them.
         for (key, &count) in root_names.iter() {
-            let duped = NameStr::new(r.arenas[0].alloc_slice_copy(&**key));
+            let duped = NameStr::new(r.arena.alloc_slice_copy(&**key));
             let id = r.intern(duped);
             r.slots[id as usize] = NameSlot {
                 scope: ROOT_SCOPE,
@@ -887,7 +887,7 @@ impl NumberRenamer {
         if self.symbols.get_const(ref_).unwrap().slot_namespace() != SlotNamespace::Default {
             return;
         }
-        let name = NameStr::new(self.arenas[0].alloc_slice_copy(name));
+        let name = NameStr::new(self.arena.alloc_slice_copy(name));
         let id = self.intern(name);
         self.slots[id as usize] = NameSlot {
             scope: ROOT_SCOPE,
@@ -913,7 +913,6 @@ impl NumberRenamer {
     /// Takes the names a `NestedRenamer` over this renamer assigned.
     pub fn absorb(&mut self, nested: NestedNames) {
         self.names[nested.source_index as usize] = nested.names;
-        self.arenas.push(nested.arena);
     }
 
     pub fn name_for_symbol(&self, ref_: Ref) -> &[u8] {
@@ -932,7 +931,7 @@ impl NumberRenamer {
             let renamed: NameStr = renamed_list[inner_index as usize];
             if renamed.raw_len() > 0 {
                 // `StoreStr::slice` centralises the deref; allocated from
-                // `self.arenas` or borrows an AST-arena `original_name`, both
+                // `self.arena` (or a bundler worker arena) or borrows an AST-arena `original_name`, both
                 // of which outlive `self`.
                 return renamed.slice();
             }
@@ -971,18 +970,17 @@ pub struct NestedRenamer<'r> {
     scope: u32,
     next_scope: u32,
     ast_scope: *const js_ast::Scope,
-    arena: Bump,
+    arena: &'r bun_alloc::Arena,
 }
 
 pub struct NestedNames {
     source_index: u32,
     names: Vec<NameStr>,
-    arena: Bump,
 }
 
 impl<'r> NameScopes for NestedRenamer<'r> {
-    fn arena(&self) -> &Bump {
-        &self.arena
+    fn keep_name(&self, name: &[u8]) -> NameStr {
+        NameStr::new(self.arena.alloc_slice_copy(name))
     }
     fn scope(&self) -> u32 {
         self.scope
@@ -1041,7 +1039,14 @@ impl<'r> NameScopes for NestedRenamer<'r> {
 }
 
 impl<'r> NestedRenamer<'r> {
-    pub fn new(root: &'r NumberRenamer, uses: &'r ScopeUses<'r>, source_index: u32) -> Self {
+    /// `arena`: where made-up names go; must outlive printing (the bundler
+    /// passes the worker thread's arena).
+    pub fn new(
+        root: &'r NumberRenamer,
+        uses: &'r ScopeUses<'r>,
+        source_index: u32,
+        arena: &'r bun_alloc::Arena,
+    ) -> Self {
         let symbol_count = root.symbols.symbols_for_source[source_index as usize].len();
         let mut names = Vec::with_capacity(symbol_count);
         names.extend_from_slice(&root.names[source_index as usize]);
@@ -1059,7 +1064,7 @@ impl<'r> NestedRenamer<'r> {
             scope: ROOT_SCOPE,
             next_scope: ROOT_SCOPE + 1,
             ast_scope: core::ptr::null(),
-            arena: Bump::new(),
+            arena,
         }
     }
 
@@ -1067,7 +1072,6 @@ impl<'r> NestedRenamer<'r> {
         NestedNames {
             source_index: self.source_index,
             names: self.names,
-            arena: self.arena,
         }
     }
 

@@ -1006,4 +1006,55 @@ describe("bundler", () => {
       stdout: "object true 1",
     },
   });
+
+  // Test 50: a `.js` importer under package.json "type": "commonjs"
+  itBundled("cjs/__toESM_esModule_without_default_type_commonjs_importer", {
+    files: {
+      "/entry.js": logNamedOnly,
+      "/package.json": `{ "name": "app", "type": "commonjs" }`,
+      ...namedOnlyFiles,
+    },
+    run: {
+      stdout: "object true true true 1",
+    },
+  });
+
+  // Test 51: a dynamic import with no static import of the module
+  itBundled("cjs/__toESM_esModule_without_default_dynamic_import_only", {
+    files: {
+      "/entry.ts": /* ts */ `
+        const m = await import("named-only");
+        console.log(typeof m.default, m.default?.named, m.named);
+      `,
+      ...namedOnlyFiles,
+    },
+    run: {
+      stdout: "object 1 1",
+    },
+  });
+
+  // Test 52: an own `default` property is the default export even when its
+  // value is falsy. `bun run` prints "undefined 0" too.
+  itBundled("cjs/__toESM_esModule_with_falsy_default", {
+    files: {
+      "/entry.js": /* js */ `
+        import a from "./a.cjs";
+        import b from "./b.cjs";
+        console.log(a, b);
+      `,
+      "/a.cjs": /* js */ `
+        Object.defineProperty(exports, "__esModule", { value: true });
+        exports.default = undefined;
+        exports.named = 1;
+      `,
+      "/b.cjs": /* js */ `
+        Object.defineProperty(exports, "__esModule", { value: true });
+        exports.default = 0;
+        exports.named = 1;
+      `,
+    },
+    run: {
+      stdout: "undefined 0",
+    },
+  });
 });

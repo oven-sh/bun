@@ -152,6 +152,21 @@ impl<'a> Ast<'a> {
 pub struct CommonJSNamedExport {
     pub loc_ref: LocRef,
     pub needs_decl: bool,
+    /// How many times the file assigns `exports.name`.
+    pub assign_count: u32,
+    /// The value of the top-level statement that declares the export.
+    pub decl_value: CommonJSExportValue,
+}
+
+/// The kind of value in `exports.name = value`, for a call of the export.
+#[derive(Clone, Copy, Default)]
+pub enum CommonJSExportValue {
+    #[default]
+    Other,
+    /// A function or an arrow function with no `this` inside.
+    FunctionIgnoringThis,
+    /// An identifier, as in `exports.name = name`.
+    Identifier(Ref),
 }
 
 // `Ast` is held in arena-allocated structures whose `Drop` never runs (the

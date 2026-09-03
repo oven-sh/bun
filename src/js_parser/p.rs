@@ -348,6 +348,8 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     pub(crate) commonjs_named_exports_needs_conversion: u32,
     pub(crate) had_commonjs_named_exports_this_visit: bool,
     pub(crate) commonjs_replacement_stmts: StmtNodeList,
+    /// How many `this` expressions the visit pass has seen.
+    pub(crate) this_expr_count: u32,
 
     pub(crate) parse_pass_symbol_uses: ParsePassSymbolUsageType<'a>,
 
@@ -517,6 +519,7 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     // syntactic constructs as appropriate.
     pub(crate) stmt_expr_value: js_ast::ExprData,
     pub(crate) call_target: js_ast::ExprData,
+    pub(crate) template_tag: js_ast::ExprData,
     pub(crate) delete_target: js_ast::ExprData,
     pub(crate) loop_body: js_ast::StmtData,
     pub(crate) module_scope: js_ast::StoreRef<js_ast::Scope>,
@@ -3507,6 +3510,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             {
                                 // Silently merge this symbol into the existing symbol
                                 self.symbols[symbol_idx].link.set(member_in_scope.ref_);
+                                if Symbol::is_kind_function(existing_kind) {
+                                    self.symbols[existing_idx].set_redeclared_by_var(true);
+                                }
                                 // `StringHashMap` get_or_put already stores the key on insert and
                                 // cannot hand out `&mut K` (see StringHashMapGetOrPut docs), so
                                 // no key write is needed here.
@@ -5008,6 +5014,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     // If these are both functions, remove the overwritten declaration
                     if kind.is_function() && self.symbols[symbol_idx].kind.is_function() {
                         self.symbols[symbol_idx].set_remove_overwritten_function_declaration(true);
+                    } else if kind.is_function() {
+                        self.symbols[ref_.inner_index() as usize].set_redeclared_by_var(true);
                     }
                 }
                 MR::BecomePrivateGetSetPair => {
@@ -5713,6 +5721,39 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         self.commonjs_named_exports_deoptimized = true;
     }
 
+    pub(crate) fn count_commonjs_export_assignment(&mut self, name: &[u8]) {
+        if let Some(export) = self.commonjs_named_exports.get_mut(name) {
+            export.assign_count = export.assign_count.saturating_add(1);
+        }
+    }
+
+    /// Sets `CALL_IGNORES_THIS` on each lifted export whose calls ignore `this`.
+    fn mark_commonjs_exports_that_ignore_this(&mut self) {
+        use bun_ast::ast_result::CommonJSExportValue;
+
+        for export in self.commonjs_named_exports.values() {
+            if export.assign_count != 1 {
+                continue;
+            }
+            let ignores_this = match export.decl_value {
+                CommonJSExportValue::Other => false,
+                CommonJSExportValue::FunctionIgnoringThis => true,
+                // An assignment or a `var` of the same name can change `name`.
+                CommonJSExportValue::Identifier(binding) => {
+                    let symbol = &self.symbols[binding.inner_index() as usize];
+                    symbol.kind.is_function()
+                        && symbol.call_ignores_this()
+                        && !symbol.redeclared_by_var()
+                        && !symbol.has_been_assigned_to()
+                }
+            };
+            if ignores_this {
+                self.symbols[export.loc_ref.ref_.inner_index() as usize]
+                    .set_call_ignores_this(true);
+            }
+        }
+    }
+
     pub(crate) fn maybe_keep_expr_symbol_name(
         &mut self,
         expr: Expr,
@@ -6396,6 +6437,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             .get_or_put_value(name, Default::default())
             .expect("unreachable");
         inner_use.count_estimate += 1;
+        inner_use.is_call_target |= opts.is_call_target() || opts.is_template_tag();
         true
     }
 
@@ -9064,6 +9106,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             .unwrap_or(self.require_ref);
         let runtime_imports = core::mem::take(&mut self.runtime_imports);
 
+        if !self.commonjs_named_exports_deoptimized {
+            self.mark_commonjs_exports_that_ignore_this();
+        }
+
         // Re-tag the arena-backed buffer
         // into the `Ast` and leave the parser-side slot empty — a pointer move,
         // no realloc/memcpy. `Ast.{symbols,parts,import_records}` are now
@@ -9388,6 +9434,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             allow_in: true,
 
             call_target: null_expr_data(),
+            template_tag: null_expr_data(),
             delete_target: null_expr_data(),
             stmt_expr_value: null_expr_data(),
             loop_body: null_stmt_data(),
@@ -9470,6 +9517,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             commonjs_named_exports_needs_conversion: u32::MAX,
             had_commonjs_named_exports_this_visit: false,
             commonjs_replacement_stmts: js_ast::StmtNodeList::EMPTY,
+            this_expr_count: 0,
             parse_pass_symbol_uses: None,
             has_commonjs_export_names: false,
             should_fold_typescript_constant_expressions: false,

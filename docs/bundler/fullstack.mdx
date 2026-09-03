@@ -200,6 +200,8 @@ Bun.serve({
 });
 ```
 
+Development mode is opt-in. Without the `development` option, `Bun.serve()` only enters development mode when `NODE_ENV=development` is set, and `NODE_ENV=production` keeps the server in production mode even if `development: true` is set (Bun prints a warning when it ignores the option). See [Development mode](/runtime/http/server#development-mode) for the full precedence.
+
 ### Development Mode Features
 
 When `development` is `true`, Bun:
@@ -270,7 +272,7 @@ serve({
 
 ### Runtime Bundling
 
-If you'd rather not add a build step, set `development: false` in `Bun.serve()`.
+If you'd rather not add a build step, run `Bun.serve()` in production mode, which is the default. Setting `development: false` makes this explicit and also wins over `NODE_ENV=development`.
 
 With this setting, Bun:
 

@@ -188,10 +188,10 @@ test.concurrent("mid-stream error: the chunked body is not terminated as complet
   });
 });
 
-// Under `development: true` (the default for a plain script) the mid-stream
-// error is reported by handle_reject_stream, and the connection must still be
-// aborted: development mode never has a dev_server() for a plain Bun.serve,
-// so the dev fallback page cannot swallow the force-close.
+// Under `development: true` the mid-stream error is reported by
+// handle_reject_stream, and the connection must still be aborted: development
+// mode never has a dev_server() for a plain Bun.serve, so the dev fallback page
+// cannot swallow the force-close.
 test.concurrent("mid-stream error in development mode: reported and not terminated as complete", async () => {
   const { stdout, stderr, exitCode } = await runFixture("mid-stream-reject", "development");
   expect({ result: JSON.parse(stdout), exitCode }).toEqual({

@@ -551,8 +551,7 @@ declare module "bun" {
           /**
            * Enable Hot Module Replacement for routes (including React Fast Refresh, if React is in use)
            *
-           * @default true if process.env.NODE_ENV !== 'production'
-           *
+           * @default true
            */
           hmr?: boolean;
 
@@ -764,8 +763,24 @@ declare module "bun" {
       maxRequestBodySize?: number;
 
       /**
-       * Whether to render contextual errors with Bun's error page
-       * @default process.env.NODE_ENV !== 'production'
+       * Run the server in development mode.
+       *
+       * In development mode, errors thrown while handling a request are
+       * rendered as an HTML error page with stack traces instead of a generic
+       * `500` response, and HTML imports are re-bundled on every request,
+       * served with sourcemaps, and hot-reloaded. Pass an object to configure
+       * those development features.
+       *
+       * The mode is resolved as follows:
+       * - `NODE_ENV=production` always selects production mode. A
+       *   `development: true` set alongside it is ignored with a warning.
+       * - Otherwise `true` or an object selects development mode and `false`
+       *   selects production mode.
+       * - When this option is omitted, `NODE_ENV=development` selects
+       *   development mode; any other value (including an unset `NODE_ENV`)
+       *   selects production mode.
+       *
+       * @default process.env.NODE_ENV === 'development'
        */
       development?: Development;
 

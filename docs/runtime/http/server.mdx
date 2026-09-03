@@ -137,6 +137,27 @@ PORT=4002 bun server.ts
 NODE_PORT=4002 bun server.ts
 ```
 
+### Development mode
+
+`Bun.serve` runs in production mode unless you opt into development mode. Development mode renders an [error page](/runtime/http/error-handling) with stack traces instead of a generic 500 response, and for [HTML imports](/bundler/fullstack) it re-bundles on every request, serves sourcemaps, and enables hot module reloading. None of that should be exposed by a production server.
+
+```ts
+Bun.serve({
+  development: true, // [!code ++]
+  fetch(req) {
+    return new Response("Bun!");
+  },
+});
+```
+
+Bun decides the mode as follows:
+
+- `NODE_ENV=production` in the environment always selects production mode. If `development: true` is also set, it is ignored and Bun prints a warning.
+- Otherwise `development: true` (or a [configuration object](/bundler/fullstack#advanced-development-configuration)) selects development mode and `development: false` selects production mode.
+- When the `development` option is not set, `NODE_ENV=development` selects development mode. Any other value, including an unset `NODE_ENV`, selects production mode.
+
+`server.development` reports the mode the server ended up in.
+
 ---
 
 ## Unix domain sockets

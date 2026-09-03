@@ -194,3 +194,65 @@ describe("idle release", () => {
     expect(exitCode).toBe(0);
   });
 });
+
+// Those idle full collections are tagged (GCRequest::isIdle) so JSC may also let idle FTL code — which has no execution
+// counter of its own and pins every baseline CodeBlock it inlined — age out in them, and only in them: a program that
+// forces collections itself while running hot code must not lose that code. Eager JIT TTLs make it observable in seconds.
+describe("idle release lets FTL code age out", () => {
+  const script = /* js */ `
+    const { heapStats, noInline } = require("bun:jsc");
+    const fns = [];
+    for (let i = 0; i < 40; i++) {
+      const f = new Function("o", "h", "let s = 0; for (let k = 0; k < 40; k++) s += h(o, k) + " + i + "; return s;");
+      noInline(f);
+      fns.push(f);
+    }
+    const helper = (o, k) => o.a * k + o.b;
+    const o = { a: 1, b: 2 };
+    globalThis.keep = [helper, o, fns];
+    for (let r = 0; r < 100000; r++) for (let j = 0; j < fns.length; j++) fns[j](o, helper);
+    const count = () => heapStats().objectTypeCounts.FunctionCodeBlock ?? 0;
+    Bun.gc(true);
+    const before = count();
+    if (process.env.MODE === "forced") {
+      let n = 0;
+      const id = setInterval(() => {
+        Bun.gc(true);
+        if (++n >= 6) { clearInterval(id); console.log(JSON.stringify({ before, after: count() })); }
+      }, 700);
+    } else {
+      setTimeout(() => { Bun.gc(true); console.log(JSON.stringify({ before, after: count() })); }, 4500);
+    }
+  `;
+
+  async function run(env: Record<string, string>) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script],
+      env: {
+        ...bunEnv,
+        BUN_GC_TIMER_DISABLE: undefined,
+        BUN_GC_TIMER_INTERVAL: undefined,
+        BUN_JSC_useEagerCodeBlockJettisonTiming: "1",
+        BUN_JSC_optimizedCodeAgingQuietSeconds: "0.5",
+        ...env,
+      },
+      stdout: "pipe",
+      stderr: "inherit",
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    expect(exitCode).toBe(0);
+    return JSON.parse(stdout.trim()) as { before: number; after: number };
+  }
+
+  test.concurrent("the idle collections drop the warmed-up code", async () => {
+    const { before, after } = await run({ BUN_IDLE_GC_SECONDS: "1,1,1" });
+    expect(before).toBeGreaterThan(40);
+    expect(after).toBeLessThan(before / 4);
+  });
+
+  test.concurrent("collections the program forces itself do not", async () => {
+    const { before, after } = await run({ BUN_IDLE_GC_SECONDS: "0", MODE: "forced" });
+    expect(before).toBeGreaterThan(40);
+    expect(after).toBeGreaterThan(before / 2);
+  });
+});

@@ -878,9 +878,6 @@ impl ExportsKind {
             Self::EsmWithDynamicFallback | Self::EsmWithDynamicFallbackFromCjs
         )
     }
-
-    // `to_module_type()` lives in `bun_options_types` as
-    // `impl From<ExportsKind> for ModuleType` (would cycle here).
 }
 
 #[derive(Copy, Clone)]
@@ -1021,15 +1018,6 @@ pub struct Dependency {
     pub part_index: u32, // Index.Int
 }
 
-impl Default for Dependency {
-    fn default() -> Self {
-        Self {
-            source_index: Index::INVALID,
-            part_index: 0,
-        }
-    }
-}
-
 pub type DependencyList = bun_alloc::AstVec<Dependency>;
 
 // PERF: these may be arena-backed in callers; revisit with
@@ -1102,10 +1090,18 @@ pub enum PartTag {
 pub type PartSymbolUseMap = ArrayHashMap<Ref, symbol::Use, AutoContext, bun_alloc::AstAlloc>;
 pub type PartSymbolPropertyUseMap = ArrayHashMap<
     Ref,
-    StringHashMap<symbol::Use, bun_alloc::AstAlloc>,
+    StringHashMap<PropertyUse, bun_alloc::AstAlloc>,
     AutoContext,
     bun_alloc::AstAlloc,
 >;
+
+/// The reads of one `X.name` in `Part::import_symbol_property_uses`.
+#[derive(Default, Clone, Copy)]
+pub struct PropertyUse {
+    pub count_estimate: u32,
+    /// Some read is called, as `X.name()` or a template tag, with `X` as `this`.
+    pub is_call_target: bool,
+}
 
 impl Default for Part {
     fn default() -> Self {
@@ -1185,20 +1181,6 @@ pub struct NamedImport {
     /// It's useful to flag exported imports because if they are in a TypeScript
     /// file, we can't tell if they are a type or a value.
     pub is_exported: bool,
-}
-
-impl Default for NamedImport {
-    fn default() -> Self {
-        Self {
-            local_parts_with_uses: bun_alloc::AstAlloc::vec(),
-            alias: None,
-            alias_loc: crate::Loc::EMPTY,
-            namespace_ref: Ref::NONE,
-            import_record_index: 0,
-            alias_is_star: false,
-            is_exported: false,
-        }
-    }
 }
 
 #[derive(Copy, Clone)]

@@ -400,14 +400,13 @@ pub(crate) fn write_output_files_to_disk(
                         bstr::BStr::new(&chunk.final_rel_path),
                         BYTECODE_EXTENSION,
                     ));
-                    source_provider_url.ref_();
-                    // `defer source_provider_url.deref()` handled by Drop on OwnedString.
-                    let mut source_provider_url = bun_core::OwnedString::new(source_provider_url);
 
                     if let Some(bytecode) = crate::bundle_v2::dispatch::generate_cached_bytecode(
                         c.options.output_format,
                         &code_result.buffer,
-                        &mut source_provider_url,
+                        &source_provider_url,
+                        c.options.bytecode_depth,
+                        None,
                     ) {
                         let source_provider_url_str = source_provider_url.to_utf8();
                         debug!(
@@ -533,14 +532,7 @@ pub(crate) fn write_output_files_to_disk(
             None
         };
 
-        let output_kind = if matches!(chunk.content, Content::Css(_)) {
-            options::OutputKind::Asset
-        } else if chunk.entry_point.is_entry_point() {
-            c.graph.files.items_entry_point_kind()[chunk.entry_point.source_index() as usize]
-                .output_kind()
-        } else {
-            options::OutputKind::Chunk
-        };
+        let output_kind = c.chunk_output_kind(chunk);
 
         let chunk_index = output_files.insert_for_chunk(OutputFile::init(OutputFileInit {
             output_path: chunk.final_rel_path.clone(),
@@ -560,14 +552,7 @@ pub(crate) fn write_output_files_to_disk(
             display_size: display_size as u32,
             is_executable: chunk.flags.contains(ChunkFlags::IS_EXECUTABLE),
             data: OutputFileData::Saved(0),
-            side: Some(if matches!(chunk.content, Content::Css(_)) {
-                options::Side::Client
-            } else {
-                match c.graph.ast.items_target()[chunk.entry_point.source_index() as usize] {
-                    options::Target::Browser => options::Side::Client,
-                    _ => options::Side::Server,
-                }
-            }),
+            side: Some(c.chunk_side(chunk)),
             entry_point_index: if output_kind == options::OutputKind::EntryPoint {
                 // Server-components builds insert 2 extra synthetic sources
                 // before user entry points, so the source-index offset is 3.

@@ -1,13 +1,14 @@
 import { file, spawn, write } from "bun";
 import { install_test_helpers, npm_manifest_test_helpers } from "bun:internal-for-testing";
-import { afterAll, beforeEach, describe, expect, setDefaultTimeout, test } from "bun:test";
+import { afterAll, beforeAll, beforeEach, describe, expect, setDefaultTimeout, test } from "bun:test";
 import { copyFileSync, mkdirSync } from "fs";
-import { cp, exists, lstat, mkdir, readlink, rm, writeFile } from "fs/promises";
+import { cp, exists, lstat, mkdir, readlink, rename, rm, writeFile } from "fs/promises";
 import {
   assertManifestsPopulated,
   bunExe,
   bunEnv as env,
   isFlaky,
+  isLinux,
   isMacOS,
   isWindows,
   mergeWindowEnvs,
@@ -3255,6 +3256,112 @@ describe("binaries", () => {
     expect(err).toBeEmpty();
     expect(await result.exited).toBe(0);
   }
+
+  // Before it appends a bin name, the bin linker writes `<node_modules>/<package>/` and
+  // `<node_modules>/.bin/` into two path buffers of MAX_PATH_BYTES (4096 bytes on Linux, 1024 on
+  // macOS). A project deep enough for one of them not to fit has to fail like a bin name that does
+  // not fit. Windows is left out: its buffer holds more than any path the OS accepts.
+  describe.skipIf(isWindows)("directories longer than the path buffer", () => {
+    const maxPathBytes = isLinux ? 4096 : 1024;
+
+    // Writes `<dir>/<name>`, a package whose bin is named after it.
+    const writeBinPackage = (dir: string, name: string) =>
+      Promise.all([
+        write(
+          join(dir, name, "package.json"),
+          JSON.stringify({ name, version: "1.0.0", bin: { [name]: `${name}.js` } }),
+        ),
+        write(join(dir, name, `${name}.js`), `#!/usr/bin/env node\nconsole.log("${name}")`),
+      ]);
+
+    // Directory names of at most 200 bytes which bring `base` to exactly `length` bytes.
+    function componentsUpTo(base: string, length: number) {
+      const components: string[] = [];
+      let remaining = length - Buffer.byteLength(base);
+      while (remaining > 0) {
+        let len = Math.min(200, remaining - "/".length);
+        // Never leave exactly one byte: it would have to be a separator with no name after it.
+        if (remaining - "/".length - len === 1) len -= 1;
+        components.push(Buffer.alloc(len, "d").toString());
+        remaining -= "/".length + len;
+      }
+      return components;
+    }
+
+    // Creates, under `base`, a directory whose `<dir>/<subpath>` is exactly maxPathBytes long. The
+    // directory itself fits, so it can be created. Whatever bun creates below `<dir>/<subpath>` does
+    // not, so `shorten()` renames the first directory name to one byte before those paths are used.
+    function directoryFilledBy(base: string, subpath: string) {
+      const components = componentsUpTo(base, maxPathBytes - Buffer.byteLength("/" + subpath));
+      const dir = join(base, ...components);
+      expect(Buffer.byteLength(join(dir, subpath))).toBe(maxPathBytes);
+      mkdirSync(dir, { recursive: true });
+      const shorten = async () => {
+        await rename(join(base, components[0]), join(base, "x"));
+        return join(base, "x", ...components.slice(1));
+      };
+      return { dir, shorten };
+    }
+
+    async function run(args: string[], cwd: string, runEnv: NodeJS.Dict<string>) {
+      await using proc = spawn({
+        cmd: [bunExe(), ...args],
+        cwd,
+        stdout: "pipe",
+        stderr: "pipe",
+        env: runEnv,
+      });
+      const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      return { out, err, exitCode };
+    }
+
+    // With `has-bin`, `<project>/node_modules/has-bin/` is one byte too long for the buffer. With
+    // `a`, the package directory fits and `<project>/node_modules/.bin/` is one byte too long.
+    test.each([
+      ["package directory", "has-bin", join("node_modules", "has-bin")],
+      [".bin directory", "a", join("node_modules", ".bin")],
+    ])("install reports a %s that does not fit as ENAMETOOLONG", async (_, name, subpath) => {
+      await writeBinPackage(packageDir, name);
+      const { dir: project, shorten } = directoryFilledBy(packageDir, subpath);
+      await write(
+        join(project, "package.json"),
+        JSON.stringify({ name: "foo", dependencies: { [name]: `file:${join(packageDir, name)}` } }),
+      );
+
+      const { out, err, exitCode } = await run(["install"], project, env);
+      const shortened = await shorten();
+
+      expect(err).toContain(`error: Failed to link ${name}: ENAMETOOLONG`);
+      expect(out).not.toContain("installed");
+      // The package itself was installed. Only its bin is missing.
+      expect(await exists(join(shortened, "node_modules", name, "package.json"))).toBeTrue();
+      expect(await exists(join(shortened, "node_modules", ".bin", name))).toBeFalse();
+      expect(exitCode).toBe(1);
+    });
+
+    // `bun link` symlinks the package into the global directory's node_modules and links its bins
+    // from there, into the global bin directory.
+    test("bun link reports a global package directory that does not fit as ENAMETOOLONG", async () => {
+      await writeBinPackage(packageDir, "has-bin");
+      const { dir: globalDir, shorten } = directoryFilledBy(packageDir, join("node_modules", "has-bin"));
+      const globalBinDir = join(packageDir, "global-bin-dir");
+
+      const { out, err, exitCode } = await run(["link"], join(packageDir, "has-bin"), {
+        ...env,
+        BUN_INSTALL: join(packageDir, "global-install-dir"),
+        BUN_INSTALL_GLOBAL_DIR: globalDir,
+        BUN_INSTALL_BIN: globalBinDir,
+      });
+      const shortened = await shorten();
+
+      expect(err).toContain("error: failed to link bin due to error ENAMETOOLONG");
+      expect(out).not.toContain("Success!");
+      // The package itself was registered. Only its bin is missing.
+      expect(await exists(join(shortened, "node_modules", "has-bin", "package.json"))).toBeTrue();
+      expect(await exists(join(globalBinDir, "has-bin"))).toBeFalse();
+      expect(exitCode).toBe(1);
+    });
+  });
 
   test("it will skip (without errors) if a folder from `directories.bin` does not exist", async () => {
     await Promise.all([
@@ -9756,6 +9863,148 @@ test("npm manifest cache entries are only reused for the package name they were 
 
   expect(parseManifest(byName["no-deps"], registryUrl()).name).toBe("no-deps");
   expect(exitCode).toBe(0);
+});
+
+// A manifest cache entry is written to a temporary file in the temporary
+// directory and renamed into the cache directory. Every install on the machine
+// shares the temporary directory, so the temporary file name has to be unique
+// per writer. It used to be the package name hash and the current millisecond:
+// two installs that saved the same package in the same millisecond opened one
+// file, and the rename of one moved the other's bytes into its cache (an entry
+// for the wrong registry) or left it with no entry at all. Linux writes the
+// entry with O_TMPFILE and does not use the name.
+describe("manifest cache temporary files", () => {
+  const { parseManifest } = npm_manifest_test_helpers;
+  const name = "shared-temp-name";
+  const tarballPath = `/${name}-1.0.0.tgz`;
+  let tarball: Uint8Array;
+  beforeAll(async () => {
+    tarball = await new Bun.Archive(
+      { "package/package.json": JSON.stringify({ name, version: "1.0.0" }) },
+      { compress: "gzip" },
+    ).bytes();
+  });
+
+  function cacheDirOf(cwd: string) {
+    return join(cwd, ".bun-cache");
+  }
+
+  async function cacheEntries(cwd: string) {
+    return (await readdirSorted(cacheDirOf(cwd))).filter(entry => entry.endsWith(".npm"));
+  }
+
+  /**
+   * Serves `name` to the project at `cwd`. The manifest response waits for
+   * `hold`. The tarball response waits until the manifest's cache entry exists
+   * (bun install writes it from a thread pool task it does not wait for before
+   * exiting, so this keeps the install alive until the entry is on disk), or
+   * gives up after a few seconds so a lost write still ends as a failed assertion.
+   */
+  function serveRegistry(cwd: string, hold: () => Promise<void> = async () => {}) {
+    return Bun.serve({
+      port: 0,
+      async fetch(request) {
+        const { origin, pathname } = new URL(request.url);
+        if (pathname === tarballPath) {
+          const deadline = Date.now() + 5_000;
+          while ((await cacheEntries(cwd)).length === 0 && Date.now() < deadline) await Bun.sleep(10);
+          return new Response(tarball);
+        }
+        if (pathname !== `/${name}`) return new Response("not found", { status: 404 });
+        await hold();
+        return Response.json({
+          name,
+          "dist-tags": { latest: "1.0.0" },
+          versions: { "1.0.0": { name, version: "1.0.0", dist: { tarball: `${origin}${tarballPath}` } } },
+        });
+      },
+    });
+  }
+
+  /** Installs `name` into the project at `cwd`, with its own cache directory, and returns the cache entry it left, by package name. */
+  async function installAndReadCache(cwd: string, registryHref: string) {
+    const cacheDir = cacheDirOf(cwd);
+    mkdirSync(cacheDir, { recursive: true });
+    await Promise.all([
+      write(join(cwd, "package.json"), JSON.stringify({ name: "app", dependencies: { [name]: "1.0.0" } })),
+      write(join(cwd, "bunfig.toml"), `[install]\nregistry = "${registryHref}"\n`),
+    ]);
+    await using proc = spawn({
+      cmd: [bunExe(), "install"],
+      cwd,
+      stdout: "pipe",
+      stdin: "ignore",
+      stderr: "pipe",
+      env: { ...env, BUN_INSTALL_CACHE_DIR: cacheDir },
+    });
+    const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(err).not.toContain("error:");
+    expect(out).toContain(`+ ${name}@1.0.0`);
+    expect(exitCode).toBe(0);
+
+    // parseManifest rejects an entry that was saved for another registry.
+    const entries = await cacheEntries(cwd);
+    try {
+      return {
+        entries,
+        cached: entries.length === 1 ? parseManifest(join(cacheDir, entries[0]), registryHref).name : undefined,
+      };
+    } catch (error) {
+      return { entries, cached: String(error) };
+    }
+  }
+
+  test("concurrent installs saving the same manifest keep their own cache entries", async () => {
+    const installs = 4;
+    for (let round = 0; round < 3; round++) {
+      // Every registry holds its manifest response until all of them have been
+      // asked, so the installs parse and save the manifest at the same time.
+      let asked = 0;
+      const { promise: allAsked, resolve: release } = Promise.withResolvers<void>();
+      const projects = Array.from({ length: installs }, (_, i) => join(packageDir, `round-${round}-${i}`));
+      const registries = projects.map(cwd =>
+        serveRegistry(cwd, () => {
+          if (++asked === installs) release();
+          return allAsked;
+        }),
+      );
+      try {
+        const results = await Promise.all(projects.map((cwd, i) => installAndReadCache(cwd, registries[i].url.href)));
+        expect({ round, cached: results.map(result => result.cached) }).toEqual({
+          round,
+          cached: Array(installs).fill(name),
+        });
+      } finally {
+        for (const server of registries) server.stop(true);
+      }
+    }
+  });
+
+  test("the temporary file is not named after the package and the current millisecond", async () => {
+    // A cold install caches the manifest as <hash of name>-<hash of registry url>.npm.
+    const first = join(packageDir, "first");
+    await using registry = serveRegistry(first);
+    const { entries, cached } = await installAndReadCache(first, registry.url.href);
+    expect(cached).toBe(name);
+    const nameHash = entries[0].slice(0, entries[0].indexOf("-"));
+    expect(nameHash).toMatch(/^[0-9a-f]{16}$/);
+
+    // Hold the manifest response until a directory sits at the old temporary
+    // file name of this package for every millisecond of the next seconds. An
+    // install that picks such a name cannot open it (EISDIR) and saves nothing.
+    const second = join(packageDir, "second");
+    const { promise: trapReady, resolve: trapIsReady } = Promise.withResolvers<void>();
+    await using trapped = serveRegistry(second, () => trapReady);
+    const installed = installAndReadCache(second, trapped.url.href);
+    const tmpDir = String(env.BUN_TMPDIR);
+    mkdirSync(tmpDir, { recursive: true });
+    const start = Date.now() - 100;
+    for (let ms = start; ms < Date.now() + 3_000 && ms < start + 10_000; ms++) {
+      mkdirSync(join(tmpDir, `${nameHash}.npm-${ms.toString(16).padStart(16, "0")}`));
+    }
+    trapIsReady();
+    expect((await installed).cached).toBe(name);
+  });
 });
 
 describe("manifest conditional requests", () => {

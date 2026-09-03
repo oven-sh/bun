@@ -93,6 +93,10 @@ pub struct PackageInstaller<'a> {
     pub(crate) successfully_installed: Bitset,
     pub(crate) command_ctx: Command::Context<'a>,
     pub(crate) current_tree_id: lockfile::tree::Id,
+    /// Trees that live under a self-contained workspace: packages there are copied
+    /// (real files) rather than hardlinked/cloned/symlinked from the cache, so tools
+    /// that walk, prune or rewrite that node_modules cannot reach the shared cache.
+    pub(crate) copy_trees: Bitset,
 
     // fields used for running lifecycle scripts when it's safe
     //
@@ -730,7 +734,7 @@ impl<'a> PackageInstaller<'a> {
     }
 
     pub(crate) fn link_remaining_bins(&mut self, log_level: Options::LogLevel) {
-        let mut depth_buf: lockfile::tree::DepthBuf = [0u32; lockfile::tree::MAX_DEPTH];
+        let mut depth_buf = lockfile::tree::depth_buf_uninit();
         let mut node_modules_rel_path_buf = PathBuffer::uninit();
         node_modules_rel_path_buf[..b"node_modules".len()].copy_from_slice(b"node_modules");
 
@@ -884,9 +888,9 @@ impl<'a> PackageInstaller<'a> {
                     self.current_tree_id = context.tree_id;
 
                     // Re-verify: a parent reinstall may have deleted a deferred entry.
-                    const NEEDS_VERIFY: bool = true;
-                    const IS_PENDING_PACKAGE_INSTALL: bool = true;
-                    self.install_package_with_name_and_resolution::<NEEDS_VERIFY, IS_PENDING_PACKAGE_INSTALL>(
+                    let needs_verify = true;
+                    let is_pending_package_install = true;
+                    self.install_package_with_name_and_resolution(
                         // This id might be different from the id used to enqueue the task. Important
                         // to use the correct one because the package might be aliased with a different
                         // name
@@ -895,6 +899,8 @@ impl<'a> PackageInstaller<'a> {
                         log_level,
                         name,
                         &resolutions[package_id as usize],
+                        needs_verify,
+                        is_pending_package_install,
                     );
                 }
             }
@@ -1119,9 +1125,9 @@ impl<'a> PackageInstaller<'a> {
                 // `DependencyInstallContext.path: Vec<u8>` — clone since `cb` is `&`.
                 self.node_modules.path.clone_from(&context.path);
                 self.current_tree_id = context.tree_id;
-                const NEEDS_VERIFY: bool = false;
-                const IS_PENDING_PACKAGE_INSTALL: bool = false;
-                self.install_package_with_name_and_resolution::<NEEDS_VERIFY, IS_PENDING_PACKAGE_INSTALL>(
+                let needs_verify = false;
+                let is_pending_package_install = false;
+                self.install_package_with_name_and_resolution(
                     // This id might be different from the id used to enqueue the task. Important
                     // to use the correct one because the package might be aliased with a different
                     // name
@@ -1130,6 +1136,8 @@ impl<'a> PackageInstaller<'a> {
                     log_level,
                     name,
                     &resolutions[callback_package_id as usize],
+                    needs_verify,
+                    is_pending_package_install,
                 );
             }
             self.node_modules = prev_node_modules;
@@ -1215,20 +1223,19 @@ impl<'a> PackageInstaller<'a> {
         count
     }
 
-    pub(crate) fn install_package_with_name_and_resolution<
-        // false when coming from download. if the package was downloaded
-        // it was already determined to need an install
-        const NEEDS_VERIFY: bool,
-        // we don't want to allow more package installs through
-        // pending packages if we're already draining them.
-        const IS_PENDING_PACKAGE_INSTALL: bool,
-    >(
+    pub(crate) fn install_package_with_name_and_resolution(
         &mut self,
         dependency_id: DependencyID,
         package_id: PackageID,
         log_level: Options::LogLevel,
         pkg_name: String,
         resolution: &Resolution,
+        // false when coming from download. if the package was downloaded
+        // it was already determined to need an install
+        needs_verify: bool,
+        // we don't want to allow more package installs through
+        // pending packages if we're already draining them.
+        is_pending_package_install: bool,
     ) {
         // reshaped for borrowck — `string_bytes` is not mutated during install,
         // so capture a raw slice once to avoid repeatedly re-borrowing `self.lockfile`
@@ -1256,7 +1263,7 @@ impl<'a> PackageInstaller<'a> {
             }
             self.summary.fail += 1;
             self.increment_tree_install_count(
-                !IS_PENDING_PACKAGE_INSTALL,
+                !is_pending_package_install,
                 self.current_tree_id,
                 log_level,
             );
@@ -1311,11 +1318,11 @@ impl<'a> PackageInstaller<'a> {
             )
         };
 
-        let (patch_patch, patch_contents_hash, patch_name_and_version_hash, remove_patch) = 'brk: {
+        let (patch_contents_hash, patch_name_and_version_hash, remove_patch) = 'brk: {
             if self.manager().lockfile.patched_dependencies.count() == 0
                 && self.manager().patched_dependencies_to_remove.count() == 0
             {
-                break 'brk (None, None, None, false);
+                break 'brk (None, None, false);
             }
             let mut name_and_version: Vec<u8> = Vec::new();
             use std::io::Write;
@@ -1339,17 +1346,28 @@ impl<'a> PackageInstaller<'a> {
                     .patched_dependencies_to_remove
                     .contains(&name_and_version_hash);
                 if to_remove {
-                    break 'brk (None, None, Some(name_and_version_hash), true);
+                    break 'brk (None, Some(name_and_version_hash), true);
                 }
-                break 'brk (None, None, None, false);
+                break 'brk (None, None, false);
             };
-            debug_assert!(!patchdep.patchfile_hash_is_null);
-            // if (!patchdep.patchfile_hash_is_null) {
-            //     this.manager.enqueuePatchTask(PatchTask.newCalcPatchHash(this, package_id, name_and_version_hash, dependency_id, url: string))
-            // }
+            let Some(patch_contents_hash) = patchdep.patchfile_hash() else {
+                if log_level != Options::LogLevel::Silent {
+                    bun_core::pretty_errorln!(
+                        "<r><red>error<r>: failed to patch package <b>{}<r>: the hash of patch file {} was not calculated before install, this is a bug in Bun",
+                        bstr::BStr::new(&name_and_version),
+                        bun_core::fmt::quote(patchdep.path.slice(string_buf!())),
+                    );
+                }
+                self.summary.fail += 1;
+                self.increment_tree_install_count(
+                    !is_pending_package_install,
+                    self.current_tree_id,
+                    log_level,
+                );
+                return;
+            };
             break 'brk (
-                Some(patchdep.path.slice(string_buf!())),
-                Some(patchdep.patchfile_hash().unwrap()),
+                Some(patch_contents_hash),
                 Some(name_and_version_hash),
                 false,
             );
@@ -1375,9 +1393,8 @@ impl<'a> PackageInstaller<'a> {
             // same raw pointer, so this `&mut` does not invalidate it under stacked-borrows.
             destination_dir_subpath_buf: unsafe { (*subpath_buf_ptr).as_mut_slice() },
             package_name: pkg_name,
-            patch: patch_patch.map(|_| package_install::Patch {
-                contents_hash: patch_contents_hash.unwrap(),
-            }),
+            patch: patch_contents_hash
+                .map(|contents_hash| package_install::Patch { contents_hash }),
             package_version,
             node_modules: node_modules_ref.get(),
             // BACKREF accessor — `self.lockfile` is `*mut Lockfile` (never null,
@@ -1462,7 +1479,7 @@ impl<'a> PackageInstaller<'a> {
                         }
                         self.summary.fail += 1;
                         self.increment_tree_install_count(
-                            !IS_PENDING_PACKAGE_INSTALL,
+                            !is_pending_package_install,
                             self.current_tree_id,
                             log_level,
                         );
@@ -1545,7 +1562,7 @@ impl<'a> PackageInstaller<'a> {
                     panic!("Internal assertion failure: unexpected resolution tag");
                 }
                 self.increment_tree_install_count(
-                    !IS_PENDING_PACKAGE_INSTALL,
+                    !is_pending_package_install,
                     self.current_tree_id,
                     log_level,
                 );
@@ -1555,7 +1572,7 @@ impl<'a> PackageInstaller<'a> {
 
         let needs_install = self.force_install
             || self.skip_verify_installed_version_number
-            || !NEEDS_VERIFY
+            || !needs_verify
             || remove_patch
             || !installer.verify(resolution, &self.root_node_modules_folder);
 
@@ -1568,6 +1585,23 @@ impl<'a> PackageInstaller<'a> {
                 )
             {
                 debug_assert!(resolution.can_enqueue_install_task());
+
+                // Re-enqueueing would dedupe against the finished download and never call back.
+                if !needs_verify {
+                    if log_level != Options::LogLevel::Silent {
+                        bun_core::pretty_errorln!(
+                            "<r><red>error<r>: failed to install <b>{}<r>: the downloaded package was not found in the cache",
+                            bstr::BStr::new(alias.slice(string_buf!())),
+                        );
+                    }
+                    self.summary.fail += 1;
+                    self.increment_tree_install_count(
+                        !is_pending_package_install,
+                        self.current_tree_id,
+                        log_level,
+                    );
+                    return;
+                }
 
                 let context =
                     TaskCallbackContext::DependencyInstallContext(DependencyInstallContext {
@@ -1586,14 +1620,21 @@ impl<'a> PackageInstaller<'a> {
                 };
                 match resolution.tag {
                     resolution::Tag::Git => {
-                        package_manager::enqueue_git_for_checkout(
+                        if package_manager::enqueue_git_for_checkout(
                             self.manager_mut(),
                             dependency_id,
                             alias.slice(string_buf!()),
                             resolution,
                             context,
                             download_patch_hash,
-                        );
+                        ) == package_manager::GitEnqueueResult::OfflineMiss
+                        {
+                            self.increment_tree_install_count(
+                                !is_pending_package_install,
+                                self.current_tree_id,
+                                log_level,
+                            );
+                        }
                     }
                     resolution::Tag::Github => {
                         let url = self.manager_mut().alloc_github_url(resolution.github());
@@ -1609,11 +1650,11 @@ impl<'a> PackageInstaller<'a> {
                             Ok(()) => {}
                             Err(ForTarballError::OutOfMemory) => bun_core::out_of_memory(),
                             Err(ForTarballError::InvalidURL) => {
-                                self.fail_with_invalid_url::<IS_PENDING_PACKAGE_INSTALL>(log_level)
+                                self.fail_with_invalid_url(log_level, is_pending_package_install)
                             }
-                            Err(ForTarballError::AlreadyFailed) => self
+                            Err(ForTarballError::AlreadyFailed | ForTarballError::Offline) => self
                                 .increment_tree_install_count(
-                                    !IS_PENDING_PACKAGE_INSTALL,
+                                    !is_pending_package_install,
                                     self.current_tree_id,
                                     log_level,
                                 ),
@@ -1641,11 +1682,11 @@ impl<'a> PackageInstaller<'a> {
                             Ok(()) => {}
                             Err(ForTarballError::OutOfMemory) => bun_core::out_of_memory(),
                             Err(ForTarballError::InvalidURL) => {
-                                self.fail_with_invalid_url::<IS_PENDING_PACKAGE_INSTALL>(log_level)
+                                self.fail_with_invalid_url(log_level, is_pending_package_install)
                             }
-                            Err(ForTarballError::AlreadyFailed) => self
+                            Err(ForTarballError::AlreadyFailed | ForTarballError::Offline) => self
                                 .increment_tree_install_count(
-                                    !IS_PENDING_PACKAGE_INSTALL,
+                                    !is_pending_package_install,
                                     self.current_tree_id,
                                     log_level,
                                 ),
@@ -1679,11 +1720,11 @@ impl<'a> PackageInstaller<'a> {
                             Ok(()) => {}
                             Err(ForTarballError::OutOfMemory) => bun_core::out_of_memory(),
                             Err(ForTarballError::InvalidURL) => {
-                                self.fail_with_invalid_url::<IS_PENDING_PACKAGE_INSTALL>(log_level)
+                                self.fail_with_invalid_url(log_level, is_pending_package_install)
                             }
-                            Err(ForTarballError::AlreadyFailed) => self
+                            Err(ForTarballError::AlreadyFailed | ForTarballError::Offline) => self
                                 .increment_tree_install_count(
-                                    !IS_PENDING_PACKAGE_INSTALL,
+                                    !is_pending_package_install,
                                     self.current_tree_id,
                                     log_level,
                                 ),
@@ -1694,7 +1735,7 @@ impl<'a> PackageInstaller<'a> {
                             panic!("unreachable, handled above");
                         }
                         self.increment_tree_install_count(
-                            !IS_PENDING_PACKAGE_INSTALL,
+                            !is_pending_package_install,
                             self.current_tree_id,
                             log_level,
                         );
@@ -1727,7 +1768,7 @@ impl<'a> PackageInstaller<'a> {
                 }
             }
 
-            if !IS_PENDING_PACKAGE_INSTALL
+            if !is_pending_package_install
                 && !Self::can_install_package_for_tree(
                     &self.completed_trees,
                     self.lockfile().buffers.trees.as_slice(),
@@ -1766,7 +1807,7 @@ impl<'a> PackageInstaller<'a> {
                     }
                     self.summary.fail += 1;
                     self.increment_tree_install_count(
-                        !IS_PENDING_PACKAGE_INSTALL,
+                        !is_pending_package_install,
                         self.current_tree_id,
                         log_level,
                     );
@@ -1856,10 +1897,17 @@ impl<'a> PackageInstaller<'a> {
                         break 'result result;
                     }
 
+                    let method = if (self.current_tree_id as usize) < self.copy_trees.bit_length()
+                        && self.copy_trees.is_set(self.current_tree_id as usize)
+                    {
+                        package_install::Method::Copyfile
+                    } else {
+                        installer.get_install_method()
+                    };
                     break 'result installer.install(
                         self.skip_delete,
                         &destination_dir,
-                        installer.get_install_method(),
+                        method,
                         resolution.tag,
                     );
                 }
@@ -2028,7 +2076,7 @@ impl<'a> PackageInstaller<'a> {
                     }
 
                     self.increment_tree_install_count(
-                        !IS_PENDING_PACKAGE_INSTALL,
+                        !is_pending_package_install,
                         self.current_tree_id,
                         log_level,
                     );
@@ -2043,7 +2091,7 @@ impl<'a> PackageInstaller<'a> {
                     // even if the package failed to install, we still need to increment the install
                     // counter for this tree
                     self.increment_tree_install_count(
-                        !IS_PENDING_PACKAGE_INSTALL,
+                        !is_pending_package_install,
                         self.current_tree_id,
                         log_level,
                     );
@@ -2158,7 +2206,7 @@ impl<'a> PackageInstaller<'a> {
         } else {
             // Same gate as the `needs_install` branch: a pending parent's
             // `uninstall_before_install` would delete this verified package.
-            if !IS_PENDING_PACKAGE_INSTALL
+            if !is_pending_package_install
                 && !Self::can_install_package_for_tree(
                     &self.completed_trees,
                     self.lockfile().buffers.trees.as_slice(),
@@ -2294,20 +2342,21 @@ impl<'a> PackageInstaller<'a> {
             }
 
             self.increment_tree_install_count(
-                !IS_PENDING_PACKAGE_INSTALL,
+                !is_pending_package_install,
                 self.current_tree_id,
                 log_level,
             );
         }
     }
 
-    fn fail_with_invalid_url<const IS_PENDING_PACKAGE_INSTALL: bool>(
+    fn fail_with_invalid_url(
         &mut self,
         log_level: Options::LogLevel,
+        is_pending_package_install: bool,
     ) {
         self.summary.fail += 1;
         self.increment_tree_install_count(
-            !IS_PENDING_PACKAGE_INSTALL,
+            !is_pending_package_install,
             self.current_tree_id,
             log_level,
         );
@@ -2427,14 +2476,16 @@ impl<'a> PackageInstaller<'a> {
         // `&mut self` call.
         let resolutions = self.resolutions;
 
-        const NEEDS_VERIFY: bool = true;
-        const IS_PENDING_PACKAGE_INSTALL: bool = false;
-        self.install_package_with_name_and_resolution::<NEEDS_VERIFY, IS_PENDING_PACKAGE_INSTALL>(
+        let needs_verify = true;
+        let is_pending_package_install = false;
+        self.install_package_with_name_and_resolution(
             dep_id,
             package_id,
             log_level,
             name,
             &resolutions[package_id as usize],
+            needs_verify,
+            is_pending_package_install,
         );
     }
 }

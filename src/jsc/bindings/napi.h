@@ -30,6 +30,10 @@ extern "C" void napi_internal_threadsafe_function_env_teardown(void* tsfn);
 extern "C" void napi_internal_suppress_crash_on_abort_if_desired();
 extern "C" void Bun__crashHandler(const char* message, size_t message_len);
 
+namespace Zig {
+class NapiRef;
+}
+
 namespace Napi {
 
 static constexpr int DEFAULT_NAPI_VERSION = 10;
@@ -116,7 +120,7 @@ private:
 
 using HookSet = std::unordered_set<EitherCleanupHook, EitherCleanupHook::Hash>;
 
-napi_status defineProperty(napi_env env, JSC::JSObject* to, const napi_property_descriptor& property, JSC::ThrowScope& scope);
+napi_status defineProperty(napi_env env, JSC::JSObject* to, const napi_property_descriptor& property, JSC::ExceptionScope& scope);
 }
 
 // Owned by the addon: allocated by napi_add_async_cleanup_hook and freed only
@@ -135,13 +139,6 @@ struct napi_async_cleanup_hook_handle__ {
     do {                                                       \
         napi_internal_suppress_crash_on_abort_if_desired();    \
         Bun__crashHandler(message "", sizeof(message "") - 1); \
-    } while (0)
-
-#define NAPI_PERISH(...)                                                      \
-    do {                                                                      \
-        WTFReportError(__FILE__, __LINE__, __PRETTY_FUNCTION__, __VA_ARGS__); \
-        WTFReportBacktrace();                                                 \
-        NAPI_ABORT("Aborted");                                                \
     } while (0)
 
 #define NAPI_RELEASE_ASSERT(assertion, ...)                                                                         \
@@ -318,9 +315,18 @@ public:
         return *m_finalizers.add({ callback, hint, data }).iterator;
     }
 
-    bool hasFinalizers() const
+    // Node's pending_finalizers: refs whose value was swept during GC and whose finalizer runs on a later event-loop turn; ~NapiRef removes itself.
+    void enqueueRefFinalizer(Zig::NapiRef* ref)
     {
-        return !m_finalizers.isEmpty();
+        bool wasEmpty = m_pendingRefFinalizers.isEmpty();
+        m_pendingRefFinalizers.add(ref);
+        if (wasEmpty)
+            napi_internal_enqueue_finalizer(this, drainOneRefFinalizer, this, nullptr);
+    }
+
+    void dequeueRefFinalizer(Zig::NapiRef* ref)
+    {
+        m_pendingRefFinalizers.remove(ref);
     }
 
     /// Will abort the process if a duplicate entry would be added.
@@ -406,11 +412,6 @@ public:
                 NAPI_ABORT("A Node-API function that may affect GC state was called from a finalizer during garbage collection");
             }
         }
-    }
-
-    bool isVMTerminating() const
-    {
-        return this->vm().hasTerminationRequest();
     }
 
     void doFinalizer(napi_finalize finalize_cb, void* data, void* finalize_hint)
@@ -499,8 +500,6 @@ public:
     }
 
     inline bool isFinishingFinalizers() const { return m_isFinishingFinalizers; }
-    // The entry cleanup() is currently calling, if any (see BoundFinalizer::deactivate).
-    inline const BoundFinalizer* currentFinalizer() const { return m_currentFinalizer; }
 
     // Almost all NAPI functions should set error_code to the status they're returning right before
     // they return it
@@ -585,6 +584,9 @@ private:
     // ListHashSet preserves insertion order so cleanup() can run finalizers in reverse
     // (LIFO), matching Node.js teardown semantics for napi_wrap references.
     WTF::ListHashSet<BoundFinalizer, BoundFinalizer::Hash> m_finalizers;
+    static void drainOneRefFinalizer(napi_env, void*, void*);
+    WTF::ListHashSet<Zig::NapiRef*> m_pendingRefFinalizers;
+    // The entry cleanup() is currently calling, if any (see BoundFinalizer::deactivate).
     const BoundFinalizer* m_currentFinalizer = nullptr;
     bool m_isFinishingFinalizers = false;
     JSC::VM& m_vm;
@@ -789,8 +791,7 @@ public:
             strongRef.set(globalObject->vm(), value);
         }
 
-        // In NAPI non-experimental, types other than object, function and symbol can't be used as values for references.
-        // In NAPI experimental, they can be, but we must not store weak references to them.
+        // Like Node's Reference::SetWeak(), a value that cannot be held weakly is released once the count reaches zero.
         if (can_be_weak) {
             weakValueRef.set(value, Napi::NapiRefWeakHandleOwner::weakValueHandleOwner(), this);
         }
@@ -809,6 +810,7 @@ public:
         }
     }
 
+    // Queues a copy when in GC, which a later delete of this ref cannot cancel: only for runtime-owned refs and env cleanup.
     void callFinalizer()
     {
         // Calling the finalizer may delete `this`, so we have to do state changes on `this` before
@@ -818,9 +820,13 @@ public:
         saved_finalizer.call(env.ptr(), nativeObject, !env->mustDeferFinalizers() || !env->inGC());
     }
 
+    // For a ref the addon owns: napi_delete_reference before the queued finalizer runs cancels it (Node's ~ReferenceWithFinalizer).
+    void callFinalizerFromGC();
+
     ~NapiRef()
     {
         NAPI_LOG("destruct napi ref %p", this);
+        env->dequeueRefFinalizer(this);
         if (boundCleanup) {
             boundCleanup->deactivate(env);
             boundCleanup = nullptr;
@@ -865,12 +871,7 @@ public:
     {
         if constexpr (mode == JSC::SubspaceAccess::Concurrently)
             return nullptr;
-        return WebCore::subspaceForImpl<NapiClass, WebCore::UseCustomHeapCellType::No>(
-            vm,
-            [](auto& spaces) { return spaces.m_clientSubspaceForNapiClass.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForNapiClass = std::forward<decltype(space)>(space); },
-            [](auto& spaces) { return spaces.m_subspaceForNapiClass.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_subspaceForNapiClass = std::forward<decltype(space)>(space); });
+        return WebCore::subspaceForImpl<NapiClass, WebCore::UseCustomHeapCellType::No>(vm, BUN_SUBSPACE_SLOTS(m_clientSubspaceForNapiClass, m_subspaceForNapiClass));
     }
 
     DECLARE_EXPORT_INFO;
@@ -885,7 +886,7 @@ public:
     static Structure* createStructure(VM& vm, JSGlobalObject* globalObject, JSValue prototype)
     {
         ASSERT(globalObject);
-        return Structure::create(vm, globalObject, prototype, TypeInfo(JSFunctionType, StructureFlags), info());
+        return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(JSFunctionType, StructureFlags), info());
     }
 
     inline napi_callback constructor() const { return m_constructor; }
@@ -938,7 +939,7 @@ public:
     static Structure* createStructure(VM& vm, JSGlobalObject* globalObject, JSValue prototype)
     {
         ASSERT(globalObject);
-        return Structure::create(vm, globalObject, prototype, TypeInfo(ObjectType, StructureFlags), info());
+        return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(ObjectType, StructureFlags), info());
     }
 
     NapiPrototype* subclass(JSC::JSGlobalObject* globalObject, JSC::JSObject* newTarget)

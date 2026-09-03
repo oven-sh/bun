@@ -53,10 +53,12 @@ To run manually:
 
 */
 
+import { mkdir, readFile, writeFile } from "fs/promises";
+
 const start = Date.now();
 let isInstalled = false;
 try {
-  const grammarfile = await Bun.file("node_modules/@lezer/cpp/src/cpp.grammar").text();
+  const grammarfile = await readFile("node_modules/@lezer/cpp/src/cpp.grammar", "utf8");
   isInstalled = true;
 } catch (e) {}
 if (!isInstalled) {
@@ -79,7 +81,6 @@ if (!isInstalled) {
 
 type SyntaxNode = import("@lezer/common").SyntaxNode;
 const { parser: cppParser } = await import("@lezer/cpp");
-const { mkdir } = await import("fs/promises");
 const { join, relative } = await import("path");
 const { bannedTypes } = await import("./shared-types");
 
@@ -457,7 +458,7 @@ const rustSharedTypes: Record<string, string> = {
   "JSC::JSGlobalObject": "crate::JSGlobalObject",
   "Zig::GlobalObject": "crate::JSGlobalObject",
   "ZigException": "crate::zig_exception::ZigException",
-  "ZigString": "bun_core::ZigString",
+  "EncodedSlice": "bun_core::EncodedSlice",
   "JSC::VM": "crate::VM",
   "JSC::JSPromise": "crate::JSPromise",
   "JSC::JSMap": "crate::JSMap",
@@ -756,7 +757,7 @@ function closest(node: SyntaxNode | null, type: string): SyntaxNode | null {
 type CppParser = typeof cppParser;
 
 async function processFile(parser: CppParser, file: string, allFunctions: CppFn[]) {
-  const sourceCode = await Bun.file(file).text();
+  const sourceCode = await readFile(file, "utf8");
   if (!sourceCode.includes("[[ZIG_EXPORT(")) return;
 
   const sourceCodeLines = sourceCode.split("\n");
@@ -886,7 +887,7 @@ async function processFile(parser: CppParser, file: string, allFunctions: CppFn[
 }
 
 async function renderError(position: Srcloc, message: string, label: string, color: string) {
-  const fileContent = await Bun.file(position.file).text();
+  const fileContent = await readFile(position.file, "utf8");
   const lines = fileContent.split("\n");
   const line = lines[position.start.line - 1];
   if (line === undefined) return;
@@ -903,7 +904,7 @@ async function renderError(position: Srcloc, message: string, label: string, col
 
 async function readFileOrEmpty(file: string): Promise<string> {
   try {
-    const fileContents = await Bun.file(file).text();
+    const fileContents = await readFile(file, "utf8");
     return fileContents;
   } catch (e) {
     return "";
@@ -942,7 +943,7 @@ async function main() {
     console.error("usage: cppbind.ts <codegen-dir> <output> <cxx-sources-file>");
     process.exit(1);
   }
-  const allCppFiles = (await Bun.file(cxxSourcesPath).text())
+  const allCppFiles = (await readFile(cxxSourcesPath, "utf8"))
     .trim()
     .split("\n")
     .map(q => q.trim())
@@ -986,7 +987,7 @@ async function main() {
     rustWrap.join("\n") +
     "\n";
   if ((await readFileOrEmpty(rustFilePath)) !== rustContents) {
-    await Bun.write(rustFilePath, rustContents);
+    await writeFile(rustFilePath, rustContents);
   }
 
   if (process.env.CI) {

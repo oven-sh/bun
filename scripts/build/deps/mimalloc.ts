@@ -12,7 +12,7 @@
 
 import type { Dependency, DirectBuild } from "../source.ts";
 
-const MIMALLOC_COMMIT = "6a14aee24315e503fa295a1fa90fe8b24ad91774";
+const MIMALLOC_COMMIT = "6a64e1ba7f5b2130d4efccb67ec87fd0003f0f6a";
 
 export const mimalloc: Dependency = {
   name: "mimalloc",
@@ -35,7 +35,7 @@ export const mimalloc: Dependency = {
     //            alloc-override.c emits _expand/_msize/free which duplicate
     //            against libucrt(d) at link time. The C deps that would
     //            otherwise sit on the uCRT heap are pointed at mimalloc one
-    //            by one instead (ICU and libuv in bun_bin's
+    //            by one instead (ICU and libuv in bun_runtime::bin_entry's
     //            use_mimalloc_in_dependencies, BoringSSL via the hooks in
     //            boringssl.ts, c-ares via ares_library_init_mem).
     const override = cfg.linux && !cfg.asan;

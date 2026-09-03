@@ -3964,7 +3964,7 @@ pub mod bindings {
             return Err(global.throw(format_args!("expected tarball path string argument")));
         }
 
-        let tarball_path_str = bun_core::OwnedString::new(args[0].to_bun_string(global)?);
+        let tarball_path_str = args[0].to_bun_string(global)?;
 
         let tarball_path = tarball_path_str.to_utf8();
 
@@ -4011,7 +4011,7 @@ pub mod bindings {
 
         struct EntryInfo {
             pathname: BunString,
-            kind: BunString,
+            kind: bun_sys::FileKind,
             perm: bun_sys::Mode,
             contents: Option<BunString>,
         }
@@ -4105,7 +4105,7 @@ pub mod bindings {
 
                     let mut entry_info = EntryInfo {
                         pathname: pathname_string,
-                        kind: BunString::static_(file_kind_tag(kind)),
+                        kind,
                         perm,
                         contents: None,
                     };
@@ -4156,13 +4156,17 @@ pub mod bindings {
 
         let entries = JSArray::create_empty(global, entries_info.len())?;
 
-        for (i, entry) in entries_info.iter().enumerate() {
+        for (i, entry) in entries_info.into_iter().enumerate() {
             let obj = JSValue::create_empty_object(global, 0);
-            obj.put(global, b"pathname", entry.pathname.to_js(global)?);
-            obj.put(global, b"kind", entry.kind.to_js(global)?);
+            obj.put(global, b"pathname", entry.pathname.into_js(global)?);
+            let kind = match entry.kind {
+                bun_sys::FileKind::Unknown => global.common_strings().unknown(),
+                kind => BunString::static_(file_kind_tag(kind)).to_js(global)?,
+            };
+            obj.put(global, b"kind", kind);
             obj.put(global, b"perm", JSValue::js_number(f64::from(entry.perm)));
-            if let Some(contents) = &entry.contents {
-                obj.put(global, b"contents", contents.to_js(global)?);
+            if let Some(contents) = entry.contents {
+                obj.put(global, b"contents", contents.into_js(global)?);
             }
             entries.put_index(global, u32::try_from(i).expect("int cast"), obj)?;
         }
@@ -4170,7 +4174,7 @@ pub mod bindings {
         let result = JSValue::create_empty_object(global, 4);
         result.put(global, b"entries", entries);
         result.put(global, b"size", JSValue::js_number(tarball.len() as f64));
-        result.put(global, b"shasum", shasum_str.to_js(global)?);
+        result.put(global, b"shasum", shasum_str.into_js(global)?);
         result.put(global, b"integrity", integrity_value);
 
         Ok(result)

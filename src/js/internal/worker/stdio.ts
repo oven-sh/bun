@@ -8,8 +8,6 @@
 // flight at a time; further writes buffer in the Writable, so write() returns
 // false and 'drain' fires only when the consumer catches up. The payload is the
 // bare chunk array, EOF is null, and any other message is the ack.
-const Readable = require("internal/streams/readable");
-const Writable = require("internal/streams/writable");
 
 const kFlushSync = Symbol("kFlushSync");
 
@@ -32,6 +30,7 @@ function makePortReadable(port: MessagePort, incrementsPortRef: boolean) {
       }
     }
   }
+  const Readable = require("internal/streams/readable");
   const stream = new Readable({
     read() {
       if (startedReading === false && incrementsPortRef) {
@@ -72,6 +71,7 @@ function makePortReadable(port: MessagePort, incrementsPortRef: boolean) {
 // Writable that forwards chunks over a MessagePort (worker.stdin on the parent,
 // process.stdout/stderr in the worker). final() posts null as EOF.
 function makePortWritable(port: MessagePort) {
+  const Writable = require("internal/streams/writable");
   // Reader-side acks complete the in-flight writev. The listener refs the
   // event loop; release that immediately — the port is re-ref'd only while a
   // batch is awaiting its ack, so unflushed data keeps the writer alive
@@ -134,6 +134,7 @@ function makePortWritable(port: MessagePort) {
 
 // A node worker's process.stdin without { stdin: true }.
 function makeEndedReadable() {
+  const Readable = require("internal/streams/readable");
   return new Readable({
     read() {
       this.push(null);

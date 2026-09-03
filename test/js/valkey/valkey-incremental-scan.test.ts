@@ -1,4 +1,4 @@
-import { RedisClient, type TCPSocketListener } from "bun";
+import { RedisClient, type Socket, type TCPSocketListener } from "bun";
 import { describe, expect, test } from "bun:test";
 import net from "node:net";
 
@@ -11,16 +11,11 @@ const HELLO =
 type PerSocket = { buf: Buffer; replied: boolean };
 
 /**
- * Mock server: answers HELLO, then answers the first GET with `reply`. When
- * `splitAt` is inside the reply it is split there across two event-loop turns
- * so the client's empty-read-buffer stack path sees a partial frame; "bytes"
- * sends one byte per turn so the reply scanner resumes at every offset.
- * Subsequent commands get `+OK`.
+ * Mock server: parses the client's RESP command frames
+ * (`*N\r\n($len\r\n...\r\n){N}`) and hands each complete one to `onCommand`.
  */
-function createReplyServer(
-  reply: string,
-  splitAt: number | "bytes" = reply.length,
-  hello: string = HELLO,
+function createCommandServer(
+  onCommand: (fields: string[], s: Socket<PerSocket>) => void,
 ): TCPSocketListener<PerSocket> {
   return Bun.listen<PerSocket>({
     hostname: "127.0.0.1",
@@ -34,7 +29,6 @@ function createReplyServer(
       data(s, raw) {
         const st = s.data;
         st.buf = Buffer.concat([st.buf, raw]);
-        // Parse complete client RESP command frames (`*N\r\n($len\r\n...\r\n){N}`).
         for (;;) {
           const b = st.buf;
           if (!b.length || b[0] !== 0x2a) break;
@@ -61,35 +55,52 @@ function createReplyServer(
           }
           if (!complete) break;
           st.buf = b.subarray(pos);
-          const cmd = fields[0]?.toUpperCase();
-          if (cmd === "HELLO") {
-            s.write(hello);
-          } else if (cmd === "GET" && !st.replied) {
-            st.replied = true;
-            if (splitAt === "bytes") {
-              const bytes = Buffer.from(reply, "latin1");
-              const writeByte = (i: number) => {
-                if (i >= bytes.length) return;
-                s.write(bytes.subarray(i, i + 1));
-                s.flush();
-                setImmediate(() => setImmediate(() => writeByte(i + 1)));
-              };
-              writeByte(0);
-            } else {
-              s.write(reply.slice(0, splitAt));
-              s.flush();
-              if (splitAt < reply.length) {
-                // Yield twice so the first write reaches the client's `on_data`
-                // before the second is sent.
-                setImmediate(() => setImmediate(() => s.write(reply.slice(splitAt))));
-              }
-            }
-          } else {
-            s.write(`+OK${CRLF}`);
-          }
+          onCommand(fields, s);
         }
       },
     },
+  });
+}
+
+/**
+ * Mock server: answers HELLO, then answers the first GET with `reply`. When
+ * `splitAt` is inside the reply it is split there across two event-loop turns
+ * so the client's empty-read-buffer stack path sees a partial frame; "bytes"
+ * sends one byte per turn so the reply scanner resumes at every offset.
+ * Subsequent commands get `+OK`.
+ */
+function createReplyServer(
+  reply: string,
+  splitAt: number | "bytes" = reply.length,
+  hello: string = HELLO,
+): TCPSocketListener<PerSocket> {
+  return createCommandServer((fields, s) => {
+    const cmd = fields[0]?.toUpperCase();
+    if (cmd === "HELLO") {
+      s.write(hello);
+    } else if (cmd === "GET" && !s.data.replied) {
+      s.data.replied = true;
+      if (splitAt === "bytes") {
+        const bytes = Buffer.from(reply, "latin1");
+        const writeByte = (i: number) => {
+          if (i >= bytes.length) return;
+          s.write(bytes.subarray(i, i + 1));
+          s.flush();
+          setImmediate(() => setImmediate(() => writeByte(i + 1)));
+        };
+        writeByte(0);
+      } else {
+        s.write(reply.slice(0, splitAt));
+        s.flush();
+        if (splitAt < reply.length) {
+          // Yield twice so the first write reaches the client's `on_data`
+          // before the second is sent.
+          setImmediate(() => setImmediate(() => s.write(reply.slice(splitAt))));
+        }
+      }
+    } else {
+      s.write(`+OK${CRLF}`);
+    }
   });
 }
 
@@ -127,12 +138,12 @@ const FRAMES: [name: string, frame: string, expected: Decoded][] = [
   [
     "simple error (-ERR)",
     `-ERR unknown command${CRLF}`,
-    { rejects: { code: "ERR_REDIS_INVALID_RESPONSE", message: "ERR unknown command" } },
+    { rejects: { code: "ERR_REDIS_SERVER_ERROR", message: "ERR unknown command" } },
   ],
   [
     "blob error (!)",
     `!21${CRLF}SYNTAX invalid syntax${CRLF}`,
-    { rejects: { code: "ERR_REDIS_INVALID_RESPONSE", message: "SYNTAX invalid syntax" } },
+    { rejects: { code: "ERR_REDIS_SERVER_ERROR", message: "SYNTAX invalid syntax" } },
   ],
 ];
 
@@ -201,14 +212,49 @@ describe.concurrent("Valkey reply decoding", () => {
   test.each([
     ["-", `-WRONGTYPE wrong kind${CRLF}`],
     ["!", `!20${CRLF}WRONGTYPE wrong kind${CRLF}`],
-  ])("error reply (%s) nested in an array resolves as an Error element", async (_kind, element) => {
+  ])("error reply (%s) nested in an array resolves as an ERR_REDIS_SERVER_ERROR element", async (_kind, element) => {
     const server = createReplyServer(`*2${CRLF}+OK${CRLF}${element}`);
     await withClient(server, async client => {
-      const result = (await client.get("k")) as unknown as [string, Error];
+      const result = (await client.get("k")) as unknown as [string, Error & { code: string }];
       expect(result[0]).toBe("OK");
       expect(result[1]).toBeInstanceOf(Error);
-      expect(result[1].message).toBe("WRONGTYPE wrong kind");
+      expect({ code: result[1].code, message: result[1].message }).toEqual({
+        code: "ERR_REDIS_SERVER_ERROR",
+        message: "WRONGTYPE wrong kind",
+      });
       expect(await client.send("PING", [])).toBe("OK");
+    });
+  });
+
+  test("error reply in subscriber mode fails the connection with ERR_REDIS_SERVER_ERROR", async () => {
+    const server = createCommandServer((fields, s) => {
+      switch (fields[0]?.toUpperCase()) {
+        case "HELLO":
+          s.write(HELLO);
+          break;
+        case "SUBSCRIBE":
+          s.write(`>3${CRLF}` + bulk("subscribe") + bulk(fields[1]) + `:1${CRLF}`);
+          break;
+        default:
+          s.write(`-NOPERM no permissions${CRLF}`);
+      }
+    });
+    await withClient(server, async client => {
+      await client.subscribe("ch", () => {});
+      // A subscriber fails the whole connection on an error reply. The PING
+      // that drew the reply is left unsettled (#32858 changes that), so the
+      // code is read from the second PING, which is still in flight when the
+      // connection fails.
+      client.send("PING", []).catch(() => {});
+      const err = await client.send("PING", []).then(
+        () => null,
+        e => e,
+      );
+      expect(err).toBeInstanceOf(Error);
+      expect({ code: err.code, message: err.message }).toEqual({
+        code: "ERR_REDIS_SERVER_ERROR",
+        message: "NOPERM no permissions",
+      });
     });
   });
 });
@@ -250,7 +296,7 @@ describe.concurrent("Valkey reply torn across socket reads", () => {
         e => e,
       );
       expect(err).toBeInstanceOf(Error);
-      expect(err.code).toBe("ERR_REDIS_INVALID_RESPONSE");
+      expect(err.code).toBe("ERR_REDIS_SERVER_ERROR");
       expect(err.message).toBe("SYNTAX invalid syntax");
       expect(await client.send("PING", [])).toBe("OK");
     });

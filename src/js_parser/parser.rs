@@ -146,13 +146,6 @@ pub mod options {
     pub struct ReactFastRefresh {
         pub import_source: Cow<'static, [u8]>,
     }
-    impl Default for ReactFastRefresh {
-        fn default() -> Self {
-            Self {
-                import_source: Cow::Borrowed(b"react-refresh/runtime"),
-            }
-        }
-    }
 }
 pub use crate::parse::parse_entry::{Options as ParserOptions, Parser};
 pub use crate::renamer;
@@ -264,6 +257,9 @@ pub mod Runtime {
         /// in watch/dev-server mode.
         pub bundler_feature_flags: Option<Box<StringSet>>,
 
+        /// `Define::user_hash` of this parse's define table (runtime transpiler cache key).
+        pub define_hash: Option<u64>,
+
         /// REPL mode: transforms code for interactive evaluation
         /// - Wraps lone object literals `{...}` in parentheses
         /// - Hoists variable declarations for REPL persistence
@@ -311,6 +307,7 @@ pub mod Runtime {
                 runtime_transpiler_cache: None,
                 lower_using: true,
                 bundler_feature_flags: None,
+                define_hash: None,
                 repl_mode: false,
                 jsx_optimization_inline: false,
             }
@@ -398,6 +395,12 @@ pub mod Runtime {
                     hasher.update(b"\x00");
                 }
             }
+
+            // Define pairs and `--drop` entries. `None` adds nothing, like an empty flag set.
+            if let Some(define_hash) = self.define_hash {
+                hasher.update(b"define");
+                hasher.update(&define_hash.to_le_bytes());
+            }
         }
 
         pub(crate) fn should_unwrap_require(&self, package_name: &[u8]) -> bool {
@@ -449,6 +452,11 @@ pub(crate) const LOC_MODULE_SCOPE: bun_ast::Loc = bun_ast::Loc { start: -100 };
 pub struct DeferredImportNamespace {
     pub(crate) namespace: LocRef,
     pub(crate) import_record_id: u32,
+    /// Scope the namespace binding lives in. Used by
+    /// `imports_to_convert_from_dynamic_import` to bail when a direct
+    /// `eval()` can observe the binding by name. Unused by
+    /// `imports_to_convert_from_require`.
+    pub(crate) scope: Option<bun_ast::StoreRef<bun_ast::Scope>>,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -902,6 +910,7 @@ impl IdentifierOpts {
     const IS_DELETE_TARGET: u8 = 1 << 2;
     const WAS_ORIGINALLY_IDENTIFIER: u8 = 1 << 3;
     const IS_CALL_TARGET: u8 = 1 << 4;
+    const IS_TEMPLATE_TAG: u8 = 1 << 5;
 
     #[inline]
     pub(crate) const fn assign_target(self) -> js_ast::AssignTarget {
@@ -929,6 +938,11 @@ impl IdentifierOpts {
     pub(crate) const fn is_call_target(self) -> bool {
         self.0 & Self::IS_CALL_TARGET != 0
     }
+    /// The tag of a tagged template, which passes `this` like a call target.
+    #[inline]
+    pub(crate) const fn is_template_tag(self) -> bool {
+        self.0 & Self::IS_TEMPLATE_TAG != 0
+    }
 
     // Builder-style helpers (this stays a packed u8 rather than a
     // named-field struct).
@@ -954,6 +968,11 @@ impl IdentifierOpts {
     #[inline]
     pub(crate) const fn with_is_call_target(mut self, v: bool) -> Self {
         self.0 = (self.0 & !Self::IS_CALL_TARGET) | ((v as u8) << 4);
+        self
+    }
+    #[inline]
+    pub(crate) const fn with_is_template_tag(mut self, v: bool) -> Self {
+        self.0 = (self.0 & !Self::IS_TEMPLATE_TAG) | ((v as u8) << 5);
         self
     }
 }
@@ -1049,15 +1068,6 @@ pub struct ThenCatchChain {
     pub(crate) has_multiple_args: bool,
     pub(crate) has_catch: bool,
 }
-impl Default for ThenCatchChain {
-    fn default() -> Self {
-        Self {
-            next_target: js_ast::ExprData::EMissing(E::Missing {}),
-            has_multiple_args: false,
-            has_catch: false,
-        }
-    }
-}
 
 #[derive(Clone, Copy)]
 pub struct ParsedPath<'a> {
@@ -1070,14 +1080,8 @@ pub struct ParsedPath<'a> {
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum StrictModeFeature {
-    WithStatement,
-    DeleteBareName,
-    ForInVarInit,
     EvalOrArguments,
     ReservedWord,
-    LegacyOctalLiteral,
-    LegacyOctalEscape,
-    IfElseFunctionStmt,
 }
 
 #[derive(Clone, Copy)]
@@ -1199,6 +1203,7 @@ impl<'arena> ScopeOrder<'arena> {
 pub struct ParenExprOpts {
     pub(crate) is_async: bool,
     pub(crate) force_arrow_fn: bool,
+    pub(crate) is_after_question_and_before_colon: bool,
 }
 
 #[repr(u8)]
@@ -1283,27 +1288,7 @@ pub struct FnOrArrowDataVisit {
 /// restored on the call stack around code that parses nested functions (but not
 /// nested arrow functions).
 #[derive(Default)]
-pub struct FnOnlyDataVisit<'a> {
-    /// This is a reference to the enclosing class name if there is one. It's used
-    /// to implement "this" and "super" references. A name is automatically generated
-    /// if one is missing so this will always be present inside a class body.
-    ///
-    /// `&Cell<Ref>` (not `&mut Ref`): the visit pass needs to
-    /// both share this slot into nested `fn_only_data_visit` frames *and* read/write
-    /// it from the enclosing `visit_class` frame. `Cell` gives shared interior
-    /// mutability for the `Copy` `Ref` payload with zero `unsafe`.
-    pub(crate) class_name_ref: Option<&'a core::cell::Cell<Ref>>,
-
-    /// If true, we're inside a static class context where "this" expressions
-    /// should be replaced with the class name.
-    pub(crate) should_replace_this_with_class_name_ref: bool,
-
-    /// If we're inside an async arrow function and async functions are not
-    /// supported, then we will have to convert that arrow function to a generator
-    /// function. That means references to "arguments" inside the arrow function
-    /// will have to reference a captured variable instead of the real variable.
-    pub(crate) is_inside_async_arrow_fn: bool,
-
+pub struct FnOnlyDataVisit {
     /// If false, the value for "this" is the top-level module scope "this" value.
     /// That means it's "undefined" for ECMAScript modules and "exports" for
     /// CommonJS modules. We track this information so that we can substitute the
@@ -1730,6 +1715,7 @@ pub fn new_lazy_export_ast_impl<'bump>(
         define,
         source,
         log: log_ptr,
+        orig_error_count: 0,
     };
     let result = match parser.to_lazy_export_ast(expr, runtime_api_call, symbols) {
         Ok(r) => r,

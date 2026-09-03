@@ -3,6 +3,7 @@ use core::ffi::{c_int, c_void};
 use core::mem::size_of;
 
 use bun_jsc::JsCell;
+use bun_ptr::RefPtr;
 
 use crate::json_line_buffer::JSONLineBuffer;
 use bun_collections::{ByteVecExt, VecExt};
@@ -14,7 +15,7 @@ use bun_jsc as jsc;
 use bun_jsc::js_value::Protected;
 #[cfg(windows)]
 use bun_jsc::virtual_machine::VirtualMachine;
-use bun_jsc::{JSGlobalObject, JSValue, JsError, JsResult, SerializedFlags, Task};
+use bun_jsc::{JSGlobalObject, JSValue, JsError, JsResult, SerializedFlags, StringJsc as _, Task};
 use bun_sys::Fd;
 use bun_sys::FdExt;
 #[cfg(windows)]
@@ -428,7 +429,7 @@ mod json {
 
     extern "C" fn json_ipc_data_string_free_cb(context: *mut bool, _: *mut c_void, _: usize) {
         // SAFETY: context points to `was_ascii_string_freed` on the caller's stack,
-        // kept alive across the deref/defer block in decode_ipc_message.
+        // kept alive across the `drop(str)` in decode_ipc_message.
         unsafe { *context = true };
     }
 
@@ -509,14 +510,11 @@ mod json {
             BunString::borrow_utf8(json_data)
         };
 
-        // `bun_core::String` is `Copy` (no `Drop`), so the +1 ref taken by
-        // `create_external` / `borrow_utf8` must be released explicitly. The
-        // ASCII-path free callback (`json_ipc_data_string_free_cb`) only fires
-        // when the WTFStringImpl refcount hits zero — i.e. *during* `deref()` —
-        // so the freed-flag check must follow it on every exit path.
-        let mut str = str;
-        let parsed = bun_jsc::bun_string_jsc::to_js_by_parse_json(&mut str, global_this);
-        str.deref();
+        // The ASCII-path free callback (`json_ipc_data_string_free_cb`) only
+        // fires when the WTFStringImpl refcount hits zero — i.e. *during* the
+        // drop — so the freed-flag check must follow it.
+        let parsed = str.to_js_by_parse_json(global_this);
+        drop(str);
         if is_ascii && !was_ascii_string_freed {
             panic!(
                 "Expected ascii string to be freed by ExternalString, but it wasn't. This is a bug in Bun."
@@ -551,15 +549,9 @@ mod json {
         value: JSValue,
         is_internal: IsInternal,
     ) -> Result<usize, IPCSerializationError> {
-        let mut out: BunString = BunString::default();
         // Use jsonStringifyFast which passes undefined for the space parameter,
         // triggering JSC's SIMD-optimized FastStringifier code path.
-        value.json_stringify_fast(global, &mut out)?;
-        // `bun_core::String` is `Copy` (no `Drop`),
-        // so the +1 ref written by `json_stringify_fast` is wrapped in
-        // `OwnedString` immediately so every exit path (Dead, OOM in
-        // `ensure_unused_capacity`, success) releases it.
-        let out = bun_core::OwnedString::new(out);
+        let out = value.json_stringify_fast(global)?;
 
         if out.tag() == bun_core::Tag::Dead {
             return Err(IPCSerializationError::SerializationFailed);
@@ -836,7 +828,7 @@ fn close_sent_handle(global: &JSGlobalObject, callframe: &jsc::CallFrame) -> JsR
 fn close_sent_handle_fn(global: &JSGlobalObject) -> JSValue {
     jsc::JSFunction::create(
         global,
-        BunString::empty(),
+        "",
         __jsc_host_close_sent_handle,
         1,
         Default::default(),
@@ -970,7 +962,7 @@ impl SendQueueOwner {
         }
     }
 
-    fn handle_ipc_message(self, msg: &DecodedIPCMessage, handle: JSValue) {
+    fn handle_ipc_message(self, msg: &DecodedIPCMessage, handle: JSValue) -> JsResult<()> {
         match self {
             // SAFETY: an attached owner is live (it holds a ref on the SendQueue).
             SendQueueOwner::Subprocess(p) => unsafe { p.as_ref() }.handle_ipc_message(msg, handle),
@@ -1026,9 +1018,13 @@ impl SendQueue {
         self.owner.set(None);
     }
 
-    pub fn new(mode: Mode, owner: Option<SendQueueOwner>, socket: SocketUnion) -> *mut SendQueue {
+    pub fn new(
+        mode: Mode,
+        owner: Option<SendQueueOwner>,
+        socket: SocketUnion,
+    ) -> RefPtr<SendQueue> {
         log!("SendQueue#init");
-        let this = bun_core::heap::into_raw(Box::new(Self {
+        let this = RefPtr::new(Self {
             ref_count: Cell::new(1),
             root: Cell::new(None),
             queue: JsCell::new(Vec::new()),
@@ -1050,9 +1046,8 @@ impl SendQueue {
             write_in_progress: Cell::new(false),
             close_event_sent: Cell::new(false),
             windows: JsCell::new(WindowsState::default()),
-        }));
-        // SAFETY: `this` is the fresh, non-null allocation root.
-        unsafe { (*this).root.set(core::ptr::NonNull::new(this)) };
+        });
+        this.root.set(Some(this.as_non_null()));
         this
     }
 
@@ -1406,13 +1401,11 @@ impl SendQueue {
                 }
             }
             // too many retries; give up - emit warning if possible
-            let mut warning =
-                BunString::static_(b"Handle did not reach the receiving process correctly");
-            let mut warning_name = BunString::static_(b"SentHandleNotReceivedWarning");
-            if let Ok(warning_js) = bun_jsc::bun_string_jsc::transfer_to_js(&mut warning, global) {
-                if let Ok(warning_name_js) =
-                    bun_jsc::bun_string_jsc::transfer_to_js(&mut warning_name, global)
-                {
+            let warning =
+                BunString::static_("Handle did not reach the receiving process correctly");
+            let warning_name = BunString::static_("SentHandleNotReceivedWarning");
+            if let Ok(warning_js) = warning.into_js(global) {
+                if let Ok(warning_name_js) = warning_name.into_js(global) {
                     let _ = global.emit_warning(
                         warning_js,
                         warning_name_js,
@@ -2000,16 +1993,18 @@ pub fn windows_export_socket_hex(fd: Fd, peer_pid: u32) -> Option<Box<[u8]>> {
 pub const WIN_SOCKET_INFO_KEY: &[u8] = b"$winSocketInfo";
 
 #[cfg(windows)]
-fn import_windows_socket_payload(global: &JSGlobalObject, msg_data: JSValue) -> Option<Fd> {
-    let info_value = match msg_data.get(global, WIN_SOCKET_INFO_KEY) {
-        Ok(Some(v)) if v.is_string() => v,
-        Ok(_) => return None,
-        Err(_) => {
-            global.clear_exception();
-            return None;
-        }
+fn import_windows_socket_payload(
+    global: &JSGlobalObject,
+    msg_data: JSValue,
+) -> JsResult<Option<Fd>> {
+    let Some(info_value) = msg_data
+        .get(global, WIN_SOCKET_INFO_KEY)?
+        .filter(|v| v.is_string())
+    else {
+        return Ok(None);
     };
-    let hex = jsc::JSString::opaque_ref(info_value.as_string()).to_slice(global);
+    let hex_view = info_value.to_js_string_view(global)?;
+    let hex = hex_view.to_utf8();
     let expected = bun_uws::socket_transfer::bsd_socket_export_size() as usize;
     let mut info = vec![0u8; expected];
     let decoded = strings::decode_hex_to_bytes_truncate(&mut info, hex.slice());
@@ -2019,7 +2014,7 @@ fn import_windows_socket_payload(global: &JSGlobalObject, msg_data: JSValue) -> 
             decoded,
             expected
         );
-        return None;
+        return Ok(None);
     }
     let mut err: c_int = 0;
     // SAFETY: `info` is a live buffer of export_size() bytes holding the
@@ -2028,10 +2023,16 @@ fn import_windows_socket_payload(global: &JSGlobalObject, msg_data: JSValue) -> 
     };
     if sock == bun_uws::LIBUS_SOCKET_DESCRIPTOR::MAX {
         log!("importWindowsSocketPayload: WSASocketW failed: {}", err);
-        return None;
+        return Ok(None);
     }
-    msg_data.delete_property(global, WIN_SOCKET_INFO_KEY);
-    Some(Fd::from_system(sock as *mut c_void))
+    let fd = Fd::from_system(sock as *mut c_void);
+    if let Err(err) = msg_data.delete_property(global, WIN_SOCKET_INFO_KEY) {
+        // The imported socket is not owned by anything yet; do not leak it
+        // with the exception.
+        fd.close();
+        return Err(err);
+    }
+    Ok(Some(fd))
 }
 
 fn received_fd_to_js(fd: Fd) -> JSValue {
@@ -2056,11 +2057,13 @@ enum IPCCommand {
     Nack,
 }
 
+/// One decoded message's delivery. A JS exception raised while inspecting or delivering it is this message's
+/// failure; the on-data callers fold it (reported as uncaught) and go on to the next message.
 fn handle_ipc_message(
     send_queue: &SendQueue,
     message: DecodedIPCMessage,
     global_this: &JSGlobalObject,
-) {
+) -> JsResult<()> {
     #[cfg(debug_assertions)]
     {
         // The `Formatter` runs its deinit in `Drop`.
@@ -2085,30 +2088,19 @@ fn handle_ipc_message(
         if let DecodedIPCMessage::Data(msg_data) = &message {
             let msg_data = *msg_data;
             if msg_data.is_object() {
-                let cmd = match msg_data.fast_get(global_this, jsc::BuiltinName::cmd) {
-                    Err(_) => {
-                        global_this.clear_exception();
-                        break 'handle_message;
-                    }
-                    Ok(None) => break 'handle_message,
-                    Ok(Some(v)) => v,
+                let Some(cmd) = msg_data.fast_get(global_this, jsc::BuiltinName::cmd)? else {
+                    break 'handle_message;
                 };
                 if cmd.is_string() {
                     if !cmd.is_cell() {
                         break 'handle_message;
                     }
-                    let cmd_str = match bun_jsc::bun_string_jsc::from_js(cmd, global_this) {
-                        Ok(s) => s,
-                        Err(e) => {
-                            let _ = global_this.take_exception(e);
-                            break 'handle_message;
-                        }
-                    };
-                    if cmd_str.eql_comptime(b"NODE_HANDLE") {
+                    let cmd_str = bun_core::String::from_js(cmd, global_this)?;
+                    if cmd_str.eq_ascii(b"NODE_HANDLE") {
                         internal_command = Some(IPCCommand::Handle(msg_data));
-                    } else if cmd_str.eql_comptime(b"NODE_HANDLE_ACK") {
+                    } else if cmd_str.eq_ascii(b"NODE_HANDLE_ACK") {
                         internal_command = Some(IPCCommand::Ack);
-                    } else if cmd_str.eql_comptime(b"NODE_HANDLE_NACK") {
+                    } else if cmd_str.eq_ascii(b"NODE_HANDLE_NACK") {
                         internal_command = Some(IPCCommand::Nack);
                     }
                 }
@@ -2120,7 +2112,7 @@ fn handle_ipc_message(
         match icmd {
             IPCCommand::Handle(msg_data) => {
                 #[cfg(windows)]
-                let imported = import_windows_socket_payload(global_this, msg_data);
+                let imported = import_windows_socket_payload(global_this, msg_data)?;
                 #[cfg(windows)]
                 let ack = imported.is_some();
                 #[cfg(not(windows))]
@@ -2146,7 +2138,7 @@ fn handle_ipc_message(
                 send_queue.continue_send(global_this, ContinueSendReason::NewMessageAppended);
 
                 if !ack {
-                    return;
+                    return Ok(());
                 }
 
                 // Get file descriptor and clear it
@@ -2157,7 +2149,7 @@ fn handle_ipc_message(
 
                 let Some(owner) = send_queue.owner_ref() else {
                     let _ = fd.close_allowing_standard_io(None);
-                    return;
+                    return Ok(());
                 };
                 let target: JSValue = match owner.kind() {
                     SendQueueOwnerKind::Subprocess => owner.this_jsvalue(),
@@ -2168,12 +2160,10 @@ fn handle_ipc_message(
                 // early-error return and the fall-through.
                 let _scope = global_this.bun_vm().enter_event_loop_scope();
                 let fd_js = received_fd_to_js(fd);
-                let res = ipc_parse(global_this, target, msg_data, fd_js);
-                if let Err(e) = res {
+                if let Err(e) = ipc_parse(global_this, target, msg_data, fd_js) {
                     // ack written already, that's okay.
                     let _ = fd.close_allowing_standard_io(None);
-                    crate::dispatch::fold(Err(e));
-                    return;
+                    return Err(e);
                 }
                 drop(_scope);
 
@@ -2181,15 +2171,15 @@ fn handle_ipc_message(
                 // we have sent the ack already so the next message could arrive at any time. maybe even before
                 // parseHandle calls emit(). however, node does this too and its messages don't end up out of order.
                 // so hopefully ours won't either.
-                return;
+                return Ok(());
             }
             IPCCommand::Ack => {
                 send_queue.on_ack_nack(global_this, AckNack::Ack);
-                return;
+                return Ok(());
             }
             IPCCommand::Nack => {
                 send_queue.on_ack_nack(global_this, AckNack::Nack);
-                return;
+                return Ok(());
             }
         }
     } else {
@@ -2199,48 +2189,43 @@ fn handle_ipc_message(
         if let DecodedIPCMessage::Internal(msg_data) = &message {
             let msg_data = *msg_data;
             if msg_data.is_object() {
-                match msg_data.get(global_this, "$hasHandle") {
-                    Ok(Some(marker)) if marker.to_boolean() => {
-                        #[cfg(windows)]
-                        let imported = import_windows_socket_payload(global_this, msg_data);
-                        #[cfg(windows)]
-                        let ack = imported.is_some();
-                        #[cfg(not(windows))]
-                        let ack = send_queue.incoming_fd.get().is_some();
-                        let packet = if ack {
-                            get_ack_packet(send_queue.mode)
-                        } else {
-                            get_nack_packet(send_queue.mode)
-                        };
-                        let mut reply = SendHandle {
-                            data: StreamBuffer::default(),
-                            handle: None,
-                            callbacks: CallbackList::AckNack,
-                        };
-                        handle_oom(reply.data.write(packet));
-                        send_queue.insert_message(reply);
-                        log!("IPC call continueSend() from internal $hasHandle ack");
-                        send_queue
-                            .continue_send(global_this, ContinueSendReason::NewMessageAppended);
-                        if !ack {
-                            return;
-                        }
-                        #[cfg(windows)]
-                        let fd = imported.unwrap();
-                        #[cfg(not(windows))]
-                        let fd = send_queue.incoming_fd.take().unwrap();
-                        received_fd = Some(fd);
-                        handle_js = received_fd_to_js(fd);
+                if let Some(marker) = msg_data.get(global_this, "$hasHandle")?
+                    && marker.to_boolean()
+                {
+                    #[cfg(windows)]
+                    let imported = import_windows_socket_payload(global_this, msg_data)?;
+                    #[cfg(windows)]
+                    let ack = imported.is_some();
+                    #[cfg(not(windows))]
+                    let ack = send_queue.incoming_fd.get().is_some();
+                    let packet = if ack {
+                        get_ack_packet(send_queue.mode)
+                    } else {
+                        get_nack_packet(send_queue.mode)
+                    };
+                    let mut reply = SendHandle {
+                        data: StreamBuffer::default(),
+                        handle: None,
+                        callbacks: CallbackList::AckNack,
+                    };
+                    handle_oom(reply.data.write(packet));
+                    send_queue.insert_message(reply);
+                    log!("IPC call continueSend() from internal $hasHandle ack");
+                    send_queue.continue_send(global_this, ContinueSendReason::NewMessageAppended);
+                    if !ack {
+                        return Ok(());
                     }
-                    Ok(_) => {}
-                    Err(_) => {
-                        global_this.clear_exception();
-                    }
+                    #[cfg(windows)]
+                    let fd = imported.unwrap();
+                    #[cfg(not(windows))]
+                    let fd = send_queue.incoming_fd.take().unwrap();
+                    received_fd = Some(fd);
+                    handle_js = received_fd_to_js(fd);
                 }
             }
         }
         match send_queue.owner.get() {
-            Some(owner) => owner.handle_ipc_message(&message, handle_js),
+            Some(owner) => owner.handle_ipc_message(&message, handle_js)?,
             // Owner already torn down: nobody will adopt the descriptor we just acked.
             None => {
                 if let Some(fd) = received_fd {
@@ -2249,6 +2234,7 @@ fn handle_ipc_message(
             }
         }
     }
+    Ok(())
 }
 
 enum DecodeStep {
@@ -2353,7 +2339,11 @@ fn on_data2(send_queue: &SendQueue, all_data: &[u8]) {
             loop {
                 match decode_next_json(&send_queue.incoming, &global_this) {
                     DecodeStep::Message(result) => {
-                        handle_ipc_message(send_queue, result.message, &global_this);
+                        crate::dispatch::fold(handle_ipc_message(
+                            send_queue,
+                            result.message,
+                            &global_this,
+                        ));
                     }
                     step => return finish_decode(send_queue, &step),
                 }
@@ -2373,7 +2363,11 @@ fn on_data2(send_queue: &SendQueue, all_data: &[u8]) {
                     match decode_ipc_message(Mode::Advanced, data, &global_this, None) {
                         Ok(result) => {
                             let consumed = result.bytes_consumed as usize;
-                            handle_ipc_message(send_queue, result.message, &global_this);
+                            crate::dispatch::fold(handle_ipc_message(
+                                send_queue,
+                                result.message,
+                                &global_this,
+                            ));
                             if consumed < data.len() {
                                 data = &data[consumed..];
                             } else {
@@ -2406,7 +2400,11 @@ fn on_data2(send_queue: &SendQueue, all_data: &[u8]) {
             loop {
                 match decode_next_advanced(&send_queue.incoming, &global_this, &mut slice_start) {
                     DecodeStep::Message(result) => {
-                        handle_ipc_message(send_queue, result.message, &global_this);
+                        crate::dispatch::fold(handle_ipc_message(
+                            send_queue,
+                            result.message,
+                            &global_this,
+                        ));
                     }
                     step => return finish_decode(send_queue, &step),
                 }
@@ -2532,7 +2530,11 @@ pub mod IPCHandlers {
                     loop {
                         match decode_next_json(&send_queue.incoming, &global_this) {
                             DecodeStep::Message(result) => {
-                                handle_ipc_message(send_queue, result.message, &global_this);
+                                crate::dispatch::fold(handle_ipc_message(
+                                    send_queue,
+                                    result.message,
+                                    &global_this,
+                                ));
                             }
                             step => return finish_decode(send_queue, &step),
                         }
@@ -2554,7 +2556,11 @@ pub mod IPCHandlers {
                             &mut slice_start,
                         ) {
                             DecodeStep::Message(result) => {
-                                handle_ipc_message(send_queue, result.message, &global_this);
+                                crate::dispatch::fold(handle_ipc_message(
+                                    send_queue,
+                                    result.message,
+                                    &global_this,
+                                ));
                             }
                             step => return finish_decode(send_queue, &step),
                         }

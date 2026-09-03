@@ -13,7 +13,7 @@ use bun_install::lockfile::package::PackageColumns as _;
 use bun_install::lockfile::{LoadResult, LoadStep};
 use bun_install::package_manager::options::Do;
 use bun_install::package_manager::{
-    LogLevel, ManifestLoad, Subcommand, WorkspaceFilter, populate_manifest_cache,
+    LogLevel, Subcommand, WorkspaceFilter, populate_manifest_cache,
     update_package_json_and_install_with_manager,
 };
 use bun_install::package_manager_real::command_line_arguments::UpdateGroups;
@@ -889,7 +889,6 @@ impl UpdateInteractiveCommand {
                     &scope,
                     package_name,
                     Some(&mut expired),
-                    ManifestLoad::LoadFromMemoryFallbackToDisk,
                     needs_extended,
                 ) else {
                     continue;
@@ -1228,10 +1227,7 @@ impl UpdateInteractiveCommand {
         let result = match Self::process_multi_select(&mut state, terminal_size) {
             Ok(r) => r,
             Err(err) => {
-                if matches!(
-                    err,
-                    crate::Error::EndOfStream | crate::Error::Core(bun_core::Error::EndOfStream)
-                ) {
+                if matches!(err, crate::Error::Core(bun_core::Error::EndOfStream)) {
                     Output::flush();
                     bun_core::prettyln!("\n<r><red>x<r> Cancelled");
                     Global::exit(0);
@@ -1943,7 +1939,7 @@ impl UpdateInteractiveCommand {
                     // ctrl+c, ctrl+d
                     reprint_menu = false;
                     cleanup_and_reprint!(reprint_menu);
-                    return Err(crate::Error::EndOfStream);
+                    return Err(crate::Error::Core(bun_core::Error::EndOfStream));
                 }
                 b' ' => {
                     state.selected[state.cursor] = !state.selected[state.cursor];

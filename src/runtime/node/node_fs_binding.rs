@@ -1,10 +1,11 @@
-use core::mem::ManuallyDrop;
 use core::ptr::NonNull;
 
 use bun_jsc::call_frame::ArgumentsSlice;
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{CallFrame, JSGlobalObject, JSPromise, JSValue, JsCell, JsResult, SysErrorJsc as _};
+use bun_sys_jsc::SystemErrorJsc as _;
 
+use crate::node::ThreadIsolated;
 use crate::node::fs::{
     self, AsyncCpTask, AsyncReaddirRecursiveTask, Flavor, FsArgument, FsReturn, NodeFS,
     NodeFSDispatch, NodeFSFunctionEnum, Op, args, async_, ret,
@@ -35,26 +36,17 @@ where
     // for the duration of argument parsing on the JS thread.
     let vm: &VirtualMachine = global.bun_vm();
     let mut slice = ArgumentsSlice::init(vm, frame.arguments());
-    // `defer slice.deinit()` → `Drop for ArgumentsSlice`.
-
-    // `defer if (@hasDecl(Arguments, "deinit")) args.deinit()` → `Drop for A`
-    // (every `args::*` field type — `PathLike`, `StringOrBuffer`, `Vec`, … —
-    // releases its own resources; the wrapper structs need no manual hook).
     let args = <A as FsArgument>::from_js(global, &mut slice)?;
-
-    if global.has_exception() {
-        return Ok(JSValue::ZERO);
-    }
 
     // R-2: `JsCell::with_mut` scopes the `&mut NodeFS` to the blocking
     // syscall; `dispatch` never re-enters JS, and `Maybe<R>` is fully owned
     // (`sys::Error.path` is `Box<[u8]>`, not a borrow into `sync_error_buf`).
-    let mut result = this
+    let result = this
         .node_fs
         .with_mut(|nfs| NodeFS::dispatch::<R, A, F>(nfs, &args, Flavor::Sync));
     match result {
-        Err(ref err) => Err(global.throw_value(err.to_js(global))),
-        Ok(ref mut res) => res.fs_to_js(global),
+        Err(err) => Err(global.throw_value(err.to_js(global))),
+        Ok(res) => res.fs_to_js(global),
     }
 }
 
@@ -69,59 +61,41 @@ fn run_async<A: FsArgument>(
     this: &Binding,
     global: &JSGlobalObject,
     frame: &CallFrame,
-    create_task: fn(&JSGlobalObject, &Binding, A, &mut VirtualMachine) -> JSValue,
+    create_task: fn(&JSGlobalObject, &Binding, ThreadIsolated<A>, &mut VirtualMachine) -> JSValue,
 ) -> JsResult<JSValue> {
-    // SAFETY: JS-thread borrow of the per-thread VM; outlives `slice`.
-    let vm: &mut VirtualMachine = global.bun_vm().as_mut();
-    let mut slice = ManuallyDrop::new(ArgumentsSlice::init(vm, frame.arguments()));
-    slice.will_be_async = true;
-
-    // `ManuallyDrop` keeps `slice` alive past return when ownership transfers
-    // to the Task: dropped only on the early-return
-    // error/abort branches; on the success path the Task owns `args` (whose
-    // protected JSValues are released by `Drop for ThreadSafe<A>` when the
-    // Task completes), and `slice` is intentionally not dropped — its
-    // `Drop`-unprotect would race that.
-
-    let mut args = match <A as FsArgument>::from_js(global, &mut slice) {
-        Ok(a) => a,
-        Err(err) => {
-            // SAFETY: not yet dropped; only drop site for this path.
-            unsafe { ManuallyDrop::drop(&mut slice) };
-            return Err(err);
-        }
+    let args = match parse_async_args::<A>(global, frame) {
+        Ok(args) => args,
+        Err(result) => return result,
     };
-
-    if global.has_exception() {
-        args.unprotect();
-        drop(args);
-        // SAFETY: not yet dropped; only drop site for this path.
-        unsafe { ManuallyDrop::drop(&mut slice) };
-        return Ok(JSValue::ZERO);
-    }
-
-    if A::HAVE_ABORT_SIGNAL {
-        if let Some(signal) = args.signal() {
-            if let Some(abort_error) = signal.node_abort_error_if_aborted(global) {
-                let promise =
-                    JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
-                        global,
-                        abort_error,
-                    );
-                args.unprotect();
-                drop(args);
-                // SAFETY: not yet dropped; only drop site for this path.
-                unsafe { ManuallyDrop::drop(&mut slice) };
-                return Ok(promise);
-            }
-        }
-    }
-
-    // The `cp` / `readdir` operations are handled by their dedicated
-    // bindings below.
-    // SAFETY: re-borrow `vm` mutably; the `slice` borrow is no longer used.
     let vm: &mut VirtualMachine = global.bun_vm().as_mut();
     Ok(create_task(global, this, args, vm))
+}
+
+/// Parses a promise-returning binding's arguments; `Err` is what the binding returns instead.
+fn parse_async_args<A: FsArgument>(
+    global: &JSGlobalObject,
+    frame: &CallFrame,
+) -> Result<ThreadIsolated<A>, JsResult<JSValue>> {
+    let vm: &VirtualMachine = global.bun_vm();
+    let mut slice = ArgumentsSlice::init(vm, frame.arguments());
+    let args = A::from_js_async(global, &mut slice).map_err(Err)?;
+
+    let rejection = 'rejection: {
+        if A::HAVE_ABORT_SIGNAL {
+            if let Some(abort_error) = args
+                .signal()
+                .and_then(|signal| signal.node_abort_error_if_aborted(global))
+            {
+                break 'rejection abort_error;
+            }
+        }
+        if let Some(err) = slice.deferred_error.take() {
+            break 'rejection (*err).to_error_instance(global);
+        }
+        return Ok(args);
+    };
+
+    Err(Ok(JSPromise::rejected_promise(global, rejection).to_js()))
 }
 
 #[inline(always)]
@@ -181,31 +155,12 @@ impl Binding {
 
     // ── Hand-written bindings for ops outside `NodeFSFunctionEnum` ────────
 
-    /// `callAsync(.cp)` — `AsyncCpTask::create` copies its paths via
-    /// `to_thread_safe()`, so the arena is dropped with `slice`.
+    /// `callAsync(.cp)`.
     pub(crate) fn cp(this: &Self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-        // SAFETY: JS-thread borrow of the per-thread VM; outlives `slice`.
-        let vm: &mut VirtualMachine = global.bun_vm().as_mut();
-        let mut slice = ManuallyDrop::new(ArgumentsSlice::init(vm, frame.arguments()));
-        slice.will_be_async = true;
-
-        let cp_args = match args::Cp::from_js(global, &mut slice) {
-            Ok(a) => a,
-            Err(err) => {
-                // SAFETY: not yet dropped; only drop site for this path.
-                unsafe { ManuallyDrop::drop(&mut slice) };
-                return Err(err);
-            }
+        let cp_args = match parse_async_args::<args::Cp<'static>>(global, frame) {
+            Ok(args) => args,
+            Err(result) => return result,
         };
-
-        if global.has_exception() {
-            drop(cp_args);
-            // SAFETY: not yet dropped; only drop site for this path.
-            unsafe { ManuallyDrop::drop(&mut slice) };
-            return Ok(JSValue::ZERO);
-        }
-
-        // SAFETY: re-borrow `vm` mutably; the `slice` borrow is no longer used.
         let vm: &mut VirtualMachine = global.bun_vm().as_mut();
         Ok(AsyncCpTask::create(global, this, cp_args, vm))
     }
@@ -223,10 +178,6 @@ impl Binding {
         // `defer args.deinit()` → `Drop` on `cp_args` (its `PathLike` fields).
         let cp_args = args::Cp::from_js(global, &mut slice)?;
 
-        if global.has_exception() {
-            return Ok(JSValue::ZERO);
-        }
-
         // R-2: blocking syscall — `&mut NodeFS` scoped to the call, no JS re-entry.
         match this.node_fs.with_mut(|nfs| nfs.cp(&cp_args, Flavor::Sync)) {
             Err(ref err) => Err(global.throw_value(err.to_js(global))),
@@ -241,31 +192,13 @@ impl Binding {
         global: &JSGlobalObject,
         frame: &CallFrame,
     ) -> JsResult<JSValue> {
-        // SAFETY: JS-thread borrow of the per-thread VM; outlives `slice`.
-        let vm: &mut VirtualMachine = global.bun_vm().as_mut();
-        let mut slice = ManuallyDrop::new(ArgumentsSlice::init(vm, frame.arguments()));
-        slice.will_be_async = true;
-
-        let rd_args = match args::Readdir::from_js(global, &mut slice) {
-            Ok(a) => a,
-            Err(err) => {
-                // SAFETY: not yet dropped; only drop site for this path.
-                unsafe { ManuallyDrop::drop(&mut slice) };
-                return Err(err);
-            }
+        let rd_args = match parse_async_args::<args::Readdir<'static>>(global, frame) {
+            Ok(args) => args,
+            Err(result) => return result,
         };
-
-        if global.has_exception() {
-            drop(rd_args);
-            // SAFETY: not yet dropped; only drop site for this path.
-            unsafe { ManuallyDrop::drop(&mut slice) };
-            return Ok(JSValue::ZERO);
-        }
-
-        // SAFETY: re-borrow `vm` mutably; the `slice` borrow is no longer used.
         let vm: &mut VirtualMachine = global.bun_vm().as_mut();
         // /$bunfs/ is in-memory; readdir_inner handles it (recursive included).
-        let is_bunfs = bun_standalone_graph::Graph::get().is_some()
+        let is_bunfs = bun_standalone_graph::Graph::get_ref().is_some()
             && bun_standalone_graph::is_bun_standalone_file_path(rd_args.path.slice());
         if rd_args.recursive && !is_bunfs {
             return Ok(AsyncReaddirRecursiveTask::create(global, rd_args, vm));
@@ -285,10 +218,6 @@ impl Binding {
         let mut slice = ArgumentsSlice::init(vm, frame.arguments());
 
         let watch_args = fs::Watcher::Arguments::from_js(global, &mut slice)?;
-
-        if global.has_exception() {
-            return Ok(JSValue::ZERO);
-        }
 
         // R-2: `NodeFS::watch` only reads `self.vm` (no scratch-buffer write);
         // scoped via `with_mut` so the borrow cannot outlive the call.
@@ -312,10 +241,6 @@ impl Binding {
         let mut slice = ArgumentsSlice::init(vm, frame.arguments());
 
         let wf_args = fs::StatWatcher::Arguments::from_js(global, &mut slice)?;
-
-        if global.has_exception() {
-            return Ok(JSValue::ZERO);
-        }
 
         match this
             .node_fs
@@ -349,53 +274,53 @@ macro_rules! node_fs_bindings {
 
 #[rustfmt::skip]
 node_fs_bindings! {
-    access_sync       / access            => Access,            args::Access,    ret::Access;
-    append_file_sync  / append_file       => AppendFile,        args::AppendFile,ret::AppendFile;
-    close_sync        / close             => Close,             args::Close,     ret::Close;
-    copy_file_sync    / copy_file         => CopyFile,          args::CopyFile,  ret::CopyFile;
-    exists_sync       / exists            => Exists,            args::Exists,    ret::Exists;
-    chown_sync        / chown             => Chown,             args::Chown,     ret::Chown;
-    chmod_sync        / chmod             => Chmod,             args::Chmod,     ret::Chmod;
-    fchmod_sync       / fchmod            => Fchmod,            args::FChmod,    ret::Fchmod;
-    fchown_sync       / fchown            => Fchown,            args::Fchown,    ret::Fchown;
-    fstat_sync        / fstat             => Fstat,             args::Fstat,     ret::Fstat;
-    fsync_sync        / fsync             => Fsync,             args::Fsync,     ret::Fsync;
-    ftruncate_sync    / ftruncate         => Ftruncate,         args::FTruncate, ret::Ftruncate;
-    futimes_sync      / futimes           => Futimes,           args::Futimes,   ret::Futimes;
-    lchmod_sync       / lchmod            => Lchmod,            args::LCHmod,    ret::Lchmod;
-    lchown_sync       / lchown            => Lchown,            args::LChown,    ret::Lchown;
-    link_sync         / link              => Link,              args::Link,      ret::Link;
-    lstat_sync        / lstat             => Lstat,             args::Lstat,     ret::Lstat;
-    mkdir_sync        / mkdir             => Mkdir,             args::Mkdir,     ret::Mkdir;
-    mkdtemp_sync      / mkdtemp           => Mkdtemp,           args::MkdirTemp, ret::Mkdtemp;
-    open_sync         / open              => Open,              args::Open,      ret::Open;
-    read_sync         / read              => Read,              args::Read,      ret::Read;
-    write_sync        / write             => Write,             args::Write,     ret::Write;
-    read_file_sync    / read_file         => ReadFile,          args::ReadFile,  ret::ReadFile;
-    write_file_sync   / write_file        => WriteFile,         args::WriteFile, ret::WriteFile;
-    readlink_sync     / readlink          => Readlink,          args::Readlink,  ret::Readlink;
-    rm_sync           / rm                => Rm,                args::Rm,        ret::Rm;
-    rmdir_sync        / rmdir             => Rmdir,             args::RmDir,     ret::Rmdir;
-    realpath_sync     / realpath          => RealpathNonNative, args::Realpath,  ret::Realpath;
-    realpath_native_sync / realpath_native => Realpath,         args::Realpath,  ret::Realpath;
-    rename_sync       / rename            => Rename,            args::Rename,    ret::Rename;
-    stat_sync         / stat              => Stat,              args::Stat,      ret::Stat;
-    statfs_sync       / statfs            => Statfs,            args::StatFS,    ret::StatFS;
-    symlink_sync      / symlink           => Symlink,           args::Symlink,   ret::Symlink;
-    truncate_sync     / truncate          => Truncate,          args::Truncate,  ret::Truncate;
-    unlink_sync       / unlink            => Unlink,            args::Unlink,    ret::Unlink;
-    utimes_sync       / utimes            => Utimes,            args::Utimes,    ret::Utimes;
-    lutimes_sync      / lutimes           => Lutimes,           args::Lutimes,   ret::Lutimes;
-    writev_sync       / writev            => Writev,            args::Writev,    ret::Writev;
-    readv_sync        / readv             => Readv,             args::Readv,     ret::Readv;
-    fdatasync_sync    / fdatasync         => Fdatasync,         args::FdataSync, ret::Fdatasync;
+    access_sync          / access          => Access,            args::Access<'static>,     ret::Access;
+    append_file_sync     / append_file     => AppendFile,        args::AppendFile<'static>, ret::AppendFile;
+    close_sync           / close           => Close,             args::Close,               ret::Close;
+    copy_file_sync       / copy_file       => CopyFile,          args::CopyFile<'static>,   ret::CopyFile;
+    exists_sync          / exists          => Exists,            args::Exists<'static>,     ret::Exists;
+    chown_sync           / chown           => Chown,             args::Chown<'static>,      ret::Chown;
+    chmod_sync           / chmod           => Chmod,             args::Chmod<'static>,      ret::Chmod;
+    fchmod_sync          / fchmod          => Fchmod,            args::FChmod,              ret::Fchmod;
+    fchown_sync          / fchown          => Fchown,            args::Fchown,              ret::Fchown;
+    fstat_sync           / fstat           => Fstat,             args::Fstat,               ret::Fstat;
+    fsync_sync           / fsync           => Fsync,             args::Fsync,               ret::Fsync;
+    ftruncate_sync       / ftruncate       => Ftruncate,         args::FTruncate,           ret::Ftruncate;
+    futimes_sync         / futimes         => Futimes,           args::Futimes,             ret::Futimes;
+    lchmod_sync          / lchmod          => Lchmod,            args::LCHmod<'static>,     ret::Lchmod;
+    lchown_sync          / lchown          => Lchown,            args::LChown<'static>,     ret::Lchown;
+    link_sync            / link            => Link,              args::Link<'static>,       ret::Link;
+    lstat_sync           / lstat           => Lstat,             args::Lstat<'static>,      ret::Lstat;
+    mkdir_sync           / mkdir           => Mkdir,             args::Mkdir<'static>,      ret::Mkdir;
+    mkdtemp_sync         / mkdtemp         => Mkdtemp,           args::MkdirTemp<'static>,  ret::Mkdtemp;
+    open_sync            / open            => Open,              args::Open<'static>,       ret::Open;
+    read_sync            / read            => Read,              args::Read,                ret::Read;
+    write_sync           / write           => Write,             args::Write<'static>,      ret::Write;
+    read_file_sync       / read_file       => ReadFile,          args::ReadFile<'static>,   ret::ReadFile;
+    write_file_sync      / write_file      => WriteFile,         args::WriteFile<'static>,  ret::WriteFile;
+    readlink_sync        / readlink        => Readlink,          args::Readlink<'static>,   ret::Readlink;
+    rm_sync              / rm              => Rm,                args::Rm<'static>,         ret::Rm;
+    rmdir_sync           / rmdir           => Rmdir,             args::RmDir<'static>,      ret::Rmdir;
+    realpath_sync        / realpath        => RealpathNonNative, args::Realpath<'static>,   ret::Realpath;
+    realpath_native_sync / realpath_native => Realpath,          args::Realpath<'static>,   ret::Realpath;
+    rename_sync          / rename          => Rename,            args::Rename<'static>,     ret::Rename;
+    stat_sync            / stat            => Stat,              args::Stat<'static>,       ret::Stat;
+    statfs_sync          / statfs          => Statfs,            args::StatFS<'static>,     ret::StatFS;
+    symlink_sync         / symlink         => Symlink,           args::Symlink<'static>,    ret::Symlink;
+    truncate_sync        / truncate        => Truncate,          args::Truncate<'static>,   ret::Truncate;
+    unlink_sync          / unlink          => Unlink,            args::Unlink<'static>,     ret::Unlink;
+    utimes_sync          / utimes          => Utimes,            args::Utimes<'static>,     ret::Utimes;
+    lutimes_sync         / lutimes         => Lutimes,           args::Lutimes<'static>,    ret::Lutimes;
+    writev_sync          / writev          => Writev,            args::Writev,              ret::Writev;
+    readv_sync           / readv           => Readv,             args::Readv,               ret::Readv;
+    fdatasync_sync       / fdatasync       => Fdatasync,         args::FdataSync,           ret::Fdatasync;
 }
 
 // `readdirSync` goes through the generic sync path; only the async side is
 // special-cased above.
 impl Binding {
     pub(crate) const readdir_sync: NodeFSFunction =
-        call_sync::<ret::Readdir, args::Readdir, { NodeFSFunctionEnum::Readdir }>();
+        call_sync::<ret::Readdir, args::Readdir<'static>, { NodeFSFunctionEnum::Readdir }>();
     // pub const statfs = callAsync(.statfs);
     // pub const statfsSync = callSync(.statfs);
 }

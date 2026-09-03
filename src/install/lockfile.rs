@@ -180,6 +180,8 @@ pub struct Lockfile {
     pub(crate) scripts: Scripts,
     pub(crate) workspace_paths: NameHashMap,
     pub workspace_versions: VersionHashMap,
+    /// Name hashes of the self-contained workspaces, from the manifests. Not saved.
+    pub self_contained_workspaces: ArrayHashMap<PackageNameHash, (), ArrayIdentityContextU64>,
 
     /// Optional because `trustedDependencies` in package.json might be an
     /// empty list or it might not exist
@@ -684,6 +686,7 @@ impl Lockfile {
         self.trusted_dependencies = None;
         self.workspace_paths = NameHashMap::default();
         self.workspace_versions = VersionHashMap::default();
+        self.self_contained_workspaces = ArrayHashMap::default();
         self.overrides = OverrideMap::default();
         self.catalogs = CatalogMap::default();
         self.patched_dependencies = PatchedDependenciesMap::default();
@@ -810,6 +813,47 @@ impl Lockfile {
         }
 
         invalid_package_id
+    }
+
+    /// Workspace packages whose node_modules must be self-contained: listed in the
+    /// root manifest's `workspaces.selfContained` (by path or name) or declaring
+    /// `"installConfig": { "hoistingLimits": "workspaces" }` in their own manifest.
+    /// Both are recorded in `self_contained_workspaces` while the workspaces are
+    /// parsed.
+    pub(crate) fn self_contained_workspace_ids(&self) -> Vec<PackageID> {
+        if self.self_contained_workspaces.count() == 0 {
+            return Vec::new();
+        }
+        let mut out = Vec::new();
+        let pkgs = self.packages.slice();
+        for (i, res) in pkgs.items_resolution().iter().enumerate() {
+            if res.tag == crate::resolution::Tag::Workspace
+                && self
+                    .self_contained_workspaces
+                    .contains(&pkgs.items_name_hash()[i])
+            {
+                out.push(i as PackageID);
+            }
+        }
+        out
+    }
+
+    /// The workspace (or root, 0) package that owns tree `id`: walk up until a
+    /// workspace/root tree is reached and return the package it stands for.
+    pub(crate) fn owning_workspace_of_tree(&self, mut id: tree::Id) -> PackageID {
+        while id != 0 && (id as usize) < self.buffers.trees.len() {
+            let t = &self.buffers.trees[id as usize];
+            let dep_id = t.dependency_id;
+            if (dep_id as usize) < self.buffers.dependencies.len()
+                && self.buffers.dependencies[dep_id as usize]
+                    .behavior
+                    .is_workspace()
+            {
+                return self.buffers.resolutions[dep_id as usize];
+            }
+            id = t.parent;
+        }
+        0
     }
 
     /// Does this tree id belong to a workspace (including workspace root)?
@@ -994,7 +1038,6 @@ impl Lockfile {
             log,
             old_preinstall_state,
             manager: &mut *manager,
-            trees_count: 1,
         };
 
         // try clone_queue.ensureUnusedCapacity(root.dependencies.len);
@@ -1089,6 +1132,9 @@ impl Lockfile {
 
                 new.workspace_versions.re_index()?;
                 new.workspace_paths.re_index()?;
+            }
+            for key in old.self_contained_workspaces.keys() {
+                new.self_contained_workspaces.put(*key, ())?;
             }
         }
 
@@ -1221,7 +1267,6 @@ pub struct Cloner<'a> {
     pub lockfile: &'a mut Lockfile,
     pub(crate) old: &'a mut Lockfile,
     pub(crate) mapping: &'a mut [PackageID],
-    pub(crate) trees_count: u32,
     pub(crate) log: &'a mut bun_ast::Log,
     pub(crate) old_preinstall_state: Vec<Install::PreinstallState>,
     pub(crate) manager: &'a mut PackageManager,
@@ -1316,6 +1361,13 @@ impl Lockfile {
     ) -> Result<bool, tree::SubtreeError> {
         let slice = self.packages.slice();
 
+        // Only the install applies the barrier, so the saved tree does not depend on it.
+        let self_contained = if METHOD == tree::BuilderMethod::Filter {
+            self.self_contained_workspace_ids()
+        } else {
+            Vec::new()
+        };
+
         // `tree::Builder` stores `lockfile: ParentRef<Lockfile>` so
         // the `&mut buffers.resolutions` split-borrow below can coexist with
         // the read-only lockfile view inside the builder (see Tree.rs note).
@@ -1324,6 +1376,7 @@ impl Lockfile {
         // `Builder` does not outlive this `&mut self` borrow.
         let lockfile_ref = bun_ptr::ParentRef::<Lockfile>::new(&*self);
         let mut builder = tree::Builder::<METHOD> {
+            self_contained,
             queue: tree::TreeFiller::init(),
             resolution_lists: slice.items_resolutions(),
             resolutions: self.buffers.resolutions.as_mut_slice(),
@@ -1443,7 +1496,6 @@ impl Lockfile {
                         scope,
                         pkg_name_str,
                         pkg_name_hash,
-                        Install::ManifestLoad::LoadFromMemoryFallbackToDisk,
                         false,
                     ) else {
                         continue;
@@ -1987,6 +2039,7 @@ impl Lockfile {
             trusted_dependencies: None,
             workspace_paths: NameHashMap::default(),
             workspace_versions: VersionHashMap::default(),
+            self_contained_workspaces: ArrayHashMap::default(),
             overrides: OverrideMap::default(),
             catalogs: CatalogMap::default(),
             meta_hash: ZERO_HASH,
@@ -2374,12 +2427,6 @@ impl Scratch {
             dependency_list_queue: DependencyQueue::init(),
             duplicate_checker_map: DuplicateCheckerMap::default(),
         }
-    }
-}
-
-impl Default for Scratch {
-    fn default() -> Self {
-        Self::init()
     }
 }
 

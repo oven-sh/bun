@@ -32,6 +32,8 @@ pub enum RedisError {
     IdleTimeout,
     NestingDepthExceeded,
     LineTooLong,
+    /// The server answered with a `-` or `!` error reply.
+    ServerError,
 }
 
 bun_core::impl_tag_error!(RedisError);
@@ -530,7 +532,6 @@ impl<'a> ValkeyReader<'a> {
 
                 // First element is the push type
                 let push_type = self.read_value_with_depth(depth + 1)?;
-                // defer push_type.deinit() — drops at scope end
                 let push_type_str: &[u8] = match &push_type {
                     RESPValue::SimpleString(str) => str,
                     RESPValue::BulkString(maybe_str) => {

@@ -158,14 +158,6 @@ impl<'a> run_tasks::RunTasksCallbacks for StoreRunTasksCallbacks<'a> {
     ) {
         ctx.on_package_download_error(id, name, resolution, err, url);
     }
-
-    fn as_store_installer<'x>(ctx: &'x mut Self::Ctx) -> &'x mut store::Installer<'x> {
-        // SAFETY: identity cast — narrows the invariant `'a` param to the
-        // borrow-local `'x` (`'a: 'x` is implied by `&'x mut Installer<'a>`).
-        // The returned reference cannot outlive `'x`, so all inner `'a`
-        // borrows remain valid. Inner-lifetime variance cast via raw pointer.
-        unsafe { &mut *core::ptr::from_mut(ctx).cast::<store::Installer<'x>>() }
-    }
 }
 
 struct Wait<'a, 'b> {
@@ -528,12 +520,11 @@ pub(crate) fn build_store(
                                     }
                                     break 'resolved invalid_package_id;
                                 };
-                                // Auto-install fallback is declarer-specific; let the
-                                // second pass handle this position rather than risk an
-                                // unsound key.
-                                if resolved == invalid_package_id {
-                                    break 'dont_dedupe;
-                                }
+                                // `invalid_package_id` is part of the key: an
+                                // unresolved peer auto-installs the declarer's own
+                                // `resolutions[peer_dep_id]`, which is position-
+                                // independent, so two positions that both leave
+                                // the name unresolved expand identically.
                                 hasher.update(bun_core::bytes_of(&peer_name_hash));
                                 hasher.update(bun_core::bytes_of(&resolved));
                             }
@@ -2213,7 +2204,16 @@ pub(crate) fn install_isolated_packages(
                     let pkg_res_tag = pkg_res.tag;
 
                     let patch_info =
-                        installer.package_patch_info(pkg_name, pkg_name_hash, &pkg_res)?;
+                        match installer.package_patch_info(pkg_name, pkg_name_hash, &pkg_res) {
+                            Ok(patch_info) => patch_info,
+                            Err(err) => {
+                                // .monotonic is okay because the task isn't running on another thread.
+                                entry_steps[entry_id.get() as usize]
+                                    .store(installer::Step::Done as u32, Ordering::Relaxed);
+                                installer.on_task_fail(entry_id, &err);
+                                continue;
+                            }
+                        };
 
                     let uses_global_store = installer.entry_uses_global_store(entry_id);
 
@@ -2425,7 +2425,10 @@ pub(crate) fn install_isolated_packages(
                                 Err(e) if e == crate::Error::Alloc(bun_alloc::AllocError) => {
                                     return Err(AllocError);
                                 }
-                                Err(crate::network_task::ForTarballError::AlreadyFailed) => {
+                                Err(
+                                    crate::network_task::ForTarballError::AlreadyFailed
+                                    | crate::network_task::ForTarballError::Offline,
+                                ) => {
                                     // .monotonic is okay because an error means the task isn't
                                     // running on another thread.
                                     entry_steps[entry_id.get() as usize]
@@ -2459,13 +2462,21 @@ pub(crate) fn install_isolated_packages(
                             }
                         }
                         ResolutionTag::Git => {
-                            installer.manager_mut().enqueue_git_for_checkout(
+                            if installer.manager_mut().enqueue_git_for_checkout(
                                 dep_id,
                                 dep.name.slice(string_buf),
                                 &pkg_res,
                                 ctx,
                                 patch_info.name_and_version_hash(),
-                            );
+                            ) == crate::package_manager::GitEnqueueResult::OfflineMiss
+                            {
+                                // --offline and not cached: nothing was queued
+                                entry_steps[entry_id.get() as usize]
+                                    .store(installer::Step::Done as u32, Ordering::Relaxed);
+                                installer
+                                    .on_task_complete(entry_id, installer::CompleteState::Fail);
+                                continue;
+                            }
                         }
                         ResolutionTag::Github => {
                             // The `.git()` accessor has a `debug_assert_eq!(tag, Git)` that
@@ -2484,7 +2495,10 @@ pub(crate) fn install_isolated_packages(
                                 Err(e) if e == crate::Error::Alloc(bun_alloc::AllocError) => {
                                     bun_core::out_of_memory()
                                 }
-                                Err(crate::network_task::ForTarballError::AlreadyFailed) => {
+                                Err(
+                                    crate::network_task::ForTarballError::AlreadyFailed
+                                    | crate::network_task::ForTarballError::Offline,
+                                ) => {
                                     // .monotonic is okay because an error means the task isn't
                                     // running on another thread.
                                     entry_steps[entry_id.get() as usize]
@@ -2537,7 +2551,10 @@ pub(crate) fn install_isolated_packages(
                                 Err(e) if e == crate::Error::Alloc(bun_alloc::AllocError) => {
                                     bun_core::out_of_memory()
                                 }
-                                Err(crate::network_task::ForTarballError::AlreadyFailed) => {
+                                Err(
+                                    crate::network_task::ForTarballError::AlreadyFailed
+                                    | crate::network_task::ForTarballError::Offline,
+                                ) => {
                                     // .monotonic is okay because an error means the task isn't
                                     // running on another thread.
                                     entry_steps[entry_id.get() as usize]

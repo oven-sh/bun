@@ -200,7 +200,7 @@ impl ReadableStream {
                 // SAFETY: ptr came from ReadableStreamTag__tagged; valid while stream alive.
                 let blobby = unsafe { &mut *blobby };
                 if let Some(blob) = blobby.to_any_blob(global_this) {
-                    self.done(global_this);
+                    self.done();
                     return Some(blob);
                 }
             }
@@ -210,9 +210,16 @@ impl ReadableStream {
                 let blobby = self.ptr.file().expect("matched File");
                 if let webcore::file_reader::Lazy::Blob(store) = blobby.lazy.get() {
                     let blob = Blob::init_with_store(store.clone(), global_this);
+                    // The window `from_blob_copy_ref` moved onto the reader.
+                    if let Some(offset) = blobby.start_offset {
+                        blob.offset.set(offset as webcore::blob::SizeType);
+                    }
+                    if let Some(size) = blobby.max_size {
+                        blob.size.set(size as webcore::blob::SizeType);
+                    }
                     // it should be lazy, file shouldn't have opened yet.
                     debug_assert!(!blobby.started.get());
-                    self.done(global_this);
+                    self.done();
                     return Some(webcore::blob::Any::Blob(blob));
                 }
             }
@@ -222,7 +229,7 @@ impl ReadableStream {
                 // If we've received the complete body by the time this function is called
                 // we can avoid streaming it and convert it to a Blob
                 if let Some(blob) = bytes.to_any_blob() {
-                    self.done(global_this);
+                    self.done();
                     return Some(blob);
                 }
                 return None;
@@ -233,7 +240,7 @@ impl ReadableStream {
         None
     }
 
-    pub fn done(&self, global_this: &JSGlobalObject) {
+    pub fn done(&self) {
         // done is called when we are done consuming the stream
         // cancel actually mark the stream source as done
         // this will resolve any pending promises to done: true
@@ -246,14 +253,13 @@ impl ReadableStream {
             Source::Bytes(source) => unsafe { (*NewSource::from_context_ptr(source)).cancel() },
             _ => {}
         }
-        self.detach_if_possible(global_this);
     }
 
     /// Cancel the stream (an `AbortError` reason) and mark its native source done. The source's own
-    /// cancel failure is the cancel promise's (handled) rejection; `Err` is a termination met in there.
+    /// cancel failure is the cancel promise's (handled) rejection; `Err` is anything thrown synchronously.
     pub fn cancel(&self, global_this: &JSGlobalObject) -> JsResult<()> {
         let result = bun_jsc::cpp::ReadableStream__cancel(self.value, global_this);
-        self.done(global_this);
+        self.done();
         result
     }
 
@@ -268,7 +274,7 @@ impl ReadableStream {
     ) -> JsResult<()> {
         let result =
             bun_jsc::cpp::ReadableStream__cancelWithReason(self.value, global_this, reason);
-        self.done(global_this);
+        self.done();
         result
     }
 
@@ -280,7 +286,7 @@ impl ReadableStream {
     /// Like [`Self::cancel`] but pending reads reject with `reason` instead of resolving `{done: true}`.
     pub(crate) fn error(&self, global_this: &JSGlobalObject, reason: JSValue) -> JsResult<()> {
         let result = bun_jsc::cpp::ReadableStream__error(self.value, global_this, reason);
-        self.done(global_this);
+        self.done();
         result
     }
 
@@ -386,11 +392,6 @@ impl ReadableStream {
 
         NativeWireResult::NotNative
     }
-
-    /// Decrement Source ref count and detach the underlying stream if ref count is zero
-    /// be careful, this can invalidate the stream do not call this multiple times
-    /// this is meant to be called only once when we are done consuming the stream or from the ReadableStream.Strong.deinit
-    pub fn detach_if_possible(&self, _global: &JSGlobalObject) {}
 
     pub fn is_disturbed(&self, global_object: &JSGlobalObject) -> bool {
         is_disturbed_value(self.value, global_object)
@@ -498,7 +499,6 @@ impl ReadableStream {
         recommended_chunk_size: webcore::blob::SizeType,
     ) -> JsResult<JSValue> {
         let blob = Blob::init(bytes.into(), global_this);
-        // defer blob.deinit() → handled by Drop
         Self::from_blob_copy_ref(global_this, &blob, recommended_chunk_size)
     }
 
@@ -689,9 +689,6 @@ pub enum Source {
     /// but with a FileLoader
     /// we can skip the FileLoader and just use the underlying File
     File(*mut FileReader),
-    /// This is a direct readable stream
-    /// That means we can turn it into whatever we want
-    Direct,
     Bytes(*mut ByteStream),
 }
 
@@ -1150,14 +1147,20 @@ impl<C: SourceContext> NewSource<C> {
         // `on_js_close`, reached from `on_reader_done` off the event loop with
         // no JS frame on the stack, never reads a dead-but-unswept cell.
         if !self.wrapper_unrooted.get() {
-            self.upgrade_wrapper();
+            // SAFETY: `self` is live for the call.
+            unsafe { Self::upgrade_wrapper(self) };
         }
     }
 
-    fn upgrade_wrapper(&mut self) {
-        if let Some(global) = self.global_this.as_deref() {
-            if self.this_jsvalue.is_not_empty() {
-                self.this_jsvalue.upgrade(global);
+    /// # Safety
+    /// `this` points at a live `NewSource<C>`.
+    unsafe fn upgrade_wrapper(this: *mut Self) {
+        // SAFETY: fn contract; field places only, see `unroot_wrapper`.
+        unsafe {
+            if let Some(global) = (*this).global_this.as_deref() {
+                if (*this).this_jsvalue.is_not_empty() {
+                    (*this).this_jsvalue.upgrade(global);
+                }
             }
         }
     }
@@ -1165,18 +1168,32 @@ impl<C: SourceContext> NewSource<C> {
     /// The producer keeps its native ref but stops rooting the wrapper: nothing
     /// is reading, so the stream should be collectable. [`SourceContext::wrapper_finalized`]
     /// tells the producer if that happens.
-    /// Same access pattern as [`Self::increment_count`]: reached through the
-    /// producer's raw pointer while the context may be borrowed.
-    pub fn unroot_wrapper(&mut self) {
-        self.wrapper_unrooted.set(true);
-        self.this_jsvalue.downgrade();
+    ///
+    /// Takes a raw pointer: the producer reaches this while it holds a `&C` into
+    /// `this` (the chunk it is delivering to), so only the fields written here
+    /// are touched, never a `&mut Self` that would cover the context too.
+    ///
+    /// # Safety
+    /// `this` points at a live `NewSource<C>`.
+    pub unsafe fn unroot_wrapper(this: *mut Self) {
+        // SAFETY: fn contract.
+        unsafe {
+            (*this).wrapper_unrooted.set(true);
+            (*this).this_jsvalue.downgrade();
+        }
     }
 
     /// Undo [`Self::unroot_wrapper`]: a consumer is reading again.
-    pub fn root_wrapper(&mut self) {
-        self.wrapper_unrooted.set(false);
-        if self.ref_count > 1 {
-            self.upgrade_wrapper();
+    ///
+    /// # Safety
+    /// As [`Self::unroot_wrapper`].
+    pub unsafe fn root_wrapper(this: *mut Self) {
+        // SAFETY: fn contract.
+        unsafe {
+            (*this).wrapper_unrooted.set(false);
+            if (*this).ref_count > 1 {
+                Self::upgrade_wrapper(this);
+            }
         }
     }
 

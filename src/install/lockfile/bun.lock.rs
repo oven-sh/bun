@@ -163,6 +163,18 @@ impl<'a> TreeDepsSortCtx<'a> {
             r.name.slice(self.string_buf),
         )
     }
+
+    fn sort(&self, dep_ids: &mut [DependencyID]) {
+        index_sort::sort_indices(dep_ids, &mut |a, b| {
+            if self.is_less_than(a, b) {
+                core::cmp::Ordering::Less
+            } else if self.is_less_than(b, a) {
+                core::cmp::Ordering::Greater
+            } else {
+                core::cmp::Ordering::Equal
+            }
+        });
+    }
 }
 
 /// The slot order every existing bun.lock has its `trustedDependencies` and
@@ -671,21 +683,11 @@ impl Stringifier {
                 tree_deps_sort_buf.clear();
                 tree_deps_sort_buf.extend_from_slice(dependencies);
 
-                {
-                    let ctx = TreeDepsSortCtx {
-                        string_buf: buf,
-                        deps_buf,
-                    };
-                    index_sort::sort_indices(&mut tree_deps_sort_buf, &mut |a, b| {
-                        if ctx.is_less_than(a, b) {
-                            core::cmp::Ordering::Less
-                        } else if ctx.is_less_than(b, a) {
-                            core::cmp::Ordering::Greater
-                        } else {
-                            core::cmp::Ordering::Equal
-                        }
-                    });
+                TreeDepsSortCtx {
+                    string_buf: buf,
+                    deps_buf,
                 }
+                .sort(&mut tree_deps_sort_buf);
 
                 for &dep_id in &tree_deps_sort_buf {
                     let pkg_id = resolution_buf[dep_id as usize];
@@ -770,21 +772,11 @@ impl Stringifier {
                     // there might be duplicate names due to dependency behaviors,
                     // but we print behaviors in different groups so it won't affect
                     // the result
-                    {
-                        let ctx = TreeDepsSortCtx {
-                            string_buf: buf,
-                            deps_buf,
-                        };
-                        index_sort::sort_indices(&mut pkg_deps_sort_buf, &mut |a, b| {
-                            if ctx.is_less_than(a, b) {
-                                core::cmp::Ordering::Less
-                            } else if ctx.is_less_than(b, a) {
-                                core::cmp::Ordering::Greater
-                            } else {
-                                core::cmp::Ordering::Equal
-                            }
-                        });
+                    TreeDepsSortCtx {
+                        string_buf: buf,
+                        deps_buf,
                     }
+                    .sort(&mut pkg_deps_sort_buf);
 
                     // INFO = { prod/dev/optional/peer dependencies, os, cpu, libc (TODO), bin, binDir }
 
@@ -1323,9 +1315,20 @@ impl Stringifier {
             any = true;
         }
 
+        // Re-sort by current name: a no-alias git/tarball dep sorts under its version
+        // literal at parse time, and `assign_resolution` renames it without a re-sort.
+        let deps_list = pkg_deps[pkg_id as usize];
+        let mut deps_sort_buf: Vec<DependencyID> = (deps_list.begin()..deps_list.end()).collect();
+        TreeDepsSortCtx {
+            string_buf: buf,
+            deps_buf,
+        }
+        .sort(&mut deps_sort_buf);
+
         for &(group_name, group_behavior) in WORKSPACE_DEPENDENCY_GROUPS.iter() {
             let mut first = true;
-            for dep in pkg_deps[pkg_id as usize].get(deps_buf) {
+            for &dep_id in &deps_sort_buf {
+                let dep = &deps_buf[dep_id as usize];
                 if !dep.behavior.intersects(group_behavior) {
                     continue;
                 }

@@ -43,6 +43,7 @@ pub(crate) fn valkey_error_to_js(
         RedisError::IdleTimeout => JscError::REDIS_IDLE_TIMEOUT,
         RedisError::NestingDepthExceeded => JscError::REDIS_INVALID_RESPONSE,
         RedisError::LineTooLong => JscError::REDIS_INVALID_RESPONSE,
+        RedisError::ServerError => JscError::REDIS_SERVER_ERROR,
         RedisError::JSError => return global.take_exception(JsError::Thrown),
         RedisError::OutOfMemory => {
             let _ = global.throw_out_of_memory();
@@ -91,11 +92,7 @@ pub(crate) fn resp_value_to_js_with_options(
 ) -> JsResult<JSValue> {
     match this {
         RESPValue::SimpleString(str) => valkey_str_to_js_value(global, str, options),
-        RESPValue::Error(str) => Ok(valkey_error_to_js(
-            global,
-            &**str,
-            RedisError::InvalidResponse,
-        )),
+        RESPValue::Error(str) => Ok(valkey_error_to_js(global, &**str, RedisError::ServerError)),
         RESPValue::Integer(int) => Ok(JSValue::js_number(*int as f64)),
         RESPValue::BulkString(maybe_str) => {
             if let Some(str) = maybe_str {
@@ -120,9 +117,6 @@ pub(crate) fn resp_value_to_js_with_options(
             for entry in entries.iter_mut() {
                 let js_key =
                     resp_value_to_js_with_options(&mut entry.key, global, ToJSOptions::default())?;
-                // Route through `put_to_property_key`, which performs
-                // index-vs-string property dispatch on the JSValue key.
-                let _ = js_key.to_bun_string(global)?; // preserve toString side-effect/exception path
                 let js_value = resp_value_to_js_with_options(&mut entry.value, global, options)?;
 
                 JSValue::put_to_property_key(js_obj, global, js_key, js_value)?;

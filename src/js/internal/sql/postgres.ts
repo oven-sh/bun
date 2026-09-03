@@ -228,8 +228,6 @@ function getArrayType(typeNameOrID: number | ArrayType | undefined): ArrayType |
     }
     return type;
   }
-  // No type: the parameter is bound without a cast and the server infers the
-  // element type from the column or from the cast the query applies to it.
   return undefined;
 }
 function serializeArray(values: any[], type: ArrayType | undefined) {

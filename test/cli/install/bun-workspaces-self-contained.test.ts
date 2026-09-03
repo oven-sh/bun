@@ -1,9 +1,9 @@
 import { spawn } from "bun";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, setDefaultTimeout } from "bun:test";
-import { existsSync, lstatSync, readlinkSync, statSync } from "fs";
+import { existsSync, lstatSync, readFileSync, readlinkSync, statSync } from "fs";
 import { mkdir, rm, writeFile } from "fs/promises";
 import { bunExe, bunEnv as env, isWindows, readdirSorted } from "harness";
-import { join } from "path";
+import { dirname, join } from "path";
 import {
   dummyAfterAll,
   dummyAfterEach,
@@ -37,13 +37,13 @@ beforeEach(async () => {
 });
 afterEach(dummyAfterEach);
 
-async function install(cwd: string, args: string[] = []) {
+async function install(cwd: string, args: string[] = [], extraEnv: Record<string, string> = {}) {
   // --backend=hardlink so the "physical copy" assertions are meaningful on macOS too
   // (its default, clonefile, also yields nlink 1)
   await using proc = spawn({
     cmd: [bunExe(), "install", "--backend=hardlink", ...args],
     cwd,
-    env,
+    env: { ...env, ...extraEnv },
     stdout: "pipe",
     stderr: "pipe",
   });
@@ -176,3 +176,99 @@ it("without either setting the workspace is hoisted normally", async () => {
   expect(existsSync(join(package_dir, "node_modules", "@barn", "moo", "package.json"))).toBeTrue();
   expect(existsSync(join(package_dir, "node_modules", "baz", "package.json"))).toBeTrue();
 });
+
+// The package.json of `name` that `from` resolves without leaving `root`. It walks up
+// from `from` and does not resolve symlinks, the way a tool that copies `root` sees it.
+function findWithin(root: string, from: string, name: string): string | undefined {
+  for (let dir = from; ; dir = dirname(dir)) {
+    const candidate = join(dir, "node_modules", name, "package.json");
+    if (existsSync(candidate)) return candidate;
+    if (dir === root || dirname(dir) === dir) return undefined;
+  }
+}
+
+// `c` is self-contained and depends on its siblings `a` and `b`, which need different
+// versions of `baz`. The siblings stay symlinks, so the version that cannot hoist into
+// c's node_modules goes into the sibling's own node_modules, through the symlink. The
+// sibling's own tree can write the same directory. The second write used to truncate
+// the hardlinks of the first, and with them the files in the cache.
+it.each([
+  // baz@0.0.3 hoists to the root, so b's own tree also nests baz@0.0.5 in packages/b
+  ["one nested in the sibling's own node_modules", {}],
+  // b uses the root's baz@0.0.5, so only c's tree writes it into packages/b
+  ["one provided by the root", { baz: "0.0.5" }],
+] as const)(
+  "siblings that need two versions of a package, %s: each resolves its own version inside the self-contained workspace, and the cache stays intact",
+  async (_label, rootDependencies) => {
+    setHandler(dummyRegistry([], { "0.0.3": {}, "0.0.5": {} }));
+    // a cache outside node_modules, like the global one. The variable takes precedence
+    // over the bunfig `cache` key, and the test runner sets it.
+    const cacheDir = join(package_dir, ".bun-cache");
+    const cacheEnv = { BUN_INSTALL_CACHE_DIR: cacheDir };
+    await writeFile(
+      join(package_dir, "bunfig.toml"),
+      Bun.TOML.stringify({
+        install: { registry: root_url + "/", saveTextLockfile: true, linker: "hoisted" },
+      }),
+    );
+    for (const ws of ["a", "b", "c"]) {
+      await mkdir(join(package_dir, "packages", ws), { recursive: true });
+    }
+    await writeFile(
+      join(package_dir, "package.json"),
+      JSON.stringify({
+        name: "root",
+        private: true,
+        workspaces: { packages: ["packages/*"], selfContained: ["packages/c"] },
+        dependencies: rootDependencies,
+      }),
+    );
+    await writeFile(
+      join(package_dir, "packages", "a", "package.json"),
+      JSON.stringify({ name: "@p/a", version: "1.0.0", dependencies: { baz: "0.0.3" } }),
+    );
+    await writeFile(
+      join(package_dir, "packages", "b", "package.json"),
+      JSON.stringify({ name: "@p/b", version: "1.0.0", dependencies: { baz: "0.0.5" } }),
+    );
+    await writeFile(
+      join(package_dir, "packages", "c", "package.json"),
+      JSON.stringify({
+        name: "@p/c",
+        version: "1.0.0",
+        dependencies: { "@p/a": "workspace:*", "@p/b": "workspace:*" },
+      }),
+    );
+
+    const r = await install(package_dir, [], cacheEnv);
+    expect(r.err).not.toContain("error:");
+    expect(r.code).toBe(0);
+
+    const versionOf = (pkgJson: string) => {
+      expect(statSync(pkgJson).size).toBeGreaterThan(0);
+      return JSON.parse(readFileSync(pkgJson, "utf8")).version;
+    };
+    const cDir = join(package_dir, "packages", "c");
+    const bazFrom = (sibling: string) => {
+      const found = findWithin(cDir, join(cDir, "node_modules", "@p", sibling), "baz");
+      expect(found).toBeDefined();
+      return versionOf(found!);
+    };
+
+    expect({ a: bazFrom("a"), b: bazFrom("b") }).toEqual({ a: "0.0.3", b: "0.0.5" });
+
+    for (const version of ["0.0.3", "0.0.5"]) {
+      const cached = (await readdirSorted(cacheDir)).filter(name => name.startsWith(`baz@${version}@`));
+      expect(cached).toHaveLength(1);
+      expect(versionOf(join(cacheDir, cached[0], "package.json"))).toBe(version);
+      expect(statSync(join(cacheDir, cached[0], "index.js")).size).toBeGreaterThan(0);
+    }
+
+    // a repeat install has nothing to do
+    const again = await install(package_dir, [], cacheEnv);
+    expect(again.err).not.toContain("error:");
+    expect(again.out).toContain("(no changes)");
+    expect(again.code).toBe(0);
+    expect({ a: bazFrom("a"), b: bazFrom("b") }).toEqual({ a: "0.0.3", b: "0.0.5" });
+  },
+);

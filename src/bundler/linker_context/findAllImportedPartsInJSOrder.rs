@@ -39,7 +39,10 @@ pub(crate) fn find_all_imported_parts_in_js_order(
     struct Ctx<'a, 'f> {
         inner: crate::linker_context_mod::GenerateChunkCtx<'a>,
         chunk_of_file: &'f [u32],
+        range_source_bytes_max: i32,
     }
+
+    let range_source_bytes_max = range_source_bytes_max(this);
 
     // One chunk per task. Each task writes only its own `Chunk` and, for
     // server-component files, that file's `entry_point_chunk_index` slot (a
@@ -54,6 +57,7 @@ pub(crate) fn find_all_imported_parts_in_js_order(
             chunks: bun_ptr::BackRef::new(&*chunks),
         },
         chunk_of_file: &chunk_of_file,
+        range_source_bytes_max,
     };
     let chunks_len = chunks.len();
     this.worker_pool().each_ptr(
@@ -74,11 +78,32 @@ pub(crate) fn find_all_imported_parts_in_js_order(
                 u32::try_from(index).expect("int cast"),
                 ctx.chunk_of_file,
                 chunks_len,
+                ctx.range_source_bytes_max,
             ));
         },
         chunks,
     );
     Ok(())
+}
+
+/// Each part range is printed as one task, so a range stops growing once it
+/// spans this many source bytes: enough ranges for a large file to occupy
+/// the thread pool, few enough that small files stay whole.
+pub(crate) fn range_source_bytes_max(this: &LinkerContext) -> i32 {
+    const MIN: usize = 128 * 1024;
+    let loaders = this.parse_graph().input_files.items_loader();
+    let largest = this
+        .parse_graph()
+        .input_files
+        .items_source()
+        .iter()
+        .zip(loaders)
+        .filter(|(_, loader)| loader.is_javascript_like_or_json())
+        .map(|(source, _)| source.contents.len())
+        .max()
+        .unwrap_or(0);
+    let threads = this.worker_pool().max_threads().max(1) as usize;
+    (largest / (2 * threads)).max(MIN).min(i32::MAX as usize) as i32
 }
 
 pub(crate) fn find_imported_parts_in_js_order(
@@ -89,6 +114,7 @@ pub(crate) fn find_imported_parts_in_js_order(
     chunk_index: u32,
     chunk_of_file: &[u32],
     chunks_len: usize,
+    range_source_bytes_max: i32,
 ) -> Result<(), bun_alloc::AllocError> {
     let mut chunk_order_array: Vec<Order> =
         Vec::with_capacity(chunk.files_with_parts_in_chunk.count());
@@ -147,15 +173,7 @@ pub(crate) fn find_imported_parts_in_js_order(
             parts: this.graph.ast.items_parts(),
             import_records: this.graph.ast.items_import_records(),
             entry_bits: chunk.entry_bits(),
-            largest_source_len: this
-                .parse_graph()
-                .input_files
-                .items_source()
-                .iter()
-                .map(|source| source.contents.len())
-                .max()
-                .unwrap_or(0)
-                .min(i32::MAX as usize) as i32,
+            range_source_bytes_max,
             c: this,
             chunk_index,
             entry_point_chunk_indices,
@@ -212,8 +230,7 @@ fn run_visits<const WITH_CODE_SPLITTING: bool, const WITH_SCB: bool>(
 
 pub(crate) struct FindImportedPartsVisitor<'a, 'ctx> {
     pub(crate) entry_bits: &'a AutoBitSet,
-    /// Of the JavaScript files in the bundle.
-    pub(crate) largest_source_len: i32,
+    pub(crate) range_source_bytes_max: i32,
     pub(crate) flags: &'a [crate::js_meta::Flags],
     pub(crate) parts: &'a [bun_ast::PartList<'ctx>],
     pub(crate) import_records: &'a [bun_ast::import_record::List<'ctx>],
@@ -253,15 +270,6 @@ enum PartsFrame {
 }
 
 impl<'a, 'ctx> FindImportedPartsVisitor<'a, 'ctx> {
-    /// Each range is printed as one task, so a range stops growing once it
-    /// spans this many source bytes: enough ranges for a large file to occupy
-    /// the thread pool, few enough that small files stay whole.
-    fn range_source_bytes_max(&self) -> i32 {
-        const MIN: i32 = 128 * 1024;
-        let threads = self.c.worker_pool().max_threads().max(1) as i32;
-        (self.largest_source_len / (2 * threads)).max(MIN)
-    }
-
     fn append_or_extend_range(
         &mut self,
         in_prefix: bool,
@@ -275,7 +283,7 @@ impl<'a, 'ctx> FindImportedPartsVisitor<'a, 'ctx> {
                 None => 0,
             }
         };
-        let max = self.range_source_bytes_max();
+        let max = self.range_source_bytes_max;
         let ranges = if in_prefix {
             &mut self.parts_prefix
         } else {

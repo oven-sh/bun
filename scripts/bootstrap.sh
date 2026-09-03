@@ -1,5 +1,5 @@
 #!/bin/sh
-# Version: 44
+# Version: 45
 
 # A script that installs the dependencies needed to build and test Bun.
 # This should work on macOS and Linux with a POSIX shell.
@@ -1178,7 +1178,7 @@ install_bun_toolchain() {
 	# installs above stay for everything else. All lanes build on linux-aarch64, so only that
 	# host's toolchains exist.
 	[ "$arch" = "aarch64" ] || error "bun toolchains are built for the linux-aarch64 build host only"
-	toolchain_release="bun-toolchain-nightly-2026-07-20-bun-1f48523a"
+	toolchain_release="bun-toolchain-nightly-2026-07-20-bun-d98dac36"
 	toolchain_root="/opt/bun-toolchain"
 	if ! [ -f "$(which zstd)" ]; then install_packages zstd; fi
 	execute_sudo rm -rf "$toolchain_root"
@@ -1193,32 +1193,32 @@ install_bun_toolchain() {
 		rust) [ -x "$dir/bin/rustc" ] || error "$variant rust toolchain did not unpack into $dir" ;;
 		esac
 	done <<-EOF
-		ci-darwin-aarch64 llvm c73e288232975062673b1caad3ac4cd915526697be54504e1003e6ec23a0c7ff
-		ci-darwin-aarch64 rust 122b08b564dc8eb49759d1a122fe5343b8a78134997258561f6c25e9669184b1
-		ci-darwin-x64 llvm ee0bd9a1946062a8a0d077850bfd61ee41b724680e47525f2aa19e2edd5f009c
-		ci-darwin-x64 rust bdb572fece6c30fa4b9ed57db07c9a68cec01bf2e41d3793b5b5362a0b28f9f3
-		ci-freebsd-aarch64 llvm 20d88a777cc9789c5281ed476c305e9e99db9e34abacded0e26ed2694bbdccb8
-		ci-freebsd-aarch64 rust 82afab31af87913e3e160410148a4d48453927d4a76a5c50452bd55558ae7e3c
-		ci-freebsd-x64 llvm 7a5210352f8608632b71f8f3c8e3ba181184851f7614d094b1876fc7ac99de43
-		ci-freebsd-x64 rust f896a8ac6ab5bc6633d5ff7d95ff6114e2261b37f7e7e336f384449fd85ea714
-		ci-linux-aarch64 llvm a3ab642343eeb6a551e0e7df40698eb6662dfa8307071df53507db6783bdecb6
-		ci-linux-aarch64 rust 491d733935b40ba67de98d4750fe6fc15e69fedd97e7b2ae16db715f69be3158
-		ci-linux-aarch64-android llvm c48e8b26b134acb16b0fbcdb1e332dcaab95707242ed0ea12985345fbce2f326
-		ci-linux-aarch64-android rust a458fd12ddcf45f68d758ba9a5547928dbd0cb646afd3c1d6e870379b102d9e3
-		ci-linux-aarch64-musl llvm af4291183ad89c292f842599a6ef43de27c55f49d11af17b474de5d31f3abb19
-		ci-linux-aarch64-musl rust 26c5af0378725f36a4f01447a9739926b97c21310d232beae133376a79d788e7
-		ci-linux-x64 llvm 2b71c7c53c8074cd1a379611d74f4731c39af9fc4e789611aa73ead4a838b0de
-		ci-linux-x64 rust 7ea8c7dcf74ab3278252ee1cbc2b28870d3b0d95517d2cc081c2cad8c5db037c
-		ci-linux-x64-android llvm b31def720741d3fdb15cbb570ac2db74bffe638f01b094ef6d2ae409f7ced626
-		ci-linux-x64-android rust e0b850417e19a82d2171d2aa02caec2cce3ca8a1ded30a48d76f4bc68025e167
-		ci-linux-x64-asan llvm e2833d6740ccf97004c3f015bcf2b51d33119f9598f90fe6f4d424f062735dac
-		ci-linux-x64-asan rust 13d1a249fac2781c4b751b09d7890e9d53103de6cc80d8dc7a0f132345de1a17
-		ci-linux-x64-musl llvm be7494d627b222f01b33a2ab3777a14f7bda7b6225a9359cd212b40cce605f7d
-		ci-linux-x64-musl rust 238212c30ebbb953312e876a905d12865c0fd8f5d89f3b93a8492ef02f96510d
-		ci-windows-aarch64 llvm 0749236f054eb3c241fd40b7d1b4d9bda885652e8b1e62772b35865957160595
-		ci-windows-aarch64 rust 571e83b1ffea8037eb7f5e5a5f4c12c47054d57ec85549138e4eff7e3a42b1f8
-		ci-windows-x64 llvm 26c74936b9d75765db3d09cd196795cd727d596802ead6d390d811847d84b912
-		ci-windows-x64 rust 598bb967e90f93c4857e44707bc9d8e23f91dd97174c6ca90d2b89f86f7341e0
+		ci-darwin-aarch64 llvm 7c8c149315ba23eee507fc500a8c8bbc6274e177122219565ce11151d22b11ec
+		ci-darwin-aarch64 rust fcd26ddf25db0ad5613d52d035ff98f7c7594d81fa9e24ac9039ffc13261169a
+		ci-darwin-x64 llvm 77271d5e469010f6add05b0a30821f5a8d8bc3ec61a840d55d23135c5a98b8db
+		ci-darwin-x64 rust b48d65e3e067c9ca654166fd7eb1e3bb1d4c63f3fa07d2836611eaddd68d6227
+		ci-freebsd-aarch64 llvm c0fb4455de4e0e6c12639905bdb32f235f4616f825a7744a0fa14dfdbef16ef0
+		ci-freebsd-aarch64 rust 4c6f6706727ffc961f42c8b6297ea09a526153a3fbce0548c0d0fff3a51c9735
+		ci-freebsd-x64 llvm 88c99a611174aaf3ef2b7488b164c4e5038b2215b0cd22758c56f646e7915dfa
+		ci-freebsd-x64 rust c5939ce1b47b08cefc9d94abc63a67305c8e8e901fea563d41433d7c78a91641
+		ci-linux-aarch64 llvm 1c53c3deb2d0a9f6af3e94a38718cc14509f866cd203d140e77a3321c77ed3f6
+		ci-linux-aarch64 rust 2ac88eeb39dbfd3e9ea8a1c1b2885e65e0d3f75c73f28aa2a0377aedb2810381
+		ci-linux-aarch64-android llvm 96986a6f9d42870f992e2106ab9e061413d0b8914a475d429a775a5677c3f63c
+		ci-linux-aarch64-android rust 350b94729fe079ad83e87099189889c93524c6b0a34abd5c8bd8907fb61b0e95
+		ci-linux-aarch64-musl llvm 5ceb9f06633eedf8eb155b88512b61573a147f10c4676b625d7823dd73bc3928
+		ci-linux-aarch64-musl rust d35ffbca76cbc1c49350922692724f952b9777b2b78adbd867e4730fb364af6a
+		ci-linux-x64 llvm 6165dd868a092efb865a9a9b5828af5e9ff83ccdfb07c2d0bb34bb770ef54903
+		ci-linux-x64 rust d576aeed3e1018a39a170e2d01b0f2b36e3f1242799ffea956d6c0b17953e5c1
+		ci-linux-x64-android llvm 250c04802e92f4cc4f66b3862ca60ed9ee685214524481b1351b7db603877c48
+		ci-linux-x64-android rust ed04e542634f6caea21ba8a9e7ab6940845cd9431cb68423422095adc5567b4e
+		ci-linux-x64-asan llvm 6a2841a1e1781e05379825d792c5e2c3f4320a85d9f393d74af3a77effff152a
+		ci-linux-x64-asan rust abb27eacebdff3c5395380fcf81099b5756b4af0ecf89297ecb74cacf95aead2
+		ci-linux-x64-musl llvm 7d03fbaeffbca0cdf130b84a0a0011b6dfba8a4fd5f62c568b956959e5286714
+		ci-linux-x64-musl rust c3fe3681adc5cc4b3933ad19f4f08afcb76f6bb50d257da8ba5bb0f111a17f7c
+		ci-windows-aarch64 llvm 93963e5c64f1d6caac9bc8a8eda96405f91242de3c008b83ee06da7721feeda0
+		ci-windows-aarch64 rust 8fa6eb4b41edb1aac0a651c9b542c0ab936d70e7dbd5583a1d68c142ffb3fcaa
+		ci-windows-x64 llvm 67b04462f9947aa37627c976c9773e58eea4831c49bc91e06f3c9d3ce8b21501
+		ci-windows-x64 rust eb247109fd053fb7b0db677e486eadd5ec10dd65a132c36641a2317be6bf8298
 	EOF
 	execute "$toolchain_root/ci-linux-aarch64/bin/clang" --version
 	execute "$toolchain_root/ci-linux-aarch64/bin/rustc" -vV

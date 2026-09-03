@@ -3801,14 +3801,19 @@ impl crate::api::h2::connection::Sink for H2FrameParser {
         // §6.9.2 (mirrors the legacy inbound): when the peer's INITIAL_WINDOW_SIZE grows, raise the
         // send window of streams opened before its SETTINGS arrived (a client's first request is
         // typically sent before the server's SETTINGS lands), then resume queued sends.
+        let mut window_grew = false;
         for (_, item) in self.streams.get().iter() {
             // SAFETY: item is &*mut Stream from streams.iter(); the boxed Stream outlives the iteration
             let stream = unsafe { &mut **item };
-            if settings.initial_window_size as u64 >= stream.remote_window_size {
+            if (settings.initial_window_size as u64) > stream.remote_window_size {
                 stream.remote_window_size = settings.initial_window_size as u64;
+                window_grew = true;
             }
         }
-        let _ = self.flush();
+        // Resume queued sends only when a window actually grew; there is nothing to flush otherwise.
+        if window_grew {
+            let _ = self.flush();
+        }
         let g = self.global();
         let js = rewrite_settings_to_js(settings, g);
         // Custom setting ids the user asked to track (remoteCustomSettings) and that the peer has

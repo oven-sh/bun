@@ -4404,6 +4404,16 @@ impl<'a> LinkerContext<'a> {
         false
     }
 
+    /// The chunk of a lifted CommonJS module exports its namespace object as `default`.
+    pub(crate) fn chunk_default_export_is_namespace(
+        meta_flags: crate::js_meta::Flags,
+        ast_flags: AstFlags,
+    ) -> bool {
+        meta_flags.needs_synthetic_default_export
+            && meta_flags.wrap != WrapKind::Cjs
+            && ast_flags.contains(AstFlags::COMMONJS_LIFTED_TO_ESM)
+    }
+
     /// Resolves every named import in one file to its matching export,
     /// recording the bindings in `imports_to_bind`.
     pub(crate) fn match_imports_with_exports_for_file(

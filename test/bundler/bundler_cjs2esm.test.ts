@@ -1,5 +1,6 @@
 import { describe, expect } from "bun:test";
-import { itBundled } from "./expectBundled";
+import { readdirSync } from "node:fs";
+import { itBundled, type BundlerTestBundleAPI } from "./expectBundled";
 
 const fakeReactNodeModules = {
   "/node_modules/react/index.js": /* js */ `
@@ -1336,6 +1337,218 @@ describe("bundler", () => {
       { file: "/out/a.js", stdout: "a a id" },
       { file: "/out/b.js", stdout: "b 2 true 4" },
     ],
+  });
+  // The chunk a split `import()` of a lifted CommonJS module loads exports the
+  // module's namespace object as `default`: the same object a default import
+  // binds to, not a getter-only copy of the exports.
+  const splitChunk = (api: BundlerTestBundleAPI, name: string) =>
+    api.readFile("/out/" + readdirSync(api.outdir).find(f => f.startsWith(`${name}-`) && f.endsWith(".js"))!);
+  const liftedLib = /* js */ `
+    exports.createElement = function (t) { return "<" + t + ">"; };
+    exports.version = "19.x";
+  `;
+  itBundled("cjs2esm/SplitDynamicImportDefaultIsNamespaceOfLiftedCommonJS", {
+    files: {
+      "/entry.mjs": /* js */ `
+        import lib from "./lib.cjs";
+        import * as ns from "./lib.cjs";
+        const m = await import("./lib.cjs");
+        lib.expando = 1;
+        m.default.version = "patched";
+        console.log(m.default === lib, m.default === ns, m.default.expando, lib.version, m.version, Object.keys(m.default).join(","));
+      `,
+      "/lib.cjs": liftedLib,
+    },
+    outdir: "/out",
+    outputPaths: ["/out/entry.js"],
+    splitting: true,
+    onAfterBundle(api) {
+      expect(splitChunk(api, "lib")).toContain("export default exports_lib;");
+      expect(splitChunk(api, "lib")).not.toContain("get createElement()");
+    },
+    run: { file: "/out/entry.js", stdout: "true true 1 patched patched createElement,version,expando" },
+  });
+  itBundled("cjs2esm/SplitDynamicImportOnlyOfLiftedCommonJS", {
+    files: {
+      "/entry.js": /* js */ `
+        const m = await import("./lib.cjs");
+        console.log(m.default.createElement("i"), m.default.createElement === m.createElement, Object.keys(m.default).join(","));
+      `,
+      "/lib.cjs": liftedLib,
+    },
+    outdir: "/out",
+    splitting: true,
+    onAfterBundle(api) {
+      expect(splitChunk(api, "lib")).toContain("export default exports_lib;");
+      expect(splitChunk(api, "lib")).not.toContain("get createElement()");
+    },
+    run: { file: "/out/entry.js", stdout: "<i> true createElement,version" },
+  });
+  // No importer reads `default`, so the chunk needs no namespace object.
+  itBundled("cjs2esm/SplitDynamicImportOfLiftedCommonJSWithoutDefaultRead", {
+    files: {
+      "/entry.js": /* js */ `
+        const { version } = await import("./lib.cjs");
+        console.log(version);
+      `,
+      "/lib.cjs": liftedLib,
+    },
+    outdir: "/out",
+    splitting: true,
+    onAfterBundle(api) {
+      expect(splitChunk(api, "lib")).not.toContain("export default");
+      expect(splitChunk(api, "lib")).not.toContain("__export");
+    },
+    run: { file: "/out/entry.js", stdout: "19.x" },
+  });
+  itBundled("cjs2esm/DefaultImportWithSplitDynamicImport", {
+    files: {
+      "/entry.js": /* js */ `
+        import React from "react";
+        const m = await import("react");
+        console.log(m.default === React, m.useState === React.useState, m.default.useId());
+      `,
+      ...liftedReact,
+    },
+    outdir: "/out",
+    splitting: true,
+    onAfterBundle(api) {
+      expect(splitChunk(api, "index")).toContain("export default exports_react;");
+    },
+    run: { file: "/out/entry.js", stdout: "true true id" },
+  });
+  // A lifted module with no exports still has a namespace object.
+  itBundled("cjs2esm/SplitDynamicImportOfLiftedCommonJSWithoutExports", {
+    files: {
+      "/entry.js": /* js */ `
+        import React from "react";
+        const m = await import("react");
+        console.log(m.default === React, typeof m.default);
+      `,
+      "/node_modules/react/package.json": /* json */ `
+        { "name": "react", "version": "19.0.0", "main": "index.js" }
+      `,
+      "/node_modules/react/index.js": `'use strict';`,
+    },
+    outdir: "/out",
+    splitting: true,
+    run: { file: "/out/entry.js", stdout: "true object" },
+  });
+  // `exports.default` is a property of `module.exports`, as in Node, unless the
+  // module also sets `__esModule`. Then it is the `default`, as with `bun run`.
+  itBundled("cjs2esm/SplitDynamicImportOfLiftedCommonJSWithOwnDefault", {
+    files: {
+      "/entry.js": /* js */ `
+        import lib from "./lib.cjs";
+        const m = await import("./lib.cjs");
+        console.log(m.default === lib, m.default.default, lib.default, m.x);
+      `,
+      "/lib.cjs": /* js */ `
+        exports.default = "d";
+        exports.x = 1;
+      `,
+    },
+    outdir: "/out",
+    splitting: true,
+    onAfterBundle(api) {
+      expect(splitChunk(api, "lib")).toContain("export default exports_lib;");
+    },
+    run: { file: "/out/entry.js", stdout: "true d d 1" },
+  });
+  itBundled("cjs2esm/SplitDynamicImportOfLiftedCommonJSWithEsModuleAndDefault", {
+    files: {
+      "/entry.mjs": /* js */ `
+        const m = await import("./lib.cjs");
+        console.log(m.default, m.x);
+      `,
+      "/lib.cjs": /* js */ `
+        exports.__esModule = true;
+        exports.default = "d";
+        exports.x = 1;
+      `,
+    },
+    outdir: "/out",
+    outputPaths: ["/out/entry.js"],
+    splitting: true,
+    run: { file: "/out/entry.js", stdout: "d 1" },
+  });
+  // Static imports of a lifted module bind its exports directly, whether or
+  // not a split `import()` of the module reads `default`. Only a read of
+  // `default` creates the namespace object.
+  const outputText = (api: BundlerTestBundleAPI) =>
+    readdirSync(api.outdir)
+      .filter(f => f.endsWith(".js"))
+      .map(f => api.readFile("/out/" + f))
+      .join("\n");
+  const staticHookImporters = {
+    "/a.js": /* js */ `
+      import React from "./lib.cjs";
+      export const viaDefault = () => React.useState;
+      export const versionViaDefault = () => React.version;
+    `,
+    "/b.js": /* js */ `
+      import { useState, version } from "./lib.cjs";
+      export const viaNamed = () => useState;
+      export const versionViaNamed = () => version;
+    `,
+    "/lib.cjs": /* js */ `
+      exports.useState = function (value) { return [value]; };
+      exports.version = "19.x";
+    `,
+  };
+  itBundled("cjs2esm/SplitDynamicImportDestructuredWithStaticImportsOfLiftedCommonJS", {
+    files: {
+      "/entry.js": /* js */ `
+        import { viaDefault } from "./a.js";
+        import { viaNamed } from "./b.js";
+        const { useState } = await import("./lib.cjs");
+        console.log(viaDefault() === useState, viaNamed() === useState, useState(1)[0]);
+      `,
+      ...staticHookImporters,
+    },
+    outdir: "/out",
+    splitting: true,
+    onAfterBundle(api) {
+      expect(splitChunk(api, "lib")).not.toContain("export default");
+      const out = outputText(api);
+      expect(out).not.toContain("exports_lib");
+      expect(out).not.toContain("__toESM");
+      expect(out).toContain("viaDefault = () => $useState;");
+      expect(out).toContain("viaNamed = () => $useState;");
+    },
+    run: { file: "/out/entry.js", stdout: "true true 1" },
+  });
+  itBundled("cjs2esm/SplitDynamicImportDefaultWithStaticImportsOfLiftedCommonJS", {
+    files: {
+      "/entry.js": /* js */ `
+        import React from "./lib.cjs";
+        import { viaDefault, versionViaDefault } from "./a.js";
+        import { viaNamed, versionViaNamed } from "./b.js";
+        const m = await import("./lib.cjs");
+        m.default.version = "patched";
+        console.log(
+          m.default === React,
+          m.default.useState === viaDefault(),
+          viaNamed() === viaDefault(),
+          versionViaDefault(),
+          versionViaNamed(),
+        );
+      `,
+      ...staticHookImporters,
+    },
+    outdir: "/out",
+    splitting: true,
+    onAfterBundle(api) {
+      expect(splitChunk(api, "lib")).toContain("export default exports_lib;");
+      const out = outputText(api);
+      expect(out).not.toContain("exports_lib.");
+      expect(out).not.toContain("__toESM");
+      expect(out).toContain("viaDefault = () => $useState;");
+      expect(out).toContain("versionViaDefault = () => $version;");
+      expect(out).toContain("viaNamed = () => $useState;");
+      expect(out).toContain("versionViaNamed = () => $version;");
+    },
+    run: { file: "/out/entry.js", stdout: "true true true patched patched" },
   });
   // `import()` of a lifted CommonJS module resolves to a view of its namespace
   // whose `default` is the namespace itself (`module.exports`), as in Node.

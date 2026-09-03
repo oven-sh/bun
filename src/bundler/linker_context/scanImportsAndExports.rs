@@ -360,6 +360,30 @@ pub(crate) fn scan_imports_and_exports(
                                 col!(flags)[other_file].wrap = WrapKind::Cjs;
                                 col!(exports_kind)[other_file] = ExportsKind::Cjs;
                             }
+                        } else if other_flags.contains(AstFlags::FORCE_CJS_TO_ESM)
+                            && this.is_external_dynamic_import(record, id as u32)
+                        {
+                            let exports = &col_ref!(named_exports)[other_file];
+                            let user_entry = col_ref!(entry_point_kinds)[other_file]
+                                == EntryPoint::Kind::UserSpecified;
+                            // `__esModule` makes `exports.default` the `default`, as in `bun run`.
+                            let default_is_module_exports = !exports.contains(b"default")
+                                || (other_flags.contains(AstFlags::COMMONJS_LIFTED_TO_ESM)
+                                    && !user_entry
+                                    && !exports.contains(b"__esModule"));
+                            let default_is_read = user_entry
+                                || col_ref!(dynamic_import_aliases)[id]
+                                    .get(&(import_record_index as u32))
+                                    .is_none_or(|dynamic_use| {
+                                        dynamic_use
+                                            .aliases
+                                            .slice()
+                                            .iter()
+                                            .any(|alias| alias.slice() == b"default")
+                                    });
+                            if default_is_module_exports && default_is_read {
+                                col!(flags)[other_file].needs_synthetic_default_export = true;
+                            }
                         }
                     }
                     _ => {}
@@ -948,9 +972,14 @@ pub(crate) fn scan_imports_and_exports(
             // If this is an entry point, depend on all exports so they are included
             if is_entry_point {
                 let force_include_exports = flag.force_include_exports_for_entry_point;
+                let include_namespace = force_include_exports
+                    || LinkerContext::chunk_default_export_is_namespace(
+                        flag,
+                        col_ref!(ast_flags_list)[id],
+                    );
                 let add_wrapper = wrap != WrapKind::None;
 
-                let extra_count = (force_include_exports as usize) + (add_wrapper as usize);
+                let extra_count = (include_namespace as usize) + (add_wrapper as usize);
 
                 let mut dependencies =
                     bun_ast::DependencyList::with_capacity_in(extra_count, bun_alloc::AstAlloc);
@@ -992,7 +1021,7 @@ pub(crate) fn scan_imports_and_exports(
                 dependencies.reserve(extra_count);
 
                 // Ensure "exports" is included if the current output format needs it
-                if force_include_exports {
+                if include_namespace {
                     dependencies.push(Dependency {
                         source_index: bun_ast::Index::source(source_index as usize),
                         part_index: bun_ast::NAMESPACE_EXPORT_PART_INDEX,
@@ -1089,17 +1118,7 @@ pub(crate) fn scan_imports_and_exports(
                                 && col_ref!(ast_flags_list)[other_id]
                                     .contains(AstFlags::FORCE_CJS_TO_ESM)
                             {
-                                // If the CommonJS module was converted to ESM
-                                // and the developer `import("cjs_module")`, then
-                                // they may have code that expects the default export to return the CommonJS module.exports object
-                                // That module.exports object does not exist.
-                                // We create a default object with getters for each statically-known export
-                                // This is kind of similar to what Node.js does
-                                // Once we track usages of the dynamic import, we can remove this.
-                                if !col_ref!(named_exports)[other_id].contains(b"default") {
-                                    col!(flags)[other_id].needs_synthetic_default_export = true;
-                                }
-
+                                // The chunk of a module converted to ESM provides `default` itself.
                                 continue;
                             } else {
                                 // We should use "__require" instead of "require" if we're not

@@ -1436,8 +1436,9 @@ describe("--tolerate-republish", async () => {
 
 describe("--recursive", () => {
   // A registry that records every PUT. `known` lists name@version pairs it already has,
-  // `reject` lists names it answers with 403.
-  function mockRegistry(opts: { known?: string[]; reject?: string[] } = {}) {
+  // `reject` lists names it answers with 403, `unauthorized` lists names it answers with a
+  // 401 that asks for a bearer token (not an OTP).
+  function mockRegistry(opts: { known?: string[]; reject?: string[]; unauthorized?: string[] } = {}) {
     const puts: string[] = [];
     const server = Bun.serve({
       port: 0,
@@ -1459,6 +1460,12 @@ describe("--recursive", () => {
           if (opts.reject?.includes(name)) {
             return Response.json({ error: `${name} is not yours` }, { status: 403 });
           }
+          if (opts.unauthorized?.includes(name)) {
+            return new Response("unauthorized", {
+              status: 401,
+              headers: { "www-authenticate": 'Bearer realm="mock"' },
+            });
+          }
           return new Response("OK");
         }
         return new Response("unexpected", { status: 500 });
@@ -1474,10 +1481,16 @@ describe("--recursive", () => {
   }
 
   // Root plus three members: `b` depends on `a`, `c` depends on `b`, `hidden` is private.
+  // Every member has a `postpublish` script that prints `postpublish <name>`.
   async function workspace(prefix: string, registryUrl: string, extra: Record<string, object> = {}) {
     const { packageDir } = await registry.createTestDir();
     const pkg = (name: string, dependencies?: Record<string, string>) =>
-      JSON.stringify({ name: `${prefix}-${name}`, version: "1.0.0", dependencies });
+      JSON.stringify({
+        name: `${prefix}-${name}`,
+        version: "1.0.0",
+        dependencies,
+        scripts: { postpublish: `echo postpublish ${prefix}-${name}` },
+      });
     await Promise.all([
       write(
         join(packageDir, "bunfig.toml"),
@@ -1521,9 +1534,51 @@ describe("--recursive", () => {
     const packageDir = await workspace("rec-skip", `http://localhost:${mock.server.port}/`);
 
     const { out, err, exitCode } = await publish(env, packageDir, "-r");
-    expect(err).toBe("warn: Registry already knows about version 1.0.0; skipping.\n".repeat(2));
+    expect(err).not.toContain("error:");
+    expect(err.match(/warn: Registry already knows about version 1\.0\.0; skipping\./g)).toHaveLength(2);
     expect(mock.puts).toEqual(["rec-skip-b@1.0.0"]);
+    // A skipped package gets no success line and runs no publish scripts.
+    expect(out.match(/ \+ rec-skip-\w+@1\.0\.0/g)).toEqual([" + rec-skip-b@1.0.0"]);
+    expect(err.match(/\$ echo postpublish rec-skip-\w+/g)).toEqual(["$ echo postpublish rec-skip-b"]);
     expect(exitCode).toBe(0);
+  });
+
+  test("a dependent of a dependency cycle comes after the cycle", async () => {
+    using mock = mockRegistry();
+    // `x` and `y` depend on each other, `after` depends on `x`. Lockfile ids follow name
+    // order, so `after` has the lowest id of the three.
+    const packageDir = await workspace("rec-cycle", `http://localhost:${mock.server.port}/`, {
+      "packages/x": { name: "rec-cycle-x", version: "1.0.0", dependencies: { "rec-cycle-y": "workspace:*" } },
+      "packages/y": { name: "rec-cycle-y", version: "1.0.0", dependencies: { "rec-cycle-x": "workspace:*" } },
+      "packages/after": { name: "rec-cycle-after", version: "1.0.0", dependencies: { "rec-cycle-x": "workspace:*" } },
+    });
+
+    const { err, exitCode } = await publish(
+      env,
+      packageDir,
+      "--filter",
+      "rec-cycle-x",
+      "--filter",
+      "rec-cycle-y",
+      "--filter",
+      "rec-cycle-after",
+    );
+    expect(err).not.toContain("error:");
+    expect(mock.puts).toHaveLength(3);
+    expect(mock.puts.indexOf("rec-cycle-after@1.0.0")).toBeGreaterThan(mock.puts.indexOf("rec-cycle-x@1.0.0"));
+    expect(exitCode).toBe(0);
+  });
+
+  test("continues after a 401 that does not ask for an OTP", async () => {
+    using mock = mockRegistry({ unauthorized: ["rec-auth-a"] });
+    const packageDir = await workspace("rec-auth", `http://localhost:${mock.server.port}/`);
+
+    const { out, err, exitCode } = await publish(env, packageDir, "-r");
+    expect(err).toContain('error: unable to authenticate, need: Bearer realm="mock"');
+    expect(err).toContain("error: failed to publish 1 of 3 packages: rec-auth-a");
+    expect(out.match(/ \+ rec-auth-\w+@1\.0\.0/g)).toEqual([" + rec-auth-b@1.0.0", " + rec-auth-c@1.0.0"]);
+    expect(mock.puts).toEqual(["rec-auth-a@1.0.0", "rec-auth-b@1.0.0", "rec-auth-c@1.0.0"]);
+    expect(exitCode).toBe(1);
   });
 
   test("--filter publishes only the matching packages", async () => {
@@ -1617,8 +1672,8 @@ describe("--recursive", () => {
     const { packageDir } = await registry.createTestDir();
     const bunfig = await registry.authBunfig("recursive");
     await Promise.all([
-      rm(join(registry.packagesPath, "recursive-pub-a"), { recursive: true, force: true }),
-      rm(join(registry.packagesPath, "recursive-pub-b"), { recursive: true, force: true }),
+      rm(join(registry.packagesPath, "publish-pkg-recursive-a"), { recursive: true, force: true }),
+      rm(join(registry.packagesPath, "publish-pkg-recursive-b"), { recursive: true, force: true }),
       write(join(packageDir, "bunfig.toml"), bunfig),
       write(
         join(packageDir, "package.json"),
@@ -1626,14 +1681,14 @@ describe("--recursive", () => {
       ),
       write(
         join(packageDir, "packages", "a", "package.json"),
-        JSON.stringify({ name: "recursive-pub-a", version: "1.0.0" }),
+        JSON.stringify({ name: "publish-pkg-recursive-a", version: "1.0.0" }),
       ),
       write(
         join(packageDir, "packages", "b", "package.json"),
         JSON.stringify({
-          name: "recursive-pub-b",
+          name: "publish-pkg-recursive-b",
           version: "1.0.0",
-          dependencies: { "recursive-pub-a": "workspace:*" },
+          dependencies: { "publish-pkg-recursive-a": "workspace:*" },
         }),
       ),
     ]);
@@ -1645,15 +1700,15 @@ describe("--recursive", () => {
 
     using consumer = tempDir("recursive-consumer", {
       "bunfig.toml": bunfig,
-      "package.json": JSON.stringify({ name: "consumer", dependencies: { "recursive-pub-b": "1.0.0" } }),
+      "package.json": JSON.stringify({ name: "consumer", dependencies: { "publish-pkg-recursive-b": "1.0.0" } }),
     });
     const consumerDir = String(consumer);
     await runBunInstall(env, consumerDir);
-    expect(await file(join(consumerDir, "node_modules", "recursive-pub-b", "package.json")).json()).toEqual({
-      name: "recursive-pub-b",
+    expect(await file(join(consumerDir, "node_modules", "publish-pkg-recursive-b", "package.json")).json()).toEqual({
+      name: "publish-pkg-recursive-b",
       version: "1.0.0",
-      dependencies: { "recursive-pub-a": "1.0.0" },
+      dependencies: { "publish-pkg-recursive-a": "1.0.0" },
     });
-    expect(await exists(join(consumerDir, "node_modules", "recursive-pub-a", "package.json"))).toBeTrue();
+    expect(await exists(join(consumerDir, "node_modules", "publish-pkg-recursive-a", "package.json"))).toBeTrue();
   });
 });

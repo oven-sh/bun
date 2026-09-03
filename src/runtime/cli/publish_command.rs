@@ -764,7 +764,9 @@ impl PublishCommand {
             let _ = bun_sys::unlink(&context.abs_tarball_path);
 
             match Self::publish::<true>(&context) {
-                Ok(()) => {}
+                Ok(Published::Yes) => {}
+                // Nothing was published: no `+` line, no `publish`/`postpublish` scripts.
+                Ok(Published::AlreadyOnRegistry) => continue,
                 Err(err @ (PublishError::OutOfMemory | PublishError::NeedAuth)) => {
                     err.report_and_crash();
                 }
@@ -989,7 +991,7 @@ impl PublishCommand {
 
     fn publish<const DIRECTORY_PUBLISH: bool>(
         ctx: &Context<'_, DIRECTORY_PUBLISH>,
-    ) -> Result<(), PublishError> {
+    ) -> Result<Published, PublishError> {
         let registry = ctx.manager.scope_for_package_name(&ctx.package_name);
         let registry_url = registry.url.url();
 
@@ -1017,7 +1019,7 @@ impl PublishCommand {
                     "Registry already knows about version {}; skipping.",
                     bstr::BStr::new(version_without_build_tag),
                 );
-                return Ok(());
+                return Ok(Published::AlreadyOnRegistry);
             }
         }
 
@@ -1040,16 +1042,14 @@ impl PublishCommand {
 
         // dry-run stops here
         if ctx.manager.options.dry_run {
-            return Ok(());
+            return Ok(Published::Yes);
         }
 
-        // Note: `AsyncHTTP::init_sync` requires `&'static [u8]` for the
-        // request body. Single-shot CLI path — adopt the
-        // already-owned `Box<[u8]>` (base64-encoded tarball; can be multi-MB)
-        // into the process-lifetime side-table. Zero-copy.
-        let publish_req_body: &'static [u8] = crate::cli::cli_adopt(
-            Self::construct_publish_request_body::<DIRECTORY_PUBLISH>(ctx)?,
-        );
+        // base64-encoded tarball; can be multi-MB. Freed when this call returns, so a workspace
+        // run holds one body at a time.
+        let publish_req_body: Box<[u8]> =
+            Self::construct_publish_request_body::<DIRECTORY_PUBLISH>(ctx)?;
+        let publish_req_body: &[u8] = &publish_req_body;
 
         let mut print_buf: Vec<u8> = Vec::new();
 
@@ -1117,7 +1117,7 @@ impl PublishCommand {
                                     "login is not allowed from your IP address",
                                     (),
                                 );
-                                Global::crash();
+                                return Err(PublishError::Rejected);
                             } else if strings::eql_case_insensitive_ascii(trimmed, b"otp", true) {
                                 break 'prompt_for_otp true;
                             }
@@ -1127,7 +1127,7 @@ impl PublishCommand {
                             "unable to authenticate, need: {}",
                             (bstr::BStr::new(www_authenticate),),
                         );
-                        Global::crash();
+                        return Err(PublishError::Rejected);
                     } else if strings::contains(&response_buf.list, b"one-time pass") {
                         // missing www-authenicate header but one-time pass is still included
                         break 'prompt_for_otp true;
@@ -1221,7 +1221,7 @@ impl PublishCommand {
             _ => {}
         }
 
-        Ok(())
+        Ok(Published::Yes)
     }
 
     fn press_enter_to_open_in_browser(auth_url: &ZStr) {
@@ -2221,6 +2221,12 @@ impl PublishCommand {
 
         Ok(buf.into_boxed_slice())
     }
+}
+
+pub(crate) enum Published {
+    Yes,
+    /// The registry already had this `name@version`, so nothing was sent.
+    AlreadyOnRegistry,
 }
 
 #[derive(thiserror::Error, Debug, strum::IntoStaticStr)]

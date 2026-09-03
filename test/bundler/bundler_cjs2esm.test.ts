@@ -1376,8 +1376,8 @@ describe("bundler", () => {
   });
   // A `var` with the name of a function declaration can change the value of the
   // binding, and so can a block-level function in sloppy mode. An ES module
-  // cannot declare a function and a `var` with one name, so this output does
-  // not load. The test reads the printed calls.
+  // cannot declare a function and a `var` with one name, so this file keeps its
+  // `__commonJS` wrapper, and each call passes `module.exports` as `this`.
   itBundled("cjs2esm/MethodCallKeepsThisWhenAVarRedeclaresTheFunction", {
     files: {
       "/entry.js": /* js */ `
@@ -1400,12 +1400,9 @@ describe("bundler", () => {
         exports.name = "lib";
       `,
     },
-    cjs2esm: true,
-    onAfterBundle(api) {
-      const out = api.readFile("/out.js");
-      expect(out).toContain(
-        "console.log(exports_lib.nested(), exports_lib.top(), exports_lib.top2(), exports_lib.block());",
-      );
+    cjs2esm: { unhandled: ["/lib.cjs"] },
+    run: {
+      stdout: "lib lib lib lib",
     },
   });
   itBundled("cjs2esm/MethodCallWithoutThisBindsDirectly", {
@@ -2046,6 +2043,120 @@ describe("bundler", () => {
     cjs2esm: true,
     run: {
       stdout: "1 2 false",
+    },
+  });
+  // Module code makes a top-level function declaration lexical, so a `var`
+  // with the same name is a SyntaxError there. A function body allows it, so
+  // these files keep their `__commonJS` wrapper.
+  itBundled("cjs2esm/VarWithTheNameOfATopLevelFunctionKeepsWrapper", {
+    files: {
+      "/entry.js": /* js */ `
+        import { top as a } from "./decl-then-var.cjs";
+        import { top as b } from "./var-then-decl.cjs";
+        import { top as c } from "./var-in-block.cjs";
+        import { top as d } from "./block-function.cjs";
+        import { top as e } from "./generator.cjs";
+        import lib from "./default-import.cjs";
+        console.log(a(), b(), c(), d(), e(), lib.top());
+      `,
+      "/decl-then-var.cjs": /* js */ `
+        function top() { return "declaration"; }
+        var top = function () { return "var"; };
+        exports.top = top;
+      `,
+      "/var-then-decl.cjs": /* js */ `
+        var top = function () { return "var"; };
+        function top() { return "declaration"; }
+        exports.top = top;
+      `,
+      "/var-in-block.cjs": /* js */ `
+        function top() { return "declaration"; }
+        if (typeof top === "function") {
+          var top = function () { return "var"; };
+        }
+        exports.top = top;
+      `,
+      "/block-function.cjs": /* js */ `
+        function top() { return "declaration"; }
+        {
+          function top() { return "block"; }
+        }
+        exports.top = top;
+      `,
+      "/generator.cjs": /* js */ `
+        function* top() {}
+        var top = function () { return "var"; };
+        exports.top = top;
+      `,
+      "/default-import.cjs": /* js */ `
+        function top() { return "declaration"; }
+        var top = function () { return "var"; };
+        exports.top = top;
+      `,
+    },
+    cjs2esm: {
+      unhandled: [
+        "/decl-then-var.cjs",
+        "/var-then-decl.cjs",
+        "/var-in-block.cjs",
+        "/block-function.cjs",
+        "/generator.cjs",
+        "/default-import.cjs",
+      ],
+    },
+    run: {
+      stdout: "var var var block var var",
+    },
+  });
+  // A repeated `var` and a `var` in a nested function are valid module code.
+  // Of two top-level functions with one name, the parser drops the first. So
+  // this file is still lifted.
+  itBundled("cjs2esm/OtherRedeclarationsAreStillLifted", {
+    files: {
+      "/entry.js": /* js */ `
+        import { top, count, wrap } from "./lib.cjs";
+        console.log(top(), count, wrap());
+      `,
+      "/lib.cjs": /* js */ `
+        function top() { return "first"; }
+        function top() { return "second"; }
+        var count = 1;
+        var count = 2;
+        function wrap() {
+          var top = function () { return "inner"; };
+          return top();
+        }
+        exports.top = top;
+        exports.count = count;
+        exports.wrap = wrap;
+      `,
+    },
+    cjs2esm: true,
+    run: {
+      stdout: "second 2 inner",
+    },
+  });
+  // `module.exports = require()` in an unwrapped package becomes
+  // `export * from`, which is module code too.
+  itBundled("cjs2esm/ReactSpecificUnwrappingVarWithTheNameOfAFunctionKeepsWrapper", {
+    files: {
+      "/entry.js": /* js */ `
+        import { value } from "react";
+        console.log(value);
+      `,
+      "/node_modules/react/index.js": /* js */ `
+        function load() { return "declaration"; }
+        var load = function () { return "var"; };
+        console.log(load());
+        module.exports = require('./main');
+      `,
+      "/node_modules/react/main.js": /* js */ `
+        exports.value = "main";
+      `,
+    },
+    cjs2esm: { unhandled: ["/node_modules/react/index.js"] },
+    run: {
+      stdout: "var\nmain",
     },
   });
 });

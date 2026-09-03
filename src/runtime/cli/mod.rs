@@ -375,6 +375,8 @@ pub mod pm_view_command;
 pub(crate) mod pm_why_command;
 #[path = "prune_command.rs"]
 pub(crate) mod prune_command;
+#[path = "web_login.rs"]
+pub(crate) mod web_login;
 #[path = "publish_command.rs"]
 pub mod publish_command;
 #[path = "remove_command.rs"]

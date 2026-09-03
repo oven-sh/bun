@@ -68,6 +68,7 @@ pub mod error;
 pub use error::{Error, Result};
 
 pub mod npm;
+pub mod npmrc;
 #[path = "PackageManifestMap.rs"]
 pub mod package_manifest_map;
 pub mod resolution;

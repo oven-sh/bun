@@ -98,11 +98,11 @@
   "src/runtime/cli/open.rs": {
     "thread spawn": 1
   },
-  "src/runtime/cli/publish_command.rs": {
-    "thread spawn": 1
-  },
   "src/runtime/cli/run_command.rs": {
     "HTTPThread::schedule": 1
+  },
+  "src/runtime/cli/web_login.rs": {
+    "thread spawn": 1
   },
   "src/runtime/dns_jsc/dns.rs": {
     "WorkPool::schedule*": 1,

@@ -214,7 +214,6 @@ export class ClassDefinition {
    */
   memoryCost?: boolean;
   hasPendingActivity?: boolean;
-  isEventEmitter?: boolean;
 
   configurable?: boolean;
   enumerable?: boolean;

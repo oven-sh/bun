@@ -190,7 +190,6 @@ name = "bun_ast_jsc"
 version = "0.0.0"
 dependencies = [
  "bun_ast",
- "bun_core",
  "bun_jsc",
 ]
 
@@ -297,7 +296,6 @@ dependencies = [
  "bstr",
  "bun_ast",
  "bun_bundler",
- "bun_core",
  "bun_jsc",
  "bun_opaque",
  "bun_options_types",
@@ -1094,7 +1092,6 @@ name = "bun_patch_jsc"
 version = "0.0.0"
 dependencies = [
  "bstr",
- "bun_core",
  "bun_jsc",
  "bun_patch",
  "bun_sys",

@@ -324,7 +324,6 @@ function layoutOrder(modules: string[], outputs: Map<string, string>): string[] 
     "node/https.ts",
     "node/net.ts",
     "node/url.ts",
-    "node/buffer.ts",
     "node/tty.ts",
     "node/worker_threads.ts",
     "node/zlib.ts",

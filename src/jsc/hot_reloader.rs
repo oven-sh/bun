@@ -108,10 +108,8 @@ impl HotReloaderCtx for VirtualMachine {
         }
     }
 
-    fn reload(&mut self, _task: &mut dyn HotReloadTaskView) {
-        // The inherent `reload` ignores its task argument, so pass `None`
-        // rather than threading the dyn view through.
-        VirtualMachine::reload(self, None);
+    fn reload(&mut self) {
+        VirtualMachine::reload(self);
     }
 
     fn bust_dir_cache(&mut self, path: &[u8]) -> bool {
@@ -183,8 +181,6 @@ impl HotReloaderCtx for VirtualMachine {
 }
 
 /// The concrete `HotReloadTask` instance the JS event loop dispatches.
-/// The dyn trait below is the type-erased view used by
-/// `HotReloaderCtx::reload`.
 pub type HotReloadTask = Task<VirtualMachine, EventLoop, false>;
 /// `bun run --watch` reload routed through the event loop (only when
 /// `--watch-kill-signal` listeners exist; see `Task::enqueue`).
@@ -203,10 +199,8 @@ pub trait HotReloaderCtx {
     /// Implementor returns the live `Watcher` regardless of how it's stored.
     fn bun_watcher_mut(&mut self) -> &mut Watcher;
 
-    /// Called from `Task::run` to perform the actual reload. The const-generic
-    /// task is erased via the `HotReloadTaskView` so this trait isn't
-    /// recursively generic.
-    fn reload(&mut self, task: &mut dyn HotReloadTaskView);
+    /// Called from `Task::run` to perform the actual reload.
+    fn reload(&mut self);
 
     /// Returns whether anything was busted.
     fn bust_dir_cache(&mut self, path: &[u8]) -> bool;
@@ -235,28 +229,6 @@ pub trait HotReloaderCtx {
     ) -> *mut Watcher;
 
     fn compute_clear_screen(&self) -> bool;
-}
-
-/// Type-erased view of a `Task<Ctx, EventLoopType, RELOAD_IMMEDIATELY>` so
-/// `HotReloaderCtx::reload` doesn't need to name the const generics.
-pub trait HotReloadTaskView {
-    fn count(&self) -> u8;
-    fn hashes(&self) -> &[u32];
-    fn paths(&self) -> &[&'static [u8]];
-}
-
-impl<Ctx, EventLoopType, const RELOAD_IMMEDIATELY: bool> HotReloadTaskView
-    for Task<Ctx, EventLoopType, RELOAD_IMMEDIATELY>
-{
-    fn count(&self) -> u8 {
-        self.count
-    }
-    fn hashes(&self) -> &[u32] {
-        &self.hashes[..self.count as usize]
-    }
-    fn paths(&self) -> &[&'static [u8]] {
-        &self.paths[..self.count as usize]
-    }
 }
 
 /// When non-null, `on_file_update` records the absolute path of every file
@@ -579,7 +551,7 @@ where
         while self.pending_count().swap(0, Ordering::Relaxed) > 0 {
             let ctx = self.ctx_ptr();
             // SAFETY: ctx outlives reloader (BACKREF).
-            unsafe { (*ctx).reload(self) };
+            unsafe { (*ctx).reload() };
         }
     }
 
@@ -1333,7 +1305,7 @@ impl<'a> HotReloaderCtx for bun_bundler::BundleV2<'a> {
         unsafe { &mut *handle.as_ptr() }
     }
 
-    fn reload(&mut self, _task: &mut dyn HotReloadTaskView) {
+    fn reload(&mut self) {
         // RELOAD_IMMEDIATELY=true never enqueues `Task::run` for BundleV2
         // (diverges or kill-signal branch; no listeners registered there).
         unreachable!()

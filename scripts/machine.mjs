@@ -255,17 +255,6 @@ const aws = {
   },
 
   /**
-   * @param {Record<string, string | undefined>} options
-   * @returns {Promise<string>}
-   * @link https://awscli.amazonaws.com/v2/documentation/api/latest/reference/ec2/copy-image.html
-   */
-  async copyImage(options) {
-    const flags = aws.getFlags(options);
-    const { ImageId } = await aws.spawn($`ec2 copy-image ${flags}`);
-    return ImageId;
-  },
-
-  /**
    * @param {"image-available"} action
    * @param {...string} imageIds
    * @link https://awscli.amazonaws.com/v2/documentation/api/latest/reference/ec2/wait/image-available.html

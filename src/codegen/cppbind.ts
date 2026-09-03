@@ -745,14 +745,6 @@ function generateRustFn(fn: CppFn, rustRaw: string[], rustWrap: string[]): void 
   );
 }
 
-function closest(node: SyntaxNode | null, type: string): SyntaxNode | null {
-  while (node) {
-    if (node.name === type) return node;
-    node = node.parent;
-  }
-  return null;
-}
-
 type CppParser = typeof cppParser;
 
 async function processFile(parser: CppParser, file: string, allFunctions: CppFn[]) {
@@ -823,17 +815,6 @@ async function processFile(parser: CppParser, file: string, allFunctions: CppFn[
       }
 
       queryFoundLines.add(lineInfo.get(zigExportAttr.from).line);
-
-      // disabled because lezer parses (extern "C") separately to the function definition / block
-      /* const linkage = closest(fnNode, "LinkageSpecification");
-      const linkageString = linkage?.getChild("String");
-      if (!linkage || !linkageString || text(linkageString, ctx) !== '"C"') {
-        appendError(
-          nodePosition(fnNode, ctx),
-          'exported function must be extern "C":\n' +
-            (linkage ? prettyPrintLezerNode(linkage, ctx.sourceCode) : "no linkage"),
-        );
-      } */
 
       const tagStr = text(tagIdentifier, ctx);
       let tag: ExportTag | undefined;

@@ -27,10 +27,6 @@ typedef void* gpointer;
 typedef unsigned int guint;
 typedef int gint;
 
-// GLib constants
-#define G_FALSE 0
-#define G_TRUE 1
-
 // Secret schema types
 typedef enum {
     SECRET_SCHEMA_NONE = 0,

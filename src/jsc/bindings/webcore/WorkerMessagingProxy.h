@@ -91,7 +91,6 @@ public:
     void parentContextWillDestroy();
 
     bool hasPendingActivity() const { return m_state.load() != State::Closed; }
-    bool isOnline() const { return m_state.load() == State::Running; }
     bool isClosingOrClosed() const { return m_state.load() >= State::Closing; }
 
     uint64_t registerCrossVMRequest(JSC::VM&, JSC::JSPromise*);

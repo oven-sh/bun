@@ -126,8 +126,13 @@ describe("root install step", () => {
   test("uses npm with rootPackageManager=npm", () => {
     const { rule, text } = rootInstallNinja({ rootPackageManager: "npm" });
     expect(rule).toBe("npm_install");
+    // The rule deletes node_modules before npm runs. The syntax depends on the host shell.
+    const clean =
+      process.platform === "win32"
+        ? "(if exist node_modules rmdir /s /q node_modules) && (if exist node_modules exit 1) && call"
+        : "rm -rf node_modules &&";
     expect(text).toContain(
-      "command = cd $dir && rm -rf node_modules && /fake/bin/npm install --no-save --no-package-lock --include=dev --no-audit --no-fund && touch $stamp",
+      `${clean} /fake/bin/npm install --no-save --no-package-lock --include=dev --no-audit --no-fund`,
     );
   });
 

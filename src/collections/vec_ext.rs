@@ -108,12 +108,12 @@ pub trait VecExt<T>: Sized {
     /// # Safety
     /// Exposes `self[len..capacity]` as initialized. Every element must be
     /// overwritten before any read (including Drop). Prefer
-    /// [`unused_capacity_slice`] for `T` with validity invariants.
+    /// `spare_capacity_mut()` for `T` with validity invariants.
     unsafe fn expand_to_capacity(&mut self);
     /// # Safety
     /// Returns `&mut [T]` over `additional` uninitialized elements. Caller
     /// must fully initialize the slice before any read/drop. Prefer
-    /// [`unused_capacity_slice`] + `set_len` for non-POD `T`.
+    /// [`reserve_spare`] + `set_len` for non-POD `T`.
     unsafe fn writable_slice(&mut self, additional: usize) -> &mut [T];
     /// # Safety
     /// As [`writable_slice`] but uses `reserve_exact` so the allocation grows

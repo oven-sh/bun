@@ -900,7 +900,7 @@ impl<'a> Parser<'a> {
 
         let mut before = BumpVec::<js_ast::Part>::new_in(p.arena);
         let mut after = BumpVec::<js_ast::Part>::new_in(p.arena);
-        let mut parts = BumpVec::<js_ast::Part>::new_in(p.arena);
+        let mut parts = BumpVec::<js_ast::Part>::with_capacity_in(stmts.len() + 2, p.arena);
         // (Element ownership is transferred into `parts` below via bitwise copy + set_len(0).)
 
         if p.options.bundle {

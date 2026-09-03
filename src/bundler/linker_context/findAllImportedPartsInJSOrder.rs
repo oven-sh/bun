@@ -147,6 +147,15 @@ pub(crate) fn find_imported_parts_in_js_order(
             parts: this.graph.ast.items_parts(),
             import_records: this.graph.ast.items_import_records(),
             entry_bits: chunk.entry_bits(),
+            largest_source_len: this
+                .parse_graph()
+                .input_files
+                .items_source()
+                .iter()
+                .map(|source| source.contents.len())
+                .max()
+                .unwrap_or(0)
+                .min(i32::MAX as usize) as i32,
             c: this,
             chunk_index,
             entry_point_chunk_indices,
@@ -203,6 +212,8 @@ fn run_visits<const WITH_CODE_SPLITTING: bool, const WITH_SCB: bool>(
 
 pub(crate) struct FindImportedPartsVisitor<'a, 'ctx> {
     pub(crate) entry_bits: &'a AutoBitSet,
+    /// Of the JavaScript files in the bundle.
+    pub(crate) largest_source_len: i32,
     pub(crate) flags: &'a [crate::js_meta::Flags],
     pub(crate) parts: &'a [bun_ast::PartList<'ctx>],
     pub(crate) import_records: &'a [bun_ast::import_record::List<'ctx>],
@@ -242,14 +253,38 @@ enum PartsFrame {
 }
 
 impl<'a, 'ctx> FindImportedPartsVisitor<'a, 'ctx> {
+    /// Each range is printed as one task, so a range stops growing once it
+    /// spans this many source bytes: enough ranges for a large file to occupy
+    /// the thread pool, few enough that small files stay whole.
+    fn range_source_bytes_max(&self) -> i32 {
+        const MIN: i32 = 128 * 1024;
+        let threads = self.c.worker_pool().max_threads().max(1) as i32;
+        (self.largest_source_len / (2 * threads)).max(MIN)
+    }
+
     fn append_or_extend_range(
-        ranges: &mut Vec<PartRange>,
+        &mut self,
+        in_prefix: bool,
         source_index: IndexInt,
         part_index: IndexInt,
     ) {
+        let parts = self.parts[source_index as usize].as_slice();
+        let part_start = |part_index: IndexInt| -> i32 {
+            match parts[part_index as usize].stmts.slice().first() {
+                Some(stmt) => stmt.loc.start,
+                None => 0,
+            }
+        };
+        let max = self.range_source_bytes_max();
+        let ranges = if in_prefix {
+            &mut self.parts_prefix
+        } else {
+            &mut self.part_ranges
+        };
         if let Some(last_range) = ranges.last_mut() {
             if last_range.source_index.get() == source_index
                 && last_range.part_index_end == part_index
+                && part_start(part_index) - part_start(last_range.part_index_begin) < max
             {
                 last_range.part_index_end += 1;
                 return;
@@ -289,12 +324,11 @@ impl<'a, 'ctx> FindImportedPartsVisitor<'a, 'ctx> {
                         && part_index != bun_ast::NAMESPACE_EXPORT_PART_INDEX
                         && self.c.should_include_part(source_index, part)
                     {
-                        let js_parts = if source_index == Index::RUNTIME.value() {
-                            &mut self.parts_prefix
-                        } else {
-                            &mut self.part_ranges
-                        };
-                        Self::append_or_extend_range(js_parts, source_index, part_index);
+                        self.append_or_extend_range(
+                            source_index == Index::RUNTIME.value(),
+                            source_index,
+                            part_index,
+                        );
                     }
                     continue;
                 }
@@ -386,8 +420,8 @@ impl<'a, 'ctx> FindImportedPartsVisitor<'a, 'ctx> {
                         && is_file_in_chunk
                         && parts_live.is_set(bun_ast::NAMESPACE_EXPORT_PART_INDEX as usize)
                     {
-                        Self::append_or_extend_range(
-                            &mut self.part_ranges,
+                        self.append_or_extend_range(
+                            false,
                             source_index,
                             bun_ast::NAMESPACE_EXPORT_PART_INDEX,
                         );

@@ -9591,7 +9591,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // the vast majority of real files in a single allocation.
         let estimated_symbol_count = source.contents.len() / 16;
 
-        let mut scope_order = ScopeOrderList::with_capacity_in(1, arena);
+        // ~one scope per 64 source bytes covers most files without regrowth.
+        let mut scope_order =
+            ScopeOrderList::with_capacity_in((source.contents.len() / 64).max(1), arena);
         let scope_obj = arena.alloc(Scope {
             members: Default::default(),
             children: bun_alloc::AstAlloc::vec(),
@@ -9725,7 +9727,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             latest_arrow_arg_loc: bun_ast::Loc::EMPTY,
             forbid_suffix_after_as_loc: bun_ast::Loc::EMPTY,
             scopes_for_current_part: BumpVec::new_in(arena),
-            symbols: BumpVec::new_in(arena),
+            symbols: BumpVec::with_capacity_in(estimated_symbol_count, arena),
             ts_use_counts: BumpVec::new_in(arena),
             exports_ref: Ref::NONE,
             require_ref: Ref::NONE,

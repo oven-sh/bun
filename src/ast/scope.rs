@@ -17,17 +17,27 @@ pub struct MemberEntry {
     pub member: Member,
 }
 
-/// Up to `INLINE_MAX` bindings, hashes first so that a lookup that misses
-/// (the common case while resolving an identifier up the scope chain) reads
-/// one cache line.
-pub struct InlineMembers {
-    hashes: [u32; Members::INLINE_MAX],
+/// Up to `N` bindings, hashes first so that a lookup that misses (the common
+/// case while resolving an identifier up the scope chain) reads one cache
+/// line. Scopes start with `N = 4` (most have no more) and move to `N = 8`
+/// before becoming a table.
+pub struct InlineMembers<const N: usize> {
+    hashes: [u32; N],
     len: u32,
-    names: [crate::StoreStr; Members::INLINE_MAX],
-    members: [Member; Members::INLINE_MAX],
+    members: [Member; N],
+    names: [crate::StoreStr; N],
 }
 
-impl InlineMembers {
+impl<const N: usize> InlineMembers<N> {
+    fn new() -> Self {
+        InlineMembers {
+            hashes: [0; N],
+            len: 0,
+            members: [Member::EMPTY; N],
+            names: [crate::StoreStr::EMPTY; N],
+        }
+    }
+
     /// Bit `i` set: entry `i` has this hash.
     #[inline]
     fn matches(&self, hash: u32) -> u32 {
@@ -50,6 +60,27 @@ impl InlineMembers {
         }
         None
     }
+
+    /// Caller checks `len < N`.
+    #[inline]
+    fn push(&mut self, hash: u32, name: &[u8]) -> usize {
+        let i = self.len as usize;
+        self.hashes[i] = hash;
+        self.names[i] = crate::StoreStr::new(name);
+        self.members[i] = Member::default();
+        self.len += 1;
+        i
+    }
+
+    fn grow<const M: usize>(&self) -> InlineMembers<M> {
+        let mut out = InlineMembers::<M>::new();
+        let n = self.len as usize;
+        out.hashes[..n].copy_from_slice(&self.hashes[..n]);
+        out.members[..n].copy_from_slice(&self.members[..n]);
+        out.names[..n].copy_from_slice(&self.names[..n]);
+        out.len = self.len;
+        out
+    }
 }
 
 /// A scope's bindings by name. Most scopes bind a handful of names, so they
@@ -61,7 +92,8 @@ pub enum Members {
     #[default]
     Empty,
     /// In declaration order.
-    Inline(bun_alloc::AstBox<InlineMembers>),
+    Small(bun_alloc::AstBox<InlineMembers<4>>),
+    Inline(bun_alloc::AstBox<InlineMembers<8>>),
     Table(bun_collections::hashbrown::HashTable<MemberEntry, AstAlloc>),
 }
 
@@ -71,8 +103,7 @@ pub struct MembersGetOrPut<'a> {
 }
 
 pub enum MembersIter<'a> {
-    Empty,
-    Inline(&'a InlineMembers, usize),
+    Inline(&'a [crate::StoreStr], &'a [Member], usize),
     Table(bun_collections::hashbrown::hash_table::Iter<'a, MemberEntry>),
 }
 
@@ -82,12 +113,8 @@ impl<'a> Iterator for MembersIter<'a> {
     #[inline]
     fn next(&mut self) -> Option<Self::Item> {
         match self {
-            MembersIter::Empty => None,
-            MembersIter::Inline(inline, i) => {
-                if *i >= inline.len as usize {
-                    return None;
-                }
-                let item = (inline.names[*i].slice(), &inline.members[*i]);
+            MembersIter::Inline(names, members, i) => {
+                let item = (names.get(*i)?.slice(), &members[*i]);
                 *i += 1;
                 Some(item)
             }
@@ -100,8 +127,9 @@ impl Members {
     pub const EMPTY: Members = Members::Empty;
     pub const INLINE_MAX: usize = 8;
 
-    /// The low 32 bits of wyhash; `hashbrown` takes its tag from the top 7
-    /// bits of what it is given, so `Table` feeds it the `u32` widened.
+    /// The low 32 bits of wyhash. A match is always confirmed by comparing
+    /// the names. `Table` feeds `hashbrown` the value widened, since it takes
+    /// its tag from the top bits.
     #[inline]
     pub fn hash(name: &[u8]) -> u32 {
         bun_wyhash::hash(name) as u32
@@ -116,6 +144,7 @@ impl Members {
     pub fn len(&self) -> usize {
         match self {
             Members::Empty => 0,
+            Members::Small(inline) => inline.len as usize,
             Members::Inline(inline) => inline.len as usize,
             Members::Table(table) => table.len(),
         }
@@ -133,8 +162,13 @@ impl Members {
 
     pub fn iter(&self) -> MembersIter<'_> {
         match self {
-            Members::Empty => MembersIter::Empty,
-            Members::Inline(inline) => MembersIter::Inline(inline, 0),
+            Members::Empty => MembersIter::Inline(&[], &[], 0),
+            Members::Small(m) => {
+                MembersIter::Inline(&m.names[..m.len as usize], &m.members[..m.len as usize], 0)
+            }
+            Members::Inline(m) => {
+                MembersIter::Inline(&m.names[..m.len as usize], &m.members[..m.len as usize], 0)
+            }
             Members::Table(table) => MembersIter::Table(table.iter()),
         }
     }
@@ -157,6 +191,7 @@ impl Members {
     pub fn get_hashed(&self, hash: u32, name: &[u8]) -> Option<&Member> {
         match self {
             Members::Empty => None,
+            Members::Small(inline) => inline.find(hash, name).map(|i| &inline.members[i]),
             Members::Inline(inline) => inline.find(hash, name).map(|i| &inline.members[i]),
             Members::Table(table) => table
                 .find(Self::table_hash(hash), |e| {
@@ -174,7 +209,27 @@ impl Members {
     }
 
     fn to_table(&mut self, capacity: usize) {
-        let mut table = match core::mem::take(self) {
+        fn fill<const N: usize>(
+            inline: &InlineMembers<N>,
+            capacity: usize,
+        ) -> bun_collections::hashbrown::HashTable<MemberEntry, AstAlloc> {
+            let mut table = bun_collections::hashbrown::HashTable::with_capacity_in(
+                capacity.max(Members::INLINE_MAX * 2),
+                AstAlloc,
+            );
+            for i in 0..inline.len as usize {
+                let entry = MemberEntry {
+                    name: inline.names[i],
+                    hash: inline.hashes[i],
+                    member: inline.members[i],
+                };
+                table.insert_unique(Members::table_hash(entry.hash), entry, |e| {
+                    Members::table_hash(e.hash)
+                });
+            }
+            table
+        }
+        let table = match core::mem::take(self) {
             Members::Table(mut table) => {
                 table.reserve(capacity, |e| Self::table_hash(e.hash));
                 table
@@ -182,31 +237,10 @@ impl Members {
             Members::Empty => {
                 bun_collections::hashbrown::HashTable::with_capacity_in(capacity, AstAlloc)
             }
-            Members::Inline(inline) => {
-                let mut table = bun_collections::hashbrown::HashTable::with_capacity_in(
-                    capacity.max(Self::INLINE_MAX * 2),
-                    AstAlloc,
-                );
-                for i in 0..inline.len as usize {
-                    let entry = MemberEntry {
-                        name: inline.names[i],
-                        hash: inline.hashes[i],
-                        member: inline.members[i],
-                    };
-                    table.insert_unique(Self::table_hash(entry.hash), entry, |e| {
-                        Self::table_hash(e.hash)
-                    });
-                }
-                table
-            }
+            Members::Small(inline) => fill(&inline, capacity),
+            Members::Inline(inline) => fill(&inline, capacity),
         };
-        let _ = core::mem::replace(
-            self,
-            Members::Table(core::mem::replace(
-                &mut table,
-                bun_collections::hashbrown::HashTable::new_in(AstAlloc),
-            )),
-        );
+        *self = Members::Table(table);
     }
 
     /// The entry for `name`, inserted with `Member::default()` if absent.
@@ -218,34 +252,38 @@ impl Members {
         loop {
             match self {
                 Members::Empty => {
-                    *self = Members::Inline(bun_alloc::ast_box(InlineMembers {
-                        hashes: [0; Self::INLINE_MAX],
-                        len: 0,
-                        names: [crate::StoreStr::EMPTY; Self::INLINE_MAX],
-                        members: [Member::EMPTY; Self::INLINE_MAX],
-                    }));
+                    *self = Members::Small(bun_alloc::ast_box(InlineMembers::new()));
                 }
-                Members::Inline(inline) => {
-                    if let Some(i) = inline.find(hash, name) {
-                        let Members::Inline(inline) = self else {
+                Members::Small(inline) => {
+                    let found = inline.find(hash, name);
+                    if found.is_some() || (inline.len as usize) < 4 {
+                        let Members::Small(inline) = self else {
                             unreachable!()
                         };
+                        let i = match found {
+                            Some(i) => i,
+                            None => inline.push(hash, name),
+                        };
                         return MembersGetOrPut {
-                            found_existing: true,
+                            found_existing: found.is_some(),
                             value_ptr: &mut inline.members[i],
                         };
                     }
-                    let i = inline.len as usize;
-                    if i < Self::INLINE_MAX {
+                    let grown = inline.grow::<8>();
+                    *self = Members::Inline(bun_alloc::ast_box(grown));
+                }
+                Members::Inline(inline) => {
+                    let found = inline.find(hash, name);
+                    if found.is_some() || (inline.len as usize) < Self::INLINE_MAX {
                         let Members::Inline(inline) = self else {
                             unreachable!()
                         };
-                        inline.hashes[i] = hash;
-                        inline.names[i] = crate::StoreStr::new(name);
-                        inline.members[i] = Member::default();
-                        inline.len += 1;
+                        let i = match found {
+                            Some(i) => i,
+                            None => inline.push(hash, name),
+                        };
                         return MembersGetOrPut {
-                            found_existing: false,
+                            found_existing: found.is_some(),
                             value_ptr: &mut inline.members[i],
                         };
                     }

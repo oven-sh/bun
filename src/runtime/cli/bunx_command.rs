@@ -1013,9 +1013,8 @@ impl BunxCommand {
         let passthrough: &[Box<[u8]>] = opts.passthrough_list.as_slice();
 
         let mut do_cache_bust = update_request.version.tag == VersionTag::DistTag;
-        // `--force` re-links the whole cached tree (slow on Windows, #41211), so
-        // pass it only when an existing tree must be replaced: stale or untrusted.
-        // A dist-tag run only needs the fresh manifest from `--no-cache` (#4981).
+        // Stale or untrusted tree only: `--force` re-links every cached package,
+        // which is slow on Windows (#41211); `--no-cache` alone keeps #4981 fixed.
         let mut force_reinstall = false;
         let look_for_existing_bin = update_request.version.literal.is_empty()
             || update_request.version.tag != VersionTag::DistTag;

@@ -96,19 +96,24 @@ const DEBUG_PARAMS: &[ParamType] = &[parse_param!(
     "--breakpoint-resolve <STR>...     DEBUG MODE: breakpoint when resolving something that includes this string"
 )];
 
-const TRANSPILER_PARAMS_: &[ParamType] = &[
-    parse_param!(
-        "--main-fields <STR>...             Main fields to lookup in package.json. Defaults to --target dependent"
-    ),
-    parse_param!("--preserve-symlinks               Preserve symlinks when resolving files"),
-    parse_param!(
-        "--preserve-symlinks-main          Preserve symlinks when resolving the main entry point"
-    ),
-    parse_param!("--extension-order <STR>...        Defaults to: .tsx,.ts,.jsx,.js,.json "),
-    parse_param!(
-        "--tsconfig-override <STR>          Specify custom tsconfig.json. Default <d>$cwd<r>/tsconfig.json"
-    ),
-    parse_param!(
+pub(crate) const TSCONFIG_OVERRIDE_PARAM: &[ParamType] = &[parse_param!(
+    "--tsconfig-override <STR>          Specify custom tsconfig.json. Default <d>$cwd<r>/tsconfig.json"
+)];
+
+const TRANSPILER_PARAMS_: &[ParamType] = concat_params!(
+    &[
+        parse_param!(
+            "--main-fields <STR>...             Main fields to lookup in package.json. Defaults to --target dependent"
+        ),
+        parse_param!("--preserve-symlinks               Preserve symlinks when resolving files"),
+        parse_param!(
+            "--preserve-symlinks-main          Preserve symlinks when resolving the main entry point"
+        ),
+        parse_param!("--extension-order <STR>...        Defaults to: .tsx,.ts,.jsx,.js,.json "),
+    ],
+    TSCONFIG_OVERRIDE_PARAM,
+    &[
+        parse_param!(
         "-d, --define <STR>...              Substitute K:V while parsing, e.g. --define process.env.NODE_ENV:\"development\". Values are parsed as JSON."
     ),
     parse_param!(
@@ -139,7 +144,8 @@ const TRANSPILER_PARAMS_: &[ParamType] = &[
     parse_param!(
         "--ignore-dce-annotations          Ignore tree-shaking annotations such as @__PURE__"
     ),
-];
+    ],
+);
 
 const RUNTIME_PARAMS_: &[ParamType] = &[
     parse_param!(

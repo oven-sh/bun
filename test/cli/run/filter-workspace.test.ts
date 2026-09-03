@@ -1,63 +1,35 @@
-import { spawnSync } from "bun";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isWindows, tempDir, tempDirWithFiles } from "harness";
+import {
+  bunEnv,
+  bunExe,
+  isWindows,
+  normalizeBunSnapshot,
+  tempDir,
+  tempDirWithFiles,
+  type DirectoryTree,
+} from "harness";
 import { existsSync, symlinkSync } from "node:fs";
 import { setTimeout as sleep } from "node:timers/promises";
 import { join } from "path";
 
+// Shared read-only workspace. Every test that runs a script here only reads
+// the tree, so the concurrent tests below can share it.
 const cwd_root = tempDirWithFiles("testworkspace", {
   packages: {
     pkga: {
-      "index.js": "console.log('pkga');",
-      "sleep.js":
-        "for (let i = 0; i < 3; i++) { await new Promise(resolve => setTimeout(resolve, 100)); console.log('x'); }",
-      "package.json": JSON.stringify({
-        name: "pkga",
-        scripts: {
-          present: "echo scripta",
-          long: `${bunExe()} run sleep.js`,
-        },
-      }),
+      "package.json": JSON.stringify({ name: "pkga", scripts: { present: "echo scripta" } }),
     },
     scoped: {
-      "index.js": "console.log('pkga');",
-      "sleep.js":
-        "for (let i = 0; i < 3; i++) { await new Promise(resolve => setTimeout(resolve, 100)); console.log('x'); }",
-      "package.json": JSON.stringify({
-        name: "@scoped/scoped",
-        scripts: {
-          present: "echo scriptd",
-          long: `${bunExe()} run sleep.js`,
-        },
-      }),
+      "package.json": JSON.stringify({ name: "@scoped/scoped", scripts: { present: "echo scriptd" } }),
     },
     pkgb: {
-      "index.js": "console.log('pkgb');",
-      "sleep.js":
-        "for (let i = 0; i < 3; i++) { await new Promise(resolve => setTimeout(resolve, 100)); console.log('y'); }",
-      "package.json": JSON.stringify({
-        name: "pkgb",
-        scripts: {
-          present: "echo scriptb",
-          long: `${bunExe()} run sleep.js`,
-        },
-      }),
+      "package.json": JSON.stringify({ name: "pkgb", scripts: { present: "echo scriptb" } }),
     },
     dirname: {
-      "index.js": "console.log('pkgc');",
-      "package.json": JSON.stringify({
-        name: "pkgc",
-        scripts: {
-          present: "echo scriptc",
-        },
-      }),
+      "package.json": JSON.stringify({ name: "pkgc", scripts: { present: "echo scriptc" } }),
     },
     malformed1: {
-      "package.json": JSON.stringify({
-        scripts: {
-          present: "echo malformed1",
-        },
-      }),
+      "package.json": JSON.stringify({ scripts: { present: "echo malformed1" } }),
     },
     malformed2: {
       "package.json": "asdfsadfas",
@@ -68,14 +40,13 @@ const cwd_root = tempDirWithFiles("testworkspace", {
   },
   "package.json": JSON.stringify({
     name: "ws",
-    scripts: {
-      present: "echo rootscript",
-    },
+    scripts: { present: "echo rootscript" },
     workspaces: ["packages/*"],
   }),
 });
 
 // Edges: web -> api -> shared -> pkg-a; pkg-b and the root are isolated.
+// `shared` has no scripts, so it never shows up in the output even when selected.
 const graph_root = tempDirWithFiles("filter-selectors", {
   packages: {
     web: {
@@ -99,16 +70,10 @@ const graph_root = tempDirWithFiles("filter-selectors", {
       }),
     },
     "pkg-a": {
-      "package.json": JSON.stringify({
-        name: "pkg-a",
-        scripts: { present: "echo out-pkg-a" },
-      }),
+      "package.json": JSON.stringify({ name: "pkg-a", scripts: { present: "echo out-pkg-a" } }),
     },
     "pkg-b": {
-      "package.json": JSON.stringify({
-        name: "pkg-b",
-        scripts: { present: "echo out-pkg-b" },
-      }),
+      "package.json": JSON.stringify({ name: "pkg-b", scripts: { present: "echo out-pkg-b" } }),
     },
   },
   "package.json": JSON.stringify({
@@ -119,537 +84,386 @@ const graph_root = tempDirWithFiles("filter-selectors", {
 });
 
 const cwd_packages = join(cwd_root, "packages");
-const cwd_a = join(cwd_packages, "pkga");
-const cwd_b = join(cwd_packages, "pkgb");
-const cwd_c = join(cwd_packages, "dirname");
-const cwd_d = join(cwd_packages, "scoped");
 
-function runInCwdSuccess({
-  cwd,
-  pattern,
-  target_pattern,
-  antipattern,
-  command = ["present"],
-  auto = false,
-  env = {},
-  elideCount,
-}: {
-  cwd: string;
-  pattern: string | string[];
-  target_pattern: RegExp | RegExp[];
-  antipattern?: RegExp | RegExp[];
-  command?: string[];
-  auto?: boolean;
-  env?: Record<string, string | undefined>;
-  elideCount?: number;
-}) {
-  const cmd = auto ? [bunExe()] : [bunExe(), "run"];
+// Discovery of `cwd_root` always trips over packages/malformed2/package.json.
+const malformedWarning = `warn: Failed to read "<dir>/packages/malformed2/package.json", skipping this workspace package`;
 
-  // Add elide-lines first if specified
-  if (elideCount !== undefined) {
-    cmd.push("--elide-lines", elideCount.toString());
-  }
+// A 20-line script. The lines are distinct so the elision tests can tell
+// which lines were kept.
+const twentyLines = "seq 1 20";
 
-  if (Array.isArray(pattern)) {
-    for (const p of pattern) {
-      cmd.push("--filter", p);
+// The trailing newline matters: the plain renderer prints a final unterminated
+// line without the script name.
+const writeSuccess = `await Bun.write("out.txt", "success\\n");`;
+
+// Used by two packages whose scripts must run at the same time: each side
+// writes its own marker, then waits for the other side's marker. If the
+// runner serialized the two scripts, the first one would never see the
+// second one's marker and would exit 1 at the deadline.
+const rendezvous = `
+  const [me, other] = process.argv.slice(2);
+  await Bun.write(\`../\${me}.ready\`, "");
+  const deadline = Date.now() + 10_000;
+  while (!(await Bun.file(\`../\${other}.ready\`).exists())) {
+    if (Date.now() > deadline) {
+      console.log(\`\${me} never saw \${other}\`);
+      process.exit(1);
     }
-  } else {
-    cmd.push("-F", pattern);
+    await Bun.sleep(5);
   }
+  console.log(\`\${me} saw \${other}\`);
+`;
 
-  for (const c of command) {
-    cmd.push(c);
-  }
-
-  const { exitCode, stdout, stderr } = spawnSync({
+async function run(cwd: string, args: string[], env: Record<string, string | undefined> = {}) {
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), ...args],
     cwd,
-    cmd,
     env: { ...bunEnv, ...env },
     stdout: "pipe",
     stderr: "pipe",
   });
-  const stdoutval = stdout.toString();
-  for (const r of Array.isArray(target_pattern) ? target_pattern : [target_pattern]) {
-    expect(stdoutval).toMatch(r);
-  }
-  if (antipattern !== undefined) {
-    for (const r of Array.isArray(antipattern) ? antipattern : [antipattern]) {
-      expect(stdoutval).not.toMatch(r);
-    }
-  }
-  // expect(stderr.toString()).toBeEmpty();
-  expect(exitCode).toBe(0);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  return { stdout, stderr, exitCode };
 }
 
-function runInCwdFailure(cwd: string, pkgname: string, scriptname: string, result: RegExp) {
-  const { exitCode, stdout, stderr } = spawnSync({
-    cwd: cwd,
-    cmd: [bunExe(), "run", "--filter", pkgname, scriptname],
-    env: bunEnv,
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  expect(stdout.toString()).toBeEmpty();
-  expect(stderr.toString()).toMatch(result);
-  expect(exitCode).not.toBe(0);
+// Scripts of unrelated packages run at the same time, so the order of their
+// lines is not fixed. Sorting keeps the comparison exact.
+function sorted(output: string): string[] {
+  return output
+    .split(/\r?\n/)
+    .filter(line => line.length > 0)
+    .sort();
 }
 
-describe("bun", () => {
-  const dirs = [cwd_root, cwd_packages, cwd_a, cwd_b, cwd_c, cwd_d];
-  const packages = [
-    {
-      name: "pkga",
-      output: /scripta/,
-    },
-    {
-      name: "pkgb",
-      output: /scriptb/,
-    },
-    {
-      name: "pkgc",
-      output: /scriptc/,
-    },
-    {
-      name: "@scoped/scoped",
-      output: /scriptd/,
-    },
-  ];
+// The piped (non-terminal) output of one finished script: every line it
+// printed, then its exit status, each prefixed with "<package> <script>: ".
+function finished(script: string, outputs: Record<string, string | string[]>, code = 0): string[] {
+  return Object.entries(outputs)
+    .flatMap(([pkg, lines]) => [
+      ...[lines].flat().map(line => `${pkg} ${script}: ${line}`),
+      `${pkg} ${script}: Exited with code ${code}`,
+    ])
+    .sort();
+}
 
-  const names = packages.map(p => p.name);
-  for (const d of dirs) {
-    for (const { name, output } of packages) {
-      test(`resolve ${name} from ${d}`, () => {
-        runInCwdSuccess({ cwd: d, pattern: name, target_pattern: output });
-      });
-    }
-  }
+// The terminal renderer repaints the whole run on every chunk of output, so
+// a pipe captures one frame per repaint. Only the last frame, drawn after
+// the script finished, is independent of how the output was chunked.
+function lastFrame(stdout: string): string {
+  const start = stdout.lastIndexOf("\x1b[?2026h");
+  expect(start).toBeGreaterThanOrEqual(0);
+  return stdout
+    .slice(start)
+    .replace(/\x1b\[[0-9;?]*[A-Za-z]/g, "")
+    .replace(/Done in (?:\d+ ms|\d+\.\d{2} s)/, "Done in <time>")
+    .trimEnd();
+}
 
-  for (const d of dirs) {
-    test(`resolve '*' from ${d}`, () => {
-      runInCwdSuccess({
-        cwd: d,
-        pattern: "*",
-        target_pattern: [/scripta/, /scriptb/, /scriptc/, /scriptd/],
-      });
-    });
-    test(`resolve all from ${d}`, () => {
-      runInCwdSuccess({
-        cwd: d,
-        pattern: names,
-        target_pattern: [/scripta/, /scriptb/, /scriptc/, /scriptd/],
-      });
-    });
-  }
+const range = (from: number, to: number) => Array.from({ length: to - from + 1 }, (_, i) => String(from + i));
 
-  test("works with auto command", () => {
-    runInCwdSuccess({
-      cwd: cwd_root,
-      pattern: "./packages/*",
-      target_pattern: [/scripta/, /scriptb/, /scriptc/, /scriptd/, /malformed1/],
-      auto: true,
-    });
-  });
+describe.concurrent("bun", () => {
+  const scripts = { pkga: "scripta", pkgb: "scriptb", pkgc: "scriptc", "@scoped/scoped": "scriptd" };
+  const names = Object.keys(scripts);
+  const cwds = {
+    ".": cwd_root,
+    packages: cwd_packages,
+    "packages/pkga": join(cwd_packages, "pkga"),
+    "packages/pkgb": join(cwd_packages, "pkgb"),
+    "packages/dirname": join(cwd_packages, "dirname"),
+    "packages/scoped": join(cwd_packages, "scoped"),
+  };
 
-  test("resolve all with glob", () => {
-    runInCwdSuccess({
-      cwd: cwd_root,
-      pattern: "./packages/*",
-      target_pattern: [/scripta/, /scriptb/, /scriptc/, /scriptd/, /malformed1/],
+  describe.each(Object.entries(cwds))("from %s", (_, cwd) => {
+    test.each(Object.entries(scripts))("resolve %s", async (name, output) => {
+      const { stdout, stderr, exitCode } = await run(cwd, ["run", "-F", name, "present"]);
+      expect(sorted(stdout)).toEqual(finished("present", { [name]: output }));
+      expect(normalizeBunSnapshot(stderr, cwd_root)).toBe(malformedWarning);
+      expect(exitCode).toBe(0);
     });
-  });
-  test("resolve all with recursive glob", () => {
-    runInCwdSuccess({
-      cwd: cwd_root,
-      pattern: "./**",
-      target_pattern: [/scripta/, /scriptb/, /scriptc/, /scriptd/, /malformed1/],
+
+    test("resolve '*'", async () => {
+      const { stdout, stderr, exitCode } = await run(cwd, ["run", "-F", "*", "present"]);
+      expect(sorted(stdout)).toEqual(finished("present", scripts));
+      expect(normalizeBunSnapshot(stderr, cwd_root)).toBe(malformedWarning);
+      expect(exitCode).toBe(0);
     });
-  });
-  test("resolve 'pkga' and 'pkgb' but not 'pkgc' with targeted glob", () => {
-    runInCwdSuccess({
-      cwd: cwd_root,
-      pattern: "./packages/pkg*",
-      target_pattern: [/scripta/, /scriptb/],
-      antipattern: /scriptc/,
-    });
-  });
-  test("resolve package with missing name", () => {
-    runInCwdSuccess({
-      cwd: cwd_root,
-      pattern: "./packages/malformed1",
-      target_pattern: [/malformed1/],
-      antipattern: [/scripta/, /scriptb/, /scriptc/],
+
+    test("resolve all with one --filter per name", async () => {
+      const filters = names.flatMap(name => ["--filter", name]);
+      const { stdout, stderr, exitCode } = await run(cwd, ["run", ...filters, "present"]);
+      expect(sorted(stdout)).toEqual(finished("present", scripts));
+      expect(normalizeBunSnapshot(stderr, cwd_root)).toBe(malformedWarning);
+      expect(exitCode).toBe(0);
     });
   });
 
-  test("run in parallel", () => {
-    runInCwdSuccess({
-      cwd: cwd_root,
-      pattern: "pkg*",
-      target_pattern: [/x[\s\S]*y[\s\S]*x/],
-      antipattern: [/scripta/, /scriptb/, /scriptc/],
-      command: ["long"],
-    });
-  });
+  // A path pattern also matches packages/malformed1, whose package.json has
+  // no name: its lines carry an empty package name.
+  const everyDirectory = { ...scripts, "": "malformed1" };
 
-  test("run pre and post scripts, in order", () => {
-    using dir = tempDir("testworkspace", {
-      dep0: {
-        "write.js": "await Bun.write('out.txt', 'success')",
-        "readwrite.js": "console.log(await Bun.file('out.txt').text()); await Bun.write('post.txt', 'great success')",
-        "read.js": "console.log(await Bun.file('post.txt').text())",
-        "package.json": JSON.stringify({
-          name: "dep0",
-          scripts: {
-            prescript: `${bunExe()} run write.js`,
-            script: `${bunExe()} run readwrite.js`,
-            postscript: `${bunExe()} run read.js`,
-          },
-        }),
-      },
-    });
-    runInCwdSuccess({
-      cwd: dir,
-      pattern: "*",
-      target_pattern: [/success/, /great success/],
-      antipattern: [/not found/],
-      command: ["script"],
-    });
-  });
-
-  test("respect dependency order", () => {
-    using dir = tempDir("testworkspace", {
-      dep0: {
-        "index.js": [
-          "await new Promise((resolve) => setTimeout(resolve, 100))",
-          "Bun.write('out.txt', 'success')",
-        ].join(";"),
-        "package.json": JSON.stringify({
-          name: "dep0",
-          scripts: {
-            script: `${bunExe()} run index.js`,
-          },
-        }),
-      },
-      dep1: {
-        "index.js": 'console.log(await Bun.file("../dep0/out.txt").text())',
-        "package.json": JSON.stringify({
-          name: "dep1",
-          dependencies: {
-            dep0: "*",
-          },
-          scripts: {
-            script: `${bunExe()} run index.js`,
-          },
-        }),
-      },
-    });
-    runInCwdSuccess({
-      cwd: dir,
-      pattern: "*",
-      target_pattern: [/success/],
-      antipattern: [/not found/],
-      command: ["script"],
-    });
-  });
-
-  test("respect dependency order when dependency name is larger than 8 characters", () => {
-    const largeNamePkgName = "larger-than-8-char";
-    const fileContent = `${largeNamePkgName} - ${new Date().getTime()}`;
-    const largeNamePkg = {
-      "index.js": [
-        "await new Promise((resolve) => setTimeout(resolve, 100))",
-        `Bun.write('out.txt', '${fileContent}')`,
-      ].join(";"),
-      "package.json": JSON.stringify({
-        name: largeNamePkgName,
-        scripts: {
-          script: `${bunExe()} run index.js`,
-        },
-      }),
-    };
-    using dir = tempDir("testworkspace", {
-      main: {
-        "index.js": `console.log(await Bun.file("../${largeNamePkgName}/out.txt").text())`,
-        "package.json": JSON.stringify({
-          name: "main",
-          dependencies: {
-            [largeNamePkgName]: "*",
-          },
-          scripts: {
-            script: `${bunExe()} run index.js`,
-          },
-        }),
-      },
-      [largeNamePkgName]: largeNamePkg,
-    });
-    runInCwdSuccess({
-      cwd: dir,
-      pattern: "*",
-      target_pattern: [new RegExp(fileContent)],
-      command: ["script"],
-    });
-  });
-
-  test("ignore dependency order on cycle, preserving pre and post script order", () => {
-    using dir = tempDir("testworkspace", {
-      dep0: {
-        "write.js": "await Bun.write('out.txt', 'success')",
-        "readwrite.js":
-          "console.log(await Bun.file('out.txt').text()); await Bun.write('post.txt', 'great success'); setTimeout(() => {}, 300)",
-        "read.js": "console.log(await Bun.file('post.txt').text())",
-        "package.json": JSON.stringify({
-          name: "dep0",
-          scripts: {
-            prescript: `${bunExe()} run write.js`,
-            script: `${bunExe()} run readwrite.js`,
-            postscript: `${bunExe()} run read.js`,
-          },
-          dependencies: {
-            dep1: "*",
-          },
-        }),
-      },
-      dep1: {
-        "index.js": "setTimeout(() => {}, 300)",
-        "package.json": JSON.stringify({
-          name: "dep1",
-          dependencies: {
-            dep0: "*",
-          },
-          scripts: {
-            script: `${bunExe()} run index.js`,
-          },
-        }),
-      },
-    });
-    runInCwdSuccess({
-      cwd: dir,
-      pattern: "*",
-      target_pattern: [/success/, /great success/],
-      antipattern: [/not found/],
-      command: ["script"],
-    });
-  });
-
-  test("detect cycle of length > 2", () => {
-    using dir = tempDir("testworkspace", {
-      dep0: {
-        "package.json": JSON.stringify({
-          name: "dep0",
-          scripts: {
-            script: "echo dep0",
-          },
-          dependencies: {
-            dep1: "*",
-          },
-        }),
-      },
-      dep1: {
-        "package.json": JSON.stringify({
-          name: "dep1",
-          dependencies: {
-            dep2: "*",
-          },
-          scripts: {
-            script: "echo dep1",
-          },
-        }),
-      },
-      dep2: {
-        "package.json": JSON.stringify({
-          name: "dep1",
-          dependencies: {
-            dep0: "*",
-          },
-          scripts: {
-            script: "echo dep2",
-          },
-        }),
-      },
-    });
-    runInCwdSuccess({
-      cwd: dir,
-      pattern: "*",
-      target_pattern: [/dep0/, /dep1/, /dep2/],
-      antipattern: [/not found/],
-      command: ["script"],
-    });
-  });
-
-  test("should error with missing script", () => {
-    runInCwdFailure(cwd_root, "*", "notpresent", /error: No workspace packages matched the filter "\*"/);
-  });
-  test("warns about a filter that matched nothing while running the others", () => {
-    const { exitCode, stdout, stderr } = spawnSync({
-      cwd: cwd_root,
-      cmd: [bunExe(), "run", "--filter", "pkga", "--filter", "typo", "present"],
-      env: bunEnv,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    expect(stdout.toString()).toMatch(/pkga/);
-    expect(stderr.toString()).toContain('warn: No workspace packages matched the filter "typo"');
+  test.each([
+    ["bun --filter ./packages/*", ["--filter", "./packages/*", "present"]],
+    ["bun run --filter ./packages/*", ["run", "--filter", "./packages/*", "present"]],
+    ["bun run --filter ./**", ["run", "--filter", "./**", "present"]],
+  ])("%s runs every package directory", async (_, args) => {
+    const { stdout, stderr, exitCode } = await run(cwd_root, args);
+    expect(sorted(stdout)).toEqual(finished("present", everyDirectory));
+    expect(normalizeBunSnapshot(stderr, cwd_root)).toBe(malformedWarning);
     expect(exitCode).toBe(0);
   });
-  test("should warn about malformed package.json", () => {
-    runInCwdFailure(cwd_root, "*", "x", /Failed to read .*malformed2.*package\.json/);
+
+  test("a directory glob selects only the matching directories", async () => {
+    const { stdout, stderr, exitCode } = await run(cwd_root, ["run", "--filter", "./packages/pkg*", "present"]);
+    expect(sorted(stdout)).toEqual(finished("present", { pkga: "scripta", pkgb: "scriptb" }));
+    expect(normalizeBunSnapshot(stderr, cwd_root)).toBe(malformedWarning);
+    expect(exitCode).toBe(0);
   });
-  test("nonzero exit code on failure", () => {
+
+  test("a directory pattern selects a package.json without a name", async () => {
+    const { stdout, stderr, exitCode } = await run(cwd_root, ["run", "--filter", "./packages/malformed1", "present"]);
+    expect(sorted(stdout)).toEqual(finished("present", { "": "malformed1" }));
+    expect(normalizeBunSnapshot(stderr, cwd_root)).toBe(malformedWarning);
+    expect(exitCode).toBe(0);
+  });
+
+  test("scripts of unrelated packages run in parallel", async () => {
+    using dir = tempDir("filter-parallel", {
+      "package.json": JSON.stringify({ name: "ws", workspaces: ["packages/*"] }),
+      "packages/pkga/rendezvous.js": rendezvous,
+      "packages/pkga/package.json": JSON.stringify({
+        name: "pkga",
+        scripts: { long: `${bunExe()} rendezvous.js pkga pkgb` },
+      }),
+      "packages/pkgb/rendezvous.js": rendezvous,
+      "packages/pkgb/package.json": JSON.stringify({
+        name: "pkgb",
+        scripts: { long: `${bunExe()} rendezvous.js pkgb pkga` },
+      }),
+    });
+    const { stdout, stderr, exitCode } = await run(String(dir), ["run", "--filter", "pkg*", "long"]);
+    expect(sorted(stdout)).toEqual(finished("long", { pkga: "pkga saw pkgb", pkgb: "pkgb saw pkga" }));
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+  });
+
+  // Each step reads the file the previous step wrote, so a step that ran too
+  // early fails on a missing file.
+  test("run pre and post scripts, in order", async () => {
     using dir = tempDir("testworkspace", {
       dep0: {
         "package.json": JSON.stringify({
           name: "dep0",
           scripts: {
-            script: "exit 0",
+            prescript: "echo success > out.txt",
+            script: "cat out.txt && echo great success > post.txt",
+            postscript: "cat post.txt",
           },
+        }),
+      },
+    });
+    const { stdout, stderr, exitCode } = await run(String(dir), ["run", "--filter", "*", "script"]);
+    expect(sorted(stdout)).toEqual(
+      [
+        ...finished("prescript", { dep0: [] }),
+        ...finished("script", { dep0: "success" }),
+        ...finished("postscript", { dep0: "great success" }),
+      ].sort(),
+    );
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+  });
+
+  // The dependency needs a whole runtime start before it writes the file; the
+  // dependent only needs `cat`. If both started together, the dependent would
+  // read first and fail.
+  const dependencyOrder = (dependency: string, dependent: string): DirectoryTree => ({
+    [dependency]: {
+      "write.js": writeSuccess,
+      "package.json": JSON.stringify({
+        name: dependency,
+        scripts: { script: `${bunExe()} write.js` },
+      }),
+    },
+    [dependent]: {
+      "package.json": JSON.stringify({
+        name: dependent,
+        dependencies: { [dependency]: "*" },
+        scripts: { script: `cat ../${dependency}/out.txt` },
+      }),
+    },
+  });
+
+  test.each([
+    ["dep0", "dep1"],
+    // A name longer than 8 bytes is not stored inline in the dependency map (#12203).
+    ["larger-than-8-char", "main"],
+  ])("respect dependency order (%s before %s)", async (dependency, dependent) => {
+    using dir = tempDir("testworkspace", dependencyOrder(dependency, dependent));
+    const { stdout, stderr, exitCode } = await run(String(dir), ["run", "--filter", "*", "script"]);
+    expect(sorted(stdout)).toEqual(finished("script", { [dependency]: [], [dependent]: "success" }));
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+  });
+
+  // dep0 and dep1 depend on each other. The runner drops the dependency order
+  // for the whole run (both scripts are alive at the same time) but still
+  // runs dep0's pre and post scripts around its main script.
+  test("ignore dependency order on cycle, preserving pre and post script order", async () => {
+    using dir = tempDir("testworkspace", {
+      dep0: {
+        "rendezvous.js": rendezvous,
+        "package.json": JSON.stringify({
+          name: "dep0",
+          scripts: {
+            prescript: "echo success > out.txt",
+            script: `cat out.txt && ${bunExe()} rendezvous.js dep0 dep1 && echo great success > post.txt`,
+            postscript: "cat post.txt",
+          },
+          dependencies: { dep1: "*" },
         }),
       },
       dep1: {
+        "rendezvous.js": rendezvous,
         "package.json": JSON.stringify({
           name: "dep1",
-          scripts: {
-            script: "exit 23",
-          },
+          dependencies: { dep0: "*" },
+          scripts: { script: `${bunExe()} rendezvous.js dep1 dep0` },
         }),
       },
     });
-    const { exitCode, stdout } = spawnSync({
-      cwd: dir,
-      cmd: [bunExe(), "run", "--filter", "*", "script"],
-      env: bunEnv,
-      stdout: "pipe",
-      stderr: "pipe",
+    const { stdout, stderr, exitCode } = await run(String(dir), ["run", "--filter", "*", "script"]);
+    expect(sorted(stdout)).toEqual(
+      [
+        ...finished("prescript", { dep0: [] }),
+        ...finished("script", { dep0: ["success", "dep0 saw dep1"], dep1: "dep1 saw dep0" }),
+        ...finished("postscript", { dep0: "great success" }),
+      ].sort(),
+    );
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+  });
+
+  test("detect cycle of length > 2", async () => {
+    using dir = tempDir("testworkspace", {
+      dep0: {
+        "package.json": JSON.stringify({ name: "dep0", dependencies: { dep1: "*" }, scripts: { script: "echo dep0" } }),
+      },
+      dep1: {
+        "package.json": JSON.stringify({ name: "dep1", dependencies: { dep2: "*" }, scripts: { script: "echo dep1" } }),
+      },
+      dep2: {
+        "package.json": JSON.stringify({ name: "dep2", dependencies: { dep0: "*" }, scripts: { script: "echo dep2" } }),
+      },
     });
-    const stdoutval = stdout.toString();
-    expect(stdoutval).toMatch(/code 0/);
-    expect(stdoutval).toMatch(/code 23/);
+    const { stdout, stderr, exitCode } = await run(String(dir), ["run", "--filter", "*", "script"]);
+    expect(sorted(stdout)).toEqual(finished("script", { dep0: "dep0", dep1: "dep1", dep2: "dep2" }));
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+  });
+
+  test.each(["notpresent", "x"])("errors when no package has the script (%s)", async script => {
+    const { stdout, stderr, exitCode } = await run(cwd_root, ["run", "--filter", "*", script]);
+    expect(stdout).toBe("");
+    expect(normalizeBunSnapshot(stderr, cwd_root)).toBe(
+      `${malformedWarning}\nerror: No workspace packages matched the filter "*"`,
+    );
+    expect(exitCode).toBe(1);
+  });
+
+  test("warns about a filter that matched nothing while running the others", async () => {
+    const { stdout, stderr, exitCode } = await run(cwd_root, [
+      "run",
+      "--filter",
+      "pkga",
+      "--filter",
+      "typo",
+      "present",
+    ]);
+    expect(sorted(stdout)).toEqual(finished("present", { pkga: "scripta" }));
+    expect(normalizeBunSnapshot(stderr, cwd_root)).toBe(
+      `${malformedWarning}\nwarn: No workspace packages matched the filter "typo"`,
+    );
+    expect(exitCode).toBe(0);
+  });
+
+  test("nonzero exit code on failure", async () => {
+    using dir = tempDir("testworkspace", {
+      dep0: {
+        "package.json": JSON.stringify({ name: "dep0", scripts: { script: "exit 0" } }),
+      },
+      dep1: {
+        "package.json": JSON.stringify({ name: "dep1", scripts: { script: "exit 23" } }),
+      },
+    });
+    const { stdout, stderr, exitCode } = await run(String(dir), ["run", "--filter", "*", "script"]);
+    expect(sorted(stdout)).toEqual([...finished("script", { dep0: [] }), ...finished("script", { dep1: [] }, 23)]);
+    expect(stderr).toBe("");
     expect(exitCode).toBe(23);
   });
 
-  function runElideLinesTest({
-    elideLines,
-    target_pattern,
-    antipattern,
-  }: {
-    elideLines: number;
-    target_pattern: RegExp[];
-    antipattern?: RegExp[];
-  }) {
-    const dir = tempDirWithFiles("testworkspace", {
+  function elideWorkspace(prefix: string) {
+    return tempDir(prefix, {
       packages: {
         dep0: {
-          "index.js": Array(20).fill("console.log('log_line');").join("\n"),
-          "package.json": JSON.stringify({
-            name: "dep0",
-            scripts: {
-              script: `${bunExe()} run index.js`,
-            },
-          }),
-        },
-      },
-      "package.json": JSON.stringify({
-        name: "ws",
-        workspaces: ["packages/*"],
-      }),
-    });
-
-    if (process.platform === "win32") {
-      // Windows spawnSync pipes stdout, so `windowsIsTerminal()` returns false,
-      // `state.pretty_output` is false, and `redraw()` short-circuits before
-      // ever emitting elision output. `target_pattern` is intentionally NOT
-      // iterated here: every caller bundles TTY-only regexes such as
-      // `/\[N lines elided\]/` that would never appear in piped Windows output
-      // and would fail the test for the wrong reason. The hardcoded log_line
-      // match covers the non-TTY subset of every caller's target_pattern.
-      // `antipattern` is iterated because absence-checks remain valid on either
-      // code path.
-      const { exitCode, stderr, stdout } = spawnSync({
-        cwd: dir,
-        cmd: [bunExe(), "run", "--filter", "./packages/dep0", "--elide-lines", String(elideLines), "script"],
-        env: { ...bunEnv, FORCE_COLOR: "1", NO_COLOR: "0" },
-        stdout: "pipe",
-        stderr: "pipe",
-      });
-
-      const stdoutval = stdout.toString();
-      expect(stderr.toString()).not.toContain("--elide-lines is only supported in terminal environments");
-      expect(stdoutval).toMatch(/(?:log_line[\s\S]*?){20}/);
-      if (antipattern) {
-        for (const r of antipattern) {
-          expect(stdoutval).not.toMatch(r);
-        }
-      }
-      expect(exitCode).toBe(0);
-      return;
-    }
-
-    runInCwdSuccess({
-      cwd: dir,
-      pattern: "./packages/dep0",
-      env: { FORCE_COLOR: "1", NO_COLOR: "0" },
-      target_pattern,
-      antipattern,
-      command: ["script"],
-      elideCount: elideLines,
-    });
-  }
-
-  test("elides output by default when using --filter", () => {
-    runElideLinesTest({
-      elideLines: 10,
-      target_pattern: [/\[10 lines elided\]/, /(?:log_line[\s\S]*?){20}/],
-    });
-  });
-
-  test("respects --elide-lines argument", () => {
-    runElideLinesTest({
-      elideLines: 15,
-      target_pattern: [/\[5 lines elided\]/, /(?:log_line[\s\S]*?){20}/],
-    });
-  });
-
-  test("--elide-lines=0 shows all output", () => {
-    runElideLinesTest({
-      elideLines: 0,
-      target_pattern: [/(?:log_line[\s\S]*?){20}/],
-      antipattern: [/lines elided/],
-    });
-  });
-
-  test("--elide-lines is a no-op (not an error) when stdout is not a terminal", () => {
-    using dir = tempDir("testworkspace", {
-      packages: {
-        dep0: {
-          "index.js": Array(20).fill("console.log('log_line');").join("\n"),
-          "package.json": JSON.stringify({ name: "dep0", scripts: { script: `${bunExe()} run index.js` } }),
+          "package.json": JSON.stringify({ name: "dep0", scripts: { script: twentyLines } }),
         },
       },
       "package.json": JSON.stringify({ name: "ws", workspaces: ["packages/*"] }),
     });
+  }
 
-    // Use a non-zero value so the test would fail if elision ever leaked into
-    // the non-TTY code path. With `--elide-lines 5`, a broken implementation
-    // would only surface 5 log_line entries and the 20-match regex would fail.
-    const { exitCode, stderr, stdout } = spawnSync({
-      cwd: dir,
-      cmd: [bunExe(), "run", "--filter", "./packages/dep0", "--elide-lines", "5", "script"],
-      env: { ...bunEnv, FORCE_COLOR: undefined, NO_COLOR: "1" },
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-
-    const stdoutval = stdout.toString();
-    expect(stderr.toString()).not.toContain("--elide-lines is only supported in terminal environments");
-    // Elision text is written to stdout via std.fs.File.stdout().writeAll() in
-    // filter_run.zig's flushDrawBuf; guard the correct stream.
-    expect(stdoutval).not.toMatch(/lines elided/);
-    expect(stdoutval).toMatch(/(?:log_line[\s\S]*?){20}/);
+  // FORCE_COLOR turns the terminal renderer on for a pipe on POSIX. On
+  // Windows the renderer needs a real console, so a pipe gets the plain
+  // line-per-line output and --elide-lines has nothing to act on.
+  test.each([
+    ["elides all but the last 10 lines by default", [], 10],
+    ["respects --elide-lines", ["--elide-lines", "15"], 5],
+    ["--elide-lines=0 shows all output", ["--elide-lines", "0"], 0],
+  ])("%s", async (_, flags, elided) => {
+    using dir = elideWorkspace("filter-elide");
+    const { stdout, stderr, exitCode } = await run(
+      String(dir),
+      ["run", ...flags, "--filter", "./packages/dep0", "script"],
+      {
+        FORCE_COLOR: "1",
+        NO_COLOR: "0",
+      },
+    );
+    if (isWindows) {
+      expect(sorted(stdout)).toEqual(finished("script", { dep0: range(1, 20) }));
+    } else {
+      expect(lastFrame(stdout)).toBe(
+        [
+          `dep0 script $ ${twentyLines}`,
+          ...(elided > 0 ? [`│ [${elided} lines elided]`] : []),
+          ...range(elided + 1, 20).map(line => `│ ${line}`),
+          "└─ Done in <time>",
+        ].join("\n"),
+      );
+    }
+    expect(stderr).toBe("");
     expect(exitCode).toBe(0);
   });
 
-  // The terminal renderer is TTY-only on Windows (see runElideLinesTest).
-  test.skipIf(isWindows)("terminal output reports how long a successful script took", () => {
+  test("--elide-lines is a no-op (not an error) when stdout is not a terminal", async () => {
+    using dir = elideWorkspace("filter-elide-pipe");
+    // A value other than the default: if elision leaked into the plain
+    // output, only 5 lines would survive.
+    const { stdout, stderr, exitCode } = await run(String(dir), [
+      "run",
+      "--filter",
+      "./packages/dep0",
+      "--elide-lines",
+      "5",
+      "script",
+    ]);
+    expect(sorted(stdout)).toEqual(finished("script", { dep0: range(1, 20) }));
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+  });
+
+  // The terminal renderer is TTY-only on Windows (see the elision tests).
+  test.skipIf(isWindows)("terminal output reports how long a successful script took", async () => {
     using dir = tempDir("filter-done-in", {
       packages: {
         dep0: {
@@ -658,20 +472,16 @@ describe("bun", () => {
       },
       "package.json": JSON.stringify({ name: "ws", workspaces: ["packages/*"] }),
     });
-
-    const { exitCode, stdout } = spawnSync({
-      cwd: String(dir),
-      cmd: [bunExe(), "run", "--filter", "dep0", "script"],
-      env: { ...bunEnv, FORCE_COLOR: "1", NO_COLOR: "0" },
-      stdout: "pipe",
-      stderr: "pipe",
+    const { stdout, stderr, exitCode } = await run(String(dir), ["run", "--filter", "dep0", "script"], {
+      FORCE_COLOR: "1",
+      NO_COLOR: "0",
     });
-
-    expect(stdout.toString()).toMatch(/Done in (?:\d+ ms|\d+\.\d{2} s)/);
+    expect(lastFrame(stdout)).toBe(["dep0 script $ exit 0", "└─ Done in <time>"].join("\n"));
+    expect(stderr).toBe("");
     expect(exitCode).toBe(0);
   });
 
-  test("self-referential directory symlink in a workspace does not loop", () => {
+  test("self-referential directory symlink in a workspace does not loop", async () => {
     using dir = tempDir("filter-symlink-loop", {
       packages: {
         pkga: {
@@ -692,27 +502,22 @@ describe("bun", () => {
     // ignored on POSIX.
     symlinkSync(join(dir, "packages", "cyc"), join(dir, "packages", "cyc", "loop"), "junction");
 
-    const { exitCode, stdout, stderr } = spawnSync({
-      cwd: dir,
-      cmd: [bunExe(), "run", "--filter", "*", "present"],
-      env: bunEnv,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const stdoutval = stdout.toString();
-    const count = (needle: string) => stdoutval.split(needle).length - 1;
+    const { stdout, stderr, exitCode } = await run(String(dir), ["run", "--filter", "*", "present"]);
     // `pkga` is matched once. `cyc` is matched at `packages/cyc` and once more
     // through its own `loop` alias, where the cycle is detected and descent
     // stops instead of recursing until the path length limit.
-    expect({ scripta: count("scripta"), scriptcyc: count("scriptcyc"), exitCode }).toEqual({
-      scripta: 1,
-      scriptcyc: 2,
-      exitCode: 0,
-    });
+    expect(sorted(stdout)).toEqual(
+      [
+        ...finished("present", { pkga: "scripta", cyc: "scriptcyc" }),
+        ...finished("present", { cyc: "scriptcyc" }),
+      ].sort(),
+    );
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
   });
 
   test("warning names which package.json failed to parse", async () => {
-    await using dir = tempDir("filter-bad-pkgjson", {
+    using dir = tempDir("filter-bad-pkgjson", {
       packages: {
         good: {
           "package.json": JSON.stringify({ name: "good", scripts: { go: "echo ok" } }),
@@ -723,142 +528,77 @@ describe("bun", () => {
       },
       "package.json": JSON.stringify({ name: "ws", workspaces: ["packages/*"] }),
     });
-
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "run", "--filter", "*", "go"],
-      cwd: dir,
-      env: { ...bunEnv, NO_COLOR: "1" },
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const { stdout, stderr, exitCode } = await run(String(dir), ["run", "--filter", "*", "go"]);
     // The good package still runs; the broken one is skipped with a warning
     // that names its path.
-    expect(stdout).toContain("ok");
-    const sep = process.platform === "win32" ? "\\" : "/";
-    expect(stderr).toContain(`broken${sep}package.json`);
-    expect(stderr).toContain("skipping this workspace package");
+    expect(sorted(stdout)).toEqual(finished("go", { good: "ok" }));
+    expect(normalizeBunSnapshot(stderr, String(dir))).toBe(
+      `warn: Failed to read "<dir>/packages/broken/package.json", skipping this workspace package`,
+    );
     expect(exitCode).toBe(0);
   });
 });
 
-describe("selectors", () => {
-  test("'foo...' runs foo and the workspaces it depends on", () => {
-    runInCwdSuccess({
-      cwd: graph_root,
-      pattern: "api...",
-      target_pattern: [/out-api/, /out-pkg-a/],
-      antipattern: [/out-web/, /out-pkg-b/, /out-root/],
-    });
+describe.concurrent("selectors", () => {
+  const out = (...names: string[]) => Object.fromEntries(names.map(name => [name, `out-${name}`]));
+
+  // `bun run --filter` only runs workspace members; the root's own scripts
+  // are never selected.
+  test.each([
+    ["'foo...' runs foo and the workspaces it depends on", ["api..."], out("api", "pkg-a")],
+    ["'foo^...' runs only the dependencies", ["api^..."], out("pkg-a")],
+    ["'...foo' runs foo and its dependents", ["...api"], out("api", "web")],
+    ["'...^foo' runs only the dependents", ["...^api"], out("web")],
+    ["a relation on a directory selector", ["...{./packages/pkg-a}"], out("pkg-a", "api", "web")],
+    [
+      "'{dir}' runs everything under the directory but not the root",
+      ["{packages}"],
+      out("api", "web", "pkg-a", "pkg-b"),
+    ],
+    ["a '!' pattern subtracts from '*'", ["*", "!web"], out("api", "pkg-a", "pkg-b")],
+    ["a negation-only filter starts from every workspace", ["!web"], out("api", "pkg-a", "pkg-b")],
+    ["several negation-only filters all subtract", ["!web", "!pkg-b"], out("api", "pkg-a")],
+    ["a negated path pattern subtracts from '*'", ["*", "!./packages/web"], out("api", "pkg-a", "pkg-b")],
+    [
+      "a negated '{dir}' pattern on its own subtracts from every workspace",
+      ["!{./packages/web}"],
+      out("api", "pkg-a", "pkg-b"),
+    ],
+    ["a negated relation subtracts the whole group", ["*", "!...api"], out("pkg-a", "pkg-b")],
+  ])("%s", async (_, patterns, expected) => {
+    const filters = patterns.flatMap(pattern => ["--filter", pattern]);
+    const { stdout, stderr, exitCode } = await run(graph_root, ["run", ...filters, "present"]);
+    expect(sorted(stdout)).toEqual(finished("present", expected));
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
   });
 
-  test("'foo^...' runs only the dependencies", () => {
-    runInCwdSuccess({
-      cwd: graph_root,
-      pattern: "api^...",
-      target_pattern: [/out-pkg-a/],
-      antipattern: [/out-api/, /out-web/],
-    });
+  test("'{.}' is resolved from the current directory", async () => {
+    const { stdout, stderr, exitCode } = await run(join(graph_root, "packages"), ["run", "--filter", "{.}", "present"]);
+    expect(sorted(stdout)).toEqual(finished("present", out("api", "web", "pkg-a", "pkg-b")));
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
   });
 
-  test("'...foo' runs foo and its dependents", () => {
-    runInCwdSuccess({
-      cwd: graph_root,
-      pattern: "...api",
-      target_pattern: [/out-api/, /out-web/],
-      antipattern: [/out-pkg-a/, /out-pkg-b/, /out-root/],
-    });
+  test("a negation-only filter set still skips a package.json without a name", async () => {
+    const { stdout, stderr, exitCode } = await run(cwd_root, ["run", "--filter", "!pkga", "present"]);
+    expect(sorted(stdout)).toEqual(
+      finished("present", { pkgb: "scriptb", pkgc: "scriptc", "@scoped/scoped": "scriptd" }),
+    );
+    expect(normalizeBunSnapshot(stderr, cwd_root)).toBe(malformedWarning);
+    expect(exitCode).toBe(0);
   });
 
-  test("'...^foo' runs only the dependents", () => {
-    runInCwdSuccess({
-      cwd: graph_root,
-      pattern: "...^api",
-      target_pattern: [/out-web/],
-      antipattern: [/out-api/, /out-pkg-a/],
-    });
+  test("'*' still skips a package.json without a name", async () => {
+    const { stdout, stderr, exitCode } = await run(cwd_root, ["run", "--filter", "*", "present"]);
+    expect(sorted(stdout)).toEqual(
+      finished("present", { pkga: "scripta", pkgb: "scriptb", pkgc: "scriptc", "@scoped/scoped": "scriptd" }),
+    );
+    expect(normalizeBunSnapshot(stderr, cwd_root)).toBe(malformedWarning);
+    expect(exitCode).toBe(0);
   });
 
-  test("a relation on a directory selector", () => {
-    runInCwdSuccess({
-      cwd: graph_root,
-      pattern: "...{./packages/pkg-a}",
-      target_pattern: [/out-pkg-a/, /out-api/, /out-web/],
-      antipattern: [/out-pkg-b/, /out-root/],
-    });
-  });
-
-  test("'{dir}' runs everything under the directory but not the root", () => {
-    runInCwdSuccess({
-      cwd: graph_root,
-      pattern: "{packages}",
-      target_pattern: [/out-api/, /out-web/, /out-pkg-a/, /out-pkg-b/],
-      antipattern: [/out-root/],
-    });
-  });
-
-  test("'{.}' is resolved from the current directory", () => {
-    runInCwdSuccess({
-      cwd: join(graph_root, "packages"),
-      pattern: "{.}",
-      target_pattern: [/out-api/, /out-web/, /out-pkg-a/, /out-pkg-b/],
-      antipattern: [/out-root/],
-    });
-  });
-
-  // `bun run --filter` only runs workspace members; the root's own scripts are never selected.
-  test("a '!' pattern subtracts from '*'", () => {
-    runInCwdSuccess({
-      cwd: graph_root,
-      pattern: ["*", "!web"],
-      target_pattern: [/out-api/, /out-pkg-a/, /out-pkg-b/],
-      antipattern: [/out-web/, /out-root/],
-    });
-  });
-
-  test("a negation-only filter set starts from every workspace", () => {
-    runInCwdSuccess({
-      cwd: graph_root,
-      pattern: "!web",
-      target_pattern: [/out-api/, /out-pkg-a/, /out-pkg-b/],
-      antipattern: [/out-web/, /out-root/],
-    });
-    runInCwdSuccess({
-      cwd: graph_root,
-      pattern: ["!web", "!pkg-b"],
-      target_pattern: [/out-api/, /out-pkg-a/],
-      antipattern: [/out-web/, /out-pkg-b/, /out-root/],
-    });
-  });
-
-  test("a negation-only filter set still skips a package.json without a name", () => {
-    runInCwdSuccess({
-      cwd: cwd_root,
-      pattern: "!pkga",
-      target_pattern: [/scriptb/, /scriptc/, /scriptd/],
-      antipattern: [/scripta/, /malformed1/, /rootscript/],
-    });
-  });
-
-  test("a negated path pattern subtracts from '*'", () => {
-    runInCwdSuccess({
-      cwd: graph_root,
-      pattern: ["*", "!./packages/web"],
-      target_pattern: [/out-api/, /out-pkg-a/, /out-pkg-b/],
-      antipattern: [/out-web/, /out-root/],
-    });
-  });
-
-  test("a negated '{dir}' pattern on its own subtracts from every workspace", () => {
-    runInCwdSuccess({
-      cwd: graph_root,
-      pattern: "!{./packages/web}",
-      target_pattern: [/out-api/, /out-pkg-a/, /out-pkg-b/],
-      antipattern: [/out-web/, /out-root/],
-    });
-  });
-
-  test("'foo...' follows optionalDependencies but not peerDependencies", () => {
+  test("'foo...' follows optionalDependencies but not peerDependencies", async () => {
     using dir = tempDir("filter-optional-peer", {
       packages: {
         app: {
@@ -882,103 +622,64 @@ describe("selectors", () => {
         scripts: { present: "echo out-root" },
       }),
     });
-    runInCwdSuccess({
-      cwd: String(dir),
-      pattern: "app...",
-      target_pattern: [/out-app/, /out-optlib/],
-      antipattern: [/out-peerlib/, /out-root/],
-    });
-  });
-
-  test("a negated relation subtracts the whole group", () => {
-    runInCwdSuccess({
-      cwd: graph_root,
-      pattern: ["*", "!...api"],
-      target_pattern: [/out-pkg-a/, /out-pkg-b/],
-      antipattern: [/out-api/, /out-web/, /out-root/],
-    });
-  });
-
-  test("selectors work in the 'bun --filter <script>' form", () => {
-    runInCwdSuccess({
-      cwd: graph_root,
-      pattern: "api...",
-      target_pattern: [/out-api/, /out-pkg-a/],
-      antipattern: [/out-web/, /out-pkg-b/, /out-root/],
-      auto: true,
-    });
-  });
-
-  test("selectors work with --parallel", async () => {
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "run", "--parallel", "--filter", "api...", "present"],
-      cwd: graph_root,
-      env: bunEnv,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
-    expect(stdout).toContain("out-api");
-    expect(stdout).toContain("out-pkg-a");
-    expect(stdout).not.toContain("out-web");
+    const { stdout, stderr, exitCode } = await run(String(dir), ["run", "--filter", "app...", "present"]);
+    expect(sorted(stdout)).toEqual(finished("present", out("app", "optlib")));
+    expect(stderr).toBe("");
     expect(exitCode).toBe(0);
   });
 
-  test("a bare '...' is rejected", () => {
-    runInCwdFailure(graph_root, "...", "present", /is missing a workspace name or path/);
+  test("selectors work in the 'bun --filter <script>' form", async () => {
+    const { stdout, stderr, exitCode } = await run(graph_root, ["--filter", "api...", "present"]);
+    expect(sorted(stdout)).toEqual(finished("present", out("api", "pkg-a")));
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
   });
 
-  test("dependency order is kept inside a relation selection", () => {
+  // `--parallel` has its own renderer: "<package>:<script> | " prefixes padded
+  // to the longest label, output on stdout and the status lines on stderr.
+  test("selectors work with --parallel", async () => {
+    const { stdout, stderr, exitCode } = await run(graph_root, ["run", "--parallel", "--filter", "api...", "present"]);
+    expect(sorted(stdout)).toEqual(["api:present   | out-api", "pkg-a:present | out-pkg-a"]);
+    expect(sorted(stderr.replace(/Done in \d+(?:\.\d+)?m?s/g, "Done in <time>"))).toEqual([
+      "api:present   | Done in <time>",
+      "pkg-a:present | Done in <time>",
+    ]);
+    expect(exitCode).toBe(0);
+  });
+
+  test("a bare '...' is rejected", async () => {
+    const { stdout, stderr, exitCode } = await run(graph_root, ["run", "--filter", "...", "present"]);
+    expect(stdout).toBe("");
+    expect(stderr).toBe('error: --filter "..." is missing a workspace name or path\n');
+    expect(exitCode).toBe(1);
+  });
+
+  // Same asymmetry as "respect dependency order": dep0 needs a runtime start
+  // before it writes, dep1 only needs `cat`.
+  test("dependency order is kept inside a relation selection", async () => {
     using dir = tempDir("filter-selectors-order", {
       dep0: {
-        "index.js": [
-          "await new Promise((resolve) => setTimeout(resolve, 100))",
-          "Bun.write('out.txt', 'success')",
-        ].join(";"),
+        "write.js": writeSuccess,
         "package.json": JSON.stringify({
           name: "dep0",
-          scripts: {
-            script: `${bunExe()} run index.js`,
-          },
+          scripts: { script: `${bunExe()} write.js` },
         }),
       },
       dep1: {
-        "index.js": 'console.log(await Bun.file("../dep0/out.txt").text())',
         "package.json": JSON.stringify({
           name: "dep1",
-          dependencies: {
-            dep0: "*",
-          },
-          scripts: {
-            script: `${bunExe()} run index.js`,
-          },
+          dependencies: { dep0: "*" },
+          scripts: { script: "cat ../dep0/out.txt" },
         }),
       },
       dep2: {
-        "package.json": JSON.stringify({
-          name: "dep2",
-          scripts: {
-            script: "echo unrelated",
-          },
-        }),
+        "package.json": JSON.stringify({ name: "dep2", scripts: { script: "echo unrelated" } }),
       },
     });
-    runInCwdSuccess({
-      cwd: String(dir),
-      pattern: "dep1...",
-      target_pattern: [/success/],
-      antipattern: [/not found/, /unrelated/],
-      command: ["script"],
-    });
-  });
-
-  test("'*' still skips a package.json without a name", () => {
-    runInCwdSuccess({
-      cwd: cwd_root,
-      pattern: "*",
-      target_pattern: [/scripta/],
-      antipattern: [/malformed1/],
-    });
+    const { stdout, stderr, exitCode } = await run(String(dir), ["run", "--filter", "dep1...", "script"]);
+    expect(sorted(stdout)).toEqual(finished("script", { dep0: [], dep1: "success" }));
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
   });
 });
 
@@ -1091,7 +792,7 @@ describe.skipIf(!isWindows).each([
   );
 });
 
-describe("output timing", () => {
+describe.concurrent("output timing", () => {
   // A script is finished when its process exits: output it already wrote is
   // drained at that point, but a detached child still holding the pipe write
   // ends must not keep the run alive waiting for an EOF that may never come.
@@ -1119,28 +820,22 @@ describe("output timing", () => {
         console.log("early-line");
       `,
     });
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "run", "--filter", "pkg-late", "go"],
-      // CI ASAN lanes set BUN_FEATURE_FLAG_NO_ORPHANS, which makes the script's
-      // bun SIGKILL the detached child on exit; unset it so the child really
-      // keeps the pipes open.
-      env: { ...bunEnv, BUN_FEATURE_FLAG_NO_ORPHANS: undefined },
-      cwd: String(dir),
-      stdout: "pipe",
-      stderr: "pipe",
+    // CI ASAN lanes set BUN_FEATURE_FLAG_NO_ORPHANS, which makes the script's
+    // bun SIGKILL the detached child on exit; unset it so the child really
+    // keeps the pipes open.
+    const { stdout, stderr, exitCode } = await run(String(dir), ["run", "--filter", "pkg-late", "go"], {
+      BUN_FEATURE_FLAG_NO_ORPHANS: undefined,
     });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     // Reap the pipe-holding child so nothing outlives the test. Guard the pid:
     // kill(0) would signal this whole process group.
     try {
       const pid = Number(await Bun.file(join(String(dir), "packages", "late", "pid.txt")).text());
       if (Number.isInteger(pid) && pid > 0) process.kill(pid, "SIGKILL");
     } catch {}
-    expect(stdout).toContain("early-line");
-    expect(stdout).toContain("Exited with code 0");
     // The run ends when the script exits; the child's much later write goes to
     // a closed pipe instead of delaying the run by 30s.
-    expect(stdout).not.toContain("late-line");
+    expect(sorted(stdout)).toEqual(finished("go", { "pkg-late": "early-line" }));
+    expect(stderr).toBe("");
     expect(exitCode).toBe(0);
   });
 
@@ -1199,12 +894,12 @@ describe("output timing", () => {
       const pid = Number(await Bun.file(ready).text());
       if (Number.isInteger(pid) && pid > 0) process.kill(pid, "SIGKILL");
     } catch {}
-    // 128 + SIGINT: go is killed by the signal and is the only script. stderr
-    // rides along so a regression surfaces it in the failure output.
+    // go is killed by the signal and is the only script, so the run exits
+    // with 128 + SIGINT.
     expect({ exitCode, stdout, stderr }).toEqual({
       exitCode: 130,
-      stdout: expect.any(String),
-      stderr: expect.any(String),
+      stdout: "pkg-bg go: Signaled with code SIGINT\n",
+      stderr: "",
     });
     // Waiting out the grandchild's 30s sleep means the abort bypass regressed.
     expect(Date.now() - start).toBeLessThan(15000);
@@ -1213,7 +908,9 @@ describe("output timing", () => {
 
 describe("auto-discovered bunfig.toml [run] section", () => {
   // With `run.bun = true` bun puts a `node` shim on PATH, so `typeof Bun`
-  // tells which binary ran the script.
+  // tells which binary ran the script. Every bun process on the machine
+  // shares that shim directory and a debug build deletes it before it writes
+  // the shim again, so the tests that need it stay serial.
   const typeofBun = `node -e "console.log('Bun is ' + typeof Bun)"`;
 
   function workspace(prefix: string, bunfig: string) {
@@ -1222,70 +919,81 @@ describe("auto-discovered bunfig.toml [run] section", () => {
       "package.json": JSON.stringify({ name: "ws", workspaces: ["packages/*"] }),
       packages: {
         dep0: {
-          "index.js": Array(20).fill("console.log('log_line');").join("\n"),
           "package.json": JSON.stringify({
             name: "dep0",
-            scripts: { script: typeofBun, lines: `${bunExe()} run index.js` },
+            scripts: { script: typeofBun, lines: twentyLines },
           }),
         },
       },
     });
   }
 
-  function run(dir: string, args: string[], env: Record<string, string | undefined> = {}) {
-    const { exitCode, stdout, stderr } = spawnSync({
-      cwd: dir,
-      cmd: [bunExe(), ...args],
-      env: { ...bunEnv, ...env },
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    return { exitCode, stdout: stdout.toString(), stderr: stderr.toString() };
-  }
-
   test.each([
     ["bun run --filter", ["run", "--filter", "dep0", "script"]],
     ["bun --filter", ["--filter", "dep0", "script"]],
     ["bun run --workspaces", ["run", "--workspaces", "script"]],
-  ])("%s applies [run] bun = true", (_, args) => {
+  ])("%s applies [run] bun = true", async (_, args) => {
     using dir = workspace("filter-bunfig-run-bun", "[run]\nbun = true\n");
-    const r = run(String(dir), args);
-    expect(r.stdout).toContain("Bun is object");
-    expect(r.exitCode).toBe(0);
+    const { stdout, stderr, exitCode } = await run(String(dir), args);
+    expect(sorted(stdout)).toEqual(finished("script", { dep0: "Bun is object" }));
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
   });
 
-  test("--bun on the CLI wins over [run] bun = false", () => {
+  test("--bun on the CLI wins over [run] bun = false", async () => {
     using dir = workspace("filter-bunfig-cli-bun", "[run]\nbun = false\n");
-    const r = run(String(dir), ["run", "--bun", "--filter", "dep0", "script"]);
-    expect(r.stdout).toContain("Bun is object");
-    expect(r.exitCode).toBe(0);
+    const { stdout, stderr, exitCode } = await run(String(dir), ["run", "--bun", "--filter", "dep0", "script"]);
+    expect(sorted(stdout)).toEqual(finished("script", { dep0: "Bun is object" }));
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
   });
 
   // Elision only happens on a terminal. On POSIX FORCE_COLOR=1 turns the
-  // terminal renderer on for a pipe; on Windows it stays off (see runElideLinesTest).
-  test.skipIf(isWindows)("[run] elide-lines = 0 disables elision for --filter", () => {
+  // terminal renderer on for a pipe; on Windows it stays off (see the elision tests).
+  test.concurrent.skipIf(isWindows)("[run] elide-lines = 0 disables elision for --filter", async () => {
     using dir = workspace("filter-bunfig-elide", "[run]\nelide-lines = 0\n");
-    const r = run(String(dir), ["run", "--filter", "dep0", "lines"], { FORCE_COLOR: "1", NO_COLOR: "0" });
-    expect(r.stdout).not.toMatch(/lines elided/);
-    expect(r.stdout).toMatch(/(?:log_line[\s\S]*?){20}/);
-    expect(r.exitCode).toBe(0);
-  });
-
-  test.skipIf(isWindows)("--elide-lines on the CLI wins over [run] elide-lines", () => {
-    using dir = workspace("filter-bunfig-cli-elide", "[run]\nelide-lines = 0\n");
-    const r = run(String(dir), ["run", "--elide-lines", "15", "--filter", "dep0", "lines"], {
+    const { stdout, stderr, exitCode } = await run(String(dir), ["run", "--filter", "dep0", "lines"], {
       FORCE_COLOR: "1",
       NO_COLOR: "0",
     });
-    expect(r.stdout).toMatch(/\[5 lines elided\]/);
-    expect(r.exitCode).toBe(0);
+    expect(lastFrame(stdout)).toBe(
+      [`dep0 lines $ ${twentyLines}`, ...range(1, 20).map(line => `│ ${line}`), "└─ Done in <time>"].join("\n"),
+    );
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
   });
 
-  test("a malformed bunfig.toml fails the run", () => {
+  test.concurrent.skipIf(isWindows)("--elide-lines on the CLI wins over [run] elide-lines", async () => {
+    using dir = workspace("filter-bunfig-cli-elide", "[run]\nelide-lines = 0\n");
+    const { stdout, stderr, exitCode } = await run(
+      String(dir),
+      ["run", "--elide-lines", "15", "--filter", "dep0", "lines"],
+      { FORCE_COLOR: "1", NO_COLOR: "0" },
+    );
+    expect(lastFrame(stdout)).toBe(
+      [
+        `dep0 lines $ ${twentyLines}`,
+        "│ [5 lines elided]",
+        ...range(6, 20).map(line => `│ ${line}`),
+        "└─ Done in <time>",
+      ].join("\n"),
+    );
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+  });
+
+  test.concurrent("a malformed bunfig.toml fails the run", async () => {
     using dir = workspace("filter-bunfig-malformed", '[run]\nbun = "yes"\n');
-    const r = run(String(dir), ["run", "--filter", "dep0", "script"]);
-    expect(r.stderr).toContain("Expected boolean");
-    expect(r.stdout).not.toContain("Bun is");
-    expect(r.exitCode).toBe(1);
+    const { stdout, stderr, exitCode } = await run(String(dir), ["run", "--filter", "dep0", "script"]);
+    expect(stdout).toBe("");
+    expect(normalizeBunSnapshot(stderr, String(dir))).toMatchInlineSnapshot(`
+      "2 | bun = "yes"
+                ^
+      error: Expected boolean
+          at <dir>/bunfig.toml:2:7
+
+      Invalid Bunfig: failed to load bunfig"
+    `);
+    expect(exitCode).toBe(1);
   });
 });

@@ -102,8 +102,7 @@ pub(crate) enum ScriptStatus {
 }
 
 impl ScriptStatus {
-    /// The exit code of a failed script. A signal that asks bun to stop (Ctrl+C, SIGTERM, ...)
-    /// is re-raised here instead, so a batch does not carry on past it.
+    /// The exit code to report. A signal that asks bun to stop (Ctrl+C, SIGTERM) is re-raised instead.
     pub(crate) fn exit_code(self) -> u32 {
         use bun_core::SignalCode;
         match self {

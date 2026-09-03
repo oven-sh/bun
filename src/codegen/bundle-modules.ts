@@ -16,7 +16,7 @@ import jsclasses from "./../jsc/bindings/js_classes";
 import { sliceSourceCode } from "./builtin-parser";
 import { createAssertClientJS, createLogClientJS } from "./client-js";
 import { getJS2NativeCPP, getJS2NativeRust } from "./generate-js2native";
-import { cap, checkAscii, writeIfNotChanged, writeIfNotChangedBinary } from "./helpers";
+import { cap, checkAscii, sourceStamp, writeIfNotChanged, writeIfNotChangedBinary } from "./helpers";
 import { createInternalModuleRegistry } from "./internal-module-registry-scanner";
 import { define } from "./replacements";
 
@@ -247,8 +247,7 @@ const outputs = new Map();
 
 for (const entrypoint of bundledEntryPoints) {
   const file_path = entrypoint.slice(TMP_DIR.length + 1).replace(/\.ts$/, ".js");
-  const file = Bun.file(path.join(TMP_DIR, "modules_out", file_path));
-  const output = await file.text();
+  const output = fs.readFileSync(path.join(TMP_DIR, "modules_out", file_path), "utf8");
   let captured = `(function (){${output.replace("// @bun\n", "").trim()}})`;
   let usesDebug = output.includes("$debug_log");
   let usesAssert = output.includes("$assert");
@@ -425,12 +424,9 @@ const BUILTINS_HEADER_SIZE = 48;
 
 // Identifies these module sources to bytecode generated from them ahead of time (bun build --compile embeds bytecode for
 // the internal modules an app uses); computed over the bundled outputs so it is meaningful in debug builds too.
-const internalModulesStamp = (() => {
-  const h = new Bun.CryptoHasher("sha256");
-  for (const id of moduleList.slice(0, nativeStartIndex))
-    h.update(outputs.get(id.slice(0, -3).replaceAll("/", path.sep)) ?? "");
-  return new DataView(h.digest().buffer).getUint32(0);
-})();
+const internalModulesStamp = sourceStamp(
+  moduleList.slice(0, nativeStartIndex).map(id => outputs.get(id.slice(0, -3).replaceAll("/", path.sep)) ?? ""),
+);
 
 // require() edges between JS internal modules (ids are enum order), as offsets into one flat list. `bun build --compile
 // --bytecode` embeds bytecode for the builtins an app imports plus everything reachable through this table.

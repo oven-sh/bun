@@ -1,4 +1,5 @@
 import { isAscii } from "buffer";
+import { createHash } from "crypto";
 import fs from "fs";
 import path from "path";
 
@@ -36,6 +37,13 @@ export function checkAscii(str: string) {
   }
 
   return str;
+}
+
+/** The first four bytes of the SHA-256 digest of the sources, read as a big-endian u32. */
+export function sourceStamp(sources: Iterable<string>): number {
+  const hash = createHash("sha256");
+  for (const source of sources) hash.update(source);
+  return hash.digest().readUInt32BE(0);
 }
 
 export function writeIfNotChanged(file: string, contents: string) {

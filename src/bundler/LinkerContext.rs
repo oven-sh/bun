@@ -4487,7 +4487,7 @@ impl<'a> LinkerContext<'a> {
         });
 
         // Items of `ns.name()` left unbound, each with its `ns`.
-        let mut method_call_items: Vec<(Ref, Ref)> = Vec::new();
+        let mut method_call_items: HashMap<Ref, Ref> = HashMap::default();
         for &i in &order {
             let i = i as usize;
             // SAFETY: `keys`/`values` point into stable SoA storage (see above); read-only deref.
@@ -4523,7 +4523,7 @@ impl<'a> LinkerContext<'a> {
                 MatchImportKind::Normal
                     if self.method_call_item_needs_this(import_ref, named_import, &result) =>
                 {
-                    method_call_items.push((import_ref, named_import.namespace_ref));
+                    method_call_items.insert(import_ref, named_import.namespace_ref);
                 }
                 MatchImportKind::Normal | MatchImportKind::NormalAndNamespace => {
                     self.bind_matched_import(imports_to_bind, import_ref, &result, re_exports);
@@ -4603,16 +4603,23 @@ impl<'a> LinkerContext<'a> {
 
         // A part that calls such an item reads its namespace.
         if !method_call_items.is_empty() {
+            let mut namespace_uses: Vec<(Ref, u32)> = Vec::new();
             for part in self.graph.ast.items_parts_mut()[source_index as usize].as_mut_slice() {
-                for &(item, namespace_ref) in &method_call_items {
-                    let Some(count) = part
-                        .symbol_uses
-                        .get(&item)
-                        .map(|item_use| item_use.count_estimate)
-                        .filter(|&count| count > 0)
-                    else {
+                namespace_uses.clear();
+                for (item, item_use) in part
+                    .symbol_uses
+                    .keys()
+                    .iter()
+                    .zip(part.symbol_uses.values())
+                {
+                    if item_use.count_estimate == 0 {
                         continue;
-                    };
+                    }
+                    if let Some(&namespace_ref) = method_call_items.get(item) {
+                        namespace_uses.push((namespace_ref, item_use.count_estimate));
+                    }
+                }
+                for &(namespace_ref, count) in &namespace_uses {
                     part.symbol_uses
                         .get_or_put_value(namespace_ref, Default::default())
                         .expect("OOM")

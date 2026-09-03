@@ -1090,10 +1090,18 @@ pub enum PartTag {
 pub type PartSymbolUseMap = ArrayHashMap<Ref, symbol::Use, AutoContext, bun_alloc::AstAlloc>;
 pub type PartSymbolPropertyUseMap = ArrayHashMap<
     Ref,
-    StringHashMap<symbol::Use, bun_alloc::AstAlloc>,
+    StringHashMap<PropertyUse, bun_alloc::AstAlloc>,
     AutoContext,
     bun_alloc::AstAlloc,
 >;
+
+/// The reads of one `X.name` in `Part::import_symbol_property_uses`.
+#[derive(Default, Clone, Copy)]
+pub struct PropertyUse {
+    pub count_estimate: u32,
+    /// Some read is called, as in `X.name()`. That call passes `X` as `this`.
+    pub is_call_target: bool,
+}
 
 impl Default for Part {
     fn default() -> Self {

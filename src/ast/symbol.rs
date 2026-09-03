@@ -122,6 +122,16 @@ bitflags::bitflags! {
         /// `arguments` object can). Set on the root of the symbol's link
         /// chain. Read by HMR live bindings and the printer's same-target fold.
         const HAS_BEEN_ASSIGNED_TO = 1 << 5;
+
+        /// An import item generated for `ns.name` where some use calls it,
+        /// as in `ns.name()`. That call passes `ns` as `this`.
+        const CALLED_AS_METHOD = 1 << 6;
+
+        /// On a function declaration: the function does not read `this`. On a
+        /// lifted CommonJS export (`exports.name = function () {}`): the file
+        /// assigns the export once, to such a function. A call through the
+        /// module namespace can then drop the namespace as `this`.
+        const CALL_IGNORES_THIS = 1 << 7;
     }
 }
 
@@ -147,6 +157,8 @@ symbol_flag_accessors! {
     must_not_be_renamed, set_must_not_be_renamed => MUST_NOT_BE_RENAMED;
     remove_overwritten_function_declaration, set_remove_overwritten_function_declaration => REMOVE_OVERWRITTEN_FUNCTION_DECLARATION;
     has_been_assigned_to, set_has_been_assigned_to => HAS_BEEN_ASSIGNED_TO;
+    called_as_method, set_called_as_method => CALLED_AS_METHOD;
+    call_ignores_this, set_call_ignores_this => CALL_IGNORES_THIS;
 }
 
 const _: () = assert!(core::mem::size_of::<Option<bun_alloc::AstBox<G::NamespaceAlias>>>() == 8);

@@ -4283,6 +4283,40 @@ impl<'a> LinkerContext<'a> {
                 })
     }
 
+    /// `X.name()` passes `X` as `this`. Must the call keep `X` when `X.name`
+    /// resolved to export `ref_` of `source_index`? A call through the
+    /// namespace of an ES module drops it. A lifted CommonJS export is a
+    /// property of `module.exports`, so the call keeps it unless the parser
+    /// found that the function does not read `this`.
+    fn method_call_needs_this(&self, source_index: crate::IndexInt, ref_: Ref) -> bool {
+        self.graph.ast.items_flags()[source_index as usize]
+            .contains(AstFlags::COMMONJS_LIFTED_TO_ESM)
+            && !self
+                .graph
+                .symbols
+                .get_const(ref_)
+                .is_some_and(|symbol| symbol.call_ignores_this())
+    }
+
+    /// `ns.name()` on `import * as ns` calls the item that the parser made for
+    /// `ns.name`. An item that is not bound prints as `ns.name`, so the call
+    /// keeps `ns` as `this`.
+    fn method_call_item_needs_this(
+        &self,
+        import_ref: Ref,
+        named_import: &NamedImport,
+        result: &MatchImport,
+    ) -> bool {
+        self.options.output_format != Format::InternalBakeDev
+            && named_import.namespace_ref.is_valid()
+            && self
+                .graph
+                .symbols
+                .get_const(import_ref)
+                .is_some_and(|symbol| symbol.called_as_method() && symbol.namespace_alias.is_some())
+            && self.method_call_needs_this(result.source_index, result.r#ref)
+    }
+
     fn is_esm_namespace_ref(&self, source_index: crate::IndexInt, ref_: Ref) -> bool {
         let id = source_index as usize;
         id < self.graph.ast.len()
@@ -4452,6 +4486,8 @@ impl<'a> LinkerContext<'a> {
                 .cmp(&(&*keys)[b as usize].inner_index())
         });
 
+        // Items of `ns.name()` left unbound, each with its `ns`.
+        let mut method_call_items: Vec<(Ref, Ref)> = Vec::new();
         for &i in &order {
             let i = i as usize;
             // SAFETY: `keys`/`values` point into stable SoA storage (see above); read-only deref.
@@ -4484,6 +4520,11 @@ impl<'a> LinkerContext<'a> {
             }
 
             match result.kind {
+                MatchImportKind::Normal
+                    if self.method_call_item_needs_this(import_ref, named_import, &result) =>
+                {
+                    method_call_items.push((import_ref, named_import.namespace_ref));
+                }
                 MatchImportKind::Normal | MatchImportKind::NormalAndNamespace => {
                     self.bind_matched_import(imports_to_bind, import_ref, &result, re_exports);
                 }
@@ -4560,6 +4601,27 @@ impl<'a> LinkerContext<'a> {
             }
         }
 
+        // A part that calls such an item reads its namespace.
+        if !method_call_items.is_empty() {
+            for part in self.graph.ast.items_parts_mut()[source_index as usize].as_mut_slice() {
+                for &(item, namespace_ref) in &method_call_items {
+                    let Some(count) = part
+                        .symbol_uses
+                        .get(&item)
+                        .map(|item_use| item_use.count_estimate)
+                        .filter(|&count| count > 0)
+                    else {
+                        continue;
+                    };
+                    part.symbol_uses
+                        .get_or_put_value(namespace_ref, Default::default())
+                        .expect("OOM")
+                        .value_ptr
+                        .count_estimate += count;
+                }
+            }
+        }
+
         self.bind_import_property_accesses(source_index, imports_to_bind, member_resolutions);
     }
 
@@ -4582,6 +4644,22 @@ impl<'a> LinkerContext<'a> {
         }
         let id = source_index as usize;
         let parts_len = self.graph.ast.items_parts()[id].len();
+        // `X.name()` passes `X` as `this`. The printer substitutes a binding at
+        // every `X.name` in the file, so a call that needs that `this` keeps
+        // each `X.name` in the file as written.
+        let mut called: HashMap<(Ref, bun_ast::StoreStr), ()> = HashMap::default();
+        for part in self.graph.ast.items_parts()[id].as_slice() {
+            let Some(uses) = part.import_symbol_property_uses.as_ref() else {
+                continue;
+            };
+            for (base, properties) in uses.keys().iter().zip(uses.values()) {
+                for (name, prop_use) in properties.iter() {
+                    if prop_use.is_call_target {
+                        called.insert((*base, bun_ast::StoreStr::new(name)), ());
+                    }
+                }
+            }
+        }
         let mut accesses: Vec<(Ref, crate::IndexInt, bun_ast::StoreStr, u32)> = Vec::new();
         let mut dependencies: Vec<Dependency> = Vec::new();
         let mut bound_bases: Vec<Ref> = Vec::new();
@@ -4664,6 +4742,11 @@ impl<'a> LinkerContext<'a> {
                 let Some(resolved) = member_resolutions.get(&(target_source, name)).unwrap() else {
                     continue;
                 };
+                if called.contains_key(&(base, name))
+                    && self.method_call_needs_this(resolved.source_index, resolved.r#ref)
+                {
+                    continue;
+                }
 
                 if !bound_bases.contains(&base) {
                     // First bound member of `base` in this part: depend on this

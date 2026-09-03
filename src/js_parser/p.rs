@@ -348,6 +348,9 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     pub(crate) commonjs_named_exports_needs_conversion: u32,
     pub(crate) had_commonjs_named_exports_this_visit: bool,
     pub(crate) commonjs_replacement_stmts: StmtNodeList,
+    /// How many `this` expressions the visit pass has seen. A statement that
+    /// lifts `exports.name = function () {}` compares it before and after.
+    pub(crate) this_expr_count: u32,
 
     pub(crate) parse_pass_symbol_uses: ParsePassSymbolUsageType<'a>,
 
@@ -5713,6 +5716,65 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         self.commonjs_named_exports_deoptimized = true;
     }
 
+    pub(crate) fn count_commonjs_export_assignment(&mut self, name: &[u8]) {
+        if let Some(export) = self.commonjs_named_exports.get_mut(name) {
+            export.assign_count = export.assign_count.saturating_add(1);
+        }
+    }
+
+    /// Sets `CALL_IGNORES_THIS` on each lifted export that the file assigns
+    /// once, to a function that does not read `this`.
+    fn mark_commonjs_exports_that_ignore_this(
+        &mut self,
+        top_level_symbols_to_parts: &bun_ast::ast_result::TopLevelSymbolToParts,
+    ) {
+        use bun_ast::ast_result::CommonJSExportValue;
+
+        // `exports.name = name`, where `name` is a function declaration:
+        // (export, function) pairs.
+        let mut declared_functions: Vec<(Ref, Ref)> = Vec::new();
+        for export in self.commonjs_named_exports.values() {
+            if export.assign_count != 1 {
+                continue;
+            }
+            match export.decl_value {
+                CommonJSExportValue::Other => {}
+                CommonJSExportValue::FunctionIgnoringThis => {
+                    self.symbols[export.loc_ref.ref_.inner_index() as usize]
+                        .set_call_ignores_this(true);
+                }
+                CommonJSExportValue::Identifier(function) => {
+                    let symbol = &self.symbols[function.inner_index() as usize];
+                    // An assignment or a second declaration (a `var` of the
+                    // same name) can change the value of the binding.
+                    if symbol.kind.is_function()
+                        && symbol.call_ignores_this()
+                        && !symbol.has_link()
+                        && !symbol.has_been_assigned_to()
+                        && top_level_symbols_to_parts
+                            .get(&function)
+                            .is_some_and(|parts| parts.len() == 1)
+                    {
+                        declared_functions.push((export.loc_ref.ref_, function));
+                    }
+                }
+            }
+        }
+        if declared_functions.is_empty() {
+            return;
+        }
+        // A `var` in a nested scope is linked to the function of the same name.
+        for symbol in self.symbols.iter() {
+            let link = symbol.link.get();
+            if link.is_valid() {
+                declared_functions.retain(|&(_, function)| function != link);
+            }
+        }
+        for (export, _) in declared_functions {
+            self.symbols[export.inner_index() as usize].set_call_ignores_this(true);
+        }
+    }
+
     pub(crate) fn maybe_keep_expr_symbol_name(
         &mut self,
         expr: Expr,
@@ -6396,6 +6458,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             .get_or_put_value(name, Default::default())
             .expect("unreachable");
         inner_use.count_estimate += 1;
+        inner_use.is_call_target |= opts.is_call_target();
         true
     }
 
@@ -9064,6 +9127,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             .unwrap_or(self.require_ref);
         let runtime_imports = core::mem::take(&mut self.runtime_imports);
 
+        if !self.commonjs_named_exports_deoptimized {
+            self.mark_commonjs_exports_that_ignore_this(&top_level_symbols_to_parts);
+        }
+
         // Re-tag the arena-backed buffer
         // into the `Ast` and leave the parser-side slot empty — a pointer move,
         // no realloc/memcpy. `Ast.{symbols,parts,import_records}` are now
@@ -9470,6 +9537,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             commonjs_named_exports_needs_conversion: u32::MAX,
             had_commonjs_named_exports_this_visit: false,
             commonjs_replacement_stmts: js_ast::StmtNodeList::EMPTY,
+            this_expr_count: 0,
             parse_pass_symbol_uses: None,
             has_commonjs_export_names: false,
             should_fold_typescript_constant_expressions: false,

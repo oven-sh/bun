@@ -1295,6 +1295,137 @@ describe("bundler", () => {
       stdout: "p id",
     },
   });
+  // A method call through the default import or the namespace of a CommonJS
+  // module passes `module.exports` as `this`. The `stack-trace` package reads it.
+  const thisReadingLib = {
+    "/lib.cjs": /* js */ `
+      exports.parse = function (s) {
+        return this._helper(s);
+      };
+      exports._helper = function (s) {
+        return "helped:" + s;
+      };
+    `,
+  };
+  itBundled("cjs2esm/DefaultImportMethodCallKeepsThis", {
+    files: {
+      "/entry.js": /* js */ `
+        import st from "./lib.cjs";
+        console.log(st.parse("x"), st["parse"]("y"));
+      `,
+      ...thisReadingLib,
+    },
+    cjs2esm: true,
+    run: {
+      stdout: "helped:x helped:y",
+    },
+  });
+  itBundled("cjs2esm/StarImportMethodCallKeepsThis", {
+    files: {
+      "/entry.js": /* js */ `
+        import * as ns from "./lib.cjs";
+        const parse = ns.parse;
+        console.log(ns.parse("x"), ns["parse"]("y"), parse === ns.parse);
+      `,
+      ...thisReadingLib,
+    },
+    cjs2esm: true,
+    run: {
+      stdout: "helped:x helped:y true",
+    },
+  });
+  itBundled("cjs2esm/StarImportMethodCallThroughExportStarKeepsThis", {
+    files: {
+      "/entry.js": /* js */ `
+        import * as ns from "./barrel.js";
+        import lib from "./lib.cjs";
+        console.log(ns.parse("x"), lib.parse("y"));
+      `,
+      "/barrel.js": /* js */ `
+        export * from "./lib.cjs";
+      `,
+      ...thisReadingLib,
+    },
+    cjs2esm: true,
+    run: {
+      stdout: "helped:x helped:y",
+    },
+  });
+  itBundled("cjs2esm/MethodCallKeepsThisWhenTheValueCanReadIt", {
+    files: {
+      "/entry.js": /* js */ `
+        import lib from "./lib.cjs";
+        console.log(lib.decl(), lib.reassigned(), lib.value());
+      `,
+      "/lib.cjs": /* js */ `
+        function decl() { return this.name; }
+        exports.decl = decl;
+        exports.reassigned = function () { return "first"; };
+        exports.reassigned = function () { return this.name; };
+        exports.value = [function () { return this.name; }][0];
+        exports.name = "lib";
+      `,
+    },
+    cjs2esm: true,
+    run: {
+      stdout: "lib lib lib",
+    },
+  });
+  // A `var` with the name of a function declaration can change the value of the
+  // binding. An ES module cannot declare a function and a `var` with one name,
+  // so this output does not load. The test reads the printed calls.
+  itBundled("cjs2esm/MethodCallKeepsThisWhenAVarRedeclaresTheFunction", {
+    files: {
+      "/entry.js": /* js */ `
+        import lib from "./lib.cjs";
+        console.log(lib.nested(), lib.top(), lib.top2());
+      `,
+      "/lib.cjs": /* js */ `
+        function nested() { return "declaration"; }
+        if (Math.random() < 2) { var nested = function () { return this.name; }; }
+        exports.nested = nested;
+        function top() { return "declaration"; }
+        var top = function () { return this.name; };
+        exports.top = top;
+        var top2 = function () { return this.name; };
+        function top2() { return "declaration"; }
+        exports.top2 = top2;
+        exports.name = "lib";
+      `,
+    },
+    cjs2esm: true,
+    onAfterBundle(api) {
+      const out = api.readFile("/out.js");
+      expect(out).toContain("console.log(exports_lib.nested(), exports_lib.top(), exports_lib.top2());");
+    },
+  });
+  itBundled("cjs2esm/MethodCallWithoutThisBindsDirectly", {
+    files: {
+      "/entry.js": /* js */ `
+        import lib from "./lib.cjs";
+        import * as ns from "./lib.cjs";
+        console.log(lib.expr(), lib.arrow(), lib.decl(), ns.expr(), ns.decl(), lib.nested()());
+      `,
+      "/lib.cjs": /* js */ `
+        exports.expr = function () { return "expr"; };
+        exports.arrow = () => "arrow";
+        function decl() { return "decl"; }
+        exports.decl = decl;
+        exports.nested = function () { return () => "nested"; };
+        exports.unused = function () { return this.expr(); };
+      `,
+    },
+    cjs2esm: true,
+    onAfterBundle(api) {
+      const out = api.readFile("/out.js");
+      expect(out).not.toContain("exports_lib");
+      // `unused` reads `this`, but nothing calls it, so it is tree-shaken
+      expect(out).not.toContain("this.expr");
+    },
+    run: {
+      stdout: "expr arrow decl expr decl nested",
+    },
+  });
   itBundled("cjs2esm/DefaultImportJsxClassicRuntime", {
     files: {
       "/entry.jsx": /* jsx */ `

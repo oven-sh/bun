@@ -161,7 +161,10 @@ describe("server.address()", () => {
   // port can already be in use on the machine, so ask the OS for a free one.
   async function getFreePort(host?: string): Promise<number> {
     const probe = net.createServer();
-    await new Promise<void>(resolve => probe.listen({ port: 0, host }, resolve));
+    await new Promise<void>((resolve, reject) => {
+      probe.once("error", reject);
+      probe.listen({ port: 0, host }, resolve);
+    });
     const { port } = probe.address() as net.AddressInfo;
     await new Promise<void>(resolve => probe.close(() => resolve()));
     return port;

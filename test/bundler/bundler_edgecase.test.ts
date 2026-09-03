@@ -2272,6 +2272,24 @@ describe("bundler", () => {
       api.expectFile("/out.js").not.toMatch(/[^\.:]module/); // `.module` and `node:module` are ok.
     },
   });
+  // Without code splitting, the output of an entry point holds a copy of each module that it
+  // imports. A copy of another entry point is not the main module, as with `bun run app.ts`.
+  itBundled("edgecase/ImportMetaMainInCopyOfEntryPoint", {
+    files: {
+      "/cli.ts": /* js */ `
+        export const cliIsMain = import.meta.main;
+        if (import.meta.main) console.log("cli.ts ran as the main module");
+      `,
+      "/app.ts": /* js */ `
+        import { cliIsMain } from "./cli.ts";
+        console.log(JSON.stringify({ cliIsMain, appIsMain: import.meta.main }));
+      `,
+    },
+    entryPoints: ["/cli.ts", "/app.ts"],
+    target: "bun",
+    outdir: "/out",
+    run: { file: "/out/app.js", stdout: '{"cliIsMain":false,"appIsMain":true}' },
+  });
   itBundled("edgecase/build-cjs-module#20308", {
     files: {
       "/entry.ts": /* js */ `

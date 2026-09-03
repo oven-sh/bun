@@ -2634,7 +2634,25 @@ pub mod parse_worker {
         // Entrypoints will have `import.meta.main` set as "unknown", unless we use `--compile`,
         // in which we inline `true`.
         if topts.inline_entrypoint_import_meta_main || !task.is_entry_point {
-            opts.import_meta_main_value = Some(task.is_entry_point && !topts.has_dev_server());
+            // An executable with more than one JavaScript entry point runs only one of them as
+            // the main module, and another entry point's bundle can hold a copy of that module.
+            // The linker sets the value for each chunk (`generate_code_for_file_in_chunk_js`).
+            let linker_sets_value = task.is_entry_point
+                && topts.compile_mode.is_executable()
+                && topts
+                    .entry_points
+                    .iter()
+                    .filter(|path| {
+                        !matches!(
+                            topts.loader(bun_paths::extension(path)),
+                            Loader::Html | Loader::Css
+                        )
+                    })
+                    .count()
+                    > 1;
+            if !linker_sets_value {
+                opts.import_meta_main_value = Some(task.is_entry_point && !topts.has_dev_server());
+            }
         } else if target == options::Target::Node {
             opts.lower_import_meta_main_for_node_js = true;
         }

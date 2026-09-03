@@ -514,6 +514,32 @@ describe("bundler", () => {
       },
     });
   }
+  // rewriteExternalWithNamespace and rewriteExternalWithoutNamespace in
+  // https://github.com/evanw/esbuild/blob/f6058f8364fe7ab91ca57a83e02577ed74c9cae4/scripts/plugin-tests.js#L680-L728
+  for (const namespace of ["for-testing", undefined]) {
+    itBundled(`plugin/RewriteExternal${namespace ? "WithNamespace" : "WithoutNamespace"}`, {
+      files: {
+        "/in.js": /* js */ `
+          import { exists } from "extern";
+          export default exists;
+        `,
+        "/check.js": /* js */ `
+          const fs = require("fs");
+          console.log(require("./out.js").default === fs.exists);
+        `,
+      },
+      format: "cjs",
+      plugins(builder) {
+        builder.onResolve({ filter: /^extern$/ }, () => {
+          return { path: "fs", external: true, namespace };
+        });
+      },
+      run: {
+        file: "/check.js",
+        stdout: "true",
+      },
+    });
+  }
   itBundled("plugin/ResolveOverrideFile", ({ root }) => {
     return {
       files: {

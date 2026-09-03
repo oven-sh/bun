@@ -1436,12 +1436,12 @@ describe("bundler", () => {
     },
   });
   // A call of `exports.name()` in the file itself passes `module.exports` as `this`.
+  // The entry uses named imports, so only those calls keep the namespace object.
   itBundled("cjs2esm/SelfMethodCallKeepsThis", {
     files: {
       "/entry.js": /* js */ `
-        import st from "./lib.cjs";
-        import * as ns from "./lib.cjs";
-        console.log(st.internal(), ns.viaModule(), st.viaTag());
+        import { internal, viaModule, viaTag } from "./lib.cjs";
+        console.log(internal(), viaModule(), viaTag());
       `,
       "/lib.cjs": /* js */ `
         exports.parse = function (s) { return this._helper(s); };
@@ -1453,6 +1453,11 @@ describe("bundler", () => {
       `,
     },
     cjs2esm: true,
+    onAfterBundle(api) {
+      const out = api.readFile("/out.js");
+      expect(out).toContain('return exports_lib.parse("in");');
+      expect(out).toContain("console.log($internal(), $viaModule(), $viaTag());");
+    },
     run: {
       stdout: "helped:in helped:module helped:tag",
     },

@@ -200,7 +200,11 @@ describe("bundler", () => {
       "/entry.js": /* js */ `
         const source = { x: 1, y: 2, "quoted key": 3 };
         const { x: removeX, y: removeY = 0, "quoted key": removeQuoted } = source;
-        const { missing: POSSIBLE_REMOVAL_missing } = source;
+        Object.defineProperty(Object.prototype, "inherited", {
+          configurable: true,
+          get() { console.log("inherited getter"); return 1; },
+        });
+        const { inherited: KEEP_inherited } = source;
 
         const nested = { x: { y: 1 } };
         nested.x = { get y() { console.log("nested getter"); return 1; } };
@@ -222,6 +226,7 @@ describe("bundler", () => {
     dce: true,
     run: {
       stdout: `
+        inherited getter
         nested getter
         getter
         reassigned getter

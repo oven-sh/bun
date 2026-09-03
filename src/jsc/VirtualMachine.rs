@@ -2738,7 +2738,7 @@ impl VirtualMachine {
             opts.eval_mode,
             opts.worker_ptr,
         );
-        // JSC may mess with the stack size.
+        // Sets the bound for a thread that skipped it at start (`configure_thread_no_js`).
         bun_core::StackCheck::configure_thread();
         // SAFETY: write through the raw `vm` ptr (not `vm_ref`) so no
         // `&mut VirtualMachine` is held live across the FFI call above; same

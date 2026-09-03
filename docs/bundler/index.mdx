@@ -1557,9 +1557,9 @@ interface BuildMetafile {
 
 ### check
 
-Check the module graph for circular imports. Bun resolves and parses every module, then stops before it links or prints output. It writes no files.
+Check the module graph for circular dependencies. Bun resolves and parses every module, then stops before it links or prints output. It writes no files.
 
-A circular import is a chain of imports that leads back to the file where it starts. When a module in a cycle runs, it can read a binding from another module in the cycle before that binding is initialized. For a `let`, `const`, or `class` binding, this throws a `ReferenceError`.
+A circular dependency is a chain of imports that leads back to the file where it starts. When a module in a cycle runs, it can read a binding from another module in the cycle before that binding is initialized. For a `let`, `const`, or `class` binding, this throws a `ReferenceError`.
 
 <Tabs>
   <Tab title="JavaScript">
@@ -1571,7 +1571,7 @@ A circular import is a chain of imports that leads back to the file where it sta
     });
 
     for (const message of result.logs) {
-      console.error(message.message); // "Circular import: src/a.ts -> src/b.ts -> src/a.ts"
+      console.error(message.message); // "Circular dependency: src/a.ts -> src/b.ts -> src/a.ts"
     }
     ```
 
@@ -1588,7 +1588,7 @@ Each cycle is one error. The error points at the first import in the cycle. A no
 ```txt
 1 | import { b } from "./b";
                       ^
-error: Circular import: src/a.ts -> src/b.ts -> src/a.ts
+error: Circular dependency: src/a.ts -> src/b.ts -> src/a.ts
     at /project/src/a.ts:1:19
 
 1 | import { a } from "./a";
@@ -1602,11 +1602,11 @@ Bun follows the imports that run a module when the importing module runs:
 - `import` and `export ... from` statements, including imports for side effects such as `import "./setup"`
 - `require()` calls
 
-Bun skips the imports that cannot read a binding too early:
+Bun skips these imports:
 
 - Type-only imports. TypeScript removes them, so they do not exist at runtime.
 - `import()` and `import defer`. These do not run the module when the importing module runs.
-- Imports of files in `node_modules`.
+- Imports of files in `node_modules`. Bun still checks a workspace package, because it resolves the link in `node_modules` to the directory of the package.
 
 The CLI exits with code 1 when it finds a cycle. In the JavaScript API, the cycles are errors in `result.logs`, and the promise rejects unless you set `throw: false`. You cannot use `check` with `outdir`, `metafile`, or `compile`.
 

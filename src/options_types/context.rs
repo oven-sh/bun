@@ -199,7 +199,7 @@ pub struct BundlerOptions {
     pub code_splitting: bool,
     pub split_require: bool,
     pub transform_only: bool,
-    /// `--check`: scan the module graph, report circular imports, write nothing.
+    /// `--check`: scan the module graph, report circular dependencies, write nothing.
     pub check: bool,
     pub inline_entrypoint_import_meta_main: bool,
     pub minify_syntax: bool,

@@ -507,7 +507,7 @@ pub(crate) const BUILD_ONLY_PARAMS: &[ParamType] = concat_params!(
         ),
         parse_param!("--no-bundle                      Transpile file only, do not bundle"),
         parse_param!(
-            "--check                          Resolve and parse every module, report circular imports, and write no files"
+            "--check                          Resolve and parse every module, report circular dependencies, and write no files"
         ),
         parse_param!(
             "--emit-dce-annotations           Re-emit DCE annotations in bundles. Enabled by default unless --minify-whitespace is passed."

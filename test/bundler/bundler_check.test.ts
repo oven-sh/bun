@@ -39,7 +39,7 @@ describe("bun build --check", () => {
     expect(result.stderr).toMatchInlineSnapshot(`
       "1 | import { b } from "./b";
                             ^
-      error: Circular import: a.ts -> b.ts -> c.ts -> a.ts
+      error: Circular dependency: a.ts -> b.ts -> c.ts -> a.ts
           at <dir>/a.ts:1:19
 
       1 | import { c } from "./c";
@@ -84,9 +84,9 @@ describe("bun build --check", () => {
     const result = await run(String(dir), ["build", "./index.ts", "--check"]);
 
     expect(errorLines(result.stderr)).toEqual([
-      "error: Circular import: reexport.ts -> reexport-back.ts -> reexport.ts",
-      "error: Circular import: bare.ts -> bare-back.ts -> bare.ts",
-      "error: Circular import: cjs.js -> cjs-back.js -> cjs.js",
+      "error: Circular dependency: reexport.ts -> reexport-back.ts -> reexport.ts",
+      "error: Circular dependency: bare.ts -> bare-back.ts -> bare.ts",
+      "error: Circular dependency: cjs.js -> cjs-back.js -> cjs.js",
     ]);
     expect(result.exitCode).toBe(1);
   });
@@ -99,7 +99,7 @@ describe("bun build --check", () => {
 
     const result = await run(String(dir), ["build", "./index.ts", "--check"]);
 
-    expect(errorLines(result.stderr)).toEqual(["error: Circular import: self.ts -> self.ts"]);
+    expect(errorLines(result.stderr)).toEqual(["error: Circular dependency: self.ts -> self.ts"]);
     expect(result.exitCode).toBe(1);
   });
 
@@ -137,7 +137,7 @@ describe("bun build --check", () => {
 
     const result = await run(String(dir), ["build", "./one.ts", "./two.ts", "--check"]);
 
-    expect(errorLines(result.stderr)).toEqual(["error: Circular import: a.ts -> b.ts -> a.ts"]);
+    expect(errorLines(result.stderr)).toEqual(["error: Circular dependency: a.ts -> b.ts -> a.ts"]);
     expect(result.exitCode).toBe(1);
   });
 
@@ -166,7 +166,7 @@ describe("bun build --check", () => {
     const result = await run(String(dir), ["build", "./app/index.ts", "--check"]);
 
     expect(errorLines(result.stderr)).toEqual([
-      "error: Circular import: app/index.ts -> shared/index.ts -> app/index.ts",
+      "error: Circular dependency: app/index.ts -> shared/index.ts -> app/index.ts",
     ]);
     expect(result.exitCode).toBe(1);
   });
@@ -184,7 +184,7 @@ describe("bun build --check", () => {
 
     const result = await run(String(dir), ["build", "./index.ts", "--check"]);
 
-    expect(errorLines(result.stderr)).toEqual(["error: Circular import: barrel.ts -> unused.ts -> barrel.ts"]);
+    expect(errorLines(result.stderr)).toEqual(["error: Circular dependency: barrel.ts -> unused.ts -> barrel.ts"]);
     expect(result.exitCode).toBe(1);
   });
 
@@ -240,7 +240,9 @@ describe("Bun.build({ check: true })", () => {
     expect(JSON.parse(result.stdout)).toEqual({
       success: false,
       outputs: 0,
-      logs: [{ level: "error", message: "Circular import: a.ts -> b.ts -> a.ts", file: "a.ts", line: 1, column: 19 }],
+      logs: [
+        { level: "error", message: "Circular dependency: a.ts -> b.ts -> a.ts", file: "a.ts", line: 1, column: 19 },
+      ],
     });
     expect(result.exitCode).toBe(0);
   });
@@ -261,7 +263,7 @@ describe("Bun.build({ check: true })", () => {
     const result = await run(String(dir), ["build.ts"]);
 
     expect(result).toEqual({
-      stdout: "AggregateError Circular import: a.ts -> b.ts -> a.ts",
+      stdout: "AggregateError Circular dependency: a.ts -> b.ts -> a.ts",
       stderr: "",
       exitCode: 0,
     });

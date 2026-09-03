@@ -1,4 +1,4 @@
-//! Circular import detection for `bun build --check` and `Bun.build({ check: true })`.
+//! Circular dependency detection for `bun build --check` and `Bun.build({ check: true })`.
 //!
 //! The walk reads the graph that the scan phase produced, before
 //! `find_reachable_files` runs. A check turns off the two scan-time rewrites
@@ -182,6 +182,6 @@ fn log_cycle(
         Some(&sources[cycle[0].source_index as usize]),
         range(&cycle[0]),
         notes,
-        format_args!("Circular import: {}", BStr::new(&chain)),
+        format_args!("Circular dependency: {}", BStr::new(&chain)),
     );
 }

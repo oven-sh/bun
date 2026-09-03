@@ -2265,7 +2265,7 @@ pub mod bv2_impl {
         }
 
         /// `check` mode ends the build after the scan phase. It logs an error
-        /// for each circular import. The link and print steps do not run, so
+        /// for each circular dependency. The link and print steps do not run, so
         /// the result has no output files.
         fn check_module_graph(&self) -> Result<BuildResult, Error> {
             if crate::circular_imports::report_circular_imports(self) > 0 {

@@ -1273,7 +1273,7 @@ pub struct BundleOptions<'a> {
     pub(crate) polyfill_node_globals: bool,
     pub transform_only: bool,
     /// `bun build --check` / `Bun.build({ check: true })`: stop after the scan
-    /// phase, report circular imports, and produce no output files.
+    /// phase, report circular dependencies, and produce no output files.
     pub check: bool,
     pub load_tsconfig_json: bool,
     pub(crate) load_package_json: bool,

@@ -1,8 +1,7 @@
-import { afterEach, beforeEach, describe, expect, it } from "bun:test";
+import { afterEach, beforeEach, describe, expect, it, setSystemTime } from "bun:test";
 import { generateKeyPairSync } from "crypto";
 import jwt from "jsonwebtoken";
 import jws from "jws";
-import sinon from "sinon";
 var PS_SUPPORTED = true;
 
 describe("signing a token asynchronously", function () {
@@ -11,13 +10,12 @@ describe("signing a token asynchronously", function () {
 
     // Each sign() reads Date.now() for `iat`. Freeze the clock so the async
     // and the sync token cannot differ when a second boundary falls between them.
-    var fakeClock;
     beforeEach(function () {
-      fakeClock = sinon.useFakeTimers({ now: 60000 });
+      setSystemTime(60000);
     });
 
     afterEach(function () {
-      fakeClock.uninstall();
+      setSystemTime();
     });
 
     it("should return the same result as singing synchronously", function (done) {

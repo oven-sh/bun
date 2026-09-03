@@ -393,12 +393,8 @@ function emitBunInstall(
   return stamp;
 }
 
-/**
- * The install step for the repo-root package.json, with the package manager
- * that `cfg.rootPackageManager` names. Exported for the test in
- * test/internal/source-lints/root-package-json.test.ts.
- */
-export function emitRootInstall(n: Ninja, cfg: Config): string {
+/** The install step for the repo-root package.json, with the package manager that `cfg.rootPackageManager` names. */
+function emitRootInstall(n: Ninja, cfg: Config): string {
   return emitBunInstall(n, cfg, cfg.cwd, cfg.rootPackageManager === "npm" ? "npm_install" : "bun_install");
 }
 

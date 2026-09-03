@@ -965,9 +965,7 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
         });
     }
 
-    // A file in the chunk of another entry point is a copy there, and a copy is not the main
-    // module. Under `--compile`, `ParseTask` can also leave `import.meta.main` of an entry point to
-    // this step. Then the value is `true` only for the module that the executable runs.
+    // A file in the chunk of another entry point is a copy there, and a copy is not the main module.
     let in_chunk_of_other_entry_point = chunk.entry_point.is_entry_point()
         && chunk.entry_point.source_index() as usize != source_index;
     let import_meta_main_value = if in_chunk_of_other_entry_point {

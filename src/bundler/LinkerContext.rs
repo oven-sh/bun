@@ -911,8 +911,7 @@ impl<'a> LinkerContext<'a> {
         }
 
         if self.options.compile_mode.is_executable() {
-            // `StandaloneModuleGraph::to_bytes` runs the first output file that is a server-side
-            // entry point. The output files of the chunks come first, in this order.
+            // The executable runs the first chunk that is a server-side entry point (`to_bytes`).
             self.main_module = chunks
                 .iter()
                 .find(|chunk| {

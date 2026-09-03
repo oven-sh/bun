@@ -2634,9 +2634,7 @@ pub mod parse_worker {
         // Entrypoints will have `import.meta.main` set as "unknown", unless we use `--compile`,
         // in which we inline `true`.
         if topts.inline_entrypoint_import_meta_main || !task.is_entry_point {
-            // An executable with more than one JavaScript entry point runs only one of them as
-            // the main module, and another entry point's bundle can hold a copy of that module.
-            // The linker sets the value for each chunk (`generate_code_for_file_in_chunk_js`).
+            // With several JavaScript entry points, the linker sets the value for each chunk.
             let linker_sets_value = task.is_entry_point
                 && topts.compile_mode.is_executable()
                 && topts

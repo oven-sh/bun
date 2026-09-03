@@ -7,7 +7,7 @@ use bun_ast as js_ast;
 use bun_ast::lexer_tables as tables;
 use bun_ast::{LexerLog, Loc, Log, Range, Source};
 use bun_core::Environment;
-use bun_core::fmt::hex_digit_value_u32;
+use bun_core::fmt::{hex_digit_value, hex_digit_value_u32};
 use bun_core::strings;
 use bun_core::strings::CodepointIterator;
 use identifier as js_identifier;
@@ -2799,54 +2799,18 @@ impl<'a> Lexer<'a> {
                 return;
             }
             if entity[0] == b'#' {
-                let mut number = &entity[1..entity.len()];
-                let mut base: u8 = 10;
-                if number.len() > 1 && number[0] == b'x' {
-                    number = &number[1..number.len()];
-                    base = 16;
-                }
+                let Some(value) = jsx_numeric_entity_value(&entity[1..]) else {
+                    return;
+                };
 
-                // Note: bytes-based integer parse — source bytes are
-                // not guaranteed UTF-8 so we never round-trip through &str (PORTING.md §Strings).
-                // Also reject values outside the Unicode range (0..=0x10FFFF); otherwise
-                // `push_codepoint_utf16` hits `debug_assert`s in `u16_lead`/`u16_trail`
-                // (release builds would silently encode garbage surrogate pairs).
-                cursor.c = match bun_core::parse_int::<i32>(number, base) {
-                    Ok(v) if (0..=0x10FFFF).contains(&v) => v,
-                    Ok(_) => {
-                        self.add_error(
-                            self.start,
-                            format_args!(
-                                "JSX entity escape is too big: {}",
-                                bstr::BStr::new(entity)
-                            ),
-                        );
-                        strings::UNICODE_REPLACEMENT as CodePoint
-                    }
-                    Err(err) => {
-                        match err {
-                            strings::ParseIntError::InvalidCharacter => {
-                                self.add_error(
-                                    self.start,
-                                    format_args!(
-                                        "Invalid JSX entity escape: {}",
-                                        bstr::BStr::new(entity)
-                                    ),
-                                );
-                            }
-                            strings::ParseIntError::Overflow => {
-                                self.add_error(
-                                    self.start,
-                                    format_args!(
-                                        "JSX entity escape is too big: {}",
-                                        bstr::BStr::new(entity)
-                                    ),
-                                );
-                            }
-                        }
-
-                        strings::UNICODE_REPLACEMENT as CodePoint
-                    }
+                cursor.c = if value <= 0x10FFFF {
+                    value as CodePoint
+                } else {
+                    self.add_error(
+                        self.start,
+                        format_args!("JSX entity escape is too big: {}", bstr::BStr::new(entity)),
+                    );
+                    strings::UNICODE_REPLACEMENT as CodePoint
                 };
 
                 cursor.i += u32::try_from(length).expect("int cast") + 1;
@@ -3416,6 +3380,30 @@ pub(crate) fn latin1_identifier_continue_length_scalar(name: &[u8]) -> usize {
     }
 
     name.len()
+}
+
+/// Only `[0-9]+` / `x[0-9a-fA-F]+` decode, as in Babel and TypeScript; `None` keeps the text.
+fn jsx_numeric_entity_value(text: &[u8]) -> Option<u32> {
+    let (digits, radix) = match text.strip_prefix(b"x") {
+        Some(hex) => (hex, 16u32),
+        None => (text, 10u32),
+    };
+    if digits.is_empty() {
+        return None;
+    }
+
+    let mut value: u32 = 0;
+    for &c in digits {
+        let digit = if radix == 16 {
+            hex_digit_value(c)?
+        } else if c.is_ascii_digit() {
+            c - b'0'
+        } else {
+            return None;
+        };
+        value = value.saturating_mul(radix).saturating_add(digit as u32);
+    }
+    Some(value)
 }
 
 pub struct PragmaArg;

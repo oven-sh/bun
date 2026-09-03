@@ -339,11 +339,10 @@ impl FileResponseStream {
                     },
                     self.as_ptr(),
                 );
-                // `false` only ends a synchronous read loop. A pollable fd
-                // re-arms its poll after EAGAIN and a Windows read completes
-                // later, so both keep writing into the backpressured response
-                // until the reader is paused. `on_writable` unpauses it.
-                // `pause()` does not call back into this object.
+                // `false` alone does not stop an event-driven reader: a pollable
+                // fd re-arms its poll after EAGAIN, and a Windows read completes
+                // later. `on_writable` unpauses it. `pause()` does not call back
+                // into this object.
                 self.reader_mut().pause();
                 false
             }

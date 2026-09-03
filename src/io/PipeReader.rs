@@ -118,9 +118,11 @@ impl BufferedReaderVTable {
         self.link().has_on_read_chunk()
     }
 
-    /// When the reader has read a chunk of data
-    /// and hasMore is true, it means that there might be more data to read.
-    /// Returning false prevents the reader from reading more data.
+    /// Delivers one chunk. `has_more` says whether the source may have more.
+    /// Returning false ends the current read loop, but it does not stop the
+    /// reader: the POSIX loop still re-arms the poll after a read that ended
+    /// in EAGAIN, and a Windows read completes later. A parent that wants no
+    /// more chunks until it resumes calls `pause()`.
     fn on_read_chunk(&self, chunk: Chunk<'_>, has_more: ReadState) -> bool {
         self.link().on_read_chunk(chunk, has_more)
     }

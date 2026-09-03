@@ -1002,20 +1002,26 @@ describe("Bun.file in serve routes", () => {
 // socket drains. For a pollable fd (FIFO, character device, socket) the read
 // loop re-arms its poll after EAGAIN, so a reader that is not paused keeps
 // moving the source into the response's backpressure buffer, without a bound,
-// while the client reads nothing. FileResponseStream also holds one
-// in-flight-read reference per reader.read(); the backpressure and abort paths
-// must release it exactly once, or the stream is freed while uWS still holds
-// it as callback userdata.
-test.skipIf(isWindows)(
-  "pollable file response stops reading while the client does not read, and survives the disconnect",
-  async () => {
-    using dir = tempDir("serve-fifo-backpressure", {
-      "fixture.ts": `
+// while the client reads nothing. When the client reads again, on_writable
+// must unpause the reader, or the response stalls. A client that disconnects
+// frees the stream. If its poll is still armed, the next readable event reaches
+// the freed reader. Bun.file(fd) keeps the fd open after the response ends, so
+// that event comes as soon as the pipe has data.
+for (const [source, then] of [
+  ["path", "disconnect"],
+  ["fd", "disconnect"],
+  ["path", "resume"],
+] as const) {
+  test.concurrent.skipIf(isWindows)(
+    `pollable Bun.file(${source}) response stops reading while the client does not read, then ${then === "resume" ? "resumes when the client reads" : "survives the disconnect"}`,
+    async () => {
+      using dir = tempDir("serve-fifo-backpressure", {
+        "fixture.ts": `
 import { connect } from "node:net";
 import { constants, openSync, writeSync } from "node:fs";
 
-const fifoPath = process.argv[2];
-const LIMIT = Number(process.argv[3]);
+const [fifoPath, limit, source, then] = process.argv.slice(2);
+const LIMIT = Number(limit);
 
 // Open the FIFO read+write so open() never blocks waiting for the other end
 // and the pipe never reports HUP/EOF. With O_NONBLOCK a write to a full pipe
@@ -1028,7 +1034,7 @@ const server = Bun.serve({
     if (new URL(req.url).pathname === "/alive") {
       return new Response("alive");
     }
-    return new Response(Bun.file(fifoPath));
+    return new Response(source === "fd" ? Bun.file(writerFd) : Bun.file(fifoPath));
   },
 });
 
@@ -1042,11 +1048,43 @@ function fill() {
   }
 }
 
+// Waits until the server reads from the pipe. Bounded so that a broken build
+// fails with a message instead of a timeout.
+async function waitForRead(label) {
+  const start = pumped;
+  for (let i = 0; i < 1000 && pumped === start; i++) {
+    await Bun.sleep(5);
+    fill();
+  }
+  console.log(pumped > start ? label : "no read for " + label);
+}
+
+// Refills the pipe each time the server reads from it. This loop and the
+// server share one event loop, and every sleep polls for I/O, so a reader with
+// an armed poll empties the pipe during each sleep and the next fill() makes
+// progress. A paused reader leaves the pipe full. The kernel socket buffers on
+// loopback hold a few MiB, and LIMIT is far above that.
+async function waitForStall() {
+  const start = pumped;
+  let idle = 0;
+  while (idle < 5 && pumped - start < LIMIT) {
+    const before = pumped;
+    fill();
+    if (pumped === before) {
+      idle++;
+      await Bun.sleep(10);
+    } else {
+      idle = 0;
+      await Bun.sleep(0);
+    }
+  }
+  console.log(idle >= 5 ? "stalled" : "still reading after " + (pumped - start) + " bytes");
+}
+
 // Fill the pipe before the request exists.
 fill();
-const prefill = pumped;
 
-// Raw client that sends the request and then never reads the response, so
+// Raw client that sends the request and then does not read the response, so
 // the body writes on the server side end up returning backpressure.
 const socket = connect({ port: server.port, host: "127.0.0.1", pauseOnConnect: true });
 socket.on("error", () => {});
@@ -1054,65 +1092,56 @@ await new Promise(resolve => socket.once("connect", resolve));
 socket.write("GET /stream HTTP/1.1\\r\\nHost: 127.0.0.1\\r\\n\\r\\n");
 socket.pause();
 
-// Wait for the response stream to start reading the pipe. Bounded so that a
-// broken build fails with a message instead of a timeout.
-for (let i = 0; i < 1000 && pumped === prefill; i++) {
-  await Bun.sleep(5);
+await waitForRead("streaming");
+await waitForStall();
+
+if (then === "resume") {
+  // Read the response. The socket drains, and the server reads the pipe again.
+  socket.on("data", () => {});
+  socket.resume();
+  await waitForRead("resumed");
+} else {
+  // Disconnect the stalled client; the server must survive the abort of the
+  // backpressured file stream and still answer ordinary requests.
+  socket.destroy();
+  let res = await fetch("http://127.0.0.1:" + server.port + "/alive");
+  console.log(await res.text());
+
+  // Make sure that the pipe has data. A poll that the aborted stream left
+  // armed fires during the sleep.
   fill();
+  await Bun.sleep(10);
+  res = await fetch("http://127.0.0.1:" + server.port + "/alive");
+  console.log(await res.text());
 }
-console.log(pumped > prefill ? "streaming" : "stuck at " + pumped + " (prefill " + prefill + ")");
-
-// Refill the pipe each time the server reads from it. This loop and the server
-// share one event loop, and every sleep polls for I/O, so a reader with an
-// armed poll empties the pipe during each sleep and the next fill() makes
-// progress. A paused reader leaves the pipe full. The kernel socket buffers
-// hold a few MiB at most, and LIMIT is far above that.
-let idle = 0;
-while (idle < 5 && pumped - prefill < LIMIT) {
-  const before = pumped;
-  fill();
-  if (pumped === before) {
-    idle++;
-    await Bun.sleep(10);
-  } else {
-    idle = 0;
-    await Bun.sleep(0);
-  }
-}
-console.log(idle >= 5 ? "stalled" : "still reading after " + (pumped - prefill) + " bytes");
-
-// Disconnect the stalled client; the server must survive the abort of the
-// backpressured file stream.
-socket.destroy();
-
-// The server must still answer ordinary requests afterwards.
-const res = await fetch("http://127.0.0.1:" + server.port + "/alive");
-console.log(await res.text());
 
 server.stop(true);
 process.exit(0);
 `,
-    });
+      });
 
-    const fifoPath = join(String(dir), "stream.fifo");
-    mkfifo(fifoPath);
+      const fifoPath = join(String(dir), "stream.fifo");
+      mkfifo(fifoPath);
 
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "fixture.ts", fifoPath, String(32 * 1024 * 1024)],
-      env: bunEnv,
-      cwd: String(dir),
-      stdout: "pipe",
-      stderr: "pipe",
-    });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "fixture.ts", fifoPath, String(32 * 1024 * 1024), source, then],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
 
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-    expect(stdout.trim()).toBe("streaming\nstalled\nalive");
-    expect(stderr).toBe("");
-    expect(exitCode).toBe(0);
-  },
-  30_000,
-);
+      expect(stdout.trim()).toBe(
+        then === "resume" ? "streaming\nstalled\nresumed" : "streaming\nstalled\nalive\nalive",
+      );
+      expect(stderr).toBe("");
+      expect(exitCode).toBe(0);
+    },
+    30_000,
+  );
+}
 
 // A FIFO's stat size is 0, but the body length is unknown until EOF. Writing
 // Content-Length from the stat size and then streaming the pipe to EOF puts

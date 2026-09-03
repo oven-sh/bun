@@ -499,12 +499,7 @@ impl<'a, const DIRECTORY_PUBLISH: bool> Context<'a, DIRECTORY_PUBLISH> {
         found.then_some(lockfile)
     }
 
-    /// `bun publish` without a tarball path. Pack the package at `abs_pkg_json` and get
-    /// information required for publishing
-    // Note: the return type is pinned to `Context<'static, true>`, the only
-    // valid shape. `'static` matches `pack::pack`'s return —
-    // the embedded `&mut PackageManager` / `Command::Context` are process-
-    // lifetime singletons reborrowed through raw pointers there.
+    /// `bun publish` without a tarball path: pack the package at `abs_pkg_json`. `'static` matches `pack::pack`'s return.
     pub(crate) fn from_workspace(
         ctx: Command::Context<'a>,
         manager: &'a mut PackageManager,
@@ -674,10 +669,7 @@ impl PublishCommand {
         }
     }
 
-    /// `bun publish -r` / `bun publish --filter <pattern>`: pack and publish each selected
-    /// workspace package, dependencies before dependents. A version the registry already has is
-    /// skipped. A package the registry rejects is reported and the run continues with the next
-    /// one, then the process exits with 1.
+    /// `-r` / `--filter`: publish each selected workspace package, dependencies first. Exits 1 at the end if any failed.
     fn exec_workspaces(
         ctx: Command::Context,
         manager: &mut PackageManager,
@@ -727,9 +719,7 @@ impl PublishCommand {
                 .collect()
         };
 
-        // `pack` copies `publishConfig` from each package.json into these when the flag was not
-        // given. Restore the flag values before every package so one package.json does not
-        // configure the next.
+        // `pack` writes each package's `publishConfig` into these; restored before every package.
         let cli_tag = manager.options.publish_config.tag;
         let cli_access = manager.options.publish_config.access;
 
@@ -798,8 +788,7 @@ impl PublishCommand {
         Ok(())
     }
 
-    /// Prints the `+ name@version` line and runs the `publish` and `postpublish` scripts of the
-    /// package at `abs_pkg_json`.
+    /// The `+ name@version` line, then the `publish` and `postpublish` scripts of the package at `abs_pkg_json`.
     fn finish_directory_publish(
         context: Context<'static, true>,
         abs_pkg_json: &ZStr,
@@ -1002,8 +991,6 @@ impl PublishCommand {
             return Err(PublishError::NeedAuth);
         }
 
-        // A workspace run re-publishes what a previous run already pushed, so an existing
-        // version is a skip there too.
         let skip_existing_version = ctx.manager.options.publish_config.tolerate_republish
             || Self::is_workspace_publish(ctx.manager);
         if skip_existing_version {
@@ -1045,8 +1032,6 @@ impl PublishCommand {
             return Ok(Published::Yes);
         }
 
-        // base64-encoded tarball; can be multi-MB. Freed when this call returns, so a workspace
-        // run holds one body at a time.
         let publish_req_body: Box<[u8]> =
             Self::construct_publish_request_body::<DIRECTORY_PUBLISH>(ctx)?;
         let publish_req_body: &[u8] = &publish_req_body;

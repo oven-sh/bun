@@ -351,9 +351,7 @@ impl WorkspaceGraph {
         graph
     }
 
-    /// Candidate indices with every candidate after the candidates it depends on. A dependency
-    /// cycle is broken at one of its members. A candidate that depends on the cycle still comes
-    /// after every member of it.
+    /// Candidate indices, each after the candidates it depends on. A cycle is broken at one of its members.
     pub fn dependency_order(&self) -> Vec<u32> {
         let n = self.dependencies.len();
         let mut remaining: Vec<usize> = self.dependencies.iter().map(Vec::len).collect();
@@ -384,9 +382,7 @@ impl WorkspaceGraph {
             if order.len() == n {
                 return order;
             }
-            // Every candidate left waits on another one that is left. Follow those edges from
-            // the first of them: the walk has to revisit a candidate, and that one is on a cycle.
-            // Release it. A candidate that only depends on the cycle stays behind it.
+            // Stalled on a cycle. Follow unmet edges until one repeats: that candidate is on it.
             let mut on_walk = bitset(n);
             let mut cur = (0..n)
                 .find(|&i| !queued.is_set(i))

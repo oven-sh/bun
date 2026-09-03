@@ -2596,10 +2596,13 @@ pub(crate) mod __gated_printer {
                 // However, they could also be signed or unsigned int 32 (when doing bit shifts)
                 // In this case, it's always going to unsigned since that conversion has already happened.
                 let val = float as u64;
-                if let Some(e) = bun_core::fmt::pow10_exp_1e4_to_1e9(val) {
-                    self.print(b"1e");
-                    self.print(&[b'0' + e]);
-                    return;
+                // JSON.stringify prints every integer below 1e21 as plain digits.
+                if !IS_JSON {
+                    if let Some(e) = bun_core::fmt::pow10_exp_1e4_to_1e9(val) {
+                        self.print(b"1e");
+                        self.print(&[b'0' + e]);
+                        return;
+                    }
                 }
                 let mut buf = bun_core::fmt::ItoaBuf::new();
                 self.print(bun_core::fmt::itoa(&mut buf, val));

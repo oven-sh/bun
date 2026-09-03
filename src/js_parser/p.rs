@@ -473,6 +473,7 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     pub(crate) import_records: ImportRecordList<'a>,
     pub(crate) import_records_for_current_part: List<'a, u32>,
     pub(crate) export_star_import_records: List<'a, u32>,
+    /// Also holds the calls of `exports.name` under `exports_ref`, until `to_ast`.
     pub(crate) import_symbol_property_uses: SymbolPropertyUseMap,
 
     // These are for handling ES6 imports and exports
@@ -5738,9 +5739,31 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         self.commonjs_named_exports_deoptimized = true;
     }
 
-    pub(crate) fn count_commonjs_export_assignment(&mut self, name: &[u8]) {
-        if let Some(export) = self.commonjs_named_exports.get_mut(name) {
+    /// Records an assignment to `exports.name`, or a call of it.
+    pub(crate) fn note_commonjs_export_use(
+        &mut self,
+        name: &[u8],
+        ref_: Ref,
+        opts: IdentifierOpts,
+    ) {
+        if opts.assign_target() != js_ast::AssignTarget::None
+            && let Some(export) = self.commonjs_named_exports.get_mut(name)
+        {
             export.assign_count = export.assign_count.saturating_add(1);
+        }
+        if opts.is_call_target() || opts.is_template_tag() {
+            self.symbols[ref_.inner_index() as usize].set_called_as_method(true);
+            if !self.is_revisit_for_substitution {
+                let call = self
+                    .import_symbol_property_uses
+                    .get_or_put_value(self.exports_ref, Default::default())
+                    .expect("OOM")
+                    .value_ptr
+                    .get_or_put_value(name, Default::default())
+                    .expect("OOM");
+                call.count_estimate += 1;
+                call.is_call_target = true;
+            }
         }
     }
 
@@ -5766,6 +5789,38 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             if ignores_this {
                 self.symbols[export.loc_ref.ref_.inner_index() as usize]
                     .set_call_ignores_this(true);
+            }
+        }
+    }
+
+    /// Moves the recorded calls out of each part. A call that reads `this` uses `exports_ref`.
+    fn use_namespace_for_method_calls(&self, parts: &mut [js_ast::Part]) {
+        for part in parts {
+            let Some(uses) = part.import_symbol_property_uses.as_mut() else {
+                continue;
+            };
+            let Some(calls) = uses.remove(&self.exports_ref) else {
+                continue;
+            };
+            if uses.is_empty() {
+                part.import_symbol_property_uses = None;
+            }
+            let count: u32 = calls
+                .iter()
+                .filter(|(name, _)| {
+                    self.commonjs_named_exports.get(name).is_some_and(|export| {
+                        !self.symbols[export.loc_ref.ref_.inner_index() as usize]
+                            .call_ignores_this()
+                    })
+                })
+                .map(|(_, call)| call.count_estimate)
+                .sum();
+            if count > 0 {
+                part.symbol_uses
+                    .get_or_put_value(self.exports_ref, Default::default())
+                    .expect("OOM")
+                    .value_ptr
+                    .count_estimate += count;
             }
         }
     }
@@ -9124,6 +9179,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         if !self.commonjs_named_exports_deoptimized {
             self.mark_commonjs_exports_that_ignore_this();
+        }
+        if self.should_unwrap_common_js_to_esm() {
+            self.use_namespace_for_method_calls(parts.as_mut_slice());
         }
 
         // Re-tag the arena-backed buffer

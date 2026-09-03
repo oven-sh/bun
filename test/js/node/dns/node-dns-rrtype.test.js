@@ -16,8 +16,8 @@ describe.each([
   ["dns.promises.resolve", rrtype => dns_promises.resolve("localhost", rrtype)],
   ["dns.promises.Resolver#resolve", rrtype => new dns_promises.Resolver().resolve("localhost", rrtype)],
 ])("%s", (_, fn) => {
-  // "constructor" and "toString" only miss the lookup table because it has a
-  // null prototype. They guard that clause.
+  // "constructor" and "toString" would match an inherited property if the
+  // dispatch ever became a plain-object lookup.
   it.each(["a", "aaaa", "txt", "Mx", "", "BOGUS", "constructor", "toString"])(
     "with rrtype %p throws ERR_INVALID_ARG_VALUE",
     rrtype => {

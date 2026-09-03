@@ -14,8 +14,8 @@ import { generateCargoConfig } from "./cargo-config.ts";
 import {
   type Config,
   type OS,
-  type PartialConfig,
   type PackageManager,
+  type PartialConfig,
   type Toolchain,
   detectHost,
   findRepoRoot,

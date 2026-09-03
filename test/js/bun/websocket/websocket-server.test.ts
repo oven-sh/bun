@@ -1717,7 +1717,7 @@ it.concurrent("server.upgrade() from the error() handler after fetch() threw com
 // returns or not. The server subscribes to the promise of a handler that
 // upgrades after an await, so that case is not covered here.
 describe.concurrent("a handler that calls server.upgrade() before it returns", () => {
-  async function stdoutOf(handlers: string) {
+  async function runChild(handlers: string) {
     await using proc = spawn({
       cmd: [
         bunExe(),
@@ -1741,9 +1741,7 @@ describe.concurrent("a handler that calls server.upgrade() before it returns", (
       stderr: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(stderr).toBe("");
-    expect(exitCode).toBe(0);
-    return stdout;
+    return { stdout, stderr, exitCode };
   }
 
   // A then() or catch() promise is rejected by a reaction job. It is a
@@ -1780,8 +1778,10 @@ describe.concurrent("a handler that calls server.upgrade() before it returns", (
        error(err) { server.upgrade(err.req); return Promise.reject(new Error("E")); },`,
     ],
   ])("reports a rejection to unhandledRejection when %s", async (_, handlers) => {
-    const lines = (await stdoutOf(handlers)).trim().split("\n").sort();
-    expect(lines).toEqual(["unhandledRejection: E", "ws got: hi"]);
+    const { stdout, stderr, exitCode } = await runChild(handlers);
+    expect(stdout.trim().split("\n").sort()).toEqual(["unhandledRejection: E", "ws got: hi"]);
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
   });
 });
 

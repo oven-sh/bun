@@ -8,6 +8,10 @@ describe.concurrent("bunfig.toml type-mismatch error messages", () => {
     [`telemetry = "no"`, "expected boolean but received string"],
     [`define = 3`, "expected object but received number"],
     [`[serve]\nport = "abc"`, "expected number but received string"],
+    [`[serve.static]\nsplitting = "yes"`, "Expected splitting to be a boolean"],
+    [`[serve.static]\nhmr = "yes"`, "Expected hmr to be a boolean"],
+    [`[serve.static]\npublicPath = 1`, "Expected publicPath to be a string"],
+    [`[serve.static]\nminify = { syntax = "yes" }`, "Expected minify.syntax to be a boolean"],
   ];
 
   test.each(cases)("%s -> %s", async (config, expected) => {

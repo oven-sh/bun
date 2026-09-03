@@ -33,6 +33,11 @@ impl StringMap {
         self.map.count()
     }
 
+    #[inline]
+    pub fn contains_key(&self, key: &[u8]) -> bool {
+        self.map.contains_key(key)
+    }
+
     /// Dupe `value`; `key` is duped on miss regardless (`Box<[u8]>` forces a
     /// copy), so the `dupe_keys` flag is kept for API parity only.
     pub fn insert(&mut self, key: &[u8], value: &[u8]) -> Result<(), AllocError> {

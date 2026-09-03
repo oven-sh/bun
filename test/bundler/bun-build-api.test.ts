@@ -850,6 +850,23 @@ describe("Bun.build", () => {
     },
   );
 
+  // Documented in docs/bundler/index.mdx: with `format: "cjs"` the default
+  // target is node, so node builtins stay as require() calls.
+  test.concurrent('format: "cjs" defaults the target to node', async () => {
+    using dir = tempDir("format-cjs-default-target", {
+      "index.js": `import fs from "node:fs";\nconsole.log(typeof fs.readFileSync);`,
+    });
+    const build = async (target?: "browser") => {
+      const result = await Bun.build({ entrypoints: [join(String(dir), "index.js")], format: "cjs", target });
+      expect(result.success).toBe(true);
+      return await result.outputs[0].text();
+    };
+
+    expect(await build()).toContain('require("node:fs")');
+    // An explicit browser target still stubs out the builtin.
+    expect(await build("browser")).not.toContain('require("node:fs")');
+  });
+
   test.concurrent("errors are returned as an array", async () => {
     const x = await buildNoThrow({
       entrypoints: [join(import.meta.dir, "does-not-exist.ts")],

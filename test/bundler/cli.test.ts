@@ -178,6 +178,31 @@ console.log(utils());`,
       expect(output).toContain("Hello from nested!");
     });
 
+    // Documented in docs/bundler/index.mdx: with `--format=cjs` the default
+    // target is node, so node builtins stay as require() calls.
+    test("--format=cjs defaults the target to node", async () => {
+      using dir = tempDir("bun-build-format-cjs-target", {
+        "index.js": `import fs from "node:fs";\nconsole.log(typeof fs.readFileSync);`,
+      });
+      const build = async (...extraArgs: string[]) => {
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), "build", "./index.js", "--format=cjs", ...extraArgs],
+          env: bunEnv,
+          cwd: String(dir),
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect(stderr).toBe("");
+        expect(exitCode).toBe(0);
+        return stdout;
+      };
+
+      expect(await build()).toContain('require("node:fs")');
+      // An explicit browser target still stubs out the builtin.
+      expect(await build("--target=browser")).not.toContain('require("node:fs")');
+    });
+
     test("__dirname and __filename are printed correctly", async () => {
       using baseDirPath = tempDir("bun-build-dirname-filename", {
         "我": {

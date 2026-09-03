@@ -181,6 +181,68 @@ server.close();`,
     60_000,
   );
 
+  // `--define` on the CLI wins over the compile target's own defines. The API has to agree.
+  test("a user define for a compile-target key wins", async () => {
+    using dir = tempDir("build-compile-user-define", {
+      "app.js": `console.log(process.platform, process.arch);`,
+    });
+    const outfile = join(String(dir), "app");
+
+    const result = await Bun.build({
+      entrypoints: [join(String(dir), "app.js")],
+      compile: { outfile },
+      define: { "process.platform": JSON.stringify("fake-platform") },
+    });
+    expect(result.success).toBe(true);
+
+    await using proc = Bun.spawn({
+      cmd: [result.outputs[0].path],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({
+      stdout: `fake-platform ${process.arch}\n`,
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  // The metadata is written with the Win32 resource API. The CLI rejects the
+  // `--windows-*` flags on other hosts and for other targets; the API used to
+  // accept them and drop them.
+  test.skipIf(isWindows)("compile.windows metadata on a non-Windows host is an error", async () => {
+    using dir = tempDir("build-compile-windows-host", {
+      "app.js": `console.log("hi");`,
+    });
+    expect(() =>
+      Bun.build({
+        entrypoints: [join(String(dir), "app.js")],
+        compile: { target: "bun-windows-x64", outfile: join(String(dir), "app.exe"), windows: { title: "My App" } },
+      }),
+    ).toThrowErrorMatchingInlineSnapshot(`"compile.windows.title is only available when compiling on Windows"`);
+  });
+
+  test("compile.windows options for a non-Windows target are an error", async () => {
+    using dir = tempDir("build-compile-windows-target", {
+      "app.js": `console.log("hi");`,
+    });
+    const build = (windows: Record<string, unknown>) =>
+      Bun.build({
+        entrypoints: [join(String(dir), "app.js")],
+        compile: { target: "bun-linux-x64", outfile: join(String(dir), "app"), windows },
+      });
+    expect(() => build({ hideConsole: true })).toThrowErrorMatchingInlineSnapshot(
+      `"compile.windows.hideConsole requires a Windows compile target"`,
+    );
+    if (isWindows) {
+      expect(() => build({ icon: join(String(dir), "app.js") })).toThrowErrorMatchingInlineSnapshot(
+        `"compile.windows.icon requires a Windows compile target"`,
+      );
+    }
+  });
+
   test("compile with invalid target fails gracefully", async () => {
     using dir = tempDir("build-compile-invalid", {
       "index.js": `console.log("test");`,

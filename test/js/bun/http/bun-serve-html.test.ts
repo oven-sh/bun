@@ -1605,4 +1605,49 @@ describe("production headers and import.meta.env", () => {
     );
     expect(results).toEqual(cases.map(([, , expected]) => expected));
   });
+
+  test("bunfig [serve.static] splitting puts a dynamic import in its own chunk", async () => {
+    const run = async (bunfig: string) => {
+      const dir = tempDirWithFiles("html-splitting", {
+        "index.html": `<!DOCTYPE html><html><body><script type="module" src="./app.ts"></script></body></html>`,
+        "app.ts": `import("./lazy.ts").then(m => console.log(m.lazy));`,
+        "lazy.ts": `export const lazy = "lazy-module-loaded";`,
+        "bunfig.toml": bunfig,
+        "serve.ts": /*js*/ `
+          import index from "./index.html";
+          const server = Bun.serve({ port: 0, development: false, routes: { "/": index } });
+          const base = server.url.href;
+          const html = await (await fetch(base)).text();
+          const jsPath = html.match(/src="([^"]+\\.js)"/)[1];
+          const js = await (await fetch(new URL(jsPath, base))).text();
+          const chunk = js.match(/import\\("([^"]+\\.js)"\\)/);
+          console.log(JSON.stringify({
+            hasChunkImport: chunk !== null,
+            inlinedLazy: js.includes("lazy-module-loaded"),
+            chunkStatus: chunk ? (await fetch(new URL(chunk[1], base))).status : null,
+          }));
+          await server.stop(true);
+        `,
+      });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "serve.ts"],
+        env: { ...bunEnv, NODE_ENV: undefined },
+        cwd: dir,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      if (exitCode !== 0) throw new Error(stdout + "\n" + stderr);
+      return JSON.parse(stdout) as { hasChunkImport: boolean; inlinedLazy: boolean; chunkStatus: number | null };
+    };
+
+    const [on, off] = await Promise.all([
+      run(`[serve.static]\nsplitting = true`),
+      run(`[serve.static]\nsplitting = false`),
+    ]);
+    expect({ on, off }).toEqual({
+      on: { hasChunkImport: true, inlinedLazy: false, chunkStatus: 200 },
+      off: { hasChunkImport: false, inlinedLazy: true, chunkStatus: null },
+    });
+  });
 });

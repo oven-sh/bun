@@ -522,6 +522,17 @@ sourcemap = "linked" # serve sourcemaps in production too
 # sourcemap = false      # never generate sourcemaps
 ```
 
+## Code splitting
+
+By default, each HTML route is bundled into one JavaScript chunk, and dynamic `import()` calls are inlined. Set the `splitting` option to emit shared code and dynamic imports as separate chunks, like `splitting: true` in `Bun.build()`:
+
+```toml title="bunfig.toml" icon="settings"
+[serve.static]
+splitting = true
+```
+
+This applies when `development` is not `true` in `Bun.serve()`. The HMR development server loads modules on its own and ignores this option.
+
 ## How It Works
 
 Bun uses `HTMLRewriter` to scan for `<script>` and `<link>` tags in HTML files and uses them as entrypoints for Bun's bundler. Bun then generates an optimized bundle for the JavaScript/TypeScript/TSX/JSX and CSS files and serves the result.

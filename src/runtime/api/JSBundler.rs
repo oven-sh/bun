@@ -343,15 +343,37 @@ pub mod js_bundler {
                         .throw_invalid_arguments(format_args!("windows must be an object")));
                 }
 
+                let is_windows_target =
+                    this.compile_target.os == bun_core::env::OperatingSystem::Windows;
+
                 if let Some(hide_console) =
                     windows.get_own(global_this, &BunString::static_("hideConsole"))?
                 {
+                    if !is_windows_target && hide_console.to_boolean() {
+                        return Err(global_this.throw_invalid_arguments(format_args!(
+                            "compile.windows.hideConsole requires a Windows compile target"
+                        )));
+                    }
                     this.windows_hide_console = hide_console.to_boolean();
                 }
 
-                if let Some(windows_icon_path) =
-                    windows.get_own(global_this, &BunString::static_("icon"))?
-                {
+                // `set_windows_metadata` is Win32-only, so the host and the target must be Windows.
+                let metadata_allowed = |name: &str| -> JsResult<()> {
+                    if !cfg!(windows) {
+                        return Err(global_this.throw_invalid_arguments(format_args!(
+                            "compile.windows.{name} is only available when compiling on Windows"
+                        )));
+                    }
+                    if !is_windows_target {
+                        return Err(global_this.throw_invalid_arguments(format_args!(
+                            "compile.windows.{name} requires a Windows compile target"
+                        )));
+                    }
+                    Ok(())
+                };
+
+                if let Some(windows_icon_path) = windows.get_own_truthy(global_this, "icon")? {
+                    metadata_allowed("icon")?;
                     let slice = windows_icon_path.to_utf8(global_this)?;
                     let path_z = bun_core::ZBox::from_bytes(slice.slice());
                     if bun_sys::exists_at_type(bun_sys::Fd::cwd(), path_z.as_zstr())
@@ -366,37 +388,34 @@ pub mod js_bundler {
                     this.windows_icon_path.append_slice_exact(slice.slice())?;
                 }
 
-                if let Some(windows_title) =
-                    windows.get_own(global_this, &BunString::static_("title"))?
-                {
+                if let Some(windows_title) = windows.get_own_truthy(global_this, "title")? {
+                    metadata_allowed("title")?;
                     let slice = windows_title.to_utf8(global_this)?;
                     this.windows_title.append_slice_exact(slice.slice())?;
                 }
 
-                if let Some(windows_publisher) =
-                    windows.get_own(global_this, &BunString::static_("publisher"))?
-                {
+                if let Some(windows_publisher) = windows.get_own_truthy(global_this, "publisher")? {
+                    metadata_allowed("publisher")?;
                     let slice = windows_publisher.to_utf8(global_this)?;
                     this.windows_publisher.append_slice_exact(slice.slice())?;
                 }
 
-                if let Some(windows_version) =
-                    windows.get_own(global_this, &BunString::static_("version"))?
-                {
+                if let Some(windows_version) = windows.get_own_truthy(global_this, "version")? {
+                    metadata_allowed("version")?;
                     let slice = windows_version.to_utf8(global_this)?;
                     this.windows_version.append_slice_exact(slice.slice())?;
                 }
 
                 if let Some(windows_description) =
-                    windows.get_own(global_this, &BunString::static_("description"))?
+                    windows.get_own_truthy(global_this, "description")?
                 {
+                    metadata_allowed("description")?;
                     let slice = windows_description.to_utf8(global_this)?;
                     this.windows_description.append_slice_exact(slice.slice())?;
                 }
 
-                if let Some(windows_copyright) =
-                    windows.get_own(global_this, &BunString::static_("copyright"))?
-                {
+                if let Some(windows_copyright) = windows.get_own_truthy(global_this, "copyright")? {
+                    metadata_allowed("copyright")?;
                     let slice = windows_copyright.to_utf8(global_this)?;
                     this.windows_copyright.append_slice_exact(slice.slice())?;
                 }
@@ -797,6 +816,11 @@ pub mod js_bundler {
                     return Err(global_this.throw_invalid_arguments(format_args!(
                         "format must be 'cjs' or 'esm' when bytecode is true."
                     )));
+                }
+
+                // CommonJS output defaults to the node target, like `--format=cjs`.
+                if format == options::Format::Cjs && !did_set_target && !this.bytecode {
+                    this.target = Target::Node;
                 }
             }
 
@@ -1241,11 +1265,14 @@ pub mod js_bundler {
                 if !is_standalone_html {
                     this.target = Target::Bun;
 
+                    // A user `define` for one of these keys wins, like `--define` on the CLI.
                     let define_keys = compile.compile_target.define_keys();
                     let define_values = compile.compile_target.define_values();
                     debug_assert_eq!(define_keys.len(), define_values.len());
                     for (key, value) in define_keys.iter().zip(define_values) {
-                        this.define.insert(key, value)?;
+                        if !this.define.contains_key(key) {
+                            this.define.insert(key, value)?;
+                        }
                     }
 
                     let base_public_path = StandaloneModuleGraph::target_base_public_path(

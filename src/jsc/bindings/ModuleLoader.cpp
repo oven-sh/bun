@@ -96,8 +96,7 @@ static JSC::SyntheticSourceProvider::LazySyntheticSourceGenerator generateIntern
 
         bool hasDefault = false;
         bool hasLazyExports = false;
-        // A module with defineLazyProperties (node:util) defers only its pending lazy properties, and JSC reads them
-        // from the values object, not from `object`. Node's ESM facade also keeps the module's own values.
+        // With defineLazyProperties (node:util), only pending lazy properties defer, and they bind the loader result.
         JSObject* lazyValues = Bun::lazyPropertyValues(vm, object);
 
         for (auto& entry : properties) {

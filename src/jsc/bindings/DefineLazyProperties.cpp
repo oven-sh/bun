@@ -14,8 +14,7 @@ namespace Bun {
 
 using namespace JSC;
 
-// A target's lazy properties read a values object (private name lazyPropertyValues), and so do its ESM bindings
-// (ModuleLoader.cpp). Each key of that object is a CustomValue that calls its loader (lazyPropertyLoaders) once.
+// Lazy properties and their ESM bindings (ModuleLoader.cpp) both read the values object, which calls each loader once.
 
 JSObject* lazyPropertyValues(VM& vm, JSObject* target)
 {
@@ -23,8 +22,7 @@ JSObject* lazyPropertyValues(VM& vm, JSObject* target)
     return values ? values.getObject() : nullptr;
 }
 
-// Replaces the CustomValue that `getter` serves with `value`. The other attributes stay: a frozen object keeps
-// ReadOnly, like V8's ReconfigureDataProperty.
+// The other attributes stay, so a frozen object stays ReadOnly, as with V8's ReconfigureDataProperty.
 static void materialize(VM& vm, JSObject* object, PropertyName name, JSValue value, GetValueFunc getter)
 {
     unsigned attributes = 0;

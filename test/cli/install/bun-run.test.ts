@@ -403,8 +403,7 @@ describe.concurrent("bun run", () => {
 
   // https://github.com/oven-sh/bun/issues/41275
   it("a __PURE__ marker that is not the first word of a // comment is not a DCE annotation", async () => {
-    using dir = tempDir("test", {
-      "index.ts": `
+    const source = `
       function repro() {
         // \`/*#__PURE__*/\`
         console.log("Hello, world!");
@@ -414,12 +413,10 @@ describe.concurrent("bun run", () => {
       console.log("second");
       // @__PURE__
       console.log("removed");
-    `,
-    });
+    `;
 
     await using proc = Bun.spawn({
-      cmd: [bunExe(), "run", "index.ts"],
-      cwd: String(dir),
+      cmd: [bunExe(), "-e", source],
       env: bunEnv,
       stdout: "pipe",
       stderr: "pipe",

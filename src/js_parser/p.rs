@@ -325,6 +325,16 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     /// Import records whose namespace is known to escape regardless of use
     /// counts (one local bound to two records).
     pub(crate) dynamic_import_escaped_records: HashMap<u32, ()>,
+    /// Import records with a use the printer can't rewrite to a direct read
+    /// of an export, so the linker must keep the namespace object.
+    pub(crate) dynamic_import_needs_object: HashMap<u32, ()>,
+    /// Namespace locals that hold a copy, not the namespace (`{...rest}`), or
+    /// that no source reads by name (`require_namespace_ref`).
+    pub(crate) dynamic_import_copied_locals: HashMap<Ref, ()>,
+    /// Locals a tracked destructure binds (`const { z } = await import(...)`).
+    /// `z.name` off one is recorded as an import property use so the linker
+    /// can bind it, once `parse_entry` has made the local an import item.
+    pub(crate) dynamic_import_destructured_locals: HashMap<Ref, ()>,
     /// Per namespace ref, how many of its `use_count_estimate` uses were an
     /// accounted-for read (`ns.a`, a destructure, a truthiness test). Kept
     /// beside the real count rather than decremented from it so the minifier's
@@ -1055,6 +1065,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             .unwrap();
         let rest_ref = record_destructured_aliases(self.arena, map, properties, keep_all)?;
         if let Some((rest, loc)) = rest_ref {
+            self.dynamic_import_copied_locals.insert(rest, ());
             self.register_dynamic_import_namespace_local_multi(rest, loc, records);
         }
         // The destructured locals live in this scope: a direct `eval` here can
@@ -1071,6 +1082,98 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 });
         }
         Some(())
+    }
+
+    /// Registers the items of each tracked call as named imports of its record,
+    /// as `import { alias as local }` would: the linker matches each against
+    /// the export and merges the symbol. One it does not bind reads as written
+    /// (`LinkerContext::match_imports_with_exports_for_file`). An exported local
+    /// stays a local, or an importer of this file would bind through it and
+    /// load the module eagerly. Runs after `ImportScanner` records exports.
+    fn register_dynamic_import_items(&mut self) {
+        if self.dynamic_import_aliases.count() == 0 {
+            return;
+        }
+        let mut exported: HashMap<Ref, ()> = HashMap::default();
+        for export in self.named_exports.values() {
+            exported.insert(export.ref_, ());
+        }
+        for i in 0..self.dynamic_import_aliases.count() {
+            let record = self.dynamic_import_aliases.keys()[i];
+            let items = self.dynamic_import_aliases.values()[i].items;
+            for item in items.slice() {
+                if exported.contains_key(&item.local) {
+                    continue;
+                }
+                self.is_import_item.insert(item.local, ());
+                // A name the importee does not export reads `undefined`, as it
+                // does off a namespace object, rather than failing the build.
+                self.symbols[item.local.inner_index() as usize].import_item_status =
+                    bun_ast::ImportItemStatus::Generated;
+                bun_core::handle_oom(self.named_imports.put(
+                    item.local,
+                    js_ast::NamedImport {
+                        alias: Some(item.alias),
+                        alias_loc: bun_ast::Loc::EMPTY,
+                        namespace_ref: item.namespace_ref,
+                        import_record_index: record,
+                        local_parts_with_uses: bun_alloc::AstAlloc::vec(),
+                        alias_is_star: false,
+                        is_exported: false,
+                    },
+                ));
+            }
+        }
+    }
+
+    /// The import record `ns.name` reads an export of, when `ns` holds that one
+    /// module's namespace, so the read can become an import item.
+    pub(crate) fn dynamic_import_item_record(&self, ns: Ref, name: &[u8]) -> Option<u32> {
+        if !self.options.bundle
+            || self.options.output_format == options::Format::InternalBakeDev
+            || self.dynamic_import_copied_locals.contains_key(&ns)
+        {
+            return None;
+        }
+        let &[record] = self.dynamic_import_namespace_locals.get(&ns)?.as_slice() else {
+            return None;
+        };
+        if self.dynamic_import_needs_object.contains_key(&record)
+            || is_require_marker(&self.import_records.items()[record as usize], name)
+        {
+            return None;
+        }
+        // A destructure of `ns` already holds the name with its own local.
+        match self.import_items_for_namespace.get(&ns)?.get(name) {
+            Some(existing) if !self.is_import_item.contains_key(&existing.ref_) => None,
+            _ => Some(record),
+        }
+    }
+
+    /// `const { a, b: c } = …` or `.then(({ a }) => …)`: the locals may become
+    /// import items. One already read (before its declaration, or from a
+    /// function above it) stays a local, since that read must not see the
+    /// export.
+    pub(crate) fn note_destructured_locals(&mut self, properties: &[bun_ast::B::Property]) {
+        // The dev server does not link, so nothing would bind them. A bound
+        // name leaves the pattern, and `...rest` would then collect it.
+        if !self.options.bundle
+            || self.options.output_format == options::Format::InternalBakeDev
+            || properties
+                .iter()
+                .any(|p| p.flags.contains(bun_ast::flags::Property::IsSpread))
+        {
+            return;
+        }
+        for prop in properties {
+            if let bun_ast::binding::Data::BIdentifier(id) = prop.value.data
+                && prop.default_value.is_none()
+                && !prop.flags.contains(bun_ast::flags::Property::IsSpread)
+                && self.symbols[id.r#ref.inner_index() as usize].use_count_estimate == 0
+            {
+                self.dynamic_import_destructured_locals.insert(id.r#ref, ());
+            }
+        }
     }
 
     /// Register a user-declared local (`const|let|var ns`, `.then(ns => …)`,
@@ -1109,6 +1212,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
         if records.is_empty() {
             return;
+        }
+        // `ns.a` can only be rewritten to `a` when `ns` is one namespace.
+        if records.len() > 1 {
+            for &r in records {
+                self.dynamic_import_needs_object.insert(r, ());
+            }
         }
         self.import_items_for_namespace
             .insert(local, ImportItemForNamespaceMap::default());
@@ -1296,6 +1405,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             .insert(ns, ImportItemForNamespaceMap::default());
         self.dynamic_import_namespace_locals
             .insert(ns, vec![req.import_record_index]);
+        self.dynamic_import_copied_locals.insert(ns, ());
         self.imports_to_convert_from_dynamic_import
             .push(DeferredImportNamespace {
                 namespace: LocRef {
@@ -6245,8 +6355,20 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         name: &[u8],
         opts: IdentifierOpts,
     ) -> bool {
-        let js_ast::ExprData::EImportIdentifier(id) = target.data else {
-            return false;
+        let base = match target.data {
+            js_ast::ExprData::EImportIdentifier(id) => id.ref_,
+            // Not an import item until `parse_entry` decides it is one, but
+            // its reads are recorded the same way so that it can be.
+            // Every `x.y` reaches this: skip the lookup call in a file with none.
+            js_ast::ExprData::EIdentifier(id)
+                if !self.dynamic_import_destructured_locals.is_empty()
+                    && self
+                        .dynamic_import_destructured_locals
+                        .contains_key(&id.ref_) =>
+            {
+                id.ref_
+            }
+            _ => return false,
         };
         if !self.options.bundle
             || self.is_control_flow_dead
@@ -6259,13 +6381,15 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         if self.is_revisit_for_substitution {
             return true;
         }
-        let use_ = self.symbol_uses.get_mut(&id.ref_).unwrap();
+        let Some(use_) = self.symbol_uses.get_mut(&base) else {
+            return false;
+        };
         use_.count_estimate = use_.count_estimate.saturating_sub(1);
         // note: this use is not removed as we assume it exists later
 
         let gop = self
             .import_symbol_property_uses
-            .get_or_put_value(id.ref_, Default::default())
+            .get_or_put_value(base, Default::default())
             .expect("unreachable");
         let inner_use = gop
             .value_ptr
@@ -8649,6 +8773,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
         }
 
+        self.register_dynamic_import_items();
+
         // A direct eval at module scope can assign every top-level variable and
         // reach every top-level name. Nested scopes are pinned in `pop_scope`;
         // the module scope never pops. When the bundler wraps this file in a
@@ -9334,6 +9460,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             dynamic_import_aliases: Default::default(),
             dynamic_import_namespace_locals: Default::default(),
             dynamic_import_escaped_records: Default::default(),
+            dynamic_import_needs_object: Default::default(),
+            dynamic_import_copied_locals: Default::default(),
+            dynamic_import_destructured_locals: Default::default(),
             namespace_tracked_uses: Default::default(),
             unwrap_all_requires,
             commonjs_named_exports: Default::default(),
@@ -9840,6 +9969,13 @@ pub(crate) fn null_stmt_data() -> js_ast::StmtData {
 #[inline]
 pub(crate) fn null_value_expr() -> js_ast::ExprData {
     js_ast::ExprData::ENull(E::Null {})
+}
+
+/// `require()` of an ES module returns a copy of the namespace with
+/// `__esModule` set, and reads `default` off `module.exports`: neither name is
+/// the export the linker would bind.
+pub(crate) fn is_require_marker(record: &ImportRecord, name: &[u8]) -> bool {
+    record.kind == bun_ast::ImportKind::Require && (name == b"default" || name == b"__esModule")
 }
 
 /// The property walk of `try_track_dynamic_import_destructure`, which does not

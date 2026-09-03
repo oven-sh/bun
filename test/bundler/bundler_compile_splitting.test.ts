@@ -568,7 +568,8 @@ describe("bundler", () => {
 
     // The executable embeds its entry point at `/$bunfs/root/<outfile>`. A chunk that loads the entry point with
     // `import()` or `require()` must name that path, and must get the module that already ran, not a second copy.
-    // (The "api" backend of `itBundled` sets `naming.entry` to the name of the outfile, so it would not show the bug.)
+    // The "api" backend of `itBundled` sets `naming.entry` to the name of the outfile, and that also names the chunk of
+    // the entry point. The "cli" backend does not, so this test uses it.
     itBundled("compile/splitting/ImportEntryPointFromLazyChunk", {
       backend: "cli",
       compile: true,

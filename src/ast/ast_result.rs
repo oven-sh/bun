@@ -163,7 +163,7 @@ pub struct CommonJSNamedExport {
 pub enum CommonJSExportValue {
     #[default]
     Other,
-    /// An arrow function, or a function expression that does not read `this`.
+    /// A function or an arrow function with no `this` inside.
     FunctionIgnoringThis,
     /// An identifier, as in `exports.name = name`.
     Identifier(Ref),

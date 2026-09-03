@@ -1459,13 +1459,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                     &p.commonjs_named_exports.keys()[to_convert as usize][..],
                                 )
                                 .slice();
-                                // An arrow function has no `this` of its own, and a
-                                // `this` at the top level of the file stops the lifting.
                                 let decl_value = match bin.right.data {
-                                    js_ast::ExprData::EArrow(_) => {
-                                        CommonJSExportValue::FunctionIgnoringThis
-                                    }
-                                    js_ast::ExprData::EFunction(_)
+                                    js_ast::ExprData::EArrow(_)
+                                    | js_ast::ExprData::EFunction(_)
                                         if p.this_expr_count == this_expr_count_before =>
                                     {
                                         CommonJSExportValue::FunctionIgnoringThis

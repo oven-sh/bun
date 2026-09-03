@@ -348,8 +348,7 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     pub(crate) commonjs_named_exports_needs_conversion: u32,
     pub(crate) had_commonjs_named_exports_this_visit: bool,
     pub(crate) commonjs_replacement_stmts: StmtNodeList,
-    /// How many `this` expressions the visit pass has seen. A statement that
-    /// lifts `exports.name = function () {}` compares it before and after.
+    /// How many `this` expressions the visit pass has seen.
     pub(crate) this_expr_count: u32,
 
     pub(crate) parse_pass_symbol_uses: ParsePassSymbolUsageType<'a>,
@@ -5728,8 +5727,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 
-    /// Sets `CALL_IGNORES_THIS` on each lifted export that the file assigns
-    /// once, to a function that does not read `this`.
+    /// Sets `CALL_IGNORES_THIS` on each lifted export whose calls ignore `this`.
     fn mark_commonjs_exports_that_ignore_this(&mut self) {
         use bun_ast::ast_result::CommonJSExportValue;
 
@@ -5740,8 +5738,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             let ignores_this = match export.decl_value {
                 CommonJSExportValue::Other => false,
                 CommonJSExportValue::FunctionIgnoringThis => true,
-                // `exports.name = name`: an assignment or a `var` of the same
-                // name can change the value of the binding.
+                // An assignment or a `var` of the same name can change `name`.
                 CommonJSExportValue::Identifier(binding) => {
                     let symbol = &self.symbols[binding.inner_index() as usize];
                     symbol.kind.is_function()

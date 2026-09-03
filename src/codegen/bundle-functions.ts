@@ -286,7 +286,6 @@ async function processFileSplit(filename: string): Promise<{ functions: BundledB
     const useThis = true;
 
     // TODO: we should use format=IIFE so we could bundle imports and extra functions.
-    mkdirSync(TMP_DIR, { recursive: true });
     writeFileSync(
       tmpFile,
       `// @ts-nocheck
@@ -385,6 +384,7 @@ interface BundleBuiltinFunctionsArgs {
 }
 
 export async function bundleBuiltinFunctions({ requireTransformer }: BundleBuiltinFunctionsArgs) {
+  mkdirSync(TMP_DIR, { recursive: true });
   const filesToProcess = readdirSync(SRC_DIR)
     .filter(x => x.endsWith(".ts") && !x.endsWith(".d.ts"))
     .sort();

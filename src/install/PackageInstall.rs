@@ -1356,8 +1356,7 @@ impl<'a> PackageInstall<'a> {
                             }
                         }
                         EntryKind::File => {
-                            // An existing file can be a hardlink of the source, which
-                            // `CopyFileW` cannot overwrite. Delete it and copy again.
+                            // `dest` can be a hardlink of `src`, which CopyFileW cannot overwrite.
                             // SAFETY: FFI — src/dest are valid NUL-terminated WStr buffers.
                             let copy_file =
                                 || unsafe { windows::CopyFileW(src.as_ptr(), dest.as_ptr(), 1) } != 0;
@@ -1423,8 +1422,7 @@ impl<'a> PackageInstall<'a> {
                         destination_dir_.fd(),
                         bstr::BStr::new(entry.path.as_bytes())
                     );
-                    // An existing file can be a hardlink of the source, and `O_TRUNC`
-                    // would empty the source too. Unlink it and create a new file.
+                    // The file can be a hardlink of `in_file`, and O_TRUNC would empty both.
                     let create = |path: &ZStr| {
                         let open = || {
                             sys::openat(

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { readdirSync } from "fs";
+import { mkdirSync, readdirSync, symlinkSync } from "fs";
 import { bunEnv, bunExe, normalizeBunSnapshot, tempDir } from "harness";
 import { join } from "path";
 
@@ -152,6 +152,23 @@ describe("bun build --check", () => {
     const result = await run(String(dir), ["build", "./index.ts", "--check"]);
 
     expect(result).toEqual({ stdout: "Checked 3 modules in <time>", stderr: "", exitCode: 0 });
+  });
+
+  test.concurrent("follows a workspace package that node_modules links to", async () => {
+    using dir = tempDir("build-check-workspace", {
+      "app/index.ts": `import { shared } from "shared";\nexport const app = 1;\nconsole.log(shared);\n`,
+      "shared/package.json": JSON.stringify({ name: "shared", main: "index.ts" }),
+      "shared/index.ts": `import { app } from "../app/index.ts";\nexport const shared = app;\n`,
+    });
+    mkdirSync(join(String(dir), "app", "node_modules"));
+    symlinkSync(join(String(dir), "shared"), join(String(dir), "app", "node_modules", "shared"), "junction");
+
+    const result = await run(String(dir), ["build", "./app/index.ts", "--check"]);
+
+    expect(errorLines(result.stderr)).toEqual([
+      "error: Circular import: app/index.ts -> shared/index.ts -> app/index.ts",
+    ]);
+    expect(result.exitCode).toBe(1);
   });
 
   test.concurrent("follows a re-export that a build would defer", async () => {

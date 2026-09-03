@@ -131,8 +131,9 @@ describe.if(isPosix)("terminal signal reflects the crash cause", () => {
 });
 
 // The report header names the CPU features the crash handler detected. On
-// x86_64 that detection uses cpuid directly (CPUFeatures.cpp); every machine
-// that runs this suite has the baseline of SSE4.2, POPCNT, AVX and AVX2.
+// x86_64 that detection uses cpuid directly (CPUFeatures.cpp). Every supported
+// x64 CPU has SSE4.2 and POPCNT, since the baseline build targets Nehalem.
+// AVX, AVX2 and AVX-512 are optional, and the report lists them in that order.
 test.if(isPosix)("the crash report lists the CPU features", async () => {
   await using proc = Bun.spawn({
     cmd: [bunExe(), path.join(import.meta.dir, "fixture-crash.js"), "panic", "--debug-crash-handler-use-trace-string"],
@@ -140,14 +141,14 @@ test.if(isPosix)("the crash report lists the CPU features", async () => {
     stdio: ["ignore", "pipe", "pipe"],
   });
   const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect(exitCode).not.toBe(0);
 
   const cpuLine = stderr.split("\n").find(line => line.startsWith("CPU: "));
   if (process.arch === "x64") {
-    expect(cpuLine).toMatch(/^CPU: sse42 popcnt avx avx2( avx512)?$/);
+    expect(cpuLine).toMatch(/^CPU: sse42 popcnt( avx)?( avx2)?( avx512)?$/);
   } else {
     expect(cpuLine).toMatch(/^CPU: neon fp( \w+)*$/);
   }
+  expect(exitCode).not.toBe(0);
 });
 
 // POSIX-only: Windows refuses to remove a directory that is any process's cwd.

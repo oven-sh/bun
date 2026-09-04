@@ -150,10 +150,10 @@ test("object argument with a sparse numeric key", async () => {
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   // One combined assertion so stderr (where JSC prints the exception check failure) shows up in
-  // the diff if the child aborts. Debug builds print "[macro] call take" to stdout before the
-  // script's own output, so only the tail of stdout is matched.
-  expect({ stdout, stderr, exitCode, signalCode: proc.signalCode }).toMatchObject({
-    stdout: expect.stringMatching(/200000\n$/),
+  // the diff if the child aborts.
+  expect({ stdout, stderr, exitCode, signalCode: proc.signalCode }).toEqual({
+    stdout: "200000\n",
+    stderr: "",
     exitCode: 0,
     signalCode: null,
   });
@@ -178,7 +178,7 @@ test("object destructuring of a macro result keeps every bound property regardle
     stderr: "pipe",
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect({ lastLine: stdout.trim().split("\n").pop(), stderr }).toEqual({ lastLine: "[2,1,1,1,2]", stderr: "" });
+  expect({ stdout, stderr }).toEqual({ stdout: "[2,1,1,1,2]\n", stderr: "" });
   expect(exitCode).toBe(0);
 });
 
@@ -317,11 +317,7 @@ describe("event loop routing around macros", () => {
       stderr: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    // Debug builds also print "[macro] call <name>" to stdout.
-    const lines = stdout
-      .trim()
-      .split("\n")
-      .filter(line => !line.startsWith("[macro]"));
+    const lines = stdout.trim().split("\n");
     return { lines, stderr, exitCode };
   }
 

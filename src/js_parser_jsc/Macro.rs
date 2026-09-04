@@ -32,6 +32,8 @@ use bun_jsc::{
 };
 use bun_jsc::{BuildMessage, ResolveMessage};
 
+bun_core::declare_scope!(macros, visible);
+
 const NAMESPACE_WITH_COLON: &[u8] = b"macro:";
 
 fn is_macro_path(str: &[u8]) -> bool {
@@ -903,12 +905,7 @@ impl Runner {
         id: i32,
         javascript_object: JSValue,
     ) -> Result<Expr, MacroError> {
-        if bun_core::env::IS_DEBUG {
-            bun_core::prettyln!(
-                "<r><d>[macro]<r> call <d><b>{}<r>",
-                bstr::BStr::new(function_name)
-            );
-        }
+        bun_core::scoped_log!(macros, "call <b>{}<r>", bstr::BStr::new(function_name));
 
         // The exception holder is never read in this body (legacy from an earlier
         // exception-reporting path); a thread-local sentinel suffices.

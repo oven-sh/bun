@@ -27,8 +27,7 @@ test.concurrent("macro that awaits crypto.subtle.digest resolves under bun run",
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect(stderr).toBe("");
-  // A debug build also logs "[macro] call sha" to stdout.
-  expect(stdout).toContain(`${expected}\n`);
+  expect(stdout).toBe(`${expected}\n`);
   expect(exitCode).toBe(0);
 });
 

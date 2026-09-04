@@ -4739,14 +4739,33 @@ class ServerHttp2Session extends Http2Session {
       const socket = this[bunHTTP2Socket];
       if (!this.#connected) return;
       this.#closed = true;
+      if (socket && (!this[kGoawaySent] || code)) {
+        // close() already announced a graceful shutdown - re-sending NO_ERROR would be redundant
+        // and double-fires the peer's 'goaway' event. An error code is new information, though:
+        // a destroy(err) after close() must still put the error GOAWAY on the wire.
+        this.goaway(code || constants.NGHTTP2_NO_ERROR, 0, Buffer.alloc(0));
+      }
+      const parser = this.#parser;
+      if (parser) {
+        // node destroys every open stream synchronously from inside session.destroy(); the native
+        // dispatch below still runs for connection bookkeeping, but by then each stream is already
+        // ended + destroyed (a write() racing the destroy reports write-after-end without 'error').
+        // Like Node's Http2Stream._destroy: a received GOAWAY's code takes
+        // precedence over the destroy code when streams are torn down.
+        const streamRstCode = this[kGoawayCode] || code || constants.NGHTTP2_NO_ERROR;
+        parser.forEachStream(
+          FunctionPrototypeBind.$call(destroyStreamForSessionDestroy, undefined, error, streamRstCode),
+        );
+        parser.emitErrorToAllStreams(streamRstCode);
+        // The GOAWAY is still corked in the parser: detach() is what writes it out, and on a
+        // socket without a native handle that write goes through #Handlers.write, which drops
+        // it once the session is disconnected or the socket has been ended. So the socket is
+        // torn down after this, not before.
+        parser.detach();
+        this.#parser = null;
+      }
       this.#connected = false;
       if (socket) {
-        if (!this[kGoawaySent] || code) {
-          // close() already announced a graceful shutdown - re-sending NO_ERROR would be redundant
-          // and double-fires the peer's 'goaway' event. An error code is new information, though:
-          // a destroy(err) after close() must still put the error GOAWAY on the wire.
-          this.goaway(code || constants.NGHTTP2_NO_ERROR, 0, Buffer.alloc(0));
-        }
         if (error) {
           // node's finishSessionClose destroys the socket when the session dies
           // with an error (a misbehaving peer must observe the connection going
@@ -4765,21 +4784,6 @@ class ServerHttp2Session extends Http2Session {
           socket.resume();
           socket.end();
         }
-      }
-      const parser = this.#parser;
-      if (parser) {
-        // node destroys every open stream synchronously from inside session.destroy(); the native
-        // dispatch below still runs for connection bookkeeping, but by then each stream is already
-        // ended + destroyed (a write() racing the destroy reports write-after-end without 'error').
-        // Like Node's Http2Stream._destroy: a received GOAWAY's code takes
-        // precedence over the destroy code when streams are torn down.
-        const streamRstCode = this[kGoawayCode] || code || constants.NGHTTP2_NO_ERROR;
-        parser.forEachStream(
-          FunctionPrototypeBind.$call(destroyStreamForSessionDestroy, undefined, error, streamRstCode),
-        );
-        parser.emitErrorToAllStreams(streamRstCode);
-        parser.detach();
-        this.#parser = null;
       }
     } catch (e) {
       // A throwing destroy did not destroy: argument validation (goaway's
@@ -5818,7 +5822,6 @@ class ClientHttp2Session extends Http2Session {
         this[kSessionDestroyError] = error;
       }
       this.#closed = true;
-      this.#connected = false;
       {
         // Requests still queued (waiting for connect or for a concurrency slot) never reached the
         // wire; node cancels them with ERR_HTTP2_STREAM_CANCEL (carrying the session error, if any,
@@ -5836,25 +5839,11 @@ class ClientHttp2Session extends Http2Session {
           }
         }
       }
-      if (socket) {
-        if (!this[kGoawaySent] || code) {
-          // close() already announced a graceful shutdown - re-sending NO_ERROR would be redundant
-          // and double-fires the peer's 'goaway' event. An error code is new information, though:
-          // a destroy(err) after close() must still put the error GOAWAY on the wire.
-          this.goaway(code || constants.NGHTTP2_NO_ERROR, 0, Buffer.alloc(0));
-        }
-        if (error) {
-          // See the client session: end first, destroy a tick later (node's
-          // finishSessionClose Windows-ECONNRESET avoidance).
-          endThenDestroySessionSocket(socket, error);
-        } else {
-          // See the client session's destroy: Node's finishSessionClose resumes
-          // the socket on a graceful close so unread inbound bytes cannot turn
-          // the FIN teardown into an RST.
-          // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/http2/core.js#L1188
-          socket.resume();
-          socket.end();
-        }
+      if (socket && (!this[kGoawaySent] || code)) {
+        // close() already announced a graceful shutdown - re-sending NO_ERROR would be redundant
+        // and double-fires the peer's 'goaway' event. An error code is new information, though:
+        // a destroy(err) after close() must still put the error GOAWAY on the wire.
+        this.goaway(code || constants.NGHTTP2_NO_ERROR, 0, Buffer.alloc(0));
       }
       const parser = this.#parser;
       if (parser) {
@@ -5872,7 +5861,25 @@ class ClientHttp2Session extends Http2Session {
         } finally {
           this[bunHTTP2SessionTeardownFrame] = kNoSessionTeardown;
         }
+        // Same as the server session's destroy: detach() writes out the corked GOAWAY, and
+        // #Handlers.write only passes it on while the session is connected and the socket is
+        // not ended, so the socket is torn down after this.
         parser.detach();
+      }
+      this.#connected = false;
+      if (socket) {
+        if (error) {
+          // See the server session: end first, destroy a tick later (node's
+          // finishSessionClose Windows-ECONNRESET avoidance).
+          endThenDestroySessionSocket(socket, error);
+        } else {
+          // See the server session's destroy: Node's finishSessionClose resumes
+          // the socket on a graceful close so unread inbound bytes cannot turn
+          // the FIN teardown into an RST.
+          // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/http2/core.js#L1188
+          socket.resume();
+          socket.end();
+        }
       }
     } catch (e) {
       // A throwing destroy did not destroy: argument validation (goaway's

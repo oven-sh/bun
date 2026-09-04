@@ -461,6 +461,92 @@ describe("HTTP/2 upgrade — server TLS options", () => {
   });
 });
 
+describe("HTTP/2 upgrade — frames written while the session is destroyed reach the peer", () => {
+  const SETTINGS = 4;
+  const GOAWAY = 7;
+  const { NGHTTP2_NO_ERROR, NGHTTP2_INTERNAL_ERROR } = http2.constants;
+  type Frame = { type: number; errorCode?: number };
+
+  // Splits the bytes a peer read before the server hung up into frames. The peer never sends
+  // its own preface, so everything here was written by the server session on its own: the
+  // connection preface SETTINGS and then whatever destroy() put on the wire.
+  function parseFrames(buf: Buffer): Frame[] {
+    const frames: Frame[] = [];
+    let off = 0;
+    while (off + 9 <= buf.length) {
+      const length = buf.readUIntBE(off, 3);
+      const frame: Frame = { type: buf[off + 3] };
+      // GOAWAY payload: last stream id (4 bytes), error code (4 bytes), debug data.
+      if (frame.type === GOAWAY) frame.errorCode = buf.readUInt32BE(off + 9 + 4);
+      frames.push(frame);
+      off += 9 + length;
+    }
+    assert.strictEqual(off, buf.length, "peer received a partial frame");
+    return frames;
+  }
+
+  // Injects one raw TCP connection into an Http2SecureServer, connects an h2 peer to it, and
+  // returns the frames the peer read until the server closed the connection. `teardown` runs
+  // on the server session: right away from the 'session' event when `when` is "in-session-event",
+  // otherwise once the peer has read the server's preface (so the SETTINGS frame is already out
+  // and the teardown's own frames are the only thing left to deliver).
+  async function framesReceivedAfterTeardown(
+    when: "in-session-event" | "after-preface",
+    teardown: (session: http2.ServerHttp2Session) => void,
+  ): Promise<Frame[]> {
+    const h2Server = http2.createSecureServer(TLS);
+    h2Server.on("sessionError", () => {});
+    const sessionReady = Promise.withResolvers<http2.ServerHttp2Session>();
+    h2Server.on("session", session => {
+      session.on("error", () => {});
+      if (when === "in-session-event") teardown(session);
+      sessionReady.resolve(session);
+    });
+    const netServer = net.createServer(socket => {
+      socket.on("error", () => {});
+      h2Server.emit("connection", socket);
+    });
+    const port = await new Promise<number>(resolve => {
+      netServer.listen(0, "127.0.0.1", () => resolve((netServer.address() as net.AddressInfo).port));
+    });
+    try {
+      const peer = tls.connect({ host: "127.0.0.1", port, rejectUnauthorized: false, ALPNProtocols: ["h2"] });
+      peer.on("error", () => {});
+      const chunks: Buffer[] = [];
+      const firstChunk = Promise.withResolvers<void>();
+      const closed = Promise.withResolvers<void>();
+      peer.on("data", (chunk: Buffer) => {
+        chunks.push(chunk);
+        firstChunk.resolve();
+      });
+      peer.on("close", () => closed.resolve());
+      if (when === "after-preface") {
+        const [session] = await Promise.all([sessionReady.promise, firstChunk.promise]);
+        teardown(session);
+      }
+      await closed.promise;
+      return parseFrames(Buffer.concat(chunks));
+    } finally {
+      netServer.close();
+    }
+  }
+
+  test("session.destroy(err) from the 'session' event: the preface SETTINGS and the GOAWAY both arrive", async () => {
+    const frames = await framesReceivedAfterTeardown("in-session-event", session => session.destroy(new Error("boom")));
+    assert.deepStrictEqual(frames, [{ type: SETTINGS }, { type: GOAWAY, errorCode: NGHTTP2_INTERNAL_ERROR }]);
+  });
+
+  test("session.destroy(err) on an established session: the GOAWAY arrives before the connection closes", async () => {
+    const frames = await framesReceivedAfterTeardown("after-preface", session => session.destroy(new Error("boom")));
+    assert.deepStrictEqual(frames, [{ type: SETTINGS }, { type: GOAWAY, errorCode: NGHTTP2_INTERNAL_ERROR }]);
+  });
+
+  test("session.destroy() without an error: the NO_ERROR GOAWAY arrives before the connection closes", async () => {
+    const frames = await framesReceivedAfterTeardown("after-preface", session => session.destroy());
+    assert.deepStrictEqual(frames, [{ type: SETTINGS }, { type: GOAWAY, errorCode: NGHTTP2_NO_ERROR }]);
+  });
+});
+
 if (typeof Bun !== "undefined") {
   describe("Node.js compatibility", () => {
     test("tests should run on node.js", async () => {

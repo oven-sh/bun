@@ -5976,3 +5976,120 @@ describe("frames issued from inside a user-supplied Duplex transport's _write", 
     },
   );
 });
+
+describe("session.destroy() over a transport without a native handle", () => {
+  // A session whose socket has no native handle (a createConnection Duplex, a Duplex injected with
+  // server.emit('connection'), the TLS proxy behind Http2SecureServer#emit('connection')) writes
+  // through the session's JS write handler. destroy() corks a GOAWAY that the parser's detach()
+  // writes out, and the handler used to refuse that write because destroy() had already marked the
+  // session disconnected and ended the socket: the GOAWAY (and, when destroy() ran in the tick that
+  // wrote the preface, the SETTINGS frame as well) never reached the peer.
+  const PREFACE = Buffer.from("PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n");
+  const SETTINGS = 4;
+  const GOAWAY = 7;
+  const { NGHTTP2_NO_ERROR, NGHTTP2_INTERNAL_ERROR } = http2.constants;
+
+  function parseFrames(buf, { clientPreface }) {
+    let off = 0;
+    if (clientPreface) {
+      expect(buf.subarray(0, PREFACE.length).equals(PREFACE)).toBe(true);
+      off = PREFACE.length;
+    }
+    const frames = [];
+    while (off + 9 <= buf.length) {
+      const length = buf.readUIntBE(off, 3);
+      const frame = { type: buf[off + 3] };
+      // GOAWAY payload: last stream id (4 bytes), error code (4 bytes), debug data.
+      if (frame.type === GOAWAY) frame.errorCode = buf.readUInt32BE(off + 9 + 4);
+      frames.push(frame);
+      off += 9 + length;
+    }
+    expect(off).toBe(buf.length);
+    return frames;
+  }
+
+  const cases = [
+    ["destroy(err)", () => new Error("boom"), NGHTTP2_INTERNAL_ERROR],
+    ["destroy()", () => undefined, NGHTTP2_NO_ERROR],
+  ];
+
+  describe("server session on a Duplex injected with server.emit('connection')", () => {
+    async function framesReadByPeer(when, destroyArg) {
+      const [peerSide, serverSide] = duplexPair();
+      const server = http2.createServer();
+      server.on("sessionError", () => {});
+      const sessionReady = Promise.withResolvers();
+      server.on("session", session => {
+        session.on("error", () => {});
+        if (when === "in-session-event") session.destroy(destroyArg());
+        sessionReady.resolve(session);
+      });
+
+      const chunks = [];
+      const firstChunk = Promise.withResolvers();
+      const ended = Promise.withResolvers();
+      peerSide.on("data", chunk => {
+        chunks.push(chunk);
+        firstChunk.resolve();
+      });
+      peerSide.on("end", ended.resolve);
+      peerSide.on("close", ended.resolve);
+
+      server.emit("connection", serverSide);
+      if (when === "after-preface") {
+        const [session] = await Promise.all([sessionReady.promise, firstChunk.promise]);
+        session.destroy(destroyArg());
+      }
+      await ended.promise;
+      return parseFrames(Buffer.concat(chunks), { clientPreface: false });
+    }
+
+    it.each(cases)("%s from the 'session' event delivers the preface SETTINGS and the GOAWAY", async (_, arg, code) => {
+      expect(await framesReadByPeer("in-session-event", arg)).toEqual([
+        { type: SETTINGS },
+        { type: GOAWAY, errorCode: code },
+      ]);
+    });
+
+    it.each(cases)(
+      "%s on an established session delivers the GOAWAY before ending the socket",
+      async (_, arg, code) => {
+        expect(await framesReadByPeer("after-preface", arg)).toEqual([
+          { type: SETTINGS },
+          { type: GOAWAY, errorCode: code },
+        ]);
+      },
+    );
+  });
+
+  describe("client session on a createConnection Duplex", () => {
+    it.each(cases)("%s writes the GOAWAY to the transport before ending it", async (_, arg, code) => {
+      const chunks = [];
+      const ended = Promise.withResolvers();
+      const transport = new Duplex({
+        read() {},
+        write(chunk, _encoding, callback) {
+          chunks.push(Buffer.from(chunk));
+          callback();
+        },
+        final(callback) {
+          ended.resolve();
+          callback();
+        },
+      });
+      const client = http2.connect("http://localhost", { createConnection: () => transport });
+      client.on("error", () => {});
+      await new Promise(resolve => client.once("connect", resolve));
+
+      client.destroy(arg());
+
+      // A Writable hands nothing to _write once it has been ended, so after destroy() ended the
+      // transport, `chunks` is everything the peer would ever have read.
+      await ended.promise;
+      expect(parseFrames(Buffer.concat(chunks), { clientPreface: true })).toEqual([
+        { type: SETTINGS },
+        { type: GOAWAY, errorCode: code },
+      ]);
+    });
+  });
+});

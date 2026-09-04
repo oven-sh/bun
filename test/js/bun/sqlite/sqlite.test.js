@@ -983,6 +983,63 @@ describe("does not throw missing parameter error in", () => {
   }
 });
 
+describe("prepare() binds a single non-array parameter", () => {
+  it.each([
+    ["string", "hello", "hello"],
+    ["empty string", "", ""],
+    ["number", 42, 42],
+    ["zero", 0, 0],
+    ["boolean", true, 1],
+    ["boolean false", false, 0],
+    ["null", null, null],
+  ])("%s", (_label, binding, expected) => {
+    using db = new Database(":memory:");
+    using stmt = db.prepare("SELECT ? AS value", binding);
+
+    expect(stmt.get()).toEqual({ value: expected });
+  });
+
+  it("typed array, as one blob", () => {
+    using db = new Database(":memory:");
+    const blob = new Uint8Array([1, 2, 3]);
+    using stmt = db.prepare("SELECT ? AS value", blob);
+
+    expect(stmt.get()).toEqual({ value: blob });
+  });
+
+  it("shows the bound value in toString() with strict: true", () => {
+    using db = new Database(":memory:", { strict: true });
+    db.run("CREATE TABLE test (name TEXT)");
+    using stmt = db.prepare("INSERT INTO test (name) VALUES (?)", "test1");
+
+    expect(stmt.toString()).toBe("INSERT INTO test (name) VALUES ('test1')");
+  });
+
+  it("an extra binding is an arity error, not a silent drop", () => {
+    using db = new Database(":memory:");
+
+    expect(() => db.prepare("SELECT 1 AS a", "extra")).toThrow("SQLite query expected 0 values, received 1");
+  });
+
+  it("an explicit undefined binding stays unbound", () => {
+    using db = new Database(":memory:");
+    using stmt = db.prepare("SELECT ? AS value", undefined);
+
+    expect(stmt.get()).toEqual({ value: null });
+  });
+
+  it("arrays and objects keep binding positionally and by name", () => {
+    using db = new Database(":memory:");
+    using positional = db.prepare("SELECT ? AS a, ? AS b", ["x", "y"]);
+    using named = db.prepare("SELECT $a AS a", { $a: "z" });
+    using unbound = db.prepare("SELECT 1 AS a");
+
+    expect(positional.get()).toEqual({ a: "x", b: "y" });
+    expect(named.get()).toEqual({ a: "z" });
+    expect(unbound.get()).toEqual({ a: 1 });
+  });
+});
+
 it("db.transaction()", () => {
   const db = Database.open(":memory:");
 

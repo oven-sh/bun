@@ -138,6 +138,38 @@ function typeTest(name: string, config: TypeTestConfig) {
   });
 }
 
+let tscCheckCounter = 0;
+
+/**
+ * Asserts that `files` type-check against the packed bun-types with the `bun init` tsconfig.
+ * Unlike {@link typeTest} this runs on debug builds too: spawning tsc over a file or two is
+ * cheap, unlike the in-process LanguageService runs over the whole fixture directory.
+ */
+function tscTest(name: string, files: Record<string, string>) {
+  test(name, async () => {
+    const checkDir = join(TEMP_DIR, `tsc-check-${tscCheckCounter++}`);
+    const tsconfig = structuredClone(sourceTsconfig);
+    tsconfig.include = Object.keys(files);
+    tsconfig.compilerOptions.typeRoots = [join(BASE_FIXTURE_DIR, "node_modules", "@types")];
+    await mkdir(checkDir, { recursive: true });
+    await makeTree(checkDir, { ...files, "tsconfig.json": JSON.stringify(tsconfig, null, 2) });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), join(BASE_FIXTURE_DIR, "node_modules", "typescript", "bin", "tsc"), "-p", "."],
+      env: bunEnv,
+      cwd: checkDir,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stderr.trim()).toBe("");
+    expect(stdout.trim()).toBe("");
+    expect(exitCode).toBe(0);
+  });
+}
+
 async function diagnose(
   fixtureDir: string,
   config: {
@@ -394,36 +426,50 @@ describe("@types/bun integration test", () => {
     });
   });
 
-  // Runs on debug builds too: spawning tsc over a single file is cheap,
-  // unlike the in-process LanguageService runs above.
   describe("Bun.mmap", () => {
-    test("MMapOptions accepts offset and size", async () => {
-      const checkDir = join(TEMP_DIR, "mmap-options-check");
-      const tsconfig = structuredClone(sourceTsconfig);
-      tsconfig.include = ["mmap-options.ts"];
-      tsconfig.compilerOptions.typeRoots = [join(BASE_FIXTURE_DIR, "node_modules", "@types")];
-      await mkdir(checkDir, { recursive: true });
-      await makeTree(checkDir, {
-        "tsconfig.json": JSON.stringify(tsconfig, null, 2),
-        "mmap-options.ts": `const view = Bun.mmap("./data.bin", { shared: true, sync: false, offset: 4096, size: 1024 });
-           view satisfies Uint8Array<ArrayBuffer>;
-           Bun.mmap("./data.bin", { offset: 4096 }) satisfies Uint8Array<ArrayBuffer>;
-           Bun.mmap("./data.bin", { size: 1024 }) satisfies Uint8Array<ArrayBuffer>;`,
-      });
+    tscTest("MMapOptions accepts offset and size", {
+      "mmap-options.ts": `const view = Bun.mmap("./data.bin", { shared: true, sync: false, offset: 4096, size: 1024 });
+         view satisfies Uint8Array<ArrayBuffer>;
+         Bun.mmap("./data.bin", { offset: 4096 }) satisfies Uint8Array<ArrayBuffer>;
+         Bun.mmap("./data.bin", { size: 1024 }) satisfies Uint8Array<ArrayBuffer>;`,
+    });
+  });
 
-      await using proc = Bun.spawn({
-        cmd: [bunExe(), join(BASE_FIXTURE_DIR, "node_modules", "typescript", "bin", "tsc"), "-p", "."],
-        env: bunEnv,
-        cwd: checkDir,
-        stdout: "pipe",
-        stderr: "pipe",
-      });
+  describe("WebSocket", () => {
+    tscTest("error event listeners receive ErrorEvent", {
+      "websocket-error-event.ts": `const ws = new WebSocket("wss://dev.local");
+         ws.addEventListener("error", event => {
+           event satisfies ErrorEvent;
+           event.message satisfies string;
+           console.log(event.error);
+         });
+         const onError = (event: ErrorEvent) => console.log(event.error);
+         ws.addEventListener("error", onError);
+         ws.removeEventListener("error", onError);
+         ws.onerror = event => {
+           event satisfies ErrorEvent;
+         };
+         ws.onerror = onError;`,
+    });
 
-      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-
-      expect(stderr.trim()).toBe("");
-      expect(stdout.trim()).toBe("");
-      expect(exitCode).toBe(0);
+    tscTest('binaryType "blob", Blob payloads and ping/pong events', {
+      "websocket-blob-ping-pong.ts": `const ws = new WebSocket("wss://dev.local");
+         const blob = new Blob(["payload"]);
+         ws.binaryType = "blob";
+         ws.send(blob);
+         ws.ping(blob);
+         ws.pong(blob);
+         ws.addEventListener("ping", event => {
+           event satisfies MessageEvent;
+           console.log(event.data);
+         });
+         ws.addEventListener("pong", ({ data }) => console.log(data));
+         const onPing = (event: MessageEvent) => console.log(event.data);
+         const onPong = (event: MessageEvent) => console.log(event.data);
+         ws.addEventListener("ping", onPing);
+         ws.addEventListener("pong", onPong);
+         ws.removeEventListener("ping", onPing);
+         ws.removeEventListener("pong", onPong);`,
     });
   });
 
@@ -1004,59 +1050,157 @@ describe("@types/bun integration test", () => {
             "Object literal may only specify known properties, and 'protocols' does not exist in type 'string[]'.",
         },
         {
+          code: 2322,
+          line: "websocket.ts:105:3",
+          message:
+            "Type '(event: ErrorEvent) => void' is not assignable to type '(this: WebSocket, ev: Event) => any'.\nTypes of parameters 'event' and 'ev' are incompatible.\nType 'Event' is missing the following properties from type 'ErrorEvent': colno, error, filename, lineno, message",
+        },
+        {
+          code: 2554,
+          line: "websocket.ts:132:23",
+          message: "Expected 2 arguments, but got 0.",
+        },
+        {
+          code: 2769,
+          line: "websocket.ts:170:32",
+          message:
+            "No overload matches this call.\nOverload 1 of 2, '(type: \"error\", listener: (this: WebSocket, ev: Event) => any, options?: boolean | AddEventListenerOptions | undefined): void', gave the following error.\nArgument of type '(event: ErrorEvent) => void' is not assignable to parameter of type '(this: WebSocket, ev: Event) => any'.\nTypes of parameters 'event' and 'ev' are incompatible.\nType 'Event' is missing the following properties from type 'ErrorEvent': colno, error, filename, lineno, message\nOverload 2 of 2, '(type: string, listener: EventListenerOrEventListenerObject, options?: boolean | AddEventListenerOptions | undefined): void', gave the following error.\nArgument of type '(event: ErrorEvent) => void' is not assignable to parameter of type 'EventListenerOrEventListenerObject'.\nType '(event: ErrorEvent) => void' is not assignable to type 'EventListener'.\nTypes of parameters 'event' and 'evt' are incompatible.\nType 'Event' is missing the following properties from type 'ErrorEvent': colno, error, filename, lineno, message",
+        },
+        {
+          code: 2769,
+          line: "websocket.ts:176:35",
+          message:
+            "No overload matches this call.\nOverload 1 of 2, '(type: \"error\", listener: (this: WebSocket, ev: Event) => any, options?: boolean | EventListenerOptions | undefined): void', gave the following error.\nArgument of type '(event: ErrorEvent) => void' is not assignable to parameter of type '(this: WebSocket, ev: Event) => any'.\nTypes of parameters 'event' and 'ev' are incompatible.\nType 'Event' is missing the following properties from type 'ErrorEvent': colno, error, filename, lineno, message\nOverload 2 of 2, '(type: string, listener: EventListenerOrEventListenerObject, options?: boolean | EventListenerOptions | undefined): void', gave the following error.\nArgument of type '(event: ErrorEvent) => void' is not assignable to parameter of type 'EventListenerOrEventListenerObject'.\nType '(event: ErrorEvent) => void' is not assignable to type 'EventListener'.\nTypes of parameters 'event' and 'evt' are incompatible.\nType 'Event' is missing the following properties from type 'ErrorEvent': colno, error, filename, lineno, message",
+        },
+        {
           code: 2551,
           line: "websocket.ts:192:17",
           message: "Property 'URL' does not exist on type 'WebSocket'. Did you mean 'url'?",
         },
         {
           code: 2322,
-          line: "websocket.ts:196:3",
+          line: "websocket.ts:197:3",
           message: "Type '\"nodebuffer\"' is not assignable to type 'BinaryType'.",
         },
         {
           code: 2339,
-          line: "websocket.ts:242:6",
+          line: "websocket.ts:240:6",
           message: "Property 'ping' does not exist on type 'WebSocket'.",
         },
         {
           code: 2339,
-          line: "websocket.ts:245:6",
+          line: "websocket.ts:243:6",
           message: "Property 'ping' does not exist on type 'WebSocket'.",
         },
         {
           code: 2339,
-          line: "websocket.ts:249:6",
+          line: "websocket.ts:247:6",
           message: "Property 'ping' does not exist on type 'WebSocket'.",
         },
         {
           code: 2339,
-          line: "websocket.ts:253:6",
+          line: "websocket.ts:251:6",
           message: "Property 'ping' does not exist on type 'WebSocket'.",
         },
         {
           code: 2339,
-          line: "websocket.ts:256:6",
+          line: "websocket.ts:255:6",
+          message: "Property 'ping' does not exist on type 'WebSocket'.",
+        },
+        {
+          code: 2339,
+          line: "websocket.ts:258:6",
           message: "Property 'pong' does not exist on type 'WebSocket'.",
         },
         {
           code: 2339,
-          line: "websocket.ts:259:6",
+          line: "websocket.ts:261:6",
           message: "Property 'pong' does not exist on type 'WebSocket'.",
         },
         {
           code: 2339,
-          line: "websocket.ts:263:6",
+          line: "websocket.ts:265:6",
           message: "Property 'pong' does not exist on type 'WebSocket'.",
         },
         {
           code: 2339,
-          line: "websocket.ts:267:6",
+          line: "websocket.ts:269:6",
           message: "Property 'pong' does not exist on type 'WebSocket'.",
         },
         {
           code: 2339,
-          line: "websocket.ts:270:6",
+          line: "websocket.ts:273:6",
+          message: "Property 'pong' does not exist on type 'WebSocket'.",
+        },
+        {
+          code: 2339,
+          line: "websocket.ts:276:6",
           message: "Property 'terminate' does not exist on type 'WebSocket'.",
+        },
+        {
+          code: 2554,
+          line: "websocket.ts:285:23",
+          message: "Expected 2 arguments, but got 0.",
+        },
+        {
+          code: 2339,
+          line: "websocket.ts:286:22",
+          message: "Property 'message' does not exist on type 'Event'.",
+        },
+        {
+          code: 2339,
+          line: "websocket.ts:287:22",
+          message: "Property 'error' does not exist on type 'Event'.",
+        },
+        {
+          code: 2769,
+          line: "websocket.ts:291:32",
+          message:
+            "No overload matches this call.\nOverload 1 of 2, '(type: \"error\", listener: (this: WebSocket, ev: Event) => any, options?: boolean | AddEventListenerOptions | undefined): void', gave the following error.\nArgument of type '(event: ErrorEvent) => void' is not assignable to parameter of type '(this: WebSocket, ev: Event) => any'.\nTypes of parameters 'event' and 'ev' are incompatible.\nType 'Event' is missing the following properties from type 'ErrorEvent': colno, error, filename, lineno, message\nOverload 2 of 2, '(type: string, listener: EventListenerOrEventListenerObject, options?: boolean | AddEventListenerOptions | undefined): void', gave the following error.\nArgument of type '(event: ErrorEvent) => void' is not assignable to parameter of type 'EventListenerOrEventListenerObject'.\nType '(event: ErrorEvent) => void' is not assignable to type 'EventListener'.\nTypes of parameters 'event' and 'evt' are incompatible.\nType 'Event' is missing the following properties from type 'ErrorEvent': colno, error, filename, lineno, message",
+        },
+        {
+          code: 2554,
+          line: "websocket.ts:302:23",
+          message: "Expected 2 arguments, but got 0.",
+        },
+        {
+          code: 2339,
+          line: "websocket.ts:303:22",
+          message: "Property 'data' does not exist on type 'Event'.",
+        },
+        {
+          code: 2554,
+          line: "websocket.ts:306:23",
+          message: "Expected 2 arguments, but got 0.",
+        },
+        {
+          code: 2339,
+          line: "websocket.ts:307:22",
+          message: "Property 'data' does not exist on type 'Event'.",
+        },
+        {
+          code: 2769,
+          line: "websocket.ts:317:6",
+          message:
+            "No overload matches this call.\nOverload 1 of 2, '(type: keyof WebSocketEventMap, listener: (this: WebSocket, ev: Event | MessageEvent<any> | CloseEvent) => any, options?: boolean | ... 1 more ... | undefined): void', gave the following error.\nArgument of type '\"ping\"' is not assignable to parameter of type 'keyof WebSocketEventMap'.\nOverload 2 of 2, '(type: string, listener: EventListenerOrEventListenerObject, options?: boolean | AddEventListenerOptions | undefined): void', gave the following error.\nArgument of type '(event: MessageEvent) => void' is not assignable to parameter of type 'EventListenerOrEventListenerObject'.\nType '(event: MessageEvent) => void' is not assignable to type 'EventListener'.\nTypes of parameters 'event' and 'evt' are incompatible.\nType 'Event' is missing the following properties from type 'MessageEvent<any>': data, lastEventId, origin, ports, and 3 more.",
+        },
+        {
+          code: 2769,
+          line: "websocket.ts:318:6",
+          message:
+            "No overload matches this call.\nOverload 1 of 2, '(type: keyof WebSocketEventMap, listener: (this: WebSocket, ev: Event | MessageEvent<any> | CloseEvent) => any, options?: boolean | ... 1 more ... | undefined): void', gave the following error.\nArgument of type '\"pong\"' is not assignable to parameter of type 'keyof WebSocketEventMap'.\nOverload 2 of 2, '(type: string, listener: EventListenerOrEventListenerObject, options?: boolean | AddEventListenerOptions | undefined): void', gave the following error.\nArgument of type '(event: MessageEvent) => void' is not assignable to parameter of type 'EventListenerOrEventListenerObject'.\nType '(event: MessageEvent) => void' is not assignable to type 'EventListener'.\nTypes of parameters 'event' and 'evt' are incompatible.\nType 'Event' is missing the following properties from type 'MessageEvent<any>': data, lastEventId, origin, ports, and 3 more.",
+        },
+        {
+          code: 2769,
+          line: "websocket.ts:319:6",
+          message:
+            "No overload matches this call.\nOverload 1 of 2, '(type: keyof WebSocketEventMap, listener: (this: WebSocket, ev: Event | MessageEvent<any> | CloseEvent) => any, options?: boolean | ... 1 more ... | undefined): void', gave the following error.\nArgument of type '\"ping\"' is not assignable to parameter of type 'keyof WebSocketEventMap'.\nOverload 2 of 2, '(type: string, listener: EventListenerOrEventListenerObject, options?: boolean | EventListenerOptions | undefined): void', gave the following error.\nArgument of type '(event: MessageEvent) => void' is not assignable to parameter of type 'EventListenerOrEventListenerObject'.\nType '(event: MessageEvent) => void' is not assignable to type 'EventListener'.\nTypes of parameters 'event' and 'evt' are incompatible.\nType 'Event' is missing the following properties from type 'MessageEvent<any>': data, lastEventId, origin, ports, and 3 more.",
+        },
+        {
+          code: 2769,
+          line: "websocket.ts:320:6",
+          message:
+            "No overload matches this call.\nOverload 1 of 2, '(type: keyof WebSocketEventMap, listener: (this: WebSocket, ev: Event | MessageEvent<any> | CloseEvent) => any, options?: boolean | ... 1 more ... | undefined): void', gave the following error.\nArgument of type '\"pong\"' is not assignable to parameter of type 'keyof WebSocketEventMap'.\nOverload 2 of 2, '(type: string, listener: EventListenerOrEventListenerObject, options?: boolean | EventListenerOptions | undefined): void', gave the following error.\nArgument of type '(event: MessageEvent) => void' is not assignable to parameter of type 'EventListenerOrEventListenerObject'.\nType '(event: MessageEvent) => void' is not assignable to type 'EventListener'.\nTypes of parameters 'event' and 'evt' are incompatible.\nType 'Event' is missing the following properties from type 'MessageEvent<any>': data, lastEventId, origin, ports, and 3 more.",
         },
         {
           code: 2339,

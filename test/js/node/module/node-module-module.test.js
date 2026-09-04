@@ -556,6 +556,73 @@ console.log("survived", require("./late.js"));`,
     expect(exitCode).toBe(0);
   }, 20_000);
 
+  test("Module._stat() resolves paths spelled with . or .. components", async () => {
+    // Relative paths, so the calls run in a child whose cwd is <root>/cwd. On
+    // Windows every case with a "." or ".." component used to come back
+    // negative (bun handed the spelling to NT, which rejects it), while node
+    // answers from the resolved path.
+    using root = tempDir("module-stat-dot-components", {
+      cwd: {
+        sub: {},
+        "file.txt": "",
+      },
+    });
+    const cases = [
+      ".",
+      "..",
+      "../cwd",
+      "../cwd/sub",
+      "./sub",
+      "sub/.",
+      "sub/..",
+      "./file.txt",
+      "../cwd/file.txt",
+      "sub/../file.txt",
+      "<cwd>/sub/..",
+      "<cwd>/sub/../file.txt",
+      "../cwd/missing",
+      "missing/..",
+    ];
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const { _stat } = require("module");
+         const results = {};
+         for (const c of ${JSON.stringify(cases)}) {
+           const rc = _stat(c.replace("<cwd>", process.cwd()));
+           results[c] = rc < 0 ? "negative" : rc;
+         }
+         process.stdout.write(JSON.stringify(results));`,
+      ],
+      cwd: path.join(String(root), "cwd"),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual({
+      ".": 1,
+      "..": 1,
+      "../cwd": 1,
+      "../cwd/sub": 1,
+      "./sub": 1,
+      "sub/.": 1,
+      "sub/..": 1,
+      "./file.txt": 0,
+      "../cwd/file.txt": 0,
+      "sub/../file.txt": 0,
+      "<cwd>/sub/..": 1,
+      "<cwd>/sub/../file.txt": 0,
+      "../cwd/missing": "negative",
+      // Windows resolves ".." lexically, so the missing directory is never
+      // looked up there; POSIX has to walk through it. Node answers the same way.
+      "missing/..": isWindows ? 1 : "negative",
+    });
+    expect(exitCode).toBe(0);
+  });
+
   test("Module.wrap", () => {
     var mod = { exports: {} };
     expect(eval(wrap("exports.foo = 1; return 42"))(mod.exports, mod)).toBe(42);

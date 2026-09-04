@@ -75,6 +75,32 @@ async function readVersionInfo(outfile: string) {
 
 const windowsTarget = process.arch === "arm64" ? "bun-windows-aarch64" : "bun-windows-x64";
 
+// A minimal valid ICO header (one 16x16 32bpp image entry).
+const icoHeader = Buffer.from([
+  0x00,
+  0x00, // Reserved
+  0x01,
+  0x00, // Type (1 = ICO)
+  0x01,
+  0x00, // Count (1 image)
+  0x10, // Width (16)
+  0x10, // Height (16)
+  0x00, // Color count
+  0x00, // Reserved
+  0x01,
+  0x00, // Color planes
+  0x20,
+  0x00, // Bits per pixel
+  0x68,
+  0x01,
+  0x00,
+  0x00, // Size
+  0x16,
+  0x00,
+  0x00,
+  0x00, // Offset
+]);
+
 // https://github.com/oven-sh/bun/issues/19916
 describe.skipIf(!isWindows).concurrent("--windows-hide-console", () => {
   // The default-target console-subsystem baseline is asserted inside
@@ -373,6 +399,44 @@ describe.skipIf(!isWindows).concurrent("Windows compile metadata", () => {
         OriginalFilename: "",
       });
     });
+
+    test("windows.icon spelled relative to the cwd through ..", async () => {
+      // The option is validated with an existence check that used to reject
+      // any spelling containing a "." or ".." component ("windows.icon must be
+      // a valid path to an ico file") although the file exists. The build runs
+      // in a child so the relative path has a known cwd.
+      using dir = tempDir("windows-metadata-relative-icon", {
+        "icon.ico": icoHeader,
+        proj: {
+          "app.js": `console.log("Relative icon test");`,
+          "build.js": `
+            const result = await Bun.build({
+              entrypoints: ["./app.js"],
+              outdir: "./out",
+              compile: {
+                target: ${JSON.stringify(windowsTarget)},
+                outfile: "relative-icon.exe",
+                windows: { icon: "../icon.ico" },
+              },
+            });
+            console.log(JSON.stringify({
+              success: result.success,
+              outputs: result.outputs.map(output => require("path").basename(output.path)),
+            }));
+          `,
+        },
+      });
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "build.js"],
+        cwd: join(String(dir), "proj"),
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const { stdout } = await expectBuildOk(proc);
+      expect(JSON.parse(stdout)).toEqual({ success: true, outputs: ["relative-icon.exe"] });
+    });
   });
 
   describe("Version string formats", () => {
@@ -611,32 +675,6 @@ describe.skipIf(!isWindows).concurrent("Windows compile metadata", () => {
     });
 
     test("metadata with --windows-icon", async () => {
-      // Create a simple .ico file (minimal valid ICO header)
-      const icoHeader = Buffer.from([
-        0x00,
-        0x00, // Reserved
-        0x01,
-        0x00, // Type (1 = ICO)
-        0x01,
-        0x00, // Count (1 image)
-        0x10, // Width (16)
-        0x10, // Height (16)
-        0x00, // Color count
-        0x00, // Reserved
-        0x01,
-        0x00, // Color planes
-        0x20,
-        0x00, // Bits per pixel
-        0x68,
-        0x01,
-        0x00,
-        0x00, // Size
-        0x16,
-        0x00,
-        0x00,
-        0x00, // Offset
-      ]);
-
       using dir = tempDir("windows-metadata-icon", {
         "app.js": `console.log("Icon test");`,
         "icon.ico": icoHeader,

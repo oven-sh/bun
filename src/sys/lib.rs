@@ -7115,19 +7115,15 @@ pub enum ExistsAtType {
     File,
     Directory,
 }
-/// Windows tail — `NtQueryAttributesFile` against an
-/// OBJECT_ATTRIBUTES built from an already NT-prefixed wide path. Shared by the
-/// UTF-8 (`exists_at_type`) and UTF-16 (`exists_at_type_w`) entry points so the
-/// width dispatch does not
+/// Windows tail: `NtQueryAttributesFile` against an OBJECT_ATTRIBUTES built
+/// from an NT object name, either absolute (`\??\…`, `\Device\…`) or relative
+/// to `dir`; a relative one must not contain `.`/`..` components (see
+/// [`exists_at_type_resolved`]). Shared by the UTF-8 (`exists_at_type`) and
+/// UTF-16 (`exists_at_type_w`) entry points so the width dispatch does not
 /// duplicate the syscall body.
 #[cfg(windows)]
-fn exists_at_type_nt(dir: Fd, mut path: &[u16]) -> Maybe<ExistsAtType> {
+fn exists_at_type_nt(dir: Fd, path: &[u16]) -> Maybe<ExistsAtType> {
     use bun_windows_sys::externs as w;
-    // Trim leading `.\` — NtQueryAttributesFile expects relative paths
-    // without it.
-    if path.len() > 2 && path[0] == b'.' as u16 && path[1] == b'\\' as u16 {
-        path = &path[2..];
-    }
     let path_len_bytes = (path.len() * 2) as u16;
     let mut nt_name = w::UNICODE_STRING {
         Length: path_len_bytes,
@@ -7168,6 +7164,22 @@ fn exists_at_type_nt(dir: Fd, mut path: &[u16]) -> Maybe<ExistsAtType> {
         },
     )
 }
+/// `exists_at_type` for a path with a `.` or `..` component. Those are Win32
+/// syntax: an NT object name cannot carry them (`NtQueryAttributesFile` fails
+/// with `OBJECT_NAME_INVALID`, which `directory_exists_at` cannot tell apart
+/// from a real failure), so build the name the way `openat` does: absolute
+/// paths collapse lexically, relative ones resolve against `dir`. Paths
+/// without such a component skip this and its directory-handle query.
+#[cfg(windows)]
+fn exists_at_type_resolved(dir: Fd, sub: &[u16]) -> Maybe<ExistsAtType> {
+    let mut wbuf = bun_paths::w_path_buffer_pool::get();
+    let path = normalize_path_windows(dir, sub, &mut wbuf.0[..])?;
+    exists_at_type_nt(dir, path.as_slice())
+}
+#[cfg(windows)]
+fn has_dot_component<T: bun_paths::PathChar>(path: &[T]) -> bool {
+    bun_paths::classify_rel_t(path, bun_paths::PathFormat::Windows).has_dot_component
+}
 /// `fstatat` then `S_ISDIR`.
 pub fn exists_at_type(dir: Fd, sub: &ZStr) -> Maybe<ExistsAtType> {
     #[cfg(unix)]
@@ -7181,10 +7193,16 @@ pub fn exists_at_type(dir: Fd, sub: &ZStr) -> Maybe<ExistsAtType> {
     }
     #[cfg(windows)]
     {
+        let sub = sub.as_bytes();
+        if has_dot_component(sub) {
+            let mut wide_buf = bun_paths::w_path_buffer_pool::get();
+            let wide = convert_path_u8_to_u16(&mut wide_buf.0[..], sub)?;
+            return exists_at_type_resolved(dir, wide);
+        }
         // `NtQueryAttributesFile` against an OBJECT_ATTRIBUTES
         // built from the (optionally NT-prefixed) wide path.
         let mut wbuf = bun_paths::w_path_buffer_pool::get();
-        let path = bun_paths::string_paths::to_nt_path(&mut wbuf.0[..], sub.as_bytes()).as_slice();
+        let path = bun_paths::string_paths::to_nt_path(&mut wbuf.0[..], sub).as_slice();
         exists_at_type_nt(dir, path)
     }
 }
@@ -7193,6 +7211,9 @@ pub fn exists_at_type(dir: Fd, sub: &ZStr) -> Maybe<ExistsAtType> {
 /// `toNTPath16` instead of re-widening from UTF-8.
 #[cfg(windows)]
 pub(crate) fn exists_at_type_w(dir: Fd, sub: &[u16]) -> Maybe<ExistsAtType> {
+    if has_dot_component(sub) {
+        return exists_at_type_resolved(dir, sub);
+    }
     let mut wbuf = bun_paths::w_path_buffer_pool::get();
     let path = bun_paths::string_paths::to_nt_path16(&mut wbuf.0[..], sub).as_slice();
     exists_at_type_nt(dir, path)

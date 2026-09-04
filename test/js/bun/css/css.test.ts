@@ -1600,6 +1600,346 @@ describe("css tests", () => {
       },
     );
 
+    // All four logical sides set with equal block sides: the inline sides get minified into
+    // border-inline-width/style/color or border-inline, which have to be compiled away like
+    // any other logical declaration when the targets do not support them.
+    describe("border-inline shorthands for compiled targets", () => {
+      // Safari 8 supports neither logical properties nor their shorthands.
+      describe("safari 8", () => {
+        prefix_test(
+          `
+          .foo {
+            border-block-start: 3px solid red;
+            border-block-end: 3px solid red;
+            border-inline-start: 1px solid red;
+            border-inline-end: 1px solid red;
+          }
+        `,
+          `
+          .foo {
+            border: 3px solid red;
+            border-left-width: 1px;
+            border-right-width: 1px;
+          }
+        `,
+          {
+            safari: 8 << 16,
+          },
+        );
+
+        prefix_test(
+          `
+          .foo {
+            border-block-start: 1px solid red;
+            border-block-end: 1px solid red;
+            border-inline-start: 1px dotted red;
+            border-inline-end: 1px dotted red;
+          }
+        `,
+          `
+          .foo {
+            border: 1px solid red;
+            border-left-style: dotted;
+            border-right-style: dotted;
+          }
+        `,
+          {
+            safari: 8 << 16,
+          },
+        );
+
+        prefix_test(
+          `
+          .foo {
+            border-block-start: 1px solid red;
+            border-block-end: 1px solid red;
+            border-inline-start: 1px solid blue;
+            border-inline-end: 1px solid blue;
+          }
+        `,
+          `
+          .foo {
+            border: 1px solid red;
+            border-left-color: #00f;
+            border-right-color: #00f;
+          }
+        `,
+          {
+            safari: 8 << 16,
+          },
+        );
+
+        prefix_test(
+          `
+          .foo {
+            border-block-start: 3px solid red;
+            border-block-end: 3px solid red;
+            border-inline-start: 1px dotted blue;
+            border-inline-end: 1px dotted blue;
+          }
+        `,
+          `
+          .foo {
+            border: 3px solid red;
+            border-left: 1px dotted #00f;
+            border-right: 1px dotted #00f;
+          }
+        `,
+          {
+            safari: 8 << 16,
+          },
+        );
+
+        prefix_test(
+          `
+          .foo {
+            border-block-start: 3px solid red;
+            border-block-end: 3px solid red;
+            border-inline-start: 1px solid red;
+            border-inline-end: 2px solid red;
+          }
+        `,
+          `
+          .foo {
+            border: 3px solid red;
+          }
+
+          .foo:not(:-webkit-any(:lang(ae), :lang(ar), :lang(arc), :lang(bcc), :lang(bqi), :lang(ckb), :lang(dv), :lang(fa), :lang(glk), :lang(he), :lang(ku), :lang(mzn), :lang(nqo), :lang(pnb), :lang(ps), :lang(sd), :lang(ug), :lang(ur), :lang(yi))) {
+            border-left-width: 1px;
+            border-right-width: 2px;
+          }
+
+          .foo:not(:is(:lang(ae), :lang(ar), :lang(arc), :lang(bcc), :lang(bqi), :lang(ckb), :lang(dv), :lang(fa), :lang(glk), :lang(he), :lang(ku), :lang(mzn), :lang(nqo), :lang(pnb), :lang(ps), :lang(sd), :lang(ug), :lang(ur), :lang(yi))) {
+            border-left-width: 1px;
+            border-right-width: 2px;
+          }
+
+          .foo:-webkit-any(:lang(ae), :lang(ar), :lang(arc), :lang(bcc), :lang(bqi), :lang(ckb), :lang(dv), :lang(fa), :lang(glk), :lang(he), :lang(ku), :lang(mzn), :lang(nqo), :lang(pnb), :lang(ps), :lang(sd), :lang(ug), :lang(ur), :lang(yi)) {
+            border-left-width: 2px;
+            border-right-width: 1px;
+          }
+
+          .foo:is(:lang(ae), :lang(ar), :lang(arc), :lang(bcc), :lang(bqi), :lang(ckb), :lang(dv), :lang(fa), :lang(glk), :lang(he), :lang(ku), :lang(mzn), :lang(nqo), :lang(pnb), :lang(ps), :lang(sd), :lang(ug), :lang(ur), :lang(yi)) {
+            border-left-width: 2px;
+            border-right-width: 1px;
+          }
+        `,
+          {
+            safari: 8 << 16,
+          },
+        );
+
+        prefix_test(
+          `
+          .foo {
+            border-block-start: 1px solid red;
+            border-block-end: 1px solid red;
+            border-inline-start: 1px solid blue;
+            border-inline-end: 1px solid green;
+          }
+        `,
+          `
+          .foo {
+            border: 1px solid red;
+          }
+
+          .foo:not(:-webkit-any(:lang(ae), :lang(ar), :lang(arc), :lang(bcc), :lang(bqi), :lang(ckb), :lang(dv), :lang(fa), :lang(glk), :lang(he), :lang(ku), :lang(mzn), :lang(nqo), :lang(pnb), :lang(ps), :lang(sd), :lang(ug), :lang(ur), :lang(yi))) {
+            border-left-color: #00f;
+            border-right-color: green;
+          }
+
+          .foo:not(:is(:lang(ae), :lang(ar), :lang(arc), :lang(bcc), :lang(bqi), :lang(ckb), :lang(dv), :lang(fa), :lang(glk), :lang(he), :lang(ku), :lang(mzn), :lang(nqo), :lang(pnb), :lang(ps), :lang(sd), :lang(ug), :lang(ur), :lang(yi))) {
+            border-left-color: #00f;
+            border-right-color: green;
+          }
+
+          .foo:-webkit-any(:lang(ae), :lang(ar), :lang(arc), :lang(bcc), :lang(bqi), :lang(ckb), :lang(dv), :lang(fa), :lang(glk), :lang(he), :lang(ku), :lang(mzn), :lang(nqo), :lang(pnb), :lang(ps), :lang(sd), :lang(ug), :lang(ur), :lang(yi)) {
+            border-left-color: green;
+            border-right-color: #00f;
+          }
+
+          .foo:is(:lang(ae), :lang(ar), :lang(arc), :lang(bcc), :lang(bqi), :lang(ckb), :lang(dv), :lang(fa), :lang(glk), :lang(he), :lang(ku), :lang(mzn), :lang(nqo), :lang(pnb), :lang(ps), :lang(sd), :lang(ug), :lang(ur), :lang(yi)) {
+            border-left-color: green;
+            border-right-color: #00f;
+          }
+        `,
+          {
+            safari: 8 << 16,
+          },
+        );
+      });
+
+      // Safari 13 supports the logical longhands but not the border-inline shorthands.
+      describe("safari 13", () => {
+        prefix_test(
+          `
+          .foo {
+            border-block-start: 3px solid red;
+            border-block-end: 3px solid red;
+            border-inline-start: 1px solid red;
+            border-inline-end: 1px solid red;
+          }
+        `,
+          `
+          .foo {
+            border: 3px solid red;
+            border-left-width: 1px;
+            border-right-width: 1px;
+          }
+        `,
+          {
+            safari: 13 << 16,
+          },
+        );
+
+        prefix_test(
+          `
+          .foo {
+            border-block-start: 3px solid red;
+            border-block-end: 3px solid red;
+            border-inline-start: 1px solid red;
+            border-inline-end: 2px solid red;
+          }
+        `,
+          `
+          .foo {
+            border: 3px solid red;
+            border-inline-start-width: 1px;
+            border-inline-end-width: 2px;
+          }
+        `,
+          {
+            safari: 13 << 16,
+          },
+        );
+
+        prefix_test(
+          `
+          .foo {
+            border-block-start: 1px solid red;
+            border-block-end: 1px solid red;
+            border-inline-start: 1px dotted red;
+            border-inline-end: 1px dashed red;
+          }
+        `,
+          `
+          .foo {
+            border: 1px solid red;
+            border-inline-start-style: dotted;
+            border-inline-end-style: dashed;
+          }
+        `,
+          {
+            safari: 13 << 16,
+          },
+        );
+
+        prefix_test(
+          `
+          .foo {
+            border-block-start: 3px solid red;
+            border-block-end: 3px solid red;
+            border-inline-start: 1px dotted blue;
+            border-inline-end: 1px dotted blue;
+          }
+        `,
+          `
+          .foo {
+            border: 3px solid red;
+            border-inline-start: 1px dotted #00f;
+            border-inline-end: 1px dotted #00f;
+          }
+        `,
+          {
+            safari: 13 << 16,
+          },
+        );
+      });
+
+      // Safari 15 supports everything, so the shorthands stay.
+      describe("safari 15", () => {
+        prefix_test(
+          `
+          .foo {
+            border-block-start: 3px solid red;
+            border-block-end: 3px solid red;
+            border-inline-start: 1px solid red;
+            border-inline-end: 2px solid red;
+          }
+        `,
+          `
+          .foo {
+            border: 3px solid red;
+            border-inline-width: 1px 2px;
+          }
+        `,
+          {
+            safari: 15 << 16,
+          },
+        );
+
+        prefix_test(
+          `
+          .foo {
+            border-block-start: 1px solid red;
+            border-block-end: 1px solid red;
+            border-inline-start: 1px dotted red;
+            border-inline-end: 1px dotted red;
+          }
+        `,
+          `
+          .foo {
+            border: 1px solid red;
+            border-inline-style: dotted;
+          }
+        `,
+          {
+            safari: 15 << 16,
+          },
+        );
+
+        prefix_test(
+          `
+          .foo {
+            border-block-start: 1px solid red;
+            border-block-end: 1px solid red;
+            border-inline-start: 1px solid blue;
+            border-inline-end: 1px solid green;
+          }
+        `,
+          `
+          .foo {
+            border: 1px solid red;
+            border-inline-color: #00f green;
+          }
+        `,
+          {
+            safari: 15 << 16,
+          },
+        );
+
+        prefix_test(
+          `
+          .foo {
+            border-block-start: 3px solid red;
+            border-block-end: 3px solid red;
+            border-inline-start: 1px dotted blue;
+            border-inline-end: 1px dotted blue;
+          }
+        `,
+          `
+          .foo {
+            border: 3px solid red;
+            border-inline: 1px dotted #00f;
+          }
+        `,
+          {
+            safari: 15 << 16,
+          },
+        );
+      });
+    });
+
     prefix_test(
       `
       .foo {

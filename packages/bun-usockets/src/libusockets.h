@@ -341,8 +341,10 @@ void us_socket_group_init(us_socket_group_r group, us_loop_r loop,
  * to free the embedding storage. */
 void us_socket_group_deinit(us_socket_group_r group) nonnull_fn_decl;
 
-/* Close every socket in the group (fires on_close for each). Used by server
- * shutdown. The group itself stays valid. */
+/* Close every socket in the group. Each one gets the event its owner waits
+ * for: on_close, or a connect error for a connect in flight. A connect that a
+ * handler starts during the call stays open. Used by server shutdown. The
+ * group itself stays valid. */
 void us_socket_group_close_all(us_socket_group_r group) nonnull_fn_decl;
 /* As above; `also_listeners=0` leaves head_listen_sockets alone (process-exit
  * teardown — listen sockets are owned by a Listener/App that frees them in

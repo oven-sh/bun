@@ -579,6 +579,7 @@ pub(crate) fn execute_simple_s3_request(
             content_hash: None,
             content_md5: None,
             content_type: None,
+            content_length: None,
         },
         None,
     ) {

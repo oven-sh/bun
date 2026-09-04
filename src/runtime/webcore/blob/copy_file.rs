@@ -1135,14 +1135,15 @@ impl<'a> CopyFileWindows<'a> {
         // `fs_t` owned by `self`, `uv_buf` points into `read_buf`'s capacity, and
         // `on_read` is a valid `uv_fs_cb`.
         let rc = unsafe {
+            let req: *mut libuv::fs_t = &raw mut self.io_request;
             libuv::uv_fs_read(
                 loop_,
-                &mut self.io_request,
+                req,
                 source_fd.uv(),
                 core::ptr::from_mut(&mut self.read_write_loop.uv_buf),
                 1,
                 -1,
-                Some(on_read),
+                libuv::deferred::fs_callback(req, on_read),
             )
         };
 
@@ -1237,14 +1238,15 @@ extern "C" fn on_read(req: *mut libuv::fs_t) {
     // SAFETY: FFI — `io_request` was just cleaned via `deinit()`, `uv_buf` points into
     // `read_buf` (len set above), and `on_write` is a valid `uv_fs_cb`.
     let rc2 = unsafe {
+        let req: *mut libuv::fs_t = &raw mut this.io_request;
         libuv::uv_fs_write(
             event_loop.uv_loop(),
-            &mut this.io_request,
+            req,
             destination_fd.uv(),
             core::ptr::from_mut(&mut this.read_write_loop.uv_buf),
             1,
             -1,
-            Some(on_write),
+            libuv::deferred::fs_callback(req, on_write),
         )
     };
     this.io_request.data = core::ptr::from_mut(this).cast::<c_void>();
@@ -1302,14 +1304,15 @@ extern "C" fn on_write(req: *mut libuv::fs_t) {
         // slice of the previous write buffer (still backed by `read_buf`), and
         // `on_write` is a valid `uv_fs_cb`.
         let rc2 = unsafe {
+            let req: *mut libuv::fs_t = &raw mut this.io_request;
             libuv::uv_fs_write(
                 this.event_loop.uv_loop(),
-                &mut this.io_request,
+                req,
                 destination_fd.uv(),
                 core::ptr::from_mut(&mut this.read_write_loop.uv_buf),
                 1,
                 -1,
-                Some(on_write),
+                libuv::deferred::fs_callback(req, on_write),
             )
         };
 
@@ -1595,13 +1598,14 @@ impl<'a> CopyFileWindows<'a> {
         // `old_path`/`new_path` are NUL-terminated (from `slice_z`/`ZStr`), and
         // `on_copy_file` is a valid `uv_fs_cb`.
         let rc = unsafe {
+            let req: *mut libuv::fs_t = &raw mut self.io_request;
             libuv::uv_fs_copyfile(
                 loop_,
-                &mut self.io_request,
+                req,
                 old_path.as_ptr(),
                 new_path.as_ptr(),
                 0,
-                Some(on_copy_file),
+                libuv::deferred::fs_callback(req, on_copy_file),
             )
         };
 
@@ -1675,12 +1679,13 @@ impl<'a> CopyFileWindows<'a> {
                 // `path_ptr` is NUL-terminated (from `slice_z`) and live for this call,
                 // and `on_chmod` is a valid `uv_fs_cb`.
                 let rc = unsafe {
+                    let req: *mut libuv::fs_t = &raw mut self.io_request;
                     libuv::uv_fs_chmod(
                         loop_,
-                        &mut self.io_request,
+                        req,
                         path_ptr,
                         i32::try_from(mode).expect("int cast"),
-                        Some(on_chmod),
+                        libuv::deferred::fs_callback(req, on_chmod),
                     )
                 };
 

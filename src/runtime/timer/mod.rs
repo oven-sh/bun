@@ -693,8 +693,11 @@ impl All {
 
     /// Lazily `uv_timer_init` the
     /// per-`All` libuv timer, then (re)start it for the soonest deadline
-    /// across both heaps. On Windows there is no epoll/kqueue fallback; this
-    /// `uv_timer_t` is the ONLY thing that wakes `uv_run` for JS timers.
+    /// across both heaps. On Windows this (unref'd) `uv_timer_t` is what wakes
+    /// `uv_run` for JS timers, alongside the tick's own deadline from
+    /// `get_timeout`. It only wakes: the timers themselves are drained by
+    /// `drain_timers` once the tick has returned, as on POSIX, and the
+    /// keep-alive is the loop's counter (`increment_timer_ref`).
     #[cfg(windows)]
     fn ensure_uv_timer(&mut self) {
         // `vm` here means the OWNING VM (the one this timer is embedded in),
@@ -758,34 +761,18 @@ impl All {
         if !(self.uv_timer.is_active() && due_in <= wait_ms) {
             self.uv_timer.start(wait_ms, 0, Some(Self::on_uv_timer));
         }
-
-        if self.active_timer_count > 0 {
-            self.uv_timer.ref_();
-        } else {
-            self.uv_timer.unref();
-        }
     }
 
-    /// libuv timer callback; drain due
-    /// timers then re-arm for the next deadline. Only ever invoked by libuv
-    /// (coerces to the `uv_timer_cb` fn-pointer type at the `Timer::start`
-    /// call site); body wraps its derefs explicitly.
+    /// libuv timer callback. Runs inside `uv_run`, so it must not run JS (a
+    /// timer callback that waits for a promise would drive `uv_run` again from
+    /// inside itself, which libuv does not support), and it does not re-arm:
+    /// its only job is to end the poll phase at the deadline. The tick that
+    /// was parked drains the due timers once `uv_run` returns (`auto_tick` ->
+    /// `drain_timers`, which re-arms), and a tick that does not drain timers
+    /// is not woken for them again until one that does has run - the same as
+    /// on POSIX, where such ticks pass their own timeout to epoll/kqueue.
     #[cfg(windows)]
-    extern "C" fn on_uv_timer(uv_timer_t: *mut uv::Timer) {
-        // SAFETY: `uv_timer_t` is the address of `All.uv_timer` (libuv passes
-        // back exactly the handle pointer we registered in `ensure_uv_timer`);
-        // recover the containing `All` via container_of.
-        let all: *mut All = unsafe { bun_core::from_field_ptr!(All, uv_timer, uv_timer_t) };
-        // SAFETY: `data` was set to the VM ptr in `ensure_uv_timer` (non-null).
-        let vm: *mut () = unsafe { (*uv_timer_t).data.cast() };
-        // SAFETY: callback fires on the JS thread (libuv invokes on the loop's
-        // thread); `all` is live for the VM lifetime. `drain_timers` may
-        // re-enter `(*runtime_state()).timer` — it forms only short-lived
-        // `&mut All` around heap pop/peek, so the raw-ptr deref here is sound.
-        unsafe { (*all).drain_timers(vm) };
-        // SAFETY: see above; re-arm for the next-soonest deadline (if any).
-        unsafe { (*all).ensure_uv_timer() };
-    }
+    extern "C" fn on_uv_timer(_: *mut uv::Timer) {}
 
     #[allow(clippy::not_unsafe_ptr_arg_deref)]
     pub(crate) fn remove(&mut self, timer: *mut EventLoopTimer) {
@@ -1094,6 +1081,16 @@ impl All {
                 break;
             }
         }
+        // The heap changed and the wakeup timer may have fired (it is one-shot):
+        // arm it for whatever is soonest now. Nothing to do before the first
+        // insert() created it, or once teardown has closed it.
+        #[cfg(windows)]
+        // SAFETY: `this` is the live per-thread `All`; no `&mut All` is live.
+        unsafe {
+            if !(*this).uv_timer.data.is_null() && !(*this).uv_timer.is_closing() {
+                (*this).ensure_uv_timer();
+            }
+        }
     }
 
     /// # Safety
@@ -1157,26 +1154,17 @@ impl All {
         let new = old + delta;
         debug_assert!(new >= 0);
         self.active_timer_count = new;
+        // The keep-alive lives in the loop's own counter on every platform. On
+        // Windows the wake `uv_timer` stays unref'd: it is one-shot, so libuv
+        // drops it from its active count each time it fires, and whether the
+        // process stays alive must not depend on when it was last re-armed.
         if old <= 0 && new > 0 {
-            #[cfg(not(windows))]
             // SAFETY: caller passes the VM's live uws loop
             unsafe { &mut *uws_loop }.ref_();
-            // `uv_timer.ref()` is intentionally unconditional (no `data !=
-            // null` guard). Invariant: every path that reaches a positive
-            // `active_timer_count` first inserts a timer, and `insert`
-            // → `ensure_uv_timer` lazily `uv_timer_init`s the handle. Guarding
-            // here would silently drop the ref and let the loop exit early.
-            #[cfg(windows)]
-            self.uv_timer.ref_();
         } else if old > 0 && new <= 0 {
-            #[cfg(not(windows))]
             // SAFETY: caller passes the VM's live uws loop
             unsafe { &mut *uws_loop }.unref();
-            #[cfg(windows)]
-            self.uv_timer.unref();
         }
-        #[cfg(windows)]
-        let _ = uws_loop;
     }
 
     /// VM teardown, after `cancel_all_timeout_objects`: unlink every timer still

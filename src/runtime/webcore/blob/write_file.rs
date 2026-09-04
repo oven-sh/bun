@@ -760,9 +760,10 @@ mod windows_impl {
             // SAFETY: (*this).io_request is a valid uv_fs_t embedded in a Box-allocated WriteFileWindows;
             // (*this).loop_() is the VM's libuv loop which outlives this request; posix_path is NUL-terminated.
             let rc = unsafe {
+                let req: *mut uv::fs_t = &raw mut (*this).io_request;
                 uv::uv_fs_open(
                     (*this).loop_(),
-                    &mut (*this).io_request,
+                    req,
                     posix_path.as_ptr(),
                     uv::O::CREAT
                         | uv::O::WRONLY
@@ -771,7 +772,7 @@ mod windows_impl {
                         | uv::O::SEQUENTIAL
                         | uv::O::TRUNC,
                     0o644,
-                    Some(Self::on_open),
+                    uv::deferred::fs_callback(req, Self::on_open),
                 )
             };
 
@@ -1108,14 +1109,15 @@ mod windows_impl {
             // SAFETY: uv_loop is the VM's libuv loop (outlives `*this`); io_request/uv_bufs are
             // embedded in `*this` which stays alive until on_write_complete fires; fd is open.
             let rc = unsafe {
+                let req: *mut uv::fs_t = &raw mut (*this).io_request;
                 uv::uv_fs_write(
                     uv_loop,
-                    &mut (*this).io_request,
+                    req,
                     (*this).fd,
                     (*this).uv_bufs.as_mut_ptr(),
                     1,
                     -1,
-                    Some(Self::on_write_complete),
+                    uv::deferred::fs_callback(req, Self::on_write_complete),
                 )
             };
             // SAFETY: caller contract — `this` is live.

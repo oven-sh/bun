@@ -67,6 +67,15 @@ struct WindowsPipes {
     /// Child writes the other end as fd 4.
     reply: *mut uv::Pipe,
     read_buf: Box<[u8]>,
+    /// `uv::UvStream::read_start_ctx` bookkeeping for `reply`.
+    read_deferral: uv::ReadDeferral,
+}
+
+#[cfg(windows)]
+impl Drop for WindowsPipes {
+    fn drop(&mut self) {
+        self.read_deferral.cancel();
+    }
 }
 
 // PORTING.md §Global mutable state: JS-thread-only singleton ptr → AtomicPtr.
@@ -812,6 +821,7 @@ impl Endpoints {
             cmd: core::mem::replace(&mut self.cmd, ptr::null_mut()),
             reply: core::mem::replace(&mut self.reply, ptr::null_mut()),
             read_buf: vec![0u8; READ_BUF_SIZE].into_boxed_slice(),
+            read_deferral: uv::ReadDeferral::new(),
         };
         let reply = pipes.reply;
         let generation = GENERATION.load(Ordering::Relaxed).wrapping_add(1);
@@ -897,6 +907,17 @@ impl uv::StreamReader for ChromeProcess {
         &mut this.pipes.read_buf
     }
 
+    unsafe fn on_read_commit(this: *mut Self, data: &[u8]) {
+        scoped_log!(Chrome, "read {} bytes", data.len());
+        // `read_buf` is reused by the next read, so the bytes are copied out
+        // and queued as an event-loop task right here (queueing runs no JS).
+        // SAFETY: `this` is live for the duration of the callback.
+        let generation = unsafe { (*this).generation };
+        PipeEvent::Data(Box::from(data)).post(generation);
+    }
+
+    unsafe fn on_read(_this: *mut Self, _nread: usize) {}
+
     fn on_read_error(this: &mut Self, err: core::ffi::c_int) {
         scoped_log!(
             Chrome,
@@ -906,11 +927,9 @@ impl uv::StreamReader for ChromeProcess {
         PipeEvent::Closed.post(this.generation);
     }
 
-    unsafe fn on_read(this: *mut Self, data: &[u8]) {
-        scoped_log!(Chrome, "read {} bytes", data.len());
-        // SAFETY: `this` is live for the duration of the callback.
-        let generation = unsafe { (*this).generation };
-        PipeEvent::Data(Box::from(data)).post(generation);
+    fn read_deferral(this: *mut Self) -> *mut uv::ReadDeferral {
+        // SAFETY: `this` is live; raw field projection.
+        unsafe { &raw mut (*this).pipes.read_deferral }
     }
 }
 

@@ -1960,8 +1960,8 @@ impl VirtualMachine {
         // so what remains finishes on its own (threadpool work), and a
         // completion may start more — open a handle, schedule pool work (still
         // accepted, and awaited in B) — hence sweep again after each drain.
-        // The exiting main thread neither closes its loop nor may nest uv_run
-        // here: process.exit() can be running inside a libuv completion callback.
+        // The exiting main thread does not close its loop, so it does not wait
+        // for its requests here either.
         #[cfg(windows)]
         if matches!(kind, Teardown::Worker) {
             while bun_sys::windows::libuv::Loop::drain_requests() {

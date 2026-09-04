@@ -380,7 +380,12 @@ thread_local! {
     /// `threadlocal var threadlocal_loop: ?*Loop = null` — null until `get()`
     /// initializes `THREADLOCAL_LOOP_DATA`.
     static THREADLOCAL_LOOP: Cell<*mut Loop> = const { Cell::new(ptr::null_mut()) };
+    /// What this thread's loop's `data` points at: the queue its libuv
+    /// callbacks defer into (crate::deferred). Lives as long as the loop.
+    static THREADLOCAL_LOOP_DEFERRED: UnsafeCell<crate::deferred::Queue> =
+        const { UnsafeCell::new(crate::deferred::Queue::new()) };
 }
+const _: () = assert!(!core::mem::needs_drop::<UnsafeCell<crate::deferred::Queue>>());
 
 // ──────────────────────────────────────────────────────────────────────────
 // Open stream/process handles on this thread — Bun's HandleWrap list.
@@ -421,6 +426,8 @@ impl Loop {
             if let Some(err) = unsafe { uv_loop_init(ptr_) }.raw_errno() {
                 panic!("Failed to initialize libuv loop: errno {err}");
             }
+            // SAFETY: as above, no TLS destructor; the loop never outlives it.
+            unsafe { (*ptr_).data = THREADLOCAL_LOOP_DEFERRED.with(|q| q.get()).cast() };
             slot.set(ptr_);
             ptr_
         })
@@ -445,6 +452,7 @@ impl Loop {
                 while (*loop_).active_reqs.count > 0 {
                     log!("drain_requests: {} in flight", (*loop_).active_reqs.count);
                     uv_run(loop_, RunMode::Once);
+                    crate::deferred::dispatch(loop_);
                     ran = true;
                 }
             }
@@ -458,7 +466,7 @@ impl Loop {
     /// `active_handles` with libuv, so an unbalanced ref would keep the loop
     /// alive forever). Every handle Bun registered on the loop must have been
     /// closed while its owner was alive; what remains here is uSockets' own
-    /// pre/check/async/timer, closed by us_loop_free and freed by their close
+    /// timers and wakeup async, closed by us_loop_free and freed by their close
     /// callbacks when the loop next turns.
     pub fn close_thread_loop() {
         THREADLOCAL_LOOP.with(|slot| {
@@ -488,6 +496,8 @@ impl Loop {
                     for _ in 0..64 {
                         // SAFETY: this thread's initialised loop; nothing else drives it.
                         let _ = unsafe { uv_run(loop_, RunMode::NoWait) };
+                        // SAFETY: as above; outside uv_run.
+                        unsafe { crate::deferred::dispatch(loop_) };
                         // SAFETY: as above.
                         rc = unsafe { uv_loop_close(loop_) };
                         if rc == ReturnCode::ZERO {
@@ -538,11 +548,6 @@ impl Loop {
     pub fn is_active(&self) -> bool {
         // SAFETY: self is a live loop.
         unsafe { uv_loop_alive(self) != 0 }
-    }
-    #[inline]
-    pub fn tick(&mut self) {
-        // SAFETY: self is a live loop.
-        let _ = unsafe { uv_run(self, RunMode::Default) };
     }
 }
 
@@ -660,17 +665,23 @@ pub unsafe trait UvHandle: Sized {
     }
     /// `HandleMixin::close` — `cb` receives the same pointer cast back to
     /// `*mut Self`. ABI-identical to `uv_close_cb` modulo the pointee type.
+    /// `cb` runs from the loop's dispatch phase (crate::deferred), in order
+    /// with whatever else the handle deferred, never inside `uv_run`.
     #[inline]
     fn close(&mut self, cb: unsafe extern "C" fn(*mut Self)) {
         open_handles::remove(self.as_handle_mut());
         // SAFETY: `Self` embeds `uv_handle_t` at offset 0; cb is ABI-identical.
         unsafe {
+            let handle = self.as_handle_mut() as *mut uv_handle_t;
             uv_close(
-                self.as_handle_mut(),
-                Some(mem::transmute::<
-                    unsafe extern "C" fn(*mut Self),
-                    unsafe extern "C" fn(*mut uv_handle_t),
-                >(cb)),
+                handle,
+                crate::deferred::close_callback(
+                    handle,
+                    mem::transmute::<
+                        unsafe extern "C" fn(*mut Self),
+                        unsafe extern "C" fn(*mut uv_handle_t),
+                    >(cb),
+                ),
             );
         }
     }
@@ -769,16 +780,19 @@ pub unsafe trait UvStream: UvHandle {
         // SAFETY: stream prefix invariant.
         unsafe { uv_is_writable((self as *const Self).cast()) != 0 }
     }
-    /// High-level wrapper
-    /// over `uv_read_start` that thunks Rust callbacks through a monomorphised
-    /// `extern "C"` trampoline. `context` is stashed in `handle.data` and
-    /// recovered in the trampoline; the three callbacks are baked into the
-    /// monomorphisation via the [`StreamReader`] trait (associated fns, so the
-    /// trampoline stays zero-alloc and `Handle` needs no spare storage).
+    /// High-level wrapper over `uv_read_start` that thunks Rust callbacks
+    /// through a monomorphised `extern "C"` trampoline. `context` is stashed in
+    /// `handle.data` and in the reader's [`ReadDeferral`]; the callbacks are
+    /// baked into the monomorphisation via the [`StreamReader`] trait.
     ///
-    /// `error_cb` receives the
-    /// raw negative libuv errno (`c_int`); this crate is layered below
-    /// `bun_sys` so it can't name `E`. Callers map via
+    /// libuv's read callback runs inside `uv_run`, so it only records: the
+    /// bytes are handed to [`StreamReader::on_read_commit`] there and then
+    /// (libuv may allocate and read again before `uv_run` returns), while
+    /// [`StreamReader::on_read`] / [`StreamReader::on_read_error`] run from the
+    /// loop's dispatch phase (crate::deferred).
+    ///
+    /// `on_read_error` receives the raw negative libuv errno (`c_int`); this
+    /// crate is layered below `bun_sys` so it can't name `E`. Callers map via
     /// `bun_sys::windows::translate_uv_error_to_e`. Returns the raw
     /// [`ReturnCode`] from `uv_read_start`; callers apply
     /// `.to_error(Tag::listen)` themselves.
@@ -788,6 +802,8 @@ pub unsafe trait UvStream: UvHandle {
         // `&mut Handle` for the leading `UV_HANDLE_FIELDS`.
         let h: &mut Handle = unsafe { &mut *(self as *mut Self).cast::<Handle>() };
         h.data = context.cast();
+        // SAFETY: `context` is the live reader (caller contract).
+        unsafe { (*T::read_deferral(context)).ctx = context.cast() };
 
         unsafe extern "C" fn uv_allocb<T: StreamReader>(
             req: *mut uv_handle_t,
@@ -809,27 +825,57 @@ pub unsafe trait UvStream: UvHandle {
             // Keep `ctx` raw — `(*buffer).base` was derived from the `&mut T`
             // borrow taken in `uv_allocb`, so materialising a fresh `&mut T`
             // here would pop that pointer's Stacked-Borrows tag before we
-            // read through it. Recover the raw `*mut T`, build the slice
-            // first, and hand the raw pointer to `on_read` so the impl owns
-            // the reborrow ordering.
+            // read through it.
             // SAFETY: `req.data` was set to `context` above.
             let ctx: *mut T = unsafe { (*req).data.cast::<T>() };
             let n = nreads.int();
             if n == 0 {
                 return; // EAGAIN / EWOULDBLOCK
             }
+            let d = T::read_deferral(ctx);
             if n < 0 {
                 // SAFETY: stream prefix invariant.
                 let _ = unsafe { uv_read_stop(req) };
-                // SAFETY: `ctx` is the live context stashed in `handle.data`.
-                T::on_read_error(unsafe { &mut *ctx }, n as c_int);
+                // SAFETY: `d` is live (above).
+                unsafe { (*d).err = n as c_int };
             } else {
                 // SAFETY: `buffer` was filled by `uv_allocb` above with a
                 // slice of length `>= n`.
                 let slice =
                     unsafe { core::slice::from_raw_parts((*buffer).base.cast::<u8>(), n as usize) };
                 // SAFETY: `ctx` is the live context stashed in `handle.data`.
-                unsafe { T::on_read(ctx, slice) };
+                unsafe { T::on_read_commit(ctx, slice) };
+                // SAFETY: `d` is live (above).
+                unsafe { (*d).nread += n as usize };
+            }
+            unsafe fn run<T: StreamReader>(node: *mut crate::deferred::Deferred) {
+                // SAFETY: `node` is `ReadDeferral.node` of a live reader
+                // (enqueue contract: the reader cancels it on teardown). The
+                // reader is not touched after a handler ran: if bytes and an
+                // error are both pending, the error goes back on the queue
+                // first (the reader's teardown cancels it if `on_read` ends up
+                // freeing the reader through a nested tick).
+                unsafe {
+                    let d: *mut ReadDeferral = bun_core::from_field_ptr!(ReadDeferral, node, node);
+                    let ctx: *mut T = (*d).ctx.cast();
+                    let nread = core::mem::take(&mut (*d).nread);
+                    if nread > 0 {
+                        if (*d).err != 0 {
+                            crate::deferred::Deferred::enqueue((*d).loop_, node, run::<T>);
+                        }
+                        T::on_read(ctx, nread);
+                        return;
+                    }
+                    let err = core::mem::take(&mut (*d).err);
+                    if err != 0 {
+                        T::on_read_error(&mut *ctx, err);
+                    }
+                }
+            }
+            // SAFETY: `d` is live; `req.loop_` is this handle's loop.
+            unsafe {
+                (*d).loop_ = (*req).loop_;
+                crate::deferred::Deferred::enqueue((*req).loop_, &raw mut (*d).node, run::<T>);
             }
         }
         // SAFETY: stream prefix invariant.
@@ -837,23 +883,73 @@ pub unsafe trait UvStream: UvHandle {
     }
 }
 
-/// Callback bundle for [`UvStream::read_start_ctx`].
-/// The `extern "C"` trampolines are monomorphised over
-/// this trait so the callbacks are baked into the codegen (zero-alloc, no
-/// per-handle storage).
+/// Callback bundle for [`UvStream::read_start_ctx`]. The `extern "C"`
+/// trampolines are monomorphised over this trait so the callbacks are baked
+/// into the codegen; the only per-reader storage is the [`ReadDeferral`] the
+/// implementor embeds.
 pub trait StreamReader: Sized {
+    /// Inside `uv_run`: the buffer for the next read.
     fn on_read_alloc(this: &mut Self, suggested_size: usize) -> &mut [u8];
-    /// `err` is the raw negative libuv errno (e.g. `UV_EOF`). Map via
-    /// `bun_sys::windows::translate_uv_error_to_e` if `bun_sys::E` is needed.
-    fn on_read_error(this: &mut Self, err: c_int);
-    /// `this` is raw because `data` typically points *into* `*this` (it was
-    /// returned from [`on_read_alloc`]). Forming `&mut Self` in the trampoline
-    /// would alias with `data` under Stacked Borrows; the implementor decides
-    /// how to split the borrow.
+    /// Inside `uv_run`: libuv wrote `data`, a prefix of what
+    /// [`on_read_alloc`](Self::on_read_alloc) last returned. Bookkeeping only
+    /// (commit or copy the bytes); nothing that can reach a handler, because
+    /// libuv is mid-callback. `this` is raw because `data` typically points
+    /// *into* `*this`.
     ///
     /// # Safety
     /// `this` is the live context passed to [`UvStream::read_start_ctx`].
-    unsafe fn on_read(this: *mut Self, data: &[u8]);
+    unsafe fn on_read_commit(this: *mut Self, data: &[u8]);
+    /// Dispatch phase: `nread` bytes (one or more commits) arrived since the
+    /// last call. Must not free `*this` before returning (owners go away with
+    /// their handle's close callback, which is queued behind this).
+    ///
+    /// # Safety
+    /// `this` is the live context passed to [`UvStream::read_start_ctx`].
+    unsafe fn on_read(this: *mut Self, nread: usize);
+    /// Dispatch phase: reading failed or hit EOF; `err` is the raw negative
+    /// libuv errno (e.g. `UV_EOF`), map via
+    /// `bun_sys::windows::translate_uv_error_to_e` if `bun_sys::E` is needed.
+    /// Reading was already stopped. Bytes that arrived before the error are
+    /// delivered first; if that [`on_read`](Self::on_read) ticks the loop, this
+    /// runs from the nested tick, i.e. while `on_read` is still on the stack.
+    fn on_read_error(this: &mut Self, err: c_int);
+    /// The [`ReadDeferral`] embedded in `*this`; the implementor cancels it
+    /// ([`ReadDeferral::cancel`]) when it drops.
+    fn read_deferral(this: *mut Self) -> *mut ReadDeferral;
+}
+
+/// Per-reader state for [`UvStream::read_start_ctx`]: what the read callback
+/// recorded inside `uv_run`, and the queue node that gets it dispatched.
+#[repr(C)]
+pub struct ReadDeferral {
+    pub node: crate::deferred::Deferred,
+    ctx: *mut c_void,
+    loop_: *mut Loop,
+    nread: usize,
+    err: c_int,
+}
+impl ReadDeferral {
+    pub const fn new() -> Self {
+        Self {
+            node: crate::deferred::Deferred::new(),
+            ctx: ptr::null_mut(),
+            loop_: ptr::null_mut(),
+            nread: 0,
+            err: 0,
+        }
+    }
+    /// Owner teardown: drop a pending dispatch and what it would have reported.
+    pub fn cancel(&mut self) {
+        // SAFETY: `node` is a field of `self`.
+        unsafe { crate::deferred::Deferred::cancel(&raw mut self.node) };
+        self.nread = 0;
+        self.err = 0;
+    }
+}
+impl Default for ReadDeferral {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 // SAFETY: all of these are `#[repr(C)]` with `UV_STREAM_FIELDS` prefix.
 unsafe impl UvStream for uv_stream_t {}
@@ -946,16 +1042,16 @@ pub struct uv_write_t {
     pub wait_handle: HANDLE,
 }
 impl uv_write_t {
-    /// Context-aware `uv_write`. Stores `context` in `req.data`;
-    /// the trampoline recovers it and dispatches to `on_write` as a plain Rust
-    /// `&mut`. Generic monomorphisation gives one `extern "C"` thunk per `<T>`.
+    /// Context-aware `uv_write`. Stores `context` in `req.data`; `on_write`
+    /// runs from the loop's dispatch phase once `uv_run` has returned (see
+    /// [`crate::deferred`]), never inside libuv's completion callback, with the
+    /// raw `*mut T` (callers commonly free the `T` inside the callback, so no
+    /// `&mut T` is materialised here) and the completion status.
     ///
-    /// Without a `bun_sys` dependency / unstable const-generic fn pointers,
-    /// this (a) keeps `on_write` runtime-dispatched but stashes it as a `usize`
-    /// (fn-ptr ↔ integer is well-defined; fn-ptr ↔ data-ptr is not — Miri
-    /// rejects the latter), and (b) returns the raw [`ReturnCode`]; callers
-    /// apply `.to_error(Tag::write)` themselves. The `bun.sys.syslog` line is
-    /// emitted via this crate's `[uv]` log scope.
+    /// `on_write` is runtime-dispatched but stashed as a `usize` in the
+    /// request's spare `reserved` slots (fn-ptr <-> integer is well-defined;
+    /// fn-ptr <-> data-ptr is not). Returns the raw [`ReturnCode`]; callers
+    /// apply `.to_error(Tag::write)` themselves.
     #[inline]
     pub fn write<T>(
         &mut self,
@@ -964,26 +1060,35 @@ impl uv_write_t {
         context: *mut T,
         on_write: fn(*mut T, ReturnCode),
     ) -> ReturnCode {
-        // Stash the Rust fn-pointer in `reserved[0]` (libuv never touches the
-        // 6-slot `reserved` array on `uv_req_t`) as a `usize`, recovered in the
-        // thunk below.
-        self.data = context.cast();
-        self.reserved[0] = on_write as usize as *mut c_void;
         unsafe extern "C" fn thunk<T>(req: *mut uv_write_t, status: ReturnCode) {
-            // SAFETY: `data`/`reserved[0]` were set immediately before
-            // `uv_write` below; libuv invokes this exactly once with the same
-            // `req` pointer. The `usize` → `fn` cast round-trips the address
-            // written by `on_write as usize` above (Win64: same width).
-            // Pass the raw `*mut T` straight through
-            // — callers commonly free the `T` allocation inside the callback,
-            // so materialising `&mut T` here would leave that reference
-            // dangling across the dealloc (UB).
+            unsafe fn run<T>(node: *mut crate::deferred::Deferred) {
+                // SAFETY: armed below; libuv is done with the request. The
+                // `usize` -> `fn` cast round-trips the address `write` stored.
+                unsafe {
+                    let req: *mut uv_write_t = crate::deferred::req_from_node(node);
+                    let slots = crate::deferred::req_slots(req);
+                    let cb: fn(*mut T, ReturnCode) =
+                        mem::transmute::<usize, fn(*mut T, ReturnCode)>((*slots).cb as usize);
+                    cb(
+                        (*req).data.cast::<T>(),
+                        ReturnCode((*slots).status as c_int),
+                    );
+                }
+            }
+            // SAFETY: `req` is the request armed below, just completed by libuv.
             unsafe {
-                let cb: fn(*mut T, ReturnCode) =
-                    mem::transmute::<usize, fn(*mut T, ReturnCode)>((*req).reserved[0] as usize);
-                cb((*req).data.cast::<T>(), status);
+                let slots = crate::deferred::req_slots(req);
+                (*slots).status = status.0 as isize;
+                crate::deferred::Deferred::enqueue(
+                    (*(*req).handle).loop_,
+                    &raw mut (*slots).node,
+                    run::<T>,
+                );
             }
         }
+        self.data = context.cast();
+        // SAFETY: `self` is the request about to be issued.
+        unsafe { crate::deferred::arm(self, on_write as usize as *mut c_void) };
         // SAFETY: caller guarantees `self` lives until the cb fires and
         // `stream` is a live stream handle.
         let rc = unsafe { uv_write(self, stream, input, 1, Some(thunk::<T>)) };
@@ -1237,15 +1342,17 @@ impl Pipe {
         on_connect: unsafe extern "C" fn(*mut uv_connect_t, ReturnCode),
     ) -> ReturnCode {
         self.data = context;
-        // SAFETY: pipe was `init`ed; libuv copies the name.
+        // SAFETY: pipe was `init`ed; libuv copies the name. `on_connect` runs
+        // from the dispatch phase (crate::deferred), not inside uv_run.
         unsafe {
+            let req: *mut uv_connect_t = req;
             uv_pipe_connect2(
                 req,
                 self,
                 name.as_ptr(),
                 name.len(),
                 UV_PIPE_NO_TRUNCATE,
-                Some(on_connect),
+                crate::deferred::connect_callback(req, on_connect),
             )
         }
     }

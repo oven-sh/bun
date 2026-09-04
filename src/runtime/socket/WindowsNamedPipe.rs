@@ -85,6 +85,10 @@ pub struct WindowsNamedPipe {
     pub(crate) connect_req: JsCell<uv::uv_connect_t>,
     #[cfg(not(windows))]
     pub connect_req: (),
+    /// Reads libuv recorded inside `uv_run`, dispatched after it returns
+    /// (`uv::UvStream::read_start_ctx`).
+    #[cfg(windows)]
+    pub(crate) read_deferral: JsCell<uv::ReadDeferral>,
 
     pub(crate) event_loop_timer: JsCell<EventLoopTimer>,
     pub(crate) current_timeout: Cell<u32>,
@@ -237,12 +241,10 @@ impl WindowsNamedPipe {
     }
 
     #[cfg(windows)]
+    /// Dispatch phase: `incoming` holds what the read callbacks committed.
     fn on_read(&self, nread: usize) {
         bun_output::scoped_log!(WindowsNamedPipe, "onRead ({})", nread);
         let _keep_alive = self.keep_alive();
-        // SAFETY: `nread` bytes written by libuv into on_read_alloc's slice.
-        self.incoming
-            .with_mut(|incoming| unsafe { incoming.uv_commit(nread) });
 
         self.reset_timeout();
 
@@ -575,6 +577,7 @@ impl WindowsNamedPipe {
             incoming: JsCell::new(Vec::new()),
             ssl_error: JsCell::new(CertError::default()),
             connect_req: JsCell::new(bun_core::ffi::zeroed::<uv::uv_connect_t>()),
+            read_deferral: JsCell::new(uv::ReadDeferral::new()),
             event_loop_timer: JsCell::new(EventLoopTimer::init_paused(
                 EventLoopTimerTag::WindowsNamedPipe,
             )),
@@ -1089,6 +1092,10 @@ impl WindowsNamedPipe {
         // (cancelled async by `uv_close`) so it is left to the writer's own Drop.
         #[cfg(windows)]
         {
+            // Reads stop here: also drop one that was recorded but not yet
+            // dispatched, so `on_read` never runs (and never takes `keep_alive`)
+            // after this point.
+            self.read_deferral.with_mut(|d| d.cancel());
             if let Some(stream) = self.writer.with_mut(|w| w.get_stream()) {
                 // SAFETY: `stream` is the live pipe stream; `uv_read_stop`
                 // always succeeds and is a no-op if not reading.
@@ -1106,6 +1113,7 @@ impl WindowsNamedPipe {
 
 impl Drop for WindowsNamedPipe {
     fn drop(&mut self) {
+        self.read_deferral.with_mut(|d| d.cancel());
         self.release_resources();
         // Reclaim the `Box<uv::Pipe>` leaked in `from()` if it was never
         // adopted by `self.writer.source` (early-error returns from
@@ -1179,6 +1187,26 @@ impl uv::StreamReader for WindowsNamedPipe {
         &mut spare[..suggested_size]
     }
     #[inline]
+    unsafe fn on_read_commit(this: *mut Self, data: &[u8]) {
+        // `data` points into `(*this).incoming` (it was returned from
+        // `on_read_alloc`). Capture the only thing needed (length) and drop
+        // the slice before touching `*this`.
+        let nread = data.len();
+        let _ = data;
+        // SAFETY: `this` is the live context stashed in `handle.data` by
+        // `read_start_ctx`; `nread` bytes were written by libuv into
+        // on_read_alloc's slice.
+        unsafe { &*this }
+            .incoming
+            .with_mut(|incoming| unsafe { incoming.uv_commit(nread) });
+    }
+    #[inline]
+    unsafe fn on_read(this: *mut Self, nread: usize) {
+        // SAFETY: `this` is the live context stashed in `handle.data` by
+        // `read_start_ctx`.
+        unsafe { &*this }.on_read(nread);
+    }
+    #[inline]
     fn on_read_error(this: &mut Self, err: core::ffi::c_int) {
         // The trampoline only reaches this arm when `nreads < 0`, and for any
         // negative code `translate_uv_error_to_e` already
@@ -1189,14 +1217,8 @@ impl uv::StreamReader for WindowsNamedPipe {
         this.on_read_error(e);
     }
     #[inline]
-    unsafe fn on_read(this: *mut Self, data: &[u8]) {
-        // `data` points into `(*this).incoming` (it was returned from
-        // `on_read_alloc`). Capture the only thing the body needs (length)
-        // and drop the slice before touching `*this`.
-        let nread = data.len();
-        let _ = data;
-        // SAFETY: `this` is the live context stashed in `handle.data` by
-        // `read_start_ctx`; `data` is no longer live.
-        unsafe { &*this }.on_read(nread);
+    fn read_deferral(this: *mut Self) -> *mut uv::ReadDeferral {
+        // SAFETY: `this` is the live context; raw field projection.
+        unsafe { (*this).read_deferral.as_ptr() }
     }
 }

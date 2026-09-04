@@ -1742,6 +1742,9 @@ fn normalize_pipe_name<'a>(pipe_name: &[u8], buffer: &'a mut [u8]) -> Option<&'a
 #[cfg(windows)]
 pub struct WindowsNamedPipeListeningContext {
     pub(crate) uv_pipe: uv::Pipe,
+    /// Connections libuv reported inside `uv_run`; accepted from
+    /// `dispatch_connections` once it has returned (uv::deferred).
+    connections: PendingConnections,
     /// BACKREF: the parent `Listener` heap-allocated this context in
     /// `listen_named_pipe` and outlives it (cleared to `None` in
     /// `close_pipe_and_deinit` before the listener is torn down). `BackRef`
@@ -1758,6 +1761,13 @@ pub struct WindowsNamedPipeListeningContext {
 #[cfg(not(windows))]
 pub struct WindowsNamedPipeListeningContext {
     _priv: (),
+}
+
+#[cfg(windows)]
+#[derive(Default)]
+struct PendingConnections {
+    deferred: uv::Deferred,
+    pending: u32,
 }
 
 /// `c_int`: raw libuv return code so JS `err.errno` is the platform-correct UV value.
@@ -1820,7 +1830,51 @@ impl WindowsNamedPipeListeningContext {
     extern "C" fn uv_on_client_connect(handle: *mut uv::uv_stream_t, status: uv::ReturnCode) {
         // SAFETY: `data` was set to `*mut Self` by `Pipe::listen` below.
         let this = unsafe { (*handle).data.cast::<WindowsNamedPipeListeningContext>() };
-        Self::on_client_connect(this, status);
+        // Inside `uv_run`: only count it. A failed connection attempt has
+        // nothing to accept and is dropped, as `on_client_connect` would.
+        if status != uv::ReturnCode::ZERO {
+            return;
+        }
+        // SAFETY: `this` is live until its (deferred) close callback runs,
+        // which is queued behind this node.
+        unsafe {
+            (*this).connections.pending += 1;
+            uv::Deferred::enqueue(
+                (*handle).loop_,
+                &raw mut (*this).connections.deferred,
+                Self::dispatch_connections,
+            );
+        }
+    }
+
+    /// Dispatch phase: accept one connection `uv_on_client_connect` counted
+    /// (libuv keeps the pending accepts queued on the server handle until
+    /// `uv_accept`). If more are pending the node goes back on the queue
+    /// *before* the handler runs, so nothing here touches the context after
+    /// `on_client_connect`: its `open` handler may close the listener and tick
+    /// the loop, which runs the deferred `on_pipe_closed` and frees the context
+    /// (`deinit` cancels the re-queued node in that case).
+    unsafe fn dispatch_connections(node: *mut uv::Deferred) {
+        // SAFETY: `node` is `connections.deferred` of a live context.
+        let this: *mut Self = unsafe {
+            bun_core::from_field_ptr!(PendingConnections, deferred, node)
+                .cast::<u8>()
+                .sub(core::mem::offset_of!(Self, connections))
+                .cast()
+        };
+        // SAFETY: `this` is live here (see above); not accessed after the handler.
+        unsafe {
+            debug_assert!((*this).connections.pending > 0);
+            (*this).connections.pending -= 1;
+            if (*this).connections.pending > 0 {
+                uv::Deferred::enqueue(
+                    (*this).uv_pipe.get_loop(),
+                    &raw mut (*this).connections.deferred,
+                    Self::dispatch_connections,
+                );
+            }
+        }
+        Self::on_client_connect(this, uv::ReturnCode::ZERO);
     }
 
     /// `uv_close_cb` trampoline. Only ever invoked by libuv (coerces to the
@@ -1855,6 +1909,7 @@ impl WindowsNamedPipeListeningContext {
         // store a pointer back into `uv_pipe`.
         let this = bun_core::heap::into_raw(Box::new(WindowsNamedPipeListeningContext {
             uv_pipe: bun_core::ffi::zeroed(),
+            connections: PendingConnections::default(),
             listener: NonNull::new(listener).map(bun_ptr::BackRef::from),
             global_this: GlobalRef::from(global_this),
             vm: global_this.bun_vm(),
@@ -1957,6 +2012,7 @@ impl WindowsNamedPipeListeningContext {
     fn deinit(this: *mut Self) {
         // SAFETY: `this` is a live `heap::alloc` allocation; this is the last owner.
         unsafe {
+            uv::Deferred::cancel(&raw mut (*this).connections.deferred);
             (*this).listener = None;
             drop(bun_core::heap::take(this));
         }

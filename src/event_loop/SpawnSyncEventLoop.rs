@@ -392,9 +392,10 @@ impl SpawnSyncEventLoop {
         }
 
         // Suppress microtask drain for the entire tick, including the uws loop tick.
-        // On Windows, uv_run() fires callbacks inline (e.g. uv_process exit, pipe I/O)
-        // which call onProcessExit → onExit. If any code path in those callbacks
-        // reaches drainMicrotasksWithGlobal, we must already have the flag set.
+        // On Windows the uws tick dispatches libuv completions (uv_process exit,
+        // pipe I/O) right after uv_run returns, still inside tick_with_timeout,
+        // and those call onProcessExit → onExit. If any code path in them reaches
+        // drainMicrotasksWithGlobal, we must already have the flag set.
         // On POSIX, the uws tick only polls I/O; callbacks are dispatched later
         // via the task queue, but we set the flag here uniformly for safety.
         let _suppress = SuppressMicrotaskDrain::new(self.vm);

@@ -1161,11 +1161,12 @@ impl<'a> ReadFileUV<'a> {
         // and `on_file_initial_stat` is a valid `uv_fs_cb` that recovers `self`
         // from `req.data` (set above).
         let rc = unsafe {
+            let req: *mut libuv::fs_t = &raw mut self.req;
             libuv::uv_fs_fstat(
                 self.loop_,
-                &mut self.req,
+                req,
                 opened_fd.uv(),
-                Some(Self::on_file_initial_stat),
+                libuv::deferred::fs_callback(req, Self::on_file_initial_stat),
             )
         };
         if let Some(errno) = rc.errno() {
@@ -1347,14 +1348,15 @@ impl<'a> ReadFileUV<'a> {
             // descriptor before returning), `opened_fd.uv()` is the open fd, and
             // `on_read` is a valid `uv_fs_cb` that recovers `self` from `req.data`.
             let res = unsafe {
+                let req: *mut libuv::fs_t = &raw mut self.req;
                 libuv::uv_fs_read(
                     self.loop_,
-                    &mut self.req,
+                    req,
                     self.opened_fd.uv(),
                     bufs.as_mut_ptr(),
                     bufs.len() as u32,
                     i64::try_from(self.offset + self.read_off).expect("int cast"),
-                    Some(Self::on_read),
+                    libuv::deferred::fs_callback(req, Self::on_read),
                 )
             };
             self.req.data = core::ptr::from_mut(self).cast::<c_void>();

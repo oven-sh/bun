@@ -297,6 +297,17 @@ impl EventLoop {
     #[inline]
     pub fn enter(&mut self) {
         bun_core::scoped_log!(EventLoop, "enter() = {}", self.entered_event_loop_count);
+        // JavaScript may drive the loop again before it returns, and libuv's
+        // `uv_run` cannot nest: libuv callbacks record and defer, handlers run
+        // once `uv_run` has returned (bun_libuv_sys::deferred).
+        #[cfg(all(windows, debug_assertions))]
+        if let Some(uws_loop) = self.uws_loop {
+            // SAFETY: the per-thread uws loop outlives the event loop.
+            debug_assert!(
+                !unsafe { uws_loop.as_ref() }.in_uv_run(),
+                "JavaScript entered from inside a libuv callback"
+            );
+        }
         self.entered_event_loop_count += 1;
     }
 
@@ -1202,8 +1213,10 @@ impl EventLoop {
     pub unsafe fn tick_while_paused(&mut self, done: *const bool) {
         // SAFETY: see fn contract — `done` is a live FFI bool written by C++.
         while !unsafe { done.read_volatile() } {
-            // SAFETY: `native_loop()` is live for this loop's lifetime; JS thread.
-            unsafe { (*self.native_loop()).tick() };
+            // The uws loop on every platform: on Windows that is what dispatches
+            // what `uv_run` collected (the inspector socket included).
+            // SAFETY: the per-thread uws loop outlives the event loop.
+            unsafe { (*self.usockets_loop()).tick() };
         }
     }
 
@@ -1279,7 +1292,7 @@ impl EventLoop {
         self.process_gc_timer();
         // `tick()` below can start work (e.g. a --hot reload) whose only wake
         // source is a cross-thread `wakeup()`; bound the park, same as the GC
-        // timerfd used to. libuv's `tick_with_timeout` ignores the argument.
+        // timerfd used to.
         // SAFETY: as above — the tick runs loop callbacks that reach the loop
         // themselves, so the exclusive borrow is scoped to this call only.
         unsafe {

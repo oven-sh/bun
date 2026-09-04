@@ -6746,13 +6746,14 @@ pub trait FileOpener: Sized {
             // SAFETY: loop_/req are live for the duration of the async open;
             // req.data is consumed by `wrapped_callback::<Self>` above.
             let rc = unsafe {
+                let req: *mut bun_libuv_sys::fs_t = req;
                 bun_libuv_sys::uv_fs_open(
                     loop_,
                     req,
                     path.as_ptr(),
                     Self::OPEN_FLAGS | Self::OPENER_FLAGS,
                     node::fs::DEFAULT_PERMISSION as i32,
-                    Some(wrapped_callback::<Self>),
+                    bun_libuv_sys::deferred::fs_callback(req, wrapped_callback::<Self>),
                 )
             };
             if let Some(errno) = rc.errno() {

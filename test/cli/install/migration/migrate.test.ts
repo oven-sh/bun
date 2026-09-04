@@ -1689,6 +1689,267 @@ describe("package-lock.json migration fixes", () => {
     expect(storeEntries(project.dir)).toStrictEqual(linker === "isolated" ? [project.o.replaceAll(/[/:]/g, "+")] : []);
   });
 
+  // npm resolves a `file:` directory declared by a registry package against the package itself and keys the
+  // target entry by its project-relative path (`node_modules/<pkg>/<dir>`). bun installs a folder declared by a
+  // registry package from inside that package, so the migrated row has to be the path inside the package.
+  describe("file: directory inside a registry package", () => {
+    function project(
+      name: string,
+      registry: ReturnType<typeof localRegistry>,
+      pkg: "file-dep" | "missing-file-dep",
+      folder: string,
+      linkKey: string,
+    ) {
+      const dependencies = { [pkg]: "1.0.0" };
+      return synthetic(
+        name,
+        {
+          "package.json": JSON.stringify({ name, dependencies }),
+          "package-lock.json": npmLock(name, {
+            "": { name, dependencies },
+            [`node_modules/${pkg}`]: {
+              version: "1.0.0",
+              resolved: registry.tarball(pkg, "1.0.0"),
+              integrity: registry.integrity(pkg, "1.0.0"),
+              dependencies: { files: `file:./${folder}` },
+            },
+            [`node_modules/${pkg}/${folder}`]: {},
+            [linkKey]: { resolved: `node_modules/${pkg}/${folder}`, link: true },
+          }),
+        },
+        registry.url,
+      );
+    }
+
+    test.concurrent.each([
+      ["node_modules/files", "hoisted"],
+      ["node_modules/file-dep/node_modules/files", "nested"],
+    ])("is recorded relative to the package and installed from it (link at %s)", async (linkKey, slug) => {
+      using registry = localRegistry();
+      using dir = project(`npm-migrate-folder-in-package-${slug}`, registry, "file-dep", "the-files", linkKey);
+
+      const { text, lock } = await migrate(dir);
+      expect(lock.packages).toStrictEqual({
+        "file-dep": [
+          "file-dep@1.0.0",
+          registry.tarball("file-dep", "1.0.0"),
+          { dependencies: { files: "file:./the-files" } },
+          registry.integrity("file-dep", "1.0.0"),
+        ],
+        "file-dep/files": ["files@file:the-files", {}],
+      });
+      expect(text).not.toContain("node_modules/file-dep/the-files");
+      await frozen(dir);
+
+      const install = await run(dir, "install", "--linker", "hoisted");
+      expect(install.stderr).not.toContain("error");
+      expect(install.exitCode).toBe(0);
+      expect(
+        await Bun.file(join(String(dir), "node_modules", "file-dep", "node_modules", "files", "package.json")).json(),
+      ).toHaveProperty("name", "files");
+      const resolve = await run(join(String(dir), "node_modules", "file-dep"), "-e", `require("files")`);
+      expect(resolve.stdout).toBe("hello files\n");
+      expect(resolve.exitCode).toBe(0);
+      expect(registry.requests).toStrictEqual(["/file-dep/-/file-dep-1.0.0.tgz"]);
+    });
+
+    test.concurrent("a directory the package does not ship installs nothing, like a fresh resolve", async () => {
+      using registry = localRegistry();
+      using dir = project(
+        "npm-migrate-folder-in-package-missing",
+        registry,
+        "missing-file-dep",
+        "missing-folder",
+        "node_modules/files",
+      );
+
+      const { lock } = await migrate(dir);
+      expect(lock.packages["missing-file-dep/files"]).toStrictEqual(["files@file:missing-folder", {}]);
+      await frozen(dir);
+
+      const install = await run(dir, "install", "--linker", "hoisted");
+      expect(install.stderr).not.toContain("error");
+      expect(install.exitCode).toBe(0);
+      expect(fs.existsSync(join(String(dir), "node_modules", "missing-file-dep", "node_modules", "files"))).toBeFalse();
+    });
+
+    // `file:.` links back to the package's own entry, which is not inside itself, so the edge resolves to the package.
+    test.concurrent("a package depending on itself with file:. keeps resolving to itself", async () => {
+      using registry = localRegistry();
+      const dependencies = { "self-file-dep": "1.0.0" };
+      using dir = synthetic(
+        "npm-migrate-folder-self",
+        {
+          "package.json": JSON.stringify({ name: "folder-self", dependencies }),
+          "package-lock.json": npmLock("folder-self", {
+            "": { name: "folder-self", dependencies },
+            "node_modules/self-file-dep": {
+              version: "1.0.0",
+              resolved: registry.tarball("self-file-dep", "1.0.0"),
+              integrity: registry.integrity("self-file-dep", "1.0.0"),
+              dependencies: { "self-file-dep": "file:." },
+            },
+            "node_modules/self-file-dep/node_modules/self-file-dep": {
+              resolved: "node_modules/self-file-dep",
+              link: true,
+            },
+          }),
+        },
+        registry.url,
+      );
+
+      const { lock } = await migrate(dir);
+      expect(lock.packages).toStrictEqual({
+        "self-file-dep": [
+          "self-file-dep@1.0.0",
+          registry.tarball("self-file-dep", "1.0.0"),
+          { dependencies: { "self-file-dep": "file:." } },
+          registry.integrity("self-file-dep", "1.0.0"),
+        ],
+      });
+      await frozen(dir);
+
+      const install = await run(dir, "install", "--linker", "hoisted");
+      expect(install.stderr).not.toContain("error");
+      expect(install.exitCode).toBe(0);
+      const resolve = await run(
+        join(String(dir), "node_modules", "self-file-dep"),
+        "-e",
+        `console.log(require("self-file-dep/package.json").version)`,
+      );
+      expect(resolve.stdout).toBe("1.0.0\n");
+      expect(resolve.exitCode).toBe(0);
+    });
+
+    test.concurrent("a directory inside a folder the root declares stays relative to the project", async () => {
+      const dependencies = { a: "file:vendor/a" };
+      using dir = synthetic("npm-migrate-folder-in-local-folder", {
+        "package.json": JSON.stringify({ name: "folder-in-local-folder", dependencies }),
+        "vendor/a/package.json": JSON.stringify({ name: "a", version: "1.0.0", dependencies: { b: "file:./b" } }),
+        "vendor/a/b/package.json": JSON.stringify({ name: "b", version: "1.0.0" }),
+        "package-lock.json": npmLock("folder-in-local-folder", {
+          "": { name: "folder-in-local-folder", dependencies },
+          "node_modules/a": { resolved: "vendor/a", link: true },
+          "vendor/a": { version: "1.0.0", dependencies: { b: "file:./b" } },
+          "vendor/a/b": { version: "1.0.0" },
+          "vendor/a/node_modules/b": { resolved: "vendor/a/b", link: true },
+        }),
+      });
+
+      const { lock } = await migrate(dir);
+      expect(lock.packages).toStrictEqual({
+        a: ["a@file:vendor/a", { dependencies: { b: "file:./b" } }],
+        "a/b": ["b@file:vendor/a/b", {}],
+      });
+      await frozen(dir);
+
+      const install = await run(dir, "install", "--linker", "hoisted");
+      expect(install.stderr).not.toContain("error");
+      expect(install.exitCode).toBe(0);
+      expect(
+        await Bun.file(join(String(dir), "node_modules", "a", "node_modules", "b", "package.json")).json(),
+      ).toStrictEqual({ name: "b", version: "1.0.0" });
+    });
+
+    // npm deduplicated a local folder's `files` onto the hoisted link into file-dep. Each dependent needs its own
+    // form of the row: file-dep's is read relative to file-dep, the local folder's relative to the project.
+    test.concurrent.each([
+      ["file-dep", "local"],
+      ["local", "file-dep"],
+    ])("a local folder sharing the directory gets the project-relative row (%s linked first)", async (...order) => {
+      using registry = localRegistry();
+      const specs: Record<string, string> = { "file-dep": "1.0.0", local: "file:vendor/local" };
+      const dependencies = Object.fromEntries(order.map(name => [name, specs[name]]));
+      const name = `npm-migrate-folder-shared-${order[0]}-first`;
+      using dir = synthetic(
+        name,
+        {
+          "package.json": JSON.stringify({ name, dependencies }),
+          "vendor/local/package.json": JSON.stringify({
+            name: "local",
+            version: "1.0.0",
+            dependencies: { files: "*" },
+          }),
+          "package-lock.json": npmLock(name, {
+            "": { name, dependencies },
+            "node_modules/file-dep": {
+              version: "1.0.0",
+              resolved: registry.tarball("file-dep", "1.0.0"),
+              integrity: registry.integrity("file-dep", "1.0.0"),
+              dependencies: { files: "file:./the-files" },
+            },
+            "node_modules/file-dep/the-files": { name: "files", version: "1.1.1" },
+            "node_modules/files": { resolved: "node_modules/file-dep/the-files", link: true },
+            "node_modules/local": { resolved: "vendor/local", link: true },
+            "vendor/local": { version: "1.0.0", dependencies: { files: "*" } },
+          }),
+        },
+        registry.url,
+      );
+
+      const { lock } = await migrate(dir);
+      expect(lock.packages["file-dep/files"]).toStrictEqual(["files@file:the-files", {}]);
+      expect(lock.packages["local/files"]).toStrictEqual(["files@file:node_modules/file-dep/the-files", {}]);
+      await frozen(dir);
+
+      const install = await run(dir, "install", "--linker", "hoisted");
+      expect(install.stderr).not.toContain("error");
+      expect(install.exitCode).toBe(0);
+      for (const dependent of ["file-dep", "local"]) {
+        expect(
+          await Bun.file(join(String(dir), "node_modules", dependent, "node_modules", "files", "package.json")).json(),
+        ).toHaveProperty("name", "files");
+      }
+    });
+
+    test.concurrent(
+      "a registry package deduplicated onto a folder the root declares keeps the root's row",
+      async () => {
+        using registry = localRegistry();
+        const dependencies = { "dep-file-dep": "1.0.0", "file-dep": "file:vendor/file-dep" };
+        using dir = synthetic(
+          "npm-migrate-folder-dedupe",
+          {
+            "package.json": JSON.stringify({ name: "folder-dedupe", dependencies }),
+            "vendor/file-dep/package.json": JSON.stringify({ name: "file-dep", version: "1.0.0" }),
+            "package-lock.json": npmLock("folder-dedupe", {
+              "": { name: "folder-dedupe", dependencies },
+              "node_modules/dep-file-dep": {
+                version: "1.0.0",
+                resolved: registry.tarball("dep-file-dep", "1.0.0"),
+                integrity: registry.integrity("dep-file-dep", "1.0.0"),
+                dependencies: { "file-dep": "1.0.0" },
+              },
+              "node_modules/file-dep": { resolved: "vendor/file-dep", link: true },
+              "vendor/file-dep": { version: "1.0.0" },
+            }),
+          },
+          registry.url,
+        );
+
+        const { lock } = await migrate(dir);
+        expect(lock.packages["file-dep"]).toStrictEqual(["file-dep@file:vendor/file-dep", {}]);
+        expect(lock.packages["dep-file-dep/file-dep"]).toStrictEqual(["file-dep@file:vendor/file-dep", {}]);
+        await frozen(dir);
+
+        const install = await run(dir, "install", "--linker", "hoisted");
+        expect(install.stderr).not.toContain("error");
+        expect(install.exitCode).toBe(0);
+        // The copy under dep-file-dep has nothing to install from; the root's copy in node_modules serves it.
+        expect(
+          fs.existsSync(join(String(dir), "node_modules", "dep-file-dep", "node_modules", "file-dep")),
+        ).toBeFalse();
+        const resolve = await run(
+          join(String(dir), "node_modules", "dep-file-dep"),
+          "-e",
+          `console.log(require("file-dep/package.json").name)`,
+        );
+        expect(resolve.stdout).toBe("file-dep\n");
+        expect(resolve.exitCode).toBe(0);
+      },
+    );
+  });
+
   test.concurrent("lockfileVersion 5 is refused, and install falls back to a fresh resolve", async () => {
     using dir = synthetic("npm-migrate-v5", {
       "package.json": JSON.stringify({ name: "v5", dependencies: { "dep-1": "file:dep-1" } }),

@@ -3625,14 +3625,7 @@ Server.prototype.close = function close(callback) {
 
   const liveWorkers = this._workers.length;
   if (this._usingWorkers && liveWorkers > 0) {
-    let left = liveWorkers;
-    const self = this;
-    function onWorkerClose() {
-      if (--left !== 0) return;
-
-      self._connections = 0;
-      self._emitCloseIfDrained();
-    }
+    const onWorkerClose = onWorkerCloseForServer.bind(null, { server: this, left: liveWorkers });
 
     this._connections++;
 
@@ -3645,6 +3638,14 @@ Server.prototype.close = function close(callback) {
 
   return this;
 };
+
+function onWorkerCloseForServer(state) {
+  if (--state.left !== 0) return;
+
+  const server = state.server;
+  server._connections = 0;
+  server._emitCloseIfDrained();
+}
 
 Server.prototype[Symbol.asyncDispose] = function () {
   // Node resolves immediately when the server is not listening (lib/net.js
@@ -3688,31 +3689,33 @@ Server.prototype.getConnections = function getConnections(callback) {
   if (typeof callback !== "function") return this;
   // Both paths settle on nextTick like node's end() helper:
   // https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L2384-L2398
-  function end(err, connections?) {
-    process.nextTick(callback, err, connections);
-  }
   if (!this._usingWorkers || this._workers.length === 0) {
     //in Bun case we will never error on getConnections
     //node only errors if in the middle of the couting the server got disconnected, what never happens in Bun
     //if disconnected will only pass null as well and 0 connected
-    end(null, this._handle ? this._connections : 0);
+    process.nextTick(callback, null, this._handle ? this._connections : 0);
     return this;
   }
-  let left = this._workers.length;
-  let total = this._connections;
-  function oncount(err, count) {
-    if (err) {
-      left = -1;
-      return end(err);
-    }
-    total += count;
-    if (--left === 0) return end(null, total);
-  }
+  const oncount = onWorkerConnectionCount.bind(null, {
+    callback,
+    left: this._workers.length,
+    total: this._connections,
+  });
   for (let n = 0; n < this._workers.length; n++) {
     this._workers[n].getConnections(oncount);
   }
   return this;
 };
+
+function onWorkerConnectionCount(state, err, count) {
+  if (err) {
+    state.left = -1;
+    process.nextTick(state.callback, err);
+    return;
+  }
+  state.total += count;
+  if (--state.left === 0) process.nextTick(state.callback, null, state.total);
+}
 
 Server.prototype._setupWorker = function _setupWorker(socketList) {
   this._usingWorkers = true;

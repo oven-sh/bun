@@ -1,5 +1,5 @@
 import { $ } from "bun";
-import { expect, test } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, bunRun, normalizeBunSnapshot } from "harness";
 import { join } from "node:path";
 
@@ -174,4 +174,104 @@ test("Async functions frame should be included in stack trace", async () => {
         at async foo (file:NN:NN)
         at async <anonymous> (file:NN:NN)"
   `);
+});
+
+// Once error.stack has been read (or assigned), JSC no longer has the frames of
+// the error, and Bun.inspect / console.error / the uncaught error output print
+// the frames parsed back out of that string instead.
+describe("printing the frames parsed back out of error.stack", () => {
+  const printedFrames = (text: string) =>
+    text
+      .split("\n")
+      .map(line => line.trim())
+      .filter(line => line.startsWith("at "));
+
+  // "at async outer (/x.js:1:2)" -> "at async outer": where the frames point is
+  // not what is being tested here.
+  const withoutLocation = (line: string) => line.replace(/ \(.*$/, "");
+
+  test("async, <anonymous>, new and bare frames print as they do in error.stack", () => {
+    const err = new Error("boom");
+    err.stack = [
+      "Error: boom",
+      "    at async fetchUser (/fake/api.js:10:9)",
+      "    at async <anonymous> (/fake/app.js:4:3)",
+      "    at <anonymous> (/fake/app.js:9:1)",
+      "    at new Client (/fake/client.js:2:11)",
+      "    at run (/fake/main.js:7:5)",
+      "    at global code (/fake/main.js:12:1)",
+      "    at unknown",
+    ].join("\n");
+
+    const expected = [
+      "at async fetchUser (/fake/api.js:10:9)",
+      "at async <anonymous> (/fake/app.js:4:3)",
+      "at <anonymous> (/fake/app.js:9:1)",
+      "at new Client (/fake/client.js:2:11)",
+      "at run (/fake/main.js:7:5)",
+      "at /fake/main.js:12:1",
+      expect.stringMatching(/^at unknown\b/),
+    ];
+    expect(printedFrames(Bun.inspect(err, { colors: false }))).toEqual(expected);
+    expect(printedFrames(Bun.stripANSI(Bun.inspect(err, { colors: true })))).toEqual(expected);
+  });
+
+  test("Bun.inspect prints the same frames before and after error.stack has been read", async () => {
+    async function inner() {
+      await 1;
+      throw new Error("boom");
+    }
+    async function outer() {
+      await inner();
+    }
+    const err: Error = await (async () => {
+      await outer();
+    })().catch(e => e);
+
+    const ownFrames = (text: string) =>
+      printedFrames(text)
+        .filter(line => line.includes("stack.test.ts"))
+        .map(withoutLocation);
+    const before = ownFrames(Bun.inspect(err));
+    const stack = ownFrames(err.stack!);
+    const after = ownFrames(Bun.inspect(err));
+
+    expect(before).toEqual(["at inner", "at async outer", "at async <anonymous>"]);
+    expect({ stack, after }).toEqual({ stack: before, after: before });
+  });
+
+  test("console.error and the unhandled rejection output keep the async frames", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          async function inner() {
+            await 1;
+            throw new Error("boom");
+          }
+          async function outer() {
+            await inner();
+          }
+          (async () => {
+            await outer();
+          })().catch(e => {
+            e.stack; // e.g. a logger reading it
+            console.error(e);
+            throw e;
+          });
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    // Printed once by console.error(e) and once as an unhandled rejection.
+    const expected = ["at inner", "at async outer", "at async <anonymous>"];
+    expect(printedFrames(stderr).map(withoutLocation)).toEqual([...expected, ...expected]);
+    expect(stdout).toBe("");
+    expect(exitCode).toBe(1);
+  });
 });

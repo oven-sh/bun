@@ -523,8 +523,7 @@ pub enum Value {
     /// Single-use Blob
     /// Avoids a heap allocation.
     InternalBlob(InternalBlob),
-    /// `new Response(htmlBundle)`. Only `Bun.serve` can send it; the body
-    /// readers reject it.
+    /// `new Response(htmlBundle)`. Only `Bun.serve` can send it.
     HTMLBundle(bun_ptr::RefPtr<crate::server::HTMLBundle>),
     Locked(PendingValue),
     Used,

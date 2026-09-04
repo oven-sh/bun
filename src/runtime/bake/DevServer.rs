@@ -5300,8 +5300,7 @@ impl DevServer {
         Ok(())
     }
 
-    /// `ctx` carries a +1 on the context, released by `on_html_bundle_built`
-    /// or by `take_html_bundle_body_response`.
+    /// `ctx` carries a +1 on the context.
     pub(crate) fn respond_for_html_bundle_body(
         &mut self,
         html: bun_ptr::ThisPtr<HTMLBundleRoute>,

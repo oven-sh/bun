@@ -356,8 +356,7 @@ fn as_response(value: JSValue) -> Option<*mut Response> {
     response::from_js(value).map(|p| p.cast::<Response>())
 }
 
-/// The page's own headers (Content-Type, ETag, Cache-Control) fill in behind
-/// the handler's. Non-generic and out of line, like `release_body_stream`.
+/// The page's headers fill in behind the handler's. Non-generic, like `release_body_stream`.
 #[inline(never)]
 fn add_html_page_headers(
     response: &mut Response,

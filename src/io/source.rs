@@ -303,6 +303,19 @@ impl Source {
         }
     }
 
+    /// `uv_stream_set_blocking` on the pipe/tty stream; `None` for files,
+    /// which have no stream.
+    pub fn set_stream_blocking(&mut self, blocking: bool) -> Option<uv::ReturnCode> {
+        match self {
+            Source::Pipe(_) | Source::Tty(_) => {
+                // SAFETY: `to_stream()` is the live, initialised `uv_stream_t`
+                // this source owns.
+                Some(unsafe { uv::uv_stream_set_blocking(self.to_stream(), c_int::from(blocking)) })
+            }
+            Source::SyncFile(_) | Source::File(_) => None,
+        }
+    }
+
     pub fn set_data(&mut self, data: *mut c_void) {
         match self {
             Source::Pipe(pipe) => pipe.data = data,

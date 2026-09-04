@@ -284,9 +284,9 @@ impl crate::webcore::sink::JsSinkType for FetchRequestBodySink {
 
     crate::impl_js_sink_forwarders!();
 
-    unsafe fn finalize(this: *mut Self) {
+    fn finalize(this: bun_ptr::ThisPtr<Self>) {
         // SAFETY: same contract, forwarded.
-        unsafe { Self::finalize(this) }
+        unsafe { Self::finalize(this.as_ptr()) }
     }
     fn end_from_js(&mut self, global: &JSGlobalObject) -> bun_sys::Result<JSValue> {
         Self::end_from_js(self, global)

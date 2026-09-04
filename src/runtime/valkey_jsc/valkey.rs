@@ -1555,6 +1555,11 @@ impl HasAutoFlusher for ValkeyClient {
     fn auto_flusher(&self) -> &AutoFlusher {
         &self.auto_flusher
     }
+    #[inline]
+    fn auto_flush_ctx(&self) -> *mut Self {
+        // `on_auto_flush` only flushes; it never frees the client.
+        core::ptr::from_ref(self).cast_mut()
+    }
     unsafe fn on_auto_flush(this: *mut Self) -> bool {
         // SAFETY: `this` was registered as `&ValkeyClient` cast to `*mut c_void`;
         // `DeferredTaskQueue::run` is single-threaded (drained on the JS thread after

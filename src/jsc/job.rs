@@ -181,10 +181,6 @@ pub trait JobContext: Sized + 'static {
     type OffThread: Send;
     type Js: JsAffine;
 
-    /// Whether [`cancel`](Self::cancel) does anything, i.e. whether the job
-    /// can wait on something external. Only such jobs are tracked by the VM.
-    const CANCELLABLE: bool = false;
-
     /// Pool thread, VM not yet in its final wait when the pool reached the job
     /// (a job reached later is handed back unrun, as Node's environment
     /// cleanup `uv_cancel`s queued work). Return `done` to complete now; keep
@@ -200,18 +196,23 @@ pub trait JobContext: Sized + 'static {
     /// handed over to use and drop normally.
     fn then(off: Self::OffThread, js: Self::Js, cx: &JsThread<'_>) -> JsResult<()>;
 
-    /// JS thread, the VM's stop phase (possibly more than once): make a job
-    /// that is waiting on something *external* — not computing — finish soon,
-    /// so the VM's wait for it is short. Runs concurrently with wherever the
-    /// job is (queued, in `run`, parked on another thread's loop): touch only
-    /// what that tolerates (atomics, thread-safe queues). The default, for
-    /// jobs that only compute, does nothing.
-    ///
-    /// # Safety
-    /// `off` points at the live job's off-thread half.
-    unsafe fn cancel(off: *mut Self::OffThread) {
-        let _ = off;
-    }
+    /// Where in `OffThread` the io-loop wait this job can be parked in lives —
+    /// the one *external* thing a job may wait on rather than compute — or
+    /// `None` for jobs that only compute. The VM's stop phase
+    /// [cancels](bun_io::ParkedRequest::cancel) it so its wait for the job is
+    /// short; only such jobs are tracked by the VM. The request's ownership
+    /// protocol is what lets the JS thread reach it, concurrently with
+    /// wherever the job is.
+    const PARKED_REQUEST: Option<ParkedRequestOffset<Self::OffThread>> = None;
+}
+
+/// Where the [`bun_io::ParkedRequest`] sits inline in a job's `OffThread`
+/// half `O` — from `O`'s (`unsafe`, macro-emitted) `IntrusiveField` impl, so
+/// [`JobList::cancel_all`] may treat `off + offset` as that request.
+pub struct ParkedRequestOffset<O>(usize, core::marker::PhantomData<O>);
+
+impl<O: bun_core::IntrusiveField<bun_io::ParkedRequest>> ParkedRequestOffset<O> {
+    pub const INLINE: Self = Self(O::OFFSET, core::marker::PhantomData);
 }
 
 /// The type-erased head of every [`Job<C>`] (one task tag serves every `C`),
@@ -220,13 +221,15 @@ pub trait JobContext: Sized + 'static {
 pub struct JobHeader {
     complete: unsafe fn(*mut JobHeader, &JsThread<'_>) -> JsResult<()>,
     release_unrun: unsafe fn(*mut JobHeader),
-    cancel: unsafe fn(*mut JobHeader),
+    /// [`JobContext::PARKED_REQUEST`], inside this job's `off`; the job is
+    /// linked into its VM's [`JobList`] iff `Some`.
+    cancel: Option<NonNull<bun_io::ParkedRequest>>,
     prev: *mut JobHeader,
     next: *mut JobHeader,
 }
 
-/// A VM's live [cancellable](JobContext::CANCELLABLE) jobs (JS thread only;
-/// zero-valid), so its stop phase can [`cancel`](JobContext::cancel) them.
+/// A VM's live [cancellable](JobContext::PARKED_REQUEST) jobs (JS thread
+/// only; zero-valid), so its stop phase can cancel them.
 pub struct JobList {
     head: *mut JobHeader,
 }
@@ -258,14 +261,17 @@ impl JobList {
             }
         }
     }
-    /// The VM's stop phase (JS thread): ask every live job to finish soon.
+    /// The VM's stop phase (JS thread; possibly more than once): ask every
+    /// live job to finish soon.
     pub fn cancel_all(&self) {
         let mut job = self.head;
         while !job.is_null() {
             // SAFETY: linked ⇒ live (jobs unlink, on this thread, before they
-            // are freed); `cancel` neither frees nor unlinks.
+            // are freed) and `cancel` is `Some`, pointing into the job;
+            // `ParkedRequest::cancel` touches only what its ownership protocol
+            // allows from here, and neither frees nor unlinks.
             unsafe {
-                ((*job).cancel)(job);
+                (*job).cancel.expect("linked job").as_ref().cancel();
                 job = (*job).next;
             }
         }
@@ -312,8 +318,7 @@ impl<C: JobContext> Job<C> {
                 release_unrun: |p| unsafe {
                     <Self as bun_event_loop::Taskable>::release_unrun(p.cast::<Self>())
                 },
-                // SAFETY: linked ⇒ live; see `JobContext::cancel`.
-                cancel: |p| unsafe { C::cancel(&raw mut (*p.cast::<Self>()).off) },
+                cancel: None,
                 prev: core::ptr::null_mut(),
                 next: core::ptr::null_mut(),
             },
@@ -328,7 +333,14 @@ impl<C: JobContext> Job<C> {
         }));
         // SAFETY: live until completed/released on this thread; the pool owns it now.
         unsafe {
-            if C::CANCELLABLE {
+            if let Some(ParkedRequestOffset(offset, _)) = C::PARKED_REQUEST {
+                // SAFETY: `IntrusiveField<ParkedRequest>` contract — a
+                // `ParkedRequest` lives at `offset` inside `off`.
+                (*job).header.cancel = Some(NonNull::new_unchecked(
+                    (&raw mut (*job).off)
+                        .byte_add(offset)
+                        .cast::<bun_io::ParkedRequest>(),
+                ));
                 cx.vm().jobs.with_mut(|j| j.push(&raw mut (*job).header));
             }
             WorkPool::schedule(&raw mut (*job).task);
@@ -360,7 +372,8 @@ impl<C: JobContext> Job<C> {
     /// # Safety
     /// `this` is the job its `Completion` posted; called once, on `vm`'s thread.
     unsafe fn take(this: *mut Self, vm: &VirtualMachine) -> (C::OffThread, C::Js) {
-        if C::CANCELLABLE {
+        // SAFETY: fn contract.
+        if unsafe { (*this).header.cancel.is_some() } {
             // SAFETY: fn contract.
             vm.jobs
                 .with_mut(|j| j.unlink(unsafe { &raw mut (*this).header }));

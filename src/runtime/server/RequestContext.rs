@@ -3311,8 +3311,9 @@ where
                 // `do_render_with_body_locked`.
                 this.ref_();
                 this.flags.set_has_marked_pending(true);
-                lock.on_receive_value =
-                    Some(|ctx, value| Self::do_render_with_body_locked(ctx, value));
+                lock.on_receive_value = Some(Body::ReceiveValue::Ctx(|ctx, value| {
+                    Self::do_render_with_body_locked(ctx, value)
+                }));
                 lock.task = Some(NonNull::new(this.as_ctx_ptr().cast::<c_void>()).unwrap());
 
                 return;

@@ -578,55 +578,70 @@ mod _async_tasks {
         const _: () = assert!(ReadFile::HAVE_ABORT_SIGNAL);
         const _: () = assert!(WriteFile::HAVE_ABORT_SIGNAL);
 
+        /// Whoever an [`AsyncMkdirp`] reports back to, on the JS thread. It
+        /// travels to the pool thread and back inside the task without being
+        /// used or dropped there (the task's ticket keeps the VM until the hop
+        /// back is posted; an unrun hop is released on the JS thread).
+        #[cfg(windows)]
+        pub trait MkdirpCompletion: 'static {
+            fn on_mkdirp_done(self, result: Maybe<()>);
+        }
+
         #[cfg(windows)]
         /// Used internally. Not from JavaScript.
-        pub struct AsyncMkdirp {
-            pub(crate) completion_ctx: *mut (),
-            /// Pool thread; `ticket` is this task's, for the callee to post its
-            /// hop back through.
-            pub(crate) completion: fn(*mut (), Maybe<()>, &bun_jsc::Ticket),
+        pub struct AsyncMkdirp<C: MkdirpCompletion> {
+            pub(crate) completion: C,
             /// Memory is not owned by this struct
             pub path: *const [u8], // BORROW: not owned
-            pub(crate) ticket: bun_jsc::Ticket,
+            /// This task's; moved out to post the hop back through.
+            pub(crate) ticket: Option<bun_jsc::Ticket>,
+            pub(crate) result: Maybe<()>,
             pub task: WorkPoolTask,
         }
 
         #[cfg(windows)]
-        bun_threading::owned_task!(AsyncMkdirp, task);
+        bun_threading::owned_task!([C: MkdirpCompletion] AsyncMkdirp<C>, task);
 
         #[cfg(windows)]
-        impl AsyncMkdirp {
-            /// Heap-allocate and hand the task to the work pool, which owns the
-            /// allocation and frees it after `run_owned` returns.
-            pub(crate) fn schedule(init: AsyncMkdirp) {
-                WorkPool::schedule_new(init);
+        impl<C: MkdirpCompletion> AsyncMkdirp<C> {
+            /// Heap-allocate and hand the task to the work pool; `completion`
+            /// gets the result back on the JS thread. `path` must stay valid
+            /// until then.
+            pub(crate) fn schedule(completion: C, path: *const [u8], ticket: bun_jsc::Ticket) {
+                WorkPool::schedule_new(AsyncMkdirp {
+                    completion,
+                    path,
+                    ticket: Some(ticket),
+                    result: Ok(()),
+                    task: Default::default(),
+                });
             }
 
-            #[allow(clippy::boxed_local)]
-            fn run_owned(self: Box<Self>) {
+            fn run_owned(mut self: Box<Self>) {
                 let mut node_fs = NodeFS::default();
                 // SAFETY: the scheduling caller keeps `path` alive until `completion`
                 // runs (it points into caller-owned state, not this box).
                 let path = unsafe { &*self.path };
-                let result = node_fs.mkdir_recursive(&args::Mkdir {
-                    path: PathLike::borrowed(path),
-                    recursive: true,
-                    ..Default::default()
-                });
-                match result {
-                    Err(err) => {
-                        (self.completion)(
-                            self.completion_ctx,
-                            // `with_path` already clones into a fresh `Box<[u8]>`; pass the
-                            // existing path slice.
-                            Err(err.with_path(&err.path)),
-                            &self.ticket,
-                        );
-                    }
-                    Ok(_) => {
-                        (self.completion)(self.completion_ctx, Ok(()), &self.ticket);
-                    }
-                }
+                self.result = node_fs
+                    .mkdir_recursive(&args::Mkdir {
+                        path: PathLike::borrowed(path),
+                        recursive: true,
+                        ..Default::default()
+                    })
+                    .map(|_| ())
+                    // `with_path` already clones into a fresh `Box<[u8]>`; pass the
+                    // existing path slice.
+                    .map_err(|err| err.with_path(&err.path));
+                let ticket = self.ticket.take().expect("posted once");
+                ticket.post(bun_jsc::ConcurrentTask::create(
+                    bun_jsc::ManagedTask::ManagedTask::new_boxed(self, |this| {
+                        let Self {
+                            completion, result, ..
+                        } = *this;
+                        completion.on_mkdirp_done(result);
+                        Ok(())
+                    }),
+                ));
             }
         }
     }

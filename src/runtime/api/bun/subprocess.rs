@@ -1066,8 +1066,7 @@ impl Subprocess<'_> {
             // `pipe_ptr` came from a live FileSink (either `self.stdin.pipe`'s
             // +1-intrusive ref or the cached JS sink kept live by GC) and
             // outlives this scope on the single mutator thread — `BackRef`
-            // invariant. Shared deref via `BackRef::Deref`; the one mutable
-            // call below stays unsafe.
+            // invariant.
             let pipe = bun_ptr::BackRef::from(pipe_ptr);
 
             // Detach the source first so onAttachedProcessExit's sync FileSink.onClose cannot
@@ -1084,13 +1083,7 @@ impl Subprocess<'_> {
             let must_deref = self.flags.get().contains(Flags::DEREF_ON_STDIN_DESTROYED);
             self.update_flags(|f| f.remove(Flags::DEREF_ON_STDIN_DESTROYED));
 
-            // `pipe_ptr` is live (see `pipe` borrow above) and is the canonical
-            // `*mut FileSink` from `FileSink::create*`; pass it straight through —
-            // `on_attached_process_exit` re-enters via the writer backref and may
-            // free `this`, so no `&mut FileSink` is materialized at the boundary.
-            // SAFETY: `pipe_ptr` is the canonical heap pointer with write+dealloc
-            // provenance, held live by the `Writable::Pipe`/cache +1.
-            unsafe { FileSink::on_attached_process_exit(pipe_ptr.as_ptr(), status) };
+            FileSink::on_attached_process_exit(pipe.this_ptr(), status);
 
             if must_deref {
                 self.deref();

@@ -53,9 +53,6 @@ use store::{BytesExt as _, FileExt as _, S3Ext as _, StoreExt as _};
 
 #[path = "blob/copy_file.rs"]
 pub mod copy_file;
-#[cfg(not(windows))]
-#[path = "blob/io_parking.rs"]
-pub(crate) mod io_parking;
 #[path = "blob/read_file.rs"]
 pub mod read_file;
 #[path = "blob/write_file.rs"]
@@ -1438,7 +1435,7 @@ impl BlobExt for Blob {
             );
         }
 
-        let file_sink: RefPtr<webcore::FileSink> = 'brk_sink: {
+        let file_sink: bun_ptr::RefPtr<webcore::FileSink> = 'brk_sink: {
             #[cfg(windows)]
             {
                 let pathlike = &store.data.as_file().pathlike;
@@ -1513,20 +1510,24 @@ impl BlobExt for Blob {
 
                 #[cfg(windows)]
                 use bun_io::pipe_writer::BaseWindowsPipeWriter as _;
-                let started = sink.writer.with_mut(|w| {
-                    if is_stdout_or_stderr {
-                        w.start_sync(fd, false)
-                    } else {
-                        w.start(fd, true)
-                    }
-                });
-                if let bun_sys::Result::Err(err) = started {
-                    return Ok(
-                        JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
+                if is_stdout_or_stderr {
+                    if let bun_sys::Result::Err(err) =
+                        sink.writer.with_mut(|w| w.start_sync(fd, false))
+                    {
+                        drop(sink);
+                        return Ok(JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
                             global_this,
                             err.to_js(global_this),
-                        ),
-                    );
+                        ));
+                    }
+                } else {
+                    if let bun_sys::Result::Err(err) = sink.writer.with_mut(|w| w.start(fd, true)) {
+                        drop(sink);
+                        return Ok(JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
+                            global_this,
+                            err.to_js(global_this),
+                        ));
+                    }
                 }
 
                 break 'brk_sink sink;
@@ -1563,6 +1564,7 @@ impl BlobExt for Blob {
                 });
 
                 if let bun_sys::Result::Err(err) = sink.start(&stream_start) {
+                    drop(sink);
                     return Ok(
                         JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
                             global_this,
@@ -1574,10 +1576,8 @@ impl BlobExt for Blob {
             }
         };
 
-        // `pipe_stream` takes its own refs.
         if let Some(promise) =
-            // SAFETY: sole owner so far; `&mut` scoped to the call.
-            unsafe { (*file_sink.as_ptr()).pipe_stream(&readable_stream, global_this) }
+            webcore::FileSink::pipe_stream(file_sink.this_ptr(), &readable_stream, global_this)
         {
             return Ok(promise);
         }
@@ -1585,12 +1585,13 @@ impl BlobExt for Blob {
         let assignment_result: JSValue = webcore::file_sink::JSSink::assign_to_stream(
             global_this,
             readable_stream.value,
-            file_sink.as_non_null(),
+            file_sink.this_ptr().into(),
         );
 
         assignment_result.ensure_still_alive();
 
         if let Some(err) = assignment_result.to_error() {
+            drop(file_sink);
             return Ok(
                 JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
                     global_this,
@@ -1607,6 +1608,10 @@ impl BlobExt for Blob {
             if let Some(promise) = assignment_result.as_any_promise() {
                 match promise.status() {
                     jsc::js_promise::Status::Pending => {
+                        let sink = bun_ptr::BackRef::from(file_sink.this_ptr());
+                        // The pump's ref: released by the reactions below, or
+                        // by the controller's destructor at heap teardown.
+                        sink.hold_stream_promise_ref(file_sink);
                         let wrapper = bun_core::heap::into_raw(Box::new(FileStreamWrapper {
                             promise: jsc::JSPromiseStrong::init(global_this),
                             readable_stream_ref:
@@ -1614,7 +1619,7 @@ impl BlobExt for Blob {
                                     readable_stream,
                                     global_this,
                                 ),
-                            sink: file_sink,
+                            sink,
                         }));
                         // SAFETY: wrapper was just produced by heap::alloc; sole owner here.
                         let promise_value = unsafe { (*wrapper).promise.value() };
@@ -1628,6 +1633,7 @@ impl BlobExt for Blob {
                     }
                     jsc::js_promise::Status::Fulfilled => {
                         let written = file_sink.stream_bytes.get().unwrap_or(0);
+                        drop(file_sink);
                         readable_stream.done();
                         return Ok(JSPromise::resolved_promise_value(
                             global_this,
@@ -1635,6 +1641,7 @@ impl BlobExt for Blob {
                         ));
                     }
                     jsc::js_promise::Status::Rejected => {
+                        drop(file_sink);
                         readable_stream.cancel(global_this)?;
                         promise.set_handled(global_this.vm());
                         return Ok(JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
@@ -1644,6 +1651,7 @@ impl BlobExt for Blob {
                     }
                 }
             } else {
+                drop(file_sink);
                 readable_stream.cancel(global_this)?;
                 return Ok(
                     JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
@@ -1654,6 +1662,7 @@ impl BlobExt for Blob {
             }
         }
         let written = file_sink.stream_bytes.get().unwrap_or(0);
+        drop(file_sink);
 
         Ok(JSPromise::resolved_promise_value(
             global_this,
@@ -1809,7 +1818,8 @@ impl BlobExt for Blob {
                         .event_loop() as *mut (),
                 ),
             );
-            // `to_js` takes its own per-wrapper +1; init's ref drops at scope end.
+            // `init`'s ref is released on every exit; `to_js` takes its own
+            // per-wrapper ref, so rc >= 1 after `sink` drops on success.
             sink.writer
                 .with_mut(|w| w.owns_fd = !matches!(pathlike, PathOrFileDescriptor::Fd(_)));
 
@@ -1824,9 +1834,7 @@ impl BlobExt for Blob {
                 return Err(global_this.throw_value(err.to_js(global_this)));
             }
 
-            // SAFETY: `&mut` scoped to the call.
-            let js = unsafe { (*sink.as_ptr()).to_js(global_this) };
-            return Ok(js);
+            return Ok(sink.to_js(global_this));
         }
 
         #[cfg(not(windows))]
@@ -1842,7 +1850,9 @@ impl BlobExt for Blob {
                         .cast::<()>(),
                 ),
             );
-            // `to_js` takes its own per-wrapper +1; init's ref drops at scope end.
+            // `init`'s ref is released on every exit; `to_js` takes its own
+            // per-wrapper ref, so rc >= 1 after `sink` drops on success.
+
             let input_path: webcore::PathOrFileDescriptor = match &store.data.as_file().pathlike {
                 PathOrFileDescriptor::Fd(fd) => webcore::PathOrFileDescriptor::Fd(*fd),
                 PathOrFileDescriptor::Path(p) => webcore::PathOrFileDescriptor::Path(
@@ -1871,9 +1881,7 @@ impl BlobExt for Blob {
                 return Err(global_this.throw_value(err.to_js(global_this)));
             }
 
-            // SAFETY: `&mut` scoped to the call.
-            let js = unsafe { (*sink.as_ptr()).to_js(global_this) };
-            Ok(js)
+            Ok(sink.to_js(global_this))
         }
     }
     fn get_slice_from(
@@ -4452,31 +4460,23 @@ pub(crate) fn write_file_with_source_destination(
     let source_type = source_store.data.tag();
 
     if destination_type == store::DataTag::File && source_type == store::DataTag::Bytes {
-        let write_file_promise = bun_core::heap::into_raw(Box::new(WriteFilePromise {
-            promise: jsc::JSPromiseStrong::default(),
-            global_this: ctx,
-        }));
-
         // The borrowed views below are +0 on the store ref;
         // `WriteFile::create` takes its own ref.
         #[cfg(windows)]
         {
-            let promise = JSPromise::create(ctx);
-            let promise_value = promise.as_value(ctx);
+            let promise = WriteFilePromise::new(ctx);
+            let promise_value = promise.value();
             promise_value.ensure_still_alive();
-            // SAFETY: write_file_promise was just produced by heap::alloc above; sole owner.
-            unsafe { (*write_file_promise).promise.set(ctx, promise_value) };
             match write_file_mod::WriteFileWindows::create(
-                ctx.bun_vm().event_loop(),
+                ctx.bun_vm(),
                 destination_blob.borrowed_view(),
                 source_blob.borrowed_view(),
-                write_file_promise,
-                WriteFilePromise::run,
+                promise,
                 options.mkdirp_if_not_exists.unwrap_or(true),
             ) {
                 Err(write_file_mod::WriteFileWindowsError::WriteFileWindowsDeinitialized) => {}
                 Err(write_file_mod::WriteFileWindowsError::Js(err)) => return Err(err),
-                Ok(_) => {}
+                Ok(()) => {}
             }
             return Ok(promise_value);
         }
@@ -4486,18 +4486,14 @@ pub(crate) fn write_file_with_source_destination(
             let file_copier = write_file_mod::WriteFile::create(
                 destination_blob.borrowed_view(),
                 source_blob.borrowed_view(),
-                write_file_promise,
-                WriteFilePromise::run,
                 options.mkdirp_if_not_exists.unwrap_or(true),
             )
             .expect("unreachable");
             // Defer promise creation until we're just about to schedule the task.
-            // SAFETY: write_file_promise was just produced by heap::alloc above; sole owner.
-            unsafe { (*write_file_promise).promise = jsc::JSPromiseStrong::init(ctx) };
-            // SAFETY: same `write_file_promise` as above; still solely owned here.
-            let promise_value = unsafe { (*write_file_promise).promise.value() };
+            let promise = WriteFilePromise::new(ctx);
+            let promise_value = promise.value();
             promise_value.ensure_still_alive();
-            write_file_mod::WriteFile::schedule(file_copier, ctx);
+            write_file_mod::WriteFile::schedule(file_copier, promise, ctx);
             return Ok(promise_value);
         }
     }
@@ -5058,28 +5054,25 @@ pub(crate) fn write_file_internal(
                             _ => return Ok(ControlFlow::Continue(unsafe { (*body_value).use_() })),
                         }
                     }
-                    let task =
-                        bun_core::heap::into_raw(Box::new(WriteFileWaitFromLockedValueTask {
-                            global_this: bun_ptr::BackRef::new(global_this),
-                            // Move `destination_blob` by value into the task.
-                            file_blob: core::mem::replace(
-                                &mut destination_blob,
-                                Blob::init_empty(global_this),
-                            ),
-                            promise: jsc::JSPromiseStrong::init(global_this),
-                            mkdirp_if_not_exists: options.mkdirp_if_not_exists.unwrap_or(true),
-                        }));
+                    let task = Box::new(WriteFileWaitFromLockedValueTask {
+                        global_this: bun_ptr::BackRef::new(global_this),
+                        // Move `destination_blob` by value into the task.
+                        file_blob: core::mem::replace(
+                            &mut destination_blob,
+                            Blob::init_empty(global_this),
+                        ),
+                        promise: jsc::JSPromiseStrong::init(global_this),
+                        mkdirp_if_not_exists: options.mkdirp_if_not_exists.unwrap_or(true),
+                    });
+                    let promise = task.promise.value();
                     // SAFETY: re-borrow after the early-return paths.
                     let BodyValue::Locked(locked) = (unsafe { &mut *body_value }) else {
                         unreachable!()
                     };
                     let producer_hook = locked.on_start_buffering.take().zip(locked.task);
-                    locked.task = Some(NonNull::new(task).unwrap().cast::<c_void>());
-                    locked.on_receive_value = Some(WriteFileWaitFromLockedValueTask::then_wrap);
-                    // SAFETY: `task` was just heap-allocated; consumed in `then_wrap`.
-                    let promise = unsafe { (*task).promise.value() };
+                    locked.on_receive_value = Some(webcore::body::ReceiveValue::WriteFile(task));
                     // Signalled last (see `PendingValue::on_start_buffering`):
-                    // `then_wrap` may run and `*body_value` be replaced inside.
+                    // the task may run and `*body_value` be replaced inside.
                     if let Some((on_start_buffering, producer_task)) = producer_hook {
                         on_start_buffering(producer_task);
                     }
@@ -5773,7 +5766,15 @@ impl Drop for S3BlobDownloadTask {
 struct FileStreamWrapper {
     pub(crate) promise: jsc::JSPromiseStrong,
     pub(crate) readable_stream_ref: webcore::readable_stream::ReadableStreamStrong,
-    pub sink: RefPtr<webcore::FileSink>,
+    /// Kept alive by the pump ref `pipe_readable_stream_to_blob` parked in the
+    /// sink (`hold_stream_promise_ref`); released on drop.
+    pub sink: bun_ptr::BackRef<webcore::FileSink, bun_ptr::Root>,
+}
+
+impl Drop for FileStreamWrapper {
+    fn drop(&mut self) {
+        webcore::FileSink::release_stream_promise_ref(self.sink.this_ptr());
+    }
 }
 
 pub(crate) fn on_file_stream_resolve_request_stream(
@@ -5800,7 +5801,7 @@ pub(crate) fn on_file_stream_reject_request_stream(
     callframe: &CallFrame,
 ) -> JsResult<JSValue> {
     let args = callframe.arguments();
-    // Take ownership via Box so Drop runs `sink.deref()`
+    // Take ownership via Box so Drop releases the sink's pump ref
     // and frees the wrapper.
     // SAFETY: the trailing argument is the `FileStreamWrapper*` boxed and passed
     // through `then()` from the resolve path; we are the sole consumer here.
@@ -6828,46 +6829,49 @@ pub trait FileOpener: Sized {
     }
 }
 
-#[cfg(not(windows))]
-pub(crate) use io_parking::IoParking;
-
 // TODO: move to bun_sys?
 pub trait FileCloser: Sized {
-    const IO_TAG: bun_io::Tag;
-
     fn opened_fd(&self) -> Fd;
     fn set_opened_fd(&mut self, fd: Fd);
     fn close_after_io(&self) -> bool;
+    fn set_close_after_io(&mut self, v: bool);
     fn state(&self) -> &core::sync::atomic::AtomicU8;
     fn io_request(&mut self) -> Option<&mut bun_io::Request>;
-    fn io_poll(&mut self) -> &mut bun_io::Poll;
     fn task(&mut self) -> &mut bun_jsc::WorkPoolTask;
     #[cfg(windows)]
     fn loop_(&self) -> *mut bun_libuv_sys::uv_loop_t;
 
-    /// Intrusive backref: Rust `offset_of!` cannot name
-    /// fields on a trait `Self`, so each concrete impl supplies its own
-    /// container_of recovery (no default body).
-    fn schedule_close(request: &mut bun_io::Request) -> bun_io::Action<'_>;
+    /// The [`bun_io::RequestCallback`] `do_close` installs: the impl
+    /// recovers `Self` from its intrusive request (`offset_of!` cannot name
+    /// fields on a trait `Self`) and answers [`close_action`](Self::close_action).
+    ///
+    /// # Safety
+    /// [`bun_io::RequestCallback`]'s contract.
+    unsafe fn schedule_close(request: &mut bun_io::Request) -> bun_io::Action<'_>;
 
-    fn on_io_request_closed(this: &mut Self) {
-        this.io_poll()
-            .flags
-            .remove(bun_io::Flags::WasEverRegistered);
-        *this.task() = bun_jsc::WorkPoolTask {
-            node: Default::default(),
-            callback: Self::on_close_io_request,
-        };
-        bun_jsc::WorkPool::schedule(this.task());
+    /// The io-thread action that unregisters this job's poll; its completion
+    /// comes back as [`on_io_request_closed`](Self::on_io_request_closed).
+    fn close_action(&mut self) -> bun_io::Action<'_>
+    where
+        Self: bun_io::PollOwner,
+    {
+        let fd = self.opened_fd();
+        bun_io::Action::Close(bun_io::FileAction::new(self, fd))
     }
 
-    /// Intrusive backref: concrete impl supplies its own
-    /// container_of recovery (no default body).
-    ///
-    /// Stored in `WorkPoolTask::callback` (raw fn-pointer slot — safe `fn`
-    /// coerces). Never called directly; the impl guards its single
-    /// `container_of` deref locally, so a fn-level qualifier is redundant.
-    fn on_close_io_request(task: *mut bun_jsc::WorkPoolTask);
+    /// io thread: the poll is unregistered; hand the job back to the pool
+    /// (its [`WorkTaskHandler`](bun_threading::WorkTaskHandler) resumes it).
+    fn on_io_request_closed(this: &mut Self)
+    where
+        Self: bun_io::PollOwner + bun_threading::WorkTaskHandler,
+    {
+        bun_core::IntrusiveField::<bun_io::Poll>::field_mut(this)
+            .flags
+            .remove(bun_io::Flags::WasEverRegistered);
+        this.set_close_after_io(false);
+        *this.task() = bun_threading::work_task_for::<Self>();
+        bun_jsc::WorkPool::schedule(this.task());
+    }
 
     fn do_close(&mut self, is_allowed_to_close_fd: bool) -> bool {
         // Check `close_after_io()` before `io_request()` so the immutable
@@ -6910,15 +6914,13 @@ pub trait FileCloser: Sized {
 }
 
 /// Implements [`FileCloser`] for a task struct with the standard field set
-/// (`opened_fd`, `close_after_io`, `state`, `io_request`, `io_poll`, `task`),
-/// an inherent `update()`, and a [`bun_io::Tag`] variant named after the type.
-/// The type must also carry `bun_threading::intrusive_work_task!` and
-/// `bun_io::intrusive_io_request!`, which provide the parent-pointer recovery
-/// used by the two trampolines.
+/// (`opened_fd`, `close_after_io`, `state`, `io: ParkedRequest`, `io_poll`,
+/// `task`). The type must also carry `bun_io::intrusive_io_request!` (the
+/// parent-pointer recovery `schedule_close` uses), `bun_io::poll_owner!` and
+/// a `bun_threading::WorkTaskHandler` impl that resumes it.
 macro_rules! impl_file_closer {
     ($T:ident) => {
         impl crate::webcore::blob::FileCloser for $T {
-            const IO_TAG: ::bun_io::Tag = ::bun_io::Tag::$T;
             fn opened_fd(&self) -> ::bun_sys::Fd {
                 self.opened_fd
             }
@@ -6928,14 +6930,14 @@ macro_rules! impl_file_closer {
             fn close_after_io(&self) -> bool {
                 self.close_after_io
             }
+            fn set_close_after_io(&mut self, v: bool) {
+                self.close_after_io = v;
+            }
             fn state(&self) -> &::core::sync::atomic::AtomicU8 {
                 &self.state
             }
             fn io_request(&mut self) -> Option<&mut ::bun_io::Request> {
-                Some(&mut self.io_request)
-            }
-            fn io_poll(&mut self) -> &mut ::bun_io::Poll {
-                &mut self.io_poll
+                Some(self.io.request())
             }
             fn task(&mut self) -> &mut ::bun_jsc::WorkPoolTask {
                 &mut self.task
@@ -6945,43 +6947,13 @@ macro_rules! impl_file_closer {
                 unreachable!()
             }
 
-            fn schedule_close(request: &mut ::bun_io::Request) -> ::bun_io::Action<'_> {
+            unsafe fn schedule_close(request: &mut ::bun_io::Request) -> ::bun_io::Action<'_> {
                 use ::bun_io::IntrusiveIoRequest as _;
-                // SAFETY: `request` is `&mut self.io_request` (intrusive); recover parent.
-                let this = unsafe { $T::from_io_request(::core::ptr::from_mut(request)) };
-                fn on_done(ctx: *mut ()) {
-                    // SAFETY: ctx is `self as *mut Self` set below.
-                    let this = unsafe { ::bun_ptr::callback_ctx::<$T>(ctx.cast()) };
-                    <$T as crate::webcore::blob::FileCloser>::on_io_request_closed(this);
-                }
-                // SAFETY: `request` is `&mut self.io_request` (intrusive), so `this` is the
-                // live parent; the `fd` copy and the `io_poll` field borrow are the only
-                // borrows formed.
-                let (fd, poll) = unsafe { ((*this).opened_fd, &mut (*this).io_poll) };
-                ::bun_io::Action::Close(::bun_io::CloseAction {
-                    fd,
-                    poll,
-                    ctx: this.cast::<()>(),
-                    tag: <Self as crate::webcore::blob::FileCloser>::IO_TAG,
-                    on_done,
-                })
-            }
-
-            // `FileCloser` fixes `on_close_io_request` to take `*mut WorkPoolTask`;
-            // the trait method cannot be marked `unsafe fn`, so the lint is
-            // unsatisfiable here. The pointer is the intrusive `&mut self.task` set
-            // in `on_io_request_closed` and is guaranteed live.
-            #[allow(clippy::not_unsafe_ptr_arg_deref)]
-            fn on_close_io_request(task: *mut ::bun_jsc::WorkPoolTask) {
-                use ::bun_threading::IntrusiveWorkTask as _;
-                // SAFETY: only reached via `WorkPoolTask::callback` with `task` =
-                // `&mut self.task` (intrusive) registered in `on_io_request_closed`;
-                // recover parent.
-                let this = unsafe { $T::from_task_ptr(task) };
-                // SAFETY: `this` is the live parent (see above); scoped access.
-                unsafe { (*this).close_after_io = false };
-                // SAFETY: as above; exclusive borrow scoped to the call.
-                $T::update(unsafe { &mut *this });
+                // SAFETY: fn contract — `request` is `self.io`'s request
+                // (intrusive), so this recovers the live parent, which nothing
+                // else touches while the io thread has its request.
+                let this = unsafe { &mut *$T::from_io_request(::core::ptr::from_mut(request)) };
+                <$T as crate::webcore::blob::FileCloser>::close_action(this)
             }
         }
     };

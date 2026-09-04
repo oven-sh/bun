@@ -1296,14 +1296,12 @@ pub trait BaseWindowsPipeWriter: Sized {
         self.start_with_current_pipe()
     }
 
-    /// SAFETY: `pipe` must be a `Box<uv::Pipe>`-allocated pointer.
-    unsafe fn set_pipe(&mut self, pipe: *mut uv::Pipe) {
+    fn set_pipe(&mut self, pipe: Box<uv::Pipe>) {
         // The assignment below would Drop the prior Box WITHOUT uv_close, leaving
         // libuv with a dangling handle → UAF on next loop tick. All other
         // start_* paths assert empty; enforce the same invariant here.
         debug_assert!(self.source().is_none());
-        // SAFETY: caller contract — Box-allocated, ownership transfers.
-        *self.source_mut() = Some(Source::Pipe(unsafe { bun_core::heap::take(pipe) }));
+        *self.source_mut() = Some(Source::Pipe(pipe));
         let p = self.parent_ptr();
         self.set_parent(p);
     }
@@ -2566,8 +2564,8 @@ pub type StreamingWriter<P> = WindowsStreamingWriter<P>;
 // differing only in:
 //   (a) the inherent-method names the vtable forwards to,
 //   (b) how the callback is dispatched off `*mut Self` — as `&mut`, `&`, or
-//       a raw-ptr method call (re-entrancy under Stacked/Tree Borrows — see
-//       `borrow = shared` / `borrow = ptr` callers),
+//       a `ThisPtr` (re-entrancy under Stacked/Tree Borrows — see
+//       `borrow = shared` / `borrow = this` callers),
 //   (c) the `event_loop` / `loop_` / refcount accessor expressions.
 // These macros stamp that triple once per parent.
 //
@@ -2577,21 +2575,25 @@ pub type StreamingWriter<P> = WindowsStreamingWriter<P>;
 // `borrow = shared` → bodies form `&*this` (callback may re-enter JS or
 //                     `enqueue(&self)` and observe a fresh `&Self`; aliased
 //                     `&Self` is sound where `&mut Self` is not).
-// `borrow = ptr`    → bodies call `Self::method(this, ..)` — no reference is
-//                     materialized at the boundary; for parents that must
-//                     keep full write/dealloc provenance through a re-entrant,
-//                     freeing callback (the callback may run `Box::from_raw`
-//                     on `this`, so a `&self`-derived ptr would carry only
-//                     SharedReadOnly provenance and dealloc through it is UB).
+// `borrow = this`   → bodies call `Self::method(ThisPtr::new(this), ..)` — no
+//                     reference is materialized at the boundary; for
+//                     intrusively refcounted parents that may drop their last
+//                     ref mid-callback (freeing the allocation under a live
+//                     `&self` argument is UB, and a `&self`-derived pointer
+//                     could not free it), whose handlers are safe fns taking
+//                     `bun_ptr::ThisPtr<Self>` (root provenance).
 //
 // Accessor args use closure-literal syntax (`|this| expr`) purely as a binder
-// for the macro — no actual closure is created; `expr` is pasted into an
-// `unsafe` block with `this: *mut Self` in scope.
+// for the macro — no actual closure is created. For `mut`/`shared`, `expr`
+// is pasted into an `unsafe` block with `this: *mut Self` in scope; for
+// `this`, `expr` is pasted as-is with `this: ThisPtr<Self>` in scope.
 
 /// Re-exports for `$crate::`-qualified use inside the macro bodies so callers
 /// need no extra `use` items.
 #[doc(hidden)]
 pub mod __parent_macro {
+    pub use ::bun_ptr::AnyRefCounted;
+    pub use ::bun_ptr::ThisPtr;
     pub use ::bun_sys::Error as SysError;
     #[cfg(windows)]
     pub use ::bun_sys::windows::libuv::Loop as UvLoop;
@@ -2605,7 +2607,22 @@ macro_rules! impl_streaming_writer_parent {
     // Internal: dispatch a callback off the raw-ptr backref per `borrow` mode.
     (@call mut    $p:expr; $m:ident($($a:tt)*)) => { (&mut *$p).$m($($a)*) };
     (@call shared $p:expr; $m:ident($($a:tt)*)) => { (&*$p).$m($($a)*) };
-    (@call ptr    $p:expr; $m:ident($($a:tt)*)) => { <Self>::$m($p, $($a)*) };
+    (@call this   $p:expr; $m:ident($($a:tt)*)) => {
+        <Self>::$m($crate::pipe_writer::__parent_macro::ThisPtr::<Self>::new($p), $($a)*)
+    };
+
+    // Internal: evaluate an accessor body with `$id` bound per `borrow` mode.
+    (@acc this $id:ident = $p:ident; $e:expr) => {{
+        // SAFETY: `$p` is the BACKREF set via `set_parent` — the live parent's
+        // root pointer for as long as the writer it embeds is being called.
+        let $id = unsafe { $crate::pipe_writer::__parent_macro::ThisPtr::<Self>::new($p) };
+        $e
+    }};
+    (@acc $borrow:tt $id:ident = $p:ident; $e:expr) => {{
+        let $id = $p;
+        #[allow(unused_unsafe)]
+        unsafe { $e }
+    }};
 
     // Internal: expand the three impls once generics are normalized.
     (@emit
@@ -2629,8 +2646,8 @@ macro_rules! impl_streaming_writer_parent {
             unsafe fn on_write(this: *mut Self, amount: usize, status: $crate::WriteStatus) {
                 // SAFETY: `this` is the BACKREF set via `set_parent`; the
                 // StreamingWriter never materializes `&mut Parent`. The handler
-                // is dispatched per the `borrow` mode (`mut`/`shared`/`ptr` —
-                // see the module comment); `ptr` keeps full write/dealloc
+                // is dispatched per the `borrow` mode (`mut`/`shared`/`this` —
+                // see the module comment); `this` keeps full write/dealloc
                 // provenance through re-entrant, freeing callbacks.
                 unsafe { $crate::impl_streaming_writer_parent!(@call $borrow this; $on_write(amount, status)) }
             }
@@ -2652,16 +2669,12 @@ macro_rules! impl_streaming_writer_parent {
             #[inline]
             unsafe fn event_loop(this: *mut Self) -> $crate::EventLoopHandle {
                 // SAFETY: see on_write. Shared-only read.
-                let $el_this = this;
-                #[allow(unused_unsafe)]
-                unsafe { $el }
+                $crate::impl_streaming_writer_parent!(@acc $borrow $el_this = this; $el)
             }
             #[inline]
             unsafe fn loop_(this: *mut Self) -> *mut $crate::pipe_writer::__parent_macro::UwsLoop {
                 // SAFETY: see on_write. Shared-only read.
-                let $uws_this = this;
-                #[allow(unused_unsafe)]
-                unsafe { $uws }
+                $crate::impl_streaming_writer_parent!(@acc $borrow $uws_this = this; $uws)
             }
         }
 
@@ -2670,23 +2683,17 @@ macro_rules! impl_streaming_writer_parent {
             #[inline]
             unsafe fn loop_(this: *mut Self) -> *mut $crate::pipe_writer::__parent_macro::UvLoop {
                 // SAFETY: BACKREF set via `set_parent`; shared-only read.
-                let $uv_this = this;
-                #[allow(unused_unsafe)]
-                unsafe { $uv }
+                $crate::impl_streaming_writer_parent!(@acc $borrow $uv_this = this; $uv)
             }
             #[inline]
             unsafe fn ref_(this: *mut Self) {
                 // SAFETY: see loop_. Intrusive refcount bump.
-                let $ref_this = this;
-                #[allow(unused_unsafe)]
-                unsafe { $ref_ };
+                $crate::impl_streaming_writer_parent!(@acc $borrow $ref_this = this; $ref_)
             }
             #[inline]
             unsafe fn deref(this: *mut Self) {
                 // SAFETY: see loop_. May free `this`.
-                let $deref_this = this;
-                #[allow(unused_unsafe)]
-                unsafe { $deref };
+                $crate::impl_streaming_writer_parent!(@acc $borrow $deref_this = this; $deref)
             }
         }
 
@@ -2724,6 +2731,43 @@ macro_rules! impl_streaming_writer_parent {
     ) => {
         $crate::impl_streaming_writer_parent! {
             @emit [<$($gp $(: $b0)?),+>] $Ty; $($rest)*
+        }
+    };
+
+    // Public entry — `borrow = this`, intrusively refcounted parent: the
+    // writer's per-write `ref_`/`deref` hooks are the parent's own refcount.
+    (
+        $Ty:ty;
+        poll_tag   = $poll_tag:expr,
+        borrow     = this,
+        on_write   = $on_write:ident,
+        on_error   = $on_error:ident,
+        on_ready   = $on_ready:ident,
+        on_close   = $on_close:ident,
+        event_loop = |$el_this:ident| $el:expr,
+        uws_loop   = |$uws_this:ident| $uws:expr,
+        uv_loop    = |$uv_this:ident| $uv:expr,
+    ) => {
+        $crate::impl_streaming_writer_parent! {
+            @emit [] $Ty;
+            poll_tag   = $poll_tag,
+            borrow     = this,
+            on_write   = $on_write,
+            on_error   = $on_error,
+            on_ready   = $on_ready,
+            on_close   = $on_close,
+            event_loop = |$el_this| $el,
+            uws_loop   = |$uws_this| $uws,
+            uv_loop    = |$uv_this| $uv,
+            // SAFETY: `this_` is the live parent's root pointer.
+            ref_       = |this_| unsafe {
+                <$Ty as $crate::pipe_writer::__parent_macro::AnyRefCounted>::rc_ref(this_.as_ptr())
+            },
+            // SAFETY: releases the ref the writer took through `ref_` above for
+            // the write that just completed; `this_` is the parent's root pointer.
+            deref      = |this_| unsafe {
+                <$Ty as $crate::pipe_writer::__parent_macro::AnyRefCounted>::rc_deref(this_.as_ptr())
+            },
         }
     };
 

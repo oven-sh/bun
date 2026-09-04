@@ -224,7 +224,7 @@ pub struct PendingValue {
     pub task: Option<NonNull<c_void>>,
 
     /// runs after the data is available.
-    pub(crate) on_receive_value: Option<fn(ctx: NonNull<c_void>, value: &mut Value)>,
+    pub(crate) on_receive_value: Option<ReceiveValue>,
 
     /// A consumer that wants the whole body (`.text()`/`.json()`/…,
     /// `Bun.write`) has started waiting on it without realising a stream.
@@ -244,6 +244,24 @@ pub struct PendingValue {
 
     pub(crate) deinit: bool,
     pub(crate) action: Action,
+}
+
+/// The native consumer waiting on a [`PendingValue`] (`on_receive_value`).
+pub(crate) enum ReceiveValue {
+    /// Called with [`PendingValue::task`], which the registrant retargeted to
+    /// its own context.
+    Ctx(fn(ctx: NonNull<c_void>, value: &mut Value)),
+    /// `Bun.write(file, body)` waiting for the body.
+    WriteFile(Box<crate::webcore::blob::write_file::WriteFileWaitFromLockedValueTask>),
+}
+
+impl ReceiveValue {
+    fn call(self, task: Option<NonNull<c_void>>, value: &mut Value) {
+        match self {
+            ReceiveValue::Ctx(callback) => callback(task.unwrap(), value),
+            ReceiveValue::WriteFile(waiter) => waiter.receive(value),
+        }
+    }
 }
 
 impl PendingValue {
@@ -283,8 +301,8 @@ impl PendingValue {
         self.on_start_buffering = None;
         self.on_start_streaming = None;
         self.on_readable_stream_available = None;
-        if self.on_receive_value.is_none() {
-            // A registered `on_receive_value` means `task` is the consumer's
+        if !matches!(self.on_receive_value, Some(ReceiveValue::Ctx(_))) {
+            // A registered `ReceiveValue::Ctx` means `task` is the consumer's
             // ctx (overwriting the producer), read by `resolve()`.
             self.task = None;
         }
@@ -851,9 +869,9 @@ impl Value {
             unreachable!("locked_to_native_stream on non-Locked Value");
         };
         // A registered `on_receive_value` means a native consumer (Bun.write,
-        // the server's render-wait) owns this body and has retargeted `task`
-        // to its own context; materializing a stream here would dispatch the
-        // producer's remaining callbacks with that foreign context.
+        // the server's render-wait) owns this body (and the render-wait has
+        // retargeted `task` to its own context); materializing a stream here
+        // would hand the body to a second consumer.
         if locked.promise.is_some() || !locked.action.is_none() || locked.on_receive_value.is_some()
         {
             return ReadableStream::used(global_this);
@@ -1073,7 +1091,7 @@ impl Value {
             }
 
             if let Some(callback) = locked.on_receive_value.take() {
-                callback(locked.task.unwrap(), new);
+                callback.call(locked.task, new);
                 return Ok(());
             }
 
@@ -1346,9 +1364,9 @@ impl Value {
             }
 
             if let Some(on_receive_value) = locked.on_receive_value.take() {
-                // `task` is the live request-ctx pointer registered alongside
-                // this callback.
-                on_receive_value(locked.task.unwrap(), self);
+                // For `ReceiveValue::Ctx`, `task` is the live request-ctx
+                // pointer registered alongside this callback.
+                on_receive_value.call(locked.task, self);
             }
 
             if was_disturbed {

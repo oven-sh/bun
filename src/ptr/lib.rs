@@ -162,7 +162,48 @@ impl<T: ?Sized> BackRef<T, Mut> {
     }
 }
 
-impl<T, P> BackRef<T, P> {
+/// The root pointer of a value built by [`RefPtr::new_cyclic`], stored inside
+/// that value. It has no accessors of its own: the only way to use it is
+/// [`SelfRoot::this_ptr`], which takes the enclosing `&T` — so it cannot be
+/// followed before the value exists or after it is gone.
+#[repr(transparent)]
+pub struct SelfRoot<T>(pub(crate) core::ptr::NonNull<T>);
+
+impl<T> SelfRoot<T> {
+    /// The enclosing value as a [`ThisPtr`]. `owner` must be the value this
+    /// token is stored in (checked).
+    #[inline]
+    pub fn this_ptr(&self, owner: &T) -> ThisPtr<T> {
+        assert!(
+            core::ptr::eq(self.0.as_ptr().cast_const(), owner),
+            "SelfRoot used from a value it does not belong to"
+        );
+        // SAFETY: `owner` is a live `&T` at `self.0` (asserted), so the value is
+        // constructed; `self.0` keeps the allocation-root provenance a last
+        // release needs.
+        unsafe { ThisPtr::new(self.0.as_ptr()) }
+    }
+
+    /// The enclosing value as a root back-reference.
+    #[inline]
+    pub fn backref(&self, owner: &T) -> BackRef<T, Root> {
+        self.this_ptr(owner).into()
+    }
+}
+
+/// Provenance markers a placeholder [`BackRef::dangling`] may carry. Not
+/// [`Root`]: a `Root` back-reference can hand out a [`ThisPtr`], so it is
+/// only ever minted from a real one (see [`RefPtr::new_cyclic`]).
+pub trait DanglingOk: sealed::Sealed {}
+impl DanglingOk for Shared {}
+impl DanglingOk for Mut {}
+mod sealed {
+    pub trait Sealed {}
+    impl Sealed for super::Shared {}
+    impl Sealed for super::Mut {}
+}
+
+impl<T, P: DanglingOk> BackRef<T, P> {
     #[inline]
     pub const fn dangling() -> Self {
         BackRef(core::ptr::NonNull::dangling(), core::marker::PhantomData)
@@ -232,6 +273,13 @@ impl<T> From<ThisPtr<T>> for BackRef<T, Root> {
     #[inline]
     fn from(p: ThisPtr<T>) -> Self {
         BackRef(p.0, core::marker::PhantomData)
+    }
+}
+
+impl<T> From<ThisPtr<T>> for core::ptr::NonNull<T> {
+    #[inline]
+    fn from(p: ThisPtr<T>) -> Self {
+        p.0
     }
 }
 

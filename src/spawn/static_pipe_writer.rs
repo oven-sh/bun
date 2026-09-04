@@ -129,14 +129,11 @@ impl<P: StaticPipeWriterProcess> StaticPipeWriter<P> {
             // the caller invariant is that the `Buffer` arm is set. Enforce
             // that here: any other arm is a logic bug, not a silent no-op.
             // Ownership of the boxed `uv::Pipe` transfers into the writer's
-            // `Source::Pipe`, so we move it out (replacing with `Unavailable`)
-            // and `heap::alloc` it (set_pipe re-wraps via `heap::take`).
+            // `Source::Pipe`, so we move it out (replacing with `Unavailable`).
             use crate::process::WindowsStdioResult;
             match core::mem::replace(&mut boxed.stdio_result, WindowsStdioResult::Unavailable) {
                 WindowsStdioResult::Buffer(pipe) => {
-                    // SAFETY: `pipe` is a Box-allocated `uv::Pipe`; `set_pipe`
-                    // takes ownership via `heap::take`.
-                    unsafe { boxed.writer.set_pipe(bun_core::heap::into_raw(pipe)) };
+                    boxed.writer.set_pipe(pipe);
                 }
                 WindowsStdioResult::BufferFd(_)
                 | WindowsStdioResult::UnownedFd(_)

@@ -358,7 +358,7 @@ encodes the three modes:
 
 - `borrow = mut` — body forms `&mut *this`; safe when nothing re-enters
 - `borrow = shared` — body forms `&*this`; safe when re-entrant code only needs `&Self`
-- `borrow = ptr` — body calls `Self::method(this, ..)` with `this: *mut Self`; required when the callback may free `self`
+- `borrow = this` — body calls `Self::method(ThisPtr::new(this), ..)` with a root-provenance `bun_ptr::ThisPtr<Self>`; required when the callback may free `self` (the handler is a safe fn that holds its own ref for the call)
 
 ### `Strong` / `Weak` JS handles
 

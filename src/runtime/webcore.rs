@@ -71,9 +71,15 @@ pub struct AutoFlusher {
     pub(crate) registered: core::cell::Cell<bool>,
 }
 
-/// Implemented below for `FileSink` and `HTTPServerWritable<_, _>`.
+/// Implemented below for `FileSink` and `HTTPServerWritable<_, _>`, and by
+/// `ValkeyClient`.
 pub trait HasAutoFlusher: Sized {
     fn auto_flusher(&self) -> &AutoFlusher;
+    /// The pointer registered with the deferred-task queue and handed back to
+    /// [`on_auto_flush`](Self::on_auto_flush): the implementor's root
+    /// (allocation-provenance) pointer if `on_auto_flush` may release the
+    /// allocation, else `self`'s address (what the queue always used) will do.
+    fn auto_flush_ctx(&self) -> *mut Self;
     /// `Type.onAutoFlush` — `DeferredRepeatingTask` ABI after `@ptrCast`
     /// erasure: `fn(*anyopaque) bool`.
     ///
@@ -86,15 +92,10 @@ pub trait HasAutoFlusher: Sized {
 
 impl AutoFlusher {
     #[inline]
-    fn erased_ctx<T>(this: &T) -> Option<NonNull<core::ffi::c_void>> {
-        // Ctx is opaque ptr identity only; `cast_mut()` does not assert write
-        // provenance (no `&mut T` formed) — the trampoline recovers `*mut T`
-        // and the impl decides how to borrow.
-        NonNull::new(
-            core::ptr::from_ref::<T>(this)
-                .cast_mut()
-                .cast::<core::ffi::c_void>(),
-        )
+    fn erased_ctx<T: HasAutoFlusher>(this: &T) -> Option<NonNull<core::ffi::c_void>> {
+        // The trampoline recovers `*mut T` from this and the impl decides how
+        // to borrow (see `HasAutoFlusher::auto_flush_ctx`).
+        NonNull::new(this.auto_flush_ctx().cast::<core::ffi::c_void>())
     }
 
     #[inline]
@@ -165,8 +166,8 @@ impl AutoFlusher {
 // ─── HasAutoFlusher impls ────────────────────────────────────────────────────
 // `HTTPServerWritable` exposes an inherent `pub fn on_auto_flush(&mut self) ->
 // bool`; the trait impl is just a thunk. `FileSink::on_auto_flush` instead
-// takes the canonical `*mut FileSink` directly (no `&mut self` — see its doc
-// comment / the `borrow = ptr` note on `impl_streaming_writer_parent!`).
+// takes a `ThisPtr<FileSink>` (no `&mut self` — see its doc comment / the
+// `borrow = this` note on `impl_streaming_writer_parent!`).
 
 impl HasAutoFlusher for file_sink::FileSink {
     #[inline]
@@ -174,15 +175,18 @@ impl HasAutoFlusher for file_sink::FileSink {
         // R-2: `auto_flusher` is `JsCell`; `JsCell::get` yields `&T`.
         self.auto_flusher.get()
     }
+    #[inline]
+    fn auto_flush_ctx(&self) -> *mut Self {
+        self.this_ptr().as_ptr()
+    }
     /// # Safety
     /// See [`HasAutoFlusher::on_auto_flush`].
     unsafe fn on_auto_flush(this: *mut Self) -> bool {
-        // SAFETY: `this` was registered as the canonical `*mut FileSink` cast to
-        // `*mut c_void` (`AutoFlusher::erased_ctx`); `DeferredTaskQueue::run` is
-        // single-threaded (drained on the JS thread after microtasks), so no
-        // aliasing across the call. `FileSink::on_auto_flush` takes the raw ptr
-        // directly (no `&mut self`).
-        unsafe { file_sink::FileSink::on_auto_flush(this) }
+        // SAFETY: `this` is the sink's root pointer (`auto_flush_ctx`),
+        // registered while live and unregistered before the sink is dropped;
+        // `DeferredTaskQueue::run` is single-threaded (drained on the JS
+        // thread after microtasks), so no aliasing across the call.
+        file_sink::FileSink::on_auto_flush(unsafe { bun_ptr::ThisPtr::new(this) })
     }
 }
 
@@ -191,10 +195,18 @@ impl<const SSL: bool> HasAutoFlusher for streams::HTTPServerWritable<SSL> {
     fn auto_flusher(&self) -> &AutoFlusher {
         &self.auto_flusher
     }
+    #[inline]
+    fn auto_flush_ctx(&self) -> *mut Self {
+        // Registered from the `&mut self` its RequestContext drives it through;
+        // `on_auto_flush` never frees the sink (its RequestContext does).
+        core::ptr::from_ref(self).cast_mut()
+    }
     /// # Safety
     /// See [`HasAutoFlusher::on_auto_flush`].
     unsafe fn on_auto_flush(this: *mut Self) -> bool {
-        // SAFETY: see FileSink impl above.
+        // SAFETY: `this` is the live sink registered via `auto_flush_ctx` and
+        // unregistered before it is destroyed; `DeferredTaskQueue::run` is
+        // single-threaded, so no other borrow of it is live across the call.
         unsafe { (*this).on_auto_flush() }
     }
 }

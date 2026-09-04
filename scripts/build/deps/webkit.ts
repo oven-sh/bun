@@ -1302,11 +1302,12 @@ function emitWebKitDirect(n: Ninja, cfg: Config, ctx: CustomBuildContext): WebKi
           }),
     );
   }
-  // LowLevelInterpreter.cpp: the inline-asm interpreter. Never LTO'd (the
-  // asm labels must stay in one object), no PCH, waits for LLIntAssembly.h.
+  // LowLevelInterpreter.cpp: the inline-asm interpreter (includes
+  // LLIntAssembly.h). Its own edge, like cmake's LowLevelInterpreterLib: no
+  // PCH, and an implicit dep on the generated assembly.
   jscObjects.push(
     cxx(n, cfg, join(JSC, "llint", "LowLevelInterpreter.cpp"), {
-      flags: [...jscFlags.filter(f => !f.startsWith("-flto")), "-fno-lto"],
+      flags: jscFlags,
       implicitInputs: [llintAssembly],
       orderOnlyInputs: codegenReady,
     }),

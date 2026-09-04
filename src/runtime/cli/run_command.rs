@@ -1247,9 +1247,12 @@ pub struct Run<'a> {
 static ANY_UNHANDLED: AtomicBool = AtomicBool::new(false);
 
 impl Run<'_> {
-    /// `onUnhandledRejectionBeforeClose` — record that *something* rejected so
-    /// `start()` sets a non-zero exit code, then route through the VM's
-    /// default error printer.
+    /// `onUnhandledRejectionBeforeClose` — print the error through the VM's
+    /// default error printer and fail the run. The exit code is set here, at
+    /// report time, so the `exit` event emitted later by `on_exit()` carries 1
+    /// (`process.exitCode` reads 1 inside the listeners) exactly as it does
+    /// after an uncaught exception, which `VirtualMachine::uncaught_exception`
+    /// records the same way. `ANY_UNHANDLED` only selects the version note.
     fn on_unhandled_rejection_before_close(
         this: &mut VirtualMachine,
         _global: &JSGlobalObject,
@@ -1260,6 +1263,7 @@ impl Run<'_> {
             .on_unhandled_rejection_exception_list
             .map(|p| unsafe { &mut *p.as_ptr() });
         this.run_error_handler(value, list);
+        this.exit_handler.exit_code = 1;
         ANY_UNHANDLED.store(true, Ordering::Relaxed);
     }
 
@@ -1570,7 +1574,7 @@ impl Run<'_> {
         vm.on_exit();
 
         if ANY_UNHANDLED.load(Ordering::Relaxed) {
-            print_unhandled_version_note(vm);
+            print_unhandled_version_note();
         }
 
         // These create undefined references to externally-defined C symbols
@@ -1639,8 +1643,7 @@ fn exit_with_unhandled_note(vm: &mut VirtualMachine) -> ! {
     vm.exit_handler.requested = true;
     vm.on_exit();
     if ANY_UNHANDLED.load(Ordering::Relaxed) {
-        bun_sourcemap::SavedSourceMap::MissingSourceMapNoteInfo::print();
-        pretty_errorln!("<r>\n<d>{}<r>", Global::unhandled_error_bun_version_string,);
+        print_unhandled_version_note();
     }
     vm.global_exit();
 }
@@ -1666,16 +1669,18 @@ fn entry_point_load_failed(vm: &mut VirtualMachine, err: &crate::Error) -> ! {
     exit_with_unhandled_note(vm);
 }
 
-/// Cold tail of `Run::start` when `ANY_UNHANDLED` tripped on an otherwise-clean
-/// exit: bump the exit code and print the sourcemap note + version string.
+/// Sourcemap note + version string, printed after `on_exit()` when
+/// `ANY_UNHANDLED` tripped. Deliberately does not touch the exit code: it was
+/// set to 1 when the error was reported (`on_unhandled_rejection_before_close`),
+/// and a `process.exitCode` assignment made by an `exit` listener since then
+/// stands, as in Node.
 #[cold]
 #[inline(never)]
 #[cfg_attr(
     any(target_os = "linux", target_os = "android"),
     unsafe(link_section = ".text.unlikely")
 )]
-fn print_unhandled_version_note(vm: &mut VirtualMachine) {
-    vm.exit_handler.exit_code = 1;
+fn print_unhandled_version_note() {
     bun_sourcemap::SavedSourceMap::MissingSourceMapNoteInfo::print();
     pretty_errorln!("<r>\n<d>{}<r>", Global::unhandled_error_bun_version_string,);
 }

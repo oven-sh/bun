@@ -84,10 +84,77 @@ impl<'a> Interval<'a> {
             _ => true,
         }
     }
+
+    /// Whether a version satisfying both queries lies inside the interval.
+    ///
+    /// A version with a prerelease tag only satisfies a query when some
+    /// comparator of that query has a prerelease tag on the same
+    /// major.minor.patch (`List::satisfies_pre`). So an interval that holds
+    /// nothing but prereleases of one tuple is empty unless both queries
+    /// have such a comparator.
+    fn has_version(&self, a: &Query, b: &Query) -> bool {
+        if !self.is_non_empty() {
+            return false;
+        }
+        let (Some(l), Some(u)) = (self.lower, self.upper) else {
+            return true;
+        };
+
+        // The smallest version without a prerelease tag that the lower bound admits.
+        let release = if l.version.tag.has_pre() {
+            Version {
+                major: l.version.major,
+                minor: l.version.minor,
+                patch: l.version.patch,
+                ..Default::default()
+            }
+        } else if l.inclusive {
+            return true;
+        } else {
+            let Some(patch) = l.version.patch.checked_add(1) else {
+                return true;
+            };
+            Version {
+                major: l.version.major,
+                minor: l.version.minor,
+                patch,
+                ..Default::default()
+            }
+        };
+
+        let admitted = match release.order_without_build(u.version, &[], u.buf) {
+            Ordering::Less => true,
+            Ordering::Equal => u.inclusive,
+            Ordering::Greater => false,
+        };
+        if admitted {
+            return true;
+        }
+
+        allows_pre_of(a, release) && allows_pre_of(b, release)
+    }
+}
+
+fn allows_pre_of(query: &Query, release: Version) -> bool {
+    let mut cur = Some(query);
+    while let Some(q) = cur {
+        for c in [q.range.left, q.range.right] {
+            if c.op != Op::Unset
+                && c.version.tag.has_pre()
+                && c.version.major == release.major
+                && c.version.minor == release.minor
+                && c.version.patch == release.patch
+            {
+                return true;
+            }
+        }
+        cur = q.next.as_deref();
+    }
+    false
 }
 
 impl Group {
-    /// Whether some version satisfies both groups; prerelease-exclusion rules are not modelled, comparators are compared directly.
+    /// Whether some version satisfies both groups.
     pub fn intersects(&self, self_buf: &[u8], other: &Group, other_buf: &[u8]) -> bool {
         let mut a = Some(&self.head);
         while let Some(list_a) = a {
@@ -102,7 +169,7 @@ impl Group {
                 b = list_b.next.as_deref();
                 let mut i = base;
                 i.and_query(&list_b.head, other_buf);
-                if i.is_non_empty() {
+                if i.has_version(&list_a.head, &list_b.head) {
                     return true;
                 }
             }

@@ -2,8 +2,7 @@ import { expect, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 
 // https://github.com/oven-sh/bun/issues/41198
-// A cyclic array converted to a string renders the nested reference as the
-// empty string, like V8 and SpiderMonkey, instead of overflowing the stack.
+// A cyclic array converts to a string with "" for the cycle, like V8, and does not throw RangeError.
 
 async function run(source: string, env: Record<string, string> = {}) {
   await using proc = Bun.spawn({
@@ -65,7 +64,7 @@ test.concurrent("optimized code joins a cyclic array the same way as the interpr
   // baseline tier before ArrayJoin runs on the cyclic array.
   const { stdout, stderr, exitCode } = await run(
     `
-    const { numberOfDFGCompiles } = require("bun:jsc");
+    import { numberOfDFGCompiles } from "bun:jsc";
     const a = [];
     a.push(1, a, 2);
     const join = x => x.join("-");

@@ -1220,19 +1220,9 @@ extern "C"
     if (ssl)
     {
       uWS::HttpResponse<true> *uwsRes = (uWS::HttpResponse<true> *)res;
-      if (*length < 16 * 1024 && *length > 0) {
-        if (!uwsRes->uWS::AsyncSocket<true>::isCorked()) {
-          uwsRes->uWS::AsyncSocket<true>::cork();
-        }
-      }
       return uwsRes->write(stringViewFromC(data, *length), length);
     }
     uWS::HttpResponse<false> *uwsRes = (uWS::HttpResponse<false> *)res;
-    if (*length < 16 * 1024 && *length > 0) {
-        if (!uwsRes->uWS::AsyncSocket<false>::isCorked()) {
-          uwsRes->uWS::AsyncSocket<false>::cork();
-        }
-      }
     return uwsRes->write(stringViewFromC(data, *length), length);
   }
   size_t uws_res_try_write_body(int ssl, uws_res_r res, const char *data, size_t length, bool is_first) nonnull_fn_decl;

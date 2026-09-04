@@ -49,6 +49,14 @@ struct HttpResponse : public AsyncSocket<SSL> {
     typedef AsyncSocket<SSL> Super;
 public:
 
+    /* Every method below that emits bytes calls Super::cork() first. A response
+     * is often written from outside its request handler (a timer, a settled
+     * promise, another socket's callback), where nothing has corked the socket
+     * and each Super::write() would be its own send(). Corked, the status line,
+     * headers, chunk framing and body are assembled in the cork buffer and leave
+     * in one write; the loop's pre-callback uncorks whatever is still corked
+     * before it polls again. */
+
     HttpResponseData<SSL> *getHttpResponseData() {
         return (HttpResponseData<SSL> *) Super::getAsyncSocketData();
     }
@@ -491,6 +499,7 @@ public:
 
     /* Write 100 Continue, can be done any amount of times */
     HttpResponse *writeContinue() {
+        Super::cork();
         Super::write("HTTP/1.1 100 Continue\r\n\r\n", 25);
         return this;
     }
@@ -499,6 +508,7 @@ public:
      * the AsyncSocket write path (and buffer) writeStatus/end use, so a
      * pipelined replay stays ordered ahead of the final response bytes. */
     HttpResponse *writeRawInformational(std::string_view data) {
+        Super::cork();
         Super::write(data.data(), (int) data.length());
         return this;
     }
@@ -511,6 +521,7 @@ public:
         if (httpResponseData->state & HttpResponseData<SSL>::HTTP_STATUS_CALLED) {
             return this;
         }
+        Super::cork();
 
         /* RFC 9110 8.6: a 1xx/204 MUST NOT carry Content-Length and has no
          * body; record that at the one point every response passes through.
@@ -532,6 +543,7 @@ public:
     /* Write an HTTP header with string value */
     HttpResponse *writeHeader(std::string_view key, std::string_view value) {
         writeStatus(HTTP_200_OK);
+        Super::cork();
 
         Super::write(key.data(), (int) key.length());
         Super::write(": ", 2);
@@ -549,6 +561,7 @@ public:
         if ((getHttpResponseData()->state & HttpResponseData<SSL>::HTTP_NO_BODY_STATUS) && key.length() == 14 && !strncasecmp(key.data(), "content-length", 14)) {
             return this;
         }
+        Super::cork();
 
         Super::write(key.data(), (int) key.length());
         Super::write(": ", 2);
@@ -560,6 +573,7 @@ public:
     /* End the response with an optional data chunk. Always starts a timeout. */
     void end(std::string_view data = {}, bool closeConnection = false) {
         HttpResponseData<SSL> *httpResponseData = getHttpResponseData();
+        Super::cork();
 
         /* 204/304 responses carry no body framing at all: no Content-Length,
          * no chunked framing and no terminating chunk, even when an explicit
@@ -602,6 +616,7 @@ public:
     /* Try and end the response. Returns [true, true] on success.
      * Starts a timeout in some cases. Returns [ok, hasResponded] */
     std::pair<bool, bool> tryEnd(std::string_view data, uintmax_t totalSize = 0, bool closeConnection = false) {
+        Super::cork();
         bool ok = internalEnd(data, totalSize, true, true, closeConnection);
         /* internalEnd's close gate may have closed the socket (destructing the
          * ext hasResponded() reads); that only happens once the response has
@@ -614,6 +629,7 @@ public:
 
     /* Write the end of chunked encoded stream */
     bool sendTerminatingChunk(bool closeConnection = false) {
+        Super::cork();
         writeStatus(HTTP_200_OK);
         HttpResponseData<SSL> *httpResponseData = getHttpResponseData();
         if (!(httpResponseData->state & (HttpResponseData<SSL>::HTTP_WRITE_CALLED | HttpResponseData<SSL>::HTTP_WROTE_CONTENT_LENGTH_HEADER))) {
@@ -634,7 +650,7 @@ public:
     }
 
     void flushHeaders(bool flushImmediately = false) {
-
+        Super::cork();
         writeStatus(HTTP_200_OK);
 
         HttpResponseData<SSL> *httpResponseData = getHttpResponseData();
@@ -665,6 +681,7 @@ public:
     }
     /* Write parts of the response in chunking fashion. Starts timeout if failed. */
     bool write(std::string_view data, size_t *writtenPtr = nullptr) {
+        Super::cork();
         writeStatus(HTTP_200_OK);
 
         /* Do not allow sending 0 chunks, they mark end of response */
@@ -779,6 +796,7 @@ public:
      * Returns the number of body bytes accepted. */
     size_t tryWriteBody(std::string_view data, bool isFirst) {
         HttpResponseData<SSL> *httpResponseData = getHttpResponseData();
+        Super::cork();
         bool chunked = !(httpResponseData->state & (HttpResponseData<SSL>::HTTP_WROTE_CONTENT_LENGTH_HEADER | HttpResponseData<SSL>::HTTP_ANCIENT_REQUEST | HttpResponseData<SSL>::HTTP_CLOSE_DELIMITED));
 
         if (isFirst) {
@@ -823,6 +841,7 @@ public:
      * tryWriteBody() tail is still held externally. */
     void spillBodyTail(std::string_view data) {
         HttpResponseData<SSL> *httpResponseData = getHttpResponseData();
+        Super::cork();
         bool chunked = !(httpResponseData->state & (HttpResponseData<SSL>::HTTP_WROTE_CONTENT_LENGTH_HEADER | HttpResponseData<SSL>::HTTP_ANCIENT_REQUEST | HttpResponseData<SSL>::HTTP_CLOSE_DELIMITED));
 
         size_t length = data.length();

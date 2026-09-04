@@ -109,6 +109,13 @@ public:
 
     /* Cork this socket. Two sockets may be corked per-loop at once. */
     void cork() {
+        /* A closed socket is freed at the end of this loop iteration, before the
+         * pre-callback that drains leftover corks would reach it. write() already
+         * discards data for a closed socket, so there is nothing to batch. */
+        if (us_socket_is_closed((us_socket_t *) this)) {
+            return;
+        }
+
         LoopData *loopData = getLoopData();
 
         /* Already corked? Nothing to do. */

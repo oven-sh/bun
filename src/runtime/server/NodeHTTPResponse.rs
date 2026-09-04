@@ -2443,68 +2443,6 @@ impl NodeHTTPResponse {
         raw.timeout(seconds);
     }
 
-    pub(crate) fn cork(
-        &self,
-        global_object: &JSGlobalObject,
-        callframe: &CallFrame,
-    ) -> JsResult<JSValue> {
-        // Perf: borrow the `arguments()` slice (ptr+len) instead of
-        // materialising `Arguments<1>` by value — `cork` runs on every
-        // `res.end()`, so the small-aggregate copy + bounds branch are pure
-        // per-request overhead with no upstream equivalent.
-        let Some(&corked_fn) = callframe.arguments().first() else {
-            return Err(global_object.throw_not_enough_arguments("cork", 1, 0));
-        };
-
-        if !corked_fn.is_callable() {
-            return Err(global_object.throw_invalid_argument_type_value(
-                b"cork",
-                b"function",
-                corked_fn,
-            ));
-        }
-
-        let flags = self.flags.get();
-        if flags.contains(Flags::REQUEST_HAS_COMPLETED)
-            || flags.contains(Flags::SOCKET_CLOSED)
-            || flags.contains(Flags::UPGRADED)
-        {
-            return err_throw(
-                global_object,
-                ErrorCode::ERR_STREAM_ALREADY_FINISHED,
-                "Stream is already ended",
-            );
-        }
-
-        let mut result: JsResult<JSValue> = Ok(JSValue::UNDEFINED);
-
-        // R-2: this method takes `&self`, so the `noalias` miscompile
-        // (b818e70e1c57) is structurally impossible — `&T` is `readonly`, not
-        // `noalias`, so re-entrant writes through other `&self` views are
-        // sound. No `black_box` launder is needed; it was a hard optimization
-        // barrier on the node:http hot path (`cork` runs on every `res.end()`)
-        // that forced `self` to memory and blocked inlining/regalloc of the
-        // cork prologue.
-        let this = bun_ptr::BackRef::from(ptr::NonNull::from(self));
-        // Keeps the live `m_ctx` heap payload alive across re-entry.
-        let _guard = self.ref_guard();
-
-        // Snapshot before re-entry; `raw_response` is `Copy`.
-        let raw_response = this.raw_response.get();
-        if let Some(raw_response) = raw_response {
-            raw_response.corked(|| {
-                // Capture `this` so a `self`-derived pointer reaches the FFI
-                // closure-data slot (see the R-2 note above).
-                let _escape = this;
-                result = corked_fn.call(global_object, JSValue::UNDEFINED, &[]);
-            });
-        } else {
-            result = corked_fn.call(global_object, JSValue::UNDEFINED, &[]);
-        }
-
-        result
-    }
-
     pub(crate) fn finalize(&self) {
         // The JS wrapper is being collected; drop the raw backref so a late
         // body delivery cannot read through a dead cell.

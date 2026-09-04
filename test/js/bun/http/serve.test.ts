@@ -12,7 +12,9 @@ import {
   isIntelMacOS,
   isIPv4,
   isIPv6,
+  isLinux,
   isPosix,
+  libcPathForDlopen,
   runFixtureMaxRSS,
   tempDir,
   tls,
@@ -4700,4 +4702,130 @@ it("serves a TLS connection whose handshake completes after a graceful stop()", 
     client?.destroy();
     raw.destroy();
   }
+});
+
+// A response written from outside the request callback (after an await, from a
+// timer, from another socket's event) used to reach the socket uncorked, so the
+// status line, each header fragment, the chunk-size line, the payload and the
+// chunk terminator each left as their own send() and TCP segment. Counted from
+// the client with TCP_INFO, which is Linux-only.
+describe.skipIf(!isLinux)("response bytes written outside the request callback are batched", () => {
+  async function segmentsReceived(server: string) {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          const { dlopen, ptr } = require("bun:ffi");
+          const libc = dlopen(${JSON.stringify(libcPathForDlopen())}, {
+            getsockopt: { args: ["int", "int", "int", "ptr", "ptr"], returns: "int" },
+          });
+          // struct tcp_info: tcpi_data_segs_in is a u32 at byte 152 (linux/tcp.h, since 4.6).
+          function dataSegmentsIn(fd) {
+            const info = new Uint8Array(280);
+            const len = new Uint32Array([info.length]);
+            if (libc.symbols.getsockopt(fd, 6 /* IPPROTO_TCP */, 11 /* TCP_INFO */, ptr(info), ptr(len)) !== 0) {
+              throw new Error("getsockopt(TCP_INFO) failed");
+            }
+            return new DataView(info.buffer).getUint32(152, true);
+          }
+          const tick = () => new Promise(resolve => setImmediate(resolve));
+          ${server}
+          const done = Promise.withResolvers();
+          let response = "";
+          const socket = await Bun.connect({
+            hostname: "127.0.0.1",
+            port,
+            socket: {
+              open(socket) {
+                socket.write("GET / HTTP/1.1\\r\\nHost: example.com\\r\\n\\r\\n");
+              },
+              data(socket, data) {
+                response += data.toString();
+                if (response.endsWith("\\r\\n0\\r\\n\\r\\n") || response.endsWith("\\r\\n\\r\\nhello world")) done.resolve();
+              },
+              close() {
+                done.resolve();
+              },
+            },
+          });
+          await done.promise;
+          console.log(JSON.stringify({ segments: dataSegmentsIn(socket.fd), body: response.slice(response.indexOf("\\r\\n\\r\\n") + 4) }));
+          socket.end();
+          stop();
+        `,
+      ],
+      env: bunEnv,
+      stderr: "inherit",
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    expect(exitCode).toBe(0);
+    return JSON.parse(stdout);
+  }
+
+  it.concurrent("Bun.serve: async generator body", async () => {
+    // Segment 1: status + headers when the Response is returned. Segment 2: the
+    // Date/Transfer-Encoding headers with the first chunk. Segment 3: the last
+    // chunk together with the terminating chunk (previously five segments).
+    expect(
+      await segmentsReceived(`
+        const server = Bun.serve({
+          port: 0,
+          async fetch() {
+            await tick();
+            return new Response(async function* () {
+              await tick();
+              yield "hello ";
+              await tick();
+              yield "world";
+            }, { headers: { "X-Custom": "1" } });
+          },
+        });
+        const port = server.port;
+        const stop = () => server.stop(true);
+      `),
+    ).toEqual({ segments: 3, body: "6\r\nhello \r\n5\r\nworld\r\n0\r\n\r\n" });
+  });
+
+  it.concurrent("Bun.serve: ReadableStream that produces its only chunk later", async () => {
+    // Segment 1: status + headers. Segment 2: Date, Content-Length and the body
+    // (previously eight segments: one per header fragment).
+    expect(
+      await segmentsReceived(`
+        const server = Bun.serve({
+          port: 0,
+          async fetch() {
+            await tick();
+            return new Response(new ReadableStream({
+              async pull(controller) {
+                await tick();
+                controller.enqueue("hello world");
+                controller.close();
+              },
+            }), { headers: { "X-Custom": "1" } });
+          },
+        });
+        const port = server.port;
+        const stop = () => server.stop(true);
+      `),
+    ).toEqual({ segments: 2, body: "hello world" });
+  });
+
+  it.concurrent("node:http: write() then end() after an await", async () => {
+    // One segment: status, headers, both chunks and the terminating chunk, as
+    // Node.js sends them (previously six).
+    expect(
+      await segmentsReceived(`
+        const server = require("node:http").createServer(async (req, res) => {
+          await tick();
+          res.writeHead(200, { "Content-Type": "text/plain" });
+          res.write("hello ");
+          res.end("world");
+        });
+        await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
+        const port = server.address().port;
+        const stop = () => server.close();
+      `),
+    ).toEqual({ segments: 1, body: "6\r\nhello \r\n5\r\nworld\r\n0\r\n\r\n" });
+  });
 });

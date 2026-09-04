@@ -3295,30 +3295,26 @@ ServerResponse.prototype.write = function (chunk, encoding, callback) {
   }
 
   if (this[headerStateSymbol] !== NodeHTTPHeaderState.sent) {
-    handle.cork(() => {
-      const renderedHeaders = renderNativeHeaders(this);
-      try {
-        handle.writeHead(
-          this[kSnapshotStatusCode] ?? this.statusCode,
-          this[kSnapshotStatusMessage] ?? this.statusMessage,
-          renderedHeaders,
-          renderedAutoHeaders,
-          renderedKeepAliveSecs,
-        );
-      } finally {
-        // A throwing writeHead (status validation) must not leave the shared
-        // scratch array marked busy for the rest of the process.
-        releaseRenderedHeaders(renderedHeaders);
-      }
+    const renderedHeaders = renderNativeHeaders(this);
+    try {
+      handle.writeHead(
+        this[kSnapshotStatusCode] ?? this.statusCode,
+        this[kSnapshotStatusMessage] ?? this.statusMessage,
+        renderedHeaders,
+        renderedAutoHeaders,
+        renderedKeepAliveSecs,
+      );
+    } finally {
+      // A throwing writeHead (status validation) must not leave the shared
+      // scratch array marked busy for the rest of the process.
+      releaseRenderedHeaders(renderedHeaders);
+    }
 
-      // If handle.writeHead throws, we don't want headersSent to be set to true.
-      // So we set it here.
-      this[headerStateSymbol] = NodeHTTPHeaderState.sent;
-      result = handle.write(chunk, encoding, allowWritesToContinue.bind(this), strictContentLength(this));
-    });
-  } else {
-    result = handle.write(chunk, encoding, allowWritesToContinue.bind(this), strictContentLength(this));
+    // If handle.writeHead throws, we don't want headersSent to be set to true.
+    // So we set it here.
+    this[headerStateSymbol] = NodeHTTPHeaderState.sent;
   }
+  result = handle.write(chunk, encoding, allowWritesToContinue.bind(this), strictContentLength(this));
 
   if (result < 0) {
     if (callback) {
@@ -3479,27 +3475,23 @@ ServerResponse.prototype._send = function (data, encoding, callback, _byteLength
   }
 
   if (this[headerStateSymbol] !== NodeHTTPHeaderState.sent) {
-    handle.cork(() => {
-      const renderedHeaders = renderNativeHeaders(this);
-      try {
-        handle.writeHead(
-          this[kSnapshotStatusCode] ?? this.statusCode,
-          this[kSnapshotStatusMessage] ?? this.statusMessage,
-          renderedHeaders,
-          renderedAutoHeaders,
-          renderedKeepAliveSecs,
-        );
-      } finally {
-        // A throwing writeHead (status validation) must not leave the shared
-        // scratch array marked busy for the rest of the process.
-        releaseRenderedHeaders(renderedHeaders);
-      }
-      this[headerStateSymbol] = NodeHTTPHeaderState.sent;
-      handle.write(data, encoding, callback, strictContentLength(this));
-    });
-  } else {
-    handle.write(data, encoding, callback, strictContentLength(this));
+    const renderedHeaders = renderNativeHeaders(this);
+    try {
+      handle.writeHead(
+        this[kSnapshotStatusCode] ?? this.statusCode,
+        this[kSnapshotStatusMessage] ?? this.statusMessage,
+        renderedHeaders,
+        renderedAutoHeaders,
+        renderedKeepAliveSecs,
+      );
+    } finally {
+      // A throwing writeHead (status validation) must not leave the shared
+      // scratch array marked busy for the rest of the process.
+      releaseRenderedHeaders(renderedHeaders);
+    }
+    this[headerStateSymbol] = NodeHTTPHeaderState.sent;
   }
+  handle.write(data, encoding, callback, strictContentLength(this));
 };
 
 const kSnapshotStatusCode = Symbol("kSnapshotStatusCode");

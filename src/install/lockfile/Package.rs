@@ -2210,6 +2210,16 @@ impl Package<u64> {
             if let Some(name_q) = json.as_property(b"name") {
                 if let Some(name) = name_q.expr.as_utf8(&bump) {
                     if !name.is_empty() {
+                        // Non-root names become bun.lock `packages` entries, which the
+                        // lockfile parser rejects with the same check (see bun.lock.rs).
+                        if !FEATURES.is_main && !dependency::is_safe_install_folder_name(name) {
+                            log.add_error_fmt(
+                                source,
+                                value_loc_of(source, name_q.loc),
+                                format_args!("Invalid package name {}", bun_core::fmt::quote(name)),
+                            );
+                            return Err(crate::Error::InvalidPackageJSON);
+                        }
                         string_builder.count(name);
                         break 'name;
                     }

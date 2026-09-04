@@ -10294,6 +10294,149 @@ it("does not install transitive file: dependencies that point outside their pack
   expect(exitCode).toBe(1);
 });
 
+describe.concurrent("a dependency whose own package.json has an invalid name", () => {
+  // The name inside a tarball, folder or git dependency's package.json is written
+  // to bun.lock as `name@resolution`, and the bun.lock parser rejects names that
+  // are not safe install folder names. Saving such a name used to succeed and
+  // leave behind a lockfile that every later `bun install` ignored, so the
+  // install has to fail before the lockfile is saved.
+  async function install(root: string, ...args: string[]) {
+    await using proc = spawn({
+      cmd: [bunExe(), "install", ...args],
+      cwd: join(root, "project"),
+      env: { ...env, BUN_INSTALL_CACHE_DIR: join(root, "cache") },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { out, err, exitCode };
+  }
+
+  async function expectRejected(root: string, quotedName: string) {
+    const { out, err, exitCode } = await install(root);
+    expect(err).toContain(`error: Invalid package name ${quotedName}`);
+    expect(out).not.toContain("1 package installed");
+    expect(await exists(join(root, "project", "bun.lock"))).toBe(false);
+    expect(await exists(join(root, "project", "node_modules", "dep"))).toBe(false);
+    expect(exitCode).toBe(1);
+    return err;
+  }
+
+  it("fails to install a local tarball", async () => {
+    using dir = tempDir("invalid-name-tarball", {
+      "project/package.json": JSON.stringify({
+        name: "foo",
+        version: "0.0.1",
+        dependencies: { dep: "file:../dep.tgz" },
+      }),
+    });
+    await Bun.Archive.write(
+      join(String(dir), "dep.tgz"),
+      { "package/package.json": JSON.stringify({ name: "a:b", version: "1.0.0" }) },
+      { compress: "gzip" },
+    );
+
+    await expectRejected(String(dir), '"a:b"');
+  });
+
+  it("fails to install a file: folder and points at the offending package.json", async () => {
+    using dir = tempDir("invalid-name-folder", {
+      "project/package.json": JSON.stringify({
+        name: "foo",
+        version: "0.0.1",
+        dependencies: { dep: "file:../lib" },
+      }),
+      "lib/package.json": JSON.stringify({ name: "lib/..", version: "1.0.0" }),
+    });
+
+    const err = await expectRejected(String(dir), '"lib/.."');
+    expect(err).toMatch(/ at .*lib[\\/]package\.json:1:9\s/);
+  });
+
+  it("escapes the rejected name in the error message", async () => {
+    using dir = tempDir("invalid-name-escaped", {
+      "project/package.json": JSON.stringify({
+        name: "foo",
+        version: "0.0.1",
+        dependencies: { dep: "file:../lib" },
+      }),
+      "lib/package.json": JSON.stringify({ name: "a\0b", version: "1.0.0" }),
+    });
+
+    await expectRejected(String(dir), '"a\\u0000b"');
+  });
+
+  it("fails to install a git dependency", async () => {
+    using dir = tempDir("invalid-name-git", {
+      "work/package.json": JSON.stringify({ name: "a\\b", version: "1.0.0" }),
+    });
+    await createDumbHttpGitRepo(String(dir), {});
+    using server = serveDirectory(String(dir));
+    await write(
+      join(String(dir), "project", "package.json"),
+      JSON.stringify({
+        name: "foo",
+        version: "0.0.1",
+        dependencies: { dep: `git+http://localhost:${server.port}/repo.git` },
+      }),
+    );
+
+    await expectRejected(String(dir), '"a\\b"');
+  });
+
+  it("still installs scoped names and writes a lockfile the next install loads", async () => {
+    using dir = tempDir("valid-scoped-name-tarball", {
+      "project/package.json": JSON.stringify({
+        name: "foo",
+        version: "0.0.1",
+        dependencies: { dep: "file:../dep.tgz" },
+      }),
+    });
+    await Bun.Archive.write(
+      join(String(dir), "dep.tgz"),
+      { "package/package.json": JSON.stringify({ name: "@scope/dep", version: "1.0.0" }) },
+      { compress: "gzip" },
+    );
+
+    const first = await install(String(dir));
+    expect(first.err).not.toContain("error:");
+    expect(first.out).toContain("1 package installed");
+    expect(first.exitCode).toBe(0);
+    expect(await file(join(String(dir), "project", "bun.lock")).text()).toContain('"dep": ["@scope/dep@../dep.tgz"');
+
+    const second = await install(String(dir), "--frozen-lockfile");
+    expect(second.err).not.toContain("Ignoring lockfile");
+    expect(second.err).not.toContain("error:");
+    expect(second.exitCode).toBe(0);
+  });
+
+  it("does not apply to the root package's own name", async () => {
+    // The root is not a bun.lock `packages` entry; its name only appears in the
+    // `workspaces` section, which accepts it as-is.
+    using dir = tempDir("invalid-name-root", {
+      "project/package.json": JSON.stringify({
+        name: "a:b",
+        version: "0.0.1",
+        dependencies: { dep: "file:../lib" },
+      }),
+      "lib/package.json": JSON.stringify({ name: "lib", version: "1.0.0" }),
+    });
+
+    const first = await install(String(dir));
+    expect(first.err).not.toContain("error:");
+    expect(first.out).toContain("1 package installed");
+    expect(first.exitCode).toBe(0);
+    const lockfile = await file(join(String(dir), "project", "bun.lock")).text();
+    expect(lockfile).toContain('"name": "a:b"');
+    expect(lockfile).toContain('"dep": ["lib@file:../lib", {}]');
+
+    const second = await install(String(dir), "--frozen-lockfile");
+    expect(second.err).not.toContain("Ignoring lockfile");
+    expect(second.err).not.toContain("error:");
+    expect(second.exitCode).toBe(0);
+  });
+});
+
 it("does not install transitive file: dependencies with overlong folder targets", async () => {
   const overlongTarget = "file:./" + Buffer.alloc(120000, "a").toString();
   using dir = tempDir("transitive-file-dep-overlong", {

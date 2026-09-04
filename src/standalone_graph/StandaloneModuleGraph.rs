@@ -926,10 +926,6 @@ impl StandaloneModuleGraph {
         let modules_list_count = modules_list_bytes.len() / size_of::<CompiledModuleGraphFile>();
         let modules_list_base = modules_list_bytes.as_ptr();
 
-        if offsets.entry_point_id as usize > modules_list_count {
-            return Err(Corruption::EntryPointId.into());
-        }
-
         // The optional records `to_bytes` chains directly after the module table, in `Flags` bit order.
         let mut records = RecordChain {
             base: raw_const,
@@ -1093,6 +1089,11 @@ impl StandaloneModuleGraph {
         }
 
         let module_count = modules.count();
+        // `entry_point()` indexes `files` with this id. Two records with one name are one
+        // entry in `files`, so the bound is the entry count and not the record count.
+        if offsets.entry_point_id as usize >= module_count {
+            return Err(Corruption::EntryPointId.into());
+        }
         modules.lock_pointers(); // make the pointers stable forever
 
         // Keys are posix-separated already (see `to_bytes`), so byte-scan for `/`.

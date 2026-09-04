@@ -1,15 +1,16 @@
 // A compiled executable carries its module graph in the `.bun` section. The graph ends
 // with `Offsets`, then the trailer. `Offsets` points at the module table and at the
-// compile exec argv string. Each 52-byte module record starts with six
+// compile exec argv string, and holds the index of the entry point in the module table.
+// Each 52-byte module record starts with six
 // { u32 offset, u32 length } pointers: name, contents, source map, bytecode, module info
 // and bytecode origin path. After the module table, `to_bytes` chains records in `Flags`
 // bit order: a u32 source hash per module, the builtin bytecode table (u32 count, then
 // count x { u32 id, u32 offset, u32 length }) and, with --bytecode, a pointer to the
 // bytecode string table.
 //
-// These offsets come from the file. Each case damages one of them, and the executable
+// These fields come from the file. Each case damages one of them, and the executable
 // must report it at startup. `StandaloneModuleGraph::from_bytes` used to read past the
-// end of the section instead, and a release build crashed with a segfault.
+// end of the section instead, and a release build crashed.
 
 import { expect, test } from "bun:test";
 import { bunEnv, isMacOS, tempDir } from "harness";
@@ -35,8 +36,10 @@ function locateRecords(executable: Buffer) {
   const builtinCount = executable.readUInt32LE(builtinTableAt);
   return {
     flags: executable.readUInt32LE(offsetsAt + 28),
+    moduleCount: modulesLength / MODULE_RECORD_SIZE,
     builtinCount,
     modulesLengthAt: offsetsAt + 12,
+    entryPointIdAt: offsetsAt + 16,
     execArgvOffsetAt: offsetsAt + 20,
     firstModuleNameOffsetAt: modulesAt,
     firstModuleContentsLengthAt: modulesAt + 12,
@@ -54,6 +57,14 @@ const cases = [
     field: (records: Records) => records.modulesLengthAt,
     value: 0x7ffffff0,
     error: "module list is out of range",
+  },
+  {
+    // The app is one module (the layout check below asserts it), so 1 is one past the end.
+    label: "an entry point ID equal to the module count",
+    bytecode: false,
+    field: (records: Records) => records.entryPointIdAt,
+    value: 1,
+    error: "entry point ID is out of range for the module list",
   },
   {
     label: "a compile exec argv that starts past the end of the graph",
@@ -105,7 +116,7 @@ const cases = [
 // binary (about 800 MB under debug and ASAN), and reads it into memory. So the cases run
 // one at a time, each with a higher timeout.
 test.skipIf(isMacOS).each(cases)(
-  "$label is reported instead of read",
+  "$label is reported as a corrupted module graph",
   async ({ bytecode, execArgv, field, value, error }) => {
     // node:path gives the --bytecode build some builtin bytecode entries.
     using dir = tempDir("compile-corrupted-graph", {
@@ -125,8 +136,9 @@ test.skipIf(isMacOS).each(cases)(
     const expectedFlags = HAS_SOURCE_HASHES | HAS_BUILTIN_BYTECODE | (bytecode ? HAS_BYTECODE_STRING_TABLE : 0);
     expect({
       flags: records.flags & (HAS_SOURCE_HASHES | HAS_BUILTIN_BYTECODE | HAS_BYTECODE_STRING_TABLE),
+      moduleCount: records.moduleCount,
       hasBuiltinBytecode: records.builtinCount > 0,
-    }).toEqual({ flags: expectedFlags, hasBuiltinBytecode: bytecode });
+    }).toEqual({ flags: expectedFlags, moduleCount: 1, hasBuiltinBytecode: bytecode });
 
     // Write only the damaged field. The rest of the file stays as the build wrote it.
     const bytes = Buffer.alloc(4);

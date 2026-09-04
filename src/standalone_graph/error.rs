@@ -24,7 +24,7 @@ impl Corruption {
         match self {
             Self::ModuleList => "Corrupted module graph: module list is out of range",
             Self::EntryPointId => {
-                "Corrupted module graph: entry point ID is greater than module list count"
+                "Corrupted module graph: entry point ID is out of range for the module list"
             }
             Self::ModuleName => "Corrupted module graph: module name is out of range",
             Self::ModuleContents => "Corrupted module graph: module contents are out of range",

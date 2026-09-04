@@ -49,8 +49,8 @@
 
 import { spawn, spawnSync } from "node:child_process";
 import { closeSync, createWriteStream, openSync, writeSync } from "node:fs";
-import { writeIfChanged } from "./fs.ts";
 import { createInterface } from "node:readline";
+import { writeIfChanged } from "./fs.ts";
 import { nameColor } from "./tty.ts";
 
 export const streamPath: string = import.meta.filename;

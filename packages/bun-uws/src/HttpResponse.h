@@ -378,13 +378,28 @@ public:
             }
         }
 
+        auto* responseData = getHttpResponseData();
+
+        /* Request bytes parked behind this handshake (HttpParser::parkedRequestBytes)
+         * go down with the HTTP state destructed below, like bytes trailing a
+         * synchronous upgrade in the same read (a client may not send anything
+         * before the 101 anyway, RFC 6455 4.1). Parking paused reads; the adopted
+         * WebSocket needs them flowing, and us_socket_adopt keeps the flag. The
+         * resume re-arms writable too, so the WebSocket gets one drain callback with
+         * nothing to drain right after open; dropping the bytes before
+         * endUpgradeHandshake() keeps markDone() from arming a second one for a
+         * replay that cannot happen. */
+        if (!responseData->parkedRequestBytes.isEmpty()) [[unlikely]] {
+            responseData->parkedRequestBytes.clear();
+            Super::resume();
+        }
+
         endUpgradeHandshake();
 
         /* Grab the httpContext from res */
         HttpContext<SSL> *httpContext = HttpContext<SSL>::fromSocket((struct us_socket_t *) this);
 
         /* Move any backpressure out of HttpResponse */
-        auto* responseData = getHttpResponseData();
         BackPressure backpressure(std::move(((AsyncSocketData<SSL> *) responseData)->buffer));
 
         auto* socketData = responseData->socketData;
@@ -481,7 +496,16 @@ public:
     }
 
     HttpResponse *resume() {
-        Super::resume();
+        /* While requests are parked behind this response the pause belongs to the
+         * pipelining code (HttpContext resumes when it replays them, upgrade() when
+         * it drops them). The resumes arriving here release a request-body
+         * backpressure pause and can land after the body completed and the bytes
+         * behind it were parked; reading on would only queue more behind them, or
+         * take a FIN that closes the connection over them. node:http's flood
+         * prevention only gets here once its parked bytes are gone. */
+        if (getHttpResponseData()->parkedRequestBytes.isEmpty()) [[likely]] {
+            Super::resume();
+        }
         this->resetTimeout();
         return this;
     }

@@ -594,12 +594,23 @@ struct HttpResponseData;
     private:
         std::string fallback;
     public:
-        /* node:http flood prevention. HTTP_NODE_READS_PAUSED (state bit) = the socket's raw reads are
-         * paused and stays set through spill replay; this flag = "the parse loop running now must stop
-         * at the next request boundary and park the rest", cleared for replay so it can make progress. */
-        bool nodeHttpParkAtNextBoundary = false;
+        /* "The parse loop running now must stop at the next request boundary and park
+         * the rest of the buffer, unparsed, in parkedRequestBytes." The boundary check
+         * also holds while bytes are already parked, so later reads queue up behind
+         * them and replay (HttpContext::replayParkedRequestBytes) keeps wire order.
+         *
+         * Bun.serve: HttpContext::onData derives it (at entry and after each
+         * request's body fin) from cannotDispatchAnotherRequest: requests pipelined
+         * behind a response that is still being produced or drained wait for it,
+         * and ones behind a response that will close the connection go down with
+         * it. Reads are paused while bytes are parked, bounding them to one recv.
+         *
+         * node:http flood prevention: set on the pause edge alongside
+         * HTTP_NODE_READS_PAUSED (which stays set through the replay) and cleared for
+         * the replay so it can make progress. */
+        bool parkAtNextBoundary = false;
         bool nodeHttpSpillReplayScheduled = false;
-        WTF::Vector<char> nodeHttpPausedSpill;
+        WTF::Vector<char> parkedRequestBytes;
     private:
          /* This guy really has only 30 bits since we reserve two highest bits to chunked encoding parsing state */
         uint64_t remainingStreamingBytes = 0;
@@ -1113,15 +1124,15 @@ struct HttpResponseData;
                 consumedTotal += length;
                 return HttpParserResult::success(consumedTotal, returnedUser);
             }
-            /* node:http flood prevention: a dispatch earlier in this buffer paused reads.
-             * Stop at this request boundary, park the rest, report it as consumed so the
-             * caller does not spill it into the size-capped header fallback buffer. */
-            if constexpr (IsNodeHttp) {
-                if (nodeHttpParkAtNextBoundary) [[unlikely]] {
-                    nodeHttpPausedSpill.append(std::span<const char>(data, length));
-                    consumedTotal += length;
-                    return HttpParserResult::success(consumedTotal, user);
-                }
+            /* This connection cannot take another request right now (see
+             * parkAtNextBoundary). Stop at this request boundary, before getHeaders
+             * touches the next head, park the rest verbatim and report it as consumed
+             * so the caller does not spill it into the size-capped header fallback
+             * buffer. */
+            if (parkAtNextBoundary || !parkedRequestBytes.isEmpty()) [[unlikely]] {
+                parkedRequestBytes.append(std::span<const char>(data, length));
+                consumedTotal += length;
+                return HttpParserResult::success(consumedTotal, user);
             }
             /* RFC 9112 2.2: ignore empty lines (CRLF) received prior to the
              * request-line, like Node/llhttp - e.g. a stray "\r\n" sent on an

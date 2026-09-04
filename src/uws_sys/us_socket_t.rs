@@ -434,8 +434,8 @@ impl us_socket_t {
         c::us_socket_flush(self);
     }
 
-    pub(crate) fn send_file_needs_more(&mut self) {
-        c::us_socket_sendfile_needs_more(self);
+    pub(crate) fn request_writable(&mut self) {
+        c::us_socket_request_writable(self);
     }
 
     pub fn get_fd(&self) -> Fd {
@@ -571,7 +571,7 @@ mod c {
         ) -> i32;
         pub(super) safe fn us_socket_shutdown_read(s: &mut us_socket_t);
         pub(super) safe fn us_socket_is_shut_down(s: &us_socket_t) -> i32;
-        pub(super) safe fn us_socket_sendfile_needs_more(socket: &mut us_socket_t);
+        pub(super) safe fn us_socket_request_writable(s: &mut us_socket_t);
         pub(super) safe fn us_socket_get_fd(s: &us_socket_t) -> LIBUS_SOCKET_DESCRIPTOR;
         pub(super) safe fn us_socket_verify_error(s: &us_socket_t) -> us_bun_verify_error_t;
         pub(super) safe fn us_socket_get_error(s: &us_socket_t) -> c_int;

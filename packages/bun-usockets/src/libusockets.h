@@ -694,7 +694,13 @@ void us_socket_local_address(us_socket_r s, char *nonnull_arg buf, int *nonnull_
 
 struct us_socket_t *us_socket_detach(us_socket_r s) nonnull_fn_decl;
 int us_socket_ipc_write_fd(us_socket_r s, const char *data, int length, int fd) nonnull_fn_decl;
-void us_socket_sendfile_needs_more(us_socket_r s) nonnull_fn_decl;
+/* Have on_writable dispatched once the socket is writable, as if a
+ * us_socket_write() had just come up short. For progress that has to be made
+ * from on_writable but was not queued through us_socket_write(): a sendfile
+ * that hit EAGAIN, HTTP request bytes parked behind a response that just
+ * completed. Safe to call from inside on_writable itself. Leaves a paused
+ * socket's read side alone. */
+void us_socket_request_writable(us_socket_r s) nonnull_fn_decl;
 void *us_listen_socket_ext(struct us_listen_socket_t *ls) nonnull_fn_decl;
 LIBUS_SOCKET_DESCRIPTOR us_listen_socket_get_fd(struct us_listen_socket_t *ls) nonnull_fn_decl;
 int us_listen_socket_port(struct us_listen_socket_t *ls) nonnull_fn_decl;

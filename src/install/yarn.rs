@@ -1901,6 +1901,7 @@ pub(crate) fn migrate_yarn_lockfile<'a>(
             lockfile::DependencyIDSlice::new(resolutions_off, dep_count);
     }
 
+    this.tag_workspace_links(manager.options.link_workspace_packages);
     // `Lockfile::resolve` returns `Result<(), tree::SubtreeError>`; surface as
     // a tagged error until `From<SubtreeError>` lands.
     if let Err(_e) = this.resolve(log) {

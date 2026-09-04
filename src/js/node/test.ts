@@ -381,12 +381,12 @@ async function runFiles(opts: ReturnType<typeof validateRunOptions>, reporter: T
     let i = 0;
     for (; i < files.length; i++) {
       if (opts.signal?.aborted) break;
-      await runOneFile(files[i], opts, reporter, counts);
+      await runOneFile(files[i], i + 1, opts, reporter, counts);
     }
     // Node cancels each not-yet-started FileTest with cancelledByParent rather
     // than silently dropping it; an aborted run must not report success:true.
     for (; i < files.length; i++) {
-      reportCancelledFile(files[i], opts, reporter, counts);
+      reportCancelledFile(files[i], i + 1, opts, reporter, counts);
     }
 
     reporter.plan({ __proto__: null, nesting: 0, count: counts.topLevel });
@@ -408,6 +408,7 @@ async function runFiles(opts: ReturnType<typeof validateRunOptions>, reporter: T
 
 function reportCancelledFile(
   file: string,
+  ordinal: number,
   opts: ReturnType<typeof validateRunOptions>,
   reporter: TestsStream,
   counts: Record<string, number>,
@@ -418,7 +419,7 @@ function reportCancelledFile(
     nesting: 0,
     name: file,
     type: "test",
-    testId: 1,
+    testId: ordinal,
     parentId: 0,
     tags: [],
     line: 1,
@@ -433,10 +434,10 @@ function reportCancelledFile(
     __proto__: null,
     ...fileNode,
     type: undefined,
-    testNumber: 1,
+    testNumber: ordinal,
     details: { ...details, passed: false },
   });
-  reporter.fail({ __proto__: null, ...fileNode, type: undefined, testNumber: 1, details });
+  reporter.fail({ __proto__: null, ...fileNode, type: undefined, testNumber: ordinal, details });
   counts.tests++;
   counts.cancelled++;
   counts.topLevel++;
@@ -444,6 +445,7 @@ function reportCancelledFile(
 
 async function runOneFile(
   file: string,
+  ordinal: number,
   opts: ReturnType<typeof validateRunOptions>,
   reporter: TestsStream,
   counts: Record<string, number>,
@@ -463,7 +465,7 @@ async function runOneFile(
     nesting: 0,
     name: file,
     type: "test",
-    testId: 1,
+    testId: ordinal,
     parentId: 0,
     tags: [],
     line: 1,
@@ -584,7 +586,7 @@ async function runOneFile(
         __proto__: null,
         ...fileNode,
         type: undefined,
-        testNumber: 1,
+        testNumber: ordinal,
         details: {
           __proto__: null,
           duration_ms: fileDuration,
@@ -595,9 +597,9 @@ async function runOneFile(
       });
       const details = { __proto__: null, duration_ms: fileDuration, type: "test", error };
       if (fileFailed) {
-        reporter.fail({ __proto__: null, ...fileNode, type: undefined, testNumber: 1, details });
+        reporter.fail({ __proto__: null, ...fileNode, type: undefined, testNumber: ordinal, details });
       } else {
-        reporter.pass({ __proto__: null, ...fileNode, type: undefined, testNumber: 1, details });
+        reporter.pass({ __proto__: null, ...fileNode, type: undefined, testNumber: ordinal, details });
       }
     }
     addRunCounts(counts, fileCounts);
@@ -618,6 +620,7 @@ function rebuildError(serialized: any, depth = 0): Error {
   return error;
 }
 
+// `nesting` is forwarded as-is: the file node is not the parent of the file's tests.
 function republishChildEvent(
   event: { type: string; data: any },
   file: string,
@@ -627,7 +630,6 @@ function republishChildEvent(
   const { type, data } = event;
   Object.setPrototypeOf(data, null);
   data.file = file;
-  data.nesting = (data.nesting ?? 0) + 1;
   if (type === "test:pass" || type === "test:fail") {
     const isSuite = data.type === "suite";
     // node counts a suite in `suites` and stops there: a skipped or todo suite

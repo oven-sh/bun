@@ -561,6 +561,9 @@ long us_ssl_ctx_live_count(void);
 /* Appends the certificates in the PEM `content` to `ctx`'s trust store;
  * returns 0 when nothing could be added. */
 int us_ssl_ctx_add_ca_cert(struct ssl_ctx_st *ctx, const char *content);
+/* Replaces `ctx`'s trust store with an empty one that the default roots never
+ * seed (tls.setDefaultCACertificates([])); returns 0 on allocation failure. */
+int us_ssl_ctx_use_empty_ca_store(struct ssl_ctx_st *ctx);
 /* TLS-over-duplex / named-pipe SSL owners (no us_socket_t): opt an SSL into
  * the parked new-session/keylog queues, then drain them with the pop calls
  * after each SSL_read/SSL_do_handshake stack unwinds. Pop returns the entry

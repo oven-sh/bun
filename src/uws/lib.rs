@@ -1345,6 +1345,7 @@ pub mod SocketContext {
     /// `bun_uws_sys`; re-exported so this crate and `_sys` share one definition
     /// (callers in higher tiers pass values to `_sys` constructors directly).
     pub use bun_uws_sys::BunSocketContextOptions;
+    pub use bun_uws_sys::socket_context::c;
 }
 /// Snake-case module alias.
 pub use SocketContext as socket_context;

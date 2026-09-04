@@ -586,6 +586,29 @@ describe("Bun.build", () => {
     Bun.gc(true);
   });
 
+  // [hash] carries all 64 bits of the content hash (13 base32 characters). At
+  // 8 characters (40 bits), two of a few thousand `--splitting` chunks printed
+  // the same name about once per million builds and the build failed with
+  // "Multiple files share the same output path".
+  test("[hash] is the full 64-bit content hash", async () => {
+    const dir = tempDirWithFiles("build-hash-width", {
+      "a.js": `export default "a" + (await import("./shared.js")).default;`,
+      "b.js": `export default "b" + (await import("./shared.js")).default;`,
+      "shared.js": `export default "shared";`,
+    });
+    const build = await Bun.build({
+      entrypoints: [join(dir, "a.js"), join(dir, "b.js")],
+      splitting: true,
+      naming: { entry: "[name]-[hash].[ext]", chunk: "chunk-[hash].[ext]" },
+    });
+    expect(build.success).toBe(true);
+    for (const output of build.outputs) {
+      expect(output.hash).toMatch(/^[0-9a-z]{13}$/);
+      expect(path.basename(output.path)).toEndWith(`-${output.hash}.js`);
+    }
+    expect(new Set(build.outputs.map(o => o.hash)).size).toBe(build.outputs.length);
+  });
+
   test("BuildArtifact properties + entry.naming", async () => {
     Bun.gc(true);
     const outdir = tempDirWithFiles("build-artifact-properties-entry-naming", {

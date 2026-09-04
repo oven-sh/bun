@@ -502,7 +502,7 @@ describe("bundler", () => {
   // folds side-effect-free chunks below that size into a chunk more entries
   // load. `bun build` names chunks `[name]-[hash].js`; strip the hash so
   // expectations can name outputs.
-  const jsOutputs = (api: BundlerTestBundleAPI) => jsFilesIn(api).map(f => f.replace(/-[a-z0-9]{8}\.js$/, ".js"));
+  const jsOutputs = (api: BundlerTestBundleAPI) => jsFilesIn(api).map(f => f.replace(/-[a-z0-9]{13}\.js$/, ".js"));
   const jsOutput = (api: BundlerTestBundleAPI, name: string) =>
     api.readFile("/out/" + jsFilesIn(api).find(f => f === `${name}.js` || f.startsWith(`${name}-`))!);
 
@@ -1579,7 +1579,7 @@ describe("bundler", () => {
     onAfterBundle(api) {
       expect(jsFilesIn(api)).toHaveLength(4);
       api.expectFile("/out/entry.js").not.toContain("helper");
-      expect(jsOutput(api, "b")).not.toMatch(/from "\.\/a-[a-z0-9]{8}\.js"/);
+      expect(jsOutput(api, "b")).not.toMatch(/from "\.\/a-[a-z0-9]{13}\.js"/);
     },
     run: { file: "/out/entry.js", stdout: "entry\na h\nb h" },
   });

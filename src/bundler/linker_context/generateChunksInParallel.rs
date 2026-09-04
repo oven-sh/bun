@@ -385,7 +385,7 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
 
     // TODO: enforceNoCyclicChunkImports()
     {
-        let mut path_names_map: StringHashMap<()> = StringHashMap::default();
+        let mut path_names_map: StringHashMap<u32> = StringHashMap::default();
 
         #[derive(Default)]
         struct DuplicateEntry {
@@ -416,15 +416,18 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                 .expect("write to Vec<u8>");
             path::resolve_path::platform_to_posix_in_place::<u8>(&mut rel_path);
 
-            if path_names_map.get_or_put(&rel_path)?.found_existing {
-                // collect all duplicates in a list
+            let claimed = path_names_map.get_or_put(&rel_path)?;
+            if claimed.found_existing {
+                let first = *claimed.value_ptr as usize;
                 let dup = duplicates_map.get_or_put(&rel_path)?;
                 if !dup.found_existing {
                     *dup.value_ptr = DuplicateEntry::default();
+                    dup.value_ptr.sources.push(bun_ptr::BackRef::new(&chunks[first]));
                 }
-                dup.value_ptr.sources.push(bun_ptr::BackRef::new(&*chunk));
+                dup.value_ptr.sources.push(bun_ptr::BackRef::new(&chunks[index]));
                 continue;
             }
+            *claimed.value_ptr = index as u32;
 
             // A `./[dir]/…` template with `[dir] == "."` yields `././x.js`,
             // which importers of the chunk would copy verbatim.
@@ -432,7 +435,7 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                 rel_path.drain(i..i + 2);
             }
 
-            chunk.final_rel_path = rel_path.into_boxed_slice();
+            chunks[index].final_rel_path = rel_path.into_boxed_slice();
         }
 
         if duplicates_map.count() > 0 {

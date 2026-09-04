@@ -2215,7 +2215,7 @@ fn path_template_print<W: bun_io::Write>(
             PlaceholderField::Ext => PathTemplate::write_replacing_slashes_on_windows(writer, ext)?,
             PlaceholderField::Hash => {
                 if let Some(hash) = hash {
-                    writer.write_fmt(format_args!("{}", bun_core::fmt::truncated_hash32(hash)))?;
+                    writer.write_fmt(format_args!("{}", bun_core::fmt::content_hash(hash)))?;
                 }
             }
             PlaceholderField::Target => {

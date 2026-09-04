@@ -3531,6 +3531,35 @@ pub const fn truncated_hash32_bytes(int: u64) -> [u8; 8] {
     ]
 }
 
+/// All 64 bits of a content hash as 13 characters of the same alphabet.
+/// Bundler output names (`[hash]`) use this rather than [`truncated_hash32`]:
+/// at 40 bits, two of a few thousand chunks printing the same name is a
+/// one-in-a-million build, and that build fails.
+pub struct ContentHash(pub u64);
+
+pub fn content_hash(int: u64) -> ContentHash {
+    ContentHash(int)
+}
+
+impl Display for ContentHash {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        write_bytes(f, &content_hash_bytes(self.0))
+    }
+}
+
+pub const CONTENT_HASH_LEN: usize = 13;
+
+pub const fn content_hash_bytes(int: u64) -> [u8; CONTENT_HASH_LEN] {
+    const CHARS: &[u8; 32] = b"0123456789abcdefghjkmnpqrstvwxyz";
+    let mut out = [0u8; CONTENT_HASH_LEN];
+    let mut i = 0;
+    while i < CONTENT_HASH_LEN {
+        out[i] = CHARS[((int >> (5 * i)) & 31) as usize];
+        i += 1;
+    }
+    out
+}
+
 /// Zero-validation `&[u8] -> impl Display` adapter — short alias of [`raw`]
 /// for terse call sites (`bun_fmt::s(name)`).
 #[inline(always)]

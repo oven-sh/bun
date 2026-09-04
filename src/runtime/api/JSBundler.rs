@@ -2001,7 +2001,7 @@ impl BuildArtifact {
         use std::io::Write;
         let mut buf = [0u8; 512];
         let mut cursor = &mut buf[..];
-        write!(cursor, "{}", bun_core::fmt::truncated_hash32(this.hash)).expect("Unexpected");
+        write!(cursor, "{}", bun_core::fmt::content_hash(this.hash)).expect("Unexpected");
         let written = 512 - cursor.len();
         bun_string_jsc::create_utf8_for_js(global_this, &buf[..written])
     }
@@ -2108,7 +2108,7 @@ impl BuildArtifact {
                     writer,
                     ENABLE_ANSI_COLORS,
                     "<r>hash<r>: <green>\"{f}\"<r>",
-                    bun_core::fmt::truncated_hash32(self.hash),
+                    bun_core::fmt::content_hash(self.hash),
                 )?;
             }
 

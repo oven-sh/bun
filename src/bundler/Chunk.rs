@@ -289,7 +289,7 @@ impl Chunk {
 
     /// Stable short name for this chunk in generated code: its final content hash, as `[hash]` prints it.
     pub(crate) fn id(&self) -> [u8; CHUNK_ID_LEN] {
-        bun_core::fmt::truncated_hash32_bytes(
+        bun_core::fmt::content_hash_bytes(
             self.template.placeholder.hash.unwrap_or(self.isolated_hash),
         )
     }
@@ -1280,7 +1280,7 @@ impl QueryKind {
     }
 }
 
-pub(crate) const CHUNK_ID_LEN: usize = 8;
+pub(crate) const CHUNK_ID_LEN: usize = bun_core::fmt::CONTENT_HASH_LEN;
 
 /// Length of the lowercase-hex `unique_key` prefix (16 nibbles of a `u64`).
 pub(crate) const UNIQUE_KEY_PREFIX_LEN: usize = 16;

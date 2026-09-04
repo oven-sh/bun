@@ -8268,6 +8268,8 @@ declare module "bun" {
     /**
      * IANA time-zone name to interpret the schedule in (e.g. `"UTC"`,
      * `"America/New_York"`). Defaults to the system's local time zone.
+     *
+     * Prior to Bun v1.4 the default was UTC; pass `"UTC"` to keep that behavior.
      */
     tz?: string;
   }
@@ -8330,6 +8332,12 @@ declare module "bun" {
      *   fires when **either** matches — [POSIX cron](https://pubs.opengroup.org/onlinepubs/9699919799/utilities/crontab.html) OR semantics.
      * - All expressions work on all platforms — there is no Windows trigger limit here.
      *
+     * ### Time zone
+     *
+     * Schedules run in the system's local time zone — the same way crontab, launchd, and
+     * Windows Task Scheduler read them. Pass `{ tz: "UTC" }` (or any IANA time-zone name)
+     * to override. Prior to Bun v1.4 the default was UTC.
+     *
      * ### Lifecycle & `--hot`
      *
      * Under `bun --hot`, all in-process cron jobs are stopped immediately before the module
@@ -8343,10 +8351,12 @@ declare module "bun" {
      * @param schedule Cron expression or nickname (e.g. `"*\/5 * * * *"`, `"@hourly"`).
      * @param handler Function to call on each fire. May return a Promise — the next fire
      *   is not scheduled until it settles.
+     * @param options `{ tz?: string }` — IANA time-zone name to interpret the schedule in
+     *   (defaults to the system's local zone).
      * @returns A {@link CronJob} handle. Chainable: `.stop()`, `.ref()`, `.unref()` all
      *   return the job itself.
-     * @throws Synchronously if `schedule` is invalid, or the expression has no future
-     *   occurrences (e.g. `"0 0 30 2 *"` — February 30th).
+     * @throws Synchronously if `schedule` is invalid, `options.tz` is not a valid IANA
+     *   name, or the expression has no future occurrences (e.g. `"0 0 30 2 *"` — February 30th).
      *
      * @example
      * ```ts

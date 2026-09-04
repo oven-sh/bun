@@ -7,7 +7,7 @@
 import { $ } from "bun";
 import { afterAll, beforeAll, describe, expect, it, test } from "bun:test";
 import { chmodSync, mkdirSync } from "fs";
-import { mkdir, rm, stat } from "fs/promises";
+import { mkdir, readdir, rm, stat, symlink } from "fs/promises";
 import { bunExe, isPosix, isWindows, rss, runWithErrorPromise, tempDir, tempDirWithFiles, tmpdirSync } from "harness";
 import { join, sep } from "path";
 import { createTestBuilder, sortedShellOutput } from "./util";
@@ -1330,6 +1330,35 @@ booga"
       } finally {
         chmodSync(noaccess, 0o755);
       }
+    });
+  });
+
+  // A relative operand is joined with the cwd, which normalizes it, so only an
+  // absolute operand reaches the recursive mkdir with its trailing separator.
+  // Skipped on Windows, where the path is normalized before the walk as well.
+  describe.skipIf(isWindows)("mkdir -p with a trailing separator", () => {
+    // The walk used to hand the spelled name (`c/d/`) to mkdir(2) as well as the
+    // names it derives from it, which made -v report `d` twice; coreutils
+    // reports `c` and `c/d/`.
+    test("-v reports each created directory once, the operand as spelled", async () => {
+      await using dir = tempDir("mkdir-p-trailing-sep", {});
+      const { stdout, stderr, exitCode } = await $`mkdir -pv ${dir}/c/d/`.quiet();
+      expect(stderr.toString()).toBe("");
+      expect(stdout.toString()).toBe(`${dir}/c\n${dir}/c/d/\n`);
+      expect(exitCode).toBe(0);
+      expect(await readdir(join(dir, "c"))).toEqual(["d"]);
+    });
+
+    // mkdir(2) of `dangling/` creates the link's target on macOS and FreeBSD;
+    // the directory is created under the name `dangling` instead, which exists.
+    test("fails on a dangling symlink and creates nothing", async () => {
+      await using dir = tempDir("mkdir-p-dangling", {});
+      await symlink("missing", join(dir, "dangling"));
+      const { stdout, stderr, exitCode } = await $`mkdir -pv ${dir}/dangling/`.quiet();
+      expect(stdout.toString()).toBe("");
+      expect(stderr.toString()).toStartWith(`mkdir: ${dir}/dangling/: `);
+      expect(exitCode).toBe(1);
+      expect(await readdir(String(dir))).toEqual(["dangling"]);
     });
   });
 

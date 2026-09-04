@@ -767,6 +767,60 @@ int posix_fadvise(int fd, off_t offset, off_t len, int advice) {
         );
       });
     });
+
+    // Each source kind creates the parent on its own code path: a string is
+    // written through open(), an empty string through truncate(), and a
+    // Bun.file through the copy path (clonefile() on macOS).
+    const sources = {
+      "string": () => "contents",
+      "empty string": () => "",
+      "Bun.file": dir => Bun.file(join(dir, "src.txt")),
+    };
+
+    describe("destination spelled with doubled separators", () => {
+      for (const [name, source] of Object.entries(sources)) {
+        it(`creates the parent (${name})`, async () => {
+          using dir = tempDir("bun-write-doubled-sep", { "src.txt": "contents" });
+          const expected = source(String(dir));
+
+          await Bun.write(`${dir}/a//b//file`, expected);
+
+          expect(fs.readdirSync(String(dir)).sort()).toEqual(["a", "src.txt"]);
+          expect(fs.readdirSync(join(String(dir), "a"))).toEqual(["b"]);
+          expect(await Bun.file(join(String(dir), "a", "b", "file")).text()).toBe(
+            typeof expected === "string" ? expected : "contents",
+          );
+        });
+      }
+    });
+
+    // The parent of `dangling//file` is derived as `dangling/`, and the
+    // recursive mkdir used to hand that name to mkdir(2) as is. With the
+    // trailing separator, mkdir(2) on macOS and FreeBSD follows the symlink and
+    // creates its target, so the write created `missing` and landed in it.
+    // Linux fails that mkdir with EEXIST for either spelling, so there these
+    // cases pass regardless. Skipped on Windows, where the path is normalized
+    // before mkdir and the reported code differs.
+    describe.skipIf(isWindows)("destination parent is a dangling symlink", () => {
+      for (const [name, source] of Object.entries(sources)) {
+        for (const dest of ["dangling/file", "dangling//file"]) {
+          it(`rejects and creates nothing (${name}, ${dest})`, async () => {
+            using dir = tempDir("bun-write-dangling-parent", { "src.txt": "contents" });
+            fs.symlinkSync("missing", join(String(dir), "dangling"));
+
+            const err = await Bun.write(`${dir}/${dest}`, source(String(dir))).then(
+              () => "resolved",
+              e => e.code,
+            );
+            // The empty-string write reports the parent mkdir's own error, which
+            // is EEXIST until the recursive mkdir reports ENOENT for a dangling
+            // link as node does; the other two report the ENOENT of the write.
+            expect(name === "empty string" ? ["EEXIST", "ENOENT"] : ["ENOENT"]).toContain(err);
+            expect(fs.readdirSync(String(dir)).sort()).toEqual(["dangling", "src.txt"]);
+          });
+        }
+      }
+    });
   });
 
   test("timed output should work", async () => {

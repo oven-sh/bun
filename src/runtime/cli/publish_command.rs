@@ -1743,14 +1743,22 @@ impl PublishCommand {
                     0,
                 ) {
                     Ok(fd) => fd,
-                    Err(e) => {
-                        if e.get_errno() == bun_sys::E::ENOENT {
+                    Err(e) => match e.get_errno() {
+                        bun_sys::E::ENOENT => {
                             bun_core::warn!(
                                 "bin directory '{}' does not exist",
                                 bstr::BStr::new(normalized_bin_dir.as_bytes()),
                             );
                             return Ok(());
-                        } else {
+                        }
+                        bun_sys::E::ENOTDIR => {
+                            bun_core::warn!(
+                                "bin directory '{}' is not a directory",
+                                bstr::BStr::new(normalized_bin_dir.as_bytes()),
+                            );
+                            return Ok(());
+                        }
+                        _ => {
                             Output::err(
                                 e,
                                 "failed to open bin directory: '{}'",
@@ -1758,7 +1766,7 @@ impl PublishCommand {
                             );
                             Global::crash();
                         }
-                    }
+                    },
                 };
 
                 let mut dirs: Vec<(Fd, Box<[u8]>, bool)> = Vec::new();

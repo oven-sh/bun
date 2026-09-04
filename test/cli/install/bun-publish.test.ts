@@ -1338,6 +1338,8 @@ describe.concurrent("bin in the published manifest", () => {
     [{ directories: { bin: "bins/" } }, { "a.js": "bins/a.js" }],
     [{ directories: { bin: "" } }, undefined],
     [{ directories: { bin: "." } }, undefined],
+    [{ directories: { bin: "cli.js" } }, undefined],
+    [{ directories: { bin: "missing" } }, undefined],
     [{ bin: "", directories: { bin: "bins" } }, { "a.js": "bins/a.js" }],
     [{ bin: "cli.js", directories: { bin: "bins" } }, { "bin-pkg": "cli.js" }],
   ])("%j", async (fields, expected) => {

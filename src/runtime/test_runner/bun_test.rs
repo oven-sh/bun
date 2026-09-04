@@ -713,7 +713,7 @@ impl BunTest {
                     entry_data: Some(EntryData {
                         sequence_index: active_sequence_index,
                         entry: active_entry.as_ptr().cast::<()>(),
-                        remaining_repeat_count: sequence.remaining_repeat_count as i64,
+                        generation: sequence.generation,
                     }),
                 }
             }
@@ -1410,7 +1410,8 @@ bun_jsc::jsc_host_abi! {
 pub struct EntryData {
     pub(crate) sequence_index: usize,
     pub(crate) entry: *const (),
-    pub(crate) remaining_repeat_count: i64,
+    /// `ExecutionSequence::generation` at the time the entry was started.
+    pub(crate) generation: u32,
 }
 
 // Clone/Copy: bitwise OK — `active_scope` is a non-owning borrow of a
@@ -1477,8 +1478,8 @@ impl fmt::Display for RefDataValue {
                 if let Some(ed) = entry_data {
                     write!(
                         f,
-                        "execution: group_index={},sequence_index={},entry_index={:x},remaining_repeat_count={}",
-                        group_index, ed.sequence_index, ed.entry as usize, ed.remaining_repeat_count
+                        "execution: group_index={},sequence_index={},entry_index={:x},generation={}",
+                        group_index, ed.sequence_index, ed.entry as usize, ed.generation
                     )
                 } else {
                     write!(f, "execution: group_index={}", group_index)

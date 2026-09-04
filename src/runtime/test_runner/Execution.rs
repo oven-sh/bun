@@ -93,7 +93,7 @@ pub struct Execution {
     /// around `run_test_callback` so code re-entered from a test body (e.g.
     /// spawnSync's wait loop) can read the calling entry's own deadline.
     pub(crate) on_stack_entry: core::cell::Cell<Option<NonNull<ExecutionEntry>>>,
-    /// The (group_index, sequence_index, entry, repeat) for `on_stack_entry`,
+    /// The (sequence_index, entry, generation) for `on_stack_entry`,
     /// set/restored alongside it. `get_current_state_data()` can't name a
     /// sequence inside a concurrent group; this can, for code re-entered from
     /// the microtask drain inside `run_test_callback` (node:test's runtime
@@ -159,6 +159,8 @@ pub struct ExecutionSequence {
     pub(crate) test_entry: Option<NonNull<ExecutionEntry>>,
     pub(crate) remaining_repeat_count: u32,
     pub(crate) remaining_retry_count: u32,
+    /// Bumped by every [`Execution::reset_sequence`]; an [`EntryData`] with an older one is from an earlier retry/repeat.
+    pub(crate) generation: u32,
     pub(crate) result: Result,
     pub(crate) executing: bool,
     pub(crate) started_at: Timespec,
@@ -183,6 +185,7 @@ impl ExecutionSequence {
             remaining_repeat_count: repeat_count,
             remaining_retry_count: retry_count,
             // defaults:
+            generation: 0,
             result: Result::Pending,
             executing: false,
             started_at: Timespec::EPOCH,
@@ -478,9 +481,9 @@ impl Execution {
             return None;
         }
         let sequence = &mut self.sequences[seq_abs];
-        if i64::from(sequence.remaining_repeat_count) != entry_data.remaining_repeat_count {
+        if sequence.generation != entry_data.generation {
             group_log::log(format_args!(
-                "runOneCompleted: the data is for a previous repeat count (outdated)",
+                "runOneCompleted: the data is for a previous retry/repeat of the sequence (outdated)",
             ));
             return None;
         }
@@ -745,12 +748,14 @@ impl Execution {
         }
 
         // Preserve retry/repeat counts across reset
+        let generation = sequence.generation;
         *sequence = ExecutionSequence::init(
             sequence.first_entry,
             sequence.test_entry,
             sequence.remaining_retry_count,
             sequence.remaining_repeat_count,
         );
+        sequence.generation = generation.wrapping_add(1);
 
         // Snapshot counters are keyed by full test name and incremented on every
         // toMatchSnapshot() call. Without this reset, retries / repeats would
@@ -1009,7 +1014,7 @@ fn step_sequence_one(
         let entry_data = EntryData {
             sequence_index,
             entry: next_item_ptr.as_ptr() as *const (),
-            remaining_repeat_count: sequence.remaining_repeat_count as i64,
+            generation: sequence.generation,
         };
         let callback_data = RefDataValue::Execution {
             group_index: this.group_index,

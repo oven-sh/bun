@@ -98,6 +98,10 @@ it("import.meta.resolve(specifier, parent) accepts a URL instance as parent", ()
   expect(import.meta.resolve("./sibling.mjs", parent.href)).toBe(expected);
   expect(import.meta.resolve("./sibling.mjs", parent)).toBe(expected);
   expect(import.meta.resolve("./sibling.mjs", undefined)).toBe(new URL("./sibling.mjs", import.meta.url).href);
+  // A relative specifier resolves against a non-file URL parent as a URL.
+  expect(import.meta.resolve("./sibling.mjs", new URL("https://example.com/sub/mod.mjs"))).toBe(
+    "https://example.com/sub/sibling.mjs",
+  );
   // Bun extension: `{ paths: [...] }` is still accepted.
   expect(() => import.meta.resolve("./sibling.mjs", { paths: [dir] })).not.toThrow();
 });

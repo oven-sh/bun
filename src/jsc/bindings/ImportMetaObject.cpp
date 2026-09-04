@@ -351,6 +351,8 @@ JSC_DEFINE_HOST_FUNCTION(functionImportMeta__resolve,
 
     // Node.js allows a second argument for parent: a string or a URL instance.
     JSValue from = {};
+    // Set when the parent is a URL instance. A relative specifier resolves against it directly.
+    WTF::URL parentURL;
 
     if (callFrame->argumentCount() >= 2) {
         JSValue fromValue = callFrame->uncheckedArgument(1);
@@ -359,8 +361,8 @@ JSC_DEFINE_HOST_FUNCTION(functionImportMeta__resolve,
             from = fromValue;
         } else if (WebCore::DOMURL* url = WebCoreCast<WebCore::JSDOMURL, WebCore::DOMURL>(JSValue::encode(fromValue))) {
             // The resolver takes a filesystem path as the parent, so a file: URL is converted to one.
-            const WTF::URL& href = url->href();
-            from = jsString(vm, href.protocolIsFile() ? href.fileSystemPath() : href.string());
+            parentURL = url->href();
+            from = jsString(vm, parentURL.protocolIsFile() ? parentURL.fileSystemPath() : parentURL.string());
         } else if (fromValue.isObject()) {
             // Bun extension: `{ paths: [dir] }`, like `require.resolve`.
             auto pathsObject = fromValue.getObject()->getIfPropertyExists(globalObject, builtinNames(vm).pathsPublicName());
@@ -417,7 +419,8 @@ JSC_DEFINE_HOST_FUNCTION(functionImportMeta__resolve,
         || specifier.startsWith(".\\"_s) || specifier.startsWith("..\\"_s) || specifier.startsWith("\\"_s)
 #endif
     ) {
-        auto fromURL = fromWTFString.startsWith("file://"_s) ? WTF::URL(fromWTFString) : WTF::URL::fileURLWithFileSystemPath(fromWTFString);
+        auto fromURL = parentURL.isValid() ? parentURL : fromWTFString.startsWith("file://"_s) ? WTF::URL(fromWTFString)
+                                                                                               : WTF::URL::fileURLWithFileSystemPath(fromWTFString);
         if (!fromURL.isValid()) {
             JSC::throwTypeError(globalObject, scope, "`parent` is not a valid Filepath / URL"_s);
             RELEASE_AND_RETURN(scope, JSC::JSValue::encode(JSC::JSValue {}));

@@ -1912,27 +1912,29 @@ describe.concurrent("node:vm SourceTextModule frames name the identifier", () =>
     `;
     await using proc = Bun.spawn({ cmd: [bunExe(), "-e", code], env: bunEnv, stdout: "pipe", stderr: "pipe" });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(stderr).toBe("");
-    expect(exitCode).toBe(0);
-    return stdout;
+    return { stack: stdout.split("\n").slice(0, 3), stderr, exitCode };
   }
 
   test("an explicit identifier", async () => {
-    const stack = await stackOf('identifier: "file:///virtual/probe-module.mjs",');
-    expect(stack.split("\n").slice(0, 3)).toEqual([
+    const { stack, stderr, exitCode } = await stackOf('identifier: "file:///virtual/probe-module.mjs",');
+    expect(stack).toEqual([
       "Error: from module",
       expect.stringMatching(/^ {4}at boom \(file:\/\/\/virtual\/probe-module\.mjs:2:\d+\)$/),
       expect.stringMatching(/^ {4}at file:\/\/\/virtual\/probe-module\.mjs:3:\d+$/),
     ]);
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
   });
 
   test("the generated vm:module(N) identifier", async () => {
-    const stack = await stackOf("");
-    expect(stack.split("\n").slice(0, 3)).toEqual([
+    const { stack, stderr, exitCode } = await stackOf("");
+    expect(stack).toEqual([
       "Error: from module",
       expect.stringMatching(/^ {4}at boom \(vm:module\(\d+\):2:\d+\)$/),
       expect.stringMatching(/^ {4}at vm:module\(\d+\):3:\d+$/),
     ]);
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
   });
 });
 

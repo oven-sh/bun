@@ -150,6 +150,17 @@ depth = 3
 
 Higher values show more nested properties but may produce verbose output for complex objects. The `--console-depth` CLI flag overrides this setting.
 
+### `debug`
+
+#### `debug.editor`
+
+The editor that [`Bun.openInEditor()`](/runtime/utils#bun-openineditor) opens files with when it is called without an `editor` option. Accepts an absolute path to an editor, or the name of an editor Bun knows (for example `"code"` or `"subl"`), which is looked up on `PATH` (and in `/Applications` on macOS). This setting is consulted before the `$EDITOR` and `$VISUAL` environment variables. If the configured editor is not installed, Bun continues with the detection it performs without this setting: `$EDITOR` or `$VISUAL`, then a built-in list of common editors.
+
+```toml title="bunfig.toml" icon="settings"
+[debug]
+editor = "code"
+```
+
 ## Serve
 
 The `[serve]` section configures `Bun.serve` and `bun run` when serving HTTP.

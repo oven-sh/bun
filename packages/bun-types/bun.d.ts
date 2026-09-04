@@ -5505,7 +5505,8 @@ declare module "bun" {
   function shrink(): void;
 
   /**
-   * Open a file in your local editor. The editor is detected from `$VISUAL` or `$EDITOR`
+   * Open a file in your local editor. The editor is taken from the `[debug] editor`
+   * setting in `bunfig.toml`, otherwise detected from `$VISUAL` or `$EDITOR`
    *
    * @param path Path of the file to open
    * @param options Editor, line, and column overrides

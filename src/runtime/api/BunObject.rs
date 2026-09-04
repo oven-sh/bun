@@ -935,9 +935,8 @@ fn open_in_editor(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResu
         let mut editor_choice: Option<Editor> = None;
 
         if let Some(sliced) = &editor_name {
-            let prev_name = edit.name;
-
-            if !strings::eql_long(prev_name, sliced.slice(), true) {
+            // `name` may be a bunfig editor that auto-detection failed to find.
+            if edit.found().is_none() || !strings::eql_long(edit.name, sliced.slice(), true) {
                 let prev = core::mem::take(edit);
                 // Own the bytes in `name_storage` and
                 // hand back a thread-lifetime borrow.
@@ -956,17 +955,6 @@ fn open_in_editor(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResu
                         "Could not find editor \"{}\"",
                         bstr::BStr::new(sliced.slice()),
                     )));
-                } else if edit.name.as_ptr() == edit.path.as_ptr() {
-                    // `detect_editor` aliased `path` to `name` (absolute
-                    // editor path). `name` is backed by `slot.name_storage`,
-                    // which a later call may drop while the detached editor
-                    // thread is still reading argv[0]. Give `path`
-                    // process-lifetime storage, matching every other
-                    // `detect_editor` branch.
-                    edit.path = bun_resolver::fs::FileSystem::instance()
-                        .dirname_store
-                        .append_slice(edit.path)
-                        .expect("unreachable");
                 }
             }
         }

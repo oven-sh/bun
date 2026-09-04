@@ -3886,13 +3886,22 @@ mod windows_impl {
     /// every process spawned while it is open. Stdio handed to a child is
     /// duplicated again (inheritable) by libuv itself, so nothing needs it.
     pub fn dup(fd: Fd) -> Maybe<Fd> {
-        // DuplicateHandle on the underlying HANDLE.
+        // DuplicateHandle on the underlying HANDLE. A uv fd that is not open
+        // (and `Fd::INVALID`) decodes to INVALID_HANDLE_VALUE, which is the
+        // same value as the GetCurrentProcess() pseudo handle: DuplicateHandle
+        // accepts it and hands back a handle to this process instead of
+        // failing, so it has to be rejected before the call.
+        let source = fd.native();
+        if source == w::INVALID_HANDLE_VALUE {
+            return Err(Error::new(E::EBADF, Tag::dup).with_fd(fd));
+        }
         let process = w::kernel32::GetCurrentProcess();
         let mut target: w::HANDLE = core::ptr::null_mut();
+        // SAFETY: FFI; `target` is valid for the write.
         let out = unsafe {
             w::kernel32::DuplicateHandle(
                 process,
-                fd.native() as w::HANDLE,
+                source,
                 process,
                 &mut target,
                 0,

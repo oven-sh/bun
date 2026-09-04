@@ -3127,6 +3127,78 @@ describe("bundler", () => {
     minifyIdentifiers: false,
     run: { stdout: `a a\nb outer\n["b-arg","local,outer","outer","L,F"]` },
   });
+  // A `var` hoisted out of a block is still declared inside that block, so a
+  // block-scoped binding there cannot take the hoisted name (#41351). The
+  // same holds for a function body and its parameters, and for a catch block
+  // and its binding. A sibling block that does not mention the `var` may.
+  itBundled("identifiers/NestedBindingRenamedAroundHoistedVarDeclaration", {
+    files: {
+      "/entry.js": /* js */ `
+        import { make, loop, deep, sibling, param, arrow, caught } from "./lib.js";
+        import { Check } from "./other.js";
+        console.log(JSON.stringify([
+          make(true)(1), loop(), deep(), sibling(), param("p"), arrow("a"), caught(), Check(2),
+        ]));
+      `,
+      "/lib.js": /* js */ `
+        import { Check as OuterCheck } from "./other.js";
+        export function make(cond) {
+          OuterCheck(0);
+          if (cond) {
+            let Check2 = function (value) { return value; };
+            var Check = Check2;
+          }
+          return Check;
+        }
+        export function loop() {
+          OuterCheck(0);
+          for (let Check2 = 0; Check2 < 1; Check2++) { var Check = Check2 + 1; }
+          return Check;
+        }
+        export function deep() {
+          OuterCheck(0);
+          {
+            let Check2 = "mid";
+            { var Check = "var"; }
+            return [Check2, Check];
+          }
+        }
+        export function sibling() {
+          OuterCheck(0);
+          { var Check = "var"; }
+          let seen;
+          { let Check2 = "let"; seen = Check2; }
+          return [seen, Check];
+        }
+        export function param(Check) {
+          OuterCheck(0);
+          let Check2 = "body";
+          return Check2;
+        }
+        export const arrow = (Check) => {
+          OuterCheck(0);
+          let Check2 = "arrow";
+          return Check2;
+        };
+        export function caught() {
+          try { throw "err"; } catch (Check) {
+            OuterCheck(0);
+            let Check2 = "catch";
+            return Check2;
+          }
+        }
+      `,
+      "/other.js": /* js */ `
+        export function Check(x) { return "other " + x; }
+      `,
+    },
+    minifyIdentifiers: false,
+    onAfterBundle(api) {
+      const out = api.readFile("/out.js");
+      expect(out).toContain('let Check2 = "let"');
+    },
+    run: { stdout: `[1,1,["mid","var"],["let","var"],"body","arrow","catch","other 2"]` },
+  });
   itBundled("edgecase/MacroProtoKeyIsOwnProperty", {
     files: {
       "/entry.ts": /* js */ `

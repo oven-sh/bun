@@ -800,6 +800,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             BData::BIdentifier(bind) => {
                 let bind = bind.get();
                 self.record_declared_symbol(bind.r#ref);
+                // The declaration prints the name here even when the symbol is
+                // hoisted to an enclosing scope.
+                self.record_scope_use(bind.r#ref);
                 // SAFETY: original_name is arena-owned, valid for 'a.
                 let name: &'a [u8] = self.symbols[bind.r#ref.inner_index() as usize]
                     .original_name

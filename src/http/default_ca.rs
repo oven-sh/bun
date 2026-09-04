@@ -1,4 +1,3 @@
-
 //! `tls.setDefaultCACertificates()` override for `fetch()`'s HTTP-thread TLS
 //! contexts (node:tls applies it in JS instead — src/js/node/tls.ts).
 //! <https://github.com/nodejs/node/blob/main/lib/tls.js>

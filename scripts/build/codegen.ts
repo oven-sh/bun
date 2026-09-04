@@ -238,10 +238,9 @@ export interface CodegenOutputs {
    * ALL cpp-relevant codegen outputs — the union of cppHeaders, cppSources,
    * bindgenV2Cpp. cxx compilation order-depends on THIS (not `all`): cxx
    * doesn't need bake.*.js, runtime.out.js, or any other rust-side embedded
-   * outputs. Using `all` would pull bake-codegen in cpp-only CI mode, which
-   * fails on old CI bun versions (bake-codegen shells out to `bun build`
-   * whose CSS url() handling changed between versions). cmake only wired
-   * bake outputs into BUN_ZIG_GENERATED_SOURCES, never C++ deps — same here.
+   * outputs. Using `all` would pull bake-codegen into cpp-only CI mode for
+   * no reason. cmake only wired bake outputs into BUN_ZIG_GENERATED_SOURCES,
+   * never C++ deps — same here.
    *
    * The "undeclared .h files" issue (some scripts emit .h alongside their
    * declared outputs): those steps also emit a .cpp or .h that IS declared
@@ -848,15 +847,17 @@ function emitBakeCodegen({ n, cfg, sources, o, dirStamp }: Ctx): void {
     resolve(cfg.codegenDir, "bake.error.js"),
   ];
 
+  // The script bundles with the esbuild package from the root install.
   n.build({
     outputs,
-    rule: "codegen_bun",
+    rule: "codegen",
     inputs: [script, ...sources.bakeRuntime],
+    implicitInputs: [o.rootInstall],
     orderOnlyInputs: [dirStamp],
     vars: {
       cwd: cfg.cwd,
       desc: "bake.{client,server,error}.js",
-      args: shJoin(cfg, ["run", script, debugFlag(cfg), `--codegen-root=${cfg.codegenDir}`]),
+      args: shJoin(cfg, [script, debugFlag(cfg), `--codegen-root=${cfg.codegenDir}`]),
     },
   });
 

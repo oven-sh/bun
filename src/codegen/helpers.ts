@@ -28,12 +28,13 @@ export function readdirRecursive(root: string): string[] {
   });
 }
 
+/** The file that `specifier` names relative to the directory `from`, or null. */
 export function resolveSyncOrNull(specifier: string, from: string) {
-  try {
-    return Bun.resolveSync(specifier, from);
-  } catch {
-    return null;
+  const base = path.resolve(from, specifier);
+  for (const file of [base, base + ".ts", base + ".js", path.join(base, "index.ts"), path.join(base, "index.js")]) {
+    if (fs.existsSync(file) && fs.statSync(file).isFile()) return file;
   }
+  return null;
 }
 
 export function checkAscii(str: string) {

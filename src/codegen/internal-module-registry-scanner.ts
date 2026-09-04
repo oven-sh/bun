@@ -1,6 +1,6 @@
 import fs from "fs";
 import path from "path";
-import { readdirRecursive, resolveSyncOrNull } from "./helpers";
+import { readdirRecursive, resolveSyncOrNull } from "./helpers.ts";
 
 export function createInternalModuleRegistry(basedir: string) {
   const moduleList = ["bun", "node", "thirdparty", "internal"]
@@ -66,8 +66,11 @@ export function createInternalModuleRegistry(basedir: string) {
     const directMatch = internalRegistry.get(specifier);
     if (directMatch) return codegenRequireId(`${directMatch}/*${specifier}*/`);
 
+    // A bare specifier resolves from src/js, because src/js/tsconfig.json sets baseUrl to ".".
+    const isRelative = specifier.startsWith("./") || specifier.startsWith("../");
     const relativeMatch =
-      resolveSyncOrNull(specifier, path.join(basedir, path.dirname(from))) ?? resolveSyncOrNull(specifier, basedir);
+      (isRelative ? resolveSyncOrNull(specifier, path.join(basedir, path.dirname(from))) : null) ??
+      resolveSyncOrNull(specifier, basedir);
 
     const suffix =
       'Only files in "src/js" besides "src/js/builtins" can be imported here. Note that the "node:" or "bun:" prefix is required here.';

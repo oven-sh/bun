@@ -4,7 +4,7 @@
 // For the actual parsing, see replacements.ts
 
 import path, { basename, sep } from "path";
-import { readdirRecursiveWithExclusionsAndExtensionsSync } from "./helpers";
+import { readdirRecursiveWithExclusionsAndExtensionsSync } from "./helpers.ts";
 
 //
 interface NativeCall {
@@ -30,13 +30,14 @@ type NativeCallType = "rust" | "cpp" | "bind";
 const nativeCalls: NativeCall[] = [];
 const wrapperCalls: WrapperCall[] = [];
 
-const srcDir = path.join(import.meta.dir, "../");
+const srcDir = path.join(import.meta.dirname, "../");
 
+// Sorted because getJS2NativeDTS() writes this order, and readdir order depends on the runtime.
 const sourceFiles = readdirRecursiveWithExclusionsAndExtensionsSync(
   srcDir,
   ["deps", "node_modules", "WebKit"],
   [".cpp", ".bind.ts"],
-);
+).sort();
 
 // The $rust() macro's first argument is an identifier naming the module a
 // native symbol belongs to. The file itself is never opened, but its path
@@ -183,7 +184,7 @@ function symbol(call: Pick<NativeCall, "type" | "symbol" | "filename">) {
 function normalizeSymbolPathPrefix(input: string) {
   input = path.resolve(input);
 
-  const bunDir = path.resolve(path.join(import.meta.dir, "..", ".."));
+  const bunDir = path.resolve(path.join(import.meta.dirname, "..", ".."));
   if (input.startsWith(bunDir)) {
     input = input.slice(bunDir.length);
   }
@@ -303,7 +304,7 @@ export function getJS2NativeRust() {
     "JS2Rust___src_runtime_dns_jsc_dns_rs__internal_isAllLoopbackOfOneFamilyForTesting",
   ]);
 
-  const srcRoot = path.resolve(import.meta.dir, "..");
+  const srcRoot = path.resolve(import.meta.dirname, "..");
   const snake = (s: string) =>
     s
       .replace(/([a-z0-9])([A-Z])/g, "$1_$2")

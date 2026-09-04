@@ -1,4 +1,4 @@
-import { applyReplacements, function_replacements } from "./replacements";
+import { applyReplacements, function_replacements } from "./replacements.ts";
 
 function escapeRegex(str: string) {
   return str.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");

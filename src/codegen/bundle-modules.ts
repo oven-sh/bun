@@ -8,19 +8,20 @@
 // One day, this entire setup should be rewritten, but also it would be cool if Bun natively
 // supported macros that aren't json value -> json value. Otherwise, I'd use a real JS parser/ast
 // library, instead of RegExp hacks.
+import * as esbuild from "esbuild";
 import fs from "fs";
 import { mkdir, writeFile } from "fs/promises";
 import { builtinModules } from "node:module";
 import path from "path";
-import jsclasses from "./../jsc/bindings/js_classes";
-import { sliceSourceCode } from "./builtin-parser";
-import { createAssertClientJS, createLogClientJS } from "./client-js";
-import { getJS2NativeCPP, getJS2NativeRust } from "./generate-js2native";
-import { cap, checkAscii, sourceStamp, writeIfNotChanged, writeIfNotChangedBinary } from "./helpers";
-import { createInternalModuleRegistry } from "./internal-module-registry-scanner";
-import { define } from "./replacements";
+import jsclasses from "./../jsc/bindings/js_classes.ts";
+import { sliceSourceCode } from "./builtin-parser.ts";
+import { createAssertClientJS, createLogClientJS } from "./client-js.ts";
+import { getJS2NativeCPP, getJS2NativeRust } from "./generate-js2native.ts";
+import { cap, checkAscii, sourceStamp, writeIfNotChanged, writeIfNotChangedBinary } from "./helpers.ts";
+import { createInternalModuleRegistry } from "./internal-module-registry-scanner.ts";
+import { define } from "./replacements.ts";
 
-const BASE = path.join(import.meta.dir, "../js");
+const BASE = path.join(import.meta.dirname, "../js");
 const debug = process.argv[2] === "--debug=ON";
 const CMAKE_BUILD_ROOT = process.argv[3];
 
@@ -32,14 +33,28 @@ if (!CMAKE_BUILD_ROOT) {
   process.exit(1);
 }
 
+// bundle-functions.ts reads globalThis.CMAKE_BUILD_ROOT when it loads.
 globalThis.CMAKE_BUILD_ROOT = CMAKE_BUILD_ROOT;
-const bundleBuiltinFunctions = require("./bundle-functions").bundleBuiltinFunctions;
+const { bundleBuiltinFunctions } = await import("./bundle-functions.ts");
 
 const TMP_DIR = path.join(CMAKE_BUILD_ROOT, "tmp_modules");
 const CODEGEN_DIR = path.join(CMAKE_BUILD_ROOT, "codegen");
 const JS_DIR = path.join(CMAKE_BUILD_ROOT, "js");
 
-const t = new Bun.Transpiler({ loader: "tsx" });
+/**
+ * The top-level imports and exports of a module. Like Bun.Transpiler#scan, it skips
+ * `import type` and `export type`. Prettier puts top-level statements at column 0,
+ * so the patterns match only there.
+ */
+function scanModule(source: string) {
+  const imports = Array.from(
+    source.matchAll(/^(?:import\s+(?!type\b)[^;'"]*?\bfrom|import|export\s*[*{][^;'"]*?\bfrom)\s*["']([^"']+)["']/gm),
+    match => match[1],
+  );
+  const exportsDefault = /^export\s+default\b/m.test(source);
+  const exportsNames = /^export\b(?!\s*(?:default|type|interface|declare)\b|\s*\{\s*\})/m.test(source);
+  return { imports, exportsDefault, exportsNames };
+}
 
 let start = performance.now();
 const silent = process.env.CLAUDECODE;
@@ -59,7 +74,7 @@ globalThis.requireTransformer = requireTransformer;
 // work, so i have lot of debug logs that blow up the console because not sure what is going on.
 // that is also the reason for using `retry` when theoretically writing a file the first time
 // should actually write the file.
-const verbose = Bun.env.VERBOSE ? console.log : () => {};
+const verbose = process.env.VERBOSE ? console.log : () => {};
 async function retry(n, fn) {
   var err;
   while (n > 0) {
@@ -69,7 +84,7 @@ async function retry(n, fn) {
     } catch (e) {
       err = e;
       n--;
-      await Bun.sleep(5);
+      await new Promise(resolve => setTimeout(resolve, 5));
     }
   }
   throw err;
@@ -98,29 +113,27 @@ for (let i = 0; i < nativeStartIndex; i++) {
 
     // TODO: there is no reason this cannot be converted automatically.
     // import { ... } from '...' -> `const { ... } = require('...')`
-    const scannedImports = t.scan(input);
-    for (const imp of scannedImports.imports) {
-      if (imp.kind === "import-statement") {
-        var isBuiltin = true;
-        try {
-          if (!builtinModules.includes(imp.path)) {
-            requireTransformer(imp.path, moduleList[i]);
-          }
-        } catch {
-          isBuiltin = false;
+    const scanned = scanModule(input);
+    for (const specifier of scanned.imports) {
+      var isBuiltin = true;
+      try {
+        if (!builtinModules.includes(specifier)) {
+          requireTransformer(specifier, moduleList[i]);
         }
-        if (isBuiltin) {
-          const err = new Error(
-            `Cannot use ESM import statement within builtin modules. Use require("${imp.path}") instead. See src/js/README.md (from ${moduleList[i]})`,
-          );
-          err.name = "BunError";
-          err["fileName"] = moduleList[i];
-          throw err;
-        }
+      } catch {
+        isBuiltin = false;
+      }
+      if (isBuiltin) {
+        const err = new Error(
+          `Cannot use ESM import statement within builtin modules. Use require("${specifier}") instead. See src/js/README.md (from ${moduleList[i]})`,
+        );
+        err.name = "BunError";
+        err["fileName"] = moduleList[i];
+        throw err;
       }
     }
 
-    if (scannedImports.exports.includes("default") && scannedImports.exports.length > 1) {
+    if (scanned.exportsDefault && scanned.exportsNames) {
       const err = new Error(
         `Using \`export default\` AND named exports together in builtin modules is unsupported. See src/js/README.md (from ${moduleList[i]})`,
       );
@@ -150,8 +163,11 @@ for (let i = 0; i < nativeStartIndex; i++) {
           `Leftover starts: ${processed.rest.slice(0, 80)}`,
       );
     }
+    // `export {}` makes the file ESM for esbuild. Without it, a file that uses
+    // `module` or `exports` is bundled as CommonJS.
     let fileToTranspile = `// GENERATED TEMP FILE - DO NOT EDIT
 // Sourced from src/js/${moduleList[i]}
+export {};
 ${importStatements.join("\n")}
 
 ${processed.result.slice(1).trim()}
@@ -208,38 +224,32 @@ ${processed.result.slice(1).trim()}
 
 mark("Preprocess modules");
 
-// directory caching stuff breaks this sometimes. CLI rules
-const config_cli = [
-  process.execPath,
-  "build",
-  ...bundledEntryPoints,
-  ...(debug ? [] : ["--minify-syntax", "--keep-names"]),
-  "--root",
-  TMP_DIR,
-  "--target",
-  "bun",
-  ...builtinModules.map(x => ["--external", x]).flat(),
-  ...Object.keys(define)
-    .map(x => [`--define`, `${x}=${define[x]}`])
-    .flat(),
-  "--define",
-  `IS_BUN_DEVELOPMENT=${String(!!debug)}`,
-  "--define",
-  `__intrinsic__debug=${debug ? "$debug_log_enabled" : "false"}`,
-  "--outdir",
-  path.join(TMP_DIR, "modules_out"),
-];
-verbose("running: ", config_cli);
-const out = Bun.spawnSync({
-  cmd: config_cli,
-  cwd: process.cwd(),
-  env: process.env,
-  stdio: ["pipe", "pipe", "pipe"],
+await esbuild.build({
+  entryPoints: bundledEntryPoints,
+  outbase: TMP_DIR,
+  outdir: path.join(TMP_DIR, "modules_out"),
+  bundle: true,
+  format: "esm",
+  platform: "node",
+  target: "esnext",
+  charset: "ascii",
+  // Debug builds need this too. esbuild folds the `process.arch` comparisons
+  // in front of `$bundleError` calls only when it minifies syntax.
+  minifySyntax: true,
+  // esbuild renames a binding when a nested scope declares the same name. node:tls has a class
+  // and a function named SecureContext, and the function becomes SecureContext2. keepNames keeps
+  // the `name` property of such functions and classes.
+  keepNames: true,
+  external: builtinModules.flatMap(x => [x, "node:" + x]),
+  legalComments: "none",
+  supported: { using: false },
+  define: {
+    ...define,
+    IS_BUN_DEVELOPMENT: String(!!debug),
+    __intrinsic__debug: debug ? "$debug_log_enabled" : "false",
+  },
+  logLevel: "error",
 });
-if (out.exitCode !== 0) {
-  console.error(out.stderr.toString());
-  process.exit(out.exitCode);
-}
 
 mark("Bundle modules");
 
@@ -247,8 +257,28 @@ const outputs = new Map();
 
 for (const entrypoint of bundledEntryPoints) {
   const file_path = entrypoint.slice(TMP_DIR.length + 1).replace(/\.ts$/, ".js");
-  const output = fs.readFileSync(path.join(TMP_DIR, "modules_out", file_path), "utf8");
-  let captured = `(function (){${output.replace("// @bun\n", "").trim()}})`;
+  let output = fs
+    .readFileSync(path.join(TMP_DIR, "modules_out", file_path), "utf8")
+    // esbuild names the source file in a comment. Drop it, so that the output does not depend on the build directory.
+    .replace(/^\/\/ .*\btmp_modules\b.*\n/m, "")
+    // JSC loads the source as 8-bit text. esbuild escapes non-ASCII characters in strings, but not in the comments it keeps.
+    .replace(/[^\x00-\x7f]/g, c => "\\u" + c.charCodeAt(0).toString(16).padStart(4, "0"));
+  // keepNames adds a `__name` helper that calls Object.defineProperty, which user code can replace.
+  // The module must load anyway, so the helper ignores errors and returns its argument.
+  const nameHelpers = output.match(/^var __name = .*;$/gm) ?? [];
+  if (nameHelpers.length > 1) {
+    throw new Error(`Builtin Bundler: ${file_path} has ${nameHelpers.length} __name helpers`);
+  }
+  if (nameHelpers.length === 1) {
+    output = output.replace(
+      nameHelpers[0],
+      'var __name = (target, value) => { try { __defProp(target, "name", { __proto__: null, value, configurable: !0 }); } catch {} return target; };',
+    );
+  } else if (output.includes("__name(")) {
+    throw new Error(`Builtin Bundler: ${file_path} calls __name, but its helper was not found`);
+  }
+  // The newline keeps a line comment at the end of the output from hiding the `})`.
+  let captured = `(function (){${output.trim()}\n})`;
   let usesDebug = output.includes("$debug_log");
   let usesAssert = output.includes("$assert");
   captured =
@@ -277,6 +307,11 @@ for (const entrypoint of bundledEntryPoints) {
   if (errors.length) {
     throw new Error(`Errors in ${entrypoint}:\n${errors.map(x => x[1]).join("\n")}`);
   }
+  // JSC does not parse an export statement inside the function wrapper.
+  const leakedExport = captured.match(/^export\b.*/m);
+  if (leakedExport) {
+    throw new Error(`Builtin Bundler: ${file_path} has a top-level export after postprocessing: ${leakedExport[0]}`);
+  }
 
   const outputPath = path.join(JS_DIR, file_path);
   fs.mkdirSync(path.dirname(outputPath), { recursive: true });
@@ -298,8 +333,9 @@ mark("Postprocesss modules");
 function layoutOrder(modules: string[], outputs: Map<string, string>): string[] {
   // The bundled sources already have require() rewritten to registry lookups,
   // `internalModuleRegistry, <index>` — the index is the position in
-  // `modules`, which makes the edge list unambiguous.
-  const requireRe = /internalModuleRegistry, ?(\d+)/g;
+  // `modules`, which makes the edge list unambiguous. esbuild puts the
+  // arguments on separate lines when a comment follows the index.
+  const requireRe = /internalModuleRegistry,\s*(\d+)/g;
   const deps = new Map<string, string[]>();
   for (const id of modules) {
     const src = outputs.get(id.slice(0, -3).replaceAll("/", path.sep)) ?? "";
@@ -432,7 +468,7 @@ const internalModulesStamp = sourceStamp(
 // --bytecode` embeds bytecode for the builtins an app imports plus everything reachable through this table.
 const internalModuleDependencyTable = (() => {
   const jsModules = moduleList.slice(0, nativeStartIndex);
-  const requireRe = /internalModuleRegistry, ?(\d+)/g;
+  const requireRe = /internalModuleRegistry,\s*(\d+)/g;
   const offsets: number[] = [];
   const flat: number[] = [];
   jsModules.forEach((id, n) => {
@@ -745,7 +781,7 @@ writeIfNotChanged(
   (() => {
     let dts = `
 // GENERATED TEMP FILE - DO NOT EDIT
-// generated by ${import.meta.path}
+// generated by ${import.meta.filename}
 
 declare module "module" {
   global {
@@ -796,25 +832,29 @@ declare module "module" {
 
 mark("Generate Code");
 
-const evalFiles = new Bun.Glob(path.join(BASE, "eval", "*.ts")).scanSync();
-for (const file of evalFiles) {
+const evalDir = path.join(BASE, "eval");
+for (const name of fs.globSync("*.ts", { cwd: evalDir }).sort()) {
   const {
-    outputs: [output],
-  } = await Bun.build({
-    entrypoints: [file],
+    outputFiles: [output],
+  } = await esbuild.build({
+    entryPoints: [path.join(evalDir, name)],
+    bundle: true,
+    write: false,
 
     // Shrink it.
     minify: !debug,
 
-    target: "bun",
     format: "esm",
-    env: "disable",
+    platform: "node",
+    target: "esnext",
+    supported: { using: false },
     define: {
       "process.platform": JSON.stringify(process.env.TARGET_PLATFORM ?? process.platform),
       "process.arch": JSON.stringify(process.env.TARGET_ARCH ?? process.arch),
     },
+    logLevel: "error",
   });
-  writeIfNotChanged(path.join(CODEGEN_DIR, "eval", path.basename(file)), await output.text());
+  writeIfNotChanged(path.join(CODEGEN_DIR, "eval", name), output.text);
 }
 
 if (!silent) {

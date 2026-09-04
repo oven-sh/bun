@@ -1,4 +1,4 @@
-import { pathToUpperSnakeCase } from "./helpers";
+import { pathToUpperSnakeCase } from "./helpers.ts";
 
 // This is the implementation for $debug
 // TODO: interop with $BUN_DEBUG

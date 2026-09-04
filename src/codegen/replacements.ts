@@ -1,7 +1,7 @@
 import NodeErrors from "../jsc/bindings/ErrorCode.ts";
-import jsclasses from "./../jsc/bindings/js_classes";
-import { sliceSourceCode } from "./builtin-parser";
-import { registerNativeCall } from "./generate-js2native";
+import jsclasses from "./../jsc/bindings/js_classes.ts";
+import { sliceSourceCode } from "./builtin-parser.ts";
+import { registerNativeCall } from "./generate-js2native.ts";
 
 // This is a list of extra syntax replacements to do. Kind of like macros
 // These are only run on code itself, not string contents or comments.
@@ -133,8 +133,8 @@ export const define: Record<string, string> = {
   "process.env.NODE_ENV": JSON.stringify(debug ? "development" : "production"),
   "IS_BUN_DEVELOPMENT": String(debug),
 
-  "process.platform": JSON.stringify(Bun.env.TARGET_PLATFORM ?? process.platform),
-  "process.arch": JSON.stringify(Bun.env.TARGET_ARCH ?? process.arch),
+  "process.platform": JSON.stringify(process.env.TARGET_PLATFORM ?? process.platform),
+  "process.arch": JSON.stringify(process.env.TARGET_ARCH ?? process.arch),
 };
 
 // ------------------------------ //

@@ -808,17 +808,19 @@ function emitJsModules({ n, cfg, sources, o, dirStamp }: Ctx): void {
     o.internalModulesBin,
   ];
 
+  // The script bundles with the esbuild package from the root install.
   n.build({
     outputs,
-    rule: "codegen_bun",
+    rule: "codegen",
     inputs: [script, ...sources.js, ...sources.jsCodegen, extraInput, errorCodeInput],
+    implicitInputs: [o.rootInstall],
     orderOnlyInputs: [dirStamp],
     vars: {
       cwd: cfg.cwd,
       desc: "JS modules (bundle-modules)",
       // Note: arg is BUILD_PATH (buildDir), not CODEGEN_PATH. The script
       // derives CODEGEN_DIR = join(BUILD_PATH, "codegen") internally.
-      args: shJoin(cfg, ["run", script, debugFlag(cfg), cfg.buildDir]),
+      args: shJoin(cfg, [script, debugFlag(cfg), cfg.buildDir]),
     },
   });
 

@@ -3263,8 +3263,7 @@ describe("bundler", () => {
       expect(out).not.toMatch(/function param\(Check2\) \{\s*[^}]*let Check2\b/);
     },
     run: {
-      stdout:
-        `[1,1,["mid","var"],["let","var"],["p","body"],["a","arrow"],["default","inner"],["err","catch"],"v",[5,{"b":1}],"k","sw","try","cls",["let","v"],[["let","g-inner"],"g-inner"],"other 2"]`,
+      stdout: `[1,1,["mid","var"],["let","var"],["p","body"],["a","arrow"],["default","inner"],["err","catch"],"v",[5,{"b":1}],"k","sw","try","cls",["let","v"],[["let","g-inner"],"g-inner"],"other 2"]`,
     },
   });
   itBundled("edgecase/MacroProtoKeyIsOwnProperty", {

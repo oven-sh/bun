@@ -124,8 +124,7 @@ impl<'a> Interval<'a> {
     }
 }
 
-/// The smallest version without a prerelease tag above `v`'s major.minor.patch.
-/// `>3` desugars to `>3.MAX.MAX`, so the carry matters.
+/// The smallest release above `v`'s major.minor.patch, with a carry (`>3` desugars to `>3.MAX.MAX`).
 fn next_release(v: Version) -> Option<Version> {
     let release = |major, minor, patch| Version {
         major,

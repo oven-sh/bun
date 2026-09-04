@@ -7934,6 +7934,14 @@ declare module "bun" {
     readonly stdio: [null, null, null, ...(number | null)[]];
 
     /**
+     * The same value as {@link Subprocess.stdin}
+     *
+     * The counterpart of {@link Subprocess.readable}. With `stdin: "pipe"` this is
+     * the {@link FileSink} for the process's stdin, not a `WritableStream`.
+     */
+    readonly writable: SpawnOptions.WritableToIO<In>;
+
+    /**
      * The same value as {@link Subprocess.stdout}
      *
      * Exists for compatibility with {@link ReadableStream.pipeThrough}

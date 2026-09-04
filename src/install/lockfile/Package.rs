@@ -111,6 +111,26 @@ pub(crate) fn value_loc_of(source: &bun_ast::Source, key_loc: bun_ast::Loc) -> b
     crate::bun_json::property_value_loc(&source.contents, key_loc).unwrap_or(key_loc)
 }
 
+/// True when `folder`, a folder-dependency path relative to the workspace
+/// root (either platform's separators), names the directory of the member
+/// registered at `workspace_path` (posix).
+fn folder_path_is_workspace_path(folder: &[u8], workspace_path: &[u8]) -> bool {
+    let mut buf = path::path_buffer_pool::get();
+    let normalized = resolve_path::join_string_buf::<path::platform::Auto>(&mut buf[..], &[folder]);
+    if normalized.len() != workspace_path.len() {
+        return false;
+    }
+    if cfg!(windows) {
+        for (&a, &b) in normalized.iter().zip(workspace_path) {
+            if a != b && !(a == b'\\' && b == b'/') {
+                return false;
+            }
+        }
+        return true;
+    }
+    strings::eql(normalized, workspace_path)
+}
+
 #[cold]
 fn invalid_trusted_dependencies(
     log: &mut bun_ast::Log,
@@ -1898,6 +1918,36 @@ impl Package<u64> {
                 // if relative is empty, we are linking the package to itself
                 dependency_version.value.folder = string_builder
                     .append::<String>(if relative.is_empty() { b"." } else { relative });
+
+                // The root package's dependencies share one node_modules
+                // entry per name with the workspace members, so a root folder
+                // dependency colliding with a member resolves to the member,
+                // as in npm. Both placed side by side would serialize the
+                // same bun.lock key twice.
+                if let Some(workspace_path) = workspace_path {
+                    let collides = package_dependencies[0..dependencies_count as usize]
+                        .iter()
+                        .any(|dep| dep.name_hash == name_hash && dep.behavior.is_workspace());
+                    if collides
+                        && !folder_path_is_workspace_path(relative, workspace_path.slice(buf))
+                    {
+                        let path = workspace_path.sliced(buf);
+                        if let Some(mut dep) = dependency::parse_with_tag(
+                            external_alias.value,
+                            Some(external_alias.hash),
+                            path.slice,
+                            dependency::version::Tag::Workspace,
+                            &path,
+                            Some(&mut *log),
+                            Some(&mut *pm),
+                        ) {
+                            // Whole-struct move so `Drop` frees the old
+                            // chain; keep the existing `literal`.
+                            dep.literal = dependency_version.literal;
+                            dependency_version = dep;
+                        }
+                    }
+                }
             }
             dependency::version::Tag::Npm => {
                 if let Some(workspace_path) = lockfile::linked_workspace_path(

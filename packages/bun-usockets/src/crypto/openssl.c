@@ -1573,6 +1573,24 @@ int us_ssl_ctx_add_ca_cert(SSL_CTX *ctx, const char *content) {
   return add_ca_cert_to_ctx_store(ctx, content, store);
 }
 
+/* `tls.setDefaultCACertificates([])`: a trust store with no roots. The
+ * context is marked as user-configured so neither the per-socket attach nor
+ * the own-store helper seeds the default roots back in. Returns 0 when the
+ * store could not be allocated. */
+int us_ssl_ctx_use_empty_ca_store(SSL_CTX *ctx) {
+  if (!ctx) {
+    return 0;
+  }
+  X509_STORE *store = X509_STORE_new();
+  if (!store) {
+    return 0;
+  }
+  SSL_CTX_set_cert_store(ctx, store);
+  us_ex_idx_ensure();
+  SSL_CTX_set_ex_data(ctx, us_ctx_user_ca_ex_idx, (void *)1);
+  return 1;
+}
+
 /* node:tls `pfx` support: parse a PKCS#12 blob and hand back PEM-encoded
  * key / certificate / extra-chain strings the regular key/cert/ca options can
  * consume. Returns 1 on success; the three out-strings are libc malloc'd (not

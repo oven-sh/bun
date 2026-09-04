@@ -603,14 +603,11 @@ impl<const SSL: bool> HTTPContext<SSL> {
         let Some(ctx) = opts.create_ssl_context(&mut err) else {
             return;
         };
-        if ptrs.is_empty() {
-            // SAFETY: plain allocation; null is checked below.
-            let store = unsafe { bun_boringssl_sys::X509_STORE_new() };
-            if store.is_null() {
-                return;
-            }
-            // SAFETY: ctx is a live SSL_CTX; it takes ownership of the fresh store.
-            unsafe { bun_boringssl_sys::SSL_CTX_set_cert_store(ctx.as_ptr(), store) };
+        // SAFETY: ctx is a live SSL_CTX owned by this function.
+        if ptrs.is_empty()
+            && unsafe { uws::SocketContext::c::us_ssl_ctx_use_empty_ca_store(ctx.as_ptr()) } == 0
+        {
+            return;
         }
         // SAFETY: ctx is a live SSL_CTX owned by this function.
         unsafe { ssl_ctx_setup(ctx.as_ptr()) };

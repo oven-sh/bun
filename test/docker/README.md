@@ -152,19 +152,9 @@ test("copy data between databases", async () => {
 });
 ```
 
-### With Health Checks
+### Readiness
 
-```typescript
-test("wait for service to be healthy", async () => {
-  const redis = await dockerCompose.ensure("redis_unified");
-
-  // Optional: Wait for service to be ready
-  await dockerCompose.waitTcp(redis.host, redis.ports[6379], 30000);
-
-  // Now safe to connect
-  const client = new RedisClient(`redis://${redis.host}:${redis.ports[6379]}`);
-});
-```
+`ensure()` resolves once the service's `healthcheck` in `docker-compose.yml` passes (`compose up --wait`), so tests connect immediately after it. That is the only readiness signal there is: a TCP connect from the host to the published port succeeds even while the container is still starting (docker-proxy accepts, then closes the connection when the container refuses), so polling the port from the test proves nothing. Every service therefore needs a healthcheck that connects to its port from inside the container (`pg_isready`, `mysql -e 'SELECT 1'`, `redis-cli -e ping`, a socket connect for squid/autobahn), not one that looks for a process; `test/internal/docker-compose-services.test.ts` checks this.
 
 ## Architecture
 
@@ -300,7 +290,7 @@ A: This tells Docker to pick any available port, preventing conflicts.
 ## Best Practices
 
 1. **Always use dynamic ports**: Set `published: 0` for automatic port assignment
-2. **Use health checks**: Add healthcheck configurations for reliable startup
+2. **Health checks prove the port**: `ensure()` returns as soon as the healthcheck passes, so it must connect to the service (see Readiness above)
 3. **Clean up in tests**: Delete test data after each test (but keep containers running)
 4. **Prefer ensure()**: Always use `dockerCompose.ensure()` instead of assuming services are running
 5. **Handle failures gracefully**: Services might fail to start; handle errors appropriately
@@ -309,7 +299,7 @@ A: This tells Docker to pick any available port, preventing conflicts.
 
 | Problem | Solution |
 |---------|----------|
-| "Connection refused" | Service might still be starting. Add `waitTcp()` or increase timeout |
+| Connection refused or closed right after `ensure()` | The service's healthcheck passes before it listens. Fix the healthcheck in `docker-compose.yml` (see Readiness above) |
 | "Port already in use" | Another service using the port. Use dynamic ports (`published: 0`) |
 | "Container not found" | Run `docker-compose up -d SERVICE_NAME` manually |
 | Tests suddenly slow | Containers might have been stopped. Check with `docker-compose ps` |
@@ -321,7 +311,7 @@ To add a new service:
 
 1. Add service definition to `docker-compose.yml`
 2. Use dynamic ports unless specific port required
-3. Add health check if possible
+3. Add a healthcheck that connects to the service's port (required, see Readiness above)
 4. Document in this README
 5. Add example test
 6. Submit PR

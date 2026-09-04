@@ -2653,7 +2653,12 @@ extern "C" void WebCore__FetchHeaders__put(WebCore::FetchHeaders* headers, HTTPH
     auto throwScope = DECLARE_THROW_SCOPE(global->vm());
     throwScope.assertNoException(); // can't throw an exception when there's already one.
     // `toWTFString()` refs a `WTFStringImpl`-tagged value instead of copying it.
-    WebCore::propagateException(*global, throwScope, headers->set(name, arg2->toWTFString()));
+    WTF::String value = arg2->toWTFString();
+    // An empty BunString converts to the null String, which HTTPHeaderMap stores
+    // but `get()` and iteration report as absent while `has()` reports present.
+    if (value.isNull())
+        value = WTF::emptyString();
+    WebCore::propagateException(*global, throwScope, headers->set(name, value));
 }
 void WebCore__FetchHeaders__fastRemove_(WebCore::FetchHeaders* headers, unsigned char headerName)
 {

@@ -11,10 +11,10 @@ pkgs.mkShell rec {
     clang_21
     llvm_21
     lld_21
-    nodejs_24
+    nodejs_24 # 24, not 26: the build needs Node 24+, and <nixpkgs> here is unpinned
     bun
-    rustc
-    cargo
+    # Use rustup instead of rustc/cargo to honour rust-toolchain.toml
+    rustup
     go
     python3
     ccache
@@ -89,6 +89,7 @@ pkgs.mkShell rec {
     export TMPDIR=''${TMPDIR:-/tmp}
   '' + pkgs.lib.optionalString pkgs.stdenv.isLinux ''
     export LD="${pkgs.lib.getExe' pkgs.lld_21 "ld.lld"}"
+    export BUN_LD="$LD" # bun's build pins the linker via BUN_LD, not LD
     export NIX_CFLAGS_LINK="''${NIX_CFLAGS_LINK:+$NIX_CFLAGS_LINK }-fuse-ld=lld"
     export LD_LIBRARY_PATH="${pkgs.lib.makeLibraryPath packages}''${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
   '' + ''

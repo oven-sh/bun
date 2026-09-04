@@ -361,11 +361,14 @@ function llvmNameVariants(name: string): string[] {
   ];
 }
 
-function llvmInstallHint(os: OS): string {
-  if (os === "darwin") return `Install with: brew install llvm@${LLVM_MAJOR}`;
+function llvmInstallHint(os: OS, envVar: string | undefined): string {
+  // Only this tool's own pin, and only where it's read at all: the env vars are
+  // gated on the target, the install advice on the host.
+  const pins = envVar === undefined ? "" : `. Or pin it with $${envVar}.`;
+  if (os === "darwin") return `Install with: brew install llvm@${LLVM_MAJOR}${pins}`;
   if (os === "linux")
-    return `Install with: apt install clang-${LLVM_MAJOR} lld-${LLVM_MAJOR}  (or equivalent for your distro)`;
-  if (os === "windows") return `Install LLVM ${LLVM_VERSION} from https://github.com/llvm/llvm-project/releases`;
+    return `Install with: apt install clang-${LLVM_MAJOR} lld-${LLVM_MAJOR} (or equivalent for your distro)${pins}`;
+  if (os === "windows") return `Install LLVM ${LLVM_VERSION} from https://github.com/llvm/llvm-project/releases${pins}`;
   return "";
 }
 
@@ -377,17 +380,60 @@ function findLlvmTool(
   baseName: string,
   paths: string[],
   os: OS,
-  opts: { checkVersion: boolean; required: boolean },
+  opts: { checkVersion: boolean; required: boolean; envVar?: string | undefined },
 ): FoundTool | undefined {
+  const pinned = opts.envVar === undefined ? undefined : envTool(opts.envVar);
+  if (pinned !== undefined) return pinned;
+
   const spec: ToolSpec = {
     names: llvmNameVariants(baseName),
     paths,
     required: opts.required,
-    hint: llvmInstallHint(os),
+    hint: llvmInstallHint(os, opts.envVar),
   };
   if (opts.checkVersion) spec.version = toolchainOverride.llvm !== undefined ? "ignore" : LLVM_VERSION_RANGE;
   if (toolchainOverride.llvm !== undefined) spec.pathsOnly = true;
   return findTool(spec);
+}
+
+/**
+ * Explicit toolchain pin from $CC/$CXX/$AR/$RANLIB.
+ *
+ * A half-and-half toolchain is worse than either half: a distro clang linking
+ * through nix's `ld` yields a binary whose .interp and libc are different
+ * glibcs, which segfaults before main.
+ *
+ * Always version-checked, even where auto-detection isn't. Auto-detection
+ * skips the check to save a spawn on tools it already knows came from the
+ * same install; an env var is five independent values, so a stale
+ * `export CXX=g++` has to fail here rather than deep in the C++ build.
+ */
+function envTool(envVar: string): FoundTool | undefined {
+  const raw = process.env[envVar]?.trim();
+  if (raw === undefined || raw === "") return undefined;
+
+  const bad = (why: string) =>
+    new BuildError(`$${envVar} is set to "${raw}", ${why}`, {
+      hint: `Unset $${envVar} to auto-detect the toolchain instead.`,
+    });
+
+  // A path is taken literally, spaces and all; a bare name (CC=clang) resolves
+  // through $PATH. Nothing that is really a command line survives isExecutable,
+  // so `CC="ccache clang"` still lands in the reject below — the build drives
+  // ccache itself (compile.ts), so honouring it here would be silently wrong.
+  let path = isExecutable(raw) ? raw : undefined;
+  if (path === undefined) {
+    if (/\s/.test(raw)) throw bad("which must be a single executable path, not a command line");
+    path = findTool({ names: [raw], required: false })?.path;
+  }
+  if (path === undefined) throw bad("which is not an executable");
+
+  const probed = getToolVersion(path, "--version");
+  if ("reason" in probed) throw bad(`whose version could not be read (${probed.reason})`);
+  if (!satisfiesRange(probed.version, LLVM_VERSION_RANGE)) {
+    throw bad(`version ${probed.version}, which does not satisfy ${LLVM_VERSION_RANGE}`);
+  }
+  return { path, version: probed.version };
 }
 
 // ───────────────────────────────────────────────────────────────────────────
@@ -454,10 +500,13 @@ export function resolveLlvmToolchain(
   const ccResult = findLlvmTool(msvcTarget ? "clang-cl" : "clang", paths, os, {
     checkVersion: true,
     required: true,
+    // An exported CC/CXX/AR/RANLIB never means the clang-cl family.
+    envVar: msvcTarget ? undefined : "CC",
   });
   const cxx = findLlvmTool(msvcTarget ? "clang-cl" : "clang++", paths, os, {
     checkVersion: false,
     required: true,
+    envVar: msvcTarget ? undefined : "CXX",
   })?.path;
 
   // Resource dir (builtin headers live at <resource-dir>/include). Needed by
@@ -492,11 +541,13 @@ export function resolveLlvmToolchain(
   }
 
   // ar: llvm-ar (or llvm-lib for windows targets)
-  // No version check — ar doesn't always print a parseable version,
-  // and any ar from the same LLVM install is fine.
+  // Auto-detection skips the version check — ar doesn't always print a
+  // parseable version, and any ar from the same LLVM install is fine. An
+  // $AR pin is still checked, since it's an independent value.
   const ar = findLlvmTool(msvcTarget ? "llvm-lib" : "llvm-ar", paths, os, {
     checkVersion: false,
     required: true,
+    envVar: msvcTarget ? undefined : "AR",
   })?.path;
 
   // ranlib: llvm-ranlib (unix hosts only — llvm-lib targets don't need it).
@@ -507,6 +558,7 @@ export function resolveLlvmToolchain(
     ranlib = findLlvmTool("llvm-ranlib", paths, os, {
       checkVersion: false,
       required: true,
+      envVar: msvcTarget ? undefined : "RANLIB",
     })?.path;
   }
 
@@ -516,7 +568,10 @@ export function resolveLlvmToolchain(
   if (msvcTarget) {
     ld = findLlvmTool("lld-link", paths, os, { checkVersion: false, required: true })?.path ?? "";
   } else if (os === "linux") {
-    ld = findLlvmTool("ld.lld", paths, os, { checkVersion: true, required: true })?.path ?? "";
+    // $BUN_LD, not $LD: LD conventionally names binutils ld, and rejecting
+    // that would break anyone with autotools habits on a build that worked
+    // yesterday. This wants lld specifically.
+    ld = findLlvmTool("ld.lld", paths, os, { checkVersion: true, required: true, envVar: "BUN_LD" })?.path ?? "";
   } else {
     ld = ""; // darwin: unused
   }

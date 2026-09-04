@@ -1,25 +1,3 @@
-import * as assert from "./node_modules/assert";
-
-export const {
-  AssertionError,
-  CallTracker,
-  deepEqual,
-  deepStrictEqual,
-  doesNotMatch,
-  doesNotReject,
-  doesNotThrow,
-  equal,
-  fail,
-  ifError,
-  match,
-  notDeepEqual,
-  notDeepStrictEqual,
-  notEqual,
-  notStrictEqual,
-  ok,
-  rejects,
-  strict,
-  strictEqual,
-  throws,
-} = assert;
-export default assert;
+// CommonJS, so that `require("assert")` and the default import are both the
+// `assert` function, as in Node. See `commonJSFiles` in build-fallbacks.ts.
+module.exports = require("./node_modules/assert");

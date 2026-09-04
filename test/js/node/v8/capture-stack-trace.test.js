@@ -1223,3 +1223,25 @@ test.concurrent.each([[{}], [{ BUN_JSC_useSourceProviderCache: "0" }]])(
     expect(exitCode).toBe(0);
   },
 );
+
+test("default Error.prepareStackTrace formats a non-Error object", () => {
+  // The original prepareStackTrace is forwarded whatever captureStackTrace was
+  // given; Node's default formatter accepts any object, not only Errors.
+  const original = Error.prepareStackTrace;
+  Error.prepareStackTrace = (err, callSites) => original(err, callSites);
+  try {
+    const target = { message: "not an error" };
+    expect(() => Error.captureStackTrace(target)).not.toThrow();
+    expect(typeof target.stack).toBe("string");
+    expect(target.stack).toStartWith("Error: not an error");
+    expect(target.stack).toMatch(/\n    at /);
+
+    const bare = Object.create(null);
+    expect(() => Error.captureStackTrace(bare)).not.toThrow();
+    expect(typeof bare.stack).toBe("string");
+
+    expect(() => Error.captureStackTrace(1)).toThrow(TypeError);
+  } finally {
+    Error.prepareStackTrace = original;
+  }
+});

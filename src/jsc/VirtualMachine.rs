@@ -6200,6 +6200,34 @@ impl VirtualMachine {
             Ok(())
         }
         #[inline]
+        fn write_caret_padding(
+            w: &mut bun_core::io::Writer,
+            line: &[u8],
+            gutter_width: u64,
+            column: usize,
+        ) -> crate::CrateResult<()> {
+            use bun_core::strings::{CodepointIterator, Cursor};
+
+            splat_space(w, gutter_width)?;
+
+            // Preserve tabs at their logical positions. Supplementary codepoints
+            // occupy two UTF-16 code units, so emit two padding cells for them.
+            let codepoints = CodepointIterator::init(line);
+            let mut cursor = Cursor::default();
+            let mut codepoints_written = 0;
+            while codepoints_written < column && codepoints.next(&mut cursor) {
+                let codepoint_width = 1 + usize::from(cursor.c > 0xFFFF);
+                if cursor.c == '\t' as i32 {
+                    w.write_all(b"\t")?;
+                } else {
+                    splat_space(w, codepoint_width as u64)?;
+                }
+                codepoints_written += 1;
+            }
+
+            splat_space(w, column.saturating_sub(codepoints_written) as u64)
+        }
+        #[inline]
         fn count_digits(n: i32) -> u64 {
             bun_core::fmt::digit_count(n) as u64
         }
@@ -6379,9 +6407,12 @@ impl VirtualMachine {
                         if clamped.len() < MAX_LINE_LENGTH_WITH_DIVOT
                             || (col as usize) > MAX_LINE_LENGTH_WITH_DIVOT
                         {
-                            let indent =
-                                max_line_number_pad + b" | ".len() as u64 + col.max(0) as u64;
-                            splat_space(writer, indent)?;
+                            write_caret_padding(
+                                writer,
+                                clamped,
+                                max_line_number_pad + b" | ".len() as u64,
+                                col.max(0) as usize,
+                            )?;
                             pretty_write!(writer, "<red><b>^<r>\n")?;
                         } else {
                             writer.write_all(b"\n")?;

@@ -519,11 +519,11 @@ impl<'a> State<'a> {
         // Reshaped for borrowck — iterating handles by index since draw_buf is also &mut self.
         for idx in 0..self.handles.len() {
             let handle = &self.handles[idx];
-            // normally we truncate the output to 10 lines, but on abort we print everything to aid debugging
+            // on abort we print everything to aid debugging
             let elide_lines = if is_abort {
                 None
             } else {
-                Some(handle.config.elide_count.unwrap_or(10))
+                Some(handle.config.elide_count.unwrap_or(0))
             };
             let e = Self::elide(&handle.buffer, elide_lines);
 

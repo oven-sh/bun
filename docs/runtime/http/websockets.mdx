@@ -57,7 +57,7 @@ Bun.serve({
 
 In Bun, you declare handlers once per server, instead of per socket.
 
-You pass a single `WebSocketHandler` object to `Bun.serve()` with methods for `open`, `message`, `close`, `drain`, and `error`. This design differs from the client-side `WebSocket` class, which extends `EventTarget` (`onmessage`, `onopen`, `onclose`).
+You pass a single `WebSocketHandler` object to `Bun.serve()` with methods for `open`, `message`, `close`, and `drain`. This design differs from the client-side `WebSocket` class, which extends `EventTarget` (`onmessage`, `onopen`, `onclose`).
 
 Clients tend to have few socket connections open, so an event-based API makes sense there.
 
@@ -70,6 +70,11 @@ But servers tend to have **many** socket connections open, which means:
 Reusing one handler object across every connection avoids both costs.
 
 </Accordion>
+
+<Note>
+  The server-side `WebSocketHandler` has no `error` handler. Client-side `WebSocket` instances report errors via
+  `socket.addEventListener("error", ...)` instead.
+</Note>
 
 The first argument to each handler is the `ServerWebSocket` instance handling the event. The `ServerWebSocket` class is a fast, Bun-native implementation of [`WebSocket`](https://developer.mozilla.org/en-US/docs/Web/API/WebSocket) with some additional features.
 
@@ -368,7 +373,6 @@ namespace Bun {
       message: (ws: ServerWebSocket, message: string | ArrayBuffer | Uint8Array) => void;
       open?: (ws: ServerWebSocket) => void;
       close?: (ws: ServerWebSocket, code: number, reason: string) => void;
-      error?: (ws: ServerWebSocket, error: Error) => void;
       drain?: (ws: ServerWebSocket) => void;
 
       maxPayloadLength?: number; // default: 16 * 1024 * 1024 = 16 MB

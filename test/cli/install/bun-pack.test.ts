@@ -2062,42 +2062,36 @@ describe.concurrent("bins", () => {
   });
 
   test("deduplicates when multiple bin names point at the same file", async () => {
-    await Promise.all([
-      write(
-        join(packageDir, "package.json"),
-        JSON.stringify({
-          name: "pack-bins-dedupe",
-          version: "1.2.3",
-          type: "module",
-          files: ["dist/minified/index.mjs", "dist/other.js"],
-          bin: {
-            pbd: "dist/minified/index.mjs",
-            "pack-bins-dedupe": "dist/minified/index.mjs",
-          },
-        }),
-      ),
-      write(join(packageDir, "dist", "minified", "index.mjs"), "#!/usr/bin/env bun\n"),
-      write(join(packageDir, "dist", "other.js"), "console.log('other')"),
-    ]);
+    using dir = tempDir("pack-bins-dedupe", {
+      "package.json": JSON.stringify({
+        name: "pack-bins-dedupe",
+        version: "1.2.3",
+        type: "module",
+        files: ["dist/minified/index.mjs", "dist/other.js"],
+        bin: {
+          pbd: "dist/minified/index.mjs",
+          "pack-bins-dedupe": "dist/minified/index.mjs",
+        },
+      }),
+      "dist/minified/index.mjs": "#!/usr/bin/env bun\n",
+      "dist/other.js": "console.log('other')",
+    });
 
-    const { out } = await pack(packageDir, bunEnv, "--dry-run");
+    const dryRun = await runPack(dir, ["--dry-run"]);
+    expect(dryRun.err).toBe("");
+    expect(dryRun.out.match(/dist\/minified\/index\.mjs/g)).toHaveLength(1);
+    expect(dryRun.out).toContain("Total files: 3");
+    expect(dryRun.exitCode).toBe(0);
 
-    expect(out.match(/dist\/minified\/index\.mjs/g)).toHaveLength(1);
-    expect(out).toContain("files: 3");
+    const { err, exitCode } = await runPack(dir);
+    expect(err).toBe("");
+    expect(exitCode).toBe(0);
 
-    await pack(packageDir, bunEnv);
-
-    const tarball = readTarball(join(packageDir, "pack-bins-dedupe-1.2.3.tgz"));
-    expect(tarball.entries).toMatchObject([
-      {
-        pathname: "package/package.json",
-      },
-      {
-        pathname: "package/dist/minified/index.mjs",
-      },
-      {
-        pathname: "package/dist/other.js",
-      },
+    const tarball = readTarball(join(dir, "pack-bins-dedupe-1.2.3.tgz"));
+    expect(entryNames(tarball)).toEqual([
+      "package/package.json",
+      "package/dist/minified/index.mjs",
+      "package/dist/other.js",
     ]);
     // the bin entry keeps its executable bit
     expect(tarball.entries[1].perm & 0o111).toBe(0o111);

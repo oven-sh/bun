@@ -745,7 +745,7 @@ function emitCppBind({ n, cfg, sources, o, dirStamp }: Ctx): void {
 
   n.build({
     outputs: [outputRs],
-    rule: "codegen_bun",
+    rule: "codegen",
     inputs: [script],
     // cppbind scans ALL .cpp files for [[ZIG_EXPORT]] annotations. Every
     // .cpp is an implicit input so changing an annotation retriggers.
@@ -756,17 +756,15 @@ function emitCppBind({ n, cfg, sources, o, dirStamp }: Ctx): void {
       cxxSourcesFile,
       ...sources.cxx,
       ...sources.jsCodegen,
-      // cppbind auto-runs `bun install` for its lezer-cpp dep if needed,
-      // but depending on root install ensures that already happened on
-      // first build (and catches lezer version bumps).
+      // cppbind imports @lezer/cpp from the root install. The stamp also
+      // catches lezer version bumps.
       o.rootInstall,
     ],
     orderOnlyInputs: [dirStamp],
     vars: {
       cwd: cfg.cwd,
       desc: "cpp.rs (cppbind)",
-      // cppbind.ts takes: <srcdir> <codegendir> <cxx-sources>. No `run` —
-      // direct script invocation (`${BUN_EXECUTABLE} ${script} ...`).
+      // cppbind.ts takes: <srcdir> <codegendir> <cxx-sources>.
       args: shJoin(cfg, [script, resolve(cfg.cwd, "src"), cfg.codegenDir, cxxSourcesFile]),
     },
   });

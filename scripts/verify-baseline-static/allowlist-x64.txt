@@ -1354,13 +1354,15 @@ jsimd_ycc_rgb_convert_avx2.return                    [AVX, AVX2]
 # so every LLInt opcode handler starts with a raw 4-byte ".int <opcode_id>"
 # (LowLevelInterpreter.cpp: EMBED_OPCODE_ID_IF_NEEDED). The linear-sweep
 # decoder desyncs on those embedded ints and, depending on how preceding .text
-# code aligns, can decode a stray VEX-encoded instruction out of the garbage.
-# offlineasm's x86 backend emits SSE2 (not VEX), and the Intel SDE Nehalem
-# emulation step in this same job exercises the LLInt and passes, so any
-# single-digit hit here is decode noise. Ceiling [AVX] so a multi-feature leak
-# still fails. On ELF each opcode handler has its own symbol, so layout shifts
-# can move the desync between llint_op_* siblings; add them here as they trip.
-# (2 symbols)
+# code aligns, can decode a stray VEX-encoded instruction (or an RDPMC, 0F 33)
+# out of the garbage. offlineasm's x86 backend emits SSE2 (not VEX), and the
+# Intel SDE Nehalem emulation step in this same job exercises the LLInt and
+# passes, so any single-digit hit here is decode noise. Each ceiling is the one
+# feature that the scan reported, so a multi-feature leak still fails. On ELF
+# each opcode handler has its own symbol, so layout shifts can move the desync
+# between llint_op_* siblings; add them here as they trip.
+# (3 symbols)
 # ----------------------------------------------------------------------------
 llint_op_enter_wide32  [AVX]
+llint_op_jmp_wide32  [RDPMC]
 llint_op_wide16_wide16  [AVX]

@@ -1,5 +1,4 @@
-// Runtime-dispatched SIMD xxHash3 (XXH3_64bits and XXH3_128bits) via Google
-// Highway.
+// Runtime-dispatched SIMD xxHash3 (XXH3_64bits and XXH3_128bits) via Google Highway.
 //
 // Bun.hash.xxHash3 used the twox-hash Rust crate, which selects its SIMD
 // backend at compile time. On a nehalem (SSE2) target that meant the
@@ -8,14 +7,13 @@
 // mechanism as highway_strings.cpp), so a single binary picks the widest ISA
 // the CPU actually supports.
 //
-// Output is bit-identical to the reference XXH3_64bits and XXH3_128bits for
-// every input: only the long-keys stripe loop (accumulate_512 + scrambleAcc)
-// is vectorized, and that math is per-64-bit-lane, so scalar / SSE2 / AVX2 /
-// AVX-512 all produce the same accumulators. Both widths share that loop. The
-// 0..240 byte branches, the merge/avalanche finishers, and the seeded-secret
-// derivation are the reference's scalar code verbatim. They do not depend on
-// vector width. Verified against the xxHash reference test vectors and SMHasher
-// constants in test/js/bun/util/hash.test.js.
+// Output is bit-identical to the reference XXH3_64bits and XXH3_128bits for every input: only
+// the long-keys stripe loop (accumulate_512 + scrambleAcc) is vectorized, and
+// that math is per-64-bit-lane, so scalar / SSE2 / AVX2 / AVX-512 all produce
+// the same accumulators. The 0..240 byte branches, the merge/avalanche
+// finisher, and the seeded-secret derivation are the reference's scalar code
+// verbatim; they do not depend on vector width. Verified against the xxHash
+// reference test vectors and SMHasher constants in test/js/bun/util/hash.test.js.
 //
 // References (byte-identical constants): vendor/zstd/lib/common/xxhash.h
 // (XXH3_kSecret, PRIME*), and the twox-hash crate this replaces.
@@ -295,9 +293,7 @@ static inline XXH128Hash Len9to16_128(const u8* input, size_t len, const u8* sec
     XXH128Hash m128 = Mul64to128(input_lo ^ input_hi ^ bitflipl, PRIME64_1);
     m128.low64 += static_cast<u64>(len - 1) << 54;
     input_hi ^= bitfliph;
-    // The reference's 64-bit form of
-    // high64 += (input_hi & 0xFFFFFFFF00000000) + (u32)input_hi * PRIME32_2.
-    m128.high64 += input_hi + static_cast<u64>(static_cast<u32>(input_hi)) * (PRIME32_2 - 1);
+    m128.high64 += (input_hi & 0xFFFFFFFF00000000ull) + static_cast<u64>(static_cast<u32>(input_hi)) * PRIME32_2;
     m128.low64 ^= Swap64(m128.high64);
 
     // 128x64 multiply: h128 = m128 * PRIME64_2.
@@ -360,8 +356,7 @@ static inline XXH128Hash Len129to240_128(const u8* input, size_t len, const u8* 
     }
     acc.low64 = Avalanche(acc.low64);
     acc.high64 = Avalanche(acc.high64);
-    // `i <= len` mixes the last 32 bytes twice when len % 32 == 0. The
-    // reference does the same, and the output depends on it.
+    // `<=` matches the reference, which mixes the last 32 bytes twice when len % 32 == 0.
     for (size_t i = 160; i <= len; i += 32) {
         acc = Mix32B(acc, input + i - 32, input + i - 16, secret + kMidsizeStartOffset + i - 160, seed);
     }
@@ -709,10 +704,7 @@ static HWY_INLINE void ScrambleAcc(u64* HWY_RESTRICT acc, const u8* HWY_RESTRICT
     }
 }
 
-// The long-input stripe loop (len > 240), XXH3_hashLong_internal_loop. Writes
-// the eight accumulators to `out`. The 64-bit and the 128-bit hash merge them
-// with scalar code, outside the dispatched function. Dispatched once per call
-// so the ISA is resolved a single time, not per stripe.
+// XXH3_hashLong_internal_loop (len > 240). Both hash widths merge `out` in scalar code.
 void HashLongLoop(u64* HWY_RESTRICT out, const u8* HWY_RESTRICT input, size_t len, const u8* HWY_RESTRICT secret)
 {
     HWY_ALIGN u64 acc[kAccNb];
@@ -764,10 +756,7 @@ namespace xxh3 {
 
 HWY_EXPORT(HashLongLoop);
 
-// Runs the long-input stripe loop (len > 240) into `acc` and returns the
-// secret it used. Seed 0 uses the default secret. Any other seed derives a
-// secret into `customSecret` (matches XXH3_hashLong_*_withSeed_internal). The
-// merges read the same secret, so `customSecret` must outlive them.
+// Returns the secret the loop used: kSecret for seed 0, else one derived into `customSecret`.
 static const u8* HashLongWithSeed(u64* acc, u8* customSecret, const u8* input, size_t len, u64 seed)
 {
     const u8* secret = kSecret;
@@ -813,8 +802,6 @@ static XXH128Hash Hash128(const u8* input, size_t len, u64 seed)
     alignas(64) u8 customSecret[kSecretLen];
     u64 acc[kAccNb];
     const u8* const secret = HashLongWithSeed(acc, customSecret, input, len, seed);
-    // XXH3_hashLong_128b_internal: the low half is the 64-bit hash. The high
-    // half merges the same accumulators with the end of the secret.
     return {
         MergeAccs(acc, secret + kMergeAccsStart, static_cast<u64>(len) * PRIME64_1),
         MergeAccs(acc, secret + kSecretLen - sizeof(acc) - kMergeAccsStart, ~(static_cast<u64>(len) * PRIME64_2)),
@@ -838,9 +825,7 @@ uint64_t highway_xxhash3_64(const uint8_t* input, size_t len, uint64_t seed)
     return bun::xxh3::Hash64(input, len, seed);
 }
 
-// Runtime-dispatched XXH3_128bits_withSeed. Writes the low 64 bits of the hash
-// to out[0] and the high 64 bits to out[1]. `input` may be null only when
-// `len == 0`. Output is bit-identical to the xxHash reference.
+// Runtime-dispatched XXH3_128bits_withSeed. out[0] is the low half, out[1] the high half.
 void highway_xxhash3_128(const uint8_t* input, size_t len, uint64_t seed, uint64_t* out)
 {
     bun::xxh3::XXH128Hash const hash = bun::xxh3::Hash128(input, len, seed);

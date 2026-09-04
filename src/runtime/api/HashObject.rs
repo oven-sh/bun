@@ -131,9 +131,7 @@ struct XxHash128;
 impl HashAlgorithm for XxHash128 {
     type Output = u128;
     fn hash(seed: u64, input: &[u8]) -> u128 {
-        // XXH3_128bits_withSeed on the same SIMD kernel as XxHash3. The seed
-        // is the full u64, as in the reference. XxHash3 truncates its seed only
-        // to keep its older output. This function has no older output.
+        // The full u64 seed, as in the reference. No older output to keep, unlike XxHash3.
         bun_highway::xxhash3_128(seed, input)
     }
 }

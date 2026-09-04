@@ -4418,8 +4418,7 @@ JSC::EncodedJSValue JSC__JSValue__fromUInt64NoTruncate(JSC::JSGlobalObject* glob
     return JSC::JSValue::encode(JSC::JSBigInt::createFrom(globalObject, val));
 }
 
-// The unsigned BigInt (high << 64) | low. JSBigInt::createFrom(Int128) is
-// signed, so it cannot hold a value with the top bit set.
+// Not createFrom(Int128): it is signed, and a 128-bit hash can have the top bit set.
 JSC::EncodedJSValue JSC__JSValue__fromUInt128NoTruncate(JSC::JSGlobalObject* globalObject, uint64_t low, uint64_t high)
 {
     const uint64_t words[2] = { low, high };

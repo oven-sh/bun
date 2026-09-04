@@ -790,18 +790,12 @@ pub fn xxhash3_64(seed: u64, input: &[u8]) -> u64 {
     unsafe { highway_xxhash3_64(input.as_ptr(), input.len(), seed) }
 }
 
-/// XxHash3 128-bit (`XXH3_128bits_withSeed`, also called XXH128). It shares
-/// the runtime-dispatched stripe loop of [`xxhash3_64`], and its output is
-/// bit-identical to the xxHash reference for every input and every `seed`.
-///
-/// Returns `(high64 << 64) | low64`. Its big-endian bytes are the canonical
-/// digest (`XXH128_canonicalFromHash` in the reference).
+/// XxHash3 128-bit (`XXH3_128bits_withSeed`). Returns `(high64 << 64) | low64`.
 #[inline(always)]
 pub fn xxhash3_128(seed: u64, input: &[u8]) -> u128 {
     let mut out = [0u64; 2];
-    // SAFETY: `input.ptr/len` are a valid readable range. The kernel only
-    // reads it, and never dereferences the pointer when `len == 0`. `out` is
-    // two writable u64s, and the kernel writes exactly `out[0]` and `out[1]`.
+    // SAFETY: `input.ptr/len` are a valid readable range (never read when empty).
+    // The kernel writes exactly `out[0]` and `out[1]`.
     unsafe { highway_xxhash3_128(input.as_ptr(), input.len(), seed, out.as_mut_ptr()) };
     (u128::from(out[1]) << 64) | u128::from(out[0])
 }

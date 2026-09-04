@@ -23,7 +23,7 @@ test.each([0, 1024])("chunked trailer section is bounded when maxHeaderSize is %
     let response = "";
     socket.on("data", chunk => (response += chunk.toString()));
     socket.on("error", () => {});
-    const closed = once(socket, "close");
+    const closed = once(socket, "close").catch(err => expect(["ECONNRESET", "EPIPE"]).toContain(err.code));
     socket.write("POST / HTTP/1.1\r\nHost: a\r\nTransfer-Encoding: chunked\r\n\r\n0\r\n");
     const junkLine = Buffer.from("x-trailer-flood: yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy\r\n");
     for (let sent = 0; sent < 64 * 1024; sent += junkLine.length) {

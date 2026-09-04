@@ -973,7 +973,7 @@ unsafe fn run_phases_after_tasks(
     // SAFETY: per fn contract.
     unsafe { (*el).tick_immediate_tasks(vm) };
     // SAFETY: per fn contract. See the Note on `drain_timers` in `auto_tick`.
-    let fired = unsafe { timer::All::drain_timers(&mut (*state).timer, vm.cast()) };
+    let fired = unsafe { timer::All::drain_timers(&raw mut (*state).timer, vm.cast()) };
     if ran_immediates || fired {
         // Report a rejection before an I/O callback in the poll can handle it, as Node does.
         // SAFETY: `vm.global` is set during `VirtualMachine::init` and outlives the VM.
@@ -1156,7 +1156,7 @@ unsafe fn auto_tick(vm: *mut VirtualMachine) {
         // `drain_timers` forms short-lived `&mut` only around heap pop/peek.
         // SAFETY: `state` is the live per-thread `RuntimeState`; the `timer`
         // field address is stable for the VM lifetime.
-        unsafe { timer::All::drain_timers(&mut (*state).timer, vm.cast()) };
+        unsafe { timer::All::drain_timers(&raw mut (*state).timer, vm.cast()) };
     }
     #[cfg(not(unix))]
     let _ = state;
@@ -1298,7 +1298,7 @@ unsafe fn auto_tick_active(vm: *mut VirtualMachine) {
         unsafe { (*el).tick_immediate_tasks(vm) };
         // SAFETY: `state` is the live per-thread `RuntimeState`; see Note
         // on `auto_tick` re: aliased-&mut across `fire()`.
-        unsafe { timer::All::drain_timers(&mut (*state).timer, vm.cast()) };
+        unsafe { timer::All::drain_timers(&raw mut (*state).timer, vm.cast()) };
     }
     #[cfg(not(unix))]
     let _ = state;

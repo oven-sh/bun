@@ -316,9 +316,9 @@ setImmediate(() => console.log("immediate"));
 
 This is because:
 
-- `setImmediate` runs in `tickImmediateTasks()`, after I/O polling and before the timers
-- `setTimeout` fires after the immediates (even with 0ms)
-- However, this can vary based on timing and event loop state
+- In one turn of the loop, `tickImmediateTasks()` runs the queued immediates after I/O polling
+- The timers that are due run after them, in the same turn (a 0ms timer is due after 1ms)
+- This is not a guarantee for code at the top level: it can vary with timing and event loop state
 
 Inside an I/O callback the order is fixed, as in Node. An immediate that the callback queues runs before any timer, even a timer that came due while the callback ran.
 

@@ -781,8 +781,8 @@ impl All {
         // SAFETY: callback fires on the JS thread (libuv invokes on the loop's
         // thread); `all` is live for the VM lifetime. `drain_timers` may
         // re-enter `(*runtime_state()).timer` — it forms only short-lived
-        // `&mut All` around heap pop/peek, so the raw-ptr deref here is sound.
-        unsafe { (*all).drain_timers(vm) };
+        // `&mut All` around heap pop/peek, so it takes the raw pointer.
+        unsafe { All::drain_timers(all, vm) };
         // SAFETY: see above; re-arm for the next-soonest deadline (if any).
         unsafe { (*all).ensure_uv_timer() };
     }
@@ -1050,31 +1050,22 @@ impl All {
     /// Fires the due timers. Returns whether it fired one.
     ///
     /// # Safety
-    /// `vm` is the erased `*mut VirtualMachine` for the calling JS thread and
-    /// must remain live across any `EventLoopTimer::fire` re-entry.
-    // Forwards `vm` to `__bun_fire_timer` without dereferencing it;
-    // not_unsafe_ptr_arg_deref is a false positive on opaque-token forwarding.
-    #[allow(clippy::not_unsafe_ptr_arg_deref)]
-    pub(crate) fn drain_timers(
-        &mut self,
+    /// `this` is the live per-thread `All`. `vm` is the erased
+    /// `*mut VirtualMachine` for the calling JS thread and must remain live
+    /// across any `EventLoopTimer::fire` re-entry.
+    pub(crate) unsafe fn drain_timers(
+        this: *mut Self,
         vm: *mut (), /* erased *mut VirtualMachine */
     ) -> bool {
         // Note (§Forbidden aliased-&mut): fired handlers re-enter `vm.timer`
         // (e.g. setInterval reschedule → `vm.timer.update(...)`, `cancel()` →
         // `vm.timer.remove(...)`). In Rust those re-entrant calls resolve to
         // `(*runtime_state()).timer.{update,remove}()`, minting a fresh
-        // `&mut All` to this same allocation while the outer `&mut self` is
-        // live → UB under Stacked Borrows. Convert `self` to a raw pointer
-        // up-front and form a *short-lived* `&mut` only around `next()`,
-        // dropping it before `fire()` so no `&mut All` is held across the
-        // re-entrant call (mirroring the raw-ptr pattern in
+        // `&mut All` to this same allocation. So this takes a raw pointer and
+        // forms a *short-lived* `&mut` only around `next()`, dropping it
+        // before `fire()` so no `&mut All` is held across the re-entrant call
+        // (mirroring the raw-ptr pattern in
         // `TimerObjectInternals::run_immediate_task`).
-        //
-        // TODO: the call-site auto-ref at jsc_hooks.rs (`(*state).timer
-        // .drain_timers(...)`) still creates a `&mut All` for the call frame
-        // itself; switch it to `All::drain_timers(core::ptr::addr_of_mut!(
-        // (*state).timer), vm)` and change this signature to `this: *mut Self`.
-        let this: *mut Self = self;
 
         let mut wtf_now: Option<Timespec> = None;
         // SAFETY: `this` is the live per-thread `All`; `vm` per fn contract.

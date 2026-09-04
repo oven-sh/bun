@@ -1,6 +1,7 @@
 /// The field of the embedded module graph that `StandaloneModuleGraph::from_bytes` found out of range.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Corruption {
+    ByteCount,
     ModuleList,
     EntryPointId,
     ModuleName,
@@ -20,6 +21,7 @@ pub enum Corruption {
 impl Corruption {
     pub const fn message(self) -> &'static str {
         match self {
+            Self::ByteCount => "Corrupted module graph: byte count is out of range",
             Self::ModuleList => "Corrupted module graph: module list is out of range",
             Self::EntryPointId => {
                 "Corrupted module graph: entry point ID is out of range for the module list"

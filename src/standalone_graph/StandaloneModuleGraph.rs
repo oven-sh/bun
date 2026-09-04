@@ -910,6 +910,10 @@ impl StandaloneModuleGraph {
         // the bytecode/module_info regions never have a shared reference formed over them.
         let raw_const: *const u8 = raw_ptr;
 
+        // `bytes` spans `byte_count`, and `page_out` advises the kernel on that whole range.
+        if offsets.byte_count > raw_len {
+            return Err(Corruption::ByteCount.into());
+        }
         // SAFETY: modules metadata blob is a read-only subrange of `[0, raw_len)` disjoint
         // from bytecode/module_info, serialized by `to_bytes`.
         let modules_list_bytes = unsafe {

@@ -1,12 +1,11 @@
 // A compiled executable carries its module graph in the `.bun` section. The graph ends
-// with `Offsets`, then the trailer. `Offsets` points at the module table and at the
-// compile exec argv string, and holds the index of the entry point in the module table.
-// Each 52-byte module record starts with six
-// { u32 offset, u32 length } pointers: name, contents, source map, bytecode, module info
-// and bytecode origin path. After the module table, `to_bytes` chains records in `Flags`
-// bit order: a u32 source hash per module, the builtin bytecode table (u32 count, then
-// count x { u32 id, u32 offset, u32 length }) and, with --bytecode, a pointer to the
-// bytecode string table.
+// with `Offsets`, then the trailer. `Offsets` holds the size of the graph and the index of
+// the entry point, and it points at the module table and at the compile exec argv string.
+// Each 52-byte module record starts with six { u32 offset, u32 length } pointers: name,
+// contents, source map, bytecode, module info and bytecode origin path. After the module
+// table, `to_bytes` chains records in `Flags` bit order: a u32 source hash per module, the
+// builtin bytecode table (u32 count, then count x { u32 id, u32 offset, u32 length }) and,
+// with --bytecode, a pointer to the bytecode string table.
 //
 // These fields come from the file. Each case damages one of them, and the executable
 // must report it at startup. `StandaloneModuleGraph::from_bytes` used to read past the
@@ -41,6 +40,7 @@ function locateRecords(executable: Buffer) {
     moduleCount: modulesLength / MODULE_RECORD_SIZE,
     sourceMapLength: executable.readUInt32LE(modulesAt + 20),
     builtinCount,
+    byteCountLowAt: offsetsAt,
     modulesLengthAt: offsetsAt + 12,
     entryPointIdAt: offsetsAt + 16,
     execArgvOffsetAt: offsetsAt + 20,
@@ -67,6 +67,14 @@ function writeUInt32At(path: string, position: number, value: number) {
 }
 
 const cases = [
+  {
+    // `byte_count` is a u64. The graph is far smaller than 4 GiB, so its high half stays 0.
+    label: "a byte count larger than the section",
+    bytecode: false,
+    field: (records: Records) => records.byteCountLowAt,
+    value: 0x7ffffff0,
+    error: "byte count is out of range",
+  },
   {
     label: "a module list that runs past the end of the graph",
     bytecode: false,

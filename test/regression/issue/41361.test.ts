@@ -17,7 +17,6 @@ test("bun starts when simdutf finds no supported kernel", async () => {
     cwd: String(dir),
     stdout: "pipe",
     stderr: "pipe",
-    timeout: 10_000,
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect(stdout).toBe("ok\n");

@@ -6,7 +6,7 @@
 
 #![allow(dead_code)]
 
-use super::flow_control::{RecvWindow, SendWindow};
+use super::flow_control::{RecvWindow, RecvWindowChange, SendWindow};
 use super::hpack;
 use super::settings::{self, Settings};
 use super::stream::{self, State};
@@ -217,10 +217,16 @@ pub trait Sink {
     /// store the values.
     fn on_frame_counters(&self, _received: u64, _sent: u64) {}
     /// Connection-level receive window update (node's session.state window fields): `size` is
-    /// what the peer has been told it may send, `consumed` what it has sent since the last
-    /// WINDOW_UPDATE. Called whenever either moves, while the connection is mutably borrowed —
+    /// the window the embedder asked for, and the peer may send `size - consumed` more (see
+    /// `RecvWindow`). Called whenever either moves, while the connection is mutably borrowed —
     /// the embedder must only store the values.
     fn on_recv_window(&self, _size: i64, _consumed: i64) {}
+    /// Connection-level receive-window changes the embedder queued while the connection was
+    /// borrowed (see `Connection::apply_recv_window_change`). Taken before the connection decides
+    /// on a WINDOW_UPDATE, so a change made in a callback applies to the rest of the batch.
+    fn take_recv_window_change(&self) -> RecvWindowChange {
+        RecvWindowChange::default()
+    }
     /// Transition shim while the outbound path still flows through the embedder's legacy encoder:
     /// returns true if `stream_id` was initiated locally (HEADERS already sent by the embedder), so
     /// inbound frames for it are not treated as frames on an idle stream.
@@ -429,10 +435,10 @@ impl Connection {
         sink.on_recv_window(self.recv_window.size, self.recv_window.consumed);
     }
 
-    /// The embedder advertised `delta` more connection-level receive window (a WINDOW_UPDATE on
-    /// stream 0 it wrote itself): accept that much more DATA before the §6.9.1 overflow check.
-    pub fn grow_recv_window(&mut self, sink: &impl Sink, delta: i64) {
-        self.recv_window.grow(delta);
+    /// The embedder resized the connection-level receive window (`LocalWindow::resize`) and
+    /// wrote the WINDOW_UPDATE on stream 0 that the change needs itself.
+    pub fn apply_recv_window_change(&mut self, sink: &impl Sink, change: RecvWindowChange) {
+        self.recv_window.apply(change);
         self.note_recv_window(sink);
     }
 
@@ -583,6 +589,10 @@ impl Connection {
 
     /// Send WINDOW_UPDATE for every receive window that has consumed at least half its size.
     fn replenish_windows(&mut self, sink: &impl Sink) {
+        let change = sink.take_recv_window_change();
+        if change != RecvWindowChange::default() {
+            self.apply_recv_window_change(sink, change);
+        }
         if self.recv_window.needs_update() {
             let inc = self.recv_window.take_update();
             if inc > 0 {

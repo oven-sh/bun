@@ -23,6 +23,13 @@ const kServerResponseStatistics = Symbol("ServerResponseStatistics");
 
 const { isPrimary } = require("internal/cluster/isPrimary");
 const {
+  throwOnInvalidTLSArray,
+  tlsStringToProtocolVersion,
+  secureProtocolToVersionRange,
+  processPfxOptions,
+  validateSecureProtocol,
+} = require("internal/tls");
+const {
   kInternalSocketData,
   serverSymbol,
   kHandle,
@@ -257,25 +264,24 @@ function normalizeServerTls(tls) {
 
 function processServerTlsOptions(options) {
   let isTls = false;
-  const tlsHelpers = options.pfx || options.cert || options.key || options.ca ? require("internal/tls") : undefined;
 
   // Node's https.Server accepts PKCS#12 bundles (pfx [+ passphrase]); fold
   // them into plain key/cert/ca so the native TLS config sees PEM material.
   let tlsOptions = options;
   if (options.pfx) {
-    tlsOptions = tlsHelpers.processPfxOptions(options);
+    tlsOptions = processPfxOptions(options);
     isTls = true;
   }
 
   let cert = tlsOptions.cert;
   if (cert) {
-    tlsHelpers.throwOnInvalidTLSArray("options.cert", cert);
+    throwOnInvalidTLSArray("options.cert", cert);
     isTls = true;
   }
 
   let key = tlsOptions.key;
   if (key) {
-    tlsHelpers.throwOnInvalidTLSArray("options.key", key);
+    throwOnInvalidTLSArray("options.key", key);
     isTls = true;
   }
 
@@ -288,7 +294,7 @@ function processServerTlsOptions(options) {
     ca = ca == null ? pfxExtraCAs : $isArray(ca) ? [...ca, ...pfxExtraCAs] : [ca, ...pfxExtraCAs];
   }
   if (ca) {
-    tlsHelpers.throwOnInvalidTLSArray("options.ca", ca);
+    throwOnInvalidTLSArray("options.ca", ca);
     isTls = true;
   }
 
@@ -312,15 +318,15 @@ function processServerTlsOptions(options) {
   // Translate minVersion/maxVersion/secureProtocol into the integer
   // protocol range the native layer applies (secureProtocol wins, like
   // Node's SecureContext::Init); 0 keeps the native defaults.
-  tlsHelpers.validateSecureProtocol(options.secureProtocol);
+  validateSecureProtocol(options.secureProtocol);
   let minVersion, maxVersion;
-  const range = tlsHelpers.secureProtocolToVersionRange(options.secureProtocol);
+  const range = secureProtocolToVersionRange(options.secureProtocol);
   if (range) {
     minVersion = range[0];
     maxVersion = range[1];
   } else {
-    minVersion = tlsHelpers.tlsStringToProtocolVersion(options.minVersion);
-    maxVersion = tlsHelpers.tlsStringToProtocolVersion(options.maxVersion);
+    minVersion = tlsStringToProtocolVersion(options.minVersion);
+    maxVersion = tlsStringToProtocolVersion(options.maxVersion);
   }
   return normalizeServerTls({
     serverName,

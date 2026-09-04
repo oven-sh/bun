@@ -701,10 +701,10 @@ pub(crate) fn compute_chunks(
                     bun_sys::O::PATH | bun_sys::O::DIRECTORY,
                     0,
                 ) else {
-                    break 'dir &*resolve_path::normalize_buf::<bun_paths::platform::Auto>(
-                        dir_path,
-                        &mut real_path_buf.0,
-                    );
+                    // The directory only exists in memory (`files:` entry, plugin-resolved
+                    // path). `relative_alloc` normalizes the path itself; `normalize_buf`
+                    // would drop the leading `/` (or `..`) and make it cwd-relative.
+                    break 'dir dir_path;
                 };
 
                 match dir_file.get_path(&mut real_path_buf) {

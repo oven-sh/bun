@@ -267,6 +267,85 @@ describe("Bun.Transpiler", () => {
       expect(lastLine(ts.parsedMin(pre + 'export let y = Foo?.["A"];', false))).toBe("export let y = Foo?.A;");
       expect(lastLine(ts.parsedMin(pre + 'export let y = Bar?.["a-b"];', false))).toBe('export let y = Bar?.["a-b"];');
     });
+
+    // `B = "a" + "b"` is folded into a rope, and every inlined `A.B` pointed at
+    // that rope. Folding a template literal around it used to append the
+    // template's text onto the rope itself, so the member's declaration and all
+    // of its other uses changed too.
+    describe("template literal around an inlined string enum member", () => {
+      const pre = 'enum A { B = "a" + "b", C = B + "c" }\n';
+      const decl = 'var A;\n((A) => {\n  A.B = "ab";\n  A.C = "abc";\n})(A ||= {});\n';
+
+      it("member as the first part of the literal", () => {
+        expect(ts.parsedMin(pre + "console.log(`${A.B}-x`, A.B);", false)).toBe(
+          decl + 'console.log("ab-x", "ab" /* B */);\n',
+        );
+      });
+      it("member after a part that cannot be folded", () => {
+        expect(ts.parsedMin(pre + "console.log(`${y}${A.B}-x`, A.B);", false)).toBe(
+          decl + 'console.log(`${y}ab-x`, "ab" /* B */);\n',
+        );
+      });
+      it("member derived from another rope member", () => {
+        expect(ts.parsedMin(pre + "console.log(`${A.C}-x`, A.C);", false)).toBe(
+          decl + 'console.log("abc-x", "abc" /* C */);\n',
+        );
+      });
+      it("template inside the enum body, which folds even without minification", () => {
+        expect(ts.parsed('enum A { B = "a" + "b", C = `${B}-c`, D = `${B}` }\nconsole.log(A.B);', false)).toBe(
+          'var A;\n((A) => {\n  A["B"] = "ab";\n  A["C"] = "ab-c";\n  A["D"] = "ab";\n})(A ||= {});\nconsole.log("ab" /* B */);\n',
+        );
+      });
+      it("at runtime, including the same member in several templates", async () => {
+        // Not concurrent: before the fix the second template crashed the
+        // transpiler and the fourth one made it loop forever, and the test
+        // runner only kills a dangling child of a non-concurrent test.
+        await using proc = Bun.spawn({
+          cmd: [
+            bunExe(),
+            "-e",
+            `enum Routes {
+              Base = "/api" + "/v1",
+              Users = Base + "/users",
+              Health = "/health",
+            }
+            function tail(prefix: string) {
+              return \`\${prefix}\${Routes.Base}/y\`;
+            }
+            console.log(
+              [
+                \`\${Routes.Base}/posts\`,
+                tail("q"),
+                \`\${Routes.Users}!\`,
+                \`\${Routes.Base}\${Routes.Base}\`,
+                Routes.Base,
+                Routes.Users,
+                Routes.Health,
+                JSON.stringify(Routes),
+              ].join("\\n"),
+            );`,
+          ],
+          env: bunEnv,
+          stderr: "pipe",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect({ stdout, stderr, exitCode }).toEqual({
+          stdout: [
+            "/api/v1/posts",
+            "q/api/v1/y",
+            "/api/v1/users!",
+            "/api/v1/api/v1",
+            "/api/v1",
+            "/api/v1/users",
+            "/health",
+            '{"Base":"/api/v1","Users":"/api/v1/users","Health":"/health"}',
+            "",
+          ].join("\n"),
+          stderr: "",
+          exitCode: 0,
+        });
+      });
+    });
   });
 
   describe("TypeScript", () => {

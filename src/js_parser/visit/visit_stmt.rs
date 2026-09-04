@@ -2268,8 +2268,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
                         next_numeric_value = Some(num.value() + 1.0);
                     }
-                    js_ast::ExprData::EString(str_) => {
+                    js_ast::ExprData::EString(mut str_) => {
                         has_string_value = true;
+
+                        // Every inlined use of this member is a copy of this node that
+                        // still points at its rope chain, and string folding appends to
+                        // that chain in place. Flatten it so there is nothing to share.
+                        str_.resolve_rope_if_needed(p.arena);
 
                         exported_members.get_ptr_mut(name).unwrap().data =
                             js_ast::ts::Data::EnumString(str_);

@@ -2041,6 +2041,10 @@ impl EString {
     /// `other` MUST be Store/arena-allocated (callers pass
     /// `Expr::init(EString, ...).data.e_string_mut()` or a freshly
     /// `Store::append`ed node); its address is captured as a `StoreRef`.
+    ///
+    /// `other`'s own chain becomes part of this rope and the next push appends
+    /// at its tail, so neither chain may still be reachable from another
+    /// expression (inlined enum members are stored flat for this reason).
     pub(crate) fn push(&mut self, other: &mut EString) {
         debug_assert!(self.is_utf8());
         debug_assert!(other.is_utf8());

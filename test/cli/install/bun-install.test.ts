@@ -6,6 +6,7 @@ import {
   bunEnv,
   bunExe,
   bunEnv as env,
+  isLinux,
   isWindows,
   joinP,
   normalizeBunSnapshot,
@@ -1113,6 +1114,58 @@ describe.concurrent("bun-install", () => {
     expect(stderr).toContain("long-git-dep");
     expect(stdout).toContain("bun install v1.");
     expect(exitCode).toBe(1);
+  });
+
+  // When node_modules already exists, the hoisted installer first checks what is installed at
+  // node_modules/<alias> by appending "/package.json" (or "/.bun-tag" for git dependencies) to
+  // the alias inside the path buffer holding it. The alias may be up to one byte short of the
+  // buffer (4096 bytes on Linux, 1024 on macOS), so aliases a few bytes short of it used to crash
+  // the install right there instead of failing like any other name the file system rejects.
+  // On Windows the buffer is far larger than any path the OS accepts.
+  describe.concurrent.skipIf(isWindows)("dependency alias that fills the path buffer", () => {
+    const alias = Buffer.alloc((isLinux ? 4096 : 1024) - 6, "a").toString();
+
+    async function installIntoExistingNodeModules(cwd: string) {
+      await using proc = spawn({
+        // hardlink (the Linux default) creates node_modules/<alias> itself on every platform, so
+        // the failure is reported the same way on macOS, whose default backend is clonefile.
+        cmd: [bunExe(), "install", "--linker", "hoisted", "--backend", "hardlink"],
+        cwd,
+        env: { ...env, BUN_INSTALL_CACHE_DIR: join(cwd, ".cache") },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toContain("ENAMETOOLONG: failed opening node_modules/package dir for package pkg");
+      expect(stdout).toContain("Failed to install 1 package");
+      expect(exitCode).toBe(1);
+    }
+
+    it("file: dependency is verified through <alias>/package.json", async () => {
+      using dir = tempDir("long-alias-file-dep", {
+        "package.json": JSON.stringify({ name: "app", dependencies: { [alias]: "file:./pkg" } }),
+        "pkg/package.json": JSON.stringify({ name: "pkg", version: "1.0.0" }),
+        "node_modules": {},
+      });
+
+      await installIntoExistingNodeModules(String(dir));
+    });
+
+    it("git dependency is verified through <alias>/.bun-tag", async () => {
+      using dir = tempDir("long-alias-git-dep", {
+        "work/package.json": JSON.stringify({ name: "pkg", version: "1.0.0" }),
+        "app/node_modules": {},
+      });
+      await createDumbHttpGitRepo(String(dir), {});
+      using server = serveDirectory(String(dir));
+      const app = join(String(dir), "app");
+      await writeFile(
+        join(app, "package.json"),
+        JSON.stringify({ name: "app", dependencies: { [alias]: `git+http://localhost:${server.port}/repo.git` } }),
+      );
+
+      await installIntoExistingNodeModules(app);
+    });
   });
 
   it("should handle empty string in dependencies", async () => {

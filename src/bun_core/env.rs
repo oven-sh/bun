@@ -65,6 +65,8 @@ pub(crate) const CANARY_REVISION: &str = if IS_CANARY {
 };
 pub const DUMP_SOURCE: bool = IS_DEBUG && !IS_TEST;
 pub const BASE_PATH: &[u8] = build_options::BASE_PATH;
+/// The build's `logs` option (`--cfg=bun_logs` from scripts/build/rust.ts; defaults
+/// to `IS_DEBUG`, `release-assertions` and `--logs=on|off` override). Gates `scoped_log!`.
 pub const ENABLE_LOGS: bool = build_options::ENABLE_LOGS;
 pub const ENABLE_ASAN: bool = build_options::ENABLE_ASAN;
 pub const ENABLE_FUZZILLI: bool = build_options::ENABLE_FUZZILLI;

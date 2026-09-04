@@ -26,6 +26,7 @@
 //!   A variant of DynamicBitSet which does not store a pointer to its
 //!   allocator, in order to save space.
 
+use core::marker::PhantomData;
 use core::mem;
 use core::ptr;
 use core::slice;
@@ -443,9 +444,10 @@ impl<const SIZE: usize, const NUM_MASKS: usize> ArrayBitSet<SIZE, NUM_MASKS> {
 ///
 // Layout invariant: `masks` is a raw pointer where `masks[-1]` holds the true
 // allocation length (needed on free). This layout is load-bearing because
-// `DynamicBitSetList` constructs borrowed views into a shared buffer that must
-// look like freestanding `DynamicBitSetUnmanaged`s — do not swap the storage
-// for `Vec<usize>` without reworking `DynamicBitSetList`.
+// `DynamicBitSetList::at` constructs values of this type that point into the
+// list's own buffer (and are never resized or freed; see
+// `DynamicBitSetListEntry`). Do not swap the storage for `Vec<usize>` without
+// reworking `DynamicBitSetList`.
 pub struct DynamicBitSetUnmanaged {
     /// The number of valid items in this bit set
     pub bit_length: usize,
@@ -521,21 +523,33 @@ impl DynamicBitSetUnmanaged {
 
     /// `self.masks[i] = f(self.masks[i], other.masks[i])` for every mask word.
     /// Centralises the binary set-op loop (`set_union` / `set_intersection` /
-    /// `set_exclude` / `toggle_set` / `copy_into`) behind a single audited
-    /// raw-pointer access. Raw pointers — not `masks_slice{,_mut}` — because
-    /// `other.masks` may alias `self.masks` when both are views from the same
-    /// `DynamicBitSetList`; forming overlapping `&mut [usize]` / `&[usize]`
-    /// would be UB. `f` receives copied `usize` values, so the per-index read
-    /// happens-before the write even when `src == dst`.
+    /// `set_exclude`) behind a single audited raw-pointer access. Raw pointers
+    /// rather than `masks_slice{,_mut}` because `other.masks` may alias
+    /// `self.masks` when both are views from the same `DynamicBitSetList`;
+    /// forming overlapping `&mut [usize]` / `&[usize]` would be UB. `f`
+    /// receives copied `usize` values, so the per-index read happens-before
+    /// the write even when `src == dst`.
+    ///
+    /// Panics unless both sets have the same `bit_length`. The callers are
+    /// safe `pub fn`s and the loop reads `num_masks(self.bit_length)` words
+    /// out of `other`, so the check must survive release builds: not a
+    /// `debug_assert!`.
     #[inline(always)]
     fn zip_masks_raw(&mut self, other: &Self, mut f: impl FnMut(usize, usize) -> usize) {
+        assert!(
+            other.bit_length == self.bit_length,
+            "bit sets have different lengths ({} and {})",
+            self.bit_length,
+            other.bit_length
+        );
         let num_masks = Self::num_masks(self.bit_length);
         let dst = self.masks;
         let src = other.masks;
         for i in 0..num_masks {
-            // SAFETY: `i < num_masks(self.bit_length)`; `dst`/`src` each point
-            // at ≥ `num_masks` initialized words (`resize`/`List::at` invariant).
-            // The two pointers may be equal — see method doc.
+            // SAFETY: the lengths are equal (asserted above), so `i` is below
+            // the word count of both sets, and `dst`/`src` each point at that
+            // many initialized words (`resize`/`List::at` invariant). The two
+            // pointers may be equal; see the method doc.
             unsafe { *dst.add(i) = f(*dst.add(i), *src.add(i)) };
         }
     }
@@ -778,6 +792,10 @@ impl DynamicBitSetUnmanaged {
         self.masks_slice_mut()[num_masks - 1] &= last_item_mask;
     }
 
+    /// Replaces the contents of `self` with those of `other`. The lengths may
+    /// differ: bits beyond the end of `other` are cleared in `self`, and bits
+    /// beyond the end of `self` are not copied. `other` may share storage
+    /// with `self` (two views of one `DynamicBitSetList` slot).
     pub fn copy_into(&mut self, other: &Self) {
         let bit_length = self.bit_length;
         // avoid underflow if bit_length is zero
@@ -785,35 +803,40 @@ impl DynamicBitSetUnmanaged {
             return;
         }
 
-        let num_masks = Self::num_masks(self.bit_length);
-        self.zip_masks_raw(other, |_, b| b);
+        let num_masks = Self::num_masks(bit_length);
+        let shared = num_masks.min(Self::num_masks(other.bit_length));
+        // SAFETY: `shared` is at most the word count of either set, and each
+        // `masks` points at that many initialized words (`resize`/`List::at`
+        // invariant). `ptr::copy` allows the two ranges to overlap.
+        unsafe { ptr::copy(other.masks, self.masks, shared) };
 
         let padding_bits =
             u32::try_from(num_masks * DYN_MASK_BITS as usize - bit_length).expect("int cast");
         let last_item_mask = usize::MAX >> padding_bits;
-        self.masks_slice_mut()[num_masks - 1] &= last_item_mask;
+        let masks = self.masks_slice_mut();
+        masks[shared..].fill(0);
+        masks[num_masks - 1] &= last_item_mask;
     }
 
     /// Performs a union of two bit sets, and stores the
     /// result in the first one.  Bits in the result are
     /// set if the corresponding bits were set in either input.
-    /// The two sets must both be the same bit_length.
+    /// Panics unless the two sets have the same bit_length.
     pub fn set_union(&mut self, other: &Self) {
-        debug_assert!(other.bit_length == self.bit_length);
         self.zip_masks_raw(other, |a, b| a | b);
     }
 
     /// Performs an intersection of two bit sets, and stores
     /// the result in the first one.  Bits in the result are
     /// set if the corresponding bits were set in both inputs.
-    /// The two sets must both be the same bit_length.
+    /// Panics unless the two sets have the same bit_length.
     pub(crate) fn set_intersection(&mut self, other: &Self) {
-        debug_assert!(other.bit_length == self.bit_length);
         self.zip_masks_raw(other, |a, b| a & b);
     }
 
+    /// Clears every bit of `self` that is set in `other`.
+    /// Panics unless the two sets have the same bit_length.
     pub fn set_exclude(&mut self, other: &Self) {
-        debug_assert!(other.bit_length == self.bit_length);
         self.zip_masks_raw(other, |a, b| a & !b);
     }
 
@@ -874,11 +897,9 @@ impl DynamicBitSetUnmanaged {
     }
 }
 
-/// Do not resize the bitsets!
-///
-/// Single buffer for multiple bitsets of equal length. Does not
-/// implement all methods of DynamicBitSetUnmanaged and should
-/// be used carefully.
+/// Single buffer holding `n` bitsets of equal length. The bitsets are reached
+/// through [`DynamicBitSetList::at`], which hands out a
+/// [`DynamicBitSetListEntry`] borrowing the list; they cannot be resized.
 ///
 /// `buf` is a raw heap allocation rather than `Box<[usize]>` because `at()` /
 /// `set()` / `set_union()` hand out and write through `*mut usize` views while
@@ -889,6 +910,12 @@ impl DynamicBitSetUnmanaged {
 /// raw pointer means the heap words are never covered by a `&`/`&mut`
 /// reference, so reads and writes through `at()`-derived pointers carry the
 /// original allocation's full read-write provenance.
+///
+/// Layout: `buf` is `n` consecutive slots of `slot_words(bit_length)` words
+/// each, so `buf_len == slot_words(bit_length) * n`. A slot is one header word
+/// (the slot size, in the position where `DynamicBitSetUnmanaged` keeps its
+/// allocation length) followed by the `num_masks(bit_length)` mask words that
+/// an entry's `masks` pointer addresses.
 pub struct DynamicBitSetList {
     buf: ptr::NonNull<usize>,
     buf_len: usize,
@@ -896,11 +923,59 @@ pub struct DynamicBitSetList {
     bit_length: usize,
 }
 
+/// One bitset of a [`DynamicBitSetList`], borrowed from the list for `'a`.
+///
+/// Derefs to [`DynamicBitSetUnmanaged`] for reading. Writes go through the
+/// methods below; `&mut DynamicBitSetUnmanaged` is deliberately not exposed,
+/// because `resize` / `deinit` would treat the list's buffer as the bitset's
+/// own allocation. Dropping an entry does nothing: the storage belongs to the
+/// list, which the `'a` borrow keeps alive.
+///
+/// Entries come from `&DynamicBitSetList`, so two live entries may denote the
+/// same bitset. That is sound because every access goes through the list
+/// buffer's raw pointer and only forms a `&mut [usize]` for the duration of
+/// one method call (see the `DynamicBitSetList` doc).
+pub struct DynamicBitSetListEntry<'a> {
+    view: mem::ManuallyDrop<DynamicBitSetUnmanaged>,
+    list: PhantomData<&'a DynamicBitSetList>,
+}
+
+impl core::ops::Deref for DynamicBitSetListEntry<'_> {
+    type Target = DynamicBitSetUnmanaged;
+
+    #[inline(always)]
+    fn deref(&self) -> &DynamicBitSetUnmanaged {
+        &self.view
+    }
+}
+
+impl DynamicBitSetListEntry<'_> {
+    /// Adds a specific bit to the bit set.
+    pub(crate) fn set(&mut self, index: usize) {
+        self.view.set(index);
+    }
+
+    /// See [`DynamicBitSetUnmanaged::set_union`].
+    pub(crate) fn set_union(&mut self, other: &DynamicBitSetUnmanaged) {
+        self.view.set_union(other);
+    }
+
+    /// See [`DynamicBitSetUnmanaged::copy_into`].
+    pub fn copy_into(&mut self, other: &DynamicBitSetUnmanaged) {
+        self.view.copy_into(other);
+    }
+}
+
 impl DynamicBitSetList {
+    /// Words one bitset occupies in `buf`: the header plus its masks.
+    #[inline(always)]
+    const fn slot_words(bit_length: usize) -> usize {
+        DynamicBitSetUnmanaged::num_masks(bit_length) + 1
+    }
+
     pub fn init_empty(n: usize, bit_length: usize) -> Result<Self, AllocError> {
-        let masks = DynamicBitSetUnmanaged::num_masks(bit_length);
-        let single_bitset_buf_size = masks + 1;
-        let buf_len = single_bitset_buf_size * n;
+        let slot_words = Self::slot_words(bit_length);
+        let buf_len = slot_words.checked_mul(n).ok_or(AllocError)?;
 
         if buf_len == 0 {
             return Ok(Self {
@@ -917,9 +992,9 @@ impl DynamicBitSetList {
         let buf = ptr::NonNull::new(raw).ok_or(AllocError)?.cast::<usize>();
 
         for i in 0..n {
-            // SAFETY: `i * single_bitset_buf_size < buf_len`; allocation is
+            // SAFETY: `i * slot_words < buf_len`; allocation is
             // zero-initialized and at least `buf_len` words long.
-            unsafe { *buf.as_ptr().add(i * single_bitset_buf_size) = single_bitset_buf_size };
+            unsafe { *buf.as_ptr().add(i * slot_words) = slot_words };
         }
 
         Ok(Self {
@@ -930,43 +1005,46 @@ impl DynamicBitSetList {
         })
     }
 
-    /// Borrow the `i`th bitset as a non-owning `DynamicBitSetUnmanaged` view.
+    /// Borrows the `i`th bitset. Panics if `i >= n`: that check is what keeps
+    /// the entry, and the writes made through it, inside `buf`, so it has to
+    /// hold in release builds as well (not a `debug_assert!`).
     ///
-    /// The returned view's `masks` pointer aliases `self.buf`. It is a raw
-    /// pointer with no lifetime, so the borrow checker will **not** prevent
-    /// use-after-free: the caller must ensure `self` is not dropped (and `buf`
-    /// not reallocated — impossible today, no resize API) while the view is
-    /// live. All current callers (`hoisted_install`, `isolated_install`,
-    /// `PackageInstaller::can_run_scripts`) satisfy this by keeping the list
-    /// alive for the view's entire use. The view must not be `deinit`ed.
-    pub fn at(&self, i: usize) -> core::mem::ManuallyDrop<DynamicBitSetUnmanaged> {
-        debug_assert!(i < self.n, "DynamicBitSetList::at index out of bounds");
-        let num_masks = DynamicBitSetUnmanaged::num_masks(self.bit_length);
-        let single_bitset_buf_size = num_masks + 1;
+    /// The entry cannot outlive the list:
+    ///
+    /// ```compile_fail,E0597
+    /// let entry = {
+    ///     let list = bun_collections::DynamicBitSetList::init_empty(1, 8).unwrap();
+    ///     list.at(0)
+    /// };
+    /// let _ = entry.count();
+    /// ```
+    pub fn at(&self, i: usize) -> DynamicBitSetListEntry<'_> {
+        assert!(i < self.n, "DynamicBitSetList::at index out of bounds");
+        let offset = Self::slot_words(self.bit_length) * i;
 
-        let offset = single_bitset_buf_size * i;
-
-        core::mem::ManuallyDrop::new(DynamicBitSetUnmanaged {
-            bit_length: self.bit_length,
-            // SAFETY: `i < n` (asserted), so `offset + 1 + num_masks <= buf_len`
-            // and the pointer is in-bounds. `buf` is a raw allocation never
-            // reborrowed as `&[usize]`/`&mut [usize]`, so this `*mut` carries
-            // full read-write provenance and writes through it via the returned
-            // view (e.g. from `set`/`set_union`) are sound even though we only
-            // hold `&self` here — `&self` freezes the pointer *value*, not the
-            // pointee.
-            masks: unsafe { self.buf.as_ptr().add(offset).add(1) },
-        })
+        DynamicBitSetListEntry {
+            view: mem::ManuallyDrop::new(DynamicBitSetUnmanaged {
+                bit_length: self.bit_length,
+                // SAFETY: `buf_len == slot_words * n` (checked multiplication
+                // in `init_empty`) and `i < n` (asserted above), so slot `i`,
+                // words `offset..offset + slot_words`, lies inside `buf`; its
+                // masks start right after the header word. `buf` is never
+                // reborrowed as `&[usize]`/`&mut [usize]`, so this pointer
+                // keeps the allocation's read-write provenance and writes made
+                // through the entry while only holding `&self` are sound (see
+                // the struct doc).
+                masks: unsafe { self.buf.as_ptr().add(offset + 1) },
+            }),
+            list: PhantomData,
+        }
     }
 
     pub fn set(&self, i: usize, j: usize) {
-        let mut bitset = self.at(i);
-        bitset.set(j);
+        self.at(i).set(j);
     }
 
     pub fn set_union(&self, i: usize, other: &DynamicBitSetUnmanaged) {
-        let mut bitset = self.at(i);
-        bitset.set_union(other);
+        self.at(i).set_union(other);
     }
 }
 
@@ -1419,4 +1497,223 @@ pub struct Range {
     pub start: usize,
     /// The index immediately after the last bit of interest.
     pub end: usize,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const WORD: usize = usize::BITS as usize;
+
+    fn set_bits(set: &DynamicBitSetUnmanaged) -> Vec<usize> {
+        let mut out = Vec::new();
+        let mut it = set.iterator::<true, true>();
+        while let Some(i) = it.next() {
+            out.push(i);
+        }
+        out
+    }
+
+    #[test]
+    fn list_slots_are_independent() {
+        let list = DynamicBitSetList::init_empty(3, WORD + 6).unwrap();
+        list.set(0, 0);
+        list.set(1, WORD + 5);
+        list.set(2, WORD);
+        list.set(2, 1);
+
+        assert_eq!(set_bits(&list.at(0)), [0]);
+        assert_eq!(set_bits(&list.at(1)), [WORD + 5]);
+        assert_eq!(set_bits(&list.at(2)), [1, WORD]);
+        assert_eq!(list.at(1).bit_length, WORD + 6);
+    }
+
+    #[test]
+    fn list_set_union_merges_into_one_slot() {
+        let list = DynamicBitSetList::init_empty(2, WORD + 6).unwrap();
+        list.set(1, 2);
+        let mut other = DynamicBitSetUnmanaged::init_empty(WORD + 6).unwrap();
+        other.set(WORD + 1);
+
+        list.set_union(1, &other);
+
+        assert_eq!(set_bits(&list.at(1)), [2, WORD + 1]);
+        assert_eq!(set_bits(&list.at(0)), []);
+    }
+
+    #[test]
+    fn list_entry_copy_into_writes_through_to_the_list() {
+        let list = DynamicBitSetList::init_empty(2, WORD + 6).unwrap();
+        list.set(1, 0);
+        let mut scratch = DynamicBitSetUnmanaged::init_empty(WORD + 6).unwrap();
+        scratch.set(3);
+        scratch.set(WORD);
+
+        let mut dst = list.at(1);
+        dst.copy_into(&scratch);
+
+        assert_eq!(set_bits(&list.at(1)), [3, WORD]);
+        assert!(scratch.eql(&list.at(1)));
+        assert_eq!(set_bits(&list.at(0)), []);
+    }
+
+    #[test]
+    fn list_entry_copy_into_itself_keeps_contents() {
+        let list = DynamicBitSetList::init_empty(1, WORD + 6).unwrap();
+        list.set(0, 5);
+        list.set(0, WORD + 5);
+
+        let mut dst = list.at(0);
+        let src = list.at(0);
+        dst.copy_into(&src);
+
+        assert_eq!(set_bits(&dst), [5, WORD + 5]);
+    }
+
+    #[test]
+    fn list_with_zero_bit_length_has_empty_slots() {
+        let list = DynamicBitSetList::init_empty(4, 0).unwrap();
+        assert_eq!(list.at(3).count(), 0);
+        assert_eq!(set_bits(&list.at(0)), []);
+        let mut scratch = DynamicBitSetUnmanaged::init_empty(0).unwrap();
+        scratch.set_union(&list.at(1));
+        assert_eq!(scratch.count(), 0);
+    }
+
+    #[test]
+    #[should_panic(expected = "DynamicBitSetList::at index out of bounds")]
+    fn list_at_one_past_the_end_panics() {
+        let list = DynamicBitSetList::init_empty(2, 8).unwrap();
+        let _ = list.at(2);
+    }
+
+    #[test]
+    #[should_panic(expected = "DynamicBitSetList::at index out of bounds")]
+    fn list_at_on_an_empty_list_panics() {
+        let list = DynamicBitSetList::init_empty(0, 8).unwrap();
+        let _ = list.at(0);
+    }
+
+    #[test]
+    #[should_panic(expected = "DynamicBitSetList::at index out of bounds")]
+    fn list_set_past_the_end_panics() {
+        let list = DynamicBitSetList::init_empty(2, 8).unwrap();
+        list.set(2, 0);
+    }
+
+    #[test]
+    #[should_panic(expected = "DynamicBitSetList::at index out of bounds")]
+    fn list_set_union_past_the_end_panics() {
+        let list = DynamicBitSetList::init_empty(2, 8).unwrap();
+        let other = DynamicBitSetUnmanaged::init_empty(8).unwrap();
+        list.set_union(2, &other);
+    }
+
+    #[test]
+    #[should_panic(expected = "bit sets have different lengths")]
+    fn set_union_with_a_shorter_operand_panics() {
+        let mut a = DynamicBitSetUnmanaged::init_empty(2 * WORD).unwrap();
+        let b = DynamicBitSetUnmanaged::init_empty(WORD).unwrap();
+        a.set_union(&b);
+    }
+
+    #[test]
+    #[should_panic(expected = "bit sets have different lengths")]
+    fn set_intersection_with_a_shorter_operand_panics() {
+        let mut a = DynamicBitSetUnmanaged::init_empty(2 * WORD).unwrap();
+        let b = DynamicBitSetUnmanaged::init_empty(WORD).unwrap();
+        a.set_intersection(&b);
+    }
+
+    #[test]
+    #[should_panic(expected = "bit sets have different lengths")]
+    fn set_exclude_with_a_shorter_operand_panics() {
+        let mut a = DynamicBitSetUnmanaged::init_empty(2 * WORD).unwrap();
+        let b = DynamicBitSetUnmanaged::init_empty(WORD).unwrap();
+        a.set_exclude(&b);
+    }
+
+    #[test]
+    #[should_panic(expected = "bit sets have different lengths")]
+    fn list_set_union_with_a_shorter_operand_panics() {
+        let list = DynamicBitSetList::init_empty(1, 2 * WORD).unwrap();
+        let other = DynamicBitSetUnmanaged::init_empty(WORD).unwrap();
+        list.set_union(0, &other);
+    }
+
+    #[test]
+    fn copy_into_from_a_shorter_set_clears_the_rest() {
+        let mut src = DynamicBitSetUnmanaged::init_empty(3).unwrap();
+        src.set(1);
+        let mut dst = DynamicBitSetUnmanaged::init_empty(3 * WORD + 8).unwrap();
+        dst.set_all(true);
+
+        dst.copy_into(&src);
+
+        assert_eq!(dst.bit_length, 3 * WORD + 8);
+        assert_eq!(set_bits(&dst), [1]);
+    }
+
+    #[test]
+    fn copy_into_from_a_set_with_fewer_bits_in_the_same_word_clears_the_rest() {
+        let mut src = DynamicBitSetUnmanaged::init_empty(3).unwrap();
+        src.set_all(true);
+        let mut dst = DynamicBitSetUnmanaged::init_empty(10).unwrap();
+        dst.set_all(true);
+
+        dst.copy_into(&src);
+
+        assert_eq!(set_bits(&dst), [0, 1, 2]);
+    }
+
+    #[test]
+    fn copy_into_from_a_longer_set_truncates_and_clears_padding() {
+        let mut src = DynamicBitSetUnmanaged::init_empty(3 * WORD).unwrap();
+        src.set_all(true);
+        let mut dst = DynamicBitSetUnmanaged::init_empty(WORD + 6).unwrap();
+
+        dst.copy_into(&src);
+
+        assert_eq!(dst.count(), WORD + 6);
+        let mut unset = dst.iterator::<false, true>();
+        assert_eq!(unset.next(), None);
+    }
+
+    #[test]
+    fn copy_into_with_equal_lengths_replaces_the_contents() {
+        let mut src = DynamicBitSetUnmanaged::init_empty(WORD + 6).unwrap();
+        src.set(WORD + 2);
+        let mut dst = DynamicBitSetUnmanaged::init_empty(WORD + 6).unwrap();
+        dst.set(0);
+        dst.set(WORD + 5);
+
+        dst.copy_into(&src);
+
+        assert_eq!(set_bits(&dst), [WORD + 2]);
+    }
+
+    #[test]
+    fn copy_into_an_empty_set_is_a_no_op() {
+        let mut src = DynamicBitSetUnmanaged::init_empty(WORD).unwrap();
+        src.set_all(true);
+        let mut dst = DynamicBitSetUnmanaged::init_empty(0).unwrap();
+
+        dst.copy_into(&src);
+
+        assert_eq!(dst.count(), 0);
+        assert_eq!(dst.bit_length, 0);
+    }
+
+    #[test]
+    fn managed_copy_into_a_larger_set_keeps_every_bit() {
+        let mut old = DynamicBitSet::init_empty(WORD).unwrap();
+        old.set(0);
+        old.set(WORD - 1);
+        let mut new = DynamicBitSet::init_empty(WORD + 1).unwrap();
+
+        old.copy_into(&mut new);
+
+        assert_eq!(set_bits(&new.unmanaged), [0, WORD - 1]);
+        assert_eq!(new.bit_length(), WORD + 1);
+    }
 }

@@ -5270,13 +5270,13 @@ impl DevServer {
             route_bundle_index,
         };
         match ensure_route_is_bundled(self, route_bundle_index, &mut ensure_ctx) {
-            Ok(()) => {}
-            Err(err @ (jsc::JsError::Thrown | jsc::JsError::Terminated)) => {
-                crate::dispatch::fold(Err(err))
+            Err(jsc::JsError::OutOfMemory) => Err(AllocError),
+            // A thrown error has no frame to return to here; report it as uncaught.
+            result => {
+                crate::dispatch::fold(result);
+                Ok(())
             }
-            Err(jsc::JsError::OutOfMemory) => return Err(AllocError),
         }
-        Ok(())
     }
 
     fn get_or_put_route_bundle(

@@ -203,7 +203,6 @@ impl HTTPRequestBody {
 
     pub fn from_js(global_this: &JSGlobalObject, value: JSValue) -> JsResult<HTTPRequestBody> {
         let mut body_value = BodyValue::from_js(global_this, value)?;
-        body_value.throw_if_html_bundle(global_this)?;
         if matches!(body_value, BodyValue::Used)
             || (matches!(&body_value, BodyValue::Locked(l) if !l.action.is_none() || l.is_disturbed2(global_this)))
         {

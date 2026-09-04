@@ -1183,12 +1183,13 @@ impl Request {
                     if !fields.contains(Fields::Body) {
                         match response.get_body_value() {
                             BodyValue::Null | BodyValue::Empty | BodyValue::Used => {}
+                            BodyValue::HTMLBundle(_) => {
+                                bail!(Err(global_this.throw_type_error(format_args!(
+                                    "{}",
+                                    crate::webcore::body::HTML_BUNDLE_BODY_UNREADABLE
+                                ))))
+                            }
                             _ => {
-                                if let Err(e) =
-                                    response.get_body_value().throw_if_html_bundle(global_this)
-                                {
-                                    bail!(Err(e));
-                                }
                                 match response.clone_body_value_via_cached_stream(global_this) {
                                     Ok(v) => {
                                         *req.body_value_mut() = v;
@@ -1221,9 +1222,6 @@ impl Request {
                         }
                         match BodyValue::from_js(global_this, body_) {
                             Ok(v) => {
-                                if let Err(e) = v.throw_if_html_bundle(global_this) {
-                                    bail!(Err(e));
-                                }
                                 *req.body_value_mut() = v;
                             }
                             Err(e) => bail!(Err(e)),

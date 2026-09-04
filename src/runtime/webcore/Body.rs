@@ -1001,8 +1001,11 @@ impl Value {
             }
         }
 
-        if let Some(html_bundle) = value.as_class_this_ptr::<crate::server::HTMLBundle>() {
-            return Ok(Value::HTMLBundle(bun_ptr::RefPtr::from_this(html_bundle)));
+        if value
+            .as_class_this_ptr::<crate::server::HTMLBundle>()
+            .is_some()
+        {
+            return Err(throw_html_bundle_body_unreadable(global_this));
         }
 
         value.ensure_still_alive();
@@ -1594,7 +1597,13 @@ impl Value {
 // ────────────────────────────────────────────────────────────────────────────
 
 // https://github.com/WebKit/webkit/blob/main/Source/WebCore/Modules/fetch/FetchBody.cpp#L45
+/// The `Response` constructor's body. Only a `Response` carries an `HTMLBundle`.
 pub(crate) fn extract(global_this: &JSGlobalObject, value: JSValue) -> JsResult<Body> {
+    if let Some(html_bundle) = value.as_class_this_ptr::<crate::server::HTMLBundle>() {
+        return Ok(Body::new(Value::HTMLBundle(bun_ptr::RefPtr::from_this(
+            html_bundle,
+        ))));
+    }
     let body_value = Value::from_js(global_this, value)?;
     if let Value::Blob(b) = &body_value {
         debug_assert!(!b.is_heap_allocated()); // owned by Body
@@ -2220,11 +2229,14 @@ fn throw_html_bundle_body_unreadable(global_object: &JSGlobalObject) -> jsc::JsE
 }
 
 impl Value {
-    /// For a consumer other than `Bun.serve`, which cannot read an `HTMLBundle`.
-    pub(crate) fn throw_if_html_bundle(&self, global_object: &JSGlobalObject) -> JsResult<()> {
-        if matches!(self, Value::HTMLBundle(_)) {
-            return Err(throw_html_bundle_body_unreadable(global_object));
+    /// `use_as_any_blob` for a reader other than `Bun.serve`: an `HTMLBundle` is an error.
+    pub(crate) fn use_as_any_blob_or_throw(
+        &mut self,
+        global_object: &JSGlobalObject,
+    ) -> JsResult<AnyBlob> {
+        match self {
+            Value::HTMLBundle(_) => Err(throw_html_bundle_body_unreadable(global_object)),
+            _ => Ok(self.use_as_any_blob()),
         }
-        Ok(())
     }
 }

@@ -1567,6 +1567,7 @@ impl PublishCommand {
         });
 
         let mut iter = DirIterator::iterate(workspace_dir);
+        iter.resolve_unknown_entry_types = true;
         while let Some(entry) = iter.next().ok().flatten() {
             if entry.kind == bun_sys::EntryKind::Directory {
                 continue;
@@ -1789,6 +1790,7 @@ impl PublishCommand {
                     });
 
                     let mut iter = DirIterator::iterate(dir);
+                    iter.resolve_unknown_entry_types = true;
                     while let Some(entry) = iter.next().ok().flatten() {
                         let (name, subpath): (&'static ZStr, &'static ZStr) = {
                             // Entry names are UTF-8 on every platform.

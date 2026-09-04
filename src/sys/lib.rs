@@ -165,6 +165,25 @@ pub mod dir_iterator {
         pub kind: EntryKind,
     }
 
+    impl IteratorResult {
+        /// See `WrappedIterator::resolve_unknown_entry_types`.
+        fn resolve_unknown_kind(&mut self, dir: Fd) {
+            #[cfg(not(windows))]
+            {
+                if self.kind == EntryKind::Unknown {
+                    if let Ok(stat) = super::lstatat(dir, self.name.as_zstr()) {
+                        self.kind = super::kind_from_mode(stat.st_mode as super::Mode);
+                    }
+                }
+            }
+            #[cfg(windows)]
+            {
+                // The Windows iterator always knows the kind.
+                let _ = dir;
+            }
+        }
+    }
+
     /// Length-known, NUL-terminated entry name in OS-native encoding.
     ///
     /// **POSIX**: lifetime-erased borrow (raw pointer + length) into the
@@ -308,8 +327,7 @@ pub mod dir_iterator {
             // literal matches <sys/dirent.h>.
             #[cfg(any(target_os = "macos", target_os = "freebsd"))]
             14 /* DT_WHT */ => EntryKind::Whiteout,
-            // DT_UNKNOWN: some filesystems (bind mounts, FUSE, NFS) don't
-            // provide d_type. Callers should lstatat() to resolve when needed.
+            // DT_UNKNOWN: see `WrappedIterator::resolve_unknown_entry_types`.
             _ => EntryKind::Unknown,
         }
     }
@@ -747,6 +765,10 @@ pub mod dir_iterator {
         #[cfg(not(windows))]
         name_filter: Option<Vec<u16>>,
         state: State,
+        /// `lstat` entries whose kind the filesystem did not report (`Unknown`:
+        /// FUSE, NFS, XFS with `ftype=0`), so that, as with `d_type`, a symlink is
+        /// still a symlink. Entries that cannot be stat'ed stay `Unknown`.
+        pub resolve_unknown_entry_types: bool,
     }
     impl WrappedIterator {
         #[inline]
@@ -775,7 +797,13 @@ pub mod dir_iterator {
         /// Copy it out before pushing the iterator into a `Vec` etc.
         #[inline]
         pub fn next(&mut self) -> Result<Option<IteratorResult>> {
-            self.state.next(self.dir)
+            let mut entry = self.state.next(self.dir)?;
+            if self.resolve_unknown_entry_types {
+                if let Some(entry) = entry.as_mut() {
+                    entry.resolve_unknown_kind(self.dir);
+                }
+            }
+            Ok(entry)
         }
     }
 
@@ -786,6 +814,7 @@ pub mod dir_iterator {
                 dir,
                 name_filter: None,
                 state: State::new(),
+                resolve_unknown_entry_types: false,
             }
         }
         #[cfg(windows)]
@@ -793,6 +822,7 @@ pub mod dir_iterator {
             WrappedIterator {
                 dir,
                 state: State::new(),
+                resolve_unknown_entry_types: false,
             }
         }
     }

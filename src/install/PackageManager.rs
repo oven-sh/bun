@@ -1490,6 +1490,12 @@ pub fn init(
     subcommand: Subcommand,
 ) -> Result<(&'static mut PackageManager, Box<[u8]>), Error> {
     if cli.global {
+        ::bun_bunfig::arguments::load_config(
+            bun_options_types::command_tag::Tag::InstallCommand,
+            cli.config,
+            ctx,
+        )?;
+
         // Non-consuming peek: `ctx.install` is
         // `Option<Box<BunInstall>>` borrowed via `&mut ContextData`; reborrow with
         // `as_deref()` so the boxed config remains in `ctx` for the
@@ -1846,11 +1852,13 @@ pub fn init(
     // `loadConfig` was moved down into `bun_bunfig`
     // (MOVE_DOWN b0) so install can call it directly — no fn-pointer hook.
     // (`::`-qualified because `crate::bun_bunfig` is a legacy local shim mod.)
-    ::bun_bunfig::arguments::load_config(
-        bun_options_types::command_tag::Tag::InstallCommand,
-        cli.config,
-        ctx,
-    )?;
+    if !cli.global {
+        ::bun_bunfig::arguments::load_config(
+            bun_options_types::command_tag::Tag::InstallCommand,
+            cli.config,
+            ctx,
+        )?;
+    }
     // SAFETY: main-thread global
     unsafe {
         let tld = fs.top_level_dir();

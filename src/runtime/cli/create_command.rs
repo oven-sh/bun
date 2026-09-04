@@ -1074,8 +1074,7 @@ impl CreateCommand {
         let user_skipped_install = create_options.skip_install;
         create_options.skip_install = create_options.skip_install || !has_dependencies;
 
-        // git must finish before the tasks and the install write to the
-        // destination, so that `git add` sees only the template's files.
+        // `git add` reads the destination, so git must exit before the tasks and the install.
         if !create_options.skip_git {
             let created = if create_options.verbose {
                 GitHandler::run::<true>(destination, path_env)

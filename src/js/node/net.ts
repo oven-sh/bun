@@ -2122,8 +2122,6 @@ Socket.prototype.connect = function connect(...args) {
   }
   if (this.destroyed) {
     this._handle = null;
-    this._peername = null;
-    this._sockname = null;
   }
 
   this.connecting = true;
@@ -2134,8 +2132,9 @@ Socket.prototype.connect = function connect(...args) {
 
   if (!this._handle) {
     this._handle = newDetachedSocket(typeof this[bunTlsSymbol] === "function");
-    initSocketHandle(this);
   }
+  // A reused handle gets a new connection from doConnect, so it is reset as well.
+  initSocketHandle(this);
 
   if (!pipe) {
     lookupAndConnect(this, options);
@@ -4269,10 +4268,11 @@ function normalizeArgs(args: unknown[]): [options: Record<PropertyKey, any>, cb:
   return arr;
 }
 
-// Called when creating new Socket, or when re-using a closed Socket
+// Called on every connect(): a new Socket, or one re-used for another connection.
 function initSocketHandle(self) {
   self._undestroy();
   self._sockname = null;
+  self._peername = null;
   self[kclosed] = false;
   self[kended] = false;
 

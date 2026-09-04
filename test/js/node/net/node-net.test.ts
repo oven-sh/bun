@@ -463,33 +463,221 @@ describe("net.Socket write", () => {
     }),
   );
 
+  function listen(server: Server) {
+    return new Promise<number>((resolve, reject) => {
+      server.once("error", reject);
+      server.listen(0, "127.0.0.1", () => resolve((server.address() as import("node:net").AddressInfo).port));
+    });
+  }
+
   it("should allow reconnecting after end()", async () => {
-    const server = new Server(socket => socket.end());
-    const port = await new Promise(resolve => {
-      server.once("listening", () => resolve(server.address().port));
-      server.listen();
+    // #7325: the same net.Socket is reconnected from end()'s callback. That
+    // callback runs before the peer's FIN has been read, so the socket is not
+    // destroyed yet and connect() reuses the handle of the half-closed
+    // connection. (This used to reconnect 3ms after the callback instead, which
+    // only passed when the previous connection had finished closing by then.)
+    const iterations = 10;
+    const connections: Socket[] = [];
+    const server = createServer(c => {
+      connections.push(c);
+      c.on("error", () => {});
+      c.end();
+    });
+    const socket = new Socket();
+    const errors: Error[] = [];
+    socket.on("error", err => errors.push(err));
+    socket.resume();
+    const results: unknown[] = [];
+    try {
+      const port = await listen(server);
+      for (let i = 0; i < iterations; i++) {
+        socket.connect(port, "127.0.0.1");
+        await once(socket, "connect");
+        const readyState = socket.readyState;
+        const writeError = await new Promise<Error | null | undefined>(resolve => socket.write("script\n", resolve));
+        const endError = await new Promise<Error | null | undefined>(resolve => socket.end(resolve));
+        results.push({ readyState, writeError: writeError?.message ?? null, endError: endError?.message ?? null });
+      }
+      expect(results).toEqual(Array(iterations).fill({ readyState: "open", writeError: null, endError: null }));
+      expect(errors).toEqual([]);
+    } finally {
+      socket.destroy();
+      for (const c of connections) c.destroy();
+      server.close();
+    }
+  });
+
+  describe("connect() while the previous connection is half-closed", () => {
+    // connect() on a socket that has not been destroyed replaces the connection
+    // underneath the same handle; the per-connection stream state has to start
+    // over with it. One side of each connection stays open (allowHalfOpen on
+    // the server, or on the client) so that the client socket is still not
+    // destroyed when it is reconnected.
+    it("re-opens the writable side after end()", async () => {
+      const connections: Socket[] = [];
+      const received: { connection: number; data: string }[] = [];
+      let onData: ((data: string) => void) | undefined;
+      const server = createServer({ allowHalfOpen: true }, c => {
+        connections.push(c);
+        const connection = connections.length;
+        c.on("error", () => {});
+        c.setEncoding("utf8");
+        c.on("data", (data: string) => {
+          received.push({ connection, data });
+          onData?.(data);
+        });
+      });
+      const socket = new Socket();
+      const errors: Error[] = [];
+      socket.on("error", err => errors.push(err));
+      function writeAndWaitForServer(data: string) {
+        const { promise, resolve } = Promise.withResolvers<string>();
+        onData = resolve;
+        socket.write(data);
+        return promise;
+      }
+      try {
+        const port = await listen(server);
+
+        socket.connect(port, "127.0.0.1");
+        await once(socket, "connect");
+        await writeAndWaitForServer("first");
+        socket.end();
+        await once(socket, "finish");
+        expect({
+          destroyed: socket.destroyed,
+          writableEnded: socket.writableEnded,
+          readyState: socket.readyState,
+        }).toEqual({ destroyed: false, writableEnded: true, readyState: "readOnly" });
+
+        socket.connect(port, "127.0.0.1");
+        await once(socket, "connect");
+        expect({
+          writableEnded: socket.writableEnded,
+          writableFinished: socket.writableFinished,
+          readyState: socket.readyState,
+        }).toEqual({ writableEnded: false, writableFinished: false, readyState: "open" });
+        await writeAndWaitForServer("second");
+        expect(received).toEqual([
+          { connection: 1, data: "first" },
+          { connection: 2, data: "second" },
+        ]);
+        expect(errors).toEqual([]);
+      } finally {
+        socket.destroy();
+        for (const c of connections) c.destroy();
+        server.close();
+      }
     });
 
-    const socket = new Socket();
-    socket.on("data", data => console.log(data.toString()));
-    socket.on("error", err => console.error(err));
-
-    async function run() {
-      return new Promise((resolve, reject) => {
-        socket.once("connect", (...args) => {
-          socket.write("script\n", err => {
-            if (err) return reject(err);
-            socket.end(() => setTimeout(resolve, 3));
-          });
-        });
-        socket.connect(port, "127.0.0.1");
+    it("re-opens the writable side after end() (unix socket path)", async () => {
+      const connections: Socket[] = [];
+      const server = createServer({ allowHalfOpen: true }, c => {
+        connections.push(c);
+        c.on("error", () => {});
       });
-    }
+      const socketPath = join(socket_domain, "reconnect.sock");
+      const socket = new Socket();
+      const errors: Error[] = [];
+      socket.on("error", err => errors.push(err));
+      try {
+        await new Promise<void>((resolve, reject) => {
+          server.once("error", reject);
+          server.listen(socketPath, resolve);
+        });
 
-    for (let i = 0; i < 10; i++) {
-      await run();
-    }
-    server.close();
+        socket.connect(socketPath);
+        await once(socket, "connect");
+        socket.end();
+        await once(socket, "finish");
+
+        socket.connect(socketPath);
+        await once(socket, "connect");
+        const writeError = await new Promise<Error | null | undefined>(resolve => socket.write("again", resolve));
+        expect({ readyState: socket.readyState, writeError: writeError?.message ?? null }).toEqual({
+          readyState: "open",
+          writeError: null,
+        });
+        expect(errors).toEqual([]);
+      } finally {
+        socket.destroy();
+        for (const c of connections) c.destroy();
+        server.close();
+      }
+    });
+
+    it("re-opens the readable side after the peer ended an allowHalfOpen socket", async () => {
+      const connections: Socket[] = [];
+      const server = createServer(c => {
+        connections.push(c);
+        c.on("error", () => {});
+        c.end();
+      });
+      const socket = new Socket({ allowHalfOpen: true });
+      const errors: Error[] = [];
+      socket.on("error", err => errors.push(err));
+      socket.resume();
+      try {
+        const port = await listen(server);
+
+        socket.connect(port, "127.0.0.1");
+        await once(socket, "end");
+        expect({
+          destroyed: socket.destroyed,
+          readableEnded: socket.readableEnded,
+          readyState: socket.readyState,
+        }).toEqual({ destroyed: false, readableEnded: true, readyState: "writeOnly" });
+
+        const endedAgain = once(socket, "end");
+        socket.connect(port, "127.0.0.1");
+        await once(socket, "connect");
+        expect({ readableEnded: socket.readableEnded, readyState: socket.readyState }).toEqual({
+          readableEnded: false,
+          readyState: "open",
+        });
+        // The new connection's FIN is reported as a fresh 'end'.
+        await endedAgain;
+        expect(connections).toHaveLength(2);
+        expect(errors).toEqual([]);
+      } finally {
+        socket.destroy();
+        for (const c of connections) c.destroy();
+        server.close();
+      }
+    });
+
+    it("reports the address of the new peer", async () => {
+      const connections: Socket[] = [];
+      const onConnection = (c: Socket) => {
+        connections.push(c);
+        c.on("error", () => {});
+      };
+      const server1 = createServer({ allowHalfOpen: true }, onConnection);
+      const server2 = createServer({ allowHalfOpen: true }, onConnection);
+      const socket = new Socket();
+      const errors: Error[] = [];
+      socket.on("error", err => errors.push(err));
+      try {
+        const port1 = await listen(server1);
+        const port2 = await listen(server2);
+
+        socket.connect(port1, "127.0.0.1");
+        await once(socket, "connect");
+        expect(socket.remotePort).toBe(port1);
+        socket.end();
+        await once(socket, "finish");
+
+        socket.connect(port2, "127.0.0.1");
+        await once(socket, "connect");
+        expect(socket.remotePort).toBe(port2);
+        expect(errors).toEqual([]);
+      } finally {
+        socket.destroy();
+        for (const c of connections) c.destroy();
+        server1.close();
+        server2.close();
+      }
+    });
   });
 
   // Client-mode `Handlers.markInactive()` frees the per-connection Handlers

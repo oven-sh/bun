@@ -296,7 +296,10 @@ pub(crate) fn write<W: Write + ?Sized>(
                 // chunks, so its etag must change when those do. `isolated_hash`
                 // by design excludes those substitutions; the placeholder hash
                 // folds them in via `appendIsolatedHashesForImportedChunks`.
-                ch.template.placeholder.hash.map_or(ch.isolated_hash, |h| h.value),
+                ch.template
+                    .placeholder
+                    .hash
+                    .map_or(ch.isolated_hash, |h| h.value),
                 ch.content.loader(),
                 if ch.entry_point.is_entry_point() {
                     OutputKind::EntryPoint

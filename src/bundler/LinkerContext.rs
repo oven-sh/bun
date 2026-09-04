@@ -2700,9 +2700,13 @@ impl<'a> LinkerContext<'a> {
             .collect();
 
         use bun_core::fmt::ContentHash;
-        let min_len: Vec<usize> = chunks.iter().map(|chunk| chunk.template.hash_len()).collect();
-        let mut names: Vec<ContentHash> =
-            (0..n).map(|i| ContentHash::new(closure[i], min_len[i])).collect();
+        let min_len: Vec<usize> = chunks
+            .iter()
+            .map(|chunk| chunk.template.hash_len())
+            .collect();
+        let mut names: Vec<ContentHash> = (0..n)
+            .map(|i| ContentHash::new(closure[i], min_len[i]))
+            .collect();
         for _ in 0..ContentHash::MAX_LEN {
             if !ContentHash::widen_to_distinguish(&mut names) {
                 break;

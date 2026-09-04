@@ -4396,7 +4396,8 @@ pub mod bv2_impl {
 
                             if template.needs(options::PlaceholderField::Hash) {
                                 template.placeholder.hash = Some(
-                                    template.content_hash(content_hashes_for_additional_files[index]),
+                                    template
+                                        .content_hash(content_hashes_for_additional_files[index]),
                                 );
                             }
 

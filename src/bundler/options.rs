@@ -2374,7 +2374,9 @@ impl PathTemplate {
     pub(crate) fn content_hash(&self, hash: u64) -> bun_core::fmt::ContentHash {
         bun_core::fmt::ContentHash::new(
             hash,
-            self.placeholder.hash.map_or_else(|| self.hash_len(), |h| h.len()),
+            self.placeholder
+                .hash
+                .map_or_else(|| self.hash_len(), |h| h.len()),
         )
     }
 

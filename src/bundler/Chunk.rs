@@ -292,7 +292,7 @@ impl Chunk {
         self.template
             .placeholder
             .hash
-            .unwrap_or(bun_core::fmt::ContentHash::short(self.isolated_hash))
+            .unwrap_or_else(|| bun_core::fmt::ContentHash::short(self.isolated_hash))
     }
 
     /// The chunks reachable from chunk `start` through cross-chunk imports of the given kinds, `start` first.

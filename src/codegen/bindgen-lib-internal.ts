@@ -5,7 +5,7 @@
 import assert from "node:assert";
 import { createHash } from "node:crypto";
 import * as path from "node:path";
-import { fileURLToPath, pathToFileURL } from "node:url";
+import { pathToFileURL } from "node:url";
 import util from "node:util";
 import type { FuncOptions } from "./bindgen-lib.ts";
 
@@ -878,8 +878,6 @@ function snapshotCallerLocation(): string {
 }
 
 function stackTraceFileName(line: string): string {
-  const url = /file:\/\/\S+?(?=:\d+:\d+)/.exec(line);
-  if (url) return fileURLToPath(url[0]).replaceAll("\\", "/");
   const match = /(?:at\s+|\()(.:?[^:\n(\)]*)[^(\n]*$/i.exec(line);
   assert(match, `Couldn't extract filename from stack trace line: ${line}`);
   return match[1].replaceAll("\\", "/");

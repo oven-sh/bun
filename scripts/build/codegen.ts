@@ -534,19 +534,19 @@ function emitNodeFallbacks({ n, cfg, sources, o, dirStamp }: Ctx): void {
 
   // The script (build-fallbacks.ts) reads its args as [outdir, ...sources]
   // but actually ignores the sources — it does readdirSync(".") to discover
-  // files. We pass them anyway so ninja tracks them as inputs.
+  // files. We pass them anyway so ninja tracks them as inputs. It bundles
+  // with the esbuild package from the root install.
   const script = resolve(sourceDir, "build-fallbacks.ts");
   n.build({
     outputs,
-    rule: "codegen_bun",
+    rule: "codegen",
     inputs: [script, ...sources.nodeFallbacks],
-    implicitInputs: [installStamp],
+    implicitInputs: [installStamp, o.rootInstall],
     orderOnlyInputs: [dirStamp],
     vars: {
       cwd: sourceDir,
       desc: "node-fallbacks/*.js",
-      // `bun run build-fallbacks` resolves to `./build-fallbacks.ts` in cwd
-      args: shJoin(cfg, ["run", "build-fallbacks", outDir, ...sources.nodeFallbacks]),
+      args: shJoin(cfg, [script, outDir, ...sources.nodeFallbacks]),
     },
   });
 
@@ -558,18 +558,18 @@ function emitNodeFallbacks({ n, cfg, sources, o, dirStamp }: Ctx): void {
   const rrOut = resolve(outDir, "react-refresh.js");
   n.build({
     outputs: [rrOut],
-    rule: "codegen_bun",
+    rule: "esbuild",
     inputs: [resolve(sourceDir, "package.json"), resolve(sourceDir, "bun.lock")],
-    implicitInputs: [installStamp],
+    implicitInputs: [installStamp, o.rootInstall],
     orderOnlyInputs: [dirStamp],
     vars: {
       cwd: sourceDir,
       desc: "node-fallbacks/react-refresh.js",
       args: shJoin(cfg, [
-        "build",
         rrSrc,
         `--outfile=${rrOut}`,
-        "--target=browser",
+        "--bundle",
+        "--platform=browser",
         "--format=cjs",
         "--minify",
         `--define:process.env.NODE_ENV="development"`,

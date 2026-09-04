@@ -1531,6 +1531,7 @@ class ChildProcess extends EventEmitter {
 
       if (has_ipc) {
         this.send = this.#send;
+        this._send = this.#_send;
         this.disconnect = this.#disconnect;
         this.channel = new Control();
         require("internal/socket_list").setChannelOwner(this.#handle, this);
@@ -1601,6 +1602,16 @@ class ChildProcess extends EventEmitter {
         throw $ERR_INVALID_ARG_TYPE("options", "object", options);
       }
     }
+    return this.#_send(message, handle, options, callback);
+  }
+
+  // The internal entry point cluster and socket_list use. A boolean `options`
+  // is the legacy `swallowErrors` form.
+  // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/child_process.js#L770-L793
+  #_send(message, handle, options, callback) {
+    if (typeof options === "boolean") {
+      options = { swallowErrors: options };
+    }
 
     if (handle !== undefined && handle !== null) {
       options = { ...options, "$target": this };
@@ -1615,13 +1626,13 @@ class ChildProcess extends EventEmitter {
       return false;
     }
 
-    // We still need this send function because
+    const swallowErrors = options !== undefined && options.swallowErrors === true;
     return this.#handle.send(message, handle, options, err => {
       // node does process.nextTick() to emit or call the callback
       // we don't need to because the native IPC layer calls the send callback on nextTick
       if (callback) {
         callback(err);
-      } else if (err) {
+      } else if (err && !swallowErrors) {
         this.emit("error", err);
       }
     });

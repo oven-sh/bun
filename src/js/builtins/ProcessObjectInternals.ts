@@ -613,6 +613,19 @@ export function windowsEnv(
   });
 }
 
+// process._send: the entry point node's cluster and socket_list code calls
+// with a boolean `swallowErrors` in place of options.
+// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/child_process.js#L770-L793
+export function getInternalSend() {
+  const send = process.send;
+  function swallow() {}
+  return function _send(message, handle, options, callback) {
+    if (typeof options === "boolean") options = { swallowErrors: options };
+    if (callback === undefined && options?.swallowErrors === true) callback = swallow;
+    return send.$call(process, message, handle, options, callback);
+  };
+}
+
 export function getChannel() {
   const EventEmitter = require("node:events");
   const setRef = $newRustFunction("node_cluster_binding.rs", "setRef", 1);

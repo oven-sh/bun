@@ -3109,6 +3109,15 @@ static JSValue constructProcessChannel(VM& vm, JSObject* processObject)
     return jsUndefined();
 }
 
+static JSValue constructProcessInternalSend(VM& vm, JSObject* processObject)
+{
+    auto* globalObject = processObject->globalObject();
+    if (Bun__GlobalObject__hasIPC(globalObject)) {
+        return callLazyProcessBuilder(vm, globalObject, processObjectInternalsGetInternalSendCodeGenerator, JSC::ArgList());
+    }
+    return jsUndefined();
+}
+
 #if OS(WINDOWS)
 #define getpid _getpid
 #endif
@@ -4950,6 +4959,7 @@ extern "C" void Process__emitErrorEvent(Zig::GlobalObject* global, EncodedJSValu
   _linkedBinding                   Process_stubEmptyFunction                           Function 0
   _preload_modules                 Process_stubEmptyArray                              PropertyCallback
   _rawDebug                        constructRawDebug                                   PropertyCallback
+  _send                            constructProcessInternalSend                        PropertyCallback
   _tickCallback                    Process_stubEmptyFunction                           Function 0
   abort                            Process_functionAbort                               Function 1
   allowedNodeEnvironmentFlags      constructAllowedNodeEnvironmentFlags                PropertyCallback

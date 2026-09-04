@@ -9,13 +9,7 @@ function getChannelOwner(subprocess) {
   return channelOwners.get(subprocess);
 }
 
-function noop() {}
-
-function sendInternal(target, msg, swallowErrors) {
-  if (!target.connected) return;
-  target.send(msg, undefined, undefined, swallowErrors ? noop : undefined);
-}
-
+// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/socket_list.js
 class SocketListSend extends EventEmitter {
   key;
   child;
@@ -31,7 +25,7 @@ class SocketListSend extends EventEmitter {
     const self = this;
 
     if (!this.child.connected) return onclose();
-    sendInternal(this.child, msg, swallowErrors);
+    this.child._send(msg, undefined, swallowErrors);
 
     function onclose() {
       self.child.removeListener("internalMessage", onreply);
@@ -93,12 +87,12 @@ class SocketListReceive extends EventEmitter {
     function onempty(self) {
       if (!self.child.connected) return;
 
-      sendInternal(
-        self.child,
+      self.child._send(
         {
           cmd: "NODE_SOCKET_ALL_CLOSED",
           key: self.key,
         },
+        undefined,
         true,
       );
     }
@@ -112,15 +106,11 @@ class SocketListReceive extends EventEmitter {
         this.once("empty", onempty);
       } else if (msg.cmd === "NODE_SOCKET_GET_COUNT") {
         if (!this.child.connected) return;
-        sendInternal(
-          this.child,
-          {
-            cmd: "NODE_SOCKET_COUNT",
-            key: this.key,
-            count: this.connections,
-          },
-          false,
-        );
+        this.child._send({
+          cmd: "NODE_SOCKET_COUNT",
+          key: this.key,
+          count: this.connections,
+        });
       }
     });
   }

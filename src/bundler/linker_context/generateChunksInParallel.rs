@@ -509,7 +509,12 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                         len,
                         bun_core::fmt::ContentHash::MAX_LEN,
                     )?,
-                    Some(_) => write!(&mut text, "{} naming is '{}'", name, bstr::BStr::new(template))?,
+                    Some(_) => write!(
+                        &mut text,
+                        "{} naming is '{}'",
+                        name,
+                        bstr::BStr::new(template)
+                    )?,
                 }
                 c.log_mut().add_msg(bun_ast::Msg {
                     kind: bun_ast::Kind::Note,

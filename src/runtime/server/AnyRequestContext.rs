@@ -251,6 +251,10 @@ impl AnyRequestContext {
         dispatch!(self, (), |_T, ctx| ctx.deref())
     }
 
+    pub(crate) fn end_without_body(self, close_connection: bool) {
+        dispatch!(self, (), |_T, ctx| ctx.end_without_body(close_connection))
+    }
+
     pub fn on_request_body_stream_drained(self) {
         dispatch!(
             self,

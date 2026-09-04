@@ -58,8 +58,11 @@ int us_udp_socket_send(struct us_udp_socket_t *s, void** payloads, size_t* lengt
         if (sent < 0) {
             /* Linux sendmmsg reports EAGAIN as -1 (per-msg-loop platforms
              * report it as sent==0): re-arm writable so on_drain fires and
-             * report how many earlier batches went out. */
-            if (bsd_would_block()) {
+             * report how many earlier batches went out. ENOBUFS joins the
+             * would-block set because libuv classifies it as EAGAIN for UDP
+             * sends (macOS returns it when bursty sends fill the interface
+             * queue), so a later retry can succeed. */
+            if (bsd_would_block() || bsd_udp_send_is_transient_error()) {
                 us_poll_change((struct us_poll_t *) s, s->loop, LIBUS_SOCKET_READABLE | LIBUS_SOCKET_WRITABLE);
                 return total_sent;
             }

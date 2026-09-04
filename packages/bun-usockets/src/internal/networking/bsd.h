@@ -226,6 +226,7 @@ ssize_t bsd_writev(LIBUS_SOCKET_DESCRIPTOR fd, const struct us_iovec_t *iov, int
 ssize_t bsd_write2(LIBUS_SOCKET_DESCRIPTOR fd, const char *header, int header_length, const char *payload, int payload_length);
 int bsd_would_block();
 int bsd_send_is_transient_error();
+int bsd_udp_send_is_transient_error();
 
 // return LIBUS_SOCKET_ERROR or the fd that represents listen socket
 // listen both on ipv6 and ipv4

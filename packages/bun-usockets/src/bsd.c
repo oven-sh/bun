@@ -76,6 +76,9 @@ extern void uv__winsock_ensure(void);
 
 /* We need to emulate sendmmsg, recvmmsg on platform who don't have it */
 int bsd_sendmmsg(LIBUS_SOCKET_DESCRIPTOR fd, struct udp_sendbuf* sendbuf, int flags) {
+    ssize_t injected = 0; int unused = 0;
+    if (US_FAULT_CHECK(US_FAULT_SENDMSG, fd, injected, unused)) return (int) injected;
+    (void)unused;
 #if defined(_WIN32)// || defined(__APPLE__)
     for (int i = 0; i < sendbuf->num; i++) {
         while (1) {
@@ -1049,6 +1052,17 @@ int bsd_send_is_transient_error() {
     return WSAGetLastError() == WSAENOBUFS;
 #else
     return errno == ENOBUFS || errno == ENOMEM;
+#endif
+}
+
+/* libuv's UDP retry set is exactly EAGAIN/EWOULDBLOCK/ENOBUFS (unix/udp.c);
+ * ENOMEM stays a hard error like Node, so this is narrower than the TCP
+ * helper above. */
+int bsd_udp_send_is_transient_error() {
+#ifdef _WIN32
+    return WSAGetLastError() == WSAENOBUFS;
+#else
+    return errno == ENOBUFS;
 #endif
 }
 

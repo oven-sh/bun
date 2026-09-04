@@ -71,9 +71,7 @@ pub struct EventLoop {
     /// until the queue is empty (a task that re-posts itself there never lets
     /// the loop poll). Promoted into `tasks` by `auto_tick`, like immediates.
     pub yield_tasks: Vec<Task>,
-    /// A `tick()` ran a task since `auto_tick` last took this. Node runs
-    /// thread-pool completions in the poll phase, and Bun runs them as tasks,
-    /// so `auto_tick` treats such a tick as a poll phase.
+    /// A `tick()` ran a task since `auto_tick` last took this.
     ran_tasks: bool,
 
     pub concurrent_tasks: ConcurrentQueue,

@@ -954,12 +954,10 @@ unsafe fn ensure_debugger(vm: *mut VirtualMachine, block_until_connected: bool) 
     }
 }
 
-/// The check phase and the timers, when a `tick()` ran tasks since the last
-/// call (see `auto_tick`). Returns whether a callback ran.
+/// Runs the check phase and the timers if a `tick()` ran tasks. Returns whether a callback ran.
 ///
 /// # Safety
-/// `vm` is the live per-thread VM, `el` is its event loop, and `state` is its
-/// live `RuntimeState`.
+/// `vm`, its event loop `el`, and its `RuntimeState` `state` are live.
 #[cfg(unix)]
 unsafe fn run_phases_after_tasks(
     vm: *mut VirtualMachine,
@@ -977,8 +975,7 @@ unsafe fn run_phases_after_tasks(
     // SAFETY: per fn contract. See the Note on `drain_timers` in `auto_tick`.
     let fired = unsafe { timer::All::drain_timers(&mut (*state).timer, vm.cast()) };
     if ran_immediates || fired {
-        // Node reports a rejection after each callback. An I/O callback in
-        // the poll must not handle it first.
+        // Report a rejection before an I/O callback in the poll can handle it, as Node does.
         // SAFETY: `vm.global` is set during `VirtualMachine::init` and outlives the VM.
         let _ = unsafe { (*(*vm).global).handle_rejected_promises() };
     }
@@ -1002,10 +999,8 @@ unsafe fn auto_tick(vm: *mut VirtualMachine) {
     // SAFETY: `el` is the live per-thread event loop (field of `*vm`).
     let loop_ = unsafe { (*el).usockets_loop() };
 
-    // ── check phase (Windows) ───────────────────────────────────────────
-    // Node's loop order is poll, check (setImmediate), timers. On POSIX the
-    // check phase runs after the poll, below. On Windows, libuv runs the
-    // timers inside the poll call, so the check phase runs before it.
+    // Node's order is poll, check (setImmediate), timers. libuv runs the
+    // timers inside the Windows poll call, so there the check phase is first.
     #[cfg(windows)]
     {
         // SAFETY: `el` is the live per-thread event loop; `vm` per fn contract.
@@ -1073,13 +1068,9 @@ unsafe fn auto_tick(vm: *mut VirtualMachine) {
         return;
     }
 
-    // ── check phase and timers after a tick that ran tasks (POSIX) ──────
-    // Node runs thread-pool completions in the poll phase, and Bun runs them
-    // as tasks in `tick()`. So a tick that ran tasks counts as a poll phase,
-    // and the check phase and the timers run before this poll. An immediate
-    // queued by a completion then runs before the I/O that completion began.
-    // SAFETY: `el` is the live per-thread event loop; `state` and `vm` are
-    // live (see the timers phase below).
+    // Node runs thread-pool completions in the poll phase. Bun runs them as
+    // tasks in `tick()`, so a tick that ran tasks is a poll phase here.
+    // SAFETY: `el`, `state` and `vm` are live (see the timers phase below).
     #[cfg(unix)]
     let ran_callbacks = unsafe { run_phases_after_tasks(vm, el, state) };
     #[cfg(not(unix))]
@@ -1090,10 +1081,8 @@ unsafe fn auto_tick(vm: *mut VirtualMachine) {
     // due `WTFTimer` heap entries), so it must stay guarded by `is_active()`
     // rather than running unconditionally.
     {
-        // `immediate_tasks` holds the immediates that no check phase has run
-        // yet. The poll must not wait while there are any. It must not wait
-        // after a callback above either: that callback can have settled what
-        // the caller waits for.
+        // Do not wait while immediates are queued, or after a callback above:
+        // it can have settled what the caller waits for.
         // SAFETY: `el` is the live per-thread event loop.
         // SAFETY: `el` is the live per-thread event loop.
         let has_pending_immediate = ran_callbacks
@@ -1154,10 +1143,8 @@ unsafe fn auto_tick(vm: *mut VirtualMachine) {
         }
     }
 
-    // ── check phase, then timers (POSIX) ────────────────────────────────
-    // An immediate queued by an I/O callback runs before any timer, even
-    // one that came due while that callback ran. The timers run last, so the
-    // caller sees what they did before the next poll.
+    // Check phase, then timers. The timers run last, so the caller sees what
+    // they did before the next poll.
     #[cfg(unix)]
     {
         // SAFETY: `el` is the live per-thread event loop; `vm` per fn contract.

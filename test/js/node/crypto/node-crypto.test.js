@@ -1251,6 +1251,37 @@ describe("KeyObject raw-public / raw-private / raw-seed formats", () => {
     ).toThrow(expect.objectContaining({ code: "ERR_CRYPTO_INCOMPATIBLE_KEY_OPTIONS" }));
   });
 
+  // Node lists the accepted types as class names, so the message reads "an instance of", not "of type".
+  it("raw key import reports a non-buffer key.key with Node's message", () => {
+    const expected = received =>
+      expect.objectContaining({
+        name: "TypeError",
+        code: "ERR_INVALID_ARG_TYPE",
+        message: `The "key.key" property must be an instance of ArrayBuffer, Buffer, TypedArray, or DataView. Received ${received}`,
+      });
+    const ed25519 = { asymmetricKeyType: "ed25519" };
+
+    expect(() => crypto.createPrivateKey({ key: "abc", format: "raw-private", ...ed25519 })).toThrow(
+      expected("type string ('abc')"),
+    );
+    expect(() => crypto.createPrivateKey({ key: {}, format: "raw-seed", ...ed25519 })).toThrow(
+      expected("an instance of Object"),
+    );
+    expect(() => crypto.createPublicKey({ key: 123, format: "raw-public", ...ed25519 })).toThrow(
+      expected("type number (123)"),
+    );
+    expect(() => crypto.createPublicKey({ format: "raw-private", ...ed25519 })).toThrow(expected("undefined"));
+
+    // The same check runs when a raw key is passed to a consumer instead of createPublicKey/createPrivateKey.
+    const data = Buffer.from("data");
+    expect(() => crypto.sign(null, data, { key: "abc", format: "raw-private", ...ed25519 })).toThrow(
+      expected("type string ('abc')"),
+    );
+    expect(() => crypto.verify(null, data, { key: null, format: "raw-public", ...ed25519 }, Buffer.alloc(64))).toThrow(
+      expected("null"),
+    );
+  });
+
   it("publicEncrypt is not confused by a buffer detached from an oaepLabel getter", () => {
     const { publicKey, privateKey } = crypto.generateKeyPairSync("rsa", { modulusLength: 2048 });
     const label = new Uint8Array([1, 2, 3, 4, 5, 6, 7, 8]);

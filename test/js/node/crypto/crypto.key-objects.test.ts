@@ -20,6 +20,7 @@ import {
   publicEncrypt,
   randomBytes,
   sign,
+  subtle,
   verify,
 } from "crypto";
 import fs from "fs";
@@ -142,6 +143,27 @@ describe("crypto.KeyObjects", () => {
     // should throw.
     const privateKey = createPrivateKey(privatePem);
     expect(() => createPrivateKey(privateKey)).toThrow();
+  });
+
+  test("createPrivateKey rejects KeyObject and CryptoKey input with Node's message", async () => {
+    // Node lists "string" (a type) and the rest (classes), so the message reads
+    // "of type string or an instance of ...".
+    const expected = (received: object) =>
+      expect.objectContaining({
+        name: "TypeError",
+        code: "ERR_INVALID_ARG_TYPE",
+        message:
+          'The "key" argument must be of type string or an instance of ArrayBuffer, Buffer, TypedArray, or DataView. ' +
+          `Received an instance of ${received.constructor.name}`,
+      });
+
+    const { privateKey: cryptoKey } = (await subtle.generateKey("Ed25519", true, ["sign", "verify"])) as CryptoKeyPair;
+    expect(cryptoKey.constructor.name).toBe("CryptoKey");
+
+    for (const key of [createPrivateKey(privatePem), createPublicKey(privatePem), cryptoKey]) {
+      expect(() => createPrivateKey(key)).toThrow(expected(key));
+      expect(() => createPrivateKey({ key })).toThrow(expected(key));
+    }
   });
 
   test("basics should work", async () => {

@@ -1503,6 +1503,7 @@ var require_wasi = __commonJS({
               const type = this.view.getUint8(sin);
               sin += 1;
               sin += 7;
+              let e;
               switch (type) {
                 case constants_1.WASI_EVENTTYPE_CLOCK: {
                   const clockid = this.view.getUint32(sin, true);
@@ -1518,7 +1519,7 @@ var require_wasi = __commonJS({
                   if (!absolute) {
                     fd_timeout_ms = timeout / BigInt(1e6);
                   }
-                  let e = constants_1.WASI_ESUCCESS;
+                  e = constants_1.WASI_ESUCCESS;
                   const t = now(clockid);
                   if (t == null) {
                     e = constants_1.WASI_EINVAL;
@@ -1530,14 +1531,6 @@ var require_wasi = __commonJS({
                       waitTimeNs = waitNs;
                     }
                   }
-                  this.view.setBigUint64(sout, userdata, true);
-                  sout += 8;
-                  this.view.setUint16(sout, e, true);
-                  sout += 2;
-                  this.view.setUint8(sout, constants_1.WASI_EVENTTYPE_CLOCK);
-                  sout += 1;
-                  sout += 5;
-                  nevents += 1;
                   break;
                 }
                 case constants_1.WASI_EVENTTYPE_FD_READ:
@@ -1546,14 +1539,7 @@ var require_wasi = __commonJS({
                   fd_type = type == constants_1.WASI_EVENTTYPE_FD_READ ? "read" : "write";
                   sin += 4;
                   sin += 28;
-                  this.view.setBigUint64(sout, userdata, true);
-                  sout += 8;
-                  this.view.setUint16(sout, constants_1.WASI_ENOSYS, true);
-                  sout += 2;
-                  this.view.setUint8(sout, type);
-                  sout += 1;
-                  sout += 5;
-                  nevents += 1;
+                  e = constants_1.WASI_ENOSYS;
                   if (fd == constants_1.WASI_STDIN_FILENO && constants_1.WASI_EVENTTYPE_FD_READ == type) {
                     this.shortPause();
                   }
@@ -1562,6 +1548,15 @@ var require_wasi = __commonJS({
                 default:
                   return constants_1.WASI_EINVAL;
               }
+              // event: userdata u64 @0, error u16 @8, type u8 @10,
+              // fd_readwrite { nbytes u64 @16, flags u16 @24 }; 32 bytes per event.
+              this.view.setBigUint64(sout, userdata, true);
+              this.view.setUint16(sout + 8, e, true);
+              this.view.setUint8(sout + 10, type);
+              this.view.setBigUint64(sout + 16, BigInt(0), true);
+              this.view.setUint16(sout + 24, 0, true);
+              sout += 32;
+              nevents += 1;
               if (sin - last_sin != 48) {
                 console.warn("*** BUG in wasi-js in poll_oneoff ", {
                   i,

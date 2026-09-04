@@ -1096,9 +1096,6 @@ impl ServerConfig {
                 }
             }
         }
-        if global.has_exception() {
-            return Err(JsError::Thrown);
-        }
 
         if let Some(base_uri) = arg.get_truthy(global, "baseURI")? {
             let utf8 = base_uri.to_utf8(global)?;

@@ -78,8 +78,7 @@ pub(crate) fn bun_set_default_ca_certificates(
     let mut certs: Vec<std::ffi::CString> = Vec::new();
     let mut iter = frame.argument(0).array_iterator(global)?;
     while let Some(item) = iter.next()? {
-        let s = bun_core::OwnedString::new(item.to_bun_string(global)?);
-        let bytes = s.to_owned_slice();
+        let bytes = item.to_bun_string(global)?.to_owned_slice();
         debug_assert!(!bun_core::strings::contains_char(&bytes, 0));
         if let Ok(cert) = std::ffi::CString::new(bytes) {
             certs.push(cert);

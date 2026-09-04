@@ -914,6 +914,18 @@ describe("@types/bun integration test", () => {
             "Argument of type '{ headers: { \"x-bun\": string; }; }' is not assignable to parameter of type 'number'.",
         },
         {
+          code: 2345,
+          line: "serve-types.test.ts:520:33",
+          message:
+            "Argument of type 'HTMLBundle' is not assignable to parameter of type 'BodyInit | null | undefined'.",
+        },
+        {
+          code: 2345,
+          line: "serve-types.test.ts:522:45",
+          message:
+            "Argument of type 'HTMLBundle' is not assignable to parameter of type 'BodyInit | null | undefined'.",
+        },
+        {
           code: 2339,
           line: "spawn.ts:62:38",
           message: "Property 'text' does not exist on type 'ReadableStream<Uint8Array<ArrayBuffer>>'.",

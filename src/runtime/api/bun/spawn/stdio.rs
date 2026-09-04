@@ -347,6 +347,11 @@ impl Stdio {
             webcore::body::Value::Error(err) => {
                 return Err(global.throw_value(err.to_js(global)));
             }
+            webcore::body::Value::HTMLBundle(_) => {
+                return Err(global.throw_invalid_arguments(format_args!(
+                    "An HTMLBundle body can only be sent by Bun.serve()"
+                )));
+            }
 
             // handled above.
             webcore::body::Value::Blob(_)

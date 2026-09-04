@@ -81,6 +81,24 @@ Bun.serve({
 
 When you make a request to `/dashboard` or `/`, Bun automatically bundles the `<script>` and `<link>` tags in the HTML files, exposes them as static routes, and serves the result.
 
+### HTML Imports in a Response
+
+A route handler or `fetch` can also return an imported HTML file. Wrap it in a `Response` to set the status or headers. A bare return is `new Response(page)`.
+
+```ts title="app.ts" icon="/icons/typescript.svg"
+import homepage from "./index.html";
+import login from "./login.html";
+
+Bun.serve({
+  routes: {
+    "/": req => (isLoggedIn(req) ? homepage : new Response(login, { status: 401 })),
+    "/*": () => new Response(homepage, { status: 404 }),
+  },
+});
+```
+
+Bun bundles the page on the first request that returns it and serves its `<script>` and `<link>` assets as static routes, like a page in `routes`. Hot module reloading applies to a page a handler returns only when the server also has an HTML file in `routes`, because that is what starts the dev server. A `Response` that carries an HTML import cannot be read outside of `Bun.serve`: `.text()` and `.body` reject, and `Bun.write` rejects it.
+
 ### HTML Processing Example
 
 An `index.html` file like this:

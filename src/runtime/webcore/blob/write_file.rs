@@ -1288,6 +1288,20 @@ impl WriteFileWaitFromLockedValueTask {
                     )?;
                 }
             }
+            body::Value::HTMLBundle(_) => {
+                file_blob.detach();
+                let _ = value.use_();
+                drop(this);
+                // SAFETY: GC-owned promise cell; exclusive borrow scoped to the call.
+                unsafe {
+                    (*promise).reject(
+                        global_this,
+                        Ok(global_this.create_type_error_instance(format_args!(
+                            "An HTMLBundle body can only be sent by Bun.serve()"
+                        ))),
+                    )?;
+                }
+            }
             body::Value::WTFStringImpl(_)
             | body::Value::InternalBlob(_)
             | body::Value::Null

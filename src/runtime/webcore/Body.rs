@@ -523,6 +523,11 @@ pub enum Value {
     /// Single-use Blob
     /// Avoids a heap allocation.
     InternalBlob(InternalBlob),
+    /// `new Response(htmlBundle)`: the page an `import index from
+    /// "./index.html"` bundles to. Only `Bun.serve` can send it (it builds
+    /// the bundle on the server that serves it), so the body readers
+    /// (`.text()`, `.body`, ...) reject it.
+    HTMLBundle(bun_ptr::RefPtr<crate::server::HTMLBundle>),
     Locked(PendingValue),
     Used,
     Empty,
@@ -556,6 +561,7 @@ pub enum Tag {
     Blob,
     WTFStringImpl,
     InternalBlob,
+    HTMLBundle,
     Locked,
     Used,
     Empty,
@@ -773,6 +779,7 @@ impl Value {
                 }
                 self.locked_to_native_stream(global_this, false)
             }
+            Value::HTMLBundle(_) => Err(throw_html_bundle_body_unreadable(global_this)),
             Value::Error(err) => {
                 let reason = err.to_js(global_this);
                 let value = ReadableStream::errored(global_this, reason)?;
@@ -829,6 +836,7 @@ impl Value {
                 Ok(stream)
             }
             Value::Locked(_) => self.locked_to_native_stream(global_this, true),
+            Value::HTMLBundle(_) => Err(throw_html_bundle_body_unreadable(global_this)),
             Value::Error(err) => {
                 let reason = err.to_js(global_this);
                 let stream = ReadableStream::errored(global_this, reason)?;
@@ -994,6 +1002,10 @@ impl Value {
                 blob.content_type_was_set.set(true);
                 return Ok(Value::Blob(blob));
             }
+        }
+
+        if let Some(html_bundle) = value.as_class_this_ptr::<crate::server::HTMLBundle>() {
+            return Ok(Value::HTMLBundle(bun_ptr::RefPtr::from_this(html_bundle)));
         }
 
         value.ensure_still_alive();
@@ -1404,8 +1416,13 @@ impl Drop for Value {
             Value::WTFStringImpl(s) => wtf_impl(s).deref(),
             Value::Blob(b) => b.deinit(),
             Value::Error(e) => e.reset(),
-            // `InternalBlob`'s `Vec<u8>` is freed by the compiler's drop glue.
-            Value::InternalBlob(_) | Value::Used | Value::Empty | Value::Null => {}
+            // `InternalBlob`'s `Vec<u8>` and `HTMLBundle`'s `RefPtr` are
+            // released by the compiler's drop glue.
+            Value::InternalBlob(_)
+            | Value::HTMLBundle(_)
+            | Value::Used
+            | Value::Empty
+            | Value::Null => {}
         }
     }
 }
@@ -1551,6 +1568,10 @@ impl Value {
 
         if matches!(self, Value::Null) {
             return Ok(Value::Null);
+        }
+
+        if let Value::HTMLBundle(html_bundle) = self {
+            return Ok(Value::HTMLBundle(html_bundle.clone()));
         }
 
         // A failed body clones as failed, so the clone's readers reject via
@@ -2175,10 +2196,21 @@ fn handle_body_already_used(global_object: &JSGlobalObject) -> JSValue {
 /// reader must call this before its `Locked` handling: `Value::Error` would
 /// otherwise fall through to `use_as_any_blob_*` and resolve empty.
 fn handle_body_error(value: &mut Value, global_object: &JSGlobalObject) -> Option<JSValue> {
+    if matches!(value, Value::HTMLBundle(_)) {
+        let js =
+            global_object.create_type_error_instance(format_args!("{HTML_BUNDLE_BODY_UNREADABLE}"));
+        return Some(JSPromise::rejected_promise(global_object, js).to_js());
+    }
     let Value::Error(err) = value else {
         return None;
     };
     let js = err.to_js(global_object);
     *value = Value::Used;
     Some(JSPromise::rejected_promise(global_object, js).to_js())
+}
+
+const HTML_BUNDLE_BODY_UNREADABLE: &str = "An HTMLBundle body can only be sent by Bun.serve(). To read the page, build it with Bun.build() or fetch it from the server.";
+
+fn throw_html_bundle_body_unreadable(global_object: &JSGlobalObject) -> jsc::JsError {
+    global_object.throw_type_error(format_args!("{HTML_BUNDLE_BODY_UNREADABLE}"))
 }

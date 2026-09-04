@@ -6597,6 +6597,102 @@ describe.concurrent("bun-install", () => {
     });
   });
 
+  describe("leading whitespace in the version literal", () => {
+    // Leading whitespace is ignored when a version literal is classified, so each of these has to
+    // install what the literal without the whitespace installs. The second install re-parses the
+    // literal stored in the lockfile (bun.lockb unless told otherwise) and has to agree with the first.
+    async function installTwice(
+      ctx: TestContext,
+      installed: { name: string; version: string },
+      lockfile: "bun.lockb" | "bun.lock" = "bun.lockb",
+    ) {
+      const firstInstall = lockfile === "bun.lock" ? ["--save-text-lockfile"] : [];
+      for (const args of [firstInstall, ["--frozen-lockfile"]]) {
+        await rm(join(ctx.package_dir, "node_modules"), { recursive: true, force: true });
+        await using proc = spawn({
+          cmd: [bunExe(), "install", ...args],
+          cwd: ctx.package_dir,
+          stdout: "pipe",
+          stdin: "ignore",
+          stderr: "pipe",
+          env,
+        });
+        const [err, out, exitCode] = await Promise.all([proc.stderr.text(), proc.stdout.text(), proc.exited]);
+        expect(err).not.toContain("error:");
+        expect(out).toContain("1 package installed");
+        expect(exitCode).toBe(0);
+        expect(await file(join(ctx.package_dir, "node_modules", installed.name, "package.json")).json()).toMatchObject(
+          installed,
+        );
+      }
+      await access(join(ctx.package_dir, lockfile));
+    }
+
+    for (const version of [" latest", "\tlatest"]) {
+      it(`installs the dist-tag ${JSON.stringify(version)}`, async () => {
+        await withContext(defaultOpts, async ctx => {
+          const urls: string[] = [];
+          setContextHandler(ctx, dummyRegistryForContext(ctx, urls));
+          await writeFile(
+            join(ctx.package_dir, "package.json"),
+            JSON.stringify({ name: "foo", version: "0.0.1", dependencies: { bar: version } }),
+          );
+
+          await installTwice(ctx, { name: "bar", version: "0.0.2" });
+          expect(urls.slice(0, 2)).toEqual([`${ctx.registry_url}bar`, `${ctx.registry_url}bar-0.0.2.tgz`]);
+        });
+      });
+    }
+
+    it("keeps the literal as written in bun.lock", async () => {
+      await withContext(defaultOpts, async ctx => {
+        setContextHandler(ctx, dummyRegistryForContext(ctx, []));
+        await writeFile(
+          join(ctx.package_dir, "package.json"),
+          JSON.stringify({ name: "foo", version: "0.0.1", dependencies: { bar: " latest" } }),
+        );
+
+        await installTwice(ctx, { name: "bar", version: "0.0.2" }, "bun.lock");
+        expect(await file(join(ctx.package_dir, "bun.lock")).text()).toContain('"bar": " latest"');
+      });
+    });
+
+    it('installs the folder " ./pkg"', async () => {
+      await withContext(defaultOpts, async ctx => {
+        await mkdir(join(ctx.package_dir, "pkg"));
+        await Promise.all([
+          writeFile(
+            join(ctx.package_dir, "package.json"),
+            JSON.stringify({ name: "foo", version: "0.0.1", dependencies: { pkg: " ./pkg" } }),
+          ),
+          writeFile(join(ctx.package_dir, "pkg", "package.json"), JSON.stringify({ name: "pkg", version: "1.0.0" })),
+        ]);
+
+        await installTwice(ctx, { name: "pkg", version: "1.0.0" });
+        expect(ctx.requested).toBe(0);
+      });
+    });
+
+    // " file:./x.tgz" resolves on the first install either way; it is here for the second one, which
+    // re-parses the literal stored in bun.lockb with the tag the first install gave it.
+    for (const version of [" ./baz-0.0.3.tgz", " file:./baz-0.0.3.tgz"]) {
+      it(`installs the local tarball ${JSON.stringify(version)}`, async () => {
+        await withContext(defaultOpts, async ctx => {
+          await Promise.all([
+            writeFile(
+              join(ctx.package_dir, "package.json"),
+              JSON.stringify({ name: "foo", version: "0.0.1", dependencies: { baz: version } }),
+            ),
+            cp(join(import.meta.dir, "baz-0.0.3.tgz"), join(ctx.package_dir, "baz-0.0.3.tgz")),
+          ]);
+
+          await installTwice(ctx, { name: "baz", version: "0.0.3" });
+          expect(ctx.requested).toBe(0);
+        });
+      });
+    }
+  });
+
   it("should de-duplicate dependencies alongside tarball URL", async () => {
     await withContext(defaultOpts, async ctx => {
       const urls: string[] = [];

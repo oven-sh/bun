@@ -1,5 +1,5 @@
-import { describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, bunRun, isLinux, isMusl, isPosix, isWindows } from "harness";
+import { describe, expect, it, test } from "bun:test";
+import { bunEnv, bunExe, bunRun, isLinux, isMusl, isPosix, isWindows, tempDir } from "harness";
 import { totalmem } from "os";
 import { join } from "path";
 describe("spawnSync", () => {
@@ -223,5 +223,70 @@ describe("uid/gid", () => {
       thrown = e;
     }
     expect(thrown?.code).toBe("EPERM");
+  });
+});
+
+// spawnSync points the VM's loop handle at its private loop for the whole
+// call. A FilePoll torn down inside that window (here: the GC finalizing a
+// garbage `Bun.file(2).writer()` while spawnSync builds its result) must
+// still unregister from the loop it was registered with. Before the fix the
+// EPOLL_CTL_DEL went to the private loop, so the main loop kept a stale
+// entry for the dup'd fd number. The next `Bun.file(2).writer()` dups to the
+// same number, EPOLL_CTL_ADD fails with EEXIST, and the fd is closed twice:
+// once by FileSink::setup and once by the writer's Drop through the Closer.
+test.skipIf(!isLinux)("a writer finalized during spawnSync does not break the next writer on the same fd", async () => {
+  // A file, not `-e`: run through `-e`, the collection that `Bun.gc(false)`
+  // requests does not finalize the writers inside spawnSync (their dups stay
+  // open for the whole wait), and the test no longer reaches the bug.
+  using dir = tempDir("spawnsync-writer-finalized", {
+    "fixture.js": `
+      import { fstatSync, readdirSync } from "node:fs";
+      const stderrInode = fstatSync(2).ino;
+      // Every writer holds a dup() of fd 2; those share stderr's inode.
+      const stderrDups = () =>
+        readdirSync("/proc/self/fd")
+          .map(Number)
+          .filter(fd => {
+            if (fd === 2) return false;
+            try {
+              return fstatSync(fd).ino === stderrInode;
+            } catch {
+              return false;
+            }
+          });
+      function leakWriter() {
+        const w = Bun.file(2).writer();
+        w.write("");
+      }
+      for (let i = 0; i < 4; i++) leakWriter();
+      const dups = stderrDups().length;
+      // The collector finishes inside spawnSync: the first JS allocation after
+      // the wait (the result object) is where the mutator runs the sweep.
+      Bun.gc(false);
+      const r = Bun.spawnSync({ cmd: ["sleep", "0.2"] });
+      // The finalized writers close their fds on the work pool; wait for that so
+      // dup(2) below hands out one of the same numbers.
+      const deadline = Date.now() + 5000;
+      while (Date.now() < deadline && stderrDups().length > 0) Bun.sleepSync(5);
+      const remaining = stderrDups().length;
+      const w = Bun.file(2).writer();
+      w.write("second writer ok\\n");
+      w.flush();
+      console.log(JSON.stringify({ exitCode: r.exitCode, dups, remaining }));
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "fixture.js"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    // A pipe is pollable, so the writers register their dup of fd 2 with epoll.
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr, exitCode }).toEqual({
+    stdout: JSON.stringify({ exitCode: 0, dups: 4, remaining: 0 }) + "\n",
+    stderr: "second writer ok\n",
+    exitCode: 0,
   });
 });

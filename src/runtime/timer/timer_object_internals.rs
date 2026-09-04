@@ -189,20 +189,18 @@ impl TimerObjectInternals {
 
         let state = crate::jsc_hooks::runtime_state();
         debug_assert!(!state.is_null(), "RuntimeState not installed");
-        // SAFETY: `vm` is the live per-thread VM (hook contract); field read only.
-        let uws_loop = unsafe { (*vm).uws_loop() };
+        // SAFETY: `vm` is the live per-thread VM (hook contract).
+        let ctx = unsafe { VirtualMachine::event_loop_ctx(vm) };
         let delta = if enable { 1 } else { -1 };
         match self.flags.get().kind() {
             // SAFETY: `state` points at the boxed per-thread `RuntimeState`;
             // single-threaded JS heap so no concurrent `&mut` to `.timer`.
             Kind::SetTimeout | Kind::SetInterval => unsafe {
-                (*state).timer.increment_timer_ref(delta, uws_loop)
+                (*state).timer.increment_timer_ref(delta, ctx)
             },
             // setImmediate has slightly different event loop logic
             // SAFETY: as above.
-            Kind::SetImmediate => unsafe {
-                (*state).timer.increment_immediate_ref(delta, uws_loop)
-            },
+            Kind::SetImmediate => unsafe { (*state).timer.increment_immediate_ref(delta, ctx) },
         }
     }
 

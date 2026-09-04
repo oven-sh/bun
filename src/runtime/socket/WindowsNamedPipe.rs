@@ -1156,7 +1156,6 @@ bun_io::impl_streaming_writer_parent! {
     on_ready   = on_writable,
     on_close   = on_close,
     event_loop = |this| (*this).event_loop_handle.as_event_loop_ctx(),
-    uws_loop   = |this| (*this).vm.uws_loop(),
     uv_loop    = |this| (*this).vm.uv_loop(),
     ref_       = |this| (&*this).r#ref(),
     deref      = |this| (&*this).deref(),

@@ -284,6 +284,13 @@ impl Drop for SpawnSyncEventLoop {
 impl SpawnSyncEventLoop {
     /// Configure the event loop for a specific VM context
     pub fn prepare(&mut self, vm: *mut () /* SAFETY: erased *mut VirtualMachine */) {
+        #[cfg(unix)]
+        debug_assert!(
+            self.uws_loop().num_polls == 0 && self.uws_loop().active == 0,
+            "spawnSync isolated loop has num_polls={} active={} before a spawn",
+            self.uws_loop().num_polls,
+            self.uws_loop().active,
+        );
         __bun_spawn_sync_event_loop_set_vm(self.event_loop, vm);
         self.did_timeout.set(false);
         self.vm = vm;

@@ -923,3 +923,85 @@ it("start() with invalid options throws instead of silently ignoring them", asyn
   await writer.end();
   expect(await Bun.file(join(dir, "start-invalid.txt")).text()).toBe("ok");
 });
+
+// `Bun.file(fd).writer()` dups the fd and registers the dup for writability.
+// When that registration fails, the writer owns the dup and closes it once,
+// on the work pool. FileSink::setup used to close it as well.
+// Linux only: closing a dup leaves its epoll entry behind while fd 2 keeps the
+// pipe open, so the next dup to land on the same number fails with EEXIST.
+// On kqueue the knote goes with the fd, so there is no such failure to provoke.
+it.skipIf(!isLinux)("a writer whose poll registration fails closes its fd exactly once", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+      import { closeSync, fstatSync, openSync, readdirSync } from "node:fs";
+      const stderrInode = fstatSync(2).ino;
+      // Dups of fd 2 above the stdio range that this script created.
+      let baseline = new Set();
+      const stderrDups = () =>
+        readdirSync("/proc/self/fd")
+          .map(Number)
+          .filter(fd => {
+            if (fd <= 2 || baseline.has(fd)) return false;
+            try {
+              return fstatSync(fd).ino === stderrInode;
+            } catch {
+              return false;
+            }
+          });
+      baseline = new Set(stderrDups());
+      // Stays alive for the whole run: its poll keeps the epoll entry for the
+      // dup, and nothing else may reach that fd number through it.
+      globalThis.keep = Bun.file(2).writer();
+      globalThis.keep.write("");
+      globalThis.keep.flush();
+      const [dup] = stderrDups();
+      // fd 2 keeps the pipe open, so the entry for (pipe, dup) stays in epoll.
+      closeSync(dup);
+      let code;
+      try {
+        // dup(2) lands on the same number again: EPOLL_CTL_ADD fails with EEXIST.
+        Bun.file(2).writer();
+      } catch (e) {
+        code = e.code;
+      }
+      // Lands on the lowest free fd. A second close of the failed writer's dup
+      // would hit this descriptor.
+      const sentinel = openSync("/dev/null", "r");
+      const sentinelInode = fstatSync(sentinel).ino;
+      // The failed writer closes its dup on the work pool.
+      const deadline = Date.now() + 5000;
+      while (Date.now() < deadline && stderrDups().length > 0) Bun.sleepSync(5);
+      const remaining = stderrDups().length;
+      let sentinelIntact;
+      try {
+        sentinelIntact = fstatSync(sentinel).ino === sentinelInode;
+      } catch {
+        sentinelIntact = false;
+      }
+      // \`keep\` still owns the number \`dup\` and closes it when the process tears
+      // down. If nothing occupies that number by now, give it a live file so the
+      // teardown close has a descriptor to close.
+      let dupOccupied = true;
+      try {
+        fstatSync(dup);
+      } catch {
+        dupOccupied = openSync("/dev/null", "r") === dup;
+      }
+      console.log(JSON.stringify({ code, remaining, sentinelIntact, dupOccupied }));
+      `,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    // A pipe is pollable, so the writers register their dup of fd 2 with epoll.
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr, exitCode }).toEqual({
+    stdout: JSON.stringify({ code: "EEXIST", remaining: 0, sentinelIntact: true, dupOccupied: true }) + "\n",
+    stderr: "",
+    exitCode: 0,
+  });
+});

@@ -626,9 +626,8 @@ impl Subprocess<'_> {
             return;
         }
         self.event_loop_timer_refd.set(refd);
-        let uws_loop = self.global_this().bun_vm().uws_loop();
         let delta: i32 = if refd { 1 } else { -1 };
-        Self::timer_all().increment_timer_ref(delta, uws_loop);
+        Self::timer_all().increment_timer_ref(delta, bun_io::js_vm_ctx());
     }
 
     #[inline]

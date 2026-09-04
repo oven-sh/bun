@@ -4023,7 +4023,6 @@ impl Resolver {
             sec: now.sec,
             nsec: now.nsec,
         };
-        let uws_loop = vm.uws_loop();
         // R-2: `&self` carries no `noalias`, and every field touched below is
         // UnsafeCell-backed, so the re-entrant `ares_process_fd` callbacks
         // (`request_completed`, `drain_pending_*`) may freely re-derive
@@ -4034,7 +4033,7 @@ impl Resolver {
             // resolve via the high-tier `RuntimeState` hook.
             let state = crate::jsc_hooks::runtime_state();
             // SAFETY: `state` is the boxed per-thread `RuntimeState`; single-threaded JS heap.
-            unsafe { (*state).timer.increment_timer_ref(-1, uws_loop) };
+            unsafe { (*state).timer.increment_timer_ref(-1, js_event_loop_ctx()) };
             // SAFETY: `deref_this` is the heap allocation from `init`; releases
             // `add_timer`'s ref. May be the final release; nothing touches
             // `*self` after this point.
@@ -4126,11 +4125,10 @@ impl Resolver {
                 nsec: next.nsec,
             }
         });
-        let uws_loop = self.vm().uws_loop();
         let state = crate::jsc_hooks::runtime_state();
         // SAFETY: `state` is the boxed per-thread `RuntimeState`; single-threaded JS heap.
         unsafe {
-            (*state).timer.increment_timer_ref(1, uws_loop);
+            (*state).timer.increment_timer_ref(1, js_event_loop_ctx());
             // whole-struct provenance: `from_field_ptr!` recovers the container on fire
             (*state).timer.insert(
                 core::ptr::addr_of!(self.event_loop_timer)
@@ -4155,9 +4153,8 @@ impl Resolver {
             // global-resolver permanent pin), so this
             // `deref` cannot reach 0 while `&self` is live.
             unsafe {
-                let uws_loop = (*this).vm().uws_loop();
                 let state = crate::jsc_hooks::runtime_state();
-                (*state).timer.increment_timer_ref(-1, uws_loop);
+                (*state).timer.increment_timer_ref(-1, js_event_loop_ctx());
                 Self::deref(this);
             }
         }
@@ -4879,8 +4876,6 @@ impl Resolver {
                 Async::posix_event_loop::poll_tag::DNS_RESOLVER,
                 self.as_ctx_ptr().cast::<()>(),
             );
-            // SAFETY: `event_loop_handle` is set once VM is initialized; live for VM lifetime.
-            let loop_ = unsafe { &mut *self.vm().event_loop_handle.unwrap() };
             // SAFETY: single-JS-thread; the `&mut PollsMap` borrow does not span
             // any re-entrant call (`FilePoll::register` is a syscall wrapper).
             let polls = unsafe { self.polls.get_mut() };
@@ -4910,12 +4905,12 @@ impl Resolver {
                 // direction armed would busy-loop on level-triggered writable
                 // once the socket connects. Full resync is the simplest
                 // correct path and c-ares DNS fds are short-lived.
-                let _ = poll.unregister(loop_, false);
+                let _ = poll.unregister(ctx, false);
                 if readable {
-                    let _ = poll.register(loop_, Async::PollKind::Readable, false);
+                    let _ = poll.register(ctx, Async::PollKind::Readable, false);
                 }
                 if writable {
-                    let _ = poll.register(loop_, Async::PollKind::Writable, false);
+                    let _ = poll.register(ctx, Async::PollKind::Writable, false);
                 }
             } else {
                 // Only adding directions (or no change). register() issues a
@@ -4923,10 +4918,10 @@ impl Resolver {
                 // on kqueue EV_ADD creates a separate (ident, filter) knote
                 // without disturbing the existing one.
                 if readable && !have_readable {
-                    let _ = poll.register(loop_, Async::PollKind::Readable, false);
+                    let _ = poll.register(ctx, Async::PollKind::Readable, false);
                 }
                 if writable && !have_writable {
-                    let _ = poll.register(loop_, Async::PollKind::Writable, false);
+                    let _ = poll.register(ctx, Async::PollKind::Writable, false);
                 }
             }
         }

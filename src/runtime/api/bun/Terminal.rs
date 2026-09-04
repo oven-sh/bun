@@ -2028,9 +2028,6 @@ impl bun_io::pipe_writer::PosixStreamingWriterParent for Terminal {
             .event_loop_handle
             .as_event_loop_ctx()
     }
-    unsafe fn loop_(this: *mut Self) -> *mut bun_uws_sys::Loop {
-        Self::from_parent_ptr(this).event_loop_handle.r#loop()
-    }
 }
 
 #[cfg(windows)]

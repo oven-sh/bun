@@ -6,7 +6,9 @@ use bun_io::pipe_writer::BaseWindowsPipeWriter as _;
 use bun_io::{self, WriteResult, WriteStatus};
 use bun_jsc::JsCell;
 use bun_ptr::RefPtr;
-use bun_sys::{self as sys, Fd, FdExt as _};
+#[cfg(windows)]
+use bun_sys::FdExt as _;
+use bun_sys::{self as sys, Fd};
 
 use crate::api::bun::process::Status as SpawnStatus;
 use crate::webcore::jsc::{CallFrame, EventLoopHandle, JSGlobalObject, JSValue, JsResult};
@@ -150,7 +152,6 @@ bun_io::impl_streaming_writer_parent! {
     on_ready   = on_ready,
     on_close   = on_close,
     event_loop = |this| (*this).io_evtloop(),
-    uws_loop   = |this| (*this).event_loop_handle.r#loop(),
     uv_loop    = |this| (*this).event_loop_handle.uv_loop(),
     ref_       = |this| (&*this).ref_(),
     deref      = |this| FileSink::deref(this),
@@ -710,6 +711,8 @@ impl FileSink {
         // SAFETY(JsCell): `start` is pure I/O setup; no JS.
         match self.writer.with_mut(|w| w.start(fd, self.pollable.get())) {
             sys::Result::Err(err) => {
+                // After a failed `start` the POSIX writer has closed `fd` or holds it in its poll.
+                #[cfg(windows)]
                 fd.close();
                 return sys::Result::Err(err);
             }

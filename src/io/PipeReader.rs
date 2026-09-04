@@ -110,6 +110,7 @@ impl BufferedReaderVTable {
         self.link().event_loop()
     }
 
+    #[cfg(windows)]
     fn loop_(&self) -> *mut Loop {
         self.link().loop_ptr()
     }
@@ -350,7 +351,7 @@ impl PosixBufferedReader {
         // Unregister the FilePoll if it's registered
         if let PollOrFd::Poll(poll) = &mut self.handle {
             if poll.is_registered() {
-                let _ = poll.unregister(self.vtable.loop_().cast(), false);
+                let _ = poll.unregister(self.vtable.event_loop(), false);
             }
         }
     }
@@ -511,7 +512,6 @@ impl PosixBufferedReader {
         // normalize self.handle to Poll before taking the single &mut borrow,
         // so no raw-pointer escape is needed.
         let ev = self.vtable.event_loop();
-        let lp = self.vtable.loop_();
         let owner_ptr = std::ptr::from_mut(self).cast::<c_void>();
 
         if let PollOrFd::Fd(fd) = self.handle {
@@ -535,7 +535,7 @@ impl PosixBufferedReader {
             poll.enable_keeping_process_alive(ev);
         }
 
-        match poll.register_with_fd(lp.cast(), FilePollKind::Readable, poll.fd()) {
+        match poll.register_with_fd(ev, FilePollKind::Readable, poll.fd()) {
             sys::Result::Err(err) => Err(err),
             sys::Result::Ok(()) => Ok(()),
         }

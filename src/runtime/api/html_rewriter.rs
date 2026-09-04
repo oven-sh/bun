@@ -455,7 +455,6 @@ impl HTMLRewriter {
 
         if kind != ResponseKind::Other {
             let body_value = webcore::body::extract(global, response_value)?;
-            body_value.value_mut().throw_if_html_bundle(global)?;
             let resp = RefPtr::new(Response::init(
                 webcore::response::Init {
                     status_code: 200,

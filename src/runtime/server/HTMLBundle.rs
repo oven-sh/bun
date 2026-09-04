@@ -159,13 +159,15 @@ pub struct Route {
     /// When state == .pending, incomplete responses are stored here.
     pending_responses: JsCell<Vec<PendingResponse>>,
     build_waiters: JsCell<Vec<BuildWaiter>>,
+    /// The route's own ref while it is in `State::Building`, so the waiters
+    /// above always have a route to resume on (`StaticRoute::pending_ref`).
+    building_ref: Cell<Option<RefPtr<Route>>>,
 }
 
 /// Run by `finish_building`. The callback reads `Route::built_html`.
 pub(crate) struct BuildWaiter {
     callback: fn(NonNull<core::ffi::c_void>, ThisPtr<Route>),
     ctx: NonNull<core::ffi::c_void>,
-    _route: RefPtr<Route>,
 }
 
 pub enum State {
@@ -206,6 +208,7 @@ impl Route {
             bundle: RefPtr::from_this(html_bundle),
             pending_responses: JsCell::new(Vec::new()),
             build_waiters: JsCell::new(Vec::new()),
+            building_ref: Cell::new(None),
             ref_count: RefCount::init(),
             server: Cell::new(None),
             state: JsCell::new(State::Pending),
@@ -245,13 +248,8 @@ impl Route {
         ctx: NonNull<core::ffi::c_void>,
     ) {
         debug_assert!(matches!(this.state.get(), State::Building));
-        this.build_waiters.with_mut(|v| {
-            v.push(BuildWaiter {
-                callback,
-                ctx,
-                _route: RefPtr::from_this(this),
-            })
-        });
+        this.build_waiters
+            .with_mut(|v| v.push(BuildWaiter { callback, ctx }));
     }
 
     pub(crate) fn on_request(this: ThisPtr<Self>, req: AnyRequest, resp: AnyResponse) {
@@ -386,10 +384,12 @@ impl Route {
             GetOrStartLoadResult::Ready(plugins) => {
                 let plugins = plugins.map(NonNull::from);
                 server.on_pending_request();
+                this.building_ref.set(Some(RefPtr::from_this(this)));
                 Self::on_plugins_resolved(this, plugins)?;
             }
             GetOrStartLoadResult::Pending => {
                 server.on_pending_request();
+                this.building_ref.set(Some(RefPtr::from_this(this)));
                 this.state.set(State::Building);
             }
         }
@@ -403,17 +403,19 @@ impl Route {
     /// this build was the only thing still keeping a stopped server alive.
     fn finish_building(&self) {
         debug_assert!(matches!(self.state.get(), State::Err(_) | State::Html(_)));
+        // Dropped last: the route may have no other ref by then.
+        let building_ref = self.building_ref.take();
         self.resume_pending_responses();
-        let _waiters = self.resume_build_waiters();
-        self.server.get().expect("server set").on_request_complete();
-    }
-
-    fn resume_build_waiters(&self) -> Vec<BuildWaiter> {
         let waiters = self.build_waiters.replace(Vec::new());
-        for waiter in &waiters {
-            (waiter.callback)(waiter.ctx, waiter._route.this_ptr());
+        match &building_ref {
+            Some(route) => {
+                for waiter in &waiters {
+                    (waiter.callback)(waiter.ctx, route.this_ptr());
+                }
+            }
+            None => debug_assert!(waiters.is_empty()),
         }
-        waiters
+        self.server.get().expect("server set").on_request_complete();
     }
 
     /// Production keeps the reason to itself, see `resume_pending_responses`.

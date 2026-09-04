@@ -829,6 +829,9 @@ pub struct Linker<'a> {
     pub abs_dest_buf: &'a mut [u8],
     pub rel_buf: &'a mut [u8],
 
+    /// Real path the target package was installed from; see `make_executable`.
+    pub installed_from: Option<&'a [u8]>,
+
     pub err: Option<Error>,
     pub skipped_due_to_missing_bin: bool,
 }
@@ -951,8 +954,39 @@ impl<'a> Linker<'a> {
 
         #[cfg(not(windows))]
         {
+            Self::make_executable(self.installed_from, abs_target);
             Self::try_normalize_shebang(abs_target);
         }
+    }
+
+    /// Follows only the symlink backend's own link into `installed_from`, never a package's.
+    #[cfg(not(windows))]
+    fn make_executable(installed_from: Option<&[u8]>, abs_target: &ZStr) {
+        let mode = 0o777 & !(UMASK.load(Ordering::Acquire) as Mode);
+        let _ = sys::lchmod(abs_target, mode);
+
+        let Some(installed_from) = installed_from else {
+            return;
+        };
+        let mut link_buf = path::path_buffer_pool::get();
+        let Ok(link_len) = sys::readlink(abs_target, link_buf.as_mut_slice()) else {
+            return;
+        };
+        // `sys::readlink` writes the NUL at `link_len`.
+        let link_target = ZStr::from_buf(&link_buf[..], link_len);
+        if !path::is_absolute(link_target.as_bytes()) {
+            return;
+        }
+        let mut real_buf = path::path_buffer_pool::get();
+        let Ok(real_target) = sys::realpath(link_target, &mut *real_buf) else {
+            return;
+        };
+        if resolve_path::is_parent_or_equal(installed_from, real_target)
+            != resolve_path::ParentEqual::Parent
+        {
+            return;
+        }
+        let _ = sys::lchmod(link_target, mode);
     }
 
     #[cfg(not(windows))]
@@ -1256,10 +1290,6 @@ impl<'a> Linker<'a> {
 
     #[cfg(not(windows))]
     fn create_symlink(&mut self, abs_target: &ZStr, abs_dest: &ZStr, global: bool) {
-        // hoisted from `defer { if (this.err == null) chmod }` — scopeguard
-        // cannot capture `&mut self.err` without conflicting with the body's writes,
-        // so each return path calls `Self::chmod_on_ok` explicitly instead.
-
         let abs_dest_dir = resolve_path::dirname::<PlatformAuto>(abs_dest.as_bytes());
         let rel_target =
             resolve_path::relative_buf_z(self.rel_buf, abs_dest_dir, abs_target.as_bytes());
@@ -1270,7 +1300,6 @@ impl<'a> Linker<'a> {
             sys::Result::Err(err) => {
                 if err.get_errno() != sys::Errno::EEXIST && err.get_errno() != sys::Errno::ENOENT {
                     self.err = Some(err.into());
-                    Self::chmod_on_ok(self.err, abs_target);
                     return;
                 }
 
@@ -1278,7 +1307,6 @@ impl<'a> Linker<'a> {
                 if err.get_errno() == sys::Errno::ENOENT {
                     if global {
                         self.err = Some(err.into());
-                        Self::chmod_on_ok(self.err, abs_target);
                         return;
                     }
 
@@ -1289,43 +1317,23 @@ impl<'a> Linker<'a> {
                     let _ = sys::Dir::cwd().make_path(self.node_modules_path.slice());
                     self.node_modules_path.set_length(node_modules_path_save);
 
-                    match sys::symlink_running_executable(rel_target, abs_dest) {
-                        sys::Result::Err(real_error) => {
-                            // It was just created, no need to delete destination and symlink again
-                            self.err = Some(real_error.into());
-                            Self::chmod_on_ok(self.err, abs_target);
-                            return;
-                        }
-                        sys::Result::Ok(()) => {
-                            Self::chmod_on_ok(self.err, abs_target);
-                            return;
-                        }
+                    // It was just created, no need to delete destination and symlink again
+                    if let Err(real_error) = sys::symlink_running_executable(rel_target, abs_dest) {
+                        self.err = Some(real_error.into());
                     }
+                    return;
                 }
 
                 // beyond this error can only be `.EXIST`
                 debug_assert!(err.get_errno() == sys::Errno::EEXIST);
             }
-            sys::Result::Ok(()) => {
-                Self::chmod_on_ok(self.err, abs_target);
-                return;
-            }
+            sys::Result::Ok(()) => return,
         }
 
         // delete and try again
         let _ = sys::delete_tree_absolute(abs_dest.as_bytes());
         if let Err(err) = sys::symlink_running_executable(rel_target, abs_dest) {
             self.err = Some(err.into());
-        }
-        Self::chmod_on_ok(self.err, abs_target);
-    }
-
-    #[cfg(not(windows))]
-    fn chmod_on_ok(err: Option<Error>, abs_target: &ZStr) {
-        // hoisted from `defer` block in create_symlink
-        if err.is_none() {
-            let mode = 0o777 & !(UMASK.load(Ordering::Acquire) as Mode);
-            let _ = sys::lchmod(abs_target, mode);
         }
     }
 
@@ -1597,7 +1605,7 @@ impl<'a> Linker<'a> {
         // is called while `abs_target` / `abs_dest` borrow `self.abs_target_buf`
         // / `self.abs_dest_buf`. `link_bin_or_create_shim` never reads or writes
         // those two buffers (it only touches `rel_buf`, `node_modules_path`, `seen`, `err`,
-        // `skipped_due_to_missing_bin`). Detach the `abs_dest` borrow via a raw
+        // `skipped_due_to_missing_bin`, `installed_from`). Detach the `abs_dest` borrow via a raw
         // pointer so borrowck allows the disjoint access; the SAFETY invariant
         // is that `abs_dest_buf` is not aliased mutably for the lifetime of the
         // detached slice. `package_dir` (`abs_target_buf[0..package_dir_len]`)
@@ -1815,7 +1823,7 @@ impl<'a> Linker<'a> {
                                     // SAFETY: result lives in `self.abs_target_buf`, which
                                     // `link_bin_or_create_shim` does not write to (only
                                     // `rel_buf`/`node_modules_path`/`seen`/`err`/
-                                    // `skipped_due_to_missing_bin` are touched).
+                                    // `skipped_due_to_missing_bin`/`installed_from` are touched).
                                     ZStr::from_raw(r.as_bytes().as_ptr(), r.len())
                                 };
 

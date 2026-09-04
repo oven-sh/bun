@@ -44,6 +44,7 @@ import {
   getBuildLabel,
   getBuildMetadata,
   getBuildUrl,
+  getCloudInstanceType,
   getCommit,
   getDistro,
   getDistroVersion,
@@ -1253,7 +1254,7 @@ async function runTests() {
               context: "flaky",
               label: title,
               style: "warning",
-              content: `<details><summary><a href="${getFileUrl(title)}"><code>${title}</code></a> - ${reason} <i>(in the parallel batch on ${getBuildLabel()}; passed alone)</i></summary>${detail}</details>`,
+              content: `<details><summary><a href="${getFileUrl(title)}"><code>${title}</code></a> - ${reason} <i>(in the parallel batch on ${getTestLabel()}; passed alone)</i></summary>${detail}</details>`,
             });
           }
         }
@@ -2955,10 +2956,19 @@ function addPath(...paths) {
 }
 
 /**
+ * The lane a failure is reported against, plus the machine type the job
+ * actually ran on when that is known, e.g. ":debian: 13 x64-asan (r7i.2xlarge)".
+ * The type is what tells a timeout on fallback hardware apart from one on the
+ * hardware the lane asks for, so it goes in the annotation next to the lane.
  * @returns {string | undefined}
  */
 function getTestLabel() {
-  return getBuildLabel()?.replace(" - test-bun", "");
+  const label = getBuildLabel()?.replace(" - test-bun", "");
+  if (!label) {
+    return;
+  }
+  const instanceType = getCloudInstanceType();
+  return instanceType ? `${label} (${instanceType})` : label;
 }
 
 /**

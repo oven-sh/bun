@@ -15,7 +15,15 @@ import {
   writeFileSync,
 } from "node:fs";
 import { connect } from "node:net";
-import { hostname, homedir as nodeHomedir, tmpdir as nodeTmpdir, release, userInfo } from "node:os";
+import {
+  availableParallelism,
+  cpus,
+  hostname,
+  homedir as nodeHomedir,
+  tmpdir as nodeTmpdir,
+  release,
+  userInfo,
+} from "node:os";
 import { basename, dirname, join, relative, resolve } from "node:path";
 import { normalize as normalizeWindows } from "node:path/win32";
 
@@ -1588,6 +1596,79 @@ export function getPublicIp() {
 }
 
 /**
+ * The CPU model and the number of CPUs this process may run on, e.g.
+ * "Intel(R) Xeon(R) Platinum 8488C x8" or "Apple M2 Ultra x24".
+ * @returns {string | undefined}
+ */
+export function getCpuDescription() {
+  const [cpu] = cpus();
+  const model = cpu?.model?.replace(/\s+/g, " ").trim();
+  if (!model) {
+    return;
+  }
+  return `${model} x${availableParallelism()}`;
+}
+
+/** @type {string | undefined} "" once looked up and not available */
+let cloudInstanceType;
+
+/**
+ * The instance type the cloud provider actually launched for this machine,
+ * e.g. "r7i.2xlarge" on EC2 or "Standard_D8s_v5" on Azure. CI asks for one
+ * type per lane (.buildkite/ci.mjs), but under capacity pressure the
+ * machine may be a different, slower type. scripts/agent.mjs records the
+ * launched type as the agent's `launched-instance-type` tag, which Buildkite
+ * exposes to the job as an environment variable. Looked up once per process.
+ * @returns {string | undefined}
+ */
+export function getCloudInstanceType() {
+  if (typeof cloudInstanceType !== "string") {
+    cloudInstanceType =
+      getEnv("BUILDKITE_AGENT_META_DATA_LAUNCHED_INSTANCE_TYPE", false) || fetchCloudInstanceType() || "";
+  }
+  return cloudInstanceType || undefined;
+}
+
+/**
+ * Images baked before agent.mjs set the tag only have the `cloud` tag, so
+ * ask the metadata service directly. Synchronous and bounded, since this
+ * runs while printing a log header.
+ * @returns {string | undefined}
+ */
+function fetchCloudInstanceType() {
+  // Without a `cloud` tag (the darwin fleet, GitHub Actions) this is not a
+  // machine whose type we chose, so there is nothing to compare against.
+  const cloud = getEnv("BUILDKITE_AGENT_META_DATA_CLOUD", false);
+  let request;
+  if (cloud === "aws") {
+    request = ["http://169.254.169.254/latest/meta-data/instance-type"];
+  } else if (cloud === "azure") {
+    request = [
+      "-H",
+      "Metadata: true",
+      "http://169.254.169.254/metadata/instance/compute/vmSize?api-version=2021-02-01&format=text",
+    ];
+  } else {
+    return;
+  }
+
+  const { error, stdout } = spawnSync([
+    "curl",
+    "-sf",
+    "--noproxy",
+    "*",
+    "--connect-timeout",
+    "1",
+    "--max-time",
+    "3",
+    ...request,
+  ]);
+  if (!error) {
+    return stdout.trim() || undefined;
+  }
+}
+
+/**
  * @returns {string}
  */
 export function getHostname() {
@@ -1957,6 +2038,34 @@ export async function getCloudMetadataTag(tag, cloud) {
   };
 
   return getCloudMetadata(metadata, cloud);
+}
+
+/**
+ * The instance type this machine was launched as, e.g. "r7i.2xlarge" or
+ * "Standard_D8s_v5". agent.mjs tags the agent with it at start; jobs read it
+ * back through getCloudInstanceType().
+ * @param {Cloud} [cloud]
+ * @returns {Promise<string | undefined>}
+ */
+export async function getCloudLaunchedInstanceType(cloud) {
+  cloud ??= await getCloud();
+
+  if (cloud === "azure") {
+    const body = await getCloudMetadata("", cloud);
+    if (!body) return;
+    try {
+      return JSON.parse(body)?.compute?.vmSize || undefined;
+    } catch {}
+    return;
+  }
+
+  const metadata = {
+    "aws": "instance-type",
+    // "projects/<number>/machineTypes/<type>"
+    "google": "machine-type",
+  };
+
+  return (await getCloudMetadata(metadata, cloud))?.split("/").pop() || undefined;
 }
 
 /**
@@ -2877,8 +2986,10 @@ export function printEnvironment() {
     }
     console.log("Distro:", getDistro());
     console.log("Distro Version:", getDistroVersion());
+    console.log("CPU:", getCpuDescription());
     console.log("Hostname:", getHostname());
     if (isCI) {
+      console.log("Instance Type:", getCloudInstanceType());
       console.log("Tailscale IP:", getTailscaleIp());
       console.log("Public IP:", getPublicIp());
     }

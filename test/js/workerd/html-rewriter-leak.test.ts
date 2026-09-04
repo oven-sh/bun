@@ -134,10 +134,9 @@ test("exceptions thrown from handlers do not leak protected Exception roots", as
 // threshold and is stable on debug builds.
 //
 // One rewriter serves every round. `.on()` protects the listener and its
-// `element` method until the rewriter's wrapper is swept, and the last round's
-// wrapper can outlive one `Bun.gc(true)` through a stale stack slot (Windows
-// debug builds hit this). End-tag handlers are dropped when the rewrite
-// finishes, so a shared rewriter keeps the count independent of the sweep.
+// `element` method until the rewriter's wrapper is swept, while end-tag
+// handlers are dropped when the rewrite finishes. Sharing the rewriter keeps
+// the count independent of which wrappers the GC has swept.
 test("onEndTag callbacks are released after the rewrite", () => {
   const rewriter = new HTMLRewriter().on("p", {
     element(element) {

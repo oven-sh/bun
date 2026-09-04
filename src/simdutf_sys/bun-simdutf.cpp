@@ -7,6 +7,30 @@ typedef struct SIMDUTFResult {
 
 extern "C" {
 
+// simdutf picks its kernel by CPUID. When no compiled-in kernel matches the
+// advertised feature set (QEMU's default qemu64 model hides SSE4.2 even though
+// the host executes it; or SIMDUTF_FORCE_IMPLEMENTATION names an unknown
+// kernel), it installs a stub whose every method returns 0 / false /
+// error_code::OTHER. Callers cannot tell that from a real result: validate_ascii
+// says "not ASCII" for ASCII input, length queries return 0, and transcoding
+// loops that rely on forward progress spin forever.
+//
+// The scalar fallback kernel is not compiled into WTF's simdutf, so the least
+// demanding kernel in the list is what the binary's -march baseline already
+// assumes everywhere else. If the process reached main(), the CPU runs it.
+void simdutf__init()
+{
+    if (simdutf::get_active_implementation()->name() != "unsupported")
+        return;
+
+    const simdutf::implementation* least_demanding = nullptr;
+    for (const simdutf::implementation* impl : simdutf::get_available_implementations())
+        least_demanding = impl;
+
+    if (least_demanding)
+        simdutf::get_active_implementation() = least_demanding;
+}
+
 bool simdutf__validate_utf8(const char* buf, size_t len)
 {
     return simdutf::validate_utf8(buf, len);

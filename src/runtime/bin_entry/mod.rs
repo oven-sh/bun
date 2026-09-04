@@ -157,6 +157,11 @@ pub(crate) unsafe extern "C" fn main(argc: c_int, argv: *const *const c_char) ->
     // 1. Crash handler first so anything below gets a usable trace.
     bun_crash_handler::init();
 
+    // simdutf's CPUID dispatch may land on a stub that returns 0 for every
+    // call (QEMU's default CPU model hides SSE4.2). Pin a real kernel before
+    // the first string conversion.
+    bun_simdutf_sys::simdutf::init();
+
     use_mimalloc_in_dependencies();
 
     // SIGPIPE/SIGXFSZ → SIG_IGN.

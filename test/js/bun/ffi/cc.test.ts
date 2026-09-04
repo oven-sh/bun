@@ -1087,6 +1087,255 @@ describe("double <-> JSValue conversions", () => {
   });
 });
 
+describe.concurrent("64-bit integer arguments (i64, u64, i64_fast, u64_fast)", () => {
+  const cannotConvert = (type: string) => `TypeError: bun:ffi cannot convert argument to '${type}'`;
+
+  // The wrapper cc() compiles decodes int32-tagged and double-encoded numbers inline and hands
+  // everything else to a slow path that used to assume it was given a BigInt: any other value
+  // (undefined, null, an object, ...) hit an assertion in debug builds and reached C as INT64_MIN
+  // or 0 in release builds. The slow path is now the engine's conversion, the one dlopen() and
+  // CFunction symbols use for every argument, so the fixture runs one input matrix through a cc()
+  // wrapper and through a CFunction over the very same C functions and the two tables must agree.
+  // The matrix covers what reaches the slow path (BigInts and non-numbers) plus one input per
+  // inline branch; the inline branches themselves are not under test here, and for u64 the
+  // double-encoded branch is known to differ from the engine for negative and non-finite numbers
+  // (tracked separately), which is why no such input is in the matrix. Runs in a subprocess
+  // because the unfixed debug build aborts.
+  it("accepts what dlopen accepts and throws a TypeError for the rest", async () => {
+    using dir = tempDir("bun-ffi-cc-int64-args", {
+      "int64.c": /* c */ `
+        long long echo_i64(long long x) { return x; }
+        unsigned long long echo_u64(unsigned long long x) { return x; }
+        long long echo_i64_fast(long long x) { return x; }
+        unsigned long long echo_u64_fast(unsigned long long x) { return x; }
+
+        static int native_calls = 0;
+        /* Two 64-bit parameters of different types: the TypeError names the one that was rejected. */
+        long long add_i64_u64(long long a, unsigned long long b) { native_calls++; return a + (long long)b; }
+        /* A 64-bit parameter between two parameters that are converted inline. */
+        double mixed(int a, long long b, double c) { native_calls++; return a * 1000000 + b * 1000 + c; }
+        int take_native_calls(void) { int calls = native_calls; native_calls = 0; return calls; }
+
+        void* address_of_echo_i64(void) { return (void*)&echo_i64; }
+        void* address_of_echo_u64(void) { return (void*)&echo_u64; }
+        void* address_of_echo_i64_fast(void) { return (void*)&echo_i64_fast; }
+        void* address_of_echo_u64_fast(void) { return (void*)&echo_u64_fast; }
+        void* address_of_add_i64_u64(void) { return (void*)&add_i64_u64; }
+        void* address_of_mixed(void) { return (void*)&mixed; }
+      `,
+      "fixture.js": /* js */ `
+        import { cc, CFunction } from "bun:ffi";
+        import path from "path";
+
+        // Returns are declared as i64/u64 throughout (exact BigInts), so only the argument
+        // conversion under test differs between the four echo functions.
+        const signatures = {
+          echo_i64: { args: ["i64"], returns: "i64" },
+          echo_u64: { args: ["u64"], returns: "u64" },
+          echo_i64_fast: { args: ["i64_fast"], returns: "i64" },
+          echo_u64_fast: { args: ["u64_fast"], returns: "u64" },
+          add_i64_u64: { args: ["i64", "u64"], returns: "i64" },
+          mixed: { args: ["i32", "i64", "f64"], returns: "f64" },
+        };
+        const { symbols: compiled } = cc({
+          source: path.join(import.meta.dir, "int64.c"),
+          symbols: {
+            ...signatures,
+            take_native_calls: { args: [], returns: "i32" },
+            ...Object.fromEntries(Object.keys(signatures).map(name => ["address_of_" + name, { args: [], returns: "ptr" }])),
+          },
+        });
+        // The same C functions behind the engine's (dlopen-style) argument conversion.
+        const engine = Object.fromEntries(
+          Object.entries(signatures).map(([name, signature]) => [
+            name,
+            new CFunction({ ...signature, ptr: compiled["address_of_" + name]() }),
+          ]),
+        );
+
+        const inputs = {
+          int32: 7,
+          negative_int32: -7,
+          double: 2 ** 40,
+          bigint: 5n,
+          negative_bigint: -5n,
+          bigint_2_pow_63: 2n ** 63n,
+          undefined: undefined,
+          null: null,
+          boolean: true,
+          plain_object: {},
+          object_with_valueOf: { valueOf: () => 7 },
+          string: "7",
+          array: [7],
+          view: new Uint8Array(3),
+        };
+
+        function outcome(fn, ...args) {
+          try {
+            return String(fn(...args));
+          } catch (error) {
+            return error.name + ": " + error.message;
+          }
+        }
+
+        function run(symbols) {
+          const table = {};
+          for (const name of ["echo_i64", "echo_u64", "echo_i64_fast", "echo_u64_fast"]) {
+            table[name] = {};
+            for (const label in inputs) table[name][label] = outcome(symbols[name], inputs[label]);
+          }
+          compiled.take_native_calls();
+          table.add_i64_u64 = {
+            both_valid: outcome(symbols.add_i64_u64, 1, 2),
+            first_invalid: outcome(symbols.add_i64_u64, {}, 2),
+            second_invalid: outcome(symbols.add_i64_u64, 1, undefined),
+            both_invalid: outcome(symbols.add_i64_u64, undefined, undefined),
+            valid_after_invalid: outcome(symbols.add_i64_u64, 3, 4n),
+          };
+          table.mixed = {
+            valid: outcome(symbols.mixed, 1, 2, 0.5),
+            bigint: outcome(symbols.mixed, 1, -2n, 0.5),
+            invalid: outcome(symbols.mixed, 1, null, 0.5),
+          };
+          table.native_calls = compiled.take_native_calls();
+          return table;
+        }
+
+        console.log(JSON.stringify({ cc: run(compiled), engine: run(engine) }));
+      `,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "fixture.js"],
+      env: bunEnv,
+      cwd: String(dir),
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    const echo = (type: string, signed: boolean) => ({
+      int32: "7",
+      negative_int32: signed ? "-7" : "18446744073709551609",
+      double: "1099511627776",
+      bigint: "5",
+      negative_bigint: signed ? "-5" : "18446744073709551611",
+      bigint_2_pow_63: signed ? "-9223372036854775808" : "9223372036854775808",
+      undefined: cannotConvert(type),
+      null: cannotConvert(type),
+      boolean: cannotConvert(type),
+      plain_object: cannotConvert(type),
+      object_with_valueOf: cannotConvert(type),
+      string: cannotConvert(type),
+      array: cannotConvert(type),
+      view: cannotConvert(type),
+    });
+    const expected = {
+      echo_i64: echo("i64", true),
+      echo_u64: echo("u64", false),
+      echo_i64_fast: echo("i64_fast", true),
+      echo_u64_fast: echo("u64_fast", false),
+      add_i64_u64: {
+        both_valid: "3",
+        first_invalid: cannotConvert("i64"),
+        second_invalid: cannotConvert("u64"),
+        // Arguments are converted left to right, so the first rejected one is the one reported.
+        both_invalid: cannotConvert("i64"),
+        valid_after_invalid: "7",
+      },
+      mixed: {
+        valid: "1002000.5",
+        bigint: "998000.5",
+        invalid: cannotConvert("i64"),
+      },
+      // A rejected argument stops the call before C is entered: only the four valid multi-argument
+      // calls above reached the native functions.
+      native_calls: 4,
+    };
+
+    // On a crash there is no JSON; report the process output instead so the failure shows it.
+    const results = stdout.startsWith("{") ? JSON.parse(stdout) : { stdout, stderr };
+    expect({ results, exitCode }).toEqual({
+      results: {
+        cc: {
+          ...expected,
+          // Pre-existing cc()-only shortcut, unrelated to the slow path: a TypedArray given to an
+          // unsigned 64-bit parameter is converted inline to its length.
+          echo_u64: { ...expected.echo_u64, view: "3" },
+          echo_u64_fast: { ...expected.echo_u64_fast, view: "3" },
+        },
+        engine: expected,
+      },
+      exitCode: 0,
+    });
+  });
+
+  // napi_env wrappers open a handle scope around the native call; a rejected argument has to bail
+  // out before that happens and leave later calls working. cc()-compiled C only exercises napi on
+  // POSIX today (see the napi_create_double test above).
+  it.skipIf(isWindows)("a rejected argument bails out of a napi_env wrapper too", async () => {
+    using dir = tempDir("bun-ffi-cc-int64-args-napi", {
+      "napi_int64.c": /* c */ `
+        typedef struct napi_env_fake* napi_env_t;
+        static int native_calls = 0;
+        long long with_env(napi_env_t env, long long x) { native_calls++; return env != 0 ? x : -1; }
+        int get_native_calls(void) { return native_calls; }
+      `,
+      "fixture.js": /* js */ `
+        import { cc } from "bun:ffi";
+        import path from "path";
+
+        const { symbols } = cc({
+          source: path.join(import.meta.dir, "napi_int64.c"),
+          symbols: {
+            with_env: { args: ["napi_env", "i64"], returns: "i64" },
+            get_native_calls: { args: [], returns: "i32" },
+          },
+        });
+
+        function outcome(fn, ...args) {
+          try {
+            return String(fn(...args));
+          } catch (error) {
+            return error.name + ": " + error.message;
+          }
+        }
+
+        // The napi_env position is filled in by the wrapper; the JS argument there is ignored.
+        const results = {
+          rejected: outcome(symbols.with_env, null, {}),
+          calls_after_rejection: symbols.get_native_calls(),
+          number: outcome(symbols.with_env, null, 42),
+          bigint: outcome(symbols.with_env, null, -2n),
+          calls_at_end: symbols.get_native_calls(),
+        };
+        console.log(JSON.stringify(results));
+      `,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "fixture.js"],
+      env: bunEnv,
+      cwd: String(dir),
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    const results = stdout.startsWith("{") ? JSON.parse(stdout) : { stdout, stderr };
+    expect({ results, exitCode }).toEqual({
+      results: {
+        rejected: cannotConvert("i64"),
+        calls_after_rejection: 0,
+        number: "42",
+        bigint: "-2",
+        calls_at_end: 2,
+      },
+      exitCode: 0,
+    });
+  });
+});
+
 describe.skipIf(isASAN)("compiler runtime header directory under BUN_TMPDIR", () => {
   const plantedHeader = "#define bool int\n#define true 100\n#define false 0\n";
   const files = {

@@ -1838,7 +1838,7 @@ function parseOptions(
   let port: number | string | undefined;
   let username: string | null | undefined;
   let password: string | (() => Bun.MaybePromise<string>) | undefined | null;
-  let database: string | undefined;
+  let database: string | null | undefined;
   let tls: Bun.TLSOptions | boolean | undefined;
   let query: string = "";
   let idleTimeout: number | null | undefined;
@@ -1863,7 +1863,15 @@ function parseOptions(
     username ||= options.user || options.username || decodeIfValid(url.username);
     password ||= options.pass || options.password || decodeIfValid(url.password);
 
-    path ||= options.path || (url.hostname ? "" : url.pathname);
+    const optionsPath = options.path;
+    let pathnameIsSocketPath = false;
+    if (optionsPath) {
+      path = optionsPath;
+    } else if (!url.hostname) {
+      // postgres:///run/postgresql: a host-less pathname is the socket path, not a database name.
+      path = url.pathname;
+      pathnameIsSocketPath = true;
+    }
 
     const queryObject = url.searchParams.toJSON();
     for (const key in queryObject) {
@@ -1882,6 +1890,7 @@ function parseOptions(
         }
       } else if (lowerKey === "path") {
         path = queryObject[key];
+        pathnameIsSocketPath = false;
       } else {
         // this is valid for postgres for other databases it might not be valid
         // check adapter then implement for other databases
@@ -1895,6 +1904,10 @@ function parseOptions(
       }
     }
     query = query.trim();
+
+    if (!pathnameIsSocketPath) {
+      database ||= options.database || options.db || decodeIfValid(url.pathname.slice(1));
+    }
   }
 
   switch (adapter) {

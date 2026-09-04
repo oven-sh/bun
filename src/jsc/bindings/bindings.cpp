@@ -5430,7 +5430,7 @@ restart:
         // slots mark prototype properties that are fetched after the walk.
         MarkedArgumentBuffer snapshotValues;
 
-        structure->forEachProperty(vm, [&](const PropertyTableEntry& entry) -> bool {
+        auto snapshotProperty = [&](const PropertyTableEntry& entry) -> bool {
             if ((entry.attributes() & (PropertyAttribute::Function)) == 0 && (entry.attributes() & (PropertyAttribute::Builtin)) != 0) {
                 return true;
             }
@@ -5457,7 +5457,27 @@ restart:
             snapshot.append({ Identifier::fromUid(vm, prop), entry.attributes() });
             snapshotValues.appendWithCrashOnOverflow(propertyValue);
             return true;
+        };
+
+        // The property table is in insertion order with string and symbol keys
+        // interleaved. Emit string keys first and symbols after them, which is the
+        // OrdinaryOwnPropertyKeys order that getOwnPropertyNames (the slow path
+        // below) and node's util.inspect use.
+        bool hasSymbolKeys = false;
+        structure->forEachProperty(vm, [&](const PropertyTableEntry& entry) -> bool {
+            if (entry.key()->isSymbol()) {
+                hasSymbolKeys = true;
+                return true;
+            }
+            return snapshotProperty(entry);
         });
+        if (hasSymbolKeys) {
+            structure->forEachProperty(vm, [&](const PropertyTableEntry& entry) -> bool {
+                if (!entry.key()->isSymbol())
+                    return true;
+                return snapshotProperty(entry);
+            });
+        }
 
         for (size_t i = 0; i < snapshot.size(); i++) {
             const auto& snapshotted = snapshot[i];

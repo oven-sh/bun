@@ -810,6 +810,61 @@ it("Symbol", () => {
   expect(Bun.inspect(Symbol(""))).toBe("Symbol()");
 });
 
+// Symbol keys are printed after the string keys (OrdinaryOwnPropertyKeys order, what
+// node prints) regardless of insertion order. The formatter walks an object with no
+// accessors straight off its Structure, which stores keys in insertion order; an
+// object with a getter goes through getOwnPropertyNames instead. Each case is
+// formatted both ways and must print the same thing.
+describe("symbol keys print after string keys", () => {
+  const s = Symbol("s");
+  const t = Symbol("t");
+
+  it("object literal", () => {
+    expect(Bun.inspect({ [s]: 1, a: 2 })).toBe("{\n  a: 2,\n  [Symbol(s)]: 1,\n}");
+    expect(Bun.inspect({ [s]: 1, a: 2, get g() {} })).toBe("{\n  a: 2,\n  g: [Getter],\n  [Symbol(s)]: 1,\n}");
+  });
+
+  it.each([
+    ["symbol inserted first", () => ({ [s]: 1, a: 2, b: 3 }), "{ a: 2, b: 3, [Symbol(s)]: 1 }"],
+    ["symbol inserted in the middle", () => ({ a: 2, [s]: 1, b: 3 }), "{ a: 2, b: 3, [Symbol(s)]: 1 }"],
+    [
+      "symbols keep their insertion order among themselves",
+      () => ({ [t]: 1, a: 2, [s]: 3, b: 4 }),
+      "{ a: 2, b: 4, [Symbol(t)]: 1, [Symbol(s)]: 3 }",
+    ],
+    ["only symbol keys", () => ({ [t]: 1, [s]: 2 }), "{ [Symbol(t)]: 1, [Symbol(s)]: 2 }"],
+    [
+      "class fields",
+      () =>
+        new (class Foo {
+          [s] = 1;
+          a = 2;
+        })(),
+      "Foo { a: 2, [Symbol(s)]: 1 }",
+    ],
+    ["nested object", () => ({ [s]: { [t]: 1, x: 2 }, a: 3 }), "{ a: 3, [Symbol(s)]: { x: 2, [Symbol(t)]: 1 } }"],
+    [
+      "own properties first, then the prototype's, symbols last within each",
+      () => {
+        const obj = Object.create({ [t]: 1, p: 2 });
+        obj[s] = 3;
+        obj.a = 4;
+        return obj;
+      },
+      "{ a: 4, [Symbol(s)]: 3, p: 2, [Symbol(t)]: 1 }",
+    ],
+    ["no own properties, only the prototype's", () => Object.create({ [t]: 1, p: 2 }), "{ p: 2, [Symbol(t)]: 1 }"],
+  ])("%s", (_, init, expected) => {
+    expect(Bun.inspect(init(), { compact: true })).toBe(expected);
+
+    const withGetter = init();
+    Object.defineProperty(withGetter, "getter", { get: () => 0, enumerable: true });
+    const printed = Bun.inspect(withGetter, { compact: true });
+    expect(printed).toContain("getter: [Getter], ");
+    expect(printed.replace("getter: [Getter], ", "")).toBe(expected);
+  });
+});
+
 it("CloseEvent", () => {
   const closeEvent = new CloseEvent("close", {
     code: 1000,

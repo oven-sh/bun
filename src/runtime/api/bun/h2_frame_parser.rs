@@ -1079,7 +1079,7 @@ pub struct H2FrameParser {
     max_header_list_pairs: Cell<u32>,
     /// node maxSettings session option: maximum entries accepted in a single SETTINGS frame.
     max_settings: Cell<u32>,
-    /// Changes queued while the engine was borrowed or absent (`Sink::take_recv_window_change`).
+    /// setLocalWindowSize changes that the engine has not applied yet (`sync_recv_window`).
     pending_recv_window_change: Cell<RecvWindowChange>,
     /// Bridge: outbound DATA bytes the legacy encoder wrote since the engine last ran, applied to
     /// the engine's connection-level send window in rewrite_read (the engine cell may be borrowed
@@ -3559,11 +3559,8 @@ impl H2FrameParser {
             if self.write_buffer.get().slice()[self.write_buffer_offset.get()..].is_empty() {
                 engine.note_outbound_drained();
             }
-            // Apply a change that setLocalWindowSize() queued before the engine existed.
-            let pending = self.pending_recv_window_change.take();
-            if pending != RecvWindowChange::default() {
-                engine.apply_recv_window_change(self, pending);
-            }
+            // Apply what setLocalWindowSize() queued before the engine existed or in a dispatch.
+            engine.sync_recv_window(self);
             // Apply outbound DATA the legacy encoder wrote since the last batch, so the engine's
             // send windows reflect what is actually in flight (§6.9.1 overflow stays peer-error
             // only).
@@ -4532,7 +4529,12 @@ impl H2FrameParser {
             return Err(global_object
                 .throw_invalid_arguments(format_args!("Expected windowSize to be a number")));
         }
-        let window_size_value: u32 = window_size.to_u32();
+        let window_size_value = window_size.as_number();
+        if !(0.0..=MAX_WINDOW_SIZE_F64).contains(&window_size_value) {
+            return Err(global_object.throw_invalid_arguments(format_args!(
+                "Expected windowSize to be between 0 and {MAX_WINDOW_SIZE}"
+            )));
+        }
         // Like nghttp2_session_set_local_window_size(stream 0): SETTINGS_INITIAL_WINDOW_SIZE stays.
         let mut local_window = this.local_window.get();
         let change = local_window.resize(window_size_value as i64);
@@ -4540,17 +4542,18 @@ impl H2FrameParser {
         if change == RecvWindowChange::default() {
             return Ok(JSValue::UNDEFINED);
         }
+        // Queue the change before the write below, which can run JS that calls this again.
+        this.pending_recv_window_change
+            .set(this.pending_recv_window_change.get() + change);
         let increment = change.increment();
         if increment > 0 {
             this.send_window_update(0, UInt31WithReserved::init(increment as u32, false));
         }
-        let mut guard = this.engine.try_borrow_mut();
-        match guard.as_mut().ok().and_then(|guard| guard.as_mut()) {
-            Some(engine) => engine.apply_recv_window_change(this, change),
-            // A dispatch holds the engine, or the first inbound read has not created it yet.
-            None => this
-                .pending_recv_window_change
-                .set(this.pending_recv_window_change.get() + change),
+        // If a dispatch holds the engine, or no read has created it yet, the change stays queued.
+        if let Ok(mut guard) = this.engine.try_borrow_mut()
+            && let Some(engine) = guard.as_mut()
+        {
+            engine.sync_recv_window(this);
         }
         Ok(JSValue::UNDEFINED)
     }

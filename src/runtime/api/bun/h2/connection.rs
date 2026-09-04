@@ -218,7 +218,7 @@ pub trait Sink {
     fn on_frame_counters(&self, _received: u64, _sent: u64) {}
     /// The connection `RecvWindow` moved. Only store the values: the connection is borrowed.
     fn on_recv_window(&self, _size: i64, _consumed: i64) {}
-    /// Receive-window changes queued while the connection was borrowed. Taken before replenishing.
+    /// Receive-window changes that the embedder queued. `Connection::sync_recv_window` takes them.
     fn take_recv_window_change(&self) -> RecvWindowChange {
         RecvWindowChange::default()
     }
@@ -430,22 +430,33 @@ impl Connection {
         sink.on_recv_window(self.recv_window.size, self.recv_window.consumed);
     }
 
-    /// Applies a `LocalWindow::resize` change, then sends any WINDOW_UPDATE that it makes due.
-    pub fn apply_recv_window_change(&mut self, sink: &impl Sink, change: RecvWindowChange) {
-        self.recv_window.apply(change);
-        self.note_recv_window(sink);
-        self.replenish_connection_window(sink);
-    }
-
-    /// Send a WINDOW_UPDATE on stream 0 once the peer has used at least half the window.
-    fn replenish_connection_window(&mut self, sink: &impl Sink) {
-        if self.recv_window.needs_update() {
-            let inc = self.recv_window.take_update();
-            if inc > 0 {
-                self.send_window_update(sink, 0, inc);
+    /// Applies the queued `LocalWindow` changes, and sends each WINDOW_UPDATE that comes due.
+    pub fn sync_recv_window(&mut self, sink: &impl Sink) {
+        loop {
+            let change = sink.take_recv_window_change();
+            if change != RecvWindowChange::default() {
+                self.recv_window.apply(change);
                 self.note_recv_window(sink);
             }
+            // A WINDOW_UPDATE write can run JS that queues another change.
+            if !self.replenish_connection_window(sink) {
+                return;
+            }
         }
+    }
+
+    /// Sends a WINDOW_UPDATE on stream 0 once half the window is used. True if it wrote one.
+    fn replenish_connection_window(&mut self, sink: &impl Sink) -> bool {
+        if !self.recv_window.needs_update() {
+            return false;
+        }
+        let inc = self.recv_window.take_update();
+        if inc == 0 {
+            return false;
+        }
+        self.send_window_update(sink, 0, inc);
+        self.note_recv_window(sink);
+        true
     }
 
     fn send_rst_stream(&mut self, sink: &impl Sink, stream_id: u32, code: ErrorCode) {
@@ -595,12 +606,7 @@ impl Connection {
 
     /// Send WINDOW_UPDATE for every receive window that has consumed at least half its size.
     fn replenish_windows(&mut self, sink: &impl Sink) {
-        let change = sink.take_recv_window_change();
-        if change != RecvWindowChange::default() {
-            self.recv_window.apply(change);
-            self.note_recv_window(sink);
-        }
-        self.replenish_connection_window(sink);
+        self.sync_recv_window(sink);
         let mut buf = std::mem::take(&mut self.replenish_buf);
         buf.clear();
         for (id, s) in self.streams.iter_mut() {

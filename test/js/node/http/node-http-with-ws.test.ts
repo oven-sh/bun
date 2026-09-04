@@ -3,7 +3,7 @@ import { bunEnv, bunExe, tls as options } from "harness";
 import http from "http";
 import https from "https";
 import { once } from "node:events";
-import type { AddressInfo } from "node:net";
+import net, { type AddressInfo } from "node:net";
 import tls from "tls";
 import { WebSocketServer, type WebSocket as WsWebSocket } from "ws";
 
@@ -60,6 +60,104 @@ test.concurrent("WebSocket upgrade should unref poll_ref from response", async (
   expect(stderr).toBe("");
   expect(exitCode).toBe(0);
 });
+
+const kBunInternals = Symbol.for("::bunternal::");
+const websocketHandshakeHeaders =
+  "Connection: Upgrade\r\nUpgrade: websocket\r\nSec-WebSocket-Version: 13\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n";
+
+function responseComplete(raw: string): boolean {
+  const headEnd = raw.indexOf("\r\n\r\n");
+  if (headEnd === -1) return false;
+  if (raw.startsWith("HTTP/1.1 101 ")) return true;
+  const contentLength = /\r\ncontent-length: (\d+)\r\n/i.exec(raw.slice(0, headEnd + 2));
+  return contentLength !== null && raw.length >= headEnd + 4 + Number(contentLength[1]);
+}
+
+async function rawUpgradeExchange(server: http.Server, requestHeaders: string): Promise<string> {
+  const { promise, resolve, reject } = Promise.withResolvers<string>();
+  server.listen(0, "127.0.0.1", () => {
+    const port = (server.address() as AddressInfo).port;
+    const socket = net.connect(port, "127.0.0.1", () => {
+      socket.write(`GET / HTTP/1.1\r\nHost: localhost:${port}\r\n${requestHeaders}\r\n`);
+    });
+    socket.setEncoding("latin1");
+    let raw = "";
+    socket.on("data", chunk => {
+      raw += chunk;
+      if (responseComplete(raw)) socket.destroy();
+    });
+    socket.on("error", reject);
+    socket.on("close", () => resolve(raw));
+  });
+  try {
+    return await promise;
+  } finally {
+    server.close();
+  }
+}
+
+const websocketData = { open() {}, message() {}, close() {}, drain() {}, ping() {}, pong() {} };
+
+test.concurrent("server.upgrade(res) on a plain request returns false without corrupting the response", async () => {
+  let upgradeResult: boolean | undefined;
+  const server = http.createServer((req, res) => {
+    const bunServer = (server as any)[kBunInternals];
+    const handle = (req.socket as any)[kBunInternals];
+    upgradeResult = bunServer.upgrade(handle, { headers: { "x-should-not-appear": "1" } });
+    res.writeHead(200, { "content-type": "text/plain", "content-length": "2" });
+    res.end("ok");
+  });
+  const raw = await rawUpgradeExchange(server, "Connection: close\r\n");
+  expect(upgradeResult).toBe(false);
+  expect(raw).toStartWith("HTTP/1.1 200 ");
+  expect(raw).not.toContain("101 Switching Protocols");
+  expect(raw).not.toContain("x-should-not-appear");
+  expect(raw.match(/HTTP\/1\.1 /g)).toHaveLength(1);
+  expect(raw.split("\r\n\r\n").at(-1)).toBe("ok");
+});
+
+test.concurrent("server.upgrade(res) on a websocket handshake delivered to 'request' succeeds", async () => {
+  let upgradeResult: boolean | undefined;
+  const server = http.createServer(req => {
+    const bunServer = (server as any)[kBunInternals];
+    const handle = (req.socket as any)[kBunInternals];
+    upgradeResult = bunServer.upgrade(handle, { data: websocketData, headers: { "x-accepted": "1" } });
+  });
+  const raw = await rawUpgradeExchange(server, websocketHandshakeHeaders);
+  expect(upgradeResult).toBe(true);
+  expect(raw).toStartWith("HTTP/1.1 101 Switching Protocols\r\n");
+  expect(raw).toContain("\r\nx-accepted: 1\r\n");
+});
+
+for (const getter of ["headers", "data"] as const) {
+  test.concurrent(`server.upgrade(res) refuses when the ${getter} option getter ends the response`, async () => {
+    let upgradeResult: boolean | undefined;
+    let getterCalls = 0;
+    const server = http.createServer((req, res) => {
+      const bunServer = (server as any)[kBunInternals];
+      const handle = (req.socket as any)[kBunInternals];
+      const options: Record<string, unknown> = getter === "headers" ? { data: websocketData } : {};
+      Object.defineProperty(options, getter, {
+        enumerable: true,
+        get() {
+          getterCalls++;
+          res.writeHead(200, { "content-type": "text/plain", "content-length": "4" });
+          res.end("nope");
+          return getter === "headers" ? { "x-should-not-appear": "1" } : websocketData;
+        },
+      });
+      upgradeResult = bunServer.upgrade(handle, options);
+    });
+    const raw = await rawUpgradeExchange(server, websocketHandshakeHeaders);
+    expect(getterCalls).toBe(1);
+    expect(upgradeResult).toBe(false);
+    expect(raw).toStartWith("HTTP/1.1 200 ");
+    expect(raw).not.toContain("101 Switching Protocols");
+    expect(raw).not.toContain("x-should-not-appear");
+    expect(raw.match(/HTTP\/1\.1 /g)).toHaveLength(1);
+    expect(raw.split("\r\n\r\n").at(-1)).toBe("nope");
+  });
+}
 
 test.concurrent("should not crash when closing sockets after upgrade", async () => {
   const { promise, resolve } = Promise.withResolvers();

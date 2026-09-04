@@ -1,6 +1,6 @@
 const { isIPv4 } = require("internal/net/isIP");
 
-const { setServerCustomOptions, setServerAppFlags, drainMicrotasks } = $cpp(
+const { setServerCustomOptions, setServerAppFlags, setServerSecureContext, enableServerKeylog, drainMicrotasks } = $cpp(
   "NodeHTTP.cpp",
   "createNodeHTTPInternalBinding",
 ) as {
@@ -20,6 +20,8 @@ const { setServerCustomOptions, setServerAppFlags, drainMicrotasks } = $cpp(
     lenientHttpFlags: number,
     httpAllowHalfOpen: boolean,
   ) => void;
+  setServerSecureContext: (server: any, tls: any) => void;
+  enableServerKeylog: (server: any) => void;
   drainMicrotasks: () => void;
 };
 
@@ -498,6 +500,7 @@ export {
   emitCloseNT,
   emitEOFIncomingMessage,
   emitErrorNextTickIfErrorListenerNT,
+  enableServerKeylog,
   eofInProgress,
   fakeSocketSymbol,
   getMaxHTTPHeaderSize,
@@ -524,6 +527,7 @@ export {
   setMaxHTTPHeaderSize,
   setServerAppFlags,
   setServerCustomOptions,
+  setServerSecureContext,
   tlsSymbol,
   typeSymbol,
   utcDate,

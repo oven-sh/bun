@@ -334,6 +334,25 @@ impl<const SSL: bool> App<SSL> {
         }
     }
 
+    pub fn listen_fd(
+        &mut self,
+        handler: c::uws_listen_handler,
+        user_data: *mut c_void,
+        fd: i32,
+        options: i32,
+    ) {
+        unsafe {
+            c::uws_app_listen_fd(
+                Self::SSL_FLAG,
+                std::ptr::from_mut::<Self>(self).cast::<uws_app_t>(),
+                fd,
+                options,
+                handler,
+                user_data,
+            )
+        }
+    }
+
     pub fn listen_on_unix_socket(
         &mut self,
         handler: extern "C" fn(*mut UwsListenSocket, *const c_char, i32, *mut c_void),
@@ -494,6 +513,18 @@ impl<const SSL: bool> ListenSocket<SSL> {
         // (a listen socket IS a us_socket_t).
         crate::socket::NewSocketHandler::<SSL>::from(std::ptr::from_mut::<Self>(self).cast())
     }
+
+    #[inline]
+    pub fn set_default_ssl_ctx(&mut self, ctx: *mut crate::SslCtx) {
+        bun_opaque::opaque_deref_mut(std::ptr::from_mut::<Self>(self).cast::<UwsListenSocket>())
+            .set_default_ssl_ctx(ctx)
+    }
+
+    #[inline]
+    pub fn enable_keylog(&mut self) {
+        bun_opaque::opaque_deref_mut(std::ptr::from_mut::<Self>(self).cast::<UwsListenSocket>())
+            .enable_keylog()
+    }
 }
 
 #[derive(strum::IntoStaticStr, Debug)]
@@ -644,6 +675,14 @@ pub mod c {
             app: *mut uws_app_t,
             host: *const c_char,
             port: u16,
+            options: i32,
+            handler: uws_listen_handler,
+            user_data: *mut c_void,
+        );
+        pub(crate) fn uws_app_listen_fd(
+            ssl: i32,
+            app: *mut uws_app_t,
+            fd: i32,
             options: i32,
             handler: uws_listen_handler,
             user_data: *mut c_void,

@@ -64,28 +64,28 @@ cluster._setupWorker = function () {
     }
   });
 
-  onInternalMessage(worker, onmessage);
+  process.on("internalMessage", onmessage);
+  onInternalMessage(worker, emitInternalMessage);
   send({ act: "online" });
 
+  function emitInternalMessage(message, handle) {
+    message.cmd = "NODE_CLUSTER";
+    if (message.act === "newconn" && typeof handle === "number" && handle >= 0) {
+      handle = makeConnectionHandle(handle);
+    }
+    process.emit("internalMessage", message, handle);
+  }
+
   function onmessage(message, handle) {
+    if (message === null || typeof message !== "object" || message.cmd !== "NODE_CLUSTER") return;
     const ack = message.ack;
     if (ack !== undefined) {
       const callback = callbacks.$get(ack);
       if (callback !== undefined) {
         callbacks.$delete(ack);
-        callback.$call(this, message, handle);
+        callback.$call(worker, message, handle);
         return;
       }
-    }
-    if (message.act === "newconn" && typeof handle === "number" && handle >= 0) {
-      handle = makeConnectionHandle(handle);
-    }
-    try {
-      process.emit("internalMessage", message, handle);
-    } catch (e) {
-      process.nextTick(() => {
-        throw e;
-      });
     }
     if (message.act === "newconn") {
       onconnection(message, handle);
@@ -298,6 +298,7 @@ function send(message, cb?) {
   seq += 1;
   return process.send(wire, undefined, kInternalSendOptions);
 }
+cluster._sendInternal = send;
 
 // Extend generic Worker with methods specific to worker processes.
 Worker.prototype.disconnect = function () {

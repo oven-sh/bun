@@ -21,6 +21,7 @@ extern "C" uint64_t uws_res_get_remote_address_info(void* res, const char** dest
 extern "C" uint64_t uws_res_get_local_address_info(void* res, const char** dest, int* port, bool* is_ipv6);
 extern "C" EncodedJSValue us_socket_buffered_js_write(void* socket, bool is_ssl, bool ended, us_socket_stream_buffer_t* streamBuffer, JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue data, JSC::EncodedJSValue encoding);
 extern "C" int us_socket_is_ssl_handshake_finished(struct us_socket_t* s);
+extern "C" LIBUS_SOCKET_DESCRIPTOR us_socket_get_fd(struct us_socket_t* s);
 extern "C" int us_socket_ssl_handshake_callback_has_fired(struct us_socket_t* s);
 
 namespace Bun {
@@ -916,3 +917,21 @@ JSC::Structure* createNodeHTTPServerSocketStructure(JSC::VM& vm, JSC::JSGlobalOb
 }
 
 } // namespace Bun
+
+extern "C" [[ZIG_EXPORT(nothrow)]] int64_t NodeHTTP__getServerSocketFd(JSC::EncodedJSValue value)
+{
+    JSC::JSValue decoded = JSC::JSValue::decode(value);
+    auto* socket = dynamicDowncast<Bun::JSNodeHTTPServerSocket>(decoded);
+    if (!socket || socket->isClosed())
+        return -1;
+    return (int64_t)us_socket_get_fd(socket->socket);
+}
+
+extern "C" [[ZIG_EXPORT(nothrow)]] void NodeHTTP__pauseServerSocket(JSC::EncodedJSValue value)
+{
+    JSC::JSValue decoded = JSC::JSValue::decode(value);
+    auto* socket = dynamicDowncast<Bun::JSNodeHTTPServerSocket>(decoded);
+    if (!socket || socket->isClosed())
+        return;
+    us_socket_pause(socket->socket);
+}

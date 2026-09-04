@@ -86,6 +86,14 @@ impl ListenSocket {
         unsafe { us_listen_socket_remove_server_name(self, hostname.as_ptr()) }
     }
 
+    pub fn set_default_ssl_ctx(&mut self, ctx: *mut SslCtx) {
+        unsafe { us_listen_socket_set_default_ssl_ctx(self, ctx) }
+    }
+
+    pub fn enable_keylog(&mut self) {
+        us_listen_socket_enable_keylog(self)
+    }
+
     pub fn on_server_name(
         &mut self,
         cb: extern "C" fn(*mut ListenSocket, *const c_char, *mut c_int, *mut c_void) -> *mut c_void,
@@ -109,6 +117,8 @@ unsafe extern "C" {
         user: *mut c_void,
     ) -> c_int;
     fn us_listen_socket_remove_server_name(ls: *mut ListenSocket, hostname: *const c_char);
+    fn us_listen_socket_set_default_ssl_ctx(ls: *mut ListenSocket, ctx: *mut SslCtx);
+    safe fn us_listen_socket_enable_keylog(ls: &mut ListenSocket);
     safe fn us_listen_socket_on_server_name(
         ls: &mut ListenSocket,
         cb: extern "C" fn(*mut ListenSocket, *const c_char, *mut c_int, *mut c_void) -> *mut c_void,

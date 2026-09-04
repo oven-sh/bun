@@ -3,8 +3,10 @@
 #include "JSSocketAddressDTO.h"
 #include "ZigGlobalObject.h"
 #include "ZigGeneratedClasses.h"
+#include "JSBuffer.h"
 #include "helpers.h"
 #include <JavaScriptCore/JSCJSValueInlines.h>
+#include <JavaScriptCore/ObjectConstructor.h>
 #include <wtf/text/WTFString.h>
 #include <cmath>
 
@@ -36,6 +38,7 @@ JSC_DECLARE_HOST_FUNCTION(jsFunctionNodeHTTPServerSocketSetResponseTrailers);
 JSC_DECLARE_HOST_FUNCTION(jsFunctionNodeHTTPServerSocketIsRequestTimedOut);
 JSC_DECLARE_HOST_FUNCTION(jsFunctionNodeHTTPServerSocketStartPipelinedResponse);
 JSC_DECLARE_HOST_FUNCTION(jsFunctionNodeHTTPServerSocketStopParsing);
+JSC_DECLARE_HOST_FUNCTION(jsFunctionNodeHTTPServerSocketDrainKeylog);
 JSC_DECLARE_CUSTOM_GETTER(jsNodeHttpServerSocketGetterResponse);
 JSC_DECLARE_CUSTOM_GETTER(jsNodeHttpServerSocketGetterRemoteAddress);
 JSC_DECLARE_CUSTOM_GETTER(jsNodeHttpServerSocketGetterLocalAddress);
@@ -72,6 +75,7 @@ static const JSC::HashTableValue JSNodeHTTPServerSocketPrototypeTableValues[] = 
     { "isRequestTimedOut"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DontEnum), JSC::NoIntrinsic, { JSC::HashTableValue::NativeFunctionType, jsFunctionNodeHTTPServerSocketIsRequestTimedOut, 2 } },
     { "startPipelinedResponse"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DontEnum), JSC::NoIntrinsic, { JSC::HashTableValue::NativeFunctionType, jsFunctionNodeHTTPServerSocketStartPipelinedResponse, 3 } },
     { "stopParsing"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DontEnum), JSC::NoIntrinsic, { JSC::HashTableValue::NativeFunctionType, jsFunctionNodeHTTPServerSocketStopParsing, 0 } },
+    { "drainKeylog"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DontEnum), JSC::NoIntrinsic, { JSC::HashTableValue::NativeFunctionType, jsFunctionNodeHTTPServerSocketDrainKeylog, 0 } },
     { "secureEstablished"_s, static_cast<unsigned>(JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::ReadOnly), JSC::NoIntrinsic, { JSC::HashTableValue::GetterSetterType, jsNodeHttpServerSocketGetterIsSecureEstablished, noOpSetter } },
     { "servername"_s, static_cast<unsigned>(JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::ReadOnly), JSC::NoIntrinsic, { JSC::HashTableValue::GetterSetterType, jsNodeHttpServerSocketGetterServername, noOpSetter } },
     { "authorizationError"_s, static_cast<unsigned>(JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::ReadOnly), JSC::NoIntrinsic, { JSC::HashTableValue::GetterSetterType, jsNodeHttpServerSocketGetterAuthorizationError, noOpSetter } },
@@ -84,6 +88,34 @@ void JSNodeHTTPServerSocketPrototype::finishCreation(JSC::VM& vm)
     ASSERT(inherits(info()));
     Bun::reifyStaticPropertyTable(vm, info(), JSNodeHTTPServerSocketPrototypeTableValues, *this);
     this->structure()->setMayBePrototype(true);
+}
+
+extern "C" int us_socket_pop_keylog(us_socket_t* s, unsigned char* out, int out_cap);
+
+JSC_DEFINE_HOST_FUNCTION(jsFunctionNodeHTTPServerSocketDrainKeylog, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    auto& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto* thisObject = dynamicDowncast<JSNodeHTTPServerSocket>(callFrame->thisValue());
+    if (!thisObject || thisObject->isClosed() || !thisObject->socket) [[unlikely]] {
+        return JSValue::encode(JSC::jsNull());
+    }
+    unsigned char line[4096 + 1];
+    int length = us_socket_pop_keylog(thisObject->socket, line, sizeof(line));
+    if (length <= 0) {
+        return JSValue::encode(JSC::jsNull());
+    }
+    JSC::JSArray* array = JSC::constructEmptyArray(globalObject, nullptr, 0);
+    RETURN_IF_EXCEPTION(scope, {});
+    unsigned index = 0;
+    while (length > 0) {
+        auto* buffer = WebCore::createBuffer(globalObject, std::span<const uint8_t>(line, static_cast<size_t>(length)));
+        RETURN_IF_EXCEPTION(scope, {});
+        array->putDirectIndex(globalObject, index++, buffer);
+        RETURN_IF_EXCEPTION(scope, {});
+        length = us_socket_pop_keylog(thisObject->socket, line, sizeof(line));
+    }
+    return JSValue::encode(array);
 }
 
 // Implementation of host functions

@@ -29,4 +29,5 @@ export default {
   // tests that inspect socket[kTimeout].
   kTimeout: Symbol.for("::buntimeout::"),
   getTimerDuration,
+  TIMEOUT_MAX,
 };

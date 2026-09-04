@@ -1641,7 +1641,6 @@ where
         object: JSValue,
         optional: Option<JSValue>,
     ) -> JsResult<JSValue> {
-        use super::node_http_response::Flags as NodeHTTPResponseFlags;
         use bun_core::Utf8Bytes;
         use bun_jsc::HTTPHeaderName;
 
@@ -1673,15 +1672,7 @@ where
             // SAFETY: from_js returns a live *mut NodeHTTPResponse; shared —
             // its mutable state is `Cell`/`JsCell` and `upgrade` takes `&self`.
             let node_http_response = unsafe { &*node_http_response };
-            if node_http_response
-                .flags
-                .get()
-                .contains(NodeHTTPResponseFlags::ENDED)
-                || node_http_response
-                    .flags
-                    .get()
-                    .contains(NodeHTTPResponseFlags::SOCKET_CLOSED)
-            {
+            if !node_http_response.can_upgrade() {
                 return Ok(JSValue::FALSE);
             }
 
@@ -1760,6 +1751,9 @@ where
                             // Remove from headers so it's not written twice (once here and once by upgrade())
                             fetch_headers_to_use
                                 .fast_remove(HTTPHeaderName::SecWebSocketExtensions);
+                        }
+                        if !node_http_response.can_upgrade() {
+                            return Ok(JSValue::FALSE);
                         }
                         if let Some(raw_response) = node_http_response.raw_response.get() {
                             // we must write the status first so that 200 OK isn't written
@@ -3692,6 +3686,74 @@ fn server_set_on_connection(
     Ok(JSValue::UNDEFINED)
 }
 
+/// `https.Server#setSecureContext()`: build a fresh `SSL_CTX` from `options`
+/// and swap it in as the listener's default; live connections keep the old
+/// ctx. <https://github.com/nodejs/node/blob/main/lib/_tls_wrap.js>
+fn server_set_secure_context(
+    global: &JSGlobalObject,
+    server: JSValue,
+    options: JSValue,
+) -> JsResult<JSValue> {
+    if !server.is_object() {
+        return Err(global.throw(format_args!(
+            "Failed to set secure context: The 'this' value is not a Server."
+        )));
+    }
+    let vm = global.bun_vm();
+    macro_rules! handle {
+        ($T:ty) => {
+            if let Some(this) = server.as_::<$T>() {
+                use crate::socket::{SSLConfig, SSLConfigFromJs as _};
+                let Some(config) = SSLConfig::from_js(vm, global, options)? else {
+                    return Err(global.throw(format_args!(
+                        "setSecureContext() requires an options object with TLS options"
+                    )));
+                };
+                let mut err = uws::create_bun_socket_error_t::none;
+                let Some(ctx) = config.as_usockets().create_ssl_context(&mut err) else {
+                    if super::throw_ssl_error_if_necessary(global) {
+                        return Err(bun_jsc::JsError::Thrown);
+                    }
+                    return Err(global.throw(format_args!(
+                        "Failed to create secure context from the provided options"
+                    )));
+                };
+                if let Some(listener) = unsafe { &mut *this }.listener {
+                    bun_opaque::opaque_deref_mut(listener).set_default_ssl_ctx(ctx);
+                }
+                unsafe { bun_boringssl_sys::SSL_CTX_free(ctx) };
+                return Ok(JSValue::UNDEFINED);
+            }
+        };
+    }
+    handle!(HTTPSServer);
+    handle!(DebugHTTPSServer);
+    Err(global.throw(format_args!(
+        "setSecureContext is only supported on TLS servers"
+    )))
+}
+
+fn server_enable_keylog(global: &JSGlobalObject, server: JSValue) -> JsResult<JSValue> {
+    if !server.is_object() {
+        return Err(global.throw(format_args!(
+            "Failed to enable keylog: The 'this' value is not a Server."
+        )));
+    }
+    macro_rules! handle {
+        ($T:ty) => {
+            if let Some(this) = server.as_::<$T>() {
+                if let Some(listener) = unsafe { &mut *this }.listener {
+                    bun_opaque::opaque_deref_mut(listener).enable_keylog();
+                }
+                return Ok(JSValue::UNDEFINED);
+            }
+        };
+    }
+    handle!(HTTPSServer);
+    handle!(DebugHTTPSServer);
+    Ok(JSValue::UNDEFINED)
+}
+
 fn server_set_app_flags(
     global: &JSGlobalObject,
     server: JSValue,
@@ -3825,6 +3887,20 @@ extern "C" fn server_set_on_connection_shim(
     callback: JSValue,
 ) -> JSValue {
     host_fn::to_js_host_fn_result(global, server_set_on_connection(global, server, callback))
+}
+
+#[unsafe(export_name = "Server__enableKeylog")]
+extern "C" fn server_enable_keylog_shim(global: &JSGlobalObject, server: JSValue) -> JSValue {
+    host_fn::to_js_host_fn_result(global, server_enable_keylog(global, server))
+}
+
+#[unsafe(export_name = "Server__setSecureContext")]
+extern "C" fn server_set_secure_context_shim(
+    global: &JSGlobalObject,
+    server: JSValue,
+    options: JSValue,
+) -> JSValue {
+    host_fn::to_js_host_fn_result(global, server_set_secure_context(global, server, options))
 }
 
 #[unsafe(export_name = "Server__setMaxHTTPHeaderSize")]

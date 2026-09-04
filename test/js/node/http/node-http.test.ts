@@ -1380,6 +1380,19 @@ describe("node:http", () => {
     });
   });
 
+  test.each([["80.5"], ["1e9"], [""], [{ port: "80.5" }], [{ port: "1e9" }], [{ port: "" }]])(
+    "listen(%j) throws ERR_SOCKET_BAD_PORT synchronously",
+    arg => {
+      const server = createServer();
+      server.on("error", () => {});
+      try {
+        expect(() => server.listen(arg)).toThrow(expect.objectContaining({ code: "ERR_SOCKET_BAD_PORT" }));
+      } finally {
+        server.close();
+      }
+    },
+  );
+
   test("error event not fired, issue#4651", async () => {
     const { promise, resolve } = Promise.withResolvers();
     const server = createServer((req, res) => {
@@ -1579,6 +1592,66 @@ it("should propagate exception in async data handler", async () => {
   const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
   expect(stdout).toContain("Test passed");
   expect(exitCode).toBe(0);
+});
+
+describe("a 'request' listener that fails", () => {
+  async function rawExchangeWithThrowingHandler(
+    handlerBody: string,
+    request = "GET / HTTP/1.1\\r\\nHost: a\\r\\nConnection: close\\r\\n\\r\\n",
+  ) {
+    const script = `
+      process.on("uncaughtException", () => {});
+      const http = require("node:http");
+      const net = require("node:net");
+      const server = http.createServer((req, res) => {
+        ${handlerBody}
+      });
+      server.listen(0, "127.0.0.1", () => {
+        const socket = net.connect(server.address().port, "127.0.0.1", () => {
+          socket.write("${request}");
+        });
+        let raw = "";
+        socket.setEncoding("latin1");
+        socket.on("data", c => (raw += c));
+        socket.on("error", () => {});
+        socket.on("close", () => {
+          console.log(JSON.stringify({ raw }));
+          server.close();
+        });
+      });
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(exitCode).toBe(0);
+    return JSON.parse(stdout).raw as string;
+  }
+
+  it("throwing with nothing written responds 500, never an empty 200", async () => {
+    const raw = await rawExchangeWithThrowingHandler(`throw new Error("boom");`);
+    expect(raw).toStartWith("HTTP/1.1 500 ");
+    expect(raw).not.toContain("HTTP/1.1 200");
+  });
+
+  it("throwing after body bytes were written never completes or corrupts the chunked framing", async () => {
+    const raw = await rawExchangeWithThrowingHandler(
+      `
+        res.writeHead(200, { "Content-Type": "text/plain" });
+        res.write("partial");
+        res.flushHeaders();
+        throw new Error("boom");
+    `,
+      "GET / HTTP/1.1\\r\\nHost: a\\r\\n\\r\\n",
+    );
+    expect(raw).not.toContain("\r\n0\r\n\r\n");
+    const body = raw.split("\r\n\r\n").slice(1).join("\r\n\r\n");
+    const afterFirstChunk = body.replace(/^7\r\npartial\r\n/, "");
+    expect(afterFirstChunk === "" || /^[0-9a-fA-F]+[;\r]/.test(afterFirstChunk)).toBe(true);
+  });
 });
 
 // This test is disabled because it can OOM the CI

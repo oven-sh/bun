@@ -6,6 +6,37 @@ import { createServer as createHttpsServer } from "https";
 import { AddressInfo, connect, Server } from "net";
 import { connect as tlsConnect } from "tls";
 
+test.each([0, 1024])("chunked trailer section is bounded when maxHeaderSize is %d", async maxHeaderSize => {
+  let sawRequestEnd = false;
+  const server = createServer({ maxHeaderSize }, (req, res) => {
+    req.resume();
+    req.on("end", () => {
+      sawRequestEnd = true;
+      res.end("done");
+    });
+  });
+  server.listen(0, "127.0.0.1");
+  await once(server, "listening");
+  try {
+    const socket = connect((server.address() as AddressInfo).port, "127.0.0.1");
+    await once(socket, "connect");
+    let response = "";
+    socket.on("data", chunk => (response += chunk.toString()));
+    socket.on("error", () => {});
+    const closed = once(socket, "close");
+    socket.write("POST / HTTP/1.1\r\nHost: a\r\nTransfer-Encoding: chunked\r\n\r\n0\r\n");
+    const junkLine = Buffer.from("x-trailer-flood: yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy\r\n");
+    for (let sent = 0; sent < 64 * 1024; sent += junkLine.length) {
+      socket.write(junkLine);
+    }
+    await closed;
+    expect(response).not.toContain("HTTP/1.1 200");
+    expect(sawRequestEnd).toBe(false);
+  } finally {
+    server.close();
+  }
+});
+
 const fixture = "node-http-transfer-encoding-fixture.ts";
 test(`should not duplicate transfer-encoding header in request`, async () => {
   const { resolve, promise } = Promise.withResolvers();

@@ -2633,12 +2633,9 @@ impl<'a> StringBuilder<'a> {
         Ok(())
     }
 
-    #[inline]
+    /// Keys the pool by the hash of `slice`, as `count` does, so it never writes uncounted bytes.
     pub(crate) fn append<T: StringBuilderType>(&mut self, slice: &[u8]) -> T {
-        self.append_with_hash::<T>(slice, SemverStringBuilder::string_hash(slice))
-    }
-
-    pub(crate) fn append_with_hash<T: StringBuilderType>(&mut self, slice: &[u8], hash: u64) -> T {
+        let hash = SemverStringBuilder::string_hash(slice);
         if SemverString::can_inline(slice) {
             return T::from_init(self.string_bytes.as_slice(), slice, hash);
         }

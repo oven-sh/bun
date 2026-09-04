@@ -2732,11 +2732,12 @@ extern "C" JSC::EncodedJSValue JSC__JSValue__unwrapBoxedPrimitive(JSGlobalObject
 extern "C" [[ZIG_EXPORT(zero_is_throw)]] JSC::EncodedJSValue EncodedSlice__toJSONObject(const EncodedSlice* strPtr, JSC::JSGlobalObject* globalObject)
 {
     ASSERT_NO_PENDING_EXCEPTION(globalObject);
-    auto str = Zig::toString(*strPtr);
+    // Zig::toString() is null for an empty slice, and JSONParseWithException throws nothing for null.
+    auto str = strPtr->len ? Zig::toString(*strPtr) : emptyString();
     auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
 
     if (str.isNull()) {
-        // isNull() will be true for empty strings and for strings which are too long.
+        // isNull() will be true for strings which are too long, and when an allocation fails.
         // So we need to check the length is plausibly due to a long string.
         if (strPtr->len > Bun__stringSyntheticAllocationLimit || strPtr->len > WTF::String::MaxLength) {
             scope.throwException(globalObject, Bun::createError(globalObject, Bun::ErrorCode::ERR_STRING_TOO_LONG, "Cannot parse a JSON string longer than 2147483647 characters"_s));
@@ -2744,8 +2745,7 @@ extern "C" [[ZIG_EXPORT(zero_is_throw)]] JSC::EncodedJSValue EncodedSlice__toJSO
         }
     }
 
-    // JSONParseWithException does not propagate exceptions as expected. See #5859
-    JSValue result = JSONParse(globalObject, str);
+    JSValue result = JSONParseWithException(globalObject, str);
     RETURN_IF_EXCEPTION(scope, {});
     if (!result) {
         scope.throwException(globalObject, createSyntaxError(globalObject, "Failed to parse JSON"_s));

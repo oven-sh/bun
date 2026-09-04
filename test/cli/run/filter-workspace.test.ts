@@ -478,7 +478,22 @@ describe("bun", () => {
   });
 
   test("should error with missing script", () => {
-    runInCwdFailure(cwd_root, "*", "notpresent", /error: No workspace packages matched the filter "\*"/);
+    runInCwdFailure(cwd_root, "*", "notpresent", /error: Script "notpresent" not found in \d+ packages matching "\*"/);
+    runInCwdFailure(cwd_root, "pkga", "notpresent", /error: Script "notpresent" not found in package "pkga"/);
+  });
+  test("should error once when the filter matches no package", () => {
+    const { exitCode, stdout, stderr } = spawnSync({
+      cwd: cwd_root,
+      cmd: [bunExe(), "run", "--filter", "nosuchpkg", "present"],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    expect(stdout.toString()).toBeEmpty();
+    // Said once, as an error — not as a warning and then again as an error.
+    expect(stderr.toString().match(/No workspace packages matched/g)).toEqual(["No workspace packages matched"]);
+    expect(stderr.toString()).toContain(`error: No workspace packages matched the filter "nosuchpkg"`);
+    expect(exitCode).toBe(1);
   });
   test("warns about a filter that matched nothing while running the others", () => {
     const { exitCode, stdout, stderr } = spawnSync({

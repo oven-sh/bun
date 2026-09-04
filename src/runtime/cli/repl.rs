@@ -102,7 +102,6 @@ enum Key {
     CtrlL,
     CtrlN,
     CtrlP,
-    CtrlR,
     CtrlT,
     CtrlU,
     CtrlW,
@@ -115,8 +114,6 @@ enum Key {
     Delete,
     Home,
     End,
-    PageUp,
-    PageDown,
     ArrowUp,
     ArrowDown,
     ArrowRight,
@@ -153,7 +150,6 @@ impl Key {
             12 => Key::CtrlL,
             14 => Key::CtrlN,
             16 => Key::CtrlP,
-            18 => Key::CtrlR,
             20 => Key::CtrlT,
             21 => Key::CtrlU,
             23 => Key::CtrlW,
@@ -1214,11 +1210,9 @@ impl<'a> Repl<'a> {
                         if fourth == b'~' {
                             break 'blk match third {
                                 b'1' => Key::Home,
-                                b'2' => Key::Unknown, // insert
                                 b'3' => Key::Delete,
                                 b'4' => Key::End,
-                                b'5' => Key::PageUp,
-                                b'6' => Key::PageDown,
+                                // insert / page up / page down: consumed, not bound
                                 _ => Key::Unknown,
                             };
                         } else if fourth == b';' {
@@ -2503,7 +2497,7 @@ impl<'a> Repl<'a> {
                     self.update_suggestion();
                     self.refresh_line();
                 }
-                _ => {}
+                Key::Escape | Key::Unknown => {}
             }
         }
 

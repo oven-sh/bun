@@ -426,7 +426,9 @@ JSC_DEFINE_HOST_FUNCTION(jsSignProtoFuncSign, (JSC::JSGlobalObject * lexicalGlob
     }
 
     if (!options.isCell()) {
-        return Bun::ERR::INVALID_ARG_TYPE(scope, lexicalGlobalObject, "key"_s, "ArrayBuffer, Buffer, TypedArray, DataView, string, KeyObject, or CryptoKey"_s, options);
+        // Node: preparePrivateKey(privateKey, 'privateKey') with getKeyTypes(true).
+        static constexpr ASCIILiteral keyTypes[] = { "ArrayBuffer"_s, "Buffer"_s, "TypedArray"_s, "DataView"_s, "string"_s, "KeyObject"_s, "CryptoKey"_s };
+        return Bun::ERR::INVALID_ARG_TYPE(scope, lexicalGlobalObject, "privateKey"_s, keyTypes, options);
     }
 
     JSValue outputEncodingValue = callFrame->argument(1);

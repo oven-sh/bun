@@ -1316,3 +1316,101 @@ describe("Certificate spkac argument validation", () => {
     expect(new crypto.Certificate().verifySpkac("not a spkac", "utf8")).toBe(false);
   });
 });
+
+// These native entry points used to hand ERR_INVALID_ARG_TYPE an already flattened
+// "A, B, or C" string, which always rendered as "must be of type A, B, or C". Node
+// passes a list and groups it into "one of type ..." (primitives) and "an instance
+// of ..." (classes); the messages below are Node v26.3.0's verbatim.
+describe("ERR_INVALID_ARG_TYPE messages group accepted types like Node", () => {
+  const dhTypes =
+    "must be one of type number or string or an instance of ArrayBuffer, Buffer, TypedArray, or DataView.";
+  const addRemTypes = "must be of type bigint or an instance of ArrayBuffer, TypedArray, Buffer, or DataView.";
+  const byteSourceTypes = "must be of type string or an instance of ArrayBuffer, TypedArray, DataView, or Buffer.";
+  const keyTypes =
+    "must be of type string or an instance of ArrayBuffer, Buffer, TypedArray, DataView, KeyObject, or CryptoKey.";
+
+  it.each([
+    [
+      "createDiffieHellman(sizeOrKey)",
+      () => crypto.createDiffieHellman({}),
+      `The "sizeOrKey" argument ${dhTypes} Received an instance of Object`,
+    ],
+    [
+      "new DiffieHellman(sizeOrKey)",
+      () => new crypto.DiffieHellman(true),
+      `The "sizeOrKey" argument ${dhTypes} Received type boolean (true)`,
+    ],
+    [
+      "createDiffieHellman(prime, generator)",
+      () => crypto.createDiffieHellman(Buffer.from("abcd", "hex"), {}),
+      `The "generator" argument ${dhTypes} Received an instance of Object`,
+    ],
+    [
+      "getCipherInfo(nameOrNid)",
+      () => crypto.getCipherInfo({}),
+      'The "nameOrNid" argument must be one of type string or number. Received an instance of Object',
+    ],
+    [
+      "generatePrimeSync options.add",
+      () => crypto.generatePrimeSync(8, { add: {} }),
+      `The "options.add" property ${addRemTypes} Received an instance of Object`,
+    ],
+    [
+      "generatePrimeSync options.rem",
+      () => crypto.generatePrimeSync(8, { rem: "x" }),
+      `The "options.rem" property ${addRemTypes} Received type string ('x')`,
+    ],
+    [
+      "generatePrime options.add",
+      () => crypto.generatePrime(8, { add: {} }, () => {}),
+      `The "options.add" property ${addRemTypes} Received an instance of Object`,
+    ],
+    [
+      "generatePrime options.rem",
+      () => crypto.generatePrime(8, { rem: 1 }, () => {}),
+      `The "options.rem" property ${addRemTypes} Received type number (1)`,
+    ],
+    [
+      "hkdfSync salt",
+      () => crypto.hkdfSync("sha256", "key", {}, "info", 16),
+      `The "salt" argument ${byteSourceTypes} Received an instance of Object`,
+    ],
+    [
+      "hkdfSync info",
+      () => crypto.hkdfSync("sha256", "key", "salt", 123, 16),
+      `The "info" argument ${byteSourceTypes} Received type number (123)`,
+    ],
+    [
+      "hkdf salt",
+      () => crypto.hkdf("sha256", "key", 123, "info", 16, () => {}),
+      `The "salt" argument ${byteSourceTypes} Received type number (123)`,
+    ],
+    [
+      "hkdf info",
+      () => crypto.hkdf("sha256", "key", "salt", {}, 16, () => {}),
+      `The "info" argument ${byteSourceTypes} Received an instance of Object`,
+    ],
+    [
+      "generateKeyPairSync dh options.prime",
+      () => crypto.generateKeyPairSync("dh", { prime: "x" }),
+      "The \"options.prime\" property must be an instance of Buffer, TypedArray, or DataView. Received type string ('x')",
+    ],
+    [
+      "generateKeyPair dh options.prime",
+      () => crypto.generateKeyPair("dh", { prime: {} }, () => {}),
+      'The "options.prime" property must be an instance of Buffer, TypedArray, or DataView. Received an instance of Object',
+    ],
+    [
+      "Sign#sign(privateKey)",
+      () => crypto.createSign("SHA256").update("data").sign(123),
+      `The "privateKey" argument ${keyTypes} Received type number (123)`,
+    ],
+    [
+      "Sign#sign(privateKey) boolean",
+      () => crypto.createSign("SHA256").update("data").sign(true),
+      `The "privateKey" argument ${keyTypes} Received type boolean (true)`,
+    ],
+  ])("%s", (_label, fn, message) => {
+    expect(fn).toThrow(expect.objectContaining({ name: "TypeError", code: "ERR_INVALID_ARG_TYPE", message }));
+  });
+});

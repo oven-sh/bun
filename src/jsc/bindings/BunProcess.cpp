@@ -2265,7 +2265,8 @@ __attribute__((minsize)) JSValue Process::emitWarning(JSC::JSGlobalObject* lexic
     } else if (warning.isCell() && warning.asCell()->type() == ErrorInstanceType) {
         errorInstance = warning.getObject();
     } else {
-        return JSValue::decode(Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, "warning"_s, "string or Error"_s, warning));
+        static constexpr ASCIILiteral warningTypes[] = { "Error"_s, "string"_s };
+        return JSValue::decode(Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, "warning"_s, warningTypes, warning));
     }
 
     if (!code.isUndefined()) errorInstance->putDirect(vm, builtinNames(vm).codePublicName(), code, JSC::PropertyAttribute::DontEnum | 0);
@@ -3351,9 +3352,12 @@ JSC_DEFINE_HOST_FUNCTION(Process_functiongetgroups, (JSGlobalObject * globalObje
     return JSValue::encode(groups);
 }
 
+// Node's validateId(), shared by the set*id, setgroups, and initgroups arguments.
+static constexpr ASCIILiteral idTypes[] = { "number"_s, "string"_s };
+
 static JSValue maybe_uid_by_name(JSC::ThrowScope& throwScope, JSGlobalObject* globalObject, JSValue value)
 {
-    if (!value.isNumber() && !value.isString()) return JSValue::decode(Bun::ERR::INVALID_ARG_TYPE(throwScope, globalObject, "id"_s, "number or string"_s, value));
+    if (!value.isNumber() && !value.isString()) return JSValue::decode(Bun::ERR::INVALID_ARG_TYPE(throwScope, globalObject, "id"_s, idTypes, value));
     if (!value.isString()) return value;
 
     auto str = value.getString(globalObject);
@@ -3375,7 +3379,7 @@ static JSValue maybe_uid_by_name(JSC::ThrowScope& throwScope, JSGlobalObject* gl
 
 static JSValue maybe_gid_by_name(JSC::ThrowScope& throwScope, JSGlobalObject* globalObject, JSValue value)
 {
-    if (!value.isNumber() && !value.isString()) return JSValue::decode(Bun::ERR::INVALID_ARG_TYPE(throwScope, globalObject, "id"_s, "number or string"_s, value));
+    if (!value.isNumber() && !value.isString()) return JSValue::decode(Bun::ERR::INVALID_ARG_TYPE(throwScope, globalObject, "id"_s, idTypes, value));
     if (!value.isString()) return value;
 
     auto str = value.getString(globalObject);
@@ -3512,7 +3516,7 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionsetgroups, (JSGlobalObject * globalObje
             RETURN_IF_EXCEPTION(scope, {});
             continue;
         }
-        return Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, name, "number or string"_s, item);
+        return Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, name, idTypes, item);
     }
 
     auto result = callWithoutThreadSuspension([&] { return setgroups(count, groupsStack); });
@@ -3520,10 +3524,6 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionsetgroups, (JSGlobalObject * globalObje
     RETURN_IF_EXCEPTION(scope, {});
     return JSValue::encode(jsNumber(result));
 }
-
-// Node reports initgroups argument-type failures as
-// "must be one of type number or string".
-static constexpr ASCIILiteral initgroupsIdTypes[] = { "number"_s, "string"_s };
 
 JSC_DEFINE_HOST_FUNCTION(Process_functioninitgroups, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
@@ -3537,13 +3537,13 @@ JSC_DEFINE_HOST_FUNCTION(Process_functioninitgroups, (JSGlobalObject * globalObj
     // negatives, and non-integers fail deterministically instead of being
     // coerced into an unrelated uid/gid by toUInt32().
     if (!user.isNumber() && !user.isString())
-        return Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, "user"_s, std::span<const ASCIILiteral> { initgroupsIdTypes }, user);
+        return Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, "user"_s, idTypes, user);
     if (user.isNumber()) {
         Bun::V::validateUint32(scope, globalObject, user, "user"_s, jsUndefined());
         RETURN_IF_EXCEPTION(scope, {});
     }
     if (!extraGroup.isNumber() && !extraGroup.isString())
-        return Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, "extraGroup"_s, std::span<const ASCIILiteral> { initgroupsIdTypes }, extraGroup);
+        return Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, "extraGroup"_s, idTypes, extraGroup);
     if (extraGroup.isNumber()) {
         Bun::V::validateUint32(scope, globalObject, extraGroup, "extraGroup"_s, jsUndefined());
         RETURN_IF_EXCEPTION(scope, {});

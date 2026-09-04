@@ -176,7 +176,8 @@ void copyBufferOrString(JSGlobalObject* lexicalGlobalObject, ThrowScope& scope, 
     } else if (auto* buf = dynamicDowncast<JSArrayBuffer>(value)) {
         buffer.append(buf->impl()->span());
     } else {
-        ERR::INVALID_ARG_TYPE(scope, lexicalGlobalObject, name, "string, ArrayBuffer, TypedArray, Buffer"_s, value);
+        static constexpr ASCIILiteral byteSourceTypes[] = { "string"_s, "ArrayBuffer"_s, "TypedArray"_s, "DataView"_s, "Buffer"_s };
+        ERR::INVALID_ARG_TYPE(scope, lexicalGlobalObject, name, byteSourceTypes, value);
     }
 }
 

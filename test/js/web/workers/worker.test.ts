@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { once } from "events";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, isDebug, tempDir } from "harness";
 import path from "path";
 import wt from "worker_threads";
 
@@ -425,6 +425,8 @@ describe("web worker", () => {
     // terminate() landing while the worker reports that its entry point does not
     // resolve: the report is skipped, not turned into a panic.
     test("terminate() while the entry point fails to resolve", async () => {
+      // Every round covers the eight terminate offsets once.
+      const rounds = isDebug ? 3 : 12;
       await using proc = Bun.spawn({
         cmd: [
           bunExe(),
@@ -438,7 +440,7 @@ describe("web worker", () => {
              await closed;
              done++;
            }
-           for (let r = 0; r < 12; r++) await Promise.all(Array.from({ length: 8 }, (_, i) => one(r * 8 + i)));
+           for (let r = 0; r < ${rounds}; r++) await Promise.all(Array.from({ length: 8 }, (_, i) => one(r * 8 + i)));
            console.log("done", done);`,
         ],
         env: bunEnv,
@@ -446,21 +448,37 @@ describe("web worker", () => {
         stderr: "inherit",
       });
       const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
-      expect(stdout).toBe("done 96\n");
+      expect(stdout).toBe(`done ${rounds * 8}\n`);
       expect(exitCode).toBe(0);
     });
 
     // A worker posting faster than the parent can deserialize must not pin the
-    // parent inside one drain: its timers and I/O still get their turn.
+    // parent inside one drain: a drain task delivers a bounded batch and posts the
+    // rest to the next loop iteration, so timers and I/O get their turn in between.
     test("a message flood from a worker does not starve the parent's event loop", async () => {
-      const src = `const p = { s: Buffer.alloc(200, "x").toString(), a: [1, 2, 3], n: 0 };
-        (function burst() { for (let i = 0; i < 2000; i++) { p.n++; postMessage(p) } setImmediate(burst) })()`;
+      const total = 1500; // more than one drain task's budget (drainBatchLimit in WorkerMessagingProxy.cpp)
+      const flag = new Int32Array(new SharedArrayBuffer(4));
+      const src = `onmessage = ({ data: flag }) => {
+        for (let i = 0; i < ${total}; i++) postMessage(i);
+        Atomics.store(flag, 0, 1); Atomics.notify(flag, 0);
+      }`;
       const w = new Worker(URL.createObjectURL(new Blob([src])));
       let received = 0;
-      w.onmessage = () => received++;
-      // Three timer turns while the flood is running is the property; not the timing.
-      for (let i = 0; i < 3; i++) await new Promise<void>(r => setTimeout(r, 10));
-      expect(received).toBeGreaterThan(0);
+      const delivered = Promise.withResolvers<void>();
+      w.onmessage = () => {
+        if (++received === total) delivered.resolve();
+      };
+      w.postMessage(flag);
+      // Block until the whole flood sits in the parent's inbox, so the first drain task
+      // starts out with more than its budget no matter how fast either thread is.
+      Atomics.wait(flag, 0, 0, 30_000);
+      expect(Atomics.load(flag, 0)).toBe(1);
+      // Resumes inside the first drain task. An immediate armed there runs as soon as
+      // that task ends, before the continuation it posted delivers the next batch.
+      await once(w, "message");
+      await new Promise<void>(r => setImmediate(r));
+      expect(received).toBeLessThan(total);
+      await delivered.promise;
       w.terminate();
       await once(w, "close");
     });
@@ -471,12 +489,16 @@ describe("web worker", () => {
       const src = `import vm from "node:vm"; postMessage("busy");
         for (;;) { try { vm.runInNewContext("for(let i=0;i<1e7;i++){}", {}, { timeout: 1000 }) } catch {} await new Promise(r => setImmediate(r)) }`;
       const url = URL.createObjectURL(new Blob([src]));
-      for (let r = 0; r < 6; r++) {
-        const w = new Worker(url);
-        await new Promise(res => (w.onmessage = res));
-        w.terminate();
-        await once(w, "close");
-      }
+      // Concurrently: loading node:vm dominates each worker's start, and six of
+      // them one after another add up to seconds on debug builds.
+      await Promise.all(
+        Array.from({ length: 6 }, async () => {
+          const w = new Worker(url);
+          await new Promise(res => (w.onmessage = res));
+          w.terminate();
+          await once(w, "close");
+        }),
+      );
     });
 
     // terminate() mid `import "node:*"`: the native module's export walk stops
@@ -512,8 +534,9 @@ describe("web worker", () => {
         "side.js": `globalThis.sideRan = true;`,
         "preload.js": `import("./side.js");`,
         // big enough that the entry graph is still transpiling when side.js evaluates
+        // (debug builds transpile far slower, so a quarter of it keeps the same margin)
         "big.js": Array.from(
-          { length: 4000 },
+          { length: isDebug ? 1000 : 4000 },
           (_, i) => `export function f${i}(x) { return x * ${i} + ${i % 7}; }`,
         ).join("\n"),
         "worker.js": `import "./big.js";
@@ -533,10 +556,11 @@ describe("web worker", () => {
 
     // Everything a worker posted before it exited arrives before 'close'.
     test("messages posted right before a natural exit are all delivered before close", async () => {
+      // Several drain batches' worth (1024 each); receiving them is ~1s per round on debug builds.
       const K = 5000;
       const src = `const p = Buffer.alloc(256, "x").toString(); for (let i = 0; i < ${K}; i++) postMessage({ i, p })`;
       const url = URL.createObjectURL(new Blob([src]));
-      for (let r = 0; r < 3; r++) {
+      for (let r = 0; r < (isDebug ? 1 : 3); r++) {
         let got = 0;
         const w = new Worker(url);
         w.onmessage = () => got++;
@@ -557,18 +581,25 @@ describe("web worker", () => {
 
     // fs completions racing terminate(): whatever completes on the worker
     // after the request must release, not build script values under it.
+    // busy is posted from the first completion so that every terminate offset
+    // (0-9ms, each batch covers them once) lands mid-churn on debug builds
+    // too, where the worker's first loop turn alone outlasts the offset range.
+    // Starting one of these workers costs ~0.5s on debug builds, hence one
+    // batch there; require() because importing node:fs also builds its ESM
+    // namespace, which loads the stream classes.
     test("terminate() while fs.readFile completions keep arriving", async () => {
       using dir = tempDir("worker-readfile-churn", { "f.bin": Buffer.alloc(65536, 7) });
       await using proc = Bun.spawn({
         cmd: [
           bunExe(),
           "-e",
-          `const src = \`import { readFile } from "node:fs";
-             let n = 0; (function pump(){ while (n < 16) { n++; readFile(\${JSON.stringify(process.argv[1])}, () => { n--; setImmediate(pump) }) } })();
-             postMessage("busy")\`;
+          `const src = \`const { readFile } = require("node:fs");
+             let n = 0, busy = false;
+             (function pump(){ while (n < 16) { n++; readFile(\${JSON.stringify(process.argv[1])}, () => {
+               if (!busy) { busy = true; postMessage("busy") } n--; setImmediate(pump) }) } })()\`;
            const url = URL.createObjectURL(new Blob([src]));
-           for (let r = 0; r < 12; r++) await Promise.all(Array.from({ length: 4 }, (_, i) => new Promise(res => {
-             const w = new Worker(url); w.addEventListener("close", res); w.onmessage = () => setTimeout(() => w.terminate(), (r + i) % 10) })));
+           for (let r = 0; r < ${isDebug ? 1 : 5}; r++) await Promise.all(Array.from({ length: 10 }, (_, i) => new Promise(res => {
+             const w = new Worker(url); w.addEventListener("close", res); w.onmessage = () => setTimeout(() => w.terminate(), i) })));
            console.log("PASS");`,
           path.join(String(dir), "f.bin"),
         ],

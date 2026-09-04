@@ -1,4 +1,4 @@
-//@ requireOptions("--validateICWatchpointLiveness=true", "--useConcurrentJIT=false", "--thresholdForJITAfterWarmUp=10", "--thresholdForOptimizeAfterWarmUp=100", "--thresholdForFTLOptimizeAfterWarmUp=1000")
+//@ runDefault("--validateICWatchpointLiveness=true", "--useConcurrentJIT=false", "--thresholdForJITAfterWarmUp=10", "--thresholdForOptimizeAfterWarmUp=100", "--thresholdForFTLOptimizeAfterWarmUp=1000")
 // An optimized CodeBlock that is jettisoned while one of its frames is live keeps its inline cache stub routines.
 // Their structure-transition watchpoints are keyed on the prototype objects the access cases were built for; those
 // objects must stay live (or the routine must be dropped) for as long as the watchpoints can fire.

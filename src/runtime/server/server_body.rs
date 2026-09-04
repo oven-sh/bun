@@ -765,7 +765,7 @@ impl AnyRoute {
                             .is_some_and(|headers| !headers.is_empty());
                         if response.status_code() != 200 || has_headers {
                             return Err(init_ctx.global.throw_invalid_arguments(format_args!(
-                                "A Response with an HTML bundle body cannot carry a status or headers as a route value. Use the HTML import itself as the route value, or return new Response(index, init) from a route handler.",
+                                "A Response with an HTML import body does not support a status or headers as a route value yet. Use the HTML import itself as the route value, or return new Response(index, init) from a route handler.",
                             )));
                         }
                         Some(html_bundle.this_ptr())

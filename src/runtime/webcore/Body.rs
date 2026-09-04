@@ -1273,6 +1273,10 @@ impl Value {
             Value::Locked(l) => l
                 .to_any_blob_allow_promise()
                 .unwrap_or(AnyBlob::Blob(Blob::default())),
+            Value::HTMLBundle(_) => {
+                debug_assert!(false, "the caller rejects an HTMLBundle body first");
+                AnyBlob::Blob(Blob::default())
+            }
             _ => AnyBlob::Blob(Blob::default()),
         };
 
@@ -1295,6 +1299,10 @@ impl Value {
             Value::Locked(l) => l
                 .to_any_blob_allow_promise()
                 .unwrap_or(AnyBlob::Blob(Blob::default())),
+            Value::HTMLBundle(_) => {
+                debug_assert!(false, "the caller rejects an HTMLBundle body first");
+                AnyBlob::Blob(Blob::default())
+            }
             _ => AnyBlob::Blob(Blob::default()),
         };
 

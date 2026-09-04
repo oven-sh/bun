@@ -97,7 +97,7 @@ Bun.serve({
 });
 ```
 
-Bun bundles the page on the first request that returns it and serves its `<script>` and `<link>` assets as static routes, like a page in `routes`. Hot module reloading applies to a page a handler returns only when the server also has an HTML file in `routes`, because that is what starts the dev server. A `Response` that carries an HTML import cannot be read outside of `Bun.serve`: `.text()` and `.body` reject, and `Bun.write` rejects it.
+Bun bundles the page on the first request that returns it and serves its `<script>` and `<link>` assets as static routes, like a page in `routes`. Hot module reloading applies to a page a handler returns only when the server also has an HTML file in `routes`, because that is what starts the dev server. A `Response` that carries an HTML import cannot be read outside of `Bun.serve`: `.text()` and `.body` reject, and `Bun.write` rejects it. After `bun build --target=bun`, the import is a manifest object, not an `HTMLBundle`, so a handler cannot return it. Put the page in `routes` for that build.
 
 ### HTML Processing Example
 

@@ -56,12 +56,12 @@ import { writeIfChanged } from "../fs.ts";
 import type { Ninja } from "../ninja.ts";
 import { quote, quoteArgs, slash } from "../shell.ts";
 import {
+  depBuildDir,
+  depSourceDir,
   type CustomBuildContext,
   type Dependency,
   type NestedCmakeBuild,
   type Source,
-  depBuildDir,
-  depSourceDir,
 } from "../source.ts";
 import { buildsIcu, icuIncludes } from "./icu.ts";
 

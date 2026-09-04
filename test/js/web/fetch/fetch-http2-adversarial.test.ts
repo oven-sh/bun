@@ -434,35 +434,109 @@ describe.concurrent("fetch() HTTP/2 adversarial", () => {
     await withAdversarialServer(
       {
         onStream: (socket, id) => {
-          // END_HEADERS only (0x4) — no END_STREAM.
+          if (id === 1) {
+            // END_HEADERS only (0x4) — no END_STREAM.
+            socket.write(
+              frame(
+                1,
+                0x4,
+                id,
+                Buffer.concat([
+                  hpackStatus200,
+                  hpackLit("content-length", "0"),
+                  hpackLit("content-type", "text/event-stream"),
+                ]),
+              ),
+            );
+          } else {
+            // Barrier request — clean END_STREAM close; see subprocess comment.
+            socket.write(frame(1, 0x5, id, hpackStatus200));
+          }
+        },
+      },
+      async (url, state) => {
+        await using proc = spawnFetch(`
+          const opts = {
+            protocol: "http2",
+            signal: AbortSignal.timeout(8000),
+            tls: { rejectUnauthorized: false },
+          };
+          const r = await fetch(${JSON.stringify(url)}, opts);
+          const body = await r.text();
+          // Second request on the same pooled session acts as a delivery
+          // barrier: RST_STREAM(1) was queued ahead of HEADERS(3) on the one
+          // socket, so this response arriving back proves the RST reached the
+          // server. Without it the subprocess can exit while the RST is still
+          // in the TLS/TCP send buffer, which Windows drops on process death
+          // (abortive close) — leaving state.rst empty.
+          const barrier = (await fetch(${JSON.stringify(url)}, opts)).status;
+          console.log(JSON.stringify({ status: r.status, body, barrier }));
+        `);
+        const { stdout, stderr, exitCode } = await collect(proc);
+        // stderr first: on a crash it carries the panic/ASAN report.
+        expect(stderr).toBe("");
+        expect(JSON.parse(stdout.trim())).toEqual({ status: 200, body: "", barrier: 200 });
+        expect(exitCode).toBe(0);
+        // The first stream was still open from the server's side, so
+        // completing the response must abandon it with RST_STREAM(CANCEL)
+        // (0x8) or the server is left holding it half-open against
+        // MAX_CONCURRENT_STREAMS. connections=1 proves the barrier rode the
+        // same socket, so ordering actually applies.
+        expect({ rst: state.rst, connections: state.connections }).toEqual({
+          rst: [{ id: 1, code: 8 }],
+          connections: 1,
+        });
+      },
+    );
+  });
+
+  // 9b. Same zero-length-but-HasBody headers with DATA coalesced into the same
+  //     TLS record: the stray byte contradicts content-length: 0, so the body
+  //     must fail with a Content-Length mismatch (RFC 9113 §8.1.1) rather
+  //     than crash or surface the byte. The head was already valid when the
+  //     mismatch is detected, so fetch() resolves and the error lands on the
+  //     body, mirroring the mid-body mismatch paths.
+  test("content-length: 0 with coalesced DATA is a Content-Length mismatch", async () => {
+    await withAdversarialServer(
+      {
+        onStream: (socket, id) => {
+          // One write so HEADERS and DATA land in the same parseFrames pass.
           socket.write(
-            frame(
-              1,
-              0x4,
-              id,
-              Buffer.concat([
-                hpackStatus200,
-                hpackLit("content-length", "0"),
-                hpackLit("content-type", "text/event-stream"),
-              ]),
-            ),
+            Buffer.concat([
+              frame(
+                1,
+                0x4,
+                id,
+                Buffer.concat([
+                  hpackStatus200,
+                  hpackLit("content-length", "0"),
+                  hpackLit("content-type", "text/event-stream"),
+                ]),
+              ),
+              frame(0, 0, id, Buffer.from("x")),
+            ]),
           );
         },
       },
       async url => {
         await using proc = spawnFetch(`
-          const r = await fetch(${JSON.stringify(url)}, {
+          const out = await fetch(${JSON.stringify(url)}, {
             protocol: "http2",
             signal: AbortSignal.timeout(8000),
             tls: { rejectUnauthorized: false },
-          });
-          const body = await r.text();
-          console.log(JSON.stringify({ status: r.status, body }));
+          }).then(
+            r =>
+              r.text().then(
+                body => ({ status: r.status, body }),
+                e => ({ status: r.status, bodyErr: e.code || e.name }),
+              ),
+            e => ({ err: e.code || e.name }),
+          );
+          console.log(JSON.stringify(out));
         `);
         const { stdout, stderr, exitCode } = await collect(proc);
-        // stderr first: on a crash it carries the panic/ASAN report.
         expect(stderr).toBe("");
-        expect(stdout.trim()).toBe('{"status":200,"body":""}');
+        expect(JSON.parse(stdout.trim())).toEqual({ status: 200, bodyErr: "HTTP2ContentLengthMismatch" });
         expect(exitCode).toBe(0);
       },
     );

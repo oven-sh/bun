@@ -130,7 +130,9 @@ extern "C" JSC::EncodedJSValue functionImportMeta__resolveSync(JSC::JSGlobalObje
         }
 
         if (WebCore::DOMURL* url = WebCoreCast<WebCore::JSDOMURL, WebCore::DOMURL>(JSValue::encode(fromValue))) {
-            fromValue = jsString(vm, url->href().string());
+            // The resolver takes a filesystem path as the parent, so a file: URL is converted to one.
+            const WTF::URL& href = url->href();
+            fromValue = jsString(vm, href.protocolIsFile() ? href.fileSystemPath() : href.string());
         } else if (!fromValue.isUndefinedOrNull() && fromValue.isObject()) {
 
             auto pathsObject = fromValue.getObject()->getIfPropertyExists(globalObject, builtinNames(vm).pathsPublicName());
@@ -356,7 +358,9 @@ JSC_DEFINE_HOST_FUNCTION(functionImportMeta__resolve,
         if (fromValue.isString()) {
             from = fromValue;
         } else if (WebCore::DOMURL* url = WebCoreCast<WebCore::JSDOMURL, WebCore::DOMURL>(JSValue::encode(fromValue))) {
-            from = jsString(vm, url->href().string());
+            // The resolver takes a filesystem path as the parent, so a file: URL is converted to one.
+            const WTF::URL& href = url->href();
+            from = jsString(vm, href.protocolIsFile() ? href.fileSystemPath() : href.string());
         } else if (fromValue.isObject()) {
             // Bun extension: `{ paths: [dir] }`, like `require.resolve`.
             auto pathsObject = fromValue.getObject()->getIfPropertyExists(globalObject, builtinNames(vm).pathsPublicName());

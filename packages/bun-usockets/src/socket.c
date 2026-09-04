@@ -320,11 +320,16 @@ struct us_socket_t *us_internal_socket_close_raw(struct us_socket_t *s, int code
         if (!(us_internal_poll_type(&s->p) & POLL_TYPE_SEMI_SOCKET)) {
             res = s->ssl ? us_internal_ssl_on_close(s, code, reason)
                          : us_dispatch_close(s, code, reason);
+        } else {
+            /* SEMI_SOCKET: never-opened connect — owner is notified via
+             * on_connect_error from the connect path (after_open / close_all),
+             * not here. Dispatching here would double-fire on the natural path
+             * (after_open → handler.close → close_raw).
+             * The DNS request is still held only if after_open never ran, i.e.
+             * the owner gave up before the connect had an outcome; that says
+             * nothing about the host, so the cache entry stays. */
+            us_internal_socket_release_addrinfo(s, 0);
         }
-        /* SEMI_SOCKET: never-opened connect — owner is notified via
-         * on_connect_error from the connect path (after_open / close_all),
-         * not here. Dispatching here would double-fire on the natural path
-         * (after_open → handler.close → close_raw). */
 
         us_internal_ssl_detach(s);
 
@@ -462,6 +467,7 @@ struct us_socket_t *us_socket_from_fd(struct us_socket_group_t *group, unsigned 
     s->unclassified_send_failures = 0;
     s->read_eof = 0;
     s->connect_state = NULL;
+    s->connect_addrinfo_req = NULL;
 
     /* We always use nodelay */
     bsd_socket_nodelay(fd, 1);

@@ -500,6 +500,7 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
                         s->kind = listen_socket->accept_kind;
                         s->ssl = NULL;
                         s->connect_state = NULL;
+                        s->connect_addrinfo_req = NULL;
                         s->timeout = 255;
                         s->long_timeout = 255;
                         s->flags.low_prio_state = 0;

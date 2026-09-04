@@ -360,6 +360,7 @@ static void us_internal_init_listen_socket(struct us_listen_socket_t *ls,
     s->prev = 0;
     s->connect_state = NULL;
     s->connect_next = NULL;
+    s->connect_addrinfo_req = NULL;
 
     ls->accept_group = group;
     ls->accept_kind = kind;
@@ -538,6 +539,7 @@ static inline void us_internal_init_connect_socket(struct us_socket_t *s,
     s->read_eof = 0;
     s->connect_state = NULL;
     s->connect_next = NULL;
+    s->connect_addrinfo_req = NULL;
 }
 
 struct us_socket_t *us_socket_group_connect_resolved_dns(struct us_socket_group_t *group,
@@ -624,7 +626,15 @@ void *us_socket_group_connect(struct us_socket_group_t *group, unsigned char kin
                 init_addr_with_port(&entries->info, port, &a);
                 *has_dns_resolved = 1;
                 struct us_socket_t *s = us_socket_group_connect_resolved_dns(group, kind, ssl_ctx, &a, local_addr, options, socket_ext_size);
-                Bun__addrinfo_freeRequest(ai_req, s == NULL);
+                if (s == NULL) {
+                    Bun__addrinfo_freeRequest(ai_req, 1);
+                    return NULL;
+                }
+                /* connect() is still in flight; the socket holds the request
+                 * until us_internal_socket_after_open knows whether this one
+                 * address is dead, as us_connecting_socket_t does for
+                 * multi-address results. */
+                s->connect_addrinfo_req = ai_req;
                 return s;
             }
         }
@@ -811,6 +821,9 @@ void us_internal_socket_after_open(struct us_socket_t *s, int error) {
                 }
             }
         } else {
+            /* The one address the cache had for this host is dead: evict it
+             * before the handler runs so a retry from inside it re-resolves. */
+            us_internal_socket_release_addrinfo(s, 1);
             us_dispatch_connect_error(s, error);
             // It's expected that close is called by the caller
         }
@@ -833,6 +846,8 @@ void us_internal_socket_after_open(struct us_socket_t *s, int error) {
             Bun__addrinfo_freeRequest(c->addrinfo_req, 0);
             us_connecting_socket_free(c);
             s->connect_state = NULL;
+        } else {
+            us_internal_socket_release_addrinfo(s, 0);
         }
 
         if (s->ssl) {

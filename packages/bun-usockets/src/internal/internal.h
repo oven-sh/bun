@@ -335,11 +335,30 @@ struct us_socket_t {
   struct us_socket_t *prev, *next;
   struct us_socket_t *connect_next;
   struct us_connecting_socket_t *connect_state;
+  /* Set only on a socket connected straight from a completed DNS cache hit
+   * (us_socket_group_connect's single-address path, which has no
+   * us_connecting_socket_t to own the request). Held until the connect outcome
+   * is known so a failure can evict the entry; released by
+   * us_internal_socket_release_addrinfo from after_open or close_raw. Fits in
+   * the alignas(16) tail padding on epoll/kqueue. */
+  struct addrinfo_request *connect_addrinfo_req;
 };
 
 #if defined(LIBUS_USE_EPOLL) || defined(LIBUS_USE_KQUEUE)
 _Static_assert(sizeof(struct us_socket_flags) == 1, "us_socket_flags grew");
+_Static_assert(sizeof(struct us_socket_t) == 80, "us_socket_t grew");
 #endif
+
+/* Drop the socket's hold on the DNS cache entry its address came from, if any.
+ * `failed` invalidates the entry (mirrors the ECONNREFUSED path in
+ * us_connecting_socket_close); a close before the outcome is known is a caller
+ * abort and keeps it, like ECONNABORTED does there. */
+static inline void us_internal_socket_release_addrinfo(struct us_socket_t *s, int failed) {
+    if (s->connect_addrinfo_req) {
+        Bun__addrinfo_freeRequest(s->connect_addrinfo_req, failed);
+        s->connect_addrinfo_req = NULL;
+    }
+}
 
 /* us_socket_adopt relocates a socket whose ext grows and retires the old block
  * (is_closed + adopted, prev -> replacement; freed by the outermost tick's

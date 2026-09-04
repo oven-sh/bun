@@ -694,6 +694,7 @@ fn is_exiting() -> bool {
 // calls. `#[link_name]` avoids colliding with this module's own `pub fn exit`.
 #[allow(suspicious_runtime_symbol_definitions)] // signatures are ABI-identical; `safe fn` is intentional (above)
 unsafe extern "C" {
+    #[cfg(windows)]
     #[link_name = "abort"]
     safe fn libc_abort() -> !;
     #[link_name = "raise"]
@@ -701,6 +702,8 @@ unsafe extern "C" {
     #[cfg(unix)]
     #[link_name = "exit"]
     safe fn libc_exit(code: c_int) -> !;
+    #[cfg(not(windows))]
+    safe fn _exit(code: c_int) -> !;
     #[cfg(all(unix, not(target_os = "macos")))]
     safe fn quick_exit(code: c_int) -> !;
 }
@@ -806,11 +809,30 @@ pub fn raise_ignoring_panic_handler_raw(sig: c_int) -> ! {
             sa.sa_flags = libc::SA_RESETHAND;
             let _ = libc::sigaction(sig, &raw const sa, core::ptr::null_mut());
         }
+
+        // Whatever left `sig` blocked, raise() would only make it pending.
+        // SAFETY: zeroed sigset is valid; sigemptyset/sigaddset initialize it.
+        unsafe {
+            let mut set: libc::sigset_t = crate::ffi::zeroed();
+            libc::sigemptyset(&raw mut set);
+            libc::sigaddset(&raw mut set, sig);
+            let _ = libc::pthread_sigmask(libc::SIG_UNBLOCK, &raw const set, core::ptr::null_mut());
+        }
     }
 
-    // kill self — `raise`/`abort` have no preconditions (see `safe fn` decls above).
+    // kill self; `raise` has no preconditions (see the `safe fn` decl above).
     let _ = libc_raise(sig);
-    libc_abort();
+
+    #[cfg(not(windows))]
+    {
+        // Only PID 1 of a pid namespace gets here; like a signal death, run no exit handlers.
+        _exit(128 + sig)
+    }
+    #[cfg(windows)]
+    {
+        // The CRT's raise() returns for SIGTERM and for signals it does not know.
+        libc_abort()
+    }
 }
 
 #[derive(Default)]

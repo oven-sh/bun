@@ -2533,8 +2533,7 @@ pub mod bv2_impl {
                                             import_record.kind,
                                         );
                                     } else {
-                                        add_error(
-                                            log,
+                                        log.add_resolve_error_with_text_dupe_notes(
                                             source,
                                             import_record.range,
                                             format_args!(
@@ -2543,6 +2542,11 @@ pub mod bv2_impl {
                                             ),
                                             path_to_use,
                                             import_record.kind,
+                                            could_not_resolve_note(
+                                                path_to_use,
+                                                import_record.kind,
+                                                self.dev_server.is_some(),
+                                            ),
                                         );
                                     }
                                 } else {
@@ -6561,8 +6565,7 @@ pub mod bv2_impl {
                                                 import_record.kind,
                                             );
                                         } else {
-                                            add_error(
-                                                log,
+                                            log.add_resolve_error_with_text_dupe_notes(
                                                 Some(source),
                                                 import_record.range,
                                                 format_args!(
@@ -6571,6 +6574,11 @@ pub mod bv2_impl {
                                                 ),
                                                 import_record.path.text,
                                                 import_record.kind,
+                                                could_not_resolve_note(
+                                                    import_record.path.text,
+                                                    import_record.kind,
+                                                    self.dev_server.is_some(),
+                                                ),
                                             );
                                         }
                                     } else {
@@ -7795,6 +7803,41 @@ pub mod bv2_impl {
         None = 0,
         Cjs,
         Esm,
+    }
+
+    /// esbuild-style "mark as external" hint for "Could not resolve" on a bare
+    /// package path. Empty under the dev server (no `external` option there).
+    pub fn could_not_resolve_note(
+        path: &[u8],
+        kind: ImportKind,
+        is_dev_server: bool,
+    ) -> Box<[bun_ast::Data]> {
+        if is_dev_server {
+            return Box::default();
+        }
+        let runtime_hint: &[u8] = match kind {
+            ImportKind::Require | ImportKind::RequireResolve => {
+                b" You can also surround this \"require\" call with a try/catch block to handle this failure at run-time instead of bundle-time."
+            }
+            ImportKind::Dynamic => {
+                b" You can also add \".catch()\" here to handle this failure at run-time instead of bundle-time."
+            }
+            _ => b"",
+        };
+        Box::new([bun_ast::Data {
+            text: std::borrow::Cow::Owned(
+                format!(
+                    "You can mark the path \"{}\" as external to exclude it from the bundle, \
+                     which will remove this error and leave the unresolved path in the bundle \
+                     (pass \"--external {0}\" or \"--packages external\" to the CLI, \
+                     or add it to \"external\" in Bun.build).{}",
+                    bstr::BStr::new(path),
+                    bstr::BStr::new(runtime_hint),
+                )
+                .into_bytes(),
+            ),
+            location: None,
+        }])
     }
 
     pub fn target_from_hashbang(buffer: &[u8]) -> Option<options::Target> {

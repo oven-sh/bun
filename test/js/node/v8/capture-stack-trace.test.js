@@ -1241,6 +1241,10 @@ test("default Error.prepareStackTrace formats a non-Error object", () => {
     expect(typeof bare.stack).toBe("string");
 
     expect(() => Error.captureStackTrace(1)).toThrow(TypeError);
+    // The default formatter itself: any object is accepted, primitives are still rejected.
+    expect(typeof original({ message: "plain" }, [])).toBe("string");
+    expect(() => original(1, [])).toThrow(TypeError);
+    expect(() => original(null, [])).toThrow(TypeError);
   } finally {
     Error.prepareStackTrace = original;
   }

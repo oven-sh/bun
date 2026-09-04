@@ -1219,6 +1219,35 @@ describe("spyOn", () => {
       expect(fn).not.toHaveBeenCalled();
     });
 
+    // An int32 at an index of an object literal is in Int32 storage. The plain object
+    // above has Contiguous storage, because its value is an object.
+    test("spyOn works with an index key of an object literal", () => {
+      const obj = { 0: 42 };
+
+      const fn = spyOn(obj, 0);
+      expect(Object.getOwnPropertyDescriptor(obj, 0)).toEqual({
+        get: fn,
+        set: fn,
+        enumerable: true,
+        configurable: true,
+      });
+      expect(obj[0]).toBe(42);
+      obj[0] = 7;
+      expect(obj[0]).toBe(42);
+      expect(fn.mock.calls).toEqual([[], [7], []]);
+
+      fn.mockRestore();
+      expect(Object.getOwnPropertyDescriptor(obj, 0)).toEqual({
+        value: 42,
+        writable: true,
+        enumerable: true,
+        configurable: true,
+      });
+      obj[0] = 8;
+      expect(obj[0]).toBe(8);
+      expect(fn).not.toHaveBeenCalled();
+    });
+
     // An index this large never gets vector storage. It lives in the sparse map from the
     // start, which is where the malformed accessor entry used to crash reads and writes.
     test("spyOn works with a large sparse index that is not a function", () => {

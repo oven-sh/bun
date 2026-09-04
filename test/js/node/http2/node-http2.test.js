@@ -5501,6 +5501,68 @@ describe("setLocalWindowSize() with a smaller window", () => {
     }
   });
 
+  // A write can run JS: it flushes what another session corked, and a JS transport runs its
+  // _write at once. A setLocalWindowSize() call from there must act like a call made after.
+  it("a setLocalWindowSize() call from inside a transport write takes effect at once", async () => {
+    let nested = () => {};
+    const duplex = new Duplex({
+      read() {},
+      write(chunk, encoding, callback) {
+        nested();
+        callback();
+      },
+    });
+    const other = http2.connect("http://127.0.0.1:1", { createConnection: () => duplex });
+    other.on("error", () => {});
+    await new Promise(resolve => other.once("connect", resolve));
+    await new Promise(resolve => setImmediate(resolve));
+
+    const { server, incrementsAtPing, url } = await windowUpdateServer((socket, streamId) => {
+      socket.write(new http2utils.HeadersFrame(streamId, Buffer.from([0x88]), 0, true).data); // :status 200
+      for (const size of [16384, 16384, 16384, 16383]) {
+        socket.write(new http2utils.DataFrame(streamId, Buffer.alloc(size, "x")).data);
+      }
+    });
+    const client = http2.connect(url);
+    try {
+      const { promise, resolve, reject } = Promise.withResolvers();
+      client.on("error", reject);
+      client.once("connect", () => {
+        client.setLocalWindowSize(0);
+        const req = client.request({ ":path": "/" });
+        req.on("error", reject);
+        let received = 0;
+        req.on("data", chunk => {
+          received += chunk.length;
+          if (received !== 65535) return;
+          setImmediate(() => {
+            // The raise to 10 repays 10 bytes that the peer used, so a WINDOW_UPDATE goes out.
+            // That write flushes the PING that `other` corked, and the flush runs the raise to 65535.
+            nested = () => {
+              nested = () => {};
+              client.setLocalWindowSize(65535);
+            };
+            other.ping(() => {});
+            client.setLocalWindowSize(10);
+            const state = windowState(client);
+            client.ping(() => resolve({ increments: incrementsAtPing.at(-1), ...state }));
+          });
+        });
+      });
+      // The same frames as for the two calls made one after the other.
+      expect(await promise).toEqual({
+        increments: [10, 65535 - 10],
+        effectiveLocalWindowSize: 65535,
+        localWindowSize: 65535,
+        effectiveRecvDataLength: 0,
+      });
+    } finally {
+      other.destroy();
+      client.destroy();
+      server.close();
+    }
+  });
+
   // RFC 9113 section 6.9.1: a WINDOW_UPDATE that takes a window above 2^31-1 is a
   // FLOW_CONTROL_ERROR. The raise used to send all of 2^31-1, on top of the 65535 bytes that
   // the peer still had, so a compliant peer ended the session.

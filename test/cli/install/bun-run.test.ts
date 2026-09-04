@@ -1247,5 +1247,131 @@ describe.concurrent("bun run", () => {
       expect(stdout).toBe("");
       expect(exitCode).toBe(1);
     }
+
+    // --silent hides the command echo, not the reason the script was not run.
+    {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "run", "--silent", "--shell=system", "say", "%PATH%"],
+        cwd: String(dir),
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toContain(
+        'error: Failed to run script say: argument "%PATH%" contains a cmd.exe special character and cannot be passed to the system shell',
+      );
+      expect(stdout).toBe("");
+      expect(exitCode).toBe(1);
+    }
+  });
+
+  // Every test below runs `hi`, so the failing `prehi` must stop the run: `hi`
+  // and `posthi` never show up in the output. Windows always uses cmd.exe as the
+  // system shell, so the --shell=system failures can only be set up on POSIX.
+  describe.skipIf(isWindows)("--shell=system when bun fails to run the shell", () => {
+    function prePostScripts() {
+      return tempDir("bun-run-system-shell-failure", {
+        "package.json": JSON.stringify({
+          name: "system-shell-failure",
+          scripts: {
+            prehi: "echo pre",
+            hi: "echo hi",
+            posthi: "echo post",
+          },
+        }),
+        // The shell is looked up on PATH (bash, sh, zsh). execve of a script whose
+        // interpreter does not exist fails with ENOENT, so with PATH pointing at
+        // this directory the shell itself fails to spawn.
+        "fakebin/sh": "#!/nonexistent/interpreter\n",
+      });
+    }
+
+    async function runWithBrokenShell(...flags: string[]) {
+      using dir = prePostScripts();
+      chmodSync(join(String(dir), "fakebin", "sh"), 0o755);
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "run", ...flags, "--shell=system", "hi"],
+        cwd: String(dir),
+        env: { ...bunEnv, PATH: join(String(dir), "fakebin") },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      return { stdout, stderr: stderr.replaceAll(String(dir), "<dir>"), exitCode };
+    }
+
+    it("the shell fails to spawn", async () => {
+      const { stdout, stderr, exitCode } = await runWithBrokenShell();
+      expect(stderr).toMatchInlineSnapshot(`
+        "$ echo pre
+        error: Failed to run script prehi due to error:
+        ENOENT: <dir>/fakebin/sh: No such file or directory (posix_spawn())
+        "
+      `);
+      expect(stdout).toBe("");
+      expect(exitCode).toBe(1);
+    });
+
+    it("the shell fails to spawn, --silent", async () => {
+      const { stdout, stderr, exitCode } = await runWithBrokenShell("--silent");
+      expect(stderr).toMatchInlineSnapshot(`
+        "error: Failed to run script prehi due to error:
+        ENOENT: <dir>/fakebin/sh: No such file or directory (posix_spawn())
+        "
+      `);
+      expect(stdout).toBe("");
+      expect(exitCode).toBe(1);
+    });
+
+    it("waiting for the shell fails, --silent", async () => {
+      using dir = prePostScripts();
+
+      // With SIGCHLD ignored (inherited through exec), the kernel reaps the shell
+      // as soon as it exits and waitpid() fails with ECHILD, so the shell runs
+      // (stdout gets "pre") but bun never learns how it exited.
+      await using proc = Bun.spawn({
+        cmd: ["bash", "-c", 'trap "" CHLD; exec "$0" "$@"', bunExe(), "run", "--silent", "--shell=system", "hi"],
+        cwd: String(dir),
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toMatchInlineSnapshot(`
+        "error: Failed to run script prehi due to error:
+        ECHILD: No child processes (waitpid())
+        "
+      `);
+      expect(stdout).toBe("pre\n");
+      expect(exitCode).toBe(1);
+    });
+  });
+
+  it("--shell=bun --silent still reports a script it cannot run", async () => {
+    // bun's shell refuses to lex more than 128 nested subshells; that is reported
+    // by this error path rather than as a script exit code.
+    using dir = tempDir("bun-run-bun-shell-failure", {
+      "package.json": JSON.stringify({
+        name: "bun-shell-failure",
+        scripts: { deep: "echo " + "$(".repeat(200) + "echo x" + ")".repeat(200) },
+      }),
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "run", "--silent", "--shell=bun", "deep"],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("error: Failed to run script deep due to error SubshellDepthExceeded\n");
+    expect(stdout).toBe("");
+    expect(exitCode).toBe(1);
   });
 });

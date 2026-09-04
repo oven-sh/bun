@@ -1,6 +1,6 @@
 import { spawnSync } from "bun";
 import { isModuleResolveFilenameSlowPathEnabled } from "bun:internal-for-testing";
-import { describe, expect, it, mock } from "bun:test";
+import { expect, it, mock } from "bun:test";
 import { bunEnv, bunExe, ospath, tempDir } from "harness";
 import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import Module from "node:module";
@@ -102,25 +102,23 @@ it("import.meta.resolve(specifier, parent) accepts a URL instance as parent", ()
   expect(() => import.meta.resolve("./sibling.mjs", { paths: [dir] })).not.toThrow();
 });
 
-describe.each([
+it.each([
   ["number", 42, "type number (42)"],
   ["null", null, "null"],
   ["boolean", true, "type boolean (true)"],
   ["plain object", {}, "an instance of Object"],
   ["symbol", Symbol("x"), "type symbol (Symbol(x))"],
   ["function", () => {}, "function "],
-])("import.meta.resolve(specifier, parent) with a %s parent", (_label, parent, received) => {
-  it("throws ERR_INVALID_ARG_TYPE", () => {
-    let error = null;
-    try {
-      import.meta.resolve("./sibling.mjs", parent);
-    } catch (e) {
-      error = { code: e.code, message: e.message };
-    }
-    expect(error).toEqual({
-      code: "ERR_INVALID_ARG_TYPE",
-      message: 'The "parentURL" argument must be of type string or an instance of URL. Received ' + received,
-    });
+])("import.meta.resolve(specifier, parent) throws ERR_INVALID_ARG_TYPE for a %s parent", (_label, parent, received) => {
+  let error = null;
+  try {
+    import.meta.resolve("./sibling.mjs", parent);
+  } catch (e) {
+    error = { code: e.code, message: e.message };
+  }
+  expect(error).toEqual({
+    code: "ERR_INVALID_ARG_TYPE",
+    message: 'The "parentURL" argument must be of type string or an instance of URL. Received ' + received,
   });
 });
 

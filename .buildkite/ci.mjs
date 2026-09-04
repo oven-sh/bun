@@ -993,8 +993,9 @@ function getWindowsSignStep(windowsPlatforms, options) {
 /**
  * Aggregates stripped-binary sizes from every release build, compares them
  * against the latest main build's binary-sizes.json, and fails if any grew
- * past the threshold. Runs on PR builds (comparison) and main (record-only,
- * to produce the baseline artifact).
+ * past the threshold, or if no main build with a binary-sizes.json could be
+ * found (a comparison that did not happen is not a pass). Runs on PR builds
+ * (comparison) and main (record-only, to produce the baseline artifact).
  *
  * @param {Platform[]} releasePlatforms
  * @param {PipelineOptions} options

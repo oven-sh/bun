@@ -127,18 +127,7 @@ impl Range {
             return true;
         }
 
-        // If left has prerelease check if major,minor,patch matches with left. If
-        // not, check the same with right if right exists and has prerelease.
-        *pre_matched = *pre_matched
-            || (self.left.version.tag.has_pre()
-                && version.patch == self.left.version.patch
-                && version.minor == self.left.version.minor
-                && version.major == self.left.version.major)
-            || (has_right
-                && self.right.version.tag.has_pre()
-                && version.patch == self.right.version.patch
-                && version.minor == self.right.version.minor
-                && version.major == self.right.version.major);
+        *pre_matched = *pre_matched || self.admits_pre_of(version);
 
         if !self.left.satisfies(version, range_buf, version_buf) {
             return false;
@@ -149,6 +138,19 @@ impl Range {
         }
 
         true
+    }
+
+    /// Whether a comparator of this range has a prerelease tag on
+    /// `version`'s major.minor.patch. A prerelease only satisfies a query
+    /// when some range of the query admits it this way (node-semver's rule).
+    pub(crate) fn admits_pre_of(self, version: Version) -> bool {
+        [self.left, self.right].into_iter().any(|c| {
+            c.op != Op::Unset
+                && c.version.tag.has_pre()
+                && c.version.major == version.major
+                && c.version.minor == version.minor
+                && c.version.patch == version.patch
+        })
     }
 }
 

@@ -85,13 +85,13 @@ impl<'a> Interval<'a> {
         }
     }
 
-    /// Whether a version satisfying both queries lies inside the interval.
+    /// Whether a version that satisfies both queries lies inside the interval.
     ///
-    /// A version with a prerelease tag only satisfies a query when some
-    /// comparator of that query has a prerelease tag on the same
-    /// major.minor.patch (`List::satisfies_pre`). So an interval that holds
-    /// nothing but prereleases of one tuple is empty unless both queries
-    /// have such a comparator.
+    /// Bun's `satisfies` (`List::satisfies_pre`) accepts a prerelease only
+    /// when a comparator of the query has a prerelease tag on the same
+    /// major.minor.patch. So an interval that holds nothing but prereleases
+    /// of one tuple is empty unless both queries admit them
+    /// (`Range::admits_pre_of`).
     fn has_version(&self, a: &Query, b: &Query) -> bool {
         if !self.is_non_empty() {
             return false;
@@ -138,15 +138,8 @@ impl<'a> Interval<'a> {
 fn allows_pre_of(query: &Query, release: Version) -> bool {
     let mut cur = Some(query);
     while let Some(q) = cur {
-        for c in [q.range.left, q.range.right] {
-            if c.op != Op::Unset
-                && c.version.tag.has_pre()
-                && c.version.major == release.major
-                && c.version.minor == release.minor
-                && c.version.patch == release.patch
-            {
-                return true;
-            }
+        if q.range.admits_pre_of(release) {
+            return true;
         }
         cur = q.next.as_deref();
     }

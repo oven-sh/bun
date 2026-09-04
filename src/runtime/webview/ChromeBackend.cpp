@@ -26,6 +26,7 @@
 #include <wtf/text/Base64.h>
 
 #include <errno.h>
+#include <limits>
 #include <mutex>
 #include <stdio.h>
 #include <stdlib.h>
@@ -1200,12 +1201,24 @@ void Transport::handleEvent(std::span<const char> method, std::span<const char> 
         auto remoteToJS = [&](RefPtr<JSON::Object> ao) -> JSValue {
             auto t = ao->getString("type"_s);
             if (t == "string"_s) return jsString(vm, ao->getString("value"_s));
-            if (t == "number"_s) return jsNumber(ao->getDouble("value"_s).value_or(0));
+            if (t == "number"_s) {
+                if (auto d = ao->getDouble("value"_s)) return jsNumber(*d);
+                // NaN, Infinity, -Infinity and -0 have no JSON form: V8 omits
+                // .value and sends .unserializableValue holding that name.
+                auto u = ao->getString("unserializableValue"_s);
+                if (u == "-0"_s) return jsNumber(-0.0);
+                if (u == "Infinity"_s) return jsNumber(std::numeric_limits<double>::infinity());
+                if (u == "-Infinity"_s) return jsNumber(-std::numeric_limits<double>::infinity());
+                return jsNaN();
+            }
             if (t == "boolean"_s) return jsBoolean(ao->getBoolean("value"_s).value_or(false));
             if (t == "undefined"_s) return jsUndefined();
             if (t == "bigint"_s || t == "symbol"_s)
                 // No .value — .description is "42n" / "Symbol(foo)".
                 return jsString(vm, ao->getString("description"_s));
+            // CDP encodes null as {type:"object", subtype:"null"}. It is a
+            // primitive to the user, so it unwraps like the cases above.
+            if (t == "object"_s && ao->getString("subtype"_s) == "null"_s) return jsNull();
             // object / function. JSONParse the whole RemoteObject so the
             // caller can inspect preview.properties. toJSONString round-
             // trips the WTF::JSON tree back to a string; JSC::JSONParse

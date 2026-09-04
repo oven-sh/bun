@@ -63,9 +63,12 @@ export const cpuTargetFlags: Flag[] = [
     desc: "ARM64 Android: ARMv8-A base + CRC, tuned for Cortex-A78 (common big core)",
   },
   {
-    flag: ["/clang:-march=armv8-a+crc", "/clang:-mtune=ampere1"],
+    // No -mtune: Windows-on-ARM hardware is Snapdragon (Oryon / Cortex-X), and
+    // generic tuning is what MSVC, Chromium and Rust ship there. (ampere1's
+    // tuning pads every function and loop to 64 bytes.)
+    flag: "/clang:-march=armv8-a+crc",
     when: c => c.windows && c.arm64,
-    desc: "ARM64 Windows: clang-cl prefix required (/clang: passes to clang)",
+    desc: "ARM64 Windows: ARMv8-A base + CRC, generic tuning (clang-cl prefix required)",
   },
   {
     flag: "-march=nehalem",
@@ -380,6 +383,17 @@ export const globalFlags: Flag[] = [
     flag: ["-fno-omit-frame-pointer", "-mno-omit-leaf-frame-pointer"],
     when: c => c.unix,
     desc: "Keep frame pointers (for profiling and backtraces)",
+  },
+
+  // ─── Hardening policy (stated, so a distro clang's vendor defaults don't decide) ───
+  {
+    // Arch/Alpine/Fedora/Ubuntu package clang with -fstack-protector-strong on
+    // by default; apt.llvm.org (CI) and upstream builds don't. Off: what bun
+    // has always shipped, and a canary load+check in most JSC frames is not
+    // free.
+    flag: "-fno-stack-protector",
+    when: c => c.unix,
+    desc: "No stack protector (pin the toolchain-independent default)",
   },
   {
     // clang-cl drops /Oy- on x64 and keeps only non-leaf frames on arm64

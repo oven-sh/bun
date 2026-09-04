@@ -1493,8 +1493,20 @@ mod _async_tasks {
         /// A finished fs.cp whose completion will not run: destroy releases
         /// its promise handle, protected arguments and keep-alive.
         unsafe fn release_unrun(this: *mut Self) {
-            // SAFETY: fn contract — posted by `on_subtask_done` with the count at zero.
-            unsafe { Self::destroy(this) }
+            // SAFETY: fn contract — posted by `on_subtask_done` with the count
+            // at zero, so the pool is done with this task and with the shell
+            // task whose completion it carries (running it, `cp_on_finish`
+            // would have freed that task); `args` borrows that task's paths,
+            // hence the order.
+            unsafe {
+                let shelltask = (*this).shelltask;
+                Self::destroy(this);
+                if let Some(shelltask) = shelltask {
+                    <ShellCpTask as bun_event_loop::Taskable>::release_unrun(
+                        shelltask.as_mut_ptr(),
+                    );
+                }
+            }
         }
     }
 

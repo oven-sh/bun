@@ -481,7 +481,12 @@ describe("bun", () => {
     runInCwdFailure(cwd_root, "*", "notpresent", /error: No workspace packages matching "\*" have script "notpresent"/);
   });
   test("should error when the filter matches no package", () => {
-    runInCwdFailure(cwd_root, "nosuchpkg", "present", /error: No workspace packages matched the filter "nosuchpkg"\n(?![^]*nosuchpkg)/);
+    runInCwdFailure(
+      cwd_root,
+      "nosuchpkg",
+      "present",
+      /error: No workspace packages matched the filter "nosuchpkg"\n(?![^]*nosuchpkg)/,
+    );
   });
   test("warns about a filter that matched nothing while running the others", () => {
     const { exitCode, stdout, stderr } = spawnSync({

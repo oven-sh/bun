@@ -519,11 +519,8 @@ extern "C" [[ZIG_EXPORT(zero_is_throw)]] JSC::EncodedJSValue BunString__toJSON(
     const BunString* bunString)
 {
     auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
-    WTF::String string = bunString->toWTFString();
-    // An empty input converts to a null string, and JSONParseWithException does not throw for a
-    // null string. Parse "" instead, so the error is the one that JSON.parse("") throws.
-    if (string.isNull() && bunString->isEmpty() && !bunString->isDead())
-        string = emptyString();
+    // toWTFString() is null for an empty string, and JSONParseWithException throws nothing for null.
+    WTF::String string = !bunString->isDead() && bunString->isEmpty() ? emptyString() : bunString->toWTFString();
     JSC::JSValue result = JSC::JSONParseWithException(globalObject, string);
 
     if (!result && !scope.exception()) {

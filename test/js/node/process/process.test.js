@@ -1222,6 +1222,133 @@ describe.concurrent(() => {
     });
   });
 
+  // Node (lib/internal/process/per_thread.js) reads prevValue.user first and only
+  // runs validateObject(prevValue), which is what rejects arrays and functions, when
+  // user is not a valid number. prevValue.system is only read once user passed.
+  describe.each(["cpuUsage", "threadCpuUsage"])("process.%s prevValue check order", name => {
+    const prevValueTypeError = received =>
+      expect.objectContaining({
+        name: "TypeError",
+        code: "ERR_INVALID_ARG_TYPE",
+        message: `The "prevValue" argument must be of type object. ${received}`,
+      });
+
+    it.each([
+      ["[]", () => [], "Received an instance of Array"],
+      ["() => {}", () => () => {}, "Received function "],
+      ["function named() {}", () => function named() {}, "Received function named"],
+      [
+        "array with non-number user",
+        () => Object.assign([], { user: "x", system: 1 }),
+        "Received an instance of Array",
+      ],
+      ["function with negative user", () => Object.assign(() => {}, { user: -1, system: 1 }), "Received function "],
+      ["array with NaN user", () => Object.assign([], { user: NaN, system: 1 }), "Received an instance of Array"],
+      ["Proxy of an array", () => new Proxy([], {}), "Received an instance of Array"],
+    ])("rejects %s as prevValue, not prevValue.user", (_, makePrevValue, received) => {
+      expect(() => process[name](makePrevValue())).toThrow(prevValueTypeError(received));
+    });
+
+    it.each([
+      ["array", () => Object.assign([], { user: Number.MAX_SAFE_INTEGER, system: Number.MAX_SAFE_INTEGER })],
+      ["function", () => Object.assign(() => {}, { user: Number.MAX_SAFE_INTEGER, system: Number.MAX_SAFE_INTEGER })],
+      [
+        "Proxy of an array",
+        () => new Proxy(Object.assign([], { user: Number.MAX_SAFE_INTEGER, system: Number.MAX_SAFE_INTEGER }), {}),
+      ],
+    ])("accepts %s carrying valid user and system", (_, makePrevValue) => {
+      const usage = process[name](makePrevValue());
+      expect(usage).toEqual({ user: expect.any(Number), system: expect.any(Number) });
+      // Negative results prove the fields were subtracted rather than ignored.
+      expect(usage.user).toBeLessThan(0);
+      expect(usage.system).toBeLessThan(0);
+    });
+
+    it.each([
+      [
+        "array without system",
+        () => Object.assign([], { user: 1 }),
+        "TypeError",
+        "ERR_INVALID_ARG_TYPE",
+        'The "prevValue.system" property must be of type number. Received undefined',
+      ],
+      [
+        "function with non-number system",
+        () => Object.assign(() => {}, { user: 1, system: "x" }),
+        "TypeError",
+        "ERR_INVALID_ARG_TYPE",
+        `The "prevValue.system" property must be of type number. Received type string ('x')`,
+      ],
+      [
+        "array with negative system",
+        () => Object.assign([], { user: 1, system: -1 }),
+        "RangeError",
+        "ERR_INVALID_ARG_VALUE",
+        "The property 'prevValue.system' is invalid. Received -1",
+      ],
+    ])("reports prevValue.system for %s once user is valid", (_, makePrevValue, errorName, code, message) => {
+      expect(() => process[name](makePrevValue())).toThrow(expect.objectContaining({ name: errorName, code, message }));
+    });
+
+    it("reads user before validating prevValue itself", () => {
+      const prevValue = Object.defineProperty([], "user", {
+        get() {
+          throw new Error("user getter");
+        },
+      });
+      expect(() => process[name](prevValue)).toThrow(new Error("user getter"));
+    });
+
+    it.each([
+      [
+        "non-number",
+        "x",
+        "TypeError",
+        "ERR_INVALID_ARG_TYPE",
+        `The "prevValue.user" property must be of type number. Received type string ('x')`,
+      ],
+      ["negative", -1, "RangeError", "ERR_INVALID_ARG_VALUE", "The property 'prevValue.user' is invalid. Received -1"],
+    ])("does not read system when user is %s", (_, user, errorName, code, message) => {
+      let systemReads = 0;
+      const prevValue = {
+        user,
+        get system() {
+          systemReads++;
+          return 0;
+        },
+      };
+      expect(() => process[name](prevValue)).toThrow(expect.objectContaining({ name: errorName, code, message }));
+      expect(systemReads).toBe(0);
+    });
+
+    it.each([
+      ["cpuUsage", () => process.cpuUsage()],
+      ["threadCpuUsage", () => process.threadCpuUsage()],
+    ])("still validates the fields of a %s() result", (_, makePrevValue) => {
+      const negativeUser = makePrevValue();
+      negativeUser.user = -1;
+      expect(() => process[name](negativeUser)).toThrow(
+        expect.objectContaining({
+          name: "RangeError",
+          code: "ERR_INVALID_ARG_VALUE",
+          message: "The property 'prevValue.user' is invalid. Received -1",
+        }),
+      );
+
+      const stringSystem = makePrevValue();
+      stringSystem.system = "x";
+      expect(() => process[name](stringSystem)).toThrow(
+        expect.objectContaining({
+          name: "TypeError",
+          code: "ERR_INVALID_ARG_TYPE",
+          message: `The "prevValue.system" property must be of type number. Received type string ('x')`,
+        }),
+      );
+
+      expect(process[name](makePrevValue())).toEqual({ user: expect.any(Number), system: expect.any(Number) });
+    });
+  });
+
   if (process.platform !== "win32") {
     it("process.getegid", () => {
       expect(typeof process.getegid()).toBe("number");

@@ -31,10 +31,11 @@ check — together they catch most things; neither alone is bulletproof.
 **In scope but may miss:**
 
 - x64 linear-sweep may desync on data-in-`.text` and skip real instructions
-  that follow. Variable-length x86 encoding makes perfect code/data
-  separation undecidable (`README.md:53-59`). aarch64 is more reliable
-  (fixed-width words, `$d` mapping symbols mark data), but a missing mapping
-  symbol can still hide a hit.
+  that follow, up to the next symbol start (the decoder restarts there, so a
+  desync never crosses into the next function). Variable-length x86 encoding
+  makes perfect code/data separation undecidable (`README.md:53-70`). aarch64
+  is more reliable (fixed-width words, `$d` mapping symbols mark data), but a
+  missing mapping symbol can still hide a hit.
 - Instructions deliberately ignored (TZCNT/XGETBV on x64, hint-space PAC/BTI
   on aarch64) could theoretically be misused; we assume the compiler's idiom
   is the only one.
@@ -43,7 +44,7 @@ check — together they catch most things; neither alone is bulletproof.
 
 - Data bytes in `.text` that happen to form a valid post-baseline encoding.
   Rare on ELF (LLVM puts tables in `.rodata`), common on Windows PE (MSVC
-  inlines jump tables). See `README.md:61-74`.
+  inlines jump tables). See `README.md:72-87`.
 
 When in doubt, the emulator is ground truth: `qemu -cpu Nehalem` and hit the
 code path. SIGILL = real bug. No SIGILL = either gated or a data-in-text

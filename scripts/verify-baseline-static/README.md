@@ -52,11 +52,22 @@ If you're not sure which: run the binary under `qemu-x86_64 -cpu Nehalem`
 
 ### Data-in-`.text` false positives
 
-The tool linear-sweeps every byte in `.text`. There's no general way to do
-better for x86: toolchains don't emit "this byte is data" markers the way
-ARM EABI's `$d` mapping symbols do, and code/data separation in x86 binaries
-is undecidable in general
+The tool linear-sweeps every byte in `.text`, restarting the decoder at every
+symbol start (the same resync rule `objdump -d` uses). There's no general way
+to do better for x86: toolchains don't emit "this byte is data" markers the
+way ARM EABI's `$d` mapping symbols do, and code/data separation in x86
+binaries is undecidable in general
 ([Schwarz & Debray 2002](https://www2.cs.arizona.edu/~debray/Publications/disasm.pdf)).
+
+The restart bounds how far a desync can travel: data that sits right before a
+symbol can only produce garbage up to that symbol, never into the function
+after it. JSC's LLInt is the case that matters. `ENABLE(LLINT_EMBEDDED_OPCODE_ID)`
+puts a raw 4-byte `.int <opcode id>` in front of every opcode handler. On ELF
+each handler has its own `llint_op_*` symbol, so the id bytes decode on their
+own and the next handler starts clean. No value an id can hold decodes to a
+flagged instruction (a unit test checks all 65536 of them against the filters
+in `main.rs`). On Windows the PDB has no per-handler record, so the whole
+interpreter is one symbol and stays allowlisted.
 
 MSVC inlines jump tables and small `static const` arrays into `.text` right
 after the function that uses them (LLVM puts them in `.rodata`, so ELF builds

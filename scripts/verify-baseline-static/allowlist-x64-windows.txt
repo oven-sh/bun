@@ -987,15 +987,23 @@ strspn
 # ENABLE(LLINT_EMBEDDED_OPCODE_ID) is on for x86_64 (WTF/wtf/PlatformEnable.h),
 # so every LLInt opcode handler inside llint_entry starts with a raw 4-byte
 # ".int <opcode_id>" (LowLevelInterpreter.cpp: EMBED_OPCODE_ID_IF_NEEDED). The
-# linear-sweep decoder desyncs on those ~900 embedded ints and, depending on
-# how preceding .text code aligns, can decode a stray VEX-encoded instruction
-# out of the garbage. offlineasm's x86 backend emits SSE2 cvttsd2si (not VEX),
-# and the Intel SDE Nehalem emulation step in this same job exercises the LLInt
-# and passes, so any single-digit hit here is decode noise. Ceiling [AVX] so a
-# multi-feature leak still fails.
+# decoder desyncs on those ~900 embedded ints and reads garbage for a few
+# instructions into the handler that follows. The garbage includes rel32 and
+# RIP-relative displacements, so what it spells changes with the link layout:
+# VEX prefixes in one build, a bare `0f 33` RDPMC in another. A feature ceiling
+# has nothing to bound here and re-flakes on the next layout, so this is a
+# blanket pass (the guide's rule for confirmed data-in-.text misdecodes).
+#
+# The decoder restarts at every symbol start, which fixes this on ELF: there
+# each handler has its own llint_op_* symbol, so a desync ends at the next
+# handler. The PDB has no per-handler record (the opcode labels are assembler
+# locals), so on Windows the whole interpreter is one symbol and the entry
+# stays. offlineasm's x86 backend emits SSE2 (not VEX), and the Intel SDE
+# Nehalem emulation step in this same job exercises the LLInt, so a real
+# post-baseline instruction in it would still fail the job.
 # (1 symbol)
 # ----------------------------------------------------------------------------
-llint_entry  [AVX]
+llint_entry
 
 
 # ----------------------------------------------------------------------------

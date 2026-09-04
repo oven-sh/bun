@@ -2124,17 +2124,23 @@ pub(crate) mod strings_impl {
 
     /// Port of `bun.fmt.URLFormatter.findUrlPassword` — returns
     /// `(offset, len)` of the password segment, or None.
-    /// Only matches http:// and https:// schemes and rejects empty pw.
+    /// `s` must start with a URL (`https://`, `git+ssh://`, ...); rejects an
+    /// empty password.
     pub(crate) fn find_url_password(s: &[u8]) -> Option<(usize, usize)> {
-        // Case-sensitive prefix match; the search region is truncated at the
-        // first '\n' and at the end of the authority before scanning for '@'/':'.
-        let scheme_end = if s.starts_with(b"http://") {
-            7
-        } else if s.starts_with(b"https://") {
-            8
-        } else {
+        // RFC 3986 scheme (`git+https` is one scheme) followed by `://`; the
+        // search region is truncated at the first '\n' and at the end of the
+        // authority before scanning for '@'/':'.
+        if !s.first().is_some_and(u8::is_ascii_alphabetic) {
             return None;
-        };
+        }
+        let scheme_len = s
+            .iter()
+            .take_while(|&&b| b.is_ascii_alphanumeric() || matches!(b, b'+' | b'-' | b'.'))
+            .count();
+        if !s[scheme_len..].starts_with(b"://") {
+            return None;
+        }
+        let scheme_end = scheme_len + b"://".len();
         let mut rest = &s[scheme_end..];
         if let Some(nl) = crate::strings::index_of_char_usize(rest, b'\n') {
             rest = &rest[..nl];

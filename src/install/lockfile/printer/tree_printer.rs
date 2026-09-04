@@ -4,7 +4,7 @@ use bun_semver as semver;
 
 use crate::lockfile_real::package::PackageColumns as _;
 use crate::package_manager_real::TrackInstalledBin;
-use bun_core::fmt::PathSep;
+use bun_core::fmt::{PathSep, redacted};
 use bun_install::lockfile::{Printer, package::Meta as PackageMeta};
 use bun_install::{
     self as install, Bin, Dependency, DependencyID, INVALID_PACKAGE_ID, PackageID, PackageManager,
@@ -467,6 +467,7 @@ where
     let packages_slice = this.lockfile.packages.slice();
     let resolution: Resolution = packages_slice.items_resolution()[package_id as usize];
     let name = dependency.name.slice(string_buf);
+    let version = redacted(resolution.fmt(string_buf, PathSep::Posix));
 
     let package_name = packages_slice.items_name()[package_id as usize].slice(string_buf);
     if let Some(later_version_fmt) =
@@ -480,7 +481,7 @@ where
                     true
                 ),
                 bstr::BStr::new(name),
-                resolution.fmt(string_buf, PathSep::Posix),
+                version,
                 later_version_fmt,
             )?;
         } else {
@@ -488,7 +489,7 @@ where
                 writer,
                 bun_core::pretty_fmt!("<r>+ {s}<r><d>@{f}<r> <d>(v{f} available)<r>\n", false),
                 bstr::BStr::new(name),
-                resolution.fmt(string_buf, PathSep::Posix),
+                version,
                 later_version_fmt,
             )?;
         }
@@ -501,14 +502,14 @@ where
             writer,
             bun_core::pretty_fmt!("<r><green>+<r> <b>{s}<r><d>@{f}<r>\n", true),
             bstr::BStr::new(name),
-            resolution.fmt(string_buf, PathSep::Posix),
+            version,
         )?;
     } else {
         write!(
             writer,
             bun_core::pretty_fmt!("<r>+ {s}<r><d>@{f}<r>\n", false),
             bstr::BStr::new(name),
-            resolution.fmt(string_buf, PathSep::Posix),
+            version,
         )?;
     }
 
@@ -545,7 +546,7 @@ where
         writer,
         ENABLE_ANSI_COLORS,
         "<d>@{f}<r>",
-        resolution.fmt(string_buf, PathSep::Posix),
+        redacted(resolution.fmt(string_buf, PathSep::Posix)),
     )?;
     writer.write_str(if has_binaries {
         " with binaries:\n"
@@ -732,7 +733,7 @@ where
                 ENABLE_ANSI_COLORS,
                 " <r><b>{s}<r><d>@<b>{f}<r>\n",
                 bstr::BStr::new(package_name),
-                resolved[package_id as usize].fmt(string_buf, PathSep::Auto),
+                redacted(resolved[package_id as usize].fmt(string_buf, PathSep::Auto)),
             )?;
         }
     }

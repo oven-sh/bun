@@ -1959,7 +1959,9 @@ fn parse_test_command_options(args: &clap::Args<clap::Help>, ctx: Context<'_>) {
     ctx.test_options.run_todo = args.flag(b"--todo");
     ctx.test_options.only = args.flag(b"--only");
     ctx.test_options.pass_with_no_tests = args.flag(b"--pass-with-no-tests");
-    ctx.test_options.concurrent = args.flag(b"--concurrent");
+    let concurrent = args.flag(b"--concurrent");
+    ctx.test_options.concurrent = concurrent;
+    ctx.test_options.concurrent_from_cli = concurrent;
     ctx.test_options.randomize = args.flag(b"--randomize");
     let no_isolate = args.flag(b"--no-isolate");
     ctx.test_options.isolate = args.flag(b"--isolate") && !no_isolate;

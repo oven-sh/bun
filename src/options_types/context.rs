@@ -415,6 +415,9 @@ pub struct TestOptions {
     pub only: bool,
     pub pass_with_no_tests: bool,
     pub concurrent: bool,
+    /// Set when `--concurrent` is passed on the CLI; `bunfig.toml` `[test]`
+    /// `concurrent` then does not override it.
+    pub concurrent_from_cli: bool,
     pub randomize: bool,
     pub seed: Option<u32>,
     pub concurrent_test_glob: Option<Vec<Box<[u8]>>>,
@@ -499,6 +502,7 @@ impl Default for TestOptions {
             only: false,
             pass_with_no_tests: false,
             concurrent: false,
+            concurrent_from_cli: false,
             randomize: false,
             seed: None,
             concurrent_test_glob: None,

@@ -33,6 +33,7 @@ class JSBuiltinInternalFunctions;
 } // namespace WebCore
 
 namespace Bun {
+class ConsoleObject;
 class InternalModuleRegistry;
 class NapiHandleScopeImpl;
 class JSNextTickQueue;
@@ -777,6 +778,10 @@ private:
     Lock m_gcLock;
     Ref<WebCore::DOMWrapperWorld> m_world;
     RefPtr<WebCore::Performance> m_performance { nullptr };
+    // JSGlobalObject::setConsoleClient only takes a WeakPtr; the client installed by
+    // setConsole() is owned here so it goes away with the global (ShadowRealm globals
+    // and retired `bun test --isolate` globals are collected while the VM keeps running).
+    std::unique_ptr<Bun::ConsoleObject> m_consoleObject;
 
 public:
     // De-optimization once `require("module")._resolveFilename` is written to

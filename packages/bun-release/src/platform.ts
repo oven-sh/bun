@@ -130,6 +130,20 @@ export const platforms: Platform[] = [
   },
 ];
 
+const osNames: Record<string, string> = {
+  darwin: "macOS",
+  linux: "Linux",
+  android: "Android",
+  freebsd: "FreeBSD",
+  win32: "Windows",
+};
+
+/** The target a platform package's binary is built for, e.g. "macOS arm64" or "Linux x64 (musl)". */
+export function describePlatform({ os, arch, abi }: Pick<Platform, "os" | "arch" | "abi">): string {
+  const target = `${osNames[os] ?? os} ${arch}`;
+  return abi === "musl" ? `${target} (musl)` : target;
+}
+
 export function getSupportedPlatforms(os: string, arch: string, abi: string | undefined): Platform[] {
   return platforms
     .filter(

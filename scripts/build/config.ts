@@ -1085,11 +1085,6 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
       hint: "Use source (compile the pinned JSC in this build; add --local-deps=WebKit=<path> for your own clone) or prebuilt",
     });
   }
-  if (webkit === "source" && windows) {
-    throw new BuildError(`--webkit=source is not wired up for Windows targets yet`, {
-      hint: "Use --webkit=prebuilt (the default) when targeting Windows.",
-    });
-  }
 
   const packageManager = partial.packageManager ?? "bun";
   if (packageManager !== "bun" && packageManager !== "npm") {

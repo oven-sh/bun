@@ -109,7 +109,8 @@ function prebuiltDestDir(cfg: Config): string {
  * mode only (the script comes with the fetched tree).
  */
 export function webkitClassInfoCheckScript(cfg: Config): string | undefined {
-  if (cfg.webkit !== "source") return undefined;
+  // ELF/Mach-O symbol tables only; a PE keeps its symbols in the PDB.
+  if (cfg.webkit !== "source" || cfg.windows) return undefined;
   return join(depSourceDir(cfg, "WebKit"), "Tools", "Scripts", "check-classinfo-uniqueness.py");
 }
 
@@ -176,7 +177,7 @@ const sourceSparse = [
 //
 // The table is the output of WebKit's cmake configure, checked against the
 // cmakeconfig.h in the prebuilt tarballs for linux x64/arm64 (gnu), musl,
-// android, freebsd and macOS; entries whose value depends on the target are
+// android, freebsd, macOS and Windows; entries whose value depends on the target are
 // functions (`probe` rows are the header/function checks, which cmake does
 // not run for Apple targets). When adding a platform, diff its prebuilt's
 // cmakeconfig.h against this and make the differing rows conditional — do
@@ -185,11 +186,20 @@ const sourceSparse = [
 
 const on = (b: boolean): number => (b ? 1 : 0);
 const mimalloc = (c: Config): number => on(!c.asan);
-/** A header/function probe row: OptionsCommon.cmake skips those on APPLE, so the row is absent there. */
+/**
+ * A header/function probe row (WEBKIT_CHECK_HAVE_*). OptionsCommon.cmake
+ * skips those on APPLE, so the row is absent there; under clang-cl against
+ * the Windows SDK every one of these POSIX probes comes out 0.
+ */
 const probe =
   (v: number | ((c: Config) => number)) =>
   (c: Config): number | undefined =>
-    c.darwin ? undefined : typeof v === "function" ? v(c) : v;
+    c.darwin ? undefined : c.windows ? 0 : typeof v === "function" ? v(c) : v;
+/** The two compile probes (int128, std::filesystem) are not run for Windows either. */
+const compileProbe =
+  (v: number) =>
+  (c: Config): number | undefined =>
+    c.darwin || c.windows ? undefined : v;
 
 type Row = [name: string, value: number | undefined | ((c: Config) => number | undefined)];
 
@@ -198,7 +208,7 @@ const rows: Row[] = [
   ["BUN_SKIP_FAILING_ASSERTIONS", 1],
   ["BUSE_TZONE", 0],
   ["ENABLE_ACCESSIBILITY_ISOLATED_TREE", 0],
-  ["ENABLE_API_TESTS", 1],
+  ["ENABLE_API_TESTS", c => on(!c.windows)],
   ["ENABLE_APPLE_PAY", 0],
   ["ENABLE_APPLE_PAY_AUTOMATIC_RELOAD_LINE_ITEM", 0],
   ["ENABLE_APPLE_PAY_AUTOMATIC_RELOAD_PAYMENTS", 0],
@@ -244,7 +254,7 @@ const rows: Row[] = [
   ["ENABLE_EXPERIMENTAL_FEATURES", 0],
   ["ENABLE_FTL_JIT", 1],
   ["ENABLE_FULLSCREEN_API", 1],
-  ["ENABLE_FUZZILLI", 0],
+  ["ENABLE_FUZZILLI", c => (c.windows ? undefined : 0)],
   ["ENABLE_GAMEPAD", 0],
   ["ENABLE_GEOLOCATION", 1],
   ["ENABLE_GPU_PROCESS", 0],
@@ -348,7 +358,7 @@ const rows: Row[] = [
   ["HAVE_ALIGNED_MALLOC", probe(0)],
   ["HAVE_ERRNO_H", probe(1)],
   ["HAVE_FEATURES_H", probe(c => on(c.linux))],
-  ["HAVE_INT128_T", probe(1)],
+  ["HAVE_INT128_T", compileProbe(1)],
   ["HAVE_LANGINFO_H", probe(1)],
   ["HAVE_LINUX_MEMFD_H", probe(c => on(c.linux))],
   ["HAVE_LOCALTIME_R", probe(1)],
@@ -362,7 +372,7 @@ const rows: Row[] = [
   ["HAVE_SIGNAL_H", probe(1)],
   ["HAVE_STATX", probe(c => on(c.linux && c.abi !== "android"))],
   ["HAVE_STAT_BIRTHTIME", probe(c => on(c.freebsd))],
-  ["HAVE_STD_FILESYSTEM", probe(1)],
+  ["HAVE_STD_FILESYSTEM", compileProbe(1)],
   ["HAVE_SYS_PARAM_H", probe(1)],
   ["HAVE_SYS_TIMEB_H", probe(c => on(c.abi !== "android"))],
   ["HAVE_SYS_TIME_H", probe(1)],
@@ -393,6 +403,8 @@ const rows: Row[] = [
   ["USE_UNIX_DOMAIN_SOCKETS", 1],
   ["USE_WOFF2", 1],
   ["WTF_DEFAULT_EVENT_LOOP", 0],
+  // OptionsJSCOnly.cmake (WIN32 + ENABLE_STATIC_JSC): no dllexport/dllimport on the JS_EXPORT macros.
+  ["JS_NO_EXPORT", c => (c.windows ? 1 : undefined)],
 ];
 
 function cmakeConfigHeader(cfg: Config): string {
@@ -424,6 +436,7 @@ function inspectorFeatureDefines(cfg: Config): string {
     "USE_ALLOW_LINE_AND_COLUMN_NUMBER_IN_BUILTINS",
     "ENABLE_API_TESTS",
     "ENABLE_RESOURCE_USAGE",
+    "JS_NO_EXPORT",
   ]);
   // cmake snapshots this list before OptionsJSCOnly.cmake turns ENABLE_WEBGL
   // off, so the JSCOnly protocol has always carried the WebGL-conditioned
@@ -431,7 +444,8 @@ function inspectorFeatureDefines(cfg: Config): string {
   const names: string[] = ["ENABLE_WEBGL"];
   for (const [name, value] of rows) {
     if (name.startsWith("HAVE_") || notOptions.has(name)) continue;
-    if ((typeof value === "function" ? value(cfg) : value) !== 0) names.push(name);
+    const v = typeof value === "function" ? value(cfg) : value;
+    if (v !== undefined && v !== 0) names.push(name);
   }
   return names.sort().join(" ");
 }
@@ -795,6 +809,11 @@ const wtfSourcesCommon: readonly string[] = [
   "unicode/icu/CollatorICU.cpp",
   "unicode/icu/ICUHelpers.cpp",
   "generic/WorkQueueGeneric.cpp",
+  "bun/RunLoopBun.cpp",
+];
+
+/** PlatformJSCOnly.cmake's non-Windows block: every unix target compiles these. */
+const wtfSourcesPosix: readonly string[] = [
   "generic/MainThreadGeneric.cpp",
   "posix/OSAllocatorPOSIX.cpp",
   "posix/ThreadingPOSIX.cpp",
@@ -805,13 +824,35 @@ const wtfSourcesCommon: readonly string[] = [
   "posix/FileSystemPOSIX.cpp",
   "posix/MappedFileDataPOSIX.cpp",
   "unix/UniStdExtrasUnix.cpp",
-  "bun/RunLoopBun.cpp",
 ];
 
 /** WTF_SOURCES that Source/WTF/wtf/PlatformJSCOnly.cmake picks per OS. */
 function wtfSourcesFor(cfg: Config): string[] {
+  if (cfg.windows) {
+    return [
+      "text/win/StringWin.cpp",
+      "text/win/TextBreakIteratorInternalICUWin.cpp",
+      "win/CPUTimeWin.cpp",
+      "win/DbgHelperWin.cpp",
+      "win/FileHandleWin.cpp",
+      "win/FileSystemWin.cpp",
+      "win/LanguageWin.cpp",
+      "win/LoggingWin.cpp",
+      "win/MainThreadWin.cpp",
+      "win/MappedFileDataWin.cpp",
+      "win/OSAllocatorWin.cpp",
+      "win/PathWalker.cpp",
+      "win/SignalsWin.cpp",
+      "win/ThreadingWin.cpp",
+      "win/WTFCRTDebug.cpp",
+      "win/Win32Handle.cpp",
+      "win/MemoryFootprintWin.cpp",
+      "win/MemoryPressureHandlerWin.cpp",
+    ];
+  }
   if (cfg.abi === "android") {
     return [
+      ...wtfSourcesPosix,
       "android/LoggingAndroid.cpp",
       "android/RefPtrAndroid.cpp",
       "linux/CurrentProcessMemoryStatus.cpp",
@@ -821,7 +862,12 @@ function wtfSourcesFor(cfg: Config): string[] {
     ];
   }
   if (cfg.freebsd) {
-    return ["unix/LoggingUnix.cpp", "generic/MemoryFootprintGeneric.cpp", "unix/MemoryPressureHandlerUnix.cpp"];
+    return [
+      ...wtfSourcesPosix,
+      "unix/LoggingUnix.cpp",
+      "generic/MemoryFootprintGeneric.cpp",
+      "unix/MemoryPressureHandlerUnix.cpp",
+    ];
   }
   if (cfg.darwin) {
     // + the two MIG-generated mach_exc stubs, added by the emitter.
@@ -832,6 +878,7 @@ function wtfSourcesFor(cfg: Config): string[] {
     // The prebuilt only got away with listing it because nothing ever pulled
     // that member out of libWTF.a.
     return [
+      ...wtfSourcesPosix,
       "darwin/OSLogPrintStream.mm",
       "unix/LoggingUnix.cpp",
       "cocoa/MemoryFootprintCocoa.cpp",
@@ -840,6 +887,7 @@ function wtfSourcesFor(cfg: Config): string[] {
   }
   // linux (gnu, musl)
   return [
+    ...wtfSourcesPosix,
     "unix/LoggingUnix.cpp",
     "linux/CurrentProcessMemoryStatus.cpp",
     "linux/HighPriorityThreads.cpp",
@@ -1239,7 +1287,6 @@ function writeStub(path: string, target: string): void {
 
 function emitWebKitDirect(n: Ninja, cfg: Config, ctx: CustomBuildContext): WebKitDirectResult {
   const { srcDir: W, ready, resolved } = ctx;
-  assert(!cfg.windows, "--webkit=source: Windows targets are not wired up yet");
 
   const hostWin = cfg.host.os === "windows";
   const q = (p: string) => quote(p, hostWin);
@@ -1300,22 +1347,50 @@ function emitWebKitDirect(n: Ninja, cfg: Config, ctx: CustomBuildContext): WebKi
   // stand: the prebuilt is compiled that way too (its CMAKE_CXX_FLAGS come
   // last and carry them). The DWARF flags are WebKit's debug-info size
   // reductions; JSC's templates make them matter.
-  const webkitCommon = [
-    "-fno-strict-aliasing",
-    ...(cfg.windows ? [] : ["-gsimple-template-names", "-mllvm", "-dwarf-linkage-names=Abstract"]),
-    ...(cfg.windows || cfg.darwin ? [] : ["-fdebug-types-section"]),
-    // ASAN: keep tail-call frames (WebKitCompilerFlags.cmake does the same),
-    // so LeakSanitizer's allocation stacks — and test/leaksan.supp, which
-    // matches JSC frames by name — see every caller.
-    ...(cfg.asan && cfg.unix ? ["-fno-optimize-sibling-calls"] : []),
-    // musl: optimized for size (-Os wins over the dep-global -O level), as
-    // the Alpine builds have always shipped JSC.
-    ...(cfg.abi === "musl" && cfg.release ? ["-Os"] : []),
-  ];
+  const webkitCommon = cfg.windows
+    ? // clang-cl (OptionsMSVC.cmake): AT&T inline asm for the LLInt, no
+      // buffer-security cookie opt-out, all EH off, no FP exceptions, no RTTI,
+      // big object tables (unified sources), UTF-8 source, COMDAT folding
+      // helpers (/Gw /Gy /GF come with the dep flags), inline dllexport off.
+      [
+        "-fno-strict-aliasing",
+        "/clang:-masm=att",
+        "/Zc:dllexportInlines-",
+        "/GS",
+        "/EHa-",
+        "/EHc-",
+        "/EHs-",
+        "/fp:except-",
+        "/GR-",
+        "/analyze-",
+        "/bigobj",
+        "/utf-8",
+        "/validate-charset",
+        ...(cfg.release ? ["/Ob2"] : ["/Ob0", "/FS"]),
+      ]
+    : [
+        "-fno-strict-aliasing",
+        "-gsimple-template-names",
+        "-mllvm",
+        "-dwarf-linkage-names=Abstract",
+        ...(cfg.darwin ? [] : ["-fdebug-types-section"]),
+        // ASAN: keep tail-call frames (WebKitCompilerFlags.cmake does the same),
+        // so LeakSanitizer's allocation stacks — and test/leaksan.supp, which
+        // matches JSC frames by name — see every caller.
+        ...(cfg.asan ? ["-fno-optimize-sibling-calls"] : []),
+        // musl: optimized for size (-Os wins over the dep-global -O level), as
+        // the Alpine builds have always shipped JSC.
+        ...(cfg.abi === "musl" && cfg.release ? ["-Os"] : []),
+      ];
   // Release: WebKit's <iostream> ban (an #error stub found before the real
   // header — OptionsJSCOnly.cmake), so no TU drags std::ios_base::Init in.
   const bannedIncludes = cfg.debug ? [] : [`-I${q(join(WTF, "wtf", "bun", "BannedIncludes"))}`];
-  const webkitCxx = [...depFlags.cxxflags, ...webkitCommon, ...bannedIncludes, "-std=c++23"];
+  const webkitCxx = [
+    ...depFlags.cxxflags,
+    ...webkitCommon,
+    ...bannedIncludes,
+    cfg.windows ? "/clang:-std=c++23" : "-std=c++23",
+  ];
   const webkitC = [...depFlags.cflags, ...webkitCommon];
   // Same PIC policy as bun's own objects (bunOnlyFlags): non-PIE executable
   // everywhere but Android, whose loader requires PIE.
@@ -1340,10 +1415,32 @@ function emitWebKitDirect(n: Ninja, cfg: Config, ctx: CustomBuildContext): WebKi
     "-DHAVE_CONFIG_H",
     "-DPAS_BMALLOC=1",
     // WebKit's USE_CXX_STDLIB_ASSERTIONS default: the standard library's own
-    // hardening (libstdc++ on gnu/musl, libc++ elsewhere).
-    ...(cfg.linux && cfg.abi !== "android"
-      ? ["-D_GLIBCXX_ASSERTIONS=1"]
-      : ["-D_LIBCPP_HARDENING_MODE=_LIBCPP_HARDENING_MODE_EXTENSIVE"]),
+    // hardening (libstdc++ on gnu/musl, libc++ on the other unixes).
+    ...(cfg.windows
+      ? []
+      : cfg.linux && cfg.abi !== "android"
+        ? ["-D_GLIBCXX_ASSERTIONS=1"]
+        : ["-D_LIBCPP_HARDENING_MODE=_LIBCPP_HARDENING_MODE_EXTENSIVE"]),
+    // Windows (OptionsMSVC.cmake / OptionsJSCOnly.cmake): Win10 API level,
+    // wide-char APIs, lean windows.h (no wincrypt, no min/max, no winsock1),
+    // MSVC STL without exceptions, CRT deprecation noise off.
+    ...(cfg.windows
+      ? [
+          "-DUNICODE",
+          "-D_UNICODE",
+          "-D_WINDOWS",
+          "-DNOMINMAX",
+          "-DNOCRYPT",
+          "-D_WINSOCKAPI_=",
+          "-D_WIN32_WINNT=0x0A00",
+          "-DNTDDI_VERSION=0x0A000006",
+          "-D_HAS_EXCEPTIONS=0",
+          "-D_ENABLE_EXTENDED_ALIGNED_STORAGE",
+          "-D_CRT_SECURE_NO_WARNINGS",
+          "-D_CRT_NONSTDC_NO_DEPRECATE",
+          "-D_SILENCE_CXX23_DENORM_DEPRECATION_WARNING",
+        ]
+      : []),
     ...(cfg.assertions ? ["-DASSERT_ENABLED=1"] : []),
   ];
   // Everything below waits for the tree and for mimalloc's headers
@@ -1366,11 +1463,16 @@ function emitWebKitDirect(n: Ninja, cfg: Config, ctx: CustomBuildContext): WebKi
     ...bmIncludes.map(i => `-I${q(i)}`),
     "-Wno-cast-align",
     "-Wno-missing-field-initializers",
+    // libpas' 16-byte CAS on x64 (bmalloc/CMakeLists.txt, MSVC branch; the
+    // unix -march levels already imply it).
+    ...(cfg.windows && cfg.x64 ? ["-mcx16"] : []),
   ];
   const bmObjects: string[] = [];
   for (const src of inTree(BM, bmallocSources)) {
     // bmalloc_SOURCES' .c members are set LANGUAGE CXX in cmake.
-    const flags = src.endsWith(".c") ? ["-x", "c++", ...webkitCxx, ...bmFlagsCommon] : [...webkitCxx, ...bmFlagsCommon];
+    // bmalloc_SOURCES lists a few libpas .c files that are compiled as C++.
+    const asCxx = cfg.windows ? ["/TP"] : ["-x", "c++"];
+    const flags = src.endsWith(".c") ? [...asCxx, ...webkitCxx, ...bmFlagsCommon] : [...webkitCxx, ...bmFlagsCommon];
     bmObjects.push(
       src.endsWith(".c")
         ? cc(n, cfg, src, { flags, orderOnlyInputs: treeReady })
@@ -1830,7 +1932,19 @@ function emitWebKitDirect(n: Ninja, cfg: Config, ctx: CustomBuildContext): WebKi
     "Bun__errorInstance__finalize",
     "Bun__reportUnhandledError",
   ];
-  const testExeLinkFlags = cfg.darwin ? bunHooks.map(sym => `-Wl,-U,_${sym}`) : [];
+  // Windows: WTF's registry/shell/token calls (LanguageWin, FileSystemWin,
+  // OSAllocatorWin) — bun's own link gets these through its delay-load set.
+  // COFF has no weak undefined symbols: each TU referencing a hook carries a
+  // weak external plus an absolute-0 default, and once ThinLTO imports the
+  // referencing function into a second module lld-link sees two defaults
+  // ("duplicate symbol"). /force:multiple picks one — the hook-absent value a
+  // standalone test binary wants (the fork's Dockerfile.windows does the
+  // same for jsc.exe). bun.exe defines every hook, so its link is unaffected.
+  const testExeLinkFlags = cfg.darwin
+    ? bunHooks.map(sym => `-Wl,-U,_${sym}`)
+    : cfg.windows
+      ? ["advapi32.lib", "shell32.lib", "user32.lib", ...(cfg.lto ? ["/force:multiple"] : [])]
+      : [];
 
   // LLIntSettingsExtractor: target executable, parsed (not run) by offlineasm.
   const settingsObj = cxx(n, cfg, join(JSC, "llint", "LLIntSettingsExtractor.cpp"), {
@@ -1942,6 +2056,15 @@ function emitWebKitDirect(n: Ninja, cfg: Config, ctx: CustomBuildContext): WebKi
     implicitInputs: [join(B, "cmakeconfig.h")],
   });
 
+  // Windows ARM64: the alignment directives in these files' inline asm break
+  // LLVM's SEH unwind-info emission (llvm.org/pr47432), so JSC's CMakeLists
+  // builds them without unwind tables. (ThunkGenerators.cpp is listed there
+  // too but is always inside a unified bundle, where the property never
+  // applied.)
+  const noUnwindTables = (src: string): string[] =>
+    cfg.windows && cfg.arm64 && ["MacroAssemblerARM64.cpp", "LowLevelInterpreter.cpp"].includes(basename(src))
+      ? ["/clang:-fno-unwind-tables"]
+      : [];
   const jscObjects: string[] = [];
   for (const src of jscSources) {
     const isC = src.endsWith(".c");
@@ -1949,7 +2072,7 @@ function emitWebKitDirect(n: Ninja, cfg: Config, ctx: CustomBuildContext): WebKi
       isC
         ? cc(n, cfg, src, { flags: jscCFlags, orderOnlyInputs: codegenReady })
         : cxx(n, cfg, src, {
-            flags: jscFlags,
+            flags: [...jscFlags, ...noUnwindTables(src)],
             pch: jscPch.pch,
             pchHeader: jscPch.wrapperHeader,
             orderOnlyInputs: codegenReady,
@@ -1963,7 +2086,11 @@ function emitWebKitDirect(n: Ninja, cfg: Config, ctx: CustomBuildContext): WebKi
   // within their aligned slots, as JSC's CMakeLists does for this file.
   jscObjects.push(
     cxx(n, cfg, join(JSC, "llint", "LowLevelInterpreter.cpp"), {
-      flags: [...jscFlags, ...(cfg.debug ? ["-O1"] : [])],
+      flags: [
+        ...jscFlags,
+        ...(cfg.debug ? [cfg.windows ? "/O1" : "-O1"] : []),
+        ...noUnwindTables("LowLevelInterpreter.cpp"),
+      ],
       implicitInputs: [llintAssembly],
       orderOnlyInputs: codegenReady,
     }),

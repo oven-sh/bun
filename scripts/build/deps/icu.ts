@@ -98,15 +98,26 @@ function emitIcu(n: Ninja, cfg: Config, { srcDir, ready }: CustomBuildContext): 
   // -frtti / -Os after the dep-global -fno-rtti / -O<n> so they win. PIC
   // policy as for bun's own objects (non-PIE executable except on Android).
   const pic = cfg.abi === "android" ? ["-fPIC"] : cfg.unix ? ["-fno-pic", "-fno-pie"] : [];
-  const cxxflags = [
-    ...dep.cxxflags,
-    ...pic,
-    "-std=c++20",
-    "-frtti",
-    ...(cfg.release ? ["-Os"] : []),
-    "-fno-exceptions",
-    ...icuDefines,
-  ];
+  const cxxflags = cfg.windows
+    ? // clang-cl spellings; /GR after the dep-global /GR-. _CRT_SECURE_NO_DEPRECATE
+      // as ICU's own MSVC project files set.
+      [
+        ...dep.cxxflags,
+        "/std:c++20",
+        "/GR",
+        ...(cfg.release ? ["/Os"] : []),
+        "-D_CRT_SECURE_NO_DEPRECATE",
+        ...icuDefines,
+      ]
+    : [
+        ...dep.cxxflags,
+        ...pic,
+        "-std=c++20",
+        "-frtti",
+        ...(cfg.release ? ["-Os"] : []),
+        "-fno-exceptions",
+        ...icuDefines,
+      ];
   const ucObjects = sourcesTxt(common).map(src =>
     cxx(n, cfg, src, { flags: [...cxxflags, "-DU_COMMON_IMPLEMENTATION", `-I${q(common)}`], orderOnlyInputs: ready }),
   );
@@ -198,11 +209,22 @@ function emitIcu(n: Ninja, cfg: Config, { srcDir, ready }: CustomBuildContext): 
       ),
     },
   });
-  // The .S only names the two blobs; when they change it must reassemble.
-  const dataObj = cc(n, cfg, asm, {
-    flags: dep.cflags.filter(f => !f.startsWith("-g")),
-    implicitInputs: [outDat, dict],
-  });
+  // The .S only names the two blobs (.incbin); when they change it must
+  // reassemble. clang-cl does not take .S, so a Windows target assembles it
+  // with the GNU-driver clang for the same triple (COFF directives inside).
+  let dataObj: string;
+  if (cfg.windows) {
+    dataObj = join(B, `icudata${cfg.objSuffix}`);
+    n.build({
+      outputs: [dataObj],
+      rule: "icu_asm",
+      inputs: [asm],
+      implicitInputs: [outDat, dict],
+      vars: { target: cfg.crossTarget ?? (cfg.x64 ? "x86_64-pc-windows-msvc" : "aarch64-pc-windows-msvc") },
+    });
+  } else {
+    dataObj = cc(n, cfg, asm, { flags: dep.cflags.filter(f => !f.startsWith("-g")), implicitInputs: [outDat, dict] });
+  }
 
   const objects = [...i18nObjects, ...ucObjects, dataObj];
   n.phony("icu", objects);
@@ -229,5 +251,10 @@ export function registerIcuRules(n: Ninja, cfg: Config): void {
     command: `${cfg.jsRuntime} ${q(join(cfg.cwd, "scripts", "build", "icu-data.ts"))} $args`,
     description: "icu data (filter + zstd repack)",
     restat: true,
+  });
+  // Windows: the GNU-driver clang next to clang-cl assembles the data .S.
+  n.rule("icu_asm", {
+    command: `${q(cfg.hostCc)} --target=$target -c $in -o $out`,
+    description: "asm $out",
   });
 }

@@ -742,7 +742,7 @@ export function emitPostLink(
  */
 function emitClassInfoCheck(n: Ninja, cfg: Config, exe: string, exeName: string): string[] {
   const script = webkitClassInfoCheckScript(cfg);
-  if (script === undefined || cfg.host.os === "windows") return [];
+  if (script === undefined) return [];
   const stamp = resolve(cfg.buildDir, `${exeName}.classinfo-unique`);
   n.rule("classinfo_check", {
     command: `python3 ${quote(script, false)} $in && touch $out`,

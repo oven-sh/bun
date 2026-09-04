@@ -840,6 +840,38 @@ export const defines: Flag[] = [
  * Windows links go through lld-link's own argument shape and stay there too.
  */
 export const targetLinkFlags: Flag[] = [
+  // ─── Windows (lld-link, after /link) ───
+  {
+    // Explicit machine type — clang-cl's driver does not reliably forward
+    // its default target to lld-link when invoked as a pure link driver
+    // (no source inputs, /link separator), so on arm64 lld-link would
+    // autodetect x64 and reject every arm64 input. CMake's Windows-MSVC
+    // platform module always set /machine: from CMAKE_SYSTEM_PROCESSOR,
+    // which is why the pre-ninja build never needed this in BuildBun.cmake.
+    flag: c => `/machine:${c.arm64 ? "arm64" : "x64"}`,
+    when: c => c.windows,
+    desc: "Target machine type for lld-link (required on arm64; x64 hosts default correctly but explicit is harmless)",
+  },
+  {
+    // Serviced UCRT overlay: an explicit /libpath: is searched before the
+    // /winsysroot-derived paths, so its libucrt.lib/ucrt.lib win over the
+    // splat's stale copies (see UCRT_SERVICING_VERSION in winsysroot.ts —
+    // the VS-manifest payload xwin downloads carries an ancient arm64 UCRT
+    // with broken printf formatting).
+    flag: c => quote(`/libpath:${ucrtServicingLibDir(c)!}`, false),
+    when: c => c.windows && c.host.os !== "windows",
+    desc: "Windows cross-compile: serviced Universal CRT static libs (SDK NuGet) override the splat's",
+  },
+  {
+    // Windows cross-compile: these ldflags go after /link, straight to
+    // lld-link, which doesn't see the compile-side `/winsysroot` from
+    // globalFlags — repeat it in lld-link's own spelling so the MSVC CRT
+    // and Windows SDK import libraries (libcmt, kernel32, ...) are found
+    // without a VS dev shell's LIB env.
+    flag: c => quote(`/winsysroot:${c.winsysroot!}`, false),
+    when: c => c.windows && c.winsysroot !== undefined,
+    desc: "Windows cross-compile: MSVC CRT + Windows SDK library search root (xwin splat)",
+  },
   // ─── macOS ───
   {
     // Cross-link from a non-darwin host: same pattern as Android/FreeBSD —
@@ -1034,37 +1066,6 @@ export const linkerFlags: Flag[] = [
   },
 
   // ─── Windows ───
-  {
-    // Explicit machine type — clang-cl's driver does not reliably forward
-    // its default target to lld-link when invoked as a pure link driver
-    // (no source inputs, /link separator), so on arm64 lld-link would
-    // autodetect x64 and reject every arm64 input. CMake's Windows-MSVC
-    // platform module always set /machine: from CMAKE_SYSTEM_PROCESSOR,
-    // which is why the pre-ninja build never needed this in BuildBun.cmake.
-    flag: c => `/machine:${c.arm64 ? "arm64" : "x64"}`,
-    when: c => c.windows,
-    desc: "Target machine type for lld-link (required on arm64; x64 hosts default correctly but explicit is harmless)",
-  },
-  {
-    // Serviced UCRT overlay: an explicit /libpath: is searched before the
-    // /winsysroot-derived paths, so its libucrt.lib/ucrt.lib win over the
-    // splat's stale copies (see UCRT_SERVICING_VERSION in winsysroot.ts —
-    // the VS-manifest payload xwin downloads carries an ancient arm64 UCRT
-    // with broken printf formatting).
-    flag: c => quote(`/libpath:${ucrtServicingLibDir(c)!}`, false),
-    when: c => c.windows && c.host.os !== "windows",
-    desc: "Windows cross-compile: serviced Universal CRT static libs (SDK NuGet) override the splat's",
-  },
-  {
-    // Windows cross-compile: these ldflags go after /link, straight to
-    // lld-link, which doesn't see the compile-side `/winsysroot` from
-    // globalFlags — repeat it in lld-link's own spelling so the MSVC CRT
-    // and Windows SDK import libraries (libcmt, kernel32, ...) are found
-    // without a VS dev shell's LIB env.
-    flag: c => quote(`/winsysroot:${c.winsysroot!}`, false),
-    when: c => c.windows && c.winsysroot !== undefined,
-    desc: "Windows cross-compile: MSVC CRT + Windows SDK library search root (xwin splat)",
-  },
   {
     flag: ["/STACK:0x1200000,0x200000", "/errorlimit:0"],
     when: c => c.windows,

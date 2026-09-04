@@ -253,6 +253,10 @@ bun_core::oom_from_alloc!(Error);
 /// cap is ~1 GiB, which is already past where you'd want to be.
 pub(crate) const DEFAULT_MAX_PIXELS: u64 = 0x3FFF * 0x3FFF;
 
+/// Largest ICC profile carried from decode to encode; bigger is "no profile".
+/// Real profiles are under 4 MB, and JPEG cannot hold more than 255 × 65519.
+pub(crate) const MAX_ICC_PROFILE_BYTES: usize = 8 << 20;
+
 /// Hint from the pipeline about the eventual output size. JPEG can do M/8
 /// IDCT scaling for free, so when we know the resize target up front we
 /// decode at the smallest factor that still ≥ the target — skipping most of
@@ -357,21 +361,7 @@ pub(crate) fn probe(bytes: &[u8], max_pixels: u64) -> Result<Probe, Error> {
         Format::Jpeg => {
             // turbojpeg's header decode is already cheap (no scan data read).
             let handle = jpeg::Handle::init(1).ok_or(Error::OutOfMemory)?;
-            // SAFETY: handle is live; (ptr,len) come from a valid live slice.
-            if unsafe { jpeg::tj3DecompressHeader(handle.as_ptr(), bytes.as_ptr(), bytes.len()) }
-                != 0
-            {
-                return Err(Error::DecodeFailed);
-            }
-            // SAFETY: handle is live and has had a header decoded into it above.
-            let rw = unsafe { jpeg::tj3Get(handle.as_ptr(), jpeg::TJPARAM_JPEGWIDTH) };
-            // SAFETY: same handle invariant as above.
-            let rh = unsafe { jpeg::tj3Get(handle.as_ptr(), jpeg::TJPARAM_JPEGHEIGHT) };
-            if rw <= 0 || rh <= 0 {
-                return Err(Error::DecodeFailed);
-            }
-            w = u32::try_from(rw).expect("int cast");
-            h = u32::try_from(rh).expect("int cast");
+            (w, h) = jpeg::read_header(handle.as_ptr(), bytes)?;
         }
         Format::Webp => {
             let mut cw: c_int = 0;
@@ -393,14 +383,10 @@ pub(crate) fn probe(bytes: &[u8], max_pixels: u64) -> Result<Probe, Error> {
             h = ih.height;
         }
         Format::Gif => {
-            // sig(6) · LSD: w(u16le) h(u16le) …
-            if bytes.len() < 10 {
-                return Err(Error::DecodeFailed);
-            }
-            w = u16::from_le_bytes(bytes[6..8].try_into().expect("infallible: size matches"))
-                as u32;
-            h = u16::from_le_bytes(bytes[8..10].try_into().expect("infallible: size matches"))
-                as u32;
+            // The dims the decoder produces, not the Logical Screen Descriptor's.
+            let hdr = gif::parse_header(bytes)?;
+            w = hdr.width;
+            h = hdr.height;
         }
         Format::Tiff | Format::Heic | Format::Avif => {
             // ImageIO reads the dimensions from the container; the codec only runs in decode().
@@ -551,7 +537,10 @@ pub(crate) fn encode(
 ) -> Result<Encoded, Error> {
     // SAFETY: `EncodeOptions.icc_profile` is borrowed from the caller for the
     // duration of this call (raw-ptr stand-in for a lifetime param).
-    let icc: Option<&[u8]> = opts.icc_profile.map(|p| unsafe { p.as_ref() });
+    let icc: Option<&[u8]> = opts
+        .icc_profile
+        .map(|p| unsafe { p.as_ref() })
+        .filter(|p| p.len() <= MAX_ICC_PROFILE_BYTES);
     match opts.format {
         Format::Jpeg => jpeg::encode(rgba, width, height, opts.quality, opts.progressive, icc),
         // PNG carries iCCP on both truecolour and indexed images — quantise

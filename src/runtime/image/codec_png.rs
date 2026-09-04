@@ -44,7 +44,13 @@ unsafe extern "C" {
     /// the context and freed with `spng_ctx_free`; dupe out before then.
     fn spng_get_iccp(ctx: *mut spng_ctx, iccp: *mut Iccp) -> c_int;
     fn spng_set_iccp(ctx: *mut spng_ctx, iccp: *const Iccp) -> c_int;
+    fn spng_set_chunk_limits(ctx: *mut spng_ctx, chunk_size: usize, cache_limit: usize) -> c_int;
 }
+
+/// libspng inflates iCCP/zTXt/iTXt before the first IDAT, where `max_pixels`
+/// cannot see it. Over either cap the decode fails with `SPNG_ECHUNK_LIMITS`.
+const MAX_CHUNK_BYTES: usize = codecs::MAX_ICC_PROFILE_BYTES;
+const MAX_CHUNK_CACHE_BYTES: usize = 4 * MAX_CHUNK_BYTES;
 
 #[repr(C)]
 struct Iccp {
@@ -108,6 +114,10 @@ pub(crate) fn decode(bytes: &[u8], max_pixels: u64) -> Result<codecs::Decoded, c
         unsafe { spng_ctx_free(c) }
     });
 
+    // SAFETY: ctx is valid; both limits are plain sizes.
+    if unsafe { spng_set_chunk_limits(ctx, MAX_CHUNK_BYTES, MAX_CHUNK_CACHE_BYTES) } != 0 {
+        return Err(codecs::Error::DecodeFailed);
+    }
     // SAFETY: ctx is valid; bytes outlives the ctx (freed at end of scope).
     if unsafe { spng_set_png_buffer(ctx, bytes.as_ptr(), bytes.len()) } != 0 {
         return Err(codecs::Error::DecodeFailed);
@@ -153,6 +163,7 @@ pub(crate) fn decode(bytes: &[u8], max_pixels: u64) -> Result<codecs::Decoded, c
     // SAFETY: ctx is valid; iccp is a valid out-ptr.
     let icc: Option<Vec<u8>> = if unsafe { spng_get_iccp(ctx, &raw mut iccp) } == 0
         && iccp.profile_len > 0
+        && iccp.profile_len <= codecs::MAX_ICC_PROFILE_BYTES
         && !iccp.profile.is_null()
     {
         // SAFETY: libspng guarantees profile points to profile_len bytes owned by ctx.

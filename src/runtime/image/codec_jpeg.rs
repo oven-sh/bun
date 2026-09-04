@@ -12,11 +12,11 @@ type tjhandle = *mut c_void;
 
 // TJINIT_COMPRESS=0, TJINIT_DECOMPRESS=1.
 unsafe extern "C" {
-    pub(crate) fn tj3Init(init_type: c_int) -> tjhandle;
-    pub(crate) fn tj3Destroy(h: tjhandle);
+    fn tj3Init(init_type: c_int) -> tjhandle;
+    fn tj3Destroy(h: tjhandle);
     fn tj3Set(h: tjhandle, param: c_int, value: c_int) -> c_int;
-    pub(crate) fn tj3Get(h: tjhandle, param: c_int) -> c_int;
-    pub(crate) fn tj3DecompressHeader(h: tjhandle, buf: *const u8, len: usize) -> c_int;
+    fn tj3Get(h: tjhandle, param: c_int) -> c_int;
+    fn tj3DecompressHeader(h: tjhandle, buf: *const u8, len: usize) -> c_int;
     fn tj3Decompress8(
         h: tjhandle,
         buf: *const u8,
@@ -38,6 +38,7 @@ unsafe extern "C" {
     fn tj3SetScalingFactor(h: tjhandle, sf: ScalingFactor) -> c_int;
     fn tj3SetCroppingRegion(h: tjhandle, r: CropRegion) -> c_int;
     fn tj3GetScalingFactors(n: *mut c_int) -> *const ScalingFactor;
+    fn tj3GetErrorCode(h: tjhandle) -> c_int;
     pub(crate) fn tj3Free(ptr: *mut c_void);
     // ICC profile transport: the APP2 ICC_PROFILE marker carries the source's
     // colour space (sRGB implicit when absent; Display-P3 / Adobe RGB / Jpegli
@@ -105,8 +106,8 @@ fn scaled(dim: u32, sf: ScalingFactor) -> u32 {
 // tjparam / tjpf enum values from turbojpeg.h.
 const TJPARAM_QUALITY: c_int = 3;
 const TJPARAM_SUBSAMP: c_int = 4;
-pub(crate) const TJPARAM_JPEGWIDTH: c_int = 5;
-pub(crate) const TJPARAM_JPEGHEIGHT: c_int = 6;
+const TJPARAM_JPEGWIDTH: c_int = 5;
+const TJPARAM_JPEGHEIGHT: c_int = 6;
 const TJPARAM_PROGRESSIVE: c_int = 12;
 const TJPARAM_MAXPIXELS: c_int = 24;
 /// `2` = save only APP2/ICC_PROFILE markers (enough for colour management,
@@ -115,6 +116,33 @@ const TJPARAM_MAXPIXELS: c_int = 24;
 const TJPARAM_SAVEMARKERS: c_int = 25;
 const TJPF_RGBA: c_int = 7;
 const TJSAMP_420: c_int = 2;
+/// `tj3GetErrorCode` after a -1 return: libjpeg warned but kept going.
+const TJERR_WARNING: c_int = 0;
+
+/// Parse the header (SOF dims, saved markers) without touching scan data.
+/// A warning (`JWRN_BOGUS_ICC`: ICC markers that do not reassemble) leaves
+/// the SOF fields valid and the profile absent, so only a fatal error rejects.
+pub(crate) fn read_header(h: tjhandle, bytes: &[u8]) -> Result<(u32, u32), codecs::Error> {
+    // SAFETY: `h` is a live tjhandle; ptr/len come from a valid `&[u8]`
+    // borrowed for the call.
+    let rc = unsafe { tj3DecompressHeader(h, bytes.as_ptr(), bytes.len()) };
+    // SAFETY: `h` is live; tj3GetErrorCode only reads handle state.
+    if rc != 0 && unsafe { tj3GetErrorCode(h) } != TJERR_WARNING {
+        return Err(codecs::Error::DecodeFailed);
+    }
+    // SAFETY: `h` is live; tj3Get only reads handle state.
+    let rw = unsafe { tj3Get(h, TJPARAM_JPEGWIDTH) };
+    // SAFETY: `h` is live; tj3Get only reads handle state.
+    let rh = unsafe { tj3Get(h, TJPARAM_JPEGHEIGHT) };
+    // -1 on error, 0 if SOF was never reached: reject before the cast.
+    if rw <= 0 || rh <= 0 {
+        return Err(codecs::Error::DecodeFailed);
+    }
+    Ok((
+        u32::try_from(rw).expect("int cast"),
+        u32::try_from(rh).expect("int cast"),
+    ))
+}
 
 pub(crate) fn decode(
     bytes: &[u8],
@@ -134,21 +162,9 @@ pub(crate) fn decode(
     // marker buffer is discarded if we set this after.
     // SAFETY: `h` is a live tjhandle for the duration of `_h_guard`.
     unsafe { tj3Set(h, TJPARAM_SAVEMARKERS, 2) };
-    // SAFETY: `h` is live; ptr/len come from a valid `&[u8]` borrowed for the call.
-    if unsafe { tj3DecompressHeader(h, bytes.as_ptr(), bytes.len()) } != 0 {
-        return Err(codecs::Error::DecodeFailed);
-    }
-    // SAFETY: `h` is live; tj3Get only reads handle state.
-    let rw = unsafe { tj3Get(h, TJPARAM_JPEGWIDTH) };
-    // SAFETY: `h` is live; tj3Get only reads handle state.
-    let rh = unsafe { tj3Get(h, TJPARAM_JPEGHEIGHT) };
-    // tj3Get returns -1 on error; treat any non-positive dim as a decode
-    // failure rather than letting the cast trap on hostile input.
-    if rw <= 0 || rh <= 0 {
-        return Err(codecs::Error::DecodeFailed);
-    }
-    let src_w: u32 = u32::try_from(rw).expect("int cast");
-    let src_h: u32 = u32::try_from(rh).expect("int cast");
+    let (src_w, src_h) = read_header(h, bytes)?;
+    let rw = c_int::try_from(src_w).expect("int cast");
+    let rh = c_int::try_from(src_h).expect("int cast");
     codecs::guard(src_w, src_h, max_pixels)?;
 
     let mut w = src_w;
@@ -279,7 +295,7 @@ pub(crate) fn decode(
                 unsafe { tj3Free(p.cast()) };
             }
         });
-        if icc_ptr.is_null() {
+        if icc_ptr.is_null() || icc_size > codecs::MAX_ICC_PROFILE_BYTES {
             break 'blk None;
         }
         // SAFETY: tj3GetICCProfile wrote `icc_size` bytes at `icc_ptr`.

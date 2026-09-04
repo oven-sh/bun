@@ -129,7 +129,23 @@ impl Dict {
     }
 }
 
-pub(crate) fn decode(bytes: &[u8], max_pixels: u64) -> Result<codecs::Decoded, codecs::Error> {
+/// Everything in front of the first frame's LZW data. `width`/`height` are the
+/// Image Descriptor's (the decoded size), not the Logical Screen Descriptor's.
+pub(crate) struct Header {
+    pub(crate) width: u32,
+    pub(crate) height: u32,
+    interlace: bool,
+    /// Local colour table if the frame has one, else the global one.
+    color_table: core::ops::Range<usize>,
+    min_code: u8,
+    /// Transparency index from the most recent Graphics Control Extension.
+    transparent: Option<u8>,
+    /// Offset of the first LZW sub-block.
+    lzw_off: usize,
+}
+
+/// Walk to the first Image Descriptor, skipping extensions. No LZW is read.
+pub(crate) fn parse_header(bytes: &[u8]) -> Result<Header, codecs::Error> {
     // ── header + LSD ───────────────────────────────────────────────────────
     if bytes.len() < 13 || !(&bytes[0..6] == b"GIF89a" || &bytes[0..6] == b"GIF87a") {
         return Err(codecs::Error::DecodeFailed);
@@ -146,11 +162,7 @@ pub(crate) fn decode(bytes: &[u8], max_pixels: u64) -> Result<codecs::Decoded, c
     if i > bytes.len() {
         return Err(codecs::Error::DecodeFailed);
     }
-    let gct: &[u8] = if has_gct {
-        &bytes[13..][..(gct_size as usize) * 3]
-    } else {
-        &[]
-    };
+    let gct: core::ops::Range<usize> = if has_gct { 13..i } else { 0..0 };
 
     let mut trns: Option<u8> = None; // transparency index from the most recent GCE
 
@@ -203,18 +215,17 @@ pub(crate) fn decode(bytes: &[u8], max_pixels: u64) -> Result<codecs::Decoded, c
                 if w == 0 || h == 0 {
                     return Err(codecs::Error::DecodeFailed);
                 }
-                codecs::guard(w, h, max_pixels)?;
-                let ct: &[u8] = if has_lct {
+                let color_table: core::ops::Range<usize> = if has_lct {
                     if i + lct_size * 3 > bytes.len() {
                         return Err(codecs::Error::DecodeFailed);
                     }
-                    let s = &bytes[i..][..lct_size * 3];
+                    let r = i..i + lct_size * 3;
                     i += lct_size * 3;
-                    s
+                    r
                 } else {
                     gct
                 };
-                if ct.is_empty() {
+                if color_table.is_empty() {
                     return Err(codecs::Error::DecodeFailed); // no palette at all
                 }
 
@@ -223,12 +234,35 @@ pub(crate) fn decode(bytes: &[u8], max_pixels: u64) -> Result<codecs::Decoded, c
                 }
                 let min_code: u8 = bytes[i].clamp(2, 11);
                 i += 1;
-                return decode_frame(bytes, i, w, h, interlace, ct, min_code, trns);
+                return Ok(Header {
+                    width: w,
+                    height: h,
+                    interlace,
+                    color_table,
+                    min_code,
+                    transparent: trns,
+                    lzw_off: i,
+                });
             }
             _ => return Err(codecs::Error::DecodeFailed),
         }
     }
     Err(codecs::Error::DecodeFailed)
+}
+
+pub(crate) fn decode(bytes: &[u8], max_pixels: u64) -> Result<codecs::Decoded, codecs::Error> {
+    let hdr = parse_header(bytes)?;
+    codecs::guard(hdr.width, hdr.height, max_pixels)?;
+    decode_frame(
+        bytes,
+        hdr.lzw_off,
+        hdr.width,
+        hdr.height,
+        hdr.interlace,
+        &bytes[hdr.color_table],
+        hdr.min_code,
+        hdr.transparent,
+    )
 }
 
 fn decode_frame(

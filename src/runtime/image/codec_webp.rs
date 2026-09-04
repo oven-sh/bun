@@ -207,7 +207,8 @@ pub(crate) fn decode(bytes: &[u8], max_pixels: u64) -> Result<codecs::Decoded, c
         if iter.chunk.bytes.is_null() {
             break 'blk None;
         }
-        if iter.chunk.size == 0 {
+        // RIFF stores chunks raw: an ICCP chunk can be as large as the file.
+        if iter.chunk.size == 0 || iter.chunk.size > codecs::MAX_ICC_PROFILE_BYTES {
             break 'blk None;
         }
         // SAFETY: chunk.bytes points into `bytes` for chunk.size bytes per libwebp contract.

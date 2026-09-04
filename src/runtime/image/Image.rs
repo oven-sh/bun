@@ -385,6 +385,8 @@ fn source_from_js(
             out.truncate(r.written);
             return Ok(Source::Owned(out));
         }
+        // Same check as `Bun.file()`; the worker opens this as a C string.
+        crate::node::types::Valid::path_null_bytes(s, global)?;
         return Ok(Source::Path(ZBox::from_bytes(s)));
     }
     if let Some(ab) = value.as_array_buffer(global) {

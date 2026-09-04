@@ -55,6 +55,15 @@ The codecs themselves are vendored via `scripts/build/deps/{libjpeg-turbo,libspn
   codecs return `Encoded` with the right `free`, not a default_allocator slice.
 - The `max_pixels` guard fires **after the header read, before the RGBA alloc**
   in every codec. New codecs must do the same.
+- `probe()` reports the dimensions the decoder will produce, so `metadata()`
+  and the terminals agree on what `max_pixels` rejects. For GIF that is the
+  first Image Descriptor, not the Logical Screen Descriptor.
+- Metadata is bounded independently of `max_pixels`. An ICC profile over
+  `MAX_ICC_PROFILE_BYTES` is dropped at decode before it is copied out of the
+  codec (JPEG cannot carry more than 255 × 65519 bytes anyway), and libspng
+  runs with chunk limits so an iCCP/zTXt/iTXt that inflates past the cap
+  fails the decode instead of filling memory. New codecs must cap whatever
+  they inflate or copy out of the container the same way.
 - `image_resize.cpp` must stay in `noUnify` (see `scripts/build/unified.ts`) —
   highway's `foreach_target.h` has a TU-wide include guard that breaks with
   two highway TUs in one bundle.

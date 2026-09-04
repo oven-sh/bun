@@ -778,3 +778,212 @@ describe("random-byte fuzz", () => {
     });
   }
 });
+
+// ─── 11. path strings ────────────────────────────────────────────────────────
+
+describe("path source", () => {
+  test("interior NUL is rejected at construction with ERR_INVALID_ARG_VALUE, like Bun.file()", async () => {
+    // The worker opens the path as a C string, so "secret-no-ext\0.png" would
+    // open "secret-no-ext" while `.endsWith(".png")` on the JS string says
+    // yes. The constructor must refuse it the way Bun.file() and node:fs do.
+    using dir = tempDir("image-nul-path", { "secret-no-ext": tinyPng });
+    const p = join(String(dir), "secret-no-ext\0.png");
+    expect(p.endsWith(".png")).toBe(true);
+    const codeOf = (f: () => unknown) => {
+      try {
+        f();
+      } catch (e: any) {
+        return e.code;
+      }
+      return "no throw";
+    };
+    expect(codeOf(() => new Bun.Image(p))).toBe("ERR_INVALID_ARG_VALUE");
+    expect(codeOf(() => Bun.file(p))).toBe("ERR_INVALID_ARG_VALUE");
+    // Sanity: the same path without the NUL decodes.
+    expect(await new Bun.Image(join(String(dir), "secret-no-ext")).metadata()).toEqual({
+      width: 2,
+      height: 2,
+      format: "png",
+    });
+  });
+});
+
+// ─── 12. ancillary-chunk bombs and ICC profile transport ─────────────────────
+
+describe("PNG ancillary chunk limits", () => {
+  // A 4×4 PNG whose `kind` chunk inflates to `inflatedBytes` of zeros. The
+  // file itself stays tiny (deflate of zeros is ~1000:1), so `maxPixels`
+  // never sees anything wrong: the bomb is in metadata libspng inflates
+  // before the first IDAT.
+  function pngWithInflatingChunk(kind: "iCCP" | "zTXt" | "iTXt", inflatedBytes: number): Uint8Array {
+    const ihdr = new Uint8Array(13);
+    const iv = new DataView(ihdr.buffer);
+    iv.setUint32(0, 4);
+    iv.setUint32(4, 4);
+    ihdr[8] = 8;
+    ihdr[9] = 6;
+    const deflated = zlib.deflateSync(Buffer.alloc(inflatedBytes));
+    // iCCP: keyword \0 method deflate · zTXt: keyword \0 method deflate ·
+    // iTXt: keyword \0 compressed=1 method=0 lang \0 translated \0 deflate
+    const head =
+      kind === "iTXt" ? Buffer.from("k\0\x01\0\0\0", "latin1") : Buffer.from(kind === "iCCP" ? "icc\0\0" : "k\0\0");
+    return Buffer.concat([
+      Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+      pngChunk("IHDR", ihdr),
+      pngChunk(kind, Buffer.concat([head, deflated])),
+      pngChunk("IDAT", zlib.deflateSync(Buffer.alloc(4 * (1 + 4 * 4)))),
+      pngChunk("IEND", new Uint8Array(0)),
+    ]);
+  }
+
+  test.each(["iCCP", "zTXt", "iTXt"] as const)("%s inflating to 32 MiB rejects instead of inflating", async kind => {
+    const png = pngWithInflatingChunk(kind, 32 << 20);
+    expect(png.length).toBeLessThan(100_000);
+    // metadata() reads only the IHDR, so it is unaffected.
+    expect(await new Bun.Image(png).metadata()).toEqual({ width: 4, height: 4, format: "png" });
+    // libspng stops inflating at the 8 MiB per-chunk cap and fails the
+    // decode; the 32 MiB never materialises and `maxPixels` is irrelevant.
+    await expect(new Bun.Image(png, { maxPixels: 64 }).png().bytes()).rejects.toThrow(/decode failed/);
+  });
+
+  test("an oversized iCCP does not ride into the output", async () => {
+    // Pre-fix a 1 MB PNG became a 1 GiB WebP (the inflated profile was
+    // copied into an ICCP chunk verbatim). Anything over the cap fails the
+    // decode, so no terminal can emit it.
+    const png = pngWithInflatingChunk("iCCP", 9 << 20);
+    await expect(new Bun.Image(png).webp().bytes()).rejects.toThrow(/decode failed/);
+    await expect(new Bun.Image(png).jpeg().bytes()).rejects.toThrow(/decode failed/);
+  });
+
+  test("a 1 MiB iCCP is under the cap and still round-trips", async () => {
+    // Real profiles are far smaller than this (sRGB ~3 KB, the largest
+    // CMYK press profiles ~3 MB), so the cap must not touch them.
+    const profile = new Uint8Array(1 << 20);
+    for (let i = 0; i < profile.length; i++) profile[i] = (i * 131 + 7) & 0xff;
+    const body = Buffer.concat([Buffer.from("ICC Profile\0\0", "latin1"), zlib.deflateSync(profile)]);
+    const png = Buffer.concat([tinyPng.subarray(0, 33), pngChunk("iCCP", body), tinyPng.subarray(33)]);
+    const out = await new Bun.Image(png).png().bytes();
+    const dv = new DataView(out.buffer, out.byteOffset, out.byteLength);
+    let off = 8;
+    let got: Uint8Array | null = null;
+    while (off + 8 <= out.length) {
+      const len = dv.getUint32(off);
+      const type = String.fromCharCode(out[off + 4], out[off + 5], out[off + 6], out[off + 7]);
+      if (type === "iCCP") {
+        const chunk = out.subarray(off + 8, off + 8 + len);
+        let nul = 0;
+        while (chunk[nul] !== 0) nul++;
+        got = zlib.inflateSync(chunk.subarray(nul + 2));
+        break;
+      }
+      off += 12 + len;
+    }
+    expect(got).not.toBeNull();
+    expect(Buffer.compare(got!, profile)).toBe(0);
+  });
+});
+
+describe("JPEG ICC markers", () => {
+  // One APP2 `ICC_PROFILE` segment with the given sequence number / count
+  // and a 16-byte payload.
+  function app2(seq: number, count: number): Buffer {
+    const body = Buffer.concat([
+      Buffer.from("ICC_PROFILE\0", "latin1"),
+      Buffer.from([seq, count]),
+      Buffer.alloc(16, 0xaa),
+    ]);
+    const seg = Buffer.alloc(4 + body.length);
+    seg[0] = 0xff;
+    seg[1] = 0xe2;
+    seg.writeUInt16BE(body.length + 2, 2);
+    body.copy(seg, 4);
+    return seg;
+  }
+  // Splice segments right after SOI of a known-good JPEG.
+  const withApp2 = (...segs: Buffer[]) => Buffer.concat([tinyJpeg.subarray(0, 2), ...segs, tinyJpeg.subarray(2)]);
+  const hasIccMarker = (jpg: Uint8Array) =>
+    Buffer.from(jpg.buffer, jpg.byteOffset, jpg.byteLength).includes(Buffer.from("ICC_PROFILE\0", "latin1"));
+
+  test.each([
+    ["sequence number above the count", withApp2(app2(2, 1))],
+    ["duplicate sequence number", withApp2(app2(1, 2), app2(1, 2))],
+    ["inconsistent counts", withApp2(app2(1, 2), app2(2, 3))],
+    ["missing sequence number", withApp2(app2(1, 3), app2(3, 3))],
+  ])("%s: pixels decode, the profile is dropped", async (_name, jpg) => {
+    // libjpeg reports an ICC sequence it cannot reassemble as a warning
+    // (JWRN_BOGUS_ICC). The scan data is intact, so the image must decode
+    // without a profile (what browsers and libvips do), not fail outright.
+    expect(await new Bun.Image(jpg).metadata()).toEqual({ width: 2, height: 2, format: "jpeg" });
+    const out = await new Bun.Image(jpg).jpeg().bytes();
+    expect(hasIccMarker(out)).toBe(false);
+    expect(Buffer.compare(await rgbaOf(jpg), await rgbaOf(tinyJpeg))).toBe(0);
+  });
+
+  test("a profile too large for JPEG's 255-marker ceiling is dropped, so .jpeg() output re-decodes", async () => {
+    // The APP2 sequence counter is one byte: a profile over 255 × 65519 B
+    // gets wrapped marker numbers and libjpeg-turbo itself then rejects the
+    // file it wrote. RIFF stores chunks raw, so a WebP can carry such a
+    // profile; wrap tinyWebp's VP8 bitstream in VP8X + a 17 MiB ICCP chunk.
+    const profile = Buffer.alloc(17 << 20, 0x5a);
+    const vp8x = Buffer.from([0x20, 0, 0, 0, 1, 0, 0, 1, 0, 0]); // ICC flag · canvas 2×2 (minus one, 24-bit LE)
+    const riffChunk = (fourcc: string, payload: Uint8Array) => {
+      const size = Buffer.alloc(4);
+      size.writeUInt32LE(payload.length);
+      return Buffer.concat([
+        Buffer.from(fourcc),
+        size,
+        payload,
+        payload.length & 1 ? Buffer.alloc(1) : Buffer.alloc(0),
+      ]);
+    };
+    const body = Buffer.concat([
+      Buffer.from("WEBP"),
+      riffChunk("VP8X", vp8x),
+      riffChunk("ICCP", profile),
+      tinyWebp.subarray(12),
+    ]);
+    const riffSize = Buffer.alloc(4);
+    riffSize.writeUInt32LE(body.length);
+    const webp = Buffer.concat([Buffer.from("RIFF"), riffSize, body]);
+    expect(await new Bun.Image(webp).metadata()).toEqual({ width: 2, height: 2, format: "webp" });
+
+    const jpg = await new Bun.Image(webp).jpeg().bytes();
+    expect(hasIccMarker(jpg)).toBe(false);
+    expect(jpg.length).toBeLessThan(1 << 20);
+    expect(await new Bun.Image(jpg).metadata()).toEqual({ width: 2, height: 2, format: "jpeg" });
+    // Same cap on the WebP → WebP and WebP → PNG paths.
+    const rewebp = await new Bun.Image(webp).webp().bytes();
+    expect(rewebp.length).toBeLessThan(1 << 20);
+    expect((await new Bun.Image(webp).png().bytes()).length).toBeLessThan(1 << 20);
+  });
+});
+
+// ─── 13. GIF: metadata() and decode must size the same frame ─────────────────
+
+describe("GIF probe", () => {
+  // Logical screen 1×1, first Image Descriptor 16383×16383, LZW = clear+EOI.
+  // The static decoder sizes its output (and runs the maxPixels guard) from
+  // the Image Descriptor, so metadata() has to report the same dims or a
+  // "check metadata() first" gate lets a 1 GiB canvas through.
+  const g = Buffer.from("47494638396101000100800000000000255b0d2c00000000ff3fff3f0002022c003b", "hex");
+  // Reverse: screen 65535×65535 wrapping a 4×4 frame.
+  const r = Buffer.from(g);
+  r.writeUInt16LE(65535, 6);
+  r.writeUInt16LE(65535, 8);
+  r.writeUInt16LE(4, 24);
+  r.writeUInt16LE(4, 26);
+
+  test("metadata() reports the first frame's dimensions, not the logical screen", async () => {
+    expect(await new Bun.Image(g).metadata()).toEqual({ width: 16383, height: 16383, format: "gif" });
+    expect(await new Bun.Image(r).metadata()).toEqual({ width: 4, height: 4, format: "gif" });
+  });
+
+  test("metadata() and decode agree on maxPixels", async () => {
+    Bun.Image.backend = "bun";
+    await expect(new Bun.Image(g, { maxPixels: 64 }).metadata()).rejects.toThrow(/maxPixels/);
+    await expect(new Bun.Image(g, { maxPixels: 64 }).png().bytes()).rejects.toThrow(/maxPixels/);
+    expect(await new Bun.Image(r, { maxPixels: 64 }).metadata()).toEqual({ width: 4, height: 4, format: "gif" });
+    const px = await rgbaOf(r);
+    expect(px.length).toBe(4 * 4 * 4);
+  });
+});

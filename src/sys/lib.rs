@@ -3929,6 +3929,7 @@ mod windows_impl {
         let utf8 = bun_paths::string_paths::from_w_path(buf, &wbuf[..len as usize]);
         Ok(utf8.len())
     }
+    // The NT helpers tag errors with the failing step and no path; report the POSIX arms' shape.
     pub fn mkdirat(dir: impl AsFd, path: &ZStr, _mode: Mode) -> Maybe<()> {
         let dir = dir.as_fd();
         // Open with `op = OnlyCreate`, then close the resulting handle on
@@ -3944,7 +3945,8 @@ mod windows_impl {
                 op: super::WindowsOpenDirOp::OnlyCreate,
                 ..Default::default()
             },
-        )?;
+        )
+        .map_err(|e| e.with_path_and_syscall(path.as_bytes(), Tag::mkdir))?;
         made.close();
         Ok(())
     }
@@ -3956,6 +3958,7 @@ mod windows_impl {
         let from_w = bun_paths::string_paths::to_nt_path(&mut wf, from.as_bytes());
         let to_w = bun_paths::string_paths::to_nt_path(&mut wt, to.as_bytes());
         super::windows::rename_at_w(from_dir, from_w, to_dir, to_w, true)
+            .map_err(|e| e.with_path_and_syscall(from.as_bytes(), Tag::rename))
     }
     pub(crate) fn renameat2(
         from_dir: Fd,
@@ -3987,6 +3990,7 @@ mod windows_impl {
                 remove_dir: (flags & AT_REMOVEDIR) != 0,
             },
         )
+        .map_err(|e| e.with_path_and_syscall(path.as_bytes(), Tag::unlink))
     }
     /// 2-arg form (`flags = 0`).
     #[inline]

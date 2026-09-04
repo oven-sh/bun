@@ -6772,10 +6772,6 @@ pub mod bv2_impl {
                     continue;
                 }
 
-                if is_html_entrypoint {
-                    import_record.kind = ImportKind::HtmlManifest;
-                }
-
                 let resolve_entry = resolve_queue.get_or_put(path.text).expect("oom");
                 if resolve_entry.found_existing {
                     // SAFETY: arena-allocated `ParseTask` stored in the queue; arena outlives the pass.
@@ -6797,7 +6793,7 @@ pub mod bv2_impl {
                 // SAFETY: arena outlives the bundle pass.
                 let resolve_task: &mut ParseTask = self.arena_create(resolve_task_val);
 
-                resolve_task.known_target = if import_record.kind == ImportKind::HtmlManifest {
+                resolve_task.known_target = if is_html_entrypoint {
                     Target::Browser
                 } else {
                     target
@@ -7104,7 +7100,7 @@ pub mod bv2_impl {
                 (&raw mut *transpiler.options.define, transpiler.log)
             };
 
-            let ast_for_html_entrypoint = JSAst::init(
+            let mut ast_for_html_entrypoint = JSAst::init(
                 bun_js_parser::new_lazy_export_ast(
                     heap,
                     // SAFETY: `define`/`log` live for `'a` (owned by the Transpiler).
@@ -7125,6 +7121,8 @@ pub mod bv2_impl {
                 )?
                 .ok_or(Error::ParserError)?,
             );
+            // The parser defaults `target` to browser; this module belongs to the importing side.
+            ast_for_html_entrypoint.target = target;
 
             let fake_input_file = crate::Graph::InputFile {
                 source: empty_html_file_source.clone(),

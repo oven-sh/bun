@@ -71,6 +71,10 @@ pub struct EventLoop {
     /// until the queue is empty (a task that re-posts itself there never lets
     /// the loop poll). Promoted into `tasks` by `auto_tick`, like immediates.
     pub yield_tasks: Vec<Task>,
+    /// A `tick()` ran a task since `auto_tick` last took this. Node runs
+    /// thread-pool completions in the poll phase, and Bun runs them as tasks,
+    /// so `auto_tick` treats such a tick as a poll phase.
+    ran_tasks: bool,
 
     pub concurrent_tasks: ConcurrentQueue,
     /// Set only on Bun.spawnSync's isolated loop: how other threads reach *this*
@@ -121,6 +125,7 @@ impl Default for EventLoop {
             immediate_tasks: Vec::new(),
             next_immediate_tasks: Vec::new(),
             yield_tasks: Vec::new(),
+            ran_tasks: false,
             concurrent_tasks: ConcurrentQueue::default(),
             isolated_poster: None,
             global: None,
@@ -539,7 +544,11 @@ impl EventLoop {
     /// turn is over (`tick()` / `tick_tasks_only()` return rather than run more against that VM).
     fn tick_with_count(&mut self, virtual_machine: *mut VirtualMachine) -> Result<u32, Stopped> {
         let mut counter: u32 = 0;
-        tick_queue_with_count(self, virtual_machine, &mut counter)?;
+        let result = tick_queue_with_count(self, virtual_machine, &mut counter);
+        if counter > 0 {
+            self.ran_tasks = true;
+        }
+        result?;
         Ok(counter)
     }
 
@@ -948,6 +957,11 @@ impl EventLoop {
             return self.enqueue_task(task);
         }
         self.yield_tasks.push(task);
+    }
+
+    /// `auto_tick`: whether a `tick()` ran a task since the last call.
+    pub fn take_ran_tasks(&mut self) -> bool {
+        core::mem::take(&mut self.ran_tasks)
     }
 
     /// `auto_tick`, before it polls: last iteration's yielded tasks become

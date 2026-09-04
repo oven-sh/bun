@@ -101,6 +101,31 @@ ImportMetaObject* ImportMetaObject::createFromSpecifier(JSC::JSGlobalObject* glo
     return create(globalObject, url.string());
 }
 
+// Normalizes the `parent` argument of import.meta.resolve / resolveSync to a string.
+// A URL instance becomes its href. `{ paths: [first, ...] }` (a Bun extension) becomes `first`.
+// Anything else is returned as-is, so the caller decides what to do with it.
+static JSValue parentArgumentToString(Zig::GlobalObject* globalObject, JSC::ThrowScope& scope, JSValue fromValue)
+{
+    if (!fromValue.isObject())
+        return fromValue;
+
+    if (auto* url = WebCoreCast<WebCore::JSDOMURL, WebCore::DOMURL>(JSValue::encode(fromValue)))
+        return jsString(globalObject->vm(), url->href().string());
+
+    auto pathsObject = fromValue.getObject()->getIfPropertyExists(globalObject, builtinNames(globalObject->vm()).pathsPublicName());
+    RETURN_IF_EXCEPTION(scope, {});
+    if (pathsObject && pathsObject.isCell() && pathsObject.asCell()->type() == JSC::JSType::ArrayType) {
+        auto* pathsArray = uncheckedDowncast<JSC::JSArray>(pathsObject);
+        if (pathsArray->length() > 0) {
+            auto first = pathsArray->getIndex(globalObject, 0);
+            RETURN_IF_EXCEPTION(scope, {});
+            return first;
+        }
+    }
+
+    return fromValue;
+}
+
 extern "C" JSC::EncodedJSValue functionImportMeta__resolveSync(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame)
 {
     auto* globalObject = uncheckedDowncast<Zig::GlobalObject>(lexicalGlobalObject);
@@ -129,20 +154,9 @@ extern "C" JSC::EncodedJSValue functionImportMeta__resolveSync(JSC::JSGlobalObje
             }
         }
 
-        if (!fromValue.isUndefinedOrNull() && fromValue.isObject()) {
-
-            auto pathsObject = fromValue.getObject()->getIfPropertyExists(globalObject, builtinNames(vm).pathsPublicName());
+        if (fromValue.isObject()) {
+            fromValue = parentArgumentToString(globalObject, scope, fromValue);
             RETURN_IF_EXCEPTION(scope, {});
-            if (pathsObject) {
-                if (pathsObject.isCell() && pathsObject.asCell()->type() == JSC::JSType::ArrayType) {
-                    auto pathsArray = uncheckedDowncast<JSC::JSArray>(pathsObject);
-                    if (pathsArray->length() > 0) {
-                        fromValue = pathsArray->getIndex(globalObject, 0);
-                        RETURN_IF_EXCEPTION(scope, {});
-                    }
-                }
-            }
-
         } else if (fromValue.isBoolean()) {
             isESM = fromValue.toBoolean(globalObject);
             fromValue = JSC::jsUndefined();
@@ -350,23 +364,13 @@ JSC_DEFINE_HOST_FUNCTION(functionImportMeta__resolve,
 
     if (callFrame->argumentCount() >= 2) {
         JSValue fromValue = callFrame->uncheckedArgument(1);
-
-        if (!fromValue.isUndefinedOrNull() && fromValue.isObject()) {
-            auto pathsObject = fromValue.getObject()->getIfPropertyExists(globalObject, builtinNames(vm).pathsPublicName());
-            RETURN_IF_EXCEPTION(scope, {});
-            if (pathsObject) {
-                if (pathsObject.isCell() && pathsObject.asCell()->type() == JSC::JSType::ArrayType) {
-                    auto* pathsArray = uncheckedDowncast<JSC::JSArray>(pathsObject);
-                    if (pathsArray->length() > 0) {
-                        fromValue = pathsArray->getIndex(globalObject, 0);
-                        RETURN_IF_EXCEPTION(scope, {});
-                    }
-                }
-            }
-        }
+        fromValue = parentArgumentToString(globalObject, scope, fromValue);
+        RETURN_IF_EXCEPTION(scope, {});
 
         if (fromValue.isString()) {
             from = fromValue;
+        } else if (!fromValue.isUndefinedOrNull()) {
+            return Bun::ERR::INVALID_ARG_TYPE_INSTANCE(scope, globalObject, "parentURL"_s, "string"_s, "URL"_s, fromValue);
         }
     }
 

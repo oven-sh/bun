@@ -87,6 +87,32 @@ it("import.meta.resolveSync", () => {
   expect(import.meta.resolveSync("./" + import.meta.file, import.meta.path)).toBe(path);
 });
 
+// https://github.com/oven-sh/bun/issues/41318
+it("import.meta.resolve accepts a URL parent and rejects other non-string parents", () => {
+  const parent = new URL("./sub/mod.mjs", import.meta.url);
+  const underSub = new URL("./sub/sibling.mjs", import.meta.url).href;
+  const underHere = new URL("./sibling.mjs", import.meta.url).href;
+
+  expect(import.meta.resolve("./sibling.mjs", parent.href)).toBe(underSub);
+  expect(import.meta.resolve("./sibling.mjs", parent)).toBe(underSub);
+  expect(import.meta.resolve("./sibling.mjs", { paths: [parent.pathname] })).toBe(underSub);
+  expect(import.meta.resolve("./sibling.mjs", undefined)).toBe(underHere);
+  expect(import.meta.resolve("./sibling.mjs", null)).toBe(underHere);
+
+  for (const bad of [42, {}, true, Symbol("x")]) {
+    expect(() => import.meta.resolve("./sibling.mjs", bad)).toThrow(
+      expect.objectContaining({
+        code: "ERR_INVALID_ARG_TYPE",
+        message: expect.stringContaining('The "parentURL" argument must be of type string or an instance of URL.'),
+      }),
+    );
+  }
+});
+
+it("import.meta.resolveSync accepts a URL parent", () => {
+  expect(import.meta.resolveSync("./" + import.meta.file, new URL(import.meta.url))).toBe(path);
+});
+
 it("Module.createRequire", () => {
   const require = Module.createRequire(import.meta.path);
   expect(require.resolve(import.meta.path)).toBe(path);

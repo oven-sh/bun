@@ -800,10 +800,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             BData::BIdentifier(bind) => {
                 let bind = bind.get();
                 self.record_declared_symbol(bind.r#ref);
-                // A `var` below the scope it hoists to still prints its name
-                // here, and a parameter or catch binding shares a declaration
-                // space with the body after it: the renamer must see the name
-                // as used in this scope. Other bindings live in this scope.
+                // Bindings the renamer must see outside the scope that owns
+                // them (`ScopeUses::sees`): a hoisted `var`, a parameter, a
+                // catch binding.
                 let scope_kind = self.current_scope.kind;
                 if scope_kind == js_ast::scope::Kind::FunctionArgs
                     || scope_kind == js_ast::scope::Kind::CatchBinding

@@ -1215,10 +1215,8 @@ impl<'a> ScopeUses<'a> {
 
     /// Whether a binding in `scope` would capture a reference to `symbol`,
     /// i.e. whether `symbol` is referenced in `scope` or anywhere inside it.
-    /// A declaration counts as a reference: a `var` prints its name in the
-    /// block that declares it, and a function body or catch block cannot
-    /// redeclare the parameters of the scope around it, so those are looked
-    /// at too.
+    /// A function body or catch block also sees its parameter scope, which it
+    /// cannot redeclare.
     pub fn sees(&self, symbol: Ref, scope: &js_ast::Scope) -> bool {
         let scope = match (scope.kind, scope.parent.as_deref()) {
             (js_ast::scope::Kind::FunctionBody, Some(parent)) => parent,

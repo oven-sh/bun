@@ -235,6 +235,11 @@ private:
 enum class Method : uint8_t {
     // Internal attach chain — responses chain into the next command.
     TargetCreateTarget,
+    // A TargetCreateTarget whose view was close()d before Chrome replied
+    // (Ops::close retags it). Its reply is the only place the new tab's
+    // targetId appears, so the handler closes that tab and nothing else:
+    // there is no view and no slot behind it anymore.
+    TargetCreateTargetOrphaned,
     TargetAttachToTarget,
     PageEnable,
     RuntimeEnable,
@@ -491,6 +496,16 @@ public:
         auto it = m_views.find(viewId);
         if (it == m_views.end()) return nullptr;
         return it->value.get();
+    }
+
+    // True while the command is still parked behind the WebSocket
+    // handshake: Chrome hasn't seen it, so erasing its m_pending entry
+    // cancels it (the wsOnOpen drain and the wsOnClose replay skip it).
+    // Anything else (pipe mode, or WebSocket mode once open) is on the
+    // wire and will be answered.
+    bool isQueuedUnsent(uint32_t cdpId) const
+    {
+        return m_wsPending.containsIf([cdpId](auto& cmd) { return cmd.id == cdpId; });
     }
 
     // Register a fresh view. Returns its viewId and stores one Weak.

@@ -8182,6 +8182,19 @@ impl NodeFS {
         result
     }
 
+    /// `open(2)` blocks on a FIFO with no writer, so the source kind is checked from its lstat first.
+    #[cfg(any(target_os = "linux", target_os = "android", target_os = "freebsd"))]
+    fn cp_check_source_kind(src: &ZStr, reuse_stat: Option<&sys::Stat>) -> Maybe<()> {
+        let st_mode = match reuse_stat {
+            Some(stat_) => stat_.st_mode,
+            None => Syscall::lstat(src)?.st_mode,
+        };
+        if sys::S::ISREG(st_mode as Mode) || sys::S::ISLNK(st_mode as Mode) {
+            return Ok(());
+        }
+        Err(sys::Error::from_code(E::ENOTSUP, sys::Tag::copyfile).with_path(src.as_bytes()))
+    }
+
     #[cfg_attr(any(windows, target_os = "macos"), allow(dead_code))]
     fn cp_symlink(&mut self, src: &ZStr, dest: &ZStr) -> Maybe<ret::CopyFile> {
         let mut target_buf = PathBuffer::uninit();
@@ -8238,7 +8251,7 @@ impl NodeFS {
         src: &OSPathSliceZ,
         dest: &OSPathSliceZ,
         mode: constants::Copyfile,
-        // Stat on posix, file attributes on windows
+        // The caller's lstat on posix, file attributes on windows
         #[cfg(windows)] reuse_stat: Option<windows::DWORD>,
         #[cfg(not(windows))] reuse_stat: Option<&sys::Stat>,
         args: &args::Cp,
@@ -8381,11 +8394,12 @@ impl NodeFS {
 
         #[cfg(any(target_os = "linux", target_os = "android"))]
         {
-            let _ = reuse_stat;
             // https://manpages.debian.org/testing/manpages-dev/ioctl_ficlone.2.en.html
             if mode.is_force_clone() {
                 return Err(sys::Error::todo());
             }
+
+            Self::cp_check_source_kind(src, reuse_stat)?;
 
             let src_fd = match Syscall::open(src, sys::O::RDONLY | sys::O::NOFOLLOW, 0o644) {
                 Ok(result) => result,
@@ -8549,7 +8563,6 @@ impl NodeFS {
 
         #[cfg(target_os = "freebsd")]
         {
-            let _ = reuse_stat;
             if mode.is_force_clone() {
                 return Err(sys::Error {
                     errno: SystemErrno::EOPNOTSUPP as _,
@@ -8557,6 +8570,8 @@ impl NodeFS {
                     ..Default::default()
                 });
             }
+
+            Self::cp_check_source_kind(src, reuse_stat)?;
 
             let src_fd = match Syscall::open(src, sys::O::RDONLY | sys::O::NOFOLLOW, 0o644) {
                 Ok(result) => result,

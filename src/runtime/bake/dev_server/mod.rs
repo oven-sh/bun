@@ -1394,7 +1394,18 @@ impl DirectoryWatchStore {
                             return Err(DirectoryWatchInsertError::Ignore);
                         }
                         bun_sys::E::ENOTDIR => return Err(DirectoryWatchInsertError::Ignore),
-                        _ => bun_core::todo_panic!("log watcher error"),
+                        // EACCES, ELOOP, EMFILE, and the rest leave the
+                        // directory unwatched, the same as a failed
+                        // `add_directory` below.
+                        _ => {
+                            bun_core::scoped_log!(
+                                DevServer,
+                                "DirectoryWatchStore.insert: cannot open {}: {}",
+                                bun_core::fmt::quote(dir_name_to_watch),
+                                bstr::BStr::new(err.name()),
+                            );
+                            return Err(DirectoryWatchInsertError::Ignore);
+                        }
                     },
                 }
             }

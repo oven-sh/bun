@@ -15,14 +15,22 @@ export function createAsyncMatcher(expectFn, value, isRejects: boolean, isNot: b
     }
   }
 
-  async function run(name: string, args: unknown[]) {
+  // Jest prints a custom label as the first line of every failure, including the
+  // ones raised before the matcher itself runs.
+  function withLabel(message: string) {
+    return label === undefined ? message : `${label}\n\n${message}`;
+  }
+
+  async function run(name: string, args: unknown[], negated: boolean) {
     if (
       value === null ||
       (typeof value !== "object" && typeof value !== "function") ||
       typeof value.then !== "function"
     ) {
       throw new Error(
-        `expect(received).${kind}.${name}()\n\nMatcher error: received value must be a promise or a function returning a promise\nReceived: ${describe(value)}`,
+        withLabel(
+          `expect(received).${kind}.${name}()\n\nMatcher error: received value must be a promise or a function returning a promise\nReceived: ${describe(value)}`,
+        ),
       );
     }
     let settled;
@@ -35,12 +43,16 @@ export function createAsyncMatcher(expectFn, value, isRejects: boolean, isNot: b
     }
     if (fulfilled && isRejects) {
       throw new Error(
-        `expect(received).rejects.${name}()\n\nExpected promise that rejects\nReceived promise that resolved: ${describe(settled)}`,
+        withLabel(
+          `expect(received).rejects.${name}()\n\nExpected promise that rejects\nReceived promise that resolved: ${describe(settled)}`,
+        ),
       );
     }
     if (!fulfilled && !isRejects) {
       throw new Error(
-        `expect(received).resolves.${name}()\n\nExpected promise that resolves\nReceived promise that rejected: ${describe(settled)}`,
+        withLabel(
+          `expect(received).resolves.${name}()\n\nExpected promise that resolves\nReceived promise that rejected: ${describe(settled)}`,
+        ),
       );
     }
     let received = settled;
@@ -52,7 +64,7 @@ export function createAsyncMatcher(expectFn, value, isRejects: boolean, isNot: b
       };
     }
     let expectation = label === undefined ? expectFn(received) : expectFn(received, label);
-    if (isNot) expectation = expectation.not;
+    if (negated) expectation = expectation.not;
     const matcher = expectation[name];
     if (typeof matcher !== "function") {
       throw new TypeError(`expect(...).${kind}.${name} is not a function`);
@@ -70,8 +82,7 @@ export function createAsyncMatcher(expectFn, value, isRejects: boolean, isNot: b
         // Not thenable: `await expect(p).resolves` must not await the proxy itself.
         if (typeof name !== "string" || name === "then") return undefined;
         return function (...args) {
-          isNot = negated;
-          return run(name, args);
+          return run(name, args, negated);
         };
       },
     });

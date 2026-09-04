@@ -62,6 +62,29 @@ describe(".resolves and .rejects return promises (Jest semantics)", () => {
     await expect(expect(Promise.resolve(1), "my label").resolves.toBe(2)).rejects.toThrow("my label");
   });
 
+  test("custom labels are kept on failures raised before the matcher runs", async () => {
+    await expect(expect(4, "my label").resolves.toBe(4)).rejects.toThrow(/^my label\n\nexpect\(received\)\.resolves/);
+    await expect(expect(Promise.resolve(1), "my label").rejects.toBe(1)).rejects.toThrow(
+      /^my label\n\nexpect\(received\)\.rejects/,
+    );
+    await expect(expect(Promise.reject(1), "my label").resolves.toBe(1)).rejects.toThrow(
+      /^my label\n\nexpect\(received\)\.resolves/,
+    );
+  });
+
+  test("negation is captured per matcher call", async () => {
+    let resolve!: (v: number) => void;
+    const p = new Promise<number>(r => {
+      resolve = r;
+    });
+    const matchers = expect(p).resolves;
+    const plain = matchers.toBe(1);
+    const negated = matchers.not.toBe(1);
+    resolve(1);
+    await plain;
+    await expect(negated).rejects.toThrow();
+  });
+
   test("unawaited chains do not block and settle later", async () => {
     let resolve!: (v: number) => void;
     const p = new Promise<number>(r => {

@@ -17,6 +17,15 @@ describe("url.parse", () => {
     assert.strictEqual(query.toString, undefined);
   });
 
+  test("parseQueryString query object carries no symbol keys", () => {
+    for (const input of ["/foo/bar?baz=quux&baz=2", "http://example.com/a?b=1"]) {
+      const { query } = url.parse(input, true);
+      assert.deepStrictEqual(Object.getOwnPropertySymbols(query), []);
+      assert.strictEqual(Object.getPrototypeOf(query), null);
+      assert.strictEqual(query[Symbol.toStringTag], undefined);
+    }
+  });
+
   test("with query string", () => {
     function createWithNoPrototype(properties = []) {
       const noProto = { __proto__: null };

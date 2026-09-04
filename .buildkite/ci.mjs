@@ -292,13 +292,6 @@ function getImageName(platform, options) {
     return `${name}-build-${getBuildNumber()}`;
   }
 
-  // Trial branch: run on the images this branch baked in build #109813 (bootstrap v45 with the
-  // per-lane /opt/bun-toolchain/<variant> from bun-toolchain-…-d98dac36) instead of the published
-  // v<N>, so follow-up commits need no rebake.
-  if (hostOs === "linux") {
-    return `${name}-build-109813`;
-  }
-
   return `${name}-v${getBootstrapVersion(hostOs)}`;
 }
 
@@ -546,8 +539,8 @@ function getBuildBunStep(platform, options) {
       // Trial: compile with the oven-sh/rust bun-toolchain built for this lane (PGO/BOLT-trained on
       // this exact build), baked into the build-host image by scripts/bootstrap.sh
       // install_bun_toolchain, instead of apt LLVM + rustup.
-      // BUN_TOOLCHAIN_LLVM: `/opt/bun-toolchain/ci-${getTargetKey(platform)}`,
-      // BUN_TOOLCHAIN_RUST: `/opt/bun-toolchain/ci-${getTargetKey(platform)}`,
+      BUN_TOOLCHAIN_LLVM: `/opt/bun-toolchain/ci-${getTargetKey(platform)}`,
+      BUN_TOOLCHAIN_RUST: `/opt/bun-toolchain/ci-${getTargetKey(platform)}`,
     },
     command: [...nasmSetup, getBuildCommand(platform, options, "build")],
   };

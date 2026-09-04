@@ -2920,6 +2920,15 @@ pub fn capture_stack_trace(begin: usize, addrs: &mut [usize]) -> usize {
     debug::capture_current(first, addrs)
 }
 
+/// [`capture_stack_trace`] for the crash reporter: the same trace on POSIX; on
+/// Windows the thorough walk the fault path uses, which `capture_stack_trace`
+/// cannot afford on the debug-build `StoredTrace` paths.
+#[inline]
+pub fn capture_crash_stack_trace(begin: usize, addrs: &mut [usize]) -> usize {
+    let first = if begin == 0 { None } else { Some(begin) };
+    debug::capture_current_for_crash(first, addrs)
+}
+
 /// A PC inside the caller's caller. `#[inline(always)]`
 /// so this has no frame of its own — `frame_address()` reads the caller's fp,
 /// and `[fp + PC_OFFSET]` is the caller's saved return address. Used as the

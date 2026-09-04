@@ -57,7 +57,7 @@ To run manually:
 import type { SyntaxNode } from "@lezer/common";
 import { parser as cppParser } from "@lezer/cpp";
 import { mkdir, readFile, writeFile } from "fs/promises";
-import { join, relative } from "path";
+import { join } from "path";
 import { bannedTypes } from "./shared-types.ts";
 
 const start = Date.now();

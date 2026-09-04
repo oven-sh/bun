@@ -100,12 +100,14 @@ pub(crate) fn find_imported_parts_in_js_order(
         Vec::with_capacity(chunk.files_with_parts_in_chunk.count());
     {
         let distances = this.graph.files.items_distance_from_entry_point();
-        let stable_source_indices = this.graph.stable_source_indices.slice();
+        // Enter a cycle through the same file as the original import DFS.
+        // Post-order can select the opposite root and reverse initialization.
+        let dfs_pre_order = this.graph.dfs_pre_order.slice();
         for &source_index in chunk.files_with_parts_in_chunk.keys() {
             chunk_order_array.push(Order {
                 source_index,
                 distance: distances[source_index as usize],
-                tie_breaker: stable_source_indices[source_index as usize],
+                tie_breaker: dfs_pre_order[source_index as usize],
             });
         }
     }

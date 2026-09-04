@@ -83,7 +83,7 @@ When you make a request to `/dashboard` or `/`, Bun automatically bundles the `<
 
 ### HTML Imports in a Response
 
-A route handler or `fetch` can also return an imported HTML file. Wrap it in a `Response` to set the status or headers. A bare return is `new Response(page)`.
+A route handler or `fetch` can also send an imported HTML file: pass it to `new Response()`, with a status or headers when you need them.
 
 ```ts title="app.ts" icon="/icons/typescript.svg"
 import homepage from "./index.html";
@@ -91,7 +91,7 @@ import login from "./login.html";
 
 Bun.serve({
   routes: {
-    "/": req => (isLoggedIn(req) ? homepage : new Response(login, { status: 401 })),
+    "/": req => (isLoggedIn(req) ? new Response(homepage) : new Response(login, { status: 401 })),
     "/*": () => new Response(homepage, { status: 404 }),
   },
 });

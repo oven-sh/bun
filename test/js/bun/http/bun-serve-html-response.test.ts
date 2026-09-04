@@ -5,7 +5,8 @@ import { join } from "path";
 
 // A handler returns `new Response(htmlBundle, init)` for an `import index from
 // "./index.html"`. Bun.serve builds the bundle and sends the page with the
-// Response's status and headers (#41362, #17595).
+// Response's status and headers (#41362, #17595). A bare `return htmlBundle`
+// is not a Response and stays rejected.
 
 const files = {
   "index.html": `<!DOCTYPE html><html><head><title>t</title><script type="module" src="./app.ts"></script></head><body><h1>Hello HTML</h1></body></html>`,
@@ -85,26 +86,18 @@ describe.each([false, true])("development: %p", development => {
   });
 });
 
-test("a bare htmlBundle return is new Response(htmlBundle)", async () => {
+test("a bare htmlBundle return is not a Response", async () => {
   using dir = tempDir("html-response-bare", files);
   const { default: html } = await import(join(dir, "index.html"));
   using server = Bun.serve({
     port: 0,
     development: false,
-    async fetch() {
-      return html;
+    fetch() {
+      return html as any;
     },
   });
   const res = await fetch(server.url);
-  const page = await res.text();
-  expect(page).toContain("<h1>Hello HTML</h1>");
-  expect({ status: res.status, contentType: res.headers.get("content-type") }).toEqual({
-    status: 200,
-    contentType: "text/html;charset=utf-8",
-  });
-  const script = await fetch(new URL(scriptSrc(page), server.url));
-  expect(await script.text()).toContain("hello from app");
-  expect(script.status).toBe(200);
+  expect(await res.text()).not.toContain("<h1>Hello HTML</h1>");
 });
 
 test("with the dev server: a handler-returned bundle gets the HMR script", async () => {
@@ -206,7 +199,7 @@ describe.each(["sync", "async"])("the error handler returns a bundle (%s)", kind
       fetch() {
         throw new Error("boom");
       },
-      error: kind === "sync" ? () => html : () => Promise.resolve(new Response(html, { status: 500 })),
+      error: kind === "sync" ? () => new Response(html) : () => Promise.resolve(new Response(html, { status: 500 })),
     });
     const res = await fetch(server.url);
     const page = await res.text();

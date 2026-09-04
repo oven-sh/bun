@@ -518,7 +518,6 @@ test("permutations of valid route values", {
     "/ping": new Response("pong"),
     "/": html,
     "/index.html": new Response(html),
-    "/handler": () => html,
     "/handler-response": () => new Response(html, { status: 404 }),
     ...files,
   },

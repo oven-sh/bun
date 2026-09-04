@@ -356,27 +356,6 @@ fn as_response(value: JSValue) -> Option<*mut Response> {
     response::from_js(value).map(|p| p.cast::<Response>())
 }
 
-/// A bare `HTMLBundle` means `new Response(htmlBundle)`.
-fn wrap_html_bundle(global_this: &JSGlobalObject, value: JSValue) -> JSValue {
-    let Some(html_bundle) = value.as_class_this_ptr::<crate::server::HTMLBundle>() else {
-        return value;
-    };
-    let response = bun_core::heap::into_raw(Box::new(Response::init(
-        response::Init {
-            status_code: 200,
-            status_text: BunString::create_atom(b"OK"),
-            ..Default::default()
-        },
-        WebCore::Body::new(Body::Value::HTMLBundle(bun_ptr::RefPtr::from_this(
-            html_bundle,
-        ))),
-        BunString::EMPTY,
-        false,
-    )));
-    // SAFETY: a fresh heap `Response`; the wrapper takes ownership.
-    Response::make_maybe_pooled(global_this, response)
-}
-
 /// Release the body's hold on a stream the sink is done with, and mark a
 /// `Locked` body used. Non-generic and out of line: the eight `RequestContext`
 /// monomorphizations share one copy.
@@ -852,7 +831,6 @@ where
             return;
         }
 
-        let value = wrap_html_bundle(global_this, value);
         let Some(response) = as_response(value) else {
             self.render_missing_invalid_response(value);
             return;
@@ -2923,7 +2901,6 @@ where
 
         // `response_value` is rooted via ensure_still_alive() / protect() below
         // for as long as `response` is used.
-        let response_value = wrap_html_bundle(this.global_this(), response_value);
         if let Some(response) = as_response(response_value) {
             // SAFETY: `response` is the live, rooted cell pointer.
             if ctx.reject_unsendable_response(unsafe { (*response).status_code() }) {
@@ -2978,7 +2955,6 @@ where
                     }
                     // `fulfilled_value` is rooted via ensure_still_alive() /
                     // protect() below for as long as `response` is used.
-                    let fulfilled_value = wrap_html_bundle(this.global_this(), fulfilled_value);
                     let Some(response) = as_response(fulfilled_value) else {
                         ctx.render_missing_invalid_response(fulfilled_value);
                         return;
@@ -3853,24 +3829,24 @@ where
                         return;
                     // `result` is GC-rooted by `_keep` (EnsureStillAlive)
                     // across the render() call.
-                    } else {
-                        let result = wrap_html_bundle(server.global_this(), result);
-                        let _keep = jsc::EnsureStillAlive(result);
-                        if let Some(response) = as_response(result) {
-                            // An unsendable Response from the error handler itself
-                            // falls through to the default error page below.
-                            // SAFETY: `response` is the live, rooted cell pointer.
-                            if HTTPStatusText::is_sendable(unsafe { (*response).status_code() }) {
-                                // Root it like the async error path: a deferred body outlives `_keep`.
-                                if self.flags.response_protected() {
-                                    self.response_jsvalue.get().unprotect();
-                                }
-                                self.response_jsvalue.set(result);
-                                self.flags.set_response_protected(false);
-                                // SAFETY: as above.
-                                unsafe { self.protect_for_body_and_render(result, response) };
-                                return;
+                    } else if let Some(response) = as_response(result) {
+                        // An unsendable Response from the error handler itself
+                        // falls through to the default error page below.
+                        // SAFETY: `response` is the live, rooted cell pointer.
+                        if HTTPStatusText::is_sendable(unsafe { (*response).status_code() }) {
+                            // A file or streaming body defers `render_metadata`
+                            // past this frame, where `_keep` is the only root,
+                            // so root the Response the way the async error
+                            // path does or the deferred flush can read a
+                            // collected weakref.
+                            if self.flags.response_protected() {
+                                self.response_jsvalue.get().unprotect();
                             }
+                            self.response_jsvalue.set(result);
+                            self.flags.set_response_protected(false);
+                            // SAFETY: as above.
+                            unsafe { self.protect_for_body_and_render(result, response) };
+                            return;
                         }
                     }
                 }
@@ -3906,7 +3882,6 @@ where
             jsc::PromiseResult::Fulfilled(fulfilled_value) => {
                 // `fulfilled_value` is rooted via ensure_still_alive() below for
                 // as long as `response` is used.
-                let fulfilled_value = wrap_html_bundle(server.global_this(), fulfilled_value);
                 let Some(response) = as_response(fulfilled_value) else {
                     ctx.finish_running_error_handler(value, status);
                     return;

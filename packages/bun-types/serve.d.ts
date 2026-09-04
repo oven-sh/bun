@@ -637,21 +637,16 @@ declare module "bun" {
     type Routes<WebSocketData, R extends string> = {
       [Path in R]:
         | BaseRouteValue
-        | Handler<BunRequest<Path>, Server<WebSocketData>, Response | HTMLBundle>
-        | Partial<
-            Record<HTTPMethod, Handler<BunRequest<Path>, Server<WebSocketData>, Response | HTMLBundle> | Response>
-          >;
+        | Handler<BunRequest<Path>, Server<WebSocketData>, Response>
+        | Partial<Record<HTTPMethod, Handler<BunRequest<Path>, Server<WebSocketData>, Response> | Response>>;
     };
 
     type RoutesWithUpgrade<WebSocketData, R extends string> = {
       [Path in R]:
         | BaseRouteValue
-        | Handler<BunRequest<Path>, Server<WebSocketData>, Response | HTMLBundle | undefined | void>
+        | Handler<BunRequest<Path>, Server<WebSocketData>, Response | undefined | void>
         | Partial<
-            Record<
-              HTTPMethod,
-              Handler<BunRequest<Path>, Server<WebSocketData>, Response | HTMLBundle | undefined | void> | Response
-            >
+            Record<HTTPMethod, Handler<BunRequest<Path>, Server<WebSocketData>, Response | undefined | void> | Response>
           >;
     };
 
@@ -662,11 +657,7 @@ declare module "bun" {
            *
            * Respond to {@link Request} objects with a {@link Response} object.
            */
-          fetch?(
-            this: Server<WebSocketData>,
-            req: Request,
-            server: Server<WebSocketData>,
-          ): MaybePromise<Response | HTMLBundle>;
+          fetch?(this: Server<WebSocketData>, req: Request, server: Server<WebSocketData>): MaybePromise<Response>;
 
           routes: Routes<WebSocketData, R>;
         }
@@ -676,11 +667,7 @@ declare module "bun" {
            *
            * Respond to {@link Request} objects with a {@link Response} object.
            */
-          fetch(
-            this: Server<WebSocketData>,
-            req: Request,
-            server: Server<WebSocketData>,
-          ): MaybePromise<Response | HTMLBundle>;
+          fetch(this: Server<WebSocketData>, req: Request, server: Server<WebSocketData>): MaybePromise<Response>;
 
           routes?: Routes<WebSocketData, R>;
         };
@@ -732,7 +719,7 @@ declare module "bun" {
             this: Server<WebSocketData>,
             req: Request,
             server: Server<WebSocketData>,
-          ): MaybePromise<Response | HTMLBundle | void | undefined>;
+          ): MaybePromise<Response | void | undefined>;
 
           routes: RoutesWithUpgrade<WebSocketData, R>;
         }
@@ -746,7 +733,7 @@ declare module "bun" {
             this: Server<WebSocketData>,
             req: Request,
             server: Server<WebSocketData>,
-          ): MaybePromise<Response | HTMLBundle | void | undefined>;
+          ): MaybePromise<Response | void | undefined>;
 
           routes?: RoutesWithUpgrade<WebSocketData, R>;
         }

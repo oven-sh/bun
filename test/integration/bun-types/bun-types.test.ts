@@ -921,7 +921,7 @@ describe("@types/bun integration test", () => {
         },
         {
           code: 2345,
-          line: "serve-types.test.ts:522:45",
+          line: "serve-types.test.ts:521:45",
           message:
             "Argument of type 'HTMLBundle' is not assignable to parameter of type 'BodyInit | null | undefined'.",
         },

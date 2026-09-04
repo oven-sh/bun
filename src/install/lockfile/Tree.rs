@@ -428,14 +428,13 @@ pub struct Builder<'a, const METHOD: BuilderMethod> {
     /// overlap; reads go through [`Builder::lockfile()`] which never touches
     /// `buffers.resolutions`.
     pub lockfile: bun_ptr::ParentRef<Lockfile>,
-    // Unresolved optional peers that might resolve later. if they do we will want to assign
+    // Unresolved peers that might resolve later. if they do we will want to assign
     // builder.resolutions[peer.dep_id] to the resolved pkg_id. A dependency ID set is used because there
     // can be multiple instances of the same package in the tree, so the same unresolved dependency ID
     // could be visited multiple times before it's resolved.
-    pub(crate) pending_optional_peers:
-        ArrayHashMap<PackageNameHash, ArrayHashMap<DependencyID, ()>>,
-    /// An optional peer got bound after its dependent was placed; see `Lockfile::resolve`.
-    pub(crate) late_bound_optional_peer: bool,
+    pub(crate) pending_peers: ArrayHashMap<PackageNameHash, ArrayHashMap<DependencyID, ()>>,
+    /// A peer got bound after its dependent was placed; see `Lockfile::resolve`.
+    pub(crate) late_bound_peer: bool,
     pub(crate) manager: Option<&'a PackageManager>,
     pub(crate) sort_buf: Vec<DependencyID>,
     pub(crate) workspace_filters: &'a [WorkspaceFilter],
@@ -512,7 +511,7 @@ impl<'a, const METHOD: BuilderMethod> Builder<'a, METHOD> {
             for &dep_id in child.iter() {
                 let pkg_id = self.resolutions[dep_id as usize];
                 if pkg_id == invalid_package_id {
-                    // optional peers that never resolved
+                    // peers that never resolved
                     continue;
                 }
 
@@ -524,7 +523,7 @@ impl<'a, const METHOD: BuilderMethod> Builder<'a, METHOD> {
             tree.dependencies.len = len;
         }
 
-        // queue / sort_buf / pending_optional_peers freed by Drop; explicit deinit removed.
+        // queue / sort_buf / pending_peers freed by Drop; explicit deinit removed.
         // The sole caller (`Lockfile::hoist`) drops the Builder immediately after clean().
 
         slice.deinit_owned();
@@ -774,7 +773,11 @@ impl Tree {
                 }
 
                 if pkg_id == invalid_package_id {
-                    if dependency.behavior.is_optional_peer() {
+                    // An unbound peer (optional, or one a migration had nothing recorded for)
+                    // binds to the copy next to or above its dependent, which is where loading
+                    // the saved bun.lock binds it (`PkgMap::find_resolution`); the isolated
+                    // store keys the dependent by that binding.
+                    if dependency.behavior.is_peer() {
                         break 'hoisted Tree::hoist_dependency::<true, METHOD>(
                             next_id,
                             hoist_root_id,
@@ -845,14 +848,10 @@ impl Tree {
                     debug_assert!(pkg_id == invalid_package_id);
                     debug_assert!(res_id != invalid_package_id);
                     builder.resolutions[dep_id as usize] = res_id;
-                    debug_assert!(
-                        !builder
-                            .pending_optional_peers
-                            .contains_key(&dependency.name_hash)
-                    );
+                    debug_assert!(!builder.pending_peers.contains_key(&dependency.name_hash));
 
                     if let Some(entry) = builder
-                        .pending_optional_peers
+                        .pending_peers
                         .fetch_swap_remove(&dependency.name_hash)
                     {
                         let peers = entry.1;
@@ -870,10 +869,10 @@ impl Tree {
                 }
                 HoistDependencyResult::ResolveReplace(replace) => {
                     debug_assert!(pkg_id != invalid_package_id);
-                    builder.late_bound_optional_peer = true;
+                    builder.late_bound_peer = true;
                     builder.resolutions[replace.dep_id as usize] = pkg_id;
                     if let Some(entry) = builder
-                        .pending_optional_peers
+                        .pending_peers
                         .fetch_swap_remove(&dependency.name_hash)
                     {
                         let peers = entry.1;
@@ -911,12 +910,10 @@ impl Tree {
                     builder.resolutions[dep_id as usize] = res_id;
                 }
                 HoistDependencyResult::ResolveLater => {
-                    // `dep_id` is an unresolved optional peer. while hoisting it deduplicated
-                    // with another unresolved optional peer. save it so we remember resolve it
+                    // `dep_id` is an unresolved peer. while hoisting it deduplicated
+                    // with another unresolved peer. save it so we remember resolve it
                     // later if it's possible to resolve it.
-                    let entry = builder
-                        .pending_optional_peers
-                        .get_or_put(dependency.name_hash)?;
+                    let entry = builder.pending_peers.get_or_put(dependency.name_hash)?;
                     if !entry.found_existing {
                         *entry.value_ptr = ArrayHashMap::default();
                     }
@@ -998,15 +995,15 @@ impl Tree {
             let res_id = builder.resolutions[dep_id as usize];
 
             if res_id == invalid_package_id && package_id == invalid_package_id {
-                debug_assert!(dep.behavior.is_optional_peer());
-                debug_assert!(dependency.behavior.is_optional_peer());
-                // both optional peers will need to be resolved if they can resolve later.
+                debug_assert!(dep.behavior.is_peer());
+                debug_assert!(dependency.behavior.is_peer());
+                // both peers will need to be resolved if they can resolve later.
                 // remember input package_id and dependency for later
                 return HoistDependencyResult::ResolveLater;
             }
 
             if res_id == invalid_package_id {
-                debug_assert!(dep.behavior.is_optional_peer());
+                debug_assert!(dep.behavior.is_peer());
                 return HoistDependencyResult::ResolveReplace(ResolveReplace {
                     id: this.id,
                     dep_id,
@@ -1014,9 +1011,9 @@ impl Tree {
             }
 
             if package_id == invalid_package_id {
-                debug_assert!(dependency.behavior.is_optional_peer());
+                debug_assert!(dependency.behavior.is_peer());
                 debug_assert!(res_id != invalid_package_id);
-                // resolve optional peer to `builder.resolutions[dep_id]`
+                // resolve peer to `builder.resolutions[dep_id]`
                 return HoistDependencyResult::Resolve(res_id); // 1
             }
 

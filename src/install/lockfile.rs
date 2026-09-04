@@ -1329,7 +1329,7 @@ impl<'a> Cloner<'a> {
 // ────────────────────────────────────────────────────────────────────────────
 
 impl Lockfile {
-    /// Re-hoists while a pass bound an optional peer late; a reload has that binding up front.
+    /// Re-hoists while a pass bound a peer late; a reload has that binding up front.
     pub(crate) fn resolve(&mut self, log: &mut bun_ast::Log) -> Result<(), tree::SubtreeError> {
         while self.hoist::<{ tree::BuilderMethod::Resolvable }>(log, None, true, &[], None)? {}
         Ok(())
@@ -1353,7 +1353,7 @@ impl Lockfile {
         Ok(())
     }
 
-    /// Sets `buffers.trees`/`hoisted_dependencies`; returns `Builder::late_bound_optional_peer`.
+    /// Sets `buffers.trees`/`hoisted_dependencies`; returns `Builder::late_bound_peer`.
     pub(crate) fn hoist<const METHOD: tree::BuilderMethod>(
         &mut self,
         log: &mut bun_ast::Log,
@@ -1392,8 +1392,8 @@ impl Lockfile {
             install_root_dependencies,
             workspace_filters,
             packages_to_install,
-            pending_optional_peers: Default::default(),
-            late_bound_optional_peer: false,
+            pending_peers: Default::default(),
+            late_bound_peer: false,
             list: Default::default(),
             sort_buf: Default::default(),
         };
@@ -1412,10 +1412,10 @@ impl Lockfile {
         }
 
         let cleaned = builder.clean()?;
-        let late_bound_optional_peer = builder.late_bound_optional_peer;
+        let late_bound_peer = builder.late_bound_peer;
         self.buffers.trees = cleaned.trees;
         self.buffers.hoisted_dependencies = cleaned.dep_ids;
-        Ok(late_bound_optional_peer)
+        Ok(late_bound_peer)
     }
 }
 

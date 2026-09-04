@@ -85,9 +85,7 @@ impl<'a> Interval<'a> {
         }
     }
 
-    /// Whether a version that satisfies both queries lies inside the interval.
-    /// An interval of nothing but prereleases of one major.minor.patch is empty
-    /// unless both queries admit them (the `List::satisfies_pre` rule).
+    /// Whether a version that satisfies both queries (prereleases included, per `List::satisfies_pre`) lies inside.
     fn has_version(&self, a: &Query, b: &Query) -> bool {
         if !self.is_non_empty() {
             return false;

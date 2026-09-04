@@ -4,6 +4,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Instant;
 
 use crate::Error;
+use crate::cli::label_color::LabelColor;
 use bun_collections::{StringArrayHashMap, VecExt};
 use bun_core::strings;
 use bun_core::{self as bun, Global, Output, UnwrapOrOom};
@@ -39,6 +40,9 @@ type OwnedScriptsMap = StringArrayHashMap<Box<[u8]>>;
 
 struct ScriptConfig {
     label: Box<[u8]>,
+    /// `label[..color_key_len]` is hashed for the color: the package name when
+    /// there is one, so a package matches its `--filter` color.
+    color_key_len: usize,
     command: Box<[u8]>,
     cwd: Box<[u8]>,
     /// PATH env var value for this script
@@ -113,7 +117,8 @@ struct ProcessSlot {
 pub(crate) struct ProcessHandle<'a> {
     config: &'a ScriptConfig,
     state: *const State<'a>,
-    color_idx: usize,
+    /// `label<pad> | `, colored once up front; written before every line.
+    prefix: Box<[u8]>,
 
     stdout_reader: PipeReader<'a>,
     stderr_reader: PipeReader<'a>,
@@ -330,16 +335,29 @@ bun_spawn::link_impl_ProcessExit! {
     }
 }
 
-use bun_core::output::ansi;
-const COLORS: [&[u8]; 6] = [
-    ansi::CYAN.as_bytes(),
-    ansi::YELLOW.as_bytes(),
-    ansi::MAGENTA.as_bytes(),
-    ansi::GREEN.as_bytes(),
-    ansi::BLUE.as_bytes(),
-    ansi::RED.as_bytes(),
-];
-const RESET: &[u8] = ansi::RESET.as_bytes();
+fn line_prefix(
+    config: &ScriptConfig,
+    max_label_len: usize,
+    position: usize,
+    use_colors: bool,
+) -> Box<[u8]> {
+    let padding = max_label_len.saturating_sub(config.label.len());
+    let mut buf: Vec<u8> = Vec::with_capacity(config.label.len() + padding + 48);
+    if use_colors {
+        let color = LabelColor::for_label(&config.label[..config.color_key_len], position);
+        color.pill(&mut buf, &config.label);
+        buf.extend(core::iter::repeat_n(b' ', padding + 1));
+        color.gutter(&mut buf);
+        buf.push(b'|');
+        buf.extend_from_slice(bun_core::output::ansi::RESET.as_bytes());
+        buf.push(b' ');
+    } else {
+        buf.extend_from_slice(&config.label);
+        buf.extend(core::iter::repeat_n(b' ', padding));
+        buf.extend_from_slice(b" | ");
+    }
+    buf.into_boxed_slice()
+}
 
 struct State<'a> {
     handles: Box<[ProcessHandle<'a>]>,
@@ -348,13 +366,11 @@ struct State<'a> {
     /// (`bun_io::EventLoopHandle` wraps `*const EventLoopHandle`).
     event_loop_handle: EventLoopHandle,
     remaining_scripts: usize,
-    max_label_len: usize,
     // NUL-terminated (last byte is 0) for argv[0].
     shell_bin: Box<[u8]>,
     aborted: bool,
     no_exit_on_error: bool,
     env: *mut DotEnvLoader,
-    use_colors: bool,
 }
 
 impl<'a> State<'a> {
@@ -396,21 +412,7 @@ impl<'a> State<'a> {
     }
 
     fn write_prefix(&self, handle: &ProcessHandle, writer: &mut OutputWriter) -> Result<(), Error> {
-        if self.use_colors {
-            writer.write_all(COLORS[handle.color_idx % COLORS.len()])?;
-        }
-
-        writer.write_all(&handle.config.label)?;
-        let padding = self.max_label_len.saturating_sub(handle.config.label.len());
-        for _ in 0..padding {
-            writer.write_all(b" ")?;
-        }
-
-        if self.use_colors {
-            writer.write_all(RESET)?;
-        }
-
-        writer.write_all(b" | ")?;
+        writer.write_all(&handle.prefix)?;
         Ok(())
     }
 
@@ -456,7 +458,7 @@ impl<'a> State<'a> {
         // raw-ptr-based throughout this file).
         let handle_ptr = std::ptr::from_mut::<ProcessHandle>(handle);
         // SAFETY: handle_ptr is live for this call; flush_pipe_buffer reads only
-        // `config`/`color_idx` from `handle` and writes only `pipe.line_buffer`.
+        // `config`/`color` from `handle` and writes only `pipe.line_buffer`.
         unsafe {
             self.flush_pipe_buffer(&*handle_ptr, &mut (*handle_ptr).stdout_reader)?;
             self.flush_pipe_buffer(&*handle_ptr, &mut (*handle_ptr).stderr_reader)?;
@@ -736,6 +738,7 @@ fn add_script_configs<V: core::ops::Deref<Target = [u8]>>(
     } else {
         Box::from(raw_name)
     };
+    let color_key_len = label_prefix.map_or(label.len(), |p| p.len());
 
     let script_content = scripts_map.and_then(|sm| sm.get(raw_name));
 
@@ -763,6 +766,7 @@ fn add_script_configs<V: core::ops::Deref<Target = [u8]>>(
             cmd_buf.push(0);
             configs.push(ScriptConfig {
                 label: label.clone(),
+                color_key_len,
                 command: cmd_buf.into_boxed_slice(),
                 cwd: Box::from(cwd),
                 path: Box::from(path),
@@ -776,6 +780,7 @@ fn add_script_configs<V: core::ops::Deref<Target = [u8]>>(
             cmd_buf.push(0);
             configs.push(ScriptConfig {
                 label: label.clone(),
+                color_key_len,
                 command: cmd_buf.into_boxed_slice(),
                 cwd: Box::from(cwd),
                 path: Box::from(path),
@@ -788,6 +793,7 @@ fn add_script_configs<V: core::ops::Deref<Target = [u8]>>(
             cmd_buf.push(0);
             configs.push(ScriptConfig {
                 label,
+                color_key_len,
                 command: cmd_buf.into_boxed_slice(),
                 cwd: Box::from(cwd),
                 path: Box::from(path),
@@ -821,6 +827,7 @@ fn add_script_configs<V: core::ops::Deref<Target = [u8]>>(
         };
         configs.push(ScriptConfig {
             label,
+            color_key_len,
             command: command_z,
             cwd: Box::from(cwd),
             path: Box::from(path),
@@ -1154,12 +1161,10 @@ pub(crate) fn run(ctx: &mut Command::ContextData) -> Result<core::convert::Infal
         event_loop,
         event_loop_handle: EventLoopHandle::init_mini(event_loop),
         remaining_scripts: 0,
-        max_label_len,
         shell_bin,
         aborted: false,
         no_exit_on_error: ctx.no_exit_on_error,
         env: env_ptr,
-        use_colors,
     };
 
     // Initialize handles
@@ -1177,7 +1182,7 @@ pub(crate) fn run(ctx: &mut Command::ContextData) -> Result<core::convert::Infal
         handles.push(ProcessHandle {
             state: &raw const state,
             config,
-            color_idx,
+            prefix: line_prefix(config, max_label_len, color_idx, use_colors),
             stdout_reader: PipeReader::new(false),
             stderr_reader: PipeReader::new(true),
             process: None,

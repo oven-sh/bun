@@ -8,6 +8,7 @@ use crate::api::bun::process::SpawnResultExt as _;
 use crate::api::bun::process::{self as spawn, Rusage, SpawnOptions, Status};
 use crate::cli::Command;
 use crate::cli::filter_arg as FilterArg;
+use crate::cli::label_color::LabelColor;
 use crate::cli::run_command::{ConfigureEnvOptions, RunCommand};
 use bun_collections::StringHashMap;
 use bun_core::{Global, Output};
@@ -37,6 +38,7 @@ struct ScriptConfig {
     #[allow(non_snake_case)]
     PATH: Box<[u8]>,
     elide_count: Option<usize>,
+    color: LabelColor,
 }
 
 struct ProcessInfo {
@@ -526,18 +528,20 @@ impl<'a> State<'a> {
                 Some(handle.config.elide_count.unwrap_or(10))
             };
             let e = Self::elide(&handle.buffer, elide_lines);
+            let color = handle.config.color;
 
+            color.pill(&mut self.draw_buf, &handle.config.package_name);
             write!(
                 &mut self.draw_buf,
-                fmt!("<b>{s}<r> {s} $ <d>{s}<r>\n"),
-                bstr::BStr::new(&handle.config.package_name),
+                fmt!(" {s} $ <d>{s}<r>\n"),
                 bstr::BStr::new(&handle.config.script_name),
                 bstr::BStr::new(&handle.config.script_content),
             )?;
             if e.elided_count > 0 {
+                color.gutter(&mut self.draw_buf);
                 write!(
                     &mut self.draw_buf,
-                    fmt!("<cyan>│<r> <d>[{d} lines elided]<r>\n"),
+                    fmt!("│<r> <d>[{d} lines elided]<r>\n"),
                     e.elided_count,
                 )?;
             }
@@ -545,24 +549,24 @@ impl<'a> State<'a> {
             while let Some(i) = strings::index_of_char(content, b'\n') {
                 let i = i as usize;
                 let line = &content[0..i + 1];
-                self.draw_buf
-                    .extend_from_slice(fmt!("<cyan>│<r> ").as_bytes());
+                color.gutter(&mut self.draw_buf);
+                self.draw_buf.extend_from_slice(fmt!("│<r> ").as_bytes());
                 self.draw_buf.extend_from_slice(line);
                 content = &content[i + 1..];
             }
             if !content.is_empty() {
-                self.draw_buf
-                    .extend_from_slice(fmt!("<cyan>│<r> ").as_bytes());
+                color.gutter(&mut self.draw_buf);
+                self.draw_buf.extend_from_slice(fmt!("│<r> ").as_bytes());
                 self.draw_buf.extend_from_slice(content);
                 self.draw_buf.push(b'\n');
             }
-            self.draw_buf
-                .extend_from_slice(fmt!("<cyan>└─<r> ").as_bytes());
+            color.gutter(&mut self.draw_buf);
+            self.draw_buf.extend_from_slice("└─ ".as_bytes());
             if let Some(proc) = &handle.process {
                 match &proc.status {
                     Status::Running => {
                         self.draw_buf
-                            .extend_from_slice(fmt!("<cyan>Running...<r>\n").as_bytes());
+                            .extend_from_slice(fmt!("Running...<r>\n").as_bytes());
                     }
                     Status::Exited(exited) => {
                         if exited.code == 0 {
@@ -572,48 +576,44 @@ impl<'a> State<'a> {
                                 if ms > 1000.0 {
                                     write!(
                                         &mut self.draw_buf,
-                                        fmt!("<cyan>Done in {:.2} s<r>\n"),
+                                        fmt!("Done in {:.2} s<r>\n"),
                                         ms / 1_000.0,
                                     )?;
                                 } else {
-                                    write!(
-                                        &mut self.draw_buf,
-                                        fmt!("<cyan>Done in {:.0} ms<r>\n"),
-                                        ms,
-                                    )?;
+                                    write!(&mut self.draw_buf, fmt!("Done in {:.0} ms<r>\n"), ms,)?;
                                 }
                             } else {
                                 self.draw_buf
-                                    .extend_from_slice(fmt!("<cyan>Done<r>\n").as_bytes());
+                                    .extend_from_slice(fmt!("Done<r>\n").as_bytes());
                             }
                         } else {
                             write!(
                                 &mut self.draw_buf,
-                                fmt!("<red>Exited with code {d}<r>\n"),
+                                fmt!("<r><red>Exited with code {d}<r>\n"),
                                 exited.code,
                             )?;
                         }
                     }
                     Status::Signaled(code) => {
                         if *code == bun_sys::SignalCode::SIGINT.0 {
-                            write!(&mut self.draw_buf, fmt!("<red>Interrupted<r>\n"))?;
+                            write!(&mut self.draw_buf, fmt!("<r><red>Interrupted<r>\n"))?;
                         } else {
                             write!(
                                 &mut self.draw_buf,
-                                fmt!("<red>Signaled with code {s}<r>\n"),
+                                fmt!("<r><red>Signaled with code {s}<r>\n"),
                                 bun_sys::SignalCode(*code).name().unwrap_or("UNKNOWN"),
                             )?;
                         }
                     }
                     Status::Err(_) => {
                         self.draw_buf
-                            .extend_from_slice(fmt!("<red>Error<r>\n").as_bytes());
+                            .extend_from_slice(fmt!("<r><red>Error<r>\n").as_bytes());
                     }
                 }
             } else {
                 write!(
                     &mut self.draw_buf,
-                    fmt!("<cyan><d>Waiting for {d} other script(s)<r>\n"),
+                    fmt!("<d>Waiting for {d} other script(s)<r>\n"),
                     handle.remaining_dependencies,
                 )?;
             }
@@ -884,6 +884,7 @@ pub(crate) fn run_scripts_with_filter(
                 deps,
                 PATH: Box::<[u8]>::from(&path_var[..]),
                 elide_count: ctx.bundler_options.elide_lines,
+                color: LabelColor::for_label(&package.json.name, scripts.len()),
             });
         }
     }

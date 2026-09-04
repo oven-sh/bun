@@ -3497,6 +3497,14 @@ describe("expect()", () => {
       expect({ a: "hello world" }).not.toMatchObject({ a: expect.stringMatching("word") });
       expect({ a: "hello world" }).toMatchObject({ a: "hello world" });
       expect({ a: "hello world" }).toMatchObject({ a: expect.stringMatching(/wor/) });
+      // a global RegExp matches regardless of lastIndex and does not advance it
+      const sticky = /wor/g;
+      sticky.lastIndex = 9;
+      expect("hello world").toMatch(sticky);
+      expect("hello world").toMatch(sticky);
+      expect(sticky.lastIndex).toBe(9);
+      expect({ a: "hello world" }).toMatchObject({ a: expect.stringMatching(sticky) });
+      expect(sticky.lastIndex).toBe(9);
       expect({ a: "hello world" }).not.toMatchObject({ a: expect.stringMatching(/word/) });
       expect({ a: expect.stringMatching("wor") }).toMatchObject({ a: "hello world" });
       expect({ a: expect.stringMatching("word") }).not.toMatchObject({ a: "hello world" });

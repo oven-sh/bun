@@ -8,6 +8,7 @@ use crate::shell::interpreter::{
 };
 use crate::shell::io_writer::{ChildPtr, WriterTag};
 use crate::shell::yield_::Yield;
+use core::ops::ControlFlow;
 use core::ptr::NonNull;
 
 #[derive(Default)]
@@ -36,13 +37,9 @@ pub struct Exec {
     /// self-reference).
     pub(crate) args_start: usize,
     pub(crate) err: Option<bun_sys::Error>,
-    /// FIFO of in-flight OutputTask pointers awaiting an IOWriter chunk
-    /// completion. Stopgap until `WriterTag` can carry the `*mut OutputTask`
-    /// directly (IOWriter.rs is out of scope here): `write_err`/`write_out`
-    /// push, `on_io_writer_chunk` pops and forwards to
-    /// `OutputTask::on_io_writer_chunk` so the box is reclaimed and the
-    /// writeErr→writeOut→onDone state machine runs.
-    pub(crate) output_queue: std::collections::VecDeque<*mut OutputTask<Mkdir>>,
+    /// Tasks parked while their IOWriter chunk is in flight; the chunk's
+    /// `ChildPtr` only names the builtin, so completions are matched FIFO.
+    pub(crate) output_queue: std::collections::VecDeque<Box<OutputTask<Mkdir>>>,
 }
 
 impl Mkdir {
@@ -149,9 +146,7 @@ impl Mkdir {
             State::Idle | State::Done => panic!("Invalid state"),
         };
         if let Some(task) = pending {
-            // SAFETY: `task` was heap-allocated in `OutputTask::new` and
-            // pushed by `write_err`/`write_out`; not yet freed.
-            return unsafe { OutputTask::<Mkdir>::on_io_writer_chunk(task, interp, written, e) };
+            return OutputTask::<Mkdir>::on_io_writer_chunk(task, interp, written, e);
         }
         Self::next(interp, cmd)
     }
@@ -186,30 +181,25 @@ impl OutputTaskVTable for Mkdir {
     fn write_err(
         interp: &Interpreter,
         cmd: NodeId,
-        child: *mut OutputTask<Self>,
+        task: Box<OutputTask<Self>>,
         errbuf: &[u8],
-    ) -> Option<Yield> {
+    ) -> ControlFlow<Yield, Box<OutputTask<Self>>> {
         if let State::Exec(exec) = &mut Self::state_mut(interp, cmd).state {
             exec.output_waiting += 1;
         }
         if let Some(safeguard) = Builtin::of(interp, cmd).stderr.needs_io() {
-            // OutputTask has no `WriterTag` of its own (it is not directly
-            // dispatchable as an IOWriter child), so the enqueue is tagged
-            // `WriterTag::Builtin` and `child` is stashed on `output_queue`;
-            // `on_io_writer_chunk` pops it to route the completion back to
-            // the OutputTask state machine and reclaim the box.
             if let State::Exec(exec) = &mut Self::state_mut(interp, cmd).state {
-                exec.output_queue.push_back(child);
+                exec.output_queue.push_back(task);
             }
             let childptr = ChildPtr::new(cmd, WriterTag::Builtin);
-            return Some(
+            return ControlFlow::Break(
                 Builtin::of_mut(interp, cmd)
                     .stderr
                     .enqueue(childptr, errbuf, safeguard),
             );
         }
         let _ = Builtin::write_no_io(interp, cmd, IoKind::Stderr, errbuf);
-        None
+        ControlFlow::Continue(task)
     }
 
     fn on_write_err(interp: &Interpreter, cmd: NodeId) {
@@ -221,29 +211,25 @@ impl OutputTaskVTable for Mkdir {
     fn write_out(
         interp: &Interpreter,
         cmd: NodeId,
-        child: *mut OutputTask<Self>,
-        output: &mut OutputSrc,
-    ) -> Option<Yield> {
+        task: Box<OutputTask<Self>>,
+        output: &[u8],
+    ) -> ControlFlow<Yield, Box<OutputTask<Self>>> {
         if let State::Exec(exec) = &mut Self::state_mut(interp, cmd).state {
             exec.output_waiting += 1;
         }
         if let Some(safeguard) = Builtin::of(interp, cmd).stdout.needs_io() {
-            // See write_err — stash `child` so the chunk callback routes to
-            // OutputTask::on_io_writer_chunk.
             if let State::Exec(exec) = &mut Self::state_mut(interp, cmd).state {
-                exec.output_queue.push_back(child);
+                exec.output_queue.push_back(task);
             }
             let childptr = ChildPtr::new(cmd, WriterTag::Builtin);
-            let buf = output.slice().to_vec();
-            return Some(
+            return ControlFlow::Break(
                 Builtin::of_mut(interp, cmd)
                     .stdout
-                    .enqueue(childptr, &buf, safeguard),
+                    .enqueue(childptr, output, safeguard),
             );
         }
-        let buf = output.slice().to_vec();
-        let _ = Builtin::write_no_io(interp, cmd, IoKind::Stdout, &buf);
-        None
+        let _ = Builtin::write_no_io(interp, cmd, IoKind::Stdout, output);
+        ControlFlow::Continue(task)
     }
 
     fn on_write_out(interp: &Interpreter, cmd: NodeId) {

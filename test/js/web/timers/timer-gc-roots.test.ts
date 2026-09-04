@@ -58,6 +58,105 @@ describe.concurrent("Strong handles are backed by StrongRootBlock", () => {
     expect(exitCode).toBe(0);
   });
 
+  // The two tests below lay blocks out exactly, which relies on CAP matching
+  // StrongRootBlock::capacity and on a fresh process holding no Strongs; both
+  // are checked through the block counts they print.
+  const CAP = 960;
+
+  test("a Strong released from a GC finalizer can unlink a block from the middle of the list", async () => {
+    // Listener.stop() empties its `data` Strong but keeps the slot allocated, so
+    // the slot is released when the wrapper is finalized, i.e. while JSC is
+    // sweeping. `older` fills three blocks exactly, so `data` opens a block of
+    // its own ("M"), which the first CAP-1 `newer` timers then fill; the rest of
+    // `newer` goes into two blocks linked ahead of it. Clearing the timers that
+    // share M leaves `data` as its only occupant, with live blocks on both sides,
+    // so releasing it during the sweep has to relink M's neighbours.
+    const src = `
+      const { heapStats } = require("bun:jsc");
+      const older = [];
+      for (let i = 0; i < 3 * ${CAP}; i++) older.push(setTimeout(() => {}, 600000));
+      (function () {
+        const listener = Bun.listen({ hostname: "127.0.0.1", port: 0, data: {}, socket: { data() {} } });
+        listener.stop();
+      })();
+      const newer = [];
+      for (let i = 0; i < 2 * ${CAP}; i++) newer.push(setTimeout(() => {}, 600000));
+      for (const t of newer.splice(0, ${CAP} - 1)) clearTimeout(t);
+      const blocksArmed = heapStats().objectTypeCounts.StrongRootBlock || 0;
+      await new Promise(r => setTimeout(r, 0));
+      Bun.gc(true);
+      await new Promise(r => setTimeout(r, 0));
+      Bun.gc(true);
+      const protectedTimeouts = heapStats().protectedObjectTypeCounts.Timeout || 0;
+      console.log(JSON.stringify({ blocksArmed, protectedTimeouts }));
+      for (const t of older) clearTimeout(t);
+      for (const t of newer) clearTimeout(t);
+    `;
+    await using proc = Bun.spawn({ cmd: [bunExe(), "-e", src], env: bunEnv, stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual({
+      // three `older` blocks, M, two `newer` blocks
+      blocksArmed: 6,
+      // protectedObjectTypeCounts walks the list from the head, so this only
+      // adds up if unlinking M left the blocks on both sides of it connected.
+      protectedTimeouts: 3 * CAP + (CAP + 1),
+    });
+    expect(exitCode).toBe(0);
+  });
+
+  test("re-linking an old block ahead of new blocks keeps them alive across an eden GC", async () => {
+    // A block that survived a collection is skipped by the next eden GC unless a
+    // write barrier put it back in the remembered set. When acquire() re-links
+    // the parked spare (old) ahead of blocks allocated since the last
+    // collection, the m_next store has to be that barrier: the slot store that
+    // follows it does not remember the block when the value is not a cell,
+    // which is what `listener.data = 1` arms.
+    //
+    // `a` is exactly blocks A1+A2 (old after the full GC). The unreferenced
+    // timers are exactly three new blocks, and their Timeouts are rooted only
+    // through those blocks' slots. Clearing `a` parks A1 as the spare and
+    // leaves the list exactly full, so `listener.data = 1` re-links A1 ahead of
+    // the new blocks.
+    const src = `
+      const { heapStats, edenGC } = require("bun:jsc");
+      const blocks = () => heapStats().objectTypeCounts.StrongRootBlock || 0;
+      const protectedTimeouts = () => heapStats().protectedObjectTypeCounts.Timeout || 0;
+      const blocksAtStart = blocks();
+      const listener = Bun.listen({ hostname: "127.0.0.1", port: 0, socket: { data() {} } });
+      listener.stop();
+      const a = [];
+      for (let i = 0; i < 2 * ${CAP}; i++) a.push(setTimeout(() => {}, 600000));
+      Bun.gc(true);
+      const blocksOld = blocks();
+      for (let i = 0; i < 3 * ${CAP}; i++) setTimeout(() => {}, 600000);
+      const blocksNew = blocks();
+      for (const t of a) clearTimeout(t);
+      listener.data = 1;
+      const beforeEden = protectedTimeouts();
+      edenGC();
+      // Allocate Timeout cells so that anything the eden GC failed to keep alive
+      // is swept, releasing its slot, before counting again.
+      for (let i = 0; i < 2 * ${CAP}; i++) setTimeout(() => {}, 0);
+      await new Promise(r => setTimeout(r, 0));
+      console.log(JSON.stringify({ blocksAtStart, blocksOld, blocksNew, beforeEden, afterEden: protectedTimeouts() }));
+      process.exit(0);
+    `;
+    await using proc = Bun.spawn({ cmd: [bunExe(), "-e", src], env: bunEnv, stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual({
+      blocksAtStart: 0,
+      blocksOld: 2,
+      blocksNew: 5,
+      beforeEden: 3 * CAP,
+      // Without the barrier the eden GC frees the three new blocks and every
+      // Timeout they rooted, and this reads 0.
+      afterEden: 3 * CAP,
+    });
+    expect(exitCode).toBe(0);
+  });
+
   for (const kind of ["setTimeout", "setInterval", "setImmediate"] as const) {
     test(`${kind}: callback stays reachable across GC while armed`, async () => {
       const body =

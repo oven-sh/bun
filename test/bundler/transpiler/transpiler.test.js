@@ -2346,6 +2346,33 @@ export default <>hi</>
     expect(fragment.includes("var JSXFrag = foo.frag,")).toBe(true);
   });
 
+  // https://github.com/oven-sh/bun/issues/3528
+  describe("tsconfig jsxImportSource uses the automatic runtime for any package", () => {
+    const cases = [];
+    for (const pkg of ["solid-js", "preact", "@emotion/react"]) {
+      for (const jsx of ["react-jsx", "preserve", "unset"]) {
+        for (const form of ["object", "string"]) {
+          cases.push([pkg, jsx, form]);
+        }
+      }
+    }
+
+    it.each(cases)('"%s" (jsx: %s, tsconfig as %s)', async (pkg, jsx, form) => {
+      const compilerOptions = jsx === "unset" ? { jsxImportSource: pkg } : { jsx, jsxImportSource: pkg };
+      const tsconfig = form === "string" ? JSON.stringify({ compilerOptions }) : { compilerOptions };
+      const bun = new Bun.Transpiler({ loader: "tsx", autoImportJSX: true, tsconfig });
+      const input = `export default <div>hi</div>`;
+
+      for (const out of [bun.transformSync(input), await bun.transform(input)]) {
+        expect(out).not.toContain("React.createElement");
+        const runtime = out.match(/^import \{ (jsx|jsxDEV) as (\w+) \} from "(.+?)";/m);
+        expect(runtime).not.toBeNull();
+        expect(runtime[3]).toMatch(new RegExp(`^${pkg}/jsx-(dev-)?runtime$`));
+        expect(out).toContain(`${runtime[2]}("div"`);
+      }
+    });
+  });
+
   it('logLevel: "error" throws', () => {
     var bun = new Bun.Transpiler({
       loader: "jsx",

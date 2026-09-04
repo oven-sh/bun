@@ -3531,10 +3531,12 @@ pub const fn truncated_hash32_bytes(int: u64) -> [u8; 8] {
     ]
 }
 
-/// All 64 bits of a content hash as 13 characters of the same alphabet.
-/// Bundler output names (`[hash]`) use this rather than [`truncated_hash32`]:
-/// at 40 bits, two of a few thousand chunks printing the same name is a
-/// one-in-a-million build, and that build fails.
+/// A content hash as it prints in bundler output names (`[hash]`): ten
+/// lowercase base36 digits, log2(36^10) ≈ 51.7 bits of the hash. Lowercase
+/// alphanumeric is the largest alphabet that is safe in URLs and on
+/// case-insensitive filesystems. [`truncated_hash32`]'s 40 bits let two of a
+/// few thousand chunks share a name about once per million builds, and that
+/// build fails; this width makes it about once per billion.
 pub struct ContentHash(pub u64);
 
 pub fn content_hash(int: u64) -> ContentHash {
@@ -3547,15 +3549,17 @@ impl Display for ContentHash {
     }
 }
 
-pub const CONTENT_HASH_LEN: usize = 13;
+pub const CONTENT_HASH_LEN: usize = 10;
 
 pub const fn content_hash_bytes(int: u64) -> [u8; CONTENT_HASH_LEN] {
-    const CHARS: &[u8; 32] = b"0123456789abcdefghjkmnpqrstvwxyz";
+    const CHARS: &[u8; 36] = b"0123456789abcdefghijklmnopqrstuvwxyz";
     let mut out = [0u8; CONTENT_HASH_LEN];
-    let mut i = 0;
-    while i < CONTENT_HASH_LEN {
-        out[i] = CHARS[((int >> (5 * i)) & 31) as usize];
-        i += 1;
+    let mut rest = int;
+    let mut i = CONTENT_HASH_LEN;
+    while i > 0 {
+        i -= 1;
+        out[i] = CHARS[(rest % 36) as usize];
+        rest /= 36;
     }
     out
 }

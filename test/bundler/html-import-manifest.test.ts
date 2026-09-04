@@ -141,11 +141,11 @@ console.log(favicon);
             "files": [
               {
                 "input": "client.html",
-                "path": "./client-w596nnwxy99q6.js",
+                "path": "./client-2vbz7f51bw.js",
                 "loader": "js",
                 "isEntry": true,
                 "headers": {
-                  "etag": "vCRTK-8-pWs",
+                  "etag": "_HDh8yXcDfc",
                   "content-type": "text/javascript;charset=utf-8"
                 }
               },
@@ -155,13 +155,13 @@ console.log(favicon);
                 "loader": "html",
                 "isEntry": true,
                 "headers": {
-                  "etag": "oF-PkzUH5R0",
+                  "etag": "C-Ok-mlml2Y",
                   "content-type": "text/html;charset=utf-8"
                 }
               },
               {
                 "input": "client.html",
-                "path": "./client-gb61z245jry98.css",
+                "path": "./client-uw59g18ar4.css",
                 "loader": "css",
                 "isEntry": true,
                 "headers": {
@@ -171,7 +171,7 @@ console.log(favicon);
               },
               {
                 "input": "favicon.png",
-                "path": "./favicon-wkmwcbdy3e4e9.png",
+                "path": "./favicon-cxm3p2d5do.png",
                 "loader": "file",
                 "isEntry": false,
                 "headers": {
@@ -330,7 +330,7 @@ console.log("About manifest:", aboutHtml);
                 "input": "home.html",
                 "isEntry": true,
                 "loader": "js",
-                "path": "./home-egq8y79nvdyw8.js",
+                "path": "./home-zidcj2fd3i.js",
               },
               {
                 "headers": {
@@ -350,7 +350,7 @@ console.log("About manifest:", aboutHtml);
                 "input": "home.html",
                 "isEntry": true,
                 "loader": "css",
-                "path": "./home-5cfcmw6vck740.css",
+                "path": "./home-rc8bbkns05.css",
               },
             ],
             "index": "./home.html",
@@ -365,7 +365,7 @@ console.log("About manifest:", aboutHtml);
                 "input": "about.html",
                 "isEntry": true,
                 "loader": "js",
-                "path": "./about-429ppb4avg1mf.js",
+                "path": "./about-lwm0qzxoas.js",
               },
               {
                 "headers": {
@@ -385,7 +385,7 @@ console.log("About manifest:", aboutHtml);
                 "input": "about.html",
                 "isEntry": true,
                 "loader": "css",
-                "path": "./about-pxb0ddz94wfm7.css",
+                "path": "./about-c061btljna.css",
               },
             ],
             "index": "./about.html",

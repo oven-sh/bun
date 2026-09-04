@@ -586,11 +586,11 @@ describe("Bun.build", () => {
     Bun.gc(true);
   });
 
-  // [hash] carries all 64 bits of the content hash (13 base32 characters). At
-  // 8 characters (40 bits), two of a few thousand `--splitting` chunks printed
+  // [hash] is ten base36 digits (~52 bits of the content hash). At 8 base32
+  // characters (40 bits), two of a few thousand `--splitting` chunks printed
   // the same name about once per million builds and the build failed with
   // "Multiple files share the same output path".
-  test("[hash] is the full 64-bit content hash", async () => {
+  test("[hash] is ten base36 digits of the content hash", async () => {
     const dir = tempDirWithFiles("build-hash-width", {
       "a.js": `export default "a" + (await import("./shared.js")).default;`,
       "b.js": `export default "b" + (await import("./shared.js")).default;`,
@@ -603,7 +603,7 @@ describe("Bun.build", () => {
     });
     expect(build.success).toBe(true);
     for (const output of build.outputs) {
-      expect(output.hash).toMatch(/^[0-9a-z]{13}$/);
+      expect(output.hash).toMatch(/^[0-9a-z]{10}$/);
       expect(path.basename(output.path)).toEndWith(`-${output.hash}.js`);
     }
     expect(new Set(build.outputs.map(o => o.hash)).size).toBe(build.outputs.length);

@@ -15,8 +15,7 @@
 //!
 //! Thread lifecycle (`thread_main`):
 //!   1. `start_vm()`  — arena, env snapshot, `VirtualMachine`, publish its handle (`vm_handle`).
-//!   2. `spin()`      — `workerThreadStarted` ('online'), load the entry point,
-//!                      `workerGlobalScopeStarted`, run the
+//!   2. `spin()`      — 'online', load the entry point, `workerGlobalScopeStarted`, run the
 //!                      event loop until it drains or termination is requested,
 //!                      `beforeExit` on a natural drain.
 //!   3. `shutdown()`  — 'exit' handlers, stop phase, join own children, JSC VM
@@ -796,9 +795,7 @@ impl WebWorker {
             return self.shutdown();
         }
 
-        // The thread is up: the parent sees 'online' before the entry point
-        // runs, as in node, so it precedes anything the entry's top-level code
-        // posts. Messages and tasks from the parent still wait for Running.
+        // 'online' before the entry runs, as in node: it precedes anything the entry posts.
         WebWorker__workerThreadStarted(self.messaging_proxy);
 
         // `preloads` is owned by `self` (heap `WebWorker` outlives the VM).
@@ -927,8 +924,7 @@ impl WebWorker {
 
         self.flush_logs(vm);
         log!("[{}] event loop start", self.execution_context_id);
-        // Pending -> Running: messages and tasks that arrived while the entry
-        // point was loading are delivered now, and later ones are routed directly.
+        // Pending -> Running: messages and tasks queued while the entry loaded are delivered.
         WebWorker__workerGlobalScopeStarted(self.messaging_proxy, vm.global());
         self.set_status(Status::Running);
 

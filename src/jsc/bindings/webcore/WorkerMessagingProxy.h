@@ -98,11 +98,9 @@ public:
     JSC::Strong<JSC::JSPromise> takeCrossVMRequest(uint64_t id);
 
     // -- WorkerObjectProxy / WorkerReportingProxy (worker thread) ---------------------------------
-    // The VM is up and the entry point loads next. Posts 'online' to the parent; node reports it
-    // before any user code runs.
+    // Before the entry point loads: posts 'online' to the parent, as node does before user code.
     void workerThreadStarted();
-    // The entry point has evaluated (up to its first top-level await): tasks and messages that
-    // arrived meanwhile are delivered and later ones are routed directly.
+    // The entry point has evaluated: Pending -> Running, queued tasks and messages are delivered.
     void workerGlobalScopeStarted(Zig::GlobalObject&);
     void postMessageToWorkerObject(MessageWithMessagePorts&&);
     void postErrorToWorkerObject(Zig::GlobalObject&, const String& message, JSC::JSValue error);

@@ -380,12 +380,8 @@ void WorkerMessagingProxy::drainMessagesToWorkerObject(ScriptExecutionContext& c
 
 void WorkerMessagingProxy::workerThreadStarted()
 {
-    // Posted before the entry point loads, so it reaches the parent ahead of anything the entry's
-    // top-level code posts (node's bootstrap sends UP_AND_RUNNING before it evaluates the entry).
-    // The state stays Pending: a task or message a parent-side 'online' handler posts is queued and
-    // delivered by workerGlobalScopeStarted() once the entry has evaluated.
+    // Stays Pending: what an 'online' handler posts is queued until workerGlobalScopeStarted().
     {
-        // An exiting parent (parentContextWillDestroy) may already have moved this to Closing.
         Locker lock { m_pendingTasksLock };
         if (m_state.load() != State::Pending)
             return;
@@ -403,8 +399,7 @@ void WorkerMessagingProxy::workerGlobalScopeStarted(Zig::GlobalObject& workerGlo
     auto& context = *workerGlobalObject.scriptExecutionContext();
     ASSERT(context.identifier() == m_workerContextIdentifier);
 
-    // Pending -> Running under the lock postTaskToWorkerGlobalScope() takes, so a task is either
-    // queued here (and run below) or posted directly, never lost.
+    // Pending -> Running under the lock postTaskToWorkerGlobalScope() takes: no task is lost.
     Deque<Function<void(ScriptExecutionContext&)>> pendingTasks;
     {
         Locker lock { m_pendingTasksLock };

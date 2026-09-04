@@ -603,11 +603,12 @@ impl<const SSL: bool> HTTPContext<SSL> {
         let Some(ctx) = opts.create_ssl_context(&mut err) else {
             return;
         };
-        // SAFETY: ctx is a live SSL_CTX owned by this function.
-        if ptrs.is_empty()
-            && unsafe { uws::SocketContext::c::us_ssl_ctx_use_empty_ca_store(ctx.as_ptr()) } == 0
-        {
-            return;
+        if ptrs.is_empty() {
+            // SAFETY: ctx is a live SSL_CTX owned by this function.
+            let ok = unsafe { uws::SocketContext::c::us_ssl_ctx_use_empty_ca_store(ctx.as_ptr()) };
+            if ok == 0 {
+                return;
+            }
         }
         // SAFETY: ctx is a live SSL_CTX owned by this function.
         unsafe { ssl_ctx_setup(ctx.as_ptr()) };

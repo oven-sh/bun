@@ -379,6 +379,12 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
   // cfg.archiveDeps they live in depLibs as .a files instead.
   const allObjects = [...cxxObjects, ...cObjects, ...depObjects];
 
+  // Platform shim edges (macho-postlink host tool, asan dyld shim). Emitted
+  // before the cpp-only return: the darwin link rule ends in macho-postlink,
+  // and the WebKit source build links its own target executables with it in
+  // every mode.
+  const shims = emitShims(n, cfg);
+
   // ─── Step 6: cpp-only / archive-link → archive (cpp-only returns here) ───
   // CI's build-cpp step: archive all .o into libbun.a, stop. The sibling
   // build-rust step produces libbun_runtime.a independently; build-bun
@@ -436,7 +442,6 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
   // reached transitively from those roots, so no `--whole-archive` wrapping
   // is needed; if a member ever isn't, `rustLinkFlags()` in rust.ts is the
   // wrapping helper.
-  const shims = emitShims(n, cfg);
   const linkObjects = [...(archive !== undefined ? [archive] : allObjects), ...rustObjects, ...windowsRes];
   const ldflags = [...flags.ldflags, ...systemLibs(cfg), ...shims.ldflags];
   const exe = link(n, cfg, exeName, linkObjects, {

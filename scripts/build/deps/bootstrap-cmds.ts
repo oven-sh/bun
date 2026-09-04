@@ -43,10 +43,10 @@ function emitMigcom(n: Ninja, cfg: Config, { srcDir, ready }: CustomBuildContext
   const B = depBuildDir(cfg, "bootstrap_cmds");
   const src = join(srcDir, "migcom.tproj");
   // The stub <mach/*.h> for the host come from the WebKit tree (fetched at
-  // configure time like this one, so the files are on disk before ninja runs).
-  const webkit = depSourceDir(cfg, "WebKit");
-  const machStubs = join(webkit, "macos-cross");
-  const orderOnly = [...ready, join(webkit, ".ref")];
+  // configure time like this one — or a --local-deps clone — so the files
+  // are on disk before ninja runs; no stamp to wait for).
+  const machStubs = join(depSourceDir(cfg, "WebKit"), "macos-cross");
+  const orderOnly = ready;
 
   const lexer = join(B, "lexxer.c");
   const parser = join(B, "parser.c");

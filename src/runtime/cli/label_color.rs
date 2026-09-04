@@ -1,12 +1,11 @@
 //! Per-package colors for `bun run --filter` / `--parallel` prefixes.
 //!
 //! On truecolor terminals the color is a pure function of the label, so a
-//! package keeps its color across runs. Hue (and a chroma tier) come from a
-//! hash; lightness/chroma are fixed in OKLCH so every hue is equally legible.
-//! The label is drawn as a pill whose foreground and background are both ours
-//! (dark shade on light tint), and the gutter uses a mid-lightness foreground,
-//! so both read on light and dark terminals. Other terminals rotate through the
-//! six basic ANSI colors by position.
+//! package keeps its color across runs: a hash picks the hue, drawn at a fixed
+//! OKLCH lightness that reads on light and dark backgrounds with as much chroma
+//! as sRGB has at that hue (CSS gamut mapping trims the excess). The
+//! mustard/olive hues are skipped. Other terminals rotate through the six basic
+//! ANSI colors by position.
 
 use std::io::Write as _;
 
@@ -22,14 +21,16 @@ const BASIC: [&str; 6] = [
     ansi::RED,
 ];
 
+const LIGHTNESS: f32 = 0.72;
+const CHROMA: f32 = 0.2;
+/// OKLCH hues in `[SKIP_FROM, SKIP_TO)` come out mustard/olive at this lightness.
+const SKIP_FROM: f32 = 70.0;
+const SKIP_TO: f32 = 128.0;
+
 #[derive(Clone, Copy)]
 pub enum LabelColor {
     Basic(&'static str),
-    Rgb {
-        gutter: [u8; 3],
-        pill_bg: [u8; 3],
-        pill_fg: [u8; 3],
-    },
+    Rgb([u8; 3]),
 }
 
 impl LabelColor {
@@ -41,60 +42,35 @@ impl LabelColor {
         if depth != ColorDepth::C16m {
             return LabelColor::Basic(BASIC[position % BASIC.len()]);
         }
-        let h = bun_wyhash::hash(label);
-        let hue = (h >> 32) as f32 * (360.0 / 4_294_967_296.0);
-        let chroma = if h & 1 == 0 { 0.14 } else { 0.10 };
-        LabelColor::Rgb {
-            gutter: oklch_to_srgb(0.68, chroma, hue),
-            pill_bg: oklch_to_srgb(0.86, 0.08, hue),
-            pill_fg: oklch_to_srgb(0.32, 0.09, hue),
+        let unit = (bun_wyhash::hash(label) >> 40) as f32 / (1u32 << 24) as f32;
+        let mut h = unit * (360.0 - (SKIP_TO - SKIP_FROM));
+        if h >= SKIP_FROM {
+            h += SKIP_TO - SKIP_FROM;
         }
+        let rgb = RGBA::from(SRGB::from(OKLCH {
+            l: LIGHTNESS,
+            c: CHROMA,
+            h,
+            alpha: 1.0,
+        }));
+        LabelColor::Rgb([rgb.red, rgb.green, rgb.blue])
     }
 
     /// SGR that colors gutter text (`│`, `|`) in the package color.
     pub fn gutter(self, out: &mut Vec<u8>) {
         match self {
             LabelColor::Basic(c) => out.extend_from_slice(c.as_bytes()),
-            LabelColor::Rgb {
-                gutter: [r, g, b], ..
-            } => {
+            LabelColor::Rgb([r, g, b]) => {
                 let _ = write!(out, "\x1b[38;2;{r};{g};{b}m");
             }
         }
     }
 
-    /// Writes `label` as a colored pill (truecolor) or bold colored text.
-    pub fn pill(self, out: &mut Vec<u8>, label: &[u8]) {
-        match self {
-            LabelColor::Basic(c) => {
-                out.extend_from_slice(ansi::BOLD.as_bytes());
-                out.extend_from_slice(c.as_bytes());
-                out.extend_from_slice(label);
-                out.extend_from_slice(ansi::RESET.as_bytes());
-            }
-            LabelColor::Rgb {
-                pill_bg: [br, bg, bb],
-                pill_fg: [fr, fg, fb],
-                ..
-            } => {
-                let _ = write!(
-                    out,
-                    "\x1b[48;2;{br};{bg};{bb}m\x1b[38;2;{fr};{fg};{fb}m\x1b[1m "
-                );
-                out.extend_from_slice(label);
-                out.extend_from_slice(b" ");
-                out.extend_from_slice(ansi::RESET.as_bytes());
-            }
-        }
+    /// Writes `label` in bold package color.
+    pub fn label(self, out: &mut Vec<u8>, label: &[u8]) {
+        out.extend_from_slice(ansi::BOLD.as_bytes());
+        self.gutter(out);
+        out.extend_from_slice(label);
+        out.extend_from_slice(ansi::RESET.as_bytes());
     }
-}
-
-fn oklch_to_srgb(l: f32, c: f32, h: f32) -> [u8; 3] {
-    let rgb = RGBA::from(SRGB::from(OKLCH {
-        l,
-        c,
-        h,
-        alpha: 1.0,
-    }));
-    [rgb.red, rgb.green, rgb.blue]
 }

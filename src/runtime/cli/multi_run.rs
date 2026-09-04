@@ -345,7 +345,7 @@ fn line_prefix(
     let mut buf: Vec<u8> = Vec::with_capacity(config.label.len() + padding + 48);
     if use_colors {
         let color = LabelColor::for_label(&config.label[..config.color_key_len], position);
-        color.pill(&mut buf, &config.label);
+        color.label(&mut buf, &config.label);
         buf.extend(core::iter::repeat_n(b' ', padding + 1));
         color.gutter(&mut buf);
         buf.push(b'|');
@@ -1053,11 +1053,13 @@ pub(crate) fn run(ctx: &mut Command::ContextData) -> Result<core::convert::Infal
                 );
             } else {
                 let patterns: Vec<&[u8]> = ctx.filters.iter().map(|f| &**f).collect();
+                let names: Vec<&[u8]> = script_names.iter().map(|n| &**n).collect();
                 Output::err_generic(
-                    "{}",
-                    (bstr::BStr::new(&workspace_selection::unmatched_message(
-                        &patterns,
-                    )),),
+                    "No workspace packages matching {} have script {}",
+                    (
+                        bstr::BStr::new(&workspace_selection::quote_patterns(&patterns)),
+                        bstr::BStr::new(&workspace_selection::quote_patterns(&names)),
+                    ),
                 );
             }
             Global::exit(1);

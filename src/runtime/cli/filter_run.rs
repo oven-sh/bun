@@ -530,7 +530,7 @@ impl<'a> State<'a> {
             let e = Self::elide(&handle.buffer, elide_lines);
             let color = handle.config.color;
 
-            color.pill(&mut self.draw_buf, &handle.config.package_name);
+            color.label(&mut self.draw_buf, &handle.config.package_name);
             write!(
                 &mut self.draw_buf,
                 fmt!(" {s} $ <d>{s}<r>\n"),
@@ -902,12 +902,15 @@ pub(crate) fn run_scripts_with_filter(
         } else {
             let patterns: Vec<&[u8]> = ctx.filters.iter().map(|f| &**f).collect();
             Output::err_generic(
-                "{}",
-                (bstr::BStr::new(
-                    &bun_install::package_manager::workspace_selection::unmatched_message(
-                        &patterns,
+                "No workspace packages matching {} have script \"{}\"",
+                (
+                    bstr::BStr::new(
+                        &bun_install::package_manager::workspace_selection::quote_patterns(
+                            &patterns,
+                        ),
                     ),
-                ),),
+                    bstr::BStr::new(script_name),
+                ),
             );
         }
         Global::exit(1);

@@ -1765,15 +1765,13 @@ describe.concurrent("color cycling", () => {
     expect(exitCode).toBe(0);
   });
 
-  /** `label` → the SGR run that paints its pill, from truecolor output. */
-  function pillOf(output: string, label: string) {
-    const m = output.match(
-      new RegExp(`(\x1b\\[48;2;[\\d;]+m\x1b\\[38;2;[\\d;]+m)\x1b\\[1m ${escapeRe(label)} \x1b\\[0m`),
-    );
+  /** `label` → the truecolor SGR that paints it. */
+  function colorOfLabel(output: string, label: string) {
+    const m = output.match(new RegExp(`\x1b\\[1m(\x1b\\[38;2;[\\d;]+m)${escapeRe(label)}\x1b\\[0m`));
     return m?.[1];
   }
 
-  test("truecolor terminals get a stable per-package color with its own background", async () => {
+  test("truecolor terminals get a stable per-package color", async () => {
     using dir = makeWorkspace("mr-color-24bit", {
       "pkg-a": { build: `echo a`, lint: `echo a` },
       "pkg-b": { build: `echo b`, lint: `echo b` },
@@ -1793,23 +1791,24 @@ describe.concurrent("color cycling", () => {
 
     const { stdout: build, exitCode: buildExit } = await run("--parallel", "--filter", "*", "build");
     const { stdout: lint, exitCode: lintExit } = await run("--parallel", "--filter", "*", "lint");
-    const a = pillOf(build, "pkg-a:build");
-    const b = pillOf(build, "pkg-b:build");
-    // Both foreground and background are set, so the label reads on any terminal theme.
-    expect(a).toMatch(/^\x1b\[48;2;\d+;\d+;\d+m\x1b\[38;2;\d+;\d+;\d+m$/);
-    expect(b).toMatch(/^\x1b\[48;2;\d+;\d+;\d+m\x1b\[38;2;\d+;\d+;\d+m$/);
+    const a = colorOfLabel(build, "pkg-a:build");
+    const b = colorOfLabel(build, "pkg-b:build");
+    expect(a).toMatch(/^\x1b\[38;2;\d+;\d+;\d+m$/);
+    expect(b).toMatch(/^\x1b\[38;2;\d+;\d+;\d+m$/);
     expect(a).not.toBe(b);
+    // The gutter is painted the same color as its label.
+    expect(build).toContain(`${a}|\x1b[0m a`);
     // The color is a function of the package name, not the script or position.
-    expect(pillOf(lint, "pkg-a:lint")).toBe(a);
-    expect(pillOf(lint, "pkg-b:lint")).toBe(b);
+    expect(colorOfLabel(lint, "pkg-a:lint")).toBe(a);
+    expect(colorOfLabel(lint, "pkg-b:lint")).toBe(b);
     expect(buildExit).toBe(0);
     expect(lintExit).toBe(0);
     // ...and `--filter` without `--parallel` paints the same package the same color.
     // (Windows only draws the `--filter` UI on a real console; see filter-workspace.test.ts.)
     if (!isWindows) {
       const { stdout: filter, exitCode } = await run("--filter", "*", "build");
-      expect(pillOf(filter, "pkg-a")).toBe(a);
-      expect(pillOf(filter, "pkg-b")).toBe(b);
+      expect(colorOfLabel(filter, "pkg-a")).toBe(a);
+      expect(colorOfLabel(filter, "pkg-b")).toBe(b);
       expect(exitCode).toBe(0);
     }
   });
@@ -1966,6 +1965,21 @@ describe("workspace integration", () => {
     expectPrefixed(r.stdout, "pkg-b:build", "b-built");
     expectPrefixed(r.stdout, "pkg-c:build", "c-built");
     expect(r.exitCode).toBe(0);
+  });
+
+  test("--parallel --filter distinguishes an unmatched filter from a missing script", async () => {
+    using dir = makeWorkspace("mr-ws-missing", {
+      "pkg-a": { build: `echo a` },
+    });
+    const noPkg = await runMulti(["run", "--parallel", "--filter", "nope", "build"], String(dir));
+    expect(noPkg.stderr.trim()).toBe(`error: No workspace packages matched the filter "nope"`);
+    expect(noPkg.exitCode).toBe(1);
+    const negated = await runMulti(["run", "--parallel", "--filter", "*", "--filter", "!*", "build"], String(dir));
+    expect(negated.stderr.trim()).toBe(`error: No workspace packages matched the filters "*", "!*"`);
+    expect(negated.exitCode).toBe(1);
+    const noScript = await runMulti(["run", "--parallel", "--filter", "pkg-a", "lint", "test"], String(dir));
+    expect(noScript.stderr.trim()).toBe(`error: No workspace packages matching "pkg-a" have script "lint", "test"`);
+    expect(noScript.exitCode).toBe(1);
   });
 
   test("--parallel --filter='pkg-a' runs only in matching package", async () => {

@@ -4350,8 +4350,10 @@ pub fn maybe_handle_panic_during_process_reload() {
 }
 
 /// Port of `bun.reloadProcess`. `may_return == true` → returns on failure; `false` → panics.
-/// `on_before_reload_process_posix` clears CLOEXEC on stdio/IPC and resets caught signal
-/// dispositions on all POSIX; the close_range sweep is Linux/BSD only.
+/// `BunDebugger__willReloadProcess` removes the inspector's unix socket files, which the
+/// reloaded process binds again. `on_before_reload_process_posix` clears CLOEXEC on
+/// stdio/IPC and resets caught signal dispositions on all POSIX; the close_range sweep is
+/// Linux/BSD only.
 pub fn reload_process(clear_terminal: bool, may_return: bool) {
     // Exactly one thread may perform the reload: the JS thread and the watcher's grace-window
     // fallback can both reach here, and concurrent execve prep crashes on musl. The swap elects a
@@ -4376,6 +4378,13 @@ pub fn reload_process(clear_terminal: bool, may_return: bool) {
         crate::output::reset_terminal_all();
     }
     crate::output::stdio::restore();
+
+    {
+        unsafe extern "C" {
+            safe fn BunDebugger__willReloadProcess();
+        }
+        BunDebugger__willReloadProcess();
+    }
 
     #[cfg(windows)]
     {

@@ -218,6 +218,18 @@ Bun reads these environment variables to configure aspects of its behavior.
 | `DO_NOT_TRACK`                           | Disable uploading crash reports to `bun.report` on crash. On macOS & Windows, crash report uploads are enabled by default. Bun sends no other telemetry, though we plan to add some. If `DO_NOT_TRACK=1`, then auto-uploading crash reports and telemetry are both [disabled](https://do-not-track.dev/).                                                                     |
 | `BUN_OPTIONS`                            | Prepends command-line arguments to any Bun execution. For example, `BUN_OPTIONS="--hot"` makes `bun run dev` behave like `bun --hot run dev`.                                                                                                                                                                                                                                 |
 
+### JSC engine options
+
+Environment variables prefixed `BUN_JSC_<Option>` are forwarded to the underlying [JavaScriptCore](https://developer.apple.com/documentation/javascriptcore) engine's own option parser before the VM starts, so any internal JSC flag can be toggled this way. This happens before `.env` files are loaded, so `BUN_JSC_<Option>` must be set in the parent process (shell, CI config, etc.) — putting it in a `.env` file has no effect.
+
+The most common use is disabling tail-call elimination, which keeps every frame on the stack so a full trace survives an error instead of collapsing tail calls together:
+
+```sh
+BUN_JSC_useTailCalls=0 bun test
+```
+
+These are internal engine flags, not a stable Bun API, and may change between releases of Bun and WebKit without notice — see WebKit's [`OptionsList.h`](https://github.com/oven-sh/webkit/blob/main/Source/JavaScriptCore/runtime/OptionsList.h) for the full list. Passing a name JSC doesn't recognize exits with status `1` instead of being silently ignored.
+
 ## Runtime transpiler caching
 
 For files larger than 4 KB, Bun caches transpiled output into `$BUN_RUNTIME_TRANSPILER_CACHE_PATH` or the platform-specific cache directory. This makes CLIs using Bun load faster.

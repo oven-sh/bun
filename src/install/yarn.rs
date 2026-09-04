@@ -5,7 +5,7 @@ use std::io::Write as _;
 use crate::Error;
 use bun_collections::{HashMap, StringHashMap, index_sort};
 use bun_install::bin::Bin;
-use bun_install::dependency::{self, Dependency, DependencyExt as _};
+use bun_install::dependency::{self, Dependency, DependencyExt as _, Tag as DepTag, TagExt as _};
 use bun_install::install::{self, DependencyID, PackageID, PackageManager};
 use bun_install::integrity::Integrity;
 // `bun_install::lockfile` is the column-accessor stub used by the
@@ -137,6 +137,20 @@ impl<'a> Entry<'a> {
 
     pub(crate) fn is_npm_alias(version: &[u8]) -> bool {
         version.starts_with(b"npm:")
+    }
+
+    /// A spec asked a registry for this entry; alias entries are only named from their tarball URL.
+    pub(crate) fn is_registry_entry(&self) -> bool {
+        let mut asked_by_range = false;
+        for spec in &self.specs {
+            let name = Entry::get_name_from_spec(spec);
+            let range = spec.get(name.len() + 1..).unwrap_or(b"");
+            if Entry::is_npm_alias(range) {
+                return false;
+            }
+            asked_by_range |= DepTag::infer(range).is_npm();
+        }
+        asked_by_range
     }
 
     pub(crate) fn is_remote_tarball(version: &[u8]) -> bool {
@@ -1033,20 +1047,25 @@ pub(crate) fn migrate_yarn_lockfile<'a>(
                     }
                 }
                 break 'blk Resolution::default();
-            } else if let Some(resolved) = entry.resolved.as_deref() {
-                if is_direct_url_dep {
-                    break 'blk Resolution::init(ResolutionValue::RemoteTarball(
-                        sbuf!().append(resolved)?,
-                    ));
-                }
+            } else {
+                let resolved = entry.resolved.as_deref();
+                if let Some(resolved) = resolved {
+                    if is_direct_url_dep {
+                        break 'blk Resolution::init(ResolutionValue::RemoteTarball(
+                            sbuf!().append(resolved)?,
+                        ));
+                    }
 
-                // Yarn v1 lockfiles legitimately contain entries without an integrity field
-                // (workspace deps, file:, codeload tarballs), so migration intentionally
-                // accepts off-registry tarball URLs without integrity instead of failing.
-                if Entry::is_remote_tarball(resolved) || resolved.ends_with(b".tgz") {
-                    break 'blk Resolution::init(ResolutionValue::RemoteTarball(
-                        sbuf!().append(resolved)?,
-                    ));
+                    // Yarn v1 lockfiles legitimately contain entries without an integrity field
+                    // (workspace deps, file:, codeload tarballs), so migration intentionally
+                    // accepts off-registry tarball URLs without integrity instead of failing.
+                    if Entry::is_remote_tarball(resolved) || resolved.ends_with(b".tgz") {
+                        break 'blk Resolution::init(ResolutionValue::RemoteTarball(
+                            sbuf!().append(resolved)?,
+                        ));
+                    }
+                } else if !entry.is_registry_entry() {
+                    break 'blk Resolution::default();
                 }
 
                 let version = sbuf!().append(entry.version)?;
@@ -1056,21 +1075,20 @@ pub(crate) fn migrate_yarn_lockfile<'a>(
                     break 'blk Resolution::default();
                 }
 
-                let is_default_registry = resolved.starts_with(b"https://registry.yarnpkg.com/")
-                    || resolved.starts_with(b"https://registry.npmjs.org/");
-
-                let url = if is_default_registry {
-                    SemverString::default()
-                } else {
-                    sbuf!().append(resolved)?
+                // An empty url is fetched by name@version from the configured registry.
+                let is_default_registry = |resolved: &[u8]| {
+                    resolved.starts_with(b"https://registry.yarnpkg.com/")
+                        || resolved.starts_with(b"https://registry.npmjs.org/")
+                };
+                let url = match resolved {
+                    Some(resolved) if !is_default_registry(resolved) => sbuf!().append(resolved)?,
+                    _ => SemverString::default(),
                 };
 
                 break 'blk Resolution::init(ResolutionValue::Npm(VersionedURL {
                     url,
                     version: result.version.min(),
                 }));
-            } else {
-                break 'blk Resolution::default();
             }
         };
 

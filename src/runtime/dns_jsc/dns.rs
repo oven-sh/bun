@@ -4761,25 +4761,39 @@ impl Resolver {
     /// UnsafeCell-backed, LLVM cannot cache `ref_count` across the FFI call —
     /// the structural fix for the previously ASM-verified PROVEN_CACHED
     /// miscompile that needed `black_box` laundering under `&mut self`.
+    ///
+    /// Safety: `poll` is the live poll that fired (`__bun_run_file_poll`'s contract). It is
+    /// raw, as `FilePoll::deinit` takes it, since both the no-channel branch and (through
+    /// `on_dns_socket_state`) `Channel::process` may return it to the store.
     #[cfg(not(windows))]
-    pub(crate) fn on_dns_poll(&self, poll: &mut FilePoll) {
+    pub(crate) unsafe fn on_dns_poll(&self, poll: *mut FilePoll) {
         let vm = self.vm();
         let _exit = vm.enter_event_loop_scope();
+        // SAFETY: fn contract; the read ends at the `;`.
+        let fd = unsafe { (*poll).fd.native() };
         let Some(channel) = self.channel.get() else {
             self.polls.with_mut(|p| {
-                let _ = p.remove(&poll.fd.native());
+                let _ = p.remove(&fd);
             });
-            poll.deinit();
+            // SAFETY: fn contract; the map entry that held the slot is gone, so
+            // this is its last use.
+            unsafe { FilePoll::deinit(poll) };
             return;
         };
 
         let _guard = self.ref_guard();
 
+        // SAFETY: fn contract; each `&mut` the autoref forms ends with its
+        // statement, before `process` can reach the slot through the map.
+        let readable = unsafe { (*poll).is_readable() };
+        // SAFETY: as above.
+        let writable = unsafe { (*poll).is_writable() };
+
         // SAFETY: `channel` is the live c-ares channel owned by `self`; no `&mut`
         // to `*self` is held across this re-entrant call (all fields are
         // UnsafeCell-backed).
         unsafe {
-            (*channel).process(poll.fd.native(), poll.is_readable(), poll.is_writable());
+            (*channel).process(fd, readable, writable);
         }
 
         // c-ares detaches a query only *after* its callback returns, so
@@ -4869,8 +4883,10 @@ impl Resolver {
                 // the socket is now closed. We must free the data associated with
                 // socket.
                 if let Some(value) = self.polls.with_mut(|p| p.remove(&fd)) {
-                    // SAFETY: `value` is the heap-allocated FilePoll for this fd.
-                    unsafe { (*value).deinit_with_vm(ctx) };
+                    // SAFETY: `value` is the live slot `FilePoll::init` returned
+                    // for this fd below; removing it from the map was the only
+                    // other reference to it.
+                    unsafe { FilePoll::deinit_with_vm(value, ctx) };
                 }
                 return;
             }

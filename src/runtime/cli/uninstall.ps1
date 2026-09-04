@@ -83,12 +83,39 @@ try {
 }
 
 # Delete some tempdir files. Do not fail if an error happens here
-try {
-  Remove-Item "${Temp}\bun-*" -Recurse -Force
-} catch {}
-try {
-  Remove-Item "${Temp}\bunx-*" -Recurse -Force
-} catch {}
+function Remove-BunTempFiles {
+  try {
+    $TempDir = $env:TEMP
+    if ([string]::IsNullOrWhiteSpace($TempDir) -or -not [IO.Path]::IsPathRooted($TempDir)) {
+      return
+    }
+
+    # IsPathRooted also accepts root-relative and drive-relative paths.
+    $TempRoot = [IO.Path]::GetPathRoot($TempDir)
+    if ($TempRoot -eq "\" -or $TempRoot -match '^[A-Za-z]:$') {
+      return
+    }
+
+    $TempDir = [IO.Path]::GetFullPath($TempDir)
+    $TempRoot = [IO.Path]::GetPathRoot($TempDir)
+    $TempDirWithoutTrailingSeparator = $TempDir.TrimEnd([IO.Path]::DirectorySeparatorChar, [IO.Path]::AltDirectorySeparatorChar)
+    $TempRootWithoutTrailingSeparator = $TempRoot.TrimEnd([IO.Path]::DirectorySeparatorChar, [IO.Path]::AltDirectorySeparatorChar)
+    if ($TempDirWithoutTrailingSeparator -eq $TempRootWithoutTrailingSeparator) {
+      return
+    }
+  } catch {
+    return
+  }
+
+  $EscapedTempDir = [Management.Automation.WildcardPattern]::Escape($TempDir)
+  foreach ($Pattern in @("bun-*", "bunx-*")) {
+    try {
+      Remove-Item (Join-Path $EscapedTempDir $Pattern) -Recurse -Force
+    } catch {}
+  }
+}
+
+Remove-BunTempFiles
 
 # Remove Entry from path
 try {

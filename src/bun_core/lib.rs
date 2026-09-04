@@ -1818,12 +1818,6 @@ pub(crate) mod strings_impl {
         }
     }
 
-    /// Port of `copyLatin1IntoUTF8` — encode Latin-1 into a fixed-size UTF-8 buffer.
-    #[inline]
-    pub fn copy_latin1_into_utf8(buf: &mut [u8], latin1: &[u8]) -> EncodeIntoResult {
-        copy_latin1_into_utf8_stop_on_non_ascii::<false>(buf, latin1)
-    }
-
     #[inline]
     fn copy_ascii_prefix(dst: &mut [u8], src: &[u8]) -> usize {
         debug_assert_eq!(dst.len(), src.len());
@@ -1858,11 +1852,9 @@ pub(crate) mod strings_impl {
         copied
     }
 
-    /// Port of `copyLatin1IntoUTF8StopOnNonASCII`.
-    pub fn copy_latin1_into_utf8_stop_on_non_ascii<const STOP: bool>(
-        buf_: &mut [u8],
-        latin1_: &[u8],
-    ) -> EncodeIntoResult {
+    /// Port of `copyLatin1IntoUTF8`: encode Latin-1 into a fixed-size UTF-8 buffer.
+    #[inline]
+    pub fn copy_latin1_into_utf8(buf_: &mut [u8], latin1_: &[u8]) -> EncodeIntoResult {
         let mut written = 0usize;
         let mut read = 0usize;
 
@@ -1877,12 +1869,6 @@ pub(crate) mod strings_impl {
             }
 
             debug_assert!(latin1_[read] >= 0x80);
-            if STOP {
-                return EncodeIntoResult {
-                    written: u32::MAX,
-                    read: u32::MAX,
-                };
-            }
             if buf_.len() - written < 2 {
                 break;
             }
@@ -1896,6 +1882,18 @@ pub(crate) mod strings_impl {
             written: written as u32,
             read: read as u32,
         }
+    }
+
+    /// Port of `copyLatin1IntoUTF8StopOnNonASCII`: copies up to the shorter of the
+    /// two lengths and returns the byte count, or `None` at the first non-ASCII
+    /// byte (the ASCII prefix before it has already been written to `buf`).
+    #[inline]
+    pub fn copy_latin1_into_utf8_stop_on_non_ascii(buf: &mut [u8], latin1: &[u8]) -> Option<usize> {
+        let n = buf.len().min(latin1.len());
+        if copy_ascii_prefix(&mut buf[..n], &latin1[..n]) < n {
+            return None;
+        }
+        Some(n)
     }
 
     /// Null-terminated variant of `to_utf8_from_latin1`. Returns `ZBox` so

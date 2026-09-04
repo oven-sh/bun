@@ -589,35 +589,6 @@ describe.concurrent("--no-bundle with --outdir", () => {
     ]);
   });
 
-  test("names every input that maps to a shared output path", async () => {
-    using dir = tempDir("bundle-outdir-collision", {
-      "a.ts": `export const a = 1;\n`,
-      "b.ts": `export const b = 2;\n`,
-      "c.ts": `export const c = 3;\n`,
-    });
-
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "build", "./a.ts", "./b.ts", "./c.ts", "--outdir=dist", "--entry-naming=same.js"],
-      env: bunEnv,
-      cwd: String(dir),
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(normalizeBunSnapshot(stderr, String(dir))).toMatchInlineSnapshot(`
-      "error: Multiple files share the same output path
-        ./same.js:
-          from input a.ts
-          from input b.ts
-          from input c.ts
-
-
-      note: entry naming is './same.js', consider adding '[hash]' to make filenames unique"
-    `);
-    expect(stdout).toBe("");
-    expect(exitCode).toBe(1);
-  });
-
   test("rejects two entry points that map to the same output path", async () => {
     using dir = tempDir("no-bundle-outdir-collision", {
       "src/app.ts": `export const a = 1;\n`,
@@ -826,6 +797,35 @@ describe.concurrent("--no-bundle with --outdir", () => {
     expect(await Bun.file(path.join(String(dir), "a.js")).text()).toContain('console.log("hello world!")');
     expect(await Bun.file(path.join(String(dir), "b.js")).text()).toContain('console.log("foo bar baz")');
   });
+});
+
+test.concurrent("bun build names every input that maps to a shared output path", async () => {
+  using dir = tempDir("bundle-outdir-collision", {
+    "a.ts": `export const a = 1;\n`,
+    "b.ts": `export const b = 2;\n`,
+    "c.ts": `export const c = 3;\n`,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "build", "./a.ts", "./b.ts", "./c.ts", "--outdir=dist", "--entry-naming=same.js"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(normalizeBunSnapshot(stderr, String(dir))).toMatchInlineSnapshot(`
+    "error: Multiple files share the same output path
+      ./same.js:
+        from input a.ts
+        from input b.ts
+        from input c.ts
+
+
+    note: entry naming is './same.js', consider adding '[hash]' to make filenames unique"
+  `);
+  expect(stdout).toBe("");
+  expect(exitCode).toBe(1);
 });
 
 describe("CLI argument error messages", () => {

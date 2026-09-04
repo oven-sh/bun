@@ -11,8 +11,8 @@ use bun_core::string_joiner::StringJoiner;
 use bun_core::{Timespec, TimespecMockMode};
 use bun_sourcemap::{self as source_map, SourceMapState};
 
+use crate::bake::Side;
 use crate::bake::dev_server_body::map_log;
-use crate::bake::{self, Side};
 use crate::timer::EventLoopTimerState;
 
 use super::{ChunkKind, DevServer, EventLoopTimer, Magic, TimerTag, packed_map};
@@ -249,16 +249,7 @@ impl Entry {
         j: &mut StringJoiner<'a>,
         side: Side,
     ) -> crate::Result<()> {
-        let _ = side;
         let map_files = self.files.as_slice();
-
-        // Only the line count of the prefix matters here; the literal has
-        // exactly one '\n'.
-        const HMR_CHUNK_PREFIX: &[u8] = b"self[Symbol.for(\"bun:hmr\")]({\n";
-        let runtime_line_count: u32 = match kind {
-            ChunkKind::InitialResponse => bake::get_hmr_runtime(Side::Client).line_count,
-            ChunkKind::HmrChunk => bun_core::strings::count_char(HMR_CHUNK_PREFIX, b'\n') as u32,
-        };
 
         let mut prev_end_state = SourceMapState {
             generated_line: 0,
@@ -268,9 +259,9 @@ impl Entry {
             original_column: 0,
         };
 
-        // The runtime.line_count counts newlines (e.g., 2941 for a 2942-line file).
-        // The runtime ends at line 2942 with })({ so modules start after that.
-        let mut lines_between: u32 = runtime_line_count;
+        // `line_count` counts the prefix's newlines, which is the 0-based
+        // generated line the first module starts on.
+        let mut lines_between: u32 = kind.prefix(side).line_count;
 
         // Join all of the mappings together.
         for (i, file) in map_files.iter().enumerate() {

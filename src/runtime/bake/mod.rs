@@ -580,6 +580,20 @@ pub(crate) struct HmrRuntime {
     pub(crate) code: &'static bun_core::ZStr,
     pub(crate) line_count: u32,
 }
+impl HmrRuntime {
+    /// `code` is a literal including its trailing NUL (`b"({\0"`).
+    pub(crate) const fn from_static(code: &'static [u8]) -> Self {
+        let code = bun_core::ZStr::from_static(code);
+        let bytes = code.as_bytes();
+        let mut line_count = 0;
+        let mut i = 0;
+        while i < bytes.len() {
+            line_count += (bytes[i] == b'\n') as u32;
+            i += 1;
+        }
+        Self { code, line_count }
+    }
+}
 pub(crate) use bake_body::get_hmr_runtime;
 // (Former `__bun_bake_get_hmr_runtime` link-time bridge deleted —
 // `bun_bundler::bake_types::get_hmr_runtime` now loads the codegen bytes

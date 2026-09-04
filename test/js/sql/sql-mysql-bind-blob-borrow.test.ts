@@ -1,5 +1,5 @@
-import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, describeWithContainer, isDockerEnabled } from "harness";
+import { expect, test } from "bun:test";
+import { bunEnv, bunExe, describeWithContainer } from "harness";
 import path from "path";
 
 // Regression: Value.fromJS for MySQL BLOB parameters borrowed the
@@ -67,45 +67,15 @@ function assertFixtureOutput(stdout: string, stderr: string, exitCode: number) {
 // default on a cold cache under ASAN.
 const TEST_TIMEOUT = 30_000;
 
-if (isDockerEnabled()) {
-  describeWithContainer("mysql", { image: "mysql_plain" }, container => {
-    test(
-      "BLOB param backing store is pinned across the bind loop",
-      async () => {
-        await container.ready;
-        const url = `mysql://root@${container.host}:${container.port}/bun_sql_test`;
-        const { stdout, stderr, exitCode } = await runFixture(url);
-        assertFixtureOutput(stdout, stderr, exitCode);
-      },
-      TEST_TIMEOUT,
-    );
-  });
-} else {
-  // No docker daemon (e.g. local/sandboxed environments). If a MySQL server
-  // is reachable at MYSQL_URL or the conventional local address, exercise
-  // the fixture there so the regression is still covered.
-  const url = process.env.MYSQL_URL || "mysql://bun@127.0.0.1:3306/bun_sql_test";
-
-  describe("mysql (local)", () => {
-    test(
-      "BLOB param backing store is pinned across the bind loop",
-      async () => {
-        const { stdout, stderr, exitCode } = await runFixture(url);
-        // The fixture prints "CONNECTED" after the priming query succeeds. If
-        // it never got that far, there's no MySQL to talk to in this
-        // environment; the docker-gated branch above provides the CI coverage.
-        if (!stdout.startsWith("CONNECTED")) {
-          if (process.env.MYSQL_URL) {
-            throw new Error(
-              `sql-mysql-bind-blob-borrow: MYSQL_URL was provided but fixture never reached CONNECTED\nstdout:\n${stdout}\nstderr:\n${stderr}`,
-            );
-          }
-          console.warn("sql-mysql-bind-blob-borrow: no MySQL reachable at " + url + "; skipping assertions");
-          return;
-        }
-        assertFixtureOutput(stdout, stderr, exitCode);
-      },
-      TEST_TIMEOUT,
-    );
-  });
-}
+describeWithContainer("mysql", { image: "mysql_plain" }, container => {
+  test(
+    "BLOB param backing store is pinned across the bind loop",
+    async () => {
+      await container.ready;
+      const url = `mysql://root@${container.host}:${container.port}/bun_sql_test`;
+      const { stdout, stderr, exitCode } = await runFixture(url);
+      assertFixtureOutput(stdout, stderr, exitCode);
+    },
+    TEST_TIMEOUT,
+  );
+});

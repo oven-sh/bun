@@ -92,9 +92,6 @@
       "DotenvSingleton"
     ]
   },
-  "src/runtime/cli/create_command.rs": {
-    "thread spawn": 1
-  },
   "src/runtime/cli/open.rs": {
     "thread spawn": 1
   },

@@ -384,6 +384,45 @@ for (const [name, copy] of impls) {
       assertContent(basename + "/hello/world/b.txt", "b");
     });
 
+    // On macOS a tree of plain files and directories is copied natively, and the
+    // native copy creates the destination with the recursive mkdir walk. For this
+    // spelling that walk used to create the parent under the name `dangling/`,
+    // which macOS resolves through the link, and the tree was then copied into
+    // the link's target. Linux takes the ported implementation instead, whose own
+    // parent mkdir fails (EEXIST today, ENOENT once that mkdir reports the stat
+    // error as node does), hence the two accepted codes. Skipped on Windows, where
+    // the doubled separator is normalized away before the copy starts.
+    test.skipIf(isWindows)(
+      "directory into a dangling symlink parent spelled with a doubled separator fails",
+      async () => {
+        await using basename = tempDir("cp", {
+          "from/a.txt": "a",
+          "from/sub/b.txt": "b",
+        });
+        fs.symlinkSync("missing", basename + "/dangling");
+
+        const e = await copyShouldThrow(basename + "/from", basename + "/dangling//out", { recursive: true });
+        expect(["ENOENT", "EEXIST"]).toContain(e.code);
+
+        // Neither the link's target nor anything else was created.
+        expect(fs.readdirSync(String(basename)).sort()).toEqual(["dangling", "from"]);
+      },
+    );
+
+    test("directory into a destination spelled with doubled separators", async () => {
+      await using basename = tempDir("cp", {
+        "from/a.txt": "a",
+        "from/sub/b.txt": "b",
+      });
+
+      await copy(basename + "/from", basename + "/out//deeper//result", { recursive: true });
+
+      assertContent(basename + "/out/deeper/result/a.txt", "a");
+      assertContent(basename + "/out/deeper/result/sub/b.txt", "b");
+      expect(fs.readdirSync(basename + "/out")).toEqual(["deeper"]);
+      expect(fs.readdirSync(basename + "/out/deeper")).toEqual(["result"]);
+    });
+
     test("relative paths for directories", async () => {
       await using basename = tempDir("cp", {
         "from/a.txt": "a",

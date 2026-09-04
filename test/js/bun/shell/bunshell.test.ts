@@ -6,7 +6,7 @@
  */
 import { $ } from "bun";
 import { afterAll, beforeAll, describe, expect, it, test } from "bun:test";
-import { chmodSync, mkdirSync } from "fs";
+import { chmodSync, mkdirSync, readdirSync, statSync, symlinkSync } from "fs";
 import { mkdir, rm, stat } from "fs/promises";
 import { bunExe, isPosix, isWindows, rss, runWithErrorPromise, tempDir, tempDirWithFiles, tmpdirSync } from "harness";
 import { join, sep } from "path";
@@ -1377,6 +1377,31 @@ ${temp_dir}`
           .split("\n")
           .sort(),
       );
+    });
+  });
+
+  // The builtin resolves a relative operand against the cwd, which also collapses
+  // doubled separators, so only an absolute operand reaches the recursive walk with
+  // a run in it. Skipped on Windows, where the path is normalized before the walk.
+  describe.skipIf(isWindows)("mkdir -p with doubled separators", () => {
+    test("-v names each created directory without the separator run, like coreutils", async () => {
+      await using dir = tempDir("mkdir-p-doubled", {});
+      const { stdout, stderr, exitCode } = await $`mkdir -pv ${dir}/a//b//c`;
+      expect(stderr.toString()).toBe("");
+      // The first line is the name handed to mkdir(2); it used to be `${dir}/a/`.
+      expect(stdout.toString()).toBe(`${dir}/a\n${dir}/a//b\n${dir}/a//b//c\n`);
+      expect(exitCode).toBe(0);
+      expect(statSync(join(dir, "a", "b", "c")).isDirectory()).toBe(true);
+    });
+
+    test("fails below a dangling symlink and creates nothing", async () => {
+      await using dir = tempDir("mkdir-p-doubled", {});
+      symlinkSync("missing", join(dir, "dangling"));
+      const { stdout, stderr, exitCode } = await $`mkdir -pv ${dir}/dangling//out`;
+      expect(stdout.toString()).toBe("");
+      expect(stderr.toString()).toBe(`mkdir: ${dir}/dangling//out: No such file or directory\n`);
+      expect(exitCode).toBe(1);
+      expect(readdirSync(String(dir))).toEqual(["dangling"]);
     });
   });
 

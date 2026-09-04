@@ -399,3 +399,90 @@ describe("fs.promises.mkdir", () => {
     expect(result).toBeUndefined();
   });
 });
+
+// `a//b` names the same directories as `a/b`, but the parent the recursive walk
+// creates on the way must be named `a`, not `a/`: macOS and FreeBSD resolve the
+// trailing separator through a symlink at `a` and mkdir creates the link's target
+// (Linux fails with EEXIST for either name). The walk used to cut the parent at
+// the last separator of a run, so on those systems `dangling//out` created
+// `missing` and `missing/out` through the link; node on Linux reports ENOENT for
+// both spellings. Skipped on Windows, where the path is normalized (runs
+// collapsed) before the walk.
+describe.skipIf(isWindows)("fs.mkdir - recursive with doubled separators", () => {
+  let tmpdir: string;
+
+  const mkdirForms = {
+    mkdirSync: (pathname: string) => Promise.resolve().then(() => fs.mkdirSync(pathname, { recursive: true })),
+    mkdir: (pathname: string) =>
+      new Promise<string | undefined>((resolve, reject) =>
+        fs.mkdir(pathname, { recursive: true }, (err, result) => (err ? reject(err) : resolve(result))),
+      ),
+    "promises.mkdir": (pathname: string) => fs.promises.mkdir(pathname, { recursive: true }),
+  };
+  const forms = Object.keys(mkdirForms) as (keyof typeof mkdirForms)[];
+
+  beforeEach(() => {
+    tmpdir = getTmpDir();
+  });
+
+  afterEach(() => {
+    try {
+      fs.rmSync(tmpdir, { recursive: true, force: true });
+    } catch (err) {
+      // Ignore cleanup errors
+    }
+  });
+
+  describe.each(forms)("%s", form => {
+    it("reports ENOENT below a dangling symlink and creates nothing", async () => {
+      fs.symlinkSync("missing", path.join(tmpdir, "dangling"));
+
+      const pathname = `${tmpdir}/dangling//out`;
+      await expect(mkdirForms[form](pathname)).rejects.toMatchObject({
+        code: "ENOENT",
+        syscall: "mkdir",
+        path: pathname,
+      });
+      expect(fs.readdirSync(tmpdir)).toEqual(["dangling"]);
+    });
+
+    // With more components below the link, the error comes from the walk back down.
+    it("reports ENOENT below a dangling symlink with further components and creates nothing", async () => {
+      fs.symlinkSync("missing", path.join(tmpdir, "dangling"));
+
+      const pathname = `${tmpdir}/dangling//out//deeper`;
+      await expect(mkdirForms[form](pathname)).rejects.toMatchObject({
+        code: "ENOENT",
+        syscall: "mkdir",
+        path: pathname,
+      });
+      expect(fs.readdirSync(tmpdir)).toEqual(["dangling"]);
+    });
+
+    // Node splits the path at its last separator, so the first path it creates
+    // for `a//b` (and returns) is spelled `a/`; the returned spelling is kept
+    // even though the directory itself is created under the name `a`.
+    it("creates the directories and returns the first one spelled as node does", async () => {
+      expect(await mkdirForms[form](`${tmpdir}/a//b`)).toBe(`${tmpdir}/a/`);
+      expect(fs.statSync(path.join(tmpdir, "a", "b")).isDirectory()).toBe(true);
+      expect(fs.readdirSync(tmpdir)).toEqual(["a"]);
+      expect(fs.readdirSync(path.join(tmpdir, "a"))).toEqual(["b"]);
+    });
+
+    it("creates every component of a path with several separator runs", async () => {
+      expect(await mkdirForms[form](`${tmpdir}/c///d//e`)).toBe(`${tmpdir}/c//`);
+      expect(fs.statSync(path.join(tmpdir, "c", "d", "e")).isDirectory()).toBe(true);
+      expect(fs.readdirSync(tmpdir)).toEqual(["c"]);
+      expect(fs.readdirSync(path.join(tmpdir, "c"))).toEqual(["d"]);
+      expect(fs.readdirSync(path.join(tmpdir, "c", "d"))).toEqual(["e"]);
+    });
+
+    it("creates the missing part below an existing directory spelled with a run", async () => {
+      fs.mkdirSync(path.join(tmpdir, "existing"));
+
+      expect(await mkdirForms[form](`${tmpdir}/existing//x//y`)).toBe(`${tmpdir}/existing//x/`);
+      expect(fs.statSync(path.join(tmpdir, "existing", "x", "y")).isDirectory()).toBe(true);
+      expect(fs.readdirSync(tmpdir)).toEqual(["existing"]);
+    });
+  });
+});

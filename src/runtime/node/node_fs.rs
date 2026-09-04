@@ -5557,10 +5557,26 @@ impl NodeFS {
         // iterate backwards until creating the directory works successfully
         while i > 0 {
             if bun_paths::is_sep_native_t::<OSPathChar>((&path[..])[i as usize]) {
-                working_mem[i as usize] = 0;
-                // SAFETY: `working_mem[..i]` is initialized from `path` above and
-                // `working_mem[i]` was just set to NUL; the slice is in-bounds.
-                let parent = unsafe { OSPathSliceZ::from_raw(working_mem.as_ptr(), i as usize) };
+                // For `a//b` the parent to create is `a`: mkdir of `a/` makes macOS
+                // and FreeBSD follow a symlink at `a` and create its target (Linux
+                // reports EEXIST for both spellings). `i` stays on the run's last
+                // separator: the forward walk resumes after it, and through
+                // `first_match` the returned first-created path stays `a/`, which is
+                // what node returns as well (`MKDirpSync` splits at `find_last_of`).
+                let mut cut = i;
+                while cut > 0
+                    && bun_paths::is_sep_native_t::<OSPathChar>((&path[..])[(cut - 1) as usize])
+                {
+                    cut -= 1;
+                }
+                if cut == 0 {
+                    // The run is the root, which exists.
+                    break;
+                }
+                working_mem[cut as usize] = 0;
+                // SAFETY: `working_mem[..cut]` is initialized from `path` above and
+                // `working_mem[cut]` was just set to NUL; the slice is in-bounds.
+                let parent = unsafe { OSPathSliceZ::from_raw(working_mem.as_ptr(), cut as usize) };
                 match mkdir_os_path(parent, mode) {
                     Err(err) => {
                         // The SEP-restore must NOT happen before the errno match:
@@ -5593,13 +5609,13 @@ impl NodeFS {
                                         }
                                     }
                                 }
-                                working_mem[i as usize] = paths::SEP as OSPathChar;
+                                working_mem[cut as usize] = paths::SEP as OSPathChar;
                                 // Handle race condition
                                 break;
                             }
                             E::ENOENT => {
-                                working_mem[i as usize] = paths::SEP as OSPathChar;
-                                i -= 1;
+                                working_mem[cut as usize] = paths::SEP as OSPathChar;
+                                i = cut - 1;
                                 continue;
                             }
                             _ => {
@@ -5627,7 +5643,7 @@ impl NodeFS {
                     Ok(_) => {
                         ctx.on_create_dir(parent);
                         // We found a parent that worked
-                        working_mem[i as usize] = paths::SEP as OSPathChar;
+                        working_mem[cut as usize] = paths::SEP as OSPathChar;
                         break;
                     }
                 }
@@ -5638,7 +5654,12 @@ impl NodeFS {
         i += 1;
         // after we find one that works, we go forward _after_ the first working directory
         while i < len {
-            if bun_paths::is_sep_native_t::<OSPathChar>((&path[..])[i as usize]) {
+            // Only the first separator of a run ends a directory name (`a` in
+            // `a//b`); the prefixes ending at the later ones (`a/`) are the
+            // symlink-following spelling described above. `i >= 1` here.
+            if bun_paths::is_sep_native_t::<OSPathChar>((&path[..])[i as usize])
+                && !bun_paths::is_sep_native_t::<OSPathChar>((&path[..])[(i - 1) as usize])
+            {
                 working_mem[i as usize] = 0;
                 // SAFETY: `working_mem[..i]` is initialized from `path` and
                 // `working_mem[i]` was just set to NUL; the slice is in-bounds.

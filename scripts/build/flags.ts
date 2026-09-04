@@ -830,7 +830,7 @@ export const defines: Flag[] = [
  * The toolchain half of the link line for a unix target: triple + sysroot,
  * which linker, C++ runtime, PIE policy, deployment target. Everything an
  * executable for the target needs regardless of what it is — bun itself, and
- * the JSC LLInt offset extractors WebKit's build links (deps/webkit-direct.ts,
+ * the JSC LLInt offset extractors WebKit's build links (deps/webkit.ts,
  * via computeTargetLinkFlags). Bun-specific link policy (symbol lists, ICF,
  * stack size, wraps) stays in `linkerFlags`, which includes this table.
  * Windows links go through lld-link's own argument shape and stay there too.

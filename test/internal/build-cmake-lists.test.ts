@@ -1,6 +1,6 @@
 /**
- * cmake-lists.ts is how the direct WebKit build (scripts/build/deps/
- * webkit-direct.ts) learns which files to compile: it evaluates WebKit's own
+ * cmake-lists.ts is how the direct WebKit build (scripts/build/deps/webkit.ts,
+ * --webkit=source) learns which files to compile: it evaluates WebKit's own
  * CMakeLists.txt with the platform variables the build would have, instead of
  * keeping a copy of ~2,500 paths that drifts on every WebKit bump. If it
  * mis-evaluates a conditional, the wrong platform's sources go into libWTF and

@@ -7,108 +7,33 @@
 // fires. Every tunnel-mode connection leaked the full WebSocket client struct
 // (send/receive FIFOs + deflate state + poll_ref).
 //
-// The wss:// endpoint and CONNECT proxy run in-process on node:net/tls so
-// everything stays single-threaded — using Bun.serve here races the debug
-// scoped logger's per-scope mutex against the server's own allocations and
-// sporadically deadlocks the fixture.
+// The wss:// endpoint and CONNECT proxy run in the parent test process so this
+// subprocess stays minimal (debug+ASAN subprocess startup and the harness
+// import are the dominant cost otherwise). For the terminate/abrupt close
+// paths we signal the parent over IPC; the parent tears down the proxy's
+// client socket and acks back so the next round-trip can't race the teardown.
 //
 // Runs under BUN_DEBUG_alloc=1 so the test can count
 //   new(…NewWebSocketClient(…))   vs   destroy(…NewWebSocketClient(…))
 // emitted by `bun.new`/`bun.destroy` on debug builds.
-import net from "node:net";
-import tls from "node:tls";
-import crypto from "node:crypto";
-import { tls as tlsCerts } from "../../../harness";
 
-// Minimal wss:// endpoint: completes the RFC 6455 handshake, echoes the
-// client's close frame (unmasked) so the clean-close path runs end-to-end,
-// and idles otherwise.
-const wss = tls.createServer({ cert: tlsCerts.cert, key: tlsCerts.key }, sock => {
-  let buf = Buffer.alloc(0);
-  let upgraded = false;
-  sock.on("data", chunk => {
-    buf = Buffer.concat([buf, chunk]);
-    if (!upgraded) {
-      const end = buf.indexOf("\r\n\r\n");
-      if (end === -1) return;
-      const head = buf.subarray(0, end).toString("latin1");
-      const m = /Sec-WebSocket-Key:\s*([A-Za-z0-9+/=]+)/i.exec(head);
-      if (!m) {
-        sock.destroy();
-        return;
-      }
-      const accept = crypto
-        .createHash("sha1")
-        .update(m[1] + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11")
-        .digest("base64");
-      sock.write(
-        "HTTP/1.1 101 Switching Protocols\r\n" +
-          "Upgrade: websocket\r\n" +
-          "Connection: Upgrade\r\n" +
-          `Sec-WebSocket-Accept: ${accept}\r\n` +
-          "\r\n",
-      );
-      upgraded = true;
-      buf = buf.subarray(end + 4);
-      if (buf.length === 0) return;
-    }
-    // Upgraded: look for a masked client close frame (FIN + opcode 0x8,
-    // mask bit set) and reply with an unmasked server close so the client's
-    // sendCloseWithBody → clearData → dispatchClose path runs.
-    if (buf.length >= 2 && (buf[0] & 0x0f) === 0x8 && buf[1] & 0x80) {
-      const payloadLen = buf[1] & 0x7f;
-      if (buf.length >= 2 + 4 + payloadLen) {
-        const mask = buf.subarray(2, 6);
-        const payload = Buffer.from(buf.subarray(6, 6 + payloadLen));
-        for (let i = 0; i < payload.length; i++) payload[i] ^= mask[i % 4];
-        const reply = Buffer.alloc(2 + payloadLen);
-        reply[0] = 0x88; // FIN + Close
-        reply[1] = payloadLen; // no mask from server
-        payload.copy(reply, 2);
-        sock.write(reply);
-        sock.end();
-      }
-    }
-  });
-  sock.on("error", () => {});
-});
-await new Promise<void>(r => wss.listen(0, "127.0.0.1", () => r()));
-const wssPort = (wss.address() as net.AddressInfo).port;
+const wssPort = Number(process.env.WSS_PORT);
+const proxyPort = Number(process.env.PROXY_PORT);
 
-// HTTP CONNECT proxy — plain bidirectional tunnel. We also track the client
-// sockets so the abrupt-close variant can hard-close them.
-const clientSockets: net.Socket[] = [];
-const proxy = net.createServer(clientSocket => {
-  clientSockets.push(clientSocket);
-  let buf = Buffer.alloc(0);
-  let serverSocket: net.Socket | null = null;
-  clientSocket.on("data", chunk => {
-    if (serverSocket) {
-      serverSocket.write(chunk);
-      return;
-    }
-    buf = Buffer.concat([buf, chunk]);
-    const end = buf.indexOf("\r\n\r\n");
-    if (end === -1) return;
-    const m = /^CONNECT\s+([^:]+):(\d+)\s+HTTP/.exec(buf.toString("latin1"));
-    if (!m) {
-      clientSocket.destroy();
-      return;
-    }
-    const rest = buf.subarray(end + 4);
-    serverSocket = net.createConnection({ host: m[1], port: Number(m[2]) }, () => {
-      clientSocket.write("HTTP/1.1 200 Connection Established\r\n\r\n");
-      if (rest.length) serverSocket!.write(rest);
-      serverSocket!.on("data", d => clientSocket.write(d));
-    });
-    serverSocket.on("error", () => clientSocket.destroy());
-    serverSocket.on("close", () => clientSocket.destroy());
-    clientSocket.on("close", () => serverSocket?.destroy());
-  });
-  clientSocket.on("error", () => serverSocket?.destroy());
+let pendingAck: (() => void) | null = null;
+process.on("message", m => {
+  if (m === "ack" && pendingAck) {
+    const r = pendingAck;
+    pendingAck = null;
+    r();
+  }
 });
-await new Promise<void>(r => proxy.listen(0, "127.0.0.1", () => r()));
-const proxyPort = (proxy.address() as net.AddressInfo).port;
+function destroyProxySockets(): Promise<void> {
+  return new Promise(resolve => {
+    pendingAck = resolve;
+    process.send!("destroy-sockets");
+  });
+}
 
 async function roundTrip(mode: "clean" | "terminate" | "abrupt") {
   const ws = new WebSocket(`wss://127.0.0.1:${wssPort}/`, {
@@ -133,6 +58,7 @@ async function roundTrip(mode: "clean" | "terminate" | "abrupt") {
   await opened.promise;
   if (mode === "clean") {
     // Client-initiated close → sendCloseWithBody → clearData → dispatchClose.
+    // The parent's wss endpoint echoes the close frame.
     ws.close();
     await closed.promise;
   } else if (mode === "terminate") {
@@ -143,21 +69,25 @@ async function roundTrip(mode: "clean" | "terminate" | "abrupt") {
     // new/destroy count still proves the leak.
     // @ts-ignore Bun-specific method
     ws.terminate();
-    // Tear down the proxy side so the upgrade client's socket ref drops too.
-    for (const s of clientSockets.splice(0)) s.destroy();
+    // Tear down the proxy side so the upgrade client's socket ref drops too,
+    // and block until the parent has done so before starting the next
+    // round-trip (otherwise its socket could be caught in the teardown).
+    await destroyProxySockets();
     closed.promise.catch(() => {});
   } else {
     // Proxy-socket teardown → HTTPClient.handleClose → tunnel.onClose → ws.fail
     // → cancel → clearData.
-    for (const s of clientSockets.splice(0)) s.destroy();
+    await destroyProxySockets();
     await closed.promise;
   }
 }
 
-// Exercise all three close paths; each leaked before the fix.
-for (let i = 0; i < 3; i++) await roundTrip("clean");
-for (let i = 0; i < 3; i++) await roundTrip("terminate");
-for (let i = 0; i < 3; i++) await roundTrip("abrupt");
+// Exercise all three close paths; each leaked before the fix. Two iterations
+// per mode so a ref-count off-by-one that cancels out across a single
+// round-trip is still caught.
+for (let i = 0; i < 2; i++) await roundTrip("clean");
+for (let i = 0; i < 2; i++) await roundTrip("terminate");
+for (let i = 0; i < 2; i++) await roundTrip("abrupt");
 
 // dispatchClose/dispatchAbruptClose fire `onclose` from inside the ref-drop
 // path; yield so the trailing deref/destroy is emitted before we exit.

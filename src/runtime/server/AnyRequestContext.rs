@@ -261,6 +261,11 @@ impl AnyRequestContext {
         dispatch!(self, None, |_T, ctx| ctx.take_response())
     }
 
+    /// After the last write to the response `take_response` handed out.
+    pub(crate) fn release_taken_response(self) {
+        dispatch!(self, (), |_T, ctx| ctx.release_taken_response())
+    }
+
     pub fn on_request_body_stream_drained(self) {
         dispatch!(
             self,

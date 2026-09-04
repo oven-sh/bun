@@ -2170,14 +2170,21 @@ where
         this.end_without_body(this.should_close_connection());
     }
 
-    /// `end_without_body` without the write: another owner answers `resp`.
+    /// Detach `resp` so another owner answers it. The caller calls
+    /// `release_taken_response` after its last write to `resp`.
     pub(crate) fn take_response(&self) -> Option<uws::AnyResponse> {
         let resp = self.resp.get()?;
         self.detach_response();
         self.reclaim_promise_cell();
+        Some(resp)
+    }
+
+    /// The end of a request whose response `take_response` handed out. The
+    /// microtask drain can free an H3 stream, so it runs after the last write.
+    pub(crate) fn release_taken_response(&self) {
+        debug_assert!(self.resp.get().is_none());
         self.end_request_streaming_and_drain();
         self.deref();
-        Some(resp)
     }
 
     fn render_with_blob_from_body_value(&self) {

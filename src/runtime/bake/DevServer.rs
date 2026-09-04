@@ -1885,14 +1885,13 @@ impl RequestEnsureRouteBundledCtx {
     }
 
     fn on_plugin_error(&mut self) -> JsResult<()> {
-        let resp = match self.kind {
+        match self.kind {
             deferred_request::HandlerKind::HtmlBundleBody => {
-                take_html_bundle_body_response(self.req.request_context())
+                answer_html_bundle_body(self.req.request_context(), |resp| {
+                    resp.end(b"Plugin Error", false)
+                });
             }
-            _ => Some(self.resp),
-        };
-        if let Some(resp) = resp {
-            resp.end(b"Plugin Error", false);
+            _ => self.resp.end(b"Plugin Error", false),
         }
         Ok(())
     }
@@ -2122,11 +2121,15 @@ impl ReqOrSaved {
     }
 }
 
-/// Releases the dev server's +1 on `ctx`.
-fn take_html_bundle_body_response(ctx: AnyRequestContext) -> Option<AnyResponse> {
-    let resp = ctx.take_response();
+/// Answers an `HtmlBundleBody` request with the dev server's own page through
+/// `write`, then releases the context, including the dev server's +1.
+/// `write` does not run once the connection closed.
+fn answer_html_bundle_body(ctx: AnyRequestContext, write: impl FnOnce(AnyResponse)) {
+    if let Some(resp) = ctx.take_response() {
+        write(resp);
+        ctx.release_taken_response();
+    }
     ctx.deref();
-    resp
 }
 
 impl DevServer {
@@ -2973,7 +2976,7 @@ impl DevServer {
 
 enum DevResponse<'a> {
     Http(AnyResponse),
-    /// Resolved with `take_html_bundle_body_response`.
+    /// Answered with `answer_html_bundle_body`.
     RequestContext(AnyRequestContext),
     Promise(PromiseResponse<'a>),
 }
@@ -3157,13 +3160,11 @@ impl DeferredRequest {
                 r.response.write_header_int(b"Content-Length", 0);
                 r.response.end_without_body(true);
             }
-            Handler::HtmlBundleBody(ctx) => {
-                if let Some(resp) = take_html_bundle_body_response(ctx) {
-                    resp.write_status(b"500 Internal Server Error");
-                    resp.write_header_int(b"Content-Length", 0);
-                    resp.end_without_body(true);
-                }
-            }
+            Handler::HtmlBundleBody(ctx) => answer_html_bundle_body(ctx, |resp| {
+                resp.write_status(b"500 Internal Server Error");
+                resp.write_header_int(b"Content-Length", 0);
+                resp.end_without_body(true);
+            }),
             Handler::Aborted => {}
         }
     }
@@ -5496,27 +5497,26 @@ impl DevServer {
         buf.extend_from_slice(bun_zstd::embed_compressed!(codegen "bake.error.js"));
         buf.extend_from_slice(post.as_bytes());
 
-        let resp = match resp {
-            DevResponse::RequestContext(ctx) => {
-                take_html_bundle_body_response(ctx).map(DevResponse::Http)
-            }
-            resp => Some(resp),
+        let http_options = crate::server::static_route::InitFromBytesOptions {
+            mime_type: Some(&MimeType::HTML),
+            server: self.server,
+            status_code: 500,
+            ..Default::default()
         };
         match resp {
-            // The client went away while the bundle was building.
-            None => {}
-            Some(DevResponse::RequestContext(_)) => unreachable!(),
-            Some(DevResponse::Http(r)) => StaticRoute::send_blob_then_deinit(
+            DevResponse::RequestContext(ctx) => answer_html_bundle_body(ctx, |r| {
+                StaticRoute::send_blob_then_deinit(
+                    r,
+                    crate::webcore::blob::Any::from_array_list(buf),
+                    http_options,
+                )
+            }),
+            DevResponse::Http(r) => StaticRoute::send_blob_then_deinit(
                 r,
                 crate::webcore::blob::Any::from_array_list(buf),
-                crate::server::static_route::InitFromBytesOptions {
-                    mime_type: Some(&MimeType::HTML),
-                    server: self.server,
-                    status_code: 500,
-                    ..Default::default()
-                },
+                http_options,
             ),
-            Some(DevResponse::Promise(mut r)) => {
+            DevResponse::Promise(mut r) => {
                 let global = r.global;
                 let mut any_blob = crate::webcore::blob::Any::from_array_list(buf);
                 let mut headers = bun_http_jsc::headers_jsc::from_fetch_headers(

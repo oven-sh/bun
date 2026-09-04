@@ -7564,6 +7564,7 @@ impl NodeFS {
                 ))));
             }
         }
+        // node swallows ENOTDIR as well as ENOENT here, but only ENOENT in lstat().
         #[cfg(any(target_os = "linux", target_os = "android"))]
         if sys::SUPPORTS_STATX_ON_LINUX.load(Ordering::Relaxed) {
             return match sys::statx(path, sys::STATX_MASK_FOR_STATS) {
@@ -7572,7 +7573,8 @@ impl NodeFS {
                     args.big_int,
                 )))),
                 Err(err) => {
-                    if !args.throw_if_no_entry && err.get_errno() == E::ENOENT {
+                    if !args.throw_if_no_entry && matches!(err.get_errno(), E::ENOENT | E::ENOTDIR)
+                    {
                         return Ok(StatOrNotFound::NotFound);
                     }
                     Err(err.with_path(args.path.slice()))
@@ -7585,7 +7587,7 @@ impl NodeFS {
                 args.big_int,
             )))),
             Err(err) => {
-                if !args.throw_if_no_entry && err.get_errno() == E::ENOENT {
+                if !args.throw_if_no_entry && matches!(err.get_errno(), E::ENOENT | E::ENOTDIR) {
                     return Ok(StatOrNotFound::NotFound);
                 }
                 Err(err.with_path(args.path.slice()))

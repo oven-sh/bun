@@ -93,6 +93,7 @@ const rustIdentifierPaths: Record<string, string> = {
   "shell.rs": "runtime/shell/shell.rs",
   "sourcemap/InternalSourceMap.rs": "sourcemap/InternalSourceMap.rs",
   "string/immutable/unicode.rs": "bun_core/string/immutable/unicode.rs",
+  "string_paths.rs": "paths/string_paths.rs",
   "subprocess.rs": "runtime/api/bun/subprocess.rs",
   "sys.rs": "sys/sys.rs",
   "sys/Error.rs": "sys/Error.rs",

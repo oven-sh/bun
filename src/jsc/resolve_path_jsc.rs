@@ -32,3 +32,29 @@ extern "C" fn ResolvePath__joinAbsStringBufCurrentPlatformBunString(
 
     BunString::clone_utf8(out_slice)
 }
+
+pub mod testing_apis {
+    use crate::bun_string_jsc::to_js;
+    use crate::{CallFrame, JSGlobalObject, JSValue, JsResult};
+    use bun_core::String as BunString;
+
+    /// `pathsInternals.withoutTrailingSlashWindows` in `internal-for-testing.ts`.
+    #[bun_jsc::host_fn]
+    pub fn without_trailing_slash_windows(
+        global: &JSGlobalObject,
+        call_frame: &CallFrame,
+    ) -> JsResult<JSValue> {
+        let path_value = call_frame.argument(0);
+        if !path_value.is_string() {
+            return Err(global.throw(format_args!("expected a string path")));
+        }
+        let path = path_value.to_slice(global)?;
+
+        let output = BunString::clone_utf8(
+            bun_paths::string_paths::without_trailing_slash_windows(path.slice()),
+        );
+        let js = to_js(&output, global);
+        output.deref();
+        js
+    }
+}

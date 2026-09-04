@@ -757,6 +757,13 @@ export const stringsInternals = {
   ) => string,
 };
 
+export const pathsInternals = {
+  /** The Windows arm of `without_trailing_slash_windows_path` (src/paths/string_paths.rs), callable on every host. */
+  withoutTrailingSlashWindows: $newRustFunction("string_paths.rs", "TestingAPIs.withoutTrailingSlashWindows", 1) as (
+    path: string,
+  ) => string,
+};
+
 /** Seed the connect-path DNS cache for `hostname` via the real `process_results` interleave; returns family order. */
 export const dnsCacheSeed = $newRustFunction("runtime/dns_jsc/dns.rs", "internal.seedCacheForTesting", 2) as (
   hostname: string,

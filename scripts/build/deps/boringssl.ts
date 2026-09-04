@@ -36,6 +36,11 @@ export const boringssl: Dependency = {
     commit: BORINGSSL_COMMIT,
   }),
 
+  // Register secp256k1 as a named EC curve. Upstream BoringSSL only ships the
+  // four NIST prime curves; secp256k1 (OID 1.3.132.0.10) is widely used and is
+  // supported by Node via OpenSSL. See the patch header for details.
+  patches: ["patches/boringssl/secp256k1.patch"],
+
   build: cfg => {
     // win-x64 uses NASM-syntax .asm; everything else (including win-aarch64)
     // uses gas .S that clang assembles.

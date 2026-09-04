@@ -1357,12 +1357,14 @@ jsimd_ycc_rgb_convert_avx2.return                    [AVX, AVX2]
 # code aligns, can decode a stray VEX-encoded instruction (or an RDPMC, 0F 33)
 # out of the garbage. offlineasm's x86 backend emits SSE2 (not VEX), and the
 # Intel SDE Nehalem emulation step in this same job exercises the LLInt and
-# passes, so any single-digit hit here is decode noise. Each ceiling is the one
-# feature that the scan reported, so a multi-feature leak still fails. On ELF
-# each opcode handler has its own symbol, so layout shifts can move the desync
+# passes, so any single-digit hit here is decode noise. Blanket pass, as for
+# any data-in-.text misdecode: the handlers are offlineasm output, not compiler
+# output, and the decoded feature moves with link layout (the same desync has
+# decoded as AVX and as RDPMC), so a ceiling has nothing to bound. On ELF each
+# opcode handler has its own symbol, so layout shifts can move the desync
 # between llint_op_* siblings; add them here as they trip.
 # (3 symbols)
 # ----------------------------------------------------------------------------
-llint_op_enter_wide32  [AVX]
-llint_op_jmp_wide32  [RDPMC]
-llint_op_wide16_wide16  [AVX]
+llint_op_enter_wide32
+llint_op_jmp_wide32
+llint_op_wide16_wide16

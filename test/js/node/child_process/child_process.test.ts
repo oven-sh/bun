@@ -206,6 +206,32 @@ describe("fork() IPC", () => {
     });
     expect(exitCode).toBe(0);
   });
+
+  // fork() launches the child with process.execArgv in front of the module path. For a parent
+  // started as `bun run -`, execArgv used to contain that "-", so the child ran stdin instead.
+  it("works from a parent script piped into `bun run -`", async () => {
+    using dir = tempDir("fork-from-stdin", {
+      "child.js": `console.log("child " + JSON.stringify(process.argv.slice(2)));`,
+    });
+    const parent = `
+      const child = require("child_process").fork("./child.js", ["x"], { stdio: ["ignore", "inherit", "inherit", "ipc"] });
+      child.on("exit", code => console.log("child exit " + code));
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "run", "-", "parent-arg"],
+      cwd: String(dir),
+      env: bunEnv,
+      stdin: Buffer.from(parent),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.split("\n").filter(Boolean), stderr }).toEqual({
+      stdout: ['child ["x"]', "child exit 0"],
+      stderr: "",
+    });
+    expect(exitCode).toBe(0);
+  });
 });
 
 describe("spawn()", () => {

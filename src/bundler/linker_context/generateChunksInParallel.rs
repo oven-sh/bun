@@ -422,9 +422,13 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                 let dup = duplicates_map.get_or_put(&rel_path)?;
                 if !dup.found_existing {
                     *dup.value_ptr = DuplicateEntry::default();
-                    dup.value_ptr.sources.push(bun_ptr::BackRef::new(&chunks[first]));
+                    dup.value_ptr
+                        .sources
+                        .push(bun_ptr::BackRef::new(&chunks[first]));
                 }
-                dup.value_ptr.sources.push(bun_ptr::BackRef::new(&chunks[index]));
+                dup.value_ptr
+                    .sources
+                    .push(bun_ptr::BackRef::new(&chunks[index]));
                 continue;
             }
             *claimed.value_ptr = index as u32;

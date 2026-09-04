@@ -8,6 +8,7 @@ describe("mock functions match Jest", () => {
     expect(proxied()).toBe(2);
     expect(proxied.mock.calls).toHaveLength(1);
     expect(proxied.getMockName()).toBe(fn.getMockName());
+    expect((proxied as any)._protoImpl).toBe((fn as any)._protoImpl);
     expect(proxied).toHaveBeenCalledTimes(1);
     expect(proxied).toHaveReturnedWith(2);
     proxied.mockClear();

@@ -310,7 +310,7 @@ it.skipIf(isWindows)("stop(true) outside a tick, with a close handler that ticks
       bunExe(),
       "-e",
       `
-        const { expect } = require("bun:test");
+        import { expect } from "bun:test";
         const events = [];
         const { promise: bothOpen, resolve: onBothOpen } = Promise.withResolvers();
         let opened = 0;
@@ -364,8 +364,9 @@ it.skipIf(isWindows)("stop(true) outside a tick, with a close handler that ticks
 
 it.skipIf(!isWindows)("stop(true) on a named-pipe listener with an open connection", async () => {
   // A named-pipe listener never initializes its socket group, and stop(true)
-  // still closes that group when a connection is open. Run in a subprocess so
-  // that a crash is a non-zero exit code.
+  // still closes that group when a connection is open. The group is empty, so
+  // the pipe connection stays open until the client ends it. Run in a
+  // subprocess so that a crash is a non-zero exit code.
   await using proc = Bun.spawn({
     cmd: [
       bunExe(),

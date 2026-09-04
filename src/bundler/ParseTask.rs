@@ -2639,6 +2639,8 @@ pub mod parse_worker {
             opts.lower_import_meta_main_for_node_js = true;
         }
 
+        opts.lower_import_meta_require = !target.is_bun();
+
         opts.tree_shaking = if task.source_index.is_runtime() {
             true
         } else {

@@ -3,7 +3,7 @@
  * file, You can obtain one at https://mozilla.org/MPL/2.0/. */
 
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "path";
 import {
   cssTest,
@@ -7666,6 +7666,94 @@ describe("css tests", () => {
       "@container style(((--a:1) or (--b:2)) and (--c:3)){a{color:red}}",
       "@container style(((--a:1) or (--b:2)) and (--c:3)){a{color:red}}",
     );
+  });
+
+  describe("supports", () => {
+    // The raw-condition scan (`expect_no_error_token`) used to stop after the
+    // first function or bracket block, so anything following one in a
+    // condition was left unconsumed and failed the stylesheet with
+    // "Unexpected token". Each `SupportsCondition` shape that stores a raw
+    // slice is covered: a parenthesized condition, `selector()`, and the
+    // declaration form used by `@import ... supports()`.
+    minify_test(
+      "@supports (transform:translate(1px) rotate(1deg)){a{color:red}}",
+      "@supports (transform:translate(1px) rotate(1deg)){a{color:red}}",
+    );
+    minify_test(
+      "@supports (grid-template-columns:[a] 1fr [b]){a{color:red}}",
+      "@supports (grid-template-columns:[a] 1fr [b]){a{color:red}}",
+    );
+    minify_test("@supports (--x:{a} b){a{color:red}}", "@supports (--x:{a} b){a{color:red}}");
+    minify_test(
+      '@supports (mask:url("a.svg") no-repeat){a{color:red}}',
+      '@supports (mask:url("a.svg") no-repeat){a{color:red}}',
+    );
+    minify_test(
+      "@supports (transform:translate(1px) rotate(1deg)) and (color:rgb(0 0 0) x){a{color:red}}",
+      "@supports (transform:translate(1px) rotate(1deg)) and (color:rgb(0 0 0) x){a{color:red}}",
+    );
+    minify_test(
+      "@supports (color:rgb(0 0 0) x) or (transform:translate(1px) rotate(1deg)){a{color:red}}",
+      "@supports (color:rgb(0 0 0) x) or (transform:translate(1px) rotate(1deg)){a{color:red}}",
+    );
+    minify_test("@supports selector(a:has(b) c){a{color:red}}", "@supports selector(a:has(b) c){a{color:red}}");
+    minify_test("@supports selector(:is(a) > b){a{color:red}}", "@supports selector(:is(a) > b){a{color:red}}");
+    minify_test(
+      "@supports selector([a] b) and selector(:is(c) d){a{color:red}}",
+      "@supports selector([a] b) and selector(:is(c) d){a{color:red}}",
+    );
+    minify_test(
+      "@supports (transform:translate(1px) rotate(1deg)){a{color:red}}b{color:green}",
+      "@supports (transform:translate(1px) rotate(1deg)){a{color:red}}b{color:green}",
+    );
+    minify_test(
+      "@import url(x.css) supports(transform:translate(1px) rotate(1deg));",
+      '@import "x.css" supports(transform:translate(1px) rotate(1deg));',
+    );
+    minify_test(
+      "@import url(x.css) supports(grid-template-columns:[a] 1fr [b]);",
+      '@import "x.css" supports(grid-template-columns:[a] 1fr [b]);',
+    );
+    minify_test(
+      "@import url(x.css) supports(selector(a:has(b) c));",
+      '@import "x.css" supports(selector(a:has(b) c));',
+    );
+
+    // Scanning past a block must still reject the error tokens behind it.
+    for (const source of [
+      "@supports (transform:translate(1px) ]){a{color:red}}",
+      "@supports (transform:translate(1px) }){a{color:red}}",
+      "@supports selector(a:has(b) ]){a{color:red}}",
+      "@import url(x.css) supports(transform:translate(1px) ]);",
+    ]) {
+      test(`ERROR: ${source}`, () => {
+        expect(() => minify_test_with_options(source, "")).toThrow("Unexpected token");
+      });
+    }
+
+    // Tokens after a block are not a license to accept junk after the
+    // condition itself.
+    test("ERROR: @supports foo(bar) baz{a{color:red}}", () => {
+      expect(() => minify_test_with_options("@supports foo(bar) baz{a{color:red}}", "")).toThrow("Unexpected token");
+    });
+
+    test("bundles a stylesheet whose conditions have tokens after a function", async () => {
+      using dir = tempDir("css-supports-after-block", {
+        "entry.css": `
+          @import "./dep.css" supports(transform: translate(1px) rotate(1deg));
+          @supports (mask: url("a.svg") no-repeat) { .a { color: red } }
+          @supports selector(a:has(b) c) { .b { color: green } }
+        `,
+        "dep.css": ".dep { color: blue }",
+      });
+
+      const result = await Bun.build({ entrypoints: [join(String(dir), "entry.css")] });
+      const output = await result.outputs[0].text();
+      expect(output).toContain("@supports (transform: translate(1px) rotate(1deg))");
+      expect(output).toContain(".dep {");
+      expect(output).toContain('@supports (mask: url("a.svg") no-repeat)');
+      expect(output).toContain("@supports selector(a:has(b) c)");
+    });
   });
 
   describe("font-palette-values", () => {

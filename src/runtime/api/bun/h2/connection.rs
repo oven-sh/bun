@@ -134,7 +134,9 @@ struct HeaderBlockMeta {
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum BlockDisposition {
     Deliver,
-    /// HEADERS arrived on a closed stream: answered with RST_STREAM(STREAM_CLOSED).
+    /// HEADERS arrived on a closed stream (a `Closed` entry, or a peer id at or below the
+    /// high-water mark with no entry): decoded for HPACK and silently discarded (§5.1) — no
+    /// frame out, no sink callbacks, no state change.
     StreamClosed,
     /// The embedder refused the stream (can_open_stream = false, node's maxSessionMemory):
     /// answered with RST_STREAM(ENHANCE_YOUR_CALM).
@@ -310,7 +312,15 @@ pub struct Connection {
     evict_buf: Vec<u32>,
 
     preface_received: usize,
+    /// Highest stream id seen in either direction (inbound HEADERS/PUSH_PROMISE, locally sent
+    /// header blocks and pushes). Used for GOAWAY and the RST_STREAM idle check.
     pub last_stream_id: u32,
+    /// Highest peer-initiated stream id (§5.1.1): on a server, the highest odd id an inbound
+    /// HEADERS has opened, refused streams included; on a client, the highest promised id. A
+    /// peer id at or below it with no `streams` entry is closed, never idle (nghttp2's
+    /// last_recv_stream_id). Unlike `last_stream_id` it is never raised by local streams, so a
+    /// server that pushed even ids still recognises a lower odd id as new.
+    pub last_peer_stream_id: u32,
     pub going_away: bool,
 }
 
@@ -344,6 +354,7 @@ impl Connection {
             evict_buf: Vec::new(),
             preface_received: 0,
             last_stream_id: 0,
+            last_peer_stream_id: 0,
             going_away: false,
         }
     }
@@ -592,9 +603,9 @@ impl Connection {
         self.replenish_buf = buf;
         // Evict closed streams so the map (and this scan) stay bounded on long-lived connections.
         // A late DATA/RST/WINDOW_UPDATE for an evicted id takes the unknown-stream path, which
-        // answers RST_STREAM(STREAM_CLOSED) - the 5.1 closed-state behavior. A late HEADERS for an
-        // evicted id re-opens a fresh entry (the parity check still applies); that matches how
-        // trailers-after-close are treated as a new block by the legacy parser as well.
+        // answers RST_STREAM(STREAM_CLOSED). On a server a late HEADERS for an evicted client id
+        // is still recognised as closed (id <= `last_peer_stream_id`) and is decoded then
+        // discarded per §5.1; on a client it re-opens a fresh entry.
         let mut evict = std::mem::take(&mut self.evict_buf);
         evict.clear();
         for (id, s) in self.streams.iter() {
@@ -937,9 +948,9 @@ impl Connection {
         let recv_init = self.local_settings.initial_window_size;
         let is_new = !self.streams.contains_key(&hdr.stream_id);
         // RFC 9113 5.1.1: client-initiated streams use odd ids - a server receiving HEADERS that
-        // would open an even-id stream is a connection PROTOCOL_ERROR. (Monotonicity is not
-        // checked here: a client legitimately receives HEADERS on even promised ids that are
-        // numerically below its own latest odd id.)
+        // would open an even-id stream is a connection PROTOCOL_ERROR. (Monotonicity is only
+        // applied server-side, below: a client legitimately receives HEADERS on even promised ids
+        // that are numerically below its own latest odd id.)
         if is_new && self.is_server && hdr.stream_id.is_multiple_of(2) {
             self.send_go_away(
                 sink,
@@ -948,13 +959,20 @@ impl Connection {
             );
             return true;
         }
+        // §5.1.1: an unknown client id at or below the highest one already opened is a closed
+        // stream (evicted, or skipped and implicitly closed), not a new one: §5.1 minimal
+        // processing — decode the block for HPACK sync, discard it, open/refuse/count nothing.
+        let closed = is_new && self.is_server && hdr.stream_id <= self.last_peer_stream_id;
+        let is_new = is_new && !closed;
         let refused = is_new && self.is_server && !sink.can_open_stream();
-        let mut disposition = if refused {
+        let mut disposition = if closed {
+            BlockDisposition::StreamClosed
+        } else if refused {
             BlockDisposition::Refused
         } else {
             BlockDisposition::Deliver
         };
-        if !refused {
+        if disposition == BlockDisposition::Deliver {
             let cur_state = self
                 .streams
                 .entry(hdr.stream_id)
@@ -983,11 +1001,10 @@ impl Connection {
                     // nghttp2 (session_on_*_headers_received): HEADERS for a stream whose remote
                     // half already ended (half-closed (remote)) is escalated to a CONNECTION error
                     // of type STREAM_CLOSED — node surfaces it as NghttpError "Stream was already
-                    // closed or invalid" and tears the session down. A stream that closed for any
-                    // other reason (e.g. we reset it and the peer's trailers were already in
-                    // flight) keeps the conservative stream-level handling: the block is still
-                    // decoded for HPACK sync (§4.3), then refused with RST_STREAM(STREAM_CLOSED)
-                    // by finish_header_block.
+                    // closed or invalid" and tears the session down. A fully closed stream (e.g.
+                    // reset while the peer's trailers were in flight) gets §5.1's minimal
+                    // processing instead: finish_header_block decodes the block for HPACK sync
+                    // and discards it without a frame or callback.
                     if cur_state == State::HalfClosedRemote {
                         self.local_connection_error(
                             sink,
@@ -1007,6 +1024,11 @@ impl Connection {
             // refused HEADERS (RST_STREAM especially) are tolerated instead of GOAWAY'd.
             if hdr.stream_id > self.last_stream_id {
                 self.last_stream_id = hdr.stream_id;
+            }
+            // Only a server's inbound HEADERS opens a peer stream (odd, checked above); a client's
+            // "new" HEADERS is a response on its own stream. Client peer ids come via PUSH_PROMISE.
+            if self.is_server && hdr.stream_id > self.last_peer_stream_id {
+                self.last_peer_stream_id = hdr.stream_id;
             }
             if !refused {
                 sink.on_stream_open(hdr.stream_id);
@@ -1252,16 +1274,8 @@ impl Connection {
                 sink.on_stream_rejected(target);
                 return false;
             }
-            BlockDisposition::StreamClosed => {
-                // §5.1: HEADERS on a closed/half-closed-remote stream is a stream error of type
-                // STREAM_CLOSED. The block was decoded above purely for HPACK-table sync.
-                self.send_rst_stream(sink, target, ErrorCode::StreamClosed);
-                if let Some(s) = self.streams.get_mut(&target) {
-                    s.state = State::Closed;
-                }
-                sink.on_stream_reset(target, ErrorCode::StreamClosed.as_u32());
-                return false;
-            }
+            // §5.1 "closed": minimally processed (HPACK sync above) and discarded, as nghttp2 does.
+            BlockDisposition::StreamClosed => return false,
             BlockDisposition::Deliver => {}
         }
         // RFC 9113 §8.3.1 (nghttp2_http_on_request_headers): a request block needs exactly one
@@ -1743,6 +1757,9 @@ impl Connection {
         if promised > self.last_stream_id {
             self.last_stream_id = promised;
         }
+        if promised > self.last_peer_stream_id {
+            self.last_peer_stream_id = promised;
+        }
 
         self.header_block.clear();
         self.header_block.extend_from_slice(&payload[off..end]);
@@ -1931,9 +1948,10 @@ impl Connection {
     /// The outbound half does not run through this engine yet, so without this hook a
     /// completed request's entry would linger as HalfClosedRemote forever — the map (and
     /// the per-batch replenish/evict scans) would grow by one entry per request. Removal
-    /// has the same observable behavior as scan-eviction of a Closed stream: late frames
-    /// for the id take the unknown-stream path (RST STREAM_CLOSED, the §5.1 closed-state
-    /// answer) and a late HEADERS re-opens a fresh entry.
+    /// has the same observable behavior as scan-eviction of a Closed stream: late
+    /// DATA/RST/WINDOW_UPDATE take the unknown-stream path (RST STREAM_CLOSED); a late HEADERS
+    /// is decoded then discarded as a closed-stream block on a server (id <=
+    /// `last_peer_stream_id`, never re-opened) and re-opens a fresh entry on a client.
     pub fn close_stream(&mut self, stream_id: u32) {
         self.streams.remove(&stream_id);
     }

@@ -1356,6 +1356,184 @@ describe("inbound stream lifecycle", () => {
     }
   });
 
+  /** A server answering every stream 200 "ok" that records each stream reaching JS. */
+  async function recordingSession() {
+    const seen: { id: number; sync?: string }[] = [];
+    const server = http2.createServer();
+    server.on("stream", (stream: any, headers: any) => {
+      seen.push({ id: stream.id, sync: headers["x-bun-sync"] });
+      stream.on("error", () => {});
+      try {
+        stream.respond({ ":status": 200 });
+        stream.end("ok");
+      } catch {}
+    });
+    server.listen(0);
+    await once(server, "listening");
+    const c = await RawH2.connect((server.address() as net.AddressInfo).port);
+    c.sendPreface();
+    c.sendEmptySettings();
+    return { server, c, seen };
+  }
+
+  /** PING as a barrier: once its ACK arrives the server has processed every frame written
+   *  before it, so the next write lands in a later read. A GOAWAY fails fast instead. */
+  async function pingBarrier(c: RawH2, tag: number) {
+    const opaque = Buffer.alloc(8, tag);
+    c.sendFrame(FrameType.PING, 0, 0, opaque);
+    const frame = await c.waitFor(
+      f =>
+        f.type === FrameType.GOAWAY || (f.type === FrameType.PING && (f.flags & 0x1) === 1 && f.payload.equals(opaque)),
+    );
+    expect(frame.type).toBe(FrameType.PING);
+  }
+
+  /** A request block split across HEADERS(END_STREAM) + CONTINUATION whose CONTINUATION half
+   *  inserts `x-bun-sync: 1` into the HPACK dynamic table (index 62). */
+  function splitRequestBlock(id: number): Buffer {
+    const insert = Buffer.concat([Buffer.from([0x40]), hpackLiteral("x-bun-sync"), hpackLiteral("1")]);
+    return Buffer.concat([
+      encodeFrame(FrameType.HEADERS, 0x1 /* END_STREAM, no END_HEADERS */, id, requestHeaderBlock("GET")),
+      encodeFrame(FrameType.CONTINUATION, 0x4 /* END_HEADERS */, id, insert),
+    ]);
+  }
+
+  /** After splitRequestBlock() was sent on a closed stream: it must have been decoded (a request
+   *  on `probeId` referencing index 62 is answered, no GOAWAY) yet never surfaced as a request. */
+  async function expectDecodedButDiscarded(c: RawH2, seen: { id: number; sync?: string }[], probeId: number) {
+    c.sendFrame(FrameType.HEADERS, 0x5, probeId, Buffer.concat([requestHeaderBlock("GET"), Buffer.from([0xbe])]));
+    const resp = await c.waitFor(
+      f => (f.type === FrameType.HEADERS && f.streamId === probeId) || f.type === FrameType.GOAWAY,
+    );
+    expect(resp.type).toBe(FrameType.HEADERS);
+    await pingBarrier(c, 0xff);
+    expect(c.frames.find(f => f.type === FrameType.GOAWAY)).toBeUndefined();
+    expect(seen.filter(s => s.sync !== undefined)).toEqual([{ id: probeId, sync: "1" }]);
+  }
+
+  function headersOrRstOn(c: RawH2, id: number, since = 0) {
+    return c.frames
+      .slice(since)
+      .filter(f => f.streamId === id && (f.type === FrameType.HEADERS || f.type === FrameType.RST_STREAM));
+  }
+
+  // RFC 9113 §5.1 "closed": HEADERS on a closed stream is minimally processed (HPACK state
+  // updated) and discarded — nothing is sent on that stream, nothing reaches JS, no GOAWAY.
+  test("discards HEADERS following the peer's RST_STREAM in the same write", async () => {
+    const { server, c, seen } = await recordingSession();
+    try {
+      const cancel = Buffer.alloc(4);
+      cancel.writeUInt32BE(ErrorCode.CANCEL, 0);
+      c.send(
+        Buffer.concat([
+          encodeFrame(FrameType.HEADERS, 0x4 /* END_HEADERS */, 1, requestHeaderBlock("GET")),
+          encodeFrame(FrameType.RST_STREAM, 0, 1, cancel),
+          splitRequestBlock(1),
+        ]),
+      );
+      await expectDecodedButDiscarded(c, seen, 3);
+      expect(c.frames.filter(f => f.type === FrameType.RST_STREAM && f.streamId === 1)).toEqual([]);
+    } finally {
+      c.destroy();
+      server.close();
+    }
+  });
+
+  test("discards HEADERS arriving in a later read for a stream the peer reset", async () => {
+    const { server, c, seen } = await recordingSession();
+    try {
+      const cancel = Buffer.alloc(4);
+      cancel.writeUInt32BE(ErrorCode.CANCEL, 0);
+      c.send(
+        Buffer.concat([
+          encodeFrame(FrameType.HEADERS, 0x4 /* END_HEADERS */, 1, requestHeaderBlock("GET")),
+          encodeFrame(FrameType.RST_STREAM, 0, 1, cancel),
+        ]),
+      );
+      await pingBarrier(c, 1);
+      const since = c.frames.length;
+      c.send(splitRequestBlock(1));
+      await expectDecodedButDiscarded(c, seen, 3);
+      expect(headersOrRstOn(c, 1, since)).toEqual([]);
+    } finally {
+      c.destroy();
+      server.close();
+    }
+  });
+
+  test("discards HEADERS reusing the id of a fully answered stream", async () => {
+    const { server, c, seen } = await recordingSession();
+    try {
+      c.sendFrame(FrameType.HEADERS, 0x5, 1, requestHeaderBlock("GET"));
+      await c.waitFor(f => f.type === FrameType.DATA && f.streamId === 1 && (f.flags & 0x1) === 1);
+      await pingBarrier(c, 1);
+      const since = c.frames.length;
+      c.send(splitRequestBlock(1));
+      await expectDecodedButDiscarded(c, seen, 3);
+      expect(headersOrRstOn(c, 1, since)).toEqual([]);
+    } finally {
+      c.destroy();
+      server.close();
+    }
+  });
+
+  // §5.1.1: opening stream 5 implicitly closed the never-used stream 3.
+  test("discards HEADERS on a lower stream id than one already opened", async () => {
+    const { server, c, seen } = await recordingSession();
+    try {
+      c.sendFrame(FrameType.HEADERS, 0x5, 5, requestHeaderBlock("GET"));
+      await c.waitFor(f => f.type === FrameType.HEADERS && f.streamId === 5);
+      await pingBarrier(c, 1);
+      c.send(splitRequestBlock(3));
+      await expectDecodedButDiscarded(c, seen, 7);
+      expect(c.frames.filter(f => f.streamId === 3)).toEqual([]);
+    } finally {
+      c.destroy();
+      server.close();
+    }
+  });
+
+  // The closed-vs-new line is the highest CLIENT stream id: even ids the server promised above it
+  // (pushes 2, 4, 6 off stream 1) must not make a first HEADERS on stream 3 look closed.
+  test("a client stream id below the server's promised ids is still new", async () => {
+    const seen: number[] = [];
+    const server = http2.createServer();
+    server.on("stream", (stream: any) => {
+      seen.push(stream.id);
+      stream.on("error", () => {});
+      const pushes = stream.id === 1 ? 3 : 0;
+      for (let i = 0; i < pushes; i++) {
+        stream.pushStream({ ":path": `/push/${i}` }, (err: any, push: any) => {
+          if (err) return;
+          push.on("error", () => {});
+          push.respond({ ":status": 200 });
+          push.end("p");
+        });
+      }
+      stream.respond({ ":status": 200 });
+      stream.end("ok");
+    });
+    server.listen(0);
+    await once(server, "listening");
+    const c = await RawH2.connect((server.address() as net.AddressInfo).port);
+    try {
+      c.sendPreface();
+      c.sendEmptySettings(); // ENABLE_PUSH defaults to 1
+      c.sendFrame(FrameType.HEADERS, 0x5, 1, requestHeaderBlock("GET"));
+      // Three PUSH_PROMISEs on stream 1 reserve 2, 4 and 6.
+      await c.waitFor(f => f.type === FrameType.PUSH_PROMISE && f.streamId === 1 && f.payload.readUInt32BE(0) === 6);
+      c.sendFrame(FrameType.HEADERS, 0x5, 3, requestHeaderBlock("GET"));
+      const resp = await c.waitFor(
+        f => (f.type === FrameType.HEADERS && f.streamId === 3) || f.type === FrameType.GOAWAY,
+      );
+      expect(resp.type).toBe(FrameType.HEADERS);
+      expect(seen).toEqual([1, 3]);
+    } finally {
+      c.destroy();
+      server.close();
+    }
+  });
+
   // A header-value `toString` runs user JS while sendTrailers holds the native `&mut Stream`;
   // feeding the stream's own RST_STREAM (then another read) back into the parser from that
   // callback must not free the Stream out from under the caller (use-after-free under ASAN).

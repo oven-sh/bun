@@ -129,7 +129,9 @@ extern "C" JSC::EncodedJSValue functionImportMeta__resolveSync(JSC::JSGlobalObje
             }
         }
 
-        if (!fromValue.isUndefinedOrNull() && fromValue.isObject()) {
+        if (WebCore::DOMURL* url = WebCoreCast<WebCore::JSDOMURL, WebCore::DOMURL>(JSValue::encode(fromValue))) {
+            fromValue = jsString(vm, url->href().string());
+        } else if (!fromValue.isUndefinedOrNull() && fromValue.isObject()) {
 
             auto pathsObject = fromValue.getObject()->getIfPropertyExists(globalObject, builtinNames(vm).pathsPublicName());
             RETURN_IF_EXCEPTION(scope, {});
@@ -345,28 +347,37 @@ JSC_DEFINE_HOST_FUNCTION(functionImportMeta__resolve,
     auto specifier = specifierValue.toWTFString(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
 
-    // Node.js allows a second argument for parent
+    // Node.js allows a second argument for parent: a string or a URL instance.
     JSValue from = {};
 
     if (callFrame->argumentCount() >= 2) {
         JSValue fromValue = callFrame->uncheckedArgument(1);
 
-        if (!fromValue.isUndefinedOrNull() && fromValue.isObject()) {
+        if (fromValue.isString()) {
+            from = fromValue;
+        } else if (WebCore::DOMURL* url = WebCoreCast<WebCore::JSDOMURL, WebCore::DOMURL>(JSValue::encode(fromValue))) {
+            from = jsString(vm, url->href().string());
+        } else if (fromValue.isObject()) {
+            // Bun extension: `{ paths: [dir] }`, like `require.resolve`.
             auto pathsObject = fromValue.getObject()->getIfPropertyExists(globalObject, builtinNames(vm).pathsPublicName());
             RETURN_IF_EXCEPTION(scope, {});
-            if (pathsObject) {
-                if (pathsObject.isCell() && pathsObject.asCell()->type() == JSC::JSType::ArrayType) {
-                    auto* pathsArray = uncheckedDowncast<JSC::JSArray>(pathsObject);
-                    if (pathsArray->length() > 0) {
-                        fromValue = pathsArray->getIndex(globalObject, 0);
-                        RETURN_IF_EXCEPTION(scope, {});
+            if (!pathsObject) {
+                Bun::ERR::INVALID_ARG_TYPE_INSTANCE(scope, globalObject, "parentURL"_s, "string"_s, "URL"_s, fromValue);
+                return {};
+            }
+            if (pathsObject.isCell() && pathsObject.asCell()->type() == JSC::JSType::ArrayType) {
+                auto* pathsArray = uncheckedDowncast<JSC::JSArray>(pathsObject);
+                if (pathsArray->length() > 0) {
+                    JSValue firstPath = pathsArray->getIndex(globalObject, 0);
+                    RETURN_IF_EXCEPTION(scope, {});
+                    if (firstPath.isString()) {
+                        from = firstPath;
                     }
                 }
             }
-        }
-
-        if (fromValue.isString()) {
-            from = fromValue;
+        } else if (!fromValue.isUndefined()) {
+            Bun::ERR::INVALID_ARG_TYPE_INSTANCE(scope, globalObject, "parentURL"_s, "string"_s, "URL"_s, fromValue);
+            return {};
         }
     }
 

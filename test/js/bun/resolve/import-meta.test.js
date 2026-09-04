@@ -87,6 +87,42 @@ it("import.meta.resolveSync", () => {
   expect(import.meta.resolveSync("./" + import.meta.file, import.meta.path)).toBe(path);
 });
 
+it("import.meta.resolveSync accepts a URL instance as parent", () => {
+  expect(import.meta.resolveSync("./" + import.meta.file, new URL(import.meta.url))).toBe(path);
+});
+
+// https://github.com/oven-sh/bun/issues/41318
+it("import.meta.resolve(specifier, parent) accepts a URL instance as parent", () => {
+  const parent = new URL("./sub/mod.mjs", import.meta.url);
+  const expected = new URL("./sub/sibling.mjs", import.meta.url).href;
+  expect(import.meta.resolve("./sibling.mjs", parent.href)).toBe(expected);
+  expect(import.meta.resolve("./sibling.mjs", parent)).toBe(expected);
+  expect(import.meta.resolve("./sibling.mjs", undefined)).toBe(new URL("./sibling.mjs", import.meta.url).href);
+  // Bun extension: `{ paths: [...] }` is still accepted.
+  expect(() => import.meta.resolve("./sibling.mjs", { paths: [dir] })).not.toThrow();
+});
+
+it("import.meta.resolve(specifier, parent) rejects a parent that is not a string or URL", () => {
+  const errors = [];
+  for (const parent of [42, null, true, {}, Symbol("x"), () => {}]) {
+    try {
+      import.meta.resolve("./sibling.mjs", parent);
+      errors.push(null);
+    } catch (error) {
+      errors.push({ code: error.code, message: error.message });
+    }
+  }
+  const message = 'The "parentURL" argument must be of type string or an instance of URL. Received ';
+  expect(errors).toEqual([
+    { code: "ERR_INVALID_ARG_TYPE", message: message + "type number (42)" },
+    { code: "ERR_INVALID_ARG_TYPE", message: message + "null" },
+    { code: "ERR_INVALID_ARG_TYPE", message: message + "type boolean (true)" },
+    { code: "ERR_INVALID_ARG_TYPE", message: message + "an instance of Object" },
+    { code: "ERR_INVALID_ARG_TYPE", message: message + "type symbol (Symbol(x))" },
+    { code: "ERR_INVALID_ARG_TYPE", message: message + "function " },
+  ]);
+});
+
 it("Module.createRequire", () => {
   const require = Module.createRequire(import.meta.path);
   expect(require.resolve(import.meta.path)).toBe(path);

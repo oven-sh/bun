@@ -121,8 +121,6 @@ const jsFixtures = [
   "varargs-inlined-simple-exit.js",
   "loop-unrolling.js",
   "licm-no-pre-header.js",
-  // GC / inline cache lifetime
-  "ic-stub-watchpoint-outlives-condition-object-after-jettison.js",
 ];
 
 const wasmFixtures = [

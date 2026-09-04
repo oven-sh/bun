@@ -2144,6 +2144,179 @@ describe("css tests", () => {
     );
   });
 
+  // The rules generated when a logical property (or color-scheme) is compiled
+  // away must keep the declaration's !important, or they lose to rules the
+  // original declaration would have beaten.
+  describe("!important in generated fallback rules", () => {
+    const rtl = ":lang(ae, ar, arc, bcc, bqi, ckb, dv, fa, glk, he, ku, mzn, nqo, pnb, ps, sd, ug, ur, yi)";
+    const safari12 = { safari: 12 << 16 };
+
+    prefix_test(
+      ".foo { margin-inline-start: 2px !important; }",
+      `
+      .foo:not(${rtl}) {
+        margin-left: 2px !important;
+      }
+
+      .foo${rtl} {
+        margin-right: 2px !important;
+      }
+    `,
+      safari12,
+    );
+
+    // Important and normal declarations of the same rule land in the same
+    // generated rules, each keeping its own importance.
+    prefix_test(
+      ".foo { margin-inline-start: 2px !important; margin-inline-end: 4px; }",
+      `
+      .foo:not(${rtl}) {
+        margin-right: 4px;
+        margin-left: 2px !important;
+      }
+
+      .foo${rtl} {
+        margin-left: 4px;
+        margin-right: 2px !important;
+      }
+    `,
+      safari12,
+    );
+
+    // The logical rules are staged while the important declarations are
+    // finalized, after the normal declarations were handled.
+    prefix_test(
+      ".foo { margin-inline-start: 2px !important; color: red; }",
+      `
+      .foo {
+        color: red;
+      }
+
+      .foo:not(${rtl}) {
+        margin-left: 2px !important;
+      }
+
+      .foo${rtl} {
+        margin-right: 2px !important;
+      }
+    `,
+      safari12,
+    );
+
+    prefix_test(
+      ".foo { margin-block-start: 2px !important; }",
+      `
+      .foo {
+        margin-top: 2px !important;
+      }
+    `,
+      safari12,
+    );
+
+    prefix_test(
+      ".foo { inset-inline-start: 2px !important; }",
+      `
+      .foo:not(${rtl}) {
+        left: 2px !important;
+      }
+
+      .foo${rtl} {
+        right: 2px !important;
+      }
+    `,
+      safari12,
+    );
+
+    prefix_test(
+      ".foo { border-inline-start: 2px solid red !important; }",
+      `
+      .foo:not(${rtl}) {
+        border-left: 2px solid red !important;
+      }
+
+      .foo${rtl} {
+        border-right: 2px solid red !important;
+      }
+    `,
+      safari12,
+    );
+
+    // The generated rules are minified again, so the @supports fallbacks split
+    // out of them must stay important as well.
+    prefix_test(
+      ".foo { border-inline-end: var(--border-width) solid lab(40% 56.6 39) !important; }",
+      `
+      .foo:not(${rtl}) {
+        border-right: var(--border-width) solid color(display-p3 .643308 .192455 .167712) !important;
+      }
+
+      @supports (color: lab(0% 0 0)) {
+        .foo:not(${rtl}) {
+          border-right: var(--border-width) solid lab(40% 56.6 39) !important;
+        }
+      }
+
+      .foo${rtl} {
+        border-left: var(--border-width) solid color(display-p3 .643308 .192455 .167712) !important;
+      }
+
+      @supports (color: lab(0% 0 0)) {
+        .foo${rtl} {
+          border-left: var(--border-width) solid lab(40% 56.6 39) !important;
+        }
+      }
+    `,
+      safari12,
+    );
+
+    prefix_test(
+      ".foo { border-start-start-radius: 2px !important; }",
+      `
+      .foo:not(${rtl}) {
+        border-top-left-radius: 2px !important;
+      }
+
+      .foo${rtl} {
+        border-top-right-radius: 2px !important;
+      }
+    `,
+      safari12,
+    );
+
+    prefix_test(
+      ".foo { transition-property: margin-inline-start !important; }",
+      `
+      .foo:not(${rtl}) {
+        transition-property: margin-left !important;
+      }
+
+      .foo${rtl} {
+        transition-property: margin-right !important;
+      }
+    `,
+      safari12,
+    );
+
+    prefix_test(
+      ".foo { color-scheme: light dark !important; }",
+      `
+      .foo {
+        --buncss-light: initial !important;
+        --buncss-dark: !important;
+        color-scheme: light dark !important;
+      }
+
+      @media (prefers-color-scheme: dark) {
+        .foo {
+          --buncss-light: !important;
+          --buncss-dark: initial !important;
+        }
+      }
+    `,
+      { chrome: 90 << 16 },
+    );
+  });
+
   describe("length", () => {
     const properties = [
       "margin-right",

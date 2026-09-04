@@ -3195,11 +3195,23 @@ declare module "bun" {
      * superset of their importers, so fewer modules are loaded at runtime.
      * Nothing lazy becomes eager and no side effect runs earlier; the chunk
      * that absorbs a folded chunk exports the symbols other chunks import
-     * from it. Requires `splitting: true`. CLI: `--min-chunk-size`.
+     * from it. Requires `splitting: true`. CLI: `--min-chunk-size`. For browser
+     * builds, where every chunk is a request, 16384 is a good value.
      *
      * @default 0 (disabled)
      */
     minChunkSize?: number;
+
+    /**
+     * With `splitting` and `target: "browser"`, HTML entrypoints get a
+     * `<link rel="modulepreload">` for every chunk their script statically
+     * imports, and each `import()` first adds one for every chunk its target
+     * statically imports, so a chunk's dependencies download in parallel
+     * instead of one import depth per round trip. CLI: `--no-module-preload`.
+     *
+     * @default true
+     */
+    modulePreload?: boolean;
 
     /**
      * List of entrypoints, usually file paths

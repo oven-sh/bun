@@ -1302,7 +1302,7 @@ describe("bundler", () => {
     snapshotSourceMap: {
       "entry.js.map": {
         files: ["../node_modules/react/index.js", "../entry.js"],
-        mappingsExactMatch: "2lBACA,WAAW,IAAQ,EAAE,ICDrB,eACA,QAAQ,IAAI,CAAK",
+        mappingsExactMatch: "inBACA,WAAW,IAAQ,EAAE,ICDrB,aACA,QAAQ,IAAI,CAAK",
       },
     },
   });
@@ -1681,6 +1681,103 @@ describe("bundler", () => {
       stdout: `
         Hello World
       `,
+    },
+  });
+  // Under --target bun/node the resolver returns a builtin as an external result. An entry point
+  // has to be bundled, so that used to be scheduled as a file named after the specifier ("File not
+  // found"). "bun:wrap" is the name the bundler registers its runtime under, so that one was dropped
+  // instead and the build failed with no entry point named.
+  itBundled("edgecase/EntryPointIsNodeBuiltinWithTargetBun", {
+    files: {
+      "/entry.ts": `console.log("never built");`,
+    },
+    entryPointsRaw: ["node:fs"],
+    target: "bun",
+    bundleErrors: {
+      "<bun>": ['Cannot use "node:fs" as an entry point: it resolves to a builtin module'],
+    },
+  });
+  itBundled("edgecase/EntryPointIsBareNodeBuiltinWithTargetNode", {
+    files: {
+      "/entry.ts": `console.log("never built");`,
+    },
+    entryPointsRaw: ["fs"],
+    target: "node",
+    bundleErrors: {
+      "<bun>": ['Cannot use "fs" as an entry point: it resolves to a builtin module'],
+    },
+  });
+  itBundled("edgecase/EntryPointIsBunWrap", {
+    files: {
+      "/entry.ts": `console.log("never built");`,
+    },
+    entryPointsRaw: ["bun:wrap"],
+    target: "bun",
+    bundleErrors: {
+      "<bun>": ['Cannot use "bun:wrap" as an entry point: it resolves to a builtin module'],
+    },
+  });
+  itBundled("edgecase/EntryPointIsBunBuiltinNextToRealEntryPoint", {
+    files: {
+      "/entry.ts": `console.log("built");`,
+    },
+    entryPoints: ["/entry.ts"],
+    entryPointsRaw: ["bun"],
+    outdir: "/out",
+    target: "bun",
+    bundleErrors: {
+      "<bun>": ['Cannot use "bun" as an entry point: it resolves to a builtin module'],
+    },
+  });
+  // A package.json "imports" entry that maps to a builtin resolves to the same external result.
+  itBundled("edgecase/EntryPointIsImportsAliasOfBuiltin", {
+    files: {
+      "/package.json": `{ "name": "app", "imports": { "#fs": "node:fs" } }`,
+      "/entry.ts": `console.log("never built");`,
+    },
+    entryPointsRaw: ["#fs"],
+    target: "bun",
+    bundleErrors: {
+      "<bun>": ['Cannot use "#fs" as an entry point: it resolves to a builtin module'],
+    },
+  });
+  // A bare entry point is retried as "./<name>" when it does not resolve to a package. A name that
+  // is also a builtin takes the same retry instead of failing.
+  itBundled("edgecase/EntryPointNamedLikeBuiltinIsALocalFile", {
+    files: {
+      "/util.ts": `console.log("local util");`,
+    },
+    entryPointsRaw: ["util"],
+    target: "bun",
+    onAfterBundle(api) {
+      api.expectFile("/out/util.js").toContain("local util");
+    },
+  });
+  // --external applies to imports, not to entry points (#12734 did this for the patterns). An exact
+  // match on the entry point's package name used to come back as the same unbundleable external result.
+  itBundled("edgecase/EntryPointIsExternalPackage", {
+    files: {
+      "/node_modules/pkg/package.json": `{ "name": "pkg", "main": "index.js" }`,
+      "/node_modules/pkg/index.js": `console.log("bundled pkg");`,
+    },
+    entryPointsRaw: ["pkg"],
+    external: ["pkg"],
+    target: "bun",
+    onAfterBundle(api) {
+      api.expectFile("/out/node_modules/pkg/index.js").toContain("bundled pkg");
+    },
+  });
+  // An exact match on the entry point's own file resolved to an external result too. That one was
+  // bundled, but without the package.json and tsconfig the normal resolution attaches.
+  itBundled("edgecase/EntryPointIsExternalFile", {
+    files: {
+      "/entry.tsx": `console.log(<div />);`,
+      "/tsconfig.json": `{ "compilerOptions": { "jsx": "react", "jsxFactory": "h" } }`,
+    },
+    external: ["./entry.tsx"],
+    target: "bun",
+    onAfterBundle(api) {
+      api.expectFile("/out.js").toContain("h(");
     },
   });
   itBundled("edgecase/IntegerUnderflow#12547", {
@@ -2748,6 +2845,32 @@ describe("bundler", () => {
       expect(out).not.toMatch(/function ZI\(\w+, e3,/);
     },
   });
+  // A module wrapped in `__esm` has its top-level declarations hoisted outside
+  // the closure. A destructuring pattern runs code on its value (a getter
+  // here), so the pattern must run when the module is first evaluated, not
+  // when the bundle loads. This holds for an unused pattern and for an
+  // exported one, and for a module that holds nothing else.
+  itBundled("edgecase/EsmWrapDestructuringRunsOnInit", {
+    files: {
+      "/lazy.js": `
+        const { x } = class { static get x() { console.log("EFFECT1"); return 1 } };
+        export const y = 2;
+      `,
+      "/lazy2.js": `
+        export const { z } = class { static get z() { console.log("EFFECT2"); return 3 } };
+      `,
+      "/entry.js": `
+        console.log("before");
+        const a = await import("./lazy.js");
+        console.log(a.y);
+        const b = await import("./lazy2.js");
+        console.log(b.z);
+      `,
+    },
+    entryPoints: ["/entry.js"],
+    target: "bun",
+    run: { stdout: "before\nEFFECT1\n2\nEFFECT2\n3" },
+  });
   // https://github.com/oven-sh/bun/issues/30269
   // Same bug for a nested `let` binding instead of a function parameter.
   itBundled("identifiers/NestedLocalDoesNotShadowLaterHoistedFunction", {
@@ -2839,6 +2962,340 @@ describe("bundler", () => {
     target: "bun",
     minifyIdentifiers: false,
     run: { stdout: "43" },
+  });
+  // A binding in a nested scope keeps its name when the enclosing bindings of
+  // that name (top-level ones included, from any file in the chunk) are never
+  // referenced inside its scope, so `Function#name` / `constructor.name`
+  // survive bundling. Class and function expression names are bound in their
+  // own scope, not at top level.
+  itBundled("identifiers/NestedBindingKeepsNameWhenOuterIsNotReferencedInside", {
+    files: {
+      "/entry.js": /* js */ `
+        import { make } from "./dep.js";
+        const factory = () => { class Model {} return Model; };
+        const Model = factory();
+        var Foo = class Foo { static self() { return Foo; } };
+        var fn = function fn() { return fn; };
+        let User = class User { me() { return User; } };
+        User = ((c) => c)(User);
+        class Bar { static { Bar.tag = "bar"; } }
+        function outer() { const make = () => "local"; return make(); }
+        console.log(JSON.stringify([
+          Model.name, Foo.name, Foo.self() === Foo, fn.name, fn() === fn, User.name,
+          new User().me() === User, Bar.name, Bar.tag, make().name, outer(),
+        ]));
+      `,
+      "/dep.js": /* js */ `
+        export function make() { class Model {} return Model; }
+      `,
+    },
+    minifyIdentifiers: false,
+    onAfterBundle(api) {
+      const out = api.readFile("/out.js");
+      expect(out).not.toMatch(/\b(Model|Foo|fn|User|Bar|make)[0-9]\b/);
+    },
+    run: { stdout: `["Model","Foo",true,"fn",true,"User",true,"Bar","bar","Model","local"]` },
+  });
+  // The other direction: when the scope does reference the outer binding (as
+  // the printer will write it: a linked import, a namespace member, a CommonJS
+  // namespace object, a runtime helper, a class field moved into the
+  // constructor), the nested binding is renamed out of the way.
+  itBundled("identifiers/NestedBindingRenamedWhenOuterIsReferencedInside", {
+    files: {
+      "/entry.ts": /* ts */ `
+        import { T as U, value } from "./dep.ts";
+        import * as ns from "./ns.ts";
+        import cjs from "./cjs.cjs";
+        const lazy = () => require("./ns.ts");
+        var C = class T { m() { return U; } };
+        function a() { const parse = "local"; return [parse, ns.parse()]; }
+        function b() { let x = value; { let value = "inner"; return [value, x]; } }
+        function c() { { let value = "inner"; return [value, U.name]; } }
+        function d() { const import_cjs = "local"; return [import_cjs, cjs.kind]; }
+        function e() { const __toCommonJS = "local"; return [__toCommonJS, lazy().parse()]; }
+        function dec(target: unknown, key?: unknown) {}
+        class F {
+          @dec prop = value;
+          @dec lazy = () => value;
+          constructor(value: string) { this.arg = value; }
+          arg: string;
+        }
+        const f = new F("arg");
+        console.log(JSON.stringify([C.name, new C().m().name, a(), b(), c(), d(), e(), f.prop, f.lazy(), f.arg]));
+      `,
+      "/tsconfig.json": /* json */ `
+        { "compilerOptions": { "experimentalDecorators": true } }
+      `,
+      "/dep.ts": /* ts */ `
+        export class T {}
+        export const value = "dep";
+      `,
+      "/ns.ts": /* ts */ `
+        export function parse() { return "parsed"; }
+      `,
+      "/cjs.cjs": /* js */ `
+        module.exports = { kind: "cjs" };
+      `,
+    },
+    minifyIdentifiers: false,
+    run: {
+      stdout: `["T2","T",["local","parsed"],["inner","dep"],["inner","T"],["local","cjs"],["local","parsed"],"dep","dep","arg"]`,
+    },
+  });
+  // References that print under a name owned by an enclosing scope even
+  // though the symbol is declared beside the reference: imports inside a
+  // CommonJS-wrapped module (linked to another file's top-level symbol, or
+  // hoisted out of the closure when external), `import()` destructuring bound
+  // to the target's export, Annex B block functions hoisted to the function
+  // scope, and the TypeScript namespace closure parameter.
+  itBundled("identifiers/NestedBindingRenamedAroundLinkedAndHoistedNames", {
+    files: {
+      "/entry.ts": /* ts */ `
+        import { fn as viaStatic } from "./fn.ts";
+        import { join } from "node:path";
+        const { foo, p } = require("./a.js");
+        const block = require("./c.cjs");
+        async function g() {
+          const fn2 = 1;
+          const { fn } = await import("./fn.ts");
+          return [fn(), fn2, viaStatic()];
+        }
+        namespace NS {
+          export let a = 1;
+          a++;
+          export function f() { const NS = "local"; return [NS, a]; }
+        }
+        namespace M { export const M = "selfname"; export const other = 1; }
+        namespace M { export function f() { return [M, other]; } }
+        namespace V { export const y = 1; if (globalThis) { var V = 6 as any; } export const seen = [y, typeof V]; }
+        console.log(JSON.stringify([foo, p, block, await g(), NS.f(), typeof join, M.f(), V.seen]));
+      `,
+      "/a.js": /* js */ `
+        import make from "./b.js";
+        import { join } from "node:path";
+        var foo = make();
+        var join2 = "local";
+        module.exports = { foo, p: [join("x", "y").length, join2] };
+      `,
+      "/c.cjs": /* js */ `
+        function outer() {
+          if (true) { function make() { return "block"; } }
+          return make();
+        }
+        module.exports = outer();
+      `,
+      "/b.js": /* js */ `
+        export default function foo() { return "from b"; }
+      `,
+      "/fn.ts": /* ts */ `
+        export function fn() { return "fn"; }
+      `,
+    },
+    target: "node",
+    minifyIdentifiers: false,
+    run: { stdout: `["from b",[3,"local"],"block",["fn",1,"fn"],["local",2],"function",["selfname",1],[1,"number"]]` },
+  });
+  // The enclosing reference may come after the nested scope (a smaller scope
+  // index recorded later), through `module.exports` (printed as `exports`), or
+  // from a TypeScript type position resolved during the parse pass.
+  itBundled("identifiers/NestedBindingRenamedWhenOuterIsReferencedLater", {
+    files: {
+      "/entry.js": /* js */ `
+        import "./a.js";
+        import { calc, v, f } from "./b.js";
+        import m from "./c.cjs";
+        console.log(JSON.stringify([calc("-arg"), f(), v, m.run()]));
+      `,
+      "/a.js": /* js */ `
+        export var value = "a";
+        export let v = "a";
+        console.log(value, v);
+      `,
+      "/b.js": /* js */ `
+        export var value = "b";
+        export function calc(value2) { return value + value2; }
+        export let v = "outer";
+        export function f() { const v2 = "local"; return [v2, v].join(); }
+        console.log(value, v);
+      `,
+      "/c.cjs": /* js */ `
+        module.exports.foo = "F";
+        module.exports.run = function () { return g(); };
+        function g() { const exports = { foo: "L" }; return [exports.foo, module.exports.foo].join(); }
+      `,
+    },
+    minifyIdentifiers: false,
+    run: { stdout: `a a\nb outer\n["b-arg","local,outer","outer","L,F"]` },
+  });
+  // A `var` hoisted out of a block still prints its declaration inside that
+  // block, so a block-scoped binding there cannot take the hoisted name
+  // (#41351). The same holds for a function's parameters and its body, and a
+  // catch binding and its block. A sibling block that does not mention the
+  // `var` may still reuse the name.
+  itBundled("identifiers/NestedBindingRenamedAroundHoistedVarDeclaration", {
+    files: {
+      "/entry.js": /* js */ `
+        import * as L from "./lib.js";
+        import { Check } from "./other.js";
+        const { blockFn } = require("./sloppy.cjs");
+        console.log(JSON.stringify([
+          L.make(true)(1), L.loop(), L.deep(), L.sibling(), L.param("p"), L.arrow("a"), L.dflt(),
+          L.caught(), L.caughtVar(), L.paramUnused("p"), L.caughtUnused(), L.paramVar("p"),
+          L.catchParamVar(), L.destructured(), L.forIn(), L.inSwitch(1), L.inTry(), L.klass(),
+          L.nested(), blockFn(), Check(2),
+        ]));
+      `,
+      "/lib.js": /* js */ `
+        import { Check as OuterCheck } from "./other.js";
+        // In every function the top-level "Check" is referenced, so the local
+        // "Check" is renamed to "Check2" and meets a block-scoped "Check2".
+        export function make(cond) {
+          OuterCheck(0);
+          if (cond) {
+            let Check2 = function (value) { return value; };
+            var Check = Check2;
+          }
+          return Check;
+        }
+        export function loop() {
+          OuterCheck(0);
+          for (let Check2 = 0; Check2 < 1; Check2++) { var Check = Check2 + 1; }
+          return Check;
+        }
+        export function deep() {
+          OuterCheck(0);
+          {
+            let Check2 = "mid";
+            { var Check = "var"; }
+            return [Check2, Check];
+          }
+        }
+        export function sibling() {
+          OuterCheck(0);
+          { var Check = "var"; }
+          let seen;
+          { let Check2 = "let"; seen = Check2; }
+          return [seen, Check];
+        }
+        export function param(Check) {
+          OuterCheck(0);
+          let Check2 = "body";
+          return [Check, Check2];
+        }
+        export const arrow = (Check) => {
+          OuterCheck(0);
+          let Check2 = "arrow";
+          return [Check, Check2];
+        };
+        export function dflt(Check = "default") {
+          OuterCheck(0);
+          { let Check2 = "inner"; return [Check, Check2]; }
+        }
+        export function caught() {
+          try { throw "err"; } catch (Check) {
+            OuterCheck(0);
+            let Check2 = "catch";
+            return [Check, Check2];
+          }
+        }
+        export function caughtVar() {
+          OuterCheck(0);
+          try { throw "t"; } catch (Check) { var Check = "v"; let Check2 = Check; return Check2; }
+        }
+        // The body never mentions the parameter or the catch binding, so only
+        // its declaration stops the body's "Check2" from taking that name.
+        export function paramUnused(Check) {
+          OuterCheck(0);
+          let Check2 = "unused-param";
+          return Check2;
+        }
+        export function caughtUnused() {
+          try { throw "err"; } catch (Check) {
+            OuterCheck(0);
+            let Check2 = "unused-catch";
+            return Check2;
+          }
+        }
+        // Here the renamed "var Check" is the one that would take a
+        // parameter's or catch binding's name "Check2". That output loads but
+        // merges the var with the parameter (or assigns the catch binding), so
+        // the values are wrong instead of a SyntaxError.
+        export function paramVar(Check2) {
+          OuterCheck(0);
+          var Check;
+          return Check;
+        }
+        export function catchParamVar() {
+          OuterCheck(0);
+          try { throw 0; } catch (Check2) { var Check = "set"; }
+          return Check;
+        }
+        export function destructured() {
+          OuterCheck(0);
+          { let Check2 = 5; var { a: Check = Check2, ...rest } = { b: 1 }; }
+          return [Check, rest];
+        }
+        export function forIn() {
+          OuterCheck(0);
+          { let Check2 = "k"; for (var Check in { [Check2]: 1 }) {} }
+          return Check;
+        }
+        export function inSwitch(x) {
+          OuterCheck(0);
+          switch (x) { case 1: let Check2 = "sw"; var Check = Check2; }
+          return Check;
+        }
+        export function inTry() {
+          OuterCheck(0);
+          try { let Check2 = "try"; var Check = Check2; } finally {}
+          return Check;
+        }
+        export function klass() {
+          OuterCheck(0);
+          { class Check2 { static tag = "cls"; } var Check = Check2; }
+          return Check.tag;
+        }
+        export function nested() {
+          OuterCheck(0);
+          {
+            let Check2 = "nested";
+            function inner() { var Check = "v"; return Check; }
+            return [Check2, inner()];
+          }
+        }
+      `,
+      // Sloppy mode: a function declaration in a block is also hoisted to the
+      // enclosing function as a var (annex B), assigned where the block
+      // declares it.
+      "/sloppy.cjs": /* js */ `
+        const { g: outerG } = require("./other2.cjs");
+        exports.blockFn = function () {
+          outerG();
+          { let g2 = "let"; function g() { return "g-inner"; } var r = [g2, g()]; }
+          return [r, g()];
+        };
+      `,
+      "/other2.cjs": /* js */ `
+        exports.g = function () { return "g-outer"; };
+      `,
+      "/other.js": /* js */ `
+        export function Check(x) { return "other " + x; }
+      `,
+    },
+    minifyIdentifiers: false,
+    onAfterBundle(api) {
+      const out = api.readFile("/out.js");
+      // The sibling block does not mention the var, so its binding keeps the name.
+      expect(out).toContain('let Check2 = "let"');
+      // No scope declares one name twice.
+      expect(out).not.toMatch(/let Check2 = [^;]+;\s*var Check2\b/);
+      expect(out).not.toMatch(/function param\(Check2\) \{\s*[^}]*let Check2\b/);
+      expect(out).not.toMatch(/function paramUnused\(Check2\) \{\s*[^}]*let Check2\b/);
+      expect(out).not.toMatch(/catch \(Check2\) \{\s*[^}]*let Check2\b/);
+    },
+    run: {
+      stdout: `[1,1,["mid","var"],["let","var"],["p","body"],["a","arrow"],["default","inner"],["err","catch"],"v","unused-param","unused-catch",null,"set",[5,{"b":1}],"k","sw","try","cls",["nested","v"],[["let","g-inner"],"g-inner"],"other 2"]`,
+    },
   });
   itBundled("edgecase/MacroProtoKeyIsOwnProperty", {
     files: {
@@ -3487,6 +3944,115 @@ describe("bundler", () => {
     onAfterBundle(api) {
       api.expectFile("/out.js").toContain("var arguments = 1;");
     },
+  });
+
+  // Without code splitting, each entry point gets its own output file, even when
+  // entry points import each other. Each file runs its modules in the order that
+  // its own entry point imports them, so it prints what the unbundled entry prints.
+  itBundled("edgecase/EntryPointsImportEachOther", {
+    files: {
+      "/a.ts": /* ts */ `
+        import { b } from "./b.ts";
+        export function a() { return "a"; }
+        console.log("a runs, b() is", b());
+      `,
+      "/b.ts": /* ts */ `
+        import { a } from "./a.ts";
+        export function b() { return "b"; }
+        console.log("b runs, a() is", a());
+      `,
+    },
+    entryPoints: ["/a.ts", "/b.ts"],
+    outdir: "/out",
+    run: [
+      { file: "/out/a.js", stdout: "b runs, a() is a\na runs, b() is b" },
+      { file: "/out/b.js", stdout: "a runs, b() is b\nb runs, a() is a" },
+    ],
+  });
+  itBundled("edgecase/EntryPointImportsEntryPointModuleOrder", {
+    files: {
+      "/a.ts": `import "./c.ts"; import "./b.ts"; console.log("a");`,
+      "/b.ts": `import "./d.ts"; console.log("b");`,
+      "/c.ts": `console.log("c");`,
+      "/d.ts": `console.log("d");`,
+    },
+    entryPoints: ["/a.ts", "/b.ts"],
+    outdir: "/out",
+    run: [
+      { file: "/out/a.js", stdout: "c\nd\nb\na" },
+      { file: "/out/b.js", stdout: "d\nb" },
+    ],
+  });
+  itBundled("edgecase/CSSEntryPointsImportEachOther", {
+    files: {
+      "/a.css": `@import "./b.css"; .a { color: red }`,
+      "/b.css": `@import "./a.css"; .b { color: blue }`,
+    },
+    entryPoints: ["/a.css", "/b.css"],
+    outdir: "/out",
+    minifyWhitespace: true,
+    onAfterBundle(api) {
+      api.expectFile("/out/a.css").toEqualIgnoringWhitespace(".b{color:#00f}.a{color:red}");
+      api.expectFile("/out/b.css").toEqualIgnoringWhitespace(".a{color:red}.b{color:#00f}");
+    },
+  });
+  // With --format=cjs, the module.exports of each output holds the exports of its
+  // own entry point, also when the file of another entry point prints in it.
+  itBundled("edgecase/EntryPointsImportEachOtherCommonJS", {
+    files: {
+      "/a.ts": `import { b } from "./b.ts"; export function a() { return b(); }`,
+      "/b.ts": `import { a } from "./a.ts"; export function b() { return "b"; } export const useA = () => a;`,
+    },
+    runtimeFiles: {
+      "/check.js": `console.log(JSON.stringify([require("./out/a.js"), require("./out/b.js")].map(Object.keys)));`,
+    },
+    entryPoints: ["/a.ts", "/b.ts"],
+    outdir: "/out",
+    format: "cjs",
+    run: { file: "/check.js", stdout: `[["a"],["b","useA"]]` },
+  });
+  itBundled("edgecase/EntryPointImportsEntryPointCommonJS", {
+    files: {
+      "/index.ts": `import { x } from "./lib.ts"; export const y = x + 1;`,
+      "/lib.ts": `export * from "ext"; export const x = 1;`,
+    },
+    runtimeFiles: {
+      "/node_modules/ext/index.js": `module.exports = { fromExt: true };`,
+      "/check.js": `console.log(JSON.stringify([require("./out/index.js"), require("./out/lib.js")]));`,
+    },
+    entryPoints: ["/index.ts", "/lib.ts"],
+    outdir: "/out",
+    external: ["ext"],
+    target: "node",
+    format: "cjs",
+    run: { file: "/check.js", stdout: `[{"y":2},{"x":1,"fromExt":true}]` },
+  });
+  // A file that something require()s gets an ESM wrapper. When all of its
+  // top-level statements hoist, the wrapper is empty and is not printed, so the
+  // output of that entry point has no wrapper to call.
+  itBundled("edgecase/EntryPointRequiredByEntryPointCommonJS", {
+    files: {
+      "/a.ts": `const b = require("./b.ts"); export const fromA = b.x;`,
+      "/b.ts": `export const x = 1; export const y = 2;`,
+    },
+    runtimeFiles: {
+      "/check.js": `console.log(JSON.stringify([require("./out/a.js"), require("./out/b.js")]));`,
+    },
+    entryPoints: ["/a.ts", "/b.ts"],
+    outdir: "/out",
+    format: "cjs",
+    run: { file: "/check.js", stdout: `[{"fromA":1},{"x":1,"y":2}]` },
+  });
+  itBundled("edgecase/RequiredEntryPointWithoutWrapperCommonJS", {
+    files: {
+      "/entry.ts": `export function load() { return require("./c.ts"); } export const x = 1;`,
+      "/c.ts": `module.exports = require("./entry.ts");`,
+    },
+    runtimeFiles: {
+      "/check.js": `const m = require("./out.js"); console.log(JSON.stringify(m), m.load() === m);`,
+    },
+    format: "cjs",
+    run: { file: "/check.js", stdout: `{"x":1} true` },
   });
 });
 

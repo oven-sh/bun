@@ -14,6 +14,7 @@ import { generateCargoConfig } from "./cargo-config.ts";
 import {
   type Config,
   type OS,
+  type PackageManager,
   type PartialConfig,
   type Toolchain,
   detectHost,
@@ -28,7 +29,7 @@ import { Ninja } from "./ninja.ts";
 import { getProfile } from "./profiles.ts";
 import { registerAllRules } from "./rules.ts";
 import { quote } from "./shell.ts";
-import { findBun, findCargo, findMsvcLinker, findSystemTool, resolveLlvmToolchain } from "./tools.ts";
+import { findBun, findCargo, findMsvcLinker, findNpm, findSystemTool, resolveLlvmToolchain } from "./tools.ts";
 import { ensureWindowsSysroot } from "./winsysroot.ts";
 import { checkWorkarounds } from "./workarounds.ts";
 
@@ -42,7 +43,7 @@ import { checkWorkarounds } from "./workarounds.ts";
  * Throws BuildError with a hint if a required tool is missing. Optional
  * tools (ccache, cargo if no rust deps needed) become `undefined`.
  */
-export function resolveToolchain(targetOs?: OS): Toolchain {
+export function resolveToolchain(targetOs?: OS, packageManager: PackageManager = "bun"): Toolchain {
   const host = detectHost();
   const llvm = resolveLlvmToolchain(host.os, host.arch, targetOs ?? host.os);
 
@@ -63,26 +64,49 @@ export function resolveToolchain(targetOs?: OS): Toolchain {
   // ninja's generator rule invokes reconfigure, cwd is the build dir.
   const repoRoot = findRepoRoot();
 
-  // esbuild — comes from the root bun install. Path is deterministic.
+  // esbuild — comes from the root install. Path is deterministic.
   // If not present, the first codegen build will fail with a clear error
-  // (and the build itself runs `bun install` first via the root install
+  // (and the build itself runs the install first via the root install
   // stamp, so this path will exist by the time esbuild rules fire).
-  const esbuild = resolve(repoRoot, "node_modules", ".bin", host.os === "windows" ? "esbuild.exe" : "esbuild");
+  // On Windows, bun writes `.bin/esbuild.exe` and npm writes `.bin/esbuild.cmd`.
+  const windowsBin = packageManager === "npm" ? "esbuild.cmd" : "esbuild.exe";
+  const esbuild = resolve(repoRoot, "node_modules", ".bin", host.os === "windows" ? windowsBin : "esbuild");
 
   const bun = findBun(host.os);
+  const npm = packageManager === "npm" ? findNpm() : undefined;
 
   // jsRuntime: shell-ready prefix for running .ts subprocesses. Propagate
   // whatever's running us — if node, the strip-types flag comes along; if
   // bun, it's just the path. process.versions.bun distinguishes (undefined
   // in node). Pre-quoted so rule commands can splice it directly.
+  //
+  // The codegen scripts are ES modules under the root package.json, which
+  // has no "type" field. Node detects the module syntax and prints
+  // MODULE_TYPELESS_PACKAGE_JSON once per process, so the flag hides it.
+  //
+  // A codegen script that a module can also import runs its command line
+  // only when import.meta.main is true. Node 24.2 added import.meta.main.
+  // Before that it is undefined, and the script would write nothing. CI
+  // installs Node 26 (scripts/bootstrap.sh), so the minimum is 25.
+  if (process.versions.bun === undefined) {
+    const major = Number(process.versions.node.split(".")[0]);
+    if (major < 25) {
+      throw new BuildError(`Node ${process.versions.node} cannot run the codegen scripts`, {
+        hint: "Install Node 25 or later, or run the build with bun.",
+      });
+    }
+  }
   const q = (p: string) => quote(p, host.os === "windows");
   const jsRuntime =
-    process.versions.bun !== undefined ? q(process.execPath) : `${q(process.execPath)} --experimental-strip-types`;
+    process.versions.bun !== undefined
+      ? q(process.execPath)
+      : `${q(process.execPath)} --experimental-strip-types --disable-warning=MODULE_TYPELESS_PACKAGE_JSON`;
 
   return {
     ...llvm,
     cmake,
     bun,
+    npm,
     jsRuntime,
     esbuild,
     cargo: rust?.cargo,
@@ -118,7 +142,7 @@ export interface ConfigureResult {
  */
 function configureInputs(cwd: string): string[] {
   const buildDir = resolve(cwd, "scripts", "build");
-  const excluded = new Set(["fetch-cli.ts", "download.ts", "ci.ts", "stream.ts"]);
+  const excluded = new Set(["fetch-cli.ts", "download.ts", "ci.ts", "stream.ts", "npm-ci.ts"]);
 
   const scripts = globSync("*.ts", { cwd: buildDir })
     .filter(f => !excluded.has(f))
@@ -259,7 +283,7 @@ export async function configure(input: ConfigureInput): Promise<ConfigureResult>
     });
   }
 
-  const toolchain = resolveToolchain(partial.os);
+  const toolchain = resolveToolchain(partial.os, partial.packageManager);
   mark("resolveToolchain");
   const cfg = resolveConfig(partial, toolchain);
 

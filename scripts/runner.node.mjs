@@ -158,10 +158,6 @@ const { values: options, positionals: filters } = parseArgs({
       multiple: true,
       default: undefined,
     },
-    ["skip-slower-than"]: {
-      type: "string",
-      default: undefined,
-    },
     ["quiet"]: {
       type: "boolean",
       default: false,
@@ -176,7 +172,7 @@ const { values: options, positionals: filters } = parseArgs({
     },
     ["retries"]: {
       type: "string",
-      default: isCI ? "3" : "0", // N retries = N+1 attempts
+      default: isCI ? "3" : "0", // N retries = N+1 attempts, only for files in test/flaky-tests.txt
     },
     ["junit"]: {
       type: "boolean",
@@ -383,6 +379,27 @@ const skipsForLeaksan = (() => {
     .map(line => line.trim())
     .filter(line => !line.startsWith("#") && line.length > 0);
 })();
+
+// Test files that the runner may run again when they fail (see --retries).
+// Every other file runs once and a failure is final.
+const flakyTests = (() => {
+  const path = join(cwd, "test/flaky-tests.txt");
+  if (!existsSync(path)) {
+    return new Set();
+  }
+  return new Set(
+    readFileSync(path, "utf-8")
+      .split("\n")
+      .map(line => line.split("#")[0].trim())
+      .filter(line => line.length > 0),
+  );
+})();
+
+/**
+ * @param {string} title repo-relative path, as reported in the test output
+ * @returns {boolean}
+ */
+const isFlakyTest = title => flakyTests.has(title.replaceAll("\\", "/"));
 
 const parallelAllowlist = (() => {
   try {
@@ -626,7 +643,7 @@ async function runTests() {
   const flakyResultsTitles = [];
   const failedResults = [];
   const failedResultsTitles = [];
-  const maxAttempts = 1 + (parseInt(options["retries"]) || 0);
+  const retries = Math.max(parseInt(options["retries"], 10) || 0, 0);
 
   const parallelism = options["parallel"] ? availableParallelism() : 1;
   console.log("parallelism", parallelism);
@@ -665,14 +682,20 @@ async function runTests() {
    * @param {string} title
    * @param {function} fn
    * @param {boolean} [concurrent] this call may overlap with other runTest calls
+   * @param {TestResult} [priorFailure] the file already failed once, inside the
+   * parallel batch: that run was attempt 1
    * @returns {Promise<TestResult>}
    */
-  const runTest = async (title, fn, concurrent = parallelism > 1) => {
+  const runTest = async (title, fn, concurrent = parallelism > 1, priorFailure = undefined) => {
     const index = ++i;
+    // A test file runs once unless test/flaky-tests.txt lists it. The runner's
+    // own dependency installs (the package.json titles) are setup, not tests,
+    // and keep their retries.
+    const maxAttempts = title.endsWith("package.json") || isFlakyTest(title) ? 1 + retries : 1;
 
-    let result, failure, flaky;
-    let attempt = 1;
-    for (; attempt <= maxAttempts; attempt++) {
+    let result, failure;
+    let attempt;
+    for (attempt = priorFailure ? 2 : 1; attempt <= maxAttempts; attempt++) {
       if (attempt > 1) {
         await new Promise(resolve => setTimeout(resolve, 5000 + Math.random() * 10_000));
       }
@@ -688,15 +711,7 @@ async function runTests() {
       }
 
       const { ok, stdoutPreview, error } = result;
-      if (ok) {
-        if (failure) {
-          flakyResults.push(failure);
-          flakyResultsTitles.push(title);
-        } else {
-          okResults.push(result);
-        }
-        break;
-      }
+      if (ok) break;
 
       const color = attempt >= maxAttempts ? "red" : "yellow";
       const label = `${getAnsi(color)}[${index}/${total}] ${title} - ${error}${getAnsi("reset")}`;
@@ -712,20 +727,39 @@ async function runTests() {
       }
 
       failure ||= result;
-      flaky ||= true;
-
-      if (attempt >= maxAttempts || isAlwaysFailure(error)) {
-        flaky = false;
-        failedResults.push(failure);
-        failedResultsTitles.push(title);
-        break;
-      }
+      if (isAlwaysFailure(error)) break;
     }
 
+    // No attempt ran: the batch failure is the only result.
+    if (result === undefined) failure = priorFailure;
+
     if (!failure) {
+      okResults.push(result);
       return result;
     }
 
+    // The first failure of these attempts is the one reported. It is flaky when a later attempt passed.
+    const flaky = result?.ok === true;
+    if (flaky) {
+      flakyResults.push(failure);
+      flakyResultsTitles.push(title);
+    } else {
+      failedResults.push(failure);
+      failedResultsTitles.push(title);
+    }
+    reportFailure(title, failure, flaky, attempt);
+    return result ?? failure;
+  };
+
+  /**
+   * Reports a failed attempt to CI: a warning when the file later passed
+   * (flaky), an error when the failure is final.
+   * @param {string} title
+   * @param {TestResult} failure
+   * @param {boolean} flaky
+   * @param {number} attempt the attempt that passed, when flaky
+   */
+  function reportFailure(title, failure, flaky, attempt) {
     if (isBuildkite) {
       // Group flaky tests together, regardless of the title
       const context = flaky ? "flaky" : title;
@@ -759,9 +793,7 @@ async function runTests() {
       markBuildkiteStepReported();
       process.exit(getExitCode("fail"));
     }
-
-    return result;
-  };
+  }
 
   if (!isQuiet) {
     for (const path of [cwd, testsPath]) {
@@ -834,7 +866,7 @@ async function runTests() {
       }
     }
 
-    const runOneTest = async (testPath, concurrent) => {
+    const runOneTest = async (testPath, concurrent, priorFailure = undefined) => {
       await awaitNapiPrebuild(testPath);
       const absoluteTestPath = join(testsPath, testPath);
       const title = relative(cwd, absoluteTestPath).replaceAll(sep, "/");
@@ -949,6 +981,7 @@ async function runTests() {
             };
           },
           concurrent,
+          priorFailure,
         );
       } else {
         return runTest(
@@ -960,6 +993,7 @@ async function runTests() {
               stderr: concurrent ? () => {} : pipeTestStdout(process.stderr),
             }),
           concurrent,
+          priorFailure,
         );
       }
     };
@@ -984,6 +1018,10 @@ async function runTests() {
         env.LSAN_OPTIONS = `malloc_context_size=30:print_suppressions=0:suppressions=${process.cwd()}/test/leaksan.supp`;
       }
       if (isAsan) env.BUN_FEATURE_FLAG_NO_ORPHANS = "1";
+
+      // A report left behind by an earlier run on a persistent agent must not
+      // stand in for one this batch failed to write.
+      rmSync(junitPath, { force: true });
 
       const byPath = new Map(bucketFiles.map(t => [join("test", t).replaceAll("\\", "/"), t]));
       const norm = p =>
@@ -1027,18 +1065,33 @@ async function runTests() {
       if (suites.size && isBuildkite) uploadArtifactsToBuildKite(junitPath);
       else rmSync(junitPath, { force: true });
 
-      const failed = new Set(); // ran and failed (or hung) — a solo pass is a parallel-mode flake
-      const incomplete = new Set(); // never finished/started — re-run quietly
-      let evidence = suites.size > 0;
-      if (!ok && suites.size) {
-        for (const t of bucketFiles) {
-          const suite = suites.get(join("test", t).replaceAll("\\", "/"));
-          if (suite === undefined) incomplete.add(t);
-          else if (suite.failures > 0) failed.add(t);
+      // A failure in the batch counts as it does in a serial run. A file that
+      // failed, hung, or crashed here runs again alone only when
+      // test/flaky-tests.txt lists it and isAlwaysFailure does not match its
+      // reason. A file with no complete result (the batch never started it, or
+      // a sibling's crash stopped it) runs alone once: that is its first run.
+      const failed = new Map(); // test path -> why it failed in the batch
+      const incomplete = new Set();
+      // Files whose worker died of a fatal signal or a fatal Windows exit code.
+      // The coordinator prints a banner for each one, as the crash handler does
+      // for a serial run, and such a crash is never retried.
+      const crashed = new Set();
+      // The batch as a whole failed: no file explains the exit, or the summary
+      // counts errors between tests, which the junit report does not name.
+      let batchError;
+      if (!ok) {
+        const lines = stripAnsi(stdout).split(/\r?\n/);
+        if (suites.size) {
+          for (const t of bucketFiles) {
+            const suite = suites.get(join("test", t).replaceAll("\\", "/"));
+            if (suite === undefined) incomplete.add(t);
+            else if (suite.failures > 0) failed.set(t, `${suite.failures} failing in the parallel batch`);
+          }
         }
-      } else if (!ok) {
+        // The coordinator names the files that a hang or a worker death
+        // stopped, and the status of each worker that died.
         let list = null; // "running" | "not-started" while inside an interrupt report list
-        for (const line of stripAnsi(stdout).split(/\r?\n/)) {
+        for (const line of lines) {
           if (line.startsWith("Interrupted while still running:")) {
             list = "running";
             continue;
@@ -1049,21 +1102,70 @@ async function runTests() {
           }
           if (list && /^ {2}\S/.test(line)) {
             const testPath = norm(line);
-            if (testPath) (list === "running" ? failed : incomplete).add(testPath);
+            if (!testPath) continue;
+            if (list === "running") {
+              failed.set(testPath, `${error} in the parallel batch`);
+              incomplete.delete(testPath);
+            } else if (!failed.has(testPath)) {
+              incomplete.add(testPath);
+            }
             continue;
           }
           list = null;
-          const ended = /^✗ (.+?) \((worker crashed|aborted:|no live workers)/.exec(line);
+          const banner = /^error: a test worker process crashed with (.+?) while running (.+)\.$/.exec(line);
+          if (banner) {
+            const testPath = norm(banner[2]);
+            if (!testPath) continue;
+            crashed.add(testPath);
+            failed.set(testPath, `worker crashed with ${banner[1]} in the parallel batch`);
+            incomplete.delete(testPath);
+            continue;
+          }
+          const ended = /^✗ (.+?) \((worker crashed: (.+)|aborted:|no live workers)/.exec(line);
           const testPath = ended && norm(ended[1]);
-          if (testPath) (ended[2] === "worker crashed" ? failed : incomplete).add(testPath);
+          if (!testPath) continue;
+          if (ended[3] !== undefined) {
+            failed.set(testPath, `worker crashed with ${ended[3].replace(/\)$/, "")} in the parallel batch`);
+            incomplete.delete(testPath);
+          } else if (!failed.has(testPath)) {
+            incomplete.add(testPath);
+          }
         }
-        evidence = failed.size + incomplete.size > 0;
+        if (!suites.size) {
+          // No junit report: no file has a result.
+          for (const t of bucketFiles) if (!failed.has(t)) incomplete.add(t);
+        }
+        const failAt = lines.findLastIndex(line => /^\s*\d+ fail\s*$/.test(line));
+        const unhandled = failAt === -1 ? null : /^\s*(\d+) errors?\s*$/.exec(lines[failAt + 1] ?? "");
+        if (unhandled) {
+          batchError = `${unhandled[1]} unhandled error(s) between tests in the parallel batch`;
+        } else if (!suites.size) {
+          batchError = `${error} in the parallel batch, with no junit report`;
+        } else if (failed.size === 0) {
+          batchError = `${error} in the parallel batch, and no file failed`;
+        } else if (
+          crashed.size === 0 &&
+          /crashes reported during this test|Stack trace from GDB for/.test(crashes ?? "")
+        ) {
+          // A serial run fails the file for a core dump or a crash report.
+          batchError = "a crash was reported in the parallel batch, and no worker died of it";
+        }
       }
-      const rerun = !ok && !evidence ? [...bucketFiles] : [...failed, ...incomplete];
+      const retried = [...failed.entries()]
+        .filter(
+          ([t, reason]) =>
+            retries > 0 &&
+            !crashed.has(t) &&
+            !isAlwaysFailure(reason) &&
+            isFlakyTest(join("test", t).replaceAll("\\", "/")),
+        )
+        .map(([t]) => t);
+      const retriedSet = new Set(retried);
+      const rerun = [...retried, ...incomplete];
       const rerunSet = new Set(rerun);
 
       for (const t of bucketFiles) {
-        if (rerunSet.has(t)) continue;
+        if (rerunSet.has(t) || failed.has(t)) continue;
         const title = join("test", t).replaceAll("\\", "/");
         const seconds = suites.get(title)?.seconds;
         const timing = seconds === undefined ? "" : ` ${getAnsi("gray")}(${seconds.toFixed(2)}s)${getAnsi("reset")}`;
@@ -1078,28 +1180,65 @@ async function runTests() {
           stdoutPreview: "",
         });
       }
+      const batchFailures = new Map(); // test path -> TestResult, for the files that run again alone
       for (const t of bucketFiles) {
-        if (!failed.has(t)) continue;
+        const reason = failed.get(t);
+        if (reason === undefined) continue;
         const title = join("test", t).replaceAll("\\", "/");
-        const suite = suites.get(title);
-        if (!suite?.cases.length) continue;
-        startGroup(
-          `${title} - ${suite.failures} failing in the parallel batch ${getAnsi("gray")}(${suite.seconds.toFixed(2)}s)${getAnsi("reset")}`,
-          () => {
-            for (const { name, message } of suite.cases) {
-              console.log(`${getAnsi("red")}✗${getAnsi("reset")} ${name}`);
-              if (message) console.log(message.replace(/^/gm, "    "));
-            }
-          },
-        );
+        const cases = suites.get(title)?.cases ?? [];
+        const printCases = () => {
+          for (const { name, message } of cases) {
+            console.log(`${getAnsi("red")}✗${getAnsi("reset")} ${name}`);
+            if (message) console.log(message.replace(/^/gm, "    "));
+          }
+        };
+        const preview = cases.map(({ name, message }) => `✗ ${name}\n${message}`).join("\n\n") || reason;
+        const result = {
+          testPath: title,
+          ok: false,
+          status: "fail",
+          error: reason,
+          errors: [],
+          tests: [],
+          stdout: preview,
+          stdoutPreview: preview,
+        };
+        if (retriedSet.has(t)) {
+          startGroup(`${getAnsi("yellow")}${title} - ${reason}${getAnsi("reset")}`, printCases);
+          batchFailures.set(t, result);
+          continue;
+        }
+        startGroup(`${getAnsi("red")}[${++i}/${total}] ${title} - ${reason}${getAnsi("reset")}`, printCases);
+        failedResults.push(result);
+        failedResultsTitles.push(title);
+        reportFailure(title, result, false, 1);
+      }
+      if (batchError) {
+        // No file can hold this failure, so the list cannot hold it either.
+        const preview = `${stripAnsi(stdout).split(/\r?\n/).slice(-50).join("\n")}\n${crashes ?? ""}`.trim();
+        console.log(`${getAnsi("red")}${label} - ${batchError}${getAnsi("reset")}`);
+        const result = {
+          testPath: label,
+          ok: false,
+          status: "fail",
+          error: batchError,
+          errors: [],
+          tests: [],
+          stdout,
+          stdoutPreview: preview,
+        };
+        failedResults.push(result);
+        failedResultsTitles.push(label);
+        reportFailure(label, result, false, 1);
       }
       if (rerun.length) {
         console.log(
-          `${getAnsi("yellow")}parallel bucket: ${evidence ? `retrying ${failed.size} failed and ${incomplete.size} unfinished file(s)${suites.size ? "" : " (from streamed output; no junit)"}` : `no junit and no streamed evidence, re-running all ${rerun.length} file(s)`} one at a time${getAnsi("reset")}`,
+          `${getAnsi("yellow")}parallel bucket: running ${retried.length} listed flaky file(s) that failed and ${incomplete.size} file(s) with no result, one at a time${getAnsi("reset")}`,
         );
         for (const testPath of rerun) {
-          const result = await runOneTest(testPath, false);
-          if (result?.ok && failed.has(testPath) && isBuildkite) {
+          // A listed file's batch run was its first attempt: the solo runs are its retries.
+          const result = await runOneTest(testPath, false, batchFailures.get(testPath));
+          if (result?.ok && batchFailures.has(testPath) && isBuildkite) {
             const title = join("test", testPath).replaceAll("\\", "/");
             const cases = suites.get(title)?.cases ?? [];
             const first = cases[0];
@@ -2566,22 +2705,6 @@ function getRelevantTests(cwd, testModifiers, testExpectations) {
     }
   }
 
-  // Drop the slowest files by expected duration. Used on lanes that trade a
-  // little coverage for throughput; the same files still run on other lanes.
-  const skipSlowerThan = parseInt(options["skip-slower-than"]);
-  if (skipSlowerThan > 0) {
-    const durations = loadExpectedDurations(cwd);
-    const slow = availableTests.filter(testPath => (durations[testPath.replaceAll("\\", "/")] ?? 0) >= skipSlowerThan);
-    for (const testPath of slow) availableTests.splice(availableTests.indexOf(testPath), 1);
-    !isQuiet &&
-      console.log(
-        `Skipping tests slower than ${skipSlowerThan}ms:`,
-        slow.length,
-        "/",
-        availableTests.length + slow.length,
-      );
-  }
-
   const skipExpectations = testExpectations
     .filter(
       ({ modifiers, expectations }) =>
@@ -2869,7 +2992,8 @@ function formatTestToMarkdown(result, concise, retries) {
     }
 
     const testTitle = testPath.replace(/\\/g, "/");
-    const testUrl = getFileUrl(testPath, errorLine);
+    // A parallel batch that fails as a whole is reported under its label, not a file.
+    const testUrl = existsSync(join(cwd, testPath)) ? getFileUrl(testPath, errorLine) : undefined;
 
     if (concise) {
       markdown += "<li>";

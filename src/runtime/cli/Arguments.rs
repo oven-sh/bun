@@ -342,7 +342,7 @@ const AUTO_ONLY_PARAMS: &[ParamType] = concat_params!(
         // parse_param!("--all"),
         parse_param!("--silent                          Don't print the script command"),
         parse_param!(
-            "--elide-lines <NUMBER>            Number of lines of script output shown when using --filter (default: 10). Set to 0 to show all lines."
+            "--elide-lines <NUMBER>            Number of lines of script output shown when using --filter (default: 0, show all lines)"
         ),
         parse_param!("-v, --version                     Print version and exit"),
         parse_param!("--revision                        Print version with revision and exit"),
@@ -360,7 +360,7 @@ const RUN_ONLY_PARAMS: &[ParamType] = concat_params!(
     &[
         parse_param!("--silent                          Don't print the script command"),
         parse_param!(
-            "--elide-lines <NUMBER>            Number of lines of script output shown when using --filter (default: 10). Set to 0 to show all lines."
+            "--elide-lines <NUMBER>            Number of lines of script output shown when using --filter (default: 0, show all lines)"
         ),
     ],
     AUTO_OR_RUN_PARAMS,
@@ -470,7 +470,10 @@ pub(crate) const BUILD_ONLY_PARAMS: &[ParamType] = concat_params!(
             "--no-split-require               With --splitting and --target bun: keep a require()'d ESM file in the calling chunk instead of emitting a chunk loaded at the call"
         ),
         parse_param!(
-            "--min-chunk-size <INT>           With --splitting, also fold side-effect-free chunks smaller than this many source bytes into a chunk more entry points load"
+            "--no-module-preload              With --splitting and --target browser: don't emit <link rel=modulepreload> for the chunks an entry or import() loads"
+        ),
+        parse_param!(
+            "--min-chunk-size <INT>           With --splitting, also fold side-effect-free chunks smaller than this many source bytes into a chunk more entry points load. Default: 0 (off); 16384 is a good value for browser builds"
         ),
         parse_param!(
             "--public-path <STR>              A prefix to be appended to any import paths in bundled code"
@@ -2550,6 +2553,9 @@ fn parse_build_command_options(
     if args.flag(b"--no-split-require") {
         ctx.bundler_options.split_require = false;
     }
+    if args.flag(b"--no-module-preload") {
+        ctx.bundler_options.module_preload = false;
+    }
 
     if let Some(size_str) = args.option(b"--min-chunk-size") {
         let min_chunk_size = match strings::parse_int::<u64>(size_str, 10) {
@@ -2566,7 +2572,7 @@ fn parse_build_command_options(
             Output::err_generic("--min-chunk-size requires --splitting", ());
             Global::crash();
         }
-        ctx.bundler_options.min_chunk_size = min_chunk_size;
+        ctx.bundler_options.min_chunk_size = Some(min_chunk_size);
     }
 
     for (flag, slot) in [

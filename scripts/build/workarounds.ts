@@ -106,31 +106,6 @@ export const workarounds: Workaround[] = [
       `and this entry.`,
   },
   {
-    id: "darwin-cross-cpu-model",
-    issue: "https://github.com/llvm/llvm-project/tree/main/compiler-rt/lib/builtins/cpu_model",
-    description:
-      "macOS x64 cross-links from Linux have no libclang_rt.osx.a, and the SDK's libSystem " +
-      "reexport (libcompiler_rt.tbd) doesn't provide the __builtin_cpu_supports globals " +
-      "(___cpu_model / ___cpu_indicator_init / ___cpu_features2). A vendored copy of " +
-      "compiler-rt's cpu_model/x86.c is compiled into the cross link instead.",
-    // Only exercised on x64 darwin cross links (arm64 never references these).
-    applies: cfg => cfg.darwin && cfg.crossTarget !== undefined && cfg.x64 && cfg.osxSysroot !== undefined,
-    expectedToBeFixed: cfg => {
-      // Obsolete if the SDK starts exporting the symbol from the libSystem
-      // umbrella (then the shim would be a duplicate definition waiting to
-      // happen). Checked against the .tbd text — cheap and version-agnostic.
-      const tbd = join(cfg.osxSysroot!, "usr", "lib", "system", "libcompiler_rt.tbd");
-      try {
-        return readFileSync(tbd, "utf8").includes("___cpu_model");
-      } catch {
-        return false;
-      }
-    },
-    cleanup:
-      `Delete scripts/build/shims/cpu_model/, needsDarwinCpuModelShim() and its blocks in ` +
-      `scripts/build/shims.ts, and this entry.`,
-  },
-  {
     id: "darwin-cross-stack-size",
     issue:
       "https://github.com/llvm/llvm-project/blob/main/lld/MachO/Driver.cpp (OPT_stack_size in unimplemented warnings)",

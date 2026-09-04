@@ -29,8 +29,8 @@ pub struct Entry {
     /// `"installConfig": { "hoistingLimits": "workspaces" }` — this workspace's
     /// node_modules must be self-contained (see `Lockfile::self_contained_workspaces`).
     pub(crate) hoisting_limits: bool,
-    /// An `installConfig.hoistingLimits` value other than "workspaces", kept so the
-    /// caller can warn about it (outside `process_names_array`'s log window).
+    /// An `installConfig.hoistingLimits` value other than "workspaces" or "none", kept so
+    /// the caller can warn about it (outside `process_names_array`'s log window).
     pub(crate) unsupported_hoisting_limits: Option<Box<[u8]>>,
 }
 
@@ -201,7 +201,8 @@ fn process_workspace_name(
         name_loc: name_expr.loc,
         hoisting_limits: hoisting_limits.as_deref() == Some(b"workspaces".as_slice()),
         unsupported_hoisting_limits: match hoisting_limits {
-            Some(v) if &*v != b"workspaces" => Some(v),
+            // "none" is yarn's default: no limit, which is how every workspace hoists
+            Some(v) if !matches!(&*v, b"workspaces" | b"none") => Some(v),
             _ => None,
         },
         version: 'brk: {

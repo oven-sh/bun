@@ -401,26 +401,34 @@ void WorkerMessagingProxy::drainMessagesToWorkerObject(ScriptExecutionContext& c
 
 // ---- WorkerObjectProxy / WorkerReportingProxy (worker thread) -----------------------------------
 
-void WorkerMessagingProxy::workerGlobalScopeStarted(Zig::GlobalObject& workerGlobalObject)
+void WorkerMessagingProxy::workerThreadStarted()
 {
-    auto& context = *workerGlobalObject.scriptExecutionContext();
-    ASSERT(context.identifier() == m_workerContextIdentifier);
-
-    // Pending -> Running under the lock postTaskToWorkerGlobalScope() takes, and before 'online' is
-    // posted: a parent-side 'online' handler may immediately post a task and must find Running.
-    Deque<Function<void(ScriptExecutionContext&)>> pendingTasks;
+    // Stays Pending: what an 'online' handler posts is queued until workerGlobalScopeStarted().
     {
         Locker lock { m_pendingTasksLock };
-        m_state.store(State::Running);
-        pendingTasks = std::exchange(m_pendingTasks, {});
+        if (m_state.load() != State::Pending)
+            return;
     }
-
     ScriptExecutionContext::postTaskTo(m_loaderContextIdentifier, m_loaderLoopKind, [protectedThis = Ref { *this }](ScriptExecutionContext&) {
         RefPtr workerObject = protectedThis->m_workerObject;
         if (!workerObject || !workerObject->hasEventListeners(eventNames().openEvent))
             return;
         workerObject->dispatchEvent(Event::create(eventNames().openEvent, Event::CanBubble::No, Event::IsCancelable::No));
     });
+}
+
+void WorkerMessagingProxy::workerGlobalScopeStarted(Zig::GlobalObject& workerGlobalObject)
+{
+    auto& context = *workerGlobalObject.scriptExecutionContext();
+    ASSERT(context.identifier() == m_workerContextIdentifier);
+
+    // Pending -> Running under the lock postTaskToWorkerGlobalScope() takes: no task is lost.
+    Deque<Function<void(ScriptExecutionContext&)>> pendingTasks;
+    {
+        Locker lock { m_pendingTasksLock };
+        m_state.store(State::Running);
+        pendingTasks = std::exchange(m_pendingTasks, {});
+    }
 
     // Tasks and messages that arrived while Pending.
     for (auto& task : pendingTasks)

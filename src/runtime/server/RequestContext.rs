@@ -757,15 +757,19 @@ where
             Self::discard_response_body(global_this, result);
             return;
         };
-        match promise.unwrap(global_this.vm(), jsc::PromiseUnwrapMode::MarkHandled) {
+        let resp_held = self.resp.get().is_some();
+        match promise.status() {
             // Only while `resp` is held: the `on_abort` that follows then reclaims the cell.
-            jsc::PromiseResult::Pending if self.resp.get().is_some() => {
+            jsc::PromiseStatus::Pending if resp_held => {
                 let cell = self.create_promise_cell(global_this);
                 result.then_with_value(global_this, cell, Self::ON_RESOLVE, Self::ON_REJECT);
             }
-            jsc::PromiseResult::Pending | jsc::PromiseResult::Rejected(_) => {}
-            jsc::PromiseResult::Fulfilled(fulfilled) => {
-                Self::discard_response_body(global_this, fulfilled);
+            // A subscribed promise that rejects later is dropped. Drop this one the same way.
+            jsc::PromiseStatus::Rejected if resp_held => promise.set_handled(global_this.vm()),
+            // Nothing subscribes, so a rejection stays unhandled and reaches `unhandledRejection`.
+            jsc::PromiseStatus::Pending | jsc::PromiseStatus::Rejected => {}
+            jsc::PromiseStatus::Fulfilled => {
+                Self::discard_response_body(global_this, promise.result(global_this.vm()));
             }
         }
     }

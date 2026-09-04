@@ -1,4 +1,4 @@
-import { define, InvalidThisBehavior } from "../../codegen/class-definitions";
+import { define, InvalidThisBehavior } from "../../codegen/class-definitions.ts";
 
 export default [
   define({

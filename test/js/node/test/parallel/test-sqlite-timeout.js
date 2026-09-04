@@ -15,7 +15,7 @@ function nextDb() {
   return join(tmpdir.path, `database-${cnt++}.db`);
 }
 
-test('waits to acquire lock', { skip: typeof Bun !== 'undefined' }, async (t) => { // BUN: Worker emits 'online' only after the eval body yields; the body blocks synchronously in sqlite3_busy_timeout, so COMMIT on the parent never runs and the lock is never released. This is a Worker 'online'-timing difference (tracked separately), not a node:sqlite bug.
+test('waits to acquire lock', async (t) => {
   const DB_PATH = nextDb();
   const conn = new DatabaseSync(DB_PATH);
   t.after(() => {

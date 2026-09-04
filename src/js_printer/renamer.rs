@@ -11,7 +11,6 @@ use bun_ast::lexer_tables::{
 use bun_ast::symbol;
 use bun_ast::symbol::SlotNamespace;
 use bun_ast::{Ref, Symbol};
-use bun_collections::hive_array::Fallback as HiveArrayFallback;
 use bun_collections::{HashMap, StringHashMap, VecExt};
 use bun_core::Output;
 use bun_core::{MutableString, strings};
@@ -38,23 +37,11 @@ const SLOT_NAMESPACES: [SlotNamespace; 4] = [
     SlotNamespace::MangledProp,
 ];
 
-/// Lifetime-erased name slice used as the key in `NumberScope::name_counts`.
-///
-/// `NumberScope` lives in a `HiveArrayFallback` pool inside `NumberRenamer`,
-/// alongside the renamer's `arena: Bump`. A `&'a [u8]` key would make
-/// `NumberScope<'a>` self-referential to its own owner, so the renamer (like
-/// the rest of the AST layer) carries name slices as the lifetime-erased
-/// [`bun_ast::StoreStr`] and re-borrows on read. Every key inserted here points
-/// either at `Symbol::original_name` (an AST-arena slice that strictly outlives
-/// the renamer) or at bytes bump-allocated from the renamer's own `arena: Bump`,
-/// which is only reset on `NumberRenamer::Drop` after every `NumberScope` is
-/// returned to the pool — so the borrow contract documented on `StoreStr::slice`
-/// is always satisfied.
-///
-/// Replaces the previous `StringHashMap<u32>` (whose `put_no_clobber` heap-boxed
-/// a `Box<[u8]>` copy of the key) with a `Copy` 16-byte key that needs no
-/// allocation on insert and no free on the per-scope drop in the renamer's
-/// pool walkback.
+/// Lifetime-erased name slice used as the `NumberRenamer` interner key. Every
+/// key points either at `Symbol::original_name` (an AST-arena slice that
+/// strictly outlives the renamer) or at bytes bump-allocated from the
+/// renamer's own `arena`, so the borrow contract documented on
+/// `StoreStr::slice` is always satisfied.
 #[derive(Clone, Copy)]
 pub struct NameKey(NameStr);
 
@@ -87,13 +74,6 @@ impl core::borrow::Borrow<[u8]> for NameKey {
         self.as_bytes()
     }
 }
-
-/// Per-`NumberScope` map of assigned names → next collision counter.
-/// `bun_wyhash::BuildHasher` matches `StringHashMap` so the renamer keeps its
-/// existing hash quality; `NameKey` is a `Copy` lifetime-erased slice so insert
-/// never heap-allocates a key copy and drop never frees one.
-pub(crate) type NameCountMap =
-    bun_collections::hashbrown::HashMap<NameKey, u32, bun_wyhash::BuildHasher>;
 
 pub struct NoOpRenamer<'a> {
     // `symbol::Map` is `Vec<Vec<Symbol>>` (owning). Unlike `MinifyRenamer`/`NumberRenamer` (which the bundler builds over a
@@ -341,7 +321,7 @@ impl MinifyRenamer {
             self.accumulate_symbol_use_count(
                 top_level_symbols,
                 *key,
-                value.count_estimate,
+                value.count_estimate(),
                 stable_source_indices,
             )?;
         }
@@ -355,17 +335,8 @@ impl MinifyRenamer {
         count: u32,
         stable_source_indices: &[u32],
     ) -> Result<(), bun_alloc::AllocError> {
-        let mut ref_ = self.symbols.follow(ref_);
-        let mut symbol: &Symbol = self.symbols.get_const(ref_).unwrap();
-
-        while let Some(alias) = &symbol.namespace_alias {
-            let new_ref = self.symbols.follow(alias.namespace_ref);
-            if new_ref.eql(ref_) {
-                break;
-            }
-            ref_ = new_ref;
-            symbol = self.symbols.get_const(new_ref).unwrap();
-        }
+        let ref_ = self.symbols.follow_printed(ref_);
+        let symbol: &Symbol = self.symbols.get_const(ref_).unwrap();
 
         let ns = symbol.slot_namespace();
         if ns == SlotNamespace::MustNotBeRenamed {
@@ -580,18 +551,312 @@ pub struct NumberRenamer {
     // See `NoOpRenamer.symbols` — non-owning view.
     pub(crate) symbols: ManuallyDrop<symbol::Map>,
     pub(crate) names: Box<[Vec<NameStr>]>,
-    pub number_scope_pool: HiveArrayFallback<NumberScope, 128>,
-    pub root: NumberScope,
-    /// Backs renamed-name slices written into `names`.
+    /// Backs top-level renamed-name slices in `names` and interned keys.
     pub(crate) arena: Bump,
+    /// Every name seen in the chunk's root scope → index into `slots`.
+    ids: NameIds,
+    /// By name id: who holds that name in the root scope.
+    slots: Vec<NameSlot>,
+}
+
+type NameIds = bun_collections::hashbrown::HashMap<NameKey, u32, bun_wyhash::BuildHasher>;
+/// Name id -> index into `NestedRenamer::slots`, for the names the file's
+/// nested scopes bind or renumber; every other id reads the root's slot.
+type OverlayMap =
+    bun_collections::hashbrown::HashMap<u32, u32, core::hash::BuildHasherDefault<IdHasher>>;
+
+/// Name ids are dense small integers; multiply-shift spreads them for
+/// hashbrown's top-bit tag.
+#[derive(Default)]
+struct IdHasher(u64);
+
+impl core::hash::Hasher for IdHasher {
+    #[inline]
+    fn write(&mut self, _: &[u8]) {
+        unreachable!()
+    }
+    #[inline]
+    fn write_u32(&mut self, n: u32) {
+        self.0 = u64::from(n).wrapping_mul(0x9E37_79B9_7F4A_7C15);
+    }
+    #[inline]
+    fn finish(&self) -> u64 {
+        self.0
+    }
+}
+
+#[derive(Clone, Copy)]
+struct NameSlot {
+    /// The scope holding this name (`ROOT_SCOPE`, or a `NestedRenamer`
+    /// scope serial), or `NO_SCOPE`.
+    scope: u32,
+    /// Next collision counter for the name in that scope.
+    count: u32,
+    /// The symbol holding the name, or `Ref::NONE` for reserved names and
+    /// counter-only entries, which every inner scope must avoid.
+    owner: Ref,
+}
+
+const NO_SCOPE: u32 = 0;
+const ROOT_SCOPE: u32 = 1;
+
+impl NameSlot {
+    const EMPTY: NameSlot = NameSlot {
+        scope: NO_SCOPE,
+        count: 0,
+        owner: Ref::NONE,
+    };
+}
+
+enum NameUse {
+    Unused,
+    SameScope(u32),
+    Used,
+}
+
+/// The name table a binding is checked against: the chunk's root scope
+/// (`NumberRenamer`) or one file's nested scopes over it (`NestedRenamer`).
+trait NameScopes {
+    /// Copies a made-up name (`foo2`) somewhere that outlives printing.
+    fn keep_name(&self, name: &[u8]) -> NameStr;
+    /// Serial number of the scope being named.
+    fn scope(&self) -> u32;
+    fn id_of(&self, name: &[u8]) -> Option<u32>;
+    /// `name` must outlive the renamer (an AST `original_name` or a slice of
+    /// `arena()`).
+    fn intern(&mut self, name: NameStr) -> u32;
+    fn slot(&self, id: u32) -> NameSlot;
+    /// Give `id` to the current scope.
+    fn set_slot(&mut self, id: u32, slot: NameSlot);
+    /// Whether the scope being named references `owner`, the symbol holding
+    /// a name in an enclosing scope. When it does not, the binding may shadow
+    /// it: `owner` only took that name because whatever held it further out
+    /// is not referenced beneath `owner`'s scope either.
+    fn sees(&self, owner: Ref) -> bool;
+
+    fn find(&self, id: Option<u32>) -> NameUse {
+        let Some(id) = id else {
+            return NameUse::Unused;
+        };
+        let slot = self.slot(id);
+        if slot.scope == NO_SCOPE {
+            NameUse::Unused
+        } else if slot.scope == self.scope() {
+            NameUse::SameScope(slot.count)
+        } else if slot.owner.is_empty() || self.sees(slot.owner) {
+            NameUse::Used
+        } else {
+            NameUse::Unused
+        }
+    }
+
+    /// Takes `name` for `owner` in the current scope if free, else the first
+    /// free `name2`, `name3`, …. `None`: `name` itself was free.
+    fn find_unused_name(&mut self, input_name: NameStr, owner: Ref) -> Option<NameStr> {
+        let owned_name = valid_identifier_for(input_name.slice());
+        let normalized = owned_name.is_some();
+        let name: &[u8] = owned_name.as_deref().unwrap_or_else(|| input_name.slice());
+
+        let id = self.id_of(name);
+        let use_ = self.find(id);
+        if let NameUse::Unused = use_ {
+            let unchanged = !normalized || strings::eql_long(name, input_name.slice(), true);
+            let name = if unchanged {
+                input_name
+            } else {
+                self.keep_name(name)
+            };
+            let id = match id {
+                Some(id) => id,
+                None => self.intern(name),
+            };
+            let scope = self.scope();
+            self.set_slot(
+                id,
+                NameSlot {
+                    scope,
+                    count: 1,
+                    owner,
+                },
+            );
+            return if unchanged { None } else { Some(name) };
+        }
+
+        // To avoid O(n^2) behavior, the number must start off being the number
+        // used last time there was a collision with this name in this scope;
+        // sibling scopes can reuse the same numbers.
+        let prefix_id = id.unwrap();
+        let mut tries: u32 = match use_ {
+            NameUse::SameScope(count) => count,
+            _ => 1,
+        };
+        let mut candidate = numbered_name_buffer(name);
+        loop {
+            tries += 1;
+            write_numbered_name(&mut candidate, name.len(), tries);
+            let candidate_id = self.id_of(candidate.slice());
+            if let NameUse::Unused = self.find(candidate_id) {
+                let scope = self.scope();
+                // Where to resume for the next collision in this scope.
+                let prefix_slot = self.slot(prefix_id);
+                self.set_slot(
+                    prefix_id,
+                    NameSlot {
+                        scope,
+                        count: tries,
+                        owner: if prefix_slot.scope == scope {
+                            prefix_slot.owner
+                        } else {
+                            Ref::NONE
+                        },
+                    },
+                );
+                let renamed = self.keep_name(candidate.slice());
+                let candidate_id = match candidate_id {
+                    Some(id) => id,
+                    None => self.intern(renamed),
+                };
+                self.set_slot(
+                    candidate_id,
+                    NameSlot {
+                        scope,
+                        count: 1,
+                        owner,
+                    },
+                );
+                return Some(renamed);
+            }
+        }
+    }
+}
+
+/// `name` made a valid identifier (`let` → `_let`, non-ASCII escapes), or
+/// `None` when it already is one.
+fn valid_identifier_for(name: &[u8]) -> Option<Box<[u8]>> {
+    // `MutableString::ensure_valid_identifier` always heap-allocates, even
+    // when the input is already a valid ASCII identifier; the strict-mode
+    // reserved-word remap is the only transform that fires for an
+    // otherwise-valid ASCII name.
+    if is_simple_ascii_identifier(name)
+        && !bun_ast::lexer_tables::is_strict_mode_reserved_word(name)
+    {
+        debug_assert!(js_lexer::is_identifier(name));
+        return None;
+    }
+    let valid = MutableString::ensure_valid_identifier(name).expect("unreachable");
+    debug_assert!(js_lexer::is_identifier(&valid));
+    Some(valid)
+}
+
+fn numbered_name_buffer(name: &[u8]) -> MutableString {
+    let mut candidate = MutableString::init_empty();
+    candidate
+        .grow_if_needed(name.len() + 4)
+        .expect("unreachable");
+    candidate.append_slice(name).expect("unreachable");
+    candidate
+}
+
+/// `candidate[..prefix_len]` followed by `n`.
+fn write_numbered_name(candidate: &mut MutableString, prefix_len: usize, n: u32) {
+    candidate.reset_to(prefix_len);
+    candidate.append_int(u64::from(n)).expect("unreachable");
+}
+
+fn intern_into(ids: &mut NameIds, next_id: u32, name: NameStr) -> (u32, bool) {
+    use bun_collections::hashbrown::hash_map::RawEntryMut;
+    match ids.raw_entry_mut().from_key(name.slice()) {
+        RawEntryMut::Occupied(o) => (*o.get(), false),
+        RawEntryMut::Vacant(v) => {
+            v.insert(NameKey(name), next_id);
+            (next_id, true)
+        }
+    }
+}
+
+fn store_name(names: &mut Vec<NameStr>, inner_index: u32, name: NameStr) {
+    let new_len = names.len().max(inner_index as usize + 1);
+    if names.len() < new_len {
+        names.resize(new_len, name_str_empty());
+    }
+    names[inner_index as usize] = name;
+}
+
+impl NameScopes for NumberRenamer {
+    fn keep_name(&self, name: &[u8]) -> NameStr {
+        NameStr::new(self.arena.alloc_slice_copy(name))
+    }
+    fn scope(&self) -> u32 {
+        ROOT_SCOPE
+    }
+    fn id_of(&self, name: &[u8]) -> Option<u32> {
+        self.ids.get(name).copied()
+    }
+    fn intern(&mut self, name: NameStr) -> u32 {
+        let (id, new) = intern_into(&mut self.ids, self.slots.len() as u32, name);
+        if new {
+            self.slots.push(NameSlot::EMPTY);
+        }
+        id
+    }
+    fn slot(&self, id: u32) -> NameSlot {
+        self.slots[id as usize]
+    }
+    fn set_slot(&mut self, id: u32, slot: NameSlot) {
+        self.slots[id as usize] = slot;
+    }
+    fn sees(&self, _owner: Ref) -> bool {
+        // Top-level symbols of the whole chunk share one scope.
+        true
+    }
 }
 
 impl NumberRenamer {
-    pub(crate) fn assign_name(&mut self, scope: &mut NumberScope, input_ref: Ref) {
+    pub fn init(
+        symbols: symbol::Map,
+        root_names: &StringHashMap<u32>,
+    ) -> Result<Box<NumberRenamer>, bun_alloc::AllocError> {
+        let len = symbols.symbols_for_source.len();
+        let names: Box<[Vec<NameStr>]> = core::iter::repeat_with(Vec::<NameStr>::default)
+            .take(len)
+            .collect();
+        let symbol_count: usize = symbols.symbols_for_source.iter().map(|s| s.len()).sum();
+
+        let mut r = Box::new(NumberRenamer {
+            symbols: ManuallyDrop::new(symbols),
+            names,
+            arena: Bump::new(),
+            ids: NameIds::with_capacity_and_hasher(
+                root_names.len() + symbol_count / 4,
+                Default::default(),
+            ),
+            slots: Vec::with_capacity(root_names.len() + symbol_count / 4),
+        });
+        // `root_names` owns its keys and is dropped by the caller; copy them.
+        for (key, &count) in root_names.iter() {
+            let duped = NameStr::new(r.arena.alloc_slice_copy(&**key));
+            let id = r.intern(duped);
+            r.slots[id as usize] = NameSlot {
+                scope: ROOT_SCOPE,
+                count,
+                owner: Ref::NONE,
+            };
+        }
+
+        // Debug-only, presence-checked symbol dump.
+        #[cfg(debug_assertions)]
+        if bun_core::env_var::BUN_DUMP_SYMBOLS.get().is_some() {
+            r.symbols.dump();
+        }
+
+        Ok(r)
+    }
+
+    pub fn add_top_level_symbol(&mut self, input_ref: Ref) {
         let ref_ = self.symbols.follow(input_ref);
 
         // Don't rename the same symbol more than once
-        let inner: &mut Vec<NameStr> = &mut self.names[ref_.source_index() as usize];
+        let inner: &Vec<NameStr> = &self.names[ref_.source_index() as usize];
         if inner.len() > ref_.inner_index() as usize && inner[ref_.inner_index() as usize].len() > 0
         {
             return;
@@ -603,163 +868,15 @@ impl NumberRenamer {
             return;
         }
 
-        // SAFETY: `original_name` is an AST-arena slice that outlives the renamer.
-        let original_name: &[u8] = symbol.original_name.slice();
-        let name: NameStr = match scope.find_unused_name(&self.arena, original_name) {
-            UnusedName::Renamed(name) => name,
-            UnusedName::NoCollision => symbol.original_name,
-        };
-        let new_len = inner.len().max(ref_.inner_index() as usize + 1);
-        if inner.len() < new_len {
-            inner.resize(new_len, name_str_empty());
-        }
-        inner[ref_.inner_index() as usize] = name;
-    }
-
-    pub fn init(
-        symbols: symbol::Map,
-        root_names: &StringHashMap<u32>,
-    ) -> Result<Box<NumberRenamer>, bun_alloc::AllocError> {
-        let len = symbols.symbols_for_source.len();
-        let names: Box<[Vec<NameStr>]> = core::iter::repeat_with(Vec::<NameStr>::default)
-            .take(len)
-            .collect();
-
-        let number_scope_pool = HiveArrayFallback::<NumberScope, 128>::init();
-
-        // The arena is created here (before `root.name_counts`) so the
-        // reserved-name keys can be duped into it: `root_names` owns its keys
-        // as `Box<[u8]>` and is dropped at the end of this function, while
-        // `NameKey` is a lifetime-erased borrow that must outlive `root`.
-        // The set is bounded by the unique unbound/must-not-be-renamed globals
-        // across the chunk (typically a few hundred names), and this copy
-        // happens once per chunk vs. the millions of per-symbol ops below.
-        let arena = Bump::new();
-        let mut root = NumberScope::default();
-        root.name_counts.reserve(root_names.len());
-        for (key, &value) in root_names.iter() {
-            let duped = arena.alloc_slice_copy(&**key);
-            root.name_counts.insert(NameKey(NameStr::new(duped)), value);
-        }
-
-        // Debug-only, presence-checked symbol dump.
-        #[cfg(debug_assertions)]
-        if bun_core::env_var::BUN_DUMP_SYMBOLS.get().is_some() {
-            symbols.dump();
-        }
-
-        Ok(Box::new(NumberRenamer {
-            symbols: ManuallyDrop::new(symbols),
-            names,
-            number_scope_pool,
-            root,
-            arena,
-        }))
-    }
-
-    fn assign_names_in_scope(
-        &mut self,
-        s: &mut NumberScope,
-        scope: &js_ast::Scope,
-        source_index: u32,
-        sorted: &mut Vec<u32>,
-    ) {
-        {
-            sorted.clear();
-            sorted.extend(scope.members.values().map(|value_ref| {
-                debug_assert!(!value_ref.ref_.is_source_contents_slice());
-                value_ref.ref_.inner_index()
-            }));
-            debug_assert_eq!(sorted.len(), scope.members.count());
-            sorted.sort_unstable();
-
-            for &inner_index in sorted.iter() {
-                self.assign_name(s, Ref::init(inner_index, source_index, false));
-            }
-        }
-
-        for ref_ in scope.generated.slice() {
-            self.assign_name(s, *ref_);
-        }
-    }
-
-    pub fn assign_names_recursive_with_number_scope(
-        &mut self,
-        initial_scope: *mut NumberScope,
-        scope_: &js_ast::Scope,
-        source_index: u32,
-        sorted: &mut Vec<u32>,
-    ) {
-        let mut s: *mut NumberScope = initial_scope;
-        let mut scope = scope_;
-
-        loop {
-            let symbol_count = scope.members.count() + scope.generated.len_u32() as usize;
-            if symbol_count > 0 {
-                let new_child_scope: *mut NumberScope = self
-                    .number_scope_pool
-                    .get_init(NumberScope {
-                        // `s` is non-null (either `initial_scope` or a fresh
-                        // pool slot from a prior iteration); the new child
-                        // outlives this `ParentRef` only until `put()` below.
-                        // SAFETY: `s` is the live pool slot / initial scope (write provenance).
-                        parent: Some(unsafe {
-                            bun_ptr::ParentRef::from_raw_mut(
-                                core::ptr::NonNull::new(s)
-                                    .expect("number_scope non-null")
-                                    .as_ptr(),
-                            )
-                        }),
-                        // Pre-size to the AST scope's symbol count so the
-                        // per-name insert path doesn't realloc the table
-                        // 0→4→8→… as names are assigned. Most scopes assign
-                        // every member exactly once, so this is the exact
-                        // final size; symbols skipped by `assign_name`
-                        // (already renamed, non-default namespace) just leave
-                        // a little slack.
-                        name_counts: NameCountMap::with_capacity_and_hasher(
-                            symbol_count,
-                            Default::default(),
-                        ),
-                    })
-                    .as_ptr();
-                s = new_child_scope;
-
-                // SAFETY: s is a valid pool slot just initialized above
-                self.assign_names_in_scope(unsafe { &mut *s }, scope, source_index, sorted);
-            }
-
-            if scope.children.len_u32() == 1 {
-                // `StoreRef<Scope>: Deref<Target = Scope>` — safe arena-backed deref.
-                scope = scope.children.at(0).get();
-            } else {
-                break;
-            }
-        }
-
-        // Symbols in child scopes may also have to be renamed to avoid conflicts
-        for child in scope.children.slice() {
-            // `StoreRef<Scope>: Deref<Target = Scope>` — safe arena-backed deref.
-            self.assign_names_recursive_with_number_scope(s, child, source_index, sorted);
-        }
-
-        // The pool fallback and `name_counts` data live on the global heap
-        // (HiveArrayFallback::init() uses Box, StringHashMap uses global alloc),
-        // so we must walk the parent chain and `put` every intermediate scope
-        // we allocated in the loop above — not just the deepest one.
-        while s != initial_scope {
-            // SAFETY: `s` is a pool slot we allocated and initialized in the
-            // loop above; every such slot has `parent: Some(...)`. Read parent
-            // before `put` (which drops/frees the slot).
-            let parent = unsafe { (*s).parent }
-                .map(|p| p.as_mut_ptr())
-                .unwrap_or(initial_scope);
-            // SAFETY: `s` came from `number_scope_pool.get()` in the loop above
-            // and was fully initialized; `put` drops `name_counts` in place
-            // before recycling/freeing the slot.
-            unsafe { self.number_scope_pool.put(s) };
-            s = parent;
-        }
+        let original_name = symbol.original_name;
+        let name = self
+            .find_unused_name(original_name, ref_)
+            .unwrap_or(original_name);
+        store_name(
+            &mut self.names[ref_.source_index() as usize],
+            ref_.inner_index(),
+            name,
+        );
     }
 
     /// Gives top-level symbol `ref_` the name `name` (taken to be free in the
@@ -770,25 +887,18 @@ impl NumberRenamer {
         if self.symbols.get_const(ref_).unwrap().slot_namespace() != SlotNamespace::Default {
             return;
         }
-        let duped: &[u8] = self.arena.alloc_slice_copy(name);
-        let name = NameStr::new(duped);
-        self.root.name_counts.insert(NameKey(name), 1);
-        let inner: &mut Vec<NameStr> = &mut self.names[ref_.source_index() as usize];
-        let new_len = inner.len().max(ref_.inner_index() as usize + 1);
-        if inner.len() < new_len {
-            inner.resize(new_len, name_str_empty());
-        }
-        inner[ref_.inner_index() as usize] = name;
-    }
-
-    pub fn add_top_level_symbol(&mut self, ref_: Ref) {
-        // Reshaped for borrowck — root is a field of self, but `assign_name`
-        // needs `&mut self` AND `&mut self.root` simultaneously. Sound only
-        // while `assign_name` never reaches `self.root` through `self`; keep
-        // that invariant if `assign_name` changes.
-        let root: *mut NumberScope = &raw mut self.root;
-        // SAFETY: assign_name does not touch self.root through `self`
-        self.assign_name(unsafe { &mut *root }, ref_);
+        let name = NameStr::new(self.arena.alloc_slice_copy(name));
+        let id = self.intern(name);
+        self.slots[id as usize] = NameSlot {
+            scope: ROOT_SCOPE,
+            count: 1,
+            owner: ref_,
+        };
+        store_name(
+            &mut self.names[ref_.source_index() as usize],
+            ref_.inner_index(),
+            name,
+        );
     }
 
     pub fn add_top_level_declared_symbols(
@@ -798,6 +908,11 @@ impl NumberRenamer {
         js_ast::DeclaredSymbol::for_each_top_level_symbol(declared_symbols, self, |r, ref_| {
             r.add_top_level_symbol(ref_)
         });
+    }
+
+    /// Takes the names a `NestedRenamer` over this renamer assigned.
+    pub fn absorb(&mut self, nested: NestedNames) {
+        self.names[nested.source_index as usize] = nested.names;
     }
 
     pub fn name_for_symbol(&self, ref_: Ref) -> &[u8] {
@@ -816,7 +931,7 @@ impl NumberRenamer {
             let renamed: NameStr = renamed_list[inner_index as usize];
             if renamed.raw_len() > 0 {
                 // `StoreStr::slice` centralises the deref; allocated from
-                // `self.arena` or borrows an AST-arena `original_name`, both
+                // `self.arena` (or a bundler worker arena) or borrows an AST-arena `original_name`, both
                 // of which outlive `self`.
                 return renamed.slice();
             }
@@ -829,79 +944,212 @@ impl NumberRenamer {
     }
 }
 
-#[derive(Default)]
-pub struct NumberScope {
-    /// Backreference to the enclosing `NumberScope`. The parent is either
-    /// `NumberRenamer::root` or a pool slot allocated earlier in the same
-    /// `assign_names_recursive_with_number_scope` call, both of which strictly
-    /// outlive this child (children are `put()` back before their parent), so
-    /// `ParentRef::get()` is sound without per-site `unsafe`.
-    pub(crate) parent: Option<bun_ptr::ParentRef<NumberScope, bun_ptr::Mut>>,
-    pub(crate) name_counts: NameCountMap,
+/// Names the nested scopes of one file once every top-level symbol of the
+/// chunk is named (`NumberRenamer`), which it only reads; files can run in
+/// parallel. `into_names` hands the result back for `NumberRenamer::absorb`.
+pub struct NestedRenamer<'r> {
+    root: &'r NumberRenamer,
+    uses: &'r ScopeUses<'r>,
+    source_index: u32,
+    /// This file's names; starts as the top-level ones.
+    names: Vec<NameStr>,
+    /// Name id (the root's ids, then `local_ids`) -> index in `slots` of the
+    /// innermost enclosing scope's slot for that name; ids not present read
+    /// the root's slot. Slots of scopes already left are dropped, so a present
+    /// slot is always an enclosing one.
+    overlay: OverlayMap,
+    /// Ids `root.slots.len()..next_local_id` are this file's `local_ids`.
+    next_local_id: u32,
+    slots: Vec<NameSlot>,
+    /// Names first seen in this file's nested scopes.
+    local_ids: NameIds,
+    /// `(id, 0)` for an id the scope added to `overlay`, else `(id, 1 + the
+    /// index it mapped to)`; restored on scope exit.
+    undo: Vec<(u32, u32)>,
+    /// The AST scope being named and its serial number (from `ROOT_SCOPE + 1`).
+    scope: u32,
+    next_scope: u32,
+    ast_scope: *const js_ast::Scope,
+    arena: &'r bun_alloc::Arena,
 }
 
-enum NameUse {
-    Unused,
-    SameScope(u32),
-    Used,
+pub struct NestedNames {
+    source_index: u32,
+    names: Vec<NameStr>,
 }
 
-impl NameUse {
-    fn find(this: &NumberScope, name: &[u8]) -> NameUse {
-        // This version doesn't allocate
-        debug_assert!(js_lexer::is_identifier(name));
-
-        // Hash `name` once and probe each scope in the parent chain with the
-        // same precomputed hash via hashbrown's raw-entry API; the previous
-        // `get_adapted`/`contains_adapted` calls re-hashed `name` per scope.
-        let hash = {
-            use core::hash::BuildHasher;
-
-            <bun_wyhash::BuildHasher as Default>::default().hash_one(name)
-        };
-
-        if let Some((_, &count)) = this
-            .name_counts
-            .raw_entry()
-            .from_hash(hash, |k| k.as_bytes() == name)
-        {
-            return NameUse::SameScope(count);
+impl<'r> NameScopes for NestedRenamer<'r> {
+    fn keep_name(&self, name: &[u8]) -> NameStr {
+        NameStr::new(self.arena.alloc_slice_copy(name))
+    }
+    fn scope(&self) -> u32 {
+        self.scope
+    }
+    fn id_of(&self, name: &[u8]) -> Option<u32> {
+        self.root
+            .ids
+            .get(name)
+            .or_else(|| self.local_ids.get(name))
+            .copied()
+    }
+    fn intern(&mut self, name: NameStr) -> u32 {
+        debug_assert!(self.root.ids.get(name.slice()).is_none());
+        let (id, new) = intern_into(&mut self.local_ids, self.next_local_id, name);
+        if new {
+            self.next_local_id += 1;
         }
-
-        let mut s: Option<bun_ptr::ParentRef<NumberScope, bun_ptr::Mut>> = this.parent;
-
-        while let Some(scope) = s {
-            // `ParentRef<NumberScope>: Deref` — safe backref deref under the
-            // parent-outlives-child invariant documented on the field.
-            if scope
-                .name_counts
-                .raw_entry()
-                .from_hash(hash, |k| k.as_bytes() == name)
-                .is_some()
-            {
-                return NameUse::Used;
+        id
+    }
+    fn slot(&self, id: u32) -> NameSlot {
+        match self.overlay.get(&id) {
+            None => self
+                .root
+                .slots
+                .get(id as usize)
+                .copied()
+                .unwrap_or(NameSlot::EMPTY),
+            Some(&local) => self.slots[local as usize],
+        }
+    }
+    fn set_slot(&mut self, id: u32, slot: NameSlot) {
+        debug_assert_eq!(slot.scope, self.scope);
+        match self.overlay.entry(id) {
+            bun_collections::hashbrown::hash_map::Entry::Occupied(mut entry) => {
+                let local = *entry.get();
+                if self.slots[local as usize].scope == self.scope {
+                    self.slots[local as usize] = slot;
+                } else {
+                    self.undo.push((id, local + 1));
+                    *entry.get_mut() = self.slots.len() as u32;
+                    self.slots.push(slot);
+                }
             }
-            s = scope.parent;
+            bun_collections::hashbrown::hash_map::Entry::Vacant(entry) => {
+                self.undo.push((id, 0));
+                entry.insert(self.slots.len() as u32);
+                self.slots.push(slot);
+            }
         }
-
-        NameUse::Unused
+    }
+    fn sees(&self, owner: Ref) -> bool {
+        // SAFETY: `ast_scope` is the live scope `assign_names_recursive` is
+        // visiting.
+        self.uses.sees(owner, unsafe { &*self.ast_scope })
     }
 }
 
-pub(crate) enum UnusedName {
-    NoCollision,
-    Renamed(NameStr),
+impl<'r> NestedRenamer<'r> {
+    /// `arena`: where made-up names go; must outlive printing (the bundler
+    /// passes the worker thread's arena).
+    pub fn new(
+        root: &'r NumberRenamer,
+        uses: &'r ScopeUses<'r>,
+        source_index: u32,
+        arena: &'r bun_alloc::Arena,
+    ) -> Self {
+        let symbol_count = root.symbols.symbols_for_source[source_index as usize].len();
+        let mut names = Vec::with_capacity(symbol_count);
+        names.extend_from_slice(&root.names[source_index as usize]);
+        names.resize(symbol_count, name_str_empty());
+        NestedRenamer {
+            root,
+            uses,
+            source_index,
+            names,
+            overlay: OverlayMap::default(),
+            next_local_id: root.slots.len() as u32,
+            slots: Vec::new(),
+            local_ids: NameIds::default(),
+            undo: Vec::new(),
+            scope: ROOT_SCOPE,
+            next_scope: ROOT_SCOPE + 1,
+            ast_scope: core::ptr::null(),
+            arena,
+        }
+    }
+
+    pub fn into_names(self) -> NestedNames {
+        NestedNames {
+            source_index: self.source_index,
+            names: self.names,
+        }
+    }
+
+    fn assign_name(&mut self, input_ref: Ref) {
+        let symbols = &self.root.symbols;
+        let ref_ = symbols.follow(input_ref);
+        // A link out of the file leads to a top-level symbol, already named.
+        if ref_.source_index() != self.source_index {
+            debug_assert!(!self.root.name_for_symbol(ref_).is_empty());
+            return;
+        }
+        // Don't rename the same symbol more than once
+        if self.names[ref_.inner_index() as usize].len() > 0 {
+            return;
+        }
+        // Don't rename unbound symbols, symbols marked as reserved names, labels, or private names
+        let symbol: &Symbol = symbols.get_const(ref_).unwrap();
+        if symbol.slot_namespace() != SlotNamespace::Default {
+            return;
+        }
+        let original_name = symbol.original_name;
+        let name = self
+            .find_unused_name(original_name, ref_)
+            .unwrap_or(original_name);
+        self.names[ref_.inner_index() as usize] = name;
+    }
+
+    /// Names `scope` and everything below it.
+    pub fn assign_names_recursive(&mut self, scope: &js_ast::Scope, sorted: &mut Vec<u32>) {
+        let parent = (self.scope, self.ast_scope);
+        let undo_mark = self.undo.len();
+        let slots_mark = self.slots.len();
+        self.scope = self.next_scope;
+        self.next_scope += 1;
+        self.ast_scope = scope;
+
+        sorted.clear();
+        sorted.extend(scope.members.values().map(|value_ref| {
+            debug_assert!(!value_ref.ref_.is_source_contents_slice());
+            value_ref.ref_.inner_index()
+        }));
+        debug_assert_eq!(sorted.len(), scope.members.count());
+        sorted.sort_unstable();
+        for i in 0..sorted.len() {
+            self.assign_name(Ref::new(
+                sorted[i],
+                self.source_index,
+                bun_ast::RefTag::Symbol,
+            ));
+        }
+        for ref_ in scope.generated.slice() {
+            self.assign_name(*ref_);
+        }
+
+        for child in scope.children.slice() {
+            self.assign_names_recursive(child, sorted);
+        }
+
+        for &(id, prev) in self.undo[undo_mark..].iter().rev() {
+            match prev {
+                0 => {
+                    self.overlay.remove(&id);
+                }
+                local => {
+                    self.overlay.insert(id, local - 1);
+                }
+            }
+        }
+        self.undo.truncate(undo_mark);
+        self.slots.truncate(slots_mark);
+        (self.scope, self.ast_scope) = parent;
+    }
 }
 
 /// Fast-path for `MutableString::ensure_valid_identifier`: returns `true` iff
-/// `s` is a non-empty ASCII identifier (`[A-Za-z_$][A-Za-z0-9_$]*`). This is
-/// a sufficient condition for `MutableString::ensure_valid_identifier` to
-/// return the input unchanged (modulo the strict-mode-reserved-word remap,
-/// handled by the caller). That function currently always allocates
-/// a `Box<[u8]>` even on the borrow path, so hoisting
-/// this check into the renamer keeps zero-alloc behaviour for the
-/// overwhelmingly common case (`symbol.original_name` is parser-produced and
-/// almost always satisfies this).
+/// `s` is a non-empty ASCII identifier (`[A-Za-z_$][A-Za-z0-9_$]*`), for which
+/// that function returns the input unchanged (modulo the strict-mode reserved
+/// word remap, handled by the caller) but still allocates.
 #[inline]
 fn is_simple_ascii_identifier(s: &[u8]) -> bool {
     let Some((&first, rest)) = s.split_first() else {
@@ -918,143 +1166,169 @@ fn is_simple_ascii_identifier(s: &[u8]) -> bool {
     true
 }
 
-impl NumberScope {
-    /// Caller must use an arena allocator
-    pub(crate) fn find_unused_name(&mut self, arena: &Bump, input_name: &[u8]) -> UnusedName {
-        // `MutableString::ensure_valid_identifier` always heap-allocates
-        // (Box<[u8]>), even when the input is already a valid ASCII
-        // identifier. Skip the call entirely for the common case so this
-        // stays alloc-free.
-        // The strict-mode-reserved-word remap (`let` → `_let`, etc.) is the
-        // only transform that fires for an otherwise-valid ASCII name, so
-        // gate on that too and fall through to the full normalizer when it
-        // would apply.
-        let owned_name;
-        let normalized;
-        let mut name: &[u8] = if is_simple_ascii_identifier(input_name)
-            && !bun_ast::lexer_tables::is_strict_mode_reserved_word(input_name)
-        {
-            normalized = false;
-            input_name
-        } else {
-            normalized = true;
-            owned_name = MutableString::ensure_valid_identifier(input_name).expect("unreachable");
-            &owned_name
+/// One file's `Ast::scope_uses`, indexed on first use so the number renamer
+/// can ask whether a nested binding would capture a reference to an enclosing
+/// binding of the same name.
+pub struct ScopeUses<'a> {
+    source_index: u32,
+    list: &'a js_ast::ast_result::ScopeUseList,
+    parts: &'a [js_ast::Part],
+    parts_live: &'a bun_collections::AutoBitSet,
+    symbols: &'a symbol::Map,
+    index: core::cell::OnceCell<ScopeUseIndex>,
+}
+
+/// Scopes are numbered in pre-order (`Scope::visit_span`), so a scope
+/// together with everything inside it is the span `[first, last]`.
+#[derive(Default)]
+struct ScopeUseIndex {
+    /// `scope_indices[offsets[i]..offsets[i + 1]]`: the scopes that reference
+    /// this file's symbol `i`, ascending.
+    offsets: Vec<u32>,
+    scope_indices: Vec<u32>,
+    /// Printed symbols the linker added uses of: no scope on record, so they
+    /// may be printed anywhere in the file.
+    everywhere: HashMap<Ref, ()>,
+    /// `(printed symbol, this file's symbol that prints as it)` where the two
+    /// differ (linked import items, hoisted duplicates, namespace members).
+    /// Sorted.
+    aliases: Vec<(u64, u32)>,
+}
+
+impl<'a> ScopeUses<'a> {
+    pub fn new(
+        source_index: u32,
+        list: &'a js_ast::ast_result::ScopeUseList,
+        parts: &'a [js_ast::Part],
+        parts_live: &'a bun_collections::AutoBitSet,
+        symbols: &'a symbol::Map,
+    ) -> Self {
+        ScopeUses {
+            source_index,
+            list,
+            parts,
+            parts_live,
+            symbols,
+            index: core::cell::OnceCell::new(),
+        }
+    }
+
+    /// Whether a binding in `scope` would capture a reference to `symbol`,
+    /// i.e. whether `symbol` is referenced in `scope` or anywhere inside it.
+    /// A function body or catch block also sees its parameter scope, which it
+    /// cannot redeclare.
+    pub fn sees(&self, symbol: Ref, scope: &js_ast::Scope) -> bool {
+        let scope = match (scope.kind, scope.parent.as_deref()) {
+            (js_ast::scope::Kind::FunctionBody, Some(parent)) => parent,
+            (js_ast::scope::Kind::Block, Some(parent))
+                if parent.kind == js_ast::scope::Kind::CatchBinding =>
+            {
+                parent
+            }
+            _ => scope,
         };
-        // Hoisted from inside the match arm so `name` (which may borrow
-        // it) stays valid through the trailing dupe.
-        let mut mutable_name = MutableString::init_empty();
-        // True iff a "name2"/"name3" suffix was appended below (i.e. `name` was
-        // reassigned to `mutable_name.slice()`). On the hot ASCII path
-        // `!collided && !normalized` implies `name == input_name` so the tail
-        // check skips the byte compare; the rare `normalized` path still
-        // compares (see the comment at the tail).
-        let mut collided = false;
+        let Some(span) = scope.visit_span() else {
+            return true;
+        };
+        if !self.list.tracked {
+            return true;
+        }
+        let index = self.index.get_or_init(|| ScopeUseIndex::build(self));
+        if index.everywhere.contains_key(&symbol) {
+            return true;
+        }
+        if symbol.source_index() == self.source_index
+            && self.sees_own(index, symbol.inner_index(), span)
+        {
+            return true;
+        }
+        let key = symbol.to_raw_bits();
+        let i = index.aliases.partition_point(|&(printed, _)| printed < key);
+        index.aliases[i..]
+            .iter()
+            .take_while(|&&(printed, _)| printed == key)
+            .any(|&(_, own)| self.sees_own(index, own, span))
+    }
 
-        match NameUse::find(self, name) {
-            NameUse::Unused => {}
-            use_ => {
-                collided = true;
-                let mut tries: u32 = if matches!(use_, NameUse::Used) {
-                    1
-                } else {
-                    // To avoid O(n^2) behavior, the number must start off being the number
-                    // that we used last time there was a collision with this name. Otherwise
-                    // if there are many collisions with the same name, each name collision
-                    // would have to increment the counter past all previous name collisions
-                    // which is a O(n^2) time algorithm. Only do this if this symbol comes
-                    // from the same scope as the previous one since sibling scopes can reuse
-                    // the same name without problems.
-                    match use_ {
-                        NameUse::SameScope(n) => n,
-                        _ => unreachable!(),
-                    }
-                };
+    /// For a symbol of this file, by inner index.
+    fn sees_own(&self, index: &ScopeUseIndex, symbol: u32, (first, last): (u32, u32)) -> bool {
+        let (lo, hi) = (
+            index.offsets[symbol as usize],
+            index.offsets[symbol as usize + 1],
+        );
+        let scopes = &index.scope_indices[lo as usize..hi as usize];
+        let i = scopes.partition_point(|&at| at < first);
+        if scopes.get(i).is_some_and(|&at| at <= last) {
+            return true;
+        }
+        let spans = self.list.spans.as_slice();
+        let i = spans.partition_point(|s| s.symbol < symbol);
+        spans[i..]
+            .iter()
+            .take_while(|s| s.symbol == symbol)
+            .any(|s| s.first <= last && first <= s.last)
+    }
+}
 
-                let prefix = name;
+impl ScopeUseIndex {
+    fn build(file: &ScopeUses<'_>) -> ScopeUseIndex {
+        let mut index = ScopeUseIndex::default();
 
-                tries += 1;
-
-                mutable_name
-                    .grow_if_needed(prefix.len() + 4)
-                    .expect("unreachable");
-                mutable_name.append_slice(prefix).expect("unreachable");
-                mutable_name.append_int(tries as u64).expect("unreachable");
-
-                match NameUse::find(self, mutable_name.slice()) {
-                    NameUse::Unused => {
-                        if matches!(use_, NameUse::SameScope(_)) {
-                            // `prefix` may borrow the local `owned_name`; if a
-                            // new entry is needed, dupe into the renamer arena
-                            // so the `NameKey` outlives this function.
-                            *self.entry_or_arena_dup(prefix, arena) = tries;
-                        }
-                        name = mutable_name.slice();
-                    }
-                    cur_use => loop {
-                        mutable_name.reset_to(prefix.len());
-                        mutable_name.append_int(tries as u64).expect("unreachable");
-
-                        tries += 1;
-
-                        match NameUse::find(self, mutable_name.slice()) {
-                            NameUse::Unused => {
-                                if matches!(cur_use, NameUse::SameScope(_)) {
-                                    *self.entry_or_arena_dup(prefix, arena) = tries;
-                                }
-
-                                name = mutable_name.slice();
-                                break;
-                            }
-                            _ => {}
-                        }
-                    },
+        for (part_index, part) in file.parts.iter().enumerate() {
+            if !file.parts_live.is_set(part_index) {
+                continue;
+            }
+            for (ref_, use_) in part
+                .symbol_uses
+                .keys()
+                .iter()
+                .zip(part.symbol_uses.values())
+            {
+                if use_.has_unscoped() {
+                    index
+                        .everywhere
+                        .insert(file.symbols.follow_printed(*ref_), ());
                 }
             }
         }
 
-        // Each name starts off with a count of 1 so that the first collision with
-        // "name" is called "name2".
-        //
-        // `name` may still equal `input_name` bytewise even when `normalized`
-        // is true: `ensure_valid_identifier` returns the input bytes unchanged
-        // for any already-valid identifier (e.g. `Café`, `π`), since only
-        // `is_simple_ascii_identifier` is ASCII-restricted. The hot ASCII path
-        // skips the byte compare via `!normalized`; the rare non-ASCII path
-        // falls back to it.
-        if !collided && (!normalized || strings::eql_long(name, input_name, true)) {
-            // `input_name` is `Symbol::original_name.slice()` — an AST-arena
-            // slice that outlives the renamer (see [`NameKey`] doc). No copy.
-            let prev = self
-                .name_counts
-                .insert(NameKey(NameStr::new(input_name)), 1);
-            debug_assert!(prev.is_none(), "put_no_clobber: key already present");
-            return UnusedName::NoCollision;
-        }
-
-        let duped: &[u8] = arena.alloc_slice_copy(name);
-        let name: NameStr = bun_ast::StoreStr::new(duped);
-
-        // `duped` is bump-allocated from the renamer's `arena: Bump`, which
-        // outlives every `NumberScope` (see [`NameKey`] doc). No copy.
-        let prev = self.name_counts.insert(NameKey(name), 1);
-        debug_assert!(prev.is_none(), "put_no_clobber: key already present");
-        UnusedName::Renamed(name)
-    }
-
-    /// `name_counts.entry(prefix).or_insert(0)` with a vacant-only arena dup:
-    /// when the key is already present we mutate it in place; when it is not,
-    /// the bytes are bump-allocated into `arena` so the resulting [`NameKey`]
-    /// outlives the renamer.
-    fn entry_or_arena_dup(&mut self, prefix: &[u8], arena: &Bump) -> &mut u32 {
-        use bun_collections::hashbrown::hash_map::RawEntryMut;
-        match self.name_counts.raw_entry_mut().from_key(prefix) {
-            RawEntryMut::Occupied(o) => o.into_mut(),
-            RawEntryMut::Vacant(v) => {
-                let duped = arena.alloc_slice_copy(prefix);
-                v.insert(NameKey(NameStr::new(duped)), 0).1
+        let file_symbols = &file.symbols.symbols_for_source[file.source_index as usize];
+        for (inner, symbol) in file_symbols.iter().enumerate() {
+            if !symbol.has_link() && symbol.namespace_alias.is_none() {
+                continue;
+            }
+            let own = Ref::new(inner as u32, file.source_index, bun_ast::RefTag::Symbol);
+            let printed = file.symbols.follow_printed(own);
+            if printed != own {
+                index.aliases.push((printed.to_raw_bits(), inner as u32));
             }
         }
+        index.aliases.sort_unstable();
+
+        // Bucket the points by symbol (counting sort), then order each
+        // symbol's scopes.
+        let points = file.list.points.as_slice();
+        // `offsets[i]` = end of bucket `i`; filling each bucket from its end
+        // turns it into the start.
+        let mut offsets = vec![0u32; file_symbols.len() + 1];
+        for point in points {
+            offsets[point.symbol as usize] += 1;
+        }
+        for i in 1..offsets.len() {
+            offsets[i] += offsets[i - 1];
+        }
+        let mut scope_indices = vec![0u32; points.len()];
+        for point in points.iter().rev() {
+            let slot = &mut offsets[point.symbol as usize];
+            *slot -= 1;
+            scope_indices[*slot as usize] = point.scope;
+        }
+        for symbol in 0..file_symbols.len() {
+            scope_indices[offsets[symbol] as usize..offsets[symbol + 1] as usize].sort_unstable();
+        }
+        index.offsets = offsets;
+        index.scope_indices = scope_indices;
+        index
     }
 }
 

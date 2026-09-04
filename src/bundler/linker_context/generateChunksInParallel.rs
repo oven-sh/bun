@@ -494,12 +494,23 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                 let Some(template) = template else { continue };
 
                 let mut text: Vec<u8> = Vec::new();
-                write!(
-                    &mut text,
-                    "{} naming is '{}', consider adding '[hash]' to make filenames unique",
-                    name,
-                    bstr::BStr::new(template),
-                )?;
+                match crate::options::path_template_hash_len(template) {
+                    None => write!(
+                        &mut text,
+                        "{} naming is '{}', consider adding '[hash]' to make filenames unique",
+                        name,
+                        bstr::BStr::new(template),
+                    )?,
+                    Some(len) if len < bun_core::fmt::ContentHash::MAX_LEN => write!(
+                        &mut text,
+                        "{} naming is '{}'; if these inputs differ, their hashes share their first {} characters, use '[hash{}]' for more",
+                        name,
+                        bstr::BStr::new(template),
+                        len,
+                        bun_core::fmt::ContentHash::MAX_LEN,
+                    )?,
+                    Some(_) => write!(&mut text, "{} naming is '{}'", name, bstr::BStr::new(template))?,
+                }
                 c.log_mut().add_msg(bun_ast::Msg {
                     kind: bun_ast::Kind::Note,
                     data: bun_ast::Data {

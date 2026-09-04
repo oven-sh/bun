@@ -2136,7 +2136,7 @@ fn placeholder_field(name: &[u8]) -> Option<(PlaceholderField, usize)> {
 }
 
 /// The width of the first `[hash]`/`[hashN]` placeholder in `data`, if any.
-fn path_template_hash_len(data: &[u8]) -> Option<usize> {
+pub(crate) fn path_template_hash_len(data: &[u8]) -> Option<usize> {
     let mut remain = data;
     while let Some(open) = strings::index_of(remain, b"[hash") {
         remain = &remain[open + 1..];

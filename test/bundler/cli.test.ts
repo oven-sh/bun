@@ -828,6 +828,27 @@ test.concurrent("bun build names every input that maps to a shared output path",
   expect(exitCode).toBe(1);
 });
 
+test.concurrent("bun build suggests a wider [hashN] when hashed names collide", async () => {
+  const files: Record<string, string> = {};
+  for (let i = 0; i < 33; i++) files[`e${i}.ts`] = `export const v = ${i};\n`;
+  using dir = tempDir("bundle-hash-collision", files);
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "build", ...Object.keys(files), "--outdir=dist", "--entry-naming=[hash1].js"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toContain("Multiple files share the same output path");
+  expect(stderr).toContain(
+    "note: entry naming is './[hash1].js'; if these inputs differ, their hashes share their first 1 characters, use '[hash13]' for more",
+  );
+  expect(stdout).toBe("");
+  expect(exitCode).toBe(1);
+});
+
 describe("CLI argument error messages", () => {
   test("--format with an unrecognized value echoes the value back", async () => {
     using dir = tempDir("build-format-err", { "in.js": "console.log(1)" });

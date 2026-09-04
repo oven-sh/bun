@@ -1736,18 +1736,30 @@ Most of the time, an explicit try/catch is not needed, as Bun prints uncaught ex
 Each item in `error.errors` is an instance of `BuildMessage` or `ResolveMessage` (subclasses of `Error`), containing detailed information for each error.
 
 ```ts title="build.ts" icon="/icons/typescript.svg"
-class BuildMessage {
-  name: string;
-  position?: Position;
+class BuildMessage extends Error {
+  name: "BuildMessage";
+  position: Position | null;
   message: string;
   level: "error" | "warning" | "info" | "debug" | "verbose";
+  notes: BuildMessage[]; // related locations, each with level "note"
+  line: number; // zero-based; position.line is one-based
+  column: number; // zero-based; position.column is one-based
+  toJSON(): Pick<BuildMessage, "name" | "position" | "message" | "level">;
 }
 
-class ResolveMessage extends BuildMessage {
+class ResolveMessage extends Error {
+  name: "ResolveMessage";
+  position: Position | null;
+  message: string;
+  level: "error" | "warning" | "info" | "debug" | "verbose";
   code: string;
+  requireStack: string[] | undefined; // only set when a require() failed
   referrer: string;
   specifier: string;
   importKind: ImportKind;
+  line: number; // zero-based; position.line is one-based
+  column: number; // zero-based; position.column is one-based
+  toJSON(): Pick<ResolveMessage, "name" | "position" | "message" | "level" | "specifier" | "importKind" | "referrer">;
 }
 ```
 
@@ -1954,11 +1966,23 @@ interface BuildOutput {
   logs: Array<BuildMessage | ResolveMessage>;
 }
 
-declare class ResolveMessage {
+interface Position {
+  lineText: string;
+  file: string;
+  namespace: string;
+  line: number; // one-based
+  column: number; // one-based
+  length: number;
+  offset: number;
+}
+
+declare class ResolveMessage extends Error {
   readonly name: "ResolveMessage";
   readonly position: Position | null;
   readonly code: string;
   readonly message: string;
+  stack: string; // "ResolveMessage: <message>", no stack frames
+  readonly requireStack: string[] | undefined; // only set when a require() failed
   readonly referrer: string;
   readonly specifier: string;
   readonly importKind:
@@ -1973,8 +1997,24 @@ declare class ResolveMessage {
     | "url"
     | "internal";
   readonly level: "error" | "warning" | "info" | "debug" | "verbose";
+  readonly line: number; // zero-based, 0 without a position
+  readonly column: number; // zero-based, 0 without a position
 
-  toString(): string;
+  toString(): string; // "ResolveMessage: <message>"
+  toJSON(): Pick<ResolveMessage, "name" | "position" | "message" | "level" | "specifier" | "importKind" | "referrer">;
+}
+
+declare class BuildMessage extends Error {
+  readonly name: "BuildMessage";
+  readonly position: Position | null;
+  readonly message: string;
+  readonly level: "error" | "warning" | "info" | "debug" | "verbose";
+  readonly notes: BuildMessage[]; // related locations, each with level "note"
+  readonly line: number; // zero-based, 0 without a position
+  readonly column: number; // zero-based, 0 without a position
+
+  toString(): string; // "BuildMessage: <message>"
+  toJSON(): Pick<BuildMessage, "name" | "position" | "message" | "level">;
 }
 ```
 

@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { once } from "events";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, isDebug, tempDir } from "harness";
 import path from "path";
 import wt from "worker_threads";
 
@@ -361,6 +361,29 @@ describe("web worker", () => {
     });
   });
 
+  describe("open event", () => {
+    // 'open' is posted before the entry runs, so it precedes anything the
+    // entry's top-level code posts (node:worker_threads turns it into 'online').
+    test("precedes the worker's first message", async () => {
+      const worker = new Worker("data:text/javascript,postMessage('ready')");
+      const order: string[] = [];
+      worker.addEventListener("open", () => order.push("open"));
+      worker.addEventListener("message", e => order.push("message:" + e.data));
+      await once(worker, "close");
+      expect(order).toEqual(["open", "message:ready"]);
+    });
+
+    test("is fired for a worker whose entry does not resolve", async () => {
+      using dir = tempDir("worker-open-missing-entry", {});
+      const worker = new Worker(path.join(String(dir), "missing.js"));
+      const order: string[] = [];
+      worker.addEventListener("open", () => order.push("open"));
+      worker.addEventListener("error", () => order.push("error"));
+      await once(worker, "close");
+      expect(order).toEqual(["open", "error"]);
+    });
+  });
+
   describe("error event", () => {
     test("is fired with a string of the error", async () => {
       const worker = new Worker("data:text/javascript,throw 5");
@@ -457,10 +480,17 @@ describe("web worker", () => {
         (function burst() { for (let i = 0; i < 2000; i++) { p.n++; postMessage(p) } setImmediate(burst) })()`;
       const w = new Worker(URL.createObjectURL(new Blob([src])));
       let received = 0;
-      w.onmessage = () => received++;
+      const { promise: first, resolve: gotFirst } = Promise.withResolvers<void>();
+      w.onmessage = () => {
+        received++;
+        gotFirst();
+      };
+      // Worker startup is slow under debug/ASAN: count timer turns only once the flood has begun.
+      await first;
+      const before = received;
       // Three timer turns while the flood is running is the property; not the timing.
       for (let i = 0; i < 3; i++) await new Promise<void>(r => setTimeout(r, 10));
-      expect(received).toBeGreaterThan(0);
+      expect(received).toBeGreaterThan(before);
       w.terminate();
       await once(w, "close");
     });
@@ -507,29 +537,36 @@ describe("web worker", () => {
     // A preload's un-awaited import() finishing while the entry is still
     // fetching is not "the entry started evaluating": message delivery opens
     // only once the entry's own graph runs (and installs its handler).
-    test("preload with an un-awaited import() does not open message delivery before the entry runs", async () => {
-      using dir = tempDir("worker-preload-dynamic-import", {
-        "side.js": `globalThis.sideRan = true;`,
-        "preload.js": `import("./side.js");`,
-        // big enough that the entry graph is still transpiling when side.js evaluates
-        "big.js": Array.from(
-          { length: 4000 },
-          (_, i) => `export function f${i}(x) { return x * ${i} + ${i % 7}; }`,
-        ).join("\n"),
-        "worker.js": `import "./big.js";
+    // Three transpiles of big.js take about 2s each under debug/ASAN.
+    test(
+      "preload with an un-awaited import() does not open message delivery before the entry runs",
+      async () => {
+        using dir = tempDir("worker-preload-dynamic-import", {
+          "side.js": `globalThis.sideRan = true;`,
+          "preload.js": `import("./side.js");`,
+          // big enough that the entry graph is still transpiling when side.js evaluates
+          "big.js": Array.from(
+            { length: 4000 },
+            (_, i) => `export function f${i}(x) { return x * ${i} + ${i % 7}; }`,
+          ).join("\n"),
+          "worker.js": `import "./big.js";
           const got = [];
           self.onmessage = e => { got.push(e.data); if (e.data === "last") postMessage(got); };`,
-      });
-      for (let i = 0; i < 3; i++) {
-        const w = new Worker(path.join(String(dir), "worker.js"), { preload: [path.join(String(dir), "preload.js")] });
-        w.postMessage("first");
-        w.postMessage("second");
-        w.postMessage("last");
-        const [ev] = await once(w, "message");
-        expect(ev.data).toEqual(["first", "second", "last"]);
-        w.terminate();
-      }
-    });
+        });
+        for (let i = 0; i < 3; i++) {
+          const w = new Worker(path.join(String(dir), "worker.js"), {
+            preload: [path.join(String(dir), "preload.js")],
+          });
+          w.postMessage("first");
+          w.postMessage("second");
+          w.postMessage("last");
+          const [ev] = await once(w, "message");
+          expect(ev.data).toEqual(["first", "second", "last"]);
+          w.terminate();
+        }
+      },
+      isDebug ? 30_000 : 5_000,
+    );
 
     // Everything a worker posted before it exited arrives before 'close'.
     test("messages posted right before a natural exit are all delivered before close", async () => {

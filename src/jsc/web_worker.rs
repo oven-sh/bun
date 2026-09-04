@@ -15,7 +15,7 @@
 //!
 //! Thread lifecycle (`thread_main`):
 //!   1. `start_vm()`  — arena, env snapshot, `VirtualMachine`, publish its handle (`vm_handle`).
-//!   2. `spin()`      — load the entry point, `workerGlobalScopeStarted`, run the
+//!   2. `spin()`      — 'online', load the entry point, `workerGlobalScopeStarted`, run the
 //!                      event loop until it drains or termination is requested,
 //!                      `beforeExit` on a natural drain.
 //!   3. `shutdown()`  — 'exit' handlers, stop phase, join own children, JSC VM
@@ -155,6 +155,7 @@ pub enum Status {
 // even when C++ mutates through it. `proxy` is the opaque C++ `WorkerMessagingProxy*`
 // round-tripped from `create()`; it is only ever handed back to C++.
 unsafe extern "C" {
+    safe fn WebWorker__workerThreadStarted(proxy: *mut c_void);
     safe fn WebWorker__workerGlobalScopeStarted(proxy: *mut c_void, global: &JSGlobalObject);
     safe fn WebWorker__workerGlobalScopeDestroyed(
         proxy: *mut c_void,
@@ -766,7 +767,7 @@ impl WebWorker {
         Ok(vm)
     }
 
-    /// Phase 2: load the entry point, dispatch 'online', run the event loop.
+    /// Phase 2: post 'online', load the entry point, run the event loop.
     /// Runs inside `holdAPILock`. Always ends by calling `shutdown()`.
     ///
     /// Returns `()` so the thread can unwind-free fall out of the
@@ -793,6 +794,9 @@ impl WebWorker {
             self.flush_logs(vm);
             return self.shutdown();
         }
+
+        // 'online' before the entry runs, as in node: it precedes anything the entry posts.
+        WebWorker__workerThreadStarted(self.messaging_proxy);
 
         // `preloads` is owned by `self` (heap `WebWorker` outlives the VM).
         // `preload: Vec<Box<[u8]>>` — clone the boxes (cheap, ≤handful).
@@ -920,10 +924,7 @@ impl WebWorker {
 
         self.flush_logs(vm);
         log!("[{}] event loop start", self.execution_context_id);
-        // Pending -> Running: 'online' is posted to the parent and messages/tasks
-        // that arrived while the entry point was loading are delivered. After the
-        // entry point on purpose, so the parent observes 'online' only once the
-        // worker's top-level code has run (up to its first top-level await).
+        // Pending -> Running: messages and tasks queued while the entry loaded are delivered.
         WebWorker__workerGlobalScopeStarted(self.messaging_proxy, vm.global());
         self.set_status(Status::Running);
 

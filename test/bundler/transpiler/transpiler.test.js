@@ -1597,6 +1597,65 @@ function foo() {}
       // err("async <const const T extends X>() => {}", "Unexpected const");
     });
 
+    it("computed keys in destructuring patterns of function types and method signatures", () => {
+      const exp = ts.expectPrinted_;
+      const err = ts.expectParseError;
+
+      // Function and constructor types
+      exp("let x: ({ [k]: a }: T) => void = Foo", "let x = Foo;\n");
+      exp("let x: new ({ [k]: a }: T) => void = Foo", "let x = Foo;\n");
+      exp("let x: abstract new ({ [k]: a }: T) => void = Foo", "let x = Foo;\n");
+      exp("let x: <T>({ [k]: a }: T) => void = Foo", "let x = Foo;\n");
+      exp("type F = ({ [k]: a }: T) => void", "");
+      exp("function f(): ({ [k]: a }: T) => void {}", "function f() {}");
+      exp("let x = y as ({ [k]: a }: T) => void", "let x = y;\n");
+      exp("let x: Array<({ [k]: a }: T) => void> = []", "let x = [];\n");
+
+      // Method, call and construct signatures
+      exp("interface I { m({ [k]: a }: T): void }", "");
+      exp("interface I { ({ [k]: a }: T): void }", "");
+      exp("interface I { new ({ [k]: a }: T): I }", "");
+      exp("let x: { m({ [k]: a }: T): void } = Foo", "let x = Foo;\n");
+      exp("let x: { [m]({ [k]: a }: T): void } = Foo", "let x = Foo;\n");
+
+      // The key takes the same forms as a computed key in a type literal
+      exp("let x: ({ [a.b.c]: v }: T) => void = Foo", "let x = Foo;\n");
+      exp("let x: ({ [Symbol.iterator]: v }: T) => void = Foo", "let x = Foo;\n");
+      exp("let x: ({ ['k']: v }: T) => void = Foo", "let x = Foo;\n");
+      exp("let x: ({ [1]: v, [-1]: w, [1n]: z }: T) => void = Foo", "let x = Foo;\n");
+      exp("let x: ({ [`${k}`]: v }: T) => void = Foo", "let x = Foo;\n");
+      exp("let x: ({ [keys[0]]: v }: T) => void = Foo", "let x = Foo;\n");
+
+      // Alongside the other member forms, nested, optional and rest parameters
+      exp("let x: ({ [k]: a, b, c: d, 1: e, 's': f, if: g, ...h }: T) => void = Foo", "let x = Foo;\n");
+      exp("let x: ({ [k]: { a, [j]: [b, ...c] } }: T) => void = Foo", "let x = Foo;\n");
+      exp("let x: ([{ [k]: a }]: T) => void = Foo", "let x = Foo;\n");
+      exp("let x: ({ [k]: a }, { [j]: b }?: T, ...[{ [i]: c }]: T[]) => void = Foo", "let x = Foo;\n");
+      exp("let x: ({ [k]: a }) => void = Foo", "let x = Foo;\n");
+
+      // A parenthesized type literal with a computed key or an index signature is still a type
+      exp("let x: ({ [k]: a }) = Foo", "let x = Foo;\n");
+      exp("let x: ({ [k]: a })[] = Foo", "let x = Foo;\n");
+      exp("let x: ({ [k: string]: a }) = Foo", "let x = Foo;\n");
+
+      // In a return type, "({ [k]: v }) => c" is a function type, exactly like
+      // "({ a: v }) => c" already is. It is not a parenthesized type literal
+      // followed by the arrow body.
+      exp("y = (b): ({ a: v }) => c => e", "y = (b) => e;\n");
+      exp("y = (b): ({ [k]: v }) => c => e", "y = (b) => e;\n");
+      exp("y = (b): (({ [k]: v }) => c) => e", "y = (b) => e;\n");
+      err("y = (b): ({ a: v }) => e", 'Expected ";" but found ":"');
+      err("y = (b): ({ [k]: v }) => e", 'Expected ";" but found ":"');
+
+      // A computed key needs a binding after it
+      err("let x: ({ [k] }: T) => void", 'Expected ")" but found ":"');
+      err("interface I { m({ [k] }: T): void }", 'Expected ":" but found "}"');
+
+      // Patterns in value positions are unaffected
+      exp("let g = ({ [k]: a }: T) => a", "let g = ({ [k]: a }) => a;\n");
+      exp("function g({ [k()]: a }: T): void {}", "function g({ [k()]: a }) {}");
+    });
+
     it("non-null assertion with new operator", () => {
       const exp = ts.expectPrinted_;
 

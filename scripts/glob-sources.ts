@@ -79,14 +79,16 @@ const patterns = {
    * all `*.rs` + workspace manifests — implicit inputs to the cargo step.
    * `rust-toolchain.toml` is included so a nightly bump invalidates the
    * staticlib (cargo's own fingerprinting then forces a full rebuild).
-   * `.html` under `src/runtime/` is embedded with `include_bytes!` (e.g. the
-   * dev error page template), so edits to it must re-run cargo too.
+   * `.html` under `src/runtime/` and the `bun init` templates are embedded
+   * with `include_bytes!` (e.g. the dev error page template, `init/rule.md`),
+   * so edits to them must re-run cargo too.
    */
   rust: {
     paths: [
       "src/**/*.rs",
       "src/**/Cargo.toml",
       "src/runtime/**/*.html",
+      "src/runtime/cli/init/**/*.*",
       "Cargo.toml",
       "Cargo.lock",
       "rust-toolchain.toml",
@@ -148,17 +150,18 @@ export function globAllSources(): Sources {
         excludePrefix.push(ex.slice(0, -2)); // keep trailing '/'
       else excludeExact.add(ex);
     }
-    const files: string[] = [];
+    // A Set: patterns in one list may overlap (the `bun init` templates include `.html`).
+    const matched = new Set<string>();
     for (const pattern of spec.paths) {
       for (const rel of globSync(pattern, { cwd: root })) {
         const normalized = normalize(rel);
         if (excludeExact.has(normalized)) continue;
         if (excludePrefix.some(p => normalized.startsWith(p))) continue;
-        files.push(resolve(root, normalized));
+        matched.add(resolve(root, normalized));
       }
     }
 
-    files.sort((a, b) => a.localeCompare(b));
+    const files = [...matched].sort((a, b) => a.localeCompare(b));
     assert(files.length > 0, `Source list '${field}' matched nothing`, {
       file: import.meta.url,
       hint: `Patterns: ${spec.paths.join(", ")}`,

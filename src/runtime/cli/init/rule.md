@@ -108,4 +108,4 @@ Then, run index.ts
 bun --hot ./index.ts
 ```
 
-For more information, read the Bun API docs in `node_modules/bun-types/docs/**.mdx`.
+For more information, read the Bun API docs in `node_modules/bun-types/docs/**/*.mdx` (`node_modules/.bun/bun-types@*/node_modules/bun-types/docs/**/*.mdx` when the project uses the isolated linker).

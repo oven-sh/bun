@@ -437,6 +437,9 @@ pub struct TestOptions {
     /// `bun test --parallel[=N]`: run test files across N worker
     /// processes. 0 means not requested. Implies `isolate` in workers.
     pub parallel: u32,
+    /// Set when `--parallel` is passed on the CLI; `bunfig.toml` `[test]`
+    /// `parallel` then does not override it.
+    pub parallel_from_cli: bool,
     /// `bun test --parallel-delay=MS`: how long the first worker must be
     /// busy before spawning the rest. None = use the built-in default.
     pub parallel_delay_ms: Option<u32>,
@@ -517,6 +520,7 @@ impl Default for TestOptions {
             max_concurrency: if bun_core::env::ENABLE_ASAN { 5 } else { 20 },
             isolate: false,
             parallel: 0,
+            parallel_from_cli: false,
             parallel_delay_ms: None,
             test_worker: false,
             changed: None,

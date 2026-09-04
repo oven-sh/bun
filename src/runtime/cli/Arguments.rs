@@ -1988,6 +1988,7 @@ fn parse_test_command_options(args: &clap::Args<clap::Help>, ctx: Context<'_>) {
         }
         ctx.test_options.parallel = parsed;
         ctx.test_options.isolate = !no_isolate;
+        ctx.test_options.parallel_from_cli = true;
     }
 
     if let Some(delay_str) = args.option(b"--parallel-delay") {

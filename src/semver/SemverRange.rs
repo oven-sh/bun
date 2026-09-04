@@ -140,9 +140,7 @@ impl Range {
         true
     }
 
-    /// Whether a comparator of this range has a prerelease tag on
-    /// `version`'s major.minor.patch. A prerelease only satisfies a query
-    /// when some range of the query admits it this way (node-semver's rule).
+    /// Whether a comparator has a prerelease tag on `version`'s major.minor.patch.
     pub(crate) fn admits_pre_of(self, version: Version) -> bool {
         [self.left, self.right].into_iter().any(|c| {
             c.op != Op::Unset

@@ -86,12 +86,8 @@ impl<'a> Interval<'a> {
     }
 
     /// Whether a version that satisfies both queries lies inside the interval.
-    ///
-    /// Bun's `satisfies` (`List::satisfies_pre`) accepts a prerelease only
-    /// when a comparator of the query has a prerelease tag on the same
-    /// major.minor.patch. So an interval that holds nothing but prereleases
-    /// of one tuple is empty unless both queries admit them
-    /// (`Range::admits_pre_of`).
+    /// An interval of nothing but prereleases of one major.minor.patch is empty
+    /// unless both queries admit them (the `List::satisfies_pre` rule).
     fn has_version(&self, a: &Query, b: &Query) -> bool {
         if !self.is_non_empty() {
             return false;

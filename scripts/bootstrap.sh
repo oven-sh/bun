@@ -932,7 +932,18 @@ setup_node_gyp_cache() {
 	nodejs_version="$1"
 	headers_source="$2"
 
-	cache_dir="$home/.cache/node-gyp/$nodejs_version"
+	# node-gyp reads its cache from ~/Library/Caches/node-gyp on macOS. That parent
+	# already belongs to the user, so grant only the node-gyp directory there.
+	case "$os" in
+	darwin)
+		cache_dir="$home/Library/Caches/node-gyp/$nodejs_version"
+		grant_dir="$home/Library/Caches/node-gyp"
+		;;
+	*)
+		cache_dir="$home/.cache/node-gyp/$nodejs_version"
+		grant_dir="$home/.cache"
+		;;
+	esac
 
 	create_directory "$cache_dir"
 
@@ -959,7 +970,7 @@ setup_node_gyp_cache() {
 	esac
 
 	# Ensure entire path is accessible, not just last component
-	grant_to_user "$home/.cache"
+	grant_to_user "$grant_dir"
 }
 
 bun_version_exact() {

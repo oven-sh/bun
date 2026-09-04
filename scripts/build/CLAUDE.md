@@ -37,7 +37,7 @@ Configure time is Phase 1 below — resolve tools, compute flags, glob sources, 
 
 **The smell:** if configure code calls `spawnSync` to compile something, or compares mtimes with `statSync`, it's doing ninja's job. Make it a build edge — `n.rule()` + `n.build()`. Size doesn't matter; a 1-file compile is still a build edge.
 
-**Legitimate `spawnSync` at configure time:** tool detection (`clang --version`), git revision, `xcrun --show-sdk-path`. These probe the environment; they don't produce build artifacts.
+**Legitimate `spawnSync` at configure time:** tool detection (`clang --version`), git revision, `xcrun --show-sdk-path` — these probe the environment; and, for `custom` deps whose graph is read from their tree, the source fetch (`prefetchConfigureSources`) plus WebKit's unified-source bundler (a python script that only writes `#include` lists). None of these compile anything.
 
 ## Ninja primer
 
@@ -147,10 +147,11 @@ Tables: `cpuTargetFlags` (`-march`/`-mcpu`/`-mtune` — also translated for rust
    - `generateCargoConfig(cfg)` — write the repo-root `.cargo/config.toml` (git-ignored) with the per-target `linker = ` from the discovered `cfg.hostCxx`. Advisory only for `bun bd` (the ninja cargo edge sets the linker via env); it's there for `cargo build`/`cargo check`/rust-analyzer run directly.
 4. `globAllSources()` — one filesystem snapshot of all `.cpp`/`.c`/`.rs`/codegen-input globs.
 5. `new Ninja({buildDir})` + `registerAllRules(n, cfg)` — register every rule template.
-6. `emitGeneratorRule(n, cfg, partial)` — persist `configure.json`, emit `regen` rule so editing any build script triggers reconfigure.
+6. `prefetchConfigureSources(cfg, allDeps)` — fetch the trees of `custom` deps (WebKit, ICU) if missing or stale; their emitters read file lists out of them.
 7. `emitBun(n, cfg, sources)` — assemble the build graph (see Phase 2).
-8. `n.default([...])` + `n.write()` — set default targets, write `build.ninja` + `compile_commands.json`.
-9. `mkdirAll(...)` — pre-create all object output dirs.
+8. `emitGeneratorRule(n, cfg, partial, depInputs)` — persist `configure.json`, emit `regen` rule so editing any build script (or a dep-tree file configure read, e.g. WebKit's Sources.txt) triggers reconfigure.
+9. `n.default([...])` + `n.write()` — set default targets, write `build.ninja` + `compile_commands.json`.
+10. `mkdirAll(...)` — pre-create all object output dirs.
 
 ### Phase 2 — emitBun (`bun.ts::emitBun`)
 
@@ -175,50 +176,51 @@ Split CI modes: `rust-only` (path deps+codegen+cargo → libbun_runtime.a), `cpp
 
 ## Module inventory
 
-| File                           | Owns                                                                                                                    |
-| ------------------------------ | ----------------------------------------------------------------------------------------------------------------------- |
-| `build.ts` (parent dir)        | CLI entry — parse args, call configure, spawn ninja, optionally exec                                                    |
-| `configure.ts`                 | `configure()` — toolchain → config → `build.ninja`                                                                      |
-| `config.ts`                    | `Config`/`PartialConfig`/`Toolchain`/`Host` types, `resolveConfig()`                                                    |
-| `profiles.ts`                  | Named `PartialConfig` presets + `getProfile()`                                                                          |
-| `tools.ts`                     | Tool discovery: `findTool()`, `resolveLlvmToolchain()`, version parsing                                                 |
-| `flags.ts`                     | Flat flag tables, `computeFlags()`, `computeDepFlags()`, `computeCpuTargetFlags()`                                      |
-| `ninja.ts`                     | `Ninja` class — the build-file writer                                                                                   |
-| `rules.ts`                     | `registerAllRules()` — calls each module's `registerXxxRules()`                                                         |
-| `compile.ts`                   | `cc`/`cxx`/`pch`/`link`/`ar` + `registerCompileRules()`                                                                 |
-| `unified.ts`                   | WebKit-style unified-source bundling, `generateUnifiedSources()`                                                        |
-| `source.ts`                    | `Dependency` types, `resolveDep()`, fetch/configure/build emission                                                      |
-| `codegen.ts`                   | Code generation steps, `emitCodegen()`, `CodegenOutputs`                                                                |
-| `rust.ts`                      | `cargo build` step, `emitRust()`, `rustLibPath()`, cross-compile matrix                                                 |
-| `cargo-config.ts`              | Generates the git-ignored `.cargo/config.toml` (per-target `linker` from `cfg.hostCxx`)                                 |
-| `bun.ts`                       | `emitBun()` — assembles deps+codegen+rust+compile+link                                                                  |
-| `shims.ts`                     | Platform/toolchain workaround dylibs, `emitShims()`                                                                     |
-| `workarounds.ts`               | Self-obsoleting workaround registry, `checkWorkarounds()`                                                               |
-| `macos-sdk.ts`                 | macOS SDK resolution/download for darwin cross-compiles — `resolveMacosSdkPath()`, `ensureMacosSdk()`                   |
-| `features-json.ts`             | Host-side `features.json` for cross lanes — `parsePackedFeaturesList()`, `crossFeaturesJson()`                          |
-| `depVersionsHeader.ts`         | Generates `bun_dependency_versions.h` for `process.versions`                                                            |
-| `buildOptionsRs.ts`            | Generates `build_options.rs` (`bun_core::build_options`) from `Config`                                                  |
-| `jsonByteClass.ts`             | Generates `json_byte_class.{h,rs}` — the JSON byte classification shared by the SIMD kernel and the Rust scalar indexer |
-| `xmlByteClass.ts`              | Generates `xml_byte_class.{h,rs}` — the XML byte classification shared by the SIMD kernels and the Rust scalar indexer  |
-| `stream.ts`                    | Subprocess output wrapper — FD-3 sideband, prefixed line streaming                                                      |
-| `shell.ts`                     | `quote()`/`slash()` — shell escaping for ninja commands                                                                 |
-| `fs.ts`                        | `writeIfChanged()`, `mkdirAll()`                                                                                        |
-| `error.ts`                     | `BuildError` with hint/file/cause, `assert()`                                                                           |
-| `download.ts`                  | `downloadWithRetry()`, archive extraction                                                                               |
-| `winsysroot.ts`                | Windows MSVC CRT + SDK sysroot (xwin): validates, adds case aliases, CI fetch                                           |
-| `fetch-cli.ts`                 | Build-time CLI ninja invokes for downloads, `.h.in` substitution and the `forbidUndefined` symbol check                 |
-| `ci.ts`                        | CI integration — annotations, artifacts, log groups                                                                     |
-| `clean.ts`                     | `bun run clean` preset-based cleanup                                                                                    |
-| `glob-sources.ts` (parent dir) | Source glob patterns + CLI to print them                                                                                |
-| `deps/*.ts`                    | One `Dependency` object per vendored dep                                                                                |
-| `deps/index.ts`                | `allDeps` array — fetch order + link order                                                                              |
-| `shims/*.c`                    | Platform workaround sources                                                                                             |
+| File                           | Owns                                                                                                                                       |
+| ------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------ |
+| `build.ts` (parent dir)        | CLI entry — parse args, call configure, spawn ninja, optionally exec                                                                       |
+| `configure.ts`                 | `configure()` — toolchain → config → `build.ninja`                                                                                         |
+| `config.ts`                    | `Config`/`PartialConfig`/`Toolchain`/`Host` types, `resolveConfig()`                                                                       |
+| `profiles.ts`                  | Named `PartialConfig` presets + `getProfile()`                                                                                             |
+| `tools.ts`                     | Tool discovery: `findTool()`, `resolveLlvmToolchain()`, version parsing                                                                    |
+| `flags.ts`                     | Flat flag tables, `computeFlags()`, `computeDepFlags()`, `computeCpuTargetFlags()`                                                         |
+| `ninja.ts`                     | `Ninja` class — the build-file writer                                                                                                      |
+| `rules.ts`                     | `registerAllRules()` — calls each module's `registerXxxRules()`                                                                            |
+| `compile.ts`                   | `cc`/`cxx`/`pch`/`link`/`ar` + `registerCompileRules()`                                                                                    |
+| `unified.ts`                   | WebKit-style unified-source bundling, `generateUnifiedSources()`                                                                           |
+| `source.ts`                    | `Dependency` types, `resolveDep()`, fetch/configure/build emission                                                                         |
+| `codegen.ts`                   | Code generation steps, `emitCodegen()`, `CodegenOutputs`                                                                                   |
+| `rust.ts`                      | `cargo build` step, `emitRust()`, `rustLibPath()`, cross-compile matrix                                                                    |
+| `cargo-config.ts`              | Generates the git-ignored `.cargo/config.toml` (per-target `linker` from `cfg.hostCxx`)                                                    |
+| `bun.ts`                       | `emitBun()` — assembles deps+codegen+rust+compile+link                                                                                     |
+| `shims.ts`                     | Platform/toolchain workaround dylibs, `emitShims()`                                                                                        |
+| `workarounds.ts`               | Self-obsoleting workaround registry, `checkWorkarounds()`                                                                                  |
+| `macos-sdk.ts`                 | macOS SDK resolution/download for darwin cross-compiles — `resolveMacosSdkPath()`, `ensureMacosSdk()`                                      |
+| `features-json.ts`             | Host-side `features.json` for cross lanes — `parsePackedFeaturesList()`, `crossFeaturesJson()`                                             |
+| `depVersionsHeader.ts`         | Generates `bun_dependency_versions.h` for `process.versions`                                                                               |
+| `buildOptionsRs.ts`            | Generates `build_options.rs` (`bun_core::build_options`) from `Config`                                                                     |
+| `jsonByteClass.ts`             | Generates `json_byte_class.{h,rs}` — the JSON byte classification shared by the SIMD kernel and the Rust scalar indexer                    |
+| `xmlByteClass.ts`              | Generates `xml_byte_class.{h,rs}` — the XML byte classification shared by the SIMD kernels and the Rust scalar indexer                     |
+| `stream.ts`                    | Subprocess output wrapper — FD-3 sideband, prefixed line streaming                                                                         |
+| `shell.ts`                     | `quote()`/`slash()` — shell escaping for ninja commands                                                                                    |
+| `fs.ts`                        | `writeIfChanged()`, `mkdirAll()`                                                                                                           |
+| `error.ts`                     | `BuildError` with hint/file/cause, `assert()`                                                                                              |
+| `download.ts`                  | `downloadWithRetry()`, archive extraction, sparse `git fetch` for github sources                                                           |
+| `icu-data.ts`                  | Build-time CLI: filter ICU's `icudt.dat`, zstd-repack display-name items with a trained dictionary, emit `icudata.S` (deps/icu.ts runs it) |
+| `winsysroot.ts`                | Windows MSVC CRT + SDK sysroot (xwin): validates, adds case aliases, CI fetch                                                              |
+| `fetch-cli.ts`                 | Build-time CLI ninja invokes for downloads, `.h.in` substitution and the `forbidUndefined` symbol check                                    |
+| `ci.ts`                        | CI integration — annotations, artifacts, log groups                                                                                        |
+| `clean.ts`                     | `bun run clean` preset-based cleanup                                                                                                       |
+| `glob-sources.ts` (parent dir) | Source glob patterns + CLI to print them                                                                                                   |
+| `deps/*.ts`                    | One `Dependency` object per vendored dep                                                                                                   |
+| `deps/index.ts`                | `allDeps` array — fetch order + link order                                                                                                 |
+| `shims/*.c`                    | Platform workaround sources                                                                                                                |
 
 ## Key types
 
 **`Dependency`** (`source.ts`) — `{name, source, patches?, fetchDeps?, build, provides, enabled?, versionMacro?}`. The `source`/`build`/`provides` fields are functions of `Config` so they vary per-target. `Source` variants: `github` (archive tarball, or sparse git fetch when `sparse` is set), `tarball`, `local` (`--local-deps`), `in-tree`, `prebuilt`. `BuildSpec` variants covered in Goals above.
 
-**`Ninja`** — Accumulates rules/builds/pools/defaults, emits `build.ninja`. All paths given absolute; converted to buildDir-relative at write time.
+**`Ninja`** — Accumulates rules/builds/pools/defaults, emits `build.ninja`. All paths given absolute; converted to buildDir-relative at write time, and every build-dir output is also declared under its absolute spelling (implicit output) so compiler depfiles, which name headers by absolute path, resolve to the producing edge.
 
 ## registerXxxRules vs emitXxx
 

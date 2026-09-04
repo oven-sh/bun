@@ -49,7 +49,7 @@ export function resolveToolchain(targetOs?: OS, packageManager: PackageManager =
   const host = detectHost();
   const llvm = resolveLlvmToolchain(host.os, host.arch, targetOs ?? host.os);
 
-  // cmake — required for nested dep builds.
+  // cmake — ci.ts writes the artifact zips with `cmake -E tar`.
   const cmake = findSystemTool("cmake", { required: true, hint: "Install cmake (>= 3.24)" });
   if (cmake === undefined) throw new BuildError("unreachable: findSystemTool required=true returned undefined");
 

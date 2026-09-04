@@ -87,7 +87,7 @@ export const mydep: Dependency = {
   // Most deps use this.
   //
   // Other kinds: `tarball` (a release tarball by URL, e.g. ICU), `prebuilt`
-  // (download pre-compiled .a, e.g. WebKit on macOS/Windows), `local` (any
+  // (download pre-compiled .a, e.g. WebKit's local-dev default), `local` (any
   // fetched dep becomes one via `--local-deps`, see below), `in-tree` (source
   // in src/).
   source: () => ({ kind: "github", repo: "owner/repo", commit: "..." }),

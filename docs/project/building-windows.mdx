@@ -66,13 +66,11 @@ Start-Process -FilePath "$env:TEMP\LLVM-21.1.8-woa64.exe" -ArgumentList "/S" -Wa
   break the build.
 </Note>
 
-To build WebKit locally (optional, x64 only), install these packages:
+To compile JavaScriptCore from source instead of downloading the prebuilt (`--webkit=source`, or `bun run build:local` for your own WebKit clone), also install the code generators' interpreters:
 
 ```ps1 Scoop
-scoop install make cygwin python
+scoop install ruby python perl zstd
 ```
-
-<Note>ARM64 builds do not need Cygwin because WebKit is provided as a pre-built binary.</Note>
 
 From here on out, **use a PowerShell terminal with `.\scripts\vs-shell.ps1` sourced**. Load the script by running it:
 

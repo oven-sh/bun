@@ -1,7 +1,7 @@
 /**
- * WebKit commit — determines prebuilt download URL + what to checkout
- * for local mode. Override via `--webkit-version=<hash>` to test a branch.
- * From https://github.com/oven-sh/WebKit releases.
+ * WebKit commit — the tree `--webkit=source` fetches and the prebuilt
+ * tarball's release tag. Override via `--webkit-version=<hash>` to test a
+ * branch. From https://github.com/oven-sh/WebKit releases.
  */
 export const WEBKIT_VERSION = "40e43a82a755af3cc9eb4a4e025e4e020a7a3cfd";
 
@@ -17,7 +17,8 @@ export const WEBKIT_VERSION = "40e43a82a755af3cc9eb4a4e025e4e020a7a3cfd";
  *   mode: direct build" below). Generated headers land in the BUILD dir. To
  *   build your own WebKit clone instead of the pinned commit, point at it
  *   like any dep: `--local-deps=WebKit=<path>` (the `*-local` profiles do,
- *   from `$BUN_WEBKIT_PATH` or vendor/WebKit). This is what Linux CI ships.
+ *   from `$BUN_WEBKIT_PATH` or vendor/WebKit). This is what CI ships on
+ *   every target.
  *
  * **prebuilt**: Download tarball from oven-sh/WebKit releases. Tarball name
  *   encodes {os, arch, musl, debug|lto, asan} — each is a separate ABI.
@@ -142,11 +143,7 @@ function bmallocLib(cfg: Config): string {
   return wkLib(cfg, "bmalloc");
 }
 
-/**
- * ICU libs — prebuilt bundles them on linux/windows. macOS uses system ICU.
- * Local mode: system ICU on posix (linked via -licu* in bun.ts); built from
- * source on Windows (see icuDir/icuLibs).
- */
+/** ICU libs the prebuilt tarball bundles on linux/windows (macOS uses system ICU). */
 function prebuiltIcuLibs(cfg: Config): string[] {
   if (cfg.windows) {
     const d = cfg.debug ? "d" : "";
@@ -669,7 +666,7 @@ const bmallocCSources: readonly string[] = [
   "libpas/src/libpas/thingy_heap_config.c",
 ];
 
-/** WTF_SOURCES shared by every ELF target (relative to Source/WTF/wtf). */
+/** WTF_SOURCES shared by every target (relative to Source/WTF/wtf). */
 const wtfSourcesCommon: readonly string[] = [
   "ASCIICType.cpp",
   "ApproximateTime.cpp",
@@ -1275,10 +1272,10 @@ function writeForwardingHeaders(dir: string, headers: string[]): void {
 }
 
 /**
- * One stub. If something other than a regular file sits at `path` (a symlink
- * left by a `--webkit=local` cmake build in the same build dir points INTO the
- * source tree), remove it first — writing through it would overwrite the real
- * header with a stub that includes itself.
+ * One stub. If something other than a regular file sits at `path` (an
+ * earlier cmake-driven WebKit build in this build dir left symlinks INTO the
+ * source tree there), remove it first — writing through it would overwrite
+ * the real header with a stub that includes itself.
  */
 function writeStub(path: string, target: string): void {
   const st = lstatSync(path, { throwIfNoEntry: false });

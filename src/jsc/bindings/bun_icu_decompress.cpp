@@ -122,4 +122,4 @@ extern "C" const void* bun_icu_maybe_decompress(const void* p, int32_t* length)
     return Bun::ICUDecompressor::get().decompress(p, length);
 }
 
-#endif // OS(LINUX)
+#endif // OS(LINUX) || OS(WINDOWS) || OS(FREEBSD)

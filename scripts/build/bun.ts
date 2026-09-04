@@ -557,9 +557,9 @@ function emitLinkOnly(n: Ninja, cfg: Config): BunOutput {
   n.blank();
 
   // Dep lib paths — computed, not built. Must match cpp-only's output
-  // paths exactly; computeDepLibs() and emitNestedCmake()'s path logic
-  // share the same formula. If they drift, link fails with "file not
-  // found" — loud enough to catch in CI.
+  // paths exactly (computeDepLibs() is the one formula both sides use). If
+  // they drift, link fails with "file not found" — loud enough to catch
+  // in CI.
   const depLibs: string[] = [];
   for (const dep of allDeps) {
     depLibs.push(...computeDepLibs(cfg, dep));

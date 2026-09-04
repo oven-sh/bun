@@ -13,7 +13,7 @@
  *                          bun_icu_zstd_dict, bun_icu_zstd_dict_size
  *
  * The .S is assembled by the normal `cc` edge (target flags apply there) and
- * archived as libicudata; ICU's udata.cpp reaches compressed items through the
+ * linked with the other ICU objects; ICU's udata.cpp reaches compressed items through the
  * weak bun_icu_maybe_decompress hook (patches/icu/udata-decompress-hook.patch,
  * implemented in src/jsc/bindings/bun_icu_decompress.cpp).
  *

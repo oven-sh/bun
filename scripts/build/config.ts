@@ -253,7 +253,7 @@ export interface Config {
   esbuild: string;
   /** Optional — compiler launcher prefix. */
   ccache: string | undefined;
-  /** cmake executable. Required for nested dep builds. */
+  /** cmake executable — ci.ts packages artifacts with `cmake -E tar` (a zip writer present on every agent). */
   cmake: string;
   /** cargo executable. undefined when no rust toolchain is available. */
   cargo: string | undefined;
@@ -279,12 +279,12 @@ export interface Config {
   nasm: string | undefined;
 
   // ─── macOS SDK (darwin only, undefined elsewhere) ───
-  /** e.g. "13.0". Passed to deps as -DCMAKE_OSX_DEPLOYMENT_TARGET. */
+  /** e.g. "13.0" — the `-mmacosx-version-min` every object is compiled with. */
   osxDeploymentTarget: string | undefined;
   /**
    * SDK path. Native darwin: from `xcrun --show-sdk-path`. Darwin
    * cross-compile from a non-darwin host: an extracted MacOSX*.sdk (see
-   * macos-sdk.ts). Passed to deps as -DCMAKE_OSX_SYSROOT / `-isysroot`.
+   * macos-sdk.ts). The `-isysroot` for every compile and link.
    */
   osxSysroot: string | undefined;
 
@@ -754,7 +754,7 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
   // Android: force off. NDK ASAN deployment needs wrap.sh + runtime .so
   // shipping alongside the binary; UBSan likewise. Not worth the matrix.
   // FreeBSD: force off. Cross-compiled — we'd need to ship FreeBSD's
-  // libclang_rt.asan, and there's no -asan WebKit prebuilt for it.
+  // libclang_rt.asan (and there's no -asan WebKit prebuilt for it).
   // Darwin cross: force off. The Linux LLVM toolchain doesn't ship the
   // darwin ASAN/UBSan runtime dylibs (libclang_rt.*_osx_dynamic.dylib).
   // Windows cross: force off. The host clang doesn't ship the windows
@@ -772,16 +772,17 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
   const assertions = partial.assertions ?? (debug || asan);
 
   // LTO: default on for CI release non-asan non-assertions builds across
-  // linux, darwin-cross, and windows-cross. All three use ThinLTO (the JSC
-  // ThinLTO miscompile was fixed upstream). The -lto WebKit prebuilts only
-  // exist for the cross toolchain, so native windows/darwin stay non-LTO.
+  // linux, darwin-cross, and windows-cross (ThinLTO; that is how CI builds
+  // them). Native windows/darwin hosts default off (in prebuilt mode there
+  // is no -lto tarball for them either).
   const windowsCross = windows && host.os !== "windows";
   const ltoDefault = release && (linux || darwinCross || windowsCross) && ci && !assertions && !asan;
   let lto = partial.lto ?? ltoDefault;
   // ASAN and LTO don't mix — ASAN wins (silently, no warn — config is explicit).
-  // Android: no LTO prebuilt WebKit exists; force off so the right tarball is fetched.
-  // Windows arm64: oven-sh/WebKit ships no bun-webkit-windows-arm64-lto
-  // (LLVM's CodeView emitter aborts on ARM64 NEON tuple registers).
+  // Android: off (no -lto prebuilt; not enabled for the source build either).
+  // Windows arm64: off — LLVM's CodeView emitter aborts on ARM64 NEON tuple
+  // registers when JSC goes through LTO (why oven-sh/WebKit ships no
+  // windows-arm64-lto tarball too).
   if ((asan && lto) || abi === "android" || (windows && arm64)) {
     lto = false;
   }

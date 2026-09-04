@@ -591,14 +591,14 @@ export const bunOnlyFlags: Flag[] = [
   },
 
   // ─── Language standard ───
-  // WebKit uses gnu++ extensions on Linux; if we don't match, the first
-  // memory allocation crashes (ABI mismatch in sized delete).
-  // Not in globalFlags because deps set their own standard.
+  // Not in globalFlags because deps set their own standard (WebKit itself is
+  // -std=c++23, as its cmake builds it; the GNU-extensions dialect differs in
+  // accepted syntax and predefined macros, not ABI).
   {
     flag: "-std=gnu++23",
     when: c => c.linux || c.freebsd,
     lang: "cxx",
-    desc: "C++23 with GNU extensions (required to match WebKit's ABI on Linux/FreeBSD)",
+    desc: "C++23 with GNU extensions",
   },
   {
     flag: "-std=c++23",

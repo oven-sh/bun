@@ -426,7 +426,7 @@ export interface Provides {
 export interface Dependency {
   name: string;
 
-  /** Where source comes from. Evaluated per-config so local mode can be dynamic. */
+  /** Where source comes from. Evaluated per-config (e.g. WebKit: prebuilt tarball or github tree by cfg.webkit). */
   source: (cfg: Config) => Source;
 
   /**

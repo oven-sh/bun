@@ -2,9 +2,9 @@
  * Fetch CLI — the single entry point ninja invokes for all downloads.
  *
  * Ninja rules reference this file via `cfg.bun <this-file> <kind> <args...>`.
- * This is BUILD-time code (runs under ninja), not CONFIGURE-time. The
- * configure-time modules (source.ts, deps/*.ts) emit ninja rules that call
- * into here but don't execute any of it themselves.
+ * This is BUILD-time code (runs under ninja); the one configure-time caller
+ * is source.ts prefetchConfigureSources, which runs the same `fetchDep` for
+ * deps whose graph is read from their tree (WebKit, ICU).
  *
  * ## Adding a new fetch kind
  *
@@ -201,8 +201,8 @@ function checkUndefined(name: string, nm: string, rspfile: string, stamp: string
  * a `git+https://github.com/<repo>@<commit>?sparse=<patterns>` pseudo-URL
  * (download.ts gitArchiveUrl) for a sparse git fetch, which is cached as a
  * tarball of the same shape — everything from extraction on is one path.
- * `ref` seeds the identity stamp: the commit for github sources, the URL for
- * plain tarballs.
+ * `ref` seeds the identity stamp: the commit for github sources,
+ * `sha256:<digest>` for tarballs (the download is verified against it).
  *
  * Idempotent: if .ref exists and matches the computed identity, does nothing.
  * The ninja rule has restat=1, so a no-op fetch won't trigger downstream.

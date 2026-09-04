@@ -3495,6 +3495,14 @@ describe("expect()", () => {
       expect({ a: "hello derived String" }).not.toMatchObject({ a: expect.stringContaining(new DString("rivd")) });
       expect({ a: "hello world" }).toMatchObject({ a: expect.stringMatching("wor") });
       expect({ a: "hello world" }).not.toMatchObject({ a: expect.stringMatching("word") });
+      // a string sample is a pattern, as in Jest (`new RegExp(sample)`)
+      expect({ a: "hello world" }).toMatchObject({ a: expect.stringMatching("^hel+o w.r") });
+      expect({ a: "hello world" }).toMatchObject({ a: expect.stringMatching("w[a-z]+d$") });
+      expect({ a: "hello world" }).not.toMatchObject({ a: expect.stringMatching("^world") });
+      expect("hello world").toEqual(expect.stringMatching("o w"));
+      expect("hello world").toEqual(expect.stringMatching("^h.*d$"));
+      expect("hello world").not.toEqual(expect.stringMatching("^d"));
+      expect(() => expect("x").toEqual(expect.stringMatching("("))).toThrow(SyntaxError);
       expect({ a: "hello world" }).toMatchObject({ a: "hello world" });
       expect({ a: "hello world" }).toMatchObject({ a: expect.stringMatching(/wor/) });
       expect({ a: "hello world" }).not.toMatchObject({ a: expect.stringMatching(/word/) });

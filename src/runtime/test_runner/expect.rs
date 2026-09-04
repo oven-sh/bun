@@ -2316,7 +2316,7 @@ impl ExpectStringMatching {
         if args.is_empty() || (!args[0].is_string() && !args[0].is_reg_exp()) {
             return Err(crate::throw_pretty_static!(
                 global_this,
-                "<d>expect.<r>stringContaining<d>(<r>string<d>)<r>\n\nExpected a string or regular expression\n",
+                "<d>expect.<r>stringMatching<d>(<r>string | regexp<d>)<r>\n\nExpected a string or regular expression\n",
             ));
         }
 

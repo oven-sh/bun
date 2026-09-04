@@ -485,13 +485,20 @@ AsymmetricMatcherResult matchAsymmetricMatcherAndGetFlags(JSGlobalObject* global
 
         if (otherProp.isString()) {
             if (expectedTestValue.isString()) {
+                // Jest compiles a string sample with `new RegExp(sample)`; it is a
+                // pattern, not a literal substring (that is expect.stringContaining).
                 String otherString = otherProp.toWTFString(globalObject);
                 RETURN_IF_EXCEPTION(throwScope, AsymmetricMatcherResult::FAIL);
 
-                String substring = expectedTestValue.toWTFString(globalObject);
+                String pattern = expectedTestValue.toWTFString(globalObject);
                 RETURN_IF_EXCEPTION(throwScope, AsymmetricMatcherResult::FAIL);
 
-                if (otherString.find(substring) != WTF::notFound) {
+                RegExp* regExp = RegExp::create(globalObject->vm(), pattern, {});
+                if (!regExp->isValid()) {
+                    throwSyntaxError(globalObject, throwScope, String(regExp->errorMessage()));
+                    return AsymmetricMatcherResult::FAIL;
+                }
+                if (!!regExp->match(globalObject, otherString, 0)) {
                     return AsymmetricMatcherResult::PASS;
                 }
             } else if (auto* regex = dynamicDowncast<RegExpObject>(expectedTestValue)) {

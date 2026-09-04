@@ -3686,6 +3686,10 @@ Server.prototype.listen = function listen(port, hostname, onListen) {
     } else if (typeof hostname === "string" && typeof onListen === "number") {
       backlog = onListen;
       onListen = argsLength > 3 ? arguments[3] : undefined;
+    } else if (typeof hostname === "string" && onListen === undefined && argsLength > 3) {
+      // listen(port, host, undefined, callback): an omitted backlog still
+      // leaves the callback in the fourth slot, as Node's normalizeArgs does.
+      onListen = typeof arguments[3] === "function" ? arguments[3] : undefined;
     }
 
     if (typeof port === "function") {

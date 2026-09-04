@@ -4,6 +4,7 @@ use core::fmt;
 
 use bstr::BStr;
 
+use bun_core::fmt::escape_control_chars;
 use bun_core::output::enable_ansi_colors_stderr;
 use bun_core::pretty_fmt;
 
@@ -155,19 +156,29 @@ impl Header {
     }
 }
 
+// The `Display` impls in this file (except `Headers`, which is wire format)
+// render the `fetch(..., { verbose: true })` / `bun install --verbose` trace.
+// Names, values, status text and URLs are peer-supplied, so they go through
+// `escape_control_chars`: HTTP/1.1 admits HT and any byte >= 0x80 (so UTF-8
+// encoded C1 controls such as U+009B, CSI) in a field value or reason phrase,
+// and HPACK/QPACK only reject NUL, CR and LF.
 impl fmt::Display for Header {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         // NOTE: pretty_fmt! is the compile-time ANSI-tag expander (`<r><cyan>` → escape
         // codes).
         if enable_ansi_colors_stderr() {
             if self.is_multiline() {
-                write!(f, pretty_fmt!("<r><cyan>{}", true), BStr::new(self.value()))
+                write!(
+                    f,
+                    pretty_fmt!("<r><cyan>{}", true),
+                    escape_control_chars(self.value())
+                )
             } else {
                 write!(
                     f,
                     pretty_fmt!("<r><cyan>{}<r><d>: <r>{}", true),
-                    BStr::new(self.name()),
-                    BStr::new(self.value()),
+                    escape_control_chars(self.name()),
+                    escape_control_chars(self.value()),
                 )
             }
         } else {
@@ -175,14 +186,14 @@ impl fmt::Display for Header {
                 write!(
                     f,
                     pretty_fmt!("<r><cyan>{}", false),
-                    BStr::new(self.value())
+                    escape_control_chars(self.value())
                 )
             } else {
                 write!(
                     f,
                     pretty_fmt!("<r><cyan>{}<r><d>: <r>{}", false),
-                    BStr::new(self.name()),
-                    BStr::new(self.value()),
+                    escape_control_chars(self.name()),
+                    escape_control_chars(self.value()),
                 )
             }
         }
@@ -203,11 +214,11 @@ impl fmt::Display for HeaderCurlFormatter<'_> {
             write!(
                 f,
                 "-H \"{}: {}\"",
-                BStr::new(header.name()),
-                BStr::new(header.value())
+                escape_control_chars(header.name()),
+                escape_control_chars(header.value())
             )
         } else {
-            write!(f, "-H \"{}\"", BStr::new(header.name()))
+            write!(f, "-H \"{}\"", escape_control_chars(header.name()))
         }
     }
 }
@@ -307,7 +318,7 @@ impl fmt::Display for Request<'_> {
             f,
             "> HTTP/1.1 {} {}",
             BStr::new(self.method),
-            BStr::new(self.path)
+            escape_control_chars(self.path)
         )?;
         for header in self.headers {
             if enable_ansi_colors_stderr() {
@@ -348,10 +359,14 @@ impl fmt::Display for RequestCurlFormatter<'_> {
             write!(
                 f,
                 pretty_fmt!("<b><cyan>curl<r> <d>--http1.1<r> <b>\"{}\"<r>", true),
-                BStr::new(request.path),
+                escape_control_chars(request.path),
             )?;
         } else {
-            write!(f, "curl --http1.1 \"{}\"", BStr::new(request.path))?;
+            write!(
+                f,
+                "curl --http1.1 \"{}\"",
+                escape_control_chars(request.path)
+            )?;
         }
 
         if request.method != b"GET" {
@@ -551,7 +566,7 @@ impl fmt::Display for Response<'_> {
             StatusCodeFormatter {
                 code: self.status_code as usize
             },
-            BStr::new(self.status),
+            escape_control_chars(self.status),
         )?;
         for header in self.headers.list {
             if enable_ansi_colors_stderr() {

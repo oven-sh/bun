@@ -3639,3 +3639,59 @@ it("verbose fetch logging prints [redacted] in place of Authorization credential
   expect(stderr).not.toContain("sekret-token");
   expect(exitCode).toBe(0);
 });
+
+it("verbose fetch logging escapes control characters coming from the peer", async () => {
+  // U+009B is the one-byte form of ESC [ (CSI), so "\u009b31m" written to a terminal as-is turns
+  // the rest of the line red. HTTP/1.1 lets a server put any byte >= 0x80 in a reason phrase or
+  // header value, which includes the UTF-8 encoding of U+009B.
+  let request = "";
+  using listener = Bun.listen({
+    hostname: "127.0.0.1",
+    port: 0,
+    socket: {
+      data(socket, chunk) {
+        request += chunk.toString("latin1");
+        if (!request.includes("\r\n\r\n")) return;
+        socket.end(
+          Buffer.from(
+            "HTTP/1.1 500 Server \u009bError\r\n" +
+              "x-evil: a\u009b31mb\r\n" +
+              "content-length: 0\r\n" +
+              "connection: close\r\n" +
+              "\r\n",
+          ),
+        );
+      },
+    },
+  });
+
+  // Header values are byte strings, so the two Latin-1 characters "\u00c2\u009b" are sent as the
+  // bytes C2 9B, i.e. the same UTF-8 encoded U+009B the server sends back.
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `const res = await fetch(process.env.SERVER_URL, {
+         verbose: "curl",
+         headers: { "x-req": "v\\u00c2\\u009b31mq", authorization: "Bea\\u00c2\\u009brer sekret-token" },
+       });
+       console.log(res.status);`,
+    ],
+    env: { ...bunEnv, SERVER_URL: `http://127.0.0.1:${listener.port}/` },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stdout).toBe("500\n");
+  // The request line and the response status line are printed on their own lines; header lines
+  // are printed once per header in the "name: value" trace and once more in the curl command.
+  expect(stderr).toMatch(/^.*x-req: v\\u009b31mq$/im);
+  expect(stderr).toMatch(/^.*authorization: Bea\\u009brer \[redacted\]$/im);
+  expect(stderr).toMatch(/^< 500 Server \\u009bError$/m);
+  expect(stderr).toMatch(/^< x-evil: a\\u009b31mb$/m);
+  expect(stderr).toContain(`-H "x-req: v\\u009b31mq"`);
+  expect(stderr).not.toMatch(/[\x80-\x9f]/);
+  expect(exitCode).toBe(0);
+});

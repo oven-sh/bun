@@ -3933,7 +3933,9 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionCpuUsage, (JSC::JSGlobalObject * global
 
     if (callFrame->argumentCount() > 0) {
         JSValue comparatorValue = callFrame->argument(0);
-        if (!comparatorValue.isUndefined()) {
+        // Node ignores any falsy prevValue, not just undefined:
+        // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/process/per_thread.js#L129
+        if (comparatorValue.toBoolean(globalObject)) {
             JSC::JSObject* comparator = comparatorValue.getObject();
             if (!comparator) [[unlikely]] {
                 return Bun::ERR::INVALID_ARG_TYPE(throwScope, globalObject, "prevValue"_s, "object"_s, comparatorValue);
@@ -3996,7 +3998,9 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionThreadCpuUsage, (JSC::JSGlobalObject * 
     double userComparator = 0;
     double systemComparator = 0;
     JSValue prevValue = callFrame->argument(0);
-    if (!prevValue.isUndefined()) {
+    // Node ignores any falsy prevValue, not just undefined:
+    // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/process/per_thread.js#L169
+    if (prevValue.toBoolean(globalObject)) {
         Bun::V::validateObject(throwScope, globalObject, prevValue, "prevValue"_s);
         RETURN_IF_EXCEPTION(throwScope, {});
         JSC::JSObject* comparator = prevValue.getObject();

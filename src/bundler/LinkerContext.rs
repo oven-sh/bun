@@ -4005,10 +4005,21 @@ impl<'a> LinkerContext<'a> {
                         // disjoint allocation, so no aliasing with this `&mut`.
                         let symbol = unsafe { self.graph.symbol_mut(tracker.import_ref) };
                         symbol.import_item_status = ImportItemStatus::Missing;
-                        result.kind = MatchImportKind::NormalAndNamespace;
-                        result.namespace_ref = tracker.import_ref;
-                        result.alias = named_import.alias.expect("infallible: alias present");
-                        result.name_loc = named_import.alias_loc;
+                        let alias = named_import.alias.expect("infallible: alias present");
+                        if result.kind == MatchImportKind::Normal {
+                            result.kind = MatchImportKind::NormalAndNamespace;
+                            result.namespace_ref = tracker.import_ref;
+                            result.alias = alias;
+                            result.name_loc = named_import.alias_loc;
+                        } else {
+                            result = MatchImport {
+                                kind: MatchImportKind::Namespace,
+                                namespace_ref: tracker.import_ref,
+                                alias,
+                                name_loc: named_import.alias_loc,
+                                ..Default::default()
+                            };
+                        }
                     }
                 }
 

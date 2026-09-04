@@ -1,6 +1,6 @@
 import { spawnSync } from "bun";
 import { isModuleResolveFilenameSlowPathEnabled } from "bun:internal-for-testing";
-import { expect, it, mock } from "bun:test";
+import { describe, expect, it, mock } from "bun:test";
 import { bunEnv, bunExe, ospath, tempDir } from "harness";
 import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import Module from "node:module";
@@ -102,25 +102,26 @@ it("import.meta.resolve(specifier, parent) accepts a URL instance as parent", ()
   expect(() => import.meta.resolve("./sibling.mjs", { paths: [dir] })).not.toThrow();
 });
 
-it("import.meta.resolve(specifier, parent) rejects a parent that is not a string or URL", () => {
-  const errors = [];
-  for (const parent of [42, null, true, {}, Symbol("x"), () => {}]) {
+describe.each([
+  ["number", 42, "type number (42)"],
+  ["null", null, "null"],
+  ["boolean", true, "type boolean (true)"],
+  ["plain object", {}, "an instance of Object"],
+  ["symbol", Symbol("x"), "type symbol (Symbol(x))"],
+  ["function", () => {}, "function "],
+])("import.meta.resolve(specifier, parent) with a %s parent", (_label, parent, received) => {
+  it("throws ERR_INVALID_ARG_TYPE", () => {
+    let error = null;
     try {
       import.meta.resolve("./sibling.mjs", parent);
-      errors.push(null);
-    } catch (error) {
-      errors.push({ code: error.code, message: error.message });
+    } catch (e) {
+      error = { code: e.code, message: e.message };
     }
-  }
-  const message = 'The "parentURL" argument must be of type string or an instance of URL. Received ';
-  expect(errors).toEqual([
-    { code: "ERR_INVALID_ARG_TYPE", message: message + "type number (42)" },
-    { code: "ERR_INVALID_ARG_TYPE", message: message + "null" },
-    { code: "ERR_INVALID_ARG_TYPE", message: message + "type boolean (true)" },
-    { code: "ERR_INVALID_ARG_TYPE", message: message + "an instance of Object" },
-    { code: "ERR_INVALID_ARG_TYPE", message: message + "type symbol (Symbol(x))" },
-    { code: "ERR_INVALID_ARG_TYPE", message: message + "function " },
-  ]);
+    expect(error).toEqual({
+      code: "ERR_INVALID_ARG_TYPE",
+      message: 'The "parentURL" argument must be of type string or an instance of URL. Received ' + received,
+    });
+  });
 });
 
 it("Module.createRequire", () => {

@@ -5361,8 +5361,10 @@ describe("setLocalWindowSize() and bodies larger than the initial stream window"
 // The decrease used to be ignored, so the raise granted the peer more window than was asked for.
 describe("setLocalWindowSize() with a smaller window", () => {
   // A raw h2 server that records each connection-level WINDOW_UPDATE increment it receives.
+  // `incrementsAtPing` holds a copy of the increments for each PING, taken before the answer.
   async function windowUpdateServer(onRequest = () => {}) {
     const increments = [];
+    const incrementsAtPing = [];
     const server = net.createServer(socket => {
       let buf = Buffer.alloc(0);
       let sawPreface = false;
@@ -5384,14 +5386,17 @@ describe("setLocalWindowSize() with a smaller window", () => {
           const payload = buf.subarray(9, 9 + length);
           buf = buf.subarray(9 + length);
           if (type === 4 && !isAck) socket.write(new http2utils.SettingsFrame(true).data);
-          if (type === 6 && !isAck) socket.write(Buffer.concat([new http2utils.Frame(8, 6, 1, 0).data, payload]));
+          if (type === 6 && !isAck) {
+            incrementsAtPing.push([...increments]);
+            socket.write(Buffer.concat([new http2utils.Frame(8, 6, 1, 0).data, payload]));
+          }
           if (type === 8 && streamId === 0) increments.push(payload.readUInt32BE(0) & 0x7fffffff);
           if (type === 1) onRequest(socket, streamId);
         }
       });
     });
     await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
-    return { server, increments, url: `http://127.0.0.1:${server.address().port}` };
+    return { server, increments, incrementsAtPing, url: `http://127.0.0.1:${server.address().port}` };
   }
 
   function windowState(session) {
@@ -5439,7 +5444,7 @@ describe("setLocalWindowSize() with a smaller window", () => {
     });
   });
 
-  it("a raise that the withheld credit covers sends nothing", async () => {
+  it("a raise that the withheld credit covers sends nothing while the peer has window left", async () => {
     // node: the peer still has its 65535 bytes, more than the 30000 that were asked for.
     expect(await decreaseThenRaise(onConnect, 20, 30000)).toEqual({
       increments: [],
@@ -5447,6 +5452,53 @@ describe("setLocalWindowSize() with a smaller window", () => {
       localWindowSize: 65535,
       effectiveRecvDataLength: 0,
     });
+  });
+
+  // A raise repays the withheld credit first. When the peer has used that credit, a WINDOW_UPDATE
+  // is due at once. The peer has no window left, so it sends nothing that would start a read.
+  // node sends the same two frames for the raise to 100000. For the raise to 65535 it sends
+  // nothing, so its transfer stalls.
+  it.each([
+    [65535, [65535]],
+    [100000, [100000 - 65535, 65535]],
+  ])("a raise to %d between reads gives back the credit that the peer used", async (raise, expected) => {
+    // The peer uses all of the window that it was told about. The decrease to 0 withholds it all.
+    const { server, incrementsAtPing, url } = await windowUpdateServer((socket, streamId) => {
+      socket.write(new http2utils.HeadersFrame(streamId, Buffer.from([0x88]), 0, true).data); // :status 200
+      for (const size of [16384, 16384, 16384, 16383]) {
+        socket.write(new http2utils.DataFrame(streamId, Buffer.alloc(size, "x")).data);
+      }
+    });
+    const client = http2.connect(url);
+    try {
+      const { promise, resolve, reject } = Promise.withResolvers();
+      client.on("error", reject);
+      client.once("connect", () => {
+        client.setLocalWindowSize(0);
+        const req = client.request({ ":path": "/" });
+        req.on("error", reject);
+        let received = 0;
+        req.on("data", chunk => {
+          received += chunk.length;
+          if (received !== 65535) return;
+          setImmediate(() => {
+            client.setLocalWindowSize(raise);
+            const state = windowState(client);
+            // The server copies the increments when this PING arrives, before it answers.
+            client.ping(() => resolve({ increments: incrementsAtPing.at(-1), ...state }));
+          });
+        });
+      });
+      expect(await promise).toEqual({
+        increments: expected,
+        effectiveLocalWindowSize: raise,
+        localWindowSize: raise,
+        effectiveRecvDataLength: 0,
+      });
+    } finally {
+      client.destroy();
+      server.close();
+    }
   });
 
   // RFC 9113 section 6.9.1: a WINDOW_UPDATE that takes a window above 2^31-1 is a

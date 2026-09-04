@@ -436,10 +436,24 @@ impl Connection {
     }
 
     /// The embedder resized the connection-level receive window (`LocalWindow::resize`) and
-    /// wrote the WINDOW_UPDATE on stream 0 that the change needs itself.
+    /// wrote the WINDOW_UPDATE on stream 0 that the change needs itself. A raise that repays
+    /// withheld credit can make a WINDOW_UPDATE due at once. It goes out now: a peer with no
+    /// window left sends nothing, so no `receive()` would come to send it.
     pub fn apply_recv_window_change(&mut self, sink: &impl Sink, change: RecvWindowChange) {
         self.recv_window.apply(change);
         self.note_recv_window(sink);
+        self.replenish_connection_window(sink);
+    }
+
+    /// Send a WINDOW_UPDATE on stream 0 once the peer has used at least half the window.
+    fn replenish_connection_window(&mut self, sink: &impl Sink) {
+        if self.recv_window.needs_update() {
+            let inc = self.recv_window.take_update();
+            if inc > 0 {
+                self.send_window_update(sink, 0, inc);
+                self.note_recv_window(sink);
+            }
+        }
     }
 
     fn send_rst_stream(&mut self, sink: &impl Sink, stream_id: u32, code: ErrorCode) {
@@ -591,15 +605,10 @@ impl Connection {
     fn replenish_windows(&mut self, sink: &impl Sink) {
         let change = sink.take_recv_window_change();
         if change != RecvWindowChange::default() {
-            self.apply_recv_window_change(sink, change);
+            self.recv_window.apply(change);
+            self.note_recv_window(sink);
         }
-        if self.recv_window.needs_update() {
-            let inc = self.recv_window.take_update();
-            if inc > 0 {
-                self.send_window_update(sink, 0, inc);
-                self.note_recv_window(sink);
-            }
-        }
+        self.replenish_connection_window(sink);
         let mut buf = std::mem::take(&mut self.replenish_buf);
         buf.clear();
         for (id, s) in self.streams.iter_mut() {

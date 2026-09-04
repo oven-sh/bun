@@ -171,8 +171,8 @@ The dep's sources are declared as implicit outputs of that edge, so the
 compile edges that follow wait for it; from there they are ordinary
 `cc`/`cxx` edges with depfiles.
 
-`custom` deps (`needsSourceAtConfigure: true` — ICU, WebKit) are the
-exception to "fetch is a ninja edge": configure describes their graph _from_
+`custom` deps (ICU, WebKit, bootstrap*cmds) are the
+exception to "fetch is a ninja edge": configure describes their graph \_from*
 the tree (ICU's `sources.txt`, JSC's `Sources.txt`, header directories), so
 `configure.ts` fetches them itself (`prefetchConfigureSources`) whenever the
 tree is missing or its `.ref` is stale, before `emitBun` runs. The

@@ -1519,38 +1519,30 @@ function emitWebKit(n: Ninja, cfg: Config, ctx: CustomBuildContext): CustomBuild
     cwd?: string;
     env?: Record<string, string>;
     implicitOutputs?: string[];
+    /** For generators that print their output: capture stdout into this file (written only if changed). */
+    stdout?: string;
   }): void => {
-    // posix: `env K=V cmd`; cmd.exe (the webkit_gen rule wraps in `cmd /c`
-    // on a Windows host): `set "K=V" && cmd`.
-    const env = Object.entries(opts.env ?? {});
-    const envPrefix = hostWin
-      ? env.map(([k, v]) => `set "${k}=${v}" && `).join("")
-      : env.length > 0
-        ? `env ${env.map(([k, v]) => `${k}=${q(v)}`).join(" ")} `
-        : "";
+    const streamOpts = [
+      `--cwd=${opts.cwd ?? DS}`,
+      ...Object.entries(opts.env ?? {}).map(([k, v]) => `--env=${k}=${v}`),
+      ...(opts.stdout !== undefined ? [`--stdout=${opts.stdout}`] : []),
+    ];
     n.build({
       outputs: opts.outputs,
       ...(opts.implicitOutputs !== undefined && { implicitOutputs: opts.implicitOutputs }),
-      rule: "webkit_gen",
+      rule: "dep_codegen",
       inputs: opts.inputs,
       orderOnlyInputs: treeReady,
       vars: {
-        desc: opts.desc,
-        cwd: q(opts.cwd ?? DS),
-        cmd: envPrefix + quoteArgs(opts.cmd, hostWin),
+        name: "jsc",
+        desc: `gen ${opts.desc}`,
+        opts: quoteArgs(streamOpts, hostWin),
+        cmd: quoteArgs(opts.cmd, hostWin),
       },
     });
   };
-  /** `cmd > out` — for generators that print to stdout. */
-  const genStdout = (out: string, cmd: string[], inputs: string[], desc: string): void => {
-    n.build({
-      outputs: [out],
-      rule: "webkit_gen_stdout",
-      inputs,
-      orderOnlyInputs: treeReady,
-      vars: { desc, cmd: quoteArgs(cmd, hostWin) },
-    });
-  };
+  const genStdout = (out: string, cmd: string[], inputs: string[], desc: string): void =>
+    gen({ outputs: [out], cmd, inputs, desc, stdout: out });
 
   // ─── WTF ───
   const WTF_DS = join(B, "WTF", "DerivedSources"); // created with the other output dirs above
@@ -1933,10 +1925,9 @@ function emitWebKit(n: Ninja, cfg: Config, ctx: CustomBuildContext): CustomBuild
 
   // The extractors are real executables for the TARGET (offlineasm parses
   // them, nothing runs them), so they link with the same toolchain flags bun
-  // does: triple/sysroot, lld, C++ runtime, PIE policy.
+  // does: triple/sysroot, lld, C++ runtime, PIE policy, sanitizer runtime.
   const exeLinkFlags = [
     ...computeTargetLinkFlags(cfg),
-    ...(cfg.asan ? ["-fsanitize=address"] : []),
     // Drop unreferenced sections: the extractors reference a sliver of JSC.
     ...(cfg.darwin ? ["-Wl,-dead_strip"] : cfg.windows ? [] : ["-Wl,--gc-sections"]),
   ];
@@ -2194,29 +2185,6 @@ function emitWebKit(n: Ninja, cfg: Config, ctx: CustomBuildContext): CustomBuild
   };
 }
 
-/**
- * Ninja rules for the edges above. Registered from registerDepRules so they
- * exist before any dep emits.
- */
-export function registerWebKitRules(n: Ninja, cfg: Config): void {
-  const hostWin = cfg.host.os === "windows";
-  // Generators write several outputs and are deterministic; restat prunes
-  // downstream when a re-run produces identical bytes (offlineasm and the
-  // python generators only rewrite on change).
-  n.rule("webkit_gen", {
-    command: hostWin ? `cmd /c "cd /d $cwd && $cmd"` : `cd $cwd && $cmd`,
-    description: "gen $desc",
-    restat: true,
-  });
-  n.rule("webkit_gen_stdout", {
-    command: hostWin
-      ? `cmd /c "$cmd > $out"`
-      : `$cmd > $out.tmp && { cmp -s $out.tmp $out && rm $out.tmp || mv $out.tmp $out; }`,
-    description: "gen $desc",
-    restat: true,
-  });
-}
-
 // ───────────────────────────────────────────────────────────────────────────
 // The Dependency
 // ───────────────────────────────────────────────────────────────────────────
@@ -2260,7 +2228,7 @@ export const webkit: Dependency = {
     if (cfg.webkit === "prebuilt") {
       return { kind: "none" };
     }
-    return { kind: "custom", needsSourceAtConfigure: true, emit: emitWebKit };
+    return { kind: "custom", emit: emitWebKit };
   },
 
   provides: cfg => {

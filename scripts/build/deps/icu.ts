@@ -76,7 +76,7 @@ export const icu: Dependency = {
   source: () => ({ kind: "tarball", url: ICU_URL, sha256: ICU_SHA256, version: ICU_VERSION }),
   patches: ["patches/icu/udata-decompress-hook.patch"],
 
-  build: () => ({ kind: "custom", needsSourceAtConfigure: true, emit: emitIcu }),
+  build: () => ({ kind: "custom", emit: emitIcu }),
 
   // emitIcu reports these (CustomBuild); U_STATIC_IMPLEMENTATION reaches bun's
   // own TUs through `defines`.
@@ -183,12 +183,15 @@ function emitIcu(n: Ninja, cfg: Config, { srcDir, ready }: CustomBuildContext): 
   const asm = join(dataDir, "icudata.S");
   n.build({
     outputs: [asm, outDat, dict],
-    rule: "icu_data",
+    rule: "dep_codegen",
     inputs: [inDat],
     implicitInputs: [icupkg, keepRaw, dataScript],
     vars: {
-      args: quoteArgs(
+      name: "icu",
+      desc: "icu data (filter + zstd repack)",
+      cmd: `${cfg.jsRuntime} ${quoteArgs(
         [
+          dataScript,
           "--icupkg",
           icupkg,
           "--in",
@@ -201,7 +204,7 @@ function emitIcu(n: Ninja, cfg: Config, { srcDir, ready }: CustomBuildContext): 
           cfg.windows ? "coff" : "elf",
         ],
         hostWin,
-      ),
+      )}`,
     },
   });
   // The .S only names the two blobs (.incbin); when they change it must
@@ -246,11 +249,6 @@ export function registerIcuRules(n: Ninja, cfg: Config): void {
     description: "host-link $out",
     rspfile: "$out.rsp",
     rspfile_content: "$in_newline",
-  });
-  n.rule("icu_data", {
-    command: `${cfg.jsRuntime} ${q(join(cfg.cwd, "scripts", "build", "icu-data.ts"))} $args`,
-    description: "icu data (filter + zstd repack)",
-    restat: true,
   });
   // Windows target: the data .S goes through the GNU-driver clang (hostCc;
   // clang-cl does not take .S) for the target triple.

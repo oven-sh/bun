@@ -832,7 +832,8 @@ export const defines: Flag[] = [
 
 /**
  * The toolchain half of the link line for a unix target: triple + sysroot,
- * which linker, C++ runtime, PIE policy, deployment target. Everything an
+ * which linker, C++ runtime, PIE policy, deployment target, sanitizer
+ * runtime. Everything an
  * executable for the target needs regardless of what it is — bun itself, and
  * the JSC LLInt offset extractors WebKit's build links (deps/webkit.ts,
  * via computeTargetLinkFlags). Bun-specific link policy (symbol lists, ICF,
@@ -957,16 +958,19 @@ export const targetLinkFlags: Flag[] = [
     when: c => c.freebsd,
     desc: "FreeBSD 13+ clang defaults to PIE; opt out (matches Linux, avoids -fPIC rebuild of WebKit/deps)",
   },
-];
-
-export const linkerFlags: Flag[] = [
-  ...targetLinkFlags,
-  // ─── Sanitizers ───
+  // ─── Sanitizer runtime ───
   {
+    // Objects are compiled -fsanitize=address (globalFlags); anything linked
+    // from them needs the runtime.
     flag: "-fsanitize=address",
     when: c => c.unix && c.asan,
     desc: "Link ASAN runtime",
   },
+];
+
+export const linkerFlags: Flag[] = [
+  ...targetLinkFlags,
+  // ─── Sanitizers (bun policy) ───
   {
     flag: "-fsanitize=null",
     when: c =>

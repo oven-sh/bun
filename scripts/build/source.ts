@@ -21,9 +21,7 @@ import { existsSync, mkdirSync, rmSync } from "node:fs";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import { ar, cc, cxx, nasm } from "./compile.ts";
 import type { Config } from "./config.ts";
-import { registerBootstrapCmdsRules } from "./deps/bootstrap-cmds.ts";
 import { registerIcuRules } from "./deps/icu.ts";
-import { registerWebKitRules } from "./deps/webkit.ts";
 import { gitArchiveUrl, githubArchiveUrl } from "./download.ts";
 import { assert } from "./error.ts";
 import { assertManagedSource, fetchCliPath, fetchDep, sourceIsCurrent } from "./fetch-cli.ts";
@@ -198,11 +196,9 @@ export type BuildSpec =
 export interface CustomBuild {
   kind: "custom";
   /**
-   * The source tree must be on disk at CONFIGURE time (the emitter reads
-   * file lists out of it). configure fetches it before emitting — see
-   * prefetchConfigureSources.
+   * Reads the source tree at CONFIGURE time (file lists, globbed dirs), so
+   * configure fetches it before emitting — see prefetchConfigureSources.
    */
-  needsSourceAtConfigure: true;
   emit: (n: Ninja, cfg: Config, ctx: CustomBuildContext) => CustomBuildResult;
 }
 
@@ -546,9 +542,7 @@ export interface ResolvedDep {
  * Register ninja rules shared by all deps. Call once before any resolveDep().
  */
 export function registerDepRules(n: Ninja, cfg: Config): void {
-  registerWebKitRules(n, cfg);
   registerIcuRules(n, cfg);
-  registerBootstrapCmdsRules(n, cfg);
   // Shell quoting: tool/script paths may contain spaces (e.g. cargo
   // in "C:\Program Files\Rust\..."). quote() passes through safe paths
   // unchanged so there's no cost on the common case. Host shell syntax
@@ -644,11 +638,16 @@ export function registerDepRules(n: Ninja, cfg: Config): void {
   });
 
   // DirectBuild codegen: runs a host tool built by this graph to produce a
-  // header. cwd is the dep source dir so the tool sees its inputs; output
-  // path is absolute. restat: no-op if the header content is unchanged.
+  // header, and every other generator a dep runs (WebKit's offlineasm /
+  // ruby / python / perl scripts, ICU's data repack, migcom's flex/bison).
+  // `$opts` are stream.ts's own: --cwd=DIR, --env=K=V, --stdout=PATH (for
+  // generators that print their output; written only when it changed) — so
+  // no `sh -c`/`cmd /c`, `cd`, `env` or `> $out` is spelled per host.
+  // restat: generators that leave an unchanged output alone prune their
+  // dependents.
   n.rule("dep_codegen", {
-    command: `${stream} --cwd=$cwd $tool $args`,
-    description: "codegen $name",
+    command: `${stream} $opts $cmd`,
+    description: "$desc",
     restat: true,
   });
 
@@ -750,8 +749,8 @@ function fetchSpec(source: Extract<Source, { kind: "github" | "tarball" }>): {
 
 /**
  * Fetch, at configure time, the source of every dep whose graph can only be
- * described with the tree on disk (CustomBuild.needsSourceAtConfigure —
- * WebKit's file lists live in its own CMakeLists/Sources.txt). Same fetch,
+ * described with the tree on disk (every CustomBuild — WebKit's file lists
+ * live in its own Sources.txt, ICU's in sources.txt). Same fetch,
  * same identity stamp as the ninja `dep_fetch` edge, which is still emitted
  * and is then a no-op; this just runs it early. A no-op itself when the stamp
  * already matches, so the always-configure cost stays a stat.
@@ -762,7 +761,7 @@ export async function prefetchConfigureSources(cfg: Config, deps: readonly Depen
     const source = depSource(cfg, dep);
     if (source.kind !== "github" && source.kind !== "tarball") continue;
     const build = dep.build(cfg);
-    if (build.kind !== "custom" || !build.needsSourceAtConfigure) continue;
+    if (build.kind !== "custom") continue;
     const srcDir = depSourceDir(cfg, dep.name);
     const patches = dep.patches === undefined ? [] : typeof dep.patches === "function" ? dep.patches(cfg) : dep.patches;
     const patchPaths = patches.map(p => resolve(cfg.cwd, p));
@@ -1405,9 +1404,9 @@ function emitDirect(
       inputs: [toolExe],
       vars: {
         name,
-        cwd: srcDir,
-        tool: q(toolExe),
-        args: quoteArgs(argv, hostWin),
+        desc: `codegen ${name} ${cg.output}`,
+        opts: `--cwd=${q(srcDir)}`,
+        cmd: quoteArgs([toolExe, ...argv], hostWin),
       },
     });
   }

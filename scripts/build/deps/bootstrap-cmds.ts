@@ -34,11 +34,12 @@ export const bootstrapCmds: Dependency = {
 
   source: () => ({ kind: "github", repo: "apple-oss-distributions/bootstrap_cmds", commit: BOOTSTRAP_CMDS_COMMIT }),
 
-  build: () => ({ kind: "custom", needsSourceAtConfigure: true, emit: emitMigcom }),
+  build: () => ({ kind: "custom", emit: emitMigcom }),
   provides: () => ({ libs: [], includes: [] }),
 };
 
 function emitMigcom(n: Ninja, cfg: Config, { srcDir, ready }: CustomBuildContext): CustomBuildResult {
+  const name = "bootstrap_cmds";
   const hostWin = cfg.host.os === "windows";
   const B = depBuildDir(cfg, "bootstrap_cmds");
   const src = join(srcDir, "migcom.tproj");
@@ -53,17 +54,18 @@ function emitMigcom(n: Ninja, cfg: Config, { srcDir, ready }: CustomBuildContext
   const ytab = join(B, "y.tab.h");
   n.build({
     outputs: [lexer],
-    rule: "host_gen",
+    rule: "dep_codegen",
     inputs: [join(src, "lexxer.l")],
     orderOnlyInputs: orderOnly,
-    vars: { desc: "flex migcom", cmd: quoteArgs(["flex", "-o", lexer, join(src, "lexxer.l")], hostWin) },
+    vars: { name, desc: "flex migcom", cmd: quoteArgs(["flex", "-o", lexer, join(src, "lexxer.l")], hostWin) },
   });
   n.build({
     outputs: [parser, ytab],
-    rule: "host_gen",
+    rule: "dep_codegen",
     inputs: [join(src, "parser.y")],
     orderOnlyInputs: orderOnly,
     vars: {
+      name,
       desc: "bison migcom",
       cmd: quoteArgs(["bison", `--defines=${ytab}`, "-o", parser, join(src, "parser.y")], hostWin),
     },
@@ -100,10 +102,4 @@ function emitMigcom(n: Ninja, cfg: Config, { srcDir, ready }: CustomBuildContext
   });
   n.phony("migcom", [migcom]);
   return { objects: [], includes: [], outputs: [migcom] };
-}
-
-/** flex/bison invocations: plain host commands with their own description. */
-export function registerBootstrapCmdsRules(n: Ninja, cfg: Config): void {
-  void cfg;
-  n.rule("host_gen", { command: "$cmd", description: "$desc" });
 }

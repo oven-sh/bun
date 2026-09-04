@@ -42,11 +42,14 @@
  * would conflict with shell-quoted ninja vars like $args). --stamp=PATH
  * writes an empty file at PATH when the child exits 0 — used for rules
  * whose command doesn't naturally produce an output file (e.g. a typecheck
- * pass) so ninja can still chain on it.
+ * pass) so ninja can still chain on it. --stdout=PATH captures the child's
+ * stdout into PATH instead of forwarding it (generators that print their
+ * output), writing only when the content changed so restat can prune.
  */
 
 import { spawn, spawnSync } from "node:child_process";
 import { closeSync, createWriteStream, openSync, writeSync } from "node:fs";
+import { writeIfChanged } from "./fs.ts";
 import { createInterface } from "node:readline";
 import { nameColor } from "./tty.ts";
 
@@ -89,7 +92,7 @@ function main(): void {
   const argv = process.argv.slice(2);
   const name = argv.shift();
   if (!name) {
-    process.stderr.write("usage: stream.ts <name> [--cwd=DIR] [--env=K=V ...] <command...>\n");
+    process.stderr.write("usage: stream.ts <name> [--cwd=DIR] [--env=K=V ...] [--stdout=PATH] <command...>\n");
     process.exit(2);
   }
 
@@ -97,6 +100,7 @@ function main(): void {
   let cwd: string | undefined;
   let consoleMode = false;
   let stampPath: string | undefined;
+  let stdoutPath: string | undefined;
   const envOverrides: Record<string, string> = {};
 
   // Bun's bundled BoringSSL doesn't consult the system trust store, so
@@ -139,6 +143,8 @@ function main(): void {
       consoleMode = true;
     } else if (opt.startsWith("--stamp=")) {
       stampPath = opt.slice(8);
+    } else if (opt.startsWith("--stdout=")) {
+      stdoutPath = opt.slice(9);
     } else {
       process.stderr.write(`stream.ts: unknown option ${opt}\n`);
       process.exit(2);
@@ -243,7 +249,9 @@ function main(): void {
     const rl = createInterface({ input: stream, crlfDelay: Infinity });
     rl.on("line", line => write(prefix + line + "\n"));
   };
-  pump(child.stdout!);
+  const captured: Buffer[] = [];
+  if (stdoutPath !== undefined) child.stdout!.on("data", (chunk: Buffer) => captured.push(chunk));
+  else pump(child.stdout!);
   pump(child.stderr!);
 
   // writeSync for final messages: out.write() is async; process.exit()
@@ -263,7 +271,10 @@ function main(): void {
       writeFinal(`killed by ${signal}\n`);
       process.exit(1);
     }
-    if (code === 0) writeStamp();
+    if (code === 0) {
+      if (stdoutPath !== undefined) writeIfChanged(stdoutPath, Buffer.concat(captured).toString("utf8"));
+      writeStamp();
+    }
     process.exit(code ?? 1);
   });
 }

@@ -91,12 +91,12 @@ This is called when the event loop is active and needs to wait for I/O:
                │
                ▼
 ┌─────────────────────────────────────┐
-│  4. Tick immediate tasks (POSIX)    │ ← setImmediate() callbacks
+│  4. Tick immediate tasks            │ ← setImmediate() callbacks
 └──────────────┬──────────────────────┘
                │
                ▼
 ┌─────────────────────────────────────┐
-│  5. Drain timers (POSIX)            │ ← setTimeout/setInterval callbacks
+│  5. Drain timers                    │ ← setTimeout/setInterval callbacks
 └──────────────┬──────────────────────┘
                │
                ▼
@@ -114,7 +114,7 @@ Steps 3 to 5 follow Node's phase order: poll, check (`setImmediate`), timers. Th
 
 Node runs thread-pool completions in the poll phase. Bun runs them as tasks in `tick()`. So a `tick()` that ran tasks counts as a poll phase: before step 3, `autoTick` runs the immediates and the timers once more. If one of them ran a callback, the poll does not wait.
 
-On Windows, libuv runs the timers inside the poll call (step 3). There, the immediates run before step 1, and steps 4 and 5 do not run.
+On Windows, the poll is `uv_run`. It takes no timeout, so a wakeup keeps it from waiting while immediates are queued. A `uv_timer_t` ends it at the next timer deadline. The callback of that timer runs no timers, so step 5 runs them, as on POSIX.
 
 ## Task Draining Algorithm
 
@@ -285,23 +285,17 @@ When I/O becomes ready (socket readable/writable, file descriptor ready):
 
 ## setTimeout and setInterval Ordering
 
-Timers are handled differently based on platform:
-
-### POSIX (`event_loop.rs:396`)
-
 ```rust
 ctx.timer.drain_timers(ctx);
 ```
 
-Timers are drained after I/O polling and after the immediates. Each timer callback:
+Timers are drained after I/O polling and after the immediates, on every platform. Each timer callback:
 
 1. Is wrapped in `enter()`/`exit()`
 2. Triggers microtask draining after execution
 3. Can enqueue new tasks
 
-### Windows
-
-Uses the uv_timer_t mechanism integrated into the uSockets loop.
+On Windows, a `uv_timer_t` ends the poll at the next deadline. Its callback does nothing. The drain above runs the timers.
 
 ### Timer vs. setImmediate Ordering
 
@@ -346,8 +340,8 @@ This ensures microtasks are only drained once per top-level event loop task, eve
 
 The Bun event loop processes work in this order:
 
-1. **I/O polling** (epoll/kqueue)
-2. **Immediate tasks** (setImmediate; on Windows these run before the poll)
+1. **I/O polling** (epoll/kqueue, or libuv on Windows)
+2. **Immediate tasks** (setImmediate)
 3. **Timer callbacks** (setTimeout/setInterval)
 4. **Regular tasks** from the task queue
    - For each task:

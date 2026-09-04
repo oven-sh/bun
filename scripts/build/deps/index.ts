@@ -11,6 +11,7 @@
  */
 
 import type { Dependency } from "../source.ts";
+import { bootstrapCmds } from "./bootstrap-cmds.ts";
 import { boringssl } from "./boringssl.ts";
 import { brotli } from "./brotli.ts";
 import { cares } from "./cares.ts";
@@ -30,7 +31,6 @@ import { lsquic } from "./lsquic.ts";
 import { mimalloc } from "./mimalloc.ts";
 import { nodejsHeaders } from "./nodejs-headers.ts";
 import { picohttpparser } from "./picohttpparser.ts";
-import { bootstrapCmds } from "./bootstrap-cmds.ts";
 import { rustArgon2 } from "./rust-argon2.ts";
 import { sqlite } from "./sqlite.ts";
 import { tinycc } from "./tinycc.ts";

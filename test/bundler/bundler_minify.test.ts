@@ -79,6 +79,29 @@ describe("bundler", () => {
     minifySyntax: true,
     target: "bun",
   });
+  itBundled("minify/StringLengthFoldingNonAsciiDefine", {
+    // Strings injected by --define are stored as UTF-8, so concatenating them
+    // builds a rope whose byte length is not its JS length once a segment is
+    // non-ascii. `.length` must only fold for all-ascii ropes.
+    files: {
+      "/entry.js": /* js */ `
+        capture((ASCII + "x").length);
+        capture(\`\${ASCII}x\`.length);
+        capture((LATIN1 + "x").length);
+        capture(("x" + ASCII + LATIN1).length);
+        capture(\`\${LATIN1}x\`.length);
+        capture(\`x\${EMOJI}\`.length);
+      `,
+    },
+    define: {
+      ASCII: '"ab"',
+      LATIN1: '"é"',
+      EMOJI: '"😋"',
+    },
+    capture: ["3", "3", '"\\xE9x".length', '"xab\\xE9".length', '"\\xE9x".length', '"x\\uD83D\\uDE0B".length'],
+    minifySyntax: true,
+    target: "bun",
+  });
   itBundled("minify/StringAdditionFolding", {
     files: {
       "/entry.js": /* js */ `

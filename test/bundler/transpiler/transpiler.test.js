@@ -3196,6 +3196,32 @@ export const { dead } = { dead: "hello world!" };
       expectBunPrinted_(`export const foo = ("æ" + "™").length;`, `export const foo = ("æ" + "™").length`);
     });
 
+    it("rewrite string to length with non-ascii utf-8 strings from define", () => {
+      // Unlike non-ascii source literals (stored as UTF-16), define values are
+      // stored as UTF-8, so they do get folded into ropes. The rope tracks its
+      // byte length, which is not the JS length once a segment is non-ascii.
+      const defines = new Bun.Transpiler({
+        loader: "js",
+        platform: "bun",
+        define: { ASCII: '"ab"', LATIN1: '"é"', EMOJI: '"😋"' },
+        minify: { syntax: true },
+      });
+      const expectDefinePrinted = (code, out) => expect(parsed(code, true, false, defines)).toBe(out);
+
+      expectDefinePrinted(`export const foo = (ASCII + "x").length;`, `export const foo = 3`);
+      expectDefinePrinted(`export const foo = \`\${ASCII}x\`.length;`, `export const foo = 3`);
+
+      // "éx".length is 2, but the rope is 3 bytes long
+      expectDefinePrinted(`export const foo = (LATIN1 + "x").length;`, `export const foo = "éx".length`);
+      // the non-ascii segment is not the first one
+      expectDefinePrinted(`export const foo = ("x" + ASCII + LATIN1).length;`, `export const foo = "xabé".length`);
+      // a rope whose only non-empty segment is non-ascii
+      expectDefinePrinted(`export const foo = ("" + LATIN1).length;`, `export const foo = "é".length`);
+      // template literals are folded through the same rope, then flattened
+      expectDefinePrinted(`export const foo = \`\${LATIN1}x\`.length;`, `export const foo = "éx".length`);
+      expectDefinePrinted(`export const foo = \`x\${EMOJI}\`.length;`, `export const foo = "x😋".length`);
+    });
+
     describe("Bun.js", () => {
       it.todo("require -> import.meta.require", () => {
         expectBunPrinted_(

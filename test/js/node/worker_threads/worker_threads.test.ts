@@ -2667,7 +2667,11 @@ describe("worker stop ordering as seen by the worker's own handlers", () => {
   const workerSource = (door: "terminate" | "exit") => `
     const { workerData, parentPort } = require("node:worker_threads");
     const log = workerData.log;
-    const put = tag => { const i = Atomics.add(log, 0, 1) + 1; if (i < log.length) Atomics.store(log, i, tag); };
+    // The worker is the log's only writer. The tag is stored before the count that exposes it:
+    // terminate() can land between the two Atomics calls (the TerminationException is thrown
+    // inside whichever host call runs next), and a put() cut off there must leave nothing behind
+    // rather than a count that points at an unwritten (0) slot.
+    const put = tag => { const i = Atomics.load(log, 0) + 1; if (i < log.length) Atomics.store(log, i, tag); Atomics.store(log, 0, i); };
     process.on("exit", () => put(${TAG.exitHandler}));
     process.on("beforeExit", () => put(${TAG.beforeExit}));
     const net = require("node:net"), dgram = require("node:dgram"), fs = require("node:fs"), os = require("node:os");

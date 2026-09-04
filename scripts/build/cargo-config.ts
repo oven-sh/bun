@@ -60,9 +60,11 @@ function linkerFor(triple: string, cfg: Config): string {
  * Write `.cargo/config.toml` next to the workspace `Cargo.toml` (repo root).
  * Returns the absolute path written.
  *
- * Windows-msvc targets are omitted: the MSVC linker isn't a clang driver and
- * doesn't take `-fuse-ld=lld`; that path is handled entirely via env in
- * `rust.ts` (`CARGO_TARGET_..._LINKER = cfg.msvcLinker`).
+ * Windows-msvc targets get no `linker =` line: the MSVC linker isn't a clang
+ * driver and doesn't take `-fuse-ld=lld`; rustc finds `link.exe` itself, and
+ * the ninja build pins it via env in `rust.ts` (`CARGO_TARGET_..._LINKER =
+ * cfg.msvcLinker`). They only get the `rustflags` that let `cargo test` link
+ * (see the loop below).
  */
 export function generateCargoConfig(cfg: Config): string {
   const outPath = resolve(cfg.cwd, ".cargo", "config.toml");
@@ -77,12 +79,41 @@ export function generateCargoConfig(cfg: Config): string {
     "# of which the default `cc` link handles cleanly. Paths come from the",
     "# toolchain `scripts/build/tools.ts` discovered (`cfg.hostCxx`), so this",
     "# file is correct on whatever machine ran configure.",
+    "#",
+    "# windows-msvc: /FORCE:UNRESOLVED is what lets `cargo test -p <crate>`",
+    "# link. Test binaries reference bun's C/C++ externs (BunString__*,",
+    "# highway_*, mi_*, ...) that only the bun binary provides; link.exe and",
+    "# lld-link refuse, /FORCE resolves them to 0 instead. Sound as long as no",
+    "# test executes one, the rule scripts/rust-miri.ts already imposes on",
+    "# these crates. See scripts/build/cargo-config.ts.",
   ];
 
   for (const triple of allRustTargets) {
-    if (tripleOs(triple) === "windows") continue;
     lines.push("");
     lines.push(`[target.${triple}]${triple === host ? "  # host" : ""}`);
+    if (tripleOs(triple) === "windows") {
+      // `cargo test -p <crate>` links only Rust crates, so the C/C++ externs
+      // of bun_core & co. (BunString__*, highway_*, simdutf__*, mi_*, ...) are
+      // undefined; tests stub the few they execute (string_paths.rs,
+      // parsers/native_test_shims.rs). lld only reports a symbol that live
+      // code references, which is what makes that convention work on Linux.
+      // link.exe and lld-link report every reference in every object pulled
+      // out of an rlib, dead or not (~80 LNK2019s for any bun_core dependent),
+      // so /FORCE:UNRESOLVED resolves whatever is left to 0 instead. The
+      // resulting contract is "no test executes an unstubbed extern", the same
+      // one scripts/rust-miri.ts imposes on the crates it lists, and weaker
+      // than lld's "no live reference": a crate can link here and not on
+      // Linux, and a test that does execute one dies with
+      // STATUS_ACCESS_VIOLATION rather than a link error. The LNK2019/LNK4088
+      // text link.exe still prints under /FORCE only reaches the user via
+      // rustc's linker_messages lint, which the workspace lints already allow.
+      // The flag reaches every link a bare cargo performs on this host, but
+      // test/bench binaries are the only target executables bare cargo
+      // produces here: bun_bin is a staticlib, and bun_shim_impl is only
+      // built by rust.ts, whose CARGO_ENCODED_RUSTFLAGS replaces this table.
+      lines.push(`rustflags = ["-C", "link-arg=/FORCE:UNRESOLVED"]`);
+      continue;
+    }
     lines.push(`linker = ${JSON.stringify(linkerFor(triple, cfg))}`);
     // -Qunused-arguments: rustc passes link args that don't apply to every
     // artifact kind (e.g. `-no-pie` when it links a target cdylib; none

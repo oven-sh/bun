@@ -181,12 +181,12 @@ shell_builtins! {
         Cd       => (cd::Cd,            "cd",       b""),
         Echo     => (echo::Echo,        "echo",     b""),
         Export   => (export::Export,    "export",   b""),
+        Which    => (which::Which,      "which",    b""),
     }
     boxed: {
         Cat      => (cat::Cat,          "cat",      b"usage: cat [-belnstuv] [file ...]\n"),
         Mv       => (mv::Mv,            "mv",       b"usage: mv [-f | -i | -n] [-hv] source target\n       mv [-f | -i | -n] [-v] source ... directory\n"),
         Rm       => (rm::Rm,            "rm",       b"usage: rm [-f | -i] [-dIPRrvWx] file ...\n       unlink [--] file\n"),
-        Which    => (which::Which,      "which",    b""),
         Ls       => (ls::Ls,            "ls",       b"usage: ls [-@ABCFGHILOPRSTUWabcdefghiklmnopqrstuvwxy1%,] [--color=when] [-D format] [file ...]\n"),
         Mkdir    => (mkdir::Mkdir,      "mkdir",    b"usage: mkdir [-pv] [-m mode] directory_name ...\n"),
         Touch    => (touch::Touch,      "touch",    b"usage: touch [-A [-][[hh]mm]SS] [-achm] [-r file] [-t [[CC]YY]MMDDhhmm[.SS]]\n       [-d YYYY-MM-DDThh:mm:SS[.frac][tz]] file ...\n"),

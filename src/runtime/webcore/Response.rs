@@ -334,12 +334,6 @@ impl Response {
     }
 
     #[inline]
-    pub(crate) fn set_init_headers(&self, headers: Option<HeadersRef>) {
-        // old headers dropped (HeadersRef::Drop derefs the C++ handle)
-        self.init.with_mut(|init| init.headers = headers);
-    }
-
-    #[inline]
     pub(crate) fn get_init_status_code(&self) -> u16 {
         self.init.get().status_code
     }
@@ -389,17 +383,11 @@ impl Response {
         self.init_mut().headers.as_deref_mut()
     }
 
-    /// Deep-copy this response's init headers (if any) into a fresh
-    /// `HeadersRef`. Centralises the `FetchHeaders::clone_this` +
-    /// `HeadersRef::adopt` pair so callers stay `unsafe`-free.
-    #[inline]
-    pub(crate) fn clone_init_headers(
-        &self,
-        global: &JSGlobalObject,
-    ) -> JsResult<Option<HeadersRef>> {
-        match self.init_mut().headers.as_ref() {
+    /// Deep copy of what the `.headers` getter would report, without materializing it on `self`.
+    pub(crate) fn clone_headers(&self, global: &JSGlobalObject) -> JsResult<Option<HeadersRef>> {
+        match self.init.get().headers.as_ref() {
             Some(headers) => headers.clone_this(global),
-            None => Ok(None),
+            None => self.create_headers_from_body(global),
         }
     }
 
@@ -589,26 +577,38 @@ impl Response {
         &self,
         global_this: &JSGlobalObject,
     ) -> JsResult<&mut HeadersRef> {
+        if self.init.get().headers.is_none() {
+            let headers = self
+                .create_headers_from_body(global_this)?
+                .unwrap_or_else(HeadersRef::create_empty);
+            self.init.with_mut(|init| init.headers = Some(headers));
+        }
+
         // R-2 escape hatch via `init_mut()` — the returned `&mut HeadersRef`
         // borrows `self.init`; callers (`get_headers`, `construct_*`) do not
         // hold the borrow across calls that re-enter Response host-fns.
-        let init = self.init_mut();
-        if init.headers.is_none() {
-            init.headers = Some(HeadersRef::create_empty());
+        Ok(self.init_mut().headers.as_mut().unwrap())
+    }
 
-            if let BodyValue::Blob(blob) = self.body.get().value.get() {
-                let content_type = blob.content_type_slice();
-                if !content_type.is_empty() {
-                    init.headers.as_mut().unwrap().put(
-                        HTTPHeaderName::ContentType,
-                        &BunString::ascii(content_type),
-                        global_this,
-                    )?;
-                }
-            }
+    /// `Some` only when the body is a Blob with a Content-Type (`Bun.file()` mime, `Blob.type`).
+    fn create_headers_from_body(
+        &self,
+        global_this: &JSGlobalObject,
+    ) -> JsResult<Option<HeadersRef>> {
+        let BodyValue::Blob(blob) = self.body.get().value.get() else {
+            return Ok(None);
+        };
+        let content_type = blob.content_type_slice();
+        if content_type.is_empty() {
+            return Ok(None);
         }
-
-        Ok(init.headers.as_mut().unwrap())
+        let mut headers = HeadersRef::create_empty();
+        headers.put(
+            HTTPHeaderName::ContentType,
+            &BunString::ascii(content_type),
+            global_this,
+        )?;
+        Ok(Some(headers))
     }
 
     pub(crate) fn get_headers(this: &Self, global_this: &JSGlobalObject) -> JsResult<JSValue> {

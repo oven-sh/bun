@@ -3536,21 +3536,9 @@ impl H2FrameParser {
         }
     }
 
-    /// Feed inbound bytes through the rewrite engine, buffering the unconsumed tail (design B).
-    fn rewrite_read(&self, bytes: &[u8]) {
-        bun_output::scoped_log!(H2FrameParser, "rewriteRead {}", bytes.len());
-        // Re-entrancy guard: receive() dispatches into JS between frames, and user code can feed
-        // bytes back into the same parser from inside such a dispatch (e.g. a custom Duplex whose
-        // write path synchronously pushes back into the socket). The engine cell stays mutably
-        // borrowed across the outer receive(), so queue the bytes for the outer call to drain
-        // rather than panicking on a second borrow.
-        if self.engine.try_borrow_mut().is_err() {
-            self.rewrite_tail.with_mut(|t| t.extend_from_slice(bytes));
-            return;
-        }
-        self.ensure_engine();
-        // Keep the engine's local settings in sync with the JS-configured cell (settings() may be
-        // called after the engine was lazily created). Plain Copy structs — no allocation.
+    /// Copy what the legacy side changed since the last receive() into the engine.
+    fn sync_engine(&self) {
+        // Plain Copy structs, no allocation.
         if let Some(engine) = self.engine.borrow_mut().as_mut() {
             engine.local_settings = self.rewrite_local_settings();
             engine.max_header_list_pairs = self.max_header_list_pairs.get();
@@ -3620,6 +3608,22 @@ impl H2FrameParser {
                 });
             }
         }
+    }
+
+    /// Feed inbound bytes through the rewrite engine, buffering the unconsumed tail (design B).
+    fn rewrite_read(&self, bytes: &[u8]) {
+        bun_output::scoped_log!(H2FrameParser, "rewriteRead {}", bytes.len());
+        // Re-entrancy guard: receive() dispatches into JS between frames, and user code can feed
+        // bytes back into the same parser from inside such a dispatch (e.g. a custom Duplex whose
+        // write path synchronously pushes back into the socket). The engine cell stays mutably
+        // borrowed across the outer receive(), so queue the bytes for the outer call to drain
+        // rather than panicking on a second borrow.
+        if self.engine.try_borrow_mut().is_err() {
+            self.rewrite_tail.with_mut(|t| t.extend_from_slice(bytes));
+            return;
+        }
+        self.ensure_engine();
+        self.sync_engine();
         if self.rewrite_tail.get().is_empty() {
             let feed = {
                 let mut guard = self.engine.borrow_mut();
@@ -3665,6 +3669,8 @@ impl H2FrameParser {
             if self.rewrite_tail.get().is_empty() {
                 break;
             }
+            // A dispatch in the receive() above can have called settings() or written DATA.
+            self.sync_engine();
             let pending = self.rewrite_tail.with_mut(std::mem::take);
             let feed = {
                 let mut guard = self.engine.borrow_mut();
@@ -3803,21 +3809,24 @@ impl crate::api::h2::connection::Sink for H2FrameParser {
             max_header_list_size: settings.max_header_list_size,
             enable_connect_protocol: settings.enable_connect_protocol,
         };
+        // handle_received_stream_id opens every stream with this value.
+        let old_initial_window = self
+            .remote_settings
+            .get()
+            .map(|s| s.initial_window_size)
+            .unwrap_or(DEFAULT_WINDOW_SIZE as u32);
         self.remote_settings.set(Some(fp));
-        // §6.9.2 (mirrors the legacy inbound): when the peer's INITIAL_WINDOW_SIZE grows, raise the
-        // send window of streams opened before its SETTINGS arrived (a client's first request is
-        // typically sent before the server's SETTINGS lands), then resume queued sends.
-        let mut window_grew = false;
-        for (_, item) in self.streams.get().iter() {
-            // SAFETY: item is &*mut Stream from streams.iter(); the boxed Stream outlives the iteration
-            let stream = unsafe { &mut **item };
-            if (settings.initial_window_size as u64) > stream.remote_window_size {
-                stream.remote_window_size = settings.initial_window_size as u64;
-                window_grew = true;
+        // §6.9.2. remote_window_size is cumulative: a decrease can leave it below the used count.
+        let delta = settings.initial_window_size as i64 - old_initial_window as i64;
+        if delta != 0 {
+            for (_, item) in self.streams.get().iter() {
+                // SAFETY: item is &*mut Stream from streams.iter(); the boxed Stream outlives the iteration
+                let stream = unsafe { &mut **item };
+                stream.remote_window_size = stream.remote_window_size.saturating_add_signed(delta);
             }
         }
         // Resume queued sends only when a window actually grew; there is nothing to flush otherwise.
-        if window_grew {
+        if delta > 0 && !self.streams.get().is_empty() {
             let _ = self.flush();
         }
         let g = self.global();

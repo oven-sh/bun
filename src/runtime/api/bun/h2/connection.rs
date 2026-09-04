@@ -708,6 +708,14 @@ impl Connection {
                     .unwrap_or(PendingLocalSettings {
                         settings: self.local_settings,
                     });
+            // §6.9.2: the peer moved its stream send windows by this delta when it applied it.
+            let delta =
+                acked.settings.initial_window_size as i64 - self.acked_local_initial_window as i64;
+            if delta != 0 {
+                for s in self.streams.values_mut() {
+                    s.recv_window.grow(delta);
+                }
+            }
             self.acked_local_initial_window = acked.settings.initial_window_size;
             // The peer has acknowledged this submission: header-list enforcement may now use the
             // limit it carried.
@@ -948,10 +956,9 @@ impl Connection {
         let end_stream = wire::flags::has(hdr.flags, wire::flags::END_STREAM);
 
         // §5.1.1: a server's inbound HEADERS opens (or continues) a client-initiated odd stream.
-        // Our receive window is sized by OUR advertised SETTINGS_INITIAL_WINDOW_SIZE; our send
-        // window by the PEER's (§6.9.2).
+        // Receive window from the INITIAL_WINDOW_SIZE the peer ACKed, send window from the peer's.
         let send_init = self.remote_settings.initial_window_size;
-        let recv_init = self.local_settings.initial_window_size;
+        let recv_init = self.acked_local_initial_window;
         let is_new = !self.streams.contains_key(&hdr.stream_id);
         // RFC 9113 5.1.1: client-initiated streams use odd ids - a server receiving HEADERS that
         // would open an even-id stream is a connection PROTOCOL_ERROR. (Monotonicity is not
@@ -1397,7 +1404,7 @@ impl Connection {
 
         if !self.streams.contains_key(&hdr.stream_id) && sink.is_local_stream(hdr.stream_id) {
             let send_init = self.remote_settings.initial_window_size;
-            let recv_init = self.local_settings.initial_window_size;
+            let recv_init = self.acked_local_initial_window;
             let mut s = Stream::new(send_init, recv_init);
             s.state = State::Open;
             self.streams.insert(hdr.stream_id, s);
@@ -1538,7 +1545,7 @@ impl Connection {
         // here so it isn't mistaken for a closed/idle stream.
         if !self.streams.contains_key(&hdr.stream_id) && sink.is_local_stream(hdr.stream_id) {
             let send_init = self.remote_settings.initial_window_size;
-            let recv_init = self.local_settings.initial_window_size;
+            let recv_init = self.acked_local_initial_window;
             let mut s = Stream::new(send_init, recv_init);
             s.state = State::Open;
             self.streams.insert(hdr.stream_id, s);
@@ -1654,7 +1661,7 @@ impl Connection {
         // though this engine never saw its HEADERS go out.
         if on_idle && sink.is_local_stream(hdr.stream_id) {
             let send_init = self.remote_settings.initial_window_size;
-            let recv_init = self.local_settings.initial_window_size;
+            let recv_init = self.acked_local_initial_window;
             let s = self
                 .streams
                 .entry(hdr.stream_id)
@@ -1753,7 +1760,7 @@ impl Connection {
 
         // Reserve the promised (even) stream.
         let send_init = self.remote_settings.initial_window_size;
-        let recv_init = self.local_settings.initial_window_size;
+        let recv_init = self.acked_local_initial_window;
         let entry = self
             .streams
             .entry(promised)
@@ -1884,7 +1891,7 @@ impl Connection {
         self.enc_buf.clear();
 
         let send_init = self.remote_settings.initial_window_size;
-        let recv_init = self.local_settings.initial_window_size;
+        let recv_init = self.acked_local_initial_window;
         let s = self
             .streams
             .entry(stream_id)
@@ -2012,7 +2019,7 @@ impl Connection {
         self.enc_buf.clear();
 
         let send_init = self.remote_settings.initial_window_size;
-        let recv_init = self.local_settings.initial_window_size;
+        let recv_init = self.acked_local_initial_window;
         let s = self
             .streams
             .entry(promised_id)

@@ -459,12 +459,7 @@ impl<'a> URL<'a> {
         }
     }
 
-    /// Formats `<displayProtocol>://<displayHost>/<trimmed pathname>/`.
-    ///
-    /// `display_host()` yields a `bun_core::fmt::HostFormatter` (impls
-    /// `Display`); the other two pieces are raw byte slices, so we assemble
-    /// into a `Vec<u8>` directly rather than going through `format!` and
-    /// risking lossy UTF-8 round-trips.
+    /// The URL without its userinfo, ending in exactly one `/`: `http://host/`, `http://host/npm/`.
     pub fn href_without_auth(&self) -> Box<[u8]> {
         let proto = self.display_protocol();
         let path = strings::trim(self.pathname, b"/");
@@ -476,8 +471,10 @@ impl<'a> URL<'a> {
         // bun_core::io::Write on Vec<u8> is infallible.
         let _ = buf.print(format_args!("{}", self.display_host()));
         buf.push(b'/');
-        buf.extend_from_slice(path);
-        buf.push(b'/');
+        if !path.is_empty() {
+            buf.extend_from_slice(path);
+            buf.push(b'/');
+        }
         buf.into_boxed_slice()
     }
 

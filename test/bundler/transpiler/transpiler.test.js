@@ -5545,6 +5545,118 @@ describe("using declarations in switch statements", () => {
   });
 });
 
+describe("lowering top-level using keeps exported destructuring declarations exported", () => {
+  const source = `
+    using res = { [Symbol.dispose]() { console.log("disposed"); } };
+    export const { a, b: [c] } = { a: 1, b: [2] };
+    export let [d, , e = 5, ...rest] = [3, 4, undefined, 6, 7];
+    export const { x: renamed, ...others } = { x: 8, y: 9 };
+    export var plain = 10, { g } = { g: 11 };
+    export const [] = [], {} = {};
+  `;
+  const expectedExports = {
+    a: 1,
+    c: 2,
+    d: 3,
+    e: 5,
+    rest: [6, 7],
+    renamed: 8,
+    others: { y: 9 },
+    plain: 10,
+    g: 11,
+  };
+  const exportClauseNames = out => {
+    const clauses = [...out.matchAll(/^export \{([^}]*)\};?$/gm)];
+    expect(clauses).toHaveLength(1);
+    return clauses[0][1]
+      .split(",")
+      .map(name => name.trim())
+      .filter(Boolean);
+  };
+
+  it.each(["browser", "node"])("target=%s exports every identifier bound by the patterns", target => {
+    const out = new Bun.Transpiler({ loader: "js", target }).transformSync(source);
+    expect(out).toContain("__using");
+    // The declarations move into the try block as plain vars and the exports
+    // are re-emitted as one export clause after it.
+    expect(out).toMatch(/var \{ a, b: \[c\] \} =/);
+    expect(out).toMatch(/var \[d, , e = 5, \.\.\.rest\] =/);
+    expect(out).toMatch(/var \{ x: renamed, \.\.\.others \} =/);
+    expect(out).toMatch(/var plain = 10, \{ g \} =/);
+    expect(out).not.toMatch(/export (const|let|var)/);
+    expect(out.indexOf("export {")).toBeGreaterThan(out.indexOf("finally"));
+    expect(exportClauseNames(out)).toEqual(Object.keys(expectedExports));
+  });
+
+  // scan() reports the exports the lowered statements end up with, so every
+  // lowering target has to report the same names as the untouched bun target.
+  const exportsFor = (target, src) => new Bun.Transpiler({ loader: "js", target }).scan(src).exports;
+  it.each([
+    ["destructured declarations", source],
+    [
+      "await using with destructured declarations",
+      `
+        await using res = { [Symbol.asyncDispose]() {} };
+        export const { a, b: [c] } = { a: 1, b: [2] };
+      `,
+    ],
+    [
+      "declarations that were already re-exported",
+      `
+        using res = { [Symbol.dispose]() {} };
+        export function f() {}
+        export class K {}
+        const x = 1;
+        export { x as y };
+        export { q } from "./q";
+        export * as ns from "./ns";
+        export default 1;
+      `,
+    ],
+  ])("scan() reports the same export set for every target: %s", (_name, src) => {
+    const unlowered = exportsFor("bun", src);
+    expect(unlowered).not.toBeEmpty();
+    expect(exportsFor("browser", src)).toEqual(unlowered);
+    expect(exportsFor("node", src)).toEqual(unlowered);
+  });
+
+  it("target=bun leaves the declarations as they were", () => {
+    const out = new Bun.Transpiler({ loader: "js", target: "bun" }).transformSync(source);
+    expect(out).not.toContain("__using");
+    expect(out).toContain("export const { a, b: [c] } =");
+    expect(out).toContain("export let [d, , e = 5, ...rest] =");
+    expect(out).toContain("export const { x: renamed, ...others } =");
+    expect(out).toContain("export var plain = 10, { g } =");
+    expect(out).not.toContain("export {");
+  });
+
+  it("the lowered module exposes the same bindings when imported", async () => {
+    const lowered = new Bun.Transpiler({ loader: "js", target: "node" }).transformSync(source);
+    expect(lowered).toContain("__using");
+
+    using dir = tempDir("using-lowering-exported-destructuring", {
+      "lowered.mjs": lowered,
+      "main.mjs": `
+        import * as ns from "./lowered.mjs";
+        console.log(JSON.stringify(ns));
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "main.mjs"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    const [disposed, exported] = stdout.trim().split("\n");
+    expect(disposed).toBe("disposed");
+    expect(JSON.parse(exported)).toEqual(expectedExports);
+    expect(exitCode).toBe(0);
+  });
+});
+
 describe("minifyWhitespace keeps the space before keyword operators", () => {
   const minifier = new Bun.Transpiler({ loader: "js", minifyWhitespace: true });
 

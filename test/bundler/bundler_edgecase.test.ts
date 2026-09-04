@@ -2426,6 +2426,64 @@ describe("bundler", () => {
     },
   });
 
+  itBundled("edgecase/UsingExportDestructuring", {
+    // Lowering the top-level `using` wraps the module in try/finally and has to
+    // re-export every identifier the exported patterns bind, not only the
+    // `export const x = ...` ones.
+    files: {
+      "/entry.ts": `
+        import * as ns from "./module.ts";
+        console.log(JSON.stringify(ns));
+      `,
+      "/module.ts": `
+        using res = { [Symbol.dispose]() { console.log("Disposing"); } };
+        export const { a, b: [c] } = { a: 1, b: [2] };
+        export let [d, , e = 5, ...rest] = [3, 4, undefined, 6, 7];
+        export const { x: renamed, ...others } = { x: 8, y: 9 };
+        export var plain = 10, { g } = { g: 11 };
+        export const [] = [], {} = {};
+      `,
+    },
+    run: {
+      stdout: 'Disposing\n{"a":1,"c":2,"d":3,"e":5,"g":11,"others":{"y":9},"plain":10,"renamed":8,"rest":[6,7]}',
+    },
+  });
+
+  itBundled("edgecase/UsingExportDestructuringNamedImports", {
+    files: {
+      "/entry.ts": `
+        import { a, c, rest, renamed } from "./module.ts";
+        console.log(a, c, rest, renamed);
+      `,
+      "/module.ts": `
+        using res = { [Symbol.dispose]() { console.log("Disposing"); } };
+        export const { a, b: [c] } = { a: 1, b: [2] };
+        export let [, ...rest] = [3, 4, 5];
+        export const { x: renamed } = { x: 6 };
+      `,
+    },
+    run: {
+      stdout: "Disposing\n1 2 [ 4, 5 ] 6",
+    },
+  });
+
+  itBundled("edgecase/UsingExportDestructuringBakeDev", {
+    // The dev server's module format builds its export list from the same
+    // lowered statements.
+    format: "internal_bake_dev",
+    files: {
+      "/entry.ts": `
+        using res = { [Symbol.dispose]() {} };
+        export const { a, b: [c] } = { a: 1, b: [2] };
+        export let plain = 3;
+      `,
+    },
+    onAfterBundle(api) {
+      const output = api.readFile("/out.js");
+      expect(output).toMatch(/hmr\.exports = \{\s*a,\s*c,\s*plain,?\s*\}/);
+    },
+  });
+
   itBundled("edgecase/UsingExportDefaultThrows", {
     files: {
       "/entry.ts": `

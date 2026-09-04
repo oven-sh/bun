@@ -288,6 +288,14 @@ function getImageName(platform, options) {
   // linux image tag that doesn't exist.
   const hostOs = os === "freebsd" || crossCompile ? "linux" : os;
 
+  // TEMPORARY (this PR only): reuse the Linux images baked by build 110089
+  // (bootstrap v42) so later commits neither re-bake nor look for an
+  // unpublished -v42 image. Removed together with a [publish images] run
+  // before merge.
+  if (hostOs === "linux" && !publishImages) {
+    return `${name}-build-110089`;
+  }
+
   if (buildImages && !publishImages && (!imageFilter || hostOs === imageFilter || distro === imageFilter)) {
     return `${name}-build-${getBuildNumber()}`;
   }

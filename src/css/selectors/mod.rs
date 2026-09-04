@@ -46,7 +46,9 @@ pub mod impl_ {
         type LocalIdentifier = IdentOrRef;
         type LocalName = Ident;
         type NamespacePrefix = Ident;
-        // TODO: lifetime — should borrow the parser input.
+        // TODO: lifetime — should borrow the parser input. Requires a
+        // lifetime-parameterized SelectorImpl threaded through every selector
+        // consumer; not fixable piecemeal.
         type NamespaceUrl = &'static [u8];
         type NonTSPseudoClass = super::parser::PseudoClass;
         type PseudoElement = super::parser::PseudoElement;

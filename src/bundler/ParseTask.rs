@@ -641,7 +641,7 @@ pub mod parse_worker {
     // (`get_ast`, `run_with_source_code`) may also hold a raw pointer to
     // `(*transpiler).resolver`; materializing `&mut Transpiler` here would assert
     // exclusive access to the whole struct and invalidate that sibling pointer.
-    // We only touch the disjoint `options.define` field.
+    // We only touch the disjoint `options` field.
     fn get_empty_css_ast(
         log: &mut Log,
         transpiler: *mut Transpiler,
@@ -652,14 +652,17 @@ pub mod parse_worker {
         let root = Expr::init(E::Object::default(), Loc { start: 0 });
         // SAFETY: `transpiler` is a live worker-owned `*mut Transpiler`; `options`
         // is disjoint from any other field the caller may hold a pointer to.
+        let target = unsafe { (*transpiler).options.target };
+        // SAFETY: see above.
         let define = unsafe { &mut (*transpiler).options.define };
         let mut ast = JSAst::init(
             js_parser::new_lazy_export_ast(bump, define, opts, log, root, source, b"")?
                 .ok_or(AnyError::ParserError)?,
         );
-        ast.css = Some(crate::bundled_ast::CssAstRef::from_bump(
-            bump.alloc(bun_css::BundlerStyleSheet::empty()),
-        ));
+        let mut css = bun_css::BundlerStyleSheet::empty();
+        // Never minified, but its `@import` conditions are still printed with the sheet's targets.
+        css.targets = bun_css::Targets::for_bundler_target(target);
+        ast.css = Some(crate::bundled_ast::CssAstRef::from_bump(bump.alloc(css)));
         Ok(ast)
     }
 

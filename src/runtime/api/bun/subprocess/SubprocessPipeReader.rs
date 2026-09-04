@@ -49,8 +49,7 @@ pub struct PipeReader {
     pub(crate) stdio_result: StdioResult,
 }
 
-// `pub const ref/deref = RefCount.ref/deref` — thin forwarders so existing call
-// sites (`self.r#ref()` / `PipeReader::deref(ptr)`) keep working.
+// Thin forwarders to the intrusive `RefCount` for this file's own call sites.
 impl PipeReader {
     #[inline]
     fn r#ref(&self) {
@@ -395,6 +394,7 @@ impl Drop for PipeReader {
 // with `self`), so `&mut *this` autoref is OK.
 bun_io::impl_buffered_reader_parent! {
     SubprocessPipeReader for PipeReader;
+    reader = reader;
     has_on_read_chunk = false;
     on_reader_done  = |this| (*this).on_reader_done();
     on_reader_error = |this, err| (*this).on_reader_error(err);

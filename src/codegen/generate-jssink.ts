@@ -1123,6 +1123,16 @@ use bun_jsc::{self, host_fn, CallFrame, JSGlobalObject, JSValue};
 #[allow(dead_code, unreachable_pub, unused)]
 pub use ${rustPath} as ${name};
 
+/// The live \`m_sinkPtr\` of the \`JS${name}\` wrapper \`value\` encodes, or \`None\`
+/// if it is not one or is detached. Frame-scoped like \`JSValue::as_class_this_ptr\`:
+/// \`value\` keeps the payload alive while it is on the stack.
+#[allow(dead_code, unreachable_pub, unused)]
+pub fn ${name}__fromJSThis(value: JSValue) -> Option<bun_ptr::ThisPtr<${name}>> {
+    // SAFETY: \`from_js\` returns the wrapper's live, non-null payload (\`JSSink<T>\`
+    // is \`repr(transparent)\` over \`T\`).
+    ${JSSinkT}::from_js(value).map(|p| unsafe { bun_ptr::ThisPtr::new(p.cast::<${name}>()) })
+}
+
 `;
 
     const hostFns = ["construct", "write", "end", "flush", "start"] as const;

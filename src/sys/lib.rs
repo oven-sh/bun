@@ -904,6 +904,7 @@ pub(crate) mod libuv_error_map;
 #[path = "SignalCode.rs"]
 pub mod signal_code;
 pub use signal_code::SignalCode;
+pub mod pty;
 pub mod tmp;
 pub use tmp::Tmpfile;
 // `windows/mod.rs` is `#![cfg(windows)]`-gated internally; on POSIX this
@@ -6092,6 +6093,7 @@ macro_rules! dlsym_with_handle {
         if p.is_null() {
             None
         } else {
+            // SAFETY: see above.
             Some(unsafe { ::core::mem::transmute_copy::<*mut ::core::ffi::c_void, $T>(&p) })
         }
     }};

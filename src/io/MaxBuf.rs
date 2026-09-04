@@ -32,6 +32,73 @@ pub struct Owner {
     pub on_overflow: unsafe fn(NonNull<()>, NonNull<MaxBuf>),
 }
 
+/// The subprocess type an [`Owner`] dispatches to.
+pub trait MaxBufOwner {
+    /// See [`Owner`]: clear the matching slot, then kill the child.
+    fn on_max_buffer_overflow(&self, maxbuf: NonNull<MaxBuf>);
+}
+
+impl Owner {
+    /// `owner` must call [`MaxBuf::remove_from_subprocess`] on every slot
+    /// created with the result before it is freed; [`MaxBufSlot`] makes that
+    /// structural.
+    fn new<T: MaxBufOwner>(owner: bun_ptr::ThisPtr<T>) -> Owner {
+        unsafe fn on_overflow<T: MaxBufOwner>(ptr: NonNull<()>, maxbuf: NonNull<MaxBuf>) {
+            // SAFETY: `ptr` came from a live `ThisPtr<T>` in `Owner::new`; the
+            // owner clears `owned_by_subprocess` before it is freed, and this
+            // is only reached while that slot is `Some`.
+            unsafe { ptr.cast::<T>().as_ref() }.on_max_buffer_overflow(maxbuf)
+        }
+        Owner {
+            ptr: NonNull::from(owner).cast(),
+            on_overflow: on_overflow::<T>,
+        }
+    }
+}
+
+/// The subprocess's side of a [`MaxBuf`], as a field of the owner: created
+/// against the owner, disowned on [`release`](Self::release) or drop — so the
+/// `MaxBuf`'s back-pointer to the owner cannot outlive the owner holding this.
+pub struct MaxBufSlot(Cell<Option<NonNull<MaxBuf>>>);
+
+impl MaxBufSlot {
+    pub const fn empty() -> Self {
+        MaxBufSlot(Cell::new(None))
+    }
+
+    /// Allocate the budget (`initial = None` leaves the slot empty). `self`
+    /// is a field of `*owner`.
+    pub fn create<T: MaxBufOwner>(&self, owner: bun_ptr::ThisPtr<T>, initial: Option<i64>) {
+        self.release();
+        let mut mb = None;
+        MaxBuf::create_for_subprocess(&mut mb, initial, Owner::new(owner));
+        self.0.set(mb);
+    }
+
+    /// The budget, to hand to a pipe reader ([`MaxBuf::add_to_pipereader`]).
+    #[inline]
+    pub fn get(&self) -> Option<NonNull<MaxBuf>> {
+        self.0.get()
+    }
+
+    #[inline]
+    pub fn is(&self, maxbuf: NonNull<MaxBuf>) -> bool {
+        self.0.get() == Some(maxbuf)
+    }
+
+    /// Disown the budget (freed once the reader side lets go too).
+    pub fn release(&self) {
+        let mut mb = self.0.take();
+        MaxBuf::remove_from_subprocess(&mut mb);
+    }
+}
+
+impl Drop for MaxBufSlot {
+    fn drop(&mut self) {
+        self.release();
+    }
+}
+
 /// How far the read that crosses `maxBuffer` may overshoot it: one Node-sized
 /// stdio read. Must stay nonzero, Node's `spawnSync` documents `stdout`
 /// exceeding `maxBuffer` by up to one read.

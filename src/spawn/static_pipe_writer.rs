@@ -18,23 +18,22 @@ bun_output::declare_scope!(StaticPipeWriter, hidden);
 /// generic `BufferedWriter<StaticPipeWriter<P>>` field satisfy its
 /// `PosixBufferedWriterParent`/`WindowsBufferedWriterParent` bound for all `P`.
 ///
-/// Method takes `*mut Self` (not `&mut self`) because the writer is a field of
-/// the process — materializing `&mut P` while `&mut writer` is live would alias.
-pub trait StaticPipeWriterProcess {
+/// `on_close_io` gets the process as a [`ThisPtr`](bun_ptr::ThisPtr), not
+/// `&mut self`: it runs from inside the writer's callbacks — possibly
+/// re-entrantly from `start()` — while the writer (held in one of the
+/// process's slots) is itself borrowed.
+pub trait StaticPipeWriterProcess: Sized {
     const POLL_OWNER_TAG: bun_io::PollTag;
-    /// # Safety
-    /// `this` must point to a live `Self`.
-    unsafe fn on_close_io(this: *mut Self, kind: StdioKind);
+    fn on_close_io(this: bun_ptr::ThisPtr<Self>, kind: StdioKind);
 }
 
 /// Generic over the owning process type (e.g. `Subprocess`, `ShellSubprocess`).
-/// `P` must expose `fn on_close_io(&mut self, kind: StdioKind)`.
 ///
 /// Two refs: `create()`'s, held in the owner's stdin slot and released by its
-/// `on_close_io`, and `start()`'s, held while the write is in flight. `started`
-/// is the token for the latter: whoever swaps it to `false` releases the ref,
-/// which is `on_write` on completion, `on_close` after a failed write (the one
-/// ending with no completion report), or an owner closing the writer itself.
+/// `on_close_io`, and `start()`'s, held in `start_ref` while the write is in
+/// flight. Whoever takes `start_ref` releases it: `on_write` on completion,
+/// `on_close` after a failed write (the one ending with no completion report),
+/// or an owner closing the writer itself.
 // Cleanup lives in `impl Drop` below; the final Box free is
 // the derive's default destructor (`drop(heap::take(this))`).
 #[derive(bun_ptr::RefCounted)]
@@ -44,11 +43,12 @@ pub struct StaticPipeWriter<P: StaticPipeWriterProcess> {
     pub(crate) writer: IOWriter<P>,
     pub(crate) stdio_result: StdioResult,
     pub source: Source,
-    /// BACKREF: parent process is notified on close; never owned/destroyed here.
-    pub(crate) process: *mut P,
+    /// The owning process, notified on close. It holds this writer in its
+    /// stdin slot and closes it (firing `on_close`) before it is itself freed.
+    pub(crate) process: bun_ptr::BackRef<P, bun_ptr::Root>,
     pub(crate) event_loop: EventLoopHandle,
-    /// True while `start()`'s `+1` ref is outstanding (see the type docs).
-    pub started: bool,
+    /// `start()`'s ref while the write is in flight (see the type docs).
+    start_ref: Option<RefPtr<Self>>,
     /// Slice into `self.source`'s storage, advanced as bytes are written.
     ///
     /// Self-borrow invariant: this aliases `self.source`'s storage, which
@@ -72,7 +72,7 @@ pub type Poll<P> = IOWriter<P>;
 bun_io::impl_buffered_writer_parent! {
     for<P: StaticPipeWriterProcess> StaticPipeWriter<P>;
     poll_tag   = P::POLL_OWNER_TAG,
-    borrow     = mut,
+    borrow     = ptr,
     on_write   = on_write,
     on_error   = on_error,
     on_close   = on_close,
@@ -85,30 +85,77 @@ bun_io::impl_buffered_writer_parent! {
     deref      = |this| RefCount::<Self>::deref(this),
 }
 
+// Owner-facing entry points. The owner holds the writer by `RefPtr` (its
+// own heap allocation, event-loop thread only) and drives it through these
+// with `rc.this_ptr()` — by value, so no borrow of the owner's slot is live
+// while the writer's callbacks re-enter the *owner* (`P::on_close_io`, which
+// empties that slot and may come back through `take_start_ref` /
+// `detach_source` — fields disjoint from the `writer` borrowed by `close`).
+// Each projects the one field it needs through the root pointer for the
+// duration of the call.
 impl<P: StaticPipeWriterProcess> StaticPipeWriter<P> {
     #[inline]
     fn io_evtloop(&self) -> bun_io::EventLoopHandle {
         self.event_loop.as_event_loop_ctx()
     }
 
-    pub fn update_ref(&mut self, add: bool) {
-        self.writer.update_ref(self.io_evtloop(), add);
+    pub fn update_ref(this: bun_ptr::ThisPtr<Self>, add: bool) {
+        let evl = this.io_evtloop();
+        // SAFETY: see impl-level note; `update_ref` runs no callbacks.
+        unsafe { (*this.as_ptr()).writer.update_ref(evl, add) };
     }
 
-    pub fn close(&mut self) {
+    pub fn close(this: bun_ptr::ThisPtr<Self>) {
         bun_output::scoped_log!(
             StaticPipeWriter,
             "StaticPipeWriter(0x{:x}) close()",
-            std::ptr::from_ref(self) as usize
+            this.as_ptr() as usize
         );
-        self.writer.close();
+        // SAFETY: see impl-level note.
+        unsafe { (*this.as_ptr()).writer.close() };
+    }
+
+    pub fn watch(this: bun_ptr::ThisPtr<Self>) {
+        if this.buffer.len() > 0 {
+            // SAFETY: see impl-level note.
+            unsafe { (*this.as_ptr()).writer.watch() };
+        }
+    }
+
+    /// `start()`'s in-flight ref, for an owner closing the writer itself (it
+    /// releases the ref after the close).
+    pub fn take_start_ref(this: bun_ptr::ThisPtr<Self>) -> Option<RefPtr<Self>> {
+        // SAFETY: see impl-level note; momentary field access.
+        unsafe { (*this.as_ptr()).start_ref.take() }
+    }
+
+    /// Free the source now (the owner is discarding the writer).
+    pub fn detach_source(this: bun_ptr::ThisPtr<Self>) {
+        // SAFETY: see impl-level note; momentary field accesses. `buffer`
+        // aliases `source`'s storage, so it is cleared first.
+        unsafe {
+            (*this.as_ptr()).buffer = RawSlice::EMPTY;
+            (*this.as_ptr()).source.detach();
+        }
+    }
+
+    pub fn start(this: bun_ptr::ThisPtr<Self>) -> bun_sys::Result<()> {
+        // A synchronous failure inside `start_impl` can run `on_close`, which
+        // releases both the owner's ref and `start_ref`; hold one more so the
+        // error path below it still has a live writer.
+        let _guard = RefPtr::from_this(this);
+        // SAFETY: see impl-level note; momentary field access. The in-flight
+        // ref is minted from the root pointer (it may be released as the last).
+        unsafe { (*this.as_ptr()).start_ref = Some(RefPtr::from_this(this)) };
+        // SAFETY: see impl-level note.
+        unsafe { (*this.as_ptr()).start_impl() }
     }
 
     /// Callers resolve to an `EventLoopHandle` before calling and we accept
     /// it directly.
     pub fn create(
         event_loop: EventLoopHandle,
-        subprocess: *mut P,
+        subprocess: bun_ptr::ThisPtr<P>,
         result: StdioResult,
         source: Source,
     ) -> RefPtr<Self> {
@@ -118,9 +165,9 @@ impl<P: StaticPipeWriterProcess> StaticPipeWriter<P> {
             writer: IOWriter::<P>::default(),
             stdio_result: result,
             source,
-            process: subprocess,
+            process: bun_ptr::BackRef::from(subprocess),
             event_loop,
-            started: false,
+            start_ref: None,
             buffer: RawSlice::EMPTY,
         });
         #[cfg(windows)]
@@ -153,28 +200,22 @@ impl<P: StaticPipeWriterProcess> StaticPipeWriter<P> {
         unsafe { RefPtr::from_raw(this) }
     }
 
-    pub fn start(&mut self) -> bun_sys::Result<()> {
+    /// `start_ref` is already set by [`Self::start`].
+    fn start_impl(&mut self) -> bun_sys::Result<()> {
         bun_output::scoped_log!(
             StaticPipeWriter,
             "StaticPipeWriter(0x{:x}) start()",
             std::ptr::from_ref(self) as usize
         );
-        // Intrusive-refcount increment.
-        // SAFETY: `self` is a live `Self` (created via `create()`/`heap::alloc`).
-        unsafe { RefCount::<Self>::ref_(std::ptr::from_mut::<Self>(self)) };
         // Self-borrow into `self.source` — see `buffer` field invariant.
         self.buffer = RawSlice::new(self.source.slice());
         #[cfg(windows)]
         {
             let r = self.writer.start_with_current_pipe();
-            self.started = r.is_ok();
             if r.is_err() {
-                // start() failed: `started` stays false so no release site
-                // fires — release start()'s `+1` here.
-                // SAFETY: `self` is the live `Self` we ref'd at the top of
-                // `start()`; the caller's `RefPtr` keeps it alive and
-                // `started` is false so no other site re-derefs.
-                unsafe { RefCount::<Self>::deref(std::ptr::from_mut::<Self>(self)) };
+                // start() failed: no release site fires — release start()'s
+                // ref here (not the last: the caller's slot holds one).
+                self.start_ref = None;
             }
             return r;
         }
@@ -183,16 +224,13 @@ impl<P: StaticPipeWriterProcess> StaticPipeWriter<P> {
             // On POSIX `StdioResult` is an `Option<Fd>`.
             match self.writer.start(self.stdio_result.unwrap(), true) {
                 bun_sys::Result::Err(err) => {
-                    // start() failed: `started` stays false so no release
-                    // site fires — release start()'s `+1` here.
-                    // SAFETY: `self` is the live `Self` we ref'd at the top
-                    // of `start()`; the caller's `RefPtr` keeps it alive
-                    // and `started` is false so no other site re-derefs.
-                    unsafe { RefCount::<Self>::deref(std::ptr::from_mut::<Self>(self)) };
+                    // start() failed: no release site fires — release
+                    // start()'s ref here (not the last: the caller's slot
+                    // holds one).
+                    self.start_ref = None;
                     bun_sys::Result::Err(err)
                 }
                 bun_sys::Result::Ok(()) => {
-                    self.started = true;
                     #[cfg(unix)]
                     {
                         // `handle` is `PollOrFd` (enum); flag mutation goes
@@ -207,11 +245,17 @@ impl<P: StaticPipeWriterProcess> StaticPipeWriter<P> {
         }
     }
 
-    pub(crate) fn on_write(&mut self, amount: usize, status: WriteStatus) {
+    /// Writer callback (`borrow = ptr`): completing the write may release the
+    /// last ref, so no `&mut Self` argument (which would have to stay valid
+    /// for the whole call) is formed — fields are reached through `this`.
+    ///
+    /// # Safety
+    /// `this` is the writer's parent back-reference: the live root pointer.
+    pub(crate) unsafe fn on_write(this: *mut Self, amount: usize, status: WriteStatus) {
         bun_output::scoped_log!(
             StaticPipeWriter,
             "StaticPipeWriter(0x{:x}) onWrite(amount={} {})",
-            std::ptr::from_ref(self) as usize,
+            this as usize,
             amount,
             // Local stringify — `WriteStatus` (upstream bun_io) has no `Debug` impl.
             match status {
@@ -220,76 +264,76 @@ impl<P: StaticPipeWriterProcess> StaticPipeWriter<P> {
                 WriteStatus::Pending => "pending",
             }
         );
-        let len = self.buffer.len();
-        self.buffer = RawSlice::new(&self.buffer.slice()[amount.min(len)..]);
-        if status == WriteStatus::EndOfFile {
-            // The buffered writer closes itself (-> `on_close`) after this
-            // returns, so don't close here.
-            if core::mem::replace(&mut self.started, false) {
-                // SAFETY: token taken above; not the final ref, the owner's slot
+        // SAFETY: fn contract; each access below is a momentary field projection.
+        unsafe {
+            let len = (*this).buffer.len();
+            (*this).buffer = RawSlice::new(&(*this).buffer.slice()[amount.min(len)..]);
+            if status == WriteStatus::EndOfFile {
+                // The buffered writer closes itself (-> `on_close`) after this
+                // returns, so don't close here. Not the final ref: the owner's slot
                 // still holds one until that `on_close`.
-                unsafe { RefCount::<Self>::deref(std::ptr::from_mut::<Self>(self)) };
+                (*this).start_ref = None;
+                return;
             }
-            return;
-        }
-        if self.buffer.is_empty() {
-            // Token taken before `close()` so start()'s ref outlives the owner's.
-            let release_start_ref = core::mem::replace(&mut self.started, false);
-            self.writer.close();
-            if release_start_ref {
-                // SAFETY: token taken above; may be the final ref, last use of `self`.
-                unsafe { RefCount::<Self>::deref(std::ptr::from_mut::<Self>(self)) };
+            if (*this).buffer.is_empty() {
+                // Taken before `close()` so start()'s ref outlives the owner's.
+                let start_ref = (*this).start_ref.take();
+                (*this).writer.close();
+                // May be the final ref; nothing touches `this` after.
+                drop(start_ref);
             }
         }
     }
 
-    pub(crate) fn on_error(&mut self, err: &bun_sys::Error) {
+    /// # Safety
+    /// As [`Self::on_write`].
+    pub(crate) unsafe fn on_error(this: *mut Self, err: &bun_sys::Error) {
         bun_output::scoped_log!(
             StaticPipeWriter,
             "StaticPipeWriter(0x{:x}) onError(err={})",
-            std::ptr::from_ref(self) as usize,
+            this as usize,
             err
         );
         // `buffer` aliases `self.source`'s storage, which `detach()` frees.
         // start()'s ref is released by the `on_close` the writer pairs with
         // every error.
-        self.buffer = RawSlice::EMPTY;
-        self.source.detach();
+        // SAFETY: fn contract; momentary field projections.
+        unsafe {
+            (*this).buffer = RawSlice::EMPTY;
+            (*this).source.detach();
+        }
     }
 
-    pub(crate) fn on_close(&mut self) {
+    /// # Safety
+    /// As [`Self::on_write`].
+    pub(crate) unsafe fn on_close(this: *mut Self) {
         bun_output::scoped_log!(
             StaticPipeWriter,
             "StaticPipeWriter(0x{:x}) onClose()",
-            std::ptr::from_ref(self) as usize
+            this as usize
         );
-        // Still set only after a failed write (every other path takes the token
-        // before closing). Must be taken before `on_close_io` empties the slot:
-        // nothing can reach this writer afterwards.
-        let release_start_ref = core::mem::replace(&mut self.started, false);
-        // `buffer` aliases `self.source`'s storage; clear it before detach()
-        // frees that storage so no dangling slice survives the close.
-        self.buffer = RawSlice::EMPTY;
-        self.source.detach();
-        // SAFETY: `process` is a backref to the owning process, guaranteed alive
-        // for the lifetime of this writer (the process owns/outlives its stdio writers).
-        unsafe { P::on_close_io(self.process, StdioKind::Stdin) };
-        if release_start_ref {
-            // SAFETY: token taken above. On POSIX this frees `self`: it is the
-            // last use here, and the writer's `close()` frames below do nothing
-            // after this callback. On Windows the in-flight write's ref outlives it.
-            unsafe { RefCount::<Self>::deref(std::ptr::from_mut::<Self>(self)) };
-        }
+        // SAFETY: fn contract; momentary field projections (all disjoint from
+        // `writer`, whose `close()` frame may be live below us).
+        let (start_ref, process) = unsafe {
+            // Still set only after a failed write (every other path takes it
+            // before closing). Must be taken before `on_close_io` empties the
+            // slot: nothing can reach this writer afterwards.
+            let start_ref = (*this).start_ref.take();
+            // `buffer` aliases `self.source`'s storage; clear it before detach()
+            // frees that storage so no dangling slice survives the close.
+            (*this).buffer = RawSlice::EMPTY;
+            (*this).source.detach();
+            (start_ref, (*this).process)
+        };
+        P::on_close_io(process.this_ptr(), StdioKind::Stdin);
+        // On POSIX this frees the writer: nothing touches `this` after, and
+        // the writer's `close()` frames below do nothing after this callback.
+        // On Windows the in-flight write's ref outlives it.
+        drop(start_ref);
     }
 
     pub fn memory_cost(&self) -> usize {
         size_of::<Self>() + self.source.memory_cost() + self.writer.memory_cost()
-    }
-
-    pub fn watch(&mut self) {
-        if self.buffer.len() > 0 {
-            self.writer.watch();
-        }
     }
 }
 

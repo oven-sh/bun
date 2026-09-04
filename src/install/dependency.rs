@@ -393,7 +393,7 @@ pub(crate) fn is_scp_like_path(dependency: &[u8]) -> bool {
 ///
 /// This also checks for a github url that ends with ".tar.gz"
 #[inline]
-fn is_github_tarball_path(dependency: &[u8]) -> bool {
+pub(crate) fn is_github_tarball_path(dependency: &[u8]) -> bool {
     if is_tarball(dependency) {
         return true;
     }

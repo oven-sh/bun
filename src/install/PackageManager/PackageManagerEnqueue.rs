@@ -2636,36 +2636,29 @@ fn get_or_put_resolved_package(
     match version.tag {
         dependency::version::Tag::Npm | dependency::version::Tag::DistTag => {
             'resolve_from_workspace: {
-                if version.tag == dependency::version::Tag::Npm {
-                    let workspace_path = if this.lockfile.workspace_paths.count() > 0 {
-                        this.lockfile.workspace_paths.get(&name_hash)
-                    } else {
-                        None
+                if version.tag == dependency::version::Tag::Npm
+                    && Lockfile::linked_workspace_path(
+                        this.options.link_workspace_packages,
+                        &this.lockfile.workspace_paths,
+                        &this.lockfile.workspace_versions,
+                        name_hash,
+                        &version.npm().version,
+                        this.lockfile.buffers.string_bytes.as_slice(),
+                    )
+                    .is_some()
+                {
+                    let Some(workspace_package_id) =
+                        root_workspace_package_id(&this.lockfile, name_hash)
+                    else {
+                        break 'resolve_from_workspace;
                     };
-                    let workspace_version = this.lockfile.workspace_versions.get(&name_hash);
-                    let buf = this.lockfile.buffers.string_bytes.as_slice();
-                    let npm_group = &version.npm().version;
-                    if this.options.link_workspace_packages
-                        && ((workspace_version.is_some()
-                            && npm_group.satisfies(*workspace_version.unwrap(), buf, buf))
-                            // https://github.com/oven-sh/bun/pull/10899#issuecomment-2099609419
-                            // if the workspace doesn't have a version, it can still be used if
-                            // dependency version is wildcard
-                            || (workspace_path.is_some() && npm_group.is_star()))
-                    {
-                        let Some(workspace_package_id) =
-                            root_workspace_package_id(&this.lockfile, name_hash)
-                        else {
-                            break 'resolve_from_workspace;
-                        };
-                        // make sure verifyResolutions sees this resolution as a valid package id
-                        success_fn(this, dependency_id, workspace_package_id);
-                        return Ok(Some(ResolvedPackageResult {
-                            package: *this.lockfile.packages.get(workspace_package_id as usize),
-                            is_first_time: false,
-                            task: None,
-                        }));
-                    }
+                    // make sure verifyResolutions sees this resolution as a valid package id
+                    success_fn(this, dependency_id, workspace_package_id);
+                    return Ok(Some(ResolvedPackageResult {
+                        package: *this.lockfile.packages.get(workspace_package_id as usize),
+                        is_first_time: false,
+                        task: None,
+                    }));
                 }
             }
 

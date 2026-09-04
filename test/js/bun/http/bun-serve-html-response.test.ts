@@ -335,6 +335,7 @@ test("an HTMLBundle body cannot be read outside Bun.serve", async () => {
   expect(() => response.body).toThrow(TypeError);
   await expect(Bun.write(join(dir, "out.html"), new Response(html))).rejects.toThrow(TypeError);
   expect(() => new Request("http://localhost/", { method: "POST", body: html })).toThrow(TypeError);
+  expect(() => new Request("http://localhost/", new Response(html) as any)).toThrow(TypeError);
   expect(() => new HTMLRewriter().transform(new Response(html))).toThrow(TypeError);
   await expect(WebAssembly.compileStreaming(new Response(html))).rejects.toThrow(TypeError);
   await expect(Bun.$`cat < ${new Response(html)}`.text()).rejects.toThrow("HTMLBundle");

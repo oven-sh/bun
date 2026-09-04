@@ -1184,6 +1184,11 @@ impl Request {
                         match response.get_body_value() {
                             BodyValue::Null | BodyValue::Empty | BodyValue::Used => {}
                             _ => {
+                                if let Err(e) =
+                                    response.get_body_value().throw_if_html_bundle(global_this)
+                                {
+                                    bail!(Err(e));
+                                }
                                 match response.clone_body_value_via_cached_stream(global_this) {
                                     Ok(v) => {
                                         *req.body_value_mut() = v;

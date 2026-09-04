@@ -142,9 +142,12 @@ pub(crate) fn generate_chunk_json(
     json.extend_from_slice(b"\n      ]");
 
     // Write exports and entry point if applicable
-    // Use sorted_and_filtered_export_aliases for deterministic output and to exclude internal exports
+    // Use sorted_and_filtered_export_aliases for deterministic output and to exclude internal exports.
+    // Only JS output has exports: a CSS chunk's entry point is either a JS file
+    // (whose exports belong to the JS chunk) or a stylesheet (whose JS-side
+    // exports are not printed into the CSS).
     json.extend_from_slice(b",\n      \"exports\": [");
-    if chunk.entry_point.is_entry_point() {
+    if chunk.entry_point.is_entry_point() && matches!(chunk.content, ChunkContent::Javascript(_)) {
         let entry_source_index = chunk.entry_point.source_index();
         // Use sources.len as the authoritative bounds check
         if (entry_source_index as usize) < sources.len() {
@@ -215,6 +218,7 @@ pub(crate) fn generate(c: &mut LinkerContext, chunks: &mut [Chunk]) -> crate::Re
     let parse_graph = c.parse_graph();
     let sources = parse_graph.input_files.items_source();
     let loaders = parse_graph.input_files.items_loader();
+    let copied_contents_lens = parse_graph.input_files.items_copied_contents_len();
     let import_records_list = parse_graph.ast.items_import_records();
 
     // Iterate through all files in chunks to collect unique source indices
@@ -280,8 +284,10 @@ pub(crate) fn generate(c: &mut LinkerContext, chunks: &mut [Chunk]) -> crate::Re
             j.push_owned(buf.into_boxed_slice());
         }
         {
+            let bytes =
+                copied_contents_lens[source_index as usize].unwrap_or(source.contents.len());
             let mut buf: Vec<u8> = Vec::new();
-            write!(buf, ": {{\n      \"bytes\": {}", source.contents.len())?;
+            write!(buf, ": {{\n      \"bytes\": {}", bytes)?;
             j.push_owned(buf.into_boxed_slice());
         }
 

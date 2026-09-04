@@ -4312,11 +4312,12 @@ pub mod bv2_impl {
                 let self_ptr: *mut Self = self;
                 // SAFETY: see note above — disjoint MultiArrayList columns,
                 // raw-ptr sidestep for split-borrow against `transpiler_for_target`
-                // inside the loop. All six column derefs share the same invariant.
+                // inside the loop. All seven column derefs share the same invariant.
                 let (
                     unique_key_for_additional_files,
                     content_hashes_for_additional_files,
                     sources,
+                    copied_contents_lens,
                     targets,
                     additional_files,
                     loaders,
@@ -4331,6 +4332,10 @@ pub mod bv2_impl {
                             .input_files
                             .items_content_hash_for_additional_file(),
                         (*self_ptr).graph.input_files.items_source_mut(),
+                        (*self_ptr)
+                            .graph
+                            .input_files
+                            .items_copied_contents_len_mut(),
                         (*self_ptr).graph.ast.items_target(),
                         (*self_ptr).graph.input_files.items_additional_files_mut(),
                         (*self_ptr).graph.input_files.items_loader(),
@@ -4419,6 +4424,7 @@ pub mod bv2_impl {
                         // out instead of `to_vec()`-cloning,
                         // which is prohibitively expensive for large assets.
                         let contents_len = source.contents.len();
+                        copied_contents_lens[index] = Some(contents_len);
                         let contents = match core::mem::take(&mut source.contents) {
                             std::borrow::Cow::Owned(v) => v.into_boxed_slice(),
                             std::borrow::Cow::Borrowed(b) => Box::<[u8]>::from(b),

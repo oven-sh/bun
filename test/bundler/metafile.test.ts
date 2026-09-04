@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { tempDir } from "harness";
+import { basename } from "node:path";
 
 // Type definitions for metafile structure
 interface MetafileImport {
@@ -13,7 +14,7 @@ interface MetafileImport {
 interface MetafileInput {
   bytes: number;
   imports: MetafileImport[];
-  format?: "esm" | "cjs";
+  format?: "esm" | "cjs" | "json" | "css";
 }
 
 interface MetafileOutput {
@@ -28,6 +29,11 @@ interface MetafileOutput {
 interface Metafile {
   inputs: Record<string, MetafileInput>;
   outputs: Record<string, MetafileOutput>;
+}
+
+/** Re-keys `inputs` / `outputs` by file name, since the keys are paths that depend on where the temp dir is. */
+function byBasename<T>(record: Record<string, T>): Record<string, T> {
+  return Object.fromEntries(Object.entries(record).map(([path, value]) => [basename(path), value]));
 }
 
 describe("bundler metafile", () => {
@@ -611,6 +617,111 @@ describe("bundler metafile", () => {
 
     expect(aImportsB).toBe(true);
     expect(bImportsA).toBe(true);
+  });
+
+  test.concurrent("metafile lists a CSS entry point and the stylesheets it imports", async () => {
+    const entryCss = `@import "./reset.css";\n.foo { color: red; }\n`;
+    const resetCss = `* { margin: 0; }\n`;
+    using dir = tempDir("metafile-css-entry-point", {
+      "entry.css": entryCss,
+      "reset.css": resetCss,
+    });
+
+    const result = await Bun.build({
+      entrypoints: [`${dir}/entry.css`],
+      metafile: true,
+    });
+    expect(result.success).toBe(true);
+    const metafile = result.metafile as Metafile;
+
+    expect(byBasename(metafile.inputs)).toEqual({
+      "entry.css": {
+        bytes: Buffer.byteLength(entryCss),
+        imports: [{ path: expect.stringMatching(/reset\.css$/), kind: "import-rule", original: "./reset.css" }],
+        format: "css",
+      },
+      "reset.css": {
+        bytes: Buffer.byteLength(resetCss),
+        imports: [],
+        format: "css",
+      },
+    });
+
+    const outputs = byBasename(metafile.outputs);
+    expect(Object.keys(outputs)).toEqual(["entry.css"]);
+    const output = outputs["entry.css"];
+    expect(byBasename(output.inputs)).toEqual({
+      "entry.css": { bytesInOutput: expect.any(Number) },
+      "reset.css": { bytesInOutput: expect.any(Number) },
+    });
+    for (const { bytesInOutput } of Object.values(output.inputs)) {
+      expect(bytesInOutput).toBeGreaterThan(0);
+    }
+    expect(output.exports).toEqual([]);
+    expect(output.entryPoint).toMatch(/entry\.css$/);
+  });
+
+  test.concurrent("metafile only lists exports on JS outputs", async () => {
+    using dir = tempDir("metafile-css-output-exports", {
+      "lib.js": `import "./styles.module.css"; export const x = 1; export default 2;`,
+      "styles.module.css": `.foo { color: red; }`,
+    });
+
+    const result = await Bun.build({
+      entrypoints: [`${dir}/lib.js`, `${dir}/styles.module.css`],
+      metafile: true,
+    });
+    expect(result.success).toBe(true);
+
+    const outputs = byBasename((result.metafile as Metafile).outputs);
+    const exportsByOutput = Object.fromEntries(Object.entries(outputs).map(([file, output]) => [file, output.exports]));
+    expect(exportsByOutput).toEqual({
+      "lib.js": ["default", "x"],
+      // The CSS bundle of the JS entry point does not repeat the JS exports.
+      "lib.css": [],
+      // A CSS module's class names are exports of its JS side, not of its stylesheet.
+      "styles.module.css": [],
+    });
+  });
+
+  test.concurrent("metafile reports the size of a copied asset", async () => {
+    using dir = tempDir("metafile-copied-asset-bytes", {
+      "entry.js": `import url from "./image.png"; console.log(url);`,
+      "image.png": Buffer.alloc(4096, 1),
+    });
+
+    const result = await Bun.build({
+      entrypoints: [`${dir}/entry.js`],
+      metafile: true,
+    });
+    expect(result.success).toBe(true);
+
+    const inputs = byBasename((result.metafile as Metafile).inputs);
+    expect(inputs["image.png"]).toEqual({ bytes: 4096, imports: [] });
+  });
+
+  test.concurrent("metafile reports the size of an asset whose contents come from an onLoad plugin", async () => {
+    using dir = tempDir("metafile-plugin-asset-bytes", {
+      "entry.js": `import url from "./image.png"; console.log(url);`,
+      "image.png": "on disk",
+    });
+
+    const result = await Bun.build({
+      entrypoints: [`${dir}/entry.js`],
+      metafile: true,
+      plugins: [
+        {
+          name: "generate-image",
+          setup(build) {
+            build.onLoad({ filter: /\.png$/ }, () => ({ contents: new Uint8Array(2048), loader: "file" }));
+          },
+        },
+      ],
+    });
+    expect(result.success).toBe(true);
+
+    const inputs = byBasename((result.metafile as Metafile).inputs);
+    expect(inputs["image.png"]).toEqual({ bytes: 2048, imports: [] });
   });
 });
 

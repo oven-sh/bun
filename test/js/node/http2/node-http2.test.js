@@ -2416,6 +2416,68 @@ it(
   15_000 * ASAN_MULTIPLIER,
 );
 
+// Closed streams must be evicted from maxSessionMemory accounting, or the session
+// refuses new streams (ENHANCE_YOUR_CALM). maxSessionMemory: 1 is the floor (1 MiB)
+// and each leaked stream retains size_of::<Stream>() (112 bytes today), so a leaking
+// session trips after ~9.4k requests; the total must stay above that on every build.
+// Pipelining makes the cost total / batch round trips, and a healthy session retains
+// at most a batch or two between reads, far below the budget.
+const STREAM_EVICTION_REQUESTS = 12_000;
+const STREAM_EVICTION_BATCH = 50;
+
+it(
+  "http2 sessions evict closed streams from maxSessionMemory accounting",
+  async () => {
+    const server = http2.createServer({ maxSessionMemory: 1 });
+    server.on("stream", stream => {
+      stream.respond({ ":status": 200 }, { endStream: true });
+    });
+
+    await new Promise(resolve => server.listen(0, resolve));
+
+    const client = http2.connect(`http://localhost:${server.address().port}`, { maxSessionMemory: 1 });
+
+    // Route session-level failures into the awaited request so the test fails
+    // with the real error instead of hanging until the timeout.
+    const sessionFailed = Promise.withResolvers();
+    client.on("error", err => sessionFailed.reject(err));
+    client.on("goaway", errorCode => sessionFailed.reject(new Error(`GOAWAY errorCode=${errorCode}`)));
+
+    let completed = 0;
+    function request() {
+      const { promise, resolve, reject } = Promise.withResolvers();
+      const stream = client.request({ ":method": "GET" });
+      stream.on("error", reject);
+      stream.on("response", headers => {
+        if (headers[":status"] !== 200) reject(new Error(`unexpected status ${headers[":status"]}`));
+      });
+      stream.on("close", () => {
+        completed++;
+        resolve();
+      });
+      stream.resume();
+      stream.end();
+      return promise;
+    }
+
+    try {
+      for (let sent = 0; sent < STREAM_EVICTION_REQUESTS; sent += STREAM_EVICTION_BATCH) {
+        const size = Math.min(STREAM_EVICTION_BATCH, STREAM_EVICTION_REQUESTS - sent);
+        await Promise.race([Promise.all(Array.from({ length: size }, request)), sessionFailed.promise]);
+      }
+    } finally {
+      client.removeAllListeners("goaway");
+      client.removeAllListeners("error");
+      client.on("error", () => {});
+      client.close();
+      server.close();
+    }
+
+    expect(completed).toBe(STREAM_EVICTION_REQUESTS);
+  },
+  15_000 * ASAN_MULTIPLIER,
+);
+
 it("http2.createServer validates input options", () => {
   // Test invalid options passed to createServer
   const invalidOptions = [1, true, "test", null, Symbol("test")];

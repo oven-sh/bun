@@ -829,13 +829,11 @@ pub trait SourceContext: Sized {
 pub struct NewSource<C: SourceContext> {
     pub context: C,
     pub cancelled: bool,
+    /// Armed by the `onClose` setter ([`Self::set_on_close_from_js`]);
+    /// [`Self::on_close`] disarms it and runs [`Self::on_js_close`] once.
+    pub js_on_close_armed: bool,
     pub ref_count: u32,
     pub pending_err: Option<syscall::Error>,
-    pub close_handler: Option<fn(Option<*mut c_void>)>,
-    /// Borrowed opaque context for native `close_handler`s (never
-    /// owned/freed here). The JS path stores
-    /// `on_js_close` and leaves this `None` — see [`Self::on_close`].
-    pub close_ctx: Option<NonNull<c_void>>,
     /// Upstream producer to notify on cancel/drain/consumer-attach. Replaces
     /// the per-signal fn-ptr + ctx-ptr pairs with one typed handle.
     pub producer: Cell<streams::SourceHandle>,
@@ -867,10 +865,9 @@ impl<C: SourceContext + Default> Default for NewSource<C> {
         Self {
             context: C::default(),
             cancelled: false,
+            js_on_close_armed: false,
             ref_count: 1,
             pending_err: None,
-            close_handler: None,
-            close_ctx: None,
             producer: Cell::new(streams::SourceHandle::None),
             global_this: None,
             this_jsvalue: jsc::JsRef::empty(),
@@ -1102,32 +1099,22 @@ impl<C: SourceContext> NewSource<C> {
         if self.cancelled {
             return;
         }
-        if let Some(close) = self.close_handler.take() {
-            // Identity check against the *exact* fn pointer stored by `set_on_close_from_js`, so the
-            // JS path receives `self` (not `close_ctx`, which is unset on that path).
-            if close as usize == Self::on_js_close as fn(Option<*mut c_void>) as usize {
-                Self::on_js_close(Some(std::ptr::from_mut(self).cast::<c_void>()));
-            } else {
-                close(self.close_ctx.map(|p| p.as_ptr()));
-            }
+        if core::mem::take(&mut self.js_on_close_armed) {
+            self.on_js_close();
         }
     }
 
-    /// `JSReadableStreamSource.onClose` — invoked via `close_handler` when the
-    /// JS side registered an `onclose` callback. Stored *directly* in
-    /// `close_handler` by [`Self::set_on_close_from_js`] so the fn-pointer
-    /// identity check above matches.
-    fn on_js_close(ptr: Option<*mut c_void>) {
-        // SAFETY: ptr was set to `self as *mut NewSource<C>` in on_close()/set_on_close_from_js.
-        let this = unsafe { &mut *(ptr.unwrap().cast::<NewSource<C>>()) };
+    /// `JSReadableStreamSource.onClose`: queues the JS `onclose` callback, if
+    /// any, then clears it.
+    fn on_js_close(&self) {
         // Reached from `FileReader::on_reader_done` off the event loop. While
         // the across-read ref is held (`increment_count` upgraded to Strong),
         // the wrapper is rooted and `try_get()` is `Some`. If the wrapper was
         // already finalized, `try_get()` is `None` and there is no callback.
-        let Some(this_jsvalue) = this.this_jsvalue.try_get() else {
+        let Some(this_jsvalue) = self.this_jsvalue.try_get() else {
             return;
         };
-        let global_this = this.global_this();
+        let global_this = self.global_this();
         if let Some(cb) = <Self as NewSourceCodegen>::on_close_callback_get_cached(this_jsvalue) {
             if !cb.is_undefined() {
                 global_this.queue_microtask(cb, &[]);
@@ -1388,10 +1375,7 @@ impl<C: SourceContext> NewSource<C> {
         global_object: &JSGlobalObject,
         value: JSValue,
     ) -> JsResult<()> {
-        // Store the handler by *identity* — `NewSource::on_close` compares the
-        // stored fn pointer against `on_js_close` to decide whether to pass
-        // `self` (JS path) or `close_ctx` (native path).
-        self.close_handler = Some(Self::on_js_close);
+        self.js_on_close_armed = true;
         self.global_this = Some(bun_ptr::BackRef::new(global_object));
 
         if value.is_undefined() {

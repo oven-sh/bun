@@ -6045,7 +6045,7 @@ impl H2FrameParser {
             pin_payload,
             StringObjects::Allow,
         )? {
-            Some(b) => bun_jsc::ThreadSafe::adopt(b),
+            Some(b) => b,
             None => {
                 return Err(global_object.throw_invalid_argument_type_value(
                     b"write",

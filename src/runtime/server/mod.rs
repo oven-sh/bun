@@ -3230,13 +3230,13 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             Addr::Fd(fd) => {
                 #[cfg(windows)]
                 {
-                    let _ = (fd, http1);
+                    let _ = (fd, tcp);
                     let _ = global.throw_invalid_arguments(format_args!(
                         "listening on a file descriptor is not supported on Windows"
                     ));
                 }
                 #[cfg(not(windows))]
-                if http1 {
+                if tcp {
                     // SAFETY: app is this server's live uWS app; `this` outlives the listen call.
                     unsafe {
                         (*app).listen_fd(

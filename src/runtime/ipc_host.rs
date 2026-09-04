@@ -70,8 +70,9 @@ fn is_invalid_handle_type(global_object: &JSGlobalObject, ex: JSValue) -> JsResu
     if !code.is_string() {
         return Ok(false);
     }
-    let code_str = code.to_bun_string(global_object)?;
-    Ok(bun_core::OwnedString::new(code_str).eql_comptime(b"ERR_INVALID_HANDLE_TYPE"))
+    Ok(code
+        .to_bun_string(global_object)?
+        .eq_ascii(b"ERR_INVALID_HANDLE_TYPE"))
 }
 
 fn do_send_err(

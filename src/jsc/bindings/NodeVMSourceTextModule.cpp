@@ -90,8 +90,7 @@ NodeVMSourceTextModule* NodeVMSourceTextModule::create(VM& vm, JSGlobalObject* g
 
     RefPtr fetcher(NodeVMScriptFetcher::create(vm, dynamicImportCallback, moduleWrapper));
 
-    // The origin URL stays empty: SourceCodeKey compares it, so a URL here would
-    // make cachedData acceptance depend on the identifier.
+    // No origin URL: SourceCodeKey compares it, and cachedData must not depend on the identifier.
     SourceOrigin sourceOrigin { {}, *fetcher };
 
     WTF::String identifier = identifierValue.toWTFString(globalObject);
@@ -105,8 +104,6 @@ NodeVMSourceTextModule* NodeVMSourceTextModule::create(VM& vm, JSGlobalObject* g
         clampOffsetForSource(OrdinalNumber::fromZeroBasedInt(columnOffset), sourceText.length()),
     };
 
-    // The identifier is the provider's source URL, so stack frames name the module
-    // the same way vm.Script frames name the filename.
     Ref<StringSourceProvider> sourceProvider = StringSourceProvider::create(WTF::move(sourceText), sourceOrigin, identifier, SourceTaintedOrigin::Untainted, startPosition, SourceProviderSourceType::Module);
 
     SourceCode sourceCode(WTF::move(sourceProvider), startPosition.m_line.zeroBasedInt(), startPosition.m_column.zeroBasedInt());

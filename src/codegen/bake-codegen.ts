@@ -67,7 +67,10 @@ async function run() {
           IS_BUN_DEVELOPMENT: String(!!debug),
           OVERLAY_CSS: JSON.stringify(css("../runtime/bake/client/overlay.css", !!debug)),
         },
-        minifySyntax: !debug,
+        // Bun.build removed the branches that `side` makes dead, also in debug
+        // builds. esbuild removes them only with minifySyntax. A server-only
+        // branch uses import.meta, which a classic script cannot parse.
+        minifySyntax: true,
         platform: side === "server" ? "node" : "browser",
         // esbuild's `drop` only accepts console/debugger; bun's accepted
         // arbitrary names. `pure` + minifySyntax removes the call (arguments
@@ -80,7 +83,7 @@ async function run() {
         // postprocessing below rewrites `import.meta` to `$importMeta`.
         banner: side === "server" ? { js: "var require=import.meta.require;" } : undefined,
         external: side === "server" ? ["node:*"] : undefined,
-        logLevel: "silent",
+        logLevel: "warning",
       });
       if (result.errors.length) throw new AggregateError(result.errors);
       assert(result.outputFiles.length === 1, "must bundle to a single file");
@@ -118,7 +121,7 @@ async function run() {
         pure: debug ? [] : ["DEBUG.ASSERT", "DEBUG"],
         platform: side === "server" ? "node" : "browser",
         supported: { "using": false },
-        logLevel: "silent",
+        logLevel: "warning",
       });
       if (result.errors.length) throw new AggregateError(result.errors);
       assert(result.outputFiles.length === 1, "must bundle to a single file");

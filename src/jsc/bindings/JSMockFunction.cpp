@@ -271,6 +271,11 @@ public:
     unsigned spyAttributes = 0;
 
     static constexpr unsigned SpyAttributeESModuleNamespace = 1 << 30;
+    // spyOriginal holds the GetterSetter the spy replaced (or displaced with a data property).
+    static constexpr unsigned SpyAttributeRestoreAccessor = 1 << 29;
+    // The spied property lived on the prototype chain; restoring means removing the own copy.
+    static constexpr unsigned SpyAttributeDeleteOnRestore = 1 << 28;
+    static constexpr unsigned SpyAttributeFlagsMask = SpyAttributeESModuleNamespace | SpyAttributeRestoreAccessor | SpyAttributeDeleteOnRestore;
 
     JSString* jsName()
     {
@@ -382,6 +387,20 @@ public:
                 moduleNamespaceObject->overrideExportValue(globalObject, identifier, implValue);
                 RETURN_IF_EXCEPTION(scope, );
             }
+        } else if (attributes & SpyAttributeDeleteOnRestore) {
+            // The property came from the prototype chain; the own copy the spy installed goes away.
+            target->deleteProperty(globalObject, identifier);
+            RETURN_IF_EXCEPTION(scope, );
+        } else if (attributes & SpyAttributeRestoreAccessor) {
+            auto* getterSetter = implValue.isCell() ? dynamicDowncast<GetterSetter>(implValue.asCell()) : nullptr;
+            if (!getterSetter)
+                return;
+            // A getter-backed method spy replaced the accessor with a data property; a plain
+            // putDirectAccessor over it would not swap the slot kind.
+            target->deleteProperty(globalObject, identifier);
+            RETURN_IF_EXCEPTION(scope, );
+            target->putDirectAccessor(globalObject, identifier, getterSetter, (attributes & ~SpyAttributeFlagsMask) | PropertyAttribute::Accessor);
+            RETURN_IF_EXCEPTION(scope, );
         } else if (auto index = parseIndex(identifier)) {
             // Use putDirectIndex for numeric property keys (e.g., spyOn(arr, 0))
             target->putDirectIndex(globalObject, *index, implValue, attributes, PutDirectIndexLikePutDirect);
@@ -1532,6 +1551,109 @@ BUN_DEFINE_HOST_FUNCTION(JSMock__jsSpyOn, (JSC::JSGlobalObject * lexicalGlobalOb
     bool hasValue = object->getPropertySlot(globalObject, propertyKey, slot);
     RETURN_IF_EXCEPTION(scope, {});
 
+    auto registerSpy = [&](JSMockFunction* mock) {
+        if (!globalObject->mockModule.activeSpies) {
+            ActiveSpySet* activeSpies = ActiveSpySet::create(vm, globalObject->mockModule.activeSpySetStructure.getInitializedOnMainThread(globalObject));
+            globalObject->mockModule.activeSpies.set(vm, globalObject, activeSpies);
+        }
+        uncheckedDowncast<ActiveSpySet>(globalObject->mockModule.activeSpies.get())->add(vm, mock, mock);
+
+        if (!globalObject->mockModule.activeMocks) {
+            ActiveSpySet* activeMocks = ActiveSpySet::create(vm, globalObject->mockModule.activeSpySetStructure.getInitializedOnMainThread(globalObject));
+            globalObject->mockModule.activeMocks.set(vm, globalObject, activeMocks);
+        }
+        uncheckedDowncast<ActiveSpySet>(globalObject->mockModule.activeMocks.get())->add(vm, mock, mock);
+    };
+
+    // spyOn(target, prop, "get" | "set"): wrap one side of an accessor, as Jest does.
+    JSValue accessTypeValue = callframe->argument(2);
+    if (!accessTypeValue.isUndefined()) {
+        String accessType = accessTypeValue.isString() ? accessTypeValue.toWTFString(globalObject) : String();
+        RETURN_IF_EXCEPTION(scope, {});
+        bool isGetter = accessType == "get"_s;
+        if (!isGetter && accessType != "set"_s) {
+            throwVMError(globalObject, scope, "spyOn(target, prop, accessType) expects accessType to be \"get\" or \"set\""_s);
+            return {};
+        }
+        String keyName = propertyKey.isSymbol() ? String(propertyKey.uid()) : String(propertyKey.publicName());
+        if (!hasValue) {
+            throwVMError(globalObject, scope, makeString(keyName, " property does not exist"_s));
+            return {};
+        }
+        if (!slot.isAccessor()) {
+            throwVMError(globalObject, scope, makeString("Property `"_s, keyName, "` does not have access type "_s, accessType));
+            return {};
+        }
+        GetterSetter* getterSetter = slot.getterSetter();
+        if (isGetter ? getterSetter->isGetterNull() : getterSetter->isSetterNull()) {
+            throwVMError(globalObject, scope, makeString("Property `"_s, keyName, "` does not have access type "_s, accessType));
+            return {};
+        }
+        JSObject* original = isGetter ? getterSetter->getter() : getterSetter->setter();
+        if (auto* existing = dynamicDowncast<JSMockFunction>(original)) {
+            return JSValue::encode(existing);
+        }
+
+        auto* mock = JSMockFunction::create(vm, globalObject, globalObject->mockModule.mockFunctionStructure.getInitializedOnMainThread(globalObject), CallbackKind::Call);
+        mock->copyNameAndLength(vm, globalObject, original);
+        RETURN_IF_EXCEPTION(scope, {});
+        pushImpl(mock, globalObject, JSMockImplementation::Kind::Call, original);
+
+        bool isOwn = slot.slotBase() == object;
+        unsigned attributes = slot.attributes() & ~JSMockFunction::SpyAttributeFlagsMask;
+        GetterSetter* replacement = GetterSetter::create(vm, globalObject, isGetter ? mock : getterSetter->getter(), isGetter ? getterSetter->setter() : mock);
+        if (isOwn) {
+            object->deleteProperty(globalObject, propertyKey);
+            RETURN_IF_EXCEPTION(scope, {});
+        }
+        object->putDirectAccessor(globalObject, propertyKey, replacement, attributes | PropertyAttribute::Accessor);
+        RETURN_IF_EXCEPTION(scope, {});
+
+        mock->spyTarget = JSC::Weak<JSObject>(object, &weakValueHandleOwner(), nullptr);
+        mock->spyIdentifier = propertyKey.isSymbol() ? Identifier::fromUid(vm, propertyKey.uid()) : Identifier::fromString(vm, propertyKey.publicName());
+        mock->spyAttributes = attributes | (isOwn ? JSMockFunction::SpyAttributeRestoreAccessor : JSMockFunction::SpyAttributeDeleteOnRestore);
+        mock->spyOriginal.set(vm, mock, getterSetter);
+        registerSpy(mock);
+        return JSValue::encode(mock);
+    }
+
+    // A getter that yields a function (jsdom's named-property interfaces, lazy re-exports):
+    // Jest spies on the function the getter returns and serves the mock in its place.
+    if (hasValue && slot.isAccessor()) {
+        JSValue value = object->get(globalObject, propertyKey);
+        RETURN_IF_EXCEPTION(scope, {});
+        if (auto* existing = dynamicDowncast<JSMockFunction>(value)) {
+            return JSValue::encode(existing);
+        }
+        if (!value.isCallable()) {
+            String keyName = propertyKey.isSymbol() ? String(propertyKey.uid()) : String(propertyKey.publicName());
+            String typeName = jsTypeStringForValue(globalObject, value)->value(globalObject);
+            RETURN_IF_EXCEPTION(scope, {});
+            throwVMError(globalObject, scope, makeString("Cannot spy on the `"_s, keyName, "` property because it is not a function; "_s, typeName, " given instead"_s));
+            return {};
+        }
+
+        auto* mock = JSMockFunction::create(vm, globalObject, globalObject->mockModule.mockFunctionStructure.getInitializedOnMainThread(globalObject), CallbackKind::Call);
+        mock->copyNameAndLength(vm, globalObject, value);
+        RETURN_IF_EXCEPTION(scope, {});
+        pushImpl(mock, globalObject, JSMockImplementation::Kind::Call, value);
+
+        bool isOwn = slot.slotBase() == object;
+        unsigned attributes = slot.attributes() & ~(JSMockFunction::SpyAttributeFlagsMask | static_cast<unsigned>(PropertyAttribute::Accessor));
+        if (isOwn) {
+            object->deleteProperty(globalObject, propertyKey);
+            RETURN_IF_EXCEPTION(scope, {});
+        }
+        object->putDirect(vm, propertyKey, mock, attributes);
+
+        mock->spyTarget = JSC::Weak<JSObject>(object, &weakValueHandleOwner(), nullptr);
+        mock->spyIdentifier = propertyKey.isSymbol() ? Identifier::fromUid(vm, propertyKey.uid()) : Identifier::fromString(vm, propertyKey.publicName());
+        mock->spyAttributes = attributes | (isOwn ? JSMockFunction::SpyAttributeRestoreAccessor : JSMockFunction::SpyAttributeDeleteOnRestore);
+        mock->spyOriginal.set(vm, mock, slot.getterSetter());
+        registerSpy(mock);
+        return JSValue::encode(mock);
+    }
+
     // easymode: regular property or missing property
     if (!hasValue || slot.isValue()) {
         JSValue value = jsUndefined();
@@ -1606,30 +1728,12 @@ BUN_DEFINE_HOST_FUNCTION(JSMock__jsSpyOn, (JSC::JSGlobalObject * lexicalGlobalOb
         }
 
         mock->spyOriginal.set(vm, mock, value);
-
-        {
-            if (!globalObject->mockModule.activeSpies) {
-                ActiveSpySet* activeSpies = ActiveSpySet::create(vm, globalObject->mockModule.activeSpySetStructure.getInitializedOnMainThread(globalObject));
-                globalObject->mockModule.activeSpies.set(vm, globalObject, activeSpies);
-            }
-            ActiveSpySet* activeSpies = uncheckedDowncast<ActiveSpySet>(globalObject->mockModule.activeSpies.get());
-            activeSpies->add(vm, mock, mock);
-        }
-
-        {
-            if (!globalObject->mockModule.activeMocks) {
-                ActiveSpySet* activeMocks = ActiveSpySet::create(vm, globalObject->mockModule.activeSpySetStructure.getInitializedOnMainThread(globalObject));
-                globalObject->mockModule.activeMocks.set(vm, globalObject, activeMocks);
-            }
-            ActiveSpySet* activeMocks = uncheckedDowncast<ActiveSpySet>(globalObject->mockModule.activeMocks.get());
-            activeMocks->add(vm, mock, mock);
-        }
-
+        registerSpy(mock);
         return JSValue::encode(mock);
     }
 
-    // hardmode: accessor property
-    throwVMError(globalObject, scope, "spyOn(target, prop) does not support accessor properties yet"_s);
+    // a native (custom) accessor on a built-in
+    throwVMError(globalObject, scope, "spyOn(target, prop) does not support native accessor properties"_s);
     return {};
 }
 

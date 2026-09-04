@@ -107,6 +107,12 @@ declare module "bun:test" {
       obj: T,
       methodOrPropertyValue: K,
     ): Mock<Extract<T[K], (...args: any[]) => any>>;
+    function spyOn<T extends object, K extends keyof T>(obj: T, propertyName: K, accessType: "get"): Mock<() => T[K]>;
+    function spyOn<T extends object, K extends keyof T>(
+      obj: T,
+      propertyName: K,
+      accessType: "set",
+    ): Mock<(value: T[K]) => void>;
 
     /**
      * Constructs the type of a mock function, such as the return type of `jest.fn()`.
@@ -161,6 +167,19 @@ declare module "bun:test" {
     obj: T,
     methodOrPropertyValue: K,
   ): Mock<Extract<T[K], (...args: any[]) => any>>;
+  /**
+   * Create a spy on one side of an accessor property (`get` or `set`), like Jest.
+   */
+  export function spyOn<T extends object, K extends keyof T>(
+    obj: T,
+    propertyName: K,
+    accessType: "get",
+  ): Mock<() => T[K]>;
+  export function spyOn<T extends object, K extends keyof T>(
+    obj: T,
+    propertyName: K,
+    accessType: "set",
+  ): Mock<(value: T[K]) => void>;
 
   /**
    * Vitest-compatible mocking utilities, for migrating tests from Vitest to Bun.

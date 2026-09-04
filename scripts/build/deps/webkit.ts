@@ -99,6 +99,18 @@ function prebuiltDestDir(cfg: Config): string {
 // Lib paths — relative to destDir (prebuilt) or buildDir (local)
 // ───────────────────────────────────────────────────────────────────────────
 
+/**
+ * WebKit's post-link canary that no two JSC ClassInfo (`s_info`) objects were
+ * folded to one address by LTO/ICF — JSC compares types by s_info pointer, so
+ * a fold is a silent miscompile. The fork's own build runs it on its `jsc`
+ * shell; run on bun itself it checks the link that actually ships. Source
+ * mode only (the script comes with the fetched tree).
+ */
+export function webkitClassInfoCheckScript(cfg: Config): string | undefined {
+  if (cfg.webkit !== "source") return undefined;
+  return join(depSourceDir(cfg, "WebKit"), "Tools", "Scripts", "check-classinfo-uniqueness.py");
+}
+
 export function webkitTestFFIPath(cfg: Config): string {
   const root = cfg.webkit === "prebuilt" ? prebuiltDestDir(cfg) : depBuildDir(cfg, "WebKit");
   return resolve(root, "bin", cfg.windows ? "testFFI.exe" : "testFFI");
@@ -141,7 +153,12 @@ function prebuiltIcuLibs(cfg: Config): string[] {
  * patterns, anchored at the repo root): the three libraries the direct build
  * compiles.
  */
-const sourceSparse = ["/Source/bmalloc/", "/Source/WTF/", "/Source/JavaScriptCore/"];
+const sourceSparse = [
+  "/Source/bmalloc/",
+  "/Source/WTF/",
+  "/Source/JavaScriptCore/",
+  "/Tools/Scripts/check-classinfo-uniqueness.py",
+];
 
 // ───────────────────────────────────────────────────────────────────────────
 // Source mode: cmakeconfig.h
@@ -1271,7 +1288,10 @@ function emitWebKitDirect(n: Ninja, cfg: Config, ctx: CustomBuildContext): WebKi
     // the Alpine builds have always shipped JSC.
     ...(cfg.abi === "musl" && cfg.release ? ["-Os"] : []),
   ];
-  const webkitCxx = [...depFlags.cxxflags, ...webkitCommon, "-std=c++23"];
+  // Release: WebKit's <iostream> ban (an #error stub found before the real
+  // header — OptionsJSCOnly.cmake), so no TU drags std::ios_base::Init in.
+  const bannedIncludes = cfg.debug ? [] : [`-I${q(join(WTF, "wtf", "bun", "BannedIncludes"))}`];
+  const webkitCxx = [...depFlags.cxxflags, ...webkitCommon, ...bannedIncludes, "-std=c++23"];
   const webkitC = [...depFlags.cflags, ...webkitCommon];
   // Same PIC policy as bun's own objects (bunOnlyFlags): non-PIE executable
   // everywhere but Android, whose loader requires PIE.
@@ -1676,8 +1696,11 @@ function emitWebKitDirect(n: Ninja, cfg: Config, ctx: CustomBuildContext): WebKi
     WTF, // <wtf/X.h> straight from the source tree (cmake copies to WTF/Headers)
     ...bmallocConsumerIncludes,
   ];
-  const jscFlagsNoTarget = [
-    ...webkitCxx,
+  // What JSC's CMakeLists adds for every TU of the JavaScriptCore target,
+  // C and C++ alike: no FP contraction (results must not depend on whether
+  // the compiler fused a multiply-add), no SLP vectorizer (clang workaround
+  // WebKit carries), the static-link export-macro switches, includes.
+  const jscTargetFlags = [
     "-ffp-contract=off",
     "-fno-slp-vectorize",
     ...commonDefines,
@@ -1686,7 +1709,9 @@ function emitWebKitDirect(n: Ninja, cfg: Config, ctx: CustomBuildContext): WebKi
     ...[...new Set(jscIncludes)].map(i => `-I${q(i)}`),
     ...icuFlags,
   ];
+  const jscFlagsNoTarget = [...webkitCxx, ...jscTargetFlags];
   const jscFlags = [...jscFlagsNoTarget, "-DBUILDING_JavaScriptCore"];
+  const jscCFlags = [...webkitC, ...jscTargetFlags, "-DBUILDING_JavaScriptCore"];
 
   // All codegen must exist before any JSC TU compiles; after that the
   // depfiles know exactly which TU reads which header.
@@ -1814,16 +1839,7 @@ function emitWebKitDirect(n: Ninja, cfg: Config, ctx: CustomBuildContext): WebKi
     const isC = src.endsWith(".c");
     jscObjects.push(
       isC
-        ? cc(n, cfg, src, {
-            flags: [
-              ...webkitC,
-              ...commonDefines,
-              "-DBUILDING_JavaScriptCore",
-              ...jscIncludes.map(i => `-I${q(i)}`),
-              ...icuFlags,
-            ],
-            orderOnlyInputs: codegenReady,
-          })
+        ? cc(n, cfg, src, { flags: jscCFlags, orderOnlyInputs: codegenReady })
         : cxx(n, cfg, src, {
             flags: jscFlags,
             pch: jscPch.pch,
@@ -1835,9 +1851,11 @@ function emitWebKitDirect(n: Ninja, cfg: Config, ctx: CustomBuildContext): WebKi
   // LowLevelInterpreter.cpp: the inline-asm interpreter (includes
   // LLIntAssembly.h). Its own edge, like cmake's LowLevelInterpreterLib: no
   // PCH, and an implicit dep on the generated assembly.
+  // Debug: -O1 (after the global -O0) keeps the IPInt instruction handlers
+  // within their aligned slots, as JSC's CMakeLists does for this file.
   jscObjects.push(
     cxx(n, cfg, join(JSC, "llint", "LowLevelInterpreter.cpp"), {
-      flags: jscFlags,
+      flags: [...jscFlags, ...(cfg.debug ? ["-O1"] : [])],
       implicitInputs: [llintAssembly],
       orderOnlyInputs: codegenReady,
     }),

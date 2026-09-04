@@ -43,6 +43,7 @@ import type { BuildNode, Ninja } from "./ninja.ts";
 import { emitRust, rustLibPath } from "./rust.ts";
 import { quote, slash } from "./shell.ts";
 import { emitShims, machoPostlinkCommand, machoPostlinkImplicitInputs } from "./shims.ts";
+import { webkitClassInfoCheckScript } from "./deps/webkit.ts";
 import { computeDepLibs, resolveDep, type ResolvedDep } from "./source.ts";
 import { streamPath } from "./stream.ts";
 import { generateUnifiedSources } from "./unified.ts";
@@ -728,9 +729,27 @@ export function emitPostLink(
   // ASAN binaries to run from subprocesses (shadow memory layout conflict
   // with ELF_ET_DYN_BASE, see sanitizers/856). We try with setarch first,
   // fall back to direct invocation.
-  emitSmokeTest(n, cfg, exe, exeName, strippedExe);
+  // `ninja check`: the smoke test plus the JSC ClassInfo canary.
+  n.phony("check", [...emitSmokeTest(n, cfg, exe, exeName, strippedExe), ...emitClassInfoCheck(n, cfg, exe, exeName)]);
 
   return { strippedExe, dsym };
+}
+
+/**
+ * JSC ClassInfo address-uniqueness canary (see webkitClassInfoCheckScript)
+ * on the unstripped executable. Reads the symbol table with llvm-nm, so it
+ * runs for cross builds too. Part of `ninja check`.
+ */
+function emitClassInfoCheck(n: Ninja, cfg: Config, exe: string, exeName: string): string[] {
+  const script = webkitClassInfoCheckScript(cfg);
+  if (script === undefined || cfg.host.os === "windows") return [];
+  const stamp = resolve(cfg.buildDir, `${exeName}.classinfo-unique`);
+  n.rule("classinfo_check", {
+    command: `python3 ${quote(script, false)} $in && touch $out`,
+    description: "check JSC ClassInfo uniqueness in $in",
+  });
+  n.build({ outputs: [stamp], rule: "classinfo_check", inputs: [exe], implicitInputs: [script] });
+  return [stamp];
 }
 
 /**
@@ -743,13 +762,10 @@ export function emitPostLink(
  * order-only input so this rule never runs while strip is mid-write; see
  * emitPostLink for why.
  */
-function emitSmokeTest(n: Ninja, cfg: Config, exe: string, exeName: string, strippedExe: string | undefined): void {
+function emitSmokeTest(n: Ninja, cfg: Config, exe: string, exeName: string, strippedExe: string | undefined): string[] {
   // Skip when the binary can't run on this host (different os/arch/abi) —
-  // `ninja check` becomes a no-op alias for the exe.
-  if (!cfg.canRunOnHost) {
-    n.phony("check", [exe]);
-    return;
-  }
+  // `ninja check` then just depends on the exe.
+  if (!cfg.canRunOnHost) return [exe];
   const stamp = resolve(cfg.buildDir, `${exeName}.smoke-test-passed`);
 
   // Linux+ASAN: wrap in `setarch <arch> -R` to disable ASLR. Fall back
@@ -790,9 +806,7 @@ function emitSmokeTest(n: Ninja, cfg: Config, exe: string, exeName: string, stri
     inputs: [exe],
     ...(strippedExe !== undefined ? { orderOnlyInputs: [strippedExe] } : {}),
   });
-
-  // Phony target — `ninja check` runs the smoke test.
-  n.phony("check", [stamp]);
+  return [stamp];
 }
 
 /**

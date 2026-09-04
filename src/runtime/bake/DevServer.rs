@@ -3123,7 +3123,8 @@ impl DeferredRequest {
                 saved.deinit();
                 // `saved` (incl. `js_request: jsc::Strong`) drops at scope exit.
             }
-            Handler::BundledHtmlPage(_) | Handler::HtmlBundleBody(_) | Handler::Aborted => {}
+            Handler::HtmlBundleBody(ctx) => ctx.deref(),
+            Handler::BundledHtmlPage(_) | Handler::Aborted => {}
         }
     }
 
@@ -4729,7 +4730,13 @@ pub(super) fn finalize_bundle(
                     break 'brk DevResponse::Http(resp);
                 }
                 Handler::BundledHtmlPage(ram) => DevResponse::Http(ram.response),
-                Handler::HtmlBundleBody(ctx) => DevResponse::RequestContext(*ctx),
+                // `send_serialized_failures` releases the context; `deref_` must not.
+                Handler::HtmlBundleBody(_) => {
+                    match ::core::mem::replace(&mut req.handler, Handler::Aborted) {
+                        Handler::HtmlBundleBody(ctx) => DevResponse::RequestContext(ctx),
+                        _ => unreachable!(),
+                    }
+                }
             };
 
             // SAFETY: see Note on `failures` above; `dev_ptr` is live and

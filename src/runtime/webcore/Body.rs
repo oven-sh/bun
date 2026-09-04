@@ -2205,7 +2205,7 @@ fn handle_body_error(value: &mut Value, global_object: &JSGlobalObject) -> Optio
     Some(JSPromise::rejected_promise(global_object, js).to_js())
 }
 
-const HTML_BUNDLE_BODY_UNREADABLE: &str = "An HTMLBundle body can only be sent by Bun.serve(). To read the page, build it with Bun.build() or fetch it from the server.";
+pub(crate) const HTML_BUNDLE_BODY_UNREADABLE: &str = "An HTMLBundle body can only be sent by Bun.serve(). To read the page, build it with Bun.build() or fetch it from the server.";
 
 fn throw_html_bundle_body_unreadable(global_object: &JSGlobalObject) -> jsc::JsError {
     global_object.throw_type_error(format_args!("{HTML_BUNDLE_BODY_UNREADABLE}"))

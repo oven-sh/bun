@@ -1297,7 +1297,8 @@ impl WriteFileWaitFromLockedValueTask {
                     (*promise).reject(
                         global_this,
                         Ok(global_this.create_type_error_instance(format_args!(
-                            "An HTMLBundle body can only be sent by Bun.serve()"
+                            "{}",
+                            crate::webcore::body::HTML_BUNDLE_BODY_UNREADABLE
                         ))),
                     )?;
                 }

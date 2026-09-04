@@ -4925,7 +4925,8 @@ pub(crate) fn write_file_internal(
                         JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
                             global_this,
                             global_this.create_type_error_instance(format_args!(
-                                "An HTMLBundle body can only be sent by Bun.serve()"
+                                "{}",
+                                crate::webcore::body::HTML_BUNDLE_BODY_UNREADABLE
                             )),
                         ),
                     ));

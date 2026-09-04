@@ -19,7 +19,7 @@ function scriptSrc(html: string): string {
 
 describe.each([false, true])("development: %p", development => {
   test("handler returns new Response(htmlBundle, init)", async () => {
-    await using dir = tempDir("html-response", files);
+    using dir = tempDir("html-response", files);
     const { default: html } = await import(join(dir, "index.html"));
 
     let cookies = false;
@@ -85,7 +85,7 @@ describe.each([false, true])("development: %p", development => {
 });
 
 test("a bare htmlBundle return is new Response(htmlBundle)", async () => {
-  await using dir = tempDir("html-response-bare", files);
+  using dir = tempDir("html-response-bare", files);
   const { default: html } = await import(join(dir, "index.html"));
   using server = Bun.serve({
     port: 0,
@@ -107,7 +107,7 @@ test("a bare htmlBundle return is new Response(htmlBundle)", async () => {
 });
 
 test("with the dev server: a handler-returned bundle gets the HMR script", async () => {
-  await using dir = tempDir("html-response-hmr", files);
+  using dir = tempDir("html-response-hmr", files);
   const { default: html } = await import(join(dir, "index.html"));
   using server = Bun.serve({
     port: 0,
@@ -144,7 +144,7 @@ test("with the dev server: a handler-returned bundle gets the HMR script", async
 
 describe.each([false, true])("development: %p", development => {
   test("requests that arrive while the bundle builds all get the page", async () => {
-    await using dir = tempDir("html-response-concurrent", files);
+    using dir = tempDir("html-response-concurrent", files);
     const { default: html } = await import(join(dir, "index.html"));
     using server = Bun.serve({
       port: 0,
@@ -159,7 +159,7 @@ describe.each([false, true])("development: %p", development => {
     const aborted = new AbortController();
     const abortedFetch = fetch(server.url, { signal: aborted.signal });
     aborted.abort();
-    expect(abortedFetch).rejects.toThrow();
+    await expect(abortedFetch).rejects.toThrow();
 
     const responses = await Promise.all(Array.from({ length: 16 }, () => fetch(server.url)));
     const pages = await Promise.all(responses.map(res => res.text()));
@@ -175,7 +175,7 @@ const brokenFiles = {
 };
 
 test("a build failure reaches the error handler", async () => {
-  await using dir = tempDir("html-response-build-error", brokenFiles);
+  using dir = tempDir("html-response-build-error", brokenFiles);
   const { default: html } = await import(join(dir, "index.html"));
   let error: unknown;
   using server = Bun.serve({
@@ -196,7 +196,7 @@ test("a build failure reaches the error handler", async () => {
 });
 
 test("with the dev server: a build failure renders the error page", async () => {
-  await using dir = tempDir("html-response-build-error-hmr", brokenFiles);
+  using dir = tempDir("html-response-build-error-hmr", brokenFiles);
   const { default: html } = await import(join(dir, "index.html"));
   using server = Bun.serve({
     port: 0,
@@ -213,7 +213,7 @@ test("with the dev server: a build failure renders the error page", async () => 
 });
 
 test("new Response(htmlBundle) as a route value is the bundle route", async () => {
-  await using dir = tempDir("html-response-route-value", files);
+  using dir = tempDir("html-response-route-value", files);
   const { default: html } = await import(join(dir, "index.html"));
   using server = Bun.serve({
     port: 0,
@@ -239,7 +239,7 @@ test("new Response(htmlBundle) as a route value is the bundle route", async () =
 test.skipIf(!isASAN || isWindows)(
   "a handler-returned bundle is freed at VM teardown",
   async () => {
-    await using dir = tempDir("html-response-teardown-leak", files);
+    using dir = tempDir("html-response-teardown-leak", files);
     await using proc = Bun.spawn({
       cmd: [
         bunExe(),
@@ -281,10 +281,10 @@ test.skipIf(!isASAN || isWindows)(
 );
 
 test("an HTMLBundle body cannot be read outside Bun.serve", async () => {
-  await using dir = tempDir("html-response-read", files);
+  using dir = tempDir("html-response-read", files);
   const { default: html } = await import(join(dir, "index.html"));
   const response = new Response(html);
-  expect(response.text()).rejects.toThrow(TypeError);
+  await expect(response.text()).rejects.toThrow(TypeError);
   expect(() => response.body).toThrow(TypeError);
-  expect(Bun.write(join(dir, "out.html"), new Response(html))).rejects.toThrow(TypeError);
+  await expect(Bun.write(join(dir, "out.html"), new Response(html))).rejects.toThrow(TypeError);
 });

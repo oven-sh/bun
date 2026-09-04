@@ -349,7 +349,8 @@ impl Stdio {
             }
             webcore::body::Value::HTMLBundle(_) => {
                 return Err(global.throw_invalid_arguments(format_args!(
-                    "An HTMLBundle body can only be sent by Bun.serve()"
+                    "{}",
+                    crate::webcore::body::HTML_BUNDLE_BODY_UNREADABLE
                 )));
             }
 

@@ -5650,6 +5650,74 @@ describe("numeric property keys that overflow to Infinity", () => {
   });
 });
 
+// The parser moves literal operands of ==, !=, === and !== to the right-hand side. Since an
+// infinite number is printed as "1 / 0" (see above), that division has to count as a literal too,
+// or transpiling the output a second time swaps the operands again:
+// `"a" != Infinity` -> `"a" != 1 / 0` -> `1 / 0 != "a"`.
+describe("equality comparisons against an infinite number", () => {
+  const plain = new Bun.Transpiler({ loader: "ts" });
+  const minifier = new Bun.Transpiler({ loader: "ts", minifyWhitespace: true });
+
+  function expectStablePrint(transpiler, input, output) {
+    const once = transpiler.transformSync(input);
+    expect(once).toBe(output);
+    expect(transpiler.transformSync(once)).toBe(output);
+  }
+  hideFromStackTrace(expectStablePrint);
+
+  it.each([
+    ['"a" != Infinity', '"a" != 1 / 0', '"a"!=1/0'],
+    ['"a" == -Infinity', '"a" == -1 / 0', '"a"==-1/0'],
+    ['"a" == 1e999', '"a" == 1 / 0', '"a"==1/0'],
+    ['"a" != -1e999', '"a" != -1 / 0', '"a"!=-1/0'],
+    ["1n === Infinity", "1n === 1 / 0", "1n===1/0"],
+    ["1n !== -1e999", "1n !== -1 / 0", "1n!==-1/0"],
+    ["require.main === Infinity", "require.main === 1 / 0", "require.main===1/0"],
+    ["require.main !== -Infinity", "require.main !== -1 / 0", "require.main!==-1/0"],
+    // Non-literal operands still move to the left, no matter how the infinity is spelled.
+    ["Infinity != x", "x != 1 / 0", "x!=1/0"],
+    ["-1e999 === x", "x === -1 / 0", "x===-1/0"],
+    ["1 / 0 != x", "x != 1 / 0", "x!=1/0"],
+    ["-1 / 0 === x", "x === -1 / 0", "x===-1/0"],
+    ['"a" != 1 / 0', '"a" != 1 / 0', '"a"!=1/0'],
+    ['"a" == -1 / 0', '"a" == -1 / 0', '"a"==-1/0'],
+    // Only a division that evaluates to an infinity stands for a number literal.
+    ["1 / 2 == x", "1 / 2 == x", "1/2==x"],
+    ["0 / 0 == x", "0 / 0 == x", "0/0==x"],
+    ["x / 0 == y", "x / 0 == y", "x/0==y"],
+    ['"a" == 1 / 2', '1 / 2 == "a"', '1/2=="a"'],
+    ['"a" == x / 0', 'x / 0 == "a"', 'x/0=="a"'],
+  ])("%s prints the same way on every pass", (input, output, minified) => {
+    expectStablePrint(plain, `y = ${input};`, `y = ${output};\n`);
+    expectStablePrint(minifier, `y = ${input};`, `y=${minified};`);
+  });
+
+  it("holds in a file that declares its own Infinity", () => {
+    expectStablePrint(
+      plain,
+      'function f(Infinity) {}\ny = "a" != 1e999;',
+      'function f(Infinity) {}\ny = "a" != 1 / 0;\n',
+    );
+  });
+
+  it("an inlined enum member whose value is infinite stays on the right", () => {
+    const enumObject = 'var F;\n((F) => {\n  F[F["A"] = 1 / 0] = "A";\n})(F ||= {});\n';
+    const once = plain.transformSync('const enum F { A = 1e999 }\ny = "a" == F.A;');
+    expect(once).toBe(`${enumObject}y = "a" == 1 / 0 /* A */;\n`);
+    // Only the inlining comment goes away on the second pass, not the operand order.
+    expect(plain.transformSync(once)).toBe(`${enumObject}y = "a" == 1 / 0;\n`);
+  });
+
+  it("reordering a division keeps its value", () => {
+    const out = plain.transformSync(`
+      var x = 2;
+      var result = [1 / 0 != x, -1 / 0 === x, 1 / 0 != Infinity, -1 / 0 === -Infinity];
+    `);
+    expect(out).toBe("var x = 2;\nvar result = [x != 1 / 0, x === -1 / 0, 1 / 0 != 1 / 0, -1 / 0 === -1 / 0];\n");
+    expect(new Function(`${out}; return result;`)()).toEqual([true, false, false, true]);
+  });
+});
+
 describe("parse error flood", () => {
   it("reports duplicate-binding floods in linear time", async () => {
     await using proc = Bun.spawn({

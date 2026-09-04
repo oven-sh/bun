@@ -7639,9 +7639,7 @@ impl H2FrameParser {
             is_server = type_js.is_number() && type_js.to_u32() == 0;
         }
 
-        // The node:http2 session options. Node reads the SETTINGS parameters from
-        // `options.settings` only: the same key at the top level is not validated and does not
-        // go on the wire. The session limits are top-level keys.
+        // Node reads SETTINGS from `options.settings` and the session limits from the top level.
         if let Some(session_options) = options.get(global_object, "options")? {
             if session_options.is_object() {
                 if let Some(settings_js) = session_options.get(global_object, "settings")? {
@@ -7651,9 +7649,7 @@ impl H2FrameParser {
                             "settings received in the constructor"
                         );
                         this_ref.load_settings_from_js_value(global_object, settings_js)?;
-                        // RFC 9113 §6.5.2: a server MUST NOT send SETTINGS_ENABLE_PUSH with a
-                        // value other than 0. A client treats any other value as a
-                        // PROTOCOL_ERROR, so an explicit enablePush goes out as 0.
+                        // RFC 9113 §6.5.2: a server MUST NOT advertise ENABLE_PUSH other than 0.
                         if is_server
                             && this_ref.explicit_settings.get() & SETTING_BIT_ENABLE_PUSH != 0
                         {
@@ -7760,8 +7756,6 @@ impl H2FrameParser {
                             });
                     }
                 }
-                // Non-standard setting ids whose received values are exposed on
-                // remoteSettings.customSettings.
                 if let Some(remote_custom) =
                     session_options.get(global_object, "remoteCustomSettings")?
                 {

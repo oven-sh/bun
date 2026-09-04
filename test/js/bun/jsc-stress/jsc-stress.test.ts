@@ -121,6 +121,8 @@ const jsFixtures = [
   "varargs-inlined-simple-exit.js",
   "loop-unrolling.js",
   "licm-no-pre-header.js",
+  // ToInt32 of doubles outside the int32 range (oven-sh/WebKit#565)
+  "to-int32-out-of-int32-range-doubles.js",
 ];
 
 const wasmFixtures = [

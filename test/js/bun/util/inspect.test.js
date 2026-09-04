@@ -810,6 +810,104 @@ it("Symbol", () => {
   expect(Bun.inspect(Symbol(""))).toBe("Symbol()");
 });
 
+// Objects made only of data properties are enumerated straight from their Structure (fast
+// path); a getter takes the same object through getOwnPropertyNames (slow path); `sorted`
+// uses a third walker. Which keys get hidden must not depend on the path taken.
+describe("Symbol.toStringTag property", () => {
+  it("prints an own enumerable Symbol.toStringTag on every enumeration path", () => {
+    expect(Bun.inspect({ a: 1, [Symbol.toStringTag]: "Tag" })).toBe(
+      'Tag {\n  a: 1,\n  [Symbol(Symbol.toStringTag)]: "Tag",\n}',
+    );
+    expect(Bun.inspect({ a: 1, get g() {}, [Symbol.toStringTag]: "Tag" })).toBe(
+      'Tag {\n  a: 1,\n  g: [Getter],\n  [Symbol(Symbol.toStringTag)]: "Tag",\n}',
+    );
+    expect(Bun.inspect({ a: 1, [Symbol.toStringTag]: "Tag" }, { sorted: true })).toBe(
+      'Tag {\n  [Symbol(Symbol.toStringTag)]: "Tag",\n  a: 1,\n}',
+    );
+  });
+
+  it("hides an own non-enumerable Symbol.toStringTag on every enumeration path", () => {
+    const data = { a: 1 };
+    Object.defineProperty(data, Symbol.toStringTag, { value: "Tag" });
+    expect(Bun.inspect(data)).toBe("Tag {\n  a: 1,\n}");
+    expect(Bun.inspect(data, { sorted: true })).toBe("Tag {\n  a: 1,\n}");
+
+    const withGetter = { a: 1, get g() {} };
+    Object.defineProperty(withGetter, Symbol.toStringTag, { value: "Tag" });
+    expect(Bun.inspect(withGetter)).toBe("Tag {\n  a: 1,\n  g: [Getter],\n}");
+  });
+
+  it("applies the same enumerability rule to the prototypes it walks", () => {
+    // Non-enumerable, the way classes and builtins brand themselves: hidden.
+    class Branded {
+      a = 1;
+      method() {}
+    }
+    Object.defineProperty(Branded.prototype, Symbol.toStringTag, { value: "Branded" });
+    expect(Bun.inspect(new Branded())).toBe("Branded {\n  a: 1,\n  method: [Function: method],\n}");
+
+    class BrandedByGetter {
+      a = 1;
+      get [Symbol.toStringTag]() {
+        return "BrandedByGetter";
+      }
+    }
+    expect(Bun.inspect(new BrandedByGetter())).toBe("BrandedByGetter {\n  a: 1,\n}");
+
+    // Plain assignment makes it enumerable, and enumerable prototype data is printed,
+    // whether or not the prototype also has a getter.
+    class Assigned {
+      a = 1;
+      method() {}
+    }
+    Assigned.prototype[Symbol.toStringTag] = "Assigned";
+    expect(Bun.inspect(new Assigned())).toBe(
+      'Assigned {\n  a: 1,\n  method: [Function: method],\n  [Symbol(Symbol.toStringTag)]: "Assigned",\n}',
+    );
+
+    class AssignedWithGetter {
+      a = 1;
+      get g() {}
+    }
+    AssignedWithGetter.prototype[Symbol.toStringTag] = "AssignedWithGetter";
+    expect(Bun.inspect(new AssignedWithGetter())).toBe(
+      'AssignedWithGetter {\n  a: 1,\n  g: [Getter],\n  [Symbol(Symbol.toStringTag)]: "AssignedWithGetter",\n}',
+    );
+  });
+});
+
+describe("__esModule property", () => {
+  it("hides the non-enumerable marker compiled CommonJS modules define, with or without re-export getters", () => {
+    // What tsc / babel emit: Object.defineProperty(exports, "__esModule", { value: true })
+    const dataOnly = {};
+    Object.defineProperty(dataOnly, "__esModule", { value: true });
+    dataOnly.foo = 1;
+    expect(Bun.inspect(dataOnly)).toBe("{\n  foo: 1,\n}");
+
+    const withReExport = {};
+    Object.defineProperty(withReExport, "__esModule", { value: true });
+    withReExport.foo = 1;
+    Object.defineProperty(withReExport, "bar", { enumerable: true, get: () => 2 });
+    expect(Bun.inspect(withReExport)).toBe("{\n  foo: 1,\n  bar: [Getter],\n}");
+  });
+
+  it("prints an enumerable __esModule like any other key", () => {
+    expect(Bun.inspect({ __esModule: true, foo: 1 })).toBe("{\n  __esModule: true,\n  foo: 1,\n}");
+    expect(Bun.inspect({ __esModule: true, foo: 1, get g() {} })).toBe(
+      "{\n  __esModule: true,\n  foo: 1,\n  g: [Getter],\n}",
+    );
+
+    // Inherited ones follow the same rule on both paths.
+    const dataOnly = Object.create({ __esModule: true, method() {} });
+    dataOnly.x = 1;
+    expect(Bun.inspect(dataOnly)).toBe("{\n  x: 1,\n  __esModule: true,\n  method: [Function: method],\n}");
+
+    const withGetter = Object.create({ __esModule: true, get g() {} });
+    withGetter.x = 1;
+    expect(Bun.inspect(withGetter)).toBe("{\n  x: 1,\n  __esModule: true,\n  g: [Getter],\n}");
+  });
+});
+
 it("CloseEvent", () => {
   const closeEvent = new CloseEvent("close", {
     code: 1000,

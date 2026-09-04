@@ -5436,9 +5436,16 @@ restart:
             }
             auto* prop = entry.key();
 
-            if (prop == propertyNames->constructor
-                || prop == propertyNames->underscoreProto
-                || prop == propertyNames->toStringTagSymbol || (objectToUse != object && prop == propertyNames->__esModule))
+            if (prop == propertyNames->constructor)
+                return true;
+
+            // Same rule as the slow path below: these keys are only hidden when they are the
+            // non-enumerable markers classes and modules brand themselves with. An enumerable
+            // one is ordinary user data and prints like any other key.
+            if ((entry.attributes() & PropertyAttribute::DontEnum) != 0
+                && (prop == propertyNames->underscoreProto
+                    || prop == propertyNames->toStringTagSymbol
+                    || prop == propertyNames->__esModule))
                 return true;
 
             if (builtinNames.bunNativePtrPrivateName() == prop)

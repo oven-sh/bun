@@ -466,6 +466,7 @@ export const exposedInternals = {
   "internal/freelist": require("internal/freelist"),
   // Node's internal/fixed_queue module IS the FixedQueue class.
   "internal/fixed_queue": require("internal/fixed_queue").FixedQueue,
+  "internal/timers": require("internal/timers"),
   "internal/assert/myers_diff": require("internal/assert/myers_diff"),
   // Bun's internal/errors only carries aggregateTwoErrors; the ERR_* hierarchy
   // is native, not a JS `codes` table, so nothing else is exposed here.

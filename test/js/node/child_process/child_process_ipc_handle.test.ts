@@ -781,3 +781,95 @@ const server = net.createServer().listen(0, '127.0.0.1', () => {
     expect(exitCode).toBe(0);
   });
 });
+
+describe("NODE_-prefixed user messages", () => {
+  test.concurrent(
+    "a user send with cmd NODE_CLUSTER reaches a plain-fork parent as internalMessage, like node",
+    async () => {
+      using dir = tempDir("ipc-node-cluster-user-msg", {
+        "parent.js": `
+const { fork } = require('node:child_process');
+const child = fork('child.js');
+const got = [];
+const done = () => {
+  if (got.length === 2) {
+    console.log(JSON.stringify(got));
+    child.kill();
+    process.exit(0);
+  }
+};
+child.on('message', m => { got.push(['message', m]); done(); });
+child.on('internalMessage', m => { got.push(['internalMessage', m]); done(); });
+setTimeout(() => { console.log('TIMEOUT:' + JSON.stringify(got)); process.exit(1); }, 10000);
+`,
+        "child.js": `
+process.send({ cmd: 'NODE_CLUSTER', x: 1 });
+process.send({ cmd: 'OTHER', y: 2 });
+setInterval(() => {}, 1 << 30);
+`,
+      });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "parent.js"],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited, proc.stderr.text()]);
+      expect(JSON.parse(stdout.trim())).toEqual([
+        ["internalMessage", { cmd: "NODE_CLUSTER", x: 1 }],
+        ["message", { cmd: "OTHER", y: 2 }],
+      ]);
+      expect(exitCode).toBe(0);
+    },
+  );
+});
+
+describe.skipIf(isWindows)("http listen({ fd })", () => {
+  test.concurrent("adopts fd 0 (inetd-style) and stays alive with nothing else pending", async () => {
+    using dir = tempDir("http-listen-fd0", {
+      "parent.js": `
+const net = require('node:net');
+const server = net.createServer();
+server.listen(0, '127.0.0.1', async () => {
+  const port = server.address().port;
+  const child = Bun.spawn({
+    cmd: [process.execPath, 'child.js'],
+    stdio: [server._handle.fd, 'pipe', 'inherit'],
+    env: { ...process.env },
+    cwd: import.meta.dir,
+  });
+  server.close();
+  const decoder = new TextDecoder();
+  let childOut = '';
+  for await (const chunk of child.stdout) {
+    childOut += decoder.decode(chunk, { stream: true });
+    if (childOut.includes('ready')) break;
+  }
+  console.log('child alive:', child.exitCode === null);
+  const res = await fetch('http://127.0.0.1:' + port + '/', { signal: AbortSignal.timeout(5000) });
+  console.log('response:', await res.text());
+  child.kill();
+  process.exit(0);
+});
+`,
+      "child.js": `
+const http = require('node:http');
+const s = http.createServer((req, res) => res.end('hello-fd0'));
+s.on('error', e => { console.error('listen error:', e.code); process.exit(3); });
+s.listen({ fd: 0 }, () => console.log('ready'));
+`,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "parent.js"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited, proc.stderr.text()]);
+    expect(stdout).toContain("child alive: true");
+    expect(stdout).toContain("response: hello-fd0");
+    expect(exitCode).toBe(0);
+  });
+});

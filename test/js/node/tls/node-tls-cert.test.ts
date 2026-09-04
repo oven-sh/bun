@@ -550,6 +550,153 @@ it("tls.connect should not accept untrusted certificates", async () => {
   }
 });
 
+it("tls.connect with rejectUnauthorized: null still rejects untrusted certificates", async () => {
+  const { promise, resolve, reject } = Promise.withResolvers();
+  let server: Server | null = null;
+  let socket: TLSSocket | null = null;
+
+  try {
+    server = tls
+      .createServer({
+        key: readFileSync(join(import.meta.dir, "..", "http", "fixtures", "openssl.key")),
+        cert: readFileSync(join(import.meta.dir, "..", "http", "fixtures", "openssl.crt")),
+        passphrase: "123123123",
+      })
+      .on("error", reject)
+      .listen(0, () => {
+        const address = server?.address() as AddressInfo;
+        socket = tls
+          .connect({ port: address.port, rejectUnauthorized: null as unknown as boolean }, () => {
+            reject(new Error("secureConnect must not fire when verification failed"));
+          })
+          .on("error", resolve);
+      });
+
+    const err = await promise;
+    expect(err.code).toBe("UNABLE_TO_VERIFY_LEAF_SIGNATURE");
+  } finally {
+    socket?.end();
+    server?.close();
+  }
+});
+
+it("tls.connect with rejectUnauthorized: 0 keeps verification on like node", async () => {
+  const { promise, resolve, reject } = Promise.withResolvers();
+  let server: Server | null = null;
+  let socket: TLSSocket | null = null;
+
+  try {
+    server = tls
+      .createServer({
+        key: readFileSync(join(import.meta.dir, "..", "http", "fixtures", "openssl.key")),
+        cert: readFileSync(join(import.meta.dir, "..", "http", "fixtures", "openssl.crt")),
+        passphrase: "123123123",
+      })
+      .on("error", reject)
+      .listen(0, () => {
+        const address = server?.address() as AddressInfo;
+        socket = tls
+          .connect({ port: address.port, rejectUnauthorized: 0 as unknown as boolean }, () => {
+            reject(new Error("secureConnect must not fire when verification failed"));
+          })
+          .on("error", resolve);
+      });
+
+    const err = await promise;
+    expect(err.code).toBe("UNABLE_TO_VERIFY_LEAF_SIGNATURE");
+  } finally {
+    socket?.end();
+    server?.close();
+  }
+});
+
+it("tls.createServer with rejectUnauthorized: 0 still rejects a client with an untrusted certificate", async () => {
+  let server: Server | null = null;
+  let socket: TLSSocket | null = null;
+  const secureConnections: string[] = [];
+  const clientErrors = Promise.withResolvers<Error>();
+  const clientClosed = Promise.withResolvers<string>();
+  const serverTLS = {
+    key: readFileSync(join(import.meta.dir, "..", "http", "fixtures", "openssl.key")),
+    cert: readFileSync(join(import.meta.dir, "..", "http", "fixtures", "openssl.crt")),
+    passphrase: "123123123",
+  };
+
+  try {
+    server = tls
+      .createServer(
+        {
+          ...serverTLS,
+          requestCert: true,
+          rejectUnauthorized: 0 as unknown as boolean,
+        },
+        s => {
+          secureConnections.push(s.authorizationError as string);
+          s.write("admitted");
+        },
+      )
+      .on("tlsClientError", clientErrors.resolve)
+      .listen(0, () => {
+        const address = server?.address() as AddressInfo;
+        socket = tls.connect({ port: address.port, rejectUnauthorized: false, ...serverTLS });
+        let received = "";
+        socket.on("data", chunk => (received += chunk));
+        socket.on("error", () => {});
+        socket.on("close", () => clientClosed.resolve(received));
+      });
+
+    const [, received] = await Promise.all([clientErrors.promise, clientClosed.promise]);
+    expect({ secureConnections, received }).toEqual({ secureConnections: [], received: "" });
+  } finally {
+    socket?.end();
+    server?.close();
+  }
+});
+
+it("tls.createServer with rejectUnauthorized: null still rejects unauthorized clients", async () => {
+  let server: Server | null = null;
+  let socket: TLSSocket | null = null;
+  const secureConnections: string[] = [];
+  const clientErrors = Promise.withResolvers<Error>();
+  const clientClosed = Promise.withResolvers<string>();
+
+  try {
+    server = tls
+      .createServer(
+        {
+          key: readFileSync(join(import.meta.dir, "..", "http", "fixtures", "openssl.key")),
+          cert: readFileSync(join(import.meta.dir, "..", "http", "fixtures", "openssl.crt")),
+          passphrase: "123123123",
+          requestCert: true,
+          rejectUnauthorized: null as unknown as boolean,
+        },
+        s => {
+          secureConnections.push(s.authorizationError as string);
+          s.write("admitted");
+        },
+      )
+      .on("tlsClientError", clientErrors.resolve)
+      .listen(0, () => {
+        const address = server?.address() as AddressInfo;
+        socket = tls.connect({ port: address.port, rejectUnauthorized: false });
+        let received = "";
+        socket.on("data", chunk => (received += chunk));
+        socket.on("error", () => {});
+        socket.on("close", () => clientClosed.resolve(received));
+      });
+
+    const [err, received] = await Promise.all([clientErrors.promise, clientClosed.promise]);
+    expect({ secureConnections, received, code: (err as NodeJS.ErrnoException).code }).toEqual({
+      secureConnections: [],
+      received: "",
+      code: "ERR_SSL_PEER_DID_NOT_RETURN_A_CERTIFICATE",
+    });
+  } finally {
+    socket?.end();
+    server?.close();
+  }
+});
+
 async function createTLSServer(options: tls.TlsOptions) {
   const server = await new Promise<tls.Server>((resolve, reject) => {
     const server = tls

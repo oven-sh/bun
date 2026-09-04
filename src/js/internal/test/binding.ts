@@ -48,6 +48,58 @@ function safeGetenv(name: string) {
 
 let cachedUvBinding: Record<string, unknown> | undefined;
 
+const nghttp2ErrorMessages: Record<number, string> = {
+  [0]: "Success",
+  [-501]: "Invalid argument",
+  [-502]: "Out of buffer space",
+  [-503]: "Unsupported SPDY version",
+  [-504]: "Operation would block",
+  [-505]: "Protocol error",
+  [-506]: "Invalid frame octets",
+  [-507]: "EOF",
+  [-508]: "Data transfer deferred",
+  [-509]: "No more Stream ID available",
+  [-510]: "Stream was already closed or invalid",
+  [-511]: "Stream is closing",
+  [-512]: "The transmission is not allowed for this stream",
+  [-513]: "Stream ID is invalid",
+  [-514]: "Invalid stream state",
+  [-515]: "Another DATA frame has already been deferred",
+  [-516]: "request HEADERS is not allowed",
+  [-517]: "GOAWAY has already been sent",
+  [-518]: "Invalid header block",
+  [-519]: "Invalid state",
+  [-521]: "The user callback function failed due to the temporal error",
+  [-522]: "The length of the frame is invalid",
+  [-523]: "Header compression/decompression error",
+  [-524]: "Flow control error",
+  [-525]: "Insufficient buffer size given to function",
+  [-526]: "Callback was paused by the application",
+  [-527]: "Too many inflight SETTINGS",
+  [-528]: "Server push is disabled by peer",
+  [-529]: "DATA or HEADERS frame has already been submitted for the stream",
+  [-530]: "The current session is closing",
+  [-531]: "Invalid HTTP header field was received",
+  [-532]: "Violation in HTTP messaging rule",
+  [-533]: "Stream was refused",
+  [-534]: "Internal error",
+  [-535]: "Cancel",
+  [-536]: "When a local endpoint expects to receive SETTINGS frame, it receives an other type of frame",
+  [-537]: "SETTINGS frame contained more than the maximum allowed entries",
+  [-901]: "Out of memory",
+  [-902]: "The user callback function failed",
+  [-903]: "Received bad client magic byte string",
+  [-904]: "Flooding was detected in this HTTP/2 session, and it must be closed",
+  [-905]: "Too many CONTINUATION frames following a HEADER frame",
+};
+
+function nghttp2ErrorString(code: number) {
+  return nghttp2ErrorMessages[code] || "Unknown error code";
+}
+
+class Http2Session {}
+class Http2Stream {}
+
 function internalBinding(name: string) {
   switch (name) {
     case "trace_events":
@@ -86,6 +138,13 @@ function internalBinding(name: string) {
       const { kMaxLength, kStringMaxLength } = require("node:buffer");
       return { kMaxLength, kStringMaxLength };
     }
+    case "http2":
+      return {
+        Http2Session,
+        Http2Stream,
+        constants: require("node:http2").constants,
+        nghttp2ErrorString,
+      };
     case "udp_wrap":
       return { UDP: require("internal/dgram").UDP };
     case "tcp_wrap":

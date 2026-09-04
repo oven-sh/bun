@@ -64,6 +64,7 @@ pub use proxy_tunnel::ProxyTunnel;
 pub use send_file::SendFile;
 pub use signals::Signals;
 pub use thread_safe_stream_buffer::ThreadSafeStreamBuffer;
+pub mod default_ca;
 #[path = "ssl_config.rs"]
 pub mod ssl_config;
 pub use ssl_config::SSLConfig;

@@ -1444,12 +1444,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                             if !nhr_flags.contains(NhrFlags::REQUEST_HAS_COMPLETED)
                                 && raw.state().is_response_pending()
                             {
-                                if raw.state().is_http_status_called() {
-                                    raw.write_status(b"500 Internal Server Error");
-                                    raw.end_without_body(true);
-                                } else {
-                                    raw.end_stream(true);
-                                }
+                                node_http_response::end_failed_node_http_response(raw);
                             }
                         }
                     }
@@ -1985,6 +1980,25 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
     pub(crate) fn on_listen_failed(&mut self) {
         self.listener = None;
         let global = self.global_this();
+
+        #[cfg(not(windows))]
+        if let Some(fd) = self.config.listen_fd {
+            let errno = bun_sys::get_errno(-1i32);
+            let err = jsc::SystemError::from(
+                bun_sys::Error::from_code(
+                    if errno != bun_sys::E::SUCCESS {
+                        errno
+                    } else {
+                        bun_sys::E::EBADF
+                    },
+                    bun_sys::Tag::listen,
+                )
+                .with_fd(bun_sys::Fd::from_native(fd))
+                .to_system_error(),
+            );
+            let _ = global.throw_value(err.to_error_instance(global));
+            return;
+        }
 
         let error_instance = match &self.config.address {
             server_config::Address::Tcp {
@@ -3065,29 +3079,34 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         enum Addr {
             Tcp { port: u16, host: *const c_char },
             Unix { ptr: *const u8, len: usize },
+            Fd(i32),
         }
         let (addr, tcp, options) = {
             let cfg = &this_ref.get().config;
-            let addr = match &cfg.address {
-                server_config::Address::Tcp { port, hostname } => {
-                    let mut host: *const c_char = core::ptr::null();
-                    if let Some(existing) = hostname.as_deref() {
-                        let bytes = existing.as_bytes();
-                        let bare = strip_ipv6_brackets(bytes);
-                        host = if bare.len() == bytes.len() {
-                            existing.as_ptr()
-                        } else {
-                            stripped_hostname
-                                .insert(bun_core::ZBox::from_bytes(bare))
-                                .as_ptr()
-                        };
+            let addr = if let Some(fd) = cfg.listen_fd {
+                Addr::Fd(fd)
+            } else {
+                match &cfg.address {
+                    server_config::Address::Tcp { port, hostname } => {
+                        let mut host: *const c_char = core::ptr::null();
+                        if let Some(existing) = hostname.as_deref() {
+                            let bytes = existing.as_bytes();
+                            let bare = strip_ipv6_brackets(bytes);
+                            host = if bare.len() == bytes.len() {
+                                existing.as_ptr()
+                            } else {
+                                stripped_hostname
+                                    .insert(bun_core::ZBox::from_bytes(bare))
+                                    .as_ptr()
+                            };
+                        }
+                        Addr::Tcp { port: *port, host }
                     }
-                    Addr::Tcp { port: *port, host }
+                    server_config::Address::Unix(unix) => Addr::Unix {
+                        ptr: unix.as_ptr().cast(),
+                        len: unix.as_bytes().len(),
+                    },
                 }
-                server_config::Address::Unix(unix) => Addr::Unix {
-                    ptr: unix.as_ptr().cast(),
-                    len: unix.as_bytes().len(),
-                },
             };
             (addr, cfg.http1 || cfg.http2, cfg.get_usockets_options())
         };
@@ -3206,6 +3225,30 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                         z,
                         options,
                     );
+                }
+            }
+            Addr::Fd(fd) => {
+                #[cfg(windows)]
+                {
+                    let _ = (fd, http1);
+                    let _ = global.throw_invalid_arguments(format_args!(
+                        "listening on a file descriptor is not supported on Windows"
+                    ));
+                }
+                #[cfg(not(windows))]
+                if http1 {
+                    unsafe {
+                        (*app).listen_fd(
+                            Some(trampoline::on_listen::<SSL, DEBUG>),
+                            this.cast::<c_void>(),
+                            fd,
+                            options,
+                        );
+                    }
+                } else {
+                    let _ = global.throw_invalid_arguments(format_args!(
+                        "fd cannot be used with an http3-only server"
+                    ));
                 }
             }
         }

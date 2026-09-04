@@ -16,8 +16,9 @@ const {
   validateInteger,
   validateFunction,
   validateOneOf,
+  validatePort,
 } = require("internal/validators");
-const { ConnResetException, hasObserver, startPerf, stopPerf, kInternalSendOptions } = require("internal/shared");
+const { ConnResetException, ExceptionWithHostPort, hasObserver, startPerf, stopPerf } = require("internal/shared");
 const kServerResponseStatistics = Symbol("ServerResponseStatistics");
 
 const { isPrimary } = require("internal/cluster/isPrimary");
@@ -45,6 +46,8 @@ const {
   drainMicrotasks,
   setServerCustomOptions,
   setServerAppFlags,
+  setServerSecureContext,
+  enableServerKeylog,
   getMaxHTTPHeaderSize,
   fakeSocketSymbol,
   noBodySymbol,
@@ -69,6 +72,7 @@ const OutgoingMessagePrototype = OutgoingMessage.prototype;
 const { kIncomingMessage } = require("node:_http_common");
 let http1Fallback;
 const kConnectionsCheckingInterval = Symbol("http.server.connectionsCheckingInterval");
+const kClusterProbeKey = Symbol("kClusterProbeKey");
 const kTrackedConnections = Symbol("http.server.trackedConnections");
 const kHttpAllowHalfOpen = Symbol("http.server.httpAllowHalfOpen");
 
@@ -88,6 +92,10 @@ function traceServerRequestEnd() {
 }
 
 const getBunServerAllClosedPromise = $newRustFunction("node_http_binding.rs", "getBunServerAllClosedPromise", 1);
+let uvBinding;
+function uv() {
+  return (uvBinding ??= process.binding("uv"));
+}
 
 const kServerResponse = Symbol("ServerResponse");
 const kChunkedEncoding = Symbol("kChunkedEncoding");
@@ -247,11 +255,111 @@ function normalizeServerTls(tls) {
   return tls;
 }
 
+function processServerTlsOptions(options) {
+  let isTls = false;
+  const tlsHelpers = options.pfx || options.cert || options.key || options.ca ? require("internal/tls") : undefined;
+
+  // Node's https.Server accepts PKCS#12 bundles (pfx [+ passphrase]); fold
+  // them into plain key/cert/ca so the native TLS config sees PEM material.
+  let tlsOptions = options;
+  if (options.pfx) {
+    tlsOptions = tlsHelpers.processPfxOptions(options);
+    isTls = true;
+  }
+
+  let cert = tlsOptions.cert;
+  if (cert) {
+    tlsHelpers.throwOnInvalidTLSArray("options.cert", cert);
+    isTls = true;
+  }
+
+  let key = tlsOptions.key;
+  if (key) {
+    tlsHelpers.throwOnInvalidTLSArray("options.key", key);
+    isTls = true;
+  }
+
+  let ca = tlsOptions.ca;
+  // PKCS#12-embedded CAs extend the trust set; the server path hands raw
+  // {key, cert, ca} to the native config and has no addCACert hook, so fold
+  // them into `ca` (mirrors tls.Server.setSecureContext).
+  const pfxExtraCAs = tlsOptions._pfxExtraCACerts;
+  if (pfxExtraCAs?.length) {
+    ca = ca == null ? pfxExtraCAs : $isArray(ca) ? [...ca, ...pfxExtraCAs] : [ca, ...pfxExtraCAs];
+  }
+  if (ca) {
+    tlsHelpers.throwOnInvalidTLSArray("options.ca", ca);
+    isTls = true;
+  }
+
+  let passphrase = options.passphrase;
+  if (passphrase && typeof passphrase !== "string") {
+    throw $ERR_INVALID_ARG_TYPE("options.passphrase", "string", passphrase);
+  }
+
+  let serverName = options.servername;
+  if (serverName && typeof serverName !== "string") {
+    throw $ERR_INVALID_ARG_TYPE("options.servername", "string", serverName);
+  }
+
+  let secureOptions = options.secureOptions || 0;
+  if (secureOptions && typeof secureOptions !== "number") {
+    throw $ERR_INVALID_ARG_TYPE("options.secureOptions", "number", secureOptions);
+  }
+
+  if (!isTls) return null;
+
+  // Translate minVersion/maxVersion/secureProtocol into the integer
+  // protocol range the native layer applies (secureProtocol wins, like
+  // Node's SecureContext::Init); 0 keeps the native defaults.
+  tlsHelpers.validateSecureProtocol(options.secureProtocol);
+  let minVersion, maxVersion;
+  const range = tlsHelpers.secureProtocolToVersionRange(options.secureProtocol);
+  if (range) {
+    minVersion = range[0];
+    maxVersion = range[1];
+  } else {
+    minVersion = tlsHelpers.tlsStringToProtocolVersion(options.minVersion);
+    maxVersion = tlsHelpers.tlsStringToProtocolVersion(options.maxVersion);
+  }
+  return normalizeServerTls({
+    serverName,
+    key,
+    cert,
+    ca,
+    passphrase,
+    secureOptions,
+    minVersion,
+    maxVersion,
+    ciphers: typeof options.ciphers === "string" && options.ciphers ? options.ciphers : undefined,
+    requestCert: options.requestCert,
+    rejectUnauthorized: options.rejectUnauthorized,
+  });
+}
+
+// tls.Server#setSecureContext: rebuild credentials for future connections
+// (installed per-instance on TLS servers only, so http.Server lacks it).
+// https://github.com/nodejs/node/blob/main/lib/_tls_wrap.js
+function serverSetSecureContext(this: Server, options) {
+  validateObject(options, "options");
+  const tls = processServerTlsOptions({ ...options }) ?? normalizeServerTls({});
+  this[tlsSymbol] = tls;
+  const handle = this[serverSymbol];
+  if (handle) setServerSecureContext(handle, tls);
+}
+
+function onKeylogNewListener(this: Server, event) {
+  if (event !== "keylog") return;
+  this.removeListener("newListener", onKeylogNewListener);
+  const handle = this[serverSymbol];
+  if (handle) enableServerKeylog(handle);
+}
+
 // Node registers connectionListener on every http.Server so `server.emit("connection", socket)`
 // works for foreign Duplex sockets. The native listener handles its own sockets end to end;
 // this picks up the rest. https://github.com/nodejs/node/blob/main/lib/_http_server.js
 function connectionListener(this: Server, socket) {
-  if (NodeHTTPServerSocket && socket instanceof NodeHTTPServerSocket) return;
+  if (isNodeHTTPServerSocket(socket)) return;
   (http1Fallback ??= require("internal/http1_server_fallback")).connectionListenerHTTP1(this, socket, {
     http1Options: {
       IncomingMessage: this[kIncomingMessage],
@@ -272,6 +380,8 @@ function Server(options, callback): void {
 
   this.listening = false;
   this._unref = false;
+  // https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L1876
+  this._listeningId = 1;
   this.timeout = 0;
   this.maxRequestsPerSocket = 0;
   this.maxHeadersCount = null;
@@ -288,86 +398,12 @@ function Server(options, callback): void {
   } else {
     validateObject(options, "options");
     options = { ...options };
-    const tlsHelpers = options.pfx || options.cert || options.key || options.ca ? require("internal/tls") : undefined;
-
-    // Node's https.Server accepts PKCS#12 bundles (pfx [+ passphrase]); fold
-    // them into plain key/cert/ca so the native TLS config sees PEM material.
-    let tlsOptions = options;
-    if (options.pfx) {
-      tlsOptions = tlsHelpers.processPfxOptions(options);
+    const tlsFromOptions = processServerTlsOptions(options);
+    this[tlsSymbol] = tlsFromOptions;
+    if (tlsFromOptions) {
       this[isTlsSymbol] = true;
-    }
-
-    let cert = tlsOptions.cert;
-    if (cert) {
-      tlsHelpers.throwOnInvalidTLSArray("options.cert", cert);
-      this[isTlsSymbol] = true;
-    }
-
-    let key = tlsOptions.key;
-    if (key) {
-      tlsHelpers.throwOnInvalidTLSArray("options.key", key);
-      this[isTlsSymbol] = true;
-    }
-
-    let ca = tlsOptions.ca;
-    // PKCS#12-embedded CAs extend the trust set; the server path hands raw
-    // {key, cert, ca} to the native config and has no addCACert hook, so fold
-    // them into `ca` (mirrors tls.Server.setSecureContext).
-    const pfxExtraCAs = tlsOptions._pfxExtraCACerts;
-    if (pfxExtraCAs?.length) {
-      ca = ca == null ? pfxExtraCAs : $isArray(ca) ? [...ca, ...pfxExtraCAs] : [ca, ...pfxExtraCAs];
-    }
-    if (ca) {
-      tlsHelpers.throwOnInvalidTLSArray("options.ca", ca);
-      this[isTlsSymbol] = true;
-    }
-
-    let passphrase = options.passphrase;
-    if (passphrase && typeof passphrase !== "string") {
-      throw $ERR_INVALID_ARG_TYPE("options.passphrase", "string", passphrase);
-    }
-
-    let serverName = options.servername;
-    if (serverName && typeof serverName !== "string") {
-      throw $ERR_INVALID_ARG_TYPE("options.servername", "string", serverName);
-    }
-
-    let secureOptions = options.secureOptions || 0;
-    if (secureOptions && typeof secureOptions !== "number") {
-      throw $ERR_INVALID_ARG_TYPE("options.secureOptions", "number", secureOptions);
-    }
-
-    if (this[isTlsSymbol]) {
-      const { validateSecureProtocol, secureProtocolToVersionRange, tlsStringToProtocolVersion } = tlsHelpers;
-      // Translate minVersion/maxVersion/secureProtocol into the integer
-      // protocol range the native layer applies (secureProtocol wins, like
-      // Node's SecureContext::Init); 0 keeps the native defaults.
-      validateSecureProtocol(options.secureProtocol);
-      let minVersion, maxVersion;
-      const range = secureProtocolToVersionRange(options.secureProtocol);
-      if (range) {
-        minVersion = range[0];
-        maxVersion = range[1];
-      } else {
-        minVersion = tlsStringToProtocolVersion(options.minVersion);
-        maxVersion = tlsStringToProtocolVersion(options.maxVersion);
-      }
-      this[tlsSymbol] = normalizeServerTls({
-        serverName,
-        key,
-        cert,
-        ca,
-        passphrase,
-        secureOptions,
-        minVersion,
-        maxVersion,
-        ciphers: typeof options.ciphers === "string" && options.ciphers ? options.ciphers : undefined,
-        requestCert: options.requestCert,
-        rejectUnauthorized: options.rejectUnauthorized,
-      });
-    } else {
-      this[tlsSymbol] = null;
+      this.setSecureContext = serverSetSecureContext;
+      this.on("newListener", onKeylogNewListener);
     }
   }
 
@@ -473,9 +509,19 @@ Server.prototype.closeIdleConnections = function () {
 
 Server.prototype.close = function (optionalCallback?) {
   const server = this[serverSymbol];
+  // https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L2423
+  this._listeningId++;
   // Node.js's httpServerPreClose clears the connections-checking interval
   // even when the server was never listening.
   clearInterval(this[kConnectionsCheckingInterval]);
+  const probeKey = this[kClusterProbeKey];
+  if (probeKey !== undefined) {
+    this[kClusterProbeKey] = undefined;
+    if (process.connected && cluster?.worker) {
+      // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/cluster/child.js#L142-L161
+      cluster._sendInternal({ act: "close", key: probeKey });
+    }
+  }
   http1Fallback?.closeIdleHttp1Connections(this);
   if (!server) {
     if (typeof optionalCallback === "function") process.nextTick(optionalCallback, $ERR_SERVER_NOT_RUNNING());
@@ -536,6 +582,7 @@ Server.prototype.listen = function () {
   const server = this;
   let port, host;
   let socketPath;
+  let fd;
   let tls = this[tlsSymbol];
 
   // This logic must align with:
@@ -548,6 +595,8 @@ Server.prototype.listen = function () {
       port = arg0.port;
       host = arg0.host;
       socketPath = arg0.path;
+      const arg0Fd = arg0.fd;
+      if (typeof arg0Fd === "number" && arg0Fd >= 0) fd = arg0Fd;
 
       const otherTLS = arg0.tls;
       if (otherTLS && $isObject(otherTLS)) {
@@ -567,15 +616,17 @@ Server.prototype.listen = function () {
 
   // Bun defaults to port 3000.
   // Node defaults to port 0.
-  if (port === undefined && !socketPath) {
+  if (port === undefined && !socketPath && fd === undefined) {
     port = 0;
   }
 
-  if (typeof port === "string") {
-    const portNumber = parseInt(port);
-    if (!Number.isNaN(portNumber)) {
-      port = portNumber;
-    }
+  // https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L2130
+  this._listeningId++;
+
+  // https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L2159 (validatePort before listenInCluster)
+  if (typeof port === "number" || typeof port === "string") {
+    validatePort(port, "options.port");
+    port = port | 0;
   }
 
   const lastArg = arguments[argc - 1];
@@ -588,15 +639,14 @@ Server.prototype.listen = function () {
     // listenInCluster
 
     if (isPrimary) {
-      server[kRealListen](tls, port, host, socketPath, false);
+      server[kRealListen](tls, port, host, socketPath, false, fd);
       return this;
     }
 
     if (cluster === undefined) cluster = require("node:cluster");
 
-    server.once("listening", () => {
+    const notifyListening = () => {
       // No channel (NODE_UNIQUE_ID inherited by a plain child, or already disconnected): nothing to notify.
-      if (!process.connected) return;
       cluster.worker.state = "listening";
       const address = server.address();
       const isObjectAddress = address !== null && typeof address === "object";
@@ -609,10 +659,46 @@ Server.prototype.listen = function () {
         address: socketPath ?? (boundHost && boundHost.address) ?? null,
         addressType: socketPath ? -1 : boundHost && boundHost.family === "IPv6" ? 6 : 4,
       };
-      process.send(message, undefined, kInternalSendOptions);
-    });
+      cluster._sendInternal(message);
+    };
+    server.once("listening", notifyListening);
+    // A close() or another listen() before the primary replies makes the reply stale.
+    // https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L2078-L2085
+    const listeningId = this._listeningId;
 
-    server[kRealListen](tls, port, host, socketPath, true);
+    try {
+      // listen({fd}) in a worker: share the primary-inherited fd over SCM_RIGHTS.
+      // https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L2065-L2096 (listenInCluster)
+      if (typeof fd === "number" && fd >= 0 && process.connected) {
+        if (process.platform === "win32") {
+          server.removeListener("listening", notifyListening);
+          process.nextTick(
+            emitListenErrorNextTick,
+            server,
+            new ExceptionWithHostPort(uv().UV_EINVAL, "listen", null, 0),
+          );
+          return this;
+        }
+        cluster._sendInternal(
+          { act: "shareListenFd", fd, addressType: 4 },
+          onShareListenFdReply.bind(null, server, notifyListening, listeningId, tls, port, host, socketPath),
+        );
+        return this;
+      }
+
+      const askPrimary = typeof port === "number" && port > 0 && !socketPath && process.connected;
+      if (askPrimary) {
+        cluster._sendInternal(
+          { act: "probePort", address: host ?? null, port, addressType: 4 },
+          onProbePortReply.bind(null, server, notifyListening, listeningId, tls, port, host, socketPath),
+        );
+      } else {
+        server[kRealListen](tls, port, host, socketPath, true, fd);
+      }
+    } catch (err) {
+      server.removeListener("listening", notifyListening);
+      throw err;
+    }
   } catch (err) {
     process.nextTick(emitListenErrorNextTick, server, err);
   }
@@ -620,7 +706,60 @@ Server.prototype.listen = function () {
   return this;
 };
 
-Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort) {
+function closeSharedFd(fd) {
+  try {
+    require("node:fs").closeSync(fd);
+  } catch {}
+}
+
+function onShareListenFdReply(server, notifyListening, listeningId, tls, port, host, socketPath, reply, receivedFd) {
+  const sharedFd = typeof receivedFd === "number" && receivedFd >= 0 ? receivedFd : undefined;
+  if (listeningId !== server._listeningId) {
+    server.removeListener("listening", notifyListening);
+    if (sharedFd !== undefined) closeSharedFd(sharedFd);
+    return;
+  }
+  const replyErrno = reply.errno;
+  if (replyErrno || sharedFd === undefined) {
+    server.removeListener("listening", notifyListening);
+    if (sharedFd !== undefined) closeSharedFd(sharedFd);
+    server.emit("error", new ExceptionWithHostPort(replyErrno || uv().UV_EBADF, "listen", null, 0));
+    return;
+  }
+  try {
+    server[kRealListen](tls, port, host, socketPath, true, sharedFd);
+  } catch (err) {
+    server.removeListener("listening", notifyListening);
+    closeSharedFd(sharedFd);
+    server.emit("error", err);
+  }
+}
+
+function onProbePortReply(server, notifyListening, listeningId, tls, port, host, socketPath, reply) {
+  const replyErrno = reply.errno;
+  if (listeningId !== server._listeningId) {
+    server.removeListener("listening", notifyListening);
+    if (!replyErrno) cluster._sendInternal({ act: "close", key: reply.key });
+    return;
+  }
+  if (replyErrno) {
+    server.removeListener("listening", notifyListening);
+    server.emit("error", new ExceptionWithHostPort(replyErrno, "bind", host ?? null, port));
+    return;
+  }
+  // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/cluster/child.js#L75-L114 (indexesKey/handles)
+  server[kClusterProbeKey] = reply.key;
+  try {
+    server[kRealListen](tls, port, host, socketPath, true);
+  } catch (err) {
+    server.removeListener("listening", notifyListening);
+    server[kClusterProbeKey] = undefined;
+    cluster._sendInternal({ act: "close", key: reply.key });
+    server.emit("error", err);
+  }
+}
+
+Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort, fd) {
   {
     const ResponseClass = this[optionsSymbol].ServerResponse || ServerResponse;
     const RequestClass = this[optionsSymbol].IncomingMessage || IncomingMessage;
@@ -636,6 +775,7 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
       port,
       hostname: host,
       unix: socketPath,
+      fd,
       reusePort,
       // Bindings to be used for WS Server
       websocket: {
@@ -678,7 +818,7 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
         isPipelinedDispatch?: boolean,
       ) {
         if (!socket) {
-          socket = new (getNodeHTTPServerSocket())(server, socketHandle, !!tls);
+          socket = newNodeHTTPServerSocket(server, socketHandle, !!tls);
         }
 
         // Like Node.js's resetSocketTimeout (parserOnIncoming): a new request
@@ -1061,6 +1201,7 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
     this.listening = true;
     getBunServerAllClosedPromise(this[serverSymbol]).$then(emitCloseNTServer.bind(this));
     applyServerCustomOptions(this);
+    if (tls && this.listenerCount("keylog") > 0) enableServerKeylog(this[serverSymbol]);
 
     if (this?._unref) {
       this[serverSymbol]?.unref?.();
@@ -1134,7 +1275,7 @@ function onServerConnection(this: Server, socketHandle) {
     return;
   }
   const isTLS = !!this[tlsSymbol];
-  const socket = new (getNodeHTTPServerSocket())(this, socketHandle, isTLS);
+  const socket = newNodeHTTPServerSocket(this, socketHandle, isTLS);
 
   // Node's net.Server accept path refuses at maxConnections and emits 'drop'; the native
   // listener bypasses that, so gate it here. `>` (not Node's `>=`) because the constructor
@@ -1156,6 +1297,14 @@ function onServerConnection(this: Server, socketHandle) {
     return;
   }
 
+  if (isTLS && this.listenerCount("keylog") > 0) {
+    const lines = socketHandle.drainKeylog();
+    if (lines !== null) {
+      for (let i = 0; i < lines.length; i++) {
+        this.emit("keylog", lines[i], socket);
+      }
+    }
+  }
   // Node's connectionListener attaches the HTTPParser (socket.parser) before
   // emitting 'connection'; expose the shim here so listeners see it populated.
   socket.parser = createServerParserShim(socket);
@@ -1223,7 +1372,7 @@ function onServerClientError(ssl: boolean, socket: unknown, errorCode: number, r
   // kTrackedConnections. Reuse it, and only announce genuinely new
   // connections - the existing duplex already had its 'connection' event.
   const existingDuplex = (socket as any).duplex;
-  const nodeSocket = existingDuplex ?? new (getNodeHTTPServerSocket())(self, socket, ssl);
+  const nodeSocket = existingDuplex ?? newNodeHTTPServerSocket(self, socket, ssl);
   if (!existingDuplex) {
     nodeSocket.parser = createServerParserShim(nodeSocket);
     self.emit("connection", nodeSocket);
@@ -2095,6 +2244,38 @@ function _writeHead(statusCode, reason, obj, response) {
       throw $ERR_HTTP_TRAILER_INVALID("Trailers are invalid with this transfer encoding");
     }
   }
+}
+
+let lazyTLSServerSocketTarget;
+function newNodeHTTPServerSocket(server, handle, encrypted) {
+  const SocketClass = getNodeHTTPServerSocket();
+  if (encrypted) {
+    if (lazyTLSServerSocketTarget === undefined) {
+      const { TLSSocket } = require("node:tls");
+      const descriptors = Object.getOwnPropertyDescriptors(SocketClass.prototype);
+      for (const name of Object.getOwnPropertyNames(TLSSocket.prototype)) {
+        if (name === "constructor" || name in descriptors) continue;
+        let proto = SocketClass.prototype;
+        let desc;
+        while (proto && !(desc = Object.getOwnPropertyDescriptor(proto, name))) {
+          proto = Object.getPrototypeOf(proto);
+        }
+        if (desc) descriptors[name] = desc;
+      }
+      const target = function SocketTLS() {};
+      target.prototype = Object.create(TLSSocket.prototype, descriptors);
+      lazyTLSServerSocketTarget = target;
+    }
+    return Reflect.construct(SocketClass, [server, handle, true], lazyTLSServerSocketTarget);
+  }
+  return new SocketClass(server, handle, false);
+}
+
+function isNodeHTTPServerSocket(socket) {
+  return (
+    (NodeHTTPServerSocket !== undefined && socket instanceof NodeHTTPServerSocket) ||
+    (lazyTLSServerSocketTarget !== undefined && socket instanceof lazyTLSServerSocketTarget)
+  );
 }
 
 function ServerResponse(req, options): void {

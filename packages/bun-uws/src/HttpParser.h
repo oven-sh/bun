@@ -375,6 +375,13 @@ struct HttpResponseData;
 
                         // Move past comma if present
                         if (pos < value.length() && value[pos] == ',') {
+                            /* llhttp HPE_INVALID_TRANSFER_ENCODING: any list element after "chunked"
+                             * (including "chunked,", "chunked,chunked") is invalid, never framed as
+                             * chunked — https://github.com/nodejs/llhttp (src/llhttp/http.ts). */
+                            if (te.chunked) [[unlikely]] {
+                                te.invalid = true;
+                                return te;
+                            }
                             pos++;
                         }
                     }

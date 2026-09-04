@@ -27,6 +27,7 @@ import { emitBindgen, emitBindgenV2, registerCodegenRules, type CodegenOutputs }
 import { registerDirStamps } from "../../scripts/build/compile.ts";
 import { resolveConfig, type Config, type Toolchain } from "../../scripts/build/config.ts";
 import { Ninja } from "../../scripts/build/ninja.ts";
+import { quote } from "../../scripts/build/shell.ts";
 import type { Sources } from "../../scripts/glob-sources.ts";
 
 /** A fully-populated fake toolchain; `jsRuntime` is the one entry that gets spawned (bindgenv2 list-outputs). */
@@ -49,7 +50,8 @@ function mockToolchain(): Toolchain {
     nm: "/fake/llvm/bin/llvm-nm",
     dsymutil: "/fake/llvm/bin/dsymutil",
     bun: bunExe(),
-    jsRuntime: bunExe(),
+    // A shell command prefix, quoted like the one configure makes.
+    jsRuntime: quote(bunExe(), process.platform === "win32"),
     esbuild: "/fake/bin/esbuild",
     ccache: undefined,
     cmake: "/fake/bin/cmake",

@@ -83,6 +83,19 @@ export function resolveToolchain(targetOs?: OS, packageManager: PackageManager =
   // The codegen scripts are ES modules under the root package.json, which
   // has no "type" field. Node detects the module syntax and prints
   // MODULE_TYPELESS_PACKAGE_JSON once per process, so the flag hides it.
+  //
+  // A codegen script that a module can also import runs its command line
+  // only when import.meta.main is true. Node 24.2 added import.meta.main.
+  // Before that it is undefined, and the script would write nothing. CI
+  // installs Node 26 (scripts/bootstrap.sh), so the minimum is 25.
+  if (process.versions.bun === undefined) {
+    const major = Number(process.versions.node.split(".")[0]);
+    if (major < 25) {
+      throw new BuildError(`Node ${process.versions.node} cannot run the codegen scripts`, {
+        hint: "Install Node 25 or later, or run the build with bun.",
+      });
+    }
+  }
   const q = (p: string) => quote(p, host.os === "windows");
   const jsRuntime =
     process.versions.bun !== undefined

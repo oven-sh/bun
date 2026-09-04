@@ -1247,7 +1247,7 @@ pub enum QueryKind {
     Scb = 3,
     /// Given an HTML import index, print the manifest
     HtmlImport = 4,
-    /// Given a chunk index, print the chunk's 8-character content hash
+    /// Given a chunk index, print the chunk's content hash as `[hash]` prints it
     ChunkId = 5,
 }
 

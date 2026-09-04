@@ -416,6 +416,12 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                 .expect("write to Vec<u8>");
             path::resolve_path::platform_to_posix_in_place::<u8>(&mut rel_path);
 
+            // A `./[dir]/…` template with `[dir] == "."` yields `././x.js`,
+            // which importers of the chunk would copy verbatim.
+            while let Some(i) = strings::index_of(&rel_path, b"/./") {
+                rel_path.drain(i..i + 2);
+            }
+
             let claimed = path_names_map.get_or_put(&rel_path)?;
             if claimed.found_existing {
                 let first = *claimed.value_ptr as usize;
@@ -432,12 +438,6 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                 continue;
             }
             *claimed.value_ptr = index as u32;
-
-            // A `./[dir]/…` template with `[dir] == "."` yields `././x.js`,
-            // which importers of the chunk would copy verbatim.
-            while let Some(i) = strings::index_of(&rel_path, b"/./") {
-                rel_path.drain(i..i + 2);
-            }
 
             chunks[index].final_rel_path = rel_path.into_boxed_slice();
         }

@@ -277,6 +277,53 @@ describe("HTTP/2 upgrade — socket close ordering", () => {
     client.close();
     netServer.close();
   });
+
+  test("an error on rawSocket is the session's error, not an uncaught exception", async () => {
+    // Nothing but the upgrade listens on rawSocket once it has been handed
+    // over, so its error (a reset, EPIPE, a destroy(err) by its owner) has to
+    // be reported the way a TLSSocket reports its wrapped socket's errors: the
+    // session is destroyed with it and the server sees 'sessionError'.
+    let rawSocket: net.Socket | undefined;
+    const sessionReady = Promise.withResolvers<http2.Http2Session>();
+    const sessionErrored = Promise.withResolvers<{ err: Error; session: http2.Http2Session }>();
+
+    const h2Server = http2.createSecureServer(TLS, (_req, res) => {
+      res.writeHead(200);
+      res.end("done");
+    });
+    h2Server.on("error", () => {});
+    h2Server.on("session", s => sessionReady.resolve(s));
+    h2Server.on("sessionError", (err: Error, session: http2.Http2Session) => sessionErrored.resolve({ err, session }));
+
+    const netServer = net.createServer(socket => {
+      rawSocket = socket;
+      h2Server.emit("connection", socket);
+    });
+
+    const port = await new Promise<number>(resolve => {
+      netServer.listen(0, "127.0.0.1", () => resolve((netServer.address() as net.AddressInfo).port));
+    });
+
+    const client = connectClient(port);
+    await request(client, "GET", "/");
+    const h2Session = await sessionReady.promise;
+    // Not events.once(): the session emits 'error' on its way to 'close'.
+    const sessionClosed = new Promise<void>(resolve => h2Session.once("close", resolve));
+
+    const transportError = new Error("transport failed");
+    rawSocket!.destroy(transportError);
+
+    await sessionClosed;
+    const { err, session } = await sessionErrored.promise;
+    assert.strictEqual(err, transportError);
+    assert.deepStrictEqual(
+      { sameSession: session === h2Session, destroyed: h2Session.destroyed },
+      { sameSession: true, destroyed: true },
+    );
+
+    client.close();
+    netServer.close();
+  });
 });
 
 describe("HTTP/2 upgrade — ALPN negotiation", () => {
@@ -456,6 +503,47 @@ describe("HTTP/2 upgrade — server TLS options", () => {
       oldClient.destroy();
       assert.deepStrictEqual(outcome, { secureConnect: false, protocol: null });
     } finally {
+      netServer.close();
+    }
+  });
+
+  test("unusable credentials are the server's error, and the injected connection is closed", async () => {
+    // Node rejects the key inside createSecureServer(). Bun builds the
+    // credentials on first use, which for a server that never listens is the
+    // first injected connection, and then reports the failure the way
+    // tls.Server does for server.emit('connection'): on the server's 'error'
+    // event, with the connection closed quietly. In neither runtime is the
+    // injected socket, which nothing listens to, where the error surfaces.
+    let h2Server: http2.Http2SecureServer;
+    try {
+      h2Server = http2.createSecureServer({ key: "not a key", cert: "not a cert" });
+    } catch (err) {
+      assert.strictEqual((err as NodeJS.ErrnoException).code, "ERR_OSSL_PEM_NO_START_LINE");
+      return;
+    }
+    const surfaced = Promise.withResolvers<NodeJS.ErrnoException>();
+    h2Server.on("error", surfaced.resolve);
+
+    let rawSocket: net.Socket | undefined;
+    let emitReturned: boolean | undefined;
+    const netServer = net.createServer(socket => {
+      rawSocket = socket;
+      emitReturned = h2Server.emit("connection", socket);
+    });
+    const port = await new Promise<number>(resolve => {
+      netServer.listen(0, "127.0.0.1", () => resolve((netServer.address() as net.AddressInfo).port));
+    });
+
+    const client = net.connect(port, "127.0.0.1");
+    client.on("error", () => {});
+    try {
+      const err = await surfaced.promise;
+      assert.deepStrictEqual(
+        { code: err.code, emitReturned, rawDestroyed: rawSocket!.destroyed },
+        { code: "ERR_OSSL_PEM_NO_START_LINE", emitReturned: true, rawDestroyed: true },
+      );
+    } finally {
+      client.destroy();
       netServer.close();
     }
   });

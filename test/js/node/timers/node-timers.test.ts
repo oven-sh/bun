@@ -374,8 +374,7 @@ describe.concurrent("event loop phases", () => {
     }
   `;
 
-  // On Windows, libuv runs the timers inside its poll, so the timer fires first there.
-  test.skipIf(isWindows)("an immediate queued by an I/O callback runs before a timer that came due in it", async () => {
+  test("an immediate queued by an I/O callback runs before a timer that came due in it", async () => {
     const script = `${pair}
       pair((client, server) => {
         const order = [];
@@ -511,6 +510,5 @@ describe.concurrent("event loop phases", () => {
       });
     });
   preloadTest("a timer", "setTimeout(resolve, 1)");
-  // On Windows the check phase runs before the poll, so this wait still parks there.
-  if (!isWindows) preloadTest("an immediate", "setImmediate(resolve)");
+  preloadTest("an immediate", "setImmediate(resolve)");
 });

@@ -1393,8 +1393,11 @@ pub(crate) fn print_request(
         Protocol::Http2 => "HTTP/2",
         Protocol::Http3 => "HTTP/3",
     };
+    // The templates escape `>`: the pretty formatter drops a bare one as a tag terminator.
+    let prefix = picohttp::trace_line_prefix();
     bun_core::pretty_errorln!(
-        "> {} {} {}",
+        "{}\\> {} {} {}",
+        prefix,
         ver,
         BStr::new(request.method),
         bun_core::fmt::redacted_npm_url(url),
@@ -1407,12 +1410,13 @@ pub(crate) fn print_request(
             let value = header.value();
             let scheme_len = strings::index_of_char_usize(value, b' ').map_or(0, |i| i + 1);
             bun_core::pretty_errorln!(
-                "> <r><cyan>{}<r><d>: <r>{}<d>[redacted]<r>",
+                "{}\\> <r><cyan>{}<r><d>: <r>{}<d>[redacted]<r>",
+                prefix,
                 BStr::new(name),
                 BStr::new(&value[..scheme_len]),
             );
         } else {
-            bun_core::pretty_errorln!("> {}", header);
+            bun_core::pretty_errorln!("{}\\> {}", prefix, header);
         }
     }
     Output::flush();

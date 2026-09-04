@@ -3632,10 +3632,88 @@ it("verbose fetch logging prints [redacted] in place of Authorization credential
 
   expect(stdout).toBe("Bearer sekret-token\n");
   const authorizationLines = stderr.split(/\r?\n/).flatMap(line => {
-    const match = /^(?:\[fetch\])?\s*>?\s*authorization:(.*)$/i.exec(line);
+    const match = /^> authorization:(.*)$/i.exec(line);
     return match ? [match[1].trim()] : [];
   });
   expect(authorizationLines).toEqual(["Bearer [redacted]"]);
   expect(stderr).not.toContain("sekret-token");
   expect(exitCode).toBe(0);
+});
+
+describe.concurrent("verbose fetch logging line prefixes", () => {
+  // Every line of the trace starts with "> " (request) or "< " (response). On a
+  // color terminal each line is additionally tagged with a dim "[fetch] ".
+  const fetchTag = "\x1b[0m\x1b[2m[fetch]\x1b[0m ";
+
+  async function traceLines(env: Record<string, string | undefined>) {
+    using server = Bun.serve({
+      port: 0,
+      fetch() {
+        return new Response("ok", { headers: { "x-response-header": "yes" } });
+      },
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const init = { headers: { "Authorization": "Bearer sekret-token", "x-request-header": "yes" } };
+         if (process.env.FETCH_VERBOSE) init.verbose = true;
+         const res = await fetch(process.env.SERVER_URL, init);
+         console.log(await res.text());`,
+      ],
+      env: { ...bunEnv, SERVER_URL: server.url.href, ...env },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout).toBe("ok\n");
+    expect(exitCode).toBe(0);
+    return { url: server.url.href, lines: stderr.split(/\r?\n/).filter(line => line.length > 0) };
+  }
+
+  it("verbose: true prints > request lines and < response lines", async () => {
+    const { url, lines } = await traceLines({ FETCH_VERBOSE: "1" });
+
+    expect(lines.filter(line => !/^[<>] /.test(line))).toEqual([]);
+    expect(lines[0]).toBe(`> HTTP/1.1 GET ${url}`);
+    expect(lines).toContain("> Authorization: Bearer [redacted]");
+    expect(lines).toContain("> x-request-header: yes");
+    expect(lines).toContain("< 200 OK");
+    expect(lines).toContain("< x-response-header: yes");
+  });
+
+  it("BUN_CONFIG_VERBOSE_FETCH=1 prints > request lines and < response lines", async () => {
+    const { url, lines } = await traceLines({ BUN_CONFIG_VERBOSE_FETCH: "1" });
+
+    expect(lines.filter(line => !/^[<>] /.test(line))).toEqual([]);
+    expect(lines[0]).toBe(`> HTTP/1.1 GET ${url}`);
+    expect(lines).toContain("> x-request-header: yes");
+    expect(lines).toContain("< 200 OK");
+  });
+
+  it("BUN_CONFIG_VERBOSE_FETCH=curl prints the curl line, then > request lines", async () => {
+    const { url, lines } = await traceLines({ BUN_CONFIG_VERBOSE_FETCH: "curl" });
+
+    expect(lines[0]).toStartWith(`curl --http1.1 "${url}"`);
+    expect(lines.slice(1).filter(line => !/^[<>] /.test(line))).toEqual([]);
+    expect(lines[1]).toBe(`> HTTP/1.1 GET ${url}`);
+    expect(lines).toContain("> x-request-header: yes");
+    expect(lines).toContain("< 200 OK");
+  });
+
+  it("with colors, request lines get the same [fetch] tag as response lines", async () => {
+    const { url, lines } = await traceLines({ FETCH_VERBOSE: "1", NO_COLOR: undefined, FORCE_COLOR: "1" });
+
+    expect(lines.filter(line => !line.startsWith(fetchTag))).toEqual([]);
+    expect(lines[0]).toBe(`${fetchTag}> HTTP/1.1 GET ${url}`);
+
+    const plain = lines.map(line => Bun.stripANSI(line));
+    expect(plain.filter(line => !/^\[fetch\] [<>] /.test(line))).toEqual([]);
+    expect(plain).toContain("[fetch] > Authorization: Bearer [redacted]");
+    expect(plain).toContain("[fetch] > x-request-header: yes");
+    expect(plain).toContain("[fetch] < 200 OK");
+    expect(plain).toContain("[fetch] < x-response-header: yes");
+  });
 });

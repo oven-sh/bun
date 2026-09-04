@@ -1,0 +1,14 @@
+--- a/lshpack.c
++++ b/lshpack.c
+@@ -1889,6 +1889,11 @@
+         }
+         if (len > UINT16_MAX)
+             return LSHPACK_ERR_TOO_LARGE;
++        /* Bun: keep rejecting an empty literal field name, as lshpack did
++         * before 2.3.5.  Bun.serve's HTTP/2 server answers a header block
++         * that fails to decode with GOAWAY(COMPRESSION_ERROR). */
++        if (len == 0)
++            return LSHPACK_ERR_BAD_DATA;
+ #if LSHPACK_DEC_CALC_HASH
+         output->flags |= LSXPACK_NAME_HASH;
+         output->name_hash = XXH32(name, (size_t) len, LSHPACK_XXH_SEED);

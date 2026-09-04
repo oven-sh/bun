@@ -478,10 +478,10 @@ function emitCompressedEmbeds({ n, cfg, o, dirStamp }: Ctx): void {
     const out = resolve(cfg.codegenDir, "compressed", `${name}.zst`);
     n.build({
       outputs: [out],
-      rule: "codegen_bun",
+      rule: "codegen",
       inputs: [script, input],
       orderOnlyInputs: [dirStamp],
-      vars: { cwd: cfg.cwd, desc: `compressed/${name}.zst`, args: shJoin(cfg, ["run", script, input, out]) },
+      vars: { cwd: cfg.cwd, desc: `compressed/${name}.zst`, args: shJoin(cfg, [script, input, out]) },
     });
     o.all.push(out);
     // Debug reads the originals at runtime; only release embeds these.

@@ -744,8 +744,9 @@ function emitClassInfoCheck(n: Ninja, cfg: Config, exe: string, exeName: string)
   const script = webkitClassInfoCheckScript(cfg);
   if (script === undefined) return [];
   const stamp = resolve(cfg.buildDir, `${exeName}.classinfo-unique`);
+  // NM: the toolchain's llvm-nm (the script otherwise searches PATH).
   n.rule("classinfo_check", {
-    command: `python3 ${quote(script, false)} $in && touch $out`,
+    command: `${cfg.nm === undefined ? "" : `env NM=${quote(cfg.nm, false)} `}python3 ${quote(script, false)} $in && touch $out`,
     description: "check JSC ClassInfo uniqueness in $in",
   });
   n.build({ outputs: [stamp], rule: "classinfo_check", inputs: [exe], implicitInputs: [script] });

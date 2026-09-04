@@ -1335,10 +1335,24 @@ function emitWebKitDirect(n: Ninja, cfg: Config, ctx: CustomBuildContext): WebKi
   // from physically flattening copies into one dir.
   const bmallocConsumerIncludes = [bmallocHeaders, join(bmallocHeaders, "bmalloc")];
   writeForwardingHeaders(join(jscHeaders, "JavaScriptCore"), inTree(JSC, jscPublicHeaders));
-  writeForwardingHeaders(
-    join(jscPrivateHeaders, "JavaScriptCore"),
-    jscHeaderDirs.flatMap(d => headersIn(join(JSC, d))),
-  );
+  // The generated headers cmake also exposes as <JavaScriptCore/X.h> are part
+  // of the same set, so the stale-stub sweep leaves them alone (re-creating
+  // them each configure would touch their mtime and rebuild every bun TU
+  // that includes them).
+  const forwardedGeneratedHeaders = [
+    join(DS, "Bytecodes.h"),
+    join(DS, "JSCBuiltins.h"),
+    join(DS, "JSCWebPreferenceOptions.h"),
+    join(DS, "WasmOps.h"),
+    join(DS, "inspector", "InspectorAlternateBackendDispatchers.h"),
+    join(DS, "inspector", "InspectorBackendDispatchers.h"),
+    join(DS, "inspector", "InspectorFrontendDispatchers.h"),
+    join(DS, "inspector", "InspectorProtocolObjects.h"),
+  ];
+  writeForwardingHeaders(join(jscPrivateHeaders, "JavaScriptCore"), [
+    ...jscHeaderDirs.flatMap(d => headersIn(join(JSC, d))),
+    ...forwardedGeneratedHeaders,
+  ]);
 
   // ─── Flags ───
   const depFlags = computeDepFlags(cfg);
@@ -1829,18 +1843,6 @@ function emitWebKitDirect(n: Ninja, cfg: Config, ctx: CustomBuildContext): WebKi
     generatedHeaders.push(out);
   }
 
-  // Generated headers that cmake also exposes as <JavaScriptCore/X.h>.
-  writeForwardingStubsInto(join(jscPrivateHeaders, "JavaScriptCore"), [
-    join(DS, "Bytecodes.h"),
-    join(DS, "JSCBuiltins.h"),
-    join(DS, "JSCWebPreferenceOptions.h"),
-    join(DS, "WasmOps.h"),
-    join(DS, "inspector", "InspectorAlternateBackendDispatchers.h"),
-    join(DS, "inspector", "InspectorBackendDispatchers.h"),
-    join(DS, "inspector", "InspectorFrontendDispatchers.h"),
-    join(DS, "inspector", "InspectorProtocolObjects.h"),
-  ]);
-
   // ─── JavaScriptCore: LLInt ───
   const offlineasm = join(JSC, "offlineasm");
   const llintAsmFiles = inTree(JSC, llintAsm);
@@ -2145,12 +2147,6 @@ function emitWebKitDirect(n: Ninja, cfg: Config, ctx: CustomBuildContext): WebKi
       ...(cfg.darwin ? [appleIcuHeaders] : []),
     ],
   };
-}
-
-/** Forwarding stubs for generated headers into an existing framework dir (no stale-stub sweep). */
-function writeForwardingStubsInto(dir: string, headers: string[]): void {
-  mkdirSync(dir, { recursive: true });
-  for (const h of headers) writeStub(join(dir, basename(h)), h);
 }
 
 /**

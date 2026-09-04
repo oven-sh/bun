@@ -1,5 +1,6 @@
 //! take Collection phase output and convert to Execution phase input
 
+use core::mem::ManuallyDrop;
 use core::ptr::NonNull;
 
 use bun_jsc::JsResult;
@@ -10,10 +11,9 @@ use super::execution::{ConcurrentGroup, ExecutionSequence};
 pub(crate) struct Order {
     pub(crate) groups: Vec<ConcurrentGroup>,
     pub(crate) sequences: Vec<ExecutionSequence>,
-    // The ExecutionEntry clones below are allocated via `heap::into_raw(Box::new(...))`;
-    // `BunTest` collects them into
-    // `cloned_hook_entries` after `generate_order_describe` and reclaims the Box
-    // headers (without running `Drop`) in `Drop for BunTest`.
+    // `Box` is load-bearing: `sequences` link these by address; `ManuallyDrop`: the originals own the copied fields.
+    #[expect(clippy::vec_box)]
+    pub(crate) cloned_hook_entries: Vec<Box<ManuallyDrop<ExecutionEntry>>>,
     pub(crate) previous_group_was_concurrent: bool,
     pub(crate) cfg: Config,
 }
@@ -23,6 +23,7 @@ impl Order {
         Order {
             groups: Vec::new(),
             sequences: Vec::new(),
+            cloned_hook_entries: Vec::new(),
             cfg,
             previous_group_was_concurrent: false,
         }
@@ -122,6 +123,14 @@ impl Order {
         Ok(())
     }
 
+    fn clone_hook_entry(&mut self, src: &ExecutionEntry) -> *mut ExecutionEntry {
+        // SAFETY: `src` is live; the copy is never dropped, so the fields it shares with `src` are released once.
+        let copy = Box::new(ManuallyDrop::new(unsafe { core::ptr::read(src) }));
+        self.cloned_hook_entries.push(copy);
+        let entry: &mut ExecutionEntry = self.cloned_hook_entries.last_mut().unwrap();
+        core::ptr::from_mut(entry)
+    }
+
     /// # Safety
     /// `current` must point to a live, uniquely-owned `ExecutionEntry` (Box-owned in
     /// `DescribeScope.entries`) with mutable provenance for the duration of this call. The
@@ -148,14 +157,7 @@ impl Order {
                 // prepend in reverse so they end up in forwards order
                 let mut i: usize = p.before_each.len();
                 while i > 0 {
-                    let src: *const ExecutionEntry = &raw const *p.before_each[i - 1];
-                    // Ownership: `BunTest` collects these clones into `cloned_hook_entries`
-                    // (the post-`generate_order_describe` walk) and frees only the Box
-                    // headers in `Drop for BunTest` — `Drop` must not run on the bitwise
-                    // copy or the originals' Strong/Box fields would be freed twice.
-                    // SAFETY: `src` is valid for reads; `Drop` never runs on the bitwise copy
-                    // (see ownership note above), so duplicated owning fields are not double-freed.
-                    let cloned = bun_core::heap::into_raw(Box::new(unsafe { core::ptr::read(src) }));
+                    let cloned = self.clone_hook_entry(&p.before_each[i - 1]);
                     list.prepend(cloned);
                     i -= 1;
                 }
@@ -173,10 +175,7 @@ impl Order {
                 // SAFETY: parent chain consists of live DescribeScope nodes.
                 let p = unsafe { &*p_ptr };
                 for entry in p.after_each.iter() {
-                    let src: *const ExecutionEntry = &raw const **entry;
-                    // SAFETY: `src` is valid for reads; `Drop` never runs on the bitwise copy
-                    // (see ownership note above), so duplicated owning fields are not double-freed.
-                    let cloned = bun_core::heap::into_raw(Box::new(unsafe { core::ptr::read(src) }));
+                    let cloned = self.clone_hook_entry(entry);
                     list.append(cloned);
                 }
                 parent = p.base.parent;

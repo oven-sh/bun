@@ -2615,10 +2615,10 @@ fn parse_build_command_options(
                     ),
                 );
                 Global::crash();
-            } else {
-                opts.target = Some(api::Target::Bun);
             }
         }
+        // Needs a server-side main target: the CLI only creates a client transpiler for HTML.
+        opts.target = Some(api::Target::Bun);
     }
 
     if args.flag(b"--react-fast-refresh") {

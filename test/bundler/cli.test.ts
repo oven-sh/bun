@@ -851,6 +851,137 @@ describe("CLI argument error messages", () => {
   });
 });
 
+// `--server-components` turns on the bundler's server components mode without a
+// framework, so there is nothing to register "use client" / "use server"
+// boundaries with. Building without --target and building a file that carries a
+// directive (in the server graph, or in the browser graph an HTML import creates)
+// used to crash the bundler instead of building or reporting an error.
+describe.concurrent("bun build --server-components", () => {
+  async function build(dir: string, ...args: string[]) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build", ...args],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return {
+      stdout: normalizeBunSnapshot(stdout, String(dir)),
+      stderr: normalizeBunSnapshot(stderr, String(dir)),
+      exitCode,
+    };
+  }
+
+  test("builds for bun when no --target is given", async () => {
+    using dir = tempDir("sc-default-target", { "server.ts": `console.log("server");` });
+    const { stdout, stderr, exitCode } = await build(dir, "--server-components", "server.ts");
+    expect(stderr).toBe("");
+    expect(stdout).toMatchInlineSnapshot(`
+      "// @bun
+      // server.ts
+      console.log("server");"
+    `);
+    expect(exitCode).toBe(0);
+  });
+
+  test("rejects a client-side --target", async () => {
+    using dir = tempDir("sc-browser-target", { "server.ts": `console.log("server");` });
+    const { stdout, stderr, exitCode } = await build(dir, "--server-components", "--target=browser", "server.ts");
+    expect(stderr).toMatchInlineSnapshot(`"error: Cannot use client-side --target=Browser with --server-components"`);
+    expect(stdout).toBe("");
+    expect(exitCode).toBe(1);
+  });
+
+  test("importing a 'use client' file is a build error, not a crash", async () => {
+    using dir = tempDir("sc-use-client", {
+      "server.ts": `import { Button } from "./client"; console.log(Button);`,
+      "client.ts": `"use client";\nexport function Button() { return "button"; }`,
+    });
+    const { stdout, stderr, exitCode } = await build(dir, "--server-components", "--target=bun", "server.ts");
+    expect(stderr).toMatchInlineSnapshot(`
+      "error: "use client" requires a framework with server components configured; "bun build --server-components" does not configure one
+          at <dir>/client.ts"
+    `);
+    expect(stdout).toBe("");
+    expect(exitCode).toBe(1);
+  });
+
+  test("a 'use server' entry point is a build error, not a crash", async () => {
+    using dir = tempDir("sc-use-server", {
+      "actions.ts": `"use server";\nexport async function save() { return "saved"; }`,
+    });
+    const { stdout, stderr, exitCode } = await build(dir, "--server-components", "--target=bun", "actions.ts");
+    expect(stderr).toMatchInlineSnapshot(`
+      "error: "use server" requires a framework with server components configured; "bun build --server-components" does not configure one
+          at <dir>/actions.ts"
+    `);
+    expect(stdout).toBe("");
+    expect(exitCode).toBe(1);
+  });
+
+  // An HTML import makes the CLI set up a client transpiler and bundle a browser
+  // graph; a directive in that graph takes a different path to the same error.
+  test("a 'use client' script reached through an HTML import is a build error, not a crash", async () => {
+    using dir = tempDir("sc-html-use-client", {
+      "server.ts": `import page from "./index.html"; console.log(page);`,
+      "index.html": `<!DOCTYPE html><html><head><script type="module" src="./client.ts"></script></head><body></body></html>`,
+      "client.ts": `"use client";\ndocument.body.textContent = "button";`,
+    });
+    const { stdout, stderr, exitCode } = await build(
+      dir,
+      "--server-components",
+      "--target=bun",
+      "--outdir=out",
+      "server.ts",
+    );
+    expect(stderr).toMatchInlineSnapshot(`
+      "error: "use client" requires a framework with server components configured; "bun build --server-components" does not configure one
+          at <dir>/client.ts"
+    `);
+    expect(stdout).toBe("");
+    expect(exitCode).toBe(1);
+    expect(fs.existsSync(join(String(dir), "out"))).toBe(false);
+  });
+
+  test("the same HTML import bundles when no script carries a directive", async () => {
+    using dir = tempDir("sc-html", {
+      "server.ts": `import page from "./index.html"; console.log(page);`,
+      "index.html": `<!DOCTYPE html><html><head><script type="module" src="./client.ts"></script></head><body></body></html>`,
+      "client.ts": `document.body.textContent = "button";`,
+    });
+    const { stderr, exitCode } = await build(dir, "--server-components", "--outdir=out", "server.ts");
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+    expect(fs.readdirSync(join(String(dir), "out")).sort()).toEqual([
+      expect.stringMatching(/^index-\w+\.js$/),
+      "index.html",
+      "server.js",
+    ]);
+  });
+
+  test("directives are still plain strings without the flag", async () => {
+    using dir = tempDir("sc-flag-off", {
+      "server.ts": `import { Button } from "./client"; console.log(Button());`,
+      "client.ts": `"use client";\nexport function Button() { return "button"; }`,
+    });
+    const { stdout, stderr, exitCode } = await build(dir, "--target=bun", "server.ts");
+    expect(stderr).toBe("");
+    expect(stdout).toMatchInlineSnapshot(`
+      "// @bun
+      // client.ts
+      "use client";
+      function Button() {
+        return "button";
+      }
+
+      // server.ts
+      console.log(Button());"
+    `);
+    expect(exitCode).toBe(0);
+  });
+});
+
 describe.concurrent("modules that fail to print", () => {
   // A TOML dotted header builds an object nested arbitrarily deep without
   // recursing in the parser, so the printer's recursion guard is the first

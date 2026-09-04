@@ -236,12 +236,14 @@ impl<'a> BundleV2<'a> {
     }
 
     pub(crate) fn transpiler_for_target(&mut self, target: options::Target) -> &mut Transpiler<'a> {
-        // SAFETY: all three pointers are live for `'a` (set in `init`); the
-        // `client_transpiler` arm is only reached when bake populated it.
-        // Outside of server-components / dev-server,
-        // the only case that doesn't return the main transpiler is a
-        // browser-target request from a server-side build, which lazily
-        // spins up a client transpiler.
+        // SAFETY: all three pointers are live for `'a` (set in `init`). The
+        // server-components / dev-server arm below expects `client_transpiler` to
+        // be populated: by bake in `init`, or by `ensure_client_transpiler` on the
+        // HTML paths, the only source of browser-target requests in a CLI
+        // `--server-components` build (its main target is always server-side).
+        // Outside of those modes, the only case that doesn't return the main
+        // transpiler is a browser-target request from a server-side build, which
+        // lazily spins up a client transpiler.
         if !self.transpiler.options.server_components && self.linker.dev_server.is_none() {
             if target == Target::Browser && self.transpiler.options.target.is_server_side() {
                 if let Some(p) = self.client_transpiler {
@@ -257,11 +259,13 @@ impl<'a> BundleV2<'a> {
             }
             return &mut *self.transpiler;
         }
-        // SAFETY: all three pointers are live for `'a` (set in `init`); the
-        // `client_transpiler` arm is only reached when bake populated it.
+        // SAFETY: see above.
         unsafe {
             match target {
-                Target::Browser => self.client_transpiler.unwrap().assume_mut(),
+                Target::Browser => self
+                    .client_transpiler
+                    .expect("browser target requested before the client transpiler was set up")
+                    .assume_mut(),
                 Target::ServerComponentsSsr => &mut *self.ssr_transpiler,
                 _ => &mut *self.transpiler,
             }
@@ -7390,6 +7394,7 @@ pub mod bv2_impl {
                     // `result.ast` is moved into `graph.ast` and `result.source` was
                     // swapped earlier, so snapshot the data the use-directive block
                     // needs *before* the move. Only paid for files that hit the SCB gate.
+                    // ParseTask rejects directives without a framework, so the unwraps hold.
                     let named_exports_for_scb = if result.use_directive != crate::UseDirective::None
                         && {
                             let separate = this

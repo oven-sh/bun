@@ -1597,6 +1597,20 @@ pub fn enqueue_dependency_with_main_and_success_fn(
         dependency::version::Tag::Symlink | dependency::version::Tag::Workspace => {
             let dependency_tag = version.tag;
 
+            if dependency_tag == dependency::version::Tag::Symlink
+                && !version_was_replaced
+                && crate::bin::bin_target_escapes_package_dir(this.lockfile.str(version.symlink()))
+                && let Some(declarer) = this.lockfile.get_parent_pkg_of_dependency(id)
+                && !this.lockfile.packages.items_resolution()[declarer as usize]
+                    .tag
+                    .is_local_package()
+            {
+                if dependency.behavior.is_required() {
+                    reject_escaping_link_of_remote_package(this, declarer, dependency);
+                }
+                return Ok(());
+            }
+
             let _result = match get_or_put_resolved_package(
                 this,
                 name_hash,
@@ -1849,6 +1863,29 @@ fn warn_unmet_peer_dependency(
         "No version matching \"{}\" found for peer dependency \"{}\"<r> <d>(but package exists)<r>",
         bstr::BStr::new(this.lockfile.str(&version.literal)),
         bstr::BStr::new(this.lockfile.str(&name)),
+    );
+}
+
+/// `normalize_package_json_path` resolves the value against the project, not the declaring package, so only package.json files read from the project may use `..` or an absolute path.
+#[cold]
+#[inline(never)]
+fn reject_escaping_link_of_remote_package(
+    this: &PackageManager,
+    declarer: PackageID,
+    dependency: &Dependency,
+) {
+    let buf = this.lockfile.buffers.string_bytes.as_slice();
+    let packages = this.lockfile.packages.slice();
+    this.log_mut().add_error_fmt(
+        None,
+        bun_ast::Loc::EMPTY,
+        format_args!(
+            "refusing to resolve \"{}@{}\" declared by {}@{}: link: paths with \"..\" or an absolute path are only allowed in the package.json files of this project",
+            bstr::BStr::new(dependency.name.slice(buf)),
+            bstr::BStr::new(dependency.version.literal.slice(buf)),
+            bstr::BStr::new(packages.items_name()[declarer as usize].slice(buf)),
+            packages.items_resolution()[declarer as usize].fmt(buf, bun_fmt::PathSep::Posix),
+        ),
     );
 }
 

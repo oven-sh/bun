@@ -499,9 +499,13 @@ impl BuildCommand {
         this_transpiler.resolver.env_loader = core::ptr::NonNull::new(this_transpiler.env);
 
         // Allow tsconfig.json overriding, but always set it to false if --production is passed.
+        // `force_node_env` is what the per-file parse paths consult, so set it too;
+        // `configure_defines` may have set it to `Development` from an ambient NODE_ENV.
         if ctx.bundler_options.production {
             this_transpiler.options.jsx.development = false;
             this_transpiler.resolver.opts.jsx.development = false;
+            this_transpiler.options.force_node_env = options::ForceNodeEnv::Production;
+            this_transpiler.resolver.opts.force_node_env = options::ForceNodeEnv::Production;
         }
 
         match &ctx.debug.macros {

@@ -2123,7 +2123,7 @@ test("a top-level await rejecting while the loop is alive fails the worker then"
 });
 
 // Static imports that are still being read/transpiled are loading, not a
-// top-level await: 'online' and message delivery wait for the graph to execute.
+// top-level await: message delivery waits for the graph to execute.
 test("a file worker's static imports load before it counts as started", async () => {
   using dir = tempDir("worker-static-import-start", {
     "dep.js": `export const listeners = [];\n${"// filler\n".repeat(2000)}`,
@@ -2136,6 +2136,42 @@ parentPort.on("message", m => parentPort.postMessage("got " + m + " " + listener
   w.postMessage("hi");
   expect(await reply).toBe("got hi 0");
   await w.terminate();
+});
+
+// node posts 'online' before it evaluates the entry, so it always precedes a
+// message the entry's top-level code posts (#41375: @discordjs/ws attaches its
+// 'message' listener only after `once(worker, "online")`).
+describe("'online' precedes the worker's first message", () => {
+  test("in event order", async () => {
+    const w = new Worker(`require("worker_threads").parentPort.postMessage("ready")`, { eval: true });
+    const order: string[] = [];
+    w.on("online", () => order.push("online"));
+    w.on("message", m => order.push("message:" + m));
+    const [code] = await once(w, "exit");
+    expect(order).toEqual(["online", "message:ready"]);
+    expect(code).toBe(0);
+  });
+
+  test("a 'message' listener attached after 'online' sees it", async () => {
+    const w = new Worker(`require("worker_threads").parentPort.postMessage("ready")`, { eval: true });
+    await once(w, "online");
+    const ready = new Promise<string>(resolve => w.on("message", resolve));
+    const exited = once(w, "exit").then(() => "exited first");
+    expect(await Promise.race([ready, exited])).toBe("ready");
+    await exited;
+  });
+
+  test("a worker whose entry does not resolve reports 'online' then 'error'", async () => {
+    using dir = tempDir("worker-online-missing-entry", {});
+    const w = new Worker(join(String(dir), "missing.js"));
+    const order: string[] = [];
+    w.on("online", () => order.push("online"));
+    w.on("error", e => order.push("error:" + (e as any).code));
+    // not events.once(): it rejects on the 'error' event this test expects
+    const code = await new Promise<number>(resolve => w.on("exit", resolve));
+    expect(order).toEqual(["online", "error:MODULE_NOT_FOUND"]);
+    expect(code).toBe(1);
+  });
 });
 
 // ─── worker teardown vs. work still in flight ────────────────────────────────
@@ -2269,8 +2305,8 @@ describe("terminate with work in flight", () => {
   });
 });
 
-// A JS preload's modules are not the entry: the worker counts as started (online,
-// parent messages delivered) only once its own entry graph has executed.
+// A JS preload's modules are not the entry: parent messages are delivered only
+// once the worker's own entry graph has executed.
 test("a worker with a preload is not started before its entry module runs", async () => {
   using dir = tempDir("worker-preload-start", {
     "setup.js": `globalThis.setupRan = true;`,

@@ -2278,6 +2278,64 @@ describe("bundler", () => {
       ]);
     },
   });
+  itBundled("ts/EnumCrossModuleInliningDeleteTarget", {
+    files: {
+      "/entry.ts": /* ts */ `
+        import { E } from './enums'
+        console.log(JSON.stringify([
+          delete E.N,
+          delete E.I,
+          delete E.NI,
+          delete E.F,
+          delete E.S,
+          delete E["N"],
+          delete E["I"],
+        ]))
+      `,
+      "/enums.ts": /* ts */ `
+        export enum E {
+          N = 0 / 0,
+          I = 1 / 0,
+          NI = -1 / 0,
+          F = 42,
+          S = "s",
+        }
+      `,
+    },
+    minifySyntax: false, // intentionally disabled. enum inlining always happens
+    run: { stdout: "[true,true,true,true,true,true,true]" },
+    onAfterBundle(api) {
+      const out = api.readFile("/out.js");
+      // The bundle is an ES module: `delete NaN` / `delete Infinity` would be a
+      // SyntaxError. Non-finite values must be wrapped; finite/string values need not be.
+      expect(out).not.toContain("delete NaN");
+      expect(out).not.toContain("delete Infinity");
+      expect(out).toContain("delete (0, NaN /* N */)");
+      expect(out).toContain("delete (0, Infinity /* I */)");
+      expect(out).toContain("delete (0, -Infinity /* NI */)");
+      expect(out).toContain("delete 42 /* F */");
+      expect(out).toContain('delete "s" /* S */');
+    },
+  });
+  itBundled("ts/EnumCrossModuleInliningDeleteTargetMinified", {
+    files: {
+      "/entry.ts": /* ts */ `
+        import { E } from './enums'
+        console.log(JSON.stringify([delete E.N, delete E.I, delete E["N"]]))
+      `,
+      "/enums.ts": /* ts */ `
+        export enum E { N = 0 / 0, I = 1 / 0 }
+      `,
+    },
+    minifyWhitespace: true,
+    minifySyntax: true,
+    run: { stdout: "[true,true,true]" },
+    onAfterBundle(api) {
+      const out = api.readFile("/out.js");
+      expect(out).not.toContain("delete NaN");
+      expect(out).toContain("delete(0,NaN)");
+    },
+  });
   itBundled("ts/EnumExportClause", {
     files: {
       "/entry.ts": /* ts */ `

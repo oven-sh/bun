@@ -973,7 +973,7 @@ function emitJsSink({ n, cfg, o, dirStamp }: Ctx): void {
   const perlScript = resolve(cfg.cwd, "src", "codegen", "create_hash_table");
 
   // generate-jssink.ts writes JSSink.{cpp,h,lut.txt} + generated_jssink.rs (the
-  // Rust `#[no_mangle]` thunks), then internally spawns create-hash-table.ts to
+  // Rust `#[no_mangle]` thunks), then calls create-hash-table.ts in-process to
   // convert .lut.txt → .lut.h. So all of {cpp,h,lut.h,rs} are outputs of this
   // one step (.lut.txt is really an intermediate — we don't expose it).
   const jssinkRs = resolve(cfg.codegenDir, "generated_jssink.rs");
@@ -986,13 +986,13 @@ function emitJsSink({ n, cfg, o, dirStamp }: Ctx): void {
 
   n.build({
     outputs,
-    rule: "codegen_bun",
+    rule: "codegen",
     inputs: [script, hashTableScript, perlScript],
     orderOnlyInputs: [dirStamp],
     vars: {
       cwd: cfg.cwd,
       desc: "JSSink.{cpp,h,lut.h,rs}",
-      args: shJoin(cfg, ["run", script, cfg.codegenDir]),
+      args: shJoin(cfg, [script, cfg.codegenDir]),
     },
   });
 
@@ -1052,14 +1052,14 @@ function emitObjectLuts({ n, cfg, o, dirStamp }: Ctx): void {
   for (const [src, out] of pairs) {
     n.build({
       outputs: [out],
-      rule: "codegen_bun",
+      rule: "codegen",
       inputs: [src],
       implicitInputs: [script, perlScript],
       orderOnlyInputs: [dirStamp],
       vars: {
         cwd: cfg.cwd,
         desc: basename(out),
-        args: shJoin(cfg, ["run", script, src, out]),
+        args: shJoin(cfg, [script, src, out]),
       },
     });
     o.all.push(out);

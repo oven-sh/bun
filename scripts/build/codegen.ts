@@ -668,13 +668,13 @@ function emitGeneratedClasses({ n, cfg, sources, o, dirStamp }: Ctx): void {
 
   n.build({
     outputs,
-    rule: "codegen_bun",
+    rule: "codegen",
     inputs: [script, ...sources.zigGeneratedClasses],
     orderOnlyInputs: [dirStamp],
     vars: {
       cwd: cfg.cwd,
       desc: "ZigGeneratedClasses.{cpp,h,rs}",
-      args: shJoin(cfg, ["run", script, ...sources.zigGeneratedClasses, cfg.codegenDir]),
+      args: shJoin(cfg, [script, ...sources.zigGeneratedClasses, cfg.codegenDir]),
     },
   });
 

@@ -34,9 +34,11 @@ jobs:
             const repo = context.repo.repo;
             const pull_number = context.payload.pull_request.number;
             const headSha = context.payload.pull_request.head.sha;
+            const baseRef = context.payload.pull_request.base.ref;
 
             const SRC_EXT = /\.(rs|c|cc|cpp|h|hpp|m|mm|ts|tsx|mts|cts|js|jsx|mjs|cjs)$/;
             const MIN_LINES = 2;
+            const MAX_COMMENTS_PER_RUN = 25;
 
             function isCommentLine(line) {
               const t = line.trimStart();
@@ -89,9 +91,15 @@ jobs:
               return out;
             }
 
-            const files = await github.paginate(github.rest.pulls.listFiles, {
-              owner, repo, pull_number, per_page: 100,
+            // Not pulls.listFiles: right after a rebase or a merge from main, the PR's
+            // cached diff can still be relative to the old base and list every file
+            // main touched since the PR was opened. The compare is computed live; its
+            // files (at most 300) all come on the first page, per_page only pages commits.
+            const { data: compare } = await github.rest.repos.compareCommitsWithBasehead({
+              owner, repo, basehead: `${baseRef}...${headSha}`, per_page: 1,
             });
+            const files = compare.files ?? [];
+            core.info(`${files.length} file(s) in ${baseRef}...${headSha.slice(0, 10)} (merge base ${compare.merge_base_commit.sha.slice(0, 10)}).`);
 
             const groups = [];
             for (const f of files) {
@@ -128,8 +136,12 @@ jobs:
               `<!-- comment-cop:${keyFor(g)} -->\n` +
               `If you need a paragraph-long comment to justify why the workaround is OK, the code is wrong — fix the code\n\n`;
 
+            if (fresh.length > MAX_COMMENTS_PER_RUN) {
+              core.warning(`${fresh.length} new comment groups; posting the first ${MAX_COMMENTS_PER_RUN} only.`);
+            }
+
             let posted = 0;
-            for (const g of fresh) {
+            for (const g of fresh.slice(0, MAX_COMMENTS_PER_RUN)) {
               const params = {
                 owner, repo, pull_number,
                 commit_id: headSha,

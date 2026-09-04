@@ -1,6 +1,49 @@
-import { describe, expect } from "bun:test";
+import { describe, expect, test } from "bun:test";
+import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { readFileSync } from "node:fs";
+import { basename, join } from "node:path";
 import { itBundled } from "./expectBundled";
+
+// `main.ts` loads the entry point `tool.ts` at run time. `tool.ts` loads `main.ts` back with `import()` and with
+// `require()`, and `main.ts` prints what each of the two returns, or the first line of its error.
+const entryPointImportedBack = {
+  "main.ts": /* js */ `
+    export const who = "main";
+    console.log("main ran");
+    const settle = async (f: () => unknown) => { try { return await f(); } catch (e) { return String(e).split("\\n")[0]; } };
+    const s = (x: string) => x;
+    import(s("./tool.ts")).then(async tool => console.log(await settle(tool.viaImport), await settle(tool.viaRequire)));
+  `,
+  "tool.ts": /* js */ `
+    export const viaImport = async () => (await import("./main.ts")).who;
+    export const viaRequire = () => require("./main.ts").who;
+  `,
+};
+
+// Runs `bun build --compile --splitting <args>` in `dir`, then runs the executable that it writes.
+// On Windows, `executable` gets `.exe`.
+async function buildAndRun(dir: string, args: string[], executable: string) {
+  await using build = Bun.spawn({
+    cmd: [bunExe(), "build", "--compile", "--splitting", ...args],
+    env: bunEnv,
+    cwd: dir,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [, buildStderr, buildExitCode] = await Promise.all([build.stdout.text(), build.stderr.text(), build.exited]);
+  expect(buildStderr).toBe("");
+  expect(buildExitCode).toBe(0);
+
+  await using proc = Bun.spawn({
+    cmd: [join(dir, isWindows ? executable + ".exe" : executable)],
+    env: bunEnv,
+    cwd: dir,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  return { stdout, stderr, exitCode };
+}
 
 describe("bundler", () => {
   describe("compile with splitting", () => {
@@ -431,9 +474,8 @@ describe("bundler", () => {
       });
     }
 
-    // The executable keys the entry point's module at `/$bunfs/root/<outfile>`,
-    // so nothing may fold into the entry's own chunk; chunks shared between
-    // `import()` targets still fold into the first target's chunk.
+    // In an executable, nothing folds into the entry's own chunk; chunks shared
+    // between `import()` targets still fold into the first target's chunk.
     itBundled("compile/splitting/MinChunkSizeKeepsEntryChunkImportable", {
       compile: true,
       splitting: true,
@@ -523,5 +565,94 @@ describe("bundler", () => {
         },
       });
     }
+
+    // The executable embeds its entry point at `/$bunfs/root/<outfile>`. A chunk that loads the entry point with
+    // `import()` or `require()` must name that path, and must get the module that already ran, not a second copy.
+    // The "api" backend of `itBundled` sets `naming.entry` to the name of the outfile, and that also names the chunk of
+    // the entry point. The "cli" backend does not, so this test uses it.
+    itBundled("compile/splitting/ImportEntryPointFromLazyChunk", {
+      backend: "cli",
+      compile: true,
+      splitting: true,
+      files: {
+        "/entry.ts": /* js */ `
+          export const who = "entry";
+          console.log("entry ran");
+          const settle = async (f: () => unknown) => { try { return await f(); } catch (e) { return String(e).split("\\n")[0]; } };
+          import("./lazy.ts").then(async lazy => console.log(await settle(lazy.viaImport), await settle(lazy.viaRequire)));
+        `,
+        "/lazy.ts": /* js */ `
+          export const viaImport = async () => (await import("./entry.ts")).who;
+          export const viaRequire = () => require("./entry.ts").who;
+        `,
+      },
+      run: { stdout: "entry ran\nentry entry" },
+    });
+
+    itBundled("compile/splitting/ImportMainEntryPointFromOtherEntryPoint", {
+      backend: "cli",
+      compile: true,
+      splitting: true,
+      files: entryPointImportedBack,
+      entryPointsRaw: ["./main.ts", "./tool.ts"],
+      outfile: "dist/out",
+      run: { file: "dist/out", stdout: "main ran\nmain main" },
+    });
+
+    // The chunk of the entry point has the name of the executable, and so do its source map and its metafile output.
+    test.concurrent("Bun.build: import() and require() of the main entry point from another entry point", async () => {
+      using dir = tempDir("compile-splitting-import-main", entryPointImportedBack);
+      const result = await Bun.build({
+        entrypoints: [join(String(dir), "main.ts"), join(String(dir), "tool.ts")],
+        compile: { outfile: join(String(dir), "dist", "out") },
+        splitting: true,
+        sourcemap: "external",
+        metafile: true,
+      });
+      expect(result.logs).toEqual([]);
+      expect(result.success).toBe(true);
+      expect(result.outputs.map(output => [output.kind, basename(output.path)])).toEqual([
+        ["entry-point", isWindows ? "out.exe" : "out"],
+        ["sourcemap", "out.map"],
+        ["sourcemap", "tool.js.map"],
+      ]);
+      expect(Object.keys(result.metafile!.outputs).sort()).toEqual(["./out", "./tool.js"]);
+      expect(result.metafile!.outputs["./tool.js"].imports).toEqual([
+        { path: "./out", kind: "dynamic-import" },
+        { path: "./out", kind: "require-call" },
+      ]);
+
+      await using proc = Bun.spawn({
+        cmd: [result.outputs[0].path],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stdout).toBe("main ran\nmain main\n");
+      expect(stderr).toBe("");
+      expect(exitCode).toBe(0);
+    });
+
+    // `--outfile .` writes the executable as `index`. The entry point is embedded under that name too, so `main.ts`
+    // resolves `./tool.ts` next to it, and `tool.ts` can load `main.ts` back.
+    test.concurrent("bun build --outfile . embeds the entry point as index", async () => {
+      using dir = tempDir("compile-splitting-outfile-dot", entryPointImportedBack);
+      const run = await buildAndRun(String(dir), ["./main.ts", "./tool.ts", "--outfile", "."], "index");
+      expect(run).toEqual({ stdout: "main ran\nmain main\n", stderr: "", exitCode: 0 });
+    });
+
+    // Without `--outfile`, `src/index.ts` gives the name `src`. A directory has that name, so the executable is
+    // written as `index` (not on Windows, where it is `src.exe`). The entry point stays embedded as `src`, and the
+    // other chunks name that path.
+    test.concurrent("bun build without --outfile: an entry point at src/index.ts", async () => {
+      using dir = tempDir("compile-splitting-nested-index", {
+        "src/index.ts": entryPointImportedBack["main.ts"],
+        "src/tool.ts": entryPointImportedBack["tool.ts"].replaceAll("./main.ts", "./index.ts"),
+      });
+      const run = await buildAndRun(String(dir), ["./src/index.ts", "./src/tool.ts"], isWindows ? "src" : "index");
+      expect(run).toEqual({ stdout: "main ran\nmain main\n", stderr: "", exitCode: 0 });
+    });
   });
 });

@@ -119,6 +119,14 @@ pub struct DirInfo {
     // ergonomics. If a write is ever added, retype to `Option<NonNull<_>>`.
     pub enclosing_package_json: Option<&'static PackageJSON>,
 
+    /// The nearest package.json in this directory or above it, with or without
+    /// a "name". The bundler takes the module type of a `.js`-like file in this
+    /// directory from its "type" (`finalize_result`), as esbuild does. The
+    /// lookup does not stop at a "node_modules" directory, so a package with no
+    /// package.json of its own gets the one above it. `enclosing_package_json`
+    /// skips a nameless package.json.
+    pub package_json_for_module_type: Option<&'static PackageJSON>,
+
     // `NonNull` (not `&'static`) so `enqueue_dependency_to_resolve` can write
     // `package_manager_package_id` back through it without a const→mut
     // provenance cast. Read via `.package_json_for_dependencies()`.
@@ -148,6 +156,7 @@ impl Default for DirInfo {
             package_json_for_browser_field: None,
             enclosing_tsconfig_json: None,
             enclosing_package_json: None,
+            package_json_for_module_type: None,
             package_json_for_dependencies: None,
             abs_path: b"",
             entries: Index::default(),

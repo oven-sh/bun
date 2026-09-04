@@ -7,6 +7,7 @@ use crate::parser::{
     statement_cares_about_scope,
 };
 use bun_alloc::{ArenaVec as BumpVec, ArenaVecExt as _};
+use bun_ast::ast_result::CommonJSExportValue;
 use bun_ast::flags;
 use bun_ast::stmt::Data as StmtData;
 use bun_ast::{self as js_ast, B, Binding, E, Expr, G, S, Stmt};
@@ -603,7 +604,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             );
                         }
                         let open_parens_loc = func.func.open_parens_loc;
-                        func.func = p.visit_func(core::mem::take(&mut func.func), open_parens_loc);
+                        func.func =
+                            p.visit_func(core::mem::take(&mut func.func), open_parens_loc, false);
                         p.react_compiler_candidate_name = None;
 
                         if p.is_control_flow_dead {
@@ -773,7 +775,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     }
                     StmtData::SClass(mut class_ref) => {
                         let class: &mut S::Class = &mut *class_ref;
-                        let _ = p.visit_class(s2_loc, &mut class.class, data.default_name.ref_);
+                        let _ =
+                            p.visit_class(s2_loc, &mut class.class, data.default_name.ref_, false);
 
                         if p.is_control_flow_dead {
                             restore_dead!();
@@ -905,11 +908,15 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             p.react_compiler_candidate_name = data.func.name.map(|n| n.ref_);
         }
         let open_parens_loc = data.func.open_parens_loc;
-        data.func = p.visit_func(core::mem::take(&mut data.func), open_parens_loc);
+        let this_expr_count_before = p.this_expr_count;
+        data.func = p.visit_func(core::mem::take(&mut data.func), open_parens_loc, false);
         p.react_compiler_candidate_name = None;
 
         let name_ref = data.func.name.expect("infallible: name checked").ref_;
         debug_assert!(name_ref.is_symbol());
+        if p.this_expr_count == this_expr_count_before {
+            p.symbols[name_ref.inner_index() as usize].set_call_ignores_this(true);
+        }
         let name_symbol = &p.symbols[name_ref.inner_index() as usize];
         let original_name: &'a [u8] = name_symbol.original_name.slice();
         let remove_overwritten = name_symbol.remove_overwritten_function_declaration();
@@ -1053,7 +1060,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             p.is_control_flow_dead = true;
         }
 
-        let _ = p.visit_class(stmt.loc, &mut data.class, Ref::NONE);
+        let _ = p.visit_class(stmt.loc, &mut data.class, Ref::NONE, false);
 
         // Remove the export flag inside a namespace
         let was_export_inside_namespace = data.is_export && p.enclosing_namespace_arg_ref.is_some();
@@ -1376,6 +1383,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             p.react_compiler_candidate_name = Some(js_ast::Ref::NONE);
             p.react_compiler_in_react_hoc = in_hoc;
         }
+        let this_expr_count_before = p.this_expr_count;
         p.visit_expr(&mut data.value);
         p.react_compiler_candidate_name = None;
         p.react_compiler_in_react_hoc = false;
@@ -1453,12 +1461,25 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                     &p.commonjs_named_exports.keys()[to_convert as usize][..],
                                 )
                                 .slice();
+                                let decl_value = match bin.right.data {
+                                    js_ast::ExprData::EArrow(_)
+                                    | js_ast::ExprData::EFunction(_)
+                                        if p.this_expr_count == this_expr_count_before =>
+                                    {
+                                        CommonJSExportValue::FunctionIgnoringThis
+                                    }
+                                    js_ast::ExprData::EIdentifier(id) => {
+                                        CommonJSExportValue::Identifier(id.ref_)
+                                    }
+                                    _ => CommonJSExportValue::Other,
+                                };
                                 let last =
                                     &mut p.commonjs_named_exports.values_mut()[to_convert as usize];
                                 if !last.needs_decl {
                                     break 'convert;
                                 }
                                 last.needs_decl = false;
+                                last.decl_value = decl_value;
                                 let last_loc = last.loc_ref.loc;
 
                                 let mut decls = G::DeclList::init_capacity(1);

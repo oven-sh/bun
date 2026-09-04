@@ -46,7 +46,7 @@ use bun_paths::resolve_path::{platform, platform_to_posix_in_place, relative_nor
 use bun_resolver::fs::FileSystem;
 
 use crate::Graph::Graph;
-use crate::chunk::{Content, Flags};
+use crate::chunk::Content;
 use crate::options::{Loader, OutputKind};
 use crate::options_impl::LoaderExt as _;
 use crate::{BundleV2, Chunk, LinkerGraph};
@@ -182,7 +182,10 @@ pub(crate) fn write<W: Write + ?Sized>(
         &*bun_core::from_field_ptr!(BundleV2<'static>, graph, std::ptr::from_ref::<Graph>(graph))
     };
     let options = &bv2.transpiler().options;
-    let mut entry_point_bits = AutoBitSet::init_empty(graph.entry_points.len())?;
+    // Same size as the files' entry bits: the linker's list also holds the dynamic imports.
+    let mut entry_point_bits = AutoBitSet::init_empty(linker_graph.entry_points.len())?;
+    let mut chunks_to_write = AutoBitSet::init_empty(chunks.len())?;
+    let mut chunks_to_visit: Vec<u32> = Vec::new();
 
     let root_dir: &[u8] = if !options.root_dir.is_empty() {
         &options.root_dir[..]
@@ -199,10 +202,11 @@ pub(crate) fn write<W: Write + ?Sized>(
     let mut temp_buffer: Vec<u8> = Vec::new();
     let mut input_buffer: Vec<u8> = Vec::new();
 
-    for ch in chunks.iter() {
+    for (chunk_index, ch) in chunks.iter().enumerate() {
         if ch.entry_point.source_index() == browser_source_index && ch.entry_point.is_entry_point()
         {
             entry_point_bits.set(ch.entry_point.entry_point_id() as usize);
+            chunks_to_visit.push(chunk_index as u32);
 
             if matches!(ch.content, Content::Html) {
                 writer.write_all(b"\"index\":")?;
@@ -226,6 +230,27 @@ pub(crate) fn write<W: Write + ?Sized>(
         }
     }
 
+    // Every chunk the page's chunks import, transitively.
+    while let Some(chunk_index) = chunks_to_visit.pop() {
+        if chunks_to_write.is_set(chunk_index as usize) {
+            continue;
+        }
+        chunks_to_write.set(chunk_index as usize);
+
+        let ch = &chunks[chunk_index as usize];
+        for import in ch.cross_chunk_imports.iter() {
+            let imported = &chunks[import.chunk_index as usize];
+            if imported.entry_point.is_entry_point() {
+                // A dynamic import's entry point: its bit is what the assets only it reaches carry.
+                entry_point_bits.set(imported.entry_point.entry_point_id() as usize);
+            }
+            chunks_to_visit.push(import.chunk_index);
+        }
+        if let Content::Javascript(js) = &ch.content {
+            chunks_to_visit.extend_from_slice(&js.css_chunks);
+        }
+    }
+
     // Start the files array
 
     writer.write_all(b"\"files\":[")?;
@@ -236,16 +261,8 @@ pub(crate) fn write<W: Write + ?Sized>(
     let file_entry_bits: &[AutoBitSet] = linker_graph.files.items_entry_bits();
     let mut already_visited_output_file = AutoBitSet::init_empty(additional_output_files.len())?;
 
-    // Write all chunks that have files associated with this entry point.
-    // Also include browser chunks from server builds (lazy-loaded chunks from dynamic imports).
-    // When there's only one HTML import, all browser chunks belong to that manifest.
-    // When there are multiple HTML imports, only include chunks that intersect with this entry's bits.
-    let has_single_html_import = graph.html_imports.html_source_indices.len() == 1;
-    for ch in chunks.iter() {
-        if ch.entry_bits().has_intersection(&entry_point_bits)
-            || (has_single_html_import
-                && ch.flags.contains(Flags::IS_BROWSER_CHUNK_FROM_SERVER_BUILD))
-        {
+    for (chunk_index, ch) in chunks.iter().enumerate() {
+        if chunks_to_write.is_set(chunk_index) {
             if !first {
                 writer.write_all(b",")?;
             }

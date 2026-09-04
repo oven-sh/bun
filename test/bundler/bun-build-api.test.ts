@@ -491,6 +491,42 @@ describe("Bun.build", () => {
     expect(exitCode).toBe(0);
   });
 
+  test.concurrent("an entry point that resolves to a builtin or to a non-code data: URL is a build error", async () => {
+    // Runs in a child: unfixed, "bun:wrap" was dropped (the bundler registers its runtime under that
+    // name) and the others were scheduled as files. The data: URL is an image, which resolves as
+    // external like a builtin does, and was emitted as a module exporting "". It is listed next to a
+    // file because a lone data: entry point fails earlier, when the build opens its directory.
+    using dir = tempDir("build-api-builtin-entrypoint", { "valid.js": "console.log(1);" });
+    const image = "data:image/png;base64,iVBORw0KGgo=";
+    const fixture = /* ts */ `
+      const report = async (entrypoints: string[]) => {
+        const { success, outputs, logs } = await Bun.build({ entrypoints, target: "bun", throw: false });
+        return { success, outputs: outputs.length, logs: logs.map(log => [log.name, log.message]) };
+      };
+      console.log(JSON.stringify([
+        await report(["bun:wrap"]),
+        await report(["node:fs"]),
+        await report(["./valid.js", ${JSON.stringify(image)}]),
+      ]));
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", fixture],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    const failedWith = (message: string) => ({ success: false, outputs: 0, logs: [["BuildMessage", message]] });
+    expect(JSON.parse(stdout)).toEqual([
+      failedWith('Cannot use "bun:wrap" as an entry point: it resolves to a builtin module'),
+      failedWith('Cannot use "node:fs" as an entry point: it resolves to a builtin module'),
+      failedWith(`ModuleNotFound resolving "${image}" (entry point)`),
+    ]);
+    expect(exitCode).toBe(0);
+  });
+
   test("returns output files", async () => {
     Bun.gc(true);
     const build = await Bun.build({

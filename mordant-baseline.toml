@@ -100,7 +100,7 @@
 "generic_body_not_generic:src/runtime/node/node_fs.rs" = 3
 "generic_body_not_generic:src/runtime/node/node_net_binding.rs" = 1
 "generic_body_not_generic:src/runtime/server/NodeHTTPResponse.rs" = 1
-"generic_body_not_generic:src/runtime/server/RequestContext.rs" = 8
+"generic_body_not_generic:src/runtime/server/RequestContext.rs" = 7
 "generic_body_not_generic:src/runtime/server/mod.rs" = 2
 "generic_body_not_generic:src/runtime/server/server_body.rs" = 2
 "generic_body_not_generic:src/runtime/shell/Builtin.rs" = 1

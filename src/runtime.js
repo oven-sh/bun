@@ -52,10 +52,9 @@ var __toESMCache_node;
 /*__PURE__*/
 var __toESMCache_esm;
 
-// Converts the module from CommonJS to ESM. When in node mode (i.e. in an
-// ".mjs" file, package.json has "type: module", or the "__esModule" export
-// in the CommonJS file is falsy or missing), the "default" property is
-// overridden to point to the original CommonJS exports object instead.
+// Converts the module from CommonJS to ESM. "default" is "module.exports",
+// except outside node mode when "__esModule" is truthy and the module has its
+// own "default" property. `bun run` uses the same rule.
 export var __toESM = (mod, isNodeMode, target) => {
   var canCache = mod != null && typeof mod === "object";
   if (canCache) {
@@ -65,12 +64,10 @@ export var __toESM = (mod, isNodeMode, target) => {
   }
   target = mod != null ? __create(__getProtoOf(mod)) : {};
   const to =
-    isNodeMode || !mod || !mod.__esModule ? __defProp(target, "default", { value: mod, enumerable: true }) : target;
+    isNodeMode || !mod || !mod.__esModule || !__hasOwnProp.call(mod, "default")
+      ? __defProp(target, "default", { value: mod, enumerable: true })
+      : target;
 
-  // If the importer is in node compatibility mode or this is not an ESM
-  // file that has been converted to a CommonJS file using a Babel-
-  // compatible transform (i.e. "__esModule" has not been set), then set
-  // "default" to the CommonJS "module.exports" for node compatibility.
   // A CommonJS module may legitimately set "module.exports" to null,
   // undefined, or a primitive; only objects and functions have named exports.
   if ((mod && typeof mod === "object") || typeof mod === "function")
@@ -328,7 +325,17 @@ export var __decorateElement = (array, flags, name, decorators, target, extra) =
   );
 };
 
-export var __esm = (fn, res) => () => (fn && (res = fn((fn = 0))), res);
+// A module whose evaluation threw throws the same error on every later import.
+export var __esm = (fn, res, err) => () => {
+  if (fn)
+    try {
+      res = fn((fn = 0));
+    } catch (e) {
+      err = [e];
+    }
+  if (err) throw err[0];
+  return res;
+};
 
 // This is used for JSX inlining with React.
 export var $$typeof = /* @__PURE__ */ Symbol.for("react.element");
@@ -340,3 +347,16 @@ export var __promiseAll = args => Promise.all(args);
 // React Compiler memo-cache slot sentinels.
 export var __MEMO_CACHE_SENTINEL = /* @__PURE__ */ Symbol.for("react.memo_cache_sentinel");
 export var __EARLY_RETURN_SENTINEL = /* @__PURE__ */ Symbol.for("react.early_return_sentinel");
+
+// The namespace of a CommonJS module whose `exports.x = ...` were lifted to
+// bindings stands in for `module.exports`: a write through it assigns the
+// binding, so every importer sees it.
+export var __exportCjs = /* @__PURE__ */ (target, getters, setters) => {
+  for (var name in getters)
+    __defProp(target, name, {
+      get: getters[name],
+      set: setters[name],
+      enumerable: true,
+      configurable: true,
+    });
+};

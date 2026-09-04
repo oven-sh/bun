@@ -605,7 +605,7 @@ impl<'a> Parser<'a> {
         });
         let part = js_ast::Part {
             stmts: stmts.into(),
-            symbol_uses: core::mem::take(&mut p.symbol_uses),
+            symbol_uses: p.take_symbol_uses()?,
             ..Default::default()
         };
         let mut parts = BumpVec::with_capacity_in(2, p.arena);
@@ -900,7 +900,7 @@ impl<'a> Parser<'a> {
 
         let mut before = BumpVec::<js_ast::Part>::new_in(p.arena);
         let mut after = BumpVec::<js_ast::Part>::new_in(p.arena);
-        let mut parts = BumpVec::<js_ast::Part>::new_in(p.arena);
+        let mut parts = BumpVec::<js_ast::Part>::with_capacity_in(stmts.len() + 2, p.arena);
         // (Element ownership is transferred into `parts` below via bitwise copy + set_len(0).)
 
         if p.options.bundle {
@@ -1236,6 +1236,10 @@ impl<'a> Parser<'a> {
             struct PerRecord {
                 escaped: bool,
                 aliases: Vec<bun_ast::StoreStr>,
+                items: Vec<bun_ast::ast_result::DynamicImportItem>,
+                /// A name is read some other way (a `{...rest}` copy, a local
+                /// that stays one), so the call's value must hold it.
+                needs_value: bool,
             }
             let mut by_record: bun_collections::ArrayHashMap<u32, PerRecord> = Default::default();
             // A namespace ref is listed once per registration and once per
@@ -1300,8 +1304,41 @@ impl<'a> Parser<'a> {
                             continue;
                         }
                     }
-                    rec.aliases
-                        .push(bun_ast::StoreStr::new(arena.alloc_slice_copy(key)));
+                    let alias = bun_ast::StoreStr::new(arena.alloc_slice_copy(key));
+                    rec.aliases.push(alias);
+                    let is_require_marker = p
+                        .import_records
+                        .items()
+                        .get(import_record_id as usize)
+                        .is_some_and(|record| crate::p::is_require_marker(record, key));
+                    // A read off `ns` (an item already), or a local a pattern
+                    // binds. Assigning to either, or reaching the local through
+                    // a hoisting merge or a direct `eval`, keeps the read as
+                    // written.
+                    let is_item = local.is_valid()
+                        && !is_require_marker
+                        && (p.is_import_item.contains_key(&local)
+                            || p.dynamic_import_destructured_locals.contains_key(&local))
+                        && !p.symbols[ns_ref.inner_index() as usize].has_been_assigned_to()
+                        && p.dynamic_import_namespace_locals
+                            .get(&ns_ref)
+                            .is_none_or(|records| records.len() == 1)
+                        && {
+                            let symbol = &p.symbols[local.inner_index() as usize];
+                            !symbol.has_been_assigned_to()
+                                && !symbol.has_link()
+                                && !symbol.must_not_be_renamed()
+                                && !p.named_imports.contains(&local)
+                        };
+                    if is_item {
+                        rec.items.push(bun_ast::ast_result::DynamicImportItem {
+                            local,
+                            alias,
+                            namespace_ref: ns_ref,
+                        });
+                    } else {
+                        rec.needs_value = true;
+                    }
                 }
             }
 
@@ -1313,12 +1350,19 @@ impl<'a> Parser<'a> {
                 }
                 rec.aliases.sort_by(|a, b| a.slice().cmp(b.slice()));
                 rec.aliases.dedup_by(|a, b| a.slice() == b.slice());
-                let aliases = &rec.aliases;
-                let alias_slice = arena
-                    .alloc_slice_fill_with::<bun_ast::StoreStr, _>(aliases.len(), |j| aliases[j]);
+                let aliases = arena.alloc_slice_copy(&rec.aliases);
+                let items = arena.alloc_slice_copy(&rec.items);
                 bun_core::handle_oom(
-                    p.dynamic_import_aliases
-                        .put(import_record_id, bun_ast::StoreSlice::new(alias_slice)),
+                    p.dynamic_import_aliases.put(
+                        import_record_id,
+                        bun_ast::ast_result::DynamicImportUse {
+                            aliases: bun_ast::StoreSlice::new(aliases),
+                            items: bun_ast::StoreSlice::new(items),
+                            needs_namespace_object: rec.needs_value
+                                || p.dynamic_import_needs_object
+                                    .contains_key(&import_record_id),
+                        },
+                    ),
                 );
             }
         }
@@ -1415,9 +1459,15 @@ impl<'a> Parser<'a> {
                             }
                         }
 
-                        if needs_decl_count > 0 {
+                        if needs_decl_count > 0 || p.has_top_level_function_merged_with_var {
                             p.symbols.as_mut_slice()[p.exports_ref.inner_index() as usize]
                                 .use_count_estimate += export_refs_len as u32;
+                            p.deoptimize_commonjs_named_exports();
+                        } else if p.symbols.as_slice()[p.module_ref.inner_index() as usize]
+                            .use_count_estimate
+                            > p.module_exports_rewrite_count
+                        {
+                            // `module.constructor` and other uses of `module` need the wrapper.
                             p.deoptimize_commonjs_named_exports();
                         }
                     }
@@ -1547,115 +1597,156 @@ impl<'a> Parser<'a> {
                     }
                 }
             }
+        }
 
-            if p.commonjs_named_exports_deoptimized
-                && p.options.features.unwrap_commonjs_to_esm
-                && p.unwrap_all_requires
-                && p.imports_to_convert_from_require.len() == 1
-                && p.import_records.len() == 1
-                && p.symbols.as_slice()[p.module_ref.inner_index() as usize].use_count_estimate == 1
-            {
-                'outer_part_loop: for part in parts.iter_mut() {
-                    // Specially handle modules shaped like this:
-                    //
-                    //    doSomeStuff();
-                    //    module.exports = require('./foo.js');
-                    //
-                    // An example is react-dom/index.js, which does a DCE check.
-                    // Snapshot the StoreSlice (Copy) so the `&mut` borrow over the
-                    // arena slice doesn't conflict with the `part.stmts = …` rewrite
-                    // below.
-                    let part_stmts_ss = part.stmts;
-                    let part_stmts: &mut [Stmt] = part_stmts_ss.slice_mut();
-                    if part_stmts.len() > 1 {
-                        break;
-                    }
+        // `checkDCE(); module.exports = require('./cjs/...')` (react-dom/index.js in production).
+        // The unwrapped require() is already an `import * as ns`, so `export * from` replaces
+        // the assignment and the file needs no wrapper (`convert_stmts_for_chunk` undoes it).
+        if p.options.features.unwrap_commonjs_to_esm
+            && p.unwrap_all_requires
+            && !p.options.is_entry_point
+            && !p.has_es_module_syntax
+            && p.commonjs_named_exports.count() == 0
+            && !p.has_top_level_return
+            && !p.has_with_scope
+            && !p.has_top_level_function_merged_with_var
+            && p.symbols.as_slice()[p.module_ref.inner_index() as usize].use_count_estimate == 1
+            && p.symbols.as_slice()[p.exports_ref.inner_index() as usize].use_count_estimate == 0
+        {
+            struct ModuleExportsOfNamespace {
+                part_idx: usize,
+                stmt_idx: usize,
+                /// `checkDCE(), module.exports = ns` (the `if` block folded by
+                /// minification): the operand before the assignment.
+                leading: Option<Expr>,
+                assign_loc: bun_ast::Loc,
+                namespace_ref: js_ast::Ref,
+                import_record_index: u32,
+            }
 
-                    for j in 0..part_stmts.len() {
-                        let stmt = &mut part_stmts[j];
-                        if let js_ast::StmtData::SExpr(s_expr) = &stmt.data {
-                            let value: Expr = s_expr.value;
-
-                            if let js_ast::ExprData::EBinary(bin_ptr) = value.data {
-                                let mut bin = bin_ptr;
-                                loop {
-                                    let left = bin.left;
-                                    let right = bin.right;
-
-                                    if bin.op == js_ast::op::Code::BinAssign
-                                        && let js_ast::ExprData::ERequireString(req) = right.data
-                                        && let Some(unwrapped_id) = req.unwrapped_id.get()
-                                        && matches!(&left.data, js_ast::ExprData::EDot(d)
-                                            if d.name == b"exports"
-                                                && matches!(&d.target.data, js_ast::ExprData::EIdentifier(id)
-                                                    if id.ref_.eql(p.module_ref)))
-                                    {
-                                        p.export_star_import_records.push(req.import_record_index);
-                                        let deferred = &p.imports_to_convert_from_require
-                                            [unwrapped_id.get_usize()];
-                                        let namespace_ref = deferred.namespace.ref_;
-
-                                        let stmt_loc = stmt.loc;
-                                        part.stmts = {
-                                            let mut new_stmts = BumpVec::<Stmt>::with_capacity_in(
-                                                part.stmts.len() + 1,
-                                                p.arena,
-                                            );
-                                            new_stmts.extend_from_slice(&part_stmts[0..j]);
-
-                                            new_stmts.push(Stmt::alloc(
-                                                S::ExportStar {
-                                                    import_record_index: req.import_record_index,
-                                                    namespace_ref,
-                                                    alias: None,
-                                                },
-                                                stmt_loc,
-                                            ));
-                                            new_stmts.extend_from_slice(&part_stmts[j + 1..]);
-                                            bun_ast::StoreSlice::from_bump(new_stmts)
-                                        };
-
-                                        part.import_record_indices.push(req.import_record_index);
-                                        p.symbols.as_mut_slice()
-                                            [p.module_ref.inner_index() as usize]
-                                            .use_count_estimate = 0;
-                                        let ns_idx = namespace_ref.inner_index() as usize;
-                                        p.symbols.as_mut_slice()[ns_idx].use_count_estimate =
-                                            p.symbols.as_slice()[ns_idx]
-                                                .use_count_estimate
-                                                .saturating_sub(1);
-                                        let _ = part.symbol_uses.swap_remove(&namespace_ref);
-
-                                        for (i, before_part) in before.iter().enumerate() {
-                                            if before_part.tag
-                                                == bun_ast::PartTag::ImportToConvertFromRequire
-                                            {
-                                                let _ = before.swap_remove(i);
-                                                break;
-                                            }
-                                        }
-
-                                        if p.esm_export_keyword.len == 0 {
-                                            p.esm_export_keyword.loc = stmt_loc;
-                                            p.esm_export_keyword.len = 5;
-                                        }
-                                        p.commonjs_named_exports_deoptimized = false;
-                                        break;
-                                    }
-
-                                    if let js_ast::ExprData::EBinary(rb) = right.data {
-                                        bin = rb;
-                                        continue;
-                                    }
-
-                                    break;
-                                }
-                                let _ = bin_ptr;
+            let found: Option<ModuleExportsOfNamespace> = 'search: {
+                for (part_idx, part) in parts.iter().enumerate() {
+                    for (stmt_idx, stmt) in part.stmts.iter().enumerate() {
+                        let js_ast::StmtData::SExpr(s_expr) = &stmt.data else {
+                            continue;
+                        };
+                        let value: Expr = s_expr.value;
+                        let (leading, assign): (Option<Expr>, Expr) = match value.data {
+                            js_ast::ExprData::EBinary(bin)
+                                if bin.op == js_ast::op::Code::BinComma =>
+                            {
+                                (Some(bin.left), bin.right)
                             }
+                            _ => (None, value),
+                        };
+                        let js_ast::ExprData::EBinary(bin) = assign.data else {
+                            continue;
+                        };
+                        if bin.op != js_ast::op::Code::BinAssign
+                            || !matches!(&bin.left.data, js_ast::ExprData::EDot(d)
+                                if d.name == b"exports"
+                                    && matches!(&d.target.data, js_ast::ExprData::EIdentifier(id)
+                                        if id.ref_.eql(p.module_ref)))
+                        {
+                            continue;
                         }
+                        let js_ast::ExprData::EIdentifier(id) = &bin.right.data else {
+                            continue;
+                        };
+                        let Some(deferred) = p
+                            .imports_to_convert_from_require
+                            .iter()
+                            .find(|deferred| deferred.namespace.ref_.eql(id.ref_))
+                        else {
+                            continue;
+                        };
+                        break 'search Some(ModuleExportsOfNamespace {
+                            part_idx,
+                            stmt_idx,
+                            leading,
+                            assign_loc: assign.loc,
+                            namespace_ref: id.ref_,
+                            import_record_index: deferred.import_record_id,
+                        });
                     }
-                    let _ = &mut *part;
-                    continue 'outer_part_loop;
+                }
+                None
+            };
+
+            if let Some(found) = found {
+                let part = &mut parts[found.part_idx];
+                let stmt_loc = part.stmts.slice()[found.stmt_idx].loc;
+
+                // Like `s_export_star`: the export star declares its own namespace symbol.
+                let name = p.load_name_from_ref(found.namespace_ref);
+                let export_star_ref = p.new_symbol(js_ast::symbol::Kind::Other, name);
+                VecExt::append(&mut p.module_scope_mut().generated, export_star_ref);
+                part.declared_symbols.append(DeclaredSymbol {
+                    ref_: export_star_ref,
+                    is_top_level: true,
+                })?;
+
+                part.stmts = {
+                    let old_stmts: &[Stmt] = part.stmts.slice();
+                    let mut new_stmts =
+                        BumpVec::<Stmt>::with_capacity_in(old_stmts.len() + 1, p.arena);
+                    new_stmts.extend_from_slice(&old_stmts[..found.stmt_idx]);
+                    if let Some(leading) = found.leading {
+                        new_stmts.push(Stmt::alloc(
+                            S::SExpr {
+                                value: leading,
+                                does_not_affect_tree_shaking: false,
+                            },
+                            stmt_loc,
+                        ));
+                    }
+                    new_stmts.push(Stmt::alloc(
+                        S::ExportStar {
+                            import_record_index: found.import_record_index,
+                            namespace_ref: export_star_ref,
+                            alias: None,
+                        },
+                        found.assign_loc,
+                    ));
+                    new_stmts.extend_from_slice(&old_stmts[found.stmt_idx + 1..]);
+                    bun_ast::StoreSlice::from_bump(new_stmts)
+                };
+
+                // The assignment was the only use of `module` and one use of `ns`.
+                let _ = part.symbol_uses.swap_remove(&p.module_ref);
+                p.symbols.as_mut_slice()[p.module_ref.inner_index() as usize].use_count_estimate =
+                    0;
+                match part.symbol_uses.get_mut(&found.namespace_ref) {
+                    Some(uses) if uses.count_estimate() > 1 => uses.subtract(1),
+                    _ => {
+                        let _ = part.symbol_uses.swap_remove(&found.namespace_ref);
+                    }
+                }
+                let ns_symbol =
+                    &mut p.symbols.as_mut_slice()[found.namespace_ref.inner_index() as usize];
+                ns_symbol.use_count_estimate = ns_symbol.use_count_estimate.saturating_sub(1);
+                let ns_is_unused = ns_symbol.use_count_estimate == 0
+                    && !p
+                        .import_items_for_namespace
+                        .get(&found.namespace_ref)
+                        .is_some_and(|items| items.count() > 0);
+                if ns_is_unused {
+                    // Drop the unused `import * as ns` part, keeping the other imports in order.
+                    if let Some(i) = before.iter().position(|before_part| {
+                        before_part.tag == bun_ast::PartTag::ImportToConvertFromRequire
+                            && before_part
+                                .declared_symbols
+                                .refs()
+                                .iter()
+                                .any(|declared| declared.eql(found.namespace_ref))
+                    }) {
+                        let _ = before.remove(i);
+                    }
+                }
+
+                if p.esm_export_keyword.len == 0 {
+                    p.esm_export_keyword.loc = stmt_loc;
+                    p.esm_export_keyword.len = 5;
                 }
             }
         }

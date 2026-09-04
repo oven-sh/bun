@@ -13,7 +13,7 @@
     "noImplicitOverride": true,
     "exactOptionalPropertyTypes": true,
     "skipLibCheck": true,
-    "types": ["bun"],
+    "types": ["../../packages/bun-types"],
     "verbatimModuleSyntax": true
   },
   "include": ["./**/*.ts", "../build.ts", "../glob-sources.ts"],

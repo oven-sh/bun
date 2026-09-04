@@ -1356,21 +1356,34 @@ impl<'a> PackageInstall<'a> {
                             }
                         }
                         EntryKind::File => {
+                            // `dest` can be a hardlink of `src`, which CopyFileW cannot overwrite.
                             // SAFETY: FFI — src/dest are valid NUL-terminated WStr buffers.
-                            if unsafe { windows::CopyFileW(src.as_ptr(), dest.as_ptr(), 0) } == 0 {
-                                if let Some(entry_dirname) =
-                                    bun_paths::Dirname::dirname_u16(entry.path.as_slice())
-                                {
-                                    let _ = bun_sys::MakePath::make_path_u16(
-                                        destination_dir_,
-                                        entry_dirname,
-                                    );
-                                    // SAFETY: FFI — src/dest are valid NUL-terminated WStr buffers.
-                                    if unsafe { windows::CopyFileW(src.as_ptr(), dest.as_ptr(), 0) }
-                                        != 0
-                                    {
-                                        continue;
+                            let copy_file =
+                                || unsafe { windows::CopyFileW(src.as_ptr(), dest.as_ptr(), 1) } != 0;
+                            if !copy_file() {
+                                let copied = match windows::Win32Error::get() {
+                                    windows::Win32Error::FILE_EXISTS
+                                    | windows::Win32Error::ALREADY_EXISTS => {
+                                        // SAFETY: FFI — dest is a valid NUL-terminated WStr buffer.
+                                        unsafe { windows::DeleteFileW(dest.as_ptr()) };
+                                        copy_file()
                                     }
+                                    _ => {
+                                        match bun_paths::Dirname::dirname_u16(entry.path.as_slice())
+                                        {
+                                            Some(entry_dirname) => {
+                                                let _ = bun_sys::MakePath::make_path_u16(
+                                                    destination_dir_,
+                                                    entry_dirname,
+                                                );
+                                                copy_file()
+                                            }
+                                            None => false,
+                                        }
+                                    }
+                                };
+                                if copied {
+                                    continue;
                                 }
 
                                 let err = windows::last_system_errno();
@@ -1409,14 +1422,23 @@ impl<'a> PackageInstall<'a> {
                         destination_dir_.fd(),
                         bstr::BStr::new(entry.path.as_bytes())
                     );
-                    // Open O_WRONLY|O_CREAT|O_TRUNC, mode 0o666.
+                    // The file can be a hardlink of `in_file`, and O_TRUNC would empty both.
                     let create = |path: &ZStr| {
-                        sys::openat(
-                            destination_dir_.fd(),
-                            path,
-                            sys::O::WRONLY | sys::O::CREAT | sys::O::TRUNC,
-                            0o666,
-                        )
+                        let open = || {
+                            sys::openat(
+                                destination_dir_.fd(),
+                                path,
+                                sys::O::WRONLY | sys::O::CREAT | sys::O::EXCL,
+                                0o666,
+                            )
+                        };
+                        match open() {
+                            Err(err) if err.get_errno() == sys::E::EEXIST => {
+                                let _ = sys::unlinkat(destination_dir_, path);
+                                open()
+                            }
+                            result => result,
+                        }
                     };
                     let outfile = match create(entry.path) {
                         Ok(f) => f,

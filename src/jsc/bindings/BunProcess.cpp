@@ -1279,7 +1279,11 @@ extern "C" bool Bun__onSignalForJS(int signalNumber, Zig::GlobalObject* globalOb
     Process* process = globalObject->processObject();
 
     loadSignalNumberToNameMap();
-    String signalName = signalNumberToNameMap->get(signalNumber);
+    auto entry = signalNumberToNameMap->find(signalNumber);
+    // Identifier::fromString dereferences the null String of a missing key.
+    if (entry == signalNumberToNameMap->end()) [[unlikely]]
+        return false;
+    const String& signalName = entry->value;
     Identifier signalNameIdentifier = Identifier::fromString(JSC::getVM(globalObject), signalName);
     MarkedArgumentBuffer args;
     args.append(jsString(JSC::getVM(globalObject), signalNameIdentifier.string()));

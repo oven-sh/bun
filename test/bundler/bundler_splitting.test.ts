@@ -793,7 +793,8 @@ describe("bundler", () => {
     format: "esm",
     entryNaming: "[hash].[ext]",
     onAfterBundle(api) {
-      expect(readdirSync(api.outdir).filter(f => f.endsWith(".js"))).toHaveLength(2);
+      // a, b, and the modulepreload runtime both entries share.
+      expect(readdirSync(api.outdir).filter(f => f.endsWith(".js"))).toHaveLength(3);
     },
   });
   // A file whose every part was tree-shaken gets no chunk: two such files
@@ -955,6 +956,493 @@ describe("bundler", () => {
       { file: "/out/a.js", stdout: "lib\na 1" },
       { file: "/out/c.js", stdout: "c 2" },
     ],
+  });
+
+  // A re-export from a `"sideEffects": false` barrel prints nothing: the
+  // importer binds straight to the module that declares the name. So an entry
+  // point reaches, through the barrel, only the modules it uses, and a module
+  // only an import() uses lives in that import()'s chunk.
+  const sideEffectFreeBarrel = {
+    "/node_modules/pkg/package.json": JSON.stringify({ name: "pkg", main: "index.js", sideEffects: false }),
+    "/node_modules/pkg/index.js": /* js */ `
+      export { A } from './a.js'
+      export { B } from './b.js'
+    `,
+    "/node_modules/pkg/a.js": /* js */ `
+      export const A = 'AAAA'
+    `,
+    "/node_modules/pkg/b.js": /* js */ `
+      export const B = 'BBBB_MARK'
+    `,
+  };
+
+  itBundled("splitting/SideEffectFreeBarrelLeavesLazyModulesToTheirChunk", {
+    files: {
+      ...sideEffectFreeBarrel,
+      "/entry.js": /* js */ `
+        import { A } from 'pkg'
+        console.log(A)
+        import('./lazy.js').then(m => m.run())
+      `,
+      "/lazy.js": /* js */ `
+        import { B } from 'pkg'
+        export function run() { console.log(B) }
+      `,
+    },
+    entryPoints: ["/entry.js"],
+    splitting: true,
+    outdir: "/out",
+    format: "esm",
+    onAfterBundle(api) {
+      expect(jsOutputs(api)).toEqual(["entry.js", "lazy.js"]);
+      api.expectFile("/out/entry.js").toContain("AAAA");
+      api.expectFile("/out/entry.js").not.toContain("BBBB_MARK");
+      expect(jsOutput(api, "lazy")).toContain("BBBB_MARK");
+      expect(jsOutput(api, "lazy")).not.toContain("import ");
+    },
+    run: { file: "/out/entry.js", stdout: "AAAA\nBBBB_MARK" },
+  });
+
+  // The same through a namespace whose properties bind directly.
+  itBundled("splitting/SideEffectFreeBarrelNamespacePropertyAccess", {
+    files: {
+      ...sideEffectFreeBarrel,
+      "/entry.js": /* js */ `
+        import * as pkg from 'pkg'
+        console.log(pkg.A)
+        import('./lazy.js').then(m => m.run())
+      `,
+      "/lazy.js": /* js */ `
+        import * as pkg from 'pkg'
+        export function run() { console.log(pkg.B) }
+      `,
+    },
+    entryPoints: ["/entry.js"],
+    splitting: true,
+    outdir: "/out",
+    format: "esm",
+    onAfterBundle(api) {
+      expect(jsOutputs(api)).toEqual(["entry.js", "lazy.js"]);
+      api.expectFile("/out/entry.js").not.toContain("BBBB_MARK");
+      expect(jsOutput(api, "lazy")).toContain("BBBB_MARK");
+    },
+    run: { file: "/out/entry.js", stdout: "AAAA\nBBBB_MARK" },
+  });
+
+  // Without splitting, each entry point's bundle holds only what that entry
+  // uses from the barrel.
+  itBundled("splitting/SideEffectFreeBarrelPerEntryWithoutSplitting", {
+    files: {
+      ...sideEffectFreeBarrel,
+      "/e1.js": /* js */ `
+        import { A } from 'pkg'
+        console.log(A)
+      `,
+      "/e2.js": /* js */ `
+        import { B } from 'pkg'
+        console.log(B)
+      `,
+    },
+    entryPoints: ["/e1.js", "/e2.js"],
+    outdir: "/out",
+    format: "esm",
+    onAfterBundle(api) {
+      api.expectFile("/out/e1.js").toContain("AAAA");
+      api.expectFile("/out/e1.js").not.toContain("BBBB_MARK");
+      api.expectFile("/out/e2.js").toContain("BBBB_MARK");
+      api.expectFile("/out/e2.js").not.toContain("AAAA");
+    },
+    run: [
+      { file: "/out/e1.js", stdout: "AAAA" },
+      { file: "/out/e2.js", stdout: "BBBB_MARK" },
+    ],
+  });
+
+  // A barrel that does not declare itself side-effect free still loads every
+  // module it re-exports wherever it is imported: b.js may have side effects,
+  // and they run before the entry's own code.
+  itBundled("splitting/BarrelWithSideEffectsLoadsEveryReExport", {
+    files: {
+      "/entry.js": /* js */ `
+        import { A } from './lib/index.js'
+        console.log(A)
+        import('./lazy.js').then(m => m.run())
+      `,
+      "/lazy.js": /* js */ `
+        import { B } from './lib/index.js'
+        export function run() { console.log(B) }
+      `,
+      "/lib/index.js": /* js */ `
+        export { A } from './a.js'
+        export { B } from './b.js'
+      `,
+      "/lib/a.js": /* js */ `
+        export const A = 'AAAA'
+      `,
+      "/lib/b.js": /* js */ `
+        console.log('b runs')
+        export const B = 'BBBB_MARK'
+      `,
+    },
+    entryPoints: ["/entry.js"],
+    splitting: true,
+    outdir: "/out",
+    format: "esm",
+    onAfterBundle(api) {
+      expect(jsOutputs(api)).toEqual(["entry.js", "lazy.js"]);
+      api.expectFile("/out/entry.js").toContain("BBBB_MARK");
+    },
+    run: { file: "/out/entry.js", stdout: "b runs\nAAAA\nBBBB_MARK" },
+  });
+
+  // Ported from Rollup's chunking-form/samples/chunk-assigment-in-dynamic.
+  itBundled("splitting/SideEffectFreeCommonJSSharedByTwoLazyChunks", {
+    files: {
+      "/node_modules/icons/package.json": JSON.stringify({ name: "icons", main: "c.js", sideEffects: false }),
+      "/node_modules/icons/c.js": /* js */ `
+        exports.preFaPrint = { foo: 1 };
+        exports.faPrint = exports.preFaPrint;
+      `,
+      "/entry.js": /* js */ `
+        const a = await import('./a.js')
+        const b = await import('./b.js')
+        console.log(a.A().icon.foo, b.B().icon.foo)
+      `,
+      "/a.js": /* js */ `
+        import { faPrint } from 'icons'
+        export function A() { return { icon: faPrint } }
+      `,
+      "/b.js": /* js */ `
+        import { faPrint } from 'icons'
+        export function B() { return { icon: faPrint } }
+      `,
+    },
+    entryPoints: ["/entry.js"],
+    splitting: true,
+    outdir: "/out",
+    format: "esm",
+    run: { file: "/out/entry.js", stdout: "1 1" },
+  });
+
+  // Ported from Rollup's chunking-form/samples/deoptimized-module-with-dynamic-import.
+  itBundled("splitting/SideEffectFreeModuleWithTopLevelDynamicImport", {
+    files: {
+      "/node_modules/loader/package.json": JSON.stringify({ name: "loader", main: "index.js", sideEffects: false }),
+      "/node_modules/loader/index.js": /* js */ `
+        export function fn() { return 'fn' }
+        import('./cjs.js')
+      `,
+      "/node_modules/loader/cjs.js": /* js */ `
+        export const cjs = 'cjs-value'
+      `,
+      "/entry.js": /* js */ `
+        import { value, loadCjs } from './a.js'
+        console.log(value)
+        loadCjs().then(m => console.log(m.cjs))
+      `,
+      "/a.js": /* js */ `
+        import { fn } from 'loader'
+        export const value = fn()
+        export function loadCjs() { return import('loader/cjs.js') }
+      `,
+    },
+    entryPoints: ["/entry.js"],
+    splitting: true,
+    outdir: "/out",
+    format: "esm",
+    run: { file: "/out/entry.js", stdout: "fn\ncjs-value" },
+  });
+
+  // Ported from Rollup's chunking-form/samples/namespace-reexport-side-effect-cache.
+  itBundled("splitting/SideEffectFreeStarBarrelKeepsEffectForEveryEntry", {
+    files: {
+      "/node_modules/lib/package.json": JSON.stringify({
+        name: "lib",
+        main: "index.js",
+        sideEffects: ["./foo.js", "./effect.js"],
+      }),
+      "/node_modules/lib/index.js": `export * from './foo.js'`,
+      "/node_modules/lib/foo.js": /* js */ `
+        export { foo } from './fooImpl.js'
+        import './effect.js'
+      `,
+      "/node_modules/lib/effect.js": `console.log('side effect')`,
+      "/node_modules/lib/fooImpl.js": `export const foo = 'foo'`,
+      "/entry1.js": /* js */ `
+        import { foo } from 'lib'
+        console.log('entry1', foo)
+      `,
+      "/entry2.js": /* js */ `
+        import { foo } from 'lib'
+        console.log('entry2', foo)
+      `,
+    },
+    entryPoints: ["/entry1.js", "/entry2.js"],
+    splitting: true,
+    outdir: "/out",
+    format: "esm",
+    run: [
+      { file: "/out/entry1.js", stdout: "side effect\nentry1 foo" },
+      { file: "/out/entry2.js", stdout: "side effect\nentry2 foo" },
+    ],
+  });
+
+  // Ported from Rollup's chunking-form/samples/side-effect-free-dependencies/module-side-effects-reexports-{1,2,3}.
+  for (const [name, main] of [
+    ["ExportFrom", `export { value } from 'dep1'`],
+    ["ImportThenExport", `import { value } from 'dep1'\nexport { value }`],
+    ["ExportStar", `export * from 'dep1'`],
+  ]) {
+    itBundled(`splitting/EntryReExportsThroughSideEffectFreeStarChain${name}`, {
+      files: {
+        "/node_modules/dep1/package.json": JSON.stringify({ name: "dep1", main: "index.js", sideEffects: false }),
+        "/node_modules/dep1/index.js": `export * from './dep2.js'`,
+        "/node_modules/dep1/dep2.js": `export const value = 42`,
+        "/main.js": main,
+        "/use.js": /* js */ `
+          import { value } from './main.js'
+          console.log(value)
+        `,
+      },
+      entryPoints: ["/main.js", "/use.js"],
+      splitting: true,
+      outdir: "/out",
+      format: "esm",
+      run: { file: "/out/use.js", stdout: "42" },
+    });
+  }
+
+  // Ported from Rollup's chunking-form/samples/side-effect-free-dependencies/module-side-effects-empty-imports.
+  itBundled("splitting/SideEffectFreeImportUnusedByOneEntry", {
+    files: {
+      "/node_modules/dep/package.json": JSON.stringify({ name: "dep", main: "index.js", sideEffects: false }),
+      "/node_modules/dep/index.js": /* js */ `
+        export default 'DEP_VALUE'
+        console.log('dep body')
+      `,
+      "/main1.js": /* js */ `
+        import value from 'dep'
+        console.log('main1', value)
+      `,
+      "/main2.js": /* js */ `
+        import value from 'dep'
+        console.log('main2')
+      `,
+    },
+    entryPoints: ["/main1.js", "/main2.js"],
+    splitting: true,
+    outdir: "/out",
+    format: "esm",
+    onAfterBundle(api) {
+      expect(jsOutputs(api)).toEqual(["main1.js", "main2.js"]);
+      api.expectFile("/out/main1.js").toContain("DEP_VALUE");
+      api.expectFile("/out/main2.js").not.toContain("DEP_VALUE");
+      api.expectFile("/out/main2.js").not.toContain("import ");
+    },
+    run: [
+      { file: "/out/main1.js", stdout: "dep body\nmain1 DEP_VALUE" },
+      { file: "/out/main2.js", stdout: "main2" },
+    ],
+  });
+
+  // Ported from Rollup's function/samples/module-side-effects/reexports; lib.js still runs, as in esbuild.
+  for (const splitting of [false, true]) {
+    itBundled(`splitting/SideEffectFreeReExportRunsOnlyUsedModule${splitting ? "" : "NoSplitting"}`, {
+      files: {
+        "/node_modules/lib/package.json": JSON.stringify({ name: "lib", main: "lib.js", sideEffects: false }),
+        "/node_modules/lib/lib.js": /* js */ `
+          globalThis.effects.push('lib')
+          export { value as value1 } from './dep1.js'
+          export { value as value2 } from './dep2.js'
+        `,
+        "/node_modules/lib/dep1.js": /* js */ `
+          globalThis.effects.push('dep1')
+          export const value = 'dep1'
+        `,
+        "/node_modules/lib/dep2.js": /* js */ `
+          globalThis.effects.push('dep2')
+          export const value = 'dep2'
+        `,
+        "/setup.js": `globalThis.effects = []`,
+        "/entry.js": /* js */ `
+          import './setup.js'
+          import { value1 } from 'lib'
+          console.log(value1, JSON.stringify(globalThis.effects))
+        `,
+      },
+      entryPoints: ["/entry.js"],
+      splitting,
+      outdir: "/out",
+      format: "esm",
+      run: { file: "/out/entry.js", stdout: `dep1 ["dep1","lib"]` },
+    });
+  }
+
+  // Ported from Rollup's function/samples/tree-shake-module-side-effects-dependencies.
+  itBundled("splitting/SideEffectFreeModuleKeepsImpureDependencyInLazyChunk", {
+    files: {
+      "/node_modules/lib/package.json": JSON.stringify({ name: "lib", main: "dep.js", sideEffects: ["./effect.js"] }),
+      "/node_modules/lib/dep.js": /* js */ `
+        import './effect.js'
+        export const value = true
+      `,
+      "/node_modules/lib/effect.js": /* js */ `
+        import { updateSharedValue } from './shared.js'
+        updateSharedValue()
+      `,
+      "/node_modules/lib/shared.js": /* js */ `
+        export let sharedValue = 'original'
+        export function updateSharedValue() { sharedValue = 'updated' }
+      `,
+      "/entry.js": /* js */ `
+        import('./lazy.js').then(m => m.run())
+      `,
+      "/lazy.js": /* js */ `
+        import { value } from 'lib'
+        import { sharedValue } from 'lib/shared.js'
+        export function run() { console.log(value, sharedValue) }
+      `,
+    },
+    entryPoints: ["/entry.js"],
+    splitting: true,
+    outdir: "/out",
+    format: "esm",
+    run: { file: "/out/entry.js", stdout: "true updated" },
+  });
+
+  // Ported from Rolldown's tree_shaking/advanced_barrel_exports_bailout_dynamic_key.
+  itBundled("splitting/SideEffectFreeBarrelNamespaceComputedKey", {
+    files: {
+      ...sideEffectFreeBarrel,
+      "/entry.js": /* js */ `
+        import * as pkg from 'pkg'
+        console.log(pkg.A)
+        import('./lazy.js').then(m => m.run('B'))
+      `,
+      "/lazy.js": /* js */ `
+        import * as pkg from 'pkg'
+        export function run(key) { console.log(pkg[key]) }
+      `,
+    },
+    entryPoints: ["/entry.js"],
+    splitting: true,
+    outdir: "/out",
+    format: "esm",
+    run: { file: "/out/entry.js", stdout: "AAAA\nBBBB_MARK" },
+  });
+
+  // Ported from Rolldown's tree_shaking/advanced_barrel_exports2.
+  itBundled("splitting/SideEffectFreeRenamedNamespaceReExport", {
+    files: {
+      "/node_modules/pkg/package.json": JSON.stringify({ name: "pkg", main: "shared.js", sideEffects: false }),
+      "/node_modules/pkg/a.js": /* js */ `
+        export const c = 1000
+        export const b = 500
+        export const a = 100
+      `,
+      "/node_modules/pkg/c.js": `export * as c from './a.js'`,
+      "/node_modules/pkg/shared.js": /* js */ `
+        import { c } from './c.js'
+        export { c as a }
+      `,
+      "/entry.js": /* js */ `
+        import * as ns from 'pkg'
+        console.log(ns.a.b)
+        import('./lazy.js').then(m => m.run())
+      `,
+      "/lazy.js": /* js */ `
+        import * as ns from 'pkg'
+        export function run() { console.log(ns.a['a'], Object.keys(ns.a).sort().join()) }
+      `,
+    },
+    entryPoints: ["/entry.js"],
+    splitting: true,
+    outdir: "/out",
+    format: "esm",
+    run: { file: "/out/entry.js", stdout: "500\n100 a,b,c" },
+  });
+
+  // Ported from Rolldown's code_splitting/issue_8184.
+  itBundled("splitting/StaticAndDynamicCycleAcrossTwoEntries", {
+    files: {
+      "/dbp-1.js": `import './a.js'`,
+      "/dbp-activity-showcase.js": `import('./dbp-2.js').then(() => console.log('done'))`,
+      "/dbp-2.js": `import './b.js'`,
+      "/a.js": /* js */ `
+        import './c.js'
+        console.log('a')
+      `,
+      "/b.js": /* js */ `
+        import './a.js'
+        import './x.js'
+        console.log('b')
+      `,
+      "/c.js": /* js */ `
+        import('./a.js')
+        console.log('c')
+      `,
+      "/x.js": /* js */ `
+        console.log('x')
+        module.exports = 42
+      `,
+    },
+    entryPoints: ["/dbp-1.js", "/dbp-activity-showcase.js"],
+    splitting: true,
+    outdir: "/out",
+    format: "esm",
+    run: [
+      { file: "/out/dbp-1.js", stdout: "c\na" },
+      { file: "/out/dbp-activity-showcase.js", stdout: "c\na\nx\nb\ndone" },
+    ],
+  });
+
+  // Ported from Rolldown's code_splitting/issue_5276_2.
+  itBundled("splitting/NamespaceImportAndDynamicImportOfSameModule", {
+    files: {
+      "/entry.js": /* js */ `
+        import * as ns from './imp.js'
+        console.log(ns.imp2, ns.imp22)
+        import('./imp.js').then(m => console.log(m.imp22))
+      `,
+      "/imp.js": /* js */ `
+        export const imp2 = 2
+        export const imp22 = 22
+      `,
+    },
+    entryPoints: ["/entry.js"],
+    splitting: true,
+    outdir: "/out",
+    format: "esm",
+    run: { file: "/out/entry.js", stdout: "2 22\n22" },
+  });
+
+  // Ported from Rolldown's tree_shaking/unused_dynamic_imported_chunk.
+  itBundled("splitting/SideEffectFreeModuleDynamicImportInLiveFunction", {
+    files: {
+      "/node_modules/dep/package.json": JSON.stringify({ name: "dep", main: "index.js", sideEffects: false }),
+      "/node_modules/dep/index.js": /* js */ `
+        export async function loadTS() { return import('./dynamic.js') }
+      `,
+      "/node_modules/dep/dynamic.js": /* js */ `
+        console.log('dynamic')
+        export const ok = 'OK'
+      `,
+      "/entry.js": /* js */ `
+        import { loadTS } from 'dep'
+        console.log('entry')
+        loadTS().then(m => console.log(m.ok))
+      `,
+    },
+    entryPoints: ["/entry.js"],
+    splitting: true,
+    outdir: "/out",
+    format: "esm",
+    onAfterBundle(api) {
+      expect(jsOutputs(api)).toEqual(["dynamic.js", "entry.js"]);
+      api.expectFile("/out/entry.js").not.toContain('"OK"');
+      expect(jsOutput(api, "dynamic")).toContain('"OK"');
+    },
+    run: { file: "/out/entry.js", stdout: "entry\ndynamic\nOK" },
   });
 
   // The chunks an output file imports, in statement order.
@@ -1126,8 +1614,8 @@ describe("bundler", () => {
     outdir: "/out",
     format: "esm",
     onAfterBundle(api) {
-      // entry1, entry2, lazy, and the {entry1, lazy} chunk.
-      expect(jsFilesIn(api)).toHaveLength(4);
+      // entry1, entry2, lazy, the {entry1, lazy} chunk, and the {entry1, entry2} modulepreload runtime.
+      expect(jsFilesIn(api)).toHaveLength(5);
       expect(jsOutput(api, "lazy")).not.toContain('from "./entry1.js"');
     },
     run: [
@@ -1255,8 +1743,8 @@ describe("bundler", () => {
     outdir: "/out",
     format: "esm",
     onAfterBundle(api) {
-      // main, b, d, and the {main, d} chunk holding shared.js.
-      expect(jsFilesIn(api)).toHaveLength(4);
+      // main, b, d, the {main, d} chunk holding shared.js, and the {main, b} modulepreload runtime.
+      expect(jsFilesIn(api)).toHaveLength(5);
       api.expectFile("/out/main.js").not.toContain("41");
       expect(jsOutput(api, "d")).not.toContain('from "./main.js"');
     },
@@ -1404,8 +1892,271 @@ describe("bundler", () => {
     run: { file: "/out/c.js", stdout: "c 20000" },
   });
 
-  // A static import of a CommonJS module is a top-level require_x() call in
-  // the importer, so the importer is not side-effect free.
+  // A static import of a CommonJS module is a top-level require_lib() call
+  // in the importer. f.js may still move into g.js's chunk: that chunk
+  // imports main.js, which has already made the call by then, so repeating it
+  // does nothing.
+  itBundled("splitting/MinChunkSizeFoldsImporterOfInitializedWrappedModule", {
+    files: {
+      "/main.js": /* js */ `
+        import lib from './lib.cjs'
+        import { shared } from './shared.js'
+        console.log('main', shared.length + lib.v)
+        const routes = { a: () => import('./a.js'), b: () => import('./b.js'), c: () => import('./c.js') }
+        if (process.argv[2]) routes[process.argv[2]]().then(m => console.log(m.default()))
+      `,
+      "/a.js": /* js */ `
+        import { f } from './f.js'
+        import { g } from './g.js'
+        export default () => 'a ' + (f() + g())
+      `,
+      "/b.js": /* js */ `
+        import { f } from './f.js'
+        import { g } from './g.js'
+        export default () => 'b ' + (f() + g())
+      `,
+      "/c.js": /* js */ `
+        import { g } from './g.js'
+        export default () => 'c ' + g()
+      `,
+      "/f.js": /* js */ `
+        import lib from './lib.cjs'
+        export const f = () => lib.v
+      `,
+      "/g.js": /* js */ `
+        import { shared } from './shared.js'
+        console.log('g evaluated')
+        export const g = () => shared.length
+      `,
+      "/lib.cjs": /* js */ `
+        console.log('lib evaluated')
+        module.exports = { v: 1 }
+      `,
+      "/shared.js": /* js */ `
+        export const shared = "${Buffer.alloc(20000, "x").toString()}"
+      `,
+    },
+    entryPoints: ["/main.js"],
+    splitting: true,
+    minChunkSize: 1024,
+    outdir: "/out",
+    format: "esm",
+    onAfterBundle(api) {
+      // main, a, b, c and g.js's chunk, now holding f.js.
+      expect(jsFilesIn(api)).toHaveLength(5);
+      api.expectFile("/out/" + chunkContaining(api, "g evaluated")).toContain("var f = ");
+    },
+    run: [
+      { file: "/out/main.js", stdout: "lib evaluated\nmain 20001" },
+      { file: "/out/main.js", args: ["a"], stdout: "lib evaluated\nmain 20001\ng evaluated\na 20001" },
+    ],
+  });
+
+  // c.js moves into t.js's chunk as above. r1 imports c.js, then x.js, then
+  // t.js: c.js's require_lib() call (a no-op there) must not pull the whole
+  // t.js chunk, and its side effect, ahead of x.js's chunk.
+  itBundled("splitting/MinChunkSizeHoistedRequireKeepsChunkOrder", {
+    files: {
+      "/main.js": /* js */ `
+        import lib from './lib.cjs'
+        import { shared } from './shared.js'
+        console.log('main', shared.length + lib.v)
+        const routes = { r1: () => import('./r1.js'), r2: () => import('./r2.js'), r3: () => import('./r3.js') }
+        if (process.argv[2]) routes[process.argv[2]]()
+      `,
+      "/r1.js": /* js */ `
+        import { c } from './c.js'
+        import './x.js'
+        import { t } from './t.js'
+        console.log('r1', c() + t)
+      `,
+      "/r2.js": /* js */ `
+        import { c } from './c.js'
+        import { t } from './t.js'
+        console.log('r2', c() + t)
+      `,
+      "/r3.js": /* js */ `
+        import './x.js'
+        import { t } from './t.js'
+        console.log('r3', t)
+      `,
+      "/c.js": /* js */ `
+        import lib from './lib.cjs'
+        export const c = () => lib.v
+      `,
+      "/x.js": `console.log('x')`,
+      "/t.js": /* js */ `
+        import { shared } from './shared.js'
+        console.log('t evaluated')
+        export const t = shared.length
+      `,
+      "/lib.cjs": /* js */ `
+        console.log('lib evaluated')
+        module.exports = { v: 1 }
+      `,
+      "/shared.js": /* js */ `
+        export const shared = "${Buffer.alloc(20000, "x").toString()}"
+      `,
+    },
+    entryPoints: ["/main.js"],
+    splitting: true,
+    minChunkSize: 1024,
+    outdir: "/out",
+    format: "esm",
+    onAfterBundle(api) {
+      // main, r1, r2, r3, x.js's chunk and t.js's chunk, now holding c.js.
+      expect(jsFilesIn(api)).toHaveLength(6);
+      api.expectFile("/out/" + chunkContaining(api, "t evaluated")).toContain("var c = ");
+    },
+    run: { file: "/out/main.js", args: ["r1"], stdout: "lib evaluated\nmain 20001\nx\nt evaluated\nr1 20001" },
+  });
+
+  // Here nothing main.js loads initializes lib.cjs, so moving f.js (and its
+  // require_lib() call) into main.js would run lib.cjs at startup.
+  itBundled("splitting/MinChunkSizeKeepsFirstInitializerOfWrappedModule", {
+    files: {
+      "/main.js": /* js */ `
+        import { shared } from './shared.js'
+        console.log('main', shared.length)
+        const routes = { a: () => import('./a.js'), b: () => import('./b.js') }
+        if (process.argv[2]) routes[process.argv[2]]().then(m => console.log(m.default()))
+      `,
+      "/a.js": /* js */ `
+        import { f } from './f.js'
+        export default () => 'a ' + f()
+      `,
+      "/b.js": /* js */ `
+        import { f } from './f.js'
+        export default () => 'b ' + f()
+      `,
+      "/f.js": /* js */ `
+        import lib from './lib.cjs'
+        export const f = () => lib.v
+      `,
+      "/lib.cjs": /* js */ `
+        console.log('lib evaluated')
+        module.exports = { v: 1 }
+      `,
+      "/shared.js": /* js */ `
+        export const shared = "${Buffer.alloc(20000, "x").toString()}"
+      `,
+    },
+    entryPoints: ["/main.js"],
+    splitting: true,
+    minChunkSize: 1024 * 1024,
+    outdir: "/out",
+    format: "esm",
+    onAfterBundle(api) {
+      expect(jsFilesIn(api)).toHaveLength(4);
+      api.expectFile("/out/main.js").not.toContain("lib evaluated");
+    },
+    run: [
+      { file: "/out/main.js", stdout: "main 20000" },
+      { file: "/out/main.js", args: ["b"], stdout: "main 20000\nlib evaluated\nb 1" },
+    ],
+  });
+
+  // Off unless asked for, on every target; `minChunkSize: 0` is the same as
+  // leaving it out.
+  for (const [name, options, outputs] of [
+    ["Browser", {}, 4],
+    ["BrowserZero", { minChunkSize: 0 }, 4],
+    ["BrowserOn", { minChunkSize: 16 * 1024 }, 3],
+    ["Bun", { target: "bun" }, 4],
+    ["BunOn", { target: "bun", minChunkSize: 16 * 1024 }, 3],
+    ["Node", { target: "node" }, 4],
+  ] as const) {
+    itBundled("splitting/MinChunkSizeDefault" + name, {
+      files: {
+        "/main.js": /* js */ `
+          import { shared } from './shared.js'
+          console.log('main', shared.length)
+          const routes = { a: () => import('./a.js'), b: () => import('./b.js') }
+          if (process.argv[2]) routes[process.argv[2]]().then(m => console.log(m.default()))
+        `,
+        "/a.js": /* js */ `
+          import { f } from './f.js'
+          export default () => 'a ' + f()
+        `,
+        "/b.js": /* js */ `
+          import { f } from './f.js'
+          export default () => 'b ' + f()
+        `,
+        "/f.js": /* js */ `
+          export const f = () => 1
+        `,
+        "/shared.js": /* js */ `
+          export const shared = "${Buffer.alloc(20000, "x").toString()}"
+        `,
+      },
+      entryPoints: ["/main.js"],
+      splitting: true,
+      outdir: "/out",
+      format: "esm",
+      ...options,
+      onAfterBundle(api) {
+        expect(jsFilesIn(api)).toHaveLength(outputs);
+      },
+      run: { file: "/out/main.js", args: ["a"], stdout: "main 20000\na 1" },
+    });
+  }
+
+  // pkg's barrel stays live (`export *`) inside entry.js and has import
+  // records for b.js and b2.js, which only lazy routes use. Those records print
+  // nothing and must not count as entry.js importing the b.js chunks: if they
+  // did, c.js (which does import them) could move into entry.js, entry.js
+  // would import the b.js chunk, and that chunk imports require_lib from
+  // entry.js — a static cycle that reads require_lib before it is assigned.
+  itBundled("splitting/MinChunkSizeBarrelRecordIsNotAnImport", {
+    files: {
+      "/entry.js": /* js */ `
+        import lib from "lib"
+        import { A } from "pkg"
+        import { big } from "./big.js"
+        console.log("entry", A, lib.v, big.length)
+        if (process.argv[2] === "r1") import("./r1.js")
+        if (process.argv[2] === "all") [import("./r2.js"), import("./r3.js"), import("./r4.js")]
+      `,
+      "/big.js": `export const big = "${Buffer.alloc(40000, "x").toString()}"`,
+      "/c.js": /* js */ `
+        import { B, B2 } from "pkg"
+        export const c = () => B + B2
+      `,
+      "/r1.js": `import { c } from "./c.js"; console.log("r1", c())`,
+      "/r2.js": `import { c } from "./c.js"; console.log("r2", c())`,
+      "/r3.js": `import { B } from "pkg"; console.log("r3", B)`,
+      "/r4.js": `import { B2 } from "pkg"; console.log("r4", B2)`,
+      "/node_modules/pkg/package.json": JSON.stringify({ name: "pkg", main: "index.js", sideEffects: false }),
+      "/node_modules/pkg/index.js": /* js */ `
+        export * from "./star.js"
+        export { A } from "./a.js"
+        export { B } from "./b.js"
+        export { B2 } from "./b2.js"
+      `,
+      "/node_modules/pkg/star.js": `export const S = 1`,
+      "/node_modules/pkg/a.js": `export const A = "A"`,
+      // A top-level require() runs lib, so these chunks have a side effect and
+      // may only be imported where they already were.
+      "/node_modules/pkg/b.js": `const lib = require("lib"); export const B = lib.v`,
+      "/node_modules/pkg/b2.js": `const lib = require("lib"); export const B2 = lib.w`,
+      "/node_modules/lib/package.json": JSON.stringify({ name: "lib", main: "index.js" }),
+      "/node_modules/lib/index.js": `module.exports = { v: 1, w: 2 }`,
+    },
+    entryPoints: ["/entry.js"],
+    splitting: true,
+    minChunkSize: 1024,
+    outdir: "/out",
+    format: "esm",
+    onAfterBundle(api) {
+      // entry, r1..r4, and the c.js, b.js and b2.js chunks.
+      expect(jsFilesIn(api)).toHaveLength(8);
+      expect(api.readFile("/out/entry.js")).not.toMatch(/^import /m);
+    },
+    run: { file: "/out/entry.js", args: ["r1"], stdout: "entry A 1 40000\nr1 3" },
+  });
+
+  // An entry point runs its own code when loaded, so its chunk never moves,
+  // whatever it imports.
   itBundled("splitting/MinChunkSizeKeepsImporterOfWrappedModule", {
     files: {
       "/main.js": /* js */ `
@@ -1434,9 +2185,10 @@ describe("bundler", () => {
     run: { file: "/out/main.js", stdout: "main 20000\nlib evaluated\nlazy 20001" },
   });
 
-  // Once the {x, y} chunk folds into the {main, x, y} chunk, that chunk
-  // imports d.js, so d.js is loaded whenever main is; d.js may then no longer
-  // fold into q's chunk, whose side effect would run at startup.
+  // The {x, y} chunk (c0.js, c.js) folds into q.js's {x, y, z, w} chunk and
+  // takes d.js's {x, y, z} chunk along as a new import of it, so d.js is then
+  // loaded wherever q.js is and folds there too; nothing may land in main.js,
+  // which must not run q.js's side effect at startup.
   itBundled("splitting/MinChunkSizeTracksLoadConditionsAcrossFolds", {
     files: {
       "/main.js": /* js */ `
@@ -1499,10 +2251,11 @@ describe("bundler", () => {
     outdir: "/out",
     format: "esm",
     onAfterBundle(api) {
-      // main, x, y, z, w, the q.js chunk and the d.js chunk; mxy.js (with
-      // c.js and c0.js) lives in main.js rather than an 8th {main, x, y} chunk.
-      expect(jsFilesIn(api)).toHaveLength(7);
-      expect(api.readFile("/out/main.js").length).toBeGreaterThan(12000);
+      // main (with mxy.js), x, y, z, w and the q.js chunk holding c0, c and d.
+      expect(jsFilesIn(api)).toHaveLength(6);
+      const q = chunkContaining(api, "q evaluated");
+      for (const f of ["c0", "c", "d"]) api.expectFile("/out/" + q).toContain(`function ${f}()`);
+      api.expectFile("/out/main.js").not.toContain("q evaluated");
     },
     run: { file: "/out/main.js", stdout: "main 12000" },
   });
@@ -1642,6 +2395,74 @@ describe("bundler", () => {
     run: { file: "/out/main.js", stdout: "cjs value called" },
   });
 
+  // A split require() of a lifted `module.exports = require()` file that the
+  // linker wraps again because its target is CommonJS: the chunk's only
+  // export is `default: module.exports`, so the call reads `.default` and
+  // returns `module.exports`, not the chunk namespace.
+  // https://github.com/oven-sh/bun/issues/41236
+  itBundled("splitting/SplitRequireOfRewrappedLiftedCommonJS#41236", {
+    files: {
+      "/main.ts": /* ts */ `
+        let m;
+        try {
+          m = require("react-dom");
+        } catch {}
+        console.log(typeof m, m.version, m.default());
+      `,
+      "/node_modules/react-dom/index.js": /* js */ `
+        console.log('side effect');
+        module.exports = require('./impl');
+      `,
+      "/node_modules/react-dom/impl.js": /* js */ `
+        module.exports = function render() { return "rendered"; };
+        module.exports.version = "19.0.0";
+      `,
+    },
+    entryPoints: ["/main.ts"],
+    splitting: true,
+    target: "bun",
+    outdir: "/out",
+    format: "esm",
+    onAfterBundle(api) {
+      const chunk = chunkContaining(api, "side effect");
+      api.expectFile("/out/main.js").toContain(`import.meta.require("./${chunk}").default`);
+    },
+    run: { file: "/out/main.js", stdout: "side effect\nobject 19.0.0 rendered" },
+  });
+
+  // When the lift target is itself lifted, the chunk stays an ES module and
+  // the split require() returns its namespace with no `.default` read.
+  itBundled("splitting/SplitRequireOfLiftedCommonJSStaysEsm", {
+    files: {
+      "/main.ts": /* ts */ `
+        let m;
+        try {
+          m = require("react-dom");
+        } catch {}
+        console.log(m.version, m.render());
+      `,
+      "/node_modules/react-dom/index.js": /* js */ `
+        console.log('side effect');
+        module.exports = require('./impl');
+      `,
+      "/node_modules/react-dom/impl.js": /* js */ `
+        exports.render = function render() { return "rendered"; };
+        exports.version = "19.0.0";
+      `,
+    },
+    entryPoints: ["/main.ts"],
+    splitting: true,
+    target: "bun",
+    outdir: "/out",
+    format: "esm",
+    onAfterBundle(api) {
+      const chunk = chunkContaining(api, "side effect");
+      api.expectFile("/out/main.js").toContain(`import.meta.require("./${chunk}")`);
+      api.expectFile("/out/main.js").not.toContain(".default");
+    },
+    run: { file: "/out/main.js", stdout: "side effect\n19.0.0 rendered" },
+  });
+
   // A top-level require() in a module that the required chunk imports back
   // (the registry ↔ tool shape): the chunk is evaluated while the entry is
   // still evaluating and sees the entry's hoisted functions through live
@@ -1776,6 +2597,465 @@ describe("bundler", () => {
     },
     run: { file: "/out/main.js", stdout: "main\ntool evaluated\ntool:helped" },
   });
+
+  // Browser ESM: every split `import()` first inserts <link rel=modulepreload>
+  // for the chunks its target statically imports (transitively), so a deep
+  // chunk chain downloads in parallel instead of one round trip per level.
+  // `document` is shimmed; each appended link prints its file name.
+  const preloadShim = /* js */ `
+    globalThis.links = [];
+    globalThis.document = {
+      createElement: tag => ({ tag }),
+      querySelector: () => null,
+      head: {
+        appendChild: link => {
+          if (link.crossOrigin !== "") throw new Error("crossOrigin " + link.crossOrigin);
+          if (link.nonce !== undefined) throw new Error("nonce " + link.nonce);
+          links.push(link.rel + " " + String(link.href).split("/").pop());
+        },
+      },
+    };
+  `;
+  // r0 -> a1 -> a2 -> ... -> aN; each aK also reached by route rK, so every aK is its own chunk.
+  const preloadChainFiles = (n: number) => {
+    const files: Record<string, string> = {
+      "/r0.js": `import { a1 } from "./a1.js"; export default () => "r0:" + a1();`,
+    };
+    for (let i = 1; i <= n; i++) {
+      files[`/r${i}.js`] = `import { a${i} } from "./a${i}.js"; export default () => "r${i}:" + a${i}();`;
+      files[`/a${i}.js`] =
+        (i < n ? `import { a${i + 1} } from "./a${i + 1}.js";\n` : "") +
+        `export const a${i} = () => "a${i}" + ${i < n ? `a${i + 1}()` : `""`};`;
+    }
+    return files;
+  };
+  itBundled("splitting/ModulePreloadDynamicImportClosure", {
+    files: {
+      "/entry.js": /* js */ `
+        const routes = [
+          () => import("./r0.js"), () => import("./r1.js"), () => import("./r2.js"), () => import("./r3.js"),
+          () => import("./r4.js"), () => import("./r5.js"), () => import("./r6.js"), () => import("./leaf.js"),
+        ];
+        export const nav = i => routes[i]();
+      `,
+      "/leaf.js": `export default () => "leaf"`,
+      ...preloadChainFiles(6),
+    },
+    entryPoints: ["/entry.js"],
+    splitting: true,
+    outdir: "/out",
+    target: "browser",
+    runtimeFiles: {
+      "/test.js": /* js */ `
+        ${preloadShim}
+        const { nav } = await import("./out/entry.js");
+        console.log("load", JSON.stringify(links));
+        const pending = nav(0);
+        // every chunk r0 reaches, before r0 itself has even been fetched
+        console.log("nav", links.length, new Set(links).size);
+        console.log((await pending).default());
+        links.length = 0;
+        await nav(3); // a3..a6 already preloaded
+        await nav(7); // no static imports: nothing to do
+        await nav(0);
+        console.log("again", JSON.stringify(links));
+      `,
+      "/no-document.js": /* js */ `
+        const { nav } = await import("./out/entry.js");
+        console.log((await nav(0)).default(), (await nav(7)).default());
+      `,
+    },
+    onAfterBundle(api) {
+      const entry = api.readFile("/out/entry.js");
+      expect(entry).toMatch(/^__chunks\(import\.meta\.url,\s*\[/m);
+      expect(entry.match(/__preload\("(\w+)"\), import\("\.\/[^"]+-\1\.js"\)/g)).toHaveLength(8);
+      // one chunk per aK: the chain really is 6 deep
+      for (let i = 1; i < 6; i++) {
+        expect(api.readFile("/out/" + chunkContaining(api, `"a${i}"`))).not.toContain(`"a${i + 1}"`);
+      }
+    },
+    run: [
+      { file: "/test.js", stdout: "load []\nnav 6 6\nr0:a1a2a3a4a5a6\nagain []" },
+      { file: "/no-document.js", stdout: "r0:a1a2a3a4a5a6 leaf" },
+    ],
+  });
+  itBundled("splitting/ModulePreloadSyntaxShapes", {
+    files: {
+      "/entry.js": /* js */ `
+        const a = await import("./a.js");
+        const { b } = await import("./b.js");
+        const c = await import("./c.js").then(m => m.c);
+        const d = () => import("./d.js");
+        function e() { return import("./e.js") }
+        const all = [import("./f.js"), \`\${import("./g.js")}\`];
+        import("./h.js");
+        console.log(a.a, b, c, (await d()).d, (await e()).e, (await all[0]).f, all[1]);
+      `,
+      ...Object.fromEntries("abcdefgh".split("").map(l => [`/${l}.js`, `export const ${l} = "${l}"`])),
+    },
+    entryPoints: ["/entry.js"],
+    splitting: true,
+    outdir: "/out",
+    target: "browser",
+    minifySyntax: true,
+    onAfterBundle(api) {
+      expect(api.readFile("/out/entry.js").match(/__preload\("\w+"\), ?import\(/g)).toHaveLength(8);
+    },
+    run: { file: "/out/entry.js", stdout: "a b c d e f [object Promise]" },
+  });
+  itBundled("splitting/ModulePreloadMinifiedTwoEntriesOnePage", {
+    files: {
+      "/one.js": `globalThis.one = () => import("./r0.js")`,
+      "/two.js": `globalThis.two = () => import("./r2.js")`,
+      ...preloadChainFiles(3),
+    },
+    entryPoints: ["/one.js", "/two.js"],
+    splitting: true,
+    outdir: "/out",
+    target: "browser",
+    minifyIdentifiers: true,
+    minifyWhitespace: true,
+    runtimeFiles: {
+      "/test.js": /* js */ `
+        ${preloadShim}
+        await import("./out/one.js");
+        await import("./out/two.js");
+        const r2 = await two();
+        console.log(links.length, r2.default());
+        const r0 = await one();
+        console.log(links.length, r0.default());
+      `,
+    },
+    onAfterBundle(api) {
+      for (const entry of ["one", "two"]) {
+        expect(api.readFile(`/out/${entry}.js`)).not.toContain("__chunks");
+        expect(api.readFile(`/out/${entry}.js`)).toMatch(/[$\w]+\(import\.meta\.url,\[/);
+      }
+    },
+    // the {a2, a3} chunk is linked once, through two(); one() finds it already seen
+    run: { file: "/test.js", stdout: "1 r2:a2a3\n1 r0:a1a2a3" },
+  });
+  itBundled("splitting/ModulePreloadPublicPathAndNestedEntry", {
+    files: {
+      "/pages/deep/entry.js": `export const nav = () => import("../../r0.js")`,
+      "/other.js": `export const nav = () => import("./r2.js")`,
+      ...preloadChainFiles(2),
+    },
+    entryPoints: ["/pages/deep/entry.js", "/other.js"],
+    outputPaths: ["/out/pages/deep/entry.js", "/out/other.js"],
+    splitting: true,
+    outdir: "/out",
+    target: "browser",
+    runtimeFiles: {
+      "/test.js": /* js */ `
+        ${preloadShim}
+        document.head.appendChild = link => links.push(new URL(link.href).pathname);
+        const { nav } = await import("./out/pages/deep/entry.js");
+        await nav();
+        // a2's chunk (shared with r2) sits at the outdir root, two levels up from the entry
+        console.log(JSON.stringify(links.map(l => l.slice(l.lastIndexOf("/out/")).replace(/[^/]+$/, "X.js"))));
+      `,
+    },
+    onAfterBundle(api) {
+      // graph paths are relative to the registering chunk, like its imports
+      expect(api.readFile("/out/pages/deep/entry.js")).toMatch(
+        /__chunks\(import\.meta\.url,\[.*"\.\.\/\.\.\/r0-\w+\.js"/,
+      );
+    },
+    run: { file: "/test.js", stdout: `["/out/X.js"]` },
+  });
+  itBundled("splitting/ModulePreloadAbsolutePublicPath", {
+    files: {
+      "/entry.js": `export const nav = () => import("./r0.js")`,
+      "/other.js": `export const nav = () => import("./r2.js")`,
+      ...preloadChainFiles(2),
+    },
+    entryPoints: ["/entry.js", "/other.js"],
+    splitting: true,
+    outdir: "/out",
+    target: "browser",
+    publicPath: "https://cdn.example.com/v1/",
+    onAfterBundle(api) {
+      const entry = api.readFile("/out/entry.js");
+      expect(entry).toMatch(/__preload\("(\w+)"\), import\("https:\/\/cdn\.example\.com\/v1\/r0-\1\.js"\)/);
+      const [ids, nodes] = JSON.parse("[" + entry.match(/__chunks\(import\.meta\.url,(\[.*\]),0\);/)![1] + "]") as [
+        string[],
+        [string, ...number[]][],
+      ];
+      expect(ids.length).toBeGreaterThan(3);
+      expect(nodes).toHaveLength(ids.length);
+      const paths = nodes.map(node => node[0]);
+      for (const path of paths) expect(path).toStartWith("https://cdn.example.com/v1/");
+    },
+  });
+  // rolldown build-import-analysis/then-with-nested-import: each import() in a
+  // .then() chain preloads its own target's imports, when it runs.
+  itBundled("splitting/ModulePreloadNestedThen", {
+    files: {
+      "/entry.js": /* js */ `
+        export const run = () =>
+          import("./lib1.js")
+            .then(m => (console.log(links.length, m.v1()), import("./lib2.js")))
+            .then(m => console.log(links.length, m.v2()));
+        export const others = () => [import("./o1.js"), import("./o2.js")];
+      `,
+      "/lib1.js": `import { s1 } from "./s1.js"; export const v1 = () => s1;`,
+      "/lib2.js": `import { s2 } from "./s2.js"; export const v2 = () => s2;`,
+      "/o1.js": `export { s1 } from "./s1.js";`,
+      "/o2.js": `export { s2 } from "./s2.js";`,
+      "/s1.js": `export const s1 = 100;`,
+      "/s2.js": `export const s2 = 200;`,
+    },
+    entryPoints: ["/entry.js"],
+    splitting: true,
+    outdir: "/out",
+    target: "browser",
+    runtimeFiles: {
+      "/test.js": /* js */ `
+        ${preloadShim}
+        const { run } = await import("./out/entry.js");
+        await run();
+      `,
+    },
+    onAfterBundle(api) {
+      const indices = [...api.readFile("/out/entry.js").matchAll(/__preload\("(\w+)"\), import\(/g)].map(m => m[1]);
+      expect(indices).toHaveLength(4);
+      expect(new Set(indices).size).toBe(4);
+    },
+    run: { file: "/test.js", stdout: "1 100\n2 200" },
+  });
+  // vite html.ts getImportedChunks `seen`: a chunk reached along two import
+  // paths is linked once.
+  itBundled("splitting/ModulePreloadHTMLDiamond", {
+    files: {
+      "/a.html": `<!DOCTYPE html><html><head><script type="module" src="./a.js"></script></head><body></body></html>`,
+      "/b.html": `<!DOCTYPE html><html><head><script type="module" src="./b.js"></script></head><body></body></html>`,
+      "/c.html": `<!DOCTYPE html><html><head><script type="module" src="./c.js"></script></head><body></body></html>`,
+      "/a.js": `import { x } from "./x.js"; import { y } from "./y.js"; console.log(x(), y());`,
+      "/b.js": `import { x } from "./x.js"; console.log(x());`,
+      "/c.js": `import { y } from "./y.js"; console.log(y());`,
+      "/x.js": `import { shared } from "./shared.js"; export const x = () => "x" + shared();`,
+      "/y.js": `import { shared } from "./shared.js"; export const y = () => "y" + shared();`,
+      "/shared.js": `export const shared = () => "shared";`,
+    },
+    entryPoints: ["/a.html", "/b.html", "/c.html"],
+    splitting: true,
+    outdir: "/out",
+    onAfterBundle(api) {
+      const hrefs = [
+        ...api.readFile("/out/a.html").matchAll(/<link rel="modulepreload" crossorigin href="([^"]+)">/g),
+      ].map(m => m[1]);
+      // x's chunk, y's chunk, shared's chunk
+      expect(hrefs).toHaveLength(3);
+      expect(new Set(hrefs).size).toBe(3);
+      const script = api.readFile("/out/a.html").match(/<script type="module" crossorigin src="([^"]+)">/)![1];
+      expect(hrefs).not.toContain(script);
+    },
+  });
+  // Chunks that import() each other: the registered graph and the preload walk
+  // both terminate, and each side links the static imports of the other once.
+  itBundled("splitting/ModulePreloadImportCycle", {
+    files: {
+      "/a.js": /* js */ `
+        import { sa } from "./sa.js";
+        export const a = () => "a" + sa;
+        export const toB = () => import("./b.js");
+      `,
+      "/b.js": /* js */ `
+        import { sb } from "./sb.js";
+        export const b = () => "b" + sb;
+        export const toA = () => import("./a.js");
+      `,
+      "/other.js": `export const both = () => [import("./sa.js"), import("./sb.js")];`,
+      "/sa.js": `export const sa = 1;`,
+      "/sb.js": `export const sb = 2;`,
+    },
+    entryPoints: ["/a.js", "/b.js", "/other.js"],
+    splitting: true,
+    outdir: "/out",
+    target: "browser",
+    runtimeFiles: {
+      "/test.js": /* js */ `
+        ${preloadShim}
+        const { toB } = await import("./out/a.js");
+        const { b, toA } = await toB();
+        console.log(links.length, b());
+        const { a } = await toA();
+        console.log(links.length, a());
+        await toB();
+        console.log(links.length);
+      `,
+    },
+    onAfterBundle(api) {
+      for (const entry of ["a", "b"]) {
+        expect(api.readFile(`/out/${entry}.js`)).toMatch(/__chunks\(import\.meta\.url,\[/);
+        expect(api.readFile(`/out/${entry}.js`)).toMatch(/__preload\("\w+"\), import\(/);
+      }
+    },
+    // Going to b links sb's chunk; sa's chunk loaded with a, so coming back links nothing.
+    run: { file: "/test.js", stdout: "1 b2\n1 a1\n1" },
+  });
+  // vite dynamic-import playground "should not preload for non-analyzable urls"
+  itBundled("splitting/ModulePreloadSkipsNonAnalyzableImport", {
+    files: {
+      "/entry.js": /* js */ `
+        export const known = () => import("./page.js");
+        export const unknown = name => [import(globalThis.somewhere), import("./pages/" + name + ".js")];
+      `,
+      "/page.js": `export { shared } from "./shared.js";`,
+      "/other.js": `export { shared } from "./shared.js";`,
+      "/shared.js": `export const shared = 1;`,
+      "/pages/p.js": `export default "p";`,
+    },
+    entryPoints: ["/entry.js", "/other.js"],
+    splitting: true,
+    outdir: "/out",
+    target: "browser",
+    onAfterBundle(api) {
+      const entry = api.readFile("/out/entry.js");
+      expect(entry.match(/__preload\("\w+"\), import\(/g)).toHaveLength(1);
+      expect(entry).toMatch(/__preload\("(\w+)"\), import\("\.\/page-\1\.js"\)/);
+      expect(entry).toContain("import(globalThis.somewhere)");
+    },
+  });
+  itBundled("splitting/ModulePreloadDisabled", {
+    files: {
+      "/index.html": `<!DOCTYPE html><html><head><script type="module" src="./entry.js"></script></head><body></body></html>`,
+      "/entry.js": `import { nav } from "./other.js"; globalThis.go = () => [nav(), import("./r0.js")];`,
+      "/other.js": `export const nav = () => import("./r2.js")`,
+      ...preloadChainFiles(2),
+    },
+    entryPoints: ["/index.html", "/other.js"],
+    splitting: true,
+    outdir: "/out",
+    target: "browser",
+    modulePreload: false,
+    onAfterBundle(api) {
+      for (const file of readdirSync(api.outdir)) {
+        expect(api.readFile("/out/" + file)).not.toMatch(/__preload|__chunks|modulepreload/);
+      }
+    },
+  });
+  // An entry another entry imports keeps its code in a shared chunk; its own
+  // (re-exporting) entry chunk still registers the graph.
+  itBundled("splitting/ModulePreloadEntryImportedByEntry", {
+    files: {
+      "/index.js": `import { go } from "./lib.js"; export const run = go;`,
+      "/lib.js": `export const go = () => import("./r0.js");`,
+      "/other.js": `export const nav = () => import("./r2.js")`,
+      ...preloadChainFiles(2),
+    },
+    entryPoints: ["/index.js", "/lib.js", "/other.js"],
+    splitting: true,
+    outdir: "/out",
+    target: "browser",
+    runtimeFiles: {
+      "/test.js": /* js */ `
+        ${preloadShim}
+        const { go } = await import("./out/lib.js");
+        console.log((await go()).default(), links.length);
+      `,
+    },
+    onAfterBundle(api) {
+      for (const entry of ["index", "lib"]) {
+        expect(api.readFile(`/out/${entry}.js`)).toMatch(/__chunks\(import\.meta\.url,\[/);
+      }
+      for (const file of jsFilesIn(api)) {
+        if (!["index.js", "lib.js", "other.js"].includes(file))
+          expect(api.readFile("/out/" + file)).not.toContain("(import.meta.url,");
+      }
+    },
+    run: { file: "/test.js", stdout: "r0:a1a2 1" },
+  });
+  // import() of another user-specified entry point is a split import() too.
+  itBundled("splitting/ModulePreloadImportOfUserEntry", {
+    files: {
+      "/a.js": `export const go = () => import("./b.js");`,
+      "/b.js": `import { s } from "./s.js"; export const b = () => "b" + s;`,
+      "/c.js": `export { s } from "./s.js";`,
+      "/s.js": `export const s = 1;`,
+    },
+    entryPoints: ["/a.js", "/b.js", "/c.js"],
+    splitting: true,
+    outdir: "/out",
+    target: "browser",
+    runtimeFiles: {
+      "/test.js": /* js */ `
+        ${preloadShim}
+        const { go } = await import("./out/a.js");
+        const m = await go();
+        console.log(m.b(), links.length);
+      `,
+    },
+    onAfterBundle(api) {
+      expect(api.readFile("/out/a.js")).toMatch(/__chunks\(import\.meta\.url,\[/);
+      expect(api.readFile("/out/a.js")).toMatch(/__preload\("\w+"\), import\("\.\/b\.js"\)/);
+    },
+    run: { file: "/test.js", stdout: "b1 1" },
+  });
+  // An entry that reaches no split import() (after tree shaking) is left exactly as it was.
+  itBundled("splitting/ModulePreloadLeavesStaticEntryAlone", {
+    files: {
+      "/lazy-page.js": `export const nav = () => import("./r0.js");`,
+      "/static-page.js": `import { a2 } from "./a2.js"; console.log(a2()); function dead() { return import("./r0.js") }`,
+      ...preloadChainFiles(2),
+    },
+    entryPoints: ["/lazy-page.js", "/static-page.js"],
+    splitting: true,
+    outdir: "/out",
+    target: "browser",
+    onAfterBundle(api) {
+      expect(api.readFile("/out/lazy-page.js")).toMatch(/__chunks\(import\.meta\.url,\[/);
+      expect(api.readFile("/out/static-page.js")).not.toMatch(/__chunks|__preload/);
+      // lazy-page, static-page, r0, and the a2 chunk both pages share: no separate runtime chunk
+      expect(jsFilesIn(api)).toHaveLength(4);
+    },
+    run: { file: "/out/static-page.js", stdout: "a2" },
+  });
+  // vite importAnalysisBuild: links carry the page's <meta property="csp-nonce"> nonce.
+  itBundled("splitting/ModulePreloadCspNonce", {
+    files: {
+      "/entry.js": `export const nav = () => import("./r0.js")`,
+      "/other.js": `export const nav = () => import("./r2.js")`,
+      ...preloadChainFiles(2),
+    },
+    entryPoints: ["/entry.js", "/other.js"],
+    splitting: true,
+    outdir: "/out",
+    target: "browser",
+    runtimeFiles: {
+      "/test.js": /* js */ `
+        const links = [];
+        globalThis.document = {
+          createElement: tag => ({ tag }),
+          querySelector: sel => (sel === "meta[property=csp-nonce]" ? { nonce: "abc123" } : null),
+          head: { appendChild: link => links.push(link.nonce) },
+        };
+        const { nav } = await import("./out/entry.js");
+        await nav();
+        console.log(JSON.stringify(links));
+      `,
+    },
+    run: { file: "/test.js", stdout: `["abc123"]` },
+  });
+  for (const target of ["bun", "node"] as const) {
+    itBundled(`splitting/ModulePreloadIsBrowserOnly_${target}`, {
+      files: {
+        "/entry.js": `export const nav = () => import("./r0.js")`,
+        "/other.js": `export const nav = () => import("./r2.js")`,
+        ...preloadChainFiles(2),
+      },
+      entryPoints: ["/entry.js", "/other.js"],
+      splitting: true,
+      outdir: "/out",
+      target,
+      onAfterBundle(api) {
+        for (const file of jsFilesIn(api)) {
+          expect(api.readFile("/out/" + file)).not.toMatch(/__preload|__chunks|modulepreload/);
+        }
+      },
+    });
+  }
 
   // N same-named cross-chunk exports must get unique aliases in O(N) total
   // (ExportRenamer::next_renamed_name). Debug/ASAN builds blow past the 15s

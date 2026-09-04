@@ -304,11 +304,24 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     // Used for forcing CommonJS
     pub(crate) has_with_scope: bool,
 
+    /// A module-scope `var` has the name of a top-level function, which module code rejects.
+    pub(crate) has_top_level_function_merged_with_var: bool,
+
     pub(crate) is_file_considered_to_have_esm_exports: bool,
 
     pub(crate) has_called_runtime: bool,
 
+    /// The current part's symbol uses, built from `part_uses` when the part
+    /// is done (`take_symbol_uses`); empty while visiting.
     pub(crate) symbol_uses: SymbolUseMap,
+    /// The current part's uses in first-use order. By symbol inner index,
+    /// `part_use_slot[i]` says whether symbol `i` has a live entry in
+    /// `part_uses` this part and where: one dense lookup per reference
+    /// instead of a hash-map probe.
+    pub(crate) part_uses: Vec<(Ref, js_ast::symbol::Use)>,
+    /// `generation << 32 | index`.
+    pub(crate) part_use_slot: Vec<u64>,
+    pub(crate) part_generation: u32,
     pub(crate) declared_symbols: bun_ast::DeclaredSymbolList,
     pub(crate) runtime_imports: RuntimeImports,
 
@@ -325,6 +338,16 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     /// Import records whose namespace is known to escape regardless of use
     /// counts (one local bound to two records).
     pub(crate) dynamic_import_escaped_records: HashMap<u32, ()>,
+    /// Import records with a use the printer can't rewrite to a direct read
+    /// of an export, so the linker must keep the namespace object.
+    pub(crate) dynamic_import_needs_object: HashMap<u32, ()>,
+    /// Namespace locals that hold a copy, not the namespace (`{...rest}`), or
+    /// that no source reads by name (`require_namespace_ref`).
+    pub(crate) dynamic_import_copied_locals: HashMap<Ref, ()>,
+    /// Locals a tracked destructure binds (`const { z } = await import(...)`).
+    /// `z.name` off one is recorded as an import property use so the linker
+    /// can bind it, once `parse_entry` has made the local an import item.
+    pub(crate) dynamic_import_destructured_locals: HashMap<Ref, ()>,
     /// Per namespace ref, how many of its `use_count_estimate` uses were an
     /// accounted-for read (`ns.a`, a destructure, a truthiness test). Kept
     /// beside the real count rather than decremented from it so the minifier's
@@ -335,9 +358,13 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     pub(crate) commonjs_named_exports: bun_ast::ast_result::CommonJSNamedExports,
     pub(crate) commonjs_named_exports_deoptimized: bool,
     pub(crate) commonjs_module_exports_assigned_deoptimized: bool,
+    /// Uses of `module` that became `module.exports` and stay in its use count.
+    pub(crate) module_exports_rewrite_count: u32,
     pub(crate) commonjs_named_exports_needs_conversion: u32,
     pub(crate) had_commonjs_named_exports_this_visit: bool,
     pub(crate) commonjs_replacement_stmts: StmtNodeList,
+    /// How many `this` expressions the visit pass has seen.
+    pub(crate) this_expr_count: u32,
 
     pub(crate) parse_pass_symbol_uses: ParsePassSymbolUsageType<'a>,
 
@@ -456,6 +483,7 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     pub(crate) import_records: ImportRecordList<'a>,
     pub(crate) import_records_for_current_part: List<'a, u32>,
     pub(crate) export_star_import_records: List<'a, u32>,
+    /// Also holds the calls of `exports.name` under `exports_ref`, until `to_ast`.
     pub(crate) import_symbol_property_uses: SymbolPropertyUseMap,
 
     // These are for handling ES6 imports and exports
@@ -507,11 +535,25 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     // syntactic constructs as appropriate.
     pub(crate) stmt_expr_value: js_ast::ExprData,
     pub(crate) call_target: js_ast::ExprData,
+    pub(crate) template_tag: js_ast::ExprData,
     pub(crate) delete_target: js_ast::ExprData,
     pub(crate) loop_body: js_ast::StmtData,
     pub(crate) module_scope: js_ast::StoreRef<js_ast::Scope>,
     pub(crate) module_scope_directive_loc: bun_ast::Loc,
     pub(crate) is_control_flow_dead: bool,
+    /// Fill `scope_uses` (bundling with the number renamer).
+    pub(crate) track_scope_uses: bool,
+    /// Next `Scope::visit_span` pre-order index. The module scope is 0.
+    pub(crate) visit_scope_count: u32,
+    /// Class body scopes whose field initializer is being visited. Lowering
+    /// may move the initializer into the constructor, so its uses count as
+    /// uses anywhere in the class body.
+    pub(crate) field_init_class_bodies: Vec<js_ast::StoreRef<Scope>>,
+    /// Becomes `Ast::scope_uses`.
+    pub(crate) scope_uses: Vec<js_ast::ast_result::ScopeUse>,
+    /// `(class body scope, symbol)`; becomes `Ast::scope_uses.spans` once the
+    /// visit pass has numbered every scope. A `None` scope is the whole file.
+    pub(crate) span_uses: Vec<(Option<js_ast::StoreRef<Scope>>, u32)>,
 
     /// True while `visit_single_stmt` is visiting a non-block body. `if`,
     /// `else`, `while`, and `do` reach it without pushing a scope, so inside
@@ -1055,6 +1097,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             .unwrap();
         let rest_ref = record_destructured_aliases(self.arena, map, properties, keep_all)?;
         if let Some((rest, loc)) = rest_ref {
+            self.dynamic_import_copied_locals.insert(rest, ());
             self.register_dynamic_import_namespace_local_multi(rest, loc, records);
         }
         // The destructured locals live in this scope: a direct `eval` here can
@@ -1071,6 +1114,98 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 });
         }
         Some(())
+    }
+
+    /// Registers the items of each tracked call as named imports of its record,
+    /// as `import { alias as local }` would: the linker matches each against
+    /// the export and merges the symbol. One it does not bind reads as written
+    /// (`LinkerContext::match_imports_with_exports_for_file`). An exported local
+    /// stays a local, or an importer of this file would bind through it and
+    /// load the module eagerly. Runs after `ImportScanner` records exports.
+    fn register_dynamic_import_items(&mut self) {
+        if self.dynamic_import_aliases.count() == 0 {
+            return;
+        }
+        let mut exported: HashMap<Ref, ()> = HashMap::default();
+        for export in self.named_exports.values() {
+            exported.insert(export.ref_, ());
+        }
+        for i in 0..self.dynamic_import_aliases.count() {
+            let record = self.dynamic_import_aliases.keys()[i];
+            let items = self.dynamic_import_aliases.values()[i].items;
+            for item in items.slice() {
+                if exported.contains_key(&item.local) {
+                    continue;
+                }
+                self.is_import_item.insert(item.local, ());
+                // A name the importee does not export reads `undefined`, as it
+                // does off a namespace object, rather than failing the build.
+                self.symbols[item.local.inner_index() as usize].import_item_status =
+                    bun_ast::ImportItemStatus::Generated;
+                bun_core::handle_oom(self.named_imports.put(
+                    item.local,
+                    js_ast::NamedImport {
+                        alias: Some(item.alias),
+                        alias_loc: bun_ast::Loc::EMPTY,
+                        namespace_ref: item.namespace_ref,
+                        import_record_index: record,
+                        local_parts_with_uses: bun_alloc::AstAlloc::vec(),
+                        alias_is_star: false,
+                        is_exported: false,
+                    },
+                ));
+            }
+        }
+    }
+
+    /// The import record `ns.name` reads an export of, when `ns` holds that one
+    /// module's namespace, so the read can become an import item.
+    pub(crate) fn dynamic_import_item_record(&self, ns: Ref, name: &[u8]) -> Option<u32> {
+        if !self.options.bundle
+            || self.options.output_format == options::Format::InternalBakeDev
+            || self.dynamic_import_copied_locals.contains_key(&ns)
+        {
+            return None;
+        }
+        let &[record] = self.dynamic_import_namespace_locals.get(&ns)?.as_slice() else {
+            return None;
+        };
+        if self.dynamic_import_needs_object.contains_key(&record)
+            || is_require_marker(&self.import_records.items()[record as usize], name)
+        {
+            return None;
+        }
+        // A destructure of `ns` already holds the name with its own local.
+        match self.import_items_for_namespace.get(&ns)?.get(name) {
+            Some(existing) if !self.is_import_item.contains_key(&existing.ref_) => None,
+            _ => Some(record),
+        }
+    }
+
+    /// `const { a, b: c } = …` or `.then(({ a }) => …)`: the locals may become
+    /// import items. One already read (before its declaration, or from a
+    /// function above it) stays a local, since that read must not see the
+    /// export.
+    pub(crate) fn note_destructured_locals(&mut self, properties: &[bun_ast::B::Property]) {
+        // The dev server does not link, so nothing would bind them. A bound
+        // name leaves the pattern, and `...rest` would then collect it.
+        if !self.options.bundle
+            || self.options.output_format == options::Format::InternalBakeDev
+            || properties
+                .iter()
+                .any(|p| p.flags.contains(bun_ast::flags::Property::IsSpread))
+        {
+            return;
+        }
+        for prop in properties {
+            if let bun_ast::binding::Data::BIdentifier(id) = prop.value.data
+                && prop.default_value.is_none()
+                && !prop.flags.contains(bun_ast::flags::Property::IsSpread)
+                && self.symbols[id.r#ref.inner_index() as usize].use_count_estimate == 0
+            {
+                self.dynamic_import_destructured_locals.insert(id.r#ref, ());
+            }
+        }
     }
 
     /// Register a user-declared local (`const|let|var ns`, `.then(ns => …)`,
@@ -1109,6 +1244,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
         if records.is_empty() {
             return;
+        }
+        // `ns.a` can only be rewritten to `a` when `ns` is one namespace.
+        if records.len() > 1 {
+            for &r in records {
+                self.dynamic_import_needs_object.insert(r, ());
+            }
         }
         self.import_items_for_namespace
             .insert(local, ImportItemForNamespaceMap::default());
@@ -1296,6 +1437,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             .insert(ns, ImportItemForNamespaceMap::default());
         self.dynamic_import_namespace_locals
             .insert(ns, vec![req.import_record_index]);
+        self.dynamic_import_copied_locals.insert(ns, ());
         self.imports_to_convert_from_dynamic_import
             .push(DeferredImportNamespace {
                 namespace: LocRef {
@@ -1659,7 +1801,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             symbols[r#ref.inner_index() as usize].use_count_estimate = symbols
                 [r#ref.inner_index() as usize]
                 .use_count_estimate
-                .saturating_sub(prev.count_estimate);
+                .saturating_sub(prev.count_estimate());
         }
         let declared_refs = part.declared_symbols.refs();
         for declared in declared_refs {
@@ -1668,6 +1810,54 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     }
 
     // s() lives in the impl block above (deduped).
+
+    fn take_scope_uses(&mut self) -> js_ast::ast_result::ScopeUseList {
+        use js_ast::ast_result::{ScopeUseList, ScopeUseSpan};
+        if !self.track_scope_uses {
+            return ScopeUseList::default();
+        }
+        // Pushed first in the visit pass and never popped.
+        self.module_scope_mut().visit_span[1] = self.visit_scope_count.saturating_sub(1);
+        let file = ScopeUseSpan::whole_file;
+        let mut spans: Vec<ScopeUseSpan> = Vec::with_capacity(self.span_uses.len() + 2);
+        for &(scope, symbol) in &self.span_uses {
+            spans.push(match scope.and_then(|scope| scope.visit_span()) {
+                Some((first, last)) => ScopeUseSpan {
+                    symbol,
+                    first,
+                    last,
+                },
+                None => file(symbol),
+            });
+        }
+        // `module.exports` prints as `exports`, `exports` may print as
+        // `module.exports`.
+        spans.push(file(self.exports_ref.inner_index()));
+        spans.push(file(self.module_ref.inner_index()));
+        // The parser may print a temporary or helper it generated in a deeper
+        // scope than it referenced it in; not so its generated import items.
+        fn generated(symbols: &[Symbol], scope: &Scope, spans: &mut Vec<ScopeUseSpan>) {
+            for ref_ in scope.generated.slice() {
+                if symbols[ref_.inner_index() as usize].kind != js_ast::symbol::Kind::Import {
+                    spans.push(ScopeUseSpan::whole_file(ref_.inner_index()));
+                }
+            }
+            for child in scope.children.slice() {
+                generated(symbols, child, spans);
+            }
+        }
+        generated(self.symbols.as_slice(), self.module_scope(), &mut spans);
+        spans.sort_unstable();
+        spans.dedup();
+
+        let list = ScopeUseList {
+            tracked: true,
+            points: bun_alloc::AstAlloc::vec_from_slice(&self.scope_uses),
+            spans: bun_alloc::AstAlloc::vec_from_slice(&spans),
+        };
+        self.scope_uses = Vec::new();
+        list
+    }
 
     fn compute_character_frequency(&mut self) -> Option<js_ast::CharFreq> {
         if !self.options.features.minify_identifiers || self.is_source_runtime() {
@@ -1816,6 +2006,94 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     }
 
     pub(crate) fn record_usage(&mut self, ref_: Ref) {
+        self.record_usage_impl(ref_, true);
+    }
+
+    fn record_scope_use(&mut self, ref_: Ref) {
+        if !self.track_scope_uses {
+            return;
+        }
+        let symbol = ref_.inner_index();
+        let scope = self.current_scope;
+        if scope.visit_span[0] == u32::MAX {
+            // The parse pass (TypeScript decorator metadata resolves type
+            // names then): no scope numbering yet.
+            self.span_uses.push((None, symbol));
+        } else if scope.kind == js_ast::scope::Kind::ClassBody {
+            // A field initializer is visited in the class body scope but may
+            // be printed inside the constructor.
+            if self.span_uses.last().copied() != Some((Some(scope), symbol)) {
+                self.span_uses.push((Some(scope), symbol));
+            }
+        } else {
+            let point = js_ast::ast_result::ScopeUse {
+                scope: scope.visit_span[0],
+                symbol,
+            };
+            if self.scope_uses.last().copied() != Some(point) {
+                self.scope_uses.push(point);
+            }
+        }
+        for &class_body in &self.field_init_class_bodies {
+            if self.span_uses.last().copied() != Some((Some(class_body), symbol)) {
+                self.span_uses.push((Some(class_body), symbol));
+            }
+        }
+    }
+
+    /// The current part's use entry for `ref_`, created if absent.
+    fn part_use(&mut self, ref_: Ref) -> &mut js_ast::symbol::Use {
+        let i = ref_.inner_index() as usize;
+        if i >= self.part_use_slot.len() {
+            self.part_use_slot.resize(self.symbols.len(), 0);
+        }
+        let slot = self.part_use_slot[i];
+        let index = if (slot >> 32) as u32 == self.part_generation {
+            slot as u32 as usize
+        } else {
+            let index = self.part_uses.len();
+            self.part_use_slot[i] = (u64::from(self.part_generation) << 32) | index as u64;
+            self.part_uses.push((ref_, js_ast::symbol::Use::default()));
+            index
+        };
+        &mut self.part_uses[index].1
+    }
+
+    fn existing_part_use(&mut self, ref_: Ref) -> Option<&mut js_ast::symbol::Use> {
+        let slot = *self.part_use_slot.get(ref_.inner_index() as usize)?;
+        if (slot >> 32) as u32 != self.part_generation {
+            return None;
+        }
+        Some(&mut self.part_uses[slot as u32 as usize].1)
+    }
+
+    /// Drop the current part's uses of `ref_`.
+    pub(crate) fn forget_part_use(&mut self, ref_: Ref) {
+        if let Some(slot) = self.part_use_slot.get_mut(ref_.inner_index() as usize) {
+            *slot = 0;
+        }
+    }
+
+    /// The current part's uses as a map; starts the next part.
+    pub(crate) fn take_symbol_uses(&mut self) -> Result<SymbolUseMap, bun_alloc::AllocError> {
+        let mut map = core::mem::take(&mut self.symbol_uses);
+        map.clear_retaining_capacity();
+        map.ensure_total_capacity(self.part_uses.len())?;
+        let generation = u64::from(self.part_generation) << 32;
+        for (at, &(ref_, use_)) in self.part_uses.iter().enumerate() {
+            if self.part_use_slot[ref_.inner_index() as usize] == generation | at as u64 {
+                map.put_assume_capacity(ref_, use_);
+            }
+        }
+        self.part_uses.clear();
+        self.part_generation += 1;
+        Ok(map)
+    }
+
+    /// `scope_use = false`: the reference can never be captured by renaming
+    /// another binding (an unbound global, whose name every scope already
+    /// avoids), so `scope_uses` skips it.
+    pub(crate) fn record_usage_impl(&mut self, ref_: Ref, scope_use: bool) {
         if self.is_revisit_for_substitution {
             return;
         }
@@ -1825,12 +2103,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         if !self.is_control_flow_dead {
             debug_assert!(self.symbols.len() > ref_.inner_index() as usize);
             self.symbols[ref_.inner_index() as usize].use_count_estimate += 1;
-            // `get_or_put` zero-initializes the slot on insert (`Use::default()`).
-            self.symbol_uses
-                .get_or_put(ref_)
-                .expect("unreachable")
-                .value_ptr
-                .count_estimate += 1;
+            self.part_use(ref_).add_scoped(1);
+            if scope_use {
+                self.record_scope_use(ref_);
+            }
         }
 
         // The correctness of TypeScript-to-JavaScript conversion relies on accurate
@@ -3267,7 +3543,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     let members = &scope_ref.members;
                     let mut v = BumpVec::with_capacity_in(members.count(), arena);
                     for (k, m) in members.iter() {
-                        v.push((js_ast::StoreStr::new(k.as_ref()), *m));
+                        v.push((js_ast::StoreStr::new(k), *m));
                     }
                     v
                 };
@@ -3281,7 +3557,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
                     // `Symbol.original_name` is an arena-owned `StoreStr` valid for 'a.
                     let name: &'a [u8] = self.symbols[symbol_idx].original_name.slice();
-                    let mut hash: Option<u64> = None;
+                    let mut hash: Option<u32> = None;
 
                     if scope_parent.kind == js_ast::scope::Kind::CatchBinding
                         && self.symbols[symbol_idx].kind != js_ast::symbol::Kind::Hoisted
@@ -3400,9 +3676,20 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 // `StringHashMap` get_or_put already stores the key on insert and
                                 // cannot hand out `&mut K` (see StringHashMapGetOrPut docs), so
                                 // no key write is needed here.
-                                *_scope
-                                    .get_or_put_member_with_hash(name, hash.unwrap())
-                                    .value_ptr = member_in_scope;
+                                // SAFETY: `name` is a symbol's `original_name`.
+                                *unsafe {
+                                    _scope.get_or_put_member_with_hash(name, hash.unwrap())
+                                }
+                                .value_ptr = member_in_scope;
+
+                                // "function foo() {} { var foo; }"
+                                if _scope_ptr == self.module_scope
+                                    && self.symbols[symbol_idx].kind
+                                        == js_ast::symbol::Kind::Hoisted
+                                    && Symbol::is_kind_function(existing_kind)
+                                {
+                                    self.has_top_level_function_merged_with_var = true;
+                                }
                                 continue 'next_member;
                             }
 
@@ -3457,14 +3744,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             // If this is a catch identifier, silently merge the existing symbol
                             // into this symbol but continue hoisting past this catch scope
                             self.symbols[existing_idx].link.set(value.ref_);
-                            *_scope
-                                .get_or_put_member_with_hash(name, hash.unwrap())
+                            // SAFETY: `name` is a symbol's `original_name`.
+                            *unsafe { _scope.get_or_put_member_with_hash(name, hash.unwrap()) }
                                 .value_ptr = value;
                         }
 
                         if _scope.kind_stops_hoisting() {
-                            *_scope
-                                .get_or_put_member_with_hash(name, hash.unwrap())
+                            // SAFETY: `name` is a symbol's `original_name`.
+                            *unsafe { _scope.get_or_put_member_with_hash(name, hash.unwrap()) }
                                 .value_ptr = value;
                             break;
                         }
@@ -3533,7 +3820,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             self.panic("Scope mismatch while visiting", format_args!(""));
         }
 
-        self.current_scope = order.scope_ref();
+        let mut scope = order.scope_ref();
+        scope.visit_span[0] = self.visit_scope_count;
+        self.visit_scope_count += 1;
+        self.current_scope = scope;
         self.scopes_for_current_part.push(order.scope);
         Ok(())
     }
@@ -3635,7 +3925,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     // lexer string-table (see `get_or_put_member_with_hash`),
                     // both of which outlive every arena-backed `Scope`. Avoids
                     // a per-argument `mi_heap_malloc` on every function body.
-                    unsafe { scope.members.put_borrowed(key, value)? };
+                    unsafe { scope.members.put(key, value) };
                 }
             }
         }
@@ -4757,13 +5047,16 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let ref_ = self.new_symbol(kind, name);
 
         if member.is_none() {
-            self.module_scope_mut().members.put(
-                name,
-                js_ast::scope::Member {
-                    ref_,
-                    loc: bun_ast::Loc::EMPTY,
-                },
-            )?;
+            // SAFETY: `name` is `'static`.
+            unsafe {
+                self.module_scope_mut().members.put(
+                    name,
+                    js_ast::scope::Member {
+                        ref_,
+                        loc: bun_ast::Loc::EMPTY,
+                    },
+                )
+            };
             return Ok(ref_);
         }
 
@@ -4865,7 +5158,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let scope_kind = scope.kind;
         // SAFETY: see key-lifetime note above — `name: &'a [u8]` outlives the
         // arena-owned `Scope` map.
-        let entry = unsafe { scope.members.get_or_put_borrowed(name) };
+        let entry = unsafe {
+            scope
+                .members
+                .get_or_put_hashed(js_ast::scope::Members::hash(name), name)
+        };
         if entry.found_existing {
             let existing: js_ast::scope::Member = *entry.value_ptr;
             let symbol_idx = existing.ref_.inner_index() as usize;
@@ -4895,9 +5192,17 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 MR::ReplaceWithNew => {
                     self.symbols[symbol_idx].link.set(ref_);
 
+                    let existing_kind = self.symbols[symbol_idx].kind;
                     // If these are both functions, remove the overwritten declaration
-                    if kind.is_function() && self.symbols[symbol_idx].kind.is_function() {
+                    if kind.is_function() && existing_kind.is_function() {
                         self.symbols[symbol_idx].set_remove_overwritten_function_declaration(true);
+                    } else if self.current_scope == self.module_scope
+                        && ((existing_kind == js_ast::symbol::Kind::Hoisted && kind.is_function())
+                            || (existing_kind.is_function()
+                                && kind == js_ast::symbol::Kind::Hoisted))
+                    {
+                        // "var foo; function foo() {}" or "function foo() {} var foo;"
+                        self.has_top_level_function_merged_with_var = true;
                     }
                 }
                 MR::BecomePrivateGetSetPair => {
@@ -5116,6 +5421,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
         }
 
+        // The parse pass pops scopes before the visit pass numbers them.
+        let mut scope = current_scope;
+        if scope.visit_span[0] != u32::MAX {
+            scope.visit_span[1] = self.visit_scope_count - 1;
+        }
         self.current_scope = current_scope.parent.unwrap_or_else(|| {
             self.panic(
                 "Internal error: attempted to call popScope() on the topmost scope",
@@ -5242,9 +5552,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         parts: &mut ListManaged<'a, js_ast::Part>,
         stmts: &'a mut [Stmt],
     ) -> Result<(), crate::Error> {
-        // Reuse the memory if possible
-        // This is reusable if the last part turned out to be dead
-        self.symbol_uses.clear_retaining_capacity();
+        // Uses recorded outside a part's visit (the parse pass resolving
+        // decorator-metadata types) belong to no part.
+        self.part_uses.clear();
+        self.part_generation += 1;
         self.declared_symbols.clear_retaining_capacity();
         self.scopes_for_current_part.clear();
         self.import_records_for_current_part.clear();
@@ -5311,9 +5622,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             let final_stmts = bun_ast::StoreSlice::from_bump(part_stmts);
             let can_be_removed_if_unused = self.stmts_can_be_removed_if_unused(final_stmts.slice());
 
+            let symbol_uses = self.take_symbol_uses()?;
             parts.push(js_ast::Part {
                 stmts: final_stmts,
-                symbol_uses: core::mem::take(&mut self.symbol_uses),
+                symbol_uses,
                 import_symbol_property_uses: {
                     let m = core::mem::take(&mut self.import_symbol_property_uses);
                     if m.is_empty() {
@@ -5349,11 +5661,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             // `symbol_uses` / `import_symbol_property_uses` were already reset
             // to empty by `core::mem::take` above; no second assignment needed.
             self.had_commonjs_named_exports_this_visit = false;
-        } else if self.declared_symbols.len() > 0 || self.symbol_uses.count() > 0 {
+        } else if self.declared_symbols.len() > 0 || !self.part_uses.is_empty() {
             // if the part is dead, invalidate all the usage counts
+            let symbol_uses = self.take_symbol_uses()?;
             self.clear_symbol_usages_from_dead_part(&js_ast::Part {
                 declared_symbols: self.declared_symbols.clone()?,
-                symbol_uses: self.symbol_uses.clone()?,
+                symbol_uses,
                 ..Default::default()
             });
             self.declared_symbols.clear_retaining_capacity();
@@ -5362,11 +5675,37 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Ok(())
     }
 
-    fn binding_can_be_removed_if_unused_without_dce_check(&mut self, binding: Binding) -> bool {
+    /// A pattern runs getters or the iterator on its value, so only a literal value is side-effect free.
+    fn decl_binding_can_be_removed_if_unused_without_dce_check(
+        &mut self,
+        decl: &js_ast::g::Decl,
+    ) -> bool {
+        match &decl.value {
+            Some(value) => {
+                self.pattern_can_be_removed_if_unused_without_dce_check(decl.binding, value)
+            }
+            None => matches!(decl.binding.data, js_ast::b::B::BIdentifier(_)),
+        }
+    }
+
+    fn pattern_can_be_removed_if_unused_without_dce_check(
+        &mut self,
+        binding: Binding,
+        value: &Expr,
+    ) -> bool {
         match binding.data {
+            js_ast::b::B::BIdentifier(_) | js_ast::b::B::BMissing(_) => true,
+
+            // Like esbuild: identifiers and holes over an array literal only.
             js_ast::b::B::BArray(bi) => {
+                if !matches!(value.data, js_ast::ExprData::EArray(_)) {
+                    return false;
+                }
                 for item in bi.items.slice() {
-                    if !self.binding_can_be_removed_if_unused_without_dce_check(item.binding) {
+                    if !matches!(
+                        item.binding.data,
+                        js_ast::b::B::BIdentifier(_) | js_ast::b::B::BMissing(_)
+                    ) {
                         return false;
                     }
                     if let Some(default) = &item.default_value {
@@ -5375,15 +5714,21 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         }
                     }
                 }
+                true
             }
-            js_ast::b::B::BObject(bi) => {
-                for property in bi.properties.slice() {
-                    if !property.flags.contains(Flags::Property::IsSpread)
-                        && !self.expr_can_be_removed_if_unused_without_dce_check(&property.key)
+
+            // Every key of the pattern must name a data property of the literal.
+            js_ast::b::B::BObject(bo) => {
+                let js_ast::ExprData::EObject(literal) = &value.data else {
+                    return false;
+                };
+                if !Self::object_literal_has_only_plain_keys(literal) {
+                    return false;
+                }
+                for property in bo.properties.slice() {
+                    if property.flags.contains(Flags::Property::IsSpread)
+                        || property.flags.contains(Flags::Property::IsComputed)
                     {
-                        return false;
-                    }
-                    if !self.binding_can_be_removed_if_unused_without_dce_check(property.value) {
                         return false;
                     }
                     if let Some(default) = &property.default_value {
@@ -5391,11 +5736,63 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             return false;
                         }
                     }
+                    let js_ast::ExprData::EString(key) = &property.key.data else {
+                        return false;
+                    };
+                    let Some(matched) = Self::object_literal_data_property(literal, key) else {
+                        return false;
+                    };
+                    if !self.pattern_can_be_removed_if_unused_without_dce_check(
+                        property.value,
+                        &matched,
+                    ) {
+                        return false;
+                    }
                 }
+                true
             }
-            _ => {}
         }
-        true
+    }
+
+    /// Only string keys (a numeric key `0` is the same property as `"0"`), no spread, no computed key, and no `__proto__` (it sets the prototype).
+    fn object_literal_has_only_plain_keys(literal: &E::Object) -> bool {
+        literal.properties.slice().iter().all(|property| {
+            property.kind != js_ast::g::PropertyKind::Spread
+                && !property.flags.contains(Flags::Property::IsComputed)
+                && property.initializer.is_none()
+                && match &property.key {
+                    Some(Expr {
+                        data: js_ast::ExprData::EString(key),
+                        ..
+                    }) => !key.eql_comptime(b"__proto__"),
+                    _ => false,
+                }
+        })
+    }
+
+    /// The value of data property `key`: the last duplicate key wins, an accessor gives `None`.
+    fn object_literal_data_property(literal: &E::Object, key: &E::EString) -> Option<Expr> {
+        literal
+            .properties
+            .slice()
+            .iter()
+            .rev()
+            .find(|property| {
+                matches!(
+                    &property.key,
+                    Some(Expr {
+                        data: js_ast::ExprData::EString(literal_key),
+                        ..
+                    }) if literal_key.eql_string(key)
+                )
+            })
+            .and_then(|property| {
+                if property.kind == js_ast::g::PropertyKind::Normal {
+                    property.value
+                } else {
+                    None
+                }
+            })
     }
 
     fn stmts_can_be_removed_if_unused(&mut self, stmts: &[Stmt]) -> bool {
@@ -5441,7 +5838,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     }
 
                     for decl in st.decls.slice() {
-                        if !self.binding_can_be_removed_if_unused_without_dce_check(decl.binding) {
+                        if !self.decl_binding_can_be_removed_if_unused_without_dce_check(decl) {
                             return false;
                         }
                         if let Some(decl_value) = &decl.value {
@@ -5517,6 +5914,92 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     pub(crate) fn deoptimize_common_js_named_exports(&mut self) {
         // exists for debugging
         self.commonjs_named_exports_deoptimized = true;
+    }
+
+    /// Records an assignment to `exports.name`, or a call of it.
+    pub(crate) fn note_commonjs_export_use(
+        &mut self,
+        name: &[u8],
+        ref_: Ref,
+        opts: IdentifierOpts,
+    ) {
+        if opts.assign_target() != js_ast::AssignTarget::None
+            && let Some(export) = self.commonjs_named_exports.get_mut(name)
+        {
+            export.assign_count = export.assign_count.saturating_add(1);
+        }
+        if opts.is_call_target() || opts.is_template_tag() {
+            self.symbols[ref_.inner_index() as usize].set_called_as_method(true);
+            if !self.is_revisit_for_substitution {
+                let call = self
+                    .import_symbol_property_uses
+                    .get_or_put_value(self.exports_ref, Default::default())
+                    .expect("OOM")
+                    .value_ptr
+                    .get_or_put_value(name, Default::default())
+                    .expect("OOM");
+                call.count_estimate += 1;
+                call.is_call_target = true;
+            }
+        }
+    }
+
+    /// Sets `CALL_IGNORES_THIS` on each lifted export whose calls ignore `this`.
+    fn mark_commonjs_exports_that_ignore_this(&mut self) {
+        use bun_ast::ast_result::CommonJSExportValue;
+
+        for export in self.commonjs_named_exports.values() {
+            if export.assign_count != 1 {
+                continue;
+            }
+            let ignores_this = match export.decl_value {
+                CommonJSExportValue::Other => false,
+                CommonJSExportValue::FunctionIgnoringThis => true,
+                // An assignment can change `name`. A merged `var` keeps the file wrapped.
+                CommonJSExportValue::Identifier(binding) => {
+                    let symbol = &self.symbols[binding.inner_index() as usize];
+                    symbol.kind.is_function()
+                        && symbol.call_ignores_this()
+                        && !symbol.has_been_assigned_to()
+                }
+            };
+            if ignores_this {
+                self.symbols[export.loc_ref.ref_.inner_index() as usize]
+                    .set_call_ignores_this(true);
+            }
+        }
+    }
+
+    /// Moves the recorded calls out of each part. A call that reads `this` uses `exports_ref`.
+    fn use_namespace_for_method_calls(&self, parts: &mut [js_ast::Part]) {
+        for part in parts {
+            let Some(uses) = part.import_symbol_property_uses.as_mut() else {
+                continue;
+            };
+            let Some(calls) = uses.remove(&self.exports_ref) else {
+                continue;
+            };
+            if uses.is_empty() {
+                part.import_symbol_property_uses = None;
+            }
+            let count: u32 = calls
+                .iter()
+                .filter(|(name, _)| {
+                    self.commonjs_named_exports.get(name).is_some_and(|export| {
+                        !self.symbols[export.loc_ref.ref_.inner_index() as usize]
+                            .call_ignores_this()
+                    })
+                })
+                .map(|(_, call)| call.count_estimate)
+                .sum();
+            if count > 0 {
+                part.symbol_uses
+                    .get_or_put_value(self.exports_ref, Default::default())
+                    .expect("OOM")
+                    .value_ptr
+                    .merge(js_ast::symbol::Use::unscoped(count));
+            }
+        }
     }
 
     pub(crate) fn maybe_keep_expr_symbol_name(
@@ -6161,8 +6644,20 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         name: &[u8],
         opts: IdentifierOpts,
     ) -> bool {
-        let js_ast::ExprData::EImportIdentifier(id) = target.data else {
-            return false;
+        let base = match target.data {
+            js_ast::ExprData::EImportIdentifier(id) => id.ref_,
+            // Not an import item until `parse_entry` decides it is one, but
+            // its reads are recorded the same way so that it can be.
+            // Every `x.y` reaches this: skip the lookup call in a file with none.
+            js_ast::ExprData::EIdentifier(id)
+                if !self.dynamic_import_destructured_locals.is_empty()
+                    && self
+                        .dynamic_import_destructured_locals
+                        .contains_key(&id.ref_) =>
+            {
+                id.ref_
+            }
+            _ => return false,
         };
         if !self.options.bundle
             || self.is_control_flow_dead
@@ -6175,19 +6670,22 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         if self.is_revisit_for_substitution {
             return true;
         }
-        let use_ = self.symbol_uses.get_mut(&id.ref_).unwrap();
-        use_.count_estimate = use_.count_estimate.saturating_sub(1);
+        let Some(use_) = self.existing_part_use(base) else {
+            return false;
+        };
+        use_.subtract(1);
         // note: this use is not removed as we assume it exists later
 
         let gop = self
             .import_symbol_property_uses
-            .get_or_put_value(id.ref_, Default::default())
+            .get_or_put_value(base, Default::default())
             .expect("unreachable");
         let inner_use = gop
             .value_ptr
             .get_or_put_value(name, Default::default())
             .expect("unreachable");
         inner_use.count_estimate += 1;
+        inner_use.is_call_target |= opts.is_call_target() || opts.is_template_tag();
         true
     }
 
@@ -6198,14 +6696,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 [r#ref.inner_index() as usize]
                 .use_count_estimate
                 .saturating_sub(1);
-            let Some(mut use_) = self.symbol_uses.get(&r#ref).copied() else {
-                return;
-            };
-            use_.count_estimate = use_.count_estimate.saturating_sub(1);
-            if use_.count_estimate == 0 {
-                let _ = self.symbol_uses.swap_remove(&r#ref);
-            } else {
-                self.symbol_uses.put_assume_capacity(r#ref, use_);
+            if let Some(use_) = self.existing_part_use(r#ref) {
+                use_.subtract(1);
+                if use_.count_estimate() == 0 {
+                    self.forget_part_use(r#ref);
+                }
             }
         }
 
@@ -8565,6 +9060,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
         }
 
+        self.register_dynamic_import_items();
+
         // A direct eval at module scope can assign every top-level variable and
         // reach every top-level name. Nested scopes are pinned in `pop_scope`;
         // the module scope never pops. When the bundler wraps this file in a
@@ -8822,7 +9319,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         let ts_enums = self.compute_ts_enums_map(arena)?;
 
-        let char_freq: Option<js_ast::CharFreq> = self.compute_character_frequency();
+        let char_freq = self.compute_character_frequency().map(bun_alloc::ast_box);
+        let scope_uses = self.take_scope_uses();
 
         let module_scope_strict = self.module_scope().strict_mode;
         // Scope is not `Clone` (Vec/HashMap members), so move it out and leave
@@ -8854,6 +9352,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             .unwrap_or(self.require_ref);
         let runtime_imports = core::mem::take(&mut self.runtime_imports);
 
+        if !self.commonjs_named_exports_deoptimized {
+            self.mark_commonjs_exports_that_ignore_this();
+        }
+        if self.should_unwrap_common_js_to_esm() {
+            self.use_namespace_for_method_calls(parts.as_mut_slice());
+        }
+
         // Re-tag the arena-backed buffer
         // into the `Ast` and leave the parser-side slot empty — a pointer move,
         // no realloc/memcpy. `Ast.{symbols,parts,import_records}` are now
@@ -8861,6 +9366,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let symbols = core::mem::replace(&mut self.symbols, BumpVec::new_in(arena));
         let parts_list = core::mem::replace(parts, BumpVec::new_in(arena));
         let import_records = self.import_records.move_to_baby_list(arena);
+
+        let force_cjs_to_esm = self.unwrap_all_requires
+            || exports_kind == js_ast::ExportsKind::EsmWithDynamicFallbackFromCjs;
 
         // PERF: box at the construction site so the ~1 KB `Ast` is written
         // straight into the heap allocation and only the thin `Box` pointer is
@@ -8883,6 +9391,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             export_keyword: self.esm_export_keyword,
             top_level_symbols_to_parts,
             char_freq,
+            scope_uses,
             directive: if module_scope_strict == js_ast::StrictModeKind::ExplicitStrictMode {
                 Some(bun_ast::StoreStr::new(b"use strict"))
             } else {
@@ -8892,8 +9401,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
             require_ref,
 
-            force_cjs_to_esm: self.unwrap_all_requires
-                || exports_kind == js_ast::ExportsKind::EsmWithDynamicFallbackFromCjs,
+            force_cjs_to_esm,
+            commonjs_lifted_to_esm: force_cjs_to_esm && !self.has_es_module_syntax,
             uses_module_ref,
             uses_exports_ref,
             uses_require_ref,
@@ -9014,8 +9523,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         {
                             for decl in local.decls.slice() {
                                 if let Some(value) = &decl.value {
+                                    // The linker keeps a pattern inside the wrapper.
                                     if !matches!(value.data, js_ast::ExprData::EMissing(_))
-                                        && !value.can_be_moved()
+                                        && (!value.can_be_moved()
+                                            || !matches!(
+                                                decl.binding.data,
+                                                js_ast::b::B::BIdentifier(_)
+                                            ))
                                     {
                                         return true;
                                     }
@@ -9081,7 +9595,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // the vast majority of real files in a single allocation.
         let estimated_symbol_count = source.contents.len() / 16;
 
-        let mut scope_order = ScopeOrderList::with_capacity_in(1, arena);
+        // ~one scope per 64 source bytes covers most files without regrowth.
+        let mut scope_order =
+            ScopeOrderList::with_capacity_in((source.contents.len() / 64).max(1), arena);
         let scope_obj = arena.alloc(Scope {
             members: Default::default(),
             children: bun_alloc::AstAlloc::vec(),
@@ -9091,9 +9607,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             parent: None,
             ..Default::default()
         });
-        let _ = scope_obj
-            .members
-            .ensure_total_capacity(estimated_symbol_count);
+        scope_obj.members.reserve(estimated_symbol_count);
         let scope = js_ast::StoreRef::from_bump(scope_obj);
 
         scope_order.push(Some(ScopeOrder::new(loc_module_scope, scope.as_ptr())));
@@ -9109,6 +9623,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // literal in the by-value-return shape; now precomputed so the
         // literal below is the *only* write to `*out`). ───
         lexer.track_comments = opts.features.minify_identifiers;
+        let track_scope_uses = opts.bundle && !opts.features.minify_identifiers;
         lexer.track_react_suppressions = opts.features.react_compiler.is_enabled();
 
         if !TYPESCRIPT {
@@ -9170,6 +9685,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             allow_in: true,
 
             call_target: null_expr_data(),
+            template_tag: null_expr_data(),
             delete_target: null_expr_data(),
             stmt_expr_value: null_expr_data(),
             loop_body: null_stmt_data(),
@@ -9215,7 +9731,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             latest_arrow_arg_loc: bun_ast::Loc::EMPTY,
             forbid_suffix_after_as_loc: bun_ast::Loc::EMPTY,
             scopes_for_current_part: BumpVec::new_in(arena),
-            symbols: BumpVec::new_in(arena),
+            symbols: BumpVec::with_capacity_in(estimated_symbol_count, arena),
             ts_use_counts: BumpVec::new_in(arena),
             exports_ref: Ref::NONE,
             require_ref: Ref::NONE,
@@ -9232,9 +9748,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             macro_call_count: 0,
             hoisted_ref_for_sloppy_mode_block_fn: Default::default(),
             has_with_scope: false,
+            has_top_level_function_merged_with_var: false,
             is_file_considered_to_have_esm_exports: false,
             has_called_runtime: false,
             symbol_uses,
+            part_uses: Vec::new(),
+            part_use_slot: Vec::new(),
+            part_generation: 1,
             declared_symbols: Default::default(),
             runtime_imports: RuntimeImports::default(),
             imports_to_convert_from_require: BumpVec::new_in(arena),
@@ -9242,13 +9762,18 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             dynamic_import_aliases: Default::default(),
             dynamic_import_namespace_locals: Default::default(),
             dynamic_import_escaped_records: Default::default(),
+            dynamic_import_needs_object: Default::default(),
+            dynamic_import_copied_locals: Default::default(),
+            dynamic_import_destructured_locals: Default::default(),
             namespace_tracked_uses: Default::default(),
             unwrap_all_requires,
             commonjs_named_exports: Default::default(),
             commonjs_module_exports_assigned_deoptimized: false,
+            module_exports_rewrite_count: 0,
             commonjs_named_exports_needs_conversion: u32::MAX,
             had_commonjs_named_exports_this_visit: false,
             commonjs_replacement_stmts: js_ast::StmtNodeList::EMPTY,
+            this_expr_count: 0,
             parse_pass_symbol_uses: None,
             has_commonjs_export_names: false,
             should_fold_typescript_constant_expressions: false,
@@ -9277,6 +9802,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             scope_order_to_visit: &[],
             module_scope_directive_loc: bun_ast::Loc::default(),
             is_control_flow_dead: false,
+            track_scope_uses,
+            visit_scope_count: 0,
+            field_init_class_bodies: Vec::new(),
+            scope_uses: Vec::new(),
+            span_uses: Vec::new(),
             is_inside_single_stmt_body: false,
             is_revisit_for_substitution: false,
             method_call_must_be_replaced_with_undefined: false,
@@ -9748,6 +10278,13 @@ pub(crate) fn null_stmt_data() -> js_ast::StmtData {
 #[inline]
 pub(crate) fn null_value_expr() -> js_ast::ExprData {
     js_ast::ExprData::ENull(E::Null {})
+}
+
+/// `require()` of an ES module returns a copy of the namespace with
+/// `__esModule` set, and reads `default` off `module.exports`: neither name is
+/// the export the linker would bind.
+pub(crate) fn is_require_marker(record: &ImportRecord, name: &[u8]) -> bool {
+    record.kind == bun_ast::ImportKind::Require && (name == b"default" || name == b"__esModule")
 }
 
 /// The property walk of `try_track_dynamic_import_destructure`, which does not

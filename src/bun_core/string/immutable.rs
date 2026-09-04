@@ -1779,11 +1779,12 @@ pub(crate) fn index_of_line_ranges<const LINE_RANGE_COUNT: usize>(
                     };
                 }
                 CR => {
+                    let cr_i = cursor.i;
                     if iter.next(&mut cursor) && cursor.c == NL {
                         current_line += 1;
                         break 'brk LineRange {
                             start: 0,
-                            end: cursor.i,
+                            end: cr_i,
                         };
                     }
                 }
@@ -1804,7 +1805,10 @@ pub(crate) fn index_of_line_ranges<const LINE_RANGE_COUNT: usize>(
         return ranges;
     }
 
-    let mut prev_end = first_newline_range.end;
+    // Every later range starts at the '\n' that ended the line before it
+    // (callers trim it), so resume from the '\n' the cursor stopped on rather
+    // than from the first range's end, which for CRLF is the '\r' before it.
+    let mut prev_end = cursor.i;
     while let Some(current_i) =
         index_of_newline_or_non_ascii_check_start::<true>(text, cursor.i + u32::from(cursor.width))
     {

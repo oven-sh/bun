@@ -399,6 +399,8 @@ pub struct DevServer {
     /// Reference count to number of active sockets with the memory_visualizer enabled.
     pub(crate) emit_memory_visualizer_events: u32,
     pub(crate) memory_visualizer_timer: EventLoopTimer,
+    /// Registered with `bun_crash_handler` (`BUN_DUMP_STATE_ON_CRASH`); `Drop` unregisters.
+    pub(crate) has_pre_crash_handler: bool,
 
     pub(crate) assume_perfect_incremental_bundling: bool,
 
@@ -514,6 +516,7 @@ pub(crate) fn init(options: Options) -> JsResult<Box<DevServer>> {
             memory_visualizer_timer,
             EventLoopTimer::init_paused(EventLoopTimerTag::DevServerMemoryVisualizerTick)
         );
+        w!(has_pre_crash_handler, false);
         // `dev.frontend_only = dev.framework.file_system_router_types.len == 0`
         w!(
             frontend_only,
@@ -982,6 +985,17 @@ pub(crate) fn init(options: Options) -> JsResult<Box<DevServer>> {
     // after that line.
     dev.scan_initial_routes()?;
 
+    if bun_core::feature_flags::BAKE_DEBUGGING_FEATURES
+        && bun_core::env_var::feature_flag::BUN_DUMP_STATE_ON_CRASH
+            .get()
+            .unwrap_or(false)
+    {
+        // SAFETY: `dev` is boxed, so this address stays valid until the box is
+        // freed, and `Drop for DevServer` unregisters it before that.
+        unsafe { bun_crash_handler::append_pre_crash_handler::<DevServer>(&raw const *dev) };
+        dev.has_pre_crash_handler = true;
+    }
+
     debug_assert!(dev.magic == Magic::Valid);
 
     Ok(dev)
@@ -1045,9 +1059,15 @@ impl Drop for DevServer {
                 emit_incremental_visualizer_events: _,
                 emit_memory_visualizer_events: _,
                 memory_visualizer_timer: _,
+                has_pre_crash_handler: _,
                 assume_perfect_incremental_bundling: _,
                 broadcast_console_log_from_browser_to_server: _,
             } = &*self;
+        }
+
+        // First, so that a crash anywhere below does not dump a half-destroyed graph.
+        if self.has_pre_crash_handler {
+            bun_crash_handler::remove_pre_crash_handler::<DevServer>(std::ptr::from_ref(self));
         }
 
         // WebSockets should be deinitialized before other parts.
@@ -5565,6 +5585,169 @@ impl DevServer {
             }
         }
         Ok(())
+    }
+
+    /// The `MessageId::Visualizer` format decoded by `incremental_visualizer.html`.
+    /// Runs from the crash handler, where the graphs may be mid-mutation: counts are
+    /// written after their entries, and the path buffer pool (a `RefCell`) is not used.
+    fn write_visualizer_message(&self, payload: &mut Vec<u8>) {
+        payload.push(MessageId::Visualizer.char());
+        let mut buf = Box::new(PathBuffer::ZEROED);
+        self.write_visualizer_files(&self.client_graph, payload, &mut buf);
+        self.write_visualizer_files(&self.server_graph, payload, &mut buf);
+        write_visualizer_edges(&self.client_graph, payload);
+        write_visualizer_edges(&self.server_graph, payload);
+    }
+
+    /// `u32` count, then per file: `u32` path length (0 = deleted file, nothing
+    /// follows), the path, and six `u8` flags: stale, RSC, SSR, route,
+    /// framework file, boundary (client side: HMR root).
+    fn write_visualizer_files<const SIDE: bake::Side>(
+        &self,
+        graph: &IncrementalGraph<SIDE>,
+        payload: &mut Vec<u8>,
+        buf: &mut PathBuffer,
+    ) {
+        let count_at = reserve_visualizer_count(payload);
+        let mut count = 0u32;
+        let keys = graph.bundled_files.keys();
+        for (i, (key, file)) in keys.iter().zip(graph.bundled_files.values()).enumerate() {
+            count += 1;
+            if key.is_empty() {
+                payload.extend_from_slice(&0u32.to_le_bytes());
+                continue;
+            }
+            let path = self.relative_path(buf, key);
+            payload.extend_from_slice(&u32::try_from(path.len()).expect("int cast").to_le_bytes());
+            payload.extend_from_slice(path);
+            let stale = graph.stale_files.is_set_allow_out_of_bound(i, true) || file.failed;
+            let flags: [bool; 6] = match SIDE {
+                bake::Side::Client => [
+                    stale,
+                    false,
+                    false,
+                    file.html_route_bundle_index.is_some(),
+                    file.is_special_framework_file,
+                    file.is_hmr_root,
+                ],
+                bake::Side::Server => [
+                    stale,
+                    file.is_rsc,
+                    file.is_ssr,
+                    file.is_route,
+                    false,
+                    file.is_client_component_boundary,
+                ],
+            };
+            payload.extend_from_slice(&flags.map(u8::from));
+        }
+        set_visualizer_count(payload, count_at, count);
+    }
+
+    /// `BUN_DUMP_STATE_ON_CRASH`: writes `incremental_visualizer.html` to the cwd
+    /// with the graphs inlined, so it works without the (dead) dev server.
+    fn dump_state_due_to_crash(&self) -> sys::Maybe<()> {
+        const VISUALIZER: &[u8] = include_bytes!("incremental_visualizer.html");
+        // `inlinedData` goes at the top of the page's own (last) script.
+        let script_start = strings::last_index_of(VISUALIZER, b"<script>")
+            .expect("incremental_visualizer.html has an inline <script>")
+            + b"<script>".len();
+        let (head, script) = VISUALIZER.split_at(script_start);
+
+        let (file, file_name) = create_crash_dump_file()?;
+
+        let mut payload: Vec<u8> = Vec::new();
+        self.write_visualizer_message(&mut payload);
+
+        file.write_all(head)?;
+        file.write_all(b"\nlet inlinedData = Uint8Array.from(atob(\"")?;
+        // Multiple of 3: no `=` padding between chunks, which `atob` rejects.
+        const CHUNK: usize = 3 * 1024;
+        let mut encoded = [0u8; bun_core::base64::standard_encoder_calc_size(CHUNK)];
+        for chunk in payload.chunks(CHUNK) {
+            file.write_all(bun_core::base64::standard_encode(&mut encoded, chunk))?;
+        }
+        file.write_all(b"\"), c => c.charCodeAt(0));\n")?;
+        file.write_all(script)?;
+
+        bun_core::note!(
+            "Dumped incremental bundler graph to {}",
+            bun_core::fmt::quote(file_name.as_bytes())
+        );
+        Ok(())
+    }
+}
+
+/// `incremental-graph-crash-dump.<unix seconds>[.N].html` in the cwd; `N` keeps
+/// several DevServers (or a crash-restart loop) from overwriting each other.
+fn create_crash_dump_file() -> sys::Maybe<(sys::File, String)> {
+    const MAX_DUMPS_PER_SECOND: u32 = 100;
+    let timestamp = bun_core::time::timestamp();
+    let mut attempt = 0u32;
+    loop {
+        let file_name = if attempt == 0 {
+            format!("incremental-graph-crash-dump.{timestamp}.html")
+        } else {
+            format!("incremental-graph-crash-dump.{timestamp}.{attempt}.html")
+        };
+        match sys::File::openat(
+            sys::Fd::cwd(),
+            file_name.as_bytes(),
+            sys::O::WRONLY | sys::O::CREAT | sys::O::EXCL | sys::O::CLOEXEC,
+            0o666,
+        ) {
+            Ok(file) => return Ok((file, file_name)),
+            Err(err) if err.get_errno() == sys::E::EEXIST && attempt < MAX_DUMPS_PER_SECOND => {
+                attempt += 1;
+            }
+            Err(err) => return Err(err),
+        }
+    }
+}
+
+/// `u32` count, then per live edge: `u32` importer index, `u32` imported index.
+fn write_visualizer_edges<const SIDE: bake::Side>(
+    graph: &IncrementalGraph<SIDE>,
+    payload: &mut Vec<u8>,
+) {
+    let mut freed = vec![false; graph.edges.len()];
+    for free in &graph.edges_free_list {
+        if let Some(slot) = freed.get_mut(free.get() as usize) {
+            *slot = true;
+        }
+    }
+    let count_at = reserve_visualizer_count(payload);
+    let mut count = 0u32;
+    for (edge, _) in graph
+        .edges
+        .iter()
+        .zip(freed)
+        .filter(|(_, is_freed)| !is_freed)
+    {
+        count += 1;
+        payload.extend_from_slice(&edge.dependency.get().to_le_bytes());
+        payload.extend_from_slice(&edge.imported.get().to_le_bytes());
+    }
+    set_visualizer_count(payload, count_at, count);
+}
+
+/// Leaves room for a list's `u32` count, filled in by `set_visualizer_count`
+/// once the number of entries actually written is known.
+fn reserve_visualizer_count(payload: &mut Vec<u8>) -> usize {
+    let at = payload.len();
+    payload.extend_from_slice(&0u32.to_le_bytes());
+    at
+}
+
+fn set_visualizer_count(payload: &mut [u8], at: usize, count: u32) {
+    payload[at..at + 4].copy_from_slice(&count.to_le_bytes());
+}
+
+impl bun_crash_handler::PreCrashHandler for DevServer {
+    fn on_crash(&self) {
+        if let Err(err) = self.dump_state_due_to_crash() {
+            bun_core::warn!("Could not dump incremental bundler graph: {}", err);
+        }
     }
 }
 

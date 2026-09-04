@@ -84,6 +84,7 @@ pub(crate) fn memory_cost_detailed(dev: &DevServer) -> MemoryCost {
             emit_incremental_visualizer_events: _,
             emit_memory_visualizer_events: _,
             memory_visualizer_timer: _,
+            has_pre_crash_handler: _,
             assume_perfect_incremental_bundling: _,
             broadcast_console_log_from_browser_to_server: _,
         } = dev;
@@ -101,6 +102,7 @@ pub(crate) fn memory_cost_detailed(dev: &DevServer) -> MemoryCost {
     //   .frontend_only
     //   .generation
     //   .graph_safety_lock
+    //   .has_pre_crash_handler
     //   .magic
     //   .memory_visualizer_timer
     //   .plugin_state

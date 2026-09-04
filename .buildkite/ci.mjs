@@ -477,9 +477,9 @@ function getBuildArgs(target, options, mode) {
   // infer the target triple — always pass os/arch (and abi on linux).
   args.push(`--os=${os}`, `--arch=${arch}`);
   if (os === "linux") args.push(`--abi=${abi ?? "gnu"}`);
-  // Linux targets build JavaScriptCore (and ICU) from source in bun's own
-  // build graph; the other targets still download the prebuilt tarball.
-  if (os === "linux") args.push("--webkit=source");
+  // ELF targets build JavaScriptCore (and ICU) from source in bun's own
+  // build graph; macOS and Windows still download the prebuilt tarball.
+  if (os === "linux" || os === "freebsd") args.push("--webkit=source");
 
   if (baseline) args.push("--baseline=on");
   if (profile === "asan") args.push("--asan=on");

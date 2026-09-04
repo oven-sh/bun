@@ -1660,9 +1660,12 @@ function emitWebKitDirect(n: Ninja, cfg: Config, ctx: CustomBuildContext): WebKi
     .map(f => join(offlineasm, f));
   const lowLevelInterpreterAsm = join(JSC, "llint", "LowLevelInterpreter.asm");
   const backend = offlineAsmBackend(cfg);
-  // asm.rb only (OFFLINE_ASM_FORMAT_ARGS); the two extractor generators take just the backend.
-  const offlineAsmFormatArgs =
-    cfg.linux || cfg.freebsd ? ["--binary-format=ELF"] : cfg.windows ? ["--platform=Windows"] : [];
+  // asm.rb only (OFFLINE_ASM_FORMAT_ARGS); the two extractor generators take
+  // just the backend. --binary-format=ELF makes asm.rb emit .type/.size for
+  // each opcode label; those pair with the plain (non-.L) debug labels
+  // LowLevelInterpreter.cpp only defines under OS(LINUX), so it is Linux/
+  // Android only — as in JSC's CMakeLists (CMAKE_SYSTEM_NAME MATCHES Linux).
+  const offlineAsmFormatArgs = cfg.linux ? ["--binary-format=ELF"] : cfg.windows ? ["--platform=Windows"] : [];
   const buildVariants = "normal";
 
   const llintDesiredSettings = join(DS, "LLIntDesiredSettings.h");

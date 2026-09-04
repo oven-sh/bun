@@ -1380,6 +1380,24 @@ ${temp_dir}`
     });
   });
 
+  describe("mkdir", () => {
+    // Builtins report errno through bun_core's coreutils_error_map, which is
+    // supposed to hold the platform's strerror() text. The macOS table used to
+    // say "File or folder exists" here; strerror() says "File exists" on
+    // every platform.
+    test("existing directory is reported with strerror()'s EEXIST text", async () => {
+      using dir = tempDir("mkdir-eexist", { existing: {} });
+      const target = join(String(dir), "existing");
+
+      const { stdout, stderr, exitCode } = await $`mkdir ${target}`.quiet();
+      expect({ stdout: stdout.toString(), stderr: stderr.toString(), exitCode }).toEqual({
+        stdout: "",
+        stderr: `mkdir: ${target}: File exists\n`,
+        exitCode: 1,
+      });
+    });
+  });
+
   /**
    *
    */

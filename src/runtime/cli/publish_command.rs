@@ -1769,16 +1769,13 @@ impl PublishCommand {
                     },
                 };
 
-                let mut dirs: Vec<(Fd, Box<[u8]>, bool)> = Vec::new();
+                let mut dirs: Vec<(Fd, Box<[u8]>)> = Vec::new();
 
-                dirs.push((bin_dir, normalized_bin_dir.as_bytes().into(), false));
+                dirs.push((bin_dir, normalized_bin_dir.as_bytes().into()));
 
-                while let Some(dir_info) = dirs.pop() {
-                    let (dir, dir_subpath, close_dir) = dir_info;
-                    let _close = scopeguard::guard(dir, move |d| {
-                        if close_dir {
-                            let _ = d.close();
-                        }
+                while let Some((dir, dir_subpath)) = dirs.pop() {
+                    let _close = scopeguard::guard(dir, |d| {
+                        let _ = d.close();
                     });
 
                     let mut iter = DirIterator::iterate(dir);
@@ -1838,7 +1835,7 @@ impl PublishCommand {
                             else {
                                 continue;
                             };
-                            dirs.push((subdir, subpath.as_bytes().into(), true));
+                            dirs.push((subdir, subpath.as_bytes().into()));
                         }
                     }
                 }

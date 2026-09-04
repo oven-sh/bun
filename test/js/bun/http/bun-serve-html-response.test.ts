@@ -171,7 +171,7 @@ describe.each([false, true])("development: %p", development => {
 
 const brokenFiles = {
   "index.html": `<!DOCTYPE html><html><head><script type="module" src="./app.ts"></script></head><body>broken</body></html>`,
-  "app.ts": `import "./does-not-exist";`,
+  "app.ts": `export const broken = ;`,
 };
 
 test("a build failure reaches the error handler", async () => {

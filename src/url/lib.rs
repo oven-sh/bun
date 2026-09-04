@@ -651,9 +651,9 @@ impl<'a> URL<'a> {
                 offset += url.parse_host(base).unwrap_or(0);
             }
             b'/' | b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'-' | b'_' | b':' => {
-                let is_protocol_relative = base.len() > 1 && base[1] == b'/';
+                let is_protocol_relative = base.starts_with(b"//");
                 if is_protocol_relative {
-                    offset += 1;
+                    offset += 2;
                 } else {
                     offset += url.parse_protocol(&base[offset as usize..]).unwrap_or(0);
                 }
@@ -759,7 +759,8 @@ impl<'a> URL<'a> {
             url.pathname = &url.pathname[1..];
         }
 
-        url.origin = strings::trim(url.origin, b"/ ?#");
+        // Only the right side: a protocol-relative origin keeps its leading `//`.
+        url.origin = strings::trim_right(url.origin, b"/ ?#");
         url
     }
 

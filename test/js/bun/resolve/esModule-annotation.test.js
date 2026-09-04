@@ -26,7 +26,11 @@ describe('without type: "module"', () => {
   });
 
   test("exports.default = true; exports.__esModule = true;", () => {
-    expect(WithoutTypeModuleExportEsModuleAnnotation.default).toBeTrue();
+    // default is always module.exports, matching Node.js
+    expect(WithoutTypeModuleExportEsModuleAnnotation.default).toEqual({
+      default: true,
+      __esModule: true,
+    });
     expect(WithoutTypeModuleExportEsModuleAnnotation.__esModule).toBeUndefined();
   });
 

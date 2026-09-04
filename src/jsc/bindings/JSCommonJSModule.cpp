@@ -995,35 +995,10 @@ void populateESMExports(
     auto& vm = JSC::getVM(globalObject);
     const Identifier& esModuleMarker = vm.propertyNames->__esModule;
 
-    // Bun's interpretation of the "__esModule" annotation:
-    //
-    //   - If a "default" export does not exist OR the __esModule annotation is not present, then we
-    //   set the default export to the exports object
-    //
-    //   - If a "default" export also exists, then we set the default export
-    //   to the value of it (matching Babel behavior)
-    //
-    // https://stackoverflow.com/questions/50943704/whats-the-purpose-of-object-definepropertyexports-esmodule-value-0
-    // https://github.com/nodejs/node/issues/40891
-    // https://github.com/evanw/bundler-esm-cjs-tests
-    // https://github.com/evanw/esbuild/issues/1591
-    // https://github.com/oven-sh/bun/issues/3383
-    //
-    // Note that this interpretation is slightly different
-    //
-    //    -  We do not ignore when "type": "module" or when the file
-    //       extension is ".mjs". Build tools determine that based on the
-    //       caller's behavior, but in a JS runtime, there is only one ModuleNamespaceObject.
-    //
-    //       It would be possible to match the behavior at runtime, but
-    //       it would need further engine changes which do not match the ES Module spec
-    //
-    //   -   We ignore the value of the annotation. We only look for the
-    //       existence of the value being set. This is for performance reasons, but also
-    //       this annotation is meant for tooling and the only usages of setting
-    //       it to something that does NOT evaluate to "true" I could find were in
-    //       unit tests of build tools. Happy to revisit this if users file an issue.
-    bool needsToAssignDefault = true;
+    // The ESM `default` binding is always `module.exports` itself (Node.js
+    // semantics, see nodejs/node#40891). `__esModule` only affects named
+    // export enumeration below; it never causes `exports.default` to be
+    // unwrapped as the ESM default.
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     if (auto* exports = result.getObject()) {
@@ -1053,10 +1028,8 @@ void populateESMExports(
             if (canPerformFastEnumeration(structure)) {
                 exports->structure()->forEachProperty(vm, [&](const PropertyTableEntry& entry) -> bool {
                     auto key = entry.key();
-                    if (key->isSymbol() || key == esModuleMarker)
+                    if (key->isSymbol() || key == esModuleMarker || key == vm.propertyNames->defaultKeyword)
                         return true;
-
-                    needsToAssignDefault = needsToAssignDefault && key != vm.propertyNames->defaultKeyword;
 
                     JSValue value = exports->getDirect(entry.offset());
 
@@ -1070,7 +1043,7 @@ void populateESMExports(
                 RETURN_IF_EXCEPTION(scope, );
 
                 for (auto property : properties) {
-                    if (property.isEmpty() || property.isNull() || property == esModuleMarker || property.isPrivateName() || property.isSymbol()) [[unlikely]]
+                    if (property.isEmpty() || property.isNull() || property == esModuleMarker || property == vm.propertyNames->defaultKeyword || property.isPrivateName() || property.isSymbol()) [[unlikely]]
                         continue;
 
                     // ignore constructor
@@ -1102,8 +1075,6 @@ void populateESMExports(
                     }
 
                     exportValues.append(getterResult);
-
-                    needsToAssignDefault = needsToAssignDefault && property != vm.propertyNames->defaultKeyword;
                 }
             }
 
@@ -1161,10 +1132,8 @@ void populateESMExports(
         }
     }
 
-    if (needsToAssignDefault) {
-        exportNames.append(vm.propertyNames->defaultKeyword);
-        exportValues.append(result);
-    }
+    exportNames.append(vm.propertyNames->defaultKeyword);
+    exportValues.append(result);
 }
 
 void JSCommonJSModule::toSyntheticSource(JSC::JSGlobalObject* globalObject,

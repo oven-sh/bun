@@ -189,6 +189,7 @@ extern "C" void Bun__ensureProcessIPCInitialized(JSGlobalObject*);
 extern "C" const char* Bun__githubURL;
 extern "C" const char* Bun__sqlite3_version();
 BUN_DECLARE_HOST_FUNCTION(Bun__Process__send);
+BUN_DECLARE_HOST_FUNCTION(Bun__Process__internalSend);
 
 extern "C" void Process__emitDisconnectEvent(Zig::GlobalObject* global);
 extern "C" void Process__emitErrorEvent(Zig::GlobalObject* global, EncodedJSValue value);
@@ -3113,7 +3114,7 @@ static JSValue constructProcessInternalSend(VM& vm, JSObject* processObject)
 {
     auto* globalObject = processObject->globalObject();
     if (Bun__GlobalObject__hasIPC(globalObject)) {
-        return callLazyProcessBuilder(vm, globalObject, processObjectInternalsGetInternalSendCodeGenerator, JSC::ArgList());
+        return JSC::JSFunction::create(vm, globalObject, 1, String("_send"_s), Bun__Process__internalSend, ImplementationVisibility::Public);
     }
     return jsUndefined();
 }

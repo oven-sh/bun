@@ -2669,7 +2669,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         if let Some(hook) = react_hook_data.as_mut() {
             'try_mark_hook: {
-                if p.nearest_stmt_list.is_none() {
+                if p.nearest_stmt_list_mut().is_none() {
                     break 'try_mark_hook;
                 }
                 let decl = p.get_react_refresh_hook_signal_decl(hook.signature_cb);
@@ -2749,7 +2749,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         if let Some(hook) = react_hook_data.as_mut() {
             'try_mark_hook: {
-                if p.nearest_stmt_list.is_none() {
+                if p.nearest_stmt_list_mut().is_none() {
                     break 'try_mark_hook;
                 }
                 let decl = p.get_react_refresh_hook_signal_decl(hook.signature_cb);

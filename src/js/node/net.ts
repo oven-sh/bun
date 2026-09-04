@@ -1371,7 +1371,7 @@ const SocketHandlers2: SocketHandler<NonNullable<import("node:net").Socket["_han
       // error. https://github.com/nodejs/node/blob/v26.3.0/src/crypto/crypto_tls.cc#L339
       pendingWrite(
         self.encrypted
-          ? new ErrnoException(UV_ECANCELED, "write", "Canceled because of SSL destruction")
+          ? new ErrnoException(uv().UV_ECANCELED, "write", "Canceled because of SSL destruction")
           : $ERR_SOCKET_CLOSED(),
       );
     }

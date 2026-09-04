@@ -1831,10 +1831,12 @@ pub(crate) fn index_of_line_ranges<const LINE_RANGE_COUNT: usize>(
                     prev_end = cursor.i;
                     r
                 } else {
-                    LineRange {
+                    let r = LineRange {
                         start: prev_end,
-                        end: cursor.i + 1,
-                    }
+                        end: current_end + 1,
+                    };
+                    prev_end = current_end;
+                    r
                 }
             }
             _ => continue,
@@ -1854,10 +1856,18 @@ pub(crate) fn index_of_line_ranges<const LINE_RANGE_COUNT: usize>(
         current_line += 1;
     }
 
-    if ranges.len() == LINE_RANGE_COUNT && current_line <= target_line {
-        let mut new_ranges = BoundedArray::<LineRange, LINE_RANGE_COUNT>::default();
-        let _ = new_ranges.extend_from_slice(&ranges.as_slice()[1..]); // OOM/capacity: fire-and-forget
-        ranges = new_ranges;
+    // Tail after the last newline is the unterminated final line.
+    if (prev_end as usize) + 1 < text.len() {
+        if ranges.len() == LINE_RANGE_COUNT {
+            let mut new_ranges = BoundedArray::<LineRange, LINE_RANGE_COUNT>::default();
+            let _ = new_ranges.extend_from_slice(&ranges.as_slice()[1..]); // OOM/capacity: fire-and-forget
+            ranges = new_ranges;
+        }
+        let _ = ranges.push(LineRange {
+            start: prev_end,
+            // Wrapping cast.
+            end: text.len() as u32,
+        }); // OOM/capacity: fire-and-forget
     }
 
     ranges

@@ -1462,19 +1462,7 @@ mod _async_tasks {
                 &parent.args,
             );
 
-            'brk: {
-                match result {
-                    Err(ref err) => {
-                        if err.errno == E::EEXIST as _ && !args.flags.error_on_exist {
-                            break 'brk;
-                        }
-                        parent.finish_concurrently(result);
-                    }
-                    Ok(_) => {
-                        parent.on_copy(self.src(), self.dest());
-                    }
-                }
-            }
+            parent.record_copy_result(self.src(), self.dest(), result);
 
             // `self: Box<Self>` drops here (frees the owned `path_buf`).
             drop(self);
@@ -1513,6 +1501,19 @@ mod _async_tasks {
             self.shelltask
                 .expect("IS_SHELL ⇒ shelltask")
                 .cp_on_copy(src.as_ref(), dest.as_ref());
+        }
+
+        fn record_copy_result(
+            &self,
+            src: &OSPathSliceZ,
+            dest: &OSPathSliceZ,
+            result: Maybe<ret::CopyFile>,
+        ) {
+            match result {
+                Ok(()) => self.on_copy(src, dest),
+                Err(e) if e.get_errno() == E::EEXIST && !self.args.flags.error_on_exist => {}
+                Err(e) => self.finish_concurrently(Err(e)),
+            }
         }
 
         /// `fs.cp` / `fs.promises.cp` (JS thread): a promise, an async-stack
@@ -1833,14 +1834,7 @@ mod _async_tasks {
                         Some(attributes),
                         &this.args,
                     );
-                    if let Err(e) = &r {
-                        if e.errno == E::EEXIST as _ && !args.flags.error_on_exist {
-                            this.finish_concurrently(Ok(()));
-                            return;
-                        }
-                    }
-                    this.on_copy(src, dest);
-                    this.finish_concurrently(r);
+                    this.record_copy_result(src, dest, r);
                     return;
                 }
             }
@@ -1872,15 +1866,7 @@ mod _async_tasks {
                         Some(&stat_),
                         &this.args,
                     );
-                    if let Err(e) = &r {
-                        if e.errno == E::EEXIST as _ && !args.flags.error_on_exist {
-                            this.on_copy(src, dest);
-                            this.finish_concurrently(Ok(()));
-                            return;
-                        }
-                    }
-                    this.on_copy(src, dest);
-                    this.finish_concurrently(r);
+                    this.record_copy_result(src, dest, r);
                     return;
                 }
             }

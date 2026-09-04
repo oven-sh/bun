@@ -5342,7 +5342,7 @@ describe.concurrent("bun-install", () => {
         `                                    ^`,
         `error: optionalDependencies expects a map of specifiers, e.g.`,
         `  "optionalDependencies": {`,
-        `    <green>"bun"<r>: <green>"latest"<r>`,
+        `    "bun": "latest"`,
         `  }`,
         `    at [dir]/package.json:1:33`,
       ]);
@@ -5350,6 +5350,52 @@ describe.concurrent("bun-install", () => {
       expect(out).toEqual(expect.stringContaining("bun install v1."));
       expect(await exited).toBe(1);
     });
+  });
+
+  it("should report error on non-string specifier in dependencies", async () => {
+    using dir = tempDir("invalid-dependency-specifier", {
+      "package.json": JSON.stringify({ name: "foo", version: "0.0.1", dependencies: { bun: 1 } }),
+    });
+
+    await using proc = spawn({
+      cmd: [bunExe(), "install"],
+      cwd: String(dir),
+      env,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(normalizeBunSnapshot(stderr, String(dir))).toMatchInlineSnapshot(`
+      "1 | {"name":"foo","version":"0.0.1","dependencies":{"bun":1}}
+                                                                ^
+      error: dependencies expects a map of specifiers, e.g.
+        "dependencies": {
+          "bun": "latest"
+        }
+          at <dir>/package.json:1:55"
+    `);
+    expect(stdout).toContain("bun install v1.");
+    expect(exitCode).toBe(1);
+  });
+
+  it("should color the example in the invalid dependencies error when colors are enabled", async () => {
+    using dir = tempDir("invalid-dependencies-color", {
+      "package.json": JSON.stringify({ name: "foo", version: "0.0.1", dependencies: [] }),
+    });
+
+    await using proc = spawn({
+      cmd: [bunExe(), "install"],
+      cwd: String(dir),
+      env: { ...env, FORCE_COLOR: "1" },
+      stdout: "ignore",
+      stderr: "pipe",
+    });
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+
+    expect(stderr).toContain(`\n    \x1b[32m"bun"\x1b[0m: \x1b[32m"latest"\x1b[0m\n`);
+    expect(stderr).not.toContain("<green>");
+    expect(exitCode).toBe(1);
   });
 
   test.serial("should report error on invalid format for workspaces", async () => {

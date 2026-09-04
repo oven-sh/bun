@@ -1969,6 +1969,13 @@ pub fn pretty_fmt_runtime(fmt: &[u8], is_enabled: bool) -> Vec<u8> {
                 i += 1;
             }
             b'{' => {
+                // `{{` is an escaped literal brace, not the start of a
+                // placeholder: the text after it is still subject to markup.
+                if fmt.get(i + 1) == Some(&b'{') {
+                    out.extend_from_slice(b"{{");
+                    i += 2;
+                    continue;
+                }
                 while i < fmt.len() && fmt[i] != b'}' {
                     out.push(fmt[i]);
                     i += 1;
@@ -2974,6 +2981,55 @@ mod pretty_fmt_tests {
     }
 
     #[test]
+    fn markup_after_escaped_brace_is_rewritten() {
+        // `{{` is a literal brace, not the start of a spec: tags between it
+        // and the next `}` must still be converted / stripped.
+        assert_eq!(
+            pretty_fmt!(
+                "<r><green>\"{}\"<r>: {{\n  <green>\"bun\"<r>: <green>\"latest\"<r>\n}}",
+                false
+            ),
+            "\"{}\": {{\n  \"bun\": \"latest\"\n}}"
+        );
+        assert_eq!(pretty_fmt!("{{<green>x<r>}}", true), "{{\x1b[32mx\x1b[0m}}");
+        assert_eq!(pretty_fmt!("{{<green>x<r>}}", false), "{{x}}");
+        assert_eq!(pretty_fmt!("{{{{<r>", false), "{{{{");
+        // The escapes pass through untouched, so the output is still a valid
+        // `format_args!` template, including when an escape abuts a spec.
+        assert_eq!(
+            format!(pretty_fmt!("{{ <green>{s}<r> }}", false), "bun"),
+            "{ bun }"
+        );
+        assert_eq!(pretty_fmt!("<b>{{{s}}}<r>", false), "{{{}}}");
+        assert_eq!(format!(pretty_fmt!("<b>{{{s}}}<r>", false), "bun"), "{bun}");
+        // A spec after the escape is still shielded from the tag parser.
+        assert_eq!(pretty_fmt!("{{<d>{:<4}<r>}}", false), "{{{:<4}}}");
+    }
+
+    #[test]
+    fn runtime_markup_after_escaped_brace_is_rewritten() {
+        assert_eq!(
+            pretty_fmt_runtime(b"{{<green>x<r>}}", true),
+            b"{{\x1b[32mx\x1b[0m}}"
+        );
+        assert_eq!(pretty_fmt_runtime(b"{{<green>x<r>}}", false), b"{{x}}");
+        assert_eq!(
+            format!(
+                "{}",
+                super::pretty_fmt_args("{{ <green>{s}<r> }}", false, ("bun",))
+            ),
+            "{ bun }"
+        );
+        assert_eq!(
+            format!(
+                "{}",
+                super::pretty_fmt_args("{{ <green>{s}<r> }}", true, ("bun",))
+            ),
+            "{ \x1b[32mbun\x1b[0m }"
+        );
+    }
+
+    #[test]
     fn concat_and_stringify_inputs() {
         assert_eq!(
             pretty_fmt!(concat!("<r><d>[", stringify!(http), "]<r> "), true),
@@ -3041,5 +3097,7 @@ mod pretty_fmt_tests {
         check!(
             "  <b><blue>link<r>      <d>[\\<package\\>]<r>          Register or link a local npm package\n"
         );
+        check!("<r><green>\"{}\"<r>: {{\n  <green>\"bun\"<r>: <green>\"latest\"<r>\n}}");
+        check!("{{{{<r>{{<d>{:<4}<r>}}");
     }
 }

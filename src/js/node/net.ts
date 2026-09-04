@@ -683,11 +683,11 @@ function SocketEmitEndNT(self, _err?) {
     self.once("error", () => {});
     destroyWithReadError(self, _err);
   } else if (!self[kended]) {
-      // A codeless close error that still carries the errno (Windows IOCP
-      // delivers some this way): derive the proper code from it, like Node's
-      // errnoException(nread, 'read'). Raw WSA values (-10054, ...) that the
-      // errno table cannot name fall through to the reset shape below instead
-      // of surfacing "Unknown system error N".
+    // A codeless close error that still carries the errno (Windows IOCP
+    // delivers some this way): derive the proper code from it, like Node's
+    // errnoException(nread, 'read'). Raw WSA values (-10054, ...) that the
+    // errno table cannot name fall through to the reset shape below instead
+    // of surfacing "Unknown system error N".
     finishSocketEnd(self);
   } else if (_err && !self.destroyed) {
     // An error excluded from the synthesis above (teardown noise, or no

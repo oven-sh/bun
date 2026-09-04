@@ -1491,6 +1491,7 @@ impl<'a> BundleOptions<'a> {
             define: Box::new(defines::Define {
                 identifiers: self.define.identifiers.clone(),
                 dots: self.define.dots.clone(),
+                dots_filter: self.define.dots_filter.clone(),
                 drop_debugger: self.define.drop_debugger,
                 user_hash: self.define.user_hash,
             }),

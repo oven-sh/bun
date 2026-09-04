@@ -342,7 +342,7 @@ const AUTO_ONLY_PARAMS: &[ParamType] = concat_params!(
         // parse_param!("--all"),
         parse_param!("--silent                          Don't print the script command"),
         parse_param!(
-            "--elide-lines <NUMBER>            Number of lines of script output shown when using --filter (default: 10). Set to 0 to show all lines."
+            "--elide-lines <NUMBER>            Number of lines of script output shown when using --filter (default: 0, show all lines)"
         ),
         parse_param!("-v, --version                     Print version and exit"),
         parse_param!("--revision                        Print version with revision and exit"),
@@ -360,7 +360,7 @@ const RUN_ONLY_PARAMS: &[ParamType] = concat_params!(
     &[
         parse_param!("--silent                          Don't print the script command"),
         parse_param!(
-            "--elide-lines <NUMBER>            Number of lines of script output shown when using --filter (default: 10). Set to 0 to show all lines."
+            "--elide-lines <NUMBER>            Number of lines of script output shown when using --filter (default: 0, show all lines)"
         ),
     ],
     AUTO_OR_RUN_PARAMS,

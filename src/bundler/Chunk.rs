@@ -82,6 +82,10 @@ pub struct Chunk {
     // borrows from the symbol table and so can't live in this owning struct.
     // `ChunkRenamer` is the owning equivalent (see `crate::bun_renamer`).
     pub(crate) renamer: bun_renamer::ChunkRenamer,
+    /// The nested scopes still to name after `rename_symbols_in_chunk`
+    /// (number renamer only), `(source_index, module-scope child)` grouped by
+    /// file; each file becomes a `NestedRenamer` task.
+    pub(crate) nested_scopes_to_rename: Vec<(u32, *const bun_ast::Scope)>,
 
     pub compile_results_for_chunk: CompileResultSlots,
 
@@ -213,6 +217,7 @@ impl Default for Chunk {
             intermediate_output: IntermediateOutput::default(),
             isolated_hash: u64::MAX,
             renamer: bun_renamer::ChunkRenamer::default(),
+            nested_scopes_to_rename: Vec::new(),
             compile_results_for_chunk: CompileResultSlots::default(),
             metafile_chunk_json: Box::default(),
             flags: Flags::default(),

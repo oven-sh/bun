@@ -141,7 +141,12 @@ public:
     // (microtaskMode: "afterEvaluate" contexts only; no-op otherwise).
     void drainOwnMicrotasks();
     NodeVMSpecialSandbox* specialSandbox() const { return m_specialSandbox.get(); }
-    void setSpecialSandbox(NodeVMSpecialSandbox* sandbox) { m_specialSandbox.set(vm(), this, sandbox); }
+    // A DONT_CONTEXTIFY context's property hooks forward to its special sandbox.
+    void setSpecialSandbox(NodeVMSpecialSandbox* sandbox)
+    {
+        m_specialSandbox.set(vm(), this, sandbox);
+        m_sandbox.set(vm(), this, sandbox);
+    }
     JSValue dynamicImportCallback() const { return m_dynamicImportCallback.get(); }
 
     // Override property access to delegate to contextified object

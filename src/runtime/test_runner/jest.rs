@@ -720,7 +720,7 @@ pub(crate) fn format_label(
                     global_this,
                     bun_string_jsc::create_utf8_for_js(global_this, var_path)?,
                 )?;
-                if !value.is_empty_or_undefined_or_null() {
+                if !value.is_empty() {
                     // For primitive strings, use toString() to avoid adding quotes
                     // This matches Jest's behavior (https://github.com/jestjs/jest/issues/7689)
                     if value.is_string() {
@@ -746,6 +746,7 @@ pub(crate) fn format_label(
             list.push(b'$');
             list.extend_from_slice(&label[var_start..var_end]);
             idx = var_end;
+            continue;
         } else if char == b'%' && (idx + 1 < label.len()) && !(args_idx >= function_args.len()) {
             let current_arg = function_args[args_idx];
 

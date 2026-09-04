@@ -12,6 +12,7 @@ import {
   chmodSync,
   cpSync,
   existsSync,
+  linkSync,
   mkdirSync,
   readFileSync,
   readdirSync,
@@ -287,6 +288,18 @@ export function uploadArtifacts(cfg: Config, output: BunOutput): void {
 
   const testFFI = webkitTestFFIPath(cfg);
   if (existsSync(testFFI)) {
+    // The prebuilt ships it with full debug info: 417 MiB on the linux
+    // lanes, 57 MiB after --strip-debug (symbols stay, so a failure still
+    // has a readable backtrace; test/js/bun/jsc-stress/testFFI.test.ts only
+    // runs it). Unstripped it was uploaded here, downloaded by build-bun,
+    // took ~12s of build-bun's packaging step to deflate, and then rode in
+    // the ~460 MiB profile zip every test shard downloads. cfg.strip is the
+    // target's strip (GNU or llvm-strip, both take --strip-debug); Windows
+    // keeps its debug info in the separate .pdb and is left alone.
+    if (!cfg.windows) {
+      console.log("Stripping debug info from testFFI...");
+      run([cfg.strip, "--strip-debug", testFFI], cfg.buildDir);
+    }
     console.log("Uploading testFFI...");
     upload([relative(cfg.buildDir, testFFI)], cfg.buildDir);
   }
@@ -497,21 +510,21 @@ function makeZip(cfg: Config, name: string, files: string[]): string {
   rmSync(resolve(buildDir, zip), { force: true });
   mkdirSync(stageDir, { recursive: true });
 
-  // Copy files that exist. Some debug outputs (.pdb, .dSYM, .linker-map)
+  // Stage the files that exist. Some debug outputs (.pdb, .dSYM, .linker-map)
   // are optional depending on build config — skip rather than fail so a
   // missing optional file doesn't break packaging.
-  let copied = 0;
+  let staged = 0;
   for (const f of files) {
     const src = resolve(buildDir, f);
     if (!existsSync(src)) {
       console.log(`  (skip missing: ${f})`);
       continue;
     }
-    cpSync(src, resolve(stageDir, basename(f)), { recursive: true });
-    copied++;
+    stageForZip(src, resolve(stageDir, basename(f)));
+    staged++;
   }
 
-  console.log(`Creating ${zip} (${copied} files)...`);
+  console.log(`Creating ${zip} (${staged} files)...`);
   // Relative path `name` puts `name/` prefix inside the zip — what test
   // steps expect: they extract → `chmod +x ${triplet}/bun`.
   run([cfg.cmake, "-E", "tar", "cfv", zip, "--format=zip", name], buildDir);
@@ -520,6 +533,28 @@ function makeZip(cfg: Config, name: string, files: string[]): string {
   rmSync(stageDir, { recursive: true, force: true });
 
   return zip;
+}
+
+/**
+ * Put `src` at `dest` inside the zip staging dir. The staging dir lives next
+ * to the files (same build dir, so normally the same filesystem), and the
+ * staged tree is deleted right after the archiver has read it, so a hard
+ * link does the job without copying: the linux-x64 lane was spending ~6s
+ * copying bun-profile + testFFI + the linker map before the zip even
+ * started. Directories (the darwin .dSYM bundle) and anything that cannot be
+ * linked (another filesystem, a filesystem without hard links) are copied
+ * as before.
+ */
+export function stageForZip(src: string, dest: string): void {
+  if (statSync(src).isDirectory()) {
+    cpSync(src, dest, { recursive: true });
+    return;
+  }
+  try {
+    linkSync(src, dest);
+  } catch {
+    cpSync(src, dest);
+  }
 }
 
 /**

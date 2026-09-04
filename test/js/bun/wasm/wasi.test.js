@@ -1,5 +1,5 @@
 import { spawnSync } from "bun";
-import { expect, it } from "bun:test";
+import { describe, expect, it } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import fs from "node:fs";
 import path from "node:path";
@@ -162,4 +162,77 @@ it("path_* syscalls cannot escape the preopened directory", () => {
     WASI_ESUCCESS,
   );
   expect(wasi.FD_MAP.has(4)).toBe(true);
+});
+
+describe("getState() / setState()", () => {
+  // The constructor reads bindings.fs and bindings.path; proc_exit and proc_raise
+  // call bindings.exit and bindings.kill, so those record instead of touching the
+  // host process.
+  function makeBindings(calls, tag) {
+    return {
+      fs,
+      path,
+      hrtime: () => process.hrtime.bigint(),
+      isTTY: () => false,
+      randomFillSync: array => crypto.getRandomValues(array),
+      exit: code => calls.push([tag, "exit", code]),
+      kill: signal => calls.push([tag, "kill", signal]),
+    };
+  }
+
+  it("getState() returns the env, FD_MAP and bindings of the instance", () => {
+    const withDefaults = new WASI({ version: "preview1" });
+    expect(withDefaults.getState()).toEqual({
+      env: withDefaults.env,
+      FD_MAP: withDefaults.FD_MAP,
+      bindings: withDefaults.bindings,
+    });
+
+    const env = { WASI_TEST: "1" };
+    const bindings = makeBindings([], "custom");
+    const wasi = new WASI({ env, bindings });
+    const state = wasi.getState();
+    expect(state).toEqual({ env, FD_MAP: wasi.FD_MAP, bindings });
+    expect(state.bindings).toBe(bindings);
+  });
+
+  it("setState() installs env, FD_MAP and bindings taken from another instance", () => {
+    const source = new WASI({ env: { FROM: "source" }, bindings: makeBindings([], "source") });
+    const target = new WASI({ env: { FROM: "target" }, bindings: makeBindings([], "target") });
+    const sourceState = source.getState();
+
+    target.setState(sourceState);
+
+    expect(target.env).toBe(source.env);
+    expect(target.FD_MAP).toBe(source.FD_MAP);
+    expect(target.bindings).toBe(source.bindings);
+    expect(target.getState()).toEqual(sourceState);
+  });
+
+  it("proc_exit and proc_raise call the bindings installed by setState()", () => {
+    const WASI_ESUCCESS = 0;
+    const WASI_SIGABRT = 0;
+    const calls = [];
+    const originalBindings = makeBindings(calls, "original");
+    const wasi = new WASI({ bindings: originalBindings });
+
+    expect(wasi.wasiImport.proc_exit(3)).toBe(WASI_ESUCCESS);
+    expect(wasi.wasiImport.proc_raise(WASI_SIGABRT)).toBe(WASI_ESUCCESS);
+
+    wasi.setState({ env: wasi.env, FD_MAP: wasi.FD_MAP, bindings: makeBindings(calls, "replaced") });
+    expect(wasi.wasiImport.proc_exit(4)).toBe(WASI_ESUCCESS);
+    expect(wasi.wasiImport.proc_raise(WASI_SIGABRT)).toBe(WASI_ESUCCESS);
+
+    wasi.setState({ env: wasi.env, FD_MAP: wasi.FD_MAP, bindings: originalBindings });
+    expect(wasi.wasiImport.proc_exit(5)).toBe(WASI_ESUCCESS);
+    expect(wasi.bindings).toBe(originalBindings);
+
+    expect(calls).toEqual([
+      ["original", "exit", 3],
+      ["original", "kill", "SIGABRT"],
+      ["replaced", "exit", 4],
+      ["replaced", "kill", "SIGABRT"],
+      ["original", "exit", 5],
+    ]);
+  });
 });

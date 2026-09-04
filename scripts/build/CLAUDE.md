@@ -25,7 +25,7 @@ This directory generates `build.ninja`. The scripts **describe** the build; ninj
 - `direct` — list the dep's sources explicitly; each becomes a first-class `cc`/`cxx` edge in our graph and the `.o`s go straight into bun's link. The default for the C/C++ deps (zlib, zstd, boringssl, libarchive, mimalloc, …). Skips a sub-process configure entirely and lets LTO see across the dep boundary.
 - `nested-cmake` — invoke the dep's own cmake configure + build as ninja edges. For deps whose build is too entangled to list by hand. Flags forwarded via `-DCMAKE_C_FLAGS`; cmake's own dependency tracking handles incrementality inside.
 - `cargo` — invoke cargo build (lolhtml, rust-argon2). Cargo's incremental build is reliable; `restat = 1` keeps our downstream no-ops fast.
-- `custom` — the dep's own module emits the graph with the same `cc`/`cxx`/`pch`/`ar`/`link` primitives (WebKit `--webkit=source`: `deps/webkit.ts` reads JSC/WTF/bmalloc file lists out of WebKit's CMakeLists via `cmake-lists.ts`, emits the ruby/python codegen and the LLInt extractor chain, and archives three libs). The tree is fetched at configure time because the graph is described from it.
+- `custom` — the dep's own module emits the graph with the same `cc`/`cxx`/`pch`/`ar`/`link` primitives (WebKit `--webkit=source`: `deps/webkit.ts` lists the WTF/bmalloc sources and JSC codegen inputs, takes JSC's own TUs from its `Sources.txt`, emits the ruby/python codegen and the LLInt extractor chain, and archives three libs). The tree is fetched at configure time because the graph is described from it.
 - `prebuilt` — skip build entirely, download compiled `.a`/`.lib` (WebKit default, nodejs-headers).
 
 The `dep` pool (depth 4) throttles concurrent nested cmake/cargo sub-builds so they don't oversubscribe cores.
@@ -189,7 +189,6 @@ Split CI modes: `rust-only` (path deps+codegen+cargo → libbun_runtime.a), `cpp
 | `compile.ts`                   | `cc`/`cxx`/`pch`/`link`/`ar` + `registerCompileRules()`                                                                 |
 | `unified.ts`                   | WebKit-style unified-source bundling, `generateUnifiedSources()`                                                        |
 | `source.ts`                    | `Dependency` types, `resolveDep()`, fetch/configure/build emission                                                      |
-| `cmake-lists.ts`               | Minimal CMake evaluator — reads `set`/`list`/`if` source lists out of a dep's CMakeLists (WebKit direct build)          |
 | `codegen.ts`                   | Code generation steps, `emitCodegen()`, `CodegenOutputs`                                                                |
 | `rust.ts`                      | `cargo build` step, `emitRust()`, `rustLibPath()`, cross-compile matrix                                                 |
 | `cargo-config.ts`              | Generates the git-ignored `.cargo/config.toml` (per-target `linker` from `cfg.hostCxx`)                                 |

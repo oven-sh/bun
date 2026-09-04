@@ -28,6 +28,7 @@ To do that:
 - cd back to bun and update WEBKIT_VERSION in scripts/build/deps/webkit.ts:
   - Direct: the new vendor/WebKit commit sha
   - Preview: the full preview tag (`autobuild-preview-pr-...`)
+- Build once with `bun run build:release --webkit=source` (Linux CI builds JSC/WTF/bmalloc from source in bun's own graph). The file lists in the "Source mode: file lists" section of scripts/build/deps/webkit.ts mirror WebKit's CMakeLists (WTF_SOURCES, bmalloc_SOURCES/_C_SOURCES, JavaScriptCore_OBJECT_LUT_SOURCES, _BUILTINS_SOURCES, _INSPECTOR_DOMAINS, include dirs): a file upstream added, removed or renamed shows up as "no such file" or an undefined/duplicate symbol — diff the upstream CMakeLists change and edit the list to match.
 - git checkout -b claude/webkit-upgrade-<sha> (branch must start with `claude/` for CI)
 - commit + push (without adding the webkit-changes.md file)
 - create a PR titled "Upgrade WebKit to <upstream-short-sha>", paste webkit-changes.md into the description

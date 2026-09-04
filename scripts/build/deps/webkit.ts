@@ -46,8 +46,7 @@ export const WEBKIT_VERSION = "40e43a82a755af3cc9eb4a4e025e4e020a7a3cfd";
 import { spawnSync } from "node:child_process";
 import { existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, rmSync } from "node:fs";
 import { homedir } from "node:os";
-import { basename, dirname, join, relative, resolve } from "node:path";
-import { cmakeVars, evaluateCMake, type CMakeVars } from "../cmake-lists.ts";
+import { basename, join, resolve } from "node:path";
 import { ar, cc, cxx, link, pch } from "../compile.ts";
 import type { Config } from "../config.ts";
 import { BuildError, assert } from "../error.ts";
@@ -473,6 +472,698 @@ function inspectorFeatureDefines(cfg: Config): string {
 }
 
 // ───────────────────────────────────────────────────────────────────────────
+// Source mode: file lists
+//
+// Everything WebKit's cmake would compile/generate for the JSCOnly port with
+// bun's options, written out. JSC's own translation units are NOT here — they
+// come from JavaScriptCore/Sources.txt (+ SourcesSocket.txt) through WebKit's
+// unified-source bundler — and header/offlineasm directories are globbed.
+// What is here is what only exists inside WebKit's CMakeLists.txt:
+// WTF/bmalloc sources, the JSC files that get a .lut.h, builtins, inspector
+// domains, include dirs.
+//
+// On a WebKit upgrade a file added/removed/renamed upstream shows up as a
+// hard "no such file" or an undefined/duplicate symbol at link; fix the list.
+// The lists mirror, in order: Source/bmalloc/CMakeLists.txt (bmalloc_SOURCES,
+// bmalloc_C_SOURCES), Source/WTF/wtf/CMakeLists.txt + PlatformJSCOnly.cmake
+// (WTF_SOURCES), Source/JavaScriptCore/CMakeLists.txt
+// (JavaScriptCore_PRIVATE_INCLUDE_DIRECTORIES, _OBJECT_LUT_SOURCES,
+// _BUILTINS_SOURCES, _INSPECTOR_DOMAINS, _PUBLIC_FRAMEWORK_HEADERS).
+// ───────────────────────────────────────────────────────────────────────────
+
+/** bmalloc_SOURCES (relative to Source/bmalloc). The .c entries are compiled as C++, as cmake does. */
+const bmallocSources: readonly string[] = [
+  "bmalloc/CryptoRandom.cpp",
+  "bmalloc/SystemHeap.cpp",
+  "bmalloc/Environment.cpp",
+  "bmalloc/Gigacage.cpp",
+  "bmalloc/HeapKind.cpp",
+  "bmalloc/Logging.cpp",
+  "bmalloc/Mutex.cpp",
+  "bmalloc/TZoneHeap.cpp",
+  "bmalloc/TZoneHeapManager.cpp",
+  "bmalloc/TZoneLog.cpp",
+  "bmalloc/VMAllocate.cpp",
+  "bmalloc/bmalloc.cpp",
+  "libpas/src/libpas/bmalloc_heap.c",
+  "libpas/src/libpas/bmalloc_heap_config.c",
+  "libpas/src/libpas/bmalloc_heap_flex.c",
+  "libpas/src/libpas/bmalloc_heap_iso.c",
+  "libpas/src/libpas/bmalloc_heap_utils.c",
+  "libpas/src/libpas/jit_heap.c",
+  "libpas/src/libpas/pas_bitfit_page_config_kind.c",
+  "libpas/src/libpas/pas_heap_config_kind.c",
+  "libpas/src/libpas/pas_segregated_page_config_kind.c",
+  "libpas/src/libpas/tagged_bmalloc_heap.c",
+  "libpas/src/libpas/tagged_bmalloc_heap_config.c",
+  "libpas/src/libpas/tagged_bmalloc_heap_utils.c",
+];
+
+/** bmalloc_C_SOURCES: libpas, compiled as C (relative to Source/bmalloc). */
+const bmallocCSources: readonly string[] = [
+  "libpas/src/libpas/bmalloc_type.c",
+  "libpas/src/libpas/hotbit_heap.c",
+  "libpas/src/libpas/hotbit_heap_config.c",
+  "libpas/src/libpas/iso_heap.c",
+  "libpas/src/libpas/iso_heap_config.c",
+  "libpas/src/libpas/iso_test_heap.c",
+  "libpas/src/libpas/iso_test_heap_config.c",
+  "libpas/src/libpas/jit_heap_config.c",
+  "libpas/src/libpas/minalign32_heap.c",
+  "libpas/src/libpas/minalign32_heap_config.c",
+  "libpas/src/libpas/pagesize64k_heap.c",
+  "libpas/src/libpas/pagesize64k_heap_config.c",
+  "libpas/src/libpas/pas_alignment.c",
+  "libpas/src/libpas/pas_all_heaps.c",
+  "libpas/src/libpas/pas_allocation_callbacks.c",
+  "libpas/src/libpas/pas_allocation_result.c",
+  "libpas/src/libpas/pas_baseline_allocator.c",
+  "libpas/src/libpas/pas_baseline_allocator_table.c",
+  "libpas/src/libpas/pas_basic_heap_config_enumerator_data.c",
+  "libpas/src/libpas/pas_bitfit_allocator.c",
+  "libpas/src/libpas/pas_bitfit_directory.c",
+  "libpas/src/libpas/pas_bitfit_heap.c",
+  "libpas/src/libpas/pas_bitfit_page.c",
+  "libpas/src/libpas/pas_bitfit_size_class.c",
+  "libpas/src/libpas/pas_bitfit_view.c",
+  "libpas/src/libpas/pas_bootstrap_free_heap.c",
+  "libpas/src/libpas/pas_bootstrap_heap_page_provider.c",
+  "libpas/src/libpas/pas_coalign.c",
+  "libpas/src/libpas/pas_commit_span.c",
+  "libpas/src/libpas/pas_committed_pages_vector.c",
+  "libpas/src/libpas/pas_compact_bootstrap_free_heap.c",
+  "libpas/src/libpas/pas_compact_expendable_memory.c",
+  "libpas/src/libpas/pas_compact_heap_reservation.c",
+  "libpas/src/libpas/pas_compact_large_utility_free_heap.c",
+  "libpas/src/libpas/pas_compute_summary_object_callbacks.c",
+  "libpas/src/libpas/pas_create_basic_heap_page_caches_with_reserved_memory.c",
+  "libpas/src/libpas/pas_deallocate.c",
+  "libpas/src/libpas/pas_debug_spectrum.c",
+  "libpas/src/libpas/pas_deferred_decommit_log.c",
+  "libpas/src/libpas/pas_designated_intrinsic_heap.c",
+  "libpas/src/libpas/pas_dyld_state.c",
+  "libpas/src/libpas/pas_dynamic_primitive_heap_map.c",
+  "libpas/src/libpas/pas_ensure_heap_forced_into_reserved_memory.c",
+  "libpas/src/libpas/pas_ensure_heap_with_page_caches.c",
+  "libpas/src/libpas/pas_enumerable_page_malloc.c",
+  "libpas/src/libpas/pas_enumerable_range_list.c",
+  "libpas/src/libpas/pas_enumerate_bitfit_heaps.c",
+  "libpas/src/libpas/pas_enumerate_initially_unaccounted_pages.c",
+  "libpas/src/libpas/pas_enumerate_large_heaps.c",
+  "libpas/src/libpas/pas_enumerate_segregated_heaps.c",
+  "libpas/src/libpas/pas_enumerate_unaccounted_pages_as_meta.c",
+  "libpas/src/libpas/pas_enumerator.c",
+  "libpas/src/libpas/pas_enumerator_region.c",
+  "libpas/src/libpas/pas_epoch.c",
+  "libpas/src/libpas/pas_exclusive_view_template_memo_table.c",
+  "libpas/src/libpas/pas_expendable_memory.c",
+  "libpas/src/libpas/pas_extended_gcd.c",
+  "libpas/src/libpas/pas_fast_large_free_heap.c",
+  "libpas/src/libpas/pas_fast_megapage_cache.c",
+  "libpas/src/libpas/pas_fast_megapage_table.c",
+  "libpas/src/libpas/pas_fd_stream.c",
+  "libpas/src/libpas/pas_free_granules.c",
+  "libpas/src/libpas/pas_heap.c",
+  "libpas/src/libpas/pas_heap_config.c",
+  "libpas/src/libpas/pas_heap_config_utils.c",
+  "libpas/src/libpas/pas_heap_for_config.c",
+  "libpas/src/libpas/pas_heap_lock.c",
+  "libpas/src/libpas/pas_heap_ref.c",
+  "libpas/src/libpas/pas_heap_runtime_config.c",
+  "libpas/src/libpas/pas_heap_summary.c",
+  "libpas/src/libpas/pas_heap_table.c",
+  "libpas/src/libpas/pas_immortal_heap.c",
+  "libpas/src/libpas/pas_large_expendable_memory.c",
+  "libpas/src/libpas/pas_large_free_heap_deferred_commit_log.c",
+  "libpas/src/libpas/pas_large_free_heap_helpers.c",
+  "libpas/src/libpas/pas_large_heap.c",
+  "libpas/src/libpas/pas_large_heap_physical_page_sharing_cache.c",
+  "libpas/src/libpas/pas_large_map.c",
+  "libpas/src/libpas/pas_large_sharing_pool.c",
+  "libpas/src/libpas/pas_large_utility_free_heap.c",
+  "libpas/src/libpas/pas_lenient_compact_unsigned_ptr.c",
+  "libpas/src/libpas/pas_local_allocator.c",
+  "libpas/src/libpas/pas_local_allocator_scavenger_data.c",
+  "libpas/src/libpas/pas_local_view_cache.c",
+  "libpas/src/libpas/pas_lock.c",
+  "libpas/src/libpas/pas_lock_free_read_ptr_ptr_hashtable.c",
+  "libpas/src/libpas/pas_log.c",
+  "libpas/src/libpas/pas_malloc_stack_logging.c",
+  "libpas/src/libpas/pas_mar_registry.c",
+  "libpas/src/libpas/pas_mar_report_crash.c",
+  "libpas/src/libpas/pas_medium_megapage_cache.c",
+  "libpas/src/libpas/pas_megapage_cache.c",
+  "libpas/src/libpas/pas_monotonic_time.c",
+  "libpas/src/libpas/pas_mte.c",
+  "libpas/src/libpas/pas_mte_config.c",
+  "libpas/src/libpas/pas_page_base.c",
+  "libpas/src/libpas/pas_page_base_config.c",
+  "libpas/src/libpas/pas_page_header_table.c",
+  "libpas/src/libpas/pas_page_malloc.c",
+  "libpas/src/libpas/pas_page_sharing_participant.c",
+  "libpas/src/libpas/pas_page_sharing_pool.c",
+  "libpas/src/libpas/pas_payload_reservation_page_list.c",
+  "libpas/src/libpas/pas_physical_memory_transaction.c",
+  "libpas/src/libpas/pas_primitive_heap_ref.c",
+  "libpas/src/libpas/pas_probabilistic_guard_malloc_allocator.c",
+  "libpas/src/libpas/pas_process.c",
+  "libpas/src/libpas/pas_ptr_worklist.c",
+  "libpas/src/libpas/pas_race_test_hooks.c",
+  "libpas/src/libpas/pas_random.c",
+  "libpas/src/libpas/pas_red_black_tree.c",
+  "libpas/src/libpas/pas_redundant_local_allocator_node.c",
+  "libpas/src/libpas/pas_report_crash.c",
+  "libpas/src/libpas/pas_reserved_memory_provider.c",
+  "libpas/src/libpas/pas_root.c",
+  "libpas/src/libpas/pas_runtime_config.c",
+  "libpas/src/libpas/pas_scavenger.c",
+  "libpas/src/libpas/pas_segregated_directory.c",
+  "libpas/src/libpas/pas_segregated_exclusive_view.c",
+  "libpas/src/libpas/pas_segregated_heap.c",
+  "libpas/src/libpas/pas_segregated_page.c",
+  "libpas/src/libpas/pas_segregated_page_config.c",
+  "libpas/src/libpas/pas_segregated_size_directory.c",
+  "libpas/src/libpas/pas_segregated_view.c",
+  "libpas/src/libpas/pas_simple_free_heap_helpers.c",
+  "libpas/src/libpas/pas_simple_large_free_heap.c",
+  "libpas/src/libpas/pas_simple_type.c",
+  "libpas/src/libpas/pas_small_medium_bootstrap_free_heap.c",
+  "libpas/src/libpas/pas_small_medium_bootstrap_heap_page_provider.c",
+  "libpas/src/libpas/pas_stats.c",
+  "libpas/src/libpas/pas_status_reporter.c",
+  "libpas/src/libpas/pas_stream.c",
+  "libpas/src/libpas/pas_string_stream.c",
+  "libpas/src/libpas/pas_thread.c",
+  "libpas/src/libpas/pas_thread_local_cache.c",
+  "libpas/src/libpas/pas_thread_local_cache_layout.c",
+  "libpas/src/libpas/pas_thread_local_cache_layout_node.c",
+  "libpas/src/libpas/pas_thread_local_cache_node.c",
+  "libpas/src/libpas/pas_thread_suspend_lock.c",
+  "libpas/src/libpas/pas_thread_suspender.c",
+  "libpas/src/libpas/pas_utility_heap.c",
+  "libpas/src/libpas/pas_utility_heap_config.c",
+  "libpas/src/libpas/pas_utils.c",
+  "libpas/src/libpas/pas_versioned_field.c",
+  "libpas/src/libpas/pas_virtual_range.c",
+  "libpas/src/libpas/thingy_heap.c",
+  "libpas/src/libpas/thingy_heap_config.c",
+];
+
+/** WTF_SOURCES shared by every ELF target (relative to Source/WTF/wtf). */
+const wtfSourcesCommon: readonly string[] = [
+  "ASCIICType.cpp",
+  "ApproximateTime.cpp",
+  "Assertions.cpp",
+  "AutomaticThread.cpp",
+  "AvailableMemory.cpp",
+  "uv_get_constrained_memory.cpp",
+  "BitVector.cpp",
+  "BloomFilter.cpp",
+  "CPUTime.cpp",
+  "ClockType.cpp",
+  "CodePtr.cpp",
+  "CompactPtr.cpp",
+  "CompilationThread.cpp",
+  "ConcurrentBuffer.cpp",
+  "ConcurrentPtrHashSet.cpp",
+  "ContinuousApproximateTime.cpp",
+  "ContinuousTime.cpp",
+  "CountingLock.cpp",
+  "CrossThreadCopier.cpp",
+  "CrossThreadTaskHandler.cpp",
+  "CryptographicUtilities.cpp",
+  "CryptographicallyRandomNumber.cpp",
+  "CurrentThread.cpp",
+  "CurrentTime.cpp",
+  "DataLog.cpp",
+  "DateMath.cpp",
+  "DebugHeap.cpp",
+  "EmbeddedFixedVector.cpp",
+  "FastBitVector.cpp",
+  "FastFloat.cpp",
+  "FastMalloc.cpp",
+  "FileHandle.cpp",
+  "FilePrintStream.cpp",
+  "FileSystem.cpp",
+  "FunctionDispatcher.cpp",
+  "GlobalVersion.cpp",
+  "GregorianDateTime.cpp",
+  "HashTable.cpp",
+  "HexNumber.cpp",
+  "Int128.cpp",
+  "JSONValues.cpp",
+  "Language.cpp",
+  "LikelyDenseUnsignedIntegerSet.cpp",
+  "Lock.cpp",
+  "LockedPrintStream.cpp",
+  "LogChannels.cpp",
+  "LogInitialization.cpp",
+  "Logger.cpp",
+  "Logging.cpp",
+  "MainThread.cpp",
+  "MainThreadDispatcher.cpp",
+  "MallocCommon.cpp",
+  "MediaTime.cpp",
+  "MemoryPressureHandler.cpp",
+  "MetaAllocator.cpp",
+  "MonotonicTime.cpp",
+  "NativePromise.cpp",
+  "NumberOfCores.cpp",
+  "OSRandomSource.cpp",
+  "ObjectIdentifier.cpp",
+  "PageBlock.cpp",
+  "ParallelHelperPool.cpp",
+  "ParallelJobsGeneric.cpp",
+  "ParkingLot.cpp",
+  "PreciseSum.cpp",
+  "PrintStream.cpp",
+  "ProcessPrivilege.cpp",
+  "RAMSize.cpp",
+  "RandomDevice.cpp",
+  "ReadWriteLock.cpp",
+  "RefCountDebugger.cpp",
+  "RefTrackerMixin.cpp",
+  "RunLoop.cpp",
+  "RuntimeApplicationChecks.cpp",
+  "SHA1.cpp",
+  "SIMDUTF.cpp",
+  "SafeStrerror.cpp",
+  "Seconds.cpp",
+  "SegmentedVector.cpp",
+  "SequesteredAllocator.cpp",
+  "SequesteredAutomaticThread.cpp",
+  "SequesteredImmortalHeap.cpp",
+  "SequesteredMalloc.cpp",
+  "SixCharacterHash.cpp",
+  "SmallSet.cpp",
+  "StackBounds.cpp",
+  "StackCheck.cpp",
+  "StackPointer.cpp",
+  "StackStats.cpp",
+  "StackTrace.cpp",
+  "StringPrintStream.cpp",
+  "SuspendableWorkQueue.cpp",
+  "ThreadGroup.cpp",
+  "ThreadMessage.cpp",
+  "Threading.cpp",
+  "TimeWithDynamicClockType.cpp",
+  "TimeZone.cpp",
+  "TimingScope.cpp",
+  "URL.cpp",
+  "URLHelpers.cpp",
+  "URLParser.cpp",
+  "UUID.cpp",
+  "UnbarrieredMonotonicTime.cpp",
+  "UniqueArray.cpp",
+  "Vector.cpp",
+  "WTFAssertions.cpp",
+  "WTFConfig.cpp",
+  "WTFProcess.cpp",
+  "WallTime.cpp",
+  "WeakPtr.cpp",
+  "WeakRandomNumber.cpp",
+  "WordLock.cpp",
+  "WorkQueue.cpp",
+  "WorkerPool.cpp",
+  "dtoa.cpp",
+  "dragonbox/dragonbox_to_chars.cpp",
+  "dtoa/bignum-dtoa.cc",
+  "dtoa/bignum.cc",
+  "dtoa/cached-powers.cc",
+  "dtoa/diy-fp.cc",
+  "dtoa/double-conversion.cc",
+  "dtoa/fast-dtoa.cc",
+  "dtoa/fixed-dtoa.cc",
+  "dtoa/strtod.cc",
+  "persistence/PersistentCoders.cpp",
+  "persistence/PersistentDecoder.cpp",
+  "persistence/PersistentEncoder.cpp",
+  "text/ASCIILiteral.cpp",
+  "text/AtomString.cpp",
+  "text/AtomStringImpl.cpp",
+  "text/AtomStringTable.cpp",
+  "text/Base64.cpp",
+  "text/CString.cpp",
+  "text/CStringView.cpp",
+  "text/ExternalStringImpl.cpp",
+  "text/LineEnding.cpp",
+  "text/StringBuffer.cpp",
+  "text/StringBuilder.cpp",
+  "text/StringBuilderJSON.cpp",
+  "text/StringCommon.cpp",
+  "text/StringImpl.cpp",
+  "text/StringView.cpp",
+  "text/SymbolImpl.cpp",
+  "text/SymbolRegistry.cpp",
+  "text/TextBreakIterator.cpp",
+  "text/TextStream.cpp",
+  "text/UniquedStringImpl.cpp",
+  "text/WTFString.cpp",
+  "text/icu/UnicodeExtras.cpp",
+  "text/icu/UTextProvider.cpp",
+  "text/icu/UTextProviderLatin1.cpp",
+  "text/icu/UTextProviderUTF16.cpp",
+  "threads/BinarySemaphore.cpp",
+  "threads/Signals.cpp",
+  "unicode/CollatorDefault.cpp",
+  "unicode/UTF8Conversion.cpp",
+  "unicode/icu/CollatorICU.cpp",
+  "unicode/icu/ICUHelpers.cpp",
+  "generic/WorkQueueGeneric.cpp",
+  "generic/MainThreadGeneric.cpp",
+  "posix/OSAllocatorPOSIX.cpp",
+  "posix/ThreadingPOSIX.cpp",
+  "text/unix/TextBreakIteratorInternalICUUnix.cpp",
+  "unix/LanguageUnix.cpp",
+  "posix/CPUTimePOSIX.cpp",
+  "posix/FileHandlePOSIX.cpp",
+  "posix/FileSystemPOSIX.cpp",
+  "posix/MappedFileDataPOSIX.cpp",
+  "unix/UniStdExtrasUnix.cpp",
+  "bun/RunLoopBun.cpp",
+];
+
+/** WTF_SOURCES that Source/WTF/wtf/PlatformJSCOnly.cmake picks per OS. */
+function wtfSourcesFor(cfg: Config): string[] {
+  if (cfg.abi === "android") {
+    return [
+      "android/LoggingAndroid.cpp",
+      "android/RefPtrAndroid.cpp",
+      "linux/CurrentProcessMemoryStatus.cpp",
+      "linux/HighPriorityThreads.cpp",
+      "linux/MemoryFootprintLinux.cpp",
+      "generic/MemoryPressureHandlerGeneric.cpp",
+    ];
+  }
+  if (cfg.freebsd) {
+    return ["unix/LoggingUnix.cpp", "generic/MemoryFootprintGeneric.cpp", "unix/MemoryPressureHandlerUnix.cpp"];
+  }
+  // linux (gnu, musl)
+  return [
+    "unix/LoggingUnix.cpp",
+    "linux/CurrentProcessMemoryStatus.cpp",
+    "linux/HighPriorityThreads.cpp",
+    "linux/MemoryFootprintLinux.cpp",
+    "unix/MemoryPressureHandlerUnix.cpp",
+  ];
+}
+
+/** WTF_PRIVATE_INCLUDE_DIRECTORIES inside the tree (relative to Source/WTF/wtf; ".." is Source/WTF for <wtf/X.h>). */
+const wtfIncludeDirs: readonly string[] = [
+  "..",
+  "",
+  "dtoa",
+  "fast_float",
+  "persistence",
+  "simdutf",
+  "text",
+  "text/icu",
+  "threads",
+  "unicode",
+];
+
+/** JavaScriptCore_PRIVATE_INCLUDE_DIRECTORIES inside the tree (relative to Source/JavaScriptCore). */
+const jscIncludeDirs: readonly string[] = [
+  "",
+  "API",
+  "assembler",
+  "b3",
+  "b3/air",
+  "bindings",
+  "builtins",
+  "bytecode",
+  "bytecompiler",
+  "dfg",
+  "disassembler",
+  "disassembler/ARM64",
+  "disassembler/zydis",
+  "domjit",
+  "ffi",
+  "ffi/tests",
+  "ftl",
+  "fuzzilli",
+  "heap",
+  "debugger",
+  "inspector",
+  "inspector/agents",
+  "inspector/augmentable",
+  "inspector/remote",
+  "interpreter",
+  "jit",
+  "llint",
+  "lol",
+  "parser",
+  "profiler",
+  "runtime",
+  "runtime/temporal/core",
+  "tools",
+  "wasm",
+  "wasm/debugger",
+  "wasm/js",
+  "yarr",
+  "inspector/remote/socket",
+];
+
+/** Directories whose headers are exposed flat as <JavaScriptCore/X.h> (JavaScriptCore_PRIVATE_FRAMEWORK_HEADERS lists files from exactly these; every *.h in them is forwarded). */
+const jscHeaderDirs: readonly string[] = [
+  "API",
+  "assembler",
+  "b3/air",
+  "b3",
+  "builtins",
+  "bytecode",
+  "debugger",
+  "dfg",
+  "domjit",
+  "heap",
+  "inspector",
+  "inspector/agents",
+  "inspector/augmentable",
+  "inspector/remote",
+  "inspector/remote/socket",
+  "interpreter",
+  "jit",
+  "llint",
+  "lol",
+  "parser",
+  "bytecompiler",
+  "profiler",
+  "runtime",
+  "runtime/temporal/core",
+  "tools",
+  "wasm",
+  "wasm/debugger",
+  "wasm/js",
+  "yarr",
+  "ffi",
+  "ffi/tests",
+];
+
+/** JavaScriptCore_PUBLIC_FRAMEWORK_HEADERS: the C API, exposed as <JavaScriptCore/X.h> under Headers/. */
+const jscPublicHeaders: readonly string[] = [
+  "API/JSBase.h",
+  "API/JSContextRef.h",
+  "API/JSObjectRef.h",
+  "API/JSStringRef.h",
+  "API/JSTypedArray.h",
+  "API/JSValueRef.h",
+  "API/JavaScript.h",
+  "API/WebKitAvailability.h",
+  "API/JSRemoteInspectorServer.h",
+];
+
+/** JavaScriptCore_OBJECT_LUT_SOURCES: each gets a DerivedSources/<Name>.lut.h from create_hash_table. */
+const jscLutSources: readonly string[] = [
+  "runtime/ArrayConstructor.cpp",
+  "runtime/AsyncFromSyncIteratorPrototype.cpp",
+  "runtime/AsyncGeneratorPrototype.cpp",
+  "runtime/BigIntConstructor.cpp",
+  "runtime/BigIntPrototype.cpp",
+  "runtime/BooleanPrototype.cpp",
+  "runtime/DateConstructor.cpp",
+  "runtime/DatePrototype.cpp",
+  "runtime/ErrorPrototype.cpp",
+  "runtime/GeneratorPrototype.cpp",
+  "runtime/IntlCollatorConstructor.cpp",
+  "runtime/IntlCollatorPrototype.cpp",
+  "runtime/IntlDateTimeFormatConstructor.cpp",
+  "runtime/IntlDateTimeFormatPrototype.cpp",
+  "runtime/IntlDisplayNamesConstructor.cpp",
+  "runtime/IntlDisplayNamesPrototype.cpp",
+  "runtime/IntlDurationFormatConstructor.cpp",
+  "runtime/IntlDurationFormatPrototype.cpp",
+  "runtime/IntlListFormatConstructor.cpp",
+  "runtime/IntlListFormatPrototype.cpp",
+  "runtime/IntlLocalePrototype.cpp",
+  "runtime/IntlNumberFormatConstructor.cpp",
+  "runtime/IntlNumberFormatPrototype.cpp",
+  "runtime/IntlObject.cpp",
+  "runtime/IntlPluralRulesConstructor.cpp",
+  "runtime/IntlPluralRulesPrototype.cpp",
+  "runtime/IntlRelativeTimeFormatConstructor.cpp",
+  "runtime/IntlRelativeTimeFormatPrototype.cpp",
+  "runtime/IntlSegmentIteratorPrototype.cpp",
+  "runtime/IntlSegmenterConstructor.cpp",
+  "runtime/IntlSegmenterPrototype.cpp",
+  "runtime/IntlSegmentsPrototype.cpp",
+  "runtime/JSDataViewPrototype.cpp",
+  "runtime/JSGlobalObject.cpp",
+  "runtime/JSIterator.cpp",
+  "runtime/JSIteratorConstructor.cpp",
+  "runtime/JSIteratorHelperPrototype.cpp",
+  "runtime/JSONObject.cpp",
+  "runtime/JSPromiseConstructor.cpp",
+  "runtime/JSPromisePrototype.cpp",
+  "runtime/MapConstructor.cpp",
+  "runtime/MapPrototype.cpp",
+  "runtime/NumberConstructor.cpp",
+  "runtime/NumberPrototype.cpp",
+  "runtime/ObjectConstructor.cpp",
+  "runtime/ReflectObject.cpp",
+  "runtime/RegExpConstructor.cpp",
+  "runtime/RegExpPrototype.cpp",
+  "runtime/RegExpStringIteratorPrototype.cpp",
+  "runtime/SetPrototype.cpp",
+  "runtime/ShadowRealmObject.cpp",
+  "runtime/ShadowRealmPrototype.cpp",
+  "runtime/StringConstructor.cpp",
+  "runtime/StringPrototype.cpp",
+  "runtime/SymbolConstructor.cpp",
+  "runtime/SymbolPrototype.cpp",
+  "runtime/TemporalDurationConstructor.cpp",
+  "runtime/TemporalDurationPrototype.cpp",
+  "runtime/TemporalInstantConstructor.cpp",
+  "runtime/TemporalInstantPrototype.cpp",
+  "runtime/TemporalNow.cpp",
+  "runtime/TemporalObject.cpp",
+  "runtime/TemporalPlainDateConstructor.cpp",
+  "runtime/TemporalPlainDatePrototype.cpp",
+  "runtime/TemporalPlainDateTimeConstructor.cpp",
+  "runtime/TemporalPlainDateTimePrototype.cpp",
+  "runtime/TemporalPlainMonthDayConstructor.cpp",
+  "runtime/TemporalPlainMonthDayPrototype.cpp",
+  "runtime/TemporalPlainTimeConstructor.cpp",
+  "runtime/TemporalPlainTimePrototype.cpp",
+  "runtime/TemporalPlainYearMonthConstructor.cpp",
+  "runtime/TemporalPlainYearMonthPrototype.cpp",
+  "runtime/TemporalZonedDateTimeConstructor.cpp",
+  "runtime/TemporalZonedDateTimePrototype.cpp",
+  "wasm/js/JSWebAssembly.cpp",
+  "wasm/js/WebAssemblyArrayConstructor.cpp",
+  "wasm/js/WebAssemblyArrayPrototype.cpp",
+  "wasm/js/WebAssemblyCompileErrorConstructor.cpp",
+  "wasm/js/WebAssemblyCompileErrorPrototype.cpp",
+  "wasm/js/WebAssemblyExceptionConstructor.cpp",
+  "wasm/js/WebAssemblyExceptionPrototype.cpp",
+  "wasm/js/WebAssemblyGlobalConstructor.cpp",
+  "wasm/js/WebAssemblyGlobalPrototype.cpp",
+  "wasm/js/WebAssemblyInstanceConstructor.cpp",
+  "wasm/js/WebAssemblyInstancePrototype.cpp",
+  "wasm/js/WebAssemblyLinkErrorConstructor.cpp",
+  "wasm/js/WebAssemblyLinkErrorPrototype.cpp",
+  "wasm/js/WebAssemblyMemoryConstructor.cpp",
+  "wasm/js/WebAssemblyMemoryPrototype.cpp",
+  "wasm/js/WebAssemblyModuleConstructor.cpp",
+  "wasm/js/WebAssemblyModulePrototype.cpp",
+  "wasm/js/WebAssemblyRuntimeErrorConstructor.cpp",
+  "wasm/js/WebAssemblyRuntimeErrorPrototype.cpp",
+  "wasm/js/WebAssemblySuspendErrorConstructor.cpp",
+  "wasm/js/WebAssemblySuspendErrorPrototype.cpp",
+  "wasm/js/WebAssemblyStructConstructor.cpp",
+  "wasm/js/WebAssemblyStructPrototype.cpp",
+  "wasm/js/WebAssemblyTableConstructor.cpp",
+  "wasm/js/WebAssemblyTablePrototype.cpp",
+  "wasm/js/WebAssemblyTagConstructor.cpp",
+  "wasm/js/WebAssemblyTagPrototype.cpp",
+];
+
+/** JavaScriptCore_BUILTINS_SOURCES: inputs to generate-js-builtins.py (JSCBuiltins.{h,cpp}). */
+const jscBuiltinsSources: readonly string[] = [
+  "builtins/ArrayConstructor.js",
+  "builtins/ArrayIteratorPrototype.js",
+  "builtins/ArrayPrototype.js",
+  "builtins/AsyncDisposableStackPrototype.js",
+  "builtins/AsyncIteratorPrototype.js",
+  "builtins/DisposableStackPrototype.js",
+  "builtins/FunctionPrototype.js",
+  "builtins/GeneratorPrototype.js",
+  "builtins/IteratorHelpers.js",
+  "builtins/JSIteratorConstructor.js",
+  "builtins/JSIteratorHelperPrototype.js",
+  "builtins/JSIteratorPrototype.js",
+  "builtins/MapConstructor.js",
+  "builtins/MapPrototype.js",
+  "builtins/ObjectConstructor.js",
+  "builtins/PromiseConstructor.js",
+  "builtins/ProxyHelpers.js",
+  "builtins/ReflectObject.js",
+  "builtins/SetPrototype.js",
+  "builtins/ShadowRealmPrototype.js",
+  "builtins/TypedArrayConstructor.js",
+  "builtins/TypedArrayPrototype.js",
+  "builtins/WrapForValidIteratorPrototype.js",
+  "inspector/InjectedScriptSource.js",
+];
+
+/** JavaScriptCore_INSPECTOR_DOMAINS: protocol JSON combined into CombinedDomains.json. */
+const jscInspectorDomains: readonly string[] = [
+  "inspector/protocol/Animation.json",
+  "inspector/protocol/Audit.json",
+  "inspector/protocol/Browser.json",
+  "inspector/protocol/CPUProfiler.json",
+  "inspector/protocol/CSS.json",
+  "inspector/protocol/Canvas.json",
+  "inspector/protocol/Console.json",
+  "inspector/protocol/DOM.json",
+  "inspector/protocol/DOMDebugger.json",
+  "inspector/protocol/DOMStorage.json",
+  "inspector/protocol/Debugger.json",
+  "inspector/protocol/GenericTypes.json",
+  "inspector/protocol/Heap.json",
+  "inspector/protocol/IndexedDB.json",
+  "inspector/protocol/Inspector.json",
+  "inspector/protocol/LayerTree.json",
+  "inspector/protocol/Memory.json",
+  "inspector/protocol/Network.json",
+  "inspector/protocol/Page.json",
+  "inspector/protocol/Recording.json",
+  "inspector/protocol/Runtime.json",
+  "inspector/protocol/ScriptProfiler.json",
+  "inspector/protocol/Security.json",
+  "inspector/protocol/ServiceWorker.json",
+  "inspector/protocol/Storage.json",
+  "inspector/protocol/Target.json",
+  "inspector/protocol/Timeline.json",
+  "inspector/protocol/Worker.json",
+  "inspector/protocol/LifecycleReporter.json",
+  "inspector/protocol/TestReporter.json",
+  "inspector/protocol/BunFrontendDevServer.json",
+  "inspector/protocol/HTTPServer.json",
+  "inspector/protocol/File.json",
+  "inspector/protocol/Process.json",
+];
+
+/** JavaScriptCore_UNIFIED_SOURCE_LIST_FILES: the Sources.txt files fed to the unified bundler. */
+const jscUnifiedSourceLists: readonly string[] = ["Sources.txt", "inspector/remote/SourcesSocket.txt"];
+
+/** JavaScriptCore_SOURCES: compiled outside the unified bundles (the generated JSCBuiltins.cpp is added by the emitter). */
+function jscExtraSourcesFor(cfg: Config): string[] {
+  return [
+    cfg.windows
+      ? "inspector/remote/socket/win/RemoteInspectorSocketWin.cpp"
+      : "inspector/remote/socket/posix/RemoteInspectorSocketPOSIX.cpp",
+  ];
+}
+
+/** LLINT_ASM: the offlineasm inputs (LowLevelInterpreter.asm includes the rest). */
+const llintAsm: readonly string[] = [
+  "llint/InPlaceInterpreter.asm",
+  "llint/InPlaceInterpreter64.asm",
+  "llint/LowLevelInterpreter.asm",
+  "llint/LowLevelInterpreter64.asm",
+];
+
+// ───────────────────────────────────────────────────────────────────────────
 // Source mode: direct build
 //
 // WebKit (bmalloc + WTF + JavaScriptCore, JSCOnly port) built directly in our
@@ -480,9 +1171,8 @@ function inspectorFeatureDefines(cfg: Config): string {
 //
 // What WebKit's cmake does, and where it lives here:
 //
-//   source lists            read from WebKit's own CMakeLists.txt / Sources.txt
-//                           at configure time (cmake-lists.ts), so a WebKit bump
-//                           never needs a list edited here
+//   source lists            the "file lists" section above (WTF/bmalloc, JSC
+//                           codegen inputs); JSC's TUs from its own Sources.txt
 //   cmakeconfig.h           cmakeConfigHeader table (writeIfChanged)
 //   framework headers       forwarding stubs written at configure time:
 //                           <bmalloc/X.h>, <JavaScriptCore/X.h> flattened dirs
@@ -494,9 +1184,10 @@ function inspectorFeatureDefines(cfg: Config): string {
 //   compile/archive         cc/cxx/pch/ar from compile.ts with dep flags, so
 //                           target/cpu/lto/asan come from flags.ts like every dep
 //
-// Configure needs the WebKit tree on disk (it reads Sources.txt etc.), so the
-// fetch for this dep runs at configure time when the tree is missing or stale
-// (source.ts prefetchConfigureSources) instead of as the first ninja edge.
+// Configure needs the WebKit tree on disk (it reads Sources.txt, globs header
+// and offlineasm dirs, runs the bundler), so the fetch for this dep runs at
+// configure time when the tree is missing or stale (source.ts
+// prefetchConfigureSources) instead of as the first ninja edge.
 // ───────────────────────────────────────────────────────────────────────────
 
 interface WebKitDirectResult {
@@ -520,105 +1211,6 @@ interface WebKitDirectResult {
 
 function offlineAsmBackend(cfg: Config): string {
   return cfg.x64 ? "X86_64" : "ARM64";
-}
-
-function platformVars(cfg: Config, W: string, B: string): CMakeVars {
-  const systemName = cfg.darwin ? "Darwin" : cfg.windows ? "Windows" : cfg.freebsd ? "FreeBSD" : "Linux";
-  const JSC = join(W, "Source", "JavaScriptCore");
-  return cmakeVars({
-    PORT: "JSCOnly",
-    WIN32: cfg.windows,
-    MSVC: cfg.windows,
-    APPLE: cfg.darwin,
-    UNIX: !cfg.windows,
-    ANDROID: cfg.abi === "android",
-    CMAKE_SYSTEM_NAME: systemName,
-    CMAKE_SYSTEM_PROCESSOR: cfg.x64 ? "x86_64" : "aarch64",
-    CMAKE_BUILD_TYPE: cfg.buildType,
-    CMAKE_C_COMPILER_ID: "Clang",
-    CMAKE_CXX_COMPILER_ID: "Clang",
-    COMPILER_IS_GCC_OR_CLANG: true,
-    COMPILER_IS_CLANG: true,
-    WTF_CPU_X86_64: cfg.x64,
-    WTF_CPU_ARM64: cfg.arm64,
-    WTF_CPU_ARM: false,
-    WTF_CPU_MIPS: false,
-    WTF_CPU_RISCV64: false,
-    WTF_CPU_LOONGARCH64: false,
-    WTF_OS_LINUX: cfg.linux,
-    WTF_OS_UNIX: !cfg.windows,
-    WTF_OS_WINDOWS: cfg.windows,
-    WTF_OS_MAC_OS_X: cfg.darwin,
-    WTF_OS_DARWIN: cfg.darwin,
-    WTF_OS_FUCHSIA: false,
-    EVENT_LOOP_TYPE: "Bun",
-    LOWERCASE_EVENT_LOOP_TYPE: "bun",
-    ENABLE_REMOTE_INSPECTOR: true,
-    USE_INSPECTOR_SOCKET_SERVER: true,
-    USE_BUN_JSC_ADDITIONS: true,
-    USE_BUN_EVENT_LOOP: true,
-    USE_MIMALLOC: !cfg.asan,
-    USE_EXTERNAL_MIMALLOC: !cfg.asan,
-    USE_SYSTEM_MALLOC: false,
-    USE_LIBPAS: true,
-    USE_CAPSTONE: false,
-    USE_GLIB: false,
-    USE_LIBBACKTRACE: false,
-    USE_APPLE_INTERNAL_SDK: false,
-    ENABLE_STATIC_JSC: true,
-    ENABLE_JIT: true,
-    ENABLE_DFG_JIT: true,
-    ENABLE_FTL_JIT: true,
-    ENABLE_C_LOOP: false,
-    ENABLE_WEBASSEMBLY: true,
-    ENABLE_SAMPLING_PROFILER: true,
-    ENABLE_JSC_GLIB_API: false,
-    ENABLE_MALLOC_HEAP_BREAKDOWN: false,
-    ENABLE_JAVASCRIPT_SHELL: true,
-    ATOMICS_REQUIRE_LIBATOMIC: false,
-    DEVELOPER_MODE: false,
-    CMAKE_SOURCE_DIR: W,
-    CMAKE_BINARY_DIR: B,
-    WTF_DIR: join(W, "Source", "WTF"),
-    JAVASCRIPTCORE_DIR: JSC,
-    BMALLOC_DIR: join(W, "Source", "bmalloc"),
-    THIRDPARTY_DIR: join(W, "Source", "ThirdParty"),
-    JavaScriptCore_DERIVED_SOURCES_DIR: join(B, "JavaScriptCore", "DerivedSources"),
-    WTF_DERIVED_SOURCES_DIR: join(B, "WTF", "DerivedSources"),
-    JavaScriptCore_FRAMEWORK_HEADERS_DIR: join(B, "JavaScriptCore", "Headers"),
-    JavaScriptCore_PRIVATE_FRAMEWORK_HEADERS_DIR: join(B, "JavaScriptCore", "PrivateHeaders"),
-    WTF_FRAMEWORK_HEADERS_DIR: join(B, "WTF", "Headers"),
-    bmalloc_FRAMEWORK_HEADERS_DIR: join(B, "bmalloc", "Headers"),
-    // Scripts run from the source tree here; cmake copies them first.
-    JavaScriptCore_SCRIPTS_DIR: join(JSC, "Scripts"),
-    WTF_SCRIPTS_DIR: join(W, "Source", "WTF", "Scripts"),
-  });
-}
-
-/** Evaluate one component's CMakeLists.txt (+ PlatformJSCOnly.cmake, + include()d .cmake files). */
-function readLists(cfg: Config, W: string, B: string, cmakeLists: string): CMakeVars {
-  const vars = platformVars(cfg, W, B);
-  const dir = dirname(cmakeLists);
-  vars.set("CMAKE_CURRENT_SOURCE_DIR", [dir]);
-  vars.set("CMAKE_CURRENT_LIST_DIR", [dir]);
-  vars.set("CMAKE_CURRENT_BINARY_DIR", [join(B, relative(join(W), dir))]);
-  const opts = {
-    resolveInclude: (arg: string, from: string) => (arg.endsWith(".cmake") ? resolve(dirname(from), arg) : undefined),
-    onCommand: (name: string, _args: string[], file: string) => {
-      if (name === "webkit_include_config_files_if_exists") {
-        const platform = resolve(dirname(file), "PlatformJSCOnly.cmake");
-        if (existsSync(platform)) evaluateCMake(platform, vars, opts);
-      }
-    },
-  };
-  evaluateCMake(cmakeLists, vars, opts);
-  return vars;
-}
-
-function list(vars: CMakeVars, name: string, base: string): string[] {
-  const v = vars.get(name);
-  assert(v !== undefined, `WebKit CMakeLists no longer sets ${name} — update deps/webkit.ts`);
-  return v.map(p => resolve(base, p));
 }
 
 // ───────────────────────────────────────────────────────────────────────────
@@ -699,10 +1291,11 @@ function emitWebKitDirect(n: Ninja, cfg: Config, ctx: CustomBuildContext): WebKi
 
   n.comment("─── WebKit (direct: bmalloc + WTF + JavaScriptCore) ───");
 
-  // ─── Source lists from WebKit's cmake ───
-  const bmVars = readLists(cfg, W, B, join(BM, "CMakeLists.txt"));
-  const wtfVars = readLists(cfg, W, B, join(WTF, "wtf", "CMakeLists.txt"));
-  const jscVars = readLists(cfg, W, B, join(JSC, "CMakeLists.txt"));
+  const inTree = (base: string, rel: readonly string[]): string[] => rel.map(p => join(base, p));
+  const headersIn = (dir: string): string[] =>
+    readdirSync(dir)
+      .filter(f => f.endsWith(".h") || f.endsWith(".def"))
+      .map(f => join(dir, f));
 
   // ─── cmakeconfig.h ───
   writeIfChanged(join(B, "cmakeconfig.h"), cmakeConfigHeader(cfg));
@@ -713,21 +1306,18 @@ function emitWebKitDirect(n: Ninja, cfg: Config, ctx: CustomBuildContext): WebKi
   const useMimalloc = !cfg.asan;
   const mimallocInclude = join(depSourceDir(cfg, "mimalloc"), "include");
   writeForwardingHeaders(join(bmallocHeaders, "bmalloc"), [
-    ...list(bmVars, "bmalloc_PUBLIC_HEADERS", BM).filter(h => basename(h) !== "mimalloc.h"),
-    ...(bmVars.get("bmalloc_PRIVATE_HEADERS") ?? []).map(p => resolve(BM, p)),
+    ...headersIn(join(BM, "bmalloc")),
+    ...headersIn(join(BM, "libpas", "src", "libpas")),
     ...(useMimalloc ? [join(mimallocInclude, "mimalloc.h")] : []),
   ]);
   // Consumers see both <bmalloc/X.h> and the bare "X.h" siblings bmalloc's
   // own headers include (libpas headers, mimalloc.h) — cmake gets the latter
   // from physically flattening copies into one dir.
   const bmallocConsumerIncludes = [bmallocHeaders, join(bmallocHeaders, "bmalloc")];
-  writeForwardingHeaders(
-    join(jscHeaders, "JavaScriptCore"),
-    list(jscVars, "JavaScriptCore_PUBLIC_FRAMEWORK_HEADERS", JSC),
-  );
+  writeForwardingHeaders(join(jscHeaders, "JavaScriptCore"), inTree(JSC, jscPublicHeaders));
   writeForwardingHeaders(
     join(jscPrivateHeaders, "JavaScriptCore"),
-    list(jscVars, "JavaScriptCore_PRIVATE_FRAMEWORK_HEADERS", JSC),
+    jscHeaderDirs.flatMap(d => headersIn(join(JSC, d))),
   );
 
   // ─── Flags ───
@@ -789,7 +1379,7 @@ function emitWebKitDirect(n: Ninja, cfg: Config, ctx: CustomBuildContext): WebKi
     "-Wno-missing-field-initializers",
   ];
   const bmObjects: string[] = [];
-  for (const src of list(bmVars, "bmalloc_SOURCES", BM)) {
+  for (const src of inTree(BM, bmallocSources)) {
     // bmalloc_SOURCES' .c members are set LANGUAGE CXX in cmake.
     const flags = src.endsWith(".c") ? ["-x", "c++", ...webkitCxx, ...bmFlagsCommon] : [...webkitCxx, ...bmFlagsCommon];
     bmObjects.push(
@@ -798,7 +1388,7 @@ function emitWebKitDirect(n: Ninja, cfg: Config, ctx: CustomBuildContext): WebKi
         : cxx(n, cfg, src, { flags, orderOnlyInputs: treeReady }),
     );
   }
-  for (const src of list(bmVars, "bmalloc_C_SOURCES", BM)) {
+  for (const src of inTree(BM, bmallocCSources)) {
     bmObjects.push(cc(n, cfg, src, { flags: [...webkitC, ...bmFlagsCommon], orderOnlyInputs: treeReady }));
   }
   const [libJSCPath, libWTFPath, libbmallocPath] = webKitDirectLibs(cfg) as [string, string, string];
@@ -806,11 +1396,7 @@ function emitWebKitDirect(n: Ninja, cfg: Config, ctx: CustomBuildContext): WebKi
   n.phony("bmalloc", [libbmalloc]);
 
   // ─── WTF ───
-  const wtfIncludes = [
-    B,
-    ...list(wtfVars, "WTF_PRIVATE_INCLUDE_DIRECTORIES", join(WTF, "wtf")),
-    ...bmallocConsumerIncludes,
-  ];
+  const wtfIncludes = [B, ...inTree(join(WTF, "wtf"), wtfIncludeDirs), ...bmallocConsumerIncludes];
   const wtfFlags = [
     ...webkitCxx,
     ...commonDefines,
@@ -819,7 +1405,7 @@ function emitWebKitDirect(n: Ninja, cfg: Config, ctx: CustomBuildContext): WebKi
     ...wtfIncludes.map(i => `-I${q(i)}`),
     ...icuFlags,
   ];
-  const wtfObjects = list(wtfVars, "WTF_SOURCES", join(WTF, "wtf")).map(src =>
+  const wtfObjects = inTree(join(WTF, "wtf"), [...wtfSourcesCommon, ...wtfSourcesFor(cfg)]).map(src =>
     cxx(n, cfg, src, { flags: wtfFlags, orderOnlyInputs: treeReady }),
   );
   const libWTF = ar(n, cfg, libWTFPath, wtfObjects);
@@ -875,7 +1461,7 @@ function emitWebKitDirect(n: Ninja, cfg: Config, ctx: CustomBuildContext): WebKi
 
   // LUT tables (create_hash_table, perl).
   const hashLut = join(JSC, "create_hash_table");
-  for (const src of list(jscVars, "JavaScriptCore_OBJECT_LUT_SOURCES", JSC)) {
+  for (const src of inTree(JSC, jscLutSources)) {
     const out = join(DS, `${basename(src).replace(/\.[^.]+$/, "")}.lut.h`);
     genStdout(out, [perl, hashLut, src], [hashLut, src], `lut ${basename(out)}`);
     generatedHeaders.push(out);
@@ -1005,7 +1591,7 @@ function emitWebKitDirect(n: Ninja, cfg: Config, ctx: CustomBuildContext): WebKi
   {
     const scriptsDir = join(JSC, "Scripts");
     const script = join(scriptsDir, "generate-js-builtins.py");
-    const builtins = list(jscVars, "JavaScriptCore_BUILTINS_SOURCES", JSC);
+    const builtins = inTree(JSC, jscBuiltinsSources);
     const generatorScripts = [
       ...readdirSync(scriptsDir)
         .filter(f => f.endsWith(".py"))
@@ -1029,7 +1615,7 @@ function emitWebKitDirect(n: Ninja, cfg: Config, ctx: CustomBuildContext): WebKi
   {
     const scriptsDir = join(JSC, "Scripts");
     const combined = join(DS, "CombinedDomains.json");
-    const domains = list(jscVars, "JavaScriptCore_INSPECTOR_DOMAINS", JSC);
+    const domains = inTree(JSC, jscInspectorDomains);
     gen({
       outputs: [combined],
       cmd: [
@@ -1109,8 +1695,10 @@ function emitWebKitDirect(n: Ninja, cfg: Config, ctx: CustomBuildContext): WebKi
 
   // ─── JavaScriptCore: LLInt ───
   const offlineasm = join(JSC, "offlineasm");
-  const llintAsm = list(jscVars, "LLINT_ASM", JSC);
-  const offlineAsmRb = list(jscVars, "OFFLINE_ASM", JSC);
+  const llintAsmFiles = inTree(JSC, llintAsm);
+  const offlineAsmRb = readdirSync(offlineasm)
+    .filter(f => f.endsWith(".rb"))
+    .map(f => join(offlineasm, f));
   const lowLevelInterpreterAsm = join(JSC, "llint", "LowLevelInterpreter.asm");
   const backend = offlineAsmBackend(cfg);
   // asm.rb only (OFFLINE_ASM_FORMAT_ARGS); the two extractor generators take just the backend.
@@ -1129,7 +1717,7 @@ function emitWebKitDirect(n: Ninja, cfg: Config, ctx: CustomBuildContext): WebKi
       llintDesiredSettings,
       backend,
     ],
-    inputs: [...llintAsm, ...offlineAsmRb, join(DS, "InitBytecodes.asm")],
+    inputs: [...llintAsmFiles, ...offlineAsmRb, join(DS, "InitBytecodes.asm")],
     desc: "LLIntDesiredSettings.h",
   });
 
@@ -1139,7 +1727,7 @@ function emitWebKitDirect(n: Ninja, cfg: Config, ctx: CustomBuildContext): WebKi
     jscPrivateHeaders,
     B,
     join(jscPrivateHeaders, "JavaScriptCore"),
-    ...list(jscVars, "JavaScriptCore_PRIVATE_INCLUDE_DIRECTORIES", JSC),
+    ...inTree(JSC, jscIncludeDirs),
     DS,
     join(DS, "inspector"),
     join(DS, "runtime"),
@@ -1198,7 +1786,7 @@ function emitWebKitDirect(n: Ninja, cfg: Config, ctx: CustomBuildContext): WebKi
     ],
     inputs: [
       settingsExe,
-      ...llintAsm,
+      ...llintAsmFiles,
       ...offlineAsmRb,
       join(DS, "InitBytecodes.asm"),
       join(DS, "AirOpcode.h"),
@@ -1230,13 +1818,13 @@ function emitWebKitDirect(n: Ninja, cfg: Config, ctx: CustomBuildContext): WebKi
       buildVariants,
       ...offlineAsmFormatArgs,
     ],
-    inputs: [offsetsExe, ...llintAsm, ...offlineAsmRb, join(DS, "InitBytecodes.asm")],
+    inputs: [offsetsExe, ...llintAsmFiles, ...offlineAsmRb, join(DS, "InitBytecodes.asm")],
     env: { CMAKE_CXX_COMPILER_ID: "Clang", GCC_OFFLINEASM_SOURCE_MAP: "OFF" },
     desc: "LLIntAssembly.h",
   });
 
   // ─── JavaScriptCore: sources (unified bundles) ───
-  const unifiedListFiles = list(jscVars, "JavaScriptCore_UNIFIED_SOURCE_LIST_FILES", JSC);
+  const unifiedListFiles = inTree(JSC, jscUnifiedSourceLists);
   const bundleScript = join(WTF, "Scripts", "generate-unified-source-bundles.py");
   const bundled = spawnSync(
     python,
@@ -1269,7 +1857,8 @@ function emitWebKitDirect(n: Ninja, cfg: Config, ctx: CustomBuildContext): WebKi
       .map(s => s.trim())
       .filter(s => /\.(cpp|c|cc)$/.test(s))
       .map(s => (s.startsWith("/") ? s : !s.includes("/") && !existsSync(join(JSC, s)) ? join(DS, s) : join(JSC, s))),
-    ...list(jscVars, "JavaScriptCore_SOURCES", JSC),
+    join(DS, "JSCBuiltins.cpp"),
+    ...inTree(JSC, jscExtraSourcesFor(cfg)),
   ];
 
   const prefixHeader = join(JSC, "JavaScriptCorePrefix.h");

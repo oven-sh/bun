@@ -595,15 +595,13 @@ pub(crate) fn scan_imports_and_exports(
                     col!(flags)[source_index] = flag;
                 }
 
-                // The namespace object of a lifted CommonJS module stands in for
-                // `module.exports`, so its properties get setters that assign the
-                // lifted bindings. Step 5 runs in parallel and cannot create the
-                // setters' parameter symbol, so create it here.
-                if export_kind != ExportsKind::Cjs
-                    && flag.wrap != WrapKind::Cjs
-                    && col_ref!(ast_flags_list)[source_index]
-                        .contains(AstFlags::COMMONJS_LIFTED_TO_ESM)
-                {
+                let is_lifted_commonjs = col_ref!(ast_flags_list)[source_index]
+                    .contains(AstFlags::COMMONJS_LIFTED_TO_ESM);
+                if is_lifted_commonjs && flag.wrap == WrapKind::Cjs {
+                    // The wrapper prints `exports.x = ...` again, so it takes `exports`.
+                    col!(ast_flags_list)[source_index].insert(AstFlags::USES_EXPORTS_REF);
+                } else if is_lifted_commonjs && export_kind != ExportsKind::Cjs {
+                    // Step 5 runs in parallel, so the export setters' parameter is made here.
                     col!(lifted_setter_params)[source_index] = this.graph.generate_new_symbol(
                         source_index_.get(),
                         SymbolKind::Other,

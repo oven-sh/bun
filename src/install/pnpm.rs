@@ -8,6 +8,7 @@ use bun_collections::StringArrayHashMap;
 use bun_ast::{self, self as js_ast, E, Expr, ExprData, G};
 use bun_core::strings;
 use bun_semver as semver;
+use bun_semver::query::token::Wildcard;
 use bun_semver::{ExternalString, String};
 use bun_sys::{self as sys, Fd};
 
@@ -780,7 +781,7 @@ pub(crate) fn migrate_pnpm_lockfile<'a>(
             if let Some((version_raw, _)) = get_string(workspace_root, b"version") {
                 let version_str = sbuf!(lockfile).append(version_raw)?;
                 let parsed = semver::Version::parse(version_str.sliced(string_bytes!(lockfile)));
-                if parsed.valid && parsed.wildcard == semver::query::token::Wildcard::None {
+                if parsed.valid && parsed.wildcard == Wildcard::None {
                     lockfile
                         .workspace_versions
                         .put(name_hash, parsed.version.min())?;
@@ -1616,6 +1617,7 @@ pub(crate) fn migrate_pnpm_lockfile<'a>(
     // declares them, including `file:` folders, tarballs, and git packages.
     crate::migration::clear_non_registry_platform_constraints(lockfile);
 
+    lockfile.tag_workspace_links(manager.options.link_workspace_packages);
     lockfile.resolve(log)?;
 
     lockfile.fetch_necessary_package_metadata_after_yarn_or_pnpm_migration::<false>(manager)?;

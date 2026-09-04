@@ -1,8 +1,7 @@
 use bstr::BStr;
 use bun_collections::HashMap;
 use bun_core::{Global, Output};
-
-use bun_semver::string::Builder;
+use bun_semver as Semver;
 
 use crate::dependency::{Behavior, Tag as DependencyTag};
 use crate::lockfile::{self, Lockfile, Package};
@@ -128,11 +127,11 @@ pub(crate) fn relation_graph(
                     .or_else(|| index_by_hash.get(&dep.name_hash).copied()),
                 DependencyTag::Npm => {
                     let npm = version.npm();
-                    lockfile::linked_workspace(
+                    lockfile::linked_workspace_path(
                         manager.options.link_workspace_packages,
                         &scratch.lockfile.workspace_paths,
                         &scratch.lockfile.workspace_versions,
-                        Builder::string_hash(npm.name.slice(sbuf)),
+                        Semver::string::Builder::string_hash(npm.name.slice(sbuf)),
                         &npm.version,
                         sbuf,
                     )

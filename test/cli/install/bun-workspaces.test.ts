@@ -10,6 +10,7 @@ import {
   isWindows,
   readdirSorted,
   runBunInstall,
+  runBunUpdate,
   toMatchNodeModulesAt,
   VerdaccioRegistry,
 } from "harness";
@@ -370,15 +371,15 @@ test.concurrent("root star dep on its own prerelease workspace links the workspa
 // The root edge is cloned into the new lockfile when `bun update` re-resolves it; the clone must
 // keep the workspace it links to, which for an alias is not recoverable from the alias name.
 test.concurrent.each([
-  { range: "npm:package1@*", pkg1: {} },
-  { range: "npm:package1@^1.0.0", pkg1: { version: "1.0.0" } },
-])("root alias $range onto a workspace survives bun update", async ({ range, pkg1 }) => {
+  { spec: "npm:package1@*", pkg1: {} },
+  { spec: "npm:package1@^1.0.0", pkg1: { version: "1.0.0" } },
+])("root alias $spec onto a workspace survives bun update", async ({ spec, pkg1 }) => {
   using ctx = await setupTest();
   const { packageDir, env } = ctx;
   await Promise.all([
     write(
       join(packageDir, "package.json"),
-      JSON.stringify({ name: "root", workspaces: ["package1"], dependencies: { aliased: range } }),
+      JSON.stringify({ name: "root", workspaces: ["package1"], dependencies: { aliased: spec } }),
     ),
     write(join(packageDir, "package1", "package.json"), JSON.stringify({ name: "package1", ...pkg1 })),
   ]);
@@ -389,16 +390,7 @@ test.concurrent.each([
     ...pkg1,
   });
 
-  await using update = spawn({
-    cmd: [bunExe(), "update"],
-    cwd: packageDir,
-    env,
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  const [, err, code] = await Promise.all([update.stdout.text(), update.stderr.text(), update.exited]);
-  expect(err).not.toContain("error:");
-  expect(code).toBe(0);
+  await runBunUpdate(env, packageDir);
   expect(await file(join(packageDir, "node_modules", "aliased", "package.json")).json()).toEqual({
     name: "package1",
     ...pkg1,
@@ -428,6 +420,30 @@ test.concurrent("$ref override of a range linked to a workspace round-trips thro
 
   ({ exited } = await runBunInstall(env, packageDir, { frozenLockfile: true }));
   expect(await exited).toBe(0);
+});
+
+// bun.lock records each workspace's version (`bun pm pack` substitutes `workspace:^` from it), so
+// bumping one rewrites the lockfile even though no dependency edge changed.
+test.concurrent("bumping a workspace version rewrites bun.lock", async () => {
+  using ctx = await setupTest();
+  const { packageDir, env } = ctx;
+  const writePkg = (version: string) =>
+    write(join(packageDir, "pkg", "package.json"), JSON.stringify({ name: "pkg", version }));
+  const lockedVersion = async () =>
+    (await file(join(packageDir, "bun.lock")).text()).match(/"name": "pkg",\s*"version": "([^"]+)"/)?.[1];
+
+  await Promise.all([
+    write(join(packageDir, "package.json"), JSON.stringify({ name: "root", workspaces: ["pkg"] })),
+    writePkg("1.0.0"),
+  ]);
+  let { exited } = await runBunInstall(env, packageDir);
+  expect(await exited).toBe(0);
+  expect(await lockedVersion()).toBe("1.0.0");
+
+  await writePkg("1.1.0");
+  ({ exited } = await runBunInstall(env, packageDir, { savesLockfile: true }));
+  expect(await exited).toBe(0);
+  expect(await lockedVersion()).toBe("1.1.0");
 });
 
 test.concurrent("adding workspace in workspace edits package.json with correct version (workspace:*)", async () => {

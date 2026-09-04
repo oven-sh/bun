@@ -2637,7 +2637,7 @@ fn get_or_put_resolved_package(
         dependency::version::Tag::Npm | dependency::version::Tag::DistTag => {
             'resolve_from_workspace: {
                 if version.tag == dependency::version::Tag::Npm
-                    && Lockfile::linked_workspace(
+                    && Lockfile::linked_workspace_path(
                         this.options.link_workspace_packages,
                         &this.lockfile.workspace_paths,
                         &this.lockfile.workspace_versions,

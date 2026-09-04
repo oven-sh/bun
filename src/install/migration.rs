@@ -3,8 +3,8 @@ use bun_ast::{E, ExprData};
 use bun_core::strings;
 use bun_core::{Output, zstr};
 use bun_paths::PathBuffer;
+use bun_semver as Semver;
 use bun_semver::query::token::Wildcard;
-use bun_semver::{self as Semver, SlicedString};
 use bun_sys::{self, Fd, File, O};
 
 use crate::install::{self as Install, PackageManager, Subcommand};
@@ -64,7 +64,11 @@ pub fn detect_and_load_other_lockfile<'a>(
                 }
             };
 
-        return migrated(migrate_result, manager, log, &timer, "package-lock.json");
+        if matches!(migrate_result, LoadResult::Ok { .. }) {
+            report_migrated(manager, log, &timer, "package-lock.json");
+        }
+
+        return migrate_result;
     }
 
     'yarn: {
@@ -84,7 +88,11 @@ pub fn detect_and_load_other_lockfile<'a>(
             }
         };
 
-        return migrated(migrate_result, manager, log, &timer, "yarn.lock");
+        if matches!(migrate_result, LoadResult::Ok { .. }) {
+            report_migrated(manager, log, &timer, "yarn.lock");
+        }
+
+        return migrate_result;
     }
 
     'pnpm: {
@@ -147,7 +155,11 @@ pub fn detect_and_load_other_lockfile<'a>(
             }
         };
 
-        return migrated(migrate_result, manager, log, &timer, "pnpm-lock.yaml");
+        if matches!(migrate_result, LoadResult::Ok { .. }) {
+            report_migrated(manager, log, &timer, "pnpm-lock.yaml");
+        }
+
+        return migrate_result;
     }
 
     LoadResult::NotFound
@@ -213,20 +225,15 @@ fn pnpm_lockfile_version(data: &[u8]) -> &[u8] {
     b"< 7"
 }
 
-fn migrated<'a>(
-    result: LoadResult<'a>,
+fn report_migrated(
     manager: &PackageManager,
     log: &mut bun_ast::Log,
     timer: &std::time::Instant,
     lockfile_name: &str,
-) -> LoadResult<'a> {
-    let LoadResult::Ok(ok) = result else {
-        return result;
-    };
-    ok.lockfile.tag_workspace_links();
+) {
     if manager.options.log_level.is_silent() {
         log.reset();
-        return LoadResult::Ok(ok);
+        return;
     }
     if log.warnings > 0 && !log.has_errors() {
         let _ = log.print(std::ptr::from_mut(Output::error_writer()));
@@ -235,7 +242,6 @@ fn migrated<'a>(
     Output::print_elapsed(timer.elapsed().as_nanos() as f64 / 1_000_000.0);
     bun_core::pretty_errorln!(" <d>migrated lockfile from <r><green>{}<r>", lockfile_name);
     Output::flush();
-    LoadResult::Ok(ok)
 }
 
 fn migrate_npm_lockfile<'a>(
@@ -376,8 +382,9 @@ fn migrate_npm_lockfile<'a>(
             this.workspace_paths.insert(name_hash, appended);
 
             if let Some(version_string) = &v.version {
-                let sliced_version = SlicedString::init(version_string, version_string);
-                let result = Semver::Version::parse(sliced_version);
+                let appended = this.string_buf().append(&version_string[..])?;
+                let result =
+                    Semver::Version::parse(appended.sliced(this.buffers.string_bytes.as_slice()));
                 if result.valid && result.wildcard == Wildcard::None {
                     this.workspace_versions
                         .insert(name_hash, result.version.min());
@@ -396,6 +403,7 @@ fn migrate_npm_lockfile<'a>(
     clear_non_registry_platform_constraints(this);
     npm_lock::apply_root_overrides(this, manager, log, dir, workspace_map.as_ref(), abs_path)?;
 
+    this.tag_workspace_links(manager.options.link_workspace_packages);
     this.resolve(log)?;
 
     #[cfg(debug_assertions)]

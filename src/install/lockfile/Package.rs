@@ -918,6 +918,9 @@ pub struct DiffSummary {
     pub(crate) removed_trusted_dependencies: TrustedDependenciesSet,
 
     pub(crate) patched_dependencies_changed: bool,
+    /// A workspace's `version` changed. No edge changed with it (those count as updates), but the
+    /// lockfile records the version, so it is rewritten.
+    pub(crate) workspace_versions_changed: bool,
 
     pub(crate) pruned_workspaces: Vec<PackageNameHash>,
 }
@@ -938,6 +941,7 @@ impl DiffSummary {
             || self.added_trusted_dependencies.count() > 0
             || self.removed_trusted_dependencies.count() > 0
             || self.patched_dependencies_changed
+            || self.workspace_versions_changed
     }
 
     #[inline]
@@ -1343,6 +1347,20 @@ impl Diff {
             }
             false
         };
+
+        if is_root {
+            summary.workspace_versions_changed = from_lockfile.workspace_versions.count()
+                != to_lockfile.workspace_versions.count()
+                || to_lockfile
+                    .workspace_versions
+                    .iter()
+                    .any(|(name_hash, version)| {
+                        from_lockfile
+                            .workspace_versions
+                            .get(name_hash)
+                            .is_none_or(|from| !from.eql(*version))
+                    });
+        }
 
         let mut missing_workspaces: Vec<PackageID> = Vec::new();
         let mut survivors: Vec<(String, DependencySlice)> = Vec::new();
@@ -1872,7 +1890,7 @@ impl Package<u64> {
                     .append::<String>(if relative.is_empty() { b"." } else { relative });
             }
             dependency::version::Tag::Npm => {
-                if let Some(workspace_path) = lockfile::linked_workspace(
+                if let Some(workspace_path) = lockfile::linked_workspace_path(
                     pm.options.link_workspace_packages,
                     workspace_paths,
                     workspace_versions,

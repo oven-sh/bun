@@ -575,42 +575,47 @@ test.concurrent("workspaces: prunes workspace folders, keeps workspace links, ru
   expect(existsSync(join(nm, "a-dep"))).toBeFalse();
 });
 
-// #40393: these ranges link to the workspace at install time, so bun.lock records a workspace
-// edge; reparsing package.json must produce the same edge instead of reporting it as changed.
+// https://github.com/oven-sh/bun/issues/40393: each spec resolves to the sibling workspace;
+// reloading bun.lock and reparsing package.json must yield the same edge, or bun prune refuses.
+// An alias installs a third link, node_modules/aliased.
 test.concurrent.each([
-  { range: "* on a versionless workspace", app1: { dependencies: { package1: "*" } }, pkg1: {}, checked: 2 },
   {
-    range: "* on a prerelease workspace",
+    spec: "* on a versionless workspace",
+    app1: { dependencies: { package1: "*" } },
+    pkg1: {},
+    checked: 2,
+  },
+  {
+    spec: "* on a prerelease workspace",
     app1: { dependencies: { package1: "*" } },
     pkg1: { version: "1.0.0-alpha" },
     checked: 2,
   },
-  // the alias is a third link, node_modules/aliased
   {
-    range: "npm:@* on a versionless workspace",
+    spec: "npm:@* on a versionless workspace",
     app1: { dependencies: { aliased: "npm:package1@*" } },
     pkg1: {},
     checked: 3,
   },
   {
-    range: "catalog: on a workspace",
+    spec: "catalog: on a workspace",
     app1: { dependencies: { package1: "catalog:" } },
     pkg1: { version: "1.0.0" },
     checked: 2,
   },
   {
-    range: "workspace: alias of a workspace",
+    spec: "workspace: alias of a workspace",
     app1: { dependencies: { aliased: "workspace:package1@*" } },
     pkg1: {},
     checked: 3,
   },
   {
-    range: "workspace:* in dev and ^1 in peer",
+    spec: "workspace:* in dev and ^1 in peer",
     app1: { devDependencies: { package1: "workspace:*" }, peerDependencies: { package1: "^1.0.0" } },
     pkg1: { version: "1.0.0" },
     checked: 2,
   },
-])("workspaces: $range is in sync", async ({ app1, pkg1, checked }) => {
+])("workspaces: $spec is in sync", async ({ app1, pkg1, checked }) => {
   const { packageDir: dir, packageJson } = await registry.createTestDir();
   await Promise.all([
     write(
@@ -623,7 +628,7 @@ test.concurrent.each([
   await runBunInstall(installEnv(dir), dir);
 
   const { stdout, stderr, exitCode } = await prune(dir);
-  expect(normalizeBunSnapshot(stderr)).not.toContain(OUT_OF_SYNC);
+  expect(stderr).toBe("");
   expect(out(stdout)).toBe(`${BANNER}\n\n${NOTHING(checked, 1)}`);
   expect(exitCode).toBe(0);
 });
@@ -644,7 +649,7 @@ test.concurrent("workspaces: * on a relocated versionless workspace is out of sy
 
   await runBunInstall(installEnv(dir), dir);
   const { stdout, stderr, exitCode } = await prune(dir);
-  expect(normalizeBunSnapshot(stderr)).not.toContain(OUT_OF_SYNC);
+  expect(stderr).toBe("");
   expect(out(stdout)).toBe(`${BANNER}\n\n${NOTHING(2, 1)}`);
   expect(exitCode).toBe(0);
 });

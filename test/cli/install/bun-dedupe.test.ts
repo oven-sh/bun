@@ -754,20 +754,40 @@ test.concurrent("workspace package edge is re-pointed when run from the workspac
   await runBunInstall(installEnv(packageDir), packageDir, { frozenLockfile: true });
 });
 
-// #40393: these ranges link to the workspace at install time, so bun.lock records a workspace
-// edge; reparsing package.json must produce the same edge instead of reporting it as changed.
+// https://github.com/oven-sh/bun/issues/40393: each spec resolves to the sibling workspace;
+// reloading bun.lock and reparsing package.json must yield the same edge, or bun dedupe refuses.
 test.concurrent.each([
-  { range: "* on a versionless workspace", app1: { dependencies: { package1: "*" } }, pkg1: {} },
-  { range: "* on a prerelease workspace", app1: { dependencies: { package1: "*" } }, pkg1: { version: "1.0.0-alpha" } },
-  { range: "npm:@* on a versionless workspace", app1: { dependencies: { aliased: "npm:package1@*" } }, pkg1: {} },
-  { range: "catalog: on a workspace", app1: { dependencies: { package1: "catalog:" } }, pkg1: { version: "1.0.0" } },
-  { range: "workspace: alias of a workspace", app1: { dependencies: { aliased: "workspace:package1@*" } }, pkg1: {} },
   {
-    range: "workspace:* in dev and ^1 in peer",
+    spec: "* on a versionless workspace",
+    app1: { dependencies: { package1: "*" } },
+    pkg1: {},
+  },
+  {
+    spec: "* on a prerelease workspace",
+    app1: { dependencies: { package1: "*" } },
+    pkg1: { version: "1.0.0-alpha" },
+  },
+  {
+    spec: "npm:@* on a versionless workspace",
+    app1: { dependencies: { aliased: "npm:package1@*" } },
+    pkg1: {},
+  },
+  {
+    spec: "catalog: on a workspace",
+    app1: { dependencies: { package1: "catalog:" } },
+    pkg1: { version: "1.0.0" },
+  },
+  {
+    spec: "workspace: alias of a workspace",
+    app1: { dependencies: { aliased: "workspace:package1@*" } },
+    pkg1: {},
+  },
+  {
+    spec: "workspace:* in dev and ^1 in peer",
     app1: { devDependencies: { package1: "workspace:*" }, peerDependencies: { package1: "^1.0.0" } },
     pkg1: { version: "1.0.0" },
   },
-])("$range is in sync", async ({ app1, pkg1 }) => {
+])("$spec is in sync", async ({ app1, pkg1 }) => {
   const { packageDir, packageJson } = await registry.createTestDir();
   await Promise.all([
     write(

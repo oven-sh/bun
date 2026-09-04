@@ -13,6 +13,13 @@ use bun_semver::semver_string::{
 };
 use bun_semver::{self as Semver, ExternalString, String};
 
+use crate::bin_real::ToJsonStyle;
+use crate::config_version::ConfigVersion;
+use crate::extract_tarball as ExtractTarball;
+use crate::integrity::Integrity;
+use crate::npm::Negatable;
+use crate::package_manager_real::Options as PackageManagerOptions;
+use crate::repository::RepositoryExt as _;
 use crate::{
     DependencyID, Npm, Origin, PackageID, PackageManager, PackageNameHash, Repository, Resolution,
     TruncatedPackageNameHash,
@@ -24,17 +31,6 @@ use crate::{
     invalid_package_id,
     resolution::Tag as ResolutionTag,
 };
-// Canonical `Dependency.Version.Tag` — `crate::dependency::Tag` is a duplicate
-// enum (different nominal type) that does not unify with the
-// `bun_install_types::DependencyVersion::tag` field; use the install_types one
-// so assignments at the two `.tag = Workspace` sites type-check.
-use crate::bin_real::ToJsonStyle;
-use crate::config_version::ConfigVersion;
-use crate::extract_tarball as ExtractTarball;
-use crate::integrity::Integrity;
-use crate::npm::Negatable;
-use crate::package_manager_real::Options as PackageManagerOptions;
-use crate::repository::RepositoryExt as _;
 use bun_install_types::DependencyVersionTag;
 // this file is `crate::lockfile_real::bun_lock`; `super` is the
 // real `Lockfile` module, distinct from the `crate::lockfile` stub.
@@ -3263,7 +3259,11 @@ pub(crate) fn parse_into_binary_lockfile(
             }
         }
 
-        lockfile.tag_workspace_links();
+        lockfile.tag_workspace_links(
+            manager
+                .as_deref()
+                .map_or(true, |manager| manager.options.link_workspace_packages),
+        );
 
         if let Err(tree::SubtreeError::OutOfMemory) = lockfile.resolve(log) {
             return Err(ParseError::OutOfMemory);

@@ -27,6 +27,9 @@ import { join, resolve } from "path";
 // import app_jsx from "./app.jsx";
 import { heapStats } from "bun:jsc";
 import { spawn } from "child_process";
+import { once } from "node:events";
+import http from "node:http";
+import type { AddressInfo } from "node:net";
 import net from "node:net";
 import { networkInterfaces } from "node:os";
 import { Duplex } from "node:stream";
@@ -4833,4 +4836,72 @@ describe.skipIf(!isLinux && !isAndroid)("response bytes written outside the requ
       `),
     ).toEqual({ segments: 1, body: "6\r\nhello \r\n5\r\nworld\r\n0\r\n\r\n" });
   });
+});
+
+// The loop has two cork buffers shared by every socket. With many responses
+// writing from timers in the same tick, each write re-corks its own socket and
+// evicts whichever socket held the least recently used slot, so slots change
+// owner constantly; every byte must still reach the response that wrote it.
+// Plain and TLS sockets share the slots, and node:http shares the loop.
+it("interleaved responses written from timers never mix bytes across sockets", async () => {
+  const tick = () => new Promise<void>(resolve => setImmediate(resolve));
+  const requests = 12;
+  const rounds = 6;
+  // Below, at, and above the 16 KB cork buffer.
+  const sizes = [7, 1000, 16 * 1024 - 5, 16 * 1024 + 3, 40_000, 3];
+  const chunk = (tag: string, round: number) =>
+    Buffer.alloc(sizes[round % sizes.length], `${tag}:${round};`).toString("latin1");
+  const expected = (tag: string) => Array.from({ length: rounds }, (_, round) => chunk(tag, round)).join("");
+
+  async function* body(tag: string) {
+    for (let round = 0; round < rounds; round++) {
+      await tick();
+      yield chunk(tag, round);
+    }
+  }
+  const handler = async (req: Request) => {
+    await tick();
+    return new Response(body(new URL(req.url).searchParams.get("tag")!), { headers: { "X-Tag": "1" } });
+  };
+  using plain = Bun.serve({ port: 0, fetch: handler });
+  using secure = Bun.serve({ port: 0, tls, fetch: handler });
+  await using node = http.createServer(async (req, res) => {
+    const tag = new URL(req.url!, "http://x").searchParams.get("tag")!;
+    await tick();
+    res.writeHead(200, { "Content-Type": "text/plain" });
+    for (let round = 0; round < rounds; round++) {
+      await tick();
+      res.write(chunk(tag, round));
+    }
+    await tick();
+    res.end();
+  });
+  await once(node.listen(0, "127.0.0.1"), "listening");
+  const nodeURL = `http://127.0.0.1:${(node.address() as AddressInfo).port}`;
+
+  const jobs: Promise<[string, string]>[] = [];
+  for (let i = 0; i < requests; i++) {
+    for (const [origin, kind] of [
+      [plain.url.origin, "p"],
+      [secure.url.origin, "s"],
+      [nodeURL, "n"],
+    ] as const) {
+      const tag = `${kind}${i}`;
+      jobs.push(
+        fetch(`${origin}/?tag=${tag}`, { tls: { rejectUnauthorized: false } })
+          .then(r => r.text())
+          .then(text => [tag, text]),
+      );
+    }
+  }
+  for (const [tag, text] of await Promise.all(jobs)) {
+    if (text !== expected(tag)) {
+      // Report which response got foreign or missing bytes without dumping 70 KB.
+      expect({ tag, length: text.length, head: text.slice(0, 40) }).toEqual({
+        tag,
+        length: expected(tag).length,
+        head: expected(tag).slice(0, 40),
+      });
+    }
+  }
 });

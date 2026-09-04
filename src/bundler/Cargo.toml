@@ -61,6 +61,3 @@ bun_wyhash.workspace = true
 # from `bun_hash::XxHash64Streaming` (the C++/Highway kernel) so the workspace
 # has exactly one xxhash implementation.
 bun_hash.workspace = true
-
-[features]
-default = []

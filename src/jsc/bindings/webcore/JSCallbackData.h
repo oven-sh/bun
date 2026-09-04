@@ -45,9 +45,7 @@ class JSCallbackData {
     WTF_DEPRECATED_MAKE_FAST_ALLOCATED(JSCallbackData);
 
 public:
-    enum class CallbackType { Function,
-        Object,
-        FunctionOrObject };
+    enum class CallbackType { Function };
 
     JSCallbackData(JSC::VM&, JSC::JSObject* callback, void* owner)
         : m_callback(callback, &m_weakOwner, owner)

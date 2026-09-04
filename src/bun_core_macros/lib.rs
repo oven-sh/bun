@@ -216,21 +216,18 @@ pub fn comptime_string_set_impl(input: TokenStream) -> TokenStream {
 // `AnyRefCounted` bridge (so `RefPtr` accepts the type), and inherent
 // `ref_()`/`deref()` forwarders so call sites don't need the trait in scope.
 //
-// Field selection (first match wins):
-//   1. a field annotated `#[ref_count]`
-//   2. a field literally named `ref_count`
+// Field selection: the field literally named `ref_count`.
 //
 // There is no type-based fallback. An earlier draft fell back on "the unique
 // field whose type's last path segment is `Cell`", but that matched any
 // `Cell<_>` (e.g. `Cell<bool>`), turning the helpful "no ref_count field
 // found" diagnostic into a buried type-mismatch inside generated code.
-// Rules 1+2 are sufficient and exhaustive.
 //
 // Custom destructor: `#[ref_count(destroy = Self::deinit)]` on the struct
 // routes the trait's `destroy` to that path instead of the default
 // `drop(Box::from_raw(this))`.
 
-/// Locate the refcount field per the rules above.
+/// Locate the refcount field per the rule above.
 fn find_ref_count_field(fields: &Fields) -> Result<&syn::Ident, syn::Error> {
     let named = match fields {
         Fields::Named(n) => &n.named,
@@ -242,16 +239,6 @@ fn find_ref_count_field(fields: &Fields) -> Result<&syn::Ident, syn::Error> {
         }
     };
 
-    // 1. explicit #[ref_count] attr (bare, not the struct-level destroy form)
-    for f in named {
-        if f.attrs
-            .iter()
-            .any(|a| a.path().is_ident("ref_count") && matches!(a.meta, Meta::Path(_)))
-        {
-            return Ok(f.ident.as_ref().unwrap());
-        }
-    }
-    // 2. field named `ref_count`
     for f in named {
         if f.ident.as_ref().is_some_and(|i| i == "ref_count") {
             return Ok(f.ident.as_ref().unwrap());
@@ -259,7 +246,7 @@ fn find_ref_count_field(fields: &Fields) -> Result<&syn::Ident, syn::Error> {
     }
     Err(syn::Error::new(
         Span::call_site(),
-        "ref-count derive: no `ref_count` field found; name it `ref_count` or annotate with #[ref_count]",
+        "ref-count derive: no `ref_count` field found; name the refcount field `ref_count`",
     ))
 }
 
@@ -469,8 +456,8 @@ pub fn derive_thread_safe_ref_counted(input: TokenStream) -> TokenStream {
 //                                         `drop(::bun_core::heap::take(this))`
 //   #[ref_count(debug_name = "Name")]   — overrides `RefCounted::debug_name()`
 //
-// Field selection follows the shared `find_ref_count_field` rules (a
-// `#[ref_count]`-annotated field, else a field literally named `ref_count`).
+// Field selection follows the shared `find_ref_count_field` rule (the field
+// literally named `ref_count`).
 //
 // Unlike `CellRefCounted` this emits **no** inherent `ref_()`/`deref()`
 // forwarders and **no** `AnyRefCounted` impl: `bun_ptr::ref_count` already

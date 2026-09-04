@@ -146,7 +146,6 @@ fn prepare_css_asts_for_chunk_impl(c: &LinkerContext, chunk: &mut Chunk, bump: &
                     let mut ast = BundlerStyleSheet {
                         rules,
                         sources: Default::default(),
-                        source_map_urls: Default::default(),
                         license_comments: Default::default(),
                         options: ParserOptions::default(None),
                         composes: Default::default(),
@@ -199,7 +198,6 @@ fn prepare_css_asts_for_chunk_impl(c: &LinkerContext, chunk: &mut Chunk, bump: &
                                 options: ParserOptions::default(None),
                                 license_comments: Default::default(),
                                 sources: Default::default(),
-                                source_map_urls: Default::default(),
                                 rules: {
                                     let mut import_rule = ImportRule {
                                         url: p.pretty,
@@ -321,7 +319,6 @@ fn prepare_css_asts_for_chunk_impl(c: &LinkerContext, chunk: &mut Chunk, bump: &
                             arena_rule_list_one(bump, BundlerCssRule::Import(import_rule))
                         },
                         sources: Default::default(),
-                        source_map_urls: Default::default(),
                         license_comments: Default::default(),
                         options: ParserOptions::default(None),
                         composes: Default::default(),

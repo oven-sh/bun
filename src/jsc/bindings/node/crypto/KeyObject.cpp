@@ -1655,10 +1655,6 @@ EVPKeyPointer::PrivateKeyEncodingConfig KeyObject::getPrivateKeyEncoding(
     if (config.output_key_object) {
         // TODO: make sure this case for key generation is handled
     } else {
-        if (ctx != KeyEncodingContext::Input) {
-            config.cipher = cipher;
-        }
-
         if (passphrase) {
             config.passphrase = WTF::move(*passphrase);
         }

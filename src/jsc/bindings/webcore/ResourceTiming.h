@@ -50,8 +50,6 @@ public:
     Vector<Ref<PerformanceServerTiming>> populateServerTiming() const;
     bool isSameOriginRequest() const { return m_isSameOriginRequest; }
 
-    bool isLoadedFromServiceWorker() const { return m_isLoadedFromServiceWorker; }
-
 private:
     ResourceTiming(const URL& url, const String& initiatorType, const NetworkLoadMetrics& networkLoadMetrics);
 
@@ -60,7 +58,6 @@ private:
     ResourceLoadTiming m_resourceLoadTiming;
     NetworkLoadMetrics m_networkLoadMetrics;
     Vector<ServerTiming> m_serverTiming;
-    bool m_isLoadedFromServiceWorker { false };
     bool m_isSameOriginRequest { false };
 };
 

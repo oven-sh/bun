@@ -2671,7 +2671,7 @@ impl<'a> Transpiler<'a> {
 
     /// Returns only the count and lets
     /// `linker.enqueue_resolve_result` push directly onto `resolve_queue`.
-    fn enqueue_entry_points<const NORMALIZE_ENTRY_POINT: bool>(&mut self) -> usize {
+    fn enqueue_entry_points(&mut self) -> usize {
         let mut entry_point_i: usize = 0;
 
         // snapshot entry points so the `&mut self` resolver call
@@ -2679,12 +2679,8 @@ impl<'a> Transpiler<'a> {
         let entries: Vec<Box<[u8]>> = self.options.entry_points.to_vec();
         let top_level_dir = self.fs().top_level_dir;
 
-        for _entry in entries.iter() {
-            let entry: &[u8] = if NORMALIZE_ENTRY_POINT {
-                self.normalize_entry_point_path(_entry)
-            } else {
-                _entry
-            };
+        for raw_entry in entries.iter() {
+            let entry: &[u8] = self.normalize_entry_point_path(raw_entry);
 
             let _reset = bun_ast::StoreResetGuard::new();
 
@@ -2729,7 +2725,7 @@ impl<'a> Transpiler<'a> {
         log: *mut bun_ast::Log,
         _opts: api::TransformOptions,
     ) -> crate::Result<options::TransformResult> {
-        let _ = self.enqueue_entry_points::<true>();
+        let _ = self.enqueue_entry_points();
 
         // `log` is the same `*mut Log` stored on `self.log`; caller
         // (`BuildCommand::exec`) holds it for the process lifetime.

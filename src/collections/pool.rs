@@ -414,20 +414,16 @@ where
 // object_pool! — declare per-instantiation storage
 // ──────────────────────────────────────────────────────────────────────────
 
-/// Declare an `ObjectPool` alias plus its backing static/thread-local storage.
+/// Declare an `ObjectPool` alias plus its backing thread-local storage.
 ///
 /// ```ignore
 /// // thread-local free list, capped at 32 nodes
 /// object_pool!(pub StringVoidMapPool: StringVoidMap, threadsafe, 32);
-/// // process-wide free list, uncapped
-/// object_pool!(BufferPool: Vec<u8>, global, 0);
 /// ```
 ///
 /// Expands to a private storage struct implementing `PoolStorage<T>` and a
 /// `pub type $Name = ObjectPool<$T, .., $Storage>` alias. `threadsafe` ⇒
-/// `thread_local!` (one free list per thread); `global` ⇒ a single
-/// process-wide `RefCell` (caller is responsible for not touching it from
-/// multiple threads).
+/// `thread_local!` (one free list per thread).
 #[macro_export]
 macro_rules! object_pool {
     ($vis:vis $name:ident : $ty:ty, threadsafe, $max:expr) => {
@@ -436,17 +432,8 @@ macro_rules! object_pool {
             $ty, true, { $max }, $crate::__paste_storage!($name)
         >;
     };
-    ($vis:vis $name:ident : $ty:ty, global, $max:expr) => {
-        $crate::object_pool!(@storage_global $name, $ty);
-        $vis type $name = $crate::pool::ObjectPool<
-            $ty, false, { $max }, $crate::__paste_storage!($name)
-        >;
-    };
     (@storage_tls $name:ident, $ty:ty) => {
         $crate::__object_pool_storage! { $name, $ty, tls }
-    };
-    (@storage_global $name:ident, $ty:ty) => {
-        $crate::__object_pool_storage! { $name, $ty, global }
     };
 }
 
@@ -468,26 +455,6 @@ macro_rules! __object_pool_storage {
             fn with<R>(
                 f: impl FnOnce(&::core::cell::RefCell<$crate::pool::DataStruct<$ty>>) -> R,
             ) -> R {
-                __OBJECT_POOL_DATA.with(|cell| f(cell))
-            }
-        }
-    };
-    ($name:ident, $ty:ty, global) => {
-        #[allow(non_camel_case_types)]
-        #[doc(hidden)]
-        pub struct __ObjectPoolStorage;
-        impl $crate::pool::PoolStorage<$ty> for __ObjectPoolStorage {
-            fn with<R>(
-                f: impl FnOnce(&::core::cell::RefCell<$crate::pool::DataStruct<$ty>>) -> R,
-            ) -> R {
-                // Rust forbids non-`Sync` statics, so the "global" mode still
-                // expands to a thread-local. Single-threaded callers see the
-                // same one cell; cross-thread callers get per-thread pools.
-                ::std::thread_local! {
-                    static __OBJECT_POOL_DATA: ::core::cell::RefCell<
-                        $crate::pool::DataStruct<$ty>
-                    > = ::core::cell::RefCell::new($crate::pool::DataStruct::default());
-                }
                 __OBJECT_POOL_DATA.with(|cell| f(cell))
             }
         }

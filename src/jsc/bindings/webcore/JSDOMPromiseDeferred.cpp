@@ -72,8 +72,7 @@ void DeferredPromise::callFunction(JSGlobalObject& lexicalGlobalObject, ResolveM
         break;
     }
 
-    if (m_mode == Mode::ClearPromiseOnResolve)
-        clear();
+    clear();
 }
 
 void DeferredPromise::reject(RejectAsHandled rejectAsHandled)

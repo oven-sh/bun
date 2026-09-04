@@ -41,7 +41,6 @@ ResourceTiming::ResourceTiming(const URL& url, const String& initiatorType, cons
     , m_resourceLoadTiming(ResourceLoadTiming())
     , m_networkLoadMetrics(networkLoadMetrics)
     , m_serverTiming()
-    , m_isLoadedFromServiceWorker(false)
     , m_isSameOriginRequest(true)
 {
 }

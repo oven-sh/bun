@@ -188,12 +188,6 @@ pub(crate) mod js_bindings {
         unsafe {
             core::arch::asm!("brk #0", options(nomem, nostack));
         }
-        #[cfg(all(unix, not(any(target_arch = "x86_64", target_arch = "aarch64"))))]
-        crash_handler::crash_handler(
-            crash_handler::CrashReason::Trap(0),
-            crash_handler::TraceSeed::BeginAddr(crash_handler::debug::return_address()),
-        );
-        #[allow(unreachable_code)]
         Ok(JSValue::UNDEFINED)
     }
 

@@ -644,7 +644,7 @@ pub use bun_alloc::{
 // "FFI shape invariant" tooling lives in one file. Re-exported here so callers
 // can write `bun_core::assert_ffi_layout!(...)` without naming `bun_opaque`.
 pub use Global::*;
-pub use bun_opaque::{FfiLayout, assert_ffi_discr, assert_ffi_layout};
+pub use bun_opaque::{assert_ffi_discr, assert_ffi_layout};
 pub use error::{Error, Error as CrateError, Result as CrateResult};
 pub use ffi::{Zeroable, boxed_zeroed, boxed_zeroed_unchecked};
 pub use result::coreutils_error_map;
@@ -2934,23 +2934,13 @@ pub fn capture_stack_trace(begin: usize, addrs: &mut [usize]) -> usize {
 #[inline(always)]
 pub fn return_address() -> usize {
     // Miri cannot execute `frame_address`'s inline asm, and an address read out
-    // of a register is not a pointer it can dereference. 0 = "no trim", the
-    // same value the arches without an asm! mapping return. `cfg!` rather than
-    // `#[cfg]` so the read below stays compiled (and `PC_OFFSET` live).
+    // of a register is not a pointer it can dereference. 0 = "no trim". `cfg!`
+    // rather than `#[cfg]` so the read below stays compiled (and `PC_OFFSET` live).
     if cfg!(miri) {
         return 0;
     }
-    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
-    {
-        let fp = debug::frame_address();
-        // SAFETY: `fp` is this function's own valid frame pointer; the
-        // return-address slot at `[fp + PC_OFFSET]` is always mapped.
-        unsafe { *((fp + debug::PC_OFFSET) as *const usize) }
-    }
-    #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
-    {
-        // No frame-pointer asm! mapping for this arch; capture_current treats 0
-        // as "no trim".
-        0
-    }
+    let fp = debug::frame_address();
+    // SAFETY: `fp` is this function's own valid frame pointer; the
+    // return-address slot at `[fp + PC_OFFSET]` is always mapped.
+    unsafe { *((fp + debug::PC_OFFSET) as *const usize) }
 }

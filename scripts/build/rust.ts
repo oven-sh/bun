@@ -697,7 +697,6 @@ export function emitRust(n: Ninja, cfg: Config, inputs: RustBuildInputs): string
 
   const hostWin = cfg.host.os === "windows";
   const lib = rustLibPath(cfg);
-  const tier3 = rustTargetIsTier3(rustTarget(cfg));
   const { args, env, targetDir, triple } = cargoBuildInvocation(cfg);
 
   // ─── Windows .bin/ shim PE ───

@@ -17,8 +17,6 @@ for (const name of allFiles) {
 
 for (let fileIndex = 0; fileIndex < allFiles.length; fileIndex++) {
   const name = allFiles[fileIndex];
-  const mod = basename(name, extname(name)).replaceAll(".", "/");
-  const file = allFiles.find(f => f.startsWith(mod));
   const externals = [...builtins];
   const i = externals.indexOf(name);
   if (i !== -1) {

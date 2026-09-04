@@ -263,11 +263,6 @@ pub struct CONDITION_VARIABLE {
 pub const CONDITION_VARIABLE_INIT: CONDITION_VARIABLE = CONDITION_VARIABLE {
     ptr: ptr::null_mut(),
 };
-impl Default for CONDITION_VARIABLE {
-    fn default() -> Self {
-        CONDITION_VARIABLE_INIT
-    }
-}
 
 // `ntdll` is re-exported from `bun_windows_sys` above; the futex primitives
 // (`RtlWaitOnAddress` / `RtlWakeAddress*`) live there so this crate doesn't

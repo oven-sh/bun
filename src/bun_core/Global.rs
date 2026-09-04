@@ -584,8 +584,6 @@ pub const unhandled_error_bun_version_string: &str = concatcp!(
 
 pub const arch_name: &str = if cfg!(target_arch = "x86_64") {
     "x64"
-} else if cfg!(target_arch = "x86") {
-    "x86"
 } else if cfg!(target_arch = "aarch64") {
     "arm64"
 } else {

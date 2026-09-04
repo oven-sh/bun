@@ -318,11 +318,6 @@ impl core::ops::Deref for ZStr {
 /// process-static bytes (env block lives for the process). On POSIX wraps
 /// `libc::getenv`; on Windows scans `environ` case-insensitively.
 pub fn getenv_z(key: &ZStr) -> Option<&'static [u8]> {
-    #[cfg(not(any(unix, windows)))]
-    {
-        let _ = key;
-        return None;
-    }
     #[cfg(unix)]
     unsafe {
         // SAFETY: key is NUL-terminated by ZStr invariant; getenv reads until NUL.
@@ -413,11 +408,6 @@ pub fn getenv_z_any_case(key: &ZStr) -> Option<&'static [u8]> {
                 return Some(&line[(key_end + 1).min(line.len())..]);
             }
         }
-        None
-    }
-    #[cfg(not(any(unix, windows)))]
-    {
-        let _ = key;
         None
     }
 }
@@ -666,16 +656,8 @@ impl<T> RwLock<T> {
     }
 }
 
-impl<T: Default> Default for RwLock<T> {
-    fn default() -> Self {
-        Self::new(T::default())
-    }
-}
-
 // ─── Path primitives (from bun_paths) ─────────────────────────────────────
-pub const MAX_PATH_BYTES: usize = if cfg!(target_arch = "wasm32") {
-    1024
-} else if cfg!(windows) {
+pub const MAX_PATH_BYTES: usize = if cfg!(windows) {
     // Windows PATH_MAX_WIDE (32767) * 3 + 1 (UTF-8 worst-case from UTF-16).
     32767 * 3 + 1
 } else if cfg!(any(target_os = "linux", target_os = "android")) {
@@ -2314,11 +2296,6 @@ impl StackCheck {
             };
             sp
         }
-        #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
-        {
-            let probe = 0u8;
-            core::ptr::from_ref::<u8>(&probe) as usize
-        }
     }
 }
 
@@ -2538,13 +2515,6 @@ impl<T> Drop for Once<T> {
             // SAFETY: DONE ⇒ cell holds a valid `T`; we have `&mut self`.
             unsafe { self.cell.get_mut().assume_init_drop() };
         }
-    }
-}
-
-impl<T> Default for Once<T> {
-    #[inline]
-    fn default() -> Self {
-        Self::new()
     }
 }
 
@@ -4174,11 +4144,6 @@ fn getcwd_len(buf: &mut PathBuffer) -> crate::CrateResult<usize> {
         out[bi] = 0;
         Ok(bi)
     }
-    #[cfg(not(any(unix, windows)))]
-    {
-        let _ = buf;
-        Err(crate::CrateError::Unexpected)
-    }
 }
 
 // ── which ─────────────────────────────────────────────────────────────────
@@ -4306,10 +4271,6 @@ pub(crate) fn exit_thread() -> ! {
     #[cfg(windows)]
     // `ExitThread` is declared `safe fn` in `bun_windows_sys::kernel32`.
     crate::windows_sys::kernel32::ExitThread(0);
-    #[cfg(not(any(unix, windows)))]
-    loop {
-        core::hint::spin_loop();
-    }
 }
 
 /// Port of `bun.maybeHandlePanicDuringProcessReload`.
@@ -4854,11 +4815,6 @@ fn spawn_sync_inherit_impl(
         let code = status.code().unwrap_or(-1);
         Ok(SpawnStatus { code })
     }
-    #[cfg(not(any(unix, windows)))]
-    {
-        let _ = (argv, stdin);
-        Err(crate::CrateError::Unexpected)
-    }
 }
 
 // ── Timespec ──────────────────────────────────────────────────────────────
@@ -5163,12 +5119,6 @@ impl From<f16> for f64 {
     #[inline]
     fn from(h: f16) -> f64 {
         h.to_f64()
-    }
-}
-impl From<f16> for f32 {
-    #[inline]
-    fn from(h: f16) -> f32 {
-        h.to_f64() as f32
     }
 }
 // SAFETY: `#[repr(transparent)]` over `u16` — every bit pattern is a valid

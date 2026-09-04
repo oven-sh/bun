@@ -538,20 +538,6 @@ impl Default for Interned {
     }
 }
 
-impl From<&'static str> for Interned {
-    #[inline]
-    fn from(s: &'static str) -> Self {
-        Interned(s.as_bytes())
-    }
-}
-
-impl From<&'static [u8]> for Interned {
-    #[inline]
-    fn from(s: &'static [u8]) -> Self {
-        Interned(s)
-    }
-}
-
 impl core::fmt::Debug for Interned {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         // bstr-style: print as a (possibly-UTF-8) string rather than a byte
@@ -739,13 +725,6 @@ impl<T> DetachablePtr<T> {
         // live `&mut T` whose originating borrow has not ended; the paired
         // `detach()` nulls the slot before it does. Sole live `&mut` per call.
         unsafe { self.0.get().as_mut() }
-    }
-}
-
-impl<T> Default for DetachablePtr<T> {
-    #[inline]
-    fn default() -> Self {
-        Self::null()
     }
 }
 

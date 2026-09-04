@@ -160,11 +160,6 @@ JSValue HTTPParser::execute(JSGlobalObject* globalObject, const char* data, size
         }
     }
 
-    if (m_pendingPause) {
-        m_pendingPause = false;
-        llhttp_pause(&m_parserData);
-    }
-
     if (data != nullptr) {
         m_currentBufferLen = 0;
         m_currentBufferData = nullptr;

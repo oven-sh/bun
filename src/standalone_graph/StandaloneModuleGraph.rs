@@ -2716,14 +2716,6 @@ impl StandaloneModuleGraph {
         let data = pe::get_data();
         #[cfg(any(target_os = "linux", target_os = "android", target_os = "freebsd"))]
         let data = elf::get_data();
-        #[cfg(not(any(
-            target_os = "macos",
-            windows,
-            target_os = "linux",
-            target_os = "android",
-            target_os = "freebsd"
-        )))]
-        let data: Option<(*mut u8, usize)> = None;
         let Some((base, len)) = data else {
             return Ok(None);
         };

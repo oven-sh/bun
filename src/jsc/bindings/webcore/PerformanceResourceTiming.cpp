@@ -121,9 +121,6 @@ double PerformanceResourceTiming::redirectStart() const
     if (m_resourceTiming.networkLoadMetrics().failsTAOCheck)
         return 0.0;
 
-    if (m_resourceTiming.isLoadedFromServiceWorker())
-        return 0.0;
-
     if (!m_resourceTiming.networkLoadMetrics().redirectCount)
         return 0.0;
 
@@ -133,9 +130,6 @@ double PerformanceResourceTiming::redirectStart() const
 double PerformanceResourceTiming::redirectEnd() const
 {
     if (m_resourceTiming.networkLoadMetrics().failsTAOCheck)
-        return 0.0;
-
-    if (m_resourceTiming.isLoadedFromServiceWorker())
         return 0.0;
 
     if (!m_resourceTiming.networkLoadMetrics().redirectCount)
@@ -156,9 +150,6 @@ double PerformanceResourceTiming::domainLookupStart() const
     if (m_resourceTiming.networkLoadMetrics().failsTAOCheck)
         return 0.0;
 
-    if (m_resourceTiming.isLoadedFromServiceWorker())
-        return fetchStart();
-
     if (!m_resourceTiming.networkLoadMetrics().domainLookupStart)
         return fetchStart();
 
@@ -169,9 +160,6 @@ double PerformanceResourceTiming::domainLookupEnd() const
 {
     if (m_resourceTiming.networkLoadMetrics().failsTAOCheck)
         return 0.0;
-
-    if (m_resourceTiming.isLoadedFromServiceWorker())
-        return fetchStart();
 
     if (!m_resourceTiming.networkLoadMetrics().domainLookupEnd)
         return domainLookupStart();
@@ -184,9 +172,6 @@ double PerformanceResourceTiming::connectStart() const
     if (m_resourceTiming.networkLoadMetrics().failsTAOCheck)
         return 0.0;
 
-    if (m_resourceTiming.isLoadedFromServiceWorker())
-        return fetchStart();
-
     if (!m_resourceTiming.networkLoadMetrics().connectStart)
         return domainLookupEnd();
 
@@ -197,9 +182,6 @@ double PerformanceResourceTiming::connectEnd() const
 {
     if (m_resourceTiming.networkLoadMetrics().failsTAOCheck)
         return 0.0;
-
-    if (m_resourceTiming.isLoadedFromServiceWorker())
-        return fetchStart();
 
     if (!m_resourceTiming.networkLoadMetrics().connectEnd)
         return connectStart();

@@ -896,12 +896,9 @@ impl<T, U> IntoRawMut<T> for *mut U {
 /// by-value (e.g. `HTMLBundle`).
 #[macro_export]
 macro_rules! impl_js_class_via_generated {
-    // `for<…>` arms FIRST: a leading `for` would otherwise feed into the `:ty`
+    // `for<…>` arm FIRST: a leading `for` would otherwise feed into the `:ty`
     // arm's fragment parser, which commits to HRTB syntax and hard-errors on
     // `for<'a> Struct<'a>` ("expected trait") instead of backtracking.
-    (for<$($lt:lifetime),+> $T:ty => $gen:path) => {
-        $crate::impl_js_class_via_generated!(@emit { $($lt),+ } $T => $gen { with_ctor });
-    };
     (for<$($lt:lifetime),+> $T:ty => $gen:path, no_constructor) => {
         $crate::impl_js_class_via_generated!(@emit { $($lt),+ } $T => $gen {});
     };

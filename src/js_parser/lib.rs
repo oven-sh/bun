@@ -53,12 +53,6 @@ pub mod Macro {
         /// Spec `default_macro_js_value` = `JSValue.zero`.
         pub const ZERO: Self = MacroJSCtx(0);
     }
-    impl Default for MacroJSCtx {
-        #[inline]
-        fn default() -> Self {
-            Self::ZERO
-        }
-    }
 
     /// Lower-tier handle for `js_parser_jsc::Macro::MacroContext`.
     ///
@@ -79,15 +73,6 @@ pub mod Macro {
         /// (process lifetime); `bun_js_parser` never dereferences it.
         pub data: *mut core::ffi::c_void,
     }
-    impl Default for MacroContext {
-        #[inline]
-        fn default() -> Self {
-            Self {
-                javascript_object: MacroJSCtx::ZERO,
-                data: core::ptr::null_mut(),
-            }
-        }
-    }
     unsafe extern "Rust" {
         /// Defined `#[no_mangle]` in `bun_js_parser_jsc::Macro`. `transpiler`
         /// is `*mut bun_bundler::Transpiler<'_>` — erased because this crate
@@ -102,7 +87,7 @@ pub mod Macro {
         fn __bun_macro_context_deinit(data: *mut core::ffi::c_void);
         // All args are safe Rust-ABI types (refs/slices/by-value); the only
         // raw pointer involved is `ctx.data`, which is a struct invariant
-        // maintained by `init`/`Default` — not a caller precondition. The
+        // maintained by `init` — not a caller precondition. The
         // `#[no_mangle]` body in `bun_js_parser_jsc` is itself a safe `pub fn`.
         safe fn __bun_macro_context_call(
             ctx: &mut MacroContext,

@@ -990,9 +990,6 @@ extern "C" void Bun__startJSDebuggerThread(Zig::GlobalObject* debuggerGlobalObje
 enum class AsyncCallTypeUint8 : uint8_t {
     DOMTimer = 1,
     EventListener = 2,
-    PostMessage = 3,
-    RequestAnimationFrame = 4,
-    Microtask = 5,
 };
 
 static Inspector::InspectorDebuggerAgent::AsyncCallType getCallType(AsyncCallTypeUint8 callType)
@@ -1002,12 +999,6 @@ static Inspector::InspectorDebuggerAgent::AsyncCallType getCallType(AsyncCallTyp
         return Inspector::InspectorDebuggerAgent::AsyncCallType::DOMTimer;
     case AsyncCallTypeUint8::EventListener:
         return Inspector::InspectorDebuggerAgent::AsyncCallType::EventListener;
-    case AsyncCallTypeUint8::PostMessage:
-        return Inspector::InspectorDebuggerAgent::AsyncCallType::PostMessage;
-    case AsyncCallTypeUint8::RequestAnimationFrame:
-        return Inspector::InspectorDebuggerAgent::AsyncCallType::RequestAnimationFrame;
-    case AsyncCallTypeUint8::Microtask:
-        return Inspector::InspectorDebuggerAgent::AsyncCallType::Microtask;
     default:
         RELEASE_ASSERT_NOT_REACHED();
     }

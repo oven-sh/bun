@@ -1972,7 +1972,6 @@ pub enum ImportPathFormat {
     AbsoluteUrl,
     // omit file extension
     AbsolutePath,
-    PackagePath,
 }
 
 pub(crate) mod bundle_options_defaults {

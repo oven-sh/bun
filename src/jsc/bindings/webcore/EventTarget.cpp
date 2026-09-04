@@ -98,9 +98,6 @@ bool EventTarget::addEventListener(const AtomString& eventType, Ref<EventListene
     // if (listenerCreatedFromScript)
     //     InspectorInstrumentation::didAddEventListener(*this, eventType, listener.get(), options.capture);
 
-    // if (eventNames().isWheelEventType(eventType))
-    // invalidateEventListenerRegions();
-
     eventListenersDidChange();
     if (this->onDidChangeListener) [[unlikely]] {
         this->onDidChangeListener(*this, eventType, OnDidChangeListenerKind::Add);
@@ -137,9 +134,6 @@ bool EventTarget::removeEventListener(const AtomString& eventType, EventListener
     // InspectorInstrumentation::willRemoveEventListener(*this, eventType, listener, options.capture);
 
     if (data->eventListenerMap.remove(eventType, listener, options.capture)) {
-        if (eventNames().isWheelEventType(eventType))
-            invalidateEventListenerRegions();
-
         if (this->onDidChangeListener) [[unlikely]] {
             this->onDidChangeListener(*this, eventType, OnDidChangeListenerKind::Remove);
         }
@@ -326,9 +320,6 @@ void EventTarget::removeAllEventListeners()
 
     auto* data = eventTargetData();
     if (data && !data->eventListenerMap.isEmpty()) {
-        // if (data->eventListenerMap.contains(eventNames().wheelEvent) || data->eventListenerMap.contains(eventNames().mousewheelEvent))
-        // invalidateEventListenerRegions();
-
         if (this->onDidChangeListener) [[unlikely]] {
             for (auto& eventType : data->eventListenerMap.eventTypes()) {
                 this->onDidChangeListener(*this, eventType, OnDidChangeListenerKind::Clear);
@@ -339,10 +330,6 @@ void EventTarget::removeAllEventListeners()
     }
 
     // threadData.setIsInRemoveAllEventListeners(false);
-}
-
-void EventTarget::invalidateEventListenerRegions()
-{
 }
 
 } // namespace WebCore

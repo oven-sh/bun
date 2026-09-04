@@ -328,21 +328,16 @@ void NodeVMScript::destroy(JSCell* cell)
     static_cast<NodeVMScript*>(cell)->NodeVMScript::~NodeVMScript();
 }
 
-static JSC::EncodedJSValue runInContext(NodeVMGlobalObject* globalObject, NodeVMScript* script, JSObject* contextifiedObject, JSValue optionsArg, bool allowStringInPlaceOfOptions = false)
+static JSC::EncodedJSValue runInContext(NodeVMGlobalObject* globalObject, NodeVMScript* script, JSObject* contextifiedObject, JSValue optionsArg)
 {
     VM& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     RunningScriptOptions options;
-    if (allowStringInPlaceOfOptions && optionsArg.isString()) {
-        options.filename = optionsArg.toWTFString(globalObject);
-        RETURN_IF_EXCEPTION(scope, {});
-    } else {
-        auto from = options.fromJS(globalObject, vm, scope, optionsArg);
-        RETURN_IF_EXCEPTION(scope, {});
-        if (!from) {
-            options = {};
-        }
+    auto from = options.fromJS(globalObject, vm, scope, optionsArg);
+    RETURN_IF_EXCEPTION(scope, {});
+    if (!from) {
+        options = {};
     }
 
     // Set the contextified object before evaluating

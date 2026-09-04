@@ -5618,12 +5618,6 @@ pub mod darwin {
                 | (self.clone_force as u32) << 25
         }
     }
-    impl From<COPYFILE> for u32 {
-        #[inline]
-        fn from(f: COPYFILE) -> u32 {
-            f.bits()
-        }
-    }
 
     // ── Darwin private __ulock_* flags ──
     // <xnu/bsd/sys/ulock.h>. Kept as
@@ -7566,17 +7560,6 @@ pub fn get_fd_path<'a>(fd: Fd, out: &'a mut bun_paths::PathBuffer) -> Maybe<&'a 
         out.0[..len].copy_from_slice(unsafe { core::slice::from_raw_parts(path_ptr, len) });
         return Ok(&mut out.0[..len]);
     }
-    #[cfg(not(any(
-        target_os = "linux",
-        target_os = "android",
-        target_os = "macos",
-        target_os = "freebsd",
-        windows
-    )))]
-    {
-        let _ = (fd, out);
-        Err(Error::from_code_int(libc::ENOSYS, Tag::readlink))
-    }
 }
 
 /// fd → absolute wide path (Windows `GetFinalPathNameByHandleW`).
@@ -9341,10 +9324,6 @@ fn sink_tty_winsize(fd: Fd) -> Option<bun_core::Winsize> {
         xpixel: 0,
         ypixel: 0,
     })
-}
-#[cfg(not(any(unix, windows)))]
-fn sink_tty_winsize(_fd: Fd) -> Option<bun_core::Winsize> {
-    None
 }
 
 // Backs `bun_core::OutputSink[Sys]` — stderr/mkdir/open/QuietWriter.

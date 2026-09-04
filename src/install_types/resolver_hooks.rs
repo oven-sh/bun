@@ -1056,15 +1056,6 @@ impl<SemverInt: bun_semver::version::VersionInt> Clone for VersionedURLType<Semv
         *self
     }
 }
-impl<SemverInt: bun_semver::version::VersionInt> Default for VersionedURLType<SemverInt> {
-    #[inline]
-    fn default() -> Self {
-        Self {
-            url: SemverString::default(),
-            version: bun_semver::VersionType::default(),
-        }
-    }
-}
 
 impl<SemverInt: bun_semver::version::VersionInt> VersionedURLType<SemverInt> {
     #[inline]

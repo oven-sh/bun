@@ -1597,10 +1597,6 @@ void WebSocket::didFailWithErrorCode(Bun::WebSocketErrorCode code)
         didReceiveClose(CleanStatus::NotClean, 1006, "Timeout"_s, true);
         break;
     }
-    case Bun::WebSocketErrorCode::closed: {
-        didReceiveClose(CleanStatus::Clean, 1000, "Closed by client"_s);
-        break;
-    }
     case Bun::WebSocketErrorCode::failed_to_write: {
         didReceiveClose(CleanStatus::NotClean, 1006, "Failed to write"_s);
         break;

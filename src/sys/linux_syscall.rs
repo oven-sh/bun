@@ -216,47 +216,16 @@ pub(crate) fn fstatat(dir: i32, path: &ZStr, flags: i32) -> Result<libc::stat, i
 /// as `write_bytes<stat>` — the 144-byte memset behind `zeroed()` — plus the
 /// move chain, on a path that runs once per installed file.)
 #[inline(always)]
-#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 fn stat_to_libc(s: rustix::fs::Stat) -> libc::stat {
     const _: () = assert!(
         core::mem::size_of::<rustix::fs::Stat>() == core::mem::size_of::<libc::stat>()
             && core::mem::align_of::<rustix::fs::Stat>() == core::mem::align_of::<libc::stat>(),
-        "rustix::fs::Stat / libc::stat layout mismatch on this target — \
-         drop it from the cfg above so it takes the field-copy fallback",
+        "rustix::fs::Stat / libc::stat layout mismatch on this target",
     );
     // SAFETY: identical layout (both are the per-arch kernel UAPI `struct stat`;
     // see doc comment + const assert). All-integer POD — every bit-pattern is
     // valid for every field, so no invalid-value hazard either way.
     unsafe { core::mem::transmute::<rustix::fs::Stat, libc::stat>(s) }
-}
-
-/// Fallback for arches where userspace `libc::stat` is *not* guaranteed
-/// layout-identical to the kernel struct (e.g. mips64 glibc reorders fields).
-/// Field-by-field copy by name — both expose every public `st_*` field, only
-/// padding/reserved names differ. Compiles to straight moves.
-#[inline]
-#[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
-fn stat_to_libc(s: rustix::fs::Stat) -> libc::stat {
-    // SAFETY: `libc::stat` is POD; zero is a valid bit-pattern for every field
-    // (all integers). We overwrite every meaningful field below.
-    let mut out: libc::stat = bun_core::ffi::zeroed();
-    out.st_dev = s.st_dev as _;
-    out.st_ino = s.st_ino as _;
-    out.st_nlink = s.st_nlink as _;
-    out.st_mode = s.st_mode as _;
-    out.st_uid = s.st_uid as _;
-    out.st_gid = s.st_gid as _;
-    out.st_rdev = s.st_rdev as _;
-    out.st_size = s.st_size as _;
-    out.st_blksize = s.st_blksize as _;
-    out.st_blocks = s.st_blocks as _;
-    out.st_atime = s.st_atime as _;
-    out.st_atime_nsec = s.st_atime_nsec as _;
-    out.st_mtime = s.st_mtime as _;
-    out.st_mtime_nsec = s.st_mtime_nsec as _;
-    out.st_ctime = s.st_ctime as _;
-    out.st_ctime_nsec = s.st_ctime_nsec as _;
-    out
 }
 
 // ──────────────────────────────────────────────────────────────────────────

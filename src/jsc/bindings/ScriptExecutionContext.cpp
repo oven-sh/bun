@@ -134,8 +134,8 @@ void ScriptExecutionContext::forEachActiveDOMObject(NOESCAPE const Function<Shou
     auto possibleActiveDOMObjects = copyToVectorOf<WeakPtr<ActiveDOMObject>>(m_activeDOMObjects);
     for (auto& weakActiveDOMObject : possibleActiveDOMObjects) {
         RefPtr activeDOMObject = weakActiveDOMObject.get();
-        if (activeDOMObject && apply(*activeDOMObject) == ShouldContinue::No)
-            break;
+        if (activeDOMObject)
+            apply(*activeDOMObject);
     }
 }
 

@@ -18,7 +18,6 @@ enum class WebSocketErrorCode : int32_t {
     missing_client_protocol = 11,
     mismatch_client_protocol = 12,
     timeout = 13,
-    closed = 14,
     failed_to_write = 15,
     failed_to_connect = 16,
     ended = 18,

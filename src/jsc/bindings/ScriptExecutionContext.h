@@ -136,8 +136,6 @@ public:
         return Bun__VM__currentLoopKind(m_bunVM);
     }
 
-    bool isWorker = false;
-
     // Set once when the context is permanently shutting down (WebWorker__teardownJSCVM).
     // Unlike VM::hasTerminationRequest(), never set transiently (node:vm {timeout}).
     // Takes allScriptExecutionContextsMapLock so it serializes with postTaskTo's

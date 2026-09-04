@@ -1162,16 +1162,10 @@ impl<'a> Lexer<'a> {
         Ok(())
     }
 
-    pub(crate) fn expect_less_than<const IS_INSIDE_JSX_ELEMENT: bool>(
-        &mut self,
-    ) -> Result<(), Error> {
+    pub(crate) fn expect_less_than(&mut self) -> Result<(), Error> {
         match self.token {
             T::TLessThan => {
-                if IS_INSIDE_JSX_ELEMENT {
-                    self.next_inside_jsx_element()?;
-                } else {
-                    self.next()?;
-                }
+                self.next()?;
             }
             T::TLessThanEquals => {
                 self.token = T::TEquals;

@@ -382,7 +382,7 @@ impl Watcher {
         }
         // The close+swap_remove below must be serialized against the JS
         // thread's watchlist lookups (`ImportWatcher::snapshot_package_json`)
-        // and `append_file_maybe_lock<true>` re-adds — both take `self.mutex`.
+        // and `add_file` re-adds — both take `self.mutex`.
         // The close in pass 1 is also why the watchlist's stored fd is never
         // handed out for reads: a reader that copied the number before this
         // ran would hit `EBADF`/`EISDIR` after (see `snapshot_package_json`).
@@ -669,7 +669,7 @@ impl Watcher {
 
     // Below is platform-independent
 
-    pub(crate) fn append_file_maybe_lock<const CLONE_FILE_PATH: bool, const LOCK: bool>(
+    pub(crate) fn append_file_maybe_lock<const CLONE_FILE_PATH: bool>(
         &mut self,
         fd: Fd,
         file_path: &[u8],
@@ -677,11 +677,6 @@ impl Watcher {
         dir_fd: Fd,
         package_json: Option<&'static PackageJSON>,
     ) -> sys::Result<FdOwnership> {
-        // RAII guard: `lock_guard()` holds the
-        // mutex by `BackRef`, not a borrow of `self`, so the `&mut self` calls
-        // below are fine and every return path unlocks.
-        let _guard = LOCK.then(|| self.mutex.lock_guard());
-
         debug_assert!(file_path.len() > 1);
         let pathname = bun_paths::fs::PathName::init(file_path);
 
@@ -784,7 +779,9 @@ impl Watcher {
         file_path: &[u8],
         hash: HashType,
     ) -> sys::Result<WatchItemIndex> {
-        // RAII guard; see append_file_maybe_lock.
+        // RAII guard: `lock_guard()` holds the mutex by `BackRef`, not a
+        // borrow of `self`, so the `&mut self` calls below are fine and every
+        // return path unlocks.
         let _guard = self.mutex.lock_guard();
         if let Some(idx) = self.index_of(hash) {
             return Ok(idx as WatchItemIndex);
@@ -891,7 +888,7 @@ impl Watcher {
             return Ok(ownership);
         }
 
-        let r = self.append_file_maybe_lock::<CLONE_FILE_PATH, false>(
+        let r = self.append_file_maybe_lock::<CLONE_FILE_PATH>(
             fd,
             file_path,
             hash,

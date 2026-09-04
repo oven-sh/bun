@@ -218,8 +218,6 @@ protected:
 
   const bottom = `
 JSObject* createJSSinkPrototype(JSC::VM& vm, JSC::JSGlobalObject* globalObject, WebCore::SinkID sinkID);
-JSObject* createJSSinkControllerPrototype(JSC::VM& vm, JSC::JSGlobalObject* globalObject, WebCore::SinkID sinkID);
-Structure* createJSSinkControllerStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, WebCore::SinkID sinkID);
 // readStreamIntoSink's close for a failed source: \`error\` reaches the sink
 // whatever its value. The controller's JS close(error) reads a falsy argument
 // as a clean close instead.
@@ -896,43 +894,6 @@ void ${controller}::destroy(JSCell* cell)
 default: 
     RELEASE_ASSERT_NOT_REACHED();
     }
-}`;
-
-  templ += `
-JSObject* createJSSinkControllerPrototype(JSC::VM& vm, JSC::JSGlobalObject* globalObject, SinkID sinkID)
-{
-    switch (sinkID) {
-  `;
-  for (let name of classes) {
-    const { controllerPrototypeName } = names(name);
-    templ += `
-  case ${name}:
-      return ${controllerPrototypeName}::create(vm, globalObject, ${controllerPrototypeName}::createStructure(vm, globalObject, globalObject->objectPrototype()));
-`;
-  }
-  templ += `
-default: 
-  RELEASE_ASSERT_NOT_REACHED();
-  }
-}`;
-
-  templ += `
-Structure* createJSSinkControllerStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, SinkID sinkID)
-{
-    switch (sinkID) {
-  `;
-  for (let name of classes) {
-    templ += `
-  case ${name}: {
-    auto* prototype = createJSSinkControllerPrototype(vm, globalObject, sinkID);
-    return JSReadable${name}Controller::createStructure(vm, globalObject, prototype);
-  }
-`;
-  }
-  templ += `
-default:
-    RELEASE_ASSERT_NOT_REACHED();
-  }
 }`;
 
   const footer = `

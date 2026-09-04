@@ -88,8 +88,6 @@ static JSC_DECLARE_HOST_FUNCTION(jsPerformancePrototypeFunction_clearMarks);
 static JSC_DECLARE_HOST_FUNCTION(jsPerformancePrototypeFunction_measure);
 static JSC_DECLARE_HOST_FUNCTION(jsPerformancePrototypeFunction_clearMeasures);
 
-static JSC_DECLARE_CUSTOM_GETTER(jsPerformanceConstructor);
-
 // Attributes
 
 static JSC_DECLARE_CUSTOM_GETTER(jsPerformanceConstructor);

@@ -2717,16 +2717,6 @@ macro_rules! impl_streaming_writer_parent {
         }
     };
 
-    // Public entry — generic parent: `for<P: Bound, ...> Type<P>; ...`.
-    (
-        for<$($gp:ident $(: $b0:path)?),+> $Ty:ty;
-        $($rest:tt)*
-    ) => {
-        $crate::impl_streaming_writer_parent! {
-            @emit [<$($gp $(: $b0)?),+>] $Ty; $($rest)*
-        }
-    };
-
     // Public entry — non-generic parent.
     (
         $Ty:ty;

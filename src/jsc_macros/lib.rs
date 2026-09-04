@@ -499,10 +499,6 @@ struct JsClassArgs {
     /// `${T}__getConstructor` (generate-classes.ts:2449/2539). Skip the
     /// import-side extern so the linker doesn't see a dangling reference.
     no_constructor: bool,
-    /// `estimatedSize: true` in `.classes.ts` → emit `${T}__estimatedSize`
-    /// (generate-classes.ts:2170-2175). Off by default — the C++ side only
-    /// links against this symbol when the class definition opts in.
-    estimated_size: bool,
 }
 
 impl Parse for JsClassArgs {
@@ -518,7 +514,6 @@ impl Parse for JsClassArgs {
                 "no_finalize" => out.no_finalize = true,
                 "no_construct" => out.no_construct = true,
                 "no_constructor" => out.no_constructor = true,
-                "estimated_size" => out.estimated_size = true,
                 other => {
                     return Err(syn::Error::new(
                         ident.span(),
@@ -597,10 +592,10 @@ fn js_class_hooks(args: &JsClassArgs, rust_ty: &Ident) -> TokenStream2 {
     // `build/*/codegen/generated_classes.rs`. Emitting them here as well
     // produces duplicate-symbol link errors, so this macro is now *import-side
     // only*: it declares the C++ externs and supplies the `JsClass` trait impl.
-    // The `no_finalize` / `no_construct` / `estimated_size` attribute knobs are
+    // The `no_finalize` / `no_construct` attribute knobs are
     // still accepted (call sites carry them, and they document the
     // `.classes.ts` shape), but no longer drive any token emission here.
-    let _ = (args.no_finalize, args.no_construct, args.estimated_size);
+    let _ = (args.no_finalize, args.no_construct);
 
     // Rust→C++ hooks (we import these; bodies live in generated C++).
     let from_js_sym = format!("{ty_name}__fromJS");

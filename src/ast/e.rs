@@ -728,8 +728,6 @@ impl Number {
     /// String concatenation with numbers is required by the TypeScript compiler for
     /// "constant expression" handling in enums. We can match the behavior of a JS VM
     /// by calling out to the APIs in WebKit which are responsible for this operation.
-    ///
-    /// This can return `None` in wasm builds to avoid linking JSC
     pub(crate) fn to_string(self, bump: &Bump) -> Option<Str> {
         Self::to_string_from_f64(self.value(), bump)
     }
@@ -769,17 +767,9 @@ impl Number {
             return Some(Str::new(b"Infinity"));
         }
 
-        #[cfg(not(target_arch = "wasm32"))]
-        {
-            let mut buf = [0u8; 124];
-            let s = bun_core::fmt::FormatDouble::dtoa(&mut buf, value);
-            Some(Str::new(bump.alloc_slice_copy(s)))
-        }
-        #[cfg(target_arch = "wasm32")]
-        {
-            // do not attempt to implement the spec here, it would be error prone.
-            None
-        }
+        let mut buf = [0u8; 124];
+        let s = bun_core::fmt::FormatDouble::dtoa(&mut buf, value);
+        Some(Str::new(bump.alloc_slice_copy(s)))
     }
 
     #[inline]

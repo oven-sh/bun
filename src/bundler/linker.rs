@@ -669,8 +669,6 @@ impl Linker {
                     )?)))
                 }
             }
-
-            ImportPathFormat::PackagePath => unreachable!(),
         }
     }
 

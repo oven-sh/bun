@@ -307,18 +307,15 @@ impl FileSystemRouter {
         };
         let fs_router = Box::new(FileSystemRouter {
             origin: if !origin_str.slice().is_empty() {
-                Some(claim(
-                    vm.ref_counted_string::<true>(origin_str.slice(), None),
-                ))
+                Some(claim(vm.ref_counted_string(origin_str.slice(), None)))
             } else {
                 None
             },
-            base_dir: Some(claim(vm.ref_counted_string::<true>(base_dir_str, None))),
+            base_dir: Some(claim(vm.ref_counted_string(base_dir_str, None))),
             asset_prefix: if !asset_prefix_slice.slice().is_empty() {
-                Some(claim(vm.ref_counted_string::<true>(
-                    asset_prefix_slice.slice(),
-                    None,
-                )))
+                Some(claim(
+                    vm.ref_counted_string(asset_prefix_slice.slice(), None),
+                ))
             } else {
                 None
             },

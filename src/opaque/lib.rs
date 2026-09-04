@@ -116,29 +116,8 @@ macro_rules! opaque_ffi {
 // FFI layout assertions
 // ───────────────────────────────────────────────────────────────────────────
 
-/// Marker: `Self` is passed across `extern "C"` by value (or embedded in a
-/// type that is) and its Rust layout has been **statically verified** against
-/// the foreign side's `sizeof`/`alignof`. Implemented only via
-/// [`assert_ffi_layout!`]; never `impl` by hand.
-///
-/// Generic FFI helpers may bound on `T: FfiLayout` to refuse unaudited types
-/// at the *call* site, not just the *decl* site.
-///
-/// # Safety
-/// Implementing this trait asserts that `size_of::<Self>() == C_SIZE` and
-/// `align_of::<Self>() == C_ALIGN`, and that those constants match the C/C++
-/// declaration `Self` is paired with. The only sound way to discharge this
-/// obligation is via [`assert_ffi_layout!`], which `const`-asserts both.
-pub unsafe trait FfiLayout {
-    /// `sizeof(T)` on the C/C++ side. Equals `size_of::<Self>()` (asserted).
-    const C_SIZE: usize;
-    /// `alignof(T)` on the C/C++ side. Equals `align_of::<Self>()` (asserted).
-    const C_ALIGN: usize;
-}
-
 /// Compile-time-fail if `size_of::<$T>() != $size` or
-/// `align_of::<$T>() != $align`. Also implements [`FfiLayout`] for `$T`, so
-/// the assertion is the *only* way to acquire the marker.
+/// `align_of::<$T>() != $align`.
 ///
 /// ```ignore
 /// // Mirrors C++: static_assert(sizeof(BunString) == 24 && alignof == 8)
@@ -181,11 +160,6 @@ macro_rules! assert_ffi_layout {
                 );
             )+)?
         };
-        // SAFETY: the const-asserts above are the proof obligation.
-        unsafe impl $crate::FfiLayout for $T {
-            const C_SIZE: usize = $size;
-            const C_ALIGN: usize = $align;
-        }
     };
     // mirror-type form: assert against a bindgen'd C struct
     ($T:ty = $Mirror:ty $(; $($field:ident),+ $(,)?)?) => {

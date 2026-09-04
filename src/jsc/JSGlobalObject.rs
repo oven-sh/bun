@@ -1401,19 +1401,6 @@ pub use crate::{IntegerRange, ValidateObjectOpts};
 #[derive(Copy, Clone, Eq, PartialEq, Hash)]
 pub struct ScriptExecutionContextIdentifier(pub u32);
 
-impl From<u32> for ScriptExecutionContextIdentifier {
-    #[inline]
-    fn from(id: u32) -> Self {
-        Self(id)
-    }
-}
-impl From<ScriptExecutionContextIdentifier> for u32 {
-    #[inline]
-    fn from(id: ScriptExecutionContextIdentifier) -> u32 {
-        id.0
-    }
-}
-
 use bun_core::fmt::VecWriter as WriteVec;
 
 // ──────────────────────────────────────────────────────────────────────────────

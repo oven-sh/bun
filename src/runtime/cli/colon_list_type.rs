@@ -72,7 +72,7 @@ impl<T: ColonListValue> ColonListType<T> {
                         pretty_errorln!(
                             "<r><red>error<r><d>:<r> <b>invalid loader {}<r>, expected one of:{}",
                             bun_fmt::quote(&str[midpoint + 1..str.len()]),
-                            bun_fmt::enum_tag_list::<bun_ast::Loader, { bun_fmt::SEP_DASH }>(),
+                            bun_fmt::enum_tag_list::<bun_ast::Loader>(),
                         );
                         Global::exit(1);
                     }

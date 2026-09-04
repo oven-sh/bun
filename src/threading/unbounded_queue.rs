@@ -142,37 +142,7 @@ impl<T: Node> Batch<T> {
 /// with a non-literal const, so this newtype is `#[repr(align(N))]`-cfg'd to
 /// half the target's cache-line size, keeping producer (CAS on `back`)
 /// and consumer (swap on `front`) on separate cache halves.
-#[cfg_attr(
-    any(
-        target_arch = "x86_64",
-        target_arch = "aarch64",
-        target_arch = "powerpc64",
-    ),
-    repr(align(64))
-)]
-#[cfg_attr(
-    any(
-        target_arch = "arm",
-        target_arch = "mips",
-        target_arch = "mips64",
-        target_arch = "riscv64",
-    ),
-    repr(align(16))
-)]
-#[cfg_attr(target_arch = "s390x", repr(align(128)))]
-#[cfg_attr(
-    not(any(
-        target_arch = "x86_64",
-        target_arch = "aarch64",
-        target_arch = "powerpc64",
-        target_arch = "arm",
-        target_arch = "mips",
-        target_arch = "mips64",
-        target_arch = "riscv64",
-        target_arch = "s390x",
-    )),
-    repr(align(32))
-)]
+#[cfg_attr(any(target_arch = "x86_64", target_arch = "aarch64"), repr(align(64)))]
 pub struct QueuePadded<T>(pub(crate) T);
 
 pub struct UnboundedQueue<T: Node> {

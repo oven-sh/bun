@@ -625,18 +625,6 @@ pub mod fs {
         pub filename: &'a [u8],
     }
 
-    impl<'a> Default for PathName<'a> {
-        #[inline]
-        fn default() -> Self {
-            Self {
-                base: b"",
-                dir: b"",
-                ext: b"",
-                filename: b"",
-            }
-        }
-    }
-
     impl<'a> PathName<'a> {
         /// Returns the extension of `path` including the leading `.`, or `""`
         /// for extensionless / dotfile basenames.

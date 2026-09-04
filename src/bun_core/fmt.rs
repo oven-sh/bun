@@ -3593,7 +3593,8 @@ impl ContentHash {
     /// one character past their common prefix. Returns whether any changed.
     pub fn widen_to_distinguish(names: &mut [ContentHash]) -> bool {
         let mut order: Vec<usize> = (0..names.len()).collect();
-        order.sort_unstable_by_key(|&i| (names[i].bytes(), names[i].len()));
+        // Only equal-width names can print the same; sorting by width first keeps them adjacent.
+        order.sort_unstable_by_key(|&i| (names[i].len(), names[i].bytes()));
         let mut widened = false;
         for pair in order.windows(2) {
             let (a, b) = (names[pair[0]], names[pair[1]]);

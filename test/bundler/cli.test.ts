@@ -830,13 +830,25 @@ test.concurrent("bun build names every input that maps to a shared output path",
 
 test.concurrent("bun build widens [hash] names that would otherwise collide", async () => {
   // 40 entry points under `[hash1]` naming cannot all differ in one character
-  // (the alphabet has 32), so some names widen to 2+; none collide.
+  // (the alphabet has 32), so some names widen to 2+; none collide. The
+  // chunks use a different width so that their names sort between the
+  // entries' without hiding the entries' collisions from each other.
   const files: Record<string, string> = {};
-  for (let i = 0; i < 40; i++) files[`e${i}.ts`] = `export const v = ${i};\n`;
+  for (let i = 0; i < 40; i++) files[`e${i}.ts`] = `import("./s${i % 20}.js"); export const v = ${i};\n`;
+  for (let i = 0; i < 20; i++) files[`s${i}.js`] = `export const s = ${i};\n`;
   using dir = tempDir("bundle-hash-widen", files);
+  const entries = Object.keys(files).filter(f => f.startsWith("e"));
 
   await using proc = Bun.spawn({
-    cmd: [bunExe(), "build", ...Object.keys(files), "--outdir=dist", "--entry-naming=[hash1].[ext]"],
+    cmd: [
+      bunExe(),
+      "build",
+      ...entries,
+      "--splitting",
+      "--outdir=dist",
+      "--entry-naming=[hash1].[ext]",
+      "--chunk-naming=c[hash3].[ext]",
+    ],
     env: bunEnv,
     cwd: String(dir),
     stdout: "pipe",
@@ -845,10 +857,12 @@ test.concurrent("bun build widens [hash] names that would otherwise collide", as
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect(stderr).toBe("");
   const names = fs.readdirSync(path.join(String(dir), "dist")).sort();
-  expect(names.length).toBe(40);
-  expect(names.every(n => /^[0-9a-z]{1,13}\.js$/.test(n))).toBe(true);
-  expect(names.some(n => n.length > "x.js".length)).toBe(true);
-  expect(names.some(n => n.length == "x.js".length)).toBe(true);
+  // Entries print 1–3 characters, chunks `c` + 3 or more.
+  const entryNames = names.filter(n => /^[0-9a-z]{1,3}\.js$/.test(n));
+  expect(entryNames.length).toBe(40);
+  expect(names.length - entryNames.length).toBeGreaterThanOrEqual(20);
+  expect(names.every(n => /^c?[0-9a-z]{1,13}\.js$/.test(n))).toBe(true);
+  expect(entryNames.some(n => n.length > "x.js".length)).toBe(true);
   expect(exitCode).toBe(0);
 });
 

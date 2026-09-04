@@ -611,7 +611,7 @@ impl ShellCpTask {
         let mut buf3 = bun_paths::PathBuffer::uninit();
         // We have to give an absolute path to our cp implementation for it to
         // work with cwd.
-        let src: &bun_core::ZStr = if Platform::AUTO.is_absolute(&self.src) {
+        let mut src: &bun_core::ZStr = if Platform::AUTO.is_absolute(&self.src) {
             // `self.src` is the bare argv bytes (no NUL); re-terminate via
             // the thread-local join buffer.
             resolve_path::join_z::<platform::Auto>(&[&self.src])
@@ -626,6 +626,11 @@ impl ShellCpTask {
                 &[&self.cwd_path, &self.tgt],
             )
         };
+        // From the operand as written: the joins above normalized a trailing
+        // `.` or `..` away, and cp(1) copies `dir/.` (the directory itself)
+        // into the target rather than into `target/dir`.
+        let basename = resolve_path::basename(&self.src);
+        let dot_operand = basename == b"." || basename == b"..";
 
         // Cases:
         //   SRC       DEST
@@ -635,10 +640,31 @@ impl ShellCpTask {
         //   folder -> folder
         // We need to check dest to see what it is; if it doesn't exist we
         // need to create it.
-        let src_is_dir = match Self::is_dir(src) {
+        let mut src_is_dir = match Self::is_dir(src) {
             Ok(x) => x,
             Err(e) => return Some(ShellErr::new_sys(&e)),
         };
+
+        // `x/.` is the directory `x` leads to, through a symlink at `x`, and
+        // ENOTDIR for anything else; `src` is `x` itself, which `is_dir` does
+        // not follow.
+        if dot_operand && !src_is_dir {
+            let mut real_buf = bun_paths::path_buffer_pool::get();
+            src = match bun_sys::realpath(src, &mut real_buf) {
+                Ok(real) => resolve_path::join_z::<platform::Auto>(&[real]),
+                Err(e) => return Some(ShellErr::new_sys(&e.with_path(&self.src))),
+            };
+            src_is_dir = match Self::is_dir(src) {
+                Ok(x) => x,
+                Err(e) => return Some(ShellErr::new_sys(&e)),
+            };
+            if !src_is_dir {
+                return Some(ShellErr::new_sys(
+                    &bun_sys::Error::from_code(bun_sys::E::ENOTDIR, bun_sys::Tag::lstat)
+                        .with_path(&self.src),
+                ));
+            }
+        }
 
         // Any source directory without -R is an error.
         if src_is_dir && !self.opts.recursive {
@@ -677,11 +703,12 @@ impl ShellCpTask {
         } else if self.opts.recursive {
             // 2nd synopsis: -R source_files... -> target.
             if tgt_exists {
-                let basename = resolve_path::basename(src.as_bytes());
-                tgt = resolve_path::join_z_buf::<platform::Auto>(
-                    buf3.as_mut_slice(),
-                    &[tgt.as_bytes(), basename],
-                );
+                if !dot_operand {
+                    tgt = resolve_path::join_z_buf::<platform::Auto>(
+                        buf3.as_mut_slice(),
+                        &[tgt.as_bytes(), basename],
+                    );
+                }
             } else if self.operands == 2 {
                 // source_dir -> new_target_dir.
             } else {
@@ -708,7 +735,6 @@ impl ShellCpTask {
                         .into_boxed_slice(),
                 ));
             }
-            let basename = resolve_path::basename(src.as_bytes());
             tgt = resolve_path::join_z_buf::<platform::Auto>(
                 buf3.as_mut_slice(),
                 &[tgt.as_bytes(), basename],

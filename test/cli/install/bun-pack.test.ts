@@ -2120,6 +2120,34 @@ describe.concurrent("bins", () => {
     ]);
   });
 
+  // An empty "bin" string counts as absent, as in `bun install`, so
+  // "directories.bin" applies. Any other "bin" string wins over it.
+  test.each([
+    ["", ["package/bins/a.js"]],
+    ["cli.js", ["package/cli.js"]],
+  ])('"bin" of %p with "directories.bin"', async (bin, executable) => {
+    using dir = tempDir("pack-bins-with-dir", {
+      "package.json": JSON.stringify({
+        name: "pack-bins-with-dir",
+        version: "1.0.0",
+        bin,
+        directories: { bin: "bins" },
+      }),
+      "cli.js": "console.log('cli')",
+      "bins/a.js": "console.log('a')",
+    });
+
+    const { err, exitCode } = await runPack(dir);
+    expect(err).toBe("");
+    expect(exitCode).toBe(0);
+
+    const tarball = readTarball(join(dir, "pack-bins-with-dir-1.0.0.tgz"));
+    expect(entryNames(tarball)).toEqual(["package/package.json", "package/bins/a.js", "package/cli.js"]);
+    expect(tarball.entries.filter(entry => (entry.perm & 0o111) !== 0).map(entry => entry.pathname)).toEqual(
+      executable,
+    );
+  });
+
   test('deduplicate with "files"', async () => {
     using dir = tempDir("pack-bins-and-files-dedupe", {
       "package.json": JSON.stringify({

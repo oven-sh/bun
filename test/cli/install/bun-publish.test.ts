@@ -1327,7 +1327,7 @@ describe("readme", () => {
 // package root the way npm does it ("../cli.js" is "cli.js"), a value that
 // resolves to the root itself is dropped, other values are kept as written (npm
 // keeps "lib/" as well), and "directories.bin" is expanded with the same rule
-// the tarball uses.
+// the tarball uses. An empty "bin" string counts as absent, as in `bun install`.
 describe.concurrent("bin in the published manifest", () => {
   test.each([
     [{ bin: "cli.js" }, { "bin-pkg": "cli.js" }],
@@ -1338,6 +1338,8 @@ describe.concurrent("bin in the published manifest", () => {
     [{ directories: { bin: "bins/" } }, { "a.js": "bins/a.js" }],
     [{ directories: { bin: "" } }, undefined],
     [{ directories: { bin: "." } }, undefined],
+    [{ bin: "", directories: { bin: "bins" } }, { "a.js": "bins/a.js" }],
+    [{ bin: "cli.js", directories: { bin: "bins" } }, { "bin-pkg": "cli.js" }],
   ])("%j", async (fields, expected) => {
     let captured: any = null;
     using mock = Bun.serve({

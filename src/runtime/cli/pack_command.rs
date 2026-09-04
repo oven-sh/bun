@@ -1461,7 +1461,7 @@ fn get_package_bins(json: &Expr) -> Result<Vec<BinInfo>, AllocError> {
 
     let mut path_buf = PathBuffer::uninit();
 
-    if let Some(bin) = json.as_property(b"bin") {
+    if let Some(bin) = non_empty_bin(json) {
         if let Some(bin_str) = bin.expr.as_string(pack_bump()) {
             if let Some(subpath) = bin_subpath(bin_str, BinType::File, &mut path_buf) {
                 bins.push(BinInfo {
@@ -1510,6 +1510,12 @@ fn get_package_bins(json: &Expr) -> Result<Vec<BinInfo>, AllocError> {
     }
 
     Ok(bins)
+}
+
+/// Like `bun install`, an empty `"bin"` string counts as absent.
+pub(crate) fn non_empty_bin(json: &Expr) -> Option<bun_ast::expr::Query> {
+    json.as_property(b"bin")
+        .filter(|bin| !matches!(&bin.expr.data, ExprData::EString(bin_str) if bin_str.is_blank()))
 }
 
 pub(crate) fn bin_subpath<'a>(value: &[u8], ty: BinType, buf: &'a mut [u8]) -> Option<&'a [u8]> {

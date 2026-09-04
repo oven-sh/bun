@@ -1609,6 +1609,7 @@ impl PublishCommand {
             };
         }
         let mut path_buf = PathBuffer::uninit();
+        let use_directories_bin = pack::non_empty_bin(json).is_none();
         if let Some(bin_query) = json.as_property(b"bin") {
             match &bin_query.expr.data {
                 ExprData::EString(bin_str) => {
@@ -1719,7 +1720,10 @@ impl PublishCommand {
                 }
                 _ => {}
             }
-        } else if let Some(directories_query) = json.as_property(b"directories") {
+        }
+
+        // An empty "bin" string is now `{}`. The listing below replaces it.
+        if use_directories_bin && let Some(directories_query) = json.as_property(b"directories") {
             if let Some(bin_query) = directories_query.expr.as_property(b"bin") {
                 let Some(bin_dir_str) = bin_query.expr.as_string(bump) else {
                     return Ok(());

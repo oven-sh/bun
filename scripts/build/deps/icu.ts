@@ -7,11 +7,11 @@
  * Built directly in our graph from the ICU release tarball (which, unlike the
  * git repo, ships the prebuilt data package):
  *
- *   libicuuc / libicui18n   common/ and i18n/, file lists from ICU's own
- *                           sources.txt, compiled with dep flags
+ *   common/, i18n/          file lists from ICU's own sources.txt, compiled
+ *                           with dep flags straight onto bun's link line
  *   icupkg (host)           common + i18n + toolutil + stubdata for the BUILD
  *                           machine — reads/filters the data package
- *   libicudata              icu-data.ts: filter items bun never loads, guard
+ *   data                    icu-data.ts: filter items bun never loads, guard
  *                           the rbnf keep-list, zstd-repack per item with a
  *                           trained dictionary, emit icudata.S; assembled here
  *
@@ -21,12 +21,12 @@
 
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { ar, cc, cxx } from "../compile.ts";
+import { cc, cxx } from "../compile.ts";
 import type { Config } from "../config.ts";
 import { computeDepFlags } from "../flags.ts";
 import type { Ninja } from "../ninja.ts";
 import { quote, quoteArgs } from "../shell.ts";
-import { type CustomBuildContext, type Dependency, depBuildDir } from "../source.ts";
+import { type CustomBuildContext, type CustomBuildResult, type Dependency, depBuildDir } from "../source.ts";
 
 const ICU_VERSION = "78.3";
 const ICU_MAJOR = ICU_VERSION.split(".")[0]!;
@@ -35,12 +35,6 @@ const ICU_URL = `https://github.com/unicode-org/icu/releases/download/release-${
 /** Whether this config builds ICU itself (vs. prebuilt WebKit's copy / the macOS SDK's). */
 export function buildsIcu(cfg: Config): boolean {
   return cfg.webkit === "source" && !cfg.darwin;
-}
-
-/** Link order: i18n → uc → data. */
-export function icuLibs(cfg: Config): string[] {
-  const libDir = join(depBuildDir(cfg, "icu"), "lib");
-  return ["icui18n", "icuuc", "icudata"].map(n => join(libDir, `${cfg.libPrefix}${n}${cfg.libSuffix}`));
 }
 
 /** Include dirs consumers need: `<unicode/*.h>` live under both. */
@@ -80,27 +74,22 @@ export const icu: Dependency = {
   source: () => ({ kind: "tarball", url: ICU_URL, version: ICU_VERSION }),
   patches: ["patches/icu/udata-decompress-hook.patch"],
 
-  build: () => ({ kind: "custom", needsSourceAtConfigure: true, libs: icuLibs, emit: emitIcu }),
+  build: () => ({ kind: "custom", needsSourceAtConfigure: true, emit: emitIcu }),
 
   // emitIcu reports these (CustomBuild); U_STATIC_IMPLEMENTATION reaches bun's
   // own TUs through `defines`.
   provides: () => ({ libs: [], includes: [], defines: ["U_STATIC_IMPLEMENTATION=1"] }),
 };
 
-function emitIcu(
-  n: Ninja,
-  cfg: Config,
-  { srcDir, ready }: CustomBuildContext,
-): { libs: string[]; includes: string[]; outputs: string[] } {
+function emitIcu(n: Ninja, cfg: Config, { srcDir, ready }: CustomBuildContext): CustomBuildResult {
   const hostWin = cfg.host.os === "windows";
   const q = (p: string) => quote(p, hostWin);
   const B = depBuildDir(cfg, "icu");
   const S = join(srcDir, "source");
   const common = join(S, "common");
   const i18n = join(S, "i18n");
-  const [libI18n, libUc, libData] = icuLibs(cfg) as [string, string, string];
 
-  n.comment("─── icu (direct: common + i18n + data) ───");
+  n.comment("─── icu (common + i18n + data) ───");
 
   // ─── Target libraries ───
   const dep = computeDepFlags(cfg);
@@ -126,8 +115,6 @@ function emitIcu(
       orderOnlyInputs: ready,
     }),
   );
-  ar(n, cfg, libUc, ucObjects);
-  ar(n, cfg, libI18n, i18nObjects);
 
   // ─── Host icupkg ───
   // Reads, filters and extracts the data package at build time, so it runs on
@@ -215,11 +202,10 @@ function emitIcu(
     flags: dep.cflags.filter(f => !f.startsWith("-g")),
     implicitInputs: [outDat, dict],
   });
-  ar(n, cfg, libData, [dataObj]);
 
-  const libs = [libI18n, libUc, libData];
-  n.phony("icu", libs);
-  return { libs, includes: icuIncludes(cfg, srcDir), outputs: [...ready] };
+  const objects = [...i18nObjects, ...ucObjects, dataObj];
+  n.phony("icu", objects);
+  return { objects, includes: icuIncludes(cfg, srcDir), outputs: [...ready] };
 }
 
 /** Rules for the edges above (host tool compile/link, data pipeline). */

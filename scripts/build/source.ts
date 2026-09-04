@@ -190,7 +190,7 @@ export type BuildSpec =
 
 /**
  * A dep whose graph is emitted by its own module (WebKit: codegen chain,
- * three archives, two intermediate executables — more than DirectBuild
+ * two intermediate executables, a test binary — more than DirectBuild
  * describes). The emitter uses the same compile.ts primitives every other
  * edge does; it just decides the shape itself. `includes` in the result are
  * absolute; `provides.includes` is ignored for custom deps.
@@ -203,13 +203,12 @@ export interface CustomBuild {
    * prefetchConfigureSources.
    */
   needsSourceAtConfigure: true;
-  /** Absolute paths of the archives `emit` produces — the cpp-only → link-only artifact contract (computeDepLibs). */
-  libs: (cfg: Config) => string[];
   emit: (n: Ninja, cfg: Config, ctx: CustomBuildContext) => CustomBuildResult;
 }
 
 export interface CustomBuildResult {
-  libs: string[];
+  /** Compiled objects. They go straight onto bun's link line (and into cpp-only's archive on CI) — no intermediate .a. */
+  objects: string[];
   /** Absolute include dirs for consumers (replaces provides.includes). */
   includes: string[];
   /** The "headers are ready" signal for consumers' compiles (see ResolvedDep.outputs). */
@@ -1037,7 +1036,8 @@ export function resolveDep(
   } else if (buildSpec.kind === "custom") {
     assert(sourceStamp !== undefined, `${dep.name}: custom build needs a fetched or local source tree`);
     const result = buildSpec.emit(n, cfg, { srcDir, ready: [sourceStamp, ...fetchDepStamps], resolved });
-    libs = result.libs;
+    libs = [];
+    objects = result.objects;
     outputs = result.outputs;
     customIncludes = result.includes;
     extras = result.extras ?? [];
@@ -1135,7 +1135,7 @@ export function computeDepLibs(cfg: Config, dep: Dependency): string[] {
     return [resolve(buildDir, `${cfg.libPrefix}${dep.name}${cfg.libSuffix}`)];
   }
 
-  if (buildSpec.kind === "custom") return buildSpec.libs(cfg);
+  // custom: objects only, folded into cpp-only's archive like direct deps'.
 
   // none: no libs (header-only or directly-compiled sources).
   return [];

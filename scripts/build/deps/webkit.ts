@@ -47,7 +47,7 @@ import { spawnSync } from "node:child_process";
 import { existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, rmSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, join, resolve } from "node:path";
-import { ar, cc, cxx, link, pch } from "../compile.ts";
+import { cc, cxx, link, pch } from "../compile.ts";
 import type { Config } from "../config.ts";
 import { BuildError, assert } from "../error.ts";
 import { computeCpuTargetFlags, computeDepFlags, computeTargetLinkFlags, systemLibs } from "../flags.ts";
@@ -1181,8 +1181,9 @@ const llintAsm: readonly string[] = [
 //                           configure time (it only writes #include lists)
 //   LLInt                   settings extractor exe → offsets extractor exe →
 //                           LLIntAssembly.h, each parsed by offlineasm (ruby)
-//   compile/archive         cc/cxx/pch/ar from compile.ts with dep flags, so
-//                           target/cpu/lto/asan come from flags.ts like every dep
+//   compile                 cc/cxx/pch from compile.ts with dep flags, so
+//                           target/cpu/lto/asan come from flags.ts like every
+//                           dep; the objects go straight onto bun's link line
 //
 // Configure needs the WebKit tree on disk (it reads Sources.txt, globs header
 // and offlineasm dirs, runs the bundler), so the fetch for this dep runs at
@@ -1191,7 +1192,8 @@ const llintAsm: readonly string[] = [
 // ───────────────────────────────────────────────────────────────────────────
 
 interface WebKitDirectResult {
-  libs: string[];
+  /** bmalloc + WTF + JSC objects for bun's link line. */
+  objects: string[];
   includes: string[];
   /** testFFI — shipped in the CI artifact for jsc-stress/testFFI.test.ts. */
   extras: string[];
@@ -1255,12 +1257,6 @@ function writeStub(path: string, target: string): void {
 // The emitter
 // ───────────────────────────────────────────────────────────────────────────
 
-/** The three archives, in link order (users before providers). */
-function webKitDirectLibs(cfg: Config): string[] {
-  const libDir = join(depBuildDir(cfg, "WebKit"), "lib");
-  return ["JavaScriptCore", "WTF", "bmalloc"].map(name => join(libDir, `${cfg.libPrefix}${name}${cfg.libSuffix}`));
-}
-
 function emitWebKitDirect(n: Ninja, cfg: Config, ctx: CustomBuildContext): WebKitDirectResult {
   const { srcDir: W, ready, resolved } = ctx;
   assert(!cfg.windows && !cfg.darwin, "webkit=source direct build: only ELF targets are wired up so far", {
@@ -1279,13 +1275,12 @@ function emitWebKitDirect(n: Ninja, cfg: Config, ctx: CustomBuildContext): WebKi
   const jscPrivateHeaders = join(B, "JavaScriptCore", "PrivateHeaders");
   const bmallocHeaders = join(B, "bmalloc", "Headers");
   const binDir = join(B, "bin");
-  const libDir = join(B, "lib");
 
   assert(existsSync(join(JSC, "Sources.txt")), `WebKit source tree not present at ${W}`, {
     hint: "configure fetches it before emitting the graph — this is a bug in prefetchConfigureSources",
   });
 
-  for (const d of [DS, join(DS, "yarr"), join(DS, "inspector"), join(DS, "runtime"), binDir, libDir]) {
+  for (const d of [DS, join(DS, "yarr"), join(DS, "inspector"), join(DS, "runtime"), binDir]) {
     mkdirSync(d, { recursive: true });
   }
 
@@ -1391,9 +1386,7 @@ function emitWebKitDirect(n: Ninja, cfg: Config, ctx: CustomBuildContext): WebKi
   for (const src of inTree(BM, bmallocCSources)) {
     bmObjects.push(cc(n, cfg, src, { flags: [...webkitC, ...bmFlagsCommon], orderOnlyInputs: treeReady }));
   }
-  const [libJSCPath, libWTFPath, libbmallocPath] = webKitDirectLibs(cfg) as [string, string, string];
-  const libbmalloc = ar(n, cfg, libbmallocPath, bmObjects);
-  n.phony("bmalloc", [libbmalloc]);
+  n.phony("bmalloc", bmObjects);
 
   // ─── WTF ───
   const wtfIncludes = [B, ...inTree(join(WTF, "wtf"), wtfIncludeDirs), ...bmallocConsumerIncludes];
@@ -1408,8 +1401,7 @@ function emitWebKitDirect(n: Ninja, cfg: Config, ctx: CustomBuildContext): WebKi
   const wtfObjects = inTree(join(WTF, "wtf"), [...wtfSourcesCommon, ...wtfSourcesFor(cfg)]).map(src =>
     cxx(n, cfg, src, { flags: wtfFlags, orderOnlyInputs: treeReady }),
   );
-  const libWTF = ar(n, cfg, libWTFPath, wtfObjects);
-  n.phony("WTF", [libWTF]);
+  n.phony("WTF", wtfObjects);
 
   // ─── JavaScriptCore: codegen ───
   const ruby = "ruby";
@@ -1902,12 +1894,15 @@ function emitWebKitDirect(n: Ninja, cfg: Config, ctx: CustomBuildContext): WebKi
     }),
   );
 
-  const libJSC = ar(n, cfg, libJSCPath, jscObjects);
-  n.phony("JavaScriptCore", [libJSC]);
+  n.phony("JavaScriptCore", jscObjects);
+
+  // No archives: like every direct dep, the objects go straight onto bun's
+  // link line (and into cpp-only's archive on CI).
+  const objects = [...jscObjects, ...wtfObjects, ...bmObjects];
 
   // testFFI: JSC's bun:ffi C++/ABI test executable (ffi/tests/testFFI.cpp),
-  // run by test/js/bun/jsc-stress/testFFI.test.ts. Linking it also proves the
-  // three archives + ICU + mimalloc resolve standalone before bun does.
+  // run by test/js/bun/jsc-stress/testFFI.test.ts. Linking it also proves
+  // JSC + WTF + bmalloc + ICU + mimalloc resolve standalone before bun does.
   const testFFIObj = cxx(n, cfg, join(JSC, "ffi", "tests", "testFFI.cpp"), {
     flags: [...jscFlagsNoTarget, "-DBUILDING_testFFI", "-DSTATICALLY_LINKED_WITH_JavaScriptCore"],
     pch: jscPch.pch,
@@ -1918,18 +1913,22 @@ function emitWebKitDirect(n: Ninja, cfg: Config, ctx: CustomBuildContext): WebKi
     const r = resolved.get(name);
     return r === undefined ? [] : [...r.libs, ...r.objects];
   };
-  const testFFI = link(n, cfg, join(binDir, "testFFI"), [testFFIObj, ...depLink("mimalloc")], {
-    libs: [libJSC, libWTF, libbmalloc, ...depLink("icu")],
-    flags: [...exeLinkFlags, ...systemLibs(cfg)],
-  });
+  const testFFI = link(
+    n,
+    cfg,
+    join(binDir, "testFFI"),
+    [testFFIObj, ...objects, ...depLink("icu"), ...depLink("mimalloc")],
+    {
+      libs: [],
+      flags: [...exeLinkFlags, ...systemLibs(cfg)],
+    },
+  );
   n.phony("testFFI", [testFFI]);
   n.phony("jsc-codegen", [...generatedHeaders, ...generatedSources]);
-
-  const libs = [libJSC, libWTF, libbmalloc];
-  n.phony("WebKit", [...libs, testFFI]);
+  n.phony("WebKit", [...objects, testFFI]);
 
   return {
-    libs,
+    objects,
     extras: [testFFI],
     outputs: [...treeReady, ...generatedHeaders],
     includes: [
@@ -2024,7 +2023,7 @@ export const webkit: Dependency = {
     }
 
     if (cfg.webkit === "source") {
-      return { kind: "custom", needsSourceAtConfigure: true, libs: webKitDirectLibs, emit: emitWebKitDirect };
+      return { kind: "custom", needsSourceAtConfigure: true, emit: emitWebKitDirect };
     }
 
     // Local: nested cmake over the user's checkout, target=jsc.

@@ -7022,6 +7022,292 @@ describe("css tests", () => {
       },
     );
 
+    // A prefixed entry the list already spells out is not generated again. This is what
+    // the handler's own output looks like when a block runs through it a second time
+    // (merged rules below, the generated :lang() rules further down), and also what
+    // already-autoprefixed stylesheets look like.
+    prefix_test(
+      `
+      .foo {
+        transition: -webkit-transform .3s, transform .3s, opacity .2s;
+      }
+    `,
+      `
+      .foo {
+        -webkit-transition: -webkit-transform .3s, transform .3s, opacity .2s;
+        transition: -webkit-transform .3s, transform .3s, opacity .2s;
+      }
+    `,
+      {
+        safari: Some(6 << 16),
+      },
+    );
+
+    // Each entry keeps its own duration.
+    prefix_test(
+      `
+      .foo {
+        transition: -webkit-transform 2s, transform 1s;
+      }
+    `,
+      `
+      .foo {
+        -webkit-transition: -webkit-transform 2s, transform 1s;
+        transition: -webkit-transform 2s, transform 1s;
+      }
+    `,
+      {
+        safari: Some(6 << 16),
+      },
+    );
+
+    prefix_test(
+      `
+      .foo {
+        transition: transform 1s, -webkit-transform 1s;
+      }
+    `,
+      `
+      .foo {
+        -webkit-transition: transform 1s, -webkit-transform 1s;
+        transition: transform 1s, -webkit-transform 1s;
+      }
+    `,
+      {
+        safari: Some(6 << 16),
+      },
+    );
+
+    prefix_test(
+      `
+      .foo {
+        transition-property: -webkit-transform, transform;
+      }
+    `,
+      `
+      .foo {
+        -webkit-transition-property: -webkit-transform, transform;
+        transition-property: -webkit-transform, transform;
+      }
+    `,
+      {
+        safari: Some(6 << 16),
+      },
+    );
+
+    // Only the prefixes are deduplicated. Listing the same property twice is meaningful
+    // (the last entry wins), so both entries are still expanded.
+    prefix_test(
+      `
+      .foo {
+        transition: transform 1s, transform 2s;
+      }
+    `,
+      `
+      .foo {
+        -webkit-transition: -webkit-transform 1s, transform 1s, -webkit-transform 2s, transform 2s;
+        transition: -webkit-transform 1s, transform 1s, -webkit-transform 2s, transform 2s;
+      }
+    `,
+      {
+        safari: Some(6 << 16),
+      },
+    );
+
+    // Merging the two .foo rules minifies the merged block again.
+    prefix_test(
+      `
+      .foo {
+        color: red;
+      }
+
+      .foo {
+        transition: opacity .2s, transform .2s;
+      }
+    `,
+      `
+      .foo {
+        color: red;
+        -webkit-transition: opacity .2s, -webkit-transform .2s, transform .2s;
+        transition: opacity .2s, -webkit-transform .2s, transform .2s;
+      }
+    `,
+      {
+        safari: Some(6 << 16),
+      },
+    );
+
+    // Every @media rule merged into the first one minifies the merged body again.
+    prefix_test(
+      `
+      @media (min-width: 100px) {
+        .foo {
+          transition: transform .2s;
+        }
+      }
+
+      @media (min-width: 100px) {
+        .bar {
+          color: red;
+        }
+      }
+
+      @media (min-width: 100px) {
+        .baz {
+          color: green;
+        }
+      }
+    `,
+      `
+      @media (min-width: 100px) {
+        .foo {
+          -webkit-transition: -webkit-transform .2s, transform .2s;
+          transition: -webkit-transform .2s, transform .2s;
+        }
+
+        .bar {
+          color: red;
+        }
+
+        .baz {
+          color: green;
+        }
+      }
+    `,
+      {
+        safari: Some(6 << 16),
+      },
+    );
+
+    // The rules generated for a logical property are minified again as well.
+    prefix_test(
+      `
+      .foo {
+        transition: margin-inline-start .2s, transform .2s;
+      }
+    `,
+      `
+      .foo:not(:-webkit-any(:lang(ae), :lang(ar), :lang(arc), :lang(bcc), :lang(bqi), :lang(ckb), :lang(dv), :lang(fa), :lang(glk), :lang(he), :lang(ku), :lang(mzn), :lang(nqo), :lang(pnb), :lang(ps), :lang(sd), :lang(ug), :lang(ur), :lang(yi))) {
+        transition: margin-left .2s, -webkit-transform .2s, transform .2s;
+      }
+
+      .foo:not(:is(:lang(ae), :lang(ar), :lang(arc), :lang(bcc), :lang(bqi), :lang(ckb), :lang(dv), :lang(fa), :lang(glk), :lang(he), :lang(ku), :lang(mzn), :lang(nqo), :lang(pnb), :lang(ps), :lang(sd), :lang(ug), :lang(ur), :lang(yi))) {
+        transition: margin-left .2s, -webkit-transform .2s, transform .2s;
+      }
+
+      .foo:-webkit-any(:lang(ae), :lang(ar), :lang(arc), :lang(bcc), :lang(bqi), :lang(ckb), :lang(dv), :lang(fa), :lang(glk), :lang(he), :lang(ku), :lang(mzn), :lang(nqo), :lang(pnb), :lang(ps), :lang(sd), :lang(ug), :lang(ur), :lang(yi)) {
+        transition: margin-right .2s, -webkit-transform .2s, transform .2s;
+      }
+
+      .foo:is(:lang(ae), :lang(ar), :lang(arc), :lang(bcc), :lang(bqi), :lang(ckb), :lang(dv), :lang(fa), :lang(glk), :lang(he), :lang(ku), :lang(mzn), :lang(nqo), :lang(pnb), :lang(ps), :lang(sd), :lang(ug), :lang(ur), :lang(yi)) {
+        transition: margin-right .2s, -webkit-transform .2s, transform .2s;
+      }
+    `,
+      {
+        safari: Some(8 << 16),
+      },
+    );
+
+    // For targets that need it, mask-border gets -webkit-mask-box-image inserted in front of
+    // it (a different name, not a prefix); that entry is not inserted again when it is
+    // already listed.
+    prefix_test(
+      `
+      .foo {
+        transition: mask-border .2s;
+      }
+    `,
+      `
+      .foo {
+        transition: -webkit-mask-box-image .2s, mask-border .2s;
+      }
+    `,
+      {
+        safari: Some(15 << 16),
+      },
+    );
+
+    prefix_test(
+      `
+      .foo {
+        transition: mask-border .2s;
+      }
+    `,
+      `
+      .foo {
+        transition: mask-border .2s;
+      }
+    `,
+      {
+        safari: Some(16 << 16),
+      },
+    );
+
+    prefix_test(
+      `
+      .foo {
+        transition: -webkit-mask-box-image .2s, mask-border .2s;
+      }
+    `,
+      `
+      .foo {
+        transition: -webkit-mask-box-image .2s, mask-border .2s;
+      }
+    `,
+      {
+        safari: Some(15 << 16),
+      },
+    );
+
+    prefix_test(
+      `
+      .foo {
+        color: red;
+      }
+
+      .foo {
+        transition: mask-border .2s;
+      }
+    `,
+      `
+      .foo {
+        color: red;
+        transition: -webkit-mask-box-image .2s, mask-border .2s;
+      }
+    `,
+      {
+        safari: Some(15 << 16),
+      },
+    );
+
+    prefix_test(
+      `
+      .foo {
+        transition: margin-inline-start .2s, mask-border .2s;
+      }
+    `,
+      `
+      .foo:not(:-webkit-any(:lang(ae), :lang(ar), :lang(arc), :lang(bcc), :lang(bqi), :lang(ckb), :lang(dv), :lang(fa), :lang(glk), :lang(he), :lang(ku), :lang(mzn), :lang(nqo), :lang(pnb), :lang(ps), :lang(sd), :lang(ug), :lang(ur), :lang(yi))) {
+        transition: margin-left .2s, -webkit-mask-box-image .2s, mask-border .2s;
+      }
+
+      .foo:not(:is(:lang(ae), :lang(ar), :lang(arc), :lang(bcc), :lang(bqi), :lang(ckb), :lang(dv), :lang(fa), :lang(glk), :lang(he), :lang(ku), :lang(mzn), :lang(nqo), :lang(pnb), :lang(ps), :lang(sd), :lang(ug), :lang(ur), :lang(yi))) {
+        transition: margin-left .2s, -webkit-mask-box-image .2s, mask-border .2s;
+      }
+
+      .foo:-webkit-any(:lang(ae), :lang(ar), :lang(arc), :lang(bcc), :lang(bqi), :lang(ckb), :lang(dv), :lang(fa), :lang(glk), :lang(he), :lang(ku), :lang(mzn), :lang(nqo), :lang(pnb), :lang(ps), :lang(sd), :lang(ug), :lang(ur), :lang(yi)) {
+        transition: margin-right .2s, -webkit-mask-box-image .2s, mask-border .2s;
+      }
+
+      .foo:is(:lang(ae), :lang(ar), :lang(arc), :lang(bcc), :lang(bqi), :lang(ckb), :lang(dv), :lang(fa), :lang(glk), :lang(he), :lang(ku), :lang(mzn), :lang(nqo), :lang(pnb), :lang(ps), :lang(sd), :lang(ug), :lang(ur), :lang(yi)) {
+        transition: margin-right .2s, -webkit-mask-box-image .2s, mask-border .2s;
+      }
+    `,
+      {
+        safari: Some(8 << 16),
+      },
+    );
+
     prefix_test(
       `
       .foo {

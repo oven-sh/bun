@@ -117,8 +117,6 @@ fn exec_task(task_: &[u8], cwd: &[u8], path_env: &[u8], npm_client: Option<NPMCl
         }
     };
 
-    // cmd.exe re-tokenizes the arguments of a `.bat`/`.cmd` file, so they
-    // cannot be quoted safely (same check as `Bun.spawn`).
     let program: &[u8] = exec_path.map_or(argv[0], bun_core::ZStr::as_bytes);
     if cfg!(windows)
         && bun_which::is_batch_file(program)

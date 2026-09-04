@@ -105,6 +105,80 @@ describe("Glob.match", () => {
     expect(new Glob("**/*/c.js").match("a/b/c.js")).toBeTrue();
   });
 
+  describe("a `**` that is not a whole segment behaves like `*`", () => {
+    test("after a failed brace branch backtracks into an enclosing globstar", () => {
+      // Re-matching `a**` after the backtrack used to treat it as a globstar,
+      // so `**/a**/{x,y}` matched "ab/ay" as `**/a` + `**/` (empty) + `y`.
+      expect(new Glob("**/a**/{x,y}").match("ab/ay")).toBeFalse();
+      expect(new Glob("**/a**/{x,y}").match("ab/ax")).toBeFalse();
+      expect(new Glob("**/a**/{x}").match("ab/ax")).toBeFalse();
+      expect(new Glob("**/a**/{x,y}/c").match("ab/ay/c")).toBeFalse();
+      expect(new Glob("**/a**/{x,{y,z}}").match("ab/az")).toBeFalse();
+      expect(new Glob("**/{a,b}**/{x,y}").match("q/bz/bx")).toBeFalse();
+      expect(new Glob("!**/a**/{x,y}").match("ab/ay")).toBeTrue();
+
+      // the same patterns still match what `**/a*/{x,y}` matches
+      expect(new Glob("**/a**/{x,y}").match("ab/y")).toBeTrue();
+      expect(new Glob("**/a**/{x,y}").match("ab/ay/y")).toBeTrue();
+      expect(new Glob("**/a**/{x,y}").match("q/ab/x")).toBeTrue();
+      expect(new Glob("**/a**/{x,y}").match("ab/aq")).toBeFalse();
+      expect(new Glob("**/a**/{x,y}").match("zz/ay")).toBeFalse();
+      expect(new Glob("**/a**/{x,y}/c").match("ab/y/c")).toBeTrue();
+      expect(new Glob("**/a**/{x,{y,z}}").match("ab/z")).toBeTrue();
+      expect(new Glob("**/{a,b}**/{x,y}").match("q/bz/x")).toBeTrue();
+      expect(new Glob("!**/a**/{x,y}").match("ab/y")).toBeFalse();
+
+      // `**` that does begin a segment keeps working across the same backtrack
+      expect(new Glob("**/a/**/{x,y}").match("q/a/b/c/y")).toBeTrue();
+      expect(new Glob("**/a/**/{x,y}").match("q/a/y")).toBeTrue();
+      expect(new Glob("**/a/**/{x,y}").match("q/a/b/z")).toBeFalse();
+      expect(new Glob("**/{**/x,y}").match("a/b/x")).toBeTrue();
+      expect(new Glob("**/{**/x,y}").match("a/b/y")).toBeTrue();
+      expect(new Glob("**/{**/x,y}").match("a/b/z")).toBeFalse();
+      expect(new Glob("**/a/{b/**/x,y}").match("q/a/b/c/d/x")).toBeTrue();
+      expect(new Glob("**/a/{b/**/x,y}").match("q/a/b/c/d/z")).toBeFalse();
+
+      // controls: each of the three ingredients removed
+      expect(new Glob("**/a*/{x,y}").match("ab/ay")).toBeFalse();
+      expect(new Glob("**/a**/y").match("ab/ay")).toBeFalse();
+      expect(new Glob("a**/{x,y}").match("ab/ay")).toBeFalse();
+      expect(new Glob("*/a**/{x,y}").match("ab/ay")).toBeFalse();
+    });
+
+    test("does not absorb the `/**` segments that follow it", () => {
+      // `x**/**` used to be collapsed into a single trailing globstar,
+      // i.e. `x**`, which no longer requires the `/`.
+      expect(new Glob("x**/**").match("x")).toBeFalse();
+      expect(new Glob("x**/**").match("xy")).toBeFalse();
+      expect(new Glob("x**/**").match("x/")).toBeTrue();
+      expect(new Glob("x**/**").match("xy/")).toBeTrue();
+      expect(new Glob("x**/**").match("xy/z")).toBeTrue();
+      expect(new Glob("x**/**").match("x/y/z")).toBeTrue();
+      expect(new Glob("x**/**").match("ax/")).toBeFalse();
+
+      expect(new Glob("x**/**/y").match("xy")).toBeFalse();
+      expect(new Glob("x**/**/y").match("x/y")).toBeTrue();
+      expect(new Glob("x**/**/y").match("xq/y")).toBeTrue();
+      expect(new Glob("x**/**/y").match("xq/a/b/y")).toBeTrue();
+      expect(new Glob("x**/**/y").match("x/a/y")).toBeTrue();
+
+      expect(new Glob("**/a**/**").match("q/ab")).toBeFalse();
+      expect(new Glob("**/a**/**").match("q/ab/")).toBeTrue();
+      expect(new Glob("**/a**/**").match("q/ab/c")).toBeTrue();
+      expect(new Glob("**/a**/**").match("q/b/c")).toBeFalse();
+
+      // controls: the single-star spellings, and a `**` that does begin a segment
+      expect(new Glob("x*/**").match("x")).toBeFalse();
+      expect(new Glob("x*/**").match("xy/z")).toBeTrue();
+      expect(new Glob("x/**/**").match("x")).toBeFalse();
+      expect(new Glob("x/**/**").match("x/")).toBeTrue();
+      expect(new Glob("x/**/**").match("x/y/z")).toBeTrue();
+      expect(new Glob("**/**").match("x")).toBeTrue();
+      expect(new Glob("**/**/y").match("y")).toBeTrue();
+      expect(new Glob("**/**/y").match("a/b/y")).toBeTrue();
+    });
+  });
+
   test("braces", async () => {
     let glob: Glob;
 

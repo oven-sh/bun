@@ -978,9 +978,7 @@ function getLinuxBuildImageSteps(platform, options) {
     key: `${imageKey}-bake-image`,
     label: `${getImageLabel(platform)} - bake-image`,
     agents: {
-      // aarch64: a Graviton4 (Neoverse V2) host like the r8g build agents — the bun-toolchain
-      // binaries baked into the image are built for -mcpu=neoverse-v2 and bootstrap runs them.
-      ...getEc2Agent(platform, options, { instanceType: arch === "aarch64" ? "m8g.large" : "t3.large" }),
+      ...getEc2Agent(platform, options, { instanceType: arch === "aarch64" ? "t4g.large" : "t3.large" }),
       bake: true,
     },
     env: {

@@ -10653,7 +10653,141 @@ for (const field of ["resolutions", "overrides"]) {
       }"
     `);
   });
+
+  // Unlike `pkg-a` above, the package declaring the overridden dependency is a
+  // registry package here, so the hoisted installer cannot source the folder
+  // relative to a local declarer: the path only makes sense relative to the
+  // project, where the rule was written.
+  const isOddRules: [kind: string, rule: Record<string, unknown>][] = [
+    ["plain", { "is-odd": "file:./vendor/is-odd" }],
+    [
+      "nested",
+      field === "overrides"
+        ? { "is-even": { "is-odd": "file:./vendor/is-odd" } }
+        : { "is-even/is-odd": "file:./vendor/is-odd" },
+    ],
+  ];
+
+  for (const [kind, rule] of isOddRules) {
+    it.concurrent(`links a ${kind} "${field}" file: rule applied to a registry package's dependency`, async () => {
+      await withContext(defaultOpts, async ctx => {
+        const urls: string[] = [];
+        setContextHandler(
+          ctx,
+          dummyRegistryForContext(ctx, urls, { "1.0.0": { dependencies: { "is-odd": "^0.1.2" } } }),
+        );
+        await writeIsEvenProject(ctx.package_dir, { [field]: rule });
+
+        const { out } = await runBunInstall(env, ctx.package_dir, { saveTextLockfile: true });
+        expect(out).toContain("2 packages installed");
+        expect(urls.sort()).toEqual([`${ctx.registry_url}is-even`, `${ctx.registry_url}is-even-1.0.0.tgz`]);
+        expect(await file(join(ctx.package_dir, "bun.lock")).text()).toContain(
+          `"is-even/is-odd": ["is-odd@file:./vendor/is-odd", {}]`,
+        );
+        await expectVendoredIsOddLinked(ctx.package_dir);
+
+        // Installing again on top of the existing node_modules keeps it.
+        await runBunInstall(env, ctx.package_dir, { savesLockfile: false });
+        await expectVendoredIsOddLinked(ctx.package_dir);
+
+        // Installing from the lockfile goes through the installer without re-resolving.
+        await rm(join(ctx.package_dir, "node_modules"), { recursive: true, force: true });
+        await runBunInstall(env, ctx.package_dir, { frozenLockfile: true });
+        await expectVendoredIsOddLinked(ctx.package_dir);
+
+        expect(urls.filter(url => url.includes("is-odd"))).toEqual([]);
+      });
+    });
+
+    if (field !== "overrides") continue;
+
+    // The isolated linker already sources every folder package from the project; pin the parity.
+    it.concurrent(`isolated linker: a ${kind} file: override applied to a registry package's dependency`, async () => {
+      await withContext({ linker: "isolated" }, async ctx => {
+        const urls: string[] = [];
+        setContextHandler(
+          ctx,
+          dummyRegistryForContext(ctx, urls, { "1.0.0": { dependencies: { "is-odd": "^0.1.2" } } }),
+        );
+        await writeIsEvenProject(ctx.package_dir, { [field]: rule });
+
+        await runBunInstall(env, ctx.package_dir);
+        expect(urls.filter(url => url.includes("is-odd"))).toEqual([]);
+        await expectIsEvenUsesVendoredIsOdd(ctx.package_dir);
+      });
+    });
+  }
 }
+
+/**
+ * `is-even@1.0.0` (served by the dummy registry from the fixture tarball) does
+ * `require("is-odd")`. `vendor/is-odd` is what the override rules above point it at;
+ * it is recognizable at runtime by the line it prints.
+ */
+async function writeIsEvenProject(projectDir: string, rootPackageJsonFields: Record<string, unknown>) {
+  await Promise.all([
+    write(
+      join(projectDir, "package.json"),
+      JSON.stringify({
+        name: "foo",
+        version: "0.0.1",
+        dependencies: { "is-even": "1.0.0" },
+        ...rootPackageJsonFields,
+      }),
+    ),
+    write(join(projectDir, "vendor", "is-odd", "package.json"), JSON.stringify({ name: "is-odd", version: "9.9.9" })),
+    write(
+      join(projectDir, "vendor", "is-odd", "index.js"),
+      `module.exports = function isOdd() { console.log("vendored is-odd"); return true; };`,
+    ),
+  ]);
+}
+
+async function expectIsEvenUsesVendoredIsOdd(projectDir: string) {
+  await using proc = spawn({
+    cmd: [bunExe(), "-e", `console.log(require("is-even")(2))`],
+    cwd: projectDir,
+    env,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(err).toBe("");
+  expect(out).toBe("vendored is-odd\nfalse\n");
+  expect(exitCode).toBe(0);
+}
+
+async function expectVendoredIsOddLinked(projectDir: string) {
+  // Folder dependencies are never hoisted: the rule's target is linked inside is-even.
+  expect(await readdirSorted(join(projectDir, "node_modules", "is-even", "node_modules"))).toEqual(["is-odd"]);
+  expect(await readdirSorted(join(projectDir, "node_modules", "is-even", "node_modules", "is-odd"))).toEqual([
+    "index.js",
+    "package.json",
+  ]);
+  await expectIsEvenUsesVendoredIsOdd(projectDir);
+}
+
+it.concurrent("fails when a file: override for a registry package's dependency names a missing folder", async () => {
+  await withContext(defaultOpts, async ctx => {
+    const urls: string[] = [];
+    setContextHandler(ctx, dummyRegistryForContext(ctx, urls, { "1.0.0": { dependencies: { "is-odd": "^0.1.2" } } }));
+    await write(
+      join(ctx.package_dir, "package.json"),
+      JSON.stringify({
+        name: "foo",
+        version: "0.0.1",
+        dependencies: { "is-even": "1.0.0" },
+        overrides: { "is-odd": "file:./vendor/is-odd" },
+      }),
+    );
+
+    const { out, err } = await runBunInstall(env, ctx.package_dir, { allowErrors: true, expectedExitCode: 1 });
+
+    expect(err).toContain('Could not find folder "file:./vendor/is-odd" for dependency "is-odd"');
+    expect(out).toContain("Failed to install 1 package");
+    expect(await readdirSorted(join(ctx.package_dir, "node_modules", "is-even", "node_modules"))).toEqual([]);
+  });
+});
 
 it("installs the transitive file: dependency of a file: dependency", async () => {
   using dir = tempDir("transitive-file-dep", {

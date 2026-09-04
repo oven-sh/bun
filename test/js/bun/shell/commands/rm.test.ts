@@ -30,6 +30,13 @@ describe.concurrent("bunshell rm", () => {
     .doesNotExist("node_modules")
     .runAsTest("node_modules");
 
+  // With .quiet() stderr is a buffer rather than an fd, the other way a parse error gets written.
+  test("illegal option in a cluster", async () => {
+    const { stderr, exitCode } = await $`rm -rz`.quiet();
+    expect(stderr.toString()).toBe("rm: illegal option -- z\n");
+    expect(exitCode).toBe(1);
+  });
+
   test("force", async () => {
     const files = {
       "existent.txt": "",

@@ -2386,44 +2386,26 @@ pub(crate) fn shell_openat(
 // ────────────────────────────────────────────────────────────────────────────
 
 /// Custom parse error for invalid options.
-///
-/// Payload slices borrow from the builtin's argv (NUL-terminated arena strings)
-/// or are `'static` literals; the builtin formats them into an error message
-/// before the next argv mutation, so a raw fat pointer is safe.
 pub(crate) enum ParseError {
-    IllegalOption(*const [u8]),
-    Unsupported(*const [u8]),
+    /// The rejected option byte, as getopt(3) reports it.
+    IllegalOption(u8),
+    Unsupported(&'static [u8]),
     ShowUsage,
-}
-
-impl ParseError {
-    /// Borrow the option-name payload. The pointer borrows either a `'static`
-    /// literal (e.g. `b"-"`) or the owning `Builtin`'s argv storage
-    /// (NUL-terminated `Vec<u8>` in `Cmd::args`, live for the `Builtin`'s
-    /// lifetime — see [`Builtin::arg_bytes`](crate::shell::builtin::Builtin::arg_bytes)).
-    /// Builtins format the error before any argv mutation.
-    #[inline]
-    pub(crate) fn opt(&self) -> &[u8] {
-        match self {
-            // SAFETY: see doc comment.
-            ParseError::IllegalOption(s) | ParseError::Unsupported(s) => unsafe { &**s },
-            ParseError::ShowUsage => b"",
-        }
-    }
 }
 
 pub enum ParseFlagResult {
     ContinueParsing,
     Done,
-    IllegalOption(*const [u8]),
-    Unsupported(*const [u8]),
+    /// The rejected option byte, as getopt(3) reports it.
+    IllegalOption(u8),
+    Unsupported(&'static [u8]),
 }
 
 /// Returns just `name` and lets the caller's `fmt_error_arena` add the
 /// "unsupported option" prefix once.
 #[inline]
-pub(crate) const fn unsupported_flag(name: &'static [u8]) -> *const [u8] {
-    std::ptr::from_ref::<[u8]>(name)
+pub(crate) const fn unsupported_flag(name: &'static [u8]) -> &'static [u8] {
+    name
 }
 
 /// Per-builtin opts type implements this to plug into `FlagParser::parse_flags`.
@@ -2431,7 +2413,7 @@ pub trait FlagParser {
     /// Handle a `--long` flag. Return `None` to fall through to short parsing.
     fn parse_long(&mut self, flag: &[u8]) -> Option<ParseFlagResult>;
     /// Handle one byte of a `-abc` cluster. Return `None` to keep iterating.
-    fn parse_short(&mut self, ch: u8, smallflags: &[u8], i: usize) -> Option<ParseFlagResult>;
+    fn parse_short(&mut self, ch: u8) -> Option<ParseFlagResult>;
 }
 
 /// Returns the trailing non-flag args (`args[idx..]`) on success.
@@ -2462,16 +2444,15 @@ fn parse_one_flag<O: FlagParser>(opts: &mut O, flag: &[u8]) -> ParseFlagResult {
         return ParseFlagResult::Done;
     }
     if flag.len() == 1 {
-        return ParseFlagResult::IllegalOption(std::ptr::from_ref::<[u8]>(b"-"));
+        return ParseFlagResult::IllegalOption(b'-');
     }
     if flag.len() > 2 && flag[1] == b'-' {
         if let Some(r) = opts.parse_long(flag) {
             return r;
         }
     }
-    let small_flags = &flag[1..];
-    for (i, &ch) in small_flags.iter().enumerate() {
-        if let Some(r) = opts.parse_short(ch, small_flags, i) {
+    for &ch in &flag[1..] {
+        if let Some(r) = opts.parse_short(ch) {
             return r;
         }
     }

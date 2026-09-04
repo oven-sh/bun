@@ -1,11 +1,10 @@
+import * as esbuild from "esbuild";
 import * as fs from "fs";
-import * as Module from "module";
 import { basename, extname } from "path";
 import * as zlib from "zlib";
 
 const allFiles = fs.readdirSync(".").filter(f => f.endsWith(".js"));
 const outdir = process.argv[2];
-const builtins = Module.builtinModules;
 let commands: Promise<void>[] = [];
 
 let moduleFiles: string[] = [];
@@ -17,26 +16,33 @@ for (const name of allFiles) {
 
 for (let fileIndex = 0; fileIndex < allFiles.length; fileIndex++) {
   const name = allFiles[fileIndex];
-  const mod = basename(name, extname(name)).replaceAll(".", "/");
-  const file = allFiles.find(f => f.startsWith(mod));
-  const externals = [...builtins];
-  const i = externals.indexOf(name);
-  if (i !== -1) {
-    externals.splice(i, 1);
-  }
 
-  // Build all files at once with specific options
-  const externalModules = builtins
-    .concat(moduleFiles.filter(f => f !== name))
-    .flatMap(b => [`--external:node:${b}`, `--external:${b}`])
-    .join(" ");
+  // Only the sibling fallback files go in `external`. `platform: "node"`
+  // already leaves the builtin modules external, and it matches their names
+  // exactly. An `external` entry also matches subpaths, so "util" would leave
+  // the `require("util/")` of the npm polyfill unbundled.
+  const externalModules = moduleFiles.filter(f => f !== name).flatMap(b => [`node:${b}`, b]);
 
-  // Create the build command with all the specified options
-  const buildCommand =
-    Bun.$`bun build --define=process.env.NODE_DEBUG:"false" --define=process.env.READABLE_STREAM="'enable'" --define=global:globalThis --outdir=${outdir} ${name} --minify-syntax --minify-whitespace --format=${name.includes("stream") ? "cjs" : "esm"} --target=node ${{ raw: externalModules }}`.text();
+  const buildCommand = esbuild.build({
+    entryPoints: [name],
+    outdir,
+    bundle: true,
+    platform: "node",
+    target: "esnext",
+    format: name.includes("stream") ? "cjs" : "esm",
+    minifySyntax: true,
+    minifyWhitespace: true,
+    external: externalModules,
+    define: {
+      "process.env.NODE_DEBUG": "false",
+      "process.env.READABLE_STREAM": "'enable'",
+      "global": "globalThis",
+    },
+    logLevel: "warning",
+  });
 
   commands.push(
-    buildCommand.then(async text => {
+    buildCommand.then(async () => {
       // This is very brittle. But that should be okay for our usecase
       let outfile = fs
         .readFileSync(`${outdir}/${name}`, "utf8")

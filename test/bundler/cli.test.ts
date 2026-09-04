@@ -851,6 +851,104 @@ describe("CLI argument error messages", () => {
   });
 });
 
+describe.concurrent("bun build --no-bundle css", () => {
+  // Everything in here is rewritten for the browser targets while the
+  // stylesheet is minified, not while it is printed: color fallbacks, a
+  // prefixed selector, a prefixed property, a prefixed value and a font stack.
+  const files = {
+    "styles.css": [
+      ".a { color: oklch(70% 0.1 200) }",
+      ".b:fullscreen { color: red }",
+      ".c { background-clip: text }",
+      ".d { width: fit-content }",
+      ".e { font-family: system-ui }",
+      "",
+    ].join("\n"),
+  };
+
+  async function build(cwd: string, ...args: string[]) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build", ...args, "styles.css"],
+      env: bunEnv,
+      cwd,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+    // Only a bundled stylesheet starts with a comment naming its source file.
+    return stdout.replace("/* styles.css */\n", "");
+  }
+
+  test("lowers css for the default (browser) target the same way a bundled build does", async () => {
+    using dir = tempDir("no-bundle-css-browser", files);
+    const [transpiled, bundled] = await Promise.all([build(String(dir), "--no-bundle"), build(String(dir))]);
+    expect(transpiled).toMatchInlineSnapshot(`
+      ".a {
+        color: #40b1b7;
+        color: color(display-p3 .381906 .685023 .710512);
+        color: lab(66.1711% -31.3595 -12.905);
+      }
+
+      .b:-webkit-full-screen {
+        color: red;
+      }
+
+      .b:fullscreen {
+        color: red;
+      }
+
+      .c {
+        -webkit-background-clip: text;
+        background-clip: text;
+      }
+
+      .d {
+        width: -moz-fit-content;
+        width: fit-content;
+      }
+
+      .e {
+        font-family: system-ui, -apple-system, BlinkMacSystemFont, Segoe UI, Roboto, Noto Sans, Ubuntu, Cantarell, Helvetica Neue;
+      }
+      "
+    `);
+    expect(transpiled).toBe(bundled);
+  });
+
+  test.each(["bun", "node"])("--target=%s leaves css alone the same way a bundled build does", async target => {
+    using dir = tempDir(`no-bundle-css-${target}`, files);
+    const [transpiled, bundled] = await Promise.all([
+      build(String(dir), "--no-bundle", `--target=${target}`),
+      build(String(dir), `--target=${target}`),
+    ]);
+    expect(transpiled).toMatchInlineSnapshot(`
+      ".a {
+        color: oklch(70% .1 200);
+      }
+
+      .b:fullscreen {
+        color: red;
+      }
+
+      .c {
+        background-clip: text;
+      }
+
+      .d {
+        width: fit-content;
+      }
+
+      .e {
+        font-family: system-ui;
+      }
+      "
+    `);
+    expect(transpiled).toBe(bundled);
+  });
+});
+
 describe.concurrent("modules that fail to print", () => {
   // A TOML dotted header builds an object nested arbitrarily deep without
   // recursing in the parser, so the printer's recursion guard is the first

@@ -3195,7 +3195,15 @@ impl<'a> Transpiler<'a> {
                 return None;
             }
         };
-        if let Err(e) = sheet.minify(alloc, &bun_css::MinifyOptions::default(), &extra) {
+        let targets = bun_css::Targets::for_bundler_target(self.options.target);
+        if let Err(e) = sheet.minify(
+            alloc,
+            &bun_css::MinifyOptions {
+                targets,
+                unused_symbols: Default::default(),
+            },
+            &extra,
+        ) {
             self.log_mut().add_error_fmt(
                 None,
                 bun_ast::Loc::EMPTY,
@@ -3207,7 +3215,7 @@ impl<'a> Transpiler<'a> {
         let result = match sheet.to_css(
             alloc,
             &bun_css::PrinterOptions {
-                targets: bun_css::Targets::for_bundler_target(self.options.target),
+                targets,
                 minify: self.options.minify_whitespace,
                 ..bun_css::PrinterOptions::default()
             },

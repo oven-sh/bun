@@ -1,5 +1,6 @@
-const CONCURRENCY = 10;
-const RUN_COUNT = 5;
+// worker_destruction.test.ts lowers these on debug builds; see the note there.
+const CONCURRENCY = Number(process.env.CONCURRENCY ?? 10);
+const RUN_COUNT = Number(process.env.RUN_COUNT ?? 5);
 
 import { Worker, isMainThread, workerData } from "worker_threads";
 

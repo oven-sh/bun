@@ -2469,20 +2469,19 @@ mod draft {
 
                     // SAFETY: header points to a valid mach_header_64
                     let header_ref = unsafe { &*header };
-                    // SAFETY: load commands follow the mach header in memory; the
-                    // dyld-mapped image stays live for the process lifetime, so the
-                    // iterator's no-realloc/no-free contract is trivially upheld.
-                    let mut it =
-                        bun_sys::macho::LoadCommandIterator::new(header_ref.ncmds, unsafe {
-                            core::slice::from_raw_parts(
-                                header
-                                    .cast::<u8>()
-                                    .add(core::mem::size_of::<bun_sys::macho::mach_header_64>()),
-                                header_ref.sizeofcmds as usize,
-                            )
-                        });
+                    // SAFETY: `sizeofcmds` bytes of load commands follow the mach header in
+                    // the dyld-mapped image, which stays mapped for the process lifetime.
+                    let cmds: &[u8] = unsafe {
+                        core::slice::from_raw_parts(
+                            header
+                                .cast::<u8>()
+                                .add(core::mem::size_of::<bun_sys::macho::mach_header_64>()),
+                            header_ref.sizeofcmds as usize,
+                        )
+                    };
+                    let mut it = bun_sys::macho::LoadCommandIterator::new(header_ref.ncmds);
 
-                    while let Some(cmd) = it.next() {
+                    while let Some(cmd) = it.next(cmds) {
                         match cmd.cmd() {
                             bun_sys::macho::LC_SEGMENT_64 => {
                                 let segment_cmd =

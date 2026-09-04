@@ -5770,6 +5770,8 @@ pub mod darwin {}
 // Mach-O `--compile` target from a Linux/Windows build machine.
 #[allow(non_camel_case_types, non_snake_case)]
 pub mod macho {
+    use core::mem::size_of;
+
     pub type cpu_type_t = i32;
     pub type cpu_subtype_t = i32;
     pub type vm_prot_t = i32;
@@ -5800,6 +5802,10 @@ pub mod macho {
         pub cmd: u32,
         pub(crate) cmdsize: u32,
     }
+    // SAFETY: `#[repr(C)]` 2×u32: no padding, every bit pattern is valid.
+    unsafe impl bytemuck::Zeroable for load_command {}
+    // SAFETY: see `Zeroable` impl above; additionally `Copy + 'static`.
+    unsafe impl bytemuck::Pod for load_command {}
 
     /// `<mach-o/loader.h> segment_command_64`.
     #[repr(C)]
@@ -5817,6 +5823,11 @@ pub mod macho {
         pub nsects: u32,
         pub flags: u32,
     }
+    // SAFETY: `#[repr(C)]` 2×u32, [u8; 16], 4×u64, 2×i32, 2×u32: 72 bytes with no padding,
+    // every bit pattern is a valid value.
+    unsafe impl bytemuck::Zeroable for segment_command_64 {}
+    // SAFETY: see `Zeroable` impl above; additionally `Copy + 'static`.
+    unsafe impl bytemuck::Pod for segment_command_64 {}
     impl segment_command_64 {
         /// Segment name with trailing NULs trimmed.
         #[inline]
@@ -5825,115 +5836,73 @@ pub mod macho {
         }
     }
 
-    /// Raw `(*const u8, len)` pair so [`LoadCommandIterator`] does not hold a
-    /// Rust borrow of its backing buffer. `bun_exe_format::macho` interleaves
-    /// iterator reads with in-place mutation of the same `Vec<u8>`;
-    /// a `&'a [u8]` here would
-    /// force a structural rewrite of that consumer.
-    #[derive(Clone, Copy)]
-    pub struct RawSlice {
-        ptr: *const u8,
-        len: usize,
-    }
-    impl RawSlice {
-        #[inline]
-        pub fn as_ptr(&self) -> *const u8 {
-            self.ptr
-        }
-        #[inline]
-        pub fn len(&self) -> usize {
-            self.len
-        }
-    }
-
     /// One parsed load command: header + raw bytes (header included).
     #[derive(Clone, Copy)]
-    pub struct LoadCommand {
+    pub struct LoadCommand<'a> {
         pub hdr: load_command,
-        pub data: RawSlice,
-        /// Byte offset of this command within the buffer passed to
-        /// `LoadCommandIterator::new`.
+        pub data: &'a [u8],
+        /// Byte offset of this command within the region passed to `LoadCommandIterator::next`.
         pub offset: usize,
     }
-    impl LoadCommand {
+    impl LoadCommand<'_> {
         #[inline]
         pub fn cmd(&self) -> u32 {
             self.hdr.cmd
         }
-        /// Reinterpret the command bytes
-        /// as `T` if large enough. Returns an owned `Copy` value (via
-        /// `read_unaligned`) rather than `&T`: the backing buffer may be a
-        /// heap `Vec<u8>` with arbitrary alignment, so materialising a typed
-        /// reference would be UB.
-        pub fn cast<T: Copy>(&self) -> Option<T> {
-            if self.data.len < core::mem::size_of::<T>() {
-                return None;
-            }
-            // SAFETY: `data.ptr` points into a live Mach-O image buffer with
-            // at least `size_of::<T>()` bytes (checked above); `T` is
-            // `#[repr(C)]` POD per all callers. `read_unaligned` tolerates any
-            // alignment.
-            Some(unsafe { core::ptr::read_unaligned(self.data.ptr.cast::<T>()) })
+        /// The command as a `T` if `cmdsize` covers one; by value, as the buffer is byte-aligned.
+        pub fn cast<T: bytemuck::AnyBitPattern>(&self) -> Option<T> {
+            self.data
+                .get(..size_of::<T>())
+                .map(bytemuck::pod_read_unaligned)
         }
     }
 
-    /// Walks the load-command region
-    /// that immediately follows a `mach_header_64`.
-    ///
-    /// SAFETY contract: callers must not reallocate, shrink, or free the
-    /// backing buffer while a `LoadCommandIterator` derived from it (or any
-    /// `LoadCommand` it yielded) is live.
+    /// Cursor over the load commands following a `mach_header_64`. It holds no borrow of the
+    /// region: that is passed to each [`Self::next`] call, so callers may patch it in between.
     pub struct LoadCommandIterator {
         ncmds: u32,
         index: u32,
-        buf_ptr: *const u8,
-        buf_len: usize,
         offset: usize,
     }
     impl LoadCommandIterator {
-        /// `buffer` must remain live (no realloc/free) for the lifetime of the
-        /// returned iterator and any `LoadCommand` it yields.
         #[inline]
-        pub fn new(ncmds: u32, buffer: &[u8]) -> Self {
+        pub fn new(ncmds: u32) -> Self {
             Self {
                 ncmds,
                 index: 0,
-                buf_ptr: buffer.as_ptr(),
-                buf_len: buffer.len(),
                 offset: 0,
             }
         }
 
-        pub fn next(&mut self) -> Option<LoadCommand> {
-            if self.index >= self.ncmds || self.buf_len < core::mem::size_of::<load_command>() {
-                self.index = self.ncmds;
+        /// `cmds` must be the same `sizeofcmds`-byte region on every call.
+        /// Stops (and stays stopped) at the first malformed header.
+        pub fn next<'a>(&mut self, cmds: &'a [u8]) -> Option<LoadCommand<'a>> {
+            if self.index >= self.ncmds {
                 return None;
             }
-            // SAFETY: `buf_ptr` was derived from a slice of `buf_len` bytes
-            // which the caller promised stays live, and at least
-            // `size_of::<load_command>()` bytes remain (checked above).
-            let hdr: load_command =
-                unsafe { core::ptr::read_unaligned(self.buf_ptr.cast::<load_command>()) };
-            let cmdsize = hdr.cmdsize as usize;
-            if cmdsize < core::mem::size_of::<load_command>() || cmdsize > self.buf_len {
-                // Malformed header — stop iteration rather than UB.
+            let Some(lc) = Self::parse_at(cmds, self.offset) else {
                 self.index = self.ncmds;
                 return None;
-            }
-            let lc = LoadCommand {
-                hdr,
-                data: RawSlice {
-                    ptr: self.buf_ptr,
-                    len: cmdsize,
-                },
-                offset: self.offset,
             };
-            // SAFETY: advancing within the original buffer; bounds checked above.
-            self.buf_ptr = unsafe { self.buf_ptr.add(cmdsize) };
-            self.buf_len -= cmdsize;
-            self.offset += cmdsize;
+            self.offset += lc.data.len();
             self.index += 1;
             Some(lc)
+        }
+
+        fn parse_at(cmds: &[u8], offset: usize) -> Option<LoadCommand<'_>> {
+            let rest = cmds.get(offset..)?;
+            let hdr: load_command = rest
+                .get(..size_of::<load_command>())
+                .map(bytemuck::pod_read_unaligned)?;
+            let cmdsize = hdr.cmdsize as usize;
+            if cmdsize < size_of::<load_command>() {
+                return None;
+            }
+            Some(LoadCommand {
+                hdr,
+                data: rest.get(..cmdsize)?,
+                offset,
+            })
         }
     }
 }

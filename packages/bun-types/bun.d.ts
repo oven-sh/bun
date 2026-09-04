@@ -855,7 +855,8 @@ declare module "bun" {
    * import { stringWidth } from "bun";
    *
    * console.log(stringWidth("abc")); // 3
-   * console.log(stringWidth("👩‍👩‍👧‍👦")); // 1
+   * console.log(stringWidth("👩‍👩‍👧‍👦")); // 2
+   * console.log(stringWidth("👩‍👩‍👧‍👦", { perCodePoint: true })); // 8
    * console.log(stringWidth("\u001b[31mhello\u001b[39m")); // 5
    * console.log(stringWidth("\u001b[31mhello\u001b[39m", { countAnsiEscapeCodes: false })); // 5
    * console.log(stringWidth("\u001b[31mhello\u001b[39m", { countAnsiEscapeCodes: true })); // 13

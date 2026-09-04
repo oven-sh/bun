@@ -1594,7 +1594,7 @@ test("exit() and nested run() release the shadowed outer store", async () => {
   const pending: Promise<unknown>[] = [];
   const never = new Promise(() => {});
   function arm() {
-    timers.push(setTimeout(() => {}, 1_000_000));
+    timers.push(setTimeout(() => {}, 1_000_000).unref());
     pending.push(never.then(() => {}));
   }
   const modes = [
@@ -1603,11 +1603,11 @@ test("exit() and nested run() release the shadowed outer store", async () => {
     (fn: () => void) => als.run({ inner: true }, fn),
     (fn: () => void) => other.run(1, () => als.run({ inner: true }, () => other.run(2, fn))),
   ];
-  const refs: WeakRef<object>[] = [];
-  for (const mode of modes) {
+  const refs: WeakRef<object>[][] = modes.map(() => []);
+  for (const [m, mode] of modes.entries()) {
     for (let i = 0; i < N; i++) {
       const outer = { payload: new Uint8Array(64 * 1024) };
-      refs.push(new WeakRef(outer));
+      refs[m].push(new WeakRef(outer));
       als.run(outer, () => {
         mode(arm);
         expect(als.getStore()).toBe(outer);
@@ -1615,14 +1615,13 @@ test("exit() and nested run() release the shadowed outer store", async () => {
     }
   }
   expect(als.getStore()).toBeUndefined();
-  let alive = refs.length;
-  for (let i = 0; i < 20 && alive > N; i++) {
+  const alive = () => refs.map(mode => mode.filter(r => r.deref() !== undefined).length);
+  for (let i = 0; i < 20 && Math.max(...alive()) > N / 2; i++) {
     Bun.gc(true);
     await new Promise(r => setTimeout(r, 10));
-    alive = refs.filter(r => r.deref() !== undefined).length;
   }
-  for (const t of timers) clearTimeout(t);
   expect(timers.length + pending.length).toBe(modes.length * N * 2);
-  // without the fix every one of the modes.length * N stores is retained
-  expect(alive).toBeLessThanOrEqual(N);
+  // without the fix every store of an affected mode is retained
+  for (const n of alive()) expect(n).toBeLessThanOrEqual(N / 2);
+  for (const t of timers) clearTimeout(t);
 });

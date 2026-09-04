@@ -55,10 +55,9 @@ import { interactive, nameColor, status } from "./build/tty.ts";
 
 async function main(): Promise<void> {
   // Windows: re-exec inside the VS dev shell if not already there.
-  // The shell provides PATH (mt.exe, rc.exe, cl.exe), INCLUDE, LIB,
-  // WindowsSdkDir — things clang-cl can mostly self-detect but nested
-  // cmake projects can't. Cheap: VSINSTALLDIR check short-circuits on
-  // subsequent runs in the same terminal.
+  // The shell provides INCLUDE, LIB and WindowsSdkDir for native builds
+  // that don't use the xwin sysroot. Cheap: VSINSTALLDIR check
+  // short-circuits on subsequent runs in the same terminal.
   if (process.platform === "win32" && !process.env.VSINSTALLDIR) {
     const vsShell = join(import.meta.dirname, "vs-shell.ps1");
     const result = spawnSync(
@@ -277,7 +276,7 @@ async function main(): Promise<void> {
 
     if (args.execArgs.length === 0) {
       // Closing line on success: when restat prunes most of the graph
-      // (local WebKit no-op shows `[1/555] build WebKit` then silence),
+      // (a no-op shows `[1/555] ...` then silence),
       // it's not obvious ninja finished vs. stalled. This disambiguates.
       // Targets named when explicit so it's clear what was actually built.
       const what = args.ninjaTargets.length > 0 ? ` ${args.ninjaTargets.map(t => nameColor(t)).join(", ")}` : "";
@@ -589,7 +588,7 @@ Options:
   --<field>=<value>       Override a config field. Boolean fields take
                           on/off/true/false/yes/no/1/0.
                           Fields: asan, lto, assertions, logs, baseline,
-                                  canary, valgrind, webkit (prebuilt|source|local),
+                                  canary, valgrind, webkit (prebuilt|source),
                                   local-deps (name=path[,name=path] — build a
                                   vendored dep from a local checkout),
                                   package-manager (bun|npm, installs the

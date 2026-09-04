@@ -53,7 +53,6 @@
     "orderfile": "bun scripts/orderfile/generate.ts",
     "jsc:build": "bun scripts/build.ts --profile=release-local --build-dir=build/release-local --target=WebKit",
     "jsc:build:debug": "bun scripts/build.ts --profile=debug-local --build-dir=build/debug-local --target=WebKit",
-    "jsc:build:lto": "bun scripts/build.ts --profile=release-local --lto=on --build-dir=build/release-local-lto --target=WebKit",
     "typecheck": "tsc --noEmit && cd test && bun run typecheck",
     "fmt": "bun run prettier",
     "fmt:cpp": "bun run clang-format",

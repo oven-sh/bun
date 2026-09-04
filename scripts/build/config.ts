@@ -23,7 +23,7 @@ export type Abi = "gnu" | "musl" | "android";
 export type BuildType = "Debug" | "Release" | "RelWithDebInfo" | "MinSizeRel";
 export type BuildMode = "full" | "cpp-only" | "rust-only" | "link-only" | "rust-and-link" | "archive-link";
 /** How WebKit (JavaScriptCore) is obtained — see deps/webkit.ts. */
-export type WebKitMode = "prebuilt" | "source" | "local";
+export type WebKitMode = "prebuilt" | "source";
 /** The package manager for the package.json files the build installs. */
 export type PackageManager = "bun" | "npm";
 
@@ -219,8 +219,6 @@ export interface Config {
    */
   clangResourceDir: string | undefined;
   ar: string;
-  /** llvm-ranlib. undefined on windows (llvm-lib indexes itself). */
-  ranlib: string | undefined;
   /**
    * ld.lld on linux, lld-link on windows, ld64.lld when cross-compiling for
    * darwin from a non-darwin host. May be empty on native darwin (clang
@@ -275,10 +273,8 @@ export interface Config {
   rustc: string | undefined;
   /** Windows: MSVC link.exe path (to avoid Git's /usr/bin/link shadowing). */
   msvcLinker: string | undefined;
-  /** Windows: llvm-rc for nested cmake (CMAKE_RC_COMPILER). */
+  /** Windows: llvm-rc, compiles windows-app-info.rc. */
   rc: string | undefined;
-  /** Windows: llvm-mt for nested cmake (CMAKE_MT). May be absent in some LLVM distros. */
-  mt: string | undefined;
   /** x64: nasm for BoringSSL's win-x64 assembly and libjpeg-turbo's x86_64 SIMD. */
   nasm: string | undefined;
 
@@ -421,7 +417,6 @@ export interface Toolchain {
   /** `clang -print-resource-dir`. undefined on Windows. */
   clangResourceDir: string | undefined;
   ar: string;
-  ranlib: string | undefined;
   ld: string;
   /**
    * lld's Mach-O port (`ld64.lld`), resolved on non-darwin unix hosts.
@@ -468,19 +463,8 @@ export interface Toolchain {
    * (the GNU hard-link utility) from shadowing the real linker in PATH.
    */
   msvcLinker: string | undefined;
-  /**
-   * Windows only: llvm-rc (resource compiler). Passed to nested cmake
-   * as CMAKE_RC_COMPILER. cmake's own detection usually finds it, but
-   * that depends on PATH and cmake version — explicit is safer.
-   */
+  /** Windows only: llvm-rc (resource compiler) for windows-app-info.rc. */
   rc: string | undefined;
-  /**
-   * Windows only: llvm-mt (manifest tool). Passed to nested cmake as
-   * CMAKE_MT. Optional — some LLVM distributions don't ship llvm-mt;
-   * when absent, cmake's STATIC_LIBRARY try-compile mode (set in
-   * source.ts) sidesteps the need.
-   */
-  mt: string | undefined;
   /** x64 targets: nasm for BoringSSL's win-x64 assembly and libjpeg-turbo's x86_64 SIMD. */
   nasm: string | undefined;
 }
@@ -828,8 +812,8 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
   // files ("Unknown attribute kind"). rust-lld is built against rustc's
   // LLVM, so it reads both rustc's bitcode (same version) and clang's
   // (older, hence readable). Swap it in as `ld` for the whole build —
-  // it's a stock lld, just newer, so non-LTO objects and nested cmake
-  // deps link the same as before.
+  // it's a stock lld, just newer, so non-LTO objects link the same as
+  // before.
   //
   // Tracked in workarounds.ts ("rust-lld-for-crosslang-lto") so this
   // branch self-obsoletes once clang's LLVM catches up to rustc's.
@@ -1100,6 +1084,12 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
   const nodejsAbiVersion = partial.nodejsAbiVersion ?? versionDefaults.nodejsAbiVersion;
   const nodejsV8Version = partial.nodejsV8Version ?? versionDefaults.nodejsV8Version;
   const webkitVersion = partial.webkitVersion ?? versionDefaults.webkitVersion;
+  const webkit = partial.webkit ?? "prebuilt";
+  if (webkit !== "prebuilt" && webkit !== "source") {
+    throw new BuildError(`Unknown --webkit=${webkit}`, {
+      hint: "Use source (compile the pinned JSC in this build; add --local-deps=WebKit=<path> for your own clone) or prebuilt",
+    });
+  }
 
   const packageManager = partial.packageManager ?? "bun";
   if (packageManager !== "bun" && packageManager !== "npm") {
@@ -1108,7 +1098,6 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
   assert(packageManager === "bun" || toolchain.npm !== undefined, "packageManager=npm needs toolchain.npm");
 
   // ─── macOS SDK ───
-  // Must be passed to nested cmake builds or they'll pick the wrong SDK.
   // Native darwin: ask xcode-select/xcrun. Cross-compiling from a non-darwin
   // host: an extracted MacOSX*.sdk — explicit path, well-known install, or
   // auto-downloaded into the cache dir (see macos-sdk.ts / ensureMacosSdk()).
@@ -1213,7 +1202,7 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
     timeTrace: partial.timeTrace ?? false,
     ci,
     buildkite,
-    webkit: partial.webkit ?? "prebuilt",
+    webkit,
     localDeps: parseLocalDeps(partial.localDeps, cwd),
     packageManager,
     cwd,
@@ -1228,7 +1217,6 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
     clangVersion: toolchain.clangVersion,
     clangResourceDir: toolchain.clangResourceDir,
     ar: toolchain.ar,
-    ranlib: toolchain.ranlib,
     ld: ld64StripSwap?.ld ?? ld,
     rustLld: toolchain.rustLld,
     rustLlvmVersion: toolchain.rustLlvmVersion,
@@ -1267,7 +1255,6 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
     // newer rust-lld (and reaches it via the link rule's /clang:-B).
     msvcLinker: toolchain.msvcLinker ?? (windows && ld !== toolchain.ld ? toolchain.ld : undefined),
     rc: toolchain.rc,
-    mt: toolchain.mt,
     nasm: toolchain.nasm,
     osxDeploymentTarget,
     osxSysroot,

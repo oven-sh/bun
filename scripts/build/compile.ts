@@ -362,8 +362,8 @@ export function pch(
      * libs (libJavaScriptCore.a etc.).
      *
      * Can't be order-only: the depfile tracks headers, but ninja stats at
-     * startup. Local WebKit headers live in buildDir and get regenerated
-     * by dep_build MID-RUN. At startup ninja sees old headers → thinks
+     * startup, and a prebuilt/cargo dep rewrites its headers MID-RUN as an
+     * undeclared side effect. At startup ninja sees old headers → thinks
      * PCH is fresh → cxx fails with "file modified since PCH was built"
      * → needs a second build. With these implicit, restat propagates the
      * lib change to PCH and it rebuilds in the same run.

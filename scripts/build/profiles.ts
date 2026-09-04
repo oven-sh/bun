@@ -12,9 +12,10 @@
  * `<buildtype>[-<webkit-mode>][-<feature>]`
  *
  *   debug              → Debug build, prebuilt WebKit (the default)
- *   debug-local        → Debug build, local WebKit (you cloned vendor/WebKit/)
+ *   debug-local        → Debug build, WebKit compiled from your own clone
+ *                        ($BUN_WEBKIT_PATH, default vendor/WebKit/)
  *   release            → Release build, prebuilt WebKit, no LTO
- *   release-local      → Release build, local WebKit
+ *   release-local      → Release build, WebKit compiled from your own clone
  *   release-assertions → Release + runtime assertions enabled
  *   release-asan       → Release + address sanitizer
  *   ci-*               → CI-specific modes (cpp-only/link-only/full)
@@ -34,10 +35,11 @@ export const profiles = {
     webkit: "prebuilt",
   },
 
-  /** Debug with local WebKit (user clones vendor/WebKit/). */
+  /** Debug, WebKit compiled from your clone ($BUN_WEBKIT_PATH or vendor/WebKit/). */
   "debug-local": {
     buildType: "Debug",
-    webkit: "local",
+    webkit: "source",
+    localDeps: `WebKit=${process.env.BUN_WEBKIT_PATH || "vendor/WebKit"}`,
   },
 
   /** Debug without ASAN — faster builds, less safety. */
@@ -154,10 +156,11 @@ export const profiles = {
     buildDir: "build/btg",
   },
 
-  /** Release with local WebKit. */
+  /** Release, WebKit compiled from your clone. */
   "release-local": {
     buildType: "Release",
-    webkit: "local",
+    webkit: "source",
+    localDeps: `WebKit=${process.env.BUN_WEBKIT_PATH || "vendor/WebKit"}`,
     lto: false,
   },
 

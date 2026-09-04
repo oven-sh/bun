@@ -6,62 +6,37 @@
 export const WEBKIT_VERSION = "40e43a82a755af3cc9eb4a4e025e4e020a7a3cfd";
 
 /**
- * WebKit (JavaScriptCore) — the JS engine.
+ * WebKit (JavaScriptCore) — the JS engine, with WTF and bmalloc.
  *
- * Three modes via `cfg.webkit`:
+ * Two modes via `cfg.webkit`:
+ *
+ * **source**: Built like every other dep. The build fetches WEBKIT_VERSION
+ *   into `vendor/WebKit/` — a sparse git fetch of just
+ *   Source/{bmalloc,WTF,JavaScriptCore} (~35 MB over the wire instead of a
+ *   12 GB clone) — and compiles it in our own ninja graph, no cmake ("Source
+ *   mode: direct build" below). Generated headers land in the BUILD dir. To
+ *   build your own WebKit clone instead of the pinned commit, point at it
+ *   like any dep: `--local-deps=WebKit=<path>` (the `*-local` profiles do,
+ *   from `$BUN_WEBKIT_PATH` or vendor/WebKit). This is what Linux CI ships.
  *
  * **prebuilt**: Download tarball from oven-sh/WebKit releases. Tarball name
  *   encodes {os, arch, musl, debug|lto, asan} — each is a separate ABI.
  *   ASAN MUST match bun's setting: WTF::Vector layout changes with ASAN
- *   (see WTF/Vector.h:682), so mixing → silent memory corruption.
- *
- * **source**: The build fetches WEBKIT_VERSION into `vendor/WebKit/` like any
- *   other dep — a sparse git fetch of just Source/{bmalloc,WTF,JavaScriptCore}
- *   (~35 MB over the wire instead of a 12 GB clone) — and compiles it in our
- *   own ninja graph, no cmake ("Source mode: direct build" below).
- *   Generated headers land in the BUILD dir.
- *
- * **local**: WebKit's own cmake build (nested) over a checkout you manage:
- *   `$BUN_WEBKIT_PATH` if set, else `vendor/WebKit/`. Never fetched or
- *   stamped; the inner build re-runs every time so your edits are picked up.
- *   For working on JSC itself with WebKit's own tooling.
- *
- * ## Implementation notes
- *
- * - Build dir is `buildDir/deps/webkit/` (generic path), NOT CMake's
- *   `vendor/WebKit/WebKitBuild/`. Better: consistent, cleaned by `rm -rf
- *   build/`, separate per-profile.
- *
- * - Flags: WebKit's own cmake machinery sets -O/-g/sanitizer flags. We
- *   override `CMAKE_C_FLAGS` to drop the global dep flags (which would
- *   conflict) but DO forward -march/-mcpu + LTO/PGO, which WebKit never
- *   sets. Dep args go LAST in source.ts, so they override.
- *
- * - Windows local mode: ICU built from source via preBuild hook
- *   (build-icu.ps1 → msbuild) before cmake configure. Output goes in
- *   the per-profile build dir, not shared vendor/WebKit/WebKitBuild/icu/
- *   like the old cmake — avoids debug/release mixing.
+ *   (see WTF/Vector.h:682), so mixing → silent memory corruption. Remains
+ *   only until the direct build covers macOS and Windows.
  */
 
 import { spawnSync } from "node:child_process";
 import { existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, rmSync } from "node:fs";
-import { homedir } from "node:os";
 import { basename, join, resolve } from "node:path";
 import { cc, cxx, link, pch } from "../compile.ts";
 import type { Config } from "../config.ts";
 import { BuildError, assert } from "../error.ts";
-import { computeCpuTargetFlags, computeDepFlags, computeTargetLinkFlags, systemLibs } from "../flags.ts";
+import { computeDepFlags, computeTargetLinkFlags, systemLibs } from "../flags.ts";
 import { writeIfChanged } from "../fs.ts";
 import type { Ninja } from "../ninja.ts";
-import { quote, quoteArgs, slash } from "../shell.ts";
-import {
-  depBuildDir,
-  depSourceDir,
-  type CustomBuildContext,
-  type Dependency,
-  type NestedCmakeBuild,
-  type Source,
-} from "../source.ts";
+import { quote, quoteArgs } from "../shell.ts";
+import { depBuildDir, depSourceDir, type CustomBuildContext, type Dependency, type Source } from "../source.ts";
 import { buildsIcu, icuIncludes } from "./icu.ts";
 
 // ───────────────────────────────────────────────────────────────────────────
@@ -161,50 +136,12 @@ function prebuiltIcuLibs(cfg: Config): string[] {
   return []; // darwin: system ICU
 }
 
-// ───────────────────────────────────────────────────────────────────────────
-// Windows local mode: ICU built from source via build-icu.ps1
-//
-// No system ICU on Windows. The script (in vendor/WebKit/) downloads ICU
-// source, patches .vcxproj files for static+/MT, runs msbuild. Output goes
-// under the WebKit build dir (NOT vendor/WebKit/WebKitBuild/icu/ like the
-// old cmake did) — per-profile, so debug/release don't conflate.
-// ───────────────────────────────────────────────────────────────────────────
-
-/** Where build-icu.ps1 writes its output. Per-profile via buildDir. */
-function icuDir(cfg: Config): string {
-  return resolve(depBuildDir(cfg, "WebKit"), "icu");
-}
-
-/**
- * Libs produced by build-icu.ps1. Names are from the script's output
- * (sicudt.lib, icuin.lib, icuuc.lib) — no `d` suffix needed since the
- * per-profile dir already isolates debug/release.
- */
-function localIcuLibs(cfg: Config): string[] {
-  const dir = icuDir(cfg);
-  return [resolve(dir, "lib", "sicudt.lib"), resolve(dir, "lib", "icuin.lib"), resolve(dir, "lib", "icuuc.lib")];
-}
-
 /**
  * The part of the WebKit tree `source` mode fetches (git sparse-checkout
- * patterns, anchored at the repo root): the three libraries source mode
- * builds, whose CMakeLists.txt/Sources.txt it also reads for file lists.
+ * patterns, anchored at the repo root): the three libraries the direct build
+ * compiles.
  */
 const sourceSparse = ["/Source/bmalloc/", "/Source/WTF/", "/Source/JavaScriptCore/"];
-
-/**
- * WebKit source dir for source/local mode. vendor/WebKit, except local mode
- * follows $BUN_WEBKIT_PATH so one clone can serve every worktree.
- */
-function webkitSrcDir(cfg: Config): string {
-  const env = cfg.webkit === "local" ? process.env.BUN_WEBKIT_PATH : undefined;
-  if (!env) return depSourceDir(cfg, "WebKit");
-  // Shells don't expand ~ inside quotes; handle it here so a quoted export works.
-  if (env === "~" || env.startsWith("~/") || env.startsWith("~\\")) return join(homedir(), env.slice(1));
-  // Anchor relative paths to the repo root so ninja's regen rule (which runs
-  // from buildDir) resolves the same path as the initial configure.
-  return resolve(cfg.cwd, env);
-}
 
 // ───────────────────────────────────────────────────────────────────────────
 // Source mode: cmakeconfig.h
@@ -1979,8 +1916,8 @@ export function registerWebKitDirectRules(n: Ninja, cfg: Config): void {
 export const webkit: Dependency = {
   name: "WebKit",
   versionMacro: "WEBKIT",
-  // source mode compiles against the mimalloc bun links (USE_EXTERNAL_MIMALLOC)
-  // and, off macOS, the ICU built by deps/icu.ts.
+  // The direct build compiles against the mimalloc bun links
+  // (USE_EXTERNAL_MIMALLOC) and, off macOS, the ICU built by deps/icu.ts.
   fetchDeps: cfg => (cfg.webkit === "source" ? ["mimalloc", ...(buildsIcu(cfg) ? ["icu"] : [])] : []),
 
   source: cfg => {
@@ -2001,193 +1938,14 @@ export const webkit: Dependency = {
       return src;
     }
 
-    if (cfg.webkit === "source") {
-      return { kind: "github", repo: "oven-sh/WebKit", commit: cfg.webkitVersion, sparse: sourceSparse };
-    }
-
-    // Local: resolveDep()'s local-mode assert gives a clear "clone it
-    // yourself" error if missing.
-    const env = process.env.BUN_WEBKIT_PATH;
-    return {
-      kind: "local",
-      path: webkitSrcDir(cfg),
-      hint: env
-        ? `$BUN_WEBKIT_PATH is set to '${env}' but that path does not contain a WebKit checkout`
-        : "Clone oven-sh/WebKit to vendor/WebKit/ or set $BUN_WEBKIT_PATH to an existing clone — or pass --webkit=source to have the build fetch the pinned commit",
-    };
+    return { kind: "github", repo: "oven-sh/WebKit", commit: cfg.webkitVersion, sparse: sourceSparse };
   },
 
   build: cfg => {
     if (cfg.webkit === "prebuilt") {
       return { kind: "none" };
     }
-
-    if (cfg.webkit === "source") {
-      return { kind: "custom", needsSourceAtConfigure: true, emit: emitWebKitDirect };
-    }
-
-    // Local: nested cmake over the user's checkout, target=jsc.
-    //
-    // CMAKE_C_FLAGS/CMAKE_CXX_FLAGS: overrides the global dep flags source.ts
-    // would otherwise pass — WebKit's cmake sets its own -O/-g/sanitizer
-    // flags; ours would conflict. Dep args go LAST so they override. We DO
-    // forward:
-    //   - CPU target (-march/-mcpu): WebKit never sets this — without it,
-    //     local builds target generic x86-64 while bun + prebuilt WebKit
-    //     target nehalem.
-    //   - LTO/PGO: WebKit's cmake doesn't set those itself.
-    //
-    // Windows: ICU built from source via preBuild before cmake configure.
-    // WebKit's cmake finds it via ICU_ROOT. On posix, system ICU is used
-    // (macOS: Homebrew headers + system libs; Linux: libicu-dev) — cmake
-    // auto-detects.
-    const optFlags: string[] = computeCpuTargetFlags(cfg);
-    // -fno-pic: match bun's own C++ (flags.ts) so JSC/WTF const-pointer
-    // tables land in .rodata instead of .data.rel.ro. We link -no-pie, so
-    // PIC codegen here is pure overhead (GOT indirections + ~550 KB of
-    // RW-segment vtables that would otherwise be shared RO). Android stays
-    // PIC because bionic mandates PIE.
-    // -no-pie rides along in CMAKE_C_FLAGS so try_compile() probes link on
-    // PIE-default distros — without it the driver still passes -pie and the
-    // -fno-pic probe object fails R_X86_64_32S relocation, killing FindThreads.
-    if (cfg.unix && cfg.abi !== "android") optFlags.push("-fno-pic", "-fno-pie", "-no-pie");
-    if (cfg.lto) optFlags.push("-flto=thin");
-    if (cfg.pgoGenerate) optFlags.push(`-fprofile-generate=${cfg.pgoGenerate}`);
-    if (cfg.pgoUse) {
-      optFlags.push(
-        `-fprofile-use=${cfg.pgoUse}`,
-        "-Wno-profile-instr-out-of-date",
-        "-Wno-profile-instr-unprofiled",
-        "-Wno-backend-plugin",
-      );
-    }
-    // Android local mode: NOT using CMAKE_SYSTEM_NAME=Android because that
-    // module force-selects the NDK's bundled clang, overriding our
-    // CMAKE_{C,CXX}_COMPILER. Instead, treat it as a generic Linux
-    // cross-compile (CMAKE_SYSTEM_NAME=Linux + CMAKE_CROSSCOMPILING) and
-    // pass --target/--sysroot in CFLAGS. WebKit's source detects Android
-    // via __ANDROID__ (set by clang --target=*-android*); we set the cmake
-    // ANDROID variable manually so `if (ANDROID)` blocks trigger too.
-    if (cfg.abi === "android") {
-      const icuRoot = process.env.BUN_ANDROID_ICU_ROOT ?? "/tmp/icu-android";
-      optFlags.push(`--target=${cfg.crossTarget!}`, `--sysroot=${cfg.sysroot!}`, `-isystem`, join(icuRoot, "include"));
-    }
-    if (cfg.freebsd && cfg.crossTarget !== undefined) {
-      optFlags.push(`--target=${cfg.crossTarget}`, `--sysroot=${cfg.sysroot!}`);
-    }
-    const optFlagStr = optFlags.join(" ");
-    let cxxOptFlagStr = optFlagStr;
-    if (cfg.abi === "android") {
-      const inc = join(cfg.sysroot!, "usr", "include");
-      const triple = `${cfg.x64 ? "x86_64" : "aarch64"}-linux-android`;
-      cxxOptFlagStr += ` -nostdlibinc -isystem ${join(inc, "c++", "v1")} -isystem ${join(inc, triple)} -isystem ${inc}`;
-    } else if (cfg.freebsd && cfg.sysroot !== undefined) {
-      const inc = join(cfg.sysroot, "usr", "include");
-      cxxOptFlagStr += ` -nostdlibinc -isystem ${join(inc, "c++", "v1")} -isystem ${inc}`;
-    }
-    const args: Record<string, string> = {
-      CMAKE_C_FLAGS: optFlagStr,
-      CMAKE_CXX_FLAGS: cxxOptFlagStr,
-      ...(cfg.abi === "android"
-        ? {
-            CMAKE_SYSTEM_NAME: "Linux",
-            CMAKE_SYSTEM_PROCESSOR: cfg.arm64 ? "aarch64" : "x86_64",
-            CMAKE_SYSROOT: cfg.sysroot!,
-            ANDROID: "ON",
-            ENABLE_API_TESTS: "OFF",
-            // No system ICU on Android. Point at a static cross-built ICU
-            // (see Dockerfile.android for the recipe). FindICU also probes
-            // CMAKE_FIND_ROOT_PATH so we whitelist the prefix. ICU_INCLUDE_DIR
-            // explicit: the NDK sysroot ships annotated headers that mark
-            // most ICU functions __INTRODUCED_IN(31), so FindICU picking
-            // those up makes everything unavailable at API 28.
-            ICU_ROOT: process.env.BUN_ANDROID_ICU_ROOT ?? "/tmp/icu-android",
-            ICU_INCLUDE_DIR: join(process.env.BUN_ANDROID_ICU_ROOT ?? "/tmp/icu-android", "include"),
-            CMAKE_FIND_ROOT_PATH_MODE_PACKAGE: "BOTH",
-            CMAKE_FIND_ROOT_PATH_MODE_LIBRARY: "BOTH",
-            CMAKE_FIND_ROOT_PATH_MODE_INCLUDE: "BOTH",
-          }
-        : {}),
-      ...(cfg.freebsd && cfg.crossTarget !== undefined
-        ? {
-            CMAKE_SYSTEM_NAME: "FreeBSD",
-            CMAKE_SYSTEM_PROCESSOR: cfg.arm64 ? "aarch64" : "x86_64",
-            CMAKE_SYSROOT: cfg.sysroot!,
-            CMAKE_FIND_ROOT_PATH_MODE_PACKAGE: "BOTH",
-            CMAKE_FIND_ROOT_PATH_MODE_LIBRARY: "BOTH",
-            CMAKE_FIND_ROOT_PATH_MODE_INCLUDE: "BOTH",
-          }
-        : {}),
-      // Match bun's -fno-pic: WebKit's CMake defaults POSITION_INDEPENDENT_CODE
-      // to ON for static-archive targets, which puts ~550 KB of vtables into
-      // .data.rel.ro. We link -no-pie so this is dead weight in the RW
-      // PT_LOAD. Android (PIE) overrides via the -fPIC in optFlags above
-      // never being suppressed there.
-      ...(cfg.abi !== "android" ? { CMAKE_POSITION_INDEPENDENT_CODE: "OFF" } : {}),
-      PORT: "JSCOnly",
-      // Tools/ is TestWebKitAPI and friends — nothing the jsc target needs.
-      ENABLE_TOOLS: "OFF",
-      ENABLE_STATIC_JSC: "ON",
-      USE_THIN_ARCHIVES: "OFF",
-      ENABLE_FTL_JIT: "ON",
-      CMAKE_EXPORT_COMPILE_COMMANDS: "ON",
-      USE_BUN_JSC_ADDITIONS: "ON",
-      USE_BUN_EVENT_LOOP: "ON",
-      // Match the prebuilt: JSC allocates through Bun's mimalloc, not libpas.
-      ...(cfg.asan ? {} : { USE_MIMALLOC: "ON", USE_EXTERNAL_MIMALLOC: "ON" }),
-      ENABLE_BUN_SKIP_FAILING_ASSERTIONS: "ON",
-      ALLOW_LINE_AND_COLUMN_NUMBER_IN_BUILTINS: "ON",
-      ENABLE_REMOTE_INSPECTOR: "ON",
-      ENABLE_MEDIA_SOURCE: "OFF",
-      ENABLE_MEDIA_STREAM: "OFF",
-      ENABLE_WEB_RTC: "OFF",
-      ...(cfg.asan ? { ENABLE_SANITIZERS: "address" } : {}),
-    };
-
-    const spec: NestedCmakeBuild = {
-      kind: "nested-cmake",
-      targets: ["jsc"],
-      args,
-      // Release local WebKit keeps debug info so JSC crashes symbolicate.
-      // LTO stays plain Release (debug info + LTO bloats significantly).
-      buildType: cfg.release && !cfg.lto ? "RelWithDebInfo" : cfg.buildType,
-    };
-
-    if (cfg.windows) {
-      const icu = icuDir(cfg);
-      const srcDir = webkitSrcDir(cfg);
-      // slash(): cmake -D values — see shell.ts.
-      args.ICU_ROOT = slash(icu);
-      args.ICU_LIBRARY = slash(resolve(icu, "lib"));
-      args.ICU_INCLUDE_DIR = slash(resolve(icu, "include"));
-      // U_STATIC_IMPLEMENTATION: ICU headers default to dllimport; we
-      // link statically. Matches what the old cmake's SetupWebKit did.
-      args.CMAKE_C_FLAGS = `/DU_STATIC_IMPLEMENTATION ${optFlagStr}`.trim();
-      args.CMAKE_CXX_FLAGS = `/DU_STATIC_IMPLEMENTATION /clang:-fno-c++-static-destructors ${optFlagStr}`.trim();
-      // Static CRT to match bun + all other deps (we build everything
-      // with /MTd or /MT). Without this, cmake defaults to /MDd →
-      // RuntimeLibrary mismatch at link.
-      args.CMAKE_MSVC_RUNTIME_LIBRARY = cfg.debug ? "MultiThreadedDebug" : "MultiThreaded";
-      spec.preBuild = {
-        command: [
-          "powershell",
-          "-ExecutionPolicy",
-          "Bypass",
-          "-File",
-          resolve(srcDir, "build-icu.ps1"),
-          "-Platform",
-          cfg.x64 ? "x64" : "ARM64",
-          "-BuildType",
-          cfg.debug ? "Debug" : "Release",
-          "-OutputDir",
-          icu,
-        ],
-        cwd: srcDir,
-        outputs: localIcuLibs(cfg),
-      };
-    }
-
-    return spec;
+    return { kind: "custom", needsSourceAtConfigure: true, emit: emitWebKitDirect };
   },
 
   provides: cfg => {
@@ -2210,53 +1968,8 @@ export const webkit: Dependency = {
       return { libs, includes };
     }
 
-    if (cfg.webkit === "source") {
-      // emitWebKitDirect reports libs and include dirs itself (CustomBuild).
-      return { libs: [], includes: [] };
-    }
-
-    // Local: paths relative to BUILD dir (headers generated during build).
-    // includes uses ABSOLUTE paths via depBuildDir() — source.ts's
-    // resolve-against-srcDir would point at vendor/WebKit/ (wrong).
-    const buildDir = depBuildDir(cfg, "WebKit");
-
-    // Lib paths: emitNestedCmake resolves these relative to the build dir's
-    // libSubdir — we set none, so it's buildDir root. But WebKit's libs are
-    // in lib/. So include the lib/ prefix.
-    //
-    // Windows ICU libs are NOT listed here — they're preBuild.outputs,
-    // which source.ts appends to the resolved libs automatically. Listing
-    // them here would make dep_build also claim to produce them (dup error).
-    // Posix uses system ICU (linked via -licu* in bun.ts). Android has no
-    // system ICU — link the static cross-built libs from BUN_ANDROID_ICU_ROOT.
-    const libs = [...coreLibs(cfg), bmallocLib(cfg)];
-    if (cfg.abi === "android") {
-      const icuRoot = process.env.BUN_ANDROID_ICU_ROOT ?? "/tmp/icu-android";
-      libs.push(
-        resolve(icuRoot, "lib", "libicui18n.a"),
-        resolve(icuRoot, "lib", "libicuuc.a"),
-        resolve(icuRoot, "lib", "libicudata.a"),
-      );
-    }
-
-    const includes = [
-      // ABSOLUTE — resolved here because they're in the build dir, not src.
-      buildDir,
-      resolve(buildDir, "JavaScriptCore", "Headers"),
-      resolve(buildDir, "JavaScriptCore", "Headers", "JavaScriptCore"),
-      resolve(buildDir, "JavaScriptCore", "PrivateHeaders"),
-      resolve(buildDir, "bmalloc", "Headers"),
-      resolve(buildDir, "WTF", "Headers"),
-      resolve(buildDir, "JavaScriptCore", "PrivateHeaders", "JavaScriptCore"),
-    ];
-    // Windows: ICU headers from preBuild output.
-    if (cfg.windows) includes.push(resolve(icuDir(cfg), "include"));
-    // Android: ICU headers from BUN_ANDROID_ICU_ROOT (the NDK sysroot's
-    // unicode/ headers are __INTRODUCED_IN(31)-gated and unusable at API 28).
-    if (cfg.abi === "android") {
-      includes.push(resolve(process.env.BUN_ANDROID_ICU_ROOT ?? "/tmp/icu-android", "include"));
-    }
-
-    return { libs, includes };
+    // emitWebKitDirect reports include dirs itself (CustomBuild) and its
+    // objects go straight on the link line.
+    return { libs: [], includes: [] };
   },
 };

@@ -298,16 +298,12 @@ export async function fetchDep(
  * A vendor/<name>/ holding a `.git` but no `.ref` is somebody's clone, not a
  * tree the build fetched (those never contain `.git`). Refuse to touch it —
  * the fetch would otherwise wipe it, local branches and all. vendor/WebKit is
- * the case that matters: it is where a full WebKit clone for `--webkit=local`
- * has always lived.
+ * the case that matters: it is where a full WebKit clone has always lived.
  */
 export function assertManagedSource(name: string, srcDir: string, refStamp: string): void {
   if (existsSync(refStamp) || !existsSync(join(srcDir, ".git"))) return;
   throw new BuildError(`${srcDir} is a git clone, not a source tree fetched by the build; refusing to replace it`, {
-    hint:
-      name === "WebKit"
-        ? "To build that clone, pass --webkit=local (set $BUN_WEBKIT_PATH if you move it elsewhere). To let the build fetch the pinned WebKit commit here instead, move or delete it."
-        : `To build that clone, pass --local-deps=${name}=<path>. To let the build fetch the pinned commit here instead, move or delete it.`,
+    hint: `To build that clone, pass --local-deps=${name}=${srcDir}${name === "WebKit" ? " (bun run build:local does)" : ""}. To let the build fetch the pinned commit here instead, move or delete it.`,
   });
 }
 

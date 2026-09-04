@@ -277,7 +277,7 @@ WebKit is not cloned by default (to save time and disk space); the build downloa
 bun run build --webkit=source
 ```
 
-To work on JSC itself you want a full clone with history instead. Clone it, then build with the `*-local` profiles, which compile whatever is checked out (set `$BUN_WEBKIT_PATH` if the clone lives somewhere other than `vendor/WebKit`):
+To work on JSC itself you want a full clone with history instead. Clone it, then build with the `*-local` profiles: the same direct build, compiling whatever is checked out in your clone (`$BUN_WEBKIT_PATH`, default `vendor/WebKit`; they are `--webkit=source --local-deps=WebKit=<path>`):
 
 ```bash
 # Clone WebKit into ./vendor/WebKit
@@ -287,11 +287,11 @@ git clone https://github.com/oven-sh/WebKit vendor/WebKit
 # (a commit sha or an autobuild-* release tag; this handles both)
 bun sync-webkit-source
 
-# Build bun with the local JSC build — this automatically configures and builds JSC
+# Build bun with JSC compiled from that clone
 bun run build:local
 ```
 
-`bun run build:local` handles everything: configuring JSC, building JSC, and building Bun. On subsequent runs, JSC rebuilds incrementally if any WebKit sources changed. `ninja -Cbuild/debug-local` also works after the first build, and builds both Bun and JSC.
+`bun run build:local` builds JSC and Bun in one ninja graph; on subsequent runs only the WebKit files you changed (and what includes them) recompile. `ninja -Cbuild/debug-local` also works after the first build.
 
 The build output goes to `./build/debug-local` (instead of `./build/debug`), so you'll need to update a couple of places:
 

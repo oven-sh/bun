@@ -233,11 +233,8 @@ export const globalFlags: Flag[] = [
 
   // ─── Optimization ───
   {
-    // cmake's Release/RelWithDebInfo build types append this to
-    // CMAKE_<LANG>_FLAGS_<TYPE> automatically; nested-cmake deps got it
-    // from there. Direct deps only see globalFlags, so it must be here
-    // too — otherwise every assert() in zstd/boringssl/mimalloc/etc.
-    // stays live in release. (bun's own NDEBUG in `defines` below is
+    // Deps only see globalFlags, so it must be here — otherwise every
+    // assert() in zstd/boringssl/mimalloc/etc. stays live in release. (bun's own NDEBUG in `defines` below is
     // redundant after this, but harmless.)
     flag: "-DNDEBUG",
     when: c => c.release,
@@ -1832,11 +1829,6 @@ export function systemLibs(cfg: Config): string[] {
         libs.push("-latomic");
       }
     }
-    // Local (user-managed cmake) WebKit links system ICU; prebuilt bundles
-    // its own and --webkit=source builds deps/icu.ts. Android has no system ICU.
-    if (cfg.webkit === "local" && cfg.abi !== "android") {
-      libs.push("-licudata", "-licui18n", "-licuuc");
-    }
   }
 
   if (cfg.darwin) {
@@ -1886,9 +1878,8 @@ export function computeTargetLinkFlags(cfg: Config): string[] {
 }
 
 /**
- * Just the -march/-mcpu/-mtune flags. For deps (WebKit) whose own build system
- * sets -O/-g/sanitizer flags but never sets a CPU target, so without this they
- * end up targeting generic x86-64 while the rest of bun targets nehalem.
+ * Just the -march/-mcpu/-mtune flags — rust.ts translates them into rustc's
+ * -Ctarget-cpu so Rust code targets the same CPU as the C++.
  */
 export function computeCpuTargetFlags(cfg: Config): string[] {
   const out: string[] = [];

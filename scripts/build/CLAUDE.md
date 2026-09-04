@@ -20,15 +20,14 @@ This directory generates `build.ninja`. The scripts **describe** the build; ninj
 
 **Minimal cross-platform diffs.** Platform-specific logic is abstracted once, consumed everywhere. `Config` derives `cfg.exeSuffix`/`cfg.objSuffix`/`cfg.libPrefix`/`cfg.libSuffix` so callers write `lib${name}${cfg.libSuffix}` not `if windows ".lib" else ".a"`. Flag tables use `when: c => c.darwin` predicates — one table entry, not a new branch in N files. `shell.ts`/`stream.ts`/`tools.ts`/`compile.ts` absorb the remaining cmd.exe-vs-sh, `.exe` suffix, and clang-vs-clang-cl differences. Where a branch is unavoidable (Windows resources, Darwin dsymutil, Linux setarch), it lives in one function and returns empty on other platforms.
 
-**Deps in our graph by default; native build systems when needed.** `BuildSpec` variants:
+**Deps compile in our graph.** `BuildSpec` variants:
 
-- `direct` — list the dep's sources explicitly; each becomes a first-class `cc`/`cxx` edge in our graph and the `.o`s go straight into bun's link. The default for the C/C++ deps (zlib, zstd, boringssl, libarchive, mimalloc, …). Skips a sub-process configure entirely and lets LTO see across the dep boundary.
-- `nested-cmake` — invoke the dep's own cmake configure + build as ninja edges. For deps whose build is too entangled to list by hand. Flags forwarded via `-DCMAKE_C_FLAGS`; cmake's own dependency tracking handles incrementality inside.
+- `direct` — list the dep's sources explicitly; each becomes a first-class `cc`/`cxx` edge in our graph and the `.o`s go straight into bun's link. The C/C++ deps (zlib, zstd, boringssl, libarchive, mimalloc, …). No sub-process configure, and LTO sees across the dep boundary.
+- `custom` — same primitives (`cc`/`cxx`/`pch`/`link`), but the dep's own module emits the graph because it is more than a source list: WebKit (`deps/webkit.ts` lists the WTF/bmalloc sources and JSC codegen inputs, takes JSC's own TUs from its `Sources.txt`, emits the ruby/python codegen and the LLInt extractor chain) and ICU (`deps/icu.ts`: host `icupkg`, data filter/repack). Objects go straight into bun's link like `direct`. The tree is fetched at configure time because the graph is described from it.
 - `cargo` — invoke cargo build (lolhtml, rust-argon2). Cargo's incremental build is reliable; `restat = 1` keeps our downstream no-ops fast.
-- `custom` — the dep's own module emits the graph with the same `cc`/`cxx`/`pch`/`ar`/`link` primitives (WebKit `--webkit=source`: `deps/webkit.ts` lists the WTF/bmalloc sources and JSC codegen inputs, takes JSC's own TUs from its `Sources.txt`, emits the ruby/python codegen and the LLInt extractor chain, and archives three libs). The tree is fetched at configure time because the graph is described from it.
-- `prebuilt` — skip build entirely, download compiled `.a`/`.lib` (WebKit default, nodejs-headers).
+- `prebuilt` — skip build entirely, download compiled `.a`/`.lib` (WebKit on macOS/Windows/FreeBSD until the direct build covers them, nodejs-headers).
 
-The `dep` pool (depth 4) throttles concurrent nested cmake/cargo sub-builds so they don't oversubscribe cores.
+The `dep` pool (depth 4) throttles concurrent fetches and cargo sub-builds so they don't oversubscribe cores.
 
 **Self-obsoleting workarounds** — see "Adding a workaround" below.
 
@@ -80,7 +79,7 @@ Edge dependency types:
 
 **`restat = 1`** — after the command runs, re-stat outputs; if mtime didn't change, prune downstream. Critical for idempotent steps (fetch no-op, codegen unchanged).
 
-**`depfile`** — compiler writes `foo.o.d` listing every `#include`d header. Ninja reads it on the next build to know which headers this `.o` depends on. Codegen headers are order-only for this reason: they're declared outputs with restat, the depfile gives exact per-file header deps on build 2+, and order-only just ensures they exist for build 1. Dep outputs (`lib*.a`) are a different story — PCH, cc, and no-PCH cxx use them as _implicit_ deps, because local sub-builds (e.g. WebKit) rewrite forwarding headers as undeclared side effects and order-only would lag one build behind (see Gotchas).
+**`depfile`** — compiler writes `foo.o.d` listing every `#include`d header. Ninja reads it on the next build to know which headers this `.o` depends on. Codegen headers are order-only for this reason: they're declared outputs with restat, the depfile gives exact per-file header deps on build 2+, and order-only just ensures they exist for build 1. Prebuilt/cargo dep outputs are a different story — PCH, cc, and no-PCH cxx use them as _implicit_ deps, because those edges rewrite headers as undeclared side effects and order-only would lag one build behind (see Gotchas).
 
 ## Iterating on the build system
 
@@ -110,7 +109,7 @@ The generated `build.ninja` is the ground truth. If an edge isn't doing what you
 
 Build flags must come before exec args. `bun bd --asan=off test foo.ts` works; `bun bd test --asan=off foo.ts` sends `--asan=off` to bun-debug. Use `--` when a runtime flag collides with a build flag: `bun bd -- --target=browser script.ts`.
 
-**`--target=<name>`** builds a specific ninja target instead of the full binary. Every dep gets phonies: `<name>` (full build), `clone-<name>` (fetch only), `configure-<name>` (cmake deps). Also `bun`, `check`, `bun-rust`. List all: `ninja -C build/debug -t targets`.
+**`--target=<name>`** builds a specific ninja target instead of the full binary. Every dep gets phonies: `<name>` (full build), `clone-<name>` (fetch only). Also `bun`, `check`, `bun-rust`. List all: `ninja -C build/debug -t targets`.
 
 ## Common tasks
 
@@ -120,7 +119,7 @@ Build flags must come before exec args. `bun bd --asan=off test foo.ts` works; `
 { flag: "-fno-foo", when: c => c.linux && c.release, desc: "why this flag" },
 ```
 
-Tables: `cpuTargetFlags` (`-march`/`-mcpu`/`-mtune` — also forwarded to local WebKit via `computeCpuTargetFlags()`), `globalFlags` (bun + all deps), `bunOnlyFlags` (just bun), `linkFlags`, `stripFlags`. Use `lang: "cxx"` to restrict to C++.
+Tables: `cpuTargetFlags` (`-march`/`-mcpu`/`-mtune` — also translated for rustc via `computeCpuTargetFlags()`), `globalFlags` (bun + all deps), `bunOnlyFlags` (just bun), `linkFlags`, `stripFlags`. Use `lang: "cxx"` to restrict to C++.
 
 **Bump a dependency** — edit the `commit` in `scripts/build/deps/<name>.ts`. See `deps/README.md` for adding/removing deps.
 
@@ -136,7 +135,7 @@ Tables: `cpuTargetFlags` (`-march`/`-mcpu`/`-mtune` — also forwarded to local 
 
 ### Phase 0 — Entry (`scripts/build.ts`)
 
-1. Windows: re-exec inside VS dev shell if `VSINSTALLDIR` unset (provides PATH/INCLUDE/LIB for nested cmake).
+1. Windows: re-exec inside VS dev shell if `VSINSTALLDIR` unset (provides INCLUDE/LIB for native builds).
 2. Parse CLI: `--profile=<name>`, `--<field>=<value>` overrides, `--target=<ninja-target>`, `-j`/`-v`/`-k` passthrough, bare positionals = exec args for built binary.
 3. Resolve `PartialConfig` from profile + overrides (or `--config-file` for ninja's self-reconfigure).
 
@@ -159,7 +158,7 @@ For `mode: "full"` (the normal case):
 
 1. **Codegen** — `emitCodegen(n, cfg, sources)` emits ~20 generation steps (bindgen, `.classes.ts` → C++, bundled modules, LUTs). Returns grouped outputs.
 2. **Rust** — `emitRust(n, cfg, {...})` emits `cargo build -p bun_runtime` → `libbun_runtime.a` (after resolving its path deps, lolhtml and rust-argon2). Codegen and cargo are emitted before the deps on purpose. Scheduling: with no `.ninja_log` (every CI build) ninja weighs each edge as 1 and runs the longest remaining chain first, ties in emission order — so cargo ties with `cc → link` in full mode and wins on emission order, but in `archive-link` mode `cc → ar → link` outranks it and cargo would start only after every compile had been dispatched (~50s into a CI build). The `compile` pool in `compile.ts` (depth = core count, below ninja's default `-j` of cores+2) is what actually guarantees cargo a slot the moment it is ready.
-3. **Deps** — loop `allDeps`, call `resolveDep(n, cfg, dep)`. Each emits fetch → configure → build (nested-cmake), or fetch → cargo, or fetch → direct cc+ar, or prebuilt download. Collects lib paths, include dirs, outputs.
+3. **Deps** — loop `allDeps`, call `resolveDep(n, cfg, dep)`. Each emits fetch → direct/custom compile edges, or fetch → cargo, or prebuilt download. Collects objects, lib paths, include dirs, outputs.
 4. **Flags** — `computeFlags(cfg)` evaluates flag tables → cflags/cxxflags/defines/ldflags/stripflags.
 5. **PCH** — compile `root-pch.h` → PCH (skipped in CI full mode).
 6. **Compile** — loop sources, `cxx()`/`cc()` per file.
@@ -217,7 +216,7 @@ Split CI modes: `rust-only` (path deps+codegen+cargo → libbun_runtime.a), `cpp
 
 ## Key types
 
-**`Dependency`** (`source.ts`) — `{name, source, patches?, fetchDeps?, build, provides, enabled?, versionMacro?}`. The `source`/`build`/`provides` fields are functions of `Config` so they vary per-target. `Source` variants: `github` (archive tarball, or sparse git fetch when `sparse` is set), `local`, `in-tree`, `prebuilt`. `BuildSpec` variants covered in Goals above.
+**`Dependency`** (`source.ts`) — `{name, source, patches?, fetchDeps?, build, provides, enabled?, versionMacro?}`. The `source`/`build`/`provides` fields are functions of `Config` so they vary per-target. `Source` variants: `github` (archive tarball, or sparse git fetch when `sparse` is set), `tarball`, `local` (`--local-deps`), `in-tree`, `prebuilt`. `BuildSpec` variants covered in Goals above.
 
 **`Ninja`** — Accumulates rules/builds/pools/defaults, emits `build.ninja`. All paths given absolute; converted to buildDir-relative at write time.
 
@@ -230,13 +229,13 @@ Ninja requires all rules defined before any build references them. Hence:
 1. `registerXxxRules(n, cfg)` — each module registers its rules. Called once via `registerAllRules()`.
 2. `emitXxx(n, cfg, ...)` — each module emits build edges.
 
-Why not auto-register in emit functions? Some rules are shared (`dep_configure` used by both `source.ts` and `webkit.ts` local mode). Explicit registration keeps "which rule lives where" clear.
+Why not auto-register in emit functions? Some rules are shared (`cc`/`cxx` by `bun.ts`, direct deps and `deps/webkit.ts`). Explicit registration keeps "which rule lives where" clear.
 
 ## Gotchas
 
 **Dep order in `allDeps` matters.** `fetchDeps: ["X"]` means X must come first (its `.ref` stamp node must exist). Link order matters too: static linking resolves left→right, providers after users.
 
-**PCH, cc, and no-PCH cxx need implicit dep on `depHeaderSignal`**, not order-only. Local WebKit's sub-build rewrites forwarding headers as an undeclared side effect (only `lib*.a` are declared outputs). Depfiles record those headers, but ninja stats them before the sub-build runs — order-only lags one build. The lib itself is the invalidation signal. Codegen headers stay order-only: they're declared outputs with restat, so depfile tracking is exact.
+**PCH, cc, and no-PCH cxx need implicit dep on `depHeaderSignal`**, not order-only. A prebuilt or cargo dep rewrites its headers as an undeclared side effect (only the stamp / `lib*.a` are declared outputs). Depfiles record those headers, but ninja stats them before that edge runs — order-only lags one build. The declared output is the invalidation signal. Codegen headers and the direct WebKit build's generated headers stay exact: they're declared outputs with restat.
 
 **`isExecutable` must check `isFile()`.** `X_OK` on a directory means traversable — a `cmake/` dir in PATH would shadow the real cmake binary.
 

@@ -327,6 +327,122 @@ describe("static responses", () => {
   });
 });
 
+// https://github.com/oven-sh/bun/issues/37603
+// Literal route segments must match percent-encoded request spellings the same
+// way :param segments already do: the path is split on raw "/" first, then
+// each segment is percent-decoded, so %2F never creates a new separator and
+// "/robots.tx%74" hits "/robots.txt".
+describe("percent-encoded literal routes", () => {
+  let server: Server;
+
+  beforeAll(() => {
+    server = Bun.serve({
+      port: 0,
+      fetch: () => new Response("fallback", { status: 404 }),
+      routes: {
+        "/robots.txt": new Response("static-hit"),
+        "/fn/route": () => new Response("fn-hit"),
+        "/caf%C3%A9": () => new Response("encoded-key-hit"),
+        "/lit%zz": () => new Response("malformed-key-hit"),
+        "/api/users": () => new Response("literal"),
+        "/api/:rest": (req: BunRequest<"/api/:rest">) => new Response(`param ${req.params.rest}`),
+        "/a/b": () => new Response("two-segments"),
+      },
+    });
+    server.unref();
+  });
+
+  afterAll(() => {
+    server.stop(true);
+  });
+
+  it("matches a literal static route with an encoded unreserved character", async () => {
+    const res = await fetch(`${server.url}robots.tx%74`);
+    expect(res.status).toBe(200);
+    expect(await res.text()).toBe("static-hit");
+  });
+
+  it("matches a literal function route with encoded characters in any segment", async () => {
+    const res = await fetch(`${server.url}fn/rout%65`);
+    expect(res.status).toBe(200);
+    expect(await res.text()).toBe("fn-hit");
+    const res2 = await fetch(`${server.url}f%6E/route`);
+    expect(res2.status).toBe(200);
+    expect(await res2.text()).toBe("fn-hit");
+  });
+
+  it("matches a fully percent-encoded spelling", async () => {
+    const res = await fetch(`${server.url}%72%6f%62%6F%74%73%2etx%74`);
+    expect(res.status).toBe(200);
+    expect(await res.text()).toBe("static-hit");
+  });
+
+  it("treats hex digits case-insensitively", async () => {
+    const res = await fetch(`${server.url}caf%C3%A9`);
+    expect(res.status).toBe(200);
+    const res2 = await fetch(`${server.url}caf%c3%a9`);
+    expect(res2.status).toBe(200);
+  });
+
+  it("matches an encoded route key against both request spellings", async () => {
+    // key registered as "/caf%C3%A9" (keys must be ASCII, so the encoded
+    // spelling is the only way to register this path)
+    expect(await (await fetch(`${server.url}caf%C3%A9`)).text()).toBe("encoded-key-hit");
+    expect(await (await fetch(`${server.url}café`)).text()).toBe("encoded-key-hit");
+  });
+
+  it("matches raw high-bit bytes against a decoded route key", async () => {
+    // fetch() percent-encodes non-ASCII itself, so send the raw bytes.
+    const request = Buffer.concat([
+      Buffer.from("GET /caf"),
+      Buffer.from([0xc3, 0xa9]),
+      Buffer.from(" HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n"),
+    ]);
+    const { promise, resolve, reject } = Promise.withResolvers<string>();
+    const socket = net.connect(server.port, "127.0.0.1");
+    const chunks: Buffer[] = [];
+    socket.on("error", reject);
+    socket.on("data", chunk => chunks.push(chunk));
+    socket.on("end", () => resolve(Buffer.concat(chunks).toString("utf8")));
+    socket.on("connect", () => socket.write(request));
+    const response = await promise;
+    expect(response).toContain("HTTP/1.1 200");
+    expect(response).toContain("encoded-key-hit");
+  });
+
+  it("falls back to raw bytes for malformed percent sequences", async () => {
+    // "%zz" is not a valid escape; the segment matches its raw spelling.
+    const res = await fetch(`${server.url}lit%zz`);
+    expect(res.status).toBe(200);
+    expect(await res.text()).toBe("malformed-key-hit");
+    // A truncated escape doesn't match a route it doesn't spell.
+    const res2 = await fetch(`${server.url}robots.tx%7`);
+    expect(res2.status).toBe(404);
+  });
+
+  it("never lets %2F create a path separator in a literal match", async () => {
+    // "a%2Fb" is ONE segment whose decoded value contains "/"; it must not
+    // match the two-segment literal route "/a/b".
+    const res = await fetch(`${server.url}a%2Fb`);
+    expect(res.status).toBe(404);
+    expect(await fetch(`${server.url}a/b`).then(r => r.text())).toBe("two-segments");
+  });
+
+  it("prefers a literal route over a param route for encoded spellings", async () => {
+    const res = await fetch(`${server.url}api/user%73`);
+    expect(res.status).toBe(200);
+    expect(await res.text()).toBe("literal");
+    const res2 = await fetch(`${server.url}api/other`);
+    expect(await res2.text()).toBe("param other");
+  });
+
+  it("handles HEAD on an encoded literal static route", async () => {
+    const res = await fetch(`${server.url}robots.tx%74`, { method: "HEAD" });
+    expect(res.status).toBe(200);
+    expect(await res.text()).toBe("");
+  });
+});
+
 describe("route precedence", () => {
   let server: Server;
 

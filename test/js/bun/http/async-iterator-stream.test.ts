@@ -3,14 +3,18 @@ import { describe, expect, mock, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 
 describe.concurrent("Streaming body via", () => {
+  // The two-chunk tests hold the generator until the client has read the first chunk. That is what
+  // proves the body streams; a sleep does not, because fetch hands the reader everything its HTTP
+  // thread has received since the last read as one chunk.
   test("async generator function", async () => {
+    const firstChunkRead = Promise.withResolvers<void>();
     using server = Bun.serve({
       port: 0,
 
       async fetch(req) {
         return new Response(async function* yo() {
           yield "Hello, ";
-          await Bun.sleep(30);
+          await firstChunkRead.promise;
           yield Buffer.from("world!");
           return "not a chunk";
         });
@@ -21,6 +25,7 @@ describe.concurrent("Streaming body via", () => {
     const chunks = [];
     for await (const chunk of res.body) {
       chunks.push(chunk);
+      firstChunkRead.resolve();
     }
 
     expect(Buffer.concat(chunks).toString()).toBe("Hello, world!");
@@ -173,6 +178,7 @@ describe.concurrent("Streaming body via", () => {
   });
 
   test("[Symbol.asyncIterator]", async () => {
+    const firstChunkRead = Promise.withResolvers<void>();
     using server = Bun.serve({
       port: 0,
 
@@ -181,7 +187,7 @@ describe.concurrent("Streaming body via", () => {
           async *[Symbol.asyncIterator]() {
             var controller = yield "my string goes here\n";
             var controller2 = yield Buffer.from("my buffer goes here\n");
-            await Bun.sleep(30);
+            await firstChunkRead.promise;
             yield Buffer.from("end!\n");
             if (controller !== controller2 || typeof controller.sinkId !== "number") {
               throw new Error("Controller mismatch");
@@ -196,6 +202,7 @@ describe.concurrent("Streaming body via", () => {
     const chunks = [];
     for await (const chunk of res.body) {
       chunks.push(chunk);
+      firstChunkRead.resolve();
     }
 
     expect(Buffer.concat(chunks).toString()).toBe("my string goes here\nmy buffer goes here\nend!\n");

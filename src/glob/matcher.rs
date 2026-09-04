@@ -133,7 +133,9 @@ struct Wildcard {
 /// "**"
 ///     Matches zero or more characters, including path separators.
 ///     Must match a complete path segment, i.e. followed by a path separator or
-///     at the end of the pattern.
+///     at the end of the pattern. A "**" that ends a brace branch qualifies when
+///     the brace group itself is followed by a separator or ends the pattern, so
+///     "a/{**,b}/c" means "a/**/c" or "a/b/c".
 /// "[ab]"
 ///     Matches one of the characters contained in the brackets.
 ///     Character ranges (e.g. "[a-z]") are also supported.
@@ -220,14 +222,15 @@ fn glob_match_impl(
                             if is_globstar {
                                 state.glob_index += 2;
 
-                                let is_end_invalid = (state.glob_index as usize) < glob.len();
+                                let rest = globstar_continuation(state, glob, brace_stack);
+                                let is_end_invalid = (rest.glob_index as usize) < glob.len();
 
                                 // FIXME: explain this bug fix
                                 if is_end_invalid
                                     && state.path_index as usize == path.len()
-                                    && glob.len() - state.glob_index as usize == 2
-                                    && is_separator(glob[state.glob_index as usize])
-                                    && glob[state.glob_index as usize + 1] == b'*'
+                                    && glob.len() - rest.glob_index as usize == 2
+                                    && is_separator(glob[rest.glob_index as usize])
+                                    && glob[rest.glob_index as usize + 1] == b'*'
                                 {
                                     continue 'main_loop;
                                 }
@@ -237,8 +240,10 @@ fn glob_match_impl(
                                 // if we start at index 6 (start of **/b pattern), we don't want to index into the pattern before it
                                 if (state.glob_index.saturating_sub(glob_start) < 3
                                     || glob[state.glob_index as usize - 3] == b'/')
-                                    && (!is_end_invalid || glob[state.glob_index as usize] == b'/')
+                                    && (!is_end_invalid || glob[rest.glob_index as usize] == b'/')
                                 {
+                                    state.glob_index = rest.glob_index;
+                                    state.brace_depth = rest.brace_depth;
                                     if is_end_invalid {
                                         state.glob_index += 1;
                                     }
@@ -569,6 +574,22 @@ fn skip_branch(state: &mut State, glob: &[u8], brace_stack: &BraceStack) -> bool
         }
     }
     false
+}
+
+/// `state` has just stepped over a `**`; returns a copy of it moved to where the
+/// pattern continues. When the `**` ends a brace branch, that is after the group's
+/// `}` (and after the `}` of every enclosing group the `**` also ends), i.e. where
+/// [`skip_branch`] would resume matching. Deciding "is this `**` a whole segment"
+/// there gives `a/{**,b}/c` the meaning of its expansion `a/**/c`; decided at the
+/// `,` itself, the `**` would be demoted to a plain `*`.
+#[inline(always)]
+fn globstar_continuation(state: &State, glob: &[u8], brace_stack: &BraceStack) -> State {
+    let mut rest = *state;
+    while rest.brace_depth > 0
+        && matches!(glob.get(rest.glob_index as usize), Some(b',' | b'}'))
+        && skip_branch(&mut rest, glob, brace_stack)
+    {}
+    rest
 }
 
 /// Index of the `}` matching the `{` at `open_idx`, or `glob.len()` if unterminated.

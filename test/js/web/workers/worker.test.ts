@@ -380,6 +380,73 @@ describe("web worker", () => {
     });
   });
 
+  // The events the runtime dispatches on a worker's own global scope report `self` as their
+  // target and call the handler with `self` as `this`, as in browsers. Worker sources are
+  // modules, so a `this` of the bare global object cell would show up as undefined.
+  describe("events dispatched on the worker's global scope", () => {
+    const describeEvent = `
+      function describeEvent(thisValue, event) {
+        return {
+          type: event.type,
+          this: thisValue === self,
+          target: event.target === self,
+          currentTarget: event.currentTarget === globalThis,
+        };
+      }`;
+
+    test("message from the parent's postMessage(): self.onmessage", async () => {
+      const worker = new Worker(
+        URL.createObjectURL(
+          new Blob([
+            `${describeEvent}
+            onmessage = function (event) {
+              postMessage({ ...describeEvent(this, event), data: event.data });
+            };`,
+          ]),
+        ),
+      );
+      worker.postMessage("ping");
+      const [{ data }] = await once(worker, "message");
+      worker.terminate();
+      expect(data).toEqual({ type: "message", this: true, target: true, currentTarget: true, data: "ping" });
+    });
+
+    test("message from the parent's postMessage(): addEventListener", async () => {
+      const worker = new Worker(
+        URL.createObjectURL(
+          new Blob([
+            `${describeEvent}
+            addEventListener("message", function (event) {
+              postMessage({ ...describeEvent(this, event), data: event.data });
+            });`,
+          ]),
+        ),
+      );
+      worker.postMessage("ping");
+      const [{ data }] = await once(worker, "message");
+      worker.terminate();
+      expect(data).toEqual({ type: "message", this: true, target: true, currentTarget: true, data: "ping" });
+    });
+
+    test("error from an uncaught exception in the worker", async () => {
+      const worker = new Worker(
+        URL.createObjectURL(
+          new Blob([
+            `${describeEvent}
+            addEventListener("error", function (event) {
+              postMessage({ ...describeEvent(this, event), error: event.error.message });
+            });
+            throw new Error("boom");`,
+          ]),
+        ),
+      );
+      // The worker's own listener runs first; the error is then reported to this Worker object too.
+      const [[{ data }], [reported]] = await Promise.all([once(worker, "message"), once(worker, "error")]);
+      expect(data).toEqual({ type: "error", this: true, target: true, currentTarget: true, error: "boom" });
+      expect(reported.type).toBe("error");
+    });
+  });
+
   describe("terminate() races and lifecycle edges", () => {
     // A vm timeout inside a worker is a transient termination of that VM; it
     // must not leave the worker unable to run script (parent messages dropped).

@@ -84,6 +84,69 @@ for (const [Constructor, name, eventName, prop] of globalSetters) {
   });
 }
 
+// An event dispatched on the global scope reports globalThis (the global proxy, the only form of
+// the global that script can hold) as its target, and listeners are called with it as `this`.
+// This file is a module, so a `this` of the bare global object cell would show up as undefined.
+function describeGlobalEvent(thisValue, event) {
+  return {
+    this: thisValue === globalThis,
+    target: event.target === self,
+    currentTarget: event.currentTarget === globalThis,
+    srcElement: event.srcElement === globalThis,
+    composedPath: event.composedPath().map(node => node === globalThis),
+  };
+}
+
+test("addEventListener on the global scope: target, currentTarget and this are globalThis", () => {
+  const seen = [];
+  const listener = function (event) {
+    seen.push(describeGlobalEvent(this, event));
+  };
+  const event = new Event("global-target");
+  try {
+    addEventListener("global-target", listener);
+    dispatchEvent(event);
+  } finally {
+    removeEventListener("global-target", listener);
+  }
+  expect(seen).toEqual([{ this: true, target: true, currentTarget: true, srcElement: true, composedPath: [true] }]);
+  // After dispatch, currentTarget and the path are cleared but target is kept.
+  expect([event.target === globalThis, event.currentTarget, event.composedPath()]).toEqual([true, null, []]);
+});
+
+test("addEventListener on the global scope with a handleEvent object: this is the object, currentTarget is globalThis", () => {
+  const seen = [];
+  const listener = {
+    handleEvent(event) {
+      seen.push({ thisIsListener: this === listener, ...describeGlobalEvent(globalThis, event) });
+    },
+  };
+  try {
+    addEventListener("global-target", listener);
+    dispatchEvent(new Event("global-target"));
+  } finally {
+    removeEventListener("global-target", listener);
+  }
+  expect(seen).toEqual([
+    { thisIsListener: true, this: true, target: true, currentTarget: true, srcElement: true, composedPath: [true] },
+  ]);
+});
+
+for (const [Constructor, name, eventName] of globalSetters) {
+  test(`self.${name}: target, currentTarget and this are globalThis`, () => {
+    const seen = [];
+    try {
+      globalThis[name] = function (event) {
+        seen.push(describeGlobalEvent(this, event));
+      };
+      dispatchEvent(new Constructor(eventName));
+    } finally {
+      globalThis[name] = null;
+    }
+    expect(seen).toEqual([{ this: true, target: true, currentTarget: true, srcElement: true, composedPath: [true] }]);
+  });
+}
+
 // Assigning onmessage/onerror through a receiver that is not the global object
 // (e.g. a Proxy of globalThis) used to crash with a type confusion.
 test.concurrent("onmessage/onerror assignment through a Proxy of globalThis", async () => {

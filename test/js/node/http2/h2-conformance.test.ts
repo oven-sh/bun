@@ -445,6 +445,77 @@ describe("SETTINGS value ranges (checklist §6.5.2)", () => {
     expect(goawayErrorCode(goaway)).toBe(ErrorCode.FLOW_CONTROL_ERROR);
     c.destroy();
   });
+
+  // node reads the SETTINGS parameters from `options.settings` only. The same key at the top level
+  // of the session options is ignored: it is not validated and it does not go on the wire.
+  test.each([
+    ["Infinity", Infinity],
+    ["-1", -1],
+    ["NaN", NaN],
+    ["1.5", 1.5],
+    ["2**53", 2 ** 53],
+    ['"10"', "10"],
+  ])("a top-level maxHeaderListSize of %s is ignored by createServer() and connect()", async (_, value) => {
+    const server = http2.createServer({ maxHeaderListSize: value } as any);
+    server.on("stream", (stream: any) => {
+      stream.respond({ ":status": 204 });
+      stream.end();
+    });
+    server.listen(0);
+    await once(server, "listening");
+    let client: http2.ClientHttp2Session | undefined;
+    try {
+      client = http2.connect(`http://127.0.0.1:${(server.address() as net.AddressInfo).port}`, {
+        maxHeaderListSize: value,
+      } as any);
+      const req = client.request({ ":path": "/" });
+      req.end();
+      const [headers] = await once(req, "response");
+      expect(headers[":status"]).toBe(204);
+    } finally {
+      client?.destroy();
+      server.close();
+    }
+  });
+
+  test("the initial SETTINGS frame carries only the keys under options.settings", async () => {
+    async function initialSettings(options: object) {
+      const server = http2.createServer(options);
+      server.listen(0);
+      await once(server, "listening");
+      const c = await RawH2.connect((server.address() as net.AddressInfo).port);
+      try {
+        c.sendPreface();
+        c.sendEmptySettings();
+        const frame = await c.waitFor(f => f.type === FrameType.SETTINGS && (f.flags & 0x1) === 0);
+        const settings: Record<number, number> = {};
+        for (let i = 0; i < frame.payload.length; i += 6) {
+          settings[frame.payload.readUInt16BE(i)] = frame.payload.readUInt32BE(i + 2);
+        }
+        return settings;
+      } finally {
+        c.destroy();
+        server.close();
+      }
+    }
+
+    expect(
+      await initialSettings({
+        headerTableSize: 100,
+        enablePush: true,
+        maxConcurrentStreams: 7,
+        initialWindowSize: 100000,
+        maxFrameSize: 20000,
+        maxHeaderListSize: 1000,
+        maxHeaderSize: 1000,
+        enableConnectProtocol: true,
+        customSettings: { 1000: 5 },
+      }),
+    ).toEqual({});
+    expect(
+      await initialSettings({ maxHeaderListSize: -1, settings: { maxHeaderListSize: 1000, maxConcurrentStreams: 7 } }),
+    ).toEqual({ 3: 7, 6: 1000 });
+  });
 });
 
 describe("frame size limit (checklist §4.2)", () => {

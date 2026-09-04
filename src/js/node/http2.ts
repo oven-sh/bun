@@ -1960,11 +1960,35 @@ function createPendingStreamCancelError(cause?: any) {
   cancelError.code = "ERR_HTTP2_STREAM_CANCEL";
   return cancelError;
 }
-// The native settings object for a server session: session options + the user's settings, with
-// enablePush forced off only when the caller explicitly provided it (see the RFC 9113 §6.5.2 note
-// at the construction site). Only explicitly-present settings are serialized by the native layer.
+// The keys node reads from `options.settings` only. The same key at the top level of the session
+// options is ignored by node: it is not validated and it does not go on the wire.
+const kSettingsOnlyKeys = [
+  "headerTableSize",
+  "enablePush",
+  "maxConcurrentStreams",
+  "initialWindowSize",
+  "maxFrameSize",
+  "maxHeaderListSize",
+  "maxHeaderSize",
+  "enableConnectProtocol",
+  "customSettings",
+];
+
+// The native layer reads the session options (maxSessionMemory, maxHeaderListPairs, ...) and the
+// SETTINGS parameters from one object.
+function nativeSessionSettings(options) {
+  const sessionOptions = { ...options };
+  for (const key of kSettingsOnlyKeys) {
+    delete sessionOptions[key];
+  }
+  return { ...sessionOptions, ...options?.settings };
+}
+
+// The native settings object for a server session, with enablePush forced off only when the
+// caller explicitly provided it (see the RFC 9113 §6.5.2 note at the construction site). Only
+// explicitly-present settings are serialized by the native layer.
 function serverNativeSettings(options) {
-  const merged = { ...options, ...options?.settings };
+  const merged = nativeSessionSettings(options);
   if (merged.enablePush !== undefined) merged.enablePush = false;
   return merged;
 }
@@ -4465,7 +4489,7 @@ class ServerHttp2Session extends Http2Session {
     if (typeof options?.maxOutstandingSettings === "number" && options.maxOutstandingSettings >= 1) {
       this.#maxOutstandingSettings = options.maxOutstandingSettings;
     }
-    const advertisedMaxConcurrentStreams = options?.settings?.maxConcurrentStreams ?? options?.maxConcurrentStreams;
+    const advertisedMaxConcurrentStreams = options?.settings?.maxConcurrentStreams;
     if (typeof advertisedMaxConcurrentStreams === "number") {
       this.#advertisedMaxConcurrentStreams = advertisedMaxConcurrentStreams;
     }
@@ -5710,7 +5734,7 @@ class ClientHttp2Session extends Http2Session {
     if (options?.settings !== undefined) {
       validateSettings(options.settings);
     }
-    const nativeSettings = { ...options, ...options?.settings };
+    const nativeSettings = nativeSessionSettings(options);
     this.#localSettings = initialLocalSettings(nativeSettings);
     this.#parser = new H2FrameParser({
       native: nativeSocket,

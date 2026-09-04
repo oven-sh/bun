@@ -400,6 +400,19 @@ impl ServerWebSocket {
         this
     }
 
+    /// Undo `init` for a socket uWS refused to upgrade: `on_open`/`on_close`
+    /// never run for it, so release the signal ref and the strong
+    /// self-reference here and let the JS wrapper be collected.
+    pub(crate) fn discard_unopened(&self) {
+        self.update_flags(|f| f.set_closed(true));
+        if let Some(signal) = self.signal.take() {
+            let sig = bun_ptr::BackRef::from(signal);
+            sig.pending_activity_unref();
+            sig.unref();
+        }
+        self.this_value.with_mut(|v| v.downgrade());
+    }
+
     pub(crate) fn memory_cost(&self) -> usize {
         if self.flags.get().closed() {
             return mem::size_of::<ServerWebSocket>();

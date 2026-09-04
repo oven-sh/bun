@@ -587,6 +587,7 @@ impl NodeHTTPResponse {
             &upgrade_context.sec_websocket_key
         };
 
+        let mut upgraded = false;
         if let Some(raw_response) = self.raw_response.take() {
             self.update_flags(|f| f.insert(Flags::UPGRADED));
             // Unref the poll_ref since the socket is now upgraded to WebSocket
@@ -596,13 +597,23 @@ impl NodeHTTPResponse {
             // S008: `WebSocketUpgradeContext` is an `opaque_ffi!` ZST — safe deref
             // (`upgrade_ctx` checked non-null above).
             let ctx = bun_opaque::opaque_deref_mut(upgrade_ctx);
-            let _ = raw_response.upgrade::<ServerWebSocket>(
-                ws,
-                websocket_key,
-                sec_websocket_protocol_value,
-                sec_websocket_extensions_value,
-                Some(ctx),
-            );
+            upgraded = !raw_response
+                .upgrade::<ServerWebSocket>(
+                    ws,
+                    websocket_key,
+                    sec_websocket_protocol_value,
+                    sec_websocket_extensions_value,
+                    Some(ctx),
+                )
+                .is_null();
+            if !upgraded {
+                self.update_flags(|f| f.remove(Flags::UPGRADED));
+            }
+        }
+        if !upgraded {
+            // SAFETY: `ws` is the live allocation `init` returned; its JS
+            // wrapper owns it and nothing else has a pointer to it yet.
+            unsafe { &*ws }.discard_unopened();
         }
 
         // The sec-websocket-* headers were already copied into
@@ -612,7 +623,7 @@ impl NodeHTTPResponse {
         // post-upgrade — it would read freed header views.
         self.upgrade_context.with_mut(|c| c.reset());
 
-        true
+        upgraded
     }
 
     pub(crate) fn maybe_stop_reading_body(&self, vm: &mut VirtualMachine, this_value: JSValue) {

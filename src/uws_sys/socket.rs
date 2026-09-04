@@ -847,7 +847,8 @@ impl<const IS_SSL: bool> NewSocketHandler<IS_SSL> {
     }
 
     /// Move an open socket into a new group/kind, stashing `owner` in the ext.
-    /// Replaces `Socket.adoptPtr`.
+    /// Replaces `Socket.adoptPtr`. Returns `false`, with the socket and
+    /// `owner` untouched, for a closed or shut down socket.
     ///
     /// `set_socket_field` — the closure writes the resulting
     /// `Self` into the owner's socket field via the raw `*mut Owner` (passing

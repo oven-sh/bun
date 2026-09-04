@@ -2934,8 +2934,8 @@ pub fn capture_stack_trace(begin: usize, addrs: &mut [usize]) -> usize {
 #[inline(always)]
 pub fn return_address() -> usize {
     // Miri cannot execute `frame_address`'s inline asm, and an address read out
-    // of a register is not a pointer it can dereference. 0 = "no trim". `cfg!`
-    // rather than `#[cfg]` so the read below stays compiled (and `PC_OFFSET` live).
+    // of a register is not a pointer it can dereference. 0 = "no trim". `cfg!` rather than
+    // `#[cfg]` so the read below stays compiled (and `PC_OFFSET` live).
     if cfg!(miri) {
         return 0;
     }

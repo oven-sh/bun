@@ -456,8 +456,7 @@ pub fn derive_thread_safe_ref_counted(input: TokenStream) -> TokenStream {
 //                                         `drop(::bun_core::heap::take(this))`
 //   #[ref_count(debug_name = "Name")]   — overrides `RefCounted::debug_name()`
 //
-// Field selection follows the shared `find_ref_count_field` rule (the field
-// literally named `ref_count`).
+// Field selection follows the shared `find_ref_count_field` rule.
 //
 // Unlike `CellRefCounted` this emits **no** inherent `ref_()`/`deref()`
 // forwarders and **no** `AnyRefCounted` impl: `bun_ptr::ref_count` already

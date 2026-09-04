@@ -780,9 +780,6 @@ impl Watcher {
         file_path: &[u8],
         hash: HashType,
     ) -> sys::Result<WatchItemIndex> {
-        // RAII guard: `lock_guard()` holds the mutex by `BackRef`, not a
-        // borrow of `self`, so the `&mut self` calls below are fine and every
-        // return path unlocks.
         let _guard = self.mutex.lock_guard();
         if let Some(idx) = self.index_of(hash) {
             return Ok(idx as WatchItemIndex);

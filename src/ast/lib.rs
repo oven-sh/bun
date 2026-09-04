@@ -1642,8 +1642,8 @@ impl Log {
         })
     }
 
-    #[inline]
-    fn add_resolve_error_with_level(
+    #[cold]
+    pub fn add_resolve_error(
         &mut self,
         source: Option<&Source>,
         r: Range,
@@ -1659,17 +1659,13 @@ impl Log {
         let specifier = BabyString::r#in(&text, specifier_arg);
         self.errors += 1;
 
-        // Always dupe the line_text from the source to ensure the Location data
-        // outlives the source's backing memory (which may be arena-allocated).
-        let data = 'brk: {
-            let mut _data = self.tracked_range_data(source, r, text);
-            if let Some(loc) = &mut _data.location {
-                if let Some(_line) = loc.line_text.as_deref() {
-                    loc.line_text = Some(Cow::Owned(_line.to_vec()));
-                }
+        // Dupe line_text so the Location outlives the source's arena-backed memory.
+        let mut data = self.tracked_range_data(source, r, text);
+        if let Some(loc) = &mut data.location {
+            if let Some(line) = loc.line_text.as_deref() {
+                loc.line_text = Some(Cow::Owned(line.to_vec()));
             }
-            break 'brk _data;
-        };
+        }
 
         let msg = Msg {
             kind: Kind::Err,
@@ -1686,19 +1682,6 @@ impl Log {
     }
 
     #[cold]
-    pub fn add_resolve_error(
-        &mut self,
-        source: Option<&Source>,
-        r: Range,
-        args: fmt::Arguments<'_>,
-        specifier_arg: &[u8],
-        import_kind: ImportKind,
-        err: crate::Error,
-    ) {
-        self.add_resolve_error_with_level(source, r, args, specifier_arg, import_kind, err)
-    }
-
-    #[cold]
     pub fn add_resolve_error_with_text_dupe(
         &mut self,
         source: Option<&Source>,
@@ -1707,7 +1690,7 @@ impl Log {
         specifier_arg: &[u8],
         import_kind: ImportKind,
     ) {
-        self.add_resolve_error_with_level(
+        self.add_resolve_error(
             source,
             r,
             args,

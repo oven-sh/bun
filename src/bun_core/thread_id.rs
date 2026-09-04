@@ -14,9 +14,6 @@
 //! integer it can store in an atomic and compare against a sentinel.
 
 // ── ThreadId width ─────────────────────────────────────────────────────────
-//   linux / android / freebsd → u32
-//   macOS                     → u64
-//   Windows                   → DWORD (u32)
 #[cfg(any(
     target_os = "linux",
     target_os = "android",
@@ -44,7 +41,7 @@ static TLS_THREAD_ID: core::cell::Cell<ThreadId> = core::cell::Cell::new(0);
 
 /// Returns the platform's notion of the calling thread's ID.
 ///
-/// Uses OS-specific primitives so the value matches what
+/// Attempts to use OS-specific primitives so the value matches what
 /// debuggers/tracers report.
 ///
 /// Cached per-thread after the first call (see [`TLS_THREAD_ID`]); subsequent

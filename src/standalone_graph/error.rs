@@ -1,6 +1,4 @@
-/// The part of the embedded module graph that `StandaloneModuleGraph::from_bytes`
-/// found out of range. Every offset comes from the executable, so a damaged one
-/// is reported instead of read.
+/// The field of the embedded module graph that `StandaloneModuleGraph::from_bytes` found out of range.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Corruption {
     ModuleList,

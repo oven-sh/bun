@@ -947,8 +947,7 @@ impl StandaloneModuleGraph {
         let mut builtin_bytecode: Vec<(u32, *mut [u8])> = Vec::new();
         if offsets.flags.contains(Flags::HAS_BUILTIN_BYTECODE) {
             let count = records.read_u32(Corruption::BuiltinBytecode)? as usize;
-            // Each entry is `{ u32 id, StringPointer bytes }`. Check that `count` of them fit before
-            // `reserve` trusts it.
+            // `reserve` must not trust a count whose entries (`{ u32 id, StringPointer bytes }`) do not fit.
             if count > records.remaining() / (3 * size_of::<u32>()) {
                 return Err(Corruption::BuiltinBytecode.into());
             }
@@ -1089,8 +1088,7 @@ impl StandaloneModuleGraph {
         }
 
         let module_count = modules.count();
-        // `entry_point()` indexes `files` with this id. Two records with one name are one
-        // entry in `files`, so the bound is the entry count and not the record count.
+        // `entry_point()` indexes `files`, which has one entry per name, not one per record.
         if offsets.entry_point_id as usize >= module_count {
             return Err(Corruption::EntryPointId.into());
         }
@@ -1144,8 +1142,7 @@ impl StandaloneModuleGraph {
     }
 }
 
-/// A cursor over the records `to_bytes` chains after the module table. Every read is
-/// checked against `len`, the length of the section at `base`.
+/// A cursor over the records after the module table. Each read is checked against `len`.
 struct RecordChain {
     base: *const u8,
     len: usize,
@@ -1194,9 +1191,7 @@ fn checked_range(len: usize, ptr: StringPointer, tail: usize) -> Option<(usize, 
 /// Read-only subslice helper. Builds a `&'static [u8]` over the *subrange only* so no
 /// shared reference ever spans the writable bytecode/module_info regions of the same
 /// allocation (which would be invalidated by JSC's in-place writes).
-///
-/// `Err(what)` when the pointer reaches past `len`: every offset comes from the
-/// executable, so a damaged one is reported instead of read.
+/// `Err(what)` when the range runs past `len`.
 ///
 /// SAFETY: caller guarantees `base[..len]` is a live 'static allocation and
 /// `[ptr.offset, ptr.offset + ptr.length)` is never written through a `*mut`
@@ -1219,8 +1214,7 @@ unsafe fn slice_to(
 /// Mutable-subslice helper for `from_bytes`. Derives a `*mut [u8]` directly from the raw
 /// section base so the result carries write provenance — going through `slice_to` (which
 /// returns `&[u8]`) and casting `*const [u8] as *mut [u8]` would be UB on write.
-///
-/// `Err(what)` when the pointer reaches past `len`, as in `slice_to`.
+/// `Err(what)` when the range runs past `len`.
 ///
 /// SAFETY: caller guarantees `base[..len]` is a live allocation with write permission.
 unsafe fn slice_to_mut(

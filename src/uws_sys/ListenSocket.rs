@@ -87,6 +87,7 @@ impl ListenSocket {
     }
 
     pub fn set_default_ssl_ctx(&mut self, ctx: *mut SslCtx) {
+        // SAFETY: self and ctx are valid for the duration of the call; C up-refs ctx.
         unsafe { us_listen_socket_set_default_ssl_ctx(self, ctx) }
     }
 

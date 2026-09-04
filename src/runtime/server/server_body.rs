@@ -3718,10 +3718,10 @@ fn server_set_secure_context(
                         "Failed to create secure context from the provided options"
                     )));
                 };
+                // SAFETY: `as_` returned a live server pointer; JS-thread only.
                 if let Some(listener) = unsafe { &mut *this }.listener {
-                    bun_opaque::opaque_deref_mut(listener).set_default_ssl_ctx(ctx);
+                    bun_opaque::opaque_deref_mut(listener).set_default_ssl_ctx(ctx.as_ptr());
                 }
-                unsafe { bun_boringssl_sys::SSL_CTX_free(ctx) };
                 return Ok(JSValue::UNDEFINED);
             }
         };
@@ -3742,6 +3742,7 @@ fn server_enable_keylog(global: &JSGlobalObject, server: JSValue) -> JsResult<JS
     macro_rules! handle {
         ($T:ty) => {
             if let Some(this) = server.as_::<$T>() {
+                // SAFETY: `as_` returned a live server pointer; JS-thread only.
                 if let Some(listener) = unsafe { &mut *this }.listener {
                     bun_opaque::opaque_deref_mut(listener).enable_keylog();
                 }

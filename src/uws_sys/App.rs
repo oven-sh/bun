@@ -341,6 +341,7 @@ impl<const SSL: bool> App<SSL> {
         fd: i32,
         options: i32,
     ) {
+        // SAFETY: self is a valid app; the C side validates fd.
         unsafe {
             c::uws_app_listen_fd(
                 Self::SSL_FLAG,

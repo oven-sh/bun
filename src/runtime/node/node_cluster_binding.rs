@@ -309,6 +309,7 @@ pub(crate) fn channel_fd(global: &JSGlobalObject, _frame: &CallFrame) -> JsResul
     let Some(instance) = crate::ipc_host::get_ipc_instance(vm) else {
         return Ok(JSValue::UNDEFINED);
     };
+    // SAFETY: get_ipc_instance returned a live instance; JS-thread only.
     let fd = unsafe { (*instance).data().channel_fd() };
     Ok(match fd {
         Some(fd) => JSValue::from(fd.native() as i32),

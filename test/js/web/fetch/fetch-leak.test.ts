@@ -1,205 +1,253 @@
-import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, tls as COMMON_CERT, gc, isASAN, isCI, isDebug } from "harness";
+import { heapStats } from "bun:jsc";
+import { beforeAll, describe, expect, test } from "bun:test";
+import { bunEnv, bunExe, tls as COMMON_CERT, gc, isASAN } from "harness";
+import { randomBytes } from "node:crypto";
 import { once } from "node:events";
 import { createServer } from "node:http";
 import net from "node:net";
 import { join } from "node:path";
 
-describe("fetch doesn't leak", () => {
-  test("fixture #1", async () => {
-    const body = new Blob(["some body in here!".repeat(100)]);
-    var count = 0;
+// Environment for the children below whose RSS growth is asserted. Both
+// allocators are told to hand freed memory straight back to the OS so that RSS
+// tracks live memory: mimalloc otherwise keeps freed pages resident until later
+// allocator activity purges them (with multi-MB bodies that alone moves the
+// measurement by tens of MB from one run to the next), and ASAN's quarantine
+// retains freed allocations (256 MB by default). Leaked memory is never freed,
+// so neither setting hides a leak.
+const rssEnv = {
+  ...bunEnv,
+  MIMALLOC_PURGE_DELAY: "0",
+  ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "quarantine_size_mb=0"].filter(Boolean).join(":"),
+};
+
+// Every test here spawns one child that talks to a server in this process and
+// measures its own memory, so the group runs concurrently. The children check
+// their own Response (and promise) counts, see fetch-leak-test-helpers.js; the
+// tests own the RSS bounds.
+describe.concurrent("fetch doesn't leak", () => {
+  // A debug+ASAN build takes 2-4 s per child with the whole group running at
+  // once (release: under 1 s).
+  const timeout = 30_000;
+
+  // Response objects whose bodies are never read.
+  test(
+    "fixture #1",
+    async () => {
+      const body = new Blob(["some body in here!".repeat(100)]);
+      let served = 0;
+      using server = Bun.serve({
+        port: 0,
+        idleTimeout: 0,
+        fetch() {
+          served++;
+          return new Response(body);
+        },
+      });
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "--smol", join(import.meta.dir, "fetch-leak-test-fixture.js")],
+        env: { ...bunEnv, SERVER: server.url.href, COUNT: "200" },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      expect(stderr).toBe("");
+      expect(JSON.parse(stdout)).toMatchObject({ requests: 200 });
+      expect(served).toBe(200);
+      expect(exitCode).toBe(0);
+    },
+    timeout,
+  );
+
+  // Buffered response bodies and the Response objects themselves, over plain
+  // TCP, TLS, and TLS with per-request tls options, with and without
+  // Content-Encoding.
+  //
+  // The child reports its RSS growth in units of one body. Leaking a body per
+  // request comes out at about COUNT; a clean run is left with a few MB of
+  // connection buffers and GC jitter either way, which does not grow with COUNT
+  // and measured at most 2.6 bodies on release and 3.6 on debug+ASAN across all
+  // six variants running at once. COUNT / 4 = 20 is well clear of both.
+  const BODY_BYTES = 4 * 1024 * 1024;
+  const COUNT = 80;
+  let plainBody: Blob;
+  let deflatedBody: Blob;
+  beforeAll(() => {
+    plainBody = new Blob([Buffer.alloc(BODY_BYTES, "some body in here!")]);
+    // Random bytes do not compress, so this body also arrives as ~4 MiB of
+    // packets rather than as one small chunk. Deflating them takes a debug
+    // build ~0.4 s, hence once for all three variants.
+    deflatedBody = new Blob([Bun.deflateSync(randomBytes(BODY_BYTES))]);
+  });
+
+  async function runTest(compressed: boolean, name: string) {
+    const body = compressed ? deflatedBody : plainBody;
+    const headers: Record<string, string> = { "Content-Type": "application/octet-stream" };
+    if (compressed) headers["Content-Encoding"] = "deflate";
+
+    const tls = name.includes("tls");
+    let served = 0;
     using server = Bun.serve({
       port: 0,
       idleTimeout: 0,
-      fetch(req) {
-        count++;
-        return new Response(body);
-      },
-    });
-
-    await using proc = Bun.spawn({
-      env: {
-        ...bunEnv,
-        SERVER: server.url.href,
-        COUNT: "200",
-      },
-      stderr: "inherit",
-      stdout: "inherit",
-      cmd: [bunExe(), "--smol", join(import.meta.dir, "fetch-leak-test-fixture.js")],
-    });
-
-    const exitCode = await proc.exited;
-    expect(exitCode).toBe(0);
-    expect(count).toBe(200);
-  });
-
-  // This tests for body leakage and Response object leakage.
-  async function runTest(compressed, name) {
-    const body = !compressed
-      ? new Blob(["some body in here!".repeat(2000000)])
-      : new Blob([Bun.deflateSync(crypto.getRandomValues(new Buffer(65123)))]);
-
-    const tls = name.includes("tls");
-    const headers = {
-      "Content-Type": "application/octet-stream",
-    };
-    if (compressed) {
-      headers["Content-Encoding"] = "deflate";
-    }
-
-    const serveOptions = {
-      port: 0,
-      idleTimeout: 0,
-      fetch(req) {
+      ...(tls && { tls: { ...COMMON_CERT } }),
+      fetch() {
+        served++;
         return new Response(body, { headers });
       },
-    };
-
-    if (tls) {
-      serveOptions.tls = { ...COMMON_CERT };
-    }
-
-    using server = Bun.serve(serveOptions);
-
-    const env = {
-      ...bunEnv,
-      SERVER: server.url.href,
-      BUN_JSC_forceRAMSize: (1024 * 1024 * 64).toString(10),
-      NAME: name,
-    };
-
-    if (isASAN) {
-      // The fixture judges leakage by RSS delta, but ASAN's quarantine retains
-      // freed allocations (256 MB by default): 1000 compressed-body requests
-      // free ~65 MB of transient buffers and the delta still reads ~276 MB —
-      // pure quarantine, measured with zero real leakage. Cap the child's
-      // quarantine so RSS tracks live memory again; a genuine
-      // one-body-per-request leak still exceeds the threshold by orders of
-      // magnitude.
-      env.ASAN_OPTIONS = `${bunEnv.ASAN_OPTIONS ?? ""}:quarantine_size_mb=32`.replace(/^:/, "");
-    }
-
-    if (tls) {
-      env.NODE_TLS_REJECT_UNAUTHORIZED = "0";
-    }
-
-    if (compressed) {
-      env.COUNT = "1000";
-    }
-
-    await using proc = Bun.spawn({
-      env,
-      stderr: "inherit",
-      stdout: "inherit",
-      cmd: [bunExe(), "--smol", join(import.meta.dir, "fetch-leak-test-fixture-2.js")],
     });
 
-    const exitCode = await proc.exited;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "--smol", join(import.meta.dir, "fetch-leak-test-fixture-2.js")],
+      env: {
+        ...rssEnv,
+        SERVER: server.url.href,
+        COUNT: String(COUNT),
+        NAME: name,
+        BUN_JSC_forceRAMSize: (1024 * 1024 * 64).toString(10),
+        ...(tls && { NODE_TLS_REJECT_UNAUTHORIZED: "0" }),
+      },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    console.log(stdout.trim());
+
+    expect(stderr).toBe("");
+    const { bodiesRetained, rssGrowthMB, responsesAlive, ...report } = JSON.parse(stdout);
+    // The child warms up with COUNT / 10 requests before it measures COUNT.
+    expect(report).toEqual({ requests: COUNT + COUNT / 10, count: COUNT, bodySize: BODY_BYTES });
+    expect(served).toBe(COUNT + COUNT / 10);
+    expect(bodiesRetained).toBeLessThan(COUNT / 4);
     expect(exitCode).toBe(0);
   }
 
-  for (let compressed of [true, false]) {
+  for (const compressed of [true, false]) {
     describe(compressed ? "compressed" : "uncompressed", () => {
-      for (let name of ["tcp", "tls", "tls-with-client"]) {
+      for (const name of ["tcp", "tls", "tls-with-client"]) {
         describe(name, () => {
-          test("fixture #2", async () => {
-            await runTest(compressed, name);
-          }, 100000);
+          test("fixture #2", () => runTest(compressed, name), timeout);
         });
       }
     });
   }
 });
 
-describe.each(["FormData", "Blob", "Buffer", "String", "URLSearchParams", "stream", "iterator"])("Sending %s", type => {
-  test(
-    "does not leak",
-    async () => {
-      using server = Bun.serve({
-        port: 0,
-        idleTimeout: 0,
-        fetch(req) {
-          return new Response();
-        },
-      });
-
-      const rss = [];
-
-      await using process = Bun.spawn({
-        cmd: [
-          bunExe(),
-          "--smol",
-          join(import.meta.dir, "fetch-leak-test-fixture-5.js"),
-          server.url.href,
-          1024 * 1024 * 2 + "",
-          type,
-        ],
-        stdin: "ignore",
-        stdout: "inherit",
-        stderr: "inherit",
-        env: {
-          ...bunEnv,
-        },
-        ipc(message) {
-          rss.push(message.rss);
-        },
-      });
-
-      await process.exited;
-
-      const first = rss[0];
-      const last = rss[rss.length - 1];
-      if (!isCI || !(last < first * 10)) {
-        console.log({ rss, delta: (((last - first) / 1024 / 1024) | 0) + " MB" });
-      }
-      expect(last).toBeLessThan(first * 10);
-    },
-    // The URLSearchParams variant URL-encodes the 2MB body on each of the 500
-    // requests - pure throughput that a debug build cannot fit in 20s, and
-    // ASAN instrumentation overruns the 20s release deadline the same way
-    // (observed 20000.61ms on the x64-asan lane).
-    isDebug || isASAN ? 120 * 1000 : 20 * 1000,
-  );
-});
-
+// undici's fetch leak scenario: fetch() calls that each carry an AbortSignal,
+// against a node:http server, must not keep the signal (which the in-flight
+// request holds on to) or the Response alive once they have settled. Runs in
+// this process, so it is serial, which also makes it the barrier between the
+// two concurrent groups of children around it.
 test("do not leak", async () => {
   await using server = createServer((req, res) => {
     res.end();
-  }).listen(0);
+  }).listen(0, "127.0.0.1");
   await once(server, "listening");
+  const url = `http://127.0.0.1:${(server.address() as net.AddressInfo).port}/`;
 
-  let url;
-  let isDone = false;
-  server.listen(0, "127.0.0.1", function attack() {
-    if (isDone) {
-      return;
+  async function attack(requests: number) {
+    for (let i = 0; i < requests; i++) {
+      const controller = new AbortController();
+      const response = await fetch(url, { signal: controller.signal });
+      await response.arrayBuffer();
     }
-    url ??= new URL(`http://127.0.0.1:${server.address().port}`);
-    const controller = new AbortController();
-    fetch(url, { signal: controller.signal })
-      .then(res => res.arrayBuffer())
-      .catch(() => {})
-      .then(attack);
-  });
-
-  let prev = Infinity;
-  let count = 0;
-  var interval = setInterval(() => {
-    isDone = true;
+  }
+  // The Responses die on the first GC; their finalizers release the signals,
+  // which die on the next one.
+  async function survivors() {
     gc();
-    const next = process.memoryUsage().heapUsed;
-    if (next <= prev) {
-      expect(true).toBe(true);
-      clearInterval(interval);
-    } else if (count++ > 20) {
-      clearInterval(interval);
-      expect.unreachable();
-    } else {
-      prev = next;
-    }
-  }, 1e3);
+    await new Promise(resolve => setImmediate(resolve));
+    gc();
+    const counts = heapStats().objectTypeCounts;
+    return { signals: counts.AbortSignal ?? 0, responses: counts.Response ?? 0 };
+  }
+
+  await attack(10);
+  const baseline = await survivors();
+  await attack(40);
+  const after = await survivors();
+
+  // Leaking either object would leave ~40 more of it than at the baseline; the
+  // last few requests may still be waiting for the native side to release them.
+  expect(after.signals).toBeLessThanOrEqual(baseline.signals + 5);
+  expect(after.responses).toBeLessThanOrEqual(baseline.responses + 5);
 });
+
+// Request bodies of every supported type, each of which fetch() turns into a
+// per-request native body (a Blob store, the encoded FormData / URLSearchParams
+// bytes, the streamed chunks) that has to be released once the request is done
+// (#13657 kept it alive).
+describe.concurrent.each(["FormData", "Blob", "Buffer", "String", "URLSearchParams", "stream", "iterator"])(
+  "Sending %s",
+  type => {
+    const BODY_SIZE = 1024 * 1024 * 2;
+    const REQUESTS = 150;
+    // Leaking a body per request grows the child by BODY_SIZE per request:
+    // measured 280-300 MB for every type with the fixture made to keep its
+    // bodies alive. Clean runs under rssEnv measure under 10 MB on Linux release
+    // and under 15 MB on debug+ASAN, up to ~25 MB with all seven children on a
+    // loaded box (quarantine is off, so ASAN needs no bound of its own); the
+    // limit sits about 3x below the leak and leaves the rest of the distance as
+    // headroom for allocator behaviour on the other platforms.
+    const MAX_RSS_GROWTH_MB = 96;
+    // URL-encoding the 2 MB body takes a debug build about 0.25 s per request,
+    // i.e. the URLSearchParams child needs 40-50 s there (release: 2-3 s).
+    const timeout = 120_000;
+
+    test(
+      "does not leak",
+      async () => {
+        // The server reads every body before answering, both to prove that each
+        // request really uploaded the whole body (a type that serialized to
+        // nothing would pass the RSS check trivially) and so that no body is
+        // still being produced when the child counts what the responses left
+        // behind. (Answering while the body is still uploading is what the
+        // "server ignores the body" test further down covers.)
+        let bodies = 0;
+        let shortestBody = Infinity;
+        using server = Bun.serve({
+          port: 0,
+          idleTimeout: 0,
+          async fetch(req) {
+            let byteLength = 0;
+            for await (const chunk of req.body!) byteLength += chunk.byteLength;
+            bodies++;
+            shortestBody = Math.min(shortestBody, byteLength);
+            return new Response();
+          },
+        });
+
+        await using proc = Bun.spawn({
+          cmd: [
+            bunExe(),
+            "--smol",
+            join(import.meta.dir, "fetch-leak-test-fixture-5.js"),
+            server.url.href,
+            String(BODY_SIZE),
+            type,
+            String(REQUESTS),
+          ],
+          env: rssEnv,
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        console.log(stdout.trim());
+
+        expect(stderr).toBe("");
+        const { rssGrowthMB, responsesAlive, promisesAlive, ...report } = JSON.parse(stdout);
+        expect(report).toEqual({ type, requests: REQUESTS });
+        expect(bodies).toBe(REQUESTS);
+        // FormData and URLSearchParams add their framing on top of the payload.
+        expect(shortestBody).toBeGreaterThanOrEqual(BODY_SIZE);
+        expect(rssGrowthMB).toBeLessThan(MAX_RSS_GROWTH_MB);
+        expect(exitCode).toBe(0);
+      },
+      timeout,
+    );
+  },
+);
 
 test("fetch(data:) with percent-encoding does not leak", async () => {
   // DataURL.decodeData leaked the intermediate percent-decoded buffer (and the

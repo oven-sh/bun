@@ -173,6 +173,24 @@ pub struct ErrorLocation {
     pub(crate) column: u32,
 }
 
+/// The text of 0-based `line` in `contents` without its terminator, or `None`
+/// when `contents` has fewer lines. Lines end where the tokenizer's
+/// `consume_newline` ends them: at `\n`, `\f`, `\r\n` or a lone `\r`.
+fn line_text(contents: &[u8], line: u32) -> Option<&[u8]> {
+    const LINE_TERMINATORS: &[u8] = b"\r\n\x0c";
+    let mut rest = contents;
+    for _ in 0..line {
+        let end = bun_core::strings::index_of_any(rest, LINE_TERMINATORS)?;
+        let terminator_len = if rest[end] == b'\r' && rest.get(end + 1) == Some(&b'\n') {
+            2
+        } else {
+            1
+        };
+        rest = &rest[end + terminator_len..];
+    }
+    Some(bun_core::strings::index_of_any(rest, LINE_TERMINATORS).map_or(rest, |end| &rest[..end]))
+}
+
 impl ErrorLocation {
     pub(crate) fn to_location(
         &self,
@@ -182,8 +200,8 @@ impl ErrorLocation {
         // (`Str` placeholder per src/logger/lib.rs); the slice borrows
         // `source.contents` which outlives the diagnostic. Re-thread once
         // `bun_ast::Location` grows a real lifetime.
-        let line_text = bun_core::strings::get_lines_in_text::<1>(&source.contents, self.line)
-            .map(|lines| unsafe { &*std::ptr::from_ref::<[u8]>(lines.as_slice()[0]) });
+        let line_text = line_text(&source.contents, self.line)
+            .map(|line| unsafe { &*std::ptr::from_ref::<[u8]>(line) });
         Ok(bun_ast::Location {
             file: std::borrow::Cow::Borrowed(source.path.text),
             namespace: std::borrow::Cow::Borrowed(source.path.namespace),

@@ -1344,6 +1344,12 @@ describe("spyOn", () => {
       expect(arr[3]).toBeUndefined();
 
       fn.mockRestore();
+      expect(Object.getOwnPropertyDescriptor(arr, 3)).toEqual({
+        value: undefined,
+        writable: true,
+        enumerable: true,
+        configurable: true,
+      });
       expect(arr[3]).toBeUndefined();
       expect(fn).not.toHaveBeenCalled();
     });

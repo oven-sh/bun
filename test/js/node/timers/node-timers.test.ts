@@ -1,6 +1,7 @@
 import jsc from "bun:jsc";
 import { describe, expect, it, mock, test } from "bun:test";
 import { bunEnv, bunExe, bunRun, isWindows, tempDir } from "harness";
+import net, { type AddressInfo } from "node:net";
 import path from "node:path";
 import { clearInterval, clearTimeout, promises, setImmediate, setInterval, setTimeout } from "node:timers";
 import { promisify } from "util";
@@ -437,11 +438,17 @@ describe.concurrent("event loop phases", () => {
     expect(await run(["-e", script])).toEqual({ stdout: "unref,timeout\n", stderr: "", exitCode: 0 });
   });
 
+  // The 'unhandledRejection' listener runs only if the rejection is still
+  // unhandled when it is reported. The process then closes its sockets and exits.
   test("a rejection in a timer is reported before the next I/O callback can handle it", async () => {
     const script = `${pair}
+      const order = [];
+      process.on("unhandledRejection", error => order.push("unhandled: " + error.message));
+      process.on("exit", () => console.log(order.join(",")));
       let rejected;
       pair((client, server, serverSocket) => {
         serverSocket.on("data", () => {
+          order.push("data");
           rejected.catch(() => {});
           client.destroy();
           server.close();
@@ -452,9 +459,31 @@ describe.concurrent("event loop phases", () => {
         }, 1);
       });
     `;
-    const { stderr, exitCode } = await run(["-e", script]);
-    expect(stderr).toContain("error: rejected in a timer");
-    expect(exitCode).toBe(1);
+    const { stdout, exitCode } = await run(["-e", script]);
+    expect(stdout).toBe("unhandled: rejected in a timer,data\n");
+    expect(exitCode).toBe(0);
+  });
+
+  // `expect(promise).resolves` waits for a pending promise in a nested loop.
+  // There, an I/O callback does not drain the nextTick queue when it returns.
+  test("in a nested loop, a nextTick queued by an I/O callback runs before an immediate it queued", async () => {
+    const order: string[] = [];
+    const { promise, resolve } = Promise.withResolvers<void>();
+    const server = net.createServer(socket => socket.end("x"));
+    server.listen(0, () => {
+      const client = net.connect((server.address() as AddressInfo).port);
+      client.on("data", () => {
+        setImmediate(() => {
+          order.push("immediate");
+          client.destroy();
+          server.close();
+          resolve();
+        });
+        process.nextTick(() => order.push("tick"));
+      });
+    });
+    await expect(promise).resolves.toBeUndefined();
+    expect(order).toEqual(["tick", "immediate"]);
   });
 
   // A preload's promise is awaited by the loop's caller. The listening server

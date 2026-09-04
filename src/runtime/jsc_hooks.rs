@@ -954,6 +954,19 @@ unsafe fn ensure_debugger(vm: *mut VirtualMachine, block_until_connected: bool) 
     }
 }
 
+/// The check phase after a poll. The microtasks that the poll's callbacks
+/// queued run first, as they do in Node.
+///
+/// # Safety
+/// `vm` and its event loop `el` are live.
+#[cfg(unix)]
+unsafe fn run_check_phase(vm: *mut VirtualMachine, el: *mut bun_jsc::event_loop::EventLoop) {
+    // SAFETY: per fn contract.
+    unsafe { (*el).drain_microtasks_if_nested() };
+    // SAFETY: per fn contract.
+    unsafe { (*el).tick_immediate_tasks(vm) };
+}
+
 /// Runs the check phase and the timers if a `tick()` ran tasks. Returns whether a callback ran.
 ///
 /// # Safety
@@ -1058,7 +1071,7 @@ unsafe fn auto_tick(vm: *mut VirtualMachine) {
         #[cfg(unix)]
         {
             // SAFETY: `el` is the live per-thread event loop; `vm` per fn contract.
-            unsafe { (*el).tick_immediate_tasks(vm) };
+            unsafe { run_check_phase(vm, el) };
         }
         // Still run the post-poll hooks.
         // SAFETY: per fn contract.
@@ -1148,7 +1161,7 @@ unsafe fn auto_tick(vm: *mut VirtualMachine) {
     #[cfg(unix)]
     {
         // SAFETY: `el` is the live per-thread event loop; `vm` per fn contract.
-        unsafe { (*el).tick_immediate_tasks(vm) };
+        unsafe { run_check_phase(vm, el) };
         // Note (§Forbidden aliased-&mut): `drain_timers` fires user
         // `setTimeout` callbacks which may re-enter `timer::All::insert`/
         // `remove` via `runtime_state()`. Pass raw `*mut Self` so no
@@ -1227,7 +1240,7 @@ unsafe fn auto_tick_active(vm: *mut VirtualMachine) {
         #[cfg(unix)]
         {
             // SAFETY: `el` is the live per-thread event loop; `vm` per fn contract.
-            unsafe { (*el).tick_immediate_tasks(vm) };
+            unsafe { run_check_phase(vm, el) };
         }
         // SAFETY: per fn contract.
         unsafe { (*vm).on_after_event_loop() };
@@ -1295,7 +1308,7 @@ unsafe fn auto_tick_active(vm: *mut VirtualMachine) {
     #[cfg(unix)]
     {
         // SAFETY: `el` is the live per-thread event loop; `vm` per fn contract.
-        unsafe { (*el).tick_immediate_tasks(vm) };
+        unsafe { run_check_phase(vm, el) };
         // SAFETY: `state` is the live per-thread `RuntimeState`; see Note
         // on `auto_tick` re: aliased-&mut across `fire()`.
         unsafe { timer::All::drain_timers(&raw mut (*state).timer, vm.cast()) };

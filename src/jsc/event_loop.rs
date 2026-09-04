@@ -454,6 +454,15 @@ impl EventLoop {
         self.drain_microtasks_with_global(global, jsc_vm)
     }
 
+    /// `auto_tick`, after the poll. A callback that ran inside an entered scope
+    /// (a nested loop, such as a wait for a promise) did not drain the
+    /// microtask queue at its exit.
+    pub fn drain_microtasks_if_nested(&mut self) {
+        if self.entered_event_loop_count > 0 {
+            let _ = self.drain_microtasks();
+        }
+    }
+
     // should be called after exit()
     pub fn maybe_drain_microtasks(&mut self) -> Result<(), Stopped> {
         if self.entered_event_loop_count == 0 && !self.vm_ref().is_inside_deferred_task_queue.get()

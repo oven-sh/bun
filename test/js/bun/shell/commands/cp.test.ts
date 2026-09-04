@@ -1,7 +1,9 @@
 import { $ } from "bun";
 import { shellInternals } from "bun:internal-for-testing";
-import { describe, expect } from "bun:test";
-import { tempDirWithFiles } from "harness";
+import { describe, expect, test } from "bun:test";
+import { bunEnv, isLinux, isWindows, tempDir, tempDirWithFiles } from "harness";
+import { lstatSync, mkdirSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 import { bunExe, createTestBuilder } from "../test_builder";
 import { sortedShellOutput } from "../util";
 const { builtinDisabled } = shellInternals;
@@ -170,6 +172,154 @@ describe.if(!builtinDisabled("cp"))("bunshell cp", async () => {
       .fileEquals(TEST_COPY_TO_FOLDER_NEW_FILE, "Hello, World!")
       .testMini({ cwd: mini_tmpdir })
       .runAsTest("cp_recurse");
+  });
+});
+
+// The builtin is only the default on Windows; on POSIX it is switched on by an
+// env var that is read once per process, so each cp runs in a child bun.
+describe.concurrent("bunshell cp -R replaces an existing destination with the copied link", () => {
+  const builtinEnv = { ...bunEnv, BUN_ENABLE_EXPERIMENTAL_SHELL_BUILTINS: "1" };
+  const copied = { exitCode: 0, stderr: "" };
+
+  const at = (dir: String, ...parts: string[]) => join(String(dir), ...parts);
+
+  /**
+   * The sources: `link` and `src/link` point at `new.txt`, `dirlink` at `newdir/`.
+   * `old.txt` and `olddir/` are what each test's stale destination entry points at,
+   * and `dest/` is the directory the sources get copied into.
+   */
+  function setup(name: string) {
+    const dir = tempDir(`shell-cp-replace-link-${name}`, {
+      "new.txt": "new",
+      "old.txt": "old",
+      "newdir/marker.txt": "new",
+      "olddir/marker.txt": "old",
+      "src/file.txt": "file",
+      dest: {},
+    });
+    symlinkSync(at(dir, "new.txt"), at(dir, "link"));
+    symlinkSync(at(dir, "new.txt"), at(dir, "src", "link"));
+    symlinkSync(at(dir, "newdir"), at(dir, "dirlink"));
+    return dir;
+  }
+
+  /** Runs `command` through the shell builtin inside `dir`; returns cp's exit code and stderr. */
+  async function cp(dir: String, command: string): Promise<{ exitCode: number; stderr: string }> {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        "const r = await Bun.$`${{ raw: process.argv[1] }}`.nothrow().quiet();" +
+          "console.log(JSON.stringify({ exitCode: r.exitCode, stderr: r.stderr.toString() }));",
+        command,
+      ],
+      cwd: String(dir),
+      env: builtinEnv,
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+    return JSON.parse(stdout);
+  }
+
+  /** Whether `path` is a link now, and what reading through it gives. */
+  function entry(path: string) {
+    return { isLink: lstatSync(path).isSymbolicLink(), reads: readFileSync(path, "utf8") };
+  }
+
+  test("links are still created where nothing exists yet", async () => {
+    using dir = setup("fresh");
+
+    expect(await cp(dir, "cp -R link dirlink src dest")).toEqual(copied);
+    expect(entry(at(dir, "dest", "link"))).toEqual({ isLink: true, reads: "new" });
+    expect(entry(at(dir, "dest", "dirlink", "marker.txt"))).toEqual({ isLink: false, reads: "new" });
+    expect(lstatSync(at(dir, "dest", "dirlink")).isSymbolicLink()).toBe(true);
+    expect(entry(at(dir, "dest", "src", "link"))).toEqual({ isLink: true, reads: "new" });
+  });
+
+  test("a stale link at the destination is replaced", async () => {
+    using dir = setup("link");
+    symlinkSync(at(dir, "old.txt"), at(dir, "dest", "link"));
+
+    expect(await cp(dir, "cp -R link dest")).toEqual(copied);
+    expect(entry(at(dir, "dest", "link"))).toEqual({ isLink: true, reads: "new" });
+    // The stale link was removed, not written through.
+    expect(readFileSync(at(dir, "old.txt"), "utf8")).toBe("old");
+  });
+
+  test("a stale directory link at the destination is replaced", async () => {
+    using dir = setup("dirlink");
+    symlinkSync(at(dir, "olddir"), at(dir, "dest", "dirlink"));
+
+    expect(await cp(dir, "cp -R dirlink dest")).toEqual(copied);
+    expect(lstatSync(at(dir, "dest", "dirlink")).isSymbolicLink()).toBe(true);
+    expect(readFileSync(at(dir, "dest", "dirlink", "marker.txt"), "utf8")).toBe("new");
+    // Removing the stale link left the directory it pointed at alone.
+    expect(readFileSync(at(dir, "olddir", "marker.txt"), "utf8")).toBe("old");
+  });
+
+  test("a regular file at the destination is replaced by the link", async () => {
+    using dir = setup("file");
+    writeFileSync(at(dir, "dest", "link"), "stale");
+
+    expect(await cp(dir, "cp -R link dest")).toEqual(copied);
+    expect(entry(at(dir, "dest", "link"))).toEqual({ isLink: true, reads: "new" });
+  });
+
+  test("a stale link named as the target operand is replaced", async () => {
+    using dir = setup("operand");
+    symlinkSync(at(dir, "old.txt"), at(dir, "target"));
+
+    expect(await cp(dir, "cp -R link target")).toEqual(copied);
+    expect(entry(at(dir, "target"))).toEqual({ isLink: true, reads: "new" });
+    expect(readFileSync(at(dir, "old.txt"), "utf8")).toBe("old");
+  });
+
+  test("a stale link inside an already existing destination tree is replaced", async () => {
+    using dir = setup("tree");
+    mkdirSync(at(dir, "dest", "src"));
+    symlinkSync(at(dir, "old.txt"), at(dir, "dest", "src", "link"));
+
+    expect(await cp(dir, "cp -R src dest")).toEqual(copied);
+    expect(entry(at(dir, "dest", "src", "link"))).toEqual({ isLink: true, reads: "new" });
+    expect(entry(at(dir, "dest", "src", "file.txt"))).toEqual({ isLink: false, reads: "file" });
+  });
+
+  test("a link copied onto itself is kept and the copy fails", async () => {
+    using dir = setup("self");
+
+    expect(await cp(dir, "cp -R link .")).toEqual({
+      // The error names the source path, which the builtin on Windows holds back as
+      // a possible EBUSY and then reports without failing the command (#37943).
+      exitCode: isWindows ? 0 : 1,
+      stderr: `cp: Invalid argument: ${at(dir, "link")}\n`,
+    });
+    expect(entry(at(dir, "link"))).toEqual({ isLink: true, reads: "new" });
+  });
+
+  test("a link copied onto the file it points at keeps the file and the copy fails", async () => {
+    using dir = setup("target");
+
+    expect(await cp(dir, "cp -R link new.txt")).toEqual({
+      exitCode: 1,
+      stderr: `cp: Invalid argument: ${at(dir, "new.txt")}\n`,
+    });
+    expect(entry(at(dir, "new.txt"))).toEqual({ isLink: false, reads: "new" });
+    expect(entry(at(dir, "link"))).toEqual({ isLink: true, reads: "new" });
+  });
+
+  test("a directory at the destination is kept and the copy fails", async () => {
+    using dir = setup("dir");
+    mkdirSync(at(dir, "dest", "link"));
+    writeFileSync(at(dir, "dest", "link", "keep.txt"), "keep");
+
+    expect(await cp(dir, "cp -R link dest")).toEqual({
+      exitCode: 1,
+      // unlink refuses a directory with EISDIR on Linux and EPERM elsewhere (libuv's on Windows included).
+      stderr: `cp: ${isLinux ? "Is a directory" : "Operation not permitted"}: ${at(dir, "dest", "link")}\n`,
+    });
+    expect(readFileSync(at(dir, "dest", "link", "keep.txt"), "utf8")).toBe("keep");
   });
 });
 

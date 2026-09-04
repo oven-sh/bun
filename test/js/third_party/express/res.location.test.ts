@@ -79,7 +79,7 @@ describe("res", function () {
       request(app).get("/").expect("Location", "[object%20Object]").expect(200, done);
     });
 
-    it.todo("should consistently handle non-string inputs: array", function (done) {
+    it("should consistently handle non-string inputs: array", function (done) {
       var app = express();
       app.use(function (req, res) {
         res.location([]).end();
@@ -88,7 +88,7 @@ describe("res", function () {
       request(app).get("/").expect("Location", "").expect(200, done);
     });
 
-    it.todo("should consistently handle empty string input", function (done) {
+    it("should consistently handle empty string input", function (done) {
       var app = express();
       app.use(function (req, res) {
         res.location("").end();

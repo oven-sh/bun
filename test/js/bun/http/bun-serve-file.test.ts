@@ -306,7 +306,7 @@ describe("Bun.file in serve routes", () => {
     });
   });
 
-  describe.todo("Range requests", () => {
+  describe.concurrent("Range requests", () => {
     it("supports partial content requests", async () => {
       const res = await fetch(new URL(`/hello.txt`, server.url), {
         headers: {
@@ -314,15 +314,10 @@ describe("Bun.file in serve routes", () => {
         },
       });
 
-      if (res.status === 206) {
-        expect(await res.text()).toBe("Hello");
-        expect(res.headers.get("Content-Range")).toMatch(/bytes 0-4\/13/);
-        expect(res.headers.get("Accept-Ranges")).toBe("bytes");
-      } else {
-        // If range requests aren't supported, should return full content
-        expect(res.status).toBe(200);
-        expect(await res.text()).toBe("Hello, World!");
-      }
+      expect(res.status).toBe(206);
+      expect(res.headers.get("Content-Range")).toBe("bytes 0-4/13");
+      expect(res.headers.get("Accept-Ranges")).toBe("bytes");
+      expect(await res.text()).toBe("Hello");
     });
 
     it("handles invalid range requests", async () => {
@@ -332,8 +327,9 @@ describe("Bun.file in serve routes", () => {
         },
       });
 
-      // Should either return 416 Range Not Satisfiable or 200 with full content
-      expect([200, 416]).toContain(res.status);
+      expect(res.status).toBe(416);
+      expect(res.headers.get("Content-Range")).toBe("bytes */13");
+      expect(await res.text()).toBe("");
     });
   });
 

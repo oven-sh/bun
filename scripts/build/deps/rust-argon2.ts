@@ -12,7 +12,7 @@ export const rustArgon2: Dependency = {
   name: "rust-argon2",
 
   source: () => ({
-    kind: "github-archive",
+    kind: "github",
     repo: "sru-systems/rust-argon2",
     commit: RUST_ARGON2_COMMIT,
   }),

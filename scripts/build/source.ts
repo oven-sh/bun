@@ -19,17 +19,20 @@
  * re-extraction after a failed patch doesn't re-download.
  */
 
-import { existsSync, mkdirSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, rmSync } from "node:fs";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import { ar, cc, cxx, nasm } from "./compile.ts";
 import type { BuildType, Config } from "./config.ts";
 import { assert } from "./error.ts";
-import { computeSourceIdentity, fetchCliPath } from "./fetch-cli.ts";
+import { gitArchiveUrl, githubArchiveUrl } from "./download.ts";
+import { assertManagedSource, fetchCliPath, fetchDep, sourceIsCurrent } from "./fetch-cli.ts";
 import { computeDepFlags } from "./flags.ts";
 import { writeIfChanged } from "./fs.ts";
 import type { Ninja } from "./ninja.ts";
 import { quote, quoteArgs, slash } from "./shell.ts";
 import { streamPath } from "./stream.ts";
+import { registerIcuRules } from "./deps/icu.ts";
+import { registerWebKitDirectRules } from "./deps/webkit-direct.ts";
 
 /**
  * If the source dir exists with a stale (or missing) identity stamp,
@@ -38,36 +41,25 @@ import { streamPath } from "./stream.ts";
  *
  * See emitFetch() comment for the full why.
  *
- * Only called for github-archive deps (via emitFetch). Local-mode deps
- * (WebKit) never go through here — their source is user-managed, we
- * never touch vendor/WebKit/. Identity is commit + patch-content, NOT
- * disk content, so hand-edits to vendor/<dep>/*.c are preserved (identity
- * still matches, no wipe).
+ * Only called for github deps (via emitFetch). Local-mode deps never go
+ * through here — their source is user-managed. Identity is commit + sparse
+ * set + patch-content, NOT disk content, so hand-edits to vendor/<dep>/*.c
+ * are preserved (identity still matches, no wipe).
  */
-function invalidateStaleSource(srcDir: string, refStamp: string, commit: string, patchPaths: string[]): void {
+function invalidateStaleSource(
+  name: string,
+  srcDir: string,
+  refStamp: string,
+  ref: string,
+  sparse: string[],
+  patchPaths: string[],
+): void {
   if (!existsSync(srcDir)) return;
-
-  const patchContents = patchPaths.map(p => {
-    try {
-      return readFileSync(p, "utf8");
-    } catch {
-      // Missing patch → identity won't match → wipe. The fetch will
-      // fail later with a clearer "patch file not found" error.
-      return "<missing>";
-    }
-  });
-  const expected = computeSourceIdentity(commit, patchContents);
-
-  let current = "";
-  try {
-    current = readFileSync(refStamp, "utf8").trim();
-  } catch {
-    // .ref missing but srcDir exists — can't verify what's there. Could
-    // be stale from a previous commit, could be a manual rm. Either way:
-    // untrusted, wipe.
-  }
-
-  if (current !== expected) {
+  assertManagedSource(name, srcDir, refStamp);
+  // .ref missing counts as stale: can't verify what's there (previous commit,
+  // manual rm) — untrusted, wipe. A missing patch file also mismatches; the
+  // fetch then fails with the clearer "patch file not found".
+  if (!sourceIsCurrent(srcDir, ref, sparse, patchPaths)) {
     rmSync(srcDir, { recursive: true, force: true });
   }
 }
@@ -81,17 +73,43 @@ function invalidateStaleSource(srcDir: string, refStamp: string, commit: string,
  */
 export type Source =
   | {
-      kind: "github-archive";
+      /**
+       * A commit of a GitHub repository, extracted into vendor/<name>/. Fetched
+       * as the `/archive/<commit>.tar.gz` tarball, or — when `sparse` is set —
+       * as a shallow, blobless, sparse `git fetch` of just those paths
+       * (download.ts gitArchive). Either way the result is a plain tree with a
+       * `.ref` identity stamp; no `.git`.
+       */
+      kind: "github";
       /** "owner/repo" */
       repo: string;
       /**
-       * Commit sha or tag. Both work for github archive URLs
-       * (`/archive/<ref>.tar.gz`). Prefer commit shas — tags can move,
-       * breaking the identity hash. If upstream only publishes tags
-       * (e.g. brotli `v1.1.0`), fine, but be aware a retag will silently
-       * change what we fetch.
+       * Commit sha or tag. Prefer commit shas — tags can move, breaking the
+       * identity hash. If upstream only publishes tags (e.g. brotli
+       * `v1.1.0`), fine, but be aware a retag will silently change what we
+       * fetch.
        */
       commit: string;
+      /**
+       * git sparse-checkout patterns (non-cone: gitignore syntax, `/`-anchored
+       * to the repo root). Only these paths are downloaded and extracted. For
+       * repositories where the build wants a small part of a large tree —
+       * GitHub refuses archive tarballs for those anyway (WebKit: HTTP 422).
+       * Part of the source identity: changing the set re-fetches.
+       */
+      sparse?: string[];
+    }
+  | {
+      /**
+       * A source release tarball at a fixed URL (one top-level directory,
+       * stripped on extraction), for upstreams that publish generated files
+       * only in their release tarballs (ICU: the prebuilt data package).
+       * Fetched, cached, patched and stamped exactly like a github archive.
+       */
+      kind: "tarball";
+      url: string;
+      /** Reported in process.versions / bun_dependency_versions.h. */
+      version: string;
     }
   | {
       /**
@@ -164,10 +182,49 @@ export type BuildSpec =
   | NestedCmakeBuild
   | CargoBuild
   | DirectBuild
+  | CustomBuild
   | {
       /** No build step — headers-only or prebuilt binaries. */
       kind: "none";
     };
+
+/**
+ * A dep whose graph is emitted by its own module (WebKit: codegen chain,
+ * three archives, two intermediate executables — more than DirectBuild
+ * describes). The emitter uses the same compile.ts primitives every other
+ * edge does; it just decides the shape itself. `includes` in the result are
+ * absolute; `provides.includes` is ignored for custom deps.
+ */
+export interface CustomBuild {
+  kind: "custom";
+  /**
+   * The source tree must be on disk at CONFIGURE time (the emitter reads
+   * file lists out of it). configure fetches it before emitting — see
+   * prefetchConfigureSources.
+   */
+  needsSourceAtConfigure: true;
+  /** Absolute paths of the archives `emit` produces — the cpp-only → link-only artifact contract (computeDepLibs). */
+  libs: (cfg: Config) => string[];
+  emit: (n: Ninja, cfg: Config, ctx: CustomBuildContext) => CustomBuildResult;
+}
+
+export interface CustomBuildResult {
+  libs: string[];
+  /** Absolute include dirs for consumers (replaces provides.includes). */
+  includes: string[];
+  /** The "headers are ready" signal for consumers' compiles (see ResolvedDep.outputs). */
+  outputs: string[];
+  /** See ResolvedDep.extras. */
+  extras?: string[];
+}
+
+export interface CustomBuildContext {
+  srcDir: string;
+  /** Stamps to order every edge after — this dep's source stamp plus the `fetchDeps` outputs. */
+  ready: string[];
+  /** Deps resolved before this one (allDeps order) — for linking test executables against them. */
+  resolved: ReadonlyMap<string, ResolvedDep>;
+}
 
 /** A source file with extra per-file flags (e.g. SIMD `-mavx2`). */
 export interface DirectSource {
@@ -469,7 +526,7 @@ export interface Dependency {
    * source stamp for header-only). Order-only on configure, implicit on
    * build. Does NOT link the other dep's libs (that's `provides.libs`).
    */
-  fetchDeps?: string[];
+  fetchDeps?: string[] | ((cfg: Config) => string[]);
 
   /** How to build. */
   build: (cfg: Config) => BuildSpec;
@@ -486,7 +543,7 @@ export interface Dependency {
   /**
    * Macro name suffix for `bun_dependency_versions.h` — becomes
    * `BUN_VERSION_<macro>`. The value is derived from
-   * `source(cfg)`: `github-archive.commit`, `prebuilt.identity`, etc.
+   * `source(cfg)`: `github.commit`, `prebuilt.identity`, etc.
    *
    * Omit for deps that shouldn't appear in `process.versions` (e.g.
    * nodejs-headers — they're build-time only). The naming is constrained
@@ -534,6 +591,12 @@ export interface ResolvedDep {
    * otherwise bun.ts's archive or link.
    */
   checks: string[];
+  /**
+   * Extra artifacts the dep produces that ship next to bun but that nothing
+   * in bun's graph consumes (WebKit's testFFI executable, run by the test
+   * suite). Added to the default targets so a plain build produces them.
+   */
+  extras: string[];
 }
 
 // ───────────────────────────────────────────────────────────────────────────
@@ -544,6 +607,8 @@ export interface ResolvedDep {
  * Register ninja rules shared by all deps. Call once before any resolveDep().
  */
 export function registerDepRules(n: Ninja, cfg: Config): void {
+  registerWebKitDirectRules(n, cfg);
+  registerIcuRules(n, cfg);
   // Shell quoting: tool/script paths may contain spaces (e.g. cargo
   // in "C:\Program Files\Rust\..."). quote() passes through safe paths
   // unchanged so there's no cost on the common case. Host shell syntax
@@ -563,12 +628,13 @@ export function registerDepRules(n: Ninja, cfg: Config): void {
   // terminal directly. Deps run 4-at-a-time, every line streams live.
   const stream = `${cfg.jsRuntime} ${q(streamPath)} $name`;
 
-  // Fetch: downloads github archive tarball, extracts, patches, writes .ref.
-  // The command encodes: name, repo, commit, dest path, cache path, and patch
-  // files. If any of those change, the ninja command string changes, and ninja
-  // re-runs fetch. The fetch script is also an implicit input.
+  // Fetch: downloads a source tree (archive tarball, release tarball, or
+  // sparse git fetch), extracts, patches, writes .ref. The command encodes:
+  // name, url, identity ref, dest path, cache path, and patch files. If any
+  // of those change, the ninja command string changes, and ninja re-runs
+  // fetch. The fetch script is also an implicit input.
   n.rule("dep_fetch", {
-    command: `${stream} ${cfg.jsRuntime} ${fetchCli} dep $name $repo $commit $dest $cache $patches`,
+    command: `${stream} ${cfg.jsRuntime} ${fetchCli} dep $name $url $ref $dest $cache $patches`,
     description: "fetch $name",
     restat: true,
     pool: "dep",
@@ -740,8 +806,8 @@ export function depBuildDir(cfg: Config, name: string): string {
 
 /**
  * The dep's source, with `--local-deps` applied: a dep named there is
- * redirected from its pinned github-archive tarball to the local checkout.
- * Only github-archive sources can be redirected — prebuilt/in-tree deps
+ * redirected from its pinned github commit to the local checkout.
+ * Only github sources can be redirected — prebuilt/in-tree deps
  * have their own switches (e.g. `--webkit=local`).
  */
 export function depSource(cfg: Config, dep: Dependency): Source {
@@ -749,15 +815,58 @@ export function depSource(cfg: Config, dep: Dependency): Source {
   const localPath = cfg.localDeps[dep.name];
   if (localPath === undefined) return source;
   assert(
-    source.kind === "github-archive",
-    `--local-deps: ${dep.name} has a ${source.kind} source; only github-archive deps can be redirected`,
+    source.kind === "github" || source.kind === "tarball",
+    `--local-deps: ${dep.name} has a ${source.kind} source; only fetched (github/tarball) deps can be redirected`,
     dep.name === "WebKit" ? { hint: "Use --webkit=local (and $BUN_WEBKIT_PATH) for WebKit" } : {},
   );
   return {
     kind: "local",
     path: localPath,
-    hint: `--local-deps points ${dep.name} at ${localPath} — clone ${source.repo} there`,
+    hint: `--local-deps points ${dep.name} at ${localPath} — put ${source.kind === "github" ? `a clone of ${source.repo}` : `the extracted ${source.url}`} there`,
   };
+}
+
+/** What the fetch machinery needs from a fetchable source: the URL to get and the identity seed. */
+function fetchSpec(source: Extract<Source, { kind: "github" | "tarball" }>): {
+  url: string;
+  ref: string;
+  sparse: string[];
+} {
+  if (source.kind === "tarball") return { url: source.url, ref: source.url, sparse: [] };
+  const sparse = source.sparse ?? [];
+  return {
+    url:
+      sparse.length > 0
+        ? gitArchiveUrl(source.repo, source.commit, sparse)
+        : githubArchiveUrl(source.repo, source.commit),
+    // The commit alone seeds github identities (so adding this field changed no stamp).
+    ref: source.commit,
+    sparse,
+  };
+}
+
+/**
+ * Fetch, at configure time, the source of every dep whose graph can only be
+ * described with the tree on disk (CustomBuild.needsSourceAtConfigure —
+ * WebKit's file lists live in its own CMakeLists/Sources.txt). Same fetch,
+ * same identity stamp as the ninja `dep_fetch` edge, which is still emitted
+ * and is then a no-op; this just runs it early. A no-op itself when the stamp
+ * already matches, so the always-configure cost stays a stat.
+ */
+export async function prefetchConfigureSources(cfg: Config, deps: readonly Dependency[]): Promise<void> {
+  for (const dep of deps) {
+    if (dep.enabled && !dep.enabled(cfg)) continue;
+    const source = depSource(cfg, dep);
+    if (source.kind !== "github" && source.kind !== "tarball") continue;
+    const build = dep.build(cfg);
+    if (build.kind !== "custom" || !build.needsSourceAtConfigure) continue;
+    const srcDir = depSourceDir(cfg, dep.name);
+    const patches = dep.patches === undefined ? [] : typeof dep.patches === "function" ? dep.patches(cfg) : dep.patches;
+    const patchPaths = patches.map(p => resolve(cfg.cwd, p));
+    const { url, ref, sparse } = fetchSpec(source);
+    if (sourceIsCurrent(srcDir, ref, sparse, patchPaths)) continue;
+    await fetchDep(dep.name, url, ref, srcDir, resolve(cfg.cacheDir, "tarballs"), patchPaths);
+  }
 }
 
 /**
@@ -831,11 +940,11 @@ export function resolveDep(
 
   // ─── Step 1: source acquisition ───
   // Emits a ninja node producing the "source is ready" stamp.
-  // For github-archive: this runs fetchCli which downloads/extracts/patches.
+  // For github: this runs fetchCli which downloads/extracts/patches.
   // For local/in-tree: source is already on disk; we use a sentinel file
   //   (CMakeLists.txt) as the stamp. Editing it → reconfigure.
   let sourceStamp: string | undefined;
-  if (source.kind === "github-archive") {
+  if (source.kind === "github" || source.kind === "tarball") {
     sourceStamp = emitFetch(n, cfg, dep.name, source, patches, [...resolvedSources, ...directSources]);
   } else {
     // Local/in-tree: no .ref to write. Use the build system's manifest file
@@ -849,6 +958,9 @@ export function resolveDep(
     let stampFile: string;
     if (buildSpec.kind === "nested-cmake") {
       stampDir = buildSpec.sourceSubdir ? resolve(srcDir, buildSpec.sourceSubdir) : srcDir;
+      stampFile = "CMakeLists.txt";
+    } else if (buildSpec.kind === "custom") {
+      stampDir = srcDir;
       stampFile = "CMakeLists.txt";
     } else if (buildSpec.kind === "cargo") {
       stampDir = resolve(srcDir, buildSpec.manifestDir);
@@ -881,7 +993,8 @@ export function resolveDep(
   // On BUILD: implicit. If the cross-dep rebuilds (commit bump), its
   //   headers may have changed; our .o files track them via the inner
   //   ninja's .d files. Restat prunes downstream when nothing changed.
-  const fetchDepStamps = (dep.fetchDeps ?? []).flatMap(d => {
+  const fetchDeps = typeof dep.fetchDeps === "function" ? dep.fetchDeps(cfg) : (dep.fetchDeps ?? []);
+  const fetchDepStamps = fetchDeps.flatMap(d => {
     const r = resolved.get(d);
     assert(r, `${dep.name}: fetchDeps references '${d}' but it wasn't resolved first — fix allDeps ordering`);
     return r.outputs;
@@ -892,6 +1005,8 @@ export function resolveDep(
   let objects: string[] = [];
   let outputs: string[];
   let checks: string[] = [];
+  let customIncludes: string[] | undefined;
+  let extras: string[] = [];
 
   if (buildSpec.kind === "nested-cmake") {
     const result = emitNestedCmake(n, cfg, dep.name, buildSpec, {
@@ -919,6 +1034,13 @@ export function resolveDep(
     // that's the generated headers + source stamp, NOT the .o files (those
     // are link inputs, not include-order dependencies).
     outputs = result.headerOutputs;
+  } else if (buildSpec.kind === "custom") {
+    assert(sourceStamp !== undefined, `${dep.name}: custom build needs a fetched or local source tree`);
+    const result = buildSpec.emit(n, cfg, { srcDir, ready: [sourceStamp, ...fetchDepStamps], resolved });
+    libs = result.libs;
+    outputs = result.outputs;
+    customIncludes = result.includes;
+    extras = result.extras ?? [];
   } else {
     // No build step. The fetch stamp (if any) is the only output. For deps
     // with provides.sources (picohttpparser), emitBun adds a phony pointing
@@ -935,7 +1057,7 @@ export function resolveDep(
   // Includes CAN be absolute — for deps whose headers land in the BUILD dir
   // (generated during configure), the `provides` function computes absolute
   // paths itself using `depBuildDir()`. Relative paths resolve against srcDir.
-  const includes = provides.includes.map(inc => {
+  const includes = (customIncludes ?? provides.includes).map(inc => {
     if (isAbsolute(inc)) return inc;
     return inc === "." ? srcDir : resolve(srcDir, inc);
   });
@@ -949,6 +1071,7 @@ export function resolveDep(
     sources: resolvedSources,
     outputs,
     checks,
+    extras,
   };
 }
 
@@ -1012,6 +1135,8 @@ export function computeDepLibs(cfg: Config, dep: Dependency): string[] {
     return [resolve(buildDir, `${cfg.libPrefix}${dep.name}${cfg.libSuffix}`)];
   }
 
+  if (buildSpec.kind === "custom") return buildSpec.libs(cfg);
+
   // none: no libs (header-only or directly-compiled sources).
   return [];
 }
@@ -1027,13 +1152,14 @@ function emitFetch(
   n: Ninja,
   cfg: Config,
   name: string,
-  source: Extract<Source, { kind: "github-archive" }>,
+  source: Extract<Source, { kind: "github" | "tarball" }>,
   patches: string[],
   compiledSources: string[],
 ): string {
   const srcDir = depSourceDir(cfg, name);
   const refStamp = resolve(srcDir, ".ref");
   const patchPaths = patches.map(p => resolve(cfg.cwd, p));
+  const { url, ref, sparse } = fetchSpec(source);
 
   // ─── Preemptive stale-source cleanup ───
   // If vendor/<dep>/ exists but .ref is missing OR doesn't match the
@@ -1049,7 +1175,7 @@ function emitFetch(
   //
   // Only deletes when identity is demonstrably wrong — normal no-op
   // builds skip it (identity matches, nothing touched).
-  invalidateStaleSource(srcDir, refStamp, source.commit, patchPaths);
+  invalidateStaleSource(name, srcDir, refStamp, ref, sparse, patchPaths);
 
   n.build({
     outputs: [refStamp],
@@ -1064,8 +1190,9 @@ function emitFetch(
     implicitInputs: [fetchCliPath, ...patchPaths],
     vars: {
       name,
-      repo: source.repo,
-      commit: source.commit,
+      // Quoted: a sparse git URL carries gitignore-syntax patterns (`*`, `!`).
+      url: quote(url, cfg.host.os === "windows"),
+      ref: quote(ref, cfg.host.os === "windows"),
       dest: srcDir,
       cache: resolve(cfg.cacheDir, "tarballs"),
       // Pass patches space-separated. Shell-safe because patch paths are
@@ -1140,6 +1267,7 @@ function emitPrebuilt(
     libs,
     objects: [],
     checks: [],
+    extras: [],
     includes,
     defines: provides.defines ?? [],
     sources: [],

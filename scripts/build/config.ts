@@ -22,7 +22,8 @@ export type Arch = "x64" | "aarch64";
 export type Abi = "gnu" | "musl" | "android";
 export type BuildType = "Debug" | "Release" | "RelWithDebInfo" | "MinSizeRel";
 export type BuildMode = "full" | "cpp-only" | "rust-only" | "link-only" | "rust-and-link" | "archive-link";
-export type WebKitMode = "prebuilt" | "local";
+/** How WebKit (JavaScriptCore) is obtained — see deps/webkit.ts. */
+export type WebKitMode = "prebuilt" | "source" | "local";
 /** The package manager for the package.json files the build installs. */
 export type PackageManager = "bun" | "npm";
 
@@ -1078,9 +1079,9 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
         });
       }
     }
-    if (partial.webkit === "local") {
-      throw new BuildError("Cross-compiling for Windows requires the prebuilt WebKit (webkit=local needs msbuild)", {
-        hint: "Drop --webkit=local or build on a Windows host.",
+    if (partial.webkit !== undefined && partial.webkit !== "prebuilt") {
+      throw new BuildError(`Cross-compiling for Windows requires --webkit=prebuilt (got ${partial.webkit})`, {
+        hint: "Building WebKit for Windows from a non-Windows host is not wired up yet: local mode builds ICU with msbuild, source mode only targets ELF so far.",
       });
     }
     const llvmArch = arch === "x64" ? "x86_64" : "aarch64";

@@ -10,6 +10,8 @@ import { existsSync, globSync, mkdirSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { globAllSources } from "../glob-sources.ts";
 import { type BunOutput, bunExeName, emitBun, shouldStrip, validateBunConfig } from "./bun.ts";
+import { allDeps } from "./deps/index.ts";
+import { prefetchConfigureSources } from "./source.ts";
 import { generateCargoConfig } from "./cargo-config.ts";
 import {
   type Config,
@@ -321,6 +323,11 @@ export async function configure(input: ConfigureInput): Promise<ConfigureResult>
   const n = new Ninja({ buildDir: cfg.buildDir });
   registerAllRules(n, cfg);
   emitGeneratorRule(n, cfg, input);
+  // Deps whose graph is described from their own tree (WebKit's file lists)
+  // need that tree before emitBun can enumerate edges. No-op once fetched.
+  await prefetchConfigureSources(cfg, allDeps);
+  mark("prefetchConfigureSources");
+
   const output = emitBun(n, cfg, sources);
   mark("emitBun");
 
@@ -336,6 +343,7 @@ export async function configure(input: ConfigureInput): Promise<ConfigureResult>
     const targets = [defaultTarget, "check"];
     if (output.dsym !== undefined) targets.push(n.rel(output.dsym));
     for (const stamp of output.uploadStamps ?? []) targets.push(n.rel(stamp));
+    for (const dep of output.deps) targets.push(...dep.extras.map(e => n.rel(e)));
     n.default(targets);
   }
 

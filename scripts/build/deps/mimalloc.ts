@@ -19,7 +19,7 @@ export const mimalloc: Dependency = {
   versionMacro: "MIMALLOC",
 
   source: () => ({
-    kind: "github-archive",
+    kind: "github",
     repo: "oven-sh/mimalloc",
     commit: MIMALLOC_COMMIT,
   }),

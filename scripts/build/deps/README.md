@@ -58,7 +58,7 @@ git clone https://github.com/oven-sh/mimalloc ~/code/mimalloc
 bun bd --local-deps=mimalloc=~/code/mimalloc test foo.test.ts
 ```
 
-Any `github-archive` dep the graph compiles or includes can be redirected
+Any `github` dep the graph compiles or includes can be redirected
 (so not lolhtml or rust-argon2, which cargo reads from `vendor/` via the workspace
 `Cargo.toml` — point that path at your checkout instead); several at once
 with `name=path,name=path`. Cross-dep references (`depSourceDir()`, e.g.
@@ -80,14 +80,16 @@ change. WebKit has its own switch (`--webkit=local`).
 export const mydep: Dependency = {
   name: "mydep",
 
-  // Source tarball. Fetched from GitHub's archive endpoint (no git history,
-  // just the files at `commit`). Most deps use this.
+  // A GitHub commit (no git history, just the files at `commit`). Fetched
+  // from GitHub's archive endpoint, or — with `sparse: ["/dir/", ...]` —
+  // as a sparse git fetch of only those paths (WebKit `--webkit=source`:
+  // GitHub won't serve archives of a repo that size, and JSC is ~3% of it).
+  // Most deps use this.
   //
   // Other kinds: `prebuilt` (download pre-compiled .a, e.g. WebKit default),
-  // `local` (user-managed checkout — WebKit declares it because its clone is
-  // too slow to automate; any github-archive dep becomes one via
-  // `--local-deps`, see below), `in-tree` (source in src/).
-  source: () => ({ kind: "github-archive", repo: "owner/repo", commit: "..." }),
+  // `local` (user-managed checkout — WebKit `--webkit=local`; any github dep
+  // becomes one via `--local-deps`, see below), `in-tree` (source in src/).
+  source: () => ({ kind: "github", repo: "owner/repo", commit: "..." }),
 
   // Optional: macro name for bun_dependency_versions.h (process.versions).
   // Omit if this dep shouldn't appear there.

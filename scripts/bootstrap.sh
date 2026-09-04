@@ -1139,6 +1139,9 @@ install_build_essentials() {
 
 	case "$os" in
 		linux)
+			# ruby/perl/python3: JavaScriptCore's code generators (offlineasm,
+			# create_hash_table, builtins/inspector scripts). zstd: trains the
+			# dictionary for the ICU data package (scripts/build/icu-data.ts).
 			install_packages \
 				make \
 				nasm \
@@ -1146,6 +1149,7 @@ install_build_essentials() {
 				libtool \
 				ruby \
 				perl \
+				zstd \
 			;;
 	esac
 

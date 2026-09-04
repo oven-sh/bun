@@ -22,7 +22,7 @@ export const tinycc: Dependency = {
   enabled: cfg => cfg.tinycc,
 
   source: () => ({
-    kind: "github-archive",
+    kind: "github",
     repo: "oven-sh/tinycc",
     commit: TINYCC_COMMIT,
   }),

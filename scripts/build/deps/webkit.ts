@@ -8,19 +8,23 @@ export const WEBKIT_VERSION = "40e43a82a755af3cc9eb4a4e025e4e020a7a3cfd";
 /**
  * WebKit (JavaScriptCore) — the JS engine.
  *
- * Two modes via `cfg.webkit`:
+ * Three modes via `cfg.webkit`:
  *
  * **prebuilt**: Download tarball from oven-sh/WebKit releases. Tarball name
  *   encodes {os, arch, musl, debug|lto, asan} — each is a separate ABI.
  *   ASAN MUST match bun's setting: WTF::Vector layout changes with ASAN
  *   (see WTF/Vector.h:682), so mixing → silent memory corruption.
  *
- * **local**: Source at `vendor/WebKit/`, or `$BUN_WEBKIT_PATH` if set. User
- *   clones manually (clone takes 10+ min — too slow for the build system
- *   to do). Set `BUN_WEBKIT_PATH` to share one clone across worktrees. We
- *   cmake it like any other dep. Headers land in the BUILD dir (generated
- *   during configure), which is why `provides.includes` returns absolute
- *   paths.
+ * **source**: The build fetches WEBKIT_VERSION into `vendor/WebKit/` like any
+ *   other dep — a sparse git fetch of just Source/{bmalloc,WTF,JavaScriptCore}
+ *   (~35 MB over the wire instead of a 12 GB clone) — and compiles it in our
+ *   own ninja graph, no cmake: webkit-direct.ts. Generated headers land in
+ *   the BUILD dir.
+ *
+ * **local**: WebKit's own cmake build (nested) over a checkout you manage:
+ *   `$BUN_WEBKIT_PATH` if set, else `vendor/WebKit/`. Never fetched or
+ *   stamped; the inner build re-runs every time so your edits are picked up.
+ *   For working on JSC itself with WebKit's own tooling.
  *
  * ## Implementation notes
  *
@@ -45,6 +49,8 @@ import type { Config } from "../config.ts";
 import { computeCpuTargetFlags } from "../flags.ts";
 import { slash } from "../shell.ts";
 import { type Dependency, type NestedCmakeBuild, type Source, depBuildDir, depSourceDir } from "../source.ts";
+import { buildsIcu } from "./icu.ts";
+import { emitWebKitDirect, webKitDirectLibs } from "./webkit-direct.ts";
 
 // ───────────────────────────────────────────────────────────────────────────
 // Prebuilt URL computation
@@ -168,11 +174,18 @@ function localIcuLibs(cfg: Config): string[] {
 }
 
 /**
- * WebKit source dir for local mode. Defaults to vendor/WebKit; override via
- * $BUN_WEBKIT_PATH to share one clone across worktrees.
+ * The part of the WebKit tree `source` mode fetches (git sparse-checkout
+ * patterns, anchored at the repo root): the three libraries webkit-direct.ts
+ * builds, whose CMakeLists.txt/Sources.txt it also reads for file lists.
+ */
+const sourceSparse = ["/Source/bmalloc/", "/Source/WTF/", "/Source/JavaScriptCore/"];
+
+/**
+ * WebKit source dir for source/local mode. vendor/WebKit, except local mode
+ * follows $BUN_WEBKIT_PATH so one clone can serve every worktree.
  */
 function webkitSrcDir(cfg: Config): string {
-  const env = process.env.BUN_WEBKIT_PATH;
+  const env = cfg.webkit === "local" ? process.env.BUN_WEBKIT_PATH : undefined;
   if (!env) return depSourceDir(cfg, "WebKit");
   // Shells don't expand ~ inside quotes; handle it here so a quoted export works.
   if (env === "~" || env.startsWith("~/") || env.startsWith("~\\")) return join(homedir(), env.slice(1));
@@ -188,6 +201,9 @@ function webkitSrcDir(cfg: Config): string {
 export const webkit: Dependency = {
   name: "WebKit",
   versionMacro: "WEBKIT",
+  // source mode compiles against the mimalloc bun links (USE_EXTERNAL_MIMALLOC)
+  // and, off macOS, the ICU built by deps/icu.ts.
+  fetchDeps: cfg => (cfg.webkit === "source" ? ["mimalloc", ...(buildsIcu(cfg) ? ["icu"] : [])] : []),
 
   source: cfg => {
     if (cfg.webkit === "prebuilt") {
@@ -207,9 +223,11 @@ export const webkit: Dependency = {
       return src;
     }
 
-    // Local: user clones manually (clone takes 10+ min — the one thing the
-    // build system doesn't automate). Once cloned, we cmake it like any
-    // other dep. resolveDep()'s local-mode assert gives a clear "clone it
+    if (cfg.webkit === "source") {
+      return { kind: "github", repo: "oven-sh/WebKit", commit: cfg.webkitVersion, sparse: sourceSparse };
+    }
+
+    // Local: resolveDep()'s local-mode assert gives a clear "clone it
     // yourself" error if missing.
     const env = process.env.BUN_WEBKIT_PATH;
     return {
@@ -217,7 +235,7 @@ export const webkit: Dependency = {
       path: webkitSrcDir(cfg),
       hint: env
         ? `$BUN_WEBKIT_PATH is set to '${env}' but that path does not contain a WebKit checkout`
-        : "Clone oven-sh/WebKit to vendor/WebKit/, or set $BUN_WEBKIT_PATH to an existing clone (useful for worktrees)",
+        : "Clone oven-sh/WebKit to vendor/WebKit/ or set $BUN_WEBKIT_PATH to an existing clone — or pass --webkit=source to have the build fetch the pinned commit",
     };
   },
 
@@ -226,7 +244,11 @@ export const webkit: Dependency = {
       return { kind: "none" };
     }
 
-    // Local: nested cmake, target=jsc.
+    if (cfg.webkit === "source") {
+      return { kind: "custom", needsSourceAtConfigure: true, libs: webKitDirectLibs, emit: emitWebKitDirect };
+    }
+
+    // Local: nested cmake over the user's checkout, target=jsc.
     //
     // CMAKE_C_FLAGS/CMAKE_CXX_FLAGS: overrides the global dep flags source.ts
     // would otherwise pass — WebKit's cmake sets its own -O/-g/sanitizer
@@ -325,6 +347,8 @@ export const webkit: Dependency = {
       // never being suppressed there.
       ...(cfg.abi !== "android" ? { CMAKE_POSITION_INDEPENDENT_CODE: "OFF" } : {}),
       PORT: "JSCOnly",
+      // Tools/ is TestWebKitAPI and friends — nothing the jsc target needs.
+      ENABLE_TOOLS: "OFF",
       ENABLE_STATIC_JSC: "ON",
       USE_THIN_ARCHIVES: "OFF",
       ENABLE_FTL_JIT: "ON",
@@ -406,6 +430,11 @@ export const webkit: Dependency = {
       if (!cfg.darwin) includes.push("include/wtf/unicode");
 
       return { libs, includes };
+    }
+
+    if (cfg.webkit === "source") {
+      // webkit-direct.ts reports libs and include dirs itself (CustomBuild).
+      return { libs: [], includes: [] };
     }
 
     // Local: paths relative to BUILD dir (headers generated during build).

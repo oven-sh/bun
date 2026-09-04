@@ -53,7 +53,7 @@ export const cares: Dependency = {
   versionMacro: "C_ARES",
 
   source: () => ({
-    kind: "github-archive",
+    kind: "github",
     repo: "c-ares/c-ares",
     commit: CARES_COMMIT,
   }),

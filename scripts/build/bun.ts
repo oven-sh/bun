@@ -37,7 +37,7 @@ import { allDeps } from "./deps/index.ts";
 import { lolhtml } from "./deps/lolhtml.ts";
 import { rustArgon2 } from "./deps/rust-argon2.ts";
 import { assert } from "./error.ts";
-import { bunIncludes, computeFlags, extraFlagsFor, linkDepends, linkerMapOutputs } from "./flags.ts";
+import { bunIncludes, computeFlags, linkDepends, linkerMapOutputs, systemLibs, extraFlagsFor } from "./flags.ts";
 import { writeIfChanged } from "./fs.ts";
 import type { BuildNode, Ninja } from "./ninja.ts";
 import { emitRust, rustLibPath } from "./rust.ts";
@@ -54,73 +54,6 @@ import { generateUnifiedSources } from "./unified.ts";
 // Re-exported for existing importers (configure.ts, ci.ts). These live
 // in config.ts now so flags.ts can use bunExeName without circular import.
 export { bunExeName, shouldStrip };
-
-/**
- * System libraries to link. Platform-dependent.
- */
-function systemLibs(cfg: Config): string[] {
-  const libs: string[] = [];
-
-  if (cfg.linux) {
-    if (cfg.abi === "android") {
-      // bionic: pthread/dl/rt are folded into libc; no separate libatomic
-      // (compiler-rt builtins). -llog for __android_log_*.
-      libs.push("-lc", "-lm", "-llog");
-    } else {
-      libs.push("-lc", "-lpthread", "-ldl");
-      // libatomic: static by default (CI distros ship it), dynamic on Arch-like.
-      // The static path needs to be the actual file path for lld to find it;
-      // dynamic uses -l syntax. We emit what CMake does: bare libatomic.a gets
-      // found in lib search paths, -latomic.so doesn't exist so we use -latomic.
-      if (cfg.staticLibatomic) {
-        libs.push("-l:libatomic.a");
-      } else {
-        libs.push("-latomic");
-      }
-    }
-    // Linux local WebKit: link system ICU (prebuilt bundles its own).
-    // Assumes system ICU is in default lib paths — true on most distros.
-    // Android: no system ICU; the local WebKit build must bundle it.
-    if (cfg.webkit === "local" && cfg.abi !== "android") {
-      libs.push("-licudata", "-licui18n", "-licuuc");
-    }
-  }
-
-  if (cfg.darwin) {
-    // icucore: system ICU framework.
-    // resolv: DNS resolution (getaddrinfo et al).
-    libs.push("-licucore", "-lresolv");
-  }
-
-  if (cfg.freebsd) {
-    // pthread/m: explicit on FreeBSD (not folded into libc).
-    // execinfo: backtrace() — separate library on FreeBSD.
-    // kvm/procstat/elf: process introspection for node:os and crash handler.
-    // libutil (openpty) is linked statically: its soname bumped .so.9 → .so.10
-    // between 14.x and 15.0, so a dynamic NEEDED entry from the 14.3 sysroot
-    // fails to load on 15.x (#40530). Every other lib here kept its soname.
-    libs.push("-lc", "-lpthread", "-lm", "-lexecinfo", "-lkvm", "-lprocstat", "-lelf", "-l:libutil.a");
-  }
-
-  if (cfg.windows) {
-    // Explicit .lib: these go after /link so no auto-suffixing by the
-    // clang-cl driver. lld-link auto-appends .lib but link.exe doesn't;
-    // explicit is portable.
-    libs.push(
-      "winmm.lib",
-      "bcrypt.lib",
-      "ntdll.lib",
-      "userenv.lib",
-      "dbghelp.lib",
-      "crypt32.lib",
-      "wsock32.lib", // ws2_32 + wsock32 — wsock32 has TransmitFile (sendfile equiv)
-      "ws2_32.lib",
-      "delayimp.lib", // required for /delayload: in release
-    );
-  }
-
-  return libs;
-}
 
 // ───────────────────────────────────────────────────────────────────────────
 // Main orchestration
@@ -478,7 +411,7 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
     // lolhtml) aren't in depHeaderSignal, so the archive doesn't pull them
     // transitively — but link-only still needs them uploaded.
     if (cfg.mode === "cpp-only") {
-      n.phony("bun", [archive, ...depLibs, ...uploadStamps]);
+      n.phony("bun", [archive, ...depLibs, ...deps.flatMap(d => d.extras), ...uploadStamps]);
       n.default(["bun"]);
       return { archive, deps, codegen, rustObjects, objects: allObjects };
     }

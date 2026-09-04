@@ -25,7 +25,8 @@ This directory generates `build.ninja`. The scripts **describe** the build; ninj
 - `direct` — list the dep's sources explicitly; each becomes a first-class `cc`/`cxx` edge in our graph and the `.o`s go straight into bun's link. The default for the C/C++ deps (zlib, zstd, boringssl, libarchive, mimalloc, …). Skips a sub-process configure entirely and lets LTO see across the dep boundary.
 - `nested-cmake` — invoke the dep's own cmake configure + build as ninja edges. For deps whose build is too entangled to list by hand. Flags forwarded via `-DCMAKE_C_FLAGS`; cmake's own dependency tracking handles incrementality inside.
 - `cargo` — invoke cargo build (lolhtml, rust-argon2). Cargo's incremental build is reliable; `restat = 1` keeps our downstream no-ops fast.
-- `prebuilt` — skip build entirely, download compiled `.a`/`.lib` (WebKit, nodejs-headers).
+- `custom` — the dep's own module emits the graph with the same `cc`/`cxx`/`pch`/`ar`/`link` primitives (WebKit `--webkit=source`: `deps/webkit-direct.ts` reads JSC/WTF/bmalloc file lists out of WebKit's CMakeLists via `cmake-lists.ts`, emits the ruby/python codegen and the LLInt extractor chain, and archives three libs). The tree is fetched at configure time because the graph is described from it.
+- `prebuilt` — skip build entirely, download compiled `.a`/`.lib` (WebKit default, nodejs-headers).
 
 The `dep` pool (depth 4) throttles concurrent nested cmake/cargo sub-builds so they don't oversubscribe cores.
 
@@ -123,7 +124,7 @@ Tables: `cpuTargetFlags` (`-march`/`-mcpu`/`-mtune` — also forwarded to local 
 
 **Bump a dependency** — edit the `commit` in `scripts/build/deps/<name>.ts`. See `deps/README.md` for adding/removing deps.
 
-**Iterate on a dependency from a local checkout** — `bun bd --local-deps=mimalloc=~/code/mimalloc …` builds that dep from the clone instead of the pinned tarball (no fetch, no patches; edits rebuild incrementally). Any `github-archive` dep the graph compiles (not lolhtml or rust-argon2 — cargo reads those via `Cargo.toml`); details in `deps/README.md`.
+**Iterate on a dependency from a local checkout** — `bun bd --local-deps=mimalloc=~/code/mimalloc …` builds that dep from the clone instead of the pinned tarball (no fetch, no patches; edits rebuild incrementally). Any `github` dep the graph compiles (not lolhtml or rust-argon2 — cargo reads those via `Cargo.toml`); details in `deps/README.md`.
 
 **Add a codegen step** — add a function in `codegen.ts` following the shape of `emitErrorCode` (simple) or `emitCppBind` (needs file-list input). Call it from `emitCodegen()` and add outputs to the right `CodegenOutputs` group (`rustInputs` if the Rust build reads it (the `include!`d generated `.rs` files) — `cppSources` if it's a `.cpp` to compile, `cppAll` if it's a header).
 
@@ -188,6 +189,7 @@ Split CI modes: `rust-only` (path deps+codegen+cargo → libbun_runtime.a), `cpp
 | `compile.ts`                   | `cc`/`cxx`/`pch`/`link`/`ar` + `registerCompileRules()`                                                                 |
 | `unified.ts`                   | WebKit-style unified-source bundling, `generateUnifiedSources()`                                                        |
 | `source.ts`                    | `Dependency` types, `resolveDep()`, fetch/configure/build emission                                                      |
+| `cmake-lists.ts`               | Minimal CMake evaluator — reads `set`/`list`/`if` source lists out of a dep's CMakeLists (WebKit direct build)          |
 | `codegen.ts`                   | Code generation steps, `emitCodegen()`, `CodegenOutputs`                                                                |
 | `rust.ts`                      | `cargo build` step, `emitRust()`, `rustLibPath()`, cross-compile matrix                                                 |
 | `cargo-config.ts`              | Generates the git-ignored `.cargo/config.toml` (per-target `linker` from `cfg.hostCxx`)                                 |
@@ -211,12 +213,13 @@ Split CI modes: `rust-only` (path deps+codegen+cargo → libbun_runtime.a), `cpp
 | `clean.ts`                     | `bun run clean` preset-based cleanup                                                                                    |
 | `glob-sources.ts` (parent dir) | Source glob patterns + CLI to print them                                                                                |
 | `deps/*.ts`                    | One `Dependency` object per vendored dep                                                                                |
+| `deps/webkit-direct.ts`        | `--webkit=source`: JSC/WTF/bmalloc codegen + compile graph; `deps/webkit-config-header.ts` is its `cmakeconfig.h`        |
 | `deps/index.ts`                | `allDeps` array — fetch order + link order                                                                              |
 | `shims/*.c`                    | Platform workaround sources                                                                                             |
 
 ## Key types
 
-**`Dependency`** (`source.ts`) — `{name, source, patches?, fetchDeps?, build, provides, enabled?, versionMacro?}`. The `source`/`build`/`provides` fields are functions of `Config` so they vary per-target. `Source` variants: `github-archive`, `local`, `in-tree`, `prebuilt`. `BuildSpec` variants covered in Goals above.
+**`Dependency`** (`source.ts`) — `{name, source, patches?, fetchDeps?, build, provides, enabled?, versionMacro?}`. The `source`/`build`/`provides` fields are functions of `Config` so they vary per-target. `Source` variants: `github` (archive tarball, or sparse git fetch when `sparse` is set), `local`, `in-tree`, `prebuilt`. `BuildSpec` variants covered in Goals above.
 
 **`Ninja`** — Accumulates rules/builds/pools/defaults, emits `build.ninja`. All paths given absolute; converted to buildDir-relative at write time.
 

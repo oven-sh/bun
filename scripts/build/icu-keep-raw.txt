@@ -1,0 +1,53 @@
+# ICU data items that stay UNCOMPRESSED because decompressing them on first
+# use would be too expensive: either the item itself is large (>~100 KB → ms-
+# scale decode), it's loaded by JSC/VM init, or it's shared by every call to a
+# subsystem (root/pool/DUCET). Everything not matched here is per-item zstd'd
+# and decompressed on first lookup by Bun's bun_icu_maybe_decompress.
+
+# Unicode property tries / normalization — JSC init (lexer, regex \p{}) and
+# String.normalize/URL IDNA read these.
+*.icu
+*.nrm
+
+# Shared string pools — every locale bundle in a tree references its tree's
+# pool, so compressing these would add ~100-150 us to the first call of each
+# tree's API regardless of locale.
+*/pool.res
+pool.res
+
+# en-locale and root format patterns — Date.toString() and Intl.*("en") path.
+root.res
+en.res
+en_*.res
+
+# ko.res is the one locale-pattern file large enough (70 KB) to decode in
+# ~100 us; the next-largest (ff_Adlm, zh, ru) are <40 KB and stay compressed.
+ko.res
+
+# Supplemental tables — touched by Date / Intl.Locale / DateTimeFormat /
+# NumberFormat construction across many locales.
+supplementalData.res
+zoneinfo64.res
+metaZones.res
+timezoneTypes.res
+windowsZones.res
+numberingSystems.res
+plurals.res
+pluralRanges.res
+dayPeriods.res
+genderList.res
+metadata.res
+units.res
+langInfo.res
+keyTypeData.res
+
+# Collation: the DUCET root table is opened by every Intl.Collator (573 KB,
+# ~0.8 ms decode); the CJK tailorings are the only per-locale ones >100 KB.
+coll/ucadata.icu
+coll/root.res
+coll/zh.res
+coll/ko.res
+coll/ja.res
+
+# Segmentation dictionaries — cjdict alone is 2 MB (~1.9 ms decode).
+brkitr/*.dict

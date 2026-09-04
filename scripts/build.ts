@@ -589,7 +589,7 @@ Options:
   --<field>=<value>       Override a config field. Boolean fields take
                           on/off/true/false/yes/no/1/0.
                           Fields: asan, lto, assertions, logs, baseline,
-                                  canary, valgrind, webkit (prebuilt|local),
+                                  canary, valgrind, webkit (prebuilt|source|local),
                                   local-deps (name=path[,name=path] — build a
                                   vendored dep from a local checkout),
                                   package-manager (bun|npm, installs the

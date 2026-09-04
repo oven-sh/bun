@@ -229,6 +229,13 @@ test("invalid format string lists the accepted values", () => {
 const weird = [
   ["rgb(-255, 0, 0)", "#000"],
   ["rgb(256, 0, 0)", "red"],
+  // Negative components that print in exponent form or round to -1 used to come out with two
+  // minus signs ("lab(50% --5e-8 0)"), which no CSS parser, including Bun.color, accepts.
+  ["lab(50% -0.00000005 0)", "lab(50% -5e-8 0)"],
+  ["lch(50% 10 -0.0000001)", "lch(50% 10 -1e-7)"],
+  ["color(srgb 0 -0.000000192523 1)", "color(srgb 0 -1.92523e-7 1)"],
+  ["color(display-p3 -0.9999999 0 0)", "color(display-p3 -1 0 0)"],
+  ["lab(50% -0.5 0)", "lab(50% -.5 0)"],
 ];
 describe("weird", () => {
   test.each(weird)("color(%s, 'css') === %s", (input, expected) => {
@@ -537,6 +544,18 @@ describe("css string output parses back to the same color", () => {
     expect(components).toHaveLength(3);
     for (let i = 0; i < 3; i++) {
       expect(components[i]).toBeCloseTo((reference as number[])[i], 1);
+    }
+  });
+
+  test("tiny negative components round-trip", () => {
+    for (const input of [
+      "lab(50% -0.00000005 0)",
+      "lch(50% 10 -0.0000001)",
+      "color(srgb 0 -0.000000192523 1)",
+      "color(display-p3 -0.9999999 0 0)",
+    ]) {
+      const css = color(input, "css") as string;
+      expect(color(css, "css")).toBe(css);
     }
   });
 

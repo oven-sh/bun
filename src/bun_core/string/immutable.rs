@@ -1681,22 +1681,6 @@ pub fn trim_leading_char(slice: &[u8], char: u8) -> &[u8] {
     b""
 }
 
-/// Trim leading pattern of 2 bytes
-///
-/// e.g.
-/// `trim_leading_pattern2("abcdef", 'a', 'b') == "cdef"`
-pub fn trim_leading_pattern2(slice_: &[u8], byte1: u8, byte2: u8) -> &[u8] {
-    let mut slice = slice_;
-    while slice.len() >= 2 {
-        if slice[0] == byte1 && slice[1] == byte2 {
-            slice = &slice[2..];
-        } else {
-            break;
-        }
-    }
-    slice
-}
-
 /// prefix is of type &[u8] or &[u16]
 pub fn trim_prefix_comptime<'a, T: crate::NoUninit + Eq>(
     buffer: &'a [T],

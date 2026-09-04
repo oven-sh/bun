@@ -129,6 +129,17 @@ Ref<SourceProvider> SourceProvider::create(
 
     auto provider = getProvider();
 
+    // The source text is freed when the GC drops the last reference to this provider
+    // (executables, code blocks, VM::sourceProviderCacheMap until the next full GC), so it
+    // has to count as allocation like a JSString's StringImpl does. Otherwise modules whose
+    // JS footprint is tiny next to their source (require() + delete require.cache in a
+    // loop) never request a collection and one copy of the source piles up per load.
+    // cost() reports a StringImpl once and is 0 for static strings. Builtins live as long
+    // as the VM, so reporting them would only be pressure with nothing to reclaim.
+    if (!isBuiltin) {
+        globalObject->vm().heap.deprecatedReportExtraMemory(provider->m_source->cost());
+    }
+
     if (shouldGenerateCodeCoverage) {
         BunString providerURL = Bun::toString(provider->sourceURL());
         WTF::String providerSourceString = provider->source().toStringWithoutCopying();

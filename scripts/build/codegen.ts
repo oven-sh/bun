@@ -706,14 +706,14 @@ function emitHostExports({ n, cfg, sources, o, dirStamp }: Ctx): void {
 
   n.build({
     outputs: [output],
-    rule: "codegen_bun",
+    rule: "codegen",
     inputs: [script],
     implicitInputs: rsInputs,
     orderOnlyInputs: [dirStamp],
     vars: {
       cwd: cfg.cwd,
       desc: "generated_host_exports.rs",
-      args: shJoin(cfg, ["run", script, cfg.codegenDir]),
+      args: shJoin(cfg, [script, cfg.codegenDir]),
     },
   });
 

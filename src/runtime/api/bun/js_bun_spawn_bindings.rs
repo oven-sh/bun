@@ -364,7 +364,7 @@ fn spawn_maybe_sync(
     let mut socket_fd_indices: Vec<usize> = Vec::new();
     let mut argv0: Option<*const c_char> = None;
     let mut ipc_channel: i32 = -1;
-    let mut timeout: Option<i32> = None;
+    let mut timeout: Option<i64> = None;
     let mut uid: Option<u32> = None;
     let mut gid: Option<u32> = None;
     let mut kill_signal: SignalCode = SignalCode::DEFAULT;
@@ -735,7 +735,7 @@ fn spawn_maybe_sync(
                             }
                         }
 
-                        let timeout_int = global_this.validate_integer_range::<u64>(
+                        let timeout_int = global_this.validate_integer_range::<i64>(
                             timeout_value,
                             0,
                             bun_sql_jsc::jsc::IntegerRange {
@@ -745,10 +745,7 @@ fn spawn_maybe_sync(
                             },
                         )?;
                         if timeout_int > 0 {
-                            timeout = Some(
-                                i32::try_from((timeout_int as u32) & 0x7FFF_FFFF)
-                                    .expect("int cast"),
-                            );
+                            timeout = Some(timeout_int);
                         }
                     }
                 }
@@ -1617,7 +1614,7 @@ fn spawn_maybe_sync(
         // This must go before other things happen so that the exit handler is
         // registered before onProcessExit can potentially be called.
         if let Some(timeout_val) = timeout {
-            let ts = Timespec::ms_from_now(TimespecMockMode::ForceRealTime, i64::from(timeout_val));
+            let ts = Timespec::ms_from_now(TimespecMockMode::ForceRealTime, timeout_val);
             // Note: `EventLoopTimer.next` is a local-stub Timespec until
             // `bun_event_loop` switches to `bun_core::Timespec`; copy fieldwise.
             subprocess.event_loop_timer.with_mut(|t| {
@@ -1834,7 +1831,7 @@ fn spawn_maybe_sync(
         let mut absolute_timespec = Timespec::EPOCH;
         let mut now = Timespec::now(TimespecMockMode::ForceRealTime);
         let mut user_timespec: Timespec = if let Some(timeout_ms) = timeout {
-            now.add_ms(i64::from(timeout_ms))
+            now.add_ms(timeout_ms)
         } else {
             absolute_timespec
         };

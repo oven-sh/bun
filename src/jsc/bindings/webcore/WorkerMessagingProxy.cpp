@@ -205,20 +205,34 @@ void WorkerMessagingProxy::postMessageToWorkerGlobalScope(MessageWithMessagePort
         if (isClosingOrClosed())
             return;
         m_toWorker.queue.append(WTF::move(message));
+        if (!claimDrainToWorkerGlobalScope())
+            return;
     }
-    scheduleDrainToWorkerGlobalScope();
+    postDrainToWorkerGlobalScope();
 }
 
 void WorkerMessagingProxy::scheduleDrainToWorkerGlobalScope()
 {
     {
         Locker locker { m_toWorker.lock };
-        // Before Running the inbox is only buffered; workerGlobalScopeStarted() schedules the first
-        // drain. One drain task in flight at a time.
-        if (m_state.load() != State::Running || m_toWorker.queue.isEmpty() || m_toWorker.drainScheduled)
+        if (!claimDrainToWorkerGlobalScope())
             return;
-        m_toWorker.drainScheduled = true;
     }
+    postDrainToWorkerGlobalScope();
+}
+
+// Before Running the inbox is only buffered; workerGlobalScopeStarted() schedules the first drain.
+// One drain task in flight at a time.
+bool WorkerMessagingProxy::claimDrainToWorkerGlobalScope()
+{
+    if (m_state.load() != State::Running || m_toWorker.queue.isEmpty() || m_toWorker.drainScheduled)
+        return false;
+    m_toWorker.drainScheduled = true;
+    return true;
+}
+
+void WorkerMessagingProxy::postDrainToWorkerGlobalScope()
+{
     bool posted = ScriptExecutionContext::postTaskTo(m_workerContextIdentifier, BunLoopKind::Regular, [protectedThis = Ref { *this }](ScriptExecutionContext& context) {
         protectedThis->drainMessagesToWorkerGlobalScope(context);
     });
@@ -292,9 +306,8 @@ void WorkerMessagingProxy::rejectAllCrossVMRequests()
 // wait behind it. `UntilEmpty` is for the sender having exited: the queue is finite and everything
 // in it precedes 'close'. Worker inboxes never change owner, so up to a budget's worth is moved out
 // under one lock acquisition and dispatched uncontended; the queue itself is only swapped out whole
-// when it fits the budget, so a continuation never has to hand a tail back — except when the
-// receiver pauses (its last 'message' listener is removed mid-drain): the undelivered rest of the
-// batch goes back in front of the queue and the drain stops until a listener re-schedules it.
+// when it fits the budget, so a continuation never has to hand a tail back. A receiver that pauses
+// mid-batch (its last 'message' listener removed) puts the undelivered rest back in front.
 enum class DrainBudget { Bounded,
     UntilEmpty };
 static constexpr size_t drainBatchLimit = 1024;
@@ -362,8 +375,7 @@ void WorkerMessagingProxy::drainMessagesToWorkerGlobalScope(ScriptExecutionConte
 {
     auto& globalObject = *defaultGlobalObject(context.globalObject());
     auto& target = globalObject.globalEventScope.get();
-    // The worker's implicit port delivers only while the global scope has a 'message' listener, as a
-    // MessagePort (and Node's parentPort) does: without one the messages stay queued, and the first
+    // Delivers only while the global scope has a 'message' listener, as a MessagePort does; the next
     // listener added re-schedules this drain (GlobalEventScope::onDidChangeListenerImpl).
     auto paused = [&] { return !target.hasEventListeners(eventNames().messageEvent); };
     bool more = drainInbox(m_toWorker, globalObject, context, DrainBudget::Bounded, paused, [&](Event& event) {

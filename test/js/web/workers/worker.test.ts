@@ -446,6 +446,7 @@ describe("web worker", () => {
       const got: unknown[] = [];
       const done = Promise.withResolvers<void>();
       w.onerror = e => done.reject(e.error ?? e.message);
+      w.addEventListener("close", e => done.reject(new Error(`worker closed (${e.code}) with ${JSON.stringify(got)}`)));
       w.onmessage = e => {
         if (e.data === "started") return post(w, onStarted);
         got.push(e.data);
@@ -734,7 +735,7 @@ describe("web worker", () => {
              let n = 0; (function pump(){ while (n < 16) { n++; readFile(\${JSON.stringify(process.argv[1])}, () => { n--; setImmediate(pump) }) } })();
              postMessage("busy")\`;
            const url = URL.createObjectURL(new Blob([src]));
-           for (let r = 0; r < ${isDebug ? 3 : 12}; r++) await Promise.all(Array.from({ length: 4 }, (_, i) => new Promise(res => {
+           for (let r = 0; r < 12; r++) await Promise.all(Array.from({ length: 4 }, (_, i) => new Promise(res => {
              const w = new Worker(url); w.addEventListener("close", res); w.onmessage = () => setTimeout(() => w.terminate(), (r + i) % 10) })));
            console.log("PASS");`,
           path.join(String(dir), "f.bin"),

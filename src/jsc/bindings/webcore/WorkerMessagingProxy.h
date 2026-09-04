@@ -100,7 +100,7 @@ public:
     // -- WorkerObjectProxy / WorkerReportingProxy (worker thread) ---------------------------------
     // Before the entry point loads: posts 'online' to the parent, as node does before user code.
     void workerThreadStarted();
-    // The entry point has evaluated: Pending -> Running, queued tasks and messages are delivered.
+    // The entry point has evaluated: Pending -> Running, queued tasks run and the inbox may drain.
     void workerGlobalScopeStarted(Zig::GlobalObject&);
     void postMessageToWorkerObject(MessageWithMessagePorts&&);
     void postErrorToWorkerObject(Zig::GlobalObject&, const String& message, JSC::JSValue error);
@@ -128,6 +128,8 @@ private:
     void workerGlobalScopeDestroyedInternal(int32_t exitCode, bool stoppedByParent);
     void releaseWorkerThread();
     void drainMessagesToWorkerObject(ScriptExecutionContext&, DrainBudget);
+    bool claimDrainToWorkerGlobalScope() WTF_REQUIRES_LOCK(m_toWorker.lock);
+    void postDrainToWorkerGlobalScope();
     void rejectAllCrossVMRequests();
     void postMessageErrorToWorkerObject(String&& message);
     bool postSerializedErrorToWorkerObject(Zig::GlobalObject&, JSC::JSValue error);
@@ -161,5 +163,8 @@ private:
     MessageInbox m_toWorker;
     MessageInbox m_toParent;
 };
+
+// The proxy of the worker whose global scope runs on `bunVM`'s thread, or null on the main thread.
+extern "C" WorkerMessagingProxy* WebWorker__getMessagingProxy(void* bunVM);
 
 } // namespace WebCore

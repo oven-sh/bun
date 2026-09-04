@@ -144,9 +144,6 @@ void Worker::dispatchCloseEvent(Event& event)
 // ---- Worker-thread side: hooks the native thread object calls, and the script-facing functions that
 //      run inside a worker (parentPort.postMessage, workerData, receiveMessageOnPort, ...).
 
-// The proxy of the worker whose global scope runs on `bunVM`'s thread, or null on the main thread.
-extern "C" WorkerMessagingProxy* WebWorker__getMessagingProxy(void* bunVM);
-
 // The entry module just finished (or failed) its top-level evaluation. Flush the worker_threads
 // hub's deferred cross-thread deliveries: node's bootstrap runs the synchronous CJS main before any
 // port delivery, so a routed message must not observe "no listeners" while the entry that registers

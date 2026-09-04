@@ -9,8 +9,6 @@
 
 namespace WebCore {
 
-extern "C" WorkerMessagingProxy* WebWorker__getMessagingProxy(void* bunVM);
-
 WTF_MAKE_TZONE_ALLOCATED_IMPL(GlobalEventScope);
 
 void GlobalEventScope::onDidChangeListenerImpl(EventTarget& self, const AtomString& eventType, OnDidChangeListenerKind kind)

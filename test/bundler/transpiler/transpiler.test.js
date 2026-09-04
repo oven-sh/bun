@@ -5257,6 +5257,38 @@ it("does not duplicate the branch when simplifying an unused ternary with a comm
   expect(transpiler.transformSync("(f(), g()) ? h() : 1;").trim()).toBe("f(), g() && h();");
 });
 
+describe("simplifying an unused ternary with a comma test drops the comma operands that have no side effects", () => {
+  const transpiler = new Bun.Transpiler({ loader: "js" });
+
+  // Hoisting the comma operands out of the ternary ("(a, b) ? f() : 0" => "a, b && f()")
+  // leaves them unused, so the ones without side effects go away in the same pass.
+  // `u`, `b` and `c` are never declared, so reading them can throw and they must stay.
+  it.each([
+    ["let a = 1, b = 2; (a, b) ? f() : 0;", "let a = 1, b = 2;\nb && f();"],
+    ["let a = 1, b = 2; (a, b) ? 0 : f();", "let a = 1, b = 2;\nb || f();"],
+    ["(0, b) ? f() : 0;", "b && f();"],
+    ["(0, b) ? 0 : f();", "b || f();"],
+    ["(0, 1, b) ? f() : 0;", "b && f();"],
+    ["(0, (1, b)) ? f() : 0;", "b && f();"],
+    ["([0], { x: 1 }, b) ? 0 : f();", "b || f();"],
+    ["(0, b) ? (1, f()) : 0;", "b && f();"],
+    ["(g(), 0, b) ? f() : 0;", "g(), b && f();"],
+    ["(0, g(), b) ? f() : 0;", "g(), b && f();"],
+    ["(0, (g(), b)) ? f() : 0;", "g(), b && f();"],
+    ["(u, b) ? f() : 0;", "u, b && f();"],
+    ["(0, b, c) ? f() : 0;", "b, c && f();"],
+    ["[(0, b) ? f() : 0];", "b && f();"],
+    ["!((0, b) ? f() : 0);", "b && f();"],
+    ["(0, b) ? ((1, c) ? f() : 0) : 0;", "b && c && f();"],
+    ["let a = 1, b = 2, c = 3; a && ((b, c) ? f() : 0);", "let a = 1, b = 2, c = 3;\na && (c && f());"],
+  ])("%s", (input, expected) => {
+    const output = transpiler.transformSync(input).trim();
+    expect(output).toBe(expected);
+    // The output is fully simplified: transpiling it again prints it unchanged.
+    expect(transpiler.transformSync(output).trim()).toBe(expected);
+  });
+});
+
 describe("arrow function parsing after const declaration (scope mismatch bug)", () => {
   const transpiler = new Bun.Transpiler({ loader: "tsx" });
 

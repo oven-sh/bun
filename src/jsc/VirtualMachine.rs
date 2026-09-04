@@ -1346,10 +1346,8 @@ impl VirtualMachine {
     }
 
     pub fn is_event_loop_alive(&self) -> bool {
-        let el = self.event_loop_shared();
         self.is_event_loop_alive_excluding_immediates()
-            || !el.immediate_tasks.is_empty()
-            || !el.next_immediate_tasks.is_empty()
+            || self.event_loop_shared().has_pending_immediates()
     }
 
     pub fn wakeup(&mut self) {

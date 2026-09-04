@@ -348,7 +348,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 self.visit_expr_in_out(
                     &mut val,
                     ExprIn {
-                        is_immediately_assigned_to_decl: true,
+                        // Only the identifier unwrap below consumes the marker this requests.
+                        is_immediately_assigned_to_decl: matches!(
+                            decl.binding.data,
+                            BData::BIdentifier(_)
+                        ),
                         ..Default::default()
                     },
                 );

@@ -1382,11 +1382,7 @@ pub struct Options<'a> {
 }
 
 impl<'a> Options<'a> {
-    pub(crate) fn require_or_import_meta_for_source(
-        &self,
-        id: u32,
-        was_unwrapped_require: bool,
-    ) -> RequireOrImportMeta {
+    pub(crate) fn require_or_import_meta_for_source(&self, id: u32) -> RequireOrImportMeta {
         if self
             .require_or_import_meta_for_source_callback
             .ctx
@@ -1394,8 +1390,7 @@ impl<'a> Options<'a> {
         {
             return RequireOrImportMeta::default();
         }
-        self.require_or_import_meta_for_source_callback
-            .call(id, was_unwrapped_require)
+        self.require_or_import_meta_for_source_callback.call(id)
     }
 }
 
@@ -1471,7 +1466,6 @@ pub struct RequireOrImportMeta {
     pub wrapper_ref: Ref,
     pub exports_ref: Ref,
     pub is_wrapper_async: bool,
-    pub was_unwrapped_require: bool,
 }
 
 // Clone/Copy: bitwise OK — `ctx` is a non-owning opaque backref the caller
@@ -1479,12 +1473,12 @@ pub struct RequireOrImportMeta {
 #[derive(Clone, Copy)]
 pub struct RequireOrImportMetaCallback {
     pub(crate) ctx: Option<NonNull<()>>,
-    pub(crate) callback: fn(*mut (), u32, bool) -> RequireOrImportMeta,
+    pub(crate) callback: fn(*mut (), u32) -> RequireOrImportMeta,
 }
 
 impl Default for RequireOrImportMetaCallback {
     fn default() -> Self {
-        fn noop(_: *mut (), _: u32, _: bool) -> RequireOrImportMeta {
+        fn noop(_: *mut (), _: u32) -> RequireOrImportMeta {
             RequireOrImportMeta::default()
         }
         Self {
@@ -1497,28 +1491,20 @@ impl Default for RequireOrImportMetaCallback {
 /// PORTING.md §Dispatch — manual vtable. The erased thunk is monomorphized
 /// over `T: RequireOrImportMetaSource`, so `callback` stays a captureless `fn`.
 pub trait RequireOrImportMetaSource {
-    fn require_or_import_meta_for_source(
-        &mut self,
-        id: u32,
-        was_unwrapped_require: bool,
-    ) -> RequireOrImportMeta;
+    fn require_or_import_meta_for_source(&mut self, id: u32) -> RequireOrImportMeta;
 }
 
 impl RequireOrImportMetaCallback {
-    pub(crate) fn call(&self, id: u32, was_unwrapped_require: bool) -> RequireOrImportMeta {
-        (self.callback)(self.ctx.unwrap().as_ptr(), id, was_unwrapped_require)
+    pub(crate) fn call(&self, id: u32) -> RequireOrImportMeta {
+        (self.callback)(self.ctx.unwrap().as_ptr(), id)
     }
 
     pub fn init<T: RequireOrImportMetaSource>(ctx: &mut T) -> Self {
-        fn thunk<T: RequireOrImportMetaSource>(
-            p: *mut (),
-            id: u32,
-            was_unwrapped_require: bool,
-        ) -> RequireOrImportMeta {
+        fn thunk<T: RequireOrImportMetaSource>(p: *mut (), id: u32) -> RequireOrImportMeta {
             // SAFETY: `p` was constructed from `&mut T` in `init` below; caller guarantees
             // `ctx` outlives this `RequireOrImportMetaCallback`, so the cast-back
             // deref is valid and exclusive.
-            unsafe { (*p.cast::<T>()).require_or_import_meta_for_source(id, was_unwrapped_require) }
+            unsafe { (*p.cast::<T>()).require_or_import_meta_for_source(id) }
         }
         Self {
             // Type-erased to `*mut ()` and cast back to `*mut T` inside the thunk before dereference.
@@ -2012,7 +1998,6 @@ pub(crate) mod __gated_printer {
                 match statement {
                     None => self.print_require_or_import_expr(
                         import.import_record_index,
-                        false,
                         &[],
                         Expr::EMPTY,
                         Level::Lowest,
@@ -2033,7 +2018,6 @@ pub(crate) mod __gated_printer {
                         self.print_equals();
                         self.print_require_or_import_expr(
                             import.import_record_index,
-                            false,
                             &[],
                             Expr::EMPTY,
                             Level::Lowest,
@@ -2083,7 +2067,6 @@ pub(crate) mod __gated_printer {
                     match statement {
                         None => self.print_require_or_import_expr(
                             import.import_record_index,
-                            false,
                             &[],
                             Expr::EMPTY,
                             Level::Lowest,
@@ -2706,7 +2689,6 @@ pub(crate) mod __gated_printer {
         pub(crate) fn print_require_or_import_expr(
             &mut self,
             import_record_index: u32,
-            was_unwrapped_require: bool,
             leading_interior_comments: &[G::Comment],
             import_options: Expr,
             level_: Level,
@@ -2755,10 +2737,9 @@ pub(crate) mod __gated_printer {
             }
 
             if record.source_index.is_valid() {
-                let mut meta = self.options.require_or_import_meta_for_source(
-                    record.source_index.get(),
-                    was_unwrapped_require,
-                );
+                let mut meta = self
+                    .options
+                    .require_or_import_meta_for_source(record.source_index.get());
 
                 // Don't need the namespace object if the result is unused anyway
                 if flags.contains(ExprFlag::ExprResultIsUnused) {
@@ -2802,7 +2783,6 @@ pub(crate) mod __gated_printer {
                 // Internal "require()" or "import()"
                 let has_side_effects = meta.wrapper_ref.is_valid()
                     || meta.exports_ref.is_valid()
-                    || meta.was_unwrapped_require
                     || self.options.input_files_for_dev_server.is_some();
                 if record.kind == ImportKind::Dynamic {
                     self.print_space_before_identifier();
@@ -2835,7 +2815,7 @@ pub(crate) mod __gated_printer {
                     let path = &input_files[record.source_index.get() as usize].path;
                     self.print_string_literal_utf8(path.pretty, false);
                     self.print(b")");
-                } else if !meta.was_unwrapped_require {
+                } else {
                     // Call the wrapper
                     if meta.wrapper_ref.is_valid() {
                         self.print_space_before_identifier();
@@ -2870,10 +2850,6 @@ pub(crate) mod __gated_printer {
                         if wrap_with_to_cjs {
                             self.print(b")");
                         }
-                    }
-                } else {
-                    if !meta.exports_ref.is_empty() {
-                        self.print_symbol(meta.exports_ref);
                     }
                 }
 
@@ -3581,9 +3557,10 @@ pub(crate) mod __gated_printer {
                     }
                 }
                 ExprData::ERequireString(e) => {
+                    // An unwrapped require() is consumed by the parser's visit_decls, never printed.
+                    debug_assert!(e.unwrapped_id.is_none());
                     self.print_require_or_import_expr(
                         e.import_record_index,
-                        e.unwrapped_id.is_some(),
                         &[],
                         Expr::EMPTY,
                         level,
@@ -3651,7 +3628,6 @@ pub(crate) mod __gated_printer {
                     } else {
                         self.print_require_or_import_expr(
                             e.import_record_index,
-                            false,
                             &[], // e.leading_interior_comments,
                             e.options,
                             level,

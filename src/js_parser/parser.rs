@@ -1024,8 +1024,7 @@ pub struct ExprIn {
     /// tests.
     pub(crate) assign_target: js_ast::AssignTarget,
 
-    /// Currently this is only used when unwrapping a call to `require()`
-    /// with `__toESM()`.
+    /// Identifier-binding initializer; only used to unwrap `const x = require()` into an import.
     pub(crate) is_immediately_assigned_to_decl: bool,
 
     pub(crate) property_access_for_method_call_maybe_should_replace_with_undefined: bool,

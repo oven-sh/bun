@@ -163,7 +163,7 @@ function registerHoverProvider(context: vscode.ExtensionContext) {
       }, {
       provideHover(document, position) {
         const extracted = extractScriptsFromPackageJson(document);
-        if (!extracted) return;
+        if (!extracted) return undefined;
         const { scripts } = extracted;
 
         return {

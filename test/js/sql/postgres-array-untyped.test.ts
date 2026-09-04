@@ -238,4 +238,33 @@ describeWithContainer("untyped sql.array against postgres", { image: "postgres_p
     const [{ u }] = await sql`SELECT ${uuid}::uuid = ANY(${sql.array([uuid])}) AS u`;
     expect(u).toBe(true);
   });
+
+  // The JSON default returned an array here. With no context the server reads
+  // the parameter as text, so these queries need the type.
+  test("a query with no context needs the type", async () => {
+    await container.ready;
+    await using sql = connect();
+    const [row] = await sql`SELECT ${sql.array([1, 2])} AS untyped, ${sql.array([1, 2], "INT")} AS typed`;
+    expect({ untyped: row.untyped, typed: Array.from(row.typed) }).toEqual({ untyped: '{"1","2"}', typed: [1, 2] });
+    const error = await sql`SELECT unnest(${sql.array([1, 2])})`.catch(e => e);
+    expect(error.message).toBe("function unnest(unknown) is not unique");
+    const rows = await sql`SELECT unnest(${sql.array([1, 2], "INT")}) AS n`;
+    expect(rows.map(r => r.n)).toEqual([1, 2]);
+  });
+
+  // The JSON default JSON-encoded each string. Untyped, a string element
+  // reaches json_in as is, so json[] and jsonb[] columns need the type.
+  test("json[] and jsonb[] columns need the type for string elements", async () => {
+    await container.ready;
+    await using sql = connect();
+    const table = "array_untyped_" + Bun.randomUUIDv7("hex");
+    await sql`CREATE TEMPORARY TABLE ${sql(table)} (docs JSONB[], notes JSON[])`;
+    const [row] = await sql`INSERT INTO ${sql(table)} (docs, notes) VALUES (
+      ${sql.array([{ a: 1 }, 2, true, null])},
+      ${sql.array(["a", 'b"c'], "JSON")}
+    ) RETURNING docs, notes`;
+    expect(row).toEqual({ docs: [{ a: 1 }, 2, true, null], notes: ["a", 'b"c'] });
+    const error = await sql`INSERT INTO ${sql(table)} (docs) VALUES (${sql.array(["a"])})`.catch(e => e);
+    expect(error.message).toBe("invalid input syntax for type json");
+  });
 });

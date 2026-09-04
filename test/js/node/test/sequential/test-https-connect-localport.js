@@ -26,6 +26,12 @@ const assert = require('assert');
       family: 4,
       localPort: common.PORT,
       rejectUnauthorized: false,
+      // Upstream Node leaves the default keep-alive Agent in place, so the
+      // process idles until the server's keepAliveTimeout closes the socket
+      // (~6s in Node and in Bun). localPort binding is exercised identically
+      // with agent: false, so opt out of pooling and exit as soon as the
+      // assertions pass.
+      agent: false,
     }, common.mustCall(() => {
       assert.strictEqual(req.socket.localPort, common.PORT);
       assert.strictEqual(req.socket.remotePort, port);

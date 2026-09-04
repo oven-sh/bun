@@ -6,6 +6,8 @@ import {
   bunEnv,
   bunExe,
   bunEnv as env,
+  isAndroid,
+  isLinux,
   isWindows,
   joinP,
   normalizeBunSnapshot,
@@ -11378,5 +11380,38 @@ it.each([
     expect(tarballRequests).toEqual([]);
     expect(out).not.toContain("1 package installed");
     expect(exitCode).not.toBe(0);
+  });
+});
+
+// `--cwd` is staged in a PATH_MAX-sized buffer (4096 bytes on Linux and Android, 1024 on macOS and
+// the BSDs) before chdir. Values that did not leave room for the NUL terminator used to abort the
+// process; the buffer on Windows (~96 KiB) is larger than any command line, so only POSIX is affected.
+describe.concurrent.skipIf(isWindows)("--cwd that does not fit the path buffer", () => {
+  const PATH_MAX = isLinux || isAndroid ? 4096 : 1024;
+  const name = (length: number) => Buffer.alloc(length, "a").toString();
+
+  it.each([
+    ["install, PATH_MAX - 1 bytes (rejected by the kernel)", "install", name(PATH_MAX - 1)],
+    ["install, exactly PATH_MAX bytes", "install", name(PATH_MAX)],
+    ["install, longer than PATH_MAX", "install", name(PATH_MAX + 1000)],
+    ["install, ./ prefix longer than PATH_MAX", "install", "./" + name(PATH_MAX + 1000)],
+    ["add, longer than PATH_MAX", "add", name(PATH_MAX + 1000)],
+  ])("%s", async (_, subcommand, cwd) => {
+    using dir = tempDir("install-cwd-too-long", {
+      "package.json": JSON.stringify({ name: "foo", version: "0.0.1" }),
+    });
+
+    await using proc = spawn({
+      cmd: [bunExe(), subcommand, "--cwd", cwd, ...(subcommand === "add" ? ["bar"] : [])],
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+      env,
+    });
+    const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(err).toContain(`failed to change directory to "${cwd}": ENAMETOOLONG`);
+    expect(out).toBe("");
+    expect(exitCode).toBe(1);
   });
 });

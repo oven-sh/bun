@@ -138,10 +138,31 @@ impl Lazy {
                     'brk: {
                         #[cfg(unix)]
                         {
-                            let rc = open_as_nonblocking_tty(pl_fd.native(), sys::O::RDONLY);
+                            // libuv `uv_tty_init`: reopen the tty with the fd's
+                            // existing access mode so the fresh file description
+                            // keeps O_RDWR when the original had it, then `dup2`
+                            // it back onto the stdio fd. That leaves fd 0 itself
+                            // nonblocking without touching the file description
+                            // shared with the parent shell. Only stdin is swapped
+                            // in place; stdout/stderr readers keep using a
+                            // separate read-only fd so the write side's
+                            // blocking-tty contract on fd 1/2 is untouched and a
+                            // `> /dev/tty` (O_WRONLY) fd 1 still yields a
+                            // readable reopened fd.
+                            let accmode = if *pl_fd == Fd::stdin() {
+                                sys::get_fcntl_flags(*pl_fd)
+                                    .map(|f| f as i32 & sys::O::ACCMODE)
+                                    .unwrap_or(sys::O::RDONLY)
+                            } else {
+                                sys::O::RDONLY
+                            };
+                            let rc = open_as_nonblocking_tty(pl_fd.native(), accmode);
                             if rc > -1 {
                                 is_nonblocking = true;
                                 file.is_atty = Some(true);
+                                if *pl_fd == Fd::stdin() {
+                                    let _ = sys::dup2(Fd::from_native(rc), *pl_fd);
+                                }
                                 break 'brk Fd::from_native(rc);
                             }
                         }
@@ -227,6 +248,20 @@ impl Lazy {
             } else {
                 FileType::File
             };
+
+            // libuv `uv_pipe_open` / `uv_tty_init` set O_NONBLOCK on the adopted
+            // stdio fd. Node exposes that via `process.stdin`: once the stream
+            // is started, `fs.readSync(0, …)` returns EAGAIN instead of blocking
+            // (issue #5305). The tty path above already swapped in a nonblocking
+            // file description; this covers pipe/socket stdin and the tty
+            // fallback when reopening failed. Scoped to stdin so a
+            // `Bun.stdout.stream()` reader does not mutate fd 1/2. The startup
+            // O_NONBLOCK bit is restored in `bun_restore_stdio()`.
+            if fd == Fd::stdin() && this.pollable && !is_nonblocking {
+                if sys::set_nonblocking(fd).is_ok() {
+                    is_nonblocking = true;
+                }
+            }
 
             // pretend it's a non-blocking pipe if it's a TTY
             if is_nonblocking && this.file_type != FileType::Socket {

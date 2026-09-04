@@ -4514,7 +4514,8 @@ describe("fs/promises", () => {
   });
 
   it("writeFile", async () => {
-    const path = `${tmpdir()}/fs.test.ts/${Date.now()}.writeFile.txt`;
+    using dir = tempDir("fs-promises-writeFile", {});
+    const path = join(String(dir), "writeFile.txt");
     await writeFile(path, "File written successfully");
     expect(readFileSync(path, "utf8")).toBe("File written successfully");
   });

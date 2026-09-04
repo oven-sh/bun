@@ -1686,6 +1686,63 @@ impl Diff {
     }
 }
 
+#[cold]
+#[inline(never)]
+fn warn_linked_peer_dependencies(source: &bun_ast::Source, json: &Expr, bump: &bun_alloc::Arena) {
+    let Some(peer_deps) = json.as_property(b"peerDependencies") else {
+        return;
+    };
+    if peer_deps.expr.property_count() == 0 {
+        return;
+    }
+
+    let peer_meta = json.as_property(b"peerDependenciesMeta");
+    let linked_dir = source.path.name().dir;
+
+    let mut unresolved: Vec<(&[u8], &[u8], bool)> = Vec::new();
+    peer_deps.expr.for_each_property(|key, _loc, value| {
+        let installed = resolve_path::join_abs_string_z::<path::platform::Auto>(
+            linked_dir,
+            &[b"node_modules", key, b"package.json"],
+        );
+        if bun_sys::exists_z(installed) {
+            return;
+        }
+        let ver = value.as_utf8(bump).unwrap_or(b"");
+        let is_optional = peer_meta
+            .as_ref()
+            .and_then(|m| m.expr.as_property(key))
+            .and_then(|m| m.expr.as_property(b"optional"))
+            .map(|o| matches!(&o.expr.data, ExprData::EBoolean(b) if b.value))
+            .unwrap_or(false);
+        unresolved.push((bump.alloc_slice_copy(key), ver, is_optional));
+    });
+    if unresolved.is_empty() {
+        return;
+    }
+
+    let name = json
+        .as_property(b"name")
+        .and_then(|q| q.expr.as_utf8(bump))
+        .unwrap_or(b"");
+    bun_core::warn!(
+        "Linked package <b>\"{}\"<r> declares peerDependencies that may not resolve from this project:",
+        bstr::BStr::new(name),
+    );
+    for (key, ver, is_optional) in &unresolved {
+        bun_core::pretty_errorln!(
+            "  <d>-<r> {}<d>@{}{}<r>",
+            bstr::BStr::new(key),
+            bstr::BStr::new(ver),
+            if *is_optional { " (optional)" } else { "" },
+        );
+    }
+    bun_core::pretty_errorln!(
+        "  Linked packages resolve modules from their real location on disk. Install these peers in the linked package's own node_modules.",
+    );
+    Output::flush();
+}
+
 impl Package<u64> {
     pub fn parse<R: ResolverContext>(
         &mut self,
@@ -2309,6 +2366,13 @@ impl Package<u64> {
             }
             out
         };
+
+        // Symlinked packages realpath before node_modules lookup, so peers here are invisible; warn like pnpm.
+        if FEATURES == Features::LINK
+            && pm.options.log_level != crate::package_manager::LogLevel::Silent
+        {
+            warn_linked_peer_dependencies(source, &json, &bump);
+        }
 
         let mut workspace_names = workspace_map::WorkspaceMap::init();
 

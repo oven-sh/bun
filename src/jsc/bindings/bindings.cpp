@@ -4418,6 +4418,14 @@ JSC::EncodedJSValue JSC__JSValue__fromUInt64NoTruncate(JSC::JSGlobalObject* glob
     return JSC::JSValue::encode(JSC::JSBigInt::createFrom(globalObject, val));
 }
 
+// The unsigned BigInt (high << 64) | low. JSBigInt::createFrom(Int128) is
+// signed, so it cannot hold a value with the top bit set.
+JSC::EncodedJSValue JSC__JSValue__fromUInt128NoTruncate(JSC::JSGlobalObject* globalObject, uint64_t low, uint64_t high)
+{
+    const uint64_t words[2] = { low, high };
+    return JSC::JSValue::encode(JSC::JSBigInt::createFromWords(globalObject, words, false));
+}
+
 // Decimal integer literal (Latin-1) -> BigInt. Returns the empty value when
 // the text is not a valid StringToBigInt input.
 JSC::EncodedJSValue JSC__JSValue__bigIntFromLatin1(JSC::JSGlobalObject* globalObject, const uint8_t* ptr, size_t len)

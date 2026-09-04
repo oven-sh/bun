@@ -29,6 +29,13 @@ impl HashOutput for u64 {
     }
 }
 
+impl HashOutput for u128 {
+    #[inline]
+    fn to_js(self, global: &JSGlobalObject) -> JsResult<JSValue> {
+        JSValue::from_uint128_no_truncate(global, self)
+    }
+}
+
 trait HashAlgorithm {
     type Output: HashOutput;
     /// `seed` is always passed as u64 from JS; impls truncate to their native
@@ -120,6 +127,17 @@ impl HashAlgorithm for XxHash3 {
     }
 }
 
+struct XxHash128;
+impl HashAlgorithm for XxHash128 {
+    type Output = u128;
+    fn hash(seed: u64, input: &[u8]) -> u128 {
+        // XXH3_128bits_withSeed on the same SIMD kernel as XxHash3. The seed
+        // is the full u64, as in the reference. XxHash3 truncates its seed only
+        // to keep its older output. This function has no older output.
+        bun_highway::xxhash3_128(seed, input)
+    }
+}
+
 struct Murmur32v2;
 impl HashAlgorithm for Murmur32v2 {
     type Output = u32;
@@ -202,6 +220,11 @@ fn xx_hash3(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
 }
 
 #[bun_jsc::host_fn]
+fn xx_hash128(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+    hash_wrap::<XxHash128>(global, frame)
+}
+
+#[bun_jsc::host_fn]
 fn murmur32v2(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     hash_wrap::<Murmur32v2>(global, frame)
 }
@@ -236,6 +259,7 @@ pub(crate) fn create(global: &JSGlobalObject) -> JSValue {
             ("xxHash32", __jsc_host_xx_hash32, 1),
             ("xxHash64", __jsc_host_xx_hash64, 1),
             ("xxHash3", __jsc_host_xx_hash3, 1),
+            ("xxHash128", __jsc_host_xx_hash128, 1),
             ("murmur32v2", __jsc_host_murmur32v2, 1),
             ("murmur32v3", __jsc_host_murmur32v3, 1),
             ("murmur64v2", __jsc_host_murmur64v2, 1),

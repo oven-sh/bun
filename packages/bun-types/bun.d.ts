@@ -2883,6 +2883,13 @@ declare module "bun" {
     xxHash32: (data: string | ArrayBufferView | ArrayBuffer | SharedArrayBuffer, seed?: number) => number;
     xxHash64: (data: string | ArrayBufferView | ArrayBuffer | SharedArrayBuffer, seed?: bigint) => bigint;
     xxHash3: (data: string | ArrayBufferView | ArrayBuffer | SharedArrayBuffer, seed?: bigint) => bigint;
+    /**
+     * The 128-bit XXH3 hash (XXH128), as an unsigned bigint: `(high64 << 64n) | low64`.
+     * `hash.toString(16).padStart(32, "0")` gives the canonical hex digest.
+     *
+     * Bun reads `seed` as an unsigned 64-bit integer.
+     */
+    xxHash128: (data: string | ArrayBufferView | ArrayBuffer | SharedArrayBuffer, seed?: number | bigint) => bigint;
     murmur32v3: (data: string | ArrayBufferView | ArrayBuffer | SharedArrayBuffer, seed?: number) => number;
     murmur32v2: (data: string | ArrayBufferView | ArrayBuffer | SharedArrayBuffer, seed?: number) => number;
     murmur64v2: (data: string | ArrayBufferView | ArrayBuffer | SharedArrayBuffer, seed?: bigint) => bigint;

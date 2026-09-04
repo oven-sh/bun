@@ -1,4 +1,5 @@
 #include "BunClientData.h"
+#include "JSDOMException.h"
 #include "JSDOMURL.h"
 #include "JSDOMWrapper.h"
 #include "node/crypto/JSKeyObject.h"
@@ -559,7 +560,7 @@ static bool setSubset(JSC::JSGlobalObject* globalObject, JSC::MarkedArgumentBuff
     return true;
 }
 
-// Errors compare name/message/errors leniently: `undefined` (or an empty
+// Errors compare message/name/cause/errors leniently: `undefined` (or an empty
 // expected message) on the expected side is ignored. An own `cause` on the
 // expected error (even undefined) must exist on the actual error as well.
 static bool errorSubset(JSC::JSGlobalObject* globalObject, JSC::MarkedArgumentBuffer& gcBuffer, CycleState& cycles, JSC::ThrowScope& scope, JSValue actual, JSValue expected)
@@ -568,9 +569,10 @@ static bool errorSubset(JSC::JSGlobalObject* globalObject, JSC::MarkedArgumentBu
     JSC::JSObject* actualObject = actual.getObject();
     JSC::JSObject* expectedObject = expected.getObject();
 
-    const JSC::Identifier keys[3] = {
+    const JSC::Identifier keys[4] = {
         vm.propertyNames->message,
         vm.propertyNames->name,
+        vm.propertyNames->cause,
         JSC::Identifier::fromString(vm, "errors"_s),
     };
     for (const auto& key : keys) {
@@ -591,23 +593,14 @@ static bool errorSubset(JSC::JSGlobalObject* globalObject, JSC::MarkedArgumentBu
             return false;
     }
 
-    const JSC::Identifier causeIdentifier = JSC::Identifier::fromString(vm, "cause"_s);
     JSC::PropertySlot expectedCauseSlot(expectedObject, JSC::PropertySlot::InternalMethodType::GetOwnProperty);
-    bool expectedHasCause = expectedObject->methodTable()->getOwnPropertySlot(expectedObject, globalObject, causeIdentifier, expectedCauseSlot);
+    bool expectedHasCause = expectedObject->methodTable()->getOwnPropertySlot(expectedObject, globalObject, vm.propertyNames->cause, expectedCauseSlot);
     RETURN_IF_EXCEPTION(scope, false);
     if (expectedHasCause) {
         JSC::PropertySlot actualCauseSlot(actualObject, JSC::PropertySlot::InternalMethodType::GetOwnProperty);
-        bool actualHasCause = actualObject->methodTable()->getOwnPropertySlot(actualObject, globalObject, causeIdentifier, actualCauseSlot);
+        bool actualHasCause = actualObject->methodTable()->getOwnPropertySlot(actualObject, globalObject, vm.propertyNames->cause, actualCauseSlot);
         RETURN_IF_EXCEPTION(scope, false);
         if (!actualHasCause)
-            return false;
-        JSValue actualCause = actualObject->get(globalObject, causeIdentifier);
-        RETURN_IF_EXCEPTION(scope, false);
-        JSValue expectedCause = expectedObject->get(globalObject, causeIdentifier);
-        RETURN_IF_EXCEPTION(scope, false);
-        bool equal = compareBranch(globalObject, gcBuffer, cycles, scope, actualCause, expectedCause);
-        RETURN_IF_EXCEPTION(scope, false);
-        if (!equal)
             return false;
     }
     return objectSubset(globalObject, gcBuffer, cycles, scope, actual, expected);
@@ -755,6 +748,15 @@ static bool compareBranch(JSC::JSGlobalObject* globalObject, JSC::MarkedArgument
         if (actualURL.href() != expectedURL.href())
             return false;
         return withCycleGuard(globalObject, gcBuffer, cycles, scope, actual, expected, objectSubset);
+    }
+
+    // Not an ErrorInstance; kept ahead of and apart from the Error arm (node rejects DOMException vs Error).
+    const bool actualIsDOMException = actual.isCell() && actual.asCell()->inherits<WebCore::JSDOMException>();
+    const bool expectedIsDOMException = expected.isCell() && expected.asCell()->inherits<WebCore::JSDOMException>();
+    if (actualIsDOMException || expectedIsDOMException) {
+        if (!actualIsDOMException || !expectedIsDOMException)
+            return false;
+        return withCycleGuard(globalObject, gcBuffer, cycles, scope, actual, expected, errorSubset);
     }
 
     const bool actualIsError = actual.isCell() && actual.asCell()->inherits<JSC::ErrorInstance>();

@@ -197,32 +197,35 @@ describe("spyOn on accessor properties", () => {
       expect(obj.value).toBe(3);
     });
 
-    test("both sides of a prototype accessor restore by removing the own copy", () => {
-      class Box {
-        #size = 10;
-        get size() {
-          return this.#size;
-        }
-        set size(v: number) {
-          this.#size = v;
-        }
-      }
-      const box = new Box();
-      for (const order of ["get-first", "set-first"] as const) {
-        const getSpy = spyOn(box, "size", "get").mockReturnValue(1);
-        const setSpy = spyOn(box, "size", "set");
-        expect(Object.getOwnPropertyDescriptor(box, "size")).toBeDefined();
-        if (order === "get-first") {
-          getSpy.mockRestore();
-          setSpy.mockRestore();
-        } else {
-          setSpy.mockRestore();
-          getSpy.mockRestore();
-        }
-        expect(Object.getOwnPropertyDescriptor(box, "size")).toBeUndefined();
-        box.size = 5;
-        expect(box.size).toBe(5);
-      }
-    });
+    describe.each(["get-first", "set-first"] as const)(
+      "both sides of a prototype accessor restore by removing the own copy (%s)",
+      order => {
+        test("the own copy is gone after both restores", () => {
+          class Box {
+            #size = 10;
+            get size() {
+              return this.#size;
+            }
+            set size(v: number) {
+              this.#size = v;
+            }
+          }
+          const box = new Box();
+          const getSpy = spyOn(box, "size", "get").mockReturnValue(1);
+          const setSpy = spyOn(box, "size", "set");
+          expect(Object.getOwnPropertyDescriptor(box, "size")).toBeDefined();
+          if (order === "get-first") {
+            getSpy.mockRestore();
+            setSpy.mockRestore();
+          } else {
+            setSpy.mockRestore();
+            getSpy.mockRestore();
+          }
+          expect(Object.getOwnPropertyDescriptor(box, "size")).toBeUndefined();
+          box.size = 5;
+          expect(box.size).toBe(5);
+        });
+      },
+    );
   });
 });

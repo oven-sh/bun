@@ -172,6 +172,7 @@ unsafe extern "C" {
         message: BunString,
         err: JSValue,
     );
+    safe fn Bun__destroyEventNamesForThreadExit();
     safe fn Bun__freeSharedHeaderBufferForThreadExit();
     // Raw FFI (no RAII guard) so `thread_main` can take the API lock and abandon
     // it with the VM — see the note there.
@@ -1061,9 +1062,11 @@ impl WebWorker {
             // gone so its raw `transpiler.env` borrow is dead.
             drop(unsafe { bun_core::heap::take(env_loader) });
         }
-        // This thread's C++ thread_local destructors are not guaranteed to run
-        // before the process exits, so free the HPACK scratch buffer that any
-        // http2 session on this thread allocated.
+        // C++ is built with -fno-c++-static-destructors, so nothing a C++
+        // thread_local owns is freed when this thread returns: release the
+        // per-thread state script on this thread populated (the event-name
+        // atoms, any http2 session's HPACK scratch buffer) by hand.
+        Bun__destroyEventNamesForThreadExit();
         Bun__freeSharedHeaderBufferForThreadExit();
         drop(arena.take());
         log!(

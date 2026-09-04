@@ -428,9 +428,9 @@ static char* shared_header_buffer_get()
     return buffer.get();
 }
 
-// A Worker returns out of shutdown() instead of calling pthread_exit, and the process can exit
-// before its TLS destructors run, so the worker releases this explicitly at teardown. The getter
-// re-allocates on demand.
+// Bun compiles with -fno-c++-static-destructors, so the thread_local above is never destroyed when
+// a worker thread exits; the worker releases it explicitly at teardown (WebWorker::shutdown). The
+// getter re-allocates on demand.
 extern "C" void Bun__freeSharedHeaderBufferForThreadExit()
 {
     shared_header_buffer_slot().reset();

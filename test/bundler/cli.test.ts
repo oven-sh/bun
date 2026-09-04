@@ -849,6 +849,52 @@ describe("CLI argument error messages", () => {
     expect(stderr).toContain("key=value");
     expect(exitCode).toBe(1);
   });
+
+  // bunEnv sets BUN_FEATURE_FLAG_EXPERIMENTAL_BAKE, so --app is accepted by
+  // release builds too.
+  describe.concurrent("--app --target", () => {
+    const files = {
+      // `bun build --app` evaluates this file first, so the marker on stdout
+      // tells whether the build started at all.
+      "bun.app.ts": `console.log("config evaluated");\nexport default {};`,
+    };
+
+    test.each([
+      ["node", "Node"],
+      ["browser", "Browser"],
+    ])("--target=%s is rejected before the build starts", async (target, received) => {
+      using dir = tempDir("build-app-target-err", files);
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "build", "--app", `--target=${target}`, "bun.app.ts"],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout, stderr: normalizeBunSnapshot(stderr) }).toEqual({
+        stdout: "",
+        stderr: `error: target must be 'bun' when using --app. Received: ${received}`,
+      });
+      expect(exitCode).toBe(1);
+    });
+
+    test("--target=bun is accepted", async () => {
+      using dir = tempDir("build-app-target-bun", files);
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "build", "--app", "--target=bun", "bun.app.ts"],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      // The config above has no `app` section, so the build itself fails
+      // later on; this only checks that the target check let it start.
+      const [stdout, stderr] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).not.toContain("target must be 'bun'");
+      expect(stdout).toBe("config evaluated\n");
+    });
+  });
 });
 
 describe.concurrent("modules that fail to print", () => {

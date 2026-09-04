@@ -61,10 +61,8 @@ unsafe extern "C" {
     pub fn simdutf__utf8_length_from_latin1(input: *const u8, length: usize) -> usize;
 }
 
-/// Replaces simdutf's "unsupported" stub (every call returns 0 / false) with the
-/// least demanding compiled-in kernel. simdutf installs the stub when CPUID
-/// advertises none of the compiled-in feature sets, which happens under QEMU's
-/// default CPU model. Call once at process start, before any thread.
+/// Replaces simdutf's "unsupported" stub (every call returns 0 / false) with a
+/// compiled-in kernel. Call once at process start, before any thread.
 pub fn init() {
     simdutf__init();
 }

@@ -160,7 +160,7 @@ Bun.hash(arr.buffer);
 Bun.hash(new DataView(arr.buffer));
 ```
 
-The second parameter is an optional integer seed. For 64-bit hashes, pass seeds above `Number.MAX_SAFE_INTEGER` as BigInt to avoid loss of precision.
+The second parameter is an optional integer seed. For 64-bit hashes and `xxHash128`, pass seeds above `Number.MAX_SAFE_INTEGER` as BigInt to avoid loss of precision.
 
 ```ts
 Bun.hash("some data here", 1234);

@@ -226,11 +226,22 @@ describe("xxHash128 reference vectors", () => {
     [17, 0n, 0x7269f7707a5633ce34fdba88610c84f0n],
     [17, 42n, 0x555cee2202f0eb819d516a87ea893f55n],
     [17, BIG_SEED, 0x22860a317c761d25942cc22202328f77n],
+    // 32, 64, and 96 are the cutoffs of the 17..128 branch.
+    [32, 0n, 0xb460d4dc6be0adcb6aa1b5185c4a1bf9n],
+    [33, 42n, 0xb5bc1de50fbcfd373e3d21799fac02b8n],
+    [64, 2882400001n, 0xcf9bfad8b3365432de19134db8892d66n],
+    [65, 0n, 0xdbb73c102b1d241fc065002853df8e7cn],
+    [96, 42n, 0x5fa3b9d4dad7646c82c57ae93f82b0c1n],
+    [97, BIG_SEED, 0xf5848ceac1e49ec83c1a9fa888f554ccn],
     [128, 0n, 0xa50923197dc0dc531198ac4ec9cfd6efn],
     [128, 2882400001n, 0x7ed5bb4719b1d4ce6569b846a8c6cbafn],
     [129, 0n, 0x7ad3d310e226eae751c73585a2dbe083n],
     [129, 42n, 0xa9cc7ecec36484a6a347abdffb1b594en],
     [129, BIG_SEED, 0xe2c3e2425bf9ad647c03504f9e24492cn],
+    // The 129..240 branch mixes one more 32-byte block at 160, 192, and 224.
+    [160, 0n, 0x66dc257dd0a336a347ff8069f9d0faf9n],
+    [192, 42n, 0xc197ea3ba8c4a096477c04659dc59d93n],
+    [224, 2882400001n, 0xa837590456378ff1fced13eed398176an],
     [240, 0n, 0xf260e5c85b249b91791c37dcce4acc6bn],
     [240, 2882400001n, 0xa88c287e75d2c554d53dcf0cc73098fcn],
     // Long-input path (> 240): the Highway-dispatched stripe loop.

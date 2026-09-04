@@ -1825,6 +1825,11 @@ impl VirtualMachine {
             self.event_loop_mut().deferred_tasks.run();
             self.is_inside_deferred_task_queue.set(false);
         }
+        // Nor the loop's next pre-poll hook, which is what sends response bytes
+        // those sinks (or a `res.write()`) left in the cork buffers.
+        if self.event_loop_handle.is_some() {
+            self.uws_loop_mut().drain_corks();
+        }
 
         self.is_shutting_down = true;
 

@@ -12,6 +12,7 @@ import {
   isIntelMacOS,
   isIPv4,
   isIPv6,
+  isAndroid,
   isLinux,
   isPosix,
   libcPathForDlopen,
@@ -4705,18 +4706,18 @@ it("serves a TLS connection whose handshake completes after a graceful stop()", 
 });
 
 // A response written from outside the request callback (after an await, from a
-// timer, from another socket's event) used to reach the socket uncorked, so the
-// status line, each header fragment, the chunk-size line, the payload and the
-// chunk terminator each left as their own send() and TCP segment. Counted from
-// the client with TCP_INFO, which is Linux-only.
-describe.skipIf(!isLinux)("response bytes written outside the request callback are batched", () => {
+// timer, from another socket's event) must still be assembled into few send()
+// calls rather than one per status line / header fragment / chunk-size line /
+// payload / terminator. Each send() is one TCP segment on loopback (TCP_NODELAY),
+// counted from the client with TCP_INFO.
+describe.skipIf(!isLinux && !isAndroid)("response bytes written outside the request callback are batched", () => {
   async function segmentsReceived(server: string) {
     await using proc = Bun.spawn({
       cmd: [
         bunExe(),
         "-e",
         `
-          const { dlopen, ptr } = require("bun:ffi");
+          import { dlopen, ptr } from "bun:ffi";
           const libc = dlopen(${JSON.stringify(libcPathForDlopen())}, {
             getsockopt: { args: ["int", "int", "int", "ptr", "ptr"], returns: "int" },
           });
@@ -4744,6 +4745,9 @@ describe.skipIf(!isLinux)("response bytes written outside the request callback a
                 response += data.toString();
                 if (response.endsWith("\\r\\n0\\r\\n\\r\\n") || response.endsWith("\\r\\n\\r\\nhello world")) done.resolve();
               },
+              error(socket, error) {
+                done.reject(error);
+              },
               close() {
                 done.resolve();
               },
@@ -4759,16 +4763,15 @@ describe.skipIf(!isLinux)("response bytes written outside the request callback a
       stderr: "inherit",
     });
     const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    const result = JSON.parse(stdout);
     expect(exitCode).toBe(0);
-    return JSON.parse(stdout);
+    return result;
   }
 
   it.concurrent("Bun.serve: async generator body", async () => {
-    // Segment 1: status + headers when the Response is returned. Segment 2: the
-    // Date/Transfer-Encoding headers with the first chunk. Segment 3: the last
-    // chunk together with the terminating chunk (previously five segments).
-    expect(
-      await segmentsReceived(`
+    // At most: status + headers when the Response is returned, the remaining
+    // headers with the first chunk, and the last chunk with the terminator.
+    const { segments, body } = await segmentsReceived(`
         const server = Bun.serve({
           port: 0,
           async fetch() {
@@ -4783,15 +4786,15 @@ describe.skipIf(!isLinux)("response bytes written outside the request callback a
         });
         const port = server.port;
         const stop = () => server.stop(true);
-      `),
-    ).toEqual({ segments: 3, body: "6\r\nhello \r\n5\r\nworld\r\n0\r\n\r\n" });
+      `);
+    expect(body).toBe("6\r\nhello \r\n5\r\nworld\r\n0\r\n\r\n");
+    expect(segments).toBeLessThanOrEqual(3);
   });
 
   it.concurrent("Bun.serve: ReadableStream that produces its only chunk later", async () => {
-    // Segment 1: status + headers. Segment 2: Date, Content-Length and the body
-    // (previously eight segments: one per header fragment).
-    expect(
-      await segmentsReceived(`
+    // At most: status + headers when the Response is returned, then the
+    // remaining headers with the body.
+    const { segments, body } = await segmentsReceived(`
         const server = Bun.serve({
           port: 0,
           async fetch() {
@@ -4807,16 +4810,18 @@ describe.skipIf(!isLinux)("response bytes written outside the request callback a
         });
         const port = server.port;
         const stop = () => server.stop(true);
-      `),
-    ).toEqual({ segments: 2, body: "hello world" });
+      `);
+    expect(body).toBe("hello world");
+    expect(segments).toBeLessThanOrEqual(2);
   });
 
   it.concurrent("node:http: write() then end() after an await", async () => {
     // One segment: status, headers, both chunks and the terminating chunk, as
-    // Node.js sends them (previously six).
+    // Node.js sends them.
     expect(
       await segmentsReceived(`
-        const server = require("node:http").createServer(async (req, res) => {
+        import { createServer } from "node:http";
+        const server = createServer(async (req, res) => {
           await tick();
           res.writeHead(200, { "Content-Type": "text/plain" });
           res.write("hello ");

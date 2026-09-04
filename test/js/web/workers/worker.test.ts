@@ -451,16 +451,39 @@ describe("web worker", () => {
     });
 
     // A worker posting faster than the parent can deserialize must not pin the
-    // parent inside one drain: its timers and I/O still get their turn.
+    // parent inside one drain: a drain task delivers a bounded batch and posts the
+    // rest to the next loop iteration, so timers and I/O get their turn in between.
     test("a message flood from a worker does not starve the parent's event loop", async () => {
-      const src = `const p = { s: Buffer.alloc(200, "x").toString(), a: [1, 2, 3], n: 0 };
-        (function burst() { for (let i = 0; i < 2000; i++) { p.n++; postMessage(p) } setImmediate(burst) })()`;
+      const budget = 1024; // drainBatchLimit in WorkerMessagingProxy.cpp
+      // Two budgets plus one: the continuation the first task posts has to yield and
+      // post another one as well.
+      const total = 2 * budget + 1;
+      const flag = new Int32Array(new SharedArrayBuffer(4));
+      const src = `onmessage = ({ data: flag }) => {
+        for (let i = 0; i < ${total}; i++) postMessage(i);
+        Atomics.store(flag, 0, 1); Atomics.notify(flag, 0);
+      }`;
       const w = new Worker(URL.createObjectURL(new Blob([src])));
-      let received = 0;
-      w.onmessage = () => received++;
-      // Three timer turns while the flood is running is the property; not the timing.
-      for (let i = 0; i < 3; i++) await new Promise<void>(r => setTimeout(r, 10));
-      expect(received).toBeGreaterThan(0);
+      const got: number[] = [];
+      w.onmessage = e => got.push(e.data);
+      w.postMessage(flag);
+      // Block until the whole flood sits in the parent's inbox, so the first drain task
+      // starts out with more than its budget no matter how fast either thread is.
+      Atomics.wait(flag, 0, 0, 30_000);
+      expect(Atomics.load(flag, 0)).toBe(1);
+      // Resumes inside the first drain task. An immediate armed there runs as soon as the
+      // task ends and before the continuation it posted runs, so each immediate sees what
+      // exactly one more task delivered; two in a row seeing the same count is the end.
+      await once(w, "message");
+      const afterEachTask: number[] = [];
+      do {
+        await new Promise<void>(r => setImmediate(r));
+        afterEachTask.push(got.length);
+      } while (afterEachTask.at(-1) !== afterEachTask.at(-2));
+      // The first task and its continuation each stop at the budget, the third delivers
+      // the one left over, and everything arrives in order.
+      expect(afterEachTask).toEqual([budget, 2 * budget, total, total]);
+      expect(got).toEqual(Array.from({ length: total }, (_, i) => i));
       w.terminate();
       await once(w, "close");
     });

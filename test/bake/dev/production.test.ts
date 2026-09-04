@@ -659,4 +659,236 @@ export default function IndexPage() {
     // Verify NO JavaScript imports are included in the HTML
     expect(htmlContent).not.toContain('<script type="module"');
   });
+
+  test("css imported on the server gets browser-target processing", async () => {
+    const dir = await tempDirWithBakeDeps("bake-production-server-css", {
+      "src/index.tsx": `export default { app: { framework: "react" } };`,
+      // Importing the stylesheet from a page puts it in the server graph, but
+      // the emitted CSS is still a browser asset, so selector downleveling for
+      // browser targets must apply.
+      "pages/index.tsx": `
+import "../styles.css";
+export default function IndexPage() {
+  return <div>Hello World</div>;
+}`,
+      "styles.css": `
+.box:fullscreen {
+  color: red;
+}`,
+      "package.json": JSON.stringify({
+        "name": "test-app",
+        "version": "1.0.0",
+        "devDependencies": {
+          "react": "^18.0.0",
+          "react-dom": "^18.0.0",
+        },
+      }),
+    });
+
+    const { exitCode } = await Bun.$`${bunExe()} build --app ./src/index.tsx --outdir ./dist`
+      .cwd(dir)
+      .env(bunEnv)
+      .throws(false);
+    expect(exitCode).toBe(0);
+
+    const cssFiles = await Array.fromAsync(new Bun.Glob("**/*.css").scan(path.join(dir, "dist")));
+    expect(cssFiles).toHaveLength(1);
+    const css = await Bun.file(path.join(dir, "dist", cssFiles[0])).text();
+    expect(css).toContain(":-webkit-full-screen");
+    expect(css).toContain(":fullscreen");
+  });
+
+  test("css imported through a 'use client' component is bundled once", async () => {
+    // The boundary file is parsed into both the client and SSR graphs; its
+    // stylesheet must share one source index across graphs or the build emits
+    // two chunks whose identical content collides on one output path.
+    const dir = await tempDirWithBakeDeps("bake-production-client-css", {
+      "src/index.tsx": `export default { app: { framework: "react" } };`,
+      "pages/index.tsx": `
+import Client from "../components/Client";
+export default function IndexPage() {
+  return <div>Hello <Client /></div>;
+}`,
+      "components/Client.tsx": `
+"use client";
+import "../styles.css";
+export default function Client() {
+  return <span>client</span>;
+}`,
+      "styles.css": `
+.box:fullscreen {
+  color: red;
+}`,
+      "package.json": JSON.stringify({
+        "name": "test-app",
+        "version": "1.0.0",
+        "devDependencies": {
+          "react": "^18.0.0",
+          "react-dom": "^18.0.0",
+        },
+      }),
+    });
+
+    const { exitCode, stderr } = await Bun.$`${bunExe()} build --app ./src/index.tsx --outdir ./dist`
+      .cwd(dir)
+      .env(bunEnv)
+      .throws(false);
+    expect(stderr.toString()).not.toContain("DuplicateOutputPath");
+    expect(exitCode).toBe(0);
+
+    const cssFiles = await Array.fromAsync(new Bun.Glob("**/*.css").scan(path.join(dir, "dist")));
+    expect(cssFiles).toHaveLength(1);
+    const css = await Bun.file(path.join(dir, "dist", cssFiles[0])).text();
+    expect(css).toContain(":-webkit-full-screen");
+  });
+
+  test("css imported from both a page and a 'use client' component is bundled once", async () => {
+    const dir = await tempDirWithBakeDeps("bake-production-shared-css", {
+      "src/index.tsx": `export default { app: { framework: "react" } };`,
+      "pages/index.tsx": `
+import "../styles.css";
+import Client from "../components/Client";
+export default function IndexPage() {
+  return <div>Hello <Client /></div>;
+}`,
+      "components/Client.tsx": `
+"use client";
+import "../styles.css";
+export default function Client() {
+  return <span>client</span>;
+}`,
+      "styles.css": `
+.box:fullscreen {
+  color: red;
+}`,
+      "package.json": JSON.stringify({
+        "name": "test-app",
+        "version": "1.0.0",
+        "devDependencies": {
+          "react": "^18.0.0",
+          "react-dom": "^18.0.0",
+        },
+      }),
+    });
+
+    const { exitCode, stderr } = await Bun.$`${bunExe()} build --app ./src/index.tsx --outdir ./dist`
+      .cwd(dir)
+      .env(bunEnv)
+      .throws(false);
+    expect(stderr.toString()).not.toContain("DuplicateOutputPath");
+    expect(exitCode).toBe(0);
+
+    const cssFiles = await Array.fromAsync(new Bun.Glob("**/*.css").scan(path.join(dir, "dist")));
+    expect(cssFiles).toHaveLength(1);
+    const css = await Bun.file(path.join(dir, "dist", cssFiles[0])).text();
+    expect(css).toContain(":-webkit-full-screen");
+  });
+
+  test("css is printed with browser targets", async () => {
+    const dir = await tempDirWithBakeDeps("bake-production-css-print-targets", {
+      "src/index.tsx": `export default { app: { framework: "react" } };`,
+      "pages/index.tsx": `
+import "../styles.css";
+export default function IndexPage() {
+  return <div className="a"><div className="b">Hello World</div></div>;
+}`,
+      "styles.css": `
+:root {
+  color-scheme: light dark;
+}
+.a {
+  .b {
+    color: light-dark(white, black);
+  }
+}`,
+      "package.json": JSON.stringify({
+        "name": "test-app",
+        "version": "1.0.0",
+        "devDependencies": {
+          "react": "^18.0.0",
+          "react-dom": "^18.0.0",
+        },
+      }),
+    });
+
+    const { exitCode, stderr } = await Bun.$`${bunExe()} build --app ./src/index.tsx --outdir ./dist`
+      .cwd(dir)
+      .env(bunEnv)
+      .throws(false);
+    // A successful bake build still writes the experimental banner and
+    // progress lines to stderr, so assert on errors rather than emptiness.
+    expect(stderr.toString()).not.toContain("error:");
+    expect(exitCode).toBe(0);
+
+    const cssFiles = await Array.fromAsync(new Bun.Glob("**/*.css").scan(path.join(dir, "dist")));
+    expect(cssFiles).toHaveLength(1);
+    const css = await Bun.file(path.join(dir, "dist", cssFiles[0])).text();
+    // The emitted stylesheet is a browser asset, so downleveling for the
+    // default browser targets must apply even though the build's primary
+    // transpiler targets the server: nesting is flattened and light-dark()
+    // becomes the full variable polyfill (definitions and toggle injected at
+    // minify, references rewritten at print).
+    expect(css).toContain(".a .b");
+    expect(css).toMatch(/--buncss-light:\s*initial/);
+    expect(css).toMatch(/prefers-color-scheme:\s*dark/);
+    expect(css).toContain("var(--buncss-light");
+    expect(css).not.toContain("light-dark(");
+  });
+
+  test("css resolved through an onResolve plugin is bundled once", async () => {
+    // The plugin success arm creates the source index directly from the
+    // plugin's returned path; it must share that index across graphs like the
+    // built-in resolver paths do, or the client and SSR copies collide on one
+    // content-hashed output path.
+    const dir = await tempDirWithBakeDeps("bake-production-plugin-css", {
+      "src/index.tsx": `
+import path from "node:path";
+import type { BunPlugin } from "bun";
+const cssRedirect: BunPlugin = {
+  name: "css-redirect",
+  setup(build) {
+    build.onResolve({ filter: /^virtual-styles$/ }, () => ({
+      path: path.join(import.meta.dir, "../styles.css"),
+    }));
+  },
+};
+export default { app: { framework: "react", plugins: [cssRedirect] } };`,
+      "pages/index.tsx": `
+import "virtual-styles";
+import Client from "../components/Client";
+export default function IndexPage() {
+  return <div>Hello <Client /></div>;
+}`,
+      "components/Client.tsx": `
+"use client";
+import "virtual-styles";
+export default function Client() {
+  return <span>client</span>;
+}`,
+      "styles.css": `
+.box:fullscreen {
+  color: red;
+}`,
+      "package.json": JSON.stringify({
+        "name": "test-app",
+        "version": "1.0.0",
+        "devDependencies": {
+          "react": "^18.0.0",
+          "react-dom": "^18.0.0",
+        },
+      }),
+    });
+
+    const { exitCode, stderr } = await Bun.$`${bunExe()} build --app ./src/index.tsx --outdir ./dist`
+      .cwd(dir)
+      .env(bunEnv)
+      .throws(false);
+    expect(stderr.toString()).not.toContain("DuplicateOutputPath");
+    expect(exitCode).toBe(0);
+
+    const cssFiles = await Array.fromAsync(new Bun.Glob("**/*.css").scan(path.join(dir, "dist")));
+    expect(cssFiles).toHaveLength(1);
+    const css = await Bun.file(path.join(dir, "dist", cssFiles[0])).text();
+    expect(css).toContain(":-webkit-full-screen");
+  });
 });

@@ -662,14 +662,11 @@ impl ExtractTarball {
             }
             #[cfg(not(windows))]
             {
-                // Attempt to gracefully handle duplicate concurrent `bun install` calls
-                //
-                // By:
-                // 1. Rename from temporary directory to cache directory and fail if it already exists
-                // 2a. If the rename fails, swap the cache directory with the temporary directory version
-                // 2b. Delete the temporary directory version ONLY if we're not using a provided temporary directory
-                // 3. If rename still fails, fallback to racily deleting the cache directory version and then renaming the temporary directory version again.
-                //
+                // An existing destination is a complete entry from a concurrent
+                // `bun install` (entries only appear via atomic rename): keep it,
+                // since replacing it unlinks files another process may be copying
+                // out of the cache (#36227). Only an incomplete entry (no
+                // package.json, e.g. a crashed copy) is replaced.
 
                 if create_subdir {
                     if let Some(folder) = bun_paths::Dirname::dirname(folder_name) {
@@ -677,27 +674,62 @@ impl ExtractTarball {
                     }
                 }
 
-                if let Err(err) = sys::renameat_concurrently_a(
+                let mut folder_name_z_buf = PathBuffer::uninit();
+                folder_name_z_buf[0..folder_name.len()].copy_from_slice(folder_name);
+                folder_name_z_buf[folder_name.len()] = 0;
+                let folder_name_z = ZStr::from_buf(&folder_name_z_buf, folder_name.len());
+
+                let renamed = sys::renameat2(
                     tmpdir.fd(),
-                    tmpname.as_bytes(),
+                    tmpname,
                     cache_dir.fd(),
-                    folder_name,
-                    sys::RenameatConcurrentlyOptions {
-                        move_fallback: true,
+                    folder_name_z,
+                    sys::Renameat2Flags {
+                        exclude: true,
+                        ..Default::default()
                     },
-                ) {
-                    log.add_error_fmt(
-                        None,
-                        bun_ast::Loc::EMPTY,
-                        format_args!(
-                            "moving \"{}\" to cache dir failed: {}\n  From: {}\n    To: {}",
-                            bun_fmt::s(name),
-                            err,
-                            bun_fmt::s(tmpname.as_bytes()),
-                            bun_fmt::s(folder_name),
-                        ),
-                    );
-                    return Err(crate::Error::InstallFailed);
+                )
+                .is_ok();
+
+                let keep_existing = !renamed
+                    && match self.resolution.tag {
+                        ResolutionTag::Npm => {
+                            let mut pkg_json_buf = PathBuffer::uninit();
+                            let pkg_json = path::resolve_path::join_z_buf::<path::platform::Auto>(
+                                &mut pkg_json_buf.0,
+                                &[folder_name, b"package.json"],
+                            );
+                            sys::exists_at(cache_dir.fd(), pkg_json)
+                        }
+                        _ => sys::directory_exists_at(cache_dir.fd(), folder_name_z)
+                            .unwrap_or(false),
+                    };
+
+                if keep_existing {
+                    let _ = tmpdir.delete_tree(tmpname.as_bytes());
+                } else if !renamed {
+                    if let Err(err) = sys::renameat_concurrently_a(
+                        tmpdir.fd(),
+                        tmpname.as_bytes(),
+                        cache_dir.fd(),
+                        folder_name,
+                        sys::RenameatConcurrentlyOptions {
+                            move_fallback: true,
+                        },
+                    ) {
+                        log.add_error_fmt(
+                            None,
+                            bun_ast::Loc::EMPTY,
+                            format_args!(
+                                "moving \"{}\" to cache dir failed: {}\n  From: {}\n    To: {}",
+                                bun_fmt::s(name),
+                                err,
+                                bun_fmt::s(tmpname.as_bytes()),
+                                bun_fmt::s(folder_name),
+                            ),
+                        );
+                        return Err(crate::Error::InstallFailed);
+                    }
                 }
             }
 

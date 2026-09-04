@@ -9,7 +9,8 @@ namespace Bun {
 class JSCommonJSExtensions : public JSC::JSDestructibleObject {
 public:
     using Base = JSC::JSDestructibleObject;
-    static constexpr unsigned StructureFlags = Base::StructureFlags | JSC::OverridesPut;
+    // ProhibitsPropertyCaching: an inline-cached store would skip put(), which keeps the native loader table in sync.
+    static constexpr unsigned StructureFlags = Base::StructureFlags | JSC::OverridesPut | JSC::ProhibitsPropertyCaching;
     ~JSCommonJSExtensions();
 
     WTF::Vector<JSC::WriteBarrier<JSC::Unknown>> m_registeredFunctions;

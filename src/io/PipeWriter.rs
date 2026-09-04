@@ -1649,6 +1649,18 @@ impl<Parent: WindowsBufferedWriterParent> WindowsBufferedWriter<Parent> {
         Self::r(this).on_write_complete(uv::ReturnCode::zero());
     }
 
+    /// Debug-only fault injection (`BUN_INTERNAL_FAIL_PIPE_WRITER_WRITE`) for
+    /// test/js/bun/spawn/spawn-pipe-start-error.test.ts: stands in for a
+    /// `uv_write` that fails synchronously, which JS cannot arrange.
+    fn injected_write_error() -> Option<sys::Error> {
+        #[cfg(debug_assertions)]
+        if bun_core::env_var::feature_flag::BUN_INTERNAL_FAIL_PIPE_WRITER_WRITE.get() == Some(true)
+        {
+            return Some(sys::Error::from_code(sys::E::PIPE, sys::Tag::write));
+        }
+        None
+    }
+
     pub fn write(&mut self) {
         let buffer = self.get_buffer_internal();
         // if we are already done or if we have some pending payload we just wait until next write
@@ -1719,15 +1731,18 @@ impl<Parent: WindowsBufferedWriterParent> WindowsBufferedWriter<Parent> {
             self.pending_payload_size = buffer_len;
             self.write_buffer = write_buf;
             let self_ptr = self as *mut Self;
-            if let Some(write_err) = self
-                .write_req
-                // SAFETY: `p` is `self_ptr`; libuv invokes on the loop thread with no
-                // other Rust borrow of `*p` live, so `&mut *p` is the sole alias.
-                .write(stream_raw, &self.write_buffer, self_ptr, |p, s| unsafe {
-                    (*p).on_write_complete(s)
-                })
-                .to_error(sys::Tag::write)
-            {
+            let write_err = if let Some(err) = Self::injected_write_error() {
+                Some(err)
+            } else {
+                self.write_req
+                    // SAFETY: `p` is `self_ptr`; libuv invokes on the loop thread with no
+                    // other Rust borrow of `*p` live, so `&mut *p` is the sole alias.
+                    .write(stream_raw, &self.write_buffer, self_ptr, |p, s| unsafe {
+                        (*p).on_write_complete(s)
+                    })
+                    .to_error(sys::Tag::write)
+            };
+            if let Some(write_err) = write_err {
                 self.close();
                 self.parent_on_error(write_err);
             } else {

@@ -841,12 +841,18 @@ impl ShellSubprocess {
             }
         }
 
-        // SAFETY: borrow of the stdin slot scoped to this match; single-threaded.
-        let stdin_start_err = match unsafe { &(*subprocess).stdin } {
-            // SAFETY: single-threaded; the writer is uniquely reachable here.
-            Writable::Buffer(buffer) => unsafe { buffer_mut(buffer) }.start().err(),
+        // SAFETY: borrow of the stdin slot scoped to this match; it ends before
+        // `start()` below, which may overwrite the slot through `on_close_io`.
+        let stdin_writer = match unsafe { &(*subprocess).stdin } {
+            Writable::Buffer(buffer) => Some(buffer.as_ptr()),
             _ => None,
         };
+        let stdin_start_err = stdin_writer.and_then(|writer| {
+            // SAFETY: the slot holds `create()`'s ref on a live writer. `start()`
+            // may free it (a write that fails synchronously on Windows, reported
+            // through `on_close_io`); nothing touches it afterwards.
+            unsafe { StaticPipeWriter::start(writer) }.err()
+        });
         if let Some(err) = stdin_start_err {
             let sys_err = err.to_shell_system_error();
             // SAFETY: scoped `&mut` for the kill; `abort_after_failed_start`

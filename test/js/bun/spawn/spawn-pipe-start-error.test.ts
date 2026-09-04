@@ -1,5 +1,6 @@
-import { expect, test } from "bun:test";
-import { bunEnv, bunExe, isDebug, isWindows } from "harness";
+import { describe, expect, test } from "bun:test";
+import { bunEnv, bunExe, isDebug, isWindows, tempDir } from "harness";
+import path from "node:path";
 
 // On Windows, when the initial uv_read_start on a subprocess stdout/stderr
 // pipe fails (observed from libuv as UV_EINVAL after a bad FileAccessInformation
@@ -62,3 +63,96 @@ try {
     expect(exitCode).toBe(0);
   },
 );
+
+// The writer behind a Buffer/Blob stdin (StaticPipeWriter) issues its single
+// uv_write from start(). On Windows that uv_write fails synchronously when the
+// child's end of the pipe is already gone, and the writer closes itself inside
+// start(): on_close runs before start() has recorded its own ref, so it releases
+// nothing, and the owner (Subprocess, ShellSubprocess) drops its ref and forgets
+// the writer. start() has to release its own ref when it finds the writer closed
+// underneath it; without that the writer stays allocated for the rest of the
+// process (created 3, freed 0 below).
+//
+// The security scanner's JSON writer is the third owner. It releases start()'s
+// ref itself right after start() returns, and must not when start() already
+// has; otherwise the release in start() is one release too many for it.
+//
+// The failing uv_write cannot be arranged from JS either, so the same kind of
+// debug-only fault injection is used; the writers are counted through the
+// create()/deinit() lines of the StaticPipeWriter debug scope. The non-injected
+// variants check the counting itself and the ordinary path of the same code.
+describe.skipIf(!isWindows || !isDebug)("buffer stdin writer whose uv_write fails synchronously (windows)", () => {
+  function writerCounts(output: string) {
+    return {
+      created: output.match(/StaticPipeWriter\(0x[0-9a-f]+\) create\(\)/g)?.length ?? 0,
+      freed: output.match(/StaticPipeWriter\(0x[0-9a-f]+\) deinit\(\)/g)?.length ?? 0,
+    };
+  }
+
+  function env(failWrite: boolean) {
+    return failWrite
+      ? { ...bunEnv, BUN_DEBUG_StaticPipeWriter: "1", BUN_INTERNAL_FAIL_PIPE_WRITER_WRITE: "1" }
+      : { ...bunEnv, BUN_DEBUG_StaticPipeWriter: "1" };
+  }
+
+  test.concurrent.each([true, false])(
+    "Bun.spawn, Bun.spawnSync and the shell free the writer (write fails: %p)",
+    async failWrite => {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), path.join(import.meta.dir, "buffer-stdin-owners-fixture.ts")],
+        env: env(failWrite),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      // With the write failing the child only ever sees EOF; this also proves the
+      // injection fired. The fixture's Buffer is 4096 bytes.
+      const child = { stdout: failWrite ? "0" : "4096", exitCode: 0 };
+      const result = stdout.split(/\r?\n/).find(line => line.startsWith("RESULT "));
+      expect(result, stderr).toBeDefined();
+      expect(JSON.parse(result!.slice("RESULT ".length))).toEqual({ spawn: child, spawnSync: child, shell: child });
+      // Scoped debug logging goes to stdout; search both streams anyway.
+      expect(writerCounts(stdout + stderr)).toEqual({ created: 3, freed: 3 });
+      expect(exitCode).toBe(0);
+    },
+  );
+
+  test.concurrent.each([true, false])(
+    "bun install frees the security scanner's JSON writer (write fails: %p)",
+    async failWrite => {
+      using dir = tempDir("scanner-json-writer", {
+        "package.json": JSON.stringify({ name: "scanner-json-writer", version: "1.0.0" }),
+        "bunfig.toml": `[install.security]\nscanner = "./scanner.js"\n`,
+        // bun install runs the scanner even with nothing to scan, so no registry is needed.
+        "scanner.js": `module.exports = {
+          scanner: {
+            version: "1",
+            scan: async ({ packages }) => {
+              console.log("scanner received " + packages.length + " packages");
+              return [];
+            },
+          },
+        };`,
+      });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "install"],
+        cwd: String(dir),
+        env: env(failWrite),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      if (failWrite) {
+        // The scanner reads its package list from the pipe the failed write closed,
+        // so it gets an empty document; this also proves the injection fired.
+        expect(stderr).toContain("Failed to parse packages JSON");
+      } else {
+        expect(stdout).toContain("scanner received 0 packages");
+      }
+      expect(writerCounts(stdout + stderr)).toEqual({ created: 1, freed: 1 });
+      expect(exitCode).toBe(failWrite ? 1 : 0);
+    },
+  );
+});

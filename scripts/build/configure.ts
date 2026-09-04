@@ -79,9 +79,15 @@ export function resolveToolchain(targetOs?: OS, packageManager: PackageManager =
   // whatever's running us — if node, the strip-types flag comes along; if
   // bun, it's just the path. process.versions.bun distinguishes (undefined
   // in node). Pre-quoted so rule commands can splice it directly.
+  //
+  // The codegen scripts are ES modules under the root package.json, which
+  // has no "type" field. Node detects the module syntax and prints
+  // MODULE_TYPELESS_PACKAGE_JSON once per process, so the flag hides it.
   const q = (p: string) => quote(p, host.os === "windows");
   const jsRuntime =
-    process.versions.bun !== undefined ? q(process.execPath) : `${q(process.execPath)} --experimental-strip-types`;
+    process.versions.bun !== undefined
+      ? q(process.execPath)
+      : `${q(process.execPath)} --experimental-strip-types --disable-warning=MODULE_TYPELESS_PACKAGE_JSON`;
 
   return {
     ...llvm,

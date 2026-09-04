@@ -105,9 +105,12 @@ export function registerCodegenRules(n: Ninja, cfg: Config): void {
   const esbuild = q(cfg.esbuild);
   const { platform, arch } = codegenTarget(cfg);
 
-  // Generic codegen: `cd <repo-root> && [env VARS] bun <args>`.
-  // Both `bun run script.ts` and `bun script.ts` go through this — the
-  // caller puts the `run` subcommand in $args when needed.
+  // Generic codegen: `cd <cwd> && [env VARS] <runtime> <args>`.
+  //
+  // `codegen` runs the script with cfg.jsRuntime, the runtime that runs
+  // configure (node in CI, bun for `bun bd`). So its scripts must run
+  // under both. `codegen_bun` is for the scripts that still need bun.
+  // Its $args can start with a bun subcommand (`run`, `build`).
   //
   // TARGET_PLATFORM/ARCH: scripts that inline process.platform into the
   // bundled JS modules (replacements.ts, bundle-modules.ts,
@@ -120,8 +123,15 @@ export function registerCodegenRules(n: Ninja, cfg: Config): void {
   const env = hostWin
     ? `set TARGET_PLATFORM=${platform}&& set TARGET_ARCH=${arch}&& `
     : `TARGET_PLATFORM=${platform} TARGET_ARCH=${arch} `;
+  const codegenCommand = (runtime: string) =>
+    hostWin ? `cmd /c "cd /d $cwd && ${env}${runtime} $args"` : `cd $cwd && ${env}${runtime} $args`;
   n.rule("codegen", {
-    command: hostWin ? `cmd /c "cd /d $cwd && ${env}${bun} $args"` : `cd $cwd && ${env}${bun} $args`,
+    command: codegenCommand(cfg.jsRuntime),
+    description: "gen $desc",
+    restat: true,
+  });
+  n.rule("codegen_bun", {
+    command: codegenCommand(bun),
     description: "gen $desc",
     restat: true,
   });
@@ -468,7 +478,7 @@ function emitCompressedEmbeds({ n, cfg, o, dirStamp }: Ctx): void {
     const out = resolve(cfg.codegenDir, "compressed", `${name}.zst`);
     n.build({
       outputs: [out],
-      rule: "codegen",
+      rule: "codegen_bun",
       inputs: [script, input],
       orderOnlyInputs: [dirStamp],
       vars: { cwd: cfg.cwd, desc: `compressed/${name}.zst`, args: shJoin(cfg, ["run", script, input, out]) },
@@ -528,7 +538,7 @@ function emitNodeFallbacks({ n, cfg, sources, o, dirStamp }: Ctx): void {
   const script = resolve(sourceDir, "build-fallbacks.ts");
   n.build({
     outputs,
-    rule: "codegen",
+    rule: "codegen_bun",
     inputs: [script, ...sources.nodeFallbacks],
     implicitInputs: [installStamp],
     orderOnlyInputs: [dirStamp],
@@ -548,7 +558,7 @@ function emitNodeFallbacks({ n, cfg, sources, o, dirStamp }: Ctx): void {
   const rrOut = resolve(outDir, "react-refresh.js");
   n.build({
     outputs: [rrOut],
-    rule: "codegen",
+    rule: "codegen_bun",
     inputs: [resolve(sourceDir, "package.json"), resolve(sourceDir, "bun.lock")],
     implicitInputs: [installStamp],
     orderOnlyInputs: [dirStamp],
@@ -597,7 +607,7 @@ function emitStringMaps({ n, cfg, sources, o, dirStamp }: Ctx): void {
       vars: {
         cwd: cfg.cwd,
         desc: `string-map ${stem}`,
-        args: shJoin(cfg, ["run", script, src, out]),
+        args: shJoin(cfg, [script, src, out]),
       },
     });
     o.all.push(out);
@@ -630,7 +640,7 @@ function emitErrorCode({ n, cfg, o, dirStamp }: Ctx): void {
     vars: {
       cwd: cfg.cwd,
       desc: "ErrorCode+*.h",
-      args: shJoin(cfg, ["run", script, cfg.codegenDir]),
+      args: shJoin(cfg, [script, cfg.codegenDir]),
     },
   });
 
@@ -658,7 +668,7 @@ function emitGeneratedClasses({ n, cfg, sources, o, dirStamp }: Ctx): void {
 
   n.build({
     outputs,
-    rule: "codegen",
+    rule: "codegen_bun",
     inputs: [script, ...sources.zigGeneratedClasses],
     orderOnlyInputs: [dirStamp],
     vars: {
@@ -696,7 +706,7 @@ function emitHostExports({ n, cfg, sources, o, dirStamp }: Ctx): void {
 
   n.build({
     outputs: [output],
-    rule: "codegen",
+    rule: "codegen_bun",
     inputs: [script],
     implicitInputs: rsInputs,
     orderOnlyInputs: [dirStamp],
@@ -735,7 +745,7 @@ function emitCppBind({ n, cfg, sources, o, dirStamp }: Ctx): void {
 
   n.build({
     outputs: [outputRs],
-    rule: "codegen",
+    rule: "codegen_bun",
     inputs: [script],
     // cppbind scans ALL .cpp files for [[ZIG_EXPORT]] annotations. Every
     // .cpp is an implicit input so changing an annotation retriggers.
@@ -803,7 +813,7 @@ function emitJsModules({ n, cfg, sources, o, dirStamp }: Ctx): void {
 
   n.build({
     outputs,
-    rule: "codegen",
+    rule: "codegen_bun",
     inputs: [script, ...sources.js, ...sources.jsCodegen, extraInput, errorCodeInput],
     orderOnlyInputs: [dirStamp],
     vars: {
@@ -842,7 +852,7 @@ function emitBakeCodegen({ n, cfg, sources, o, dirStamp }: Ctx): void {
 
   n.build({
     outputs,
-    rule: "codegen",
+    rule: "codegen_bun",
     inputs: [script, ...sources.bakeRuntime],
     orderOnlyInputs: [dirStamp],
     vars: {
@@ -901,7 +911,7 @@ export function emitBindgenV2({ n, cfg, sources, o, dirStamp }: Ctx): void {
 
   n.build({
     outputs: allOutputs,
-    rule: "codegen",
+    rule: "codegen_bun",
     inputs: [script, ...sources.bindgenV2, ...sources.bindgenV2Internal],
     orderOnlyInputs: [dirStamp],
     vars: {
@@ -937,7 +947,7 @@ export function emitBindgen({ n, cfg, sources, o, dirStamp }: Ctx): void {
   // reconfigure to be picked up (next glob gets them).
   n.build({
     outputs: [cppOut, ...headers],
-    rule: "codegen",
+    rule: "codegen_bun",
     inputs: [script, ...sources.bindgen],
     orderOnlyInputs: [dirStamp],
     vars: {
@@ -976,7 +986,7 @@ function emitJsSink({ n, cfg, o, dirStamp }: Ctx): void {
 
   n.build({
     outputs,
-    rule: "codegen",
+    rule: "codegen_bun",
     inputs: [script, hashTableScript, perlScript],
     orderOnlyInputs: [dirStamp],
     vars: {
@@ -1042,7 +1052,7 @@ function emitObjectLuts({ n, cfg, o, dirStamp }: Ctx): void {
   for (const [src, out] of pairs) {
     n.build({
       outputs: [out],
-      rule: "codegen",
+      rule: "codegen_bun",
       inputs: [src],
       implicitInputs: [script, perlScript],
       orderOnlyInputs: [dirStamp],

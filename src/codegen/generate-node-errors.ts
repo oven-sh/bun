@@ -118,7 +118,7 @@ static CODE_STR: [&str; ErrorCode::COUNT as usize] = [
 ${rustCodeStr}];
 `;
 
-let builtindtsPath = path.join(import.meta.dir, "..", "..", "src", "js", "builtins.d.ts");
+let builtindtsPath = path.join(import.meta.dirname, "..", "..", "src", "js", "builtins.d.ts");
 let builtindts = readFileSync(builtindtsPath, "utf8");
 
 let dts = `

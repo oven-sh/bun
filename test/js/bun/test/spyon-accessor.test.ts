@@ -138,4 +138,91 @@ describe("spyOn on accessor properties", () => {
       "Cannot spy on the `value` property because it is not a function; number given instead",
     );
   });
+
+  describe("restoring both sides of one accessor", () => {
+    function makeObject() {
+      const stored: unknown[] = [];
+      const obj = {
+        get value() {
+          return stored.at(-1);
+        },
+        set value(v: unknown) {
+          stored.push(v);
+        },
+      };
+      const { get, set } = Object.getOwnPropertyDescriptor(obj, "value")!;
+      return { obj, stored, get, set };
+    }
+
+    function expectRestored(obj: object, get: unknown, set: unknown) {
+      const descriptor = Object.getOwnPropertyDescriptor(obj, "value")!;
+      expect(descriptor.get).toBe(get);
+      expect(descriptor.set).toBe(set);
+    }
+
+    test("getter spy restored first, then setter spy", () => {
+      const { obj, stored, get, set } = makeObject();
+      const getSpy = spyOn(obj, "value", "get").mockReturnValue("mocked");
+      const setSpy = spyOn(obj, "value", "set").mockImplementation(() => {});
+      getSpy.mockRestore();
+      obj.value = 1;
+      expect(stored).toEqual([]); // the setter spy still swallows writes
+      expect(setSpy).toHaveBeenCalledWith(1);
+      setSpy.mockRestore();
+      expectRestored(obj, get, set);
+      obj.value = 2;
+      expect(obj.value).toBe(2);
+    });
+
+    test("setter spy restored first, then getter spy", () => {
+      const { obj, stored, get, set } = makeObject();
+      const getSpy = spyOn(obj, "value", "get").mockReturnValue("mocked");
+      const setSpy = spyOn(obj, "value", "set").mockImplementation(() => {});
+      setSpy.mockRestore();
+      obj.value = 1;
+      expect(stored).toEqual([1]);
+      expect(obj.value).toBe("mocked"); // the getter spy is still in place
+      getSpy.mockRestore();
+      expectRestored(obj, get, set);
+      expect(obj.value).toBe(1);
+    });
+
+    test("jest.restoreAllMocks restores both sides", () => {
+      const { obj, get, set } = makeObject();
+      spyOn(obj, "value", "get").mockReturnValue("mocked");
+      spyOn(obj, "value", "set").mockImplementation(() => {});
+      jest.restoreAllMocks();
+      expectRestored(obj, get, set);
+      obj.value = 3;
+      expect(obj.value).toBe(3);
+    });
+
+    test("both sides of a prototype accessor restore by removing the own copy", () => {
+      class Box {
+        #size = 10;
+        get size() {
+          return this.#size;
+        }
+        set size(v: number) {
+          this.#size = v;
+        }
+      }
+      const box = new Box();
+      for (const order of ["get-first", "set-first"] as const) {
+        const getSpy = spyOn(box, "size", "get").mockReturnValue(1);
+        const setSpy = spyOn(box, "size", "set");
+        expect(Object.getOwnPropertyDescriptor(box, "size")).toBeDefined();
+        if (order === "get-first") {
+          getSpy.mockRestore();
+          setSpy.mockRestore();
+        } else {
+          setSpy.mockRestore();
+          getSpy.mockRestore();
+        }
+        expect(Object.getOwnPropertyDescriptor(box, "size")).toBeUndefined();
+        box.size = 5;
+        expect(box.size).toBe(5);
+      }
+    });
+  });
 });

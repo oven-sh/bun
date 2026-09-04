@@ -275,7 +275,11 @@ public:
     static constexpr unsigned SpyAttributeRestoreAccessor = 1 << 29;
     // The spied property lived on the prototype chain; restoring means removing the own copy.
     static constexpr unsigned SpyAttributeDeleteOnRestore = 1 << 28;
-    static constexpr unsigned SpyAttributeFlagsMask = SpyAttributeESModuleNamespace | SpyAttributeRestoreAccessor | SpyAttributeDeleteOnRestore;
+    // spyOn(obj, prop, "get" | "set"): the spy owns one side of the accessor; the other side is
+    // whatever is installed at restore time, possibly another spy.
+    static constexpr unsigned SpyAttributeAccessorGetter = 1 << 27;
+    static constexpr unsigned SpyAttributeAccessorSetter = 1 << 26;
+    static constexpr unsigned SpyAttributeFlagsMask = SpyAttributeESModuleNamespace | SpyAttributeRestoreAccessor | SpyAttributeDeleteOnRestore | SpyAttributeAccessorGetter | SpyAttributeAccessorSetter;
 
     JSString* jsName()
     {
@@ -387,6 +391,40 @@ public:
                 moduleNamespaceObject->overrideExportValue(globalObject, identifier, implValue);
                 RETURN_IF_EXCEPTION(scope, );
             }
+        } else if (attributes & (SpyAttributeAccessorGetter | SpyAttributeAccessorSetter)) {
+            auto* original = implValue.isCell() ? dynamicDowncast<GetterSetter>(implValue.asCell()) : nullptr;
+            if (!original)
+                return;
+            bool isGetterSide = attributes & SpyAttributeAccessorGetter;
+            // Put back only this spy's side. The other side is read from the accessor installed
+            // now, not from the saved descriptor: a spy installed later on the other side would
+            // otherwise be removed here and then resurrected by its own restore.
+            JSObject* getter = original->getter();
+            JSObject* setter = original->setter();
+            JSC::PropertySlot currentSlot(target, JSC::PropertySlot::InternalMethodType::GetOwnProperty);
+            bool hasOwn = target->getOwnPropertySlot(target, globalObject, identifier, currentSlot);
+            RETURN_IF_EXCEPTION(scope, );
+            if (hasOwn && currentSlot.isAccessor()) {
+                GetterSetter* current = currentSlot.getterSetter();
+                if (isGetterSide)
+                    setter = current->setter();
+                else
+                    getter = current->getter();
+            }
+            JSObject* otherSide = isGetterSide ? setter : getter;
+            auto* otherSpy = otherSide ? dynamicDowncast<JSMockFunction>(otherSide) : nullptr;
+            target->deleteProperty(globalObject, identifier);
+            RETURN_IF_EXCEPTION(scope, );
+            if (attributes & SpyAttributeDeleteOnRestore) {
+                // The accessor came from the prototype chain. With no other spy left, dropping the
+                // own copy is the restore; otherwise the other spy takes over removing it.
+                if (!otherSpy)
+                    return;
+                otherSpy->spyAttributes = (otherSpy->spyAttributes & ~SpyAttributeRestoreAccessor) | SpyAttributeDeleteOnRestore;
+            }
+            auto* merged = GetterSetter::create(this->vm(), globalObject, getter, setter);
+            target->putDirectAccessor(globalObject, identifier, merged, (attributes & ~SpyAttributeFlagsMask) | PropertyAttribute::Accessor);
+            RETURN_IF_EXCEPTION(scope, );
         } else if (attributes & SpyAttributeDeleteOnRestore) {
             // The property came from the prototype chain; the own copy the spy installed goes away.
             target->deleteProperty(globalObject, identifier);
@@ -1611,7 +1649,7 @@ BUN_DEFINE_HOST_FUNCTION(JSMock__jsSpyOn, (JSC::JSGlobalObject * lexicalGlobalOb
 
         mock->spyTarget = JSC::Weak<JSObject>(object, &weakValueHandleOwner(), nullptr);
         mock->spyIdentifier = propertyKey.isSymbol() ? Identifier::fromUid(vm, propertyKey.uid()) : Identifier::fromString(vm, propertyKey.publicName());
-        mock->spyAttributes = attributes | (isOwn ? JSMockFunction::SpyAttributeRestoreAccessor : JSMockFunction::SpyAttributeDeleteOnRestore);
+        mock->spyAttributes = attributes | (isGetter ? JSMockFunction::SpyAttributeAccessorGetter : JSMockFunction::SpyAttributeAccessorSetter) | (isOwn ? JSMockFunction::SpyAttributeRestoreAccessor : JSMockFunction::SpyAttributeDeleteOnRestore);
         mock->spyOriginal.set(vm, mock, getterSetter);
         registerSpy(mock);
         return JSValue::encode(mock);

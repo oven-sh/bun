@@ -156,3 +156,10 @@ leak:TemporalCore::withTimeZone
 # one of the op lambdas withCalendar runs would still be reported
 # (withTimeZone has no builder frame; its ucal_open is inline).
 leak:TemporalCore::buildCalendarTemplate
+# test/napi/napi-value-ffi.test.ts — FFI::finalize intentionally Box::leaks
+# the wrapper of a cc() instance that was never close()d (dlclose on GC is
+# unsound because the compiled .ptr addresses escape the collector's view;
+# see src/runtime/ffi/ffi_body.rs). One Box<FFI> plus its generate_symbols
+# map per cc() call. Anchored on bun_ffi_cc so dlopen wrappers and any other
+# leak in the file still report.
+leak:bun_ffi_cc

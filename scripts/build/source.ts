@@ -21,6 +21,7 @@ import { existsSync, mkdirSync, rmSync } from "node:fs";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import { ar, cc, cxx, nasm } from "./compile.ts";
 import type { Config } from "./config.ts";
+import { registerBootstrapCmdsRules } from "./deps/bootstrap-cmds.ts";
 import { registerIcuRules } from "./deps/icu.ts";
 import { registerWebKitDirectRules } from "./deps/webkit.ts";
 import { gitArchiveUrl, githubArchiveUrl } from "./download.ts";
@@ -538,6 +539,7 @@ export interface ResolvedDep {
 export function registerDepRules(n: Ninja, cfg: Config): void {
   registerWebKitDirectRules(n, cfg);
   registerIcuRules(n, cfg);
+  registerBootstrapCmdsRules(n, cfg);
   // Shell quoting: tool/script paths may contain spaces (e.g. cargo
   // in "C:\Program Files\Rust\..."). quote() passes through safe paths
   // unchanged so there's no cost on the common case. Host shell syntax

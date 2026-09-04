@@ -236,10 +236,9 @@ export interface CompileOpts {
  * E.g. src/jsc/bindings/foo.cpp → obj/src_jsc_bindings_foo.cpp.o
  */
 export function cxx(n: Ninja, cfg: Config, src: string, opts: CompileOpts): string {
-  assert(
-    extname(src) === ".cpp" || extname(src) === ".cc" || extname(src) === ".cxx",
-    `cxx() expects .cpp/.cc/.cxx source, got: ${src}`,
-  );
+  // .mm: Objective-C++ (WTF's darwin/OSLogPrintStream.mm); clang picks the
+  // language from the extension, the flags are the C++ ones.
+  assert([".cpp", ".cc", ".cxx", ".mm"].includes(extname(src)), `cxx() expects .cpp/.cc/.cxx/.mm source, got: ${src}`);
   return compile(n, cfg, src, opts, "cxx");
 }
 

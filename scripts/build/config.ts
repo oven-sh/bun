@@ -1085,9 +1085,9 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
       hint: "Use source (compile the pinned JSC in this build; add --local-deps=WebKit=<path> for your own clone) or prebuilt",
     });
   }
-  if (webkit === "source" && (darwin || windows)) {
-    throw new BuildError(`--webkit=source is not wired up for ${os} targets yet (ELF only: Linux, Android, FreeBSD)`, {
-      hint: "Use --webkit=prebuilt (the default) when targeting macOS or Windows.",
+  if (webkit === "source" && windows) {
+    throw new BuildError(`--webkit=source is not wired up for Windows targets yet`, {
+      hint: "Use --webkit=prebuilt (the default) when targeting Windows.",
     });
   }
 

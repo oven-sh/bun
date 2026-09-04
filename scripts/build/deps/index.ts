@@ -30,6 +30,7 @@ import { lsquic } from "./lsquic.ts";
 import { mimalloc } from "./mimalloc.ts";
 import { nodejsHeaders } from "./nodejs-headers.ts";
 import { picohttpparser } from "./picohttpparser.ts";
+import { bootstrapCmds } from "./bootstrap-cmds.ts";
 import { rustArgon2 } from "./rust-argon2.ts";
 import { sqlite } from "./sqlite.ts";
 import { tinycc } from "./tinycc.ts";
@@ -78,6 +79,9 @@ export const allDeps: readonly Dependency[] = [
   // (fetchDeps). Disabled otherwise (prebuilt WebKit bundles ICU; macOS uses
   // the SDK's).
   icu,
+  // bootstrap_cmds before WebKit: source of the migcom host tool the macOS
+  // direct build runs (fetchDeps). macOS + --webkit=source only.
+  bootstrapCmds,
   // WebKit LAST in link order — WTF/JSC provide symbols that everything
   // above might reference (via JavaScriptCore types in headers).
   webkit,
@@ -85,6 +89,7 @@ export const allDeps: readonly Dependency[] = [
 
 // Re-export individuals for direct import when needed.
 export {
+  bootstrapCmds,
   boringssl,
   brotli,
   cares,

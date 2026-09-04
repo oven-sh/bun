@@ -36,7 +36,9 @@ import { computeDepFlags, computeTargetLinkFlags, systemLibs } from "../flags.ts
 import { writeIfChanged } from "../fs.ts";
 import type { Ninja } from "../ninja.ts";
 import { quote, quoteArgs } from "../shell.ts";
+import { machoPostlinkImplicitInputs } from "../shims.ts";
 import { depBuildDir, depSourceDir, type CustomBuildContext, type Dependency, type Source } from "../source.ts";
+import { migcomPath } from "./bootstrap-cmds.ts";
 import { buildsIcu, icuIncludes } from "./icu.ts";
 
 // ───────────────────────────────────────────────────────────────────────────
@@ -158,6 +160,9 @@ const sourceSparse = [
   "/Source/WTF/",
   "/Source/JavaScriptCore/",
   "/Tools/Scripts/check-classinfo-uniqueness.py",
+  // The fork's Linux-hosted `mig` driver + the mach stub headers its host
+  // migcom build needs (macOS targets: WTF's Mach exception RPC stubs).
+  "/macos-cross/",
 ];
 
 // ───────────────────────────────────────────────────────────────────────────
@@ -171,17 +176,22 @@ const sourceSparse = [
 //
 // The table is the output of WebKit's cmake configure, checked against the
 // cmakeconfig.h in the prebuilt tarballs for linux x64/arm64 (gnu), musl,
-// android and freebsd; entries whose value depends on the target are
-// functions. macOS and Windows differ in more rows and are not encoded yet
-// (the direct build only targets ELF so far). When adding a platform, diff
-// its prebuilt's cmakeconfig.h against this and make the differing rows
-// conditional — do not fork the table.
+// android, freebsd and macOS; entries whose value depends on the target are
+// functions (`probe` rows are the header/function checks, which cmake does
+// not run for Apple targets). When adding a platform, diff its prebuilt's
+// cmakeconfig.h against this and make the differing rows conditional — do
+// not fork the table.
 // ───────────────────────────────────────────────────────────────────────────
 
 const on = (b: boolean): number => (b ? 1 : 0);
 const mimalloc = (c: Config): number => on(!c.asan);
+/** A header/function probe row: OptionsCommon.cmake skips those on APPLE, so the row is absent there. */
+const probe =
+  (v: number | ((c: Config) => number)) =>
+  (c: Config): number | undefined =>
+    c.darwin ? undefined : typeof v === "function" ? v(c) : v;
 
-type Row = [name: string, value: number | ((c: Config) => number)];
+type Row = [name: string, value: number | undefined | ((c: Config) => number | undefined)];
 
 const rows: Row[] = [
   ["ALLOW_LINE_AND_COLUMN_NUMBER_IN_BUILTINS", 1],
@@ -335,33 +345,33 @@ const rows: Row[] = [
   ["ENABLE_WK_WEB_EXTENSIONS", 0],
   ["ENABLE_WRITING_TOOLS", 0],
   ["ENABLE_XSLT", 1],
-  ["HAVE_ALIGNED_MALLOC", 0],
-  ["HAVE_ERRNO_H", 1],
-  ["HAVE_FEATURES_H", c => on(c.linux)],
-  ["HAVE_INT128_T", 1],
-  ["HAVE_LANGINFO_H", 1],
-  ["HAVE_LINUX_MEMFD_H", c => on(c.linux)],
-  ["HAVE_LOCALTIME_R", 1],
-  ["HAVE_MALLOC_TRIM", c => on(c.linux && c.abi === "gnu")],
-  ["HAVE_MAP_ALIGNED", c => on(c.freebsd)],
-  ["HAVE_MMAP", 1],
-  ["HAVE_PTHREAD_MAIN_NP", c => on(c.freebsd)],
-  ["HAVE_PTHREAD_NP_H", c => on(c.freebsd)],
-  ["HAVE_REGEX_H", 1],
-  ["HAVE_SHM_ANON", c => on(c.freebsd)],
-  ["HAVE_SIGNAL_H", 1],
-  ["HAVE_STATX", c => on(c.linux && c.abi !== "android")],
-  ["HAVE_STAT_BIRTHTIME", c => on(c.freebsd)],
-  ["HAVE_STD_FILESYSTEM", 1],
-  ["HAVE_SYS_PARAM_H", 1],
-  ["HAVE_SYS_TIMEB_H", c => on(c.abi !== "android")],
-  ["HAVE_SYS_TIME_H", 1],
-  ["HAVE_TIMEGM", 1],
-  ["HAVE_TIMERFD", 1],
-  ["HAVE_TIMINGSAFE_BCMP", c => on(c.freebsd)],
-  ["HAVE_TM_GMTOFF", 1],
-  ["HAVE_TM_ZONE", 1],
-  ["HAVE_VASPRINTF", 1],
+  ["HAVE_ALIGNED_MALLOC", probe(0)],
+  ["HAVE_ERRNO_H", probe(1)],
+  ["HAVE_FEATURES_H", probe(c => on(c.linux))],
+  ["HAVE_INT128_T", probe(1)],
+  ["HAVE_LANGINFO_H", probe(1)],
+  ["HAVE_LINUX_MEMFD_H", probe(c => on(c.linux))],
+  ["HAVE_LOCALTIME_R", probe(1)],
+  ["HAVE_MALLOC_TRIM", probe(c => on(c.linux && c.abi === "gnu"))],
+  ["HAVE_MAP_ALIGNED", probe(c => on(c.freebsd))],
+  ["HAVE_MMAP", probe(1)],
+  ["HAVE_PTHREAD_MAIN_NP", probe(c => on(c.freebsd))],
+  ["HAVE_PTHREAD_NP_H", probe(c => on(c.freebsd))],
+  ["HAVE_REGEX_H", probe(1)],
+  ["HAVE_SHM_ANON", probe(c => on(c.freebsd))],
+  ["HAVE_SIGNAL_H", probe(1)],
+  ["HAVE_STATX", probe(c => on(c.linux && c.abi !== "android"))],
+  ["HAVE_STAT_BIRTHTIME", probe(c => on(c.freebsd))],
+  ["HAVE_STD_FILESYSTEM", probe(1)],
+  ["HAVE_SYS_PARAM_H", probe(1)],
+  ["HAVE_SYS_TIMEB_H", probe(c => on(c.abi !== "android"))],
+  ["HAVE_SYS_TIME_H", probe(1)],
+  ["HAVE_TIMEGM", probe(1)],
+  ["HAVE_TIMERFD", probe(1)],
+  ["HAVE_TIMINGSAFE_BCMP", probe(c => on(c.freebsd))],
+  ["HAVE_TM_GMTOFF", probe(1)],
+  ["HAVE_TM_ZONE", probe(1)],
+  ["HAVE_VASPRINTF", probe(1)],
   ["USE_64KB_PAGE_BLOCK", 0],
   ["USE_ALLOW_LINE_AND_COLUMN_NUMBER_IN_BUILTINS", 1],
   ["USE_AVIF", 1],
@@ -369,7 +379,7 @@ const rows: Row[] = [
   ["USE_BUN_JSC_ADDITIONS", 1],
   ["USE_EXTERNAL_MIMALLOC", c => mimalloc(c)],
   ["USE_INSPECTOR_SOCKET_SERVER", 1],
-  ["USE_ISO_MALLOC", 1],
+  ["USE_ISO_MALLOC", c => on(!c.darwin)],
   ["USE_JPEGXL", 1],
   ["USE_LCMS", 1],
   ["USE_LIBBACKTRACE", 0],
@@ -388,7 +398,8 @@ const rows: Row[] = [
 function cmakeConfigHeader(cfg: Config): string {
   let out = "#ifndef CMAKECONFIG_H\n#define CMAKECONFIG_H\n\n";
   for (const [name, value] of rows) {
-    out += `#define ${name} ${typeof value === "function" ? value(cfg) : value}\n`;
+    const v = typeof value === "function" ? value(cfg) : value;
+    if (v !== undefined) out += `#define ${name} ${v}\n`;
   }
   // The prebuilt release workflow appends this; bun keys the bytecode cache
   // on it (ZigGlobalObject.cpp) and reports it in process.versions.
@@ -812,6 +823,21 @@ function wtfSourcesFor(cfg: Config): string[] {
   if (cfg.freebsd) {
     return ["unix/LoggingUnix.cpp", "generic/MemoryFootprintGeneric.cpp", "unix/MemoryPressureHandlerUnix.cpp"];
   }
+  if (cfg.darwin) {
+    // + the two MIG-generated mach_exc stubs, added by the emitter.
+    // Not cocoa/TimeZoneCocoa.cpp: with USE(BUN_JSC_ADDITIONS) TimeZone.cpp
+    // already defines listenForTimeZoneChangeNotifications() (bun bumps the
+    // time-zone ID itself), so the Cocoa notifier is a duplicate definition
+    // that also drags in CoreFoundation, which bun deliberately does not link.
+    // The prebuilt only got away with listing it because nothing ever pulled
+    // that member out of libWTF.a.
+    return [
+      "darwin/OSLogPrintStream.mm",
+      "unix/LoggingUnix.cpp",
+      "cocoa/MemoryFootprintCocoa.cpp",
+      "generic/MemoryPressureHandlerGeneric.cpp",
+    ];
+  }
   // linux (gnu, musl)
   return [
     "unix/LoggingUnix.cpp",
@@ -1213,7 +1239,7 @@ function writeStub(path: string, target: string): void {
 
 function emitWebKitDirect(n: Ninja, cfg: Config, ctx: CustomBuildContext): WebKitDirectResult {
   const { srcDir: W, ready, resolved } = ctx;
-  assert(!cfg.windows && !cfg.darwin, "--webkit=source: only ELF targets (Linux, Android, FreeBSD) so far");
+  assert(!cfg.windows, "--webkit=source: Windows targets are not wired up yet");
 
   const hostWin = cfg.host.os === "windows";
   const q = (p: string) => quote(p, hostWin);
@@ -1297,10 +1323,16 @@ function emitWebKitDirect(n: Ninja, cfg: Config, ctx: CustomBuildContext): WebKi
   webkitCxx.push(...pic);
   webkitC.push(...pic);
   // ICU: ours (deps/icu.ts) everywhere but macOS; static, so consumers
-  // define U_STATIC_IMPLEMENTATION like the prebuilt build does.
+  // define U_STATIC_IMPLEMENTATION like the prebuilt build does. macOS links
+  // the SDK's libicucore, whose headers Apple does not ship: WebKit carries a
+  // matching set in Source/WTF/icu, used with symbol renaming off
+  // (OptionsJSCOnly.cmake / FindICU.cmake).
+  const appleIcuHeaders = join(WTF, "icu");
   const icuFlags = buildsIcu(cfg)
     ? ["-DU_STATIC_IMPLEMENTATION=1", ...icuIncludes(cfg, depSourceDir(cfg, "icu")).map(i => `-I${q(i)}`)]
-    : [];
+    : cfg.darwin
+      ? ["-DU_DISABLE_RENAMING=1", `-I${q(appleIcuHeaders)}`]
+      : [];
   const commonDefines = [
     "-DBUILDING_JSCONLY__",
     "-DBUILDING_WEBKIT",
@@ -1350,22 +1382,7 @@ function emitWebKitDirect(n: Ninja, cfg: Config, ctx: CustomBuildContext): WebKi
   }
   n.phony("bmalloc", bmObjects);
 
-  // ─── WTF ───
-  const wtfIncludes = [B, ...inTree(join(WTF, "wtf"), wtfIncludeDirs), ...bmallocConsumerIncludes];
-  const wtfFlags = [
-    ...webkitCxx,
-    ...commonDefines,
-    "-DBUILDING_WTF",
-    "-DSTATICALLY_LINKED_WITH_bmalloc",
-    ...wtfIncludes.map(i => `-I${q(i)}`),
-    ...icuFlags,
-  ];
-  const wtfObjects = inTree(join(WTF, "wtf"), [...wtfSourcesCommon, ...wtfSourcesFor(cfg)]).map(src =>
-    cxx(n, cfg, src, { flags: wtfFlags, orderOnlyInputs: treeReady }),
-  );
-  n.phony("WTF", wtfObjects);
-
-  // ─── JavaScriptCore: codegen ───
+  // ─── Generator helpers ───
   const ruby = "ruby";
   const python = hostWin ? "python" : "python3";
   const perl = "perl";
@@ -1409,6 +1426,76 @@ function emitWebKitDirect(n: Ninja, cfg: Config, ctx: CustomBuildContext): WebKi
       vars: { desc, cmd: quoteArgs(cmd, hostWin) },
     });
   };
+
+  // ─── WTF ───
+  const WTF_DS = join(B, "WTF", "DerivedSources");
+  // macOS: WTF's signal handling (wasm fault trapping, VM traps) speaks Mach
+  // exceptions through MIG-generated RPC stubs (PlatformJSCOnly.cmake's APPLE
+  // branch). `mig` = preprocess MachExceptions.defs with the target compiler
+  // against the SDK, then Apple's migcom (host tool, deps/bootstrap-cmds.ts)
+  // through the fork's macos-cross/mig driver — what Dockerfile.macos does.
+  const migOutputs: string[] = [];
+  const migSources: string[] = [];
+  if (cfg.darwin) {
+    const macosCross = join(W, "macos-cross");
+    const migcom = migcomPath(cfg);
+    const defs = join(WTF, "wtf", "mac", "MachExceptions.defs");
+    migOutputs.push(
+      join(WTF_DS, "MachExceptionsServer.h"),
+      join(WTF_DS, "mach_exc.h"),
+      join(WTF_DS, "mach_excServer.c"),
+      join(WTF_DS, "mach_excUser.c"),
+    );
+    migSources.push(join(WTF_DS, "mach_excServer.c"), join(WTF_DS, "mach_excUser.c"));
+    const target = cfg.crossTarget === undefined ? [] : [`--target=${cfg.crossTarget}`];
+    gen({
+      outputs: migOutputs,
+      inputs: [defs, migcom, join(macosCross, "mig")],
+      cwd: WTF_DS,
+      env: { MIGCC: [cfg.cc, "-E", ...target, "-isysroot", cfg.osxSysroot ?? "/"].join(" "), MIGCOM: migcom },
+      cmd: [
+        "bash",
+        join(macosCross, "mig"),
+        "-header",
+        "mach_exc.h",
+        "-user",
+        "mach_excUser.c",
+        "-sheader",
+        "MachExceptionsServer.h",
+        "-server",
+        "mach_excServer.c",
+        "-DMACH_EXC_SERVER_TASKIDTOKEN_STATE",
+        "-isysroot",
+        cfg.osxSysroot ?? "/",
+        defs,
+      ],
+      desc: "mig MachExceptions.defs",
+    });
+  }
+  const wtfIncludes = [
+    B,
+    ...(cfg.darwin ? [WTF_DS] : []),
+    ...inTree(join(WTF, "wtf"), wtfIncludeDirs),
+    ...bmallocConsumerIncludes,
+  ];
+  const wtfTargetFlags = [
+    ...commonDefines,
+    "-DBUILDING_WTF",
+    "-DSTATICALLY_LINKED_WITH_bmalloc",
+    ...wtfIncludes.map(i => `-I${q(i)}`),
+    ...icuFlags,
+  ];
+  const wtfFlags = [...webkitCxx, ...wtfTargetFlags];
+  const wtfReady = [...treeReady, ...migOutputs];
+  const wtfObjects = [
+    ...inTree(join(WTF, "wtf"), [...wtfSourcesCommon, ...wtfSourcesFor(cfg)]).map(src =>
+      cxx(n, cfg, src, { flags: wtfFlags, orderOnlyInputs: wtfReady }),
+    ),
+    ...migSources.map(src => cc(n, cfg, src, { flags: [...webkitC, ...wtfTargetFlags], orderOnlyInputs: wtfReady })),
+  ];
+  n.phony("WTF", wtfObjects);
+
+  // ─── JavaScriptCore: codegen ───
 
   const generatedHeaders: string[] = [];
   /**
@@ -1724,8 +1811,26 @@ function emitWebKitDirect(n: Ninja, cfg: Config, ctx: CustomBuildContext): WebKi
   const exeLinkFlags = [
     ...computeTargetLinkFlags(cfg),
     ...(cfg.asan ? ["-fsanitize=address"] : []),
-    ...(cfg.windows ? [] : ["-Wl,--gc-sections"]),
+    // Drop unreferenced sections: the extractors reference a sliver of JSC.
+    ...(cfg.darwin ? ["-Wl,-dead_strip"] : cfg.windows ? [] : ["-Wl,--gc-sections"]),
   ];
+  // The shared `link` rule ends in bun's Mach-O post-link fixup on darwin
+  // cross links (shims.ts); its host tool must exist before these links run.
+  const exeLinkInputs = machoPostlinkImplicitInputs(cfg);
+  // Hooks bun's runtime provides to WTF/JSC (RunLoopBun.cpp, ErrorInstance,
+  // JSMicrotask). WebKit's own executables leave them undefined: ld64 needs
+  // that spelled out per symbol (WebKitCompilerFlags.cmake, USE_BUN_EVENT_LOOP).
+  const bunHooks = [
+    "WTFTimer__create",
+    "WTFTimer__update",
+    "WTFTimer__deinit",
+    "WTFTimer__isActive",
+    "WTFTimer__secondsUntilTimer",
+    "WTFTimer__cancel",
+    "Bun__errorInstance__finalize",
+    "Bun__reportUnhandledError",
+  ];
+  const testExeLinkFlags = cfg.darwin ? bunHooks.map(sym => `-Wl,-U,_${sym}`) : [];
 
   // LLIntSettingsExtractor: target executable, parsed (not run) by offlineasm.
   const settingsObj = cxx(n, cfg, join(JSC, "llint", "LLIntSettingsExtractor.cpp"), {
@@ -1734,6 +1839,7 @@ function emitWebKitDirect(n: Ninja, cfg: Config, ctx: CustomBuildContext): WebKi
     orderOnlyInputs: codegenReady,
   });
   const settingsExe = link(n, cfg, join(binDir, "LLIntSettingsExtractor"), [settingsObj], {
+    implicitInputs: exeLinkInputs,
     libs: [],
     flags: exeLinkFlags,
   });
@@ -1768,6 +1874,7 @@ function emitWebKitDirect(n: Ninja, cfg: Config, ctx: CustomBuildContext): WebKi
     orderOnlyInputs: codegenReady,
   });
   const offsetsExe = link(n, cfg, join(binDir, "LLIntOffsetsExtractor"), [offsetsObj], {
+    implicitInputs: exeLinkInputs,
     libs: [],
     flags: exeLinkFlags,
   });
@@ -1887,8 +1994,9 @@ function emitWebKitDirect(n: Ninja, cfg: Config, ctx: CustomBuildContext): WebKi
     join(binDir, "testFFI"),
     [testFFIObj, ...objects, ...depLink("icu"), ...depLink("mimalloc")],
     {
+      implicitInputs: exeLinkInputs,
       libs: [],
-      flags: [...exeLinkFlags, ...systemLibs(cfg)],
+      flags: [...exeLinkFlags, ...testExeLinkFlags, ...systemLibs(cfg)],
     },
   );
   n.phony("testFFI", [testFFI]);
@@ -1898,7 +2006,7 @@ function emitWebKitDirect(n: Ninja, cfg: Config, ctx: CustomBuildContext): WebKi
   return {
     objects,
     extras: [testFFI],
-    outputs: [...treeReady, ...generatedHeaders],
+    outputs: [...treeReady, ...generatedHeaders, ...migOutputs.filter(f => f.endsWith(".h"))],
     includes: [
       B,
       jscHeaders,
@@ -1907,6 +2015,7 @@ function emitWebKitDirect(n: Ninja, cfg: Config, ctx: CustomBuildContext): WebKi
       join(jscPrivateHeaders, "JavaScriptCore"),
       ...bmallocConsumerIncludes,
       WTF,
+      ...(cfg.darwin ? [appleIcuHeaders] : []),
     ],
   };
 }
@@ -1949,7 +2058,10 @@ export const webkit: Dependency = {
   versionMacro: "WEBKIT",
   // The direct build compiles against the mimalloc bun links
   // (USE_EXTERNAL_MIMALLOC) and, off macOS, the ICU built by deps/icu.ts.
-  fetchDeps: cfg => (cfg.webkit === "source" ? ["mimalloc", ...(buildsIcu(cfg) ? ["icu"] : [])] : []),
+  fetchDeps: cfg =>
+    cfg.webkit === "source"
+      ? ["mimalloc", ...(buildsIcu(cfg) ? ["icu"] : []), ...(cfg.darwin ? ["bootstrap_cmds"] : [])]
+      : [],
 
   source: cfg => {
     if (cfg.webkit === "prebuilt") {

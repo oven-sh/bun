@@ -120,12 +120,13 @@ export interface ConfigureResult {
  * on the next reconfigure (since adding a .ts usually means editing
  * an existing one to import it).
  *
- * Excludes runtime-only files (fetch-cli.ts, download.ts, ci.ts) and
- * runtime-only scripts — changes to those don't affect the build graph.
+ * Excludes scripts that only run as ninja subprocesses (ci.ts, stream.ts,
+ * npm-ci.ts) — changes to those don't affect the build graph. fetch-cli.ts
+ * and download.ts count: configure fetches `custom` deps' sources itself.
  */
 function configureInputs(cwd: string): string[] {
   const buildDir = resolve(cwd, "scripts", "build");
-  const excluded = new Set(["fetch-cli.ts", "download.ts", "ci.ts", "stream.ts", "npm-ci.ts"]);
+  const excluded = new Set(["ci.ts", "stream.ts", "npm-ci.ts"]);
 
   const scripts = globSync("*.ts", { cwd: buildDir })
     .filter(f => !excluded.has(f))

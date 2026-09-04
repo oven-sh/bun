@@ -22,7 +22,7 @@
 
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { existsSync, readFileSync } from "node:fs";
+import { createReadStream, existsSync, readFileSync } from "node:fs";
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { basename, join } from "node:path";
 import { downloadWithRetry, extractTarGz, fetchPrebuilt, gitArchive, parseGitArchiveUrl } from "./download.ts";
@@ -265,6 +265,20 @@ export async function fetchDep(
     else await downloadWithRetry(url, tarballPath, name);
   }
 
+  // A `sha256:<hex>` ref pins the file's contents (release tarballs, whose
+  // URL says nothing about the bytes). Checked on the cached copy too, and a
+  // mismatching file is removed so the next run downloads afresh.
+  if (ref.startsWith("sha256:")) {
+    const expected = ref.slice("sha256:".length);
+    const actual = await sha256File(tarballPath);
+    if (actual !== expected) {
+      await rm(tarballPath, { force: true });
+      throw new BuildError(`${name}: ${url} has sha256 ${actual}, expected ${expected}`, {
+        hint: `If the upstream file legitimately changed, update sha256 in deps/${name}.ts`,
+      });
+    }
+  }
+
   // ─── Extract ───
   // Wipe dest first — we don't want leftover files from a previous version.
   await rm(dest, { recursive: true, force: true });
@@ -330,6 +344,12 @@ export function sourceIsCurrent(dest: string, ref: string, sparse: string[], pat
   } catch {
     return false;
   }
+}
+
+async function sha256File(path: string): Promise<string> {
+  const hash = createHash("sha256");
+  for await (const chunk of createReadStream(path)) hash.update(chunk as Buffer);
+  return hash.digest("hex");
 }
 
 /**

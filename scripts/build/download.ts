@@ -293,14 +293,31 @@ export async function gitArchive(
   await rm(work, { recursive: true, force: true });
   await mkdir(tree, { recursive: true });
 
+  // http.lowSpeed*: a transfer that moves under 1 KB/s for 60 s is a stalled
+  // connection — git aborts it with an error and the retry loop below takes
+  // over, instead of the build hanging on a dead socket.
   const git = (args: string[], what: string, input?: string): { ok: boolean; stderr: string } => {
-    const result = spawnSync("git", ["-c", "protocol.version=2", "-c", "advice.detachedHead=false", ...args], {
-      cwd: tree,
-      input,
-      stdio: [input === undefined ? "ignore" : "pipe", "ignore", "pipe"],
-      encoding: "utf8",
-      env: { ...process.env, GIT_TERMINAL_PROMPT: "0" },
-    });
+    const result = spawnSync(
+      "git",
+      [
+        "-c",
+        "protocol.version=2",
+        "-c",
+        "advice.detachedHead=false",
+        "-c",
+        "http.lowSpeedLimit=1000",
+        "-c",
+        "http.lowSpeedTime=60",
+        ...args,
+      ],
+      {
+        cwd: tree,
+        input,
+        stdio: [input === undefined ? "ignore" : "pipe", "ignore", "pipe"],
+        encoding: "utf8",
+        env: { ...process.env, GIT_TERMINAL_PROMPT: "0" },
+      },
+    );
     if (result.error) {
       throw new BuildError(`Failed to spawn git ${what}`, { hint: "Is `git` in your PATH?", cause: result.error });
     }

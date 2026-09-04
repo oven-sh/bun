@@ -31,6 +31,7 @@ import { type CustomBuildContext, type CustomBuildResult, type Dependency, depBu
 const ICU_VERSION = "78.3";
 const ICU_MAJOR = ICU_VERSION.split(".")[0]!;
 const ICU_URL = `https://github.com/unicode-org/icu/releases/download/release-${ICU_VERSION}/icu4c-${ICU_VERSION}-sources.tgz`;
+const ICU_SHA256 = "3a2e7a47604ba702f345878308e6fefeca612ee895cf4a5f222e7955fabfe0c0";
 
 /** Whether this config builds ICU itself (vs. prebuilt WebKit's copy / the macOS SDK's). */
 export function buildsIcu(cfg: Config): boolean {
@@ -71,7 +72,7 @@ export const icu: Dependency = {
   versionMacro: "ICU",
   enabled: buildsIcu,
 
-  source: () => ({ kind: "tarball", url: ICU_URL, version: ICU_VERSION }),
+  source: () => ({ kind: "tarball", url: ICU_URL, sha256: ICU_SHA256, version: ICU_VERSION }),
   patches: ["patches/icu/udata-decompress-hook.patch"],
 
   build: () => ({ kind: "custom", needsSourceAtConfigure: true, emit: emitIcu }),

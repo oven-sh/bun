@@ -106,6 +106,8 @@ export type Source =
        */
       kind: "tarball";
       url: string;
+      /** SHA-256 of the file at `url` (hex). Verified before extraction; also the identity the .ref stamp is derived from. */
+      sha256: string;
       /** Reported in process.versions / bun_dependency_versions.h. */
       version: string;
     }
@@ -722,7 +724,7 @@ function fetchSpec(source: Extract<Source, { kind: "github" | "tarball" }>): {
   ref: string;
   sparse: string[];
 } {
-  if (source.kind === "tarball") return { url: source.url, ref: source.url, sparse: [] };
+  if (source.kind === "tarball") return { url: source.url, ref: `sha256:${source.sha256}`, sparse: [] };
   const sparse = source.sparse ?? [];
   return {
     url:

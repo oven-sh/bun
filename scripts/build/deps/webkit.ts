@@ -1360,9 +1360,14 @@ function emitWebKitDirect(n: Ninja, cfg: Config, ctx: CustomBuildContext): WebKi
     env?: Record<string, string>;
     implicitOutputs?: string[];
   }): void => {
-    const envPrefix = Object.entries(opts.env ?? {})
-      .map(([k, v]) => `${k}=${q(v)}`)
-      .join(" ");
+    // posix: `env K=V cmd`; cmd.exe (the webkit_gen rule wraps in `cmd /c`
+    // on a Windows host): `set "K=V" && cmd`.
+    const env = Object.entries(opts.env ?? {});
+    const envPrefix = hostWin
+      ? env.map(([k, v]) => `set "${k}=${v}" && `).join("")
+      : env.length > 0
+        ? `env ${env.map(([k, v]) => `${k}=${q(v)}`).join(" ")} `
+        : "";
     n.build({
       outputs: opts.outputs,
       ...(opts.implicitOutputs !== undefined && { implicitOutputs: opts.implicitOutputs }),
@@ -1372,7 +1377,7 @@ function emitWebKitDirect(n: Ninja, cfg: Config, ctx: CustomBuildContext): WebKi
       vars: {
         desc: opts.desc,
         cwd: q(opts.cwd ?? DS),
-        cmd: (envPrefix ? `env ${envPrefix} ` : "") + quoteArgs(opts.cmd, hostWin),
+        cmd: envPrefix + quoteArgs(opts.cmd, hostWin),
       },
     });
   };

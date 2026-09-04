@@ -314,7 +314,7 @@ const privateDsa = fixtures.readKey('dsa_private_encrypted_1025.pem',
     createPrivateKey({ key: Buffer.alloc(0), format: 'der', type: 'spki' });
   }, {
     code: 'ERR_INVALID_ARG_VALUE',
-    message: "The property 'options.type' is invalid. Received 'spki'"
+    message: "The property 'key.type' is invalid. Received 'spki'"
   });
 
   // Unlike SPKI, PKCS#1 is a valid encoding for private keys (and public keys),

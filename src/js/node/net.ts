@@ -623,6 +623,11 @@ function deferEndForOnreadTail(self) {
 }
 
 function destroyWithReadError(self, _err) {
+  // A codeless close error that still carries the errno (Windows IOCP
+  // delivers some this way): derive the proper code from it, like Node's
+  // errnoException(nread, 'read'). Raw WSA values (-10054, ...) that the
+  // errno table cannot name fall through to the reset shape below instead
+  // of surfacing "Unknown system error N".
   let errErrno;
   if (_err.code === undefined && typeof (errErrno = _err.errno) === "number" && errErrno !== 0) {
     const er = new ErrnoException(errErrno, "read") as Error & { code?: string };
@@ -683,11 +688,6 @@ function SocketEmitEndNT(self, _err?) {
     self.once("error", () => {});
     destroyWithReadError(self, _err);
   } else if (!self[kended]) {
-    // A codeless close error that still carries the errno (Windows IOCP
-    // delivers some this way): derive the proper code from it, like Node's
-    // errnoException(nread, 'read'). Raw WSA values (-10054, ...) that the
-    // errno table cannot name fall through to the reset shape below instead
-    // of surfacing "Unknown system error N".
     finishSocketEnd(self);
   } else if (_err && !self.destroyed) {
     // An error excluded from the synthesis above (teardown noise, or no

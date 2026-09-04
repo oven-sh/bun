@@ -3237,6 +3237,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                 }
                 #[cfg(not(windows))]
                 if http1 {
+                    // SAFETY: app is this server's live uWS app; `this` outlives the listen call.
                     unsafe {
                         (*app).listen_fd(
                             Some(trampoline::on_listen::<SSL, DEBUG>),

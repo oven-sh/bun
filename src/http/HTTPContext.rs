@@ -604,17 +604,17 @@ impl<const SSL: bool> HTTPContext<SSL> {
             return;
         };
         if ptrs.is_empty() {
+            // SAFETY: plain allocation; null is checked below.
             let store = unsafe { bun_boringssl_sys::X509_STORE_new() };
             if store.is_null() {
-                unsafe { bun_boringssl_sys::SSL_CTX_free(ctx) };
                 return;
             }
-            unsafe { bun_boringssl_sys::SSL_CTX_set_cert_store(ctx, store) };
+            // SAFETY: ctx is a live SSL_CTX; it takes ownership of the fresh store.
+            unsafe { bun_boringssl_sys::SSL_CTX_set_cert_store(ctx.as_ptr(), store) };
         }
-        unsafe { ssl_ctx_setup(ctx) };
-        if let Some(old) = self.secure.replace(ctx) {
-            unsafe { bun_boringssl_sys::SSL_CTX_free(old) };
-        }
+        // SAFETY: ctx is a live SSL_CTX owned by this function.
+        unsafe { ssl_ctx_setup(ctx.as_ptr()) };
+        self.secure = Some(ctx);
     }
 
     pub(crate) fn init(&mut self) {

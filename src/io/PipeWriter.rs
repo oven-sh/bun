@@ -847,10 +847,13 @@ impl<Parent: PosixStreamingWriterParent> PosixStreamingWriter<Parent> {
             return WriteResult::Wrote(buf_len);
         }
 
-        self.try_write_newly_buffered_data()
+        self.try_write_newly_buffered_data(buf_len)
     }
 
-    fn try_write_newly_buffered_data(&mut self) -> WriteResult {
+    /// `chunk_len` is the caller's chunk, already appended to `outgoing`.
+    /// `Wrote`/`Done` report bytes of *that chunk*; `Pending` reports bytes
+    /// drained (callers re-derive the chunk count from `buffered_len()`).
+    fn try_write_newly_buffered_data(&mut self, chunk_len: usize) -> WriteResult {
         debug_assert!(!self.is_done);
 
         // Borrow `self.outgoing` only for the syscall. `try_write` takes `&self`
@@ -863,19 +866,22 @@ impl<Parent: PosixStreamingWriterParent> PosixStreamingWriter<Parent> {
 
         match rc {
             WriteResult::Wrote(amt) => {
-                if amt == self.outgoing.size() {
-                    self.outgoing.reset();
-                    self.parent_on_write(amt, WriteStatus::Drained);
-                } else {
+                if amt < self.outgoing.size() {
                     self.outgoing.wrote(amt);
                     self.parent_on_write(amt, WriteStatus::Pending);
                     Self::register_poll(self);
                     return WriteResult::Pending(amt);
                 }
+                self.outgoing.reset();
+                self.parent_on_write(amt, WriteStatus::Drained);
+                return WriteResult::Wrote(chunk_len);
             }
             WriteResult::Done(amt) => {
+                debug_assert!(self.outgoing.size() >= chunk_len);
+                let old_buffered = self.outgoing.size() - chunk_len;
                 self.outgoing.reset();
                 self.parent_on_write(amt, WriteStatus::EndOfFile);
+                return WriteResult::Done(amt.saturating_sub(old_buffered));
             }
             WriteResult::Pending(amt) => {
                 self.outgoing.wrote(amt);
@@ -917,7 +923,7 @@ impl<Parent: PosixStreamingWriterParent> PosixStreamingWriter<Parent> {
                 return WriteResult::Err(sys::Error::oom());
             }
 
-            return self.try_write_newly_buffered_data();
+            return self.try_write_newly_buffered_data(buf.len());
         }
 
         let rc = self.try_write(self.force_sync, buf);

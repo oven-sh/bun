@@ -1959,7 +1959,65 @@ describe.concurrent("NO_PROXY with explicit proxy option", () => {
     expect(exitCode).toBe(0);
   });
 
-  test("S3 ops use runtime process.env.HTTP_PROXY and survive overwrite while in flight", async () => {
+  test("NO_PROXY IPv4 CIDR bypasses explicit proxy for fetch", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const resp = await fetch("http://127.0.0.1:${httpServer.port}", { proxy: "http://127.0.0.1:${deadProxyPort}" }); console.log(resp.status);`,
+      ],
+      env: { ...bunEnv, NO_PROXY: "127.0.0.0/8" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    if (exitCode !== 0) console.error("stderr:", stderr);
+    expect(stdout.trim()).toBe("200");
+    expect(exitCode).toBe(0);
+  });
+
+  test("NO_PROXY IPv4 CIDR non-match does not bypass explicit proxy", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `try { await fetch("http://127.0.0.1:${httpServer.port}", { proxy: "http://127.0.0.1:${deadProxyPort}" }); process.exit(1); } catch { process.exit(0); }`,
+      ],
+      env: { ...bunEnv, NO_PROXY: "10.0.0.0/8" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const exitCode = await proc.exited;
+    expect(exitCode).toBe(0);
+  });
+
+  test("NO_PROXY IPv6 CIDR bypasses explicit proxy for fetch", async () => {
+    const probe = await fetch(`http://[::1]:${httpServer.port}`).then(
+      r => r.status,
+      () => 0,
+    );
+    if (probe !== 200) {
+      // Environment without IPv6 loopback — nothing to test.
+      return;
+    }
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const resp = await fetch("http://[::1]:${httpServer.port}", { proxy: "http://127.0.0.1:${deadProxyPort}" }); console.log(resp.status);`,
+      ],
+      env: { ...bunEnv, NO_PROXY: "[::]/0" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    if (exitCode !== 0) console.error("stderr:", stderr);
+    expect(stdout.trim()).toBe("200");
+    expect(exitCode).toBe(0);
+  });
     // Covers two things this PR introduced:
     //  1) S3's getHttpProxy() observes a runtime process.env.HTTP_PROXY write.
     //  2) executeSimpleS3Request dupes the env-derived proxy slice — thrashing

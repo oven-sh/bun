@@ -66,11 +66,16 @@ function hostConfig(partial: PartialConfig, buildDir: string): Config {
 }
 
 /** Find one build-edge line in the generated ninja text (continuations unwrapped). */
+/**
+ * The `build` line for `rule`, with the absolute-path alias Ninja.build()
+ * declares for every build-dir output (`| /abs/build/<out>`) folded away so
+ * the expectations read as `build <out>: <rule> <ins>`.
+ */
 function buildEdge(ninja: string, rule: string): string {
   const flat = ninja.replace(/ \$\n +/g, " ");
   const line = flat.split("\n").find(l => l.startsWith("build ") && l.includes(`: ${rule} `));
   if (line === undefined) throw new Error(`no '${rule}' edge in ninja output:\n${ninja}`);
-  return line;
+  return line.replace(new RegExp(` \\| \\S+(?=: ${rule} )`), "");
 }
 
 describe("emitPostLink ninja ordering", () => {

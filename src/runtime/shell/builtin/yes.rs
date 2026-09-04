@@ -1,8 +1,7 @@
 use crate::shell::ExitCode;
-use crate::shell::builtin::{Builtin, BuiltinIO, BuiltinState, Impl, Kind};
+use crate::shell::builtin::{Builtin, BuiltinState, Kind};
 use crate::shell::interpreter::{EventLoopHandle, Interpreter, NodeId, OutputNeedsIOSafeGuard};
 use crate::shell::io_writer::{ChildPtr, WriterTag};
-use crate::shell::states::cmd::Exec;
 use crate::shell::yield_::Yield;
 
 use bun_event_loop::{EventLoopTask, TaskTag, Taskable, task_tag};
@@ -88,21 +87,12 @@ impl Yes {
     /// Write 4 chunks then bounce to the event loop so we don't hog the main
     /// thread.
     fn write_no_io_loop(interp: &Interpreter, cmd: NodeId) -> Yield {
-        // Split-borrow the Cmd so the tiled buffer (in `impl_`) and `stdout`
-        // are accessible simultaneously — the buffer is written zero-copy,
-        // which matters for `yes` throughput.
         let err = {
-            let cmd_node = interp.as_cmd_mut(cmd);
-            let shell = cmd_node.base.shell;
-            let Exec::Builtin(me) = &mut cmd_node.exec else {
-                unreachable!()
-            };
-            let (stdout, yes) = Self::split_stdout_state(me);
+            let (mut stdout, yes) = Self::split_stdout_no_io(interp, cmd);
             let chunk = &yes.buffer[..yes.buffer_used];
             let mut err = None;
             for _ in 0..4 {
-                // SAFETY: `shell` is `cmd_node.base.shell`, live for the Cmd.
-                if let Err(e) = unsafe { stdout.write_no_io_to(shell, chunk) } {
+                if let Err(e) = stdout.write(chunk) {
                     err = Some(e);
                     break;
                 }
@@ -139,9 +129,7 @@ impl Yes {
         safeguard: OutputNeedsIOSafeGuard,
     ) -> Yield {
         let child = ChildPtr::new(cmd, WriterTag::Builtin);
-        // `stdout` and `impl_` are disjoint fields of `Builtin` — split-borrow
-        // so the tiled buffer is enqueued zero-copy.
-        let (stdout, yes) = Self::split_stdout_state(Builtin::of_mut(interp, cmd));
+        let (stdout, yes) = Self::split_stdout(Builtin::of_mut(interp, cmd));
         stdout.enqueue(child, &yes.buffer[..yes.buffer_used], safeguard)
     }
 
@@ -170,16 +158,6 @@ impl Yes {
         }
         debug_assert!(Builtin::of(interp, cmd).stdout.needs_io().is_some());
         Self::enqueue_chunk(interp, cmd, OutputNeedsIOSafeGuard::OutputNeedsIo)
-    }
-
-    /// Split-borrow `&mut Builtin` into `(&mut stdout, &mut Yes)`; the fields
-    /// are disjoint so this is a sound reborrow without `unsafe`.
-    #[inline]
-    fn split_stdout_state(me: &mut Builtin) -> (&mut BuiltinIO, &mut Yes) {
-        let Impl::Yes(yes) = &mut me.impl_ else {
-            unreachable!()
-        };
-        (&mut me.stdout, &mut **yes)
     }
 }
 

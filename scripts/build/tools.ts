@@ -478,13 +478,13 @@ export function resolveLlvmToolchain(
 
   // Host compiler for build-time codegen tools (dep_host_cc) and host-side
   // cargo artifacts (.cargo/config.toml linker for the host triple). Normally
-  // the same as cc/cxx, but when cross-compiling for windows from a unix
-  // host, cc/cxx are clang-cl (which defaults to a *-windows-msvc triple,
-  // emits COFF, and can't drive an ELF link) — host tools must stay on plain
-  // clang/clang++.
+  // the same as cc/cxx, but for a windows target cc/cxx are clang-cl, whose
+  // command line the host-tool rules (GNU-style -o/-MMD/-c, .S input) don't
+  // speak and which, on a unix host, can't drive an ELF link — host tools
+  // use the plain clang/clang++ drivers from the same LLVM install.
   let hostCc: string | undefined;
   let hostCxx: string | undefined;
-  if (msvcTarget && os !== "windows") {
+  if (msvcTarget) {
     hostCc = findLlvmTool("clang", paths, os, { checkVersion: false, required: true })?.path;
     hostCxx = findLlvmTool("clang++", paths, os, { checkVersion: false, required: true })?.path;
   }

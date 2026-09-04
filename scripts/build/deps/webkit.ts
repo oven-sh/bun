@@ -28,7 +28,7 @@ export const WEBKIT_VERSION = "40e43a82a755af3cc9eb4a4e025e4e020a7a3cfd";
 
 import { spawnSync } from "node:child_process";
 import { existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, rmSync } from "node:fs";
-import { basename, join, resolve } from "node:path";
+import { basename, isAbsolute, join, resolve } from "node:path";
 import { cc, cxx, link, pch } from "../compile.ts";
 import type { Config } from "../config.ts";
 import { BuildError, assert } from "../error.ts";
@@ -1556,14 +1556,14 @@ function emitWebKit(n: Ninja, cfg: Config, ctx: CustomBuildContext): CustomBuild
   const WTF_DS = join(B, "WTF", "DerivedSources"); // created with the other output dirs above
   // macOS: WTF's signal handling (wasm fault trapping, VM traps) speaks Mach
   // exceptions through MIG-generated RPC stubs (PlatformJSCOnly.cmake's APPLE
-  // branch). `mig` = preprocess MachExceptions.defs with the target compiler
-  // against the SDK, then Apple's migcom (host tool, deps/bootstrap-cmds.ts)
-  // through the fork's macos-cross/mig driver — what Dockerfile.macos does.
+  // branch). On a Mac that is Xcode's `mig`; cross-compiling from Linux it is
+  // the fork's macos-cross/mig driver around Apple's migcom built for the
+  // host (deps/bootstrap-cmds.ts), preprocessing with the target compiler
+  // against the SDK — what Dockerfile.macos does.
   const migOutputs: string[] = [];
   const migSources: string[] = [];
   if (cfg.darwin) {
-    const macosCross = join(W, "macos-cross");
-    const migcom = migcomPath(cfg);
+    assert(cfg.osxSysroot !== undefined, "darwin target without a macOS SDK path");
     const defs = join(WTF, "wtf", "mac", "MachExceptions.defs");
     migOutputs.push(
       join(WTF_DS, "MachExceptionsServer.h"),
@@ -1572,30 +1572,43 @@ function emitWebKit(n: Ninja, cfg: Config, ctx: CustomBuildContext): CustomBuild
       join(WTF_DS, "mach_excUser.c"),
     );
     migSources.push(join(WTF_DS, "mach_excServer.c"), join(WTF_DS, "mach_excUser.c"));
-    const target = cfg.crossTarget === undefined ? [] : [`--target=${cfg.crossTarget}`];
-    gen({
-      outputs: migOutputs,
-      inputs: [defs, migcom, join(macosCross, "mig")],
-      cwd: WTF_DS,
-      env: { MIGCC: [cfg.cc, "-E", ...target, "-isysroot", cfg.osxSysroot ?? "/"].join(" "), MIGCOM: migcom },
-      cmd: [
-        "bash",
-        join(macosCross, "mig"),
-        "-header",
-        "mach_exc.h",
-        "-user",
-        "mach_excUser.c",
-        "-sheader",
-        "MachExceptionsServer.h",
-        "-server",
-        "mach_excServer.c",
-        "-DMACH_EXC_SERVER_TASKIDTOKEN_STATE",
-        "-isysroot",
-        cfg.osxSysroot ?? "/",
-        defs,
-      ],
-      desc: "mig MachExceptions.defs",
-    });
+    const migArgs = [
+      "-header",
+      "mach_exc.h",
+      "-user",
+      "mach_excUser.c",
+      "-sheader",
+      "MachExceptionsServer.h",
+      "-server",
+      "mach_excServer.c",
+      "-DMACH_EXC_SERVER_TASKIDTOKEN_STATE",
+      "-isysroot",
+      cfg.osxSysroot,
+      defs,
+    ];
+    if (cfg.host.os === "darwin") {
+      gen({
+        outputs: migOutputs,
+        inputs: [defs],
+        cwd: WTF_DS,
+        cmd: ["xcrun", "mig", ...migArgs],
+        desc: "mig MachExceptions.defs",
+      });
+    } else {
+      const migDriver = join(W, "macos-cross", "mig");
+      const migcom = migcomPath(cfg);
+      gen({
+        outputs: migOutputs,
+        inputs: [defs, migcom, migDriver],
+        cwd: WTF_DS,
+        env: {
+          MIGCC: [cfg.cc, "-E", `--target=${cfg.crossTarget}`, "-isysroot", cfg.osxSysroot].join(" "),
+          MIGCOM: migcom,
+        },
+        cmd: ["bash", migDriver, ...migArgs],
+        desc: "mig MachExceptions.defs",
+      });
+    }
   }
   const wtfIncludes = [
     B,
@@ -2064,7 +2077,7 @@ function emitWebKit(n: Ninja, cfg: Config, ctx: CustomBuildContext): CustomBuild
       .split(/[;\r\n]+/)
       .map(s => s.trim())
       .filter(s => /\.(cpp|c|cc)$/.test(s))
-      .map(s => (s.startsWith("/") ? s : !s.includes("/") && !existsSync(join(JSC, s)) ? join(DS, s) : join(JSC, s))),
+      .map(s => (isAbsolute(s) ? s : !/[\\/]/.test(s) && !existsSync(join(JSC, s)) ? join(DS, s) : join(JSC, s))),
     join(DS, "JSCBuiltins.cpp"),
     ...inTree(JSC, jscExtraSourcesFor(cfg)),
   ];
@@ -2215,7 +2228,11 @@ export const webkit: Dependency = {
   // (USE_EXTERNAL_MIMALLOC) and, off macOS, the ICU built by deps/icu.ts.
   fetchDeps: cfg =>
     cfg.webkit === "source"
-      ? ["mimalloc", ...(buildsIcu(cfg) ? ["icu"] : []), ...(cfg.darwin ? ["bootstrap_cmds"] : [])]
+      ? [
+          "mimalloc",
+          ...(buildsIcu(cfg) ? ["icu"] : []),
+          ...(cfg.darwin && cfg.host.os !== "darwin" ? ["bootstrap_cmds"] : []),
+        ]
       : [],
 
   source: cfg => {

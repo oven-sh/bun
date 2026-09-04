@@ -30,7 +30,7 @@ export function migcomPath(cfg: Config): string {
 
 export const bootstrapCmds: Dependency = {
   name: "bootstrap_cmds",
-  enabled: cfg => cfg.darwin && cfg.webkit === "source",
+  enabled: cfg => cfg.darwin && cfg.host.os !== "darwin" && cfg.webkit === "source",
 
   source: () => ({ kind: "github", repo: "apple-oss-distributions/bootstrap_cmds", commit: BOOTSTRAP_CMDS_COMMIT }),
 

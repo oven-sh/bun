@@ -199,15 +199,15 @@ export interface Config {
   cc: string;
   cxx: string;
   /**
-   * Compiler for build-time host tools (dep_host_cc codegen helpers).
-   * Same as `cc` except when cross-compiling for windows from a unix host,
-   * where `cc` is clang-cl (emits COFF) and host tools need plain clang.
+   * Compiler for build-time host tools (dep_host_cc codegen helpers, ICU's
+   * icupkg, the ICU data .S). Same as `cc` except for windows targets, where
+   * `cc` is clang-cl and host tools need the plain clang driver.
    */
   hostCc: string;
   /**
    * C++ driver for host-side links (cargo's host-triple linker in
    * `.cargo/config.toml` — build scripts, proc-macros). Same as `cxx`
-   * except when cross-compiling for windows from a unix host.
+   * except for windows targets.
    */
   hostCxx: string;
   /** Parsed X.Y.Z from clang --version. Captured once at resolve time. */
@@ -403,8 +403,8 @@ export interface Toolchain {
   /**
    * Host compiler / C++ driver for build-time host tools and host-side
    * cargo links. Only set when they differ from `cc`/`cxx` (windows
-   * cross-compile from a unix host, where cc/cxx are clang-cl);
-   * resolveConfig() falls back to `cc`/`cxx` otherwise.
+   * targets, where cc/cxx are clang-cl); resolveConfig() falls back to
+   * `cc`/`cxx` otherwise.
    */
   hostCc: string | undefined;
   hostCxx: string | undefined;

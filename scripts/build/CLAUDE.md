@@ -125,7 +125,7 @@ Tables: `cpuTargetFlags` (`-march`/`-mcpu`/`-mtune` — also forwarded to local 
 
 **Iterate on a dependency from a local checkout** — `bun bd --local-deps=mimalloc=~/code/mimalloc …` builds that dep from the clone instead of the pinned tarball (no fetch, no patches; edits rebuild incrementally). Any `github-archive` dep the graph compiles (not lolhtml or rust-argon2 — cargo reads those via `Cargo.toml`); details in `deps/README.md`.
 
-**Add a codegen step** — add a function in `codegen.ts` following the shape of `emitErrorCode` (simple) or `emitCppBind` (needs file-list input). Use the `codegen` rule: it runs the script with `cfg.jsRuntime`, so the script must run under node and bun. Call it from `emitCodegen()` and add outputs to the right `CodegenOutputs` group (`rustInputs` if the Rust build reads it (the `include!`d generated `.rs` files) — `cppSources` if it's a `.cpp` to compile, `cppAll` if it's a header).
+**Add a codegen step** — add a function in `codegen.ts` following the shape of `emitErrorCode` (simple) or `emitCppBind` (needs file-list input). Use the `codegen` rule: it runs the script with `cfg.jsRuntime`, so the script must run under node and bun. Call it from `emitCodegen()` and add outputs to the right `CodegenOutputs` group (`rustInputs` if the Rust build reads it (the `include!`d generated `.rs` files) — `cppSources` if it's a `.cpp` to compile, `cppHeaders` if it's a header. `emitCodegen()` builds `cppAll` from those groups at the end, so do not push to it).
 
 **Add a Config field** — add to `Config` interface and `PartialConfig` in `config.ts`, resolve in `resolveConfig()`. If it needs a CLI flag, `build.ts`'s arg parser already handles `--anyfield=value` generically.
 

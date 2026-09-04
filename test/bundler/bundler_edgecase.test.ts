@@ -3140,8 +3140,8 @@ describe("bundler", () => {
         const { blockFn } = require("./sloppy.cjs");
         console.log(JSON.stringify([
           L.make(true)(1), L.loop(), L.deep(), L.sibling(), L.param("p"), L.arrow("a"), L.dflt(),
-          L.caught(), L.caughtVar(), L.destructured(), L.forIn(), L.inSwitch(1), L.inTry(),
-          L.klass(), L.nested(), blockFn(), Check(2),
+          L.caught(), L.caughtVar(), L.paramUnused("p"), L.caughtUnused(), L.destructured(),
+          L.forIn(), L.inSwitch(1), L.inTry(), L.klass(), L.nested(), blockFn(), Check(2),
         ]));
       `,
       "/lib.js": /* js */ `
@@ -3201,6 +3201,20 @@ describe("bundler", () => {
           OuterCheck(0);
           try { throw "t"; } catch (Check) { var Check = "v"; let Check2 = Check; return Check2; }
         }
+        // The body never mentions the parameter or the catch binding, so only
+        // its declaration stops the body's "Check2" from taking that name.
+        export function paramUnused(Check) {
+          OuterCheck(0);
+          let Check2 = "unused-param";
+          return Check2;
+        }
+        export function caughtUnused() {
+          try { throw "err"; } catch (Check) {
+            OuterCheck(0);
+            let Check2 = "unused-catch";
+            return Check2;
+          }
+        }
         export function destructured() {
           OuterCheck(0);
           { let Check2 = 5; var { a: Check = Check2, ...rest } = { b: 1 }; }
@@ -3229,7 +3243,7 @@ describe("bundler", () => {
         export function nested() {
           OuterCheck(0);
           {
-            let Check2 = "let";
+            let Check2 = "nested";
             function inner() { var Check = "v"; return Check; }
             return [Check2, inner()];
           }
@@ -3261,9 +3275,11 @@ describe("bundler", () => {
       // No scope declares one name twice.
       expect(out).not.toMatch(/let Check2 = [^;]+;\s*var Check2\b/);
       expect(out).not.toMatch(/function param\(Check2\) \{\s*[^}]*let Check2\b/);
+      expect(out).not.toMatch(/function paramUnused\(Check2\) \{\s*[^}]*let Check2\b/);
+      expect(out).not.toMatch(/catch \(Check2\) \{\s*[^}]*let Check2\b/);
     },
     run: {
-      stdout: `[1,1,["mid","var"],["let","var"],["p","body"],["a","arrow"],["default","inner"],["err","catch"],"v",[5,{"b":1}],"k","sw","try","cls",["let","v"],[["let","g-inner"],"g-inner"],"other 2"]`,
+      stdout: `[1,1,["mid","var"],["let","var"],["p","body"],["a","arrow"],["default","inner"],["err","catch"],"v","unused-param","unused-catch",[5,{"b":1}],"k","sw","try","cls",["nested","v"],[["let","g-inner"],"g-inner"],"other 2"]`,
     },
   });
   itBundled("edgecase/MacroProtoKeyIsOwnProperty", {

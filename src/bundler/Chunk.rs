@@ -1365,6 +1365,9 @@ pub struct JavaScriptChunk {
     pub(crate) files_in_chunk_order: Box<[IndexInt]>,
     pub parts_in_chunk_in_order: Box<[PartRange]>,
 
+    /// Sorted `(source_index << 32) | import_record_index`; see `merge_external_esm_imports`.
+    pub(crate) redundant_external_imports: Vec<u64>,
+
     // for code splitting
     /// The other chunks with top-level side effects that the walk ordering
     /// this chunk reaches, in the order it finishes their first file with

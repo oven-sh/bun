@@ -141,6 +141,9 @@ pub mod linker_context {
     #[path = "findAllImportedPartsInJSOrder.rs"]
     pub mod find_all_imported_parts_in_js_order;
 
+    #[path = "mergeExternalESMImports.rs"]
+    pub(crate) mod merge_external_esm_imports;
+
     #[path = "findImportedCSSFilesInJSOrder.rs"]
     pub(crate) mod find_imported_css_files_in_js_order;
 

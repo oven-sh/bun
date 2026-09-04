@@ -79,6 +79,8 @@ unsafe extern "C" {
         height: u32,
         format: i32,
         quality: i32,
+        icc: *const u8, // nullable
+        icc_len: usize,
         out: *mut u8, // nullable
         out_len: *mut usize,
     ) -> i32;
@@ -180,9 +182,13 @@ pub(crate) fn encode(
     // only as a guard if a future caller passes png/webp directly.
     debug_assert!(opts.format == codecs::Format::Heic || opts.format == codecs::Format::Avif);
     let fmt: i32 = opts.format as i32;
+    // SAFETY: `EncodeOptions.icc_profile` is borrowed from the caller for the
+    // duration of this call (raw-ptr stand-in for a lifetime param).
+    let icc: Option<&[u8]> = opts.icc_profile.map(|p| unsafe { p.as_ref() });
+    let (icc_ptr, icc_len) = icc.map_or((core::ptr::null(), 0), |p| (p.as_ptr(), p.len()));
     let mut len: usize = 0;
     // Phase 1: encode into a thread-local CFData inside the shim, return size.
-    // SAFETY: rgba is valid; out=null signals "size probe" to the shim.
+    // SAFETY: rgba and icc are valid; out=null signals "size probe" to the shim.
     match unsafe {
         bun_coregraphics_encode(
             rgba.as_ptr(),
@@ -190,6 +196,8 @@ pub(crate) fn encode(
             height,
             fmt,
             i32::from(opts.quality),
+            icc_ptr,
+            icc_len,
             core::ptr::null_mut(),
             &raw mut len,
         )
@@ -208,6 +216,8 @@ pub(crate) fn encode(
             height,
             fmt,
             i32::from(opts.quality),
+            icc_ptr,
+            icc_len,
             out.as_mut_ptr(),
             &raw mut len,
         )

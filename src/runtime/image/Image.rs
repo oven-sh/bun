@@ -1720,7 +1720,6 @@ impl PipelineTask {
         // method). The pipeline doesn't colour-convert the RGBA, so dropping
         // the profile reinterprets a non-sRGB source (Display-P3, Adobe RGB,
         // Jpegli XYB) as sRGB and visibly shifts the colours — see #30197.
-        // JPEG/PNG/WebP embed it; HEIC/AVIF via the system backend do not.
         if enc.icc_profile.is_none() {
             // `EncodeOptions.icc_profile` borrows for the duration of `encode()`
             // (raw `NonNull<[u8]>`); `decoded` outlives the call below.

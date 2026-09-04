@@ -455,7 +455,9 @@ pub struct EncodeOptions {
     /// JPEG only: emit a progressive scan script (coarse-to-fine render).
     pub(crate) progressive: bool,
     /// ICC profile to embed in the output container (JPEG APP2, PNG iCCP,
-    /// WebP ICCP). `None` ⇒ no profile chunk/marker is written. The
+    /// WebP ICCP, HEIC/AVIF `colr` via the system codec). `None` ⇒ no
+    /// profile chunk/marker is written, except HEIC/AVIF which substitute
+    /// [`SRGB_ICC_PROFILE`]. The
     /// pipeline forwards this from the decode step so a non-sRGB source
     /// (P3, Adobe RGB, XYB/Jpegli) preserves its colour meaning through
     /// re-encode. Borrowed; the caller retains ownership.
@@ -464,6 +466,12 @@ pub struct EncodeOptions {
     // repo rule against lifetime params on structs.
     pub(crate) icc_profile: Option<NonNull<[u8]>>,
 }
+
+/// Compact sRGB v4 profile (480 bytes, CC0, from
+/// saucecontrol/Compact-ICC-Profiles). Default for HEIC/AVIF encode when the
+/// source has no profile: see the comment at the `encode()` call site.
+#[cfg(any(target_os = "macos", windows))]
+static SRGB_ICC_PROFILE: &[u8] = include_bytes!("srgb-v4.icc");
 
 impl Default for EncodeOptions {
     fn default() -> Self {
@@ -582,6 +590,16 @@ pub(crate) fn encode(
         Format::Heic | Format::Avif => {
             #[cfg(any(target_os = "macos", windows))]
             if use_system() {
+                let mut opts = opts;
+                // The OS codec derives the container's colour tags from the
+                // profile alone: ImageIO embeds the colorspace's ICC data in
+                // a `colr` box but never maps it to CICP codes (it writes
+                // nclx 2/2, "unspecified", regardless of the tag). So an
+                // untagged source must get a default sRGB profile here or
+                // the output carries no colour information at all (#40493).
+                if opts.icc_profile.is_none() {
+                    opts.icc_profile = Some(NonNull::from(SRGB_ICC_PROFILE));
+                }
                 return match system_backend::BackendError::split(system_backend::encode(
                     rgba, width, height, &opts,
                 )) {

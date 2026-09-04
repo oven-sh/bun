@@ -256,6 +256,22 @@ pub(crate) fn encode(
     if frame.set_pixel_format(&mut pf) < 0 {
         return Err(EncodeFailed);
     }
+    // Attach the source ICC profile (#40493). Best-effort like ImageQuality
+    // above: a codec that cannot store a colour context still encodes.
+    if let Some(p) = opts.icc_profile {
+        // SAFETY: `EncodeOptions.icc_profile` is borrowed from the caller for
+        // the duration of this call (raw-ptr stand-in for a lifetime param).
+        let icc: &[u8] = unsafe { p.as_ref() };
+        if let Ok(icc_len) = u32::try_from(icc.len())
+            && let Some(ctx) = f.create_color_context()
+        {
+            scopeguard::defer! { release(ctx.as_ptr()); }
+            if ctx.initialize_from_memory(icc.as_ptr(), icc_len) >= 0 {
+                let mut ctx_ptr = ctx.as_ptr();
+                let _ = frame.set_color_contexts(1, &mut ctx_ptr);
+            }
+        }
+    }
     let stride: u32 = width * 4;
     if pf == GUID_WICPixelFormat32bppRGBA {
         if frame.write_pixels(
@@ -494,6 +510,12 @@ impl ComPtr<IWICImagingFactory> {
         if hr < 0 { None } else { ComPtr::new(out) }
     }
     #[inline]
+    fn create_color_context(self) -> Option<ComPtr<IWICColorContext>> {
+        let mut out = ptr::null_mut();
+        let hr = unsafe { ((*(*self.as_ptr()).vt).CreateColorContext)(self.as_ptr(), &mut out) };
+        if hr < 0 { None } else { ComPtr::new(out) }
+    }
+    #[inline]
     fn create_bitmap_from_memory(
         self,
         width: u32,
@@ -570,6 +592,13 @@ impl ComPtr<IWICBitmapEncoder> {
     }
 }
 
+impl ComPtr<IWICColorContext> {
+    #[inline]
+    fn initialize_from_memory(self, buf: *const u8, len: u32) -> HRESULT {
+        unsafe { ((*(*self.as_ptr()).vt).InitializeFromMemory)(self.as_ptr(), buf, len) }
+    }
+}
+
 impl ComPtr<IWICBitmapFrameEncode> {
     #[inline]
     fn initialize(self, props: *mut IUnknown) -> HRESULT {
@@ -582,6 +611,10 @@ impl ComPtr<IWICBitmapFrameEncode> {
     #[inline]
     fn set_pixel_format(self, pf: &mut GUID) -> HRESULT {
         unsafe { ((*(*self.as_ptr()).vt).SetPixelFormat)(self.as_ptr(), pf) }
+    }
+    #[inline]
+    fn set_color_contexts(self, count: u32, ctxs: *mut *mut IWICColorContext) -> HRESULT {
+        unsafe { ((*(*self.as_ptr()).vt).SetColorContexts)(self.as_ptr(), count, ctxs) }
     }
     #[inline]
     fn write_pixels(self, lines: u32, stride: u32, size: u32, buf: *const u8) -> HRESULT {
@@ -635,7 +668,8 @@ struct IWICImagingFactoryVTable {
     CreateBitmapFlipRotator: *const c_void,
     CreateStream:
         unsafe extern "system" fn(*mut IWICImagingFactory, *mut *mut IWICStream) -> HRESULT,
-    CreateColorContext: *const c_void,
+    CreateColorContext:
+        unsafe extern "system" fn(*mut IWICImagingFactory, *mut *mut IWICColorContext) -> HRESULT,
     CreateColorTransformer: *const c_void,
     CreateBitmap: *const c_void,
     CreateBitmapFromSource: *const c_void,
@@ -716,6 +750,21 @@ struct IWICBitmapSourceVTable {
 }
 
 #[repr(C)]
+struct IWICColorContext {
+    vt: *const IWICColorContextVTable,
+}
+#[repr(C)]
+struct IWICColorContextVTable {
+    unk: IUnknownVTable,
+    InitializeFromFilename: *const c_void,
+    InitializeFromMemory:
+        unsafe extern "system" fn(*mut IWICColorContext, *const u8, u32) -> HRESULT,
+    InitializeFromExifColorSpace: *const c_void,
+    GetType: *const c_void,
+    GetProfileBytes: *const c_void,
+}
+
+#[repr(C)]
 struct IWICBitmapEncoder {
     vt: *const IWICBitmapEncoderVTable,
 }
@@ -749,7 +798,11 @@ struct IWICBitmapFrameEncodeVTable {
     SetSize: unsafe extern "system" fn(*mut IWICBitmapFrameEncode, u32, u32) -> HRESULT,
     SetResolution: *const c_void,
     SetPixelFormat: unsafe extern "system" fn(*mut IWICBitmapFrameEncode, *mut GUID) -> HRESULT,
-    SetColorContexts: *const c_void,
+    SetColorContexts: unsafe extern "system" fn(
+        *mut IWICBitmapFrameEncode,
+        u32,
+        *mut *mut IWICColorContext,
+    ) -> HRESULT,
     SetPalette: *const c_void,
     SetThumbnail: *const c_void,
     WritePixels:

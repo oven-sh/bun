@@ -778,6 +778,170 @@ describe("Bun.Image", () => {
       expect(String.fromCharCode(...lossless.subarray(12, 16))).toBe("VP8L");
       expect(extractWebpIccp(lossless)).toBeNull();
     });
+
+    // ── HEIC/AVIF colour tagging — #40493. The system encoders (ImageIO on
+    // macOS, WIC on Windows) used to receive neither the ICC profile nor a
+    // colour-space tag, so AVIF output had no `colr` ICC box and its CICP
+    // fields were "unspecified" (primaries 2, transfer 2): wide-gamut input
+    // came out untagged and rendered as sRGB downstream.
+    //
+    // Unlike the byte-copying JPEG/PNG/WebP container paths above, ImageIO
+    // *parses* the profile to build a CGColorSpace, so `fakeProfile` won't
+    // do. This is a real minimal Display-P3-compatible ICC profile (480
+    // bytes, CC0, from saucecontrol/Compact-ICC-Profiles,
+    // DisplayP3Compat-v4.icc).
+    const p3Profile = new Uint8Array(
+      Buffer.from(
+        "AAAB4GxjbXMEIAAAbW50clJHQiBYWVogB+IAAwAUAAkADgAdYWNzcE1TRlQAAAAAc2F3c2N0cmwA" +
+          "AAAAAAAAAAAAAAAAAPbWAAEAAAAA0y1oYW5kguKocouKP/clPrmS7iTWrgAAAAAAAAAAAAAAAAAA" +
+          "AAAAAAAAAAAAAAAAAAAAAAAKZGVzYwAAAPwAAAAkY3BydAAAASAAAAAid3RwdAAAAUQAAAAUY2hh" +
+          "ZAAAAVgAAAAsclhZWgAAAYQAAAAUZ1hZWgAAAZgAAAAUYlhZWgAAAawAAAAUclRSQwAAAcAAAAAg" +
+          "Z1RSQwAAAcAAAAAgYlRSQwAAAcAAAAAgbWx1YwAAAAAAAAABAAAADGVuVVMAAAAIAAAAHABzAFAA" +
+          "MwBDbWx1YwAAAAAAAAABAAAADGVuVVMAAAAGAAAAHABDAEMAMAAAWFlaIAAAAAAAAPbWAAEAAAAA" +
+          "0y1zZjMyAAAAAAABDEIAAAXe///zJQAAB5MAAP2Q///7of///k4AAAOaAADAFFhZWiAAAAAAAACD" +
+          "3wAAPb8AAAAAWFlaIAAAAAAAAEq/AACxNwAACrVYWVogAAAAAAAAKDgAABEKAADIeHBhcmEAAAAA" +
+          "AAMAAAACZmkAAPKnAAANWQAAE9AAAApb",
+        "base64",
+      ),
+    );
+
+    // Walk an ISOBMFF (HEIF/AVIF) box tree and return every `colr` box:
+    // { type: "nclx" | "prof" | "rICC", payload }. Item properties live
+    // under meta (a FullBox: 4 extra header bytes) → iprp → ipco.
+    function extractIsobmffColr(buf: Uint8Array): { type: string; payload: Uint8Array }[] {
+      const dv = new DataView(buf.buffer, buf.byteOffset, buf.byteLength);
+      const found: { type: string; payload: Uint8Array }[] = [];
+      function walk(start: number, end: number) {
+        let off = start;
+        while (off + 8 <= end) {
+          let size = dv.getUint32(off);
+          const type = String.fromCharCode(buf[off + 4], buf[off + 5], buf[off + 6], buf[off + 7]);
+          let hdr = 8;
+          if (size === 1) {
+            // 64-bit largesize; test images are tiny, the low word suffices.
+            size = Number(dv.getBigUint64(off + 8));
+            hdr = 16;
+          } else if (size === 0) {
+            size = end - off; // box extends to the end of the enclosing box
+          }
+          if (size < hdr || off + size > end) return;
+          if (type === "colr") {
+            const body = buf.subarray(off + hdr, off + size);
+            found.push({
+              type: String.fromCharCode(body[0], body[1], body[2], body[3]),
+              payload: body.subarray(4),
+            });
+          } else if (type === "meta") {
+            walk(off + hdr + 4, off + size);
+          } else if (type === "iprp" || type === "ipco") {
+            walk(off + hdr, off + size);
+          }
+          off += size;
+        }
+      }
+      walk(0, buf.length);
+      return found;
+    }
+
+    // Read the red colorant (rXYZ X component, s15Fixed16) out of an ICC
+    // profile. The D50-adapted red X is ~0.515 for Display P3 and ~0.436
+    // for sRGB, so it distinguishes the carried P3 profile from the sRGB
+    // fallback even if the encoder re-serialises the profile.
+    function iccRedColorantX(p: Uint8Array): number | null {
+      if (p.length < 132) return null;
+      const dv = new DataView(p.buffer, p.byteOffset, p.byteLength);
+      const count = dv.getUint32(128);
+      for (let i = 0; i < count; i++) {
+        const entry = 132 + i * 12;
+        if (entry + 12 > p.length) return null;
+        const sig = String.fromCharCode(p[entry], p[entry + 1], p[entry + 2], p[entry + 3]);
+        if (sig !== "rXYZ") continue;
+        const off = dv.getUint32(entry + 4);
+        if (off + 12 > p.length) return null;
+        return dv.getInt32(off + 8) / 65536;
+      }
+      return null;
+    }
+
+    // Encode availability is machine-specific (see the HEIC/AVIF describe
+    // below), so both tests pin the ERR_IMAGE_FORMAT_UNSUPPORTED branch and
+    // only assert colour tagging where the codec exists. HEIC covers every
+    // macOS CI machine (HEVC ships unconditionally); AVIF additionally runs
+    // where an AV1 encoder exists (M3+).
+    test.each(["heic", "avif"] as const)(
+      "PNG iCCP transfers to .%s() — colr box carries the ICC profile",
+      async fmt => {
+        const src = pngWithIccp(cornersPng, p3Profile);
+        let out: Uint8Array;
+        try {
+          out = await new Bun.Image(src)[fmt]({ quality: 60 }).bytes();
+        } catch (e: any) {
+          expect(e?.code).toBe("ERR_IMAGE_FORMAT_UNSUPPORTED");
+          return;
+        }
+        // Windows: the WIC HEIF encoder may reject SetColorContexts (the
+        // attach is best-effort), so only the encode itself is pinned there.
+        if (isWindows) return;
+        const colrs = extractIsobmffColr(out);
+        const prof = colrs.find(c => c.type === "prof" || c.type === "rICC");
+        if (prof) {
+          // The encoder may re-serialise the profile, so assert a well-formed
+          // RGB ICC profile rather than byte equality: data colour space
+          // "RGB " at offset 16, signature "acsp" at offset 36. The red
+          // colorant proves it is the P3 profile, not the sRGB fallback.
+          const p = prof.payload;
+          expect(String.fromCharCode(p[16], p[17], p[18], p[19])).toBe("RGB ");
+          expect(String.fromCharCode(p[36], p[37], p[38], p[39])).toBe("acsp");
+          expect(iccRedColorantX(p)).toBeGreaterThan(0.47);
+        } else {
+          // ImageIO may normalise a recognised profile to CICP instead of
+          // embedding it. That still carries the colour meaning — but sRGB
+          // primaries (1) here would mean the P3 profile was dropped and the
+          // no-profile fallback tag won, and unspecified (2) is the bug.
+          const nclx = colrs.find(c => c.type === "nclx");
+          expect(nclx).toBeDefined();
+          const dv = new DataView(nclx!.payload.buffer, nclx!.payload.byteOffset, nclx!.payload.byteLength);
+          expect(dv.getUint16(0)).not.toBe(2);
+          expect(dv.getUint16(0)).not.toBe(1);
+          expect(dv.getUint16(2)).not.toBe(2);
+          expect(dv.getUint16(4)).not.toBe(2); // matrix coefficients
+        }
+      },
+    );
+
+    // macOS only: ImageIO never maps a colour space to CICP codes (nclx is
+    // always 2/2, "unspecified"), so the only way the output can carry
+    // colour meaning is an ICC `colr` box — the encode path substitutes a
+    // default sRGB profile when the source has none. Device RGB (the bug)
+    // produced neither: no ICC, nclx 2/2. WIC support for colour contexts
+    // is best-effort, so Windows is not pinned here.
+    test.skipIf(!isMacOS).each(["heic", "avif"] as const)(
+      "no source profile → .%s() output still carries an sRGB colour tag",
+      async fmt => {
+        let out: Uint8Array;
+        try {
+          out = await new Bun.Image(cornersPng)[fmt]({ quality: 60 }).bytes();
+        } catch (e: any) {
+          expect(e?.code).toBe("ERR_IMAGE_FORMAT_UNSUPPORTED");
+          return;
+        }
+        const colrs = extractIsobmffColr(out);
+        const prof = colrs.find(c => c.type === "prof" || c.type === "rICC");
+        if (prof) {
+          const p = prof.payload;
+          expect(String.fromCharCode(p[16], p[17], p[18], p[19])).toBe("RGB ");
+          expect(String.fromCharCode(p[36], p[37], p[38], p[39])).toBe("acsp");
+        } else {
+          // No ICC — then the nclx CICP fields must be defined (not 2).
+          const nclx = colrs.find(c => c.type === "nclx");
+          expect(nclx).toBeDefined();
+          const dv = new DataView(nclx!.payload.buffer, nclx!.payload.byteOffset, nclx!.payload.byteLength);
+          expect(dv.getUint16(0)).not.toBe(2);
+          expect(dv.getUint16(2)).not.toBe(2);
+          expect(dv.getUint16(4)).not.toBe(2); // matrix coefficients
+        }
+      },
+    );
   });
 
   // EXIF: build a minimal JPEG via Bun.Image, then splice in an APP1 segment

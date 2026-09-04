@@ -383,13 +383,29 @@ impl Expect {
         this_value: JSValue,
         global_this: &JSGlobalObject,
     ) -> JsResult<JSValue> {
-        match this.flags.get().promise() {
-            Promise::Resolves | Promise::None => this.update_flags(|f| f.set_promise(Promise::Resolves)),
-            Promise::Rejects => {
-                return Err(global_this.throw(format_args!("Cannot chain .resolves() after .rejects()")));
-            }
+        if matches!(this.flags.get().promise(), Promise::Rejects) {
+            return Err(global_this.throw(format_args!("Cannot chain .resolves() after .rejects()")));
         }
-        Ok(this_value)
+        this.async_matcher(this_value, global_this, false)
+    }
+
+    /// `.resolves` / `.rejects` return a Proxy whose matcher calls await the promise and
+    /// return a Promise (Jest semantics) instead of blocking the thread on the promise.
+    fn async_matcher(&self, this_value: JSValue, global_this: &JSGlobalObject, is_rejects: bool) -> JsResult<JSValue> {
+        let Some(value) = super::expect::js::captured_value_get_cached(this_value) else {
+            return Err(global_this.throw2(
+                "Internal error: the expect(value) was garbage collected but it should not have been!",
+                (),
+            ));
+        };
+        value.ensure_still_alive();
+        let expect_fn = bun_jsc::codegen::js::get_constructor::<Expect>(global_this);
+        let label = if self.custom_label.is_empty() {
+            JSValue::UNDEFINED
+        } else {
+            self.custom_label.clone().to_js(global_this)?
+        };
+        mock::Bun__Expect__createAsyncMatcher(global_this, expect_fn, value, is_rejects, self.flags.get().not(), label)
     }
 
     // see `get_not` — `host_fn(getter)` shim signature mismatch.
@@ -398,13 +414,10 @@ impl Expect {
         this_value: JSValue,
         global_this: &JSGlobalObject,
     ) -> JsResult<JSValue> {
-        match this.flags.get().promise() {
-            Promise::None | Promise::Rejects => this.update_flags(|f| f.set_promise(Promise::Rejects)),
-            Promise::Resolves => {
-                return Err(global_this.throw(format_args!("Cannot chain .rejects() after .resolves()")));
-            }
+        if matches!(this.flags.get().promise(), Promise::Resolves) {
+            return Err(global_this.throw(format_args!("Cannot chain .rejects() after .resolves()")));
         }
-        Ok(this_value)
+        this.async_matcher(this_value, global_this, true)
     }
 
     pub(crate) fn get_value(
@@ -2898,10 +2911,38 @@ pub mod mock {
     // into the pointer slot and dereferences a garbage `JSGlobalObject*`
     // (UBSan: null `VM&` bind in JSGlobalObject.h).
     unsafe extern "C" {
+        #[link_name = "Bun__Expect__createAsyncMatcher"]
+        fn Bun__Expect__createAsyncMatcher_raw(
+            global: *mut JSGlobalObject,
+            expect_fn: JSValue,
+            value: JSValue,
+            is_rejects: bool,
+            is_not: bool,
+            label: JSValue,
+        ) -> JSValue;
         #[link_name = "JSMockFunction__getCalls"]
         fn JSMockFunction__getCalls_raw(global: *mut JSGlobalObject, value: JSValue) -> JSValue;
         #[link_name = "JSMockFunction__getReturns"]
         fn JSMockFunction__getReturns_raw(global: *mut JSGlobalObject, value: JSValue) -> JSValue;
+    }
+
+    /// `bun.cpp.Bun__Expect__createAsyncMatcher` — the `.resolves`/`.rejects` Proxy from
+    /// src/js/builtins/ExpectAsync.ts. `zero_is_throw`: a `.zero` return means the throw scope is set.
+    #[allow(non_snake_case)]
+    #[track_caller]
+    #[inline]
+    pub(crate) fn Bun__Expect__createAsyncMatcher(
+        global: &JSGlobalObject,
+        expect_fn: JSValue,
+        value: JSValue,
+        is_rejects: bool,
+        is_not: bool,
+        label: JSValue,
+    ) -> JsResult<JSValue> {
+        // SAFETY: `global` is live; JSValue is repr(transparent) i64; bools are passed as C bool.
+        bun_jsc::call_zero_is_throw(global, || unsafe {
+            Bun__Expect__createAsyncMatcher_raw(global.as_ptr(), expect_fn, value, is_rejects, is_not, label)
+        })
     }
 
     /// `bun.cpp.JSMockFunction__getCalls` — returns the `mock.calls` array for a

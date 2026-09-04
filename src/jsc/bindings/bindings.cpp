@@ -7170,3 +7170,22 @@ extern "C" void JSC__ArrayBuffer__asBunArrayBuffer(JSC::ArrayBuffer* self, Bun__
     out->resizable = self->isResizableOrGrowableShared();
     out->pinned = false;
 }
+
+// `expect(value).resolves` / `.rejects`: hands back the Proxy built by
+// src/js/builtins/ExpectAsync.ts, whose matcher calls return a Promise (Jest semantics).
+extern "C" [[ZIG_EXPORT(zero_is_throw)]] JSC::EncodedJSValue Bun__Expect__createAsyncMatcher(JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue expectFn, JSC::EncodedJSValue value, bool isRejects, bool isNot, JSC::EncodedJSValue label)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto* factory = JSC::JSFunction::create(vm, globalObject, WebCore::expectAsyncCreateAsyncMatcherCodeGenerator(vm), globalObject);
+    JSC::MarkedArgumentBuffer arguments;
+    arguments.append(JSC::JSValue::decode(expectFn));
+    arguments.append(JSC::JSValue::decode(value));
+    arguments.append(JSC::jsBoolean(isRejects));
+    arguments.append(JSC::jsBoolean(isNot));
+    arguments.append(JSC::JSValue::decode(label));
+    auto callData = JSC::getCallData(factory);
+    JSC::JSValue result = JSC::call(globalObject, factory, callData, JSC::jsUndefined(), arguments);
+    RETURN_IF_EXCEPTION(scope, {});
+    return JSC::JSValue::encode(result);
+}

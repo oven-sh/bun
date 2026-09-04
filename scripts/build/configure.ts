@@ -10,8 +10,6 @@ import { existsSync, globSync, mkdirSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { globAllSources } from "../glob-sources.ts";
 import { type BunOutput, bunExeName, emitBun, shouldStrip, validateBunConfig } from "./bun.ts";
-import { allDeps } from "./deps/index.ts";
-import { prefetchConfigureSources } from "./source.ts";
 import { generateCargoConfig } from "./cargo-config.ts";
 import {
   type Config,
@@ -23,6 +21,7 @@ import {
   findRepoRoot,
   resolveConfig,
 } from "./config.ts";
+import { allDeps } from "./deps/index.ts";
 import { BuildError } from "./error.ts";
 import { orderFilePath, usesOrderFile } from "./flags.ts";
 import { mkdirAll, writeIfChanged } from "./fs.ts";
@@ -31,6 +30,7 @@ import { Ninja } from "./ninja.ts";
 import { getProfile } from "./profiles.ts";
 import { registerAllRules } from "./rules.ts";
 import { quote } from "./shell.ts";
+import { prefetchConfigureSources } from "./source.ts";
 import { findBun, findCargo, findMsvcLinker, findNpm, findSystemTool, resolveLlvmToolchain } from "./tools.ts";
 import { ensureWindowsSysroot } from "./winsysroot.ts";
 import { checkWorkarounds } from "./workarounds.ts";

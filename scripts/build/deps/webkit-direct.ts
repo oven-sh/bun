@@ -26,7 +26,7 @@
 import { spawnSync } from "node:child_process";
 import { existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, rmSync } from "node:fs";
 import { basename, dirname, join, relative, resolve } from "node:path";
-import { evaluateCMake, cmakeVars, type CMakeVars } from "../cmake-lists.ts";
+import { cmakeVars, evaluateCMake, type CMakeVars } from "../cmake-lists.ts";
 import { ar, cc, cxx, link, pch } from "../compile.ts";
 import type { Config } from "../config.ts";
 import { BuildError, assert } from "../error.ts";
@@ -34,7 +34,7 @@ import { computeDepFlags, computeTargetLinkFlags, systemLibs } from "../flags.ts
 import { writeIfChanged } from "../fs.ts";
 import type { Ninja } from "../ninja.ts";
 import { quote, quoteArgs } from "../shell.ts";
-import { type CustomBuildContext, depBuildDir, depSourceDir } from "../source.ts";
+import { depBuildDir, depSourceDir, type CustomBuildContext } from "../source.ts";
 import { buildsIcu, icuIncludes } from "./icu.ts";
 import { cmakeConfigHeader, inspectorFeatureDefines } from "./webkit-config-header.ts";
 

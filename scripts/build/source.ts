@@ -23,16 +23,16 @@ import { existsSync, mkdirSync, rmSync } from "node:fs";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import { ar, cc, cxx, nasm } from "./compile.ts";
 import type { BuildType, Config } from "./config.ts";
-import { assert } from "./error.ts";
+import { registerIcuRules } from "./deps/icu.ts";
+import { registerWebKitDirectRules } from "./deps/webkit-direct.ts";
 import { gitArchiveUrl, githubArchiveUrl } from "./download.ts";
+import { assert } from "./error.ts";
 import { assertManagedSource, fetchCliPath, fetchDep, sourceIsCurrent } from "./fetch-cli.ts";
 import { computeDepFlags } from "./flags.ts";
 import { writeIfChanged } from "./fs.ts";
 import type { Ninja } from "./ninja.ts";
 import { quote, quoteArgs, slash } from "./shell.ts";
 import { streamPath } from "./stream.ts";
-import { registerIcuRules } from "./deps/icu.ts";
-import { registerWebKitDirectRules } from "./deps/webkit-direct.ts";
 
 /**
  * If the source dir exists with a stale (or missing) identity stamp,

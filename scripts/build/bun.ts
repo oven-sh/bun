@@ -37,7 +37,7 @@ import { allDeps } from "./deps/index.ts";
 import { lolhtml } from "./deps/lolhtml.ts";
 import { rustArgon2 } from "./deps/rust-argon2.ts";
 import { assert } from "./error.ts";
-import { bunIncludes, computeFlags, linkDepends, linkerMapOutputs, systemLibs, extraFlagsFor } from "./flags.ts";
+import { bunIncludes, computeFlags, extraFlagsFor, linkDepends, linkerMapOutputs, systemLibs } from "./flags.ts";
 import { writeIfChanged } from "./fs.ts";
 import type { BuildNode, Ninja } from "./ninja.ts";
 import { emitRust, rustLibPath } from "./rust.ts";

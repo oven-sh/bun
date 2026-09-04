@@ -213,7 +213,7 @@ Split CI modes: `rust-only` (path deps+codegen+cargo → libbun_runtime.a), `cpp
 | `clean.ts`                     | `bun run clean` preset-based cleanup                                                                                    |
 | `glob-sources.ts` (parent dir) | Source glob patterns + CLI to print them                                                                                |
 | `deps/*.ts`                    | One `Dependency` object per vendored dep                                                                                |
-| `deps/webkit-direct.ts`        | `--webkit=source`: JSC/WTF/bmalloc codegen + compile graph; `deps/webkit-config-header.ts` is its `cmakeconfig.h`        |
+| `deps/webkit-direct.ts`        | `--webkit=source`: JSC/WTF/bmalloc codegen + compile graph; `deps/webkit-config-header.ts` is its `cmakeconfig.h`       |
 | `deps/index.ts`                | `allDeps` array — fetch order + link order                                                                              |
 | `shims/*.c`                    | Platform workaround sources                                                                                             |
 

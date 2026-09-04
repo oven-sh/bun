@@ -2126,7 +2126,9 @@ fn placeholder_field(name: &[u8]) -> Option<(PlaceholderField, usize)> {
     if digits.is_empty() || digits.len() > 2 || !digits.iter().all(u8::is_ascii_digit) {
         return None;
     }
-    let len = digits.iter().fold(0usize, |n, &d| n * 10 + (d - b'0') as usize);
+    let len = digits
+        .iter()
+        .fold(0usize, |n, &d| n * 10 + (d - b'0') as usize);
     Some((PlaceholderField::Hash, len))
 }
 

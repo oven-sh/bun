@@ -3554,7 +3554,10 @@ impl ContentHash {
         } else {
             len
         };
-        ContentHash { value, len: len as u8 }
+        ContentHash {
+            value,
+            len: len as u8,
+        }
     }
 
     pub const fn short(value: u64) -> ContentHash {

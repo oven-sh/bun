@@ -32,6 +32,8 @@ const cmds = ["", "INSERT", "DELETE", "UPDATE", "MERGE", "SELECT", "MOVE", "FETC
 
 const escapeBackslash = /\\/g;
 const escapeQuote = /"/g;
+// A TypedArray's own map coerces each serialized element back to a number.
+const ArrayPrototypeMap = Array.prototype.map;
 
 function arrayEscape(value: string) {
   return value.replace(escapeBackslash, "\\\\").replace(escapeQuote, '\\"');
@@ -149,8 +151,7 @@ function arrayValueSerializer(type: ArrayType | undefined, is_numeric: boolean, 
   if ($isArray(value) || isTypedArray(value)) {
     if (!value.length) return "{}";
     const delimiter = type === "BOX" ? ";" : ",";
-    // Array.prototype.map: a TypedArray's own map coerces each result back to a number.
-    return `{${Array.prototype.map.$call(value, arrayValueSerializer.bind(this, type, is_numeric, is_json)).join(delimiter)}}`;
+    return `{${ArrayPrototypeMap.$call(value, arrayValueSerializer.bind(this, type, is_numeric, is_json)).join(delimiter)}}`;
   }
 
   // SQL NULL, except in a json[] where null stays the JSON value null.
@@ -239,18 +240,15 @@ function serializeArray(values: any[], type: ArrayType | undefined) {
   // Only _box (1020) has the ';' delimiter for arrays, all other types use the ',' delimiter
   const delimiter = type === "BOX" ? ";" : ",";
 
-  // Array.prototype.map: a TypedArray's own map coerces each result back to a number.
-  return `{${Array.prototype.map
-    .$call(
-      values,
-      arrayValueSerializer.bind(
-        this,
-        type,
-        type !== undefined && isPostgresNumericType(type),
-        type !== undefined && isPostgresJsonType(type),
-      ),
-    )
-    .join(delimiter)}}`;
+  return `{${ArrayPrototypeMap.$call(
+    values,
+    arrayValueSerializer.bind(
+      this,
+      type,
+      type !== undefined && isPostgresNumericType(type),
+      type !== undefined && isPostgresJsonType(type),
+    ),
+  ).join(delimiter)}}`;
 }
 
 function wrapPostgresError(error: Error | PostgresErrorOptions) {

@@ -529,6 +529,79 @@ describe("bundler", () => {
       stdout: "side effect\nrendered render,version object",
     },
   });
+  // `module.exports = ns` re-exports the whole namespace, so `default` of an
+  // ES module target comes through too (a plain `export *` would drop it).
+  itBundled("cjs2esm/ReactSpecificUnwrappingSideEffectTargetHasDefault", {
+    files: {
+      "/entry.js": /* js */ `
+        import ReactDOM, { version } from "react-dom";
+        import * as ns from "react-dom";
+        const m = require("react-dom");
+        console.log(version, typeof ReactDOM.default, ReactDOM.default(), typeof ns.default, ns.default(), m.default(), Object.keys(ns).sort().join(","));
+      `,
+      "/node_modules/react-dom/index.js": /* js */ `
+        console.log('side effect');
+        module.exports = require('./impl');
+      `,
+      "/node_modules/react-dom/impl.js": /* js */ `
+        export default function render() { return "rendered"; }
+        export const version = "19.0.0";
+      `,
+    },
+    cjs2esm: true,
+    minifySyntax: true,
+    run: {
+      stdout: "side effect\n19.0.0 function rendered function rendered rendered default,version",
+    },
+  });
+  itBundled("cjs2esm/ReactSpecificUnwrappingSideEffectTargetHasDefaultRequireOnly", {
+    files: {
+      "/entry.js": /* js */ `
+        const m = require("react-dom");
+        console.log(Object.keys(m).sort().join(","), typeof m.default, m.default(), m.version);
+      `,
+      "/node_modules/react-dom/index.js": /* js */ `
+        console.log('side effect');
+        module.exports = require('./impl');
+      `,
+      "/node_modules/react-dom/impl.js": /* js */ `
+        export default function render() { return "rendered"; }
+        export const version = "19.0.0";
+      `,
+    },
+    cjs2esm: true,
+    minifySyntax: true,
+    run: {
+      stdout: "side effect\ndefault,version function rendered 19.0.0",
+    },
+  });
+  // A real `export *` of the lifted file keeps ES module semantics: `default`
+  // of the lifted namespace does not pass through it.
+  itBundled("cjs2esm/ReactSpecificUnwrappingSideEffectTargetHasDefaultBehindExportStar", {
+    files: {
+      "/entry.js": /* js */ `
+        import * as ns from "./reexport";
+        import ReactDOM from "react-dom";
+        console.log(Object.keys(ns).sort().join(","), typeof ns.default, typeof ReactDOM.default);
+      `,
+      "/reexport.js": /* js */ `
+        export * from "react-dom";
+      `,
+      "/node_modules/react-dom/index.js": /* js */ `
+        console.log('side effect');
+        module.exports = require('./impl');
+      `,
+      "/node_modules/react-dom/impl.js": /* js */ `
+        export default function render() { return "rendered"; }
+        export const version = "19.0.0";
+      `,
+    },
+    cjs2esm: true,
+    minifySyntax: true,
+    run: {
+      stdout: "side effect\nversion undefined function",
+    },
+  });
   // The namespace the require() became stays imported when the file also
   // reads from it before the `module.exports =` assignment.
   itBundled("cjs2esm/ReactSpecificUnwrappingNamespaceStillUsed", {
@@ -1376,8 +1449,8 @@ describe("bundler", () => {
   });
   // A `var` with the name of a function declaration can change the value of the
   // binding, and so can a block-level function in sloppy mode. An ES module
-  // cannot declare a function and a `var` with one name, so this output does
-  // not load. The test reads the printed calls.
+  // cannot declare a function and a `var` with one name, so this file keeps its
+  // `__commonJS` wrapper, and each call passes `module.exports` as `this`.
   itBundled("cjs2esm/MethodCallKeepsThisWhenAVarRedeclaresTheFunction", {
     files: {
       "/entry.js": /* js */ `
@@ -1400,12 +1473,9 @@ describe("bundler", () => {
         exports.name = "lib";
       `,
     },
-    cjs2esm: true,
-    onAfterBundle(api) {
-      const out = api.readFile("/out.js");
-      expect(out).toContain(
-        "console.log(exports_lib.nested(), exports_lib.top(), exports_lib.top2(), exports_lib.block());",
-      );
+    cjs2esm: { unhandled: ["/lib.cjs"] },
+    run: {
+      stdout: "lib lib lib lib",
     },
   });
   itBundled("cjs2esm/MethodCallWithoutThisBindsDirectly", {
@@ -1433,6 +1503,168 @@ describe("bundler", () => {
     },
     run: {
       stdout: "expr arrow decl expr decl nested",
+    },
+  });
+  // A call of `exports.name()` in the file itself passes `module.exports` as `this`.
+  // The entry uses named imports, so only those calls keep the namespace object.
+  itBundled("cjs2esm/SelfMethodCallKeepsThis", {
+    files: {
+      "/entry.js": /* js */ `
+        import { internal, viaModule, viaTag } from "./lib.cjs";
+        console.log(internal(), viaModule(), viaTag());
+      `,
+      "/lib.cjs": /* js */ `
+        exports.parse = function (s) { return this._helper(s); };
+        exports._helper = function (s) { return "helped:" + s; };
+        exports.tag = function (strings) { return this._helper(strings[0]); };
+        exports.internal = function () { return exports.parse("in"); };
+        exports.viaModule = function () { return module.exports.parse("module"); };
+        exports.viaTag = function () { return exports.tag\`tag\`; };
+      `,
+    },
+    cjs2esm: true,
+    onAfterBundle(api) {
+      const out = api.readFile("/out.js");
+      expect(out).toContain('return exports_lib.parse("in");');
+      expect(out).toContain("console.log($internal(), $viaModule(), $viaTag());");
+    },
+    run: {
+      stdout: "helped:in helped:module helped:tag",
+    },
+  });
+  itBundled("cjs2esm/SelfMethodCallWithoutThisBindsDirectly", {
+    files: {
+      "/entry.js": /* js */ `
+        import { run } from "./lib.cjs";
+        console.log(run());
+      `,
+      "/lib.cjs": /* js */ `
+        exports.free = function (s) { return "free:" + s; };
+        exports.run = function () { return exports.free("x"); };
+        exports.unused = function () { return this.free("y"); };
+      `,
+    },
+    cjs2esm: true,
+    onAfterBundle(api) {
+      const out = api.readFile("/out.js");
+      expect(out).toContain('$free("x")');
+      expect(out).not.toContain("exports_lib");
+    },
+    run: {
+      stdout: "free:x",
+    },
+  });
+  itBundled("cjs2esm/SelfMethodCallInUnusedExportKeepsNoNamespace", {
+    files: {
+      "/entry.js": /* js */ `
+        import { parse } from "./lib.cjs";
+        console.log(typeof parse);
+      `,
+      "/lib.cjs": /* js */ `
+        exports.parse = function (s) { return this._helper(s); };
+        exports._helper = function (s) { return "helped:" + s; };
+        exports.run = function () { return exports.parse("x"); };
+        exports.other = "tree-shaken";
+      `,
+    },
+    cjs2esm: true,
+    onAfterBundle(api) {
+      const out = api.readFile("/out.js");
+      // Only the call in `run` needs the namespace object, and `run` is unused.
+      expect(out).not.toContain("exports_lib");
+      expect(out).not.toContain("tree-shaken");
+    },
+    run: {
+      stdout: "function",
+    },
+  });
+  itBundled("cjs2esm/SelfMethodCallNextToAReadKeepsNoNamespace", {
+    files: {
+      "/entry.js": /* js */ `
+        import { mixed } from "./lib.cjs";
+        console.log(mixed());
+      `,
+      "/lib.cjs": /* js */ `
+        exports.parse = function (s) { return this._helper(s); };
+        exports._helper = function (s) { return "helped:" + s; };
+        exports.run = function () { return exports.parse("x"); };
+        exports.pure = function (f) { return typeof f; };
+        exports.mixed = function () { return exports.pure(exports.parse); };
+        exports.other = "tree-shaken";
+      `,
+    },
+    cjs2esm: true,
+    onAfterBundle(api) {
+      const out = api.readFile("/out.js");
+      // `mixed` reads `parse` and calls `pure`. Neither needs the namespace object.
+      expect(out).toContain("return $pure($parse);");
+      expect(out).not.toContain("exports_lib");
+      expect(out).not.toContain("tree-shaken");
+    },
+    run: {
+      stdout: "function",
+    },
+  });
+  // `require()` of a lifted file keeps it in a `__commonJS` wrapper. A call of its own
+  // export must not bring an export table for the lifted bindings into the wrapper.
+  itBundled("cjs2esm/SelfMethodCallInRequiredFileKeepsExports", {
+    files: {
+      "/entry.js": /* js */ `
+        import * as m from "./index.cjs";
+        console.log(typeof m.publicEncrypt, typeof m.privateEncrypt, m.privateEncrypt("x"));
+      `,
+      "/index.cjs": /* js */ `
+        var c = require("./empty.cjs");
+        if (typeof c.publicEncrypt !== "function") c = require("./lib.cjs");
+        exports.publicEncrypt = c.publicEncrypt;
+        exports.privateEncrypt = c.privateEncrypt;
+      `,
+      "/lib.cjs": /* js */ `
+        exports.publicEncrypt = require("./pe.cjs");
+        exports.privateEncrypt = function (k) { return exports.publicEncrypt(k); };
+      `,
+      "/pe.cjs": /* js */ `
+        module.exports = function publicEncrypt(k) { return "enc:" + k; };
+      `,
+      "/empty.cjs": /* js */ `
+        module.exports = {};
+      `,
+    },
+    cjs2esm: { unhandled: ["/lib.cjs", "/pe.cjs", "/empty.cjs"] },
+    onAfterBundle(api) {
+      const out = api.readFile("/out.js");
+      expect(out).not.toContain("__export(");
+      expect(out).toContain("var require_lib = __commonJS(function(exports) {");
+    },
+    run: {
+      stdout: "function function enc:x",
+    },
+  });
+  // The same, with export names that no other file declares.
+  itBundled("cjs2esm/SelfMethodCallInRequiredFileDistinctNames", {
+    files: {
+      "/entry.js": /* js */ `
+        import { run } from "./index.cjs";
+        console.log(run());
+      `,
+      "/index.cjs": /* js */ `
+        var lib = require("./lib.cjs");
+        exports.run = function () { return lib.parse("in"); };
+      `,
+      "/lib.cjs": /* js */ `
+        exports.parse = function (s) { return this._helper(s); };
+        exports._helper = function (s) { return "helped:" + s; };
+        exports.internal = function () { return exports.parse("x"); };
+      `,
+    },
+    cjs2esm: { unhandled: ["/lib.cjs"] },
+    onAfterBundle(api) {
+      const out = api.readFile("/out.js");
+      expect(out).not.toContain("__export(");
+      expect(out).not.toContain("$parse");
+    },
+    run: {
+      stdout: "helped:in",
     },
   });
   itBundled("cjs2esm/DefaultImportJsxClassicRuntime", {
@@ -2046,6 +2278,130 @@ describe("bundler", () => {
     cjs2esm: true,
     run: {
       stdout: "1 2 false",
+    },
+  });
+  // Module code makes a top-level function declaration lexical, so a `var`
+  // with the same name is a SyntaxError there. A function body allows it, so
+  // these files keep their `__commonJS` wrapper. In sloppy mode the bundler
+  // prints a block-level function with a `var` of its name, so
+  // block-function.cjs has the same conflict.
+  itBundled("cjs2esm/VarWithTheNameOfATopLevelFunctionKeepsWrapper", {
+    files: {
+      "/entry.js": /* js */ `
+        import { top as a } from "./decl-then-var.cjs";
+        import { top as b } from "./var-then-decl.cjs";
+        import { top as c } from "./var-in-block.cjs";
+        import { top as d } from "./block-function.cjs";
+        import { top as e } from "./generator.cjs";
+        import lib from "./default-import.cjs";
+        console.log(a(), b(), c(), d(), e(), lib.top());
+      `,
+      "/decl-then-var.cjs": /* js */ `
+        function top() { return "declaration"; }
+        var top = function () { return "var"; };
+        exports.top = top;
+      `,
+      "/var-then-decl.cjs": /* js */ `
+        var top = function () { return "var"; };
+        function top() { return "declaration"; }
+        exports.top = top;
+      `,
+      "/var-in-block.cjs": /* js */ `
+        function top() { return "declaration"; }
+        if (typeof top === "function") {
+          var top = function () { return "var"; };
+        }
+        exports.top = top;
+      `,
+      "/block-function.cjs": /* js */ `
+        function top() { return "declaration"; }
+        {
+          function top() { return "block"; }
+        }
+        exports.top = top;
+      `,
+      "/generator.cjs": /* js */ `
+        function* top() {}
+        var top = function () { return "var"; };
+        exports.top = top;
+      `,
+      "/default-import.cjs": /* js */ `
+        function top() { return "declaration"; }
+        var top = function () { return "var"; };
+        exports.top = top;
+      `,
+    },
+    cjs2esm: {
+      unhandled: [
+        "/decl-then-var.cjs",
+        "/var-then-decl.cjs",
+        "/var-in-block.cjs",
+        "/block-function.cjs",
+        "/generator.cjs",
+        "/default-import.cjs",
+      ],
+    },
+    run: {
+      stdout: "var var var block var var",
+    },
+  });
+  // Module code allows a `var` that repeats a `var`, and a function and a `var`
+  // with one name inside a nested function. Of two top-level functions with one
+  // name, the parser drops the first. So this file is still lifted.
+  itBundled("cjs2esm/OtherRedeclarationsAreStillLifted", {
+    files: {
+      "/entry.js": /* js */ `
+        import { top, count, wrap } from "./lib.cjs";
+        console.log(top(), count, wrap());
+      `,
+      "/lib.cjs": /* js */ `
+        function top() { return "first"; }
+        function top() { return "second"; }
+        var count = 1;
+        if (count) {
+          var count = 2;
+        }
+        function wrap() {
+          var top = function () { return "shadow"; };
+          function inner() { return "declaration"; }
+          var inner = function () { return "inner"; };
+          function other() { return "declaration"; }
+          {
+            var other = function () { return "other"; };
+          }
+          return [top(), inner(), other()].join(" ");
+        }
+        exports.top = top;
+        exports.count = count;
+        exports.wrap = wrap;
+      `,
+    },
+    cjs2esm: true,
+    run: {
+      stdout: "second 2 shadow inner other",
+    },
+  });
+  // `module.exports = require()` in an unwrapped package becomes
+  // `export * from`, which is module code too.
+  itBundled("cjs2esm/ReactSpecificUnwrappingVarWithTheNameOfAFunctionKeepsWrapper", {
+    files: {
+      "/entry.js": /* js */ `
+        import { value } from "react";
+        console.log(value);
+      `,
+      "/node_modules/react/index.js": /* js */ `
+        function load() { return "declaration"; }
+        var load = function () { return "var"; };
+        console.log(load());
+        module.exports = require('./main');
+      `,
+      "/node_modules/react/main.js": /* js */ `
+        exports.value = "main";
+      `,
+    },
+    cjs2esm: { unhandled: ["/node_modules/react/index.js"] },
+    run: {
+      stdout: "var\nmain",
     },
   });
 });

@@ -690,11 +690,10 @@ impl Worker {
         let arena_ref: &'static ThreadLocalArena =
             unsafe { bun_ptr::detach_lifetime_ref(self.arena.get()) };
 
-        // The
-        // ASTMemoryAllocator owns its bump arena internally and ignores the
-        // passed fallback (see ASTMemoryAllocator::new doc).
-        *self.ast_memory_store = bun_ast::ASTMemoryAllocator::new(arena_ref);
-        self.ast_memory_store.reset();
+        // One mi_heap for the AST stores, `AstAlloc` spills and the parser's
+        // arena: allocations alternate between them per node, and mimalloc
+        // caches only the last heap a thread touched.
+        *self.ast_memory_store = bun_ast::ASTMemoryAllocator::borrowing(arena_ref);
 
         let log: *mut bun_ast::Log = arena_ref.alloc(bun_ast::Log::init());
         self.ctx = bun_ptr::BackRef::from(NonNull::from(ctx).cast::<BundleV2<'static>>());

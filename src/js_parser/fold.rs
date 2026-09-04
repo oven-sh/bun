@@ -501,9 +501,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                     }
                                     new_ref
                                 };
-                                if identifier_opts.assign_target() != js_ast::AssignTarget::None {
-                                    p.count_commonjs_export_assignment(name);
-                                }
+                                p.note_commonjs_export_use(name, ref_, identifier_opts);
 
                                 p.ignore_usage(id.ref_);
                                 p.record_usage(ref_);
@@ -717,10 +715,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                         }
                                         new_ref
                                     };
-                                    if identifier_opts.assign_target() != js_ast::AssignTarget::None
-                                    {
-                                        p.count_commonjs_export_assignment(name);
-                                    }
+                                    p.note_commonjs_export_use(name, ref_, identifier_opts);
 
                                     p.record_usage(ref_);
 

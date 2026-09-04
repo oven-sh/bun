@@ -116,9 +116,6 @@ bitflags::bitflags! {
         /// Renaming can also break any identifier used inside a "with" statement.
         const MUST_NOT_BE_RENAMED = 1 << 2;
 
-        /// A `var` of the same name merged into this function declaration.
-        const REDECLARED_BY_VAR = 1 << 3;
-
         const REMOVE_OVERWRITTEN_FUNCTION_DECLARATION = 1 << 4;
 
         /// The file assigns this variable after its declaration (or a mapped
@@ -126,7 +123,7 @@ bitflags::bitflags! {
         /// chain. Read by HMR live bindings and the printer's same-target fold.
         const HAS_BEEN_ASSIGNED_TO = 1 << 5;
 
-        /// An import item for `ns.name` that some use calls, as `ns.name()`.
+        /// An import item (`ns.name`) or a lifted export that a use calls as a method.
         const CALLED_AS_METHOD = 1 << 6;
 
         /// A call of this function declaration or lifted export ignores `this`.
@@ -154,7 +151,6 @@ macro_rules! symbol_flag_accessors {
 symbol_flag_accessors! {
     must_start_with_capital_letter_for_jsx, set_must_start_with_capital_letter_for_jsx => MUST_START_WITH_CAPITAL_LETTER_FOR_JSX;
     must_not_be_renamed, set_must_not_be_renamed => MUST_NOT_BE_RENAMED;
-    redeclared_by_var, set_redeclared_by_var => REDECLARED_BY_VAR;
     remove_overwritten_function_declaration, set_remove_overwritten_function_declaration => REMOVE_OVERWRITTEN_FUNCTION_DECLARATION;
     has_been_assigned_to, set_has_been_assigned_to => HAS_BEEN_ASSIGNED_TO;
     called_as_method, set_called_as_method => CALLED_AS_METHOD;
@@ -362,9 +358,52 @@ impl Kind {
     }
 }
 
+/// A part's uses of one symbol: an estimated count, plus whether any of them
+/// was added without its scope being recorded in `Ast::scope_uses` (by the
+/// linker or a transform), in which case the renamer must assume the symbol
+/// may be printed in any scope of the part. Packed into one word because
+/// every part holds one per referenced symbol.
 #[derive(Default, Clone, Copy)]
-pub struct Use {
-    pub count_estimate: u32,
+pub struct Use(u32);
+
+impl Use {
+    const UNSCOPED: u32 = 1 << 31;
+
+    /// `count` uses whose scope is not on record.
+    pub const fn unscoped(count: u32) -> Use {
+        Use(if count >= Self::UNSCOPED {
+            u32::MAX
+        } else {
+            count | Self::UNSCOPED
+        })
+    }
+
+    #[inline]
+    pub const fn count_estimate(self) -> u32 {
+        self.0 & !Self::UNSCOPED
+    }
+
+    #[inline]
+    pub const fn has_unscoped(self) -> bool {
+        self.0 & Self::UNSCOPED != 0
+    }
+
+    /// The parser's `record_usage`: the use's scope is on record.
+    #[inline]
+    pub fn add_scoped(&mut self, count: u32) {
+        debug_assert!(self.count_estimate() + count < Self::UNSCOPED);
+        self.0 += count;
+    }
+
+    #[inline]
+    pub fn subtract(&mut self, count: u32) {
+        self.0 = self.count_estimate().saturating_sub(count) | (self.0 & Self::UNSCOPED);
+    }
+
+    pub fn merge(&mut self, other: Use) {
+        let count = self.count_estimate().saturating_add(other.count_estimate());
+        self.0 = count.min(Self::UNSCOPED - 1) | ((self.0 | other.0) & Self::UNSCOPED);
+    }
 }
 
 pub type List<'a> = bun_alloc::ArenaVec<'a, Symbol>;
@@ -609,6 +648,21 @@ impl Map {
                 symbol.link.set(resolved);
             }
         }
+    }
+
+    /// The symbol whose name the printer writes for a reference to `ref_`:
+    /// `follow`, then through `namespace_alias` (an import that prints as a
+    /// property of its namespace object prints that object's symbol).
+    pub fn follow_printed(&self, ref_: Ref) -> Ref {
+        let mut ref_ = self.follow(ref_);
+        while let Some(alias) = &self.get_const(ref_).unwrap().namespace_alias {
+            let next = self.follow(alias.namespace_ref);
+            if next == ref_ {
+                break;
+            }
+            ref_ = next;
+        }
+        ref_
     }
 
     /// Equivalent to followSymbols in esbuild.

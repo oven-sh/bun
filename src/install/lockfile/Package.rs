@@ -918,6 +918,9 @@ pub struct DiffSummary {
     pub(crate) removed_trusted_dependencies: TrustedDependenciesSet,
 
     pub(crate) patched_dependencies_changed: bool,
+    /// A workspace's `version` changed. No edge changed with it (those count as updates), but the
+    /// lockfile records the version, so it is rewritten.
+    pub(crate) workspace_versions_changed: bool,
 
     pub(crate) pruned_workspaces: Vec<PackageNameHash>,
 }
@@ -938,6 +941,7 @@ impl DiffSummary {
             || self.added_trusted_dependencies.count() > 0
             || self.removed_trusted_dependencies.count() > 0
             || self.patched_dependencies_changed
+            || self.workspace_versions_changed
     }
 
     #[inline]
@@ -1343,6 +1347,30 @@ impl Diff {
             }
             false
         };
+
+        if is_root {
+            // Compared as bun.lock prints them (`Version::eql` ignores build metadata, and an
+            // empty pre-release or build is not printed), so one rewrite settles the file.
+            let from_buf = from_lockfile.buffers.string_bytes.as_slice();
+            let to_buf = to_lockfile.buffers.string_bytes.as_slice();
+            summary.workspace_versions_changed = from_lockfile.workspace_versions.count()
+                != to_lockfile.workspace_versions.count()
+                || to_lockfile
+                    .workspace_versions
+                    .iter()
+                    .any(|(name_hash, to)| {
+                        from_lockfile
+                            .workspace_versions
+                            .get(name_hash)
+                            .is_none_or(|from| {
+                                from.major != to.major
+                                    || from.minor != to.minor
+                                    || from.patch != to.patch
+                                    || from.tag.pre.slice(from_buf) != to.tag.pre.slice(to_buf)
+                                    || from.tag.build.slice(from_buf) != to.tag.build.slice(to_buf)
+                            })
+                    });
+        }
 
         let mut missing_workspaces: Vec<PackageID> = Vec::new();
         let mut survivors: Vec<(String, DependencySlice)> = Vec::new();
@@ -1872,43 +1900,40 @@ impl Package<u64> {
                     .append::<String>(if relative.is_empty() { b"." } else { relative });
             }
             dependency::version::Tag::Npm => {
-                if let Some(workspace_version) = workspace_version {
-                    let satisfies =
-                        dependency_version
-                            .npm()
-                            .version
-                            .satisfies(workspace_version, buf, buf);
-                    if pm.options.link_workspace_packages && satisfies {
-                        // `String::sliced` takes `&'a self`; bind the unwrapped
-                        // value so the borrow outlives the parse call.
-                        let wp = workspace_path.unwrap();
-                        let path = wp.sliced(buf);
-                        if let Some(mut dep) = dependency::parse_with_tag(
-                            external_alias.value,
-                            Some(external_alias.hash),
-                            path.slice,
-                            dependency::version::Tag::Workspace,
-                            &path,
-                            Some(&mut *log),
-                            Some(&mut *pm),
-                        ) {
-                            // Whole-struct move so `Drop` frees the old npm
-                            // chain; keep the existing `literal`.
-                            dep.literal = dependency_version.literal;
-                            dependency_version = dep;
-                        }
-                    } else {
-                        // It doesn't satisfy, but a workspace shares the same name. Override the workspace with the other dependency
-                        for dep in &mut package_dependencies[0..dependencies_count as usize] {
-                            if dep.name_hash == name_hash && dep.behavior.is_workspace() {
-                                *dep = Dependency {
-                                    behavior: group.behavior,
-                                    name: external_alias.value,
-                                    name_hash: external_alias.hash,
-                                    version: dependency_version,
-                                };
-                                return Ok(None);
-                            }
+                if let Some(workspace_path) = lockfile::linked_workspace_path(
+                    pm.options.link_workspace_packages,
+                    workspace_paths,
+                    workspace_versions,
+                    name_hash,
+                    &dependency_version.npm().version,
+                    buf,
+                ) {
+                    let path = workspace_path.sliced(buf);
+                    if let Some(mut dep) = dependency::parse_with_tag(
+                        external_alias.value,
+                        Some(external_alias.hash),
+                        path.slice,
+                        dependency::version::Tag::Workspace,
+                        &path,
+                        Some(&mut *log),
+                        Some(&mut *pm),
+                    ) {
+                        // Whole-struct move so `Drop` frees the old npm
+                        // chain; keep the existing `literal`.
+                        dep.literal = dependency_version.literal;
+                        dependency_version = dep;
+                    }
+                } else if workspace_version.is_some() {
+                    // It doesn't satisfy, but a workspace shares the same name. Override the workspace with the other dependency
+                    for dep in &mut package_dependencies[0..dependencies_count as usize] {
+                        if dep.name_hash == name_hash && dep.behavior.is_workspace() {
+                            *dep = Dependency {
+                                behavior: group.behavior,
+                                name: external_alias.value,
+                                name_hash: external_alias.hash,
+                                version: dependency_version,
+                            };
+                            return Ok(None);
                         }
                     }
                 }

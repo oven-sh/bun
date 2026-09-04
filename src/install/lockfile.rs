@@ -691,6 +691,9 @@ impl Lockfile {
         self.catalogs = CatalogMap::default();
         self.patched_dependencies = PatchedDependenciesMap::default();
 
+        let link_workspace_packages = pm
+            .as_deref()
+            .is_none_or(|pm| pm.options.link_workspace_packages);
         let load_result = match Serializer::load(self, &mut stream, log, pm) {
             Ok(r) => r,
             Err(e) => {
@@ -706,6 +709,8 @@ impl Lockfile {
         if cfg!(debug_assertions) {
             self.verify_data().expect("lockfile data is corrupt");
         }
+
+        self.tag_workspace_links(link_workspace_packages);
 
         LoadResult::Ok(LoadResultOk {
             lockfile: self,
@@ -2025,6 +2030,28 @@ impl Default for Lockfile {
     }
 }
 
+/// The workspace an npm range on `name_hash`'s package links to instead of the registry: the
+/// workspace of that name, when the range satisfies its version or is a `*` range (which links even
+/// a workspace without a version, https://github.com/oven-sh/bun/pull/10899#issuecomment-2099609419).
+pub(crate) fn linked_workspace_path(
+    link_workspace_packages: bool,
+    workspace_paths: &NameHashMap,
+    workspace_versions: &VersionHashMap,
+    name_hash: PackageNameHash,
+    range: &Semver::query::Group,
+    buf: &[u8],
+) -> Option<SemverString> {
+    if !link_workspace_packages {
+        return None;
+    }
+    let path = *workspace_paths.get(&name_hash)?;
+    if range.is_star() {
+        return Some(path);
+    }
+    let version = *workspace_versions.get(&name_hash)?;
+    range.satisfies(version, buf, buf).then_some(path)
+}
+
 impl Lockfile {
     pub(crate) fn init_empty_value() -> Self {
         Lockfile {
@@ -2059,6 +2086,59 @@ impl Lockfile {
     #[inline]
     pub(crate) fn mark_loaded_packages(&mut self) {
         self.loaded_package_count = self.packages.len() as PackageID;
+    }
+
+    /// Loaders (bun.lock, bun.lockb, migrated foreign lockfiles) rebuild a dependency from its
+    /// literal, so every loader finishes with this to give edges resolved to a workspace package the
+    /// shape `Package::parse` gives them: a `workspace:` edge's value becomes the workspace's path,
+    /// and an npm range becomes a workspace edge when `linked_workspace_path`, asked with the
+    /// workspaces this lockfile records, links it. Ranges bound to a workspace any other way (a peer
+    /// that took a sibling's version, an override) stay ranges, as they do in a reparse.
+    pub(crate) fn tag_workspace_links(&mut self, link_workspace_packages: bool) {
+        let pkg_resolutions = self.packages.items_resolution();
+        let buf = self.buffers.string_bytes.as_slice();
+        for (dep, &pkg_id) in self
+            .buffers
+            .dependencies
+            .iter_mut()
+            .zip(self.buffers.resolutions.iter())
+        {
+            if pkg_id as usize >= pkg_resolutions.len() {
+                continue;
+            }
+            let res = &pkg_resolutions[pkg_id as usize];
+            if res.tag != ResolutionTag::Workspace {
+                continue;
+            }
+            let linked = match dep.version.tag {
+                dependency::Tag::Workspace => true,
+                dependency::Tag::Npm => {
+                    let npm = dep.version.npm();
+                    linked_workspace_path(
+                        link_workspace_packages,
+                        &self.workspace_paths,
+                        &self.workspace_versions,
+                        Semver::string::Builder::string_hash(npm.name.slice(buf)),
+                        &npm.version,
+                        buf,
+                    )
+                    .is_some()
+                }
+                _ => false,
+            };
+            if !linked {
+                continue;
+            }
+            // Whole-struct move so `Drop` frees the old npm chain; keep the existing `literal`.
+            let literal = dep.version.literal;
+            dep.version = DependencyVersion {
+                tag: dependency::Tag::Workspace,
+                literal,
+                value: dependency::Value {
+                    workspace: *res.workspace(),
+                },
+            };
+        }
     }
 
     /// Record that package `id` was appended via an exact-version dependency

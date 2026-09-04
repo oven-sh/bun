@@ -1057,6 +1057,11 @@ function getReleaseStep(releasePlatforms, options, { signed = false, testStepKey
       // (same filenames, but the signed re-uploads are the ones we want).
       WINDOWS_ARTIFACT_STEP: signed ? "windows-sign" : "",
     },
+    // Only one release upload touches the `canary` tag at a time across
+    // builds. Without this two main builds that go green close together both
+    // push assets and step on each other's delete/rename sequence.
+    concurrency: 1,
+    concurrency_group: "release/canary",
     command: ".buildkite/scripts/upload-release.sh",
   };
 }

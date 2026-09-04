@@ -43,7 +43,6 @@ const mockToolchain: Toolchain = {
   clangVersion: "21.1.8",
   clangResourceDir: "/fake/llvm/lib/clang/21",
   ar: "/fake/llvm/bin/llvm-ar",
-  ranlib: "/fake/llvm/bin/llvm-ranlib",
   ld: "/fake/llvm/bin/ld.lld",
   ld64Lld: "/fake/llvm/bin/ld64.lld",
   rustLld: undefined,
@@ -62,7 +61,6 @@ const mockToolchain: Toolchain = {
   rustupHome: undefined,
   msvcLinker: undefined,
   rc: undefined,
-  mt: undefined,
   nasm: undefined,
 };
 

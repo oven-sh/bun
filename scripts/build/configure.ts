@@ -241,11 +241,16 @@ export async function configure(input: ConfigureInput): Promise<ConfigureResult>
     if (trace) process.stderr.write(`  ${label}: ${Math.round(performance.now() - start)}ms\n`);
   };
 
-  // Expand profile → PartialConfig. Overrides win.
-  const partial: PartialConfig = {
-    ...(input.profile !== undefined ? getProfile(input.profile) : {}),
-    ...(input.overrides ?? {}),
-  };
+  // Expand profile → PartialConfig. Overrides win — except localDeps, which
+  // is a list and accumulates (a `*-local` profile redirects WebKit; a CLI
+  // `--local-deps=zstd=…` on top must add to that, not replace it; a repeated
+  // name still takes the CLI's path since later entries win).
+  const profile = input.profile !== undefined ? getProfile(input.profile) : {};
+  const overrides = input.overrides ?? {};
+  const partial: PartialConfig = { ...profile, ...overrides };
+  if (profile.localDeps !== undefined && overrides.localDeps !== undefined) {
+    partial.localDeps = `${profile.localDeps},${overrides.localDeps}`;
+  }
 
   // Guard: build/btg is reserved for the LTO bench profile. Configuring it
   // with any other profile (e.g. `--profile=release --build-dir=build/btg`,

@@ -3,8 +3,8 @@ use bun_ast::{E, ExprData};
 use bun_core::strings;
 use bun_core::{Output, zstr};
 use bun_paths::PathBuffer;
+use bun_semver as Semver;
 use bun_semver::query::token::Wildcard;
-use bun_semver::{self as Semver, SlicedString};
 use bun_sys::{self, Fd, File, O};
 
 use crate::install::{self as Install, PackageManager, Subcommand};
@@ -382,8 +382,9 @@ fn migrate_npm_lockfile<'a>(
             this.workspace_paths.insert(name_hash, appended);
 
             if let Some(version_string) = &v.version {
-                let sliced_version = SlicedString::init(version_string, version_string);
-                let result = Semver::Version::parse(sliced_version);
+                let appended = this.string_buf().append(&version_string[..])?;
+                let result =
+                    Semver::Version::parse(appended.sliced(this.buffers.string_bytes.as_slice()));
                 if result.valid && result.wildcard == Wildcard::None {
                     this.workspace_versions
                         .insert(name_hash, result.version.min());
@@ -402,6 +403,7 @@ fn migrate_npm_lockfile<'a>(
     clear_non_registry_platform_constraints(this);
     npm_lock::apply_root_overrides(this, manager, log, dir, workspace_map.as_ref(), abs_path)?;
 
+    this.tag_workspace_links(manager.options.link_workspace_packages);
     this.resolve(log)?;
 
     #[cfg(debug_assertions)]

@@ -164,6 +164,9 @@ impl DependencyExt for Dependency {
     ) {
         builder.count(self.name.slice(name_buf));
         builder.count(self.version.literal.slice(version_buf));
+        if self.version.tag == Tag::Workspace {
+            builder.count(self.version.workspace().slice(version_buf));
+        }
     }
 
     fn count<SB: StringBuilderLike>(&self, buf: &[u8], builder: &mut SB) {
@@ -193,13 +196,21 @@ impl DependencyExt for Dependency {
         // prior slice. Append first, then borrow the (now-stable) buffer.
         let new_literal = builder.append_string(self.version.literal.slice(version_buf));
         let new_name = builder.append_string(self.name.slice(name_buf));
-        let out_slice = builder.string_bytes();
-        let sliced = new_literal.sliced(out_slice);
 
-        Ok(Dependency {
-            name_hash: self.name_hash,
-            name: new_name,
-            version: parse_with_tag(
+        // A workspace edge's path is not always its literal: `Package::parse` links an npm range
+        // (`^1`, `*`, `npm:pkg@1`) to a workspace and keeps the range as the literal.
+        let version = if self.version.tag == Tag::Workspace {
+            Version {
+                tag: Tag::Workspace,
+                literal: new_literal,
+                value: Value {
+                    workspace: builder.append_string(self.version.workspace().slice(version_buf)),
+                },
+            }
+        } else {
+            let out_slice = builder.string_bytes();
+            let sliced = new_literal.sliced(out_slice);
+            parse_with_tag(
                 new_name,
                 Some(Semver::string::Builder::string_hash(
                     new_name.slice(out_slice),
@@ -210,7 +221,13 @@ impl DependencyExt for Dependency {
                 None,
                 Some(package_manager as &mut dyn NpmAliasRegistry),
             )
-            .unwrap_or_default(),
+            .unwrap_or_default()
+        };
+
+        Ok(Dependency {
+            name_hash: self.name_hash,
+            name: new_name,
+            version,
             behavior: self.behavior,
         })
     }

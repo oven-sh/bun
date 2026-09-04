@@ -3172,6 +3172,16 @@ void JSC__VM__collectAsync(JSC::VM* vm, bool full)
         vm->heap.collectAsync();
 }
 
+// The full collection GarbageCollectionController requests because the heap has gone quiet: tagged so JSC may let idle
+// optimized code age out in it (GCRequest::isIdle), which it never does in a collection the program forces or allocation paces.
+void JSC__VM__collectAsyncIdle(JSC::VM* vm)
+{
+    JSC::JSLockHolder lock(*vm);
+    JSC::GCRequest request(JSC::CollectionScope::Full);
+    request.isIdle = true;
+    vm->heap.collectAsync(request);
+}
+
 size_t JSC__VM__heapSize(JSC::VM* arg0)
 {
     return arg0->heap.size();
@@ -6006,22 +6016,14 @@ extern "C" [[ZIG_EXPORT(check_slow)]] double Bun__parseDate(JSC::JSGlobalObject*
 extern "C" [[ZIG_EXPORT(check_slow)]] double Bun__gregorianDateTimeToMS(JSC::JSGlobalObject* globalObject, int year, int month, int day, int hour, int minute, int second, int millisecond, bool localTime)
 {
     auto& vm = JSC::getVM(globalObject);
-    WTF::GregorianDateTime dateTime;
-    dateTime.setYear(year);
-    dateTime.setMonth(month - 1);
-    dateTime.setMonthDay(day);
-    dateTime.setHour(hour);
-    dateTime.setMinute(minute);
-    dateTime.setSecond(second);
-    return vm.dateCache.gregorianDateTimeToMS(dateTime, millisecond, localTime ? WTF::TimeType::LocalTime : WTF::TimeType::UTCTime);
+    return vm.dateCache.gregorianDateTimeToMS(year, month - 1, day, hour, minute, second, millisecond, localTime ? WTF::TimeType::LocalTime : WTF::TimeType::UTCTime);
 }
 
 extern "C" [[ZIG_EXPORT(nothrow)]] void Bun__msToGregorianDateTime(JSC::JSGlobalObject* globalObject, double ms, bool localTime,
     int* year, int* month, int* day, int* hour, int* minute, int* second, int* weekday)
 {
     auto& vm = JSC::getVM(globalObject);
-    WTF::GregorianDateTime dt;
-    vm.dateCache.msToGregorianDateTime(ms, localTime ? WTF::TimeType::LocalTime : WTF::TimeType::UTCTime, dt);
+    auto dt = vm.dateCache.msToGregorianDateTime(ms, localTime ? WTF::TimeType::LocalTime : WTF::TimeType::UTCTime);
     *year = dt.year();
     *month = dt.month() + 1;
     *day = dt.monthDay();
@@ -6265,7 +6267,7 @@ extern "C" int JSC__JSValue__DateNowISOString(JSC::JSGlobalObject* globalObject,
 
     auto& vm = JSC::getVM(globalObject);
 
-    const GregorianDateTime* gregorianDateTime = thisDateObj->gregorianDateTimeUTC(vm.dateCache);
+    auto gregorianDateTime = thisDateObj->gregorianDateTimeUTC(vm.dateCache);
     if (!gregorianDateTime)
         return -1;
 
@@ -6275,10 +6277,10 @@ extern "C" int JSC__JSValue__DateNowISOString(JSC::JSGlobalObject* globalObject,
         ms += msPerSecond;
 
     int charactersWritten;
-    if (gregorianDateTime->year() > 9999 || gregorianDateTime->year() < 0)
-        charactersWritten = snprintf(buffer, sizeof(buffer), "%+07d-%02d-%02dT%02d:%02d:%02d.%03dZ", gregorianDateTime->year(), gregorianDateTime->month() + 1, gregorianDateTime->monthDay(), gregorianDateTime->hour(), gregorianDateTime->minute(), gregorianDateTime->second(), ms);
+    if (gregorianDateTime.year() > 9999 || gregorianDateTime.year() < 0)
+        charactersWritten = snprintf(buffer, sizeof(buffer), "%+07d-%02d-%02dT%02d:%02d:%02d.%03dZ", gregorianDateTime.year(), gregorianDateTime.month() + 1, gregorianDateTime.monthDay(), gregorianDateTime.hour(), gregorianDateTime.minute(), gregorianDateTime.second(), ms);
     else
-        charactersWritten = snprintf(buffer, sizeof(buffer), "%04d-%02d-%02dT%02d:%02d:%02d.%03dZ", gregorianDateTime->year(), gregorianDateTime->month() + 1, gregorianDateTime->monthDay(), gregorianDateTime->hour(), gregorianDateTime->minute(), gregorianDateTime->second(), ms);
+        charactersWritten = snprintf(buffer, sizeof(buffer), "%04d-%02d-%02dT%02d:%02d:%02d.%03dZ", gregorianDateTime.year(), gregorianDateTime.month() + 1, gregorianDateTime.monthDay(), gregorianDateTime.hour(), gregorianDateTime.minute(), gregorianDateTime.second(), ms);
 
     memcpy(buf, buffer, charactersWritten);
 

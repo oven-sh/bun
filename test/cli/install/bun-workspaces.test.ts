@@ -10,6 +10,7 @@ import {
   isWindows,
   readdirSorted,
   runBunInstall,
+  runBunUpdate,
   toMatchNodeModulesAt,
   VerdaccioRegistry,
 } from "harness";
@@ -194,7 +195,7 @@ test("dependency on workspace without version in package.json", async () => {
   }
 });
 
-test("allowing negative workspace patterns", async () => {
+test.concurrent("allowing negative workspace patterns", async () => {
   using ctx = await setupTest();
   const { packageDir, env } = ctx;
   await Promise.all([
@@ -279,7 +280,7 @@ test("dependency on same name as workspace and dist-tag", async () => {
   ]);
 });
 
-test("successfully installs workspace when path already exists in node_modules", async () => {
+test.concurrent("successfully installs workspace when path already exists in node_modules", async () => {
   using ctx = await setupTest();
   const { packageDir, env } = ctx;
   await Promise.all([
@@ -312,7 +313,155 @@ test("successfully installs workspace when path already exists in node_modules",
   });
 });
 
-test("adding workspace in workspace edits package.json with correct version (workspace:*)", async () => {
+// A "*" locked to a registry package moves to a workspace of that name once one exists, and back
+// to the registry once it is gone: the lockfile edge records which one it linked.
+test.concurrent("star dep follows a same-name workspace being added and removed", async () => {
+  using ctx = await setupTest();
+  const { packageDir, env } = ctx;
+  const installed = () => file(join(packageDir, "node_modules", "no-deps", "package.json")).json();
+  const writeRoot = (workspaces: string[]) =>
+    write(
+      join(packageDir, "package.json"),
+      JSON.stringify({ name: "root", workspaces, dependencies: { "no-deps": "*" } }),
+    );
+
+  await Promise.all([
+    writeRoot(["app1"]),
+    write(join(packageDir, "app1", "package.json"), JSON.stringify({ name: "app1" })),
+  ]);
+  let { exited } = await runBunInstall(env, packageDir);
+  expect(await exited).toBe(0);
+  expect((await installed()).version).toBe("2.0.0");
+
+  // versionless, so only the `*` arm of the link rule matches it
+  await Promise.all([
+    writeRoot(["app1", "no-deps"]),
+    write(join(packageDir, "no-deps", "package.json"), JSON.stringify({ name: "no-deps" })),
+  ]);
+  ({ exited } = await runBunInstall(env, packageDir));
+  expect(await exited).toBe(0);
+  expect(await installed()).toEqual({ name: "no-deps" });
+
+  await writeRoot(["app1"]);
+  ({ exited } = await runBunInstall(env, packageDir));
+  expect(await exited).toBe(0);
+  expect((await installed()).version).toBe("2.0.0");
+});
+
+// The root both lists the workspace and depends on it by `*`; a prerelease version is not
+// satisfied by `*`, but `*` links to a same-name workspace regardless of its version.
+test.concurrent("root star dep on its own prerelease workspace links the workspace", async () => {
+  using ctx = await setupTest();
+  const { packageDir, env } = ctx;
+  await Promise.all([
+    write(
+      join(packageDir, "package.json"),
+      JSON.stringify({ name: "root", workspaces: ["no-deps"], dependencies: { "no-deps": "*" } }),
+    ),
+    write(join(packageDir, "no-deps", "package.json"), JSON.stringify({ name: "no-deps", version: "1.0.0-alpha" })),
+  ]);
+  const { exited } = await runBunInstall(env, packageDir);
+  expect(await exited).toBe(0);
+  expect(await file(join(packageDir, "node_modules", "no-deps", "package.json")).json()).toEqual({
+    name: "no-deps",
+    version: "1.0.0-alpha",
+  });
+});
+
+// The root edge is cloned into the new lockfile when `bun update` re-resolves it; the clone must
+// keep the workspace it links to, which for an alias is not recoverable from the alias name.
+test.concurrent.each([
+  { spec: "npm:package1@*", pkg1: {} },
+  { spec: "npm:package1@^1.0.0", pkg1: { version: "1.0.0" } },
+])("root alias $spec onto a workspace survives bun update", async ({ spec, pkg1 }) => {
+  using ctx = await setupTest();
+  const { packageDir, env } = ctx;
+  await Promise.all([
+    write(
+      join(packageDir, "package.json"),
+      JSON.stringify({ name: "root", workspaces: ["package1"], dependencies: { aliased: spec } }),
+    ),
+    write(join(packageDir, "package1", "package.json"), JSON.stringify({ name: "package1", ...pkg1 })),
+  ]);
+  const { exited } = await runBunInstall(env, packageDir);
+  expect(await exited).toBe(0);
+  expect(await file(join(packageDir, "node_modules", "aliased", "package.json")).json()).toEqual({
+    name: "package1",
+    ...pkg1,
+  });
+
+  await runBunUpdate(env, packageDir);
+  expect(await file(join(packageDir, "node_modules", "aliased", "package.json")).json()).toEqual({
+    name: "package1",
+    ...pkg1,
+  });
+});
+
+// `$name` copies the root's spec for `name`. When that spec is a range linked to a workspace, the
+// override is still the range, which is what bun.lock records, so a reload sees no change.
+test.concurrent("$ref override of a range linked to a workspace round-trips through bun.lock", async () => {
+  using ctx = await setupTest();
+  const { packageDir, env } = ctx;
+  await Promise.all([
+    write(
+      join(packageDir, "package.json"),
+      JSON.stringify({
+        name: "root",
+        workspaces: ["no-deps"],
+        dependencies: { "no-deps": "^1.0.0", "one-range-dep": "1.0.0" },
+        overrides: { "no-deps": "$no-deps" },
+      }),
+    ),
+    write(join(packageDir, "no-deps", "package.json"), JSON.stringify({ name: "no-deps", version: "1.0.0" })),
+  ]);
+  let { exited } = await runBunInstall(env, packageDir);
+  expect(await exited).toBe(0);
+  expect(await file(join(packageDir, "bun.lock")).text()).toContain('"overrides": {\n    "no-deps": "^1.0.0"');
+
+  ({ exited } = await runBunInstall(env, packageDir, { frozenLockfile: true }));
+  expect(await exited).toBe(0);
+});
+
+// bun.lock records each workspace's version (`bun pm pack` substitutes `workspace:^` from it), so
+// bumping one rewrites the lockfile even though no dependency edge changed.
+test.concurrent("bumping a workspace version rewrites bun.lock", async () => {
+  using ctx = await setupTest();
+  const { packageDir, env } = ctx;
+  const writePkg = (version: string) =>
+    write(join(packageDir, "pkg", "package.json"), JSON.stringify({ name: "pkg", version }));
+  const lockedVersion = async () =>
+    (await file(join(packageDir, "bun.lock")).text()).match(/"name": "pkg",\s*"version": "([^"]+)"/)?.[1];
+
+  await Promise.all([
+    write(join(packageDir, "package.json"), JSON.stringify({ name: "root", workspaces: ["pkg"] })),
+    writePkg("1.0.0"),
+  ]);
+  let { exited } = await runBunInstall(env, packageDir);
+  expect(await exited).toBe(0);
+  expect(await lockedVersion()).toBe("1.0.0");
+
+  await writePkg("1.1.0");
+  ({ exited } = await runBunInstall(env, packageDir, { savesLockfile: true }));
+  expect(await exited).toBe(0);
+  expect(await lockedVersion()).toBe("1.1.0");
+
+  // build metadata is part of the recorded version too
+  await writePkg("1.1.0+build.2");
+  ({ exited } = await runBunInstall(env, packageDir, { savesLockfile: true }));
+  expect(await exited).toBe(0);
+  expect(await lockedVersion()).toBe("1.1.0+build.2");
+
+  // an empty pre-release is recorded as "1.2.0"; the install after that sees no change
+  await writePkg("1.2.0-");
+  ({ exited } = await runBunInstall(env, packageDir, { savesLockfile: true }));
+  expect(await exited).toBe(0);
+  expect(await lockedVersion()).toBe("1.2.0");
+  const settled = await runBunInstall(env, packageDir, { savesLockfile: false });
+  expect(settled.err).not.toContain("Saved lockfile");
+  expect(await settled.exited).toBe(0);
+});
+
+test.concurrent("adding workspace in workspace edits package.json with correct version (workspace:*)", async () => {
   using ctx = await setupTest();
   const { packageDir, env } = ctx;
   await Promise.all([
@@ -369,7 +518,7 @@ test("adding workspace in workspace edits package.json with correct version (wor
   });
 });
 
-test("workspaces with invalid versions should still install", async () => {
+test.concurrent("workspaces with invalid versions should still install", async () => {
   using ctx = await setupTest();
   const { packageDir, env } = ctx;
   await Promise.all([
@@ -445,7 +594,7 @@ test("workspaces with invalid versions should still install", async () => {
 });
 
 describe("workspace aliases", async () => {
-  test("combination", async () => {
+  test.concurrent("combination", async () => {
     using ctx = await setupTest();
     const { packageDir, env } = ctx;
     await Promise.all([
@@ -513,7 +662,7 @@ describe("workspace aliases", async () => {
     "workspace:@org/b@",
   ];
   for (const version of shouldPass) {
-    test(`version range ${version} and workspace with no version`, async () => {
+    test.concurrent(`version range ${version} and workspace with no version`, async () => {
       using ctx = await setupTest();
       const { packageDir, env } = ctx;
       await Promise.all([
@@ -553,7 +702,7 @@ describe("workspace aliases", async () => {
   }
   let shouldFail: string[] = ["workspace:@org/b@1.0.0", "workspace:@org/b@1", "workspace:@org/b"];
   for (const version of shouldFail) {
-    test(`version range ${version} and workspace with no version (should fail)`, async () => {
+    test.concurrent(`version range ${version} and workspace with no version (should fail)`, async () => {
       using ctx = await setupTest();
       const { packageDir, env } = ctx;
       await Promise.all([
@@ -601,7 +750,7 @@ describe("workspace aliases", async () => {
 });
 
 for (const glob of [true, false]) {
-  test(`does not crash when root package.json is in "workspaces"${glob ? " (glob)" : ""}`, async () => {
+  test.concurrent(`does not crash when root package.json is in "workspaces"${glob ? " (glob)" : ""}`, async () => {
     using ctx = await setupTest();
     const { packageDir, env } = ctx;
     await Promise.all([
@@ -627,7 +776,7 @@ for (const glob of [true, false]) {
   });
 }
 
-test("cwd in workspace script is not the symlink path on windows", async () => {
+test.concurrent("cwd in workspace script is not the symlink path on windows", async () => {
   using ctx = await setupTest();
   const { packageDir, env } = ctx;
   await Promise.all([
@@ -655,7 +804,7 @@ test("cwd in workspace script is not the symlink path on windows", async () => {
 });
 
 describe("relative tarballs", async () => {
-  test("from package.json", async () => {
+  test.concurrent("from package.json", async () => {
     using ctx = await setupTest();
     const { packageDir, env } = ctx;
     await Promise.all([
@@ -685,7 +834,7 @@ describe("relative tarballs", async () => {
       version: "0.0.2",
     });
   });
-  test("from cli", async () => {
+  test.concurrent("from cli", async () => {
     using ctx = await setupTest();
     const { packageDir, env } = ctx;
     await Promise.all([
@@ -744,7 +893,7 @@ describe("relative tarballs", async () => {
     ["override", { overrides: { bar: "file:./bar.tgz" } }, "^0.0.2"],
     ["catalog entry", { catalogs: { vendored: { bar: "file:./bar.tgz" } } }, "catalog:vendored"],
   ] as const) {
-    test(`from a root ${source} applied to a workspace dependency`, async () => {
+    test.concurrent(`from a root ${source} applied to a workspace dependency`, async () => {
       using ctx = await setupTest();
       const { packageDir, env } = ctx;
       await Promise.all([
@@ -793,7 +942,7 @@ describe("relative tarballs", async () => {
   // microseconds while tarball extraction takes milliseconds, so this test
   // does not deterministically reproduce the UAF — it exercises the concurrent
   // path and verifies each workspace-relative tarball resolves correctly.
-  test("many concurrent local tarballs in workspaces", async () => {
+  test.concurrent("many concurrent local tarballs in workspaces", async () => {
     using ctx = await setupTest();
     const { packageDir, env } = ctx;
     // Enough workspaces that `getWorkspacePkgIfWorkspaceDep` has a non-trivial
@@ -859,7 +1008,7 @@ describe("relative tarballs", async () => {
   });
 });
 
-test("$npm_package_config_ works in root", async () => {
+test.concurrent("$npm_package_config_ works in root", async () => {
   using ctx = await setupTest();
   const { packageDir, env } = ctx;
   await write(
@@ -889,7 +1038,7 @@ test("$npm_package_config_ works in root", async () => {
   expect(await new Response(p.stderr).text()).toBe(`$ echo $npm_package_config_foo $npm_package_config_qux\n`);
   expect(await new Response(p.stdout).text()).toBe(`bar\n`);
 });
-test("$npm_package_config_ works in root in subpackage", async () => {
+test.concurrent("$npm_package_config_ works in root in subpackage", async () => {
   using ctx = await setupTest();
   const { packageDir, env } = ctx;
   await write(
@@ -920,7 +1069,7 @@ test("$npm_package_config_ works in root in subpackage", async () => {
   expect(await new Response(p.stdout).text()).toBe(`tab\n`);
 });
 
-test("adding packages in a subdirectory of a workspace", async () => {
+test.concurrent("adding packages in a subdirectory of a workspace", async () => {
   using ctx = await setupTest();
   const { packageDir, packageJson, env } = ctx;
   await write(
@@ -1041,7 +1190,7 @@ test("adding packages in a subdirectory of a workspace", async () => {
 
   expect(await readdirSorted(join(packageDir, "node_modules"))).toEqual([".bin", "foo", "no-deps", "what-bin"]);
 });
-test("adding packages in workspaces", async () => {
+test.concurrent("adding packages in workspaces", async () => {
   using ctx = await setupTest();
   const { packageDir, packageJson, env } = ctx;
   await write(
@@ -1207,7 +1356,7 @@ test("adding packages in workspaces", async () => {
     description: "not a workspace",
   });
 });
-test("it should detect duplicate workspace dependencies", async () => {
+test.concurrent("it should detect duplicate workspace dependencies", async () => {
   using ctx = await setupTest();
   const { packageDir, packageJson, env } = ctx;
   await write(
@@ -1257,7 +1406,7 @@ const versions = ["workspace:1.0.0", "workspace:*", "workspace:^1.0.0", "1.0.0",
 
 for (const rootVersion of versions) {
   for (const packageVersion of versions) {
-    test(`it should allow duplicates, root@${rootVersion}, package@${packageVersion}`, async () => {
+    test.concurrent(`it should allow duplicates, root@${rootVersion}, package@${packageVersion}`, async () => {
       using ctx = await setupTest();
       const { packageDir, packageJson, env } = ctx;
       await write(
@@ -1389,7 +1538,7 @@ for (const rootVersion of versions) {
 }
 
 for (const version of versions) {
-  test(
+  test.concurrent(
     `it should allow listing workspace as dependency of the root package version ${version}`,
     async () => {
       using ctx = await setupTest();
@@ -1542,7 +1691,7 @@ for (const version of versions) {
 }
 
 describe("install --filter", () => {
-  test("does not run root scripts if root is filtered out", async () => {
+  test.concurrent("does not run root scripts if root is filtered out", async () => {
     using ctx = await setupTest();
     const { packageDir, packageJson, env } = ctx;
     await Promise.all([
@@ -1598,7 +1747,7 @@ describe("install --filter", () => {
     expect(await exists(join(packageDir, "packages", "pkg1.txt"))).toBeFalse();
   });
 
-  test("basic", async () => {
+  test.concurrent("basic", async () => {
     using ctx = await setupTest();
     const { packageDir, packageJson, env } = ctx;
     await Promise.all([
@@ -1659,7 +1808,7 @@ describe("install --filter", () => {
     ).toEqual([false, true]);
   });
 
-  test("all but one or two", async () => {
+  test.concurrent("all but one or two", async () => {
     using ctx = await setupTest();
     const { packageDir, packageJson, env } = ctx;
     await Promise.all([
@@ -1733,7 +1882,7 @@ describe("install --filter", () => {
     ).toEqual([false, true, true, true]);
   });
 
-  test("matched workspace depends on filtered workspace", async () => {
+  test.concurrent("matched workspace depends on filtered workspace", async () => {
     using ctx = await setupTest();
     const { packageDir, packageJson, env } = ctx;
     await Promise.all([
@@ -1787,7 +1936,7 @@ describe("install --filter", () => {
     ).toEqual([true, { name: "no-deps", version: "2.0.0" }, true, true]);
   });
 
-  test("filter with a path", async () => {
+  test.concurrent("filter with a path", async () => {
     using ctx = await setupTest();
     const { packageDir, packageJson, env } = ctx;
     await Promise.all([
@@ -1896,7 +2045,7 @@ describe("install --filter", () => {
     await checkWorkspace();
   });
 
-  test("relation selectors walk the workspace graph", async () => {
+  test.concurrent("relation selectors walk the workspace graph", async () => {
     using ctx = await setupTest();
     const { packageDir, packageJson, env } = ctx;
     const pkg = (name: string, deps: Record<string, unknown>) =>
@@ -1947,7 +2096,7 @@ describe("install --filter", () => {
     expect(dependenciesExit).toBe(0);
   });
 
-  test("-F is the short form of --filter", async () => {
+  test.concurrent("-F is the short form of --filter", async () => {
     using ctx = await setupTest();
     const { packageDir, packageJson, env } = ctx;
     await Promise.all([
@@ -1989,7 +2138,7 @@ describe("install --filter", () => {
     expect(exitCode).toBe(0);
   });
 
-  test("{dir} selects every workspace under a directory", async () => {
+  test.concurrent("{dir} selects every workspace under a directory", async () => {
     using ctx = await setupTest();
     const { packageDir, packageJson, env } = ctx;
     await Promise.all([
@@ -2054,7 +2203,7 @@ describe("install --filter", () => {
     expect(await installed()).toStrictEqual([true, false, false, true]);
   });
 
-  test("isolated linker honors the same selectors", async () => {
+  test.concurrent("isolated linker honors the same selectors", async () => {
     using ctx = await setupTest();
     const { packageDir, packageJson, env } = ctx;
     const pkg = (name: string, deps: Record<string, unknown>) =>
@@ -2156,7 +2305,7 @@ describe("install --filter", () => {
   });
 });
 
-test("can override npm package with workspace package under a different name", async () => {
+test.concurrent("can override npm package with workspace package under a different name", async () => {
   using ctx = await setupTest();
   const { packageDir, packageJson, env } = ctx;
   await Promise.all([
@@ -2213,7 +2362,7 @@ test("can override npm package with workspace package under a different name", a
   });
 });
 
-test("overrides in workspace packages and root pnpm.overrides are ignored", async () => {
+test.concurrent("overrides in workspace packages and root pnpm.overrides are ignored", async () => {
   using ctx = await setupTest();
   const { packageDir, packageJson, env } = ctx;
   await Promise.all([
@@ -2259,7 +2408,7 @@ test("overrides in workspace packages and root pnpm.overrides are ignored", asyn
   expect(exitCode).toBe(0);
 });
 
-test(
+test.concurrent(
   "workspace: dependencies declared inside a tarball package do not create workspace packages",
   async () => {
     using ctx = await setupTest();
@@ -2349,7 +2498,7 @@ describe("LinkWorkspacePackages", () => {
     return join(packageDir, "bunfig.toml");
   }
 
-  test("linkWorkspacePackages = false uses registry instead of linking workspace packages", async () => {
+  test.concurrent("linkWorkspacePackages = false uses registry instead of linking workspace packages", async () => {
     using ctx = await setupTest();
     const { packageDir, env } = ctx;
     const bunfigPath = await setupWorkspace(packageDir);
@@ -2403,7 +2552,7 @@ describe("LinkWorkspacePackages", () => {
     expect(lockfile.packages.find(p => p.id === barDependency?.package_id).resolution.tag).toEqual("npm");
   });
 
-  test("linkWorkspacePackages = false but workspace: prefix still links workspace", async () => {
+  test.concurrent("linkWorkspacePackages = false but workspace: prefix still links workspace", async () => {
     using ctx = await setupTest();
     const { packageDir, env } = ctx;
     const bunfigPath = await setupWorkspace(packageDir);
@@ -2577,7 +2726,7 @@ describe("packages whose version label is longer than 512 bytes", () => {
     expect(exitCode).toBe(0);
   }
 
-  test("local tarball", async () => {
+  test.concurrent("local tarball", async () => {
     using ctx = await setupTest();
     const { packageDir, packageJson } = ctx;
     const spec = longTarballSpec("bar-0.0.2.tgz");
@@ -2595,7 +2744,7 @@ describe("packages whose version label is longer than 512 bytes", () => {
     });
   });
 
-  test("remote tarball", async () => {
+  test.concurrent("remote tarball", async () => {
     using ctx = await setupTest();
     const { packageDir, packageJson } = ctx;
     const tarball = file(join(import.meta.dir, "bar-0.0.2.tgz"));
@@ -2617,7 +2766,7 @@ describe("packages whose version label is longer than 512 bytes", () => {
   });
 
   // Workspace packages are labeled with their own version rather than a resolution.
-  test("workspace package with a long prerelease version", async () => {
+  test.concurrent("workspace package with a long prerelease version", async () => {
     using ctx = await setupTest();
     const { packageDir, packageJson } = ctx;
     const version = `1.0.0-${Buffer.alloc(600, "a").toString()}`;
@@ -2636,7 +2785,7 @@ describe("packages whose version label is longer than 512 bytes", () => {
 
   // The same label is the version half of the `name@version` patchedDependencies key,
   // so a patch keyed by a long spec has to be found and applied, not just not crash.
-  test("patchedDependencies keyed by the long label is applied", async () => {
+  test.concurrent("patchedDependencies keyed by the long label is applied", async () => {
     using ctx = await setupTest();
     const { packageDir, packageJson } = ctx;
     const spec = longTarballSpec("baz-0.0.3.tgz");

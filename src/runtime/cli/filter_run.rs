@@ -435,7 +435,11 @@ impl<'a> State<'a> {
             }
         }
         if self.pretty_output {
-            let _ = self.redraw(false);
+            // On abort `finalize` draws the last frame; drawing it here too
+            // would print everything twice once it no longer fits the screen.
+            if !self.aborted {
+                let _ = self.redraw(false);
+            }
         } else {
             self.draw_buf.clear();
             // flush any remaining buffer
@@ -538,14 +542,28 @@ impl<'a> State<'a> {
                 self.draw_buf.extend_from_slice(b"\x1b[1A\x1b[K");
             }
         }
+        // While scripts are running every chunk redraws the whole frame, so cap
+        // it to the terminal: each script shows the tail of its output. The
+        // final frame (and abort, to aid debugging) prints everything unless
+        // --elide-lines says otherwise.
+        let final_frame = is_abort || self.is_done();
+        let rows = bun_core::output::File::from(bun_core::Fd::stdout())
+            .winsize()
+            .filter(|w| w.row > 0)
+            .map_or(24, |w| w.row as usize);
+        let per_script_cap = (rows.saturating_sub(1) / self.handles.len().max(1))
+            .saturating_sub(3)
+            .max(1);
         // Reshaped for borrowck — iterating handles by index since draw_buf is also &mut self.
         for idx in 0..self.handles.len() {
             let handle = &self.handles[idx];
-            // normally we truncate the output to 10 lines, but on abort we print everything to aid debugging
+            let user_cap = handle.config.elide_count.filter(|&n| n > 0);
             let elide_lines = if is_abort {
                 None
+            } else if final_frame {
+                user_cap
             } else {
-                Some(handle.config.elide_count.unwrap_or(10))
+                Some(user_cap.map_or(per_script_cap, |n| n.min(per_script_cap)))
             };
             let e = Self::elide(&handle.buffer, elide_lines);
 
@@ -915,23 +933,9 @@ pub(crate) fn run_scripts_with_filter(
             // Exit silently with success when --if-present is set
             Global::exit(0);
         }
-        if ctx.workspaces {
-            Output::err_generic(
-                "No workspace packages have script \"{s}\"",
-                (bstr::BStr::new(script_name),),
-            );
-        } else {
-            let patterns: Vec<&[u8]> = ctx.filters.iter().map(|f| &**f).collect();
-            Output::err_generic(
-                "{}",
-                (bstr::BStr::new(
-                    &bun_install::package_manager::workspace_selection::unmatched_message(
-                        &patterns,
-                    ),
-                ),),
-            );
-        }
-        Global::exit(1);
+        let quoted =
+            bun_install::package_manager::workspace_selection::quote_patterns(&[script_name]);
+        selected.error_script_not_found(&*ctx, &quoted);
     }
 
     // SAFETY: Transpiler::init always sets `env` to the process-lifetime singleton.

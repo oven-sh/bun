@@ -142,18 +142,19 @@ fn packages(this: &mut Printer, writer: &mut impl bun_io::Write) -> Result<(), c
             // https://github.com/yarnpkg/yarn/blob/158d96dce95313d9a00218302631cd263877d164/src/lockfile/stringify.js#L9
             let always_needs_quote = strings::must_escape_yaml_string(name);
 
-            let mut prev_dependency_version: Option<&dependency::Version> = None;
             let mut needs_comma = false;
-            for dependency_version in dependency_versions {
+            for (nth, dependency_version) in dependency_versions.iter().enumerate() {
+                let version_name: &[u8] = dependency_version.literal.slice(string_buf);
+                // one key per requested spec as written
+                if dependency_versions[..nth]
+                    .iter()
+                    .any(|earlier| earlier.literal.slice(string_buf) == version_name)
+                {
+                    continue;
+                }
                 if needs_comma {
-                    if let Some(prev) = prev_dependency_version {
-                        if prev.eql(dependency_version, string_buf, string_buf) {
-                            continue;
-                        }
-                    }
                     writer.write_all(b", ")?;
                 }
-                let version_name: &[u8] = dependency_version.literal.slice(string_buf);
                 let needs_quote = always_needs_quote
                     || strings::index_of_any(version_name, b" |\t-/!:\"\\,\n\r").is_some()
                     || version_name.starts_with(b"npm:");
@@ -191,7 +192,6 @@ fn packages(this: &mut Printer, writer: &mut impl bun_io::Write) -> Result<(), c
                 if needs_quote {
                     writer.write_all(b"\"")?;
                 }
-                prev_dependency_version = Some(dependency_version);
                 needs_comma = true;
             }
 

@@ -1,7 +1,9 @@
 use core::ptr::NonNull;
 
+use bstr::BStr;
 use bun_ast::{self, ExprData, Log};
 use bun_core::Global;
+use bun_core::Output;
 use bun_core::{ZStr, strings};
 use bun_glob as glob;
 use bun_install::package_manager::workspace_selection::{
@@ -244,14 +246,70 @@ pub(crate) fn select_packages(
         graph.as_ref(),
         RootSelection::Implicit,
     );
-    workspace_selection::warn_unmatched(&patterns, &selection.unmatched_patterns);
-    let packages = discovered
+    let packages: Vec<WorkspacePackage> = discovered
         .into_iter()
         .enumerate()
         .filter(|&(i, _)| selection.selected.is_set(i))
         .map(|(_, p)| p)
         .collect();
+    if packages.is_empty() {
+        if ctx.if_present {
+            Global::exit(0);
+        }
+        if ctx.workspaces {
+            Output::err_generic("No workspace packages found", ());
+            Global::exit(1);
+        }
+        workspace_selection::error_unmatched(&patterns);
+    }
+    workspace_selection::warn_unmatched(&patterns, &selection.unmatched_patterns);
     Ok(SelectedPackages { root_dir, packages })
+}
+
+impl WorkspacePackage {
+    /// `package.json` name, or the directory relative to the workspace root for unnamed packages.
+    pub(crate) fn display_name(&self, root_dir: &[u8]) -> Box<[u8]> {
+        if self.json.name.is_empty() {
+            Box::from(resolve_path::relative_platform::<platform::Posix, false>(
+                root_dir, &self.dir,
+            ))
+        } else {
+            Box::from(&self.json.name[..])
+        }
+    }
+}
+
+impl SelectedPackages {
+    /// `error: Script "x" not found in package "a"` / `... in 3 packages matching "a*"` /
+    /// `... in 3 workspace packages`, then exit 1. `scripts` is already quoted.
+    pub(crate) fn error_script_not_found(&self, ctx: &Command::ContextData, scripts: &[u8]) -> ! {
+        let n = self.packages.len();
+        if n == 1 {
+            Output::err_generic(
+                "Script {} not found in package \"{}\"",
+                (
+                    BStr::new(scripts),
+                    BStr::new(&self.packages[0].display_name(&self.root_dir)),
+                ),
+            );
+        } else if ctx.workspaces {
+            Output::err_generic(
+                "Script {} not found in {} workspace packages",
+                (BStr::new(scripts), n),
+            );
+        } else {
+            let patterns: Vec<&[u8]> = ctx.filters.iter().map(|f| &**f).collect();
+            Output::err_generic(
+                "Script {} not found in {} packages matching {}",
+                (
+                    BStr::new(scripts),
+                    n,
+                    BStr::new(&workspace_selection::quote_patterns(&patterns)),
+                ),
+            );
+        }
+        Global::exit(1);
+    }
 }
 
 // Heap-allocated so the walker keeps its address while the `PackageFilterIterator` moves. Held as

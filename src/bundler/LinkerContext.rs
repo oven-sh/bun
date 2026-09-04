@@ -3439,7 +3439,7 @@ impl<'a> LinkerContext<'a> {
                     };
                 let mut symbol_uses = PartSymbolUseMap::default();
                 symbol_uses
-                    .put(wrapper_ref, SymbolUse { count_estimate: 1 })
+                    .put(wrapper_ref, SymbolUse::unscoped(1))
                     .expect("OOM");
                 let exports_ref = self.graph.ast.items_exports_ref()[source_index as usize];
                 let module_ref = self.graph.ast.items_module_ref()[source_index as usize];
@@ -3557,7 +3557,7 @@ impl<'a> LinkerContext<'a> {
 
                 let mut symbol_uses = PartSymbolUseMap::default();
                 symbol_uses
-                    .put(wrapper_ref, SymbolUse { count_estimate: 1 })
+                    .put(wrapper_ref, SymbolUse::unscoped(1))
                     .expect("OOM");
                 let part_index = self
                     .graph
@@ -4635,11 +4635,11 @@ impl<'a> LinkerContext<'a> {
                     .iter()
                     .zip(part.symbol_uses.values())
                 {
-                    if item_use.count_estimate == 0 {
+                    if item_use.count_estimate() == 0 {
                         continue;
                     }
                     if let Some(&namespace_ref) = method_call_items.get(item) {
-                        namespace_uses.push((namespace_ref, item_use.count_estimate));
+                        namespace_uses.push((namespace_ref, item_use.count_estimate()));
                     }
                 }
                 for &(namespace_ref, count) in &namespace_uses {
@@ -4647,7 +4647,7 @@ impl<'a> LinkerContext<'a> {
                         .get_or_put_value(namespace_ref, Default::default())
                         .expect("OOM")
                         .value_ptr
-                        .count_estimate += count;
+                        .merge(SymbolUse::unscoped(count));
                 }
             }
         }
@@ -4838,7 +4838,7 @@ impl<'a> LinkerContext<'a> {
                         .get_or_put_value(resolved.r#ref, Default::default())
                         .expect("OOM")
                         .value_ptr
-                        .count_estimate += count;
+                        .merge(SymbolUse::unscoped(count));
                 }
                 if resolved.source_index != source_index
                     && !imports_to_bind.contains(&resolved.r#ref)

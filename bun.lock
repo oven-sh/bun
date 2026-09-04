@@ -5,24 +5,16 @@
     "": {
       "name": "bun",
       "devDependencies": {
-        "@lezer/common": "^1.2.3",
-        "@lezer/cpp": "^1.1.6",
-        "@types/bun": "workspace:*",
-        "esbuild": "^0.21.5",
+        "@lezer/common": "1.5.2",
+        "@lezer/cpp": "1.1.6",
+        "esbuild": "0.21.5",
         "oxlint": "1.70.0",
-        "prettier": "^3.6.2",
-        "prettier-plugin-organize-imports": "^4.3.0",
-        "react": "^18.3.1",
-        "react-dom": "^18.3.1",
-        "source-map-js": "^1.2.1",
+        "prettier": "3.6.2",
+        "prettier-plugin-organize-imports": "4.3.0",
+        "react": "18.3.1",
+        "react-dom": "18.3.1",
+        "source-map-js": "1.2.1",
         "typescript": "6.0.2",
-      },
-    },
-    "packages/@types/bun": {
-      "name": "@types/bun",
-      "version": "1.2.2",
-      "dependencies": {
-        "bun-types": "workspace:",
       },
     },
     "packages/bun-types": {
@@ -33,7 +25,6 @@
     },
   },
   "overrides": {
-    "@types/bun": "workspace:packages/@types/bun",
     "@types/node": "26.2.0",
     "bun-types": "workspace:packages/bun-types",
   },
@@ -130,7 +121,6 @@
 
     "@oxlint/binding-win32-x64-msvc": ["@oxlint/binding-win32-x64-msvc@1.70.0", "", { "os": "win32", "cpu": "x64" }, "sha512-ptOlKwCz7n4AKs5VweMqG6DAg677FmKOK+vBkkL9DMNgFATIQ+upqUYBTOEwRQyRAx1ncGlPlXleV2hIcm3z4g=="],
 
-    "@types/bun": ["@types/bun@workspace:packages/@types/bun"],
 
     "@types/node": ["@types/node@26.2.0", "", { "dependencies": { "undici-types": "~8.3.0" } }, "sha512-5IviulTZeRNp2vAJ514cc/HUlY5nZ9fCbq9DMyC52BrhFZACo3nI0R7qBxhQmo/d27NFe96ur/b7Wwxklda+kg=="],
 

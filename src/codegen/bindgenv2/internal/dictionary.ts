@@ -1,7 +1,7 @@
-import { hasRawAny, isAny } from "./any";
+import { hasRawAny, isAny } from "./any.ts";
 import {
   addIndent,
-  CodeStyle,
+  type CodeStyle,
   dedent,
   headersForTypes,
   joinIndented,
@@ -11,9 +11,9 @@ import {
   toQuotedLiteral,
   Type,
   validateName,
-} from "./base";
-import * as optional from "./optional";
-import { isUnion } from "./union";
+} from "./base.ts";
+import * as optional from "./optional.ts";
+import { isUnion } from "./union.ts";
 
 export interface DictionaryMember {
   type: Type;

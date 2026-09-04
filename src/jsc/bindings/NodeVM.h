@@ -38,6 +38,7 @@ void getNodeVMContextOptions(JSGlobalObject* globalObject, JSC::VM& vm, JSC::Thr
 NodeVMGlobalObject* getGlobalObjectFromContext(JSGlobalObject* globalObject, JSValue contextValue, bool canThrow);
 JSC::EncodedJSValue INVALID_ARG_VALUE_VM_VARIATION(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject, WTF::ASCIILiteral name, JSC::JSValue value);
 // For vm.compileFunction we need to return an anonymous function expression. This code is adapted from/inspired by JSC::constructFunction, which is used for function declarations.
+// `globalObject` is the realm the source is compiled in (options.parsingContext): the returned function and any compile error are created there.
 JSC::JSFunction* constructAnonymousFunction(JSC::JSGlobalObject* globalObject, const ArgList& args, const SourceOrigin& sourceOrigin, CompileFunctionOptions&& options, JSC::SourceTaintedOrigin sourceTaintOrigin, JSC::JSScope* scope);
 JSPromise* importModule(JSGlobalObject* globalObject, JSString* moduleNameValue, RefPtr<JSC::ScriptFetchParameters> parameters, const SourceOrigin& sourceOrigin);
 bool isContext(JSC::JSGlobalObject* globalObject, JSValue);

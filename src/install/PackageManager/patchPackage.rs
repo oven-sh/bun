@@ -1200,8 +1200,8 @@ fn overwrite_package_in_node_modules_folder(
 
     let mut copier: FileCopier = FileCopier::init(
         cached_package_folder.fd,
-        src_path,
-        dest_subpath,
+        src_path.into_checked(),
+        dest_subpath.into_checked(),
         ignore_directories,
     )?;
 

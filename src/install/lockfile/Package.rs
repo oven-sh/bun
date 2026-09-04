@@ -1355,10 +1355,13 @@ impl Diff {
                     .workspace_versions
                     .iter()
                     .any(|(name_hash, version)| {
+                        // `Version::eql` ignores build metadata, which bun.lock prints
                         from_lockfile
                             .workspace_versions
                             .get(name_hash)
-                            .is_none_or(|from| !from.eql(*version))
+                            .is_none_or(|from| {
+                                !from.eql(*version) || from.tag.build.hash != version.tag.build.hash
+                            })
                     });
         }
 

@@ -444,6 +444,12 @@ test.concurrent("bumping a workspace version rewrites bun.lock", async () => {
   ({ exited } = await runBunInstall(env, packageDir, { savesLockfile: true }));
   expect(await exited).toBe(0);
   expect(await lockedVersion()).toBe("1.1.0");
+
+  // build metadata is part of the recorded version too
+  await writePkg("1.1.0+build.2");
+  ({ exited } = await runBunInstall(env, packageDir, { savesLockfile: true }));
+  expect(await exited).toBe(0);
+  expect(await lockedVersion()).toBe("1.1.0+build.2");
 });
 
 test.concurrent("adding workspace in workspace edits package.json with correct version (workspace:*)", async () => {

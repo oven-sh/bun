@@ -1055,7 +1055,10 @@ impl All {
     // Forwards `vm` to `__bun_fire_timer` without dereferencing it;
     // not_unsafe_ptr_arg_deref is a false positive on opaque-token forwarding.
     #[allow(clippy::not_unsafe_ptr_arg_deref)]
-    pub(crate) fn drain_timers(&mut self, vm: *mut () /* erased *mut VirtualMachine */) -> bool {
+    pub(crate) fn drain_timers(
+        &mut self,
+        vm: *mut (), /* erased *mut VirtualMachine */
+    ) -> bool {
         // Note (§Forbidden aliased-&mut): fired handlers re-enter `vm.timer`
         // (e.g. setInterval reschedule → `vm.timer.update(...)`, `cancel()` →
         // `vm.timer.remove(...)`). In Rust those re-entrant calls resolve to

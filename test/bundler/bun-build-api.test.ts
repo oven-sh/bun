@@ -807,6 +807,91 @@ describe("Bun.build", () => {
     Bun.gc(true);
   });
 
+  // The bundle thread hands every build a resolver generation, and a build
+  // re-reads the directory listings cached by builds of an older generation. The
+  // generation used to advance only when the thread found its queue empty, so as
+  // long as other Bun.build() calls kept the queue non-empty, every build reused
+  // the listings read by the first one and never saw files created or removed
+  // since. The driver keeps the queue non-empty deterministically: behind every
+  // app build it queues a build that parks the thread in an async onLoad until
+  // the next app build has been queued.
+  test.concurrent("rebuilding sees directory changes while other builds keep the bundle thread busy", async () => {
+    using dir = tempDir("rebuild-while-bundle-thread-busy", {
+      "package.json": `{}`,
+      "driver.ts": `
+        const parkedBuilds: ReturnType<typeof Bun.build>[] = [];
+        let releaseParkedBuild = () => {};
+
+        // Queues a build whose onLoad does not return until the next call
+        // (or the final release below), then lets the previously parked build
+        // finish. Everything queued in between therefore sits behind a build the
+        // thread cannot finish yet, and the thread never sees an empty queue.
+        function parkBundleThread() {
+          const gate = Promise.withResolvers<void>();
+          parkedBuilds.push(
+            Bun.build({
+              entrypoints: ["./parked/entry.js"],
+              throw: false,
+              plugins: [
+                {
+                  name: "park",
+                  setup(build) {
+                    build.onResolve({ filter: /^parked:/ }, args => ({ path: args.path, namespace: "parked" }));
+                    build.onLoad({ filter: /.*/, namespace: "parked" }, async () => {
+                      await gate.promise;
+                      return { contents: "export default 1;", loader: "js" };
+                    });
+                  },
+                },
+              ],
+            }),
+          );
+          const releasePrevious = releaseParkedBuild;
+          releaseParkedBuild = gate.resolve;
+          releasePrevious();
+        }
+
+        async function buildApp() {
+          const build = Bun.build({ entrypoints: ["./app/entry.js"], throw: false });
+          parkBundleThread();
+          const result = await build;
+          return { success: result.success, messages: result.logs.map(log => log.message) };
+        }
+
+        parkBundleThread();
+        const before = await buildApp();
+        await Bun.write("app/mod.js", "export const value = 1;\\n");
+        const afterAdd = await buildApp();
+        await Bun.file("app/mod.js").delete();
+        const afterRemove = await buildApp();
+        releaseParkedBuild();
+        const parked = (await Promise.all(parkedBuilds)).map(result => result.success);
+        console.log(JSON.stringify({ before, afterAdd, afterRemove, parked }));
+      `,
+      "app/entry.js": `import { value } from "./mod.js";\nconsole.log(value);\n`,
+      "parked/entry.js": `import "parked:mod";\n`,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "driver.ts"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual({
+      before: { success: false, messages: ['Could not resolve: "./mod.js"'] },
+      afterAdd: { success: true, messages: [] },
+      // A listing still holding the removed file would fail later, while
+      // reading it ("File not found"), rather than here in the resolver.
+      afterRemove: { success: false, messages: ['Could not resolve: "./mod.js"'] },
+      parked: [true, true, true, true],
+    });
+    expect(exitCode).toBe(0);
+  });
+
   // https://github.com/oven-sh/bun/issues/33099
   // A package reached through a symlinked node_modules entry caches its file
   // descriptor in the resolver. A second in-process Bun.build() used to reuse a

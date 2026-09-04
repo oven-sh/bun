@@ -2326,8 +2326,12 @@ impl StackCheck {
 // Small helpers that downstream crates need.
 // ──────────────────────────────────────────────────────────────────────────
 
-/// Bumped each rebuild/rescan to invalidate stale cache entries.
-pub type Generation = u16;
+/// Invalidation counter for cached directory listings: a listing read at an
+/// older generation than the resolver's is re-read. The bundle thread advances
+/// it once per build for the life of the process and saturates rather than
+/// wrapping (a wrapped counter would stop invalidating anything), so it is
+/// sized to keep saturation out of reach.
+pub type Generation = u32;
 
 // ── Ordinal ───────────────────────────────────────────────────────────────
 // ABI-equivalent of WTF::OrdinalNumber:

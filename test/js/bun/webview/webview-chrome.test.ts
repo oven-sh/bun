@@ -1,3 +1,4 @@
+import { estimateShallowMemoryUsageOf } from "bun:jsc";
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe, isCI, isMacOS, isMacOSVersionAtLeast, tempDir } from "harness";
 
@@ -231,6 +232,8 @@ it("chrome: screenshot returns a PNG Blob", async () => {
   expect(bytes[3]).toBe(0x47);
   // Bun.write accepts the Blob directly — the MIME type carries through.
   expect(blob.size).toBeGreaterThan(100);
+  // The natively created Blob has to report its bytes to the GC like a Blob built from them.
+  expect(estimateShallowMemoryUsageOf(blob)).toBeGreaterThanOrEqual(estimateShallowMemoryUsageOf(new Blob([bytes])));
 });
 
 it("chrome: screenshot format options produce the right magic bytes", async () => {

@@ -998,6 +998,7 @@ impl Builtin {
     /// `bun_sys::coreutils_error_map` so output matches GNU coreutils
     /// (e.g. `ENOENT` → "No such file or directory"); falls back to
     /// `"unknown error {errno}"` when unmapped.
+    /// `err.path` is printed as the operand, so builtins that resolve an operand tag it as written.
     pub(crate) fn task_error_to_string<'a>(
         interp: &'a Interpreter,
         cmd: NodeId,

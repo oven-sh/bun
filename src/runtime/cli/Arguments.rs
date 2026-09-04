@@ -1729,6 +1729,7 @@ fn parse_test_command_options(args: &clap::Args<clap::Help>, ctx: Context<'_>) {
                     Global::exit(1);
                 }
             };
+            ctx.test_options.timeout_from_cli = true;
         }
     }
 

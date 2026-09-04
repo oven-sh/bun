@@ -408,6 +408,9 @@ pub enum HotReload {
 
 pub struct TestOptions {
     pub default_timeout_ms: u32,
+    /// Set when `--timeout` is passed on the CLI; `bunfig.toml` `[test]`
+    /// `testTimeout` then does not override it.
+    pub timeout_from_cli: bool,
     pub update_snapshots: bool,
     pub repeat_count: u32,
     pub retry: u32,
@@ -492,6 +495,7 @@ impl Default for TestOptions {
         Self {
             // 5 seconds
             default_timeout_ms: 5 * 1000,
+            timeout_from_cli: false,
             update_snapshots: false,
             repeat_count: 0,
             retry: 0,

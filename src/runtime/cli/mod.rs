@@ -342,6 +342,7 @@ pub(crate) mod dedupe_command;
 pub mod filter_arg;
 #[path = "filter_run.rs"]
 pub mod filter_run;
+pub mod label_color;
 #[path = "link_command.rs"]
 pub mod link_command;
 #[path = "multi_run.rs"]

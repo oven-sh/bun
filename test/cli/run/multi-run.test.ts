@@ -1751,13 +1751,66 @@ describe.concurrent("color cycling", () => {
     // All tasks should produce prefixed output (check Done lines in stderr since they're unique to multi-run)
     // ANSI color codes wrap the label, so match optionally around the label name
     for (let i = 0; i < 7; i++) {
-      expect(stderr).toMatch(new RegExp(`task${i}[^\n]*\\| Done`));
+      expect(Bun.stripANSI(stderr)).toMatch(new RegExp(`task${i}[^\n]*\\| Done`));
     }
     // Stdout should also have prefixed content
     for (let i = 0; i < 7; i++) {
-      expect(stdout).toMatch(new RegExp(`task${i}[^\n]*\\| t${i}`));
+      expect(Bun.stripANSI(stdout)).toMatch(new RegExp(`task${i}[^\n]*\\| t${i}`));
     }
+    // 16-color terminals rotate the six basic colors by position, so the 7th wraps to the 1st.
+    const colorOf = (i: number) => stdout.match(new RegExp(`(\x1b\\[3\\dm)task${i}\x1b`))?.[1];
+    expect(colorOf(0)).toBe("\x1b[36m");
+    expect(colorOf(1)).not.toBe(colorOf(0));
+    expect(colorOf(6)).toBe(colorOf(0));
     expect(exitCode).toBe(0);
+  });
+
+  /** `label` → the truecolor SGR that paints it. */
+  function colorOfLabel(output: string, label: string) {
+    const m = output.match(new RegExp(`\x1b\\[1m(\x1b\\[38;2;[\\d;]+m)${escapeRe(label)}\x1b\\[0m`));
+    return m?.[1];
+  }
+
+  test("truecolor terminals get a stable per-package color", async () => {
+    using dir = makeWorkspace("mr-color-24bit", {
+      "pkg-a": { build: `echo a`, lint: `echo a` },
+      "pkg-b": { build: `echo b`, lint: `echo b` },
+    });
+    const env = { ...bunEnv, NO_COLOR: undefined, FORCE_COLOR: "3" };
+    const run = async (...args: string[]) => {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "run", ...args],
+        env,
+        cwd: String(dir),
+        stderr: "pipe",
+        stdout: "pipe",
+      });
+      const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      return { stdout, exitCode };
+    };
+
+    const { stdout: build, exitCode: buildExit } = await run("--parallel", "--filter", "*", "build");
+    const { stdout: lint, exitCode: lintExit } = await run("--parallel", "--filter", "*", "lint");
+    const a = colorOfLabel(build, "pkg-a:build");
+    const b = colorOfLabel(build, "pkg-b:build");
+    expect(a).toMatch(/^\x1b\[38;2;\d+;\d+;\d+m$/);
+    expect(b).toMatch(/^\x1b\[38;2;\d+;\d+;\d+m$/);
+    expect(a).not.toBe(b);
+    // The gutter is painted the same color as its label.
+    expect(build).toContain(`${a}|\x1b[0m a`);
+    // The color is a function of the package name, not the script or position.
+    expect(colorOfLabel(lint, "pkg-a:lint")).toBe(a);
+    expect(colorOfLabel(lint, "pkg-b:lint")).toBe(b);
+    // ...and `--filter` without `--parallel` paints the same package the same color.
+    // (Windows only draws the `--filter` UI on a real console; see filter-workspace.test.ts.)
+    const filter = isWindows ? undefined : await run("--filter", "*", "build");
+    if (filter) {
+      expect(colorOfLabel(filter.stdout, "pkg-a")).toBe(a);
+      expect(colorOfLabel(filter.stdout, "pkg-b")).toBe(b);
+    }
+    expect(buildExit).toBe(0);
+    expect(lintExit).toBe(0);
+    if (filter) expect(filter.exitCode).toBe(0);
   });
 });
 
@@ -1912,6 +1965,21 @@ describe("workspace integration", () => {
     expectPrefixed(r.stdout, "pkg-b:build", "b-built");
     expectPrefixed(r.stdout, "pkg-c:build", "c-built");
     expect(r.exitCode).toBe(0);
+  });
+
+  test("--parallel --filter distinguishes an unmatched filter from a missing script", async () => {
+    using dir = makeWorkspace("mr-ws-missing", {
+      "pkg-a": { build: `echo a` },
+    });
+    const noPkg = await runMulti(["run", "--parallel", "--filter", "nope", "build"], String(dir));
+    expect(noPkg.stderr.trim()).toBe(`error: No workspace packages matched the filter "nope"`);
+    expect(noPkg.exitCode).toBe(1);
+    const negated = await runMulti(["run", "--parallel", "--filter", "*", "--filter", "!*", "build"], String(dir));
+    expect(negated.stderr.trim()).toBe(`error: No workspace packages matched the filters "*", "!*"`);
+    expect(negated.exitCode).toBe(1);
+    const noScript = await runMulti(["run", "--parallel", "--filter", "pkg-a", "lint", "test"], String(dir));
+    expect(noScript.stderr.trim()).toBe(`error: No workspace packages matching "pkg-a" have script "lint", "test"`);
+    expect(noScript.exitCode).toBe(1);
   });
 
   test("--parallel --filter='pkg-a' runs only in matching package", async () => {

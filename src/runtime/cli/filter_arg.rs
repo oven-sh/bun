@@ -244,13 +244,19 @@ pub(crate) fn select_packages(
         graph.as_ref(),
         RootSelection::Implicit,
     );
-    workspace_selection::warn_unmatched(&patterns, &selection.unmatched_patterns);
-    let packages = discovered
+    let packages: Vec<WorkspacePackage> = discovered
         .into_iter()
         .enumerate()
         .filter(|&(i, _)| selection.selected.is_set(i))
         .map(|(_, p)| p)
         .collect();
+    if packages.is_empty() && !ctx.workspaces {
+        if ctx.if_present {
+            Global::exit(0);
+        }
+        workspace_selection::error_unmatched(&patterns);
+    }
+    workspace_selection::warn_unmatched(&patterns, &selection.unmatched_patterns);
     Ok(SelectedPackages { root_dir, packages })
 }
 

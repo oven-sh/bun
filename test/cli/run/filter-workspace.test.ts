@@ -478,7 +478,15 @@ describe("bun", () => {
   });
 
   test("should error with missing script", () => {
-    runInCwdFailure(cwd_root, "*", "notpresent", /error: No workspace packages matched the filter "\*"/);
+    runInCwdFailure(cwd_root, "*", "notpresent", /error: No workspace packages matching "\*" have script "notpresent"/);
+  });
+  test("should error when the filter matches no package", () => {
+    runInCwdFailure(
+      cwd_root,
+      "nosuchpkg",
+      "present",
+      /error: No workspace packages matched the filter "nosuchpkg"\n(?![^]*nosuchpkg)/,
+    );
   });
   test("warns about a filter that matched nothing while running the others", () => {
     const { exitCode, stdout, stderr } = spawnSync({
@@ -532,7 +540,7 @@ describe("bun", () => {
     target_pattern,
     antipattern,
   }: {
-    elideLines: number;
+    elideLines?: number;
     target_pattern: RegExp[];
     antipattern?: RegExp[];
   }) {
@@ -566,7 +574,14 @@ describe("bun", () => {
       // code path.
       const { exitCode, stderr, stdout } = spawnSync({
         cwd: dir,
-        cmd: [bunExe(), "run", "--filter", "./packages/dep0", "--elide-lines", String(elideLines), "script"],
+        cmd: [
+          bunExe(),
+          "run",
+          "--filter",
+          "./packages/dep0",
+          ...(elideLines === undefined ? [] : ["--elide-lines", String(elideLines)]),
+          "script",
+        ],
         env: { ...bunEnv, FORCE_COLOR: "1", NO_COLOR: "0" },
         stdout: "pipe",
         stderr: "pipe",
@@ -595,10 +610,10 @@ describe("bun", () => {
     });
   }
 
-  test("elides output by default when using --filter", () => {
+  test("does not elide output by default when using --filter", () => {
     runElideLinesTest({
-      elideLines: 10,
-      target_pattern: [/\[10 lines elided\]/, /(?:log_line[\s\S]*?){20}/],
+      target_pattern: [/(?:log_line[\s\S]*?){20}/],
+      antipattern: [/lines elided/],
     });
   });
 
@@ -649,6 +664,50 @@ describe("bun", () => {
   });
 
   // The terminal renderer is TTY-only on Windows (see runElideLinesTest).
+  test.skipIf(isWindows)("terminal renderer redraws a bounded region and appends finished output once", () => {
+    const lines = 200;
+    using dir = tempDir("filter-live-region", {
+      packages: {
+        chatty: {
+          "chatty.js": `for (let i = 1; i <= ${lines}; i++) console.log("chatty line " + i);`,
+          "package.json": JSON.stringify({ name: "chatty", scripts: { go: `${bunExe()} chatty.js` } }),
+        },
+        after: {
+          "package.json": JSON.stringify({
+            name: "after",
+            dependencies: { chatty: "workspace:*" },
+            scripts: { go: "echo after-ran" },
+          }),
+        },
+      },
+      "package.json": JSON.stringify({ name: "ws", workspaces: ["packages/*"] }),
+    });
+    const { exitCode, stdout } = spawnSync({
+      cwd: String(dir),
+      cmd: [bunExe(), "run", "--filter", "*", "go"],
+      env: { ...bunEnv, FORCE_COLOR: "1", NO_COLOR: "0" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const out = stdout.toString();
+    const frames = out.split("\x1b[?2026h").slice(1);
+    expect(frames.length).toBeGreaterThan(1);
+    // No frame ever moves the cursor up more than the live-region cap, however much output there is.
+    for (const frame of frames) {
+      expect(frame.split("\x1b[1A").length - 1).toBeLessThanOrEqual(50);
+    }
+    // `chatty` finishes first and is flushed above the live region exactly once, in full;
+    // `after` (which waited on it) is flushed later, so completion order = output order.
+    const text = Bun.stripANSI(out);
+    const finalHeader = text.lastIndexOf("chatty go $");
+    const flushed = text.slice(finalHeader);
+    for (let i = 1; i <= lines; i++) expect(flushed).toContain(`│ chatty line ${i}\n`);
+    expect(flushed.indexOf("chatty line 1\n")).toBeLessThan(flushed.indexOf("after go $"));
+    expect(flushed).toMatch(/after go \$ echo after-ran  \[\d+ ms\]\n│ after-ran/);
+    expect(text.slice(0, finalHeader)).toContain("after go $ echo after-ran  [waiting]");
+    expect(exitCode).toBe(0);
+  });
+
   test.skipIf(isWindows)("terminal output reports how long a successful script took", () => {
     using dir = tempDir("filter-done-in", {
       packages: {
@@ -667,7 +726,9 @@ describe("bun", () => {
       stderr: "pipe",
     });
 
-    expect(stdout.toString()).toMatch(/Done in (?:\d+ ms|\d+\.\d{2} s)/);
+    expect(stdout.toString()).toMatch(
+      /dep0\x1b\[0m script \x1b\[2m\$ exit 0\x1b\[0m  \x1b\[2m\[(?:\d+ ms|\d+\.\d{2} s)\]/,
+    );
     expect(exitCode).toBe(0);
   });
 
@@ -1263,21 +1324,21 @@ describe("auto-discovered bunfig.toml [run] section", () => {
 
   // Elision only happens on a terminal. On POSIX FORCE_COLOR=1 turns the
   // terminal renderer on for a pipe; on Windows it stays off (see runElideLinesTest).
-  test.skipIf(isWindows)("[run] elide-lines = 0 disables elision for --filter", () => {
-    using dir = workspace("filter-bunfig-elide", "[run]\nelide-lines = 0\n");
+  test.skipIf(isWindows)("[run] elide-lines enables elision for --filter", () => {
+    using dir = workspace("filter-bunfig-elide", "[run]\nelide-lines = 15\n");
     const r = run(String(dir), ["run", "--filter", "dep0", "lines"], { FORCE_COLOR: "1", NO_COLOR: "0" });
-    expect(r.stdout).not.toMatch(/lines elided/);
-    expect(r.stdout).toMatch(/(?:log_line[\s\S]*?){20}/);
+    expect(r.stdout).toMatch(/\[5 lines elided\]/);
     expect(r.exitCode).toBe(0);
   });
 
   test.skipIf(isWindows)("--elide-lines on the CLI wins over [run] elide-lines", () => {
-    using dir = workspace("filter-bunfig-cli-elide", "[run]\nelide-lines = 0\n");
-    const r = run(String(dir), ["run", "--elide-lines", "15", "--filter", "dep0", "lines"], {
+    using dir = workspace("filter-bunfig-cli-elide", "[run]\nelide-lines = 15\n");
+    const r = run(String(dir), ["run", "--elide-lines", "0", "--filter", "dep0", "lines"], {
       FORCE_COLOR: "1",
       NO_COLOR: "0",
     });
-    expect(r.stdout).toMatch(/\[5 lines elided\]/);
+    expect(r.stdout).not.toMatch(/lines elided/);
+    expect(r.stdout).toMatch(/(?:log_line[\s\S]*?){20}/);
     expect(r.exitCode).toBe(0);
   });
 

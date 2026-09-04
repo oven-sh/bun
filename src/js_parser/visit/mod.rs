@@ -387,12 +387,22 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             if let Some(value) = decl.value {
                                 if let ExprData::ERequireString(req) = value.data {
                                     if let Some(unwrapped_id) = req.unwrapped_id.get() {
+                                        let is_rebound =
+                                            !was_const && self.binding_is_rebound(ref_);
                                         let deferred = &mut self.imports_to_convert_from_require
                                             [unwrapped_id.get_usize()];
-                                        deferred.namespace.ref_ = ref_;
-                                        self.import_items_for_namespace
-                                            .insert(ref_, ImportItemForNamespaceMap::default());
-                                        continue 'outer;
+                                        if is_rebound {
+                                            // Stays a variable, holding the import's namespace.
+                                            decl.value = Some(Expr::init_identifier(
+                                                deferred.namespace.ref_,
+                                                value.loc,
+                                            ));
+                                        } else {
+                                            deferred.namespace.ref_ = ref_;
+                                            self.import_items_for_namespace
+                                                .insert(ref_, ImportItemForNamespaceMap::default());
+                                            continue 'outer;
+                                        }
                                     }
                                 }
                             }

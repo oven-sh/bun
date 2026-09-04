@@ -103,6 +103,12 @@ static Exception controlFramePayloadTooLargeException(size_t length)
     return Exception { RangeError, makeString("The data size must not be greater than "_s, maxControlFramePayloadSize, " bytes. Received "_s, length, " bytes."_s) };
 }
 
+// Same message as ServerWebSocket: the send paths on both sides are synchronous.
+static Exception blobNeedsAsyncReadException(ASCIILiteral functionName)
+{
+    return Exception { TypeError, makeString(functionName, " cannot send a file- or S3-backed Blob synchronously; await blob.bytes() first"_s) };
+}
+
 // Close codes an endpoint may put on the wire (RFC 6455 7.4 + the IANA registry).
 // Deliberately the RFC endpoint set, not the browser's "1000 or 3000-4999":
 // non-browser clients legitimately send 1001 or 1011, and `ws` accepts the same set.
@@ -732,6 +738,9 @@ WebCore::ExceptionOr<void> WebCore::WebSocket::send(WebCore::JSBlob* blob)
     if (m_state == CLOSING || m_state == CLOSED) {
         return {};
     }
+
+    if (Blob__needsAsyncRead(JSC::JSValue::encode(blob)))
+        return blobNeedsAsyncReadException("send"_s);
 
     // Get the blob data and send it using existing binary data path
     void* dataPtr = Blob__getDataPtr(JSC::JSValue::encode(blob));
@@ -1811,6 +1820,9 @@ WebCore::ExceptionOr<void> WebCore::WebSocket::ping(WebCore::JSBlob* blob)
         return {};
     }
 
+    if (Blob__needsAsyncRead(JSC::JSValue::encode(blob)))
+        return blobNeedsAsyncReadException("ping"_s);
+
     // Get the blob data and send it using existing binary data path
     void* dataPtr = Blob__getDataPtr(JSC::JSValue::encode(blob));
     size_t dataSize = Blob__getSize(JSC::JSValue::encode(blob));
@@ -1834,6 +1846,9 @@ WebCore::ExceptionOr<void> WebCore::WebSocket::pong(WebCore::JSBlob* blob)
     if (m_state == CLOSING || m_state == CLOSED) {
         return {};
     }
+
+    if (Blob__needsAsyncRead(JSC::JSValue::encode(blob)))
+        return blobNeedsAsyncReadException("pong"_s);
 
     // Get the blob data and send it using existing binary data path
     void* dataPtr = Blob__getDataPtr(JSC::JSValue::encode(blob));

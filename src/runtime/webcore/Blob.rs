@@ -5886,6 +5886,18 @@ pub(crate) extern "C" fn Blob__getSize(value: JSValue) -> usize {
     unsafe { (*blob).shared_view().len() }
 }
 
+/// `true` for `Bun.file()` / `Bun.s3()` blobs, whose bytes are not in memory:
+/// [`Blob__getDataPtr`] / [`Blob__getSize`] describe them as empty.
+#[unsafe(no_mangle)]
+pub(crate) extern "C" fn Blob__needsAsyncRead(value: JSValue) -> bool {
+    let Some(blob) = Blob::from_js(value) else {
+        return false;
+    };
+    // SAFETY: `from_js` returns a non-null pointer to a live JSC-owned Blob.
+    let blob = unsafe { &*blob };
+    blob.needs_to_read_file() || blob.is_s3()
+}
+
 /// # Safety
 /// `[ptr, ptr+len)` must be a valid readable byte range (or `ptr` null / `len` 0).
 #[unsafe(no_mangle)]

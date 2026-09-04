@@ -181,10 +181,27 @@ describe("Bun.Terminal platform behaviour", () => {
     }
   });
 
-  // System conhost's ConPTY does not translate \x03 input to CTRL_C_EVENT.
-  test.todoIf(isWindows)("SAME: Ctrl+C input interrupts the child", async () => {
+  // Windows keeps a per-process "ignore Ctrl+C" flag (set by
+  // CREATE_NEW_PROCESS_GROUP or SetConsoleCtrlHandler(NULL, TRUE)) and copies
+  // it into every child, including one attached to a fresh ConPTY. CI agents
+  // start their jobs that way, so on CI the children below would discard the
+  // CTRL_C_EVENT conhost generates for them. Clear the inherited flag so these
+  // tests observe ConPTY, not the agent's process tree.
+  const enableCtrlC = isWindows
+    ? `import { dlopen } from 'bun:ffi';
+       const k32 = dlopen('kernel32.dll', { SetConsoleCtrlHandler: { args: ['ptr', 'bool'], returns: 'bool' } });
+       if (!k32.symbols.SetConsoleCtrlHandler(null, false)) throw new Error('SetConsoleCtrlHandler(NULL, FALSE) failed');`
+    : "";
+
+  test("SAME: Ctrl+C input interrupts the child", async () => {
+    // POSIX: the line discipline (ISIG) turns ^C into SIGINT. ConPTY: conhost
+    // turns ^C into a CTRL_C_EVENT for the attached child as long as the
+    // child's input mode still has ENABLE_PROCESSED_INPUT (the default), and
+    // libuv reports that event as SIGINT. Holds for the inbox conhost of both
+    // Server 2019 (17763) and Windows 11 24H2 (26100).
     const { output } = await runInTerminal(
-      `process.on('SIGINT', () => { process.stdout.write('SIGINT'); process.exit(0); });
+      `${enableCtrlC}
+       process.on('SIGINT', () => { process.stdout.write('SIGINT'); process.exit(0); });
        setInterval(() => {}, 1000);
        process.stdout.write('READY');`,
       {
@@ -193,6 +210,24 @@ describe("Bun.Terminal platform behaviour", () => {
       },
     );
     expect(output).toContain("SIGINT");
+  });
+
+  test("SAME: in raw mode Ctrl+C reaches the child as a byte", async () => {
+    // setRawMode(true) clears ISIG (POSIX) / ENABLE_PROCESSED_INPUT (Windows),
+    // so the same ^C is delivered as 0x03 on stdin instead of interrupting.
+    const { output } = await runInTerminal(
+      `${enableCtrlC}
+       process.stdin.setRawMode(true);
+       process.stdin.on('data', d => process.stdout.write('HEX:' + Buffer.from(d).toString('hex')));
+       process.on('SIGINT', () => { process.stdout.write('SIGINT'); process.exit(1); });
+       process.stdout.write('READY');`,
+      {
+        done: o => o.includes("HEX:") || o.includes("SIGINT"),
+        afterReady: t => void t.write("\x03"),
+      },
+    );
+    expect(output).toContain("HEX:03");
+    expect(output).not.toContain("SIGINT");
   });
 
   // ──────────────────────────────────────────────────────────────────────────

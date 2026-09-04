@@ -310,7 +310,12 @@ test("disable() after a run() does not reach continuations captured before the r
       });
       const after = AsyncLocalStorage.snapshot();
       b.disable();
-      seen.push(before(() => b.getStore()), after(() => b.getStore()), b.getStore(), a.getStore());
+      seen.push(
+        before(() => b.getStore()),
+        after(() => b.getStore()),
+        b.getStore(),
+        a.getStore(),
+      );
     });
     seen.push(a.getStore(), b.getStore());
   });

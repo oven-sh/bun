@@ -450,6 +450,15 @@ test.concurrent("bumping a workspace version rewrites bun.lock", async () => {
   ({ exited } = await runBunInstall(env, packageDir, { savesLockfile: true }));
   expect(await exited).toBe(0);
   expect(await lockedVersion()).toBe("1.1.0+build.2");
+
+  // an empty pre-release is recorded as "1.2.0"; the install after that sees no change
+  await writePkg("1.2.0-");
+  ({ exited } = await runBunInstall(env, packageDir, { savesLockfile: true }));
+  expect(await exited).toBe(0);
+  expect(await lockedVersion()).toBe("1.2.0");
+  const settled = await runBunInstall(env, packageDir, { savesLockfile: false });
+  expect(settled.err).not.toContain("Saved lockfile");
+  expect(await settled.exited).toBe(0);
 });
 
 test.concurrent("adding workspace in workspace edits package.json with correct version (workspace:*)", async () => {

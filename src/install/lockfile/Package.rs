@@ -1349,18 +1349,25 @@ impl Diff {
         };
 
         if is_root {
+            // Compared as bun.lock prints them (`Version::eql` ignores build metadata, and an
+            // empty pre-release or build is not printed), so one rewrite settles the file.
+            let from_buf = from_lockfile.buffers.string_bytes.as_slice();
+            let to_buf = to_lockfile.buffers.string_bytes.as_slice();
             summary.workspace_versions_changed = from_lockfile.workspace_versions.count()
                 != to_lockfile.workspace_versions.count()
                 || to_lockfile
                     .workspace_versions
                     .iter()
-                    .any(|(name_hash, version)| {
-                        // `Version::eql` ignores build metadata, which bun.lock prints
+                    .any(|(name_hash, to)| {
                         from_lockfile
                             .workspace_versions
                             .get(name_hash)
                             .is_none_or(|from| {
-                                !from.eql(*version) || from.tag.build.hash != version.tag.build.hash
+                                from.major != to.major
+                                    || from.minor != to.minor
+                                    || from.patch != to.patch
+                                    || from.tag.pre.slice(from_buf) != to.tag.pre.slice(to_buf)
+                                    || from.tag.build.slice(from_buf) != to.tag.build.slice(to_buf)
                             })
                     });
         }

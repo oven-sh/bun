@@ -216,10 +216,24 @@ describe("spyOn on accessor properties", () => {
           expect(Object.getOwnPropertyDescriptor(box, "size")).toBeDefined();
           if (order === "get-first") {
             getSpy.mockRestore();
+            // the getter is back, the setter spy is still installed on the own copy
+            const own = Object.getOwnPropertyDescriptor(box, "size")!;
+            expect(own.set).toBe(setSpy);
+            expect(box.size).toBe(10);
+            box.size = 3;
+            expect(setSpy).toHaveBeenCalledWith(3);
+            expect(box.size).toBe(3);
             setSpy.mockRestore();
           } else {
             setSpy.mockRestore();
+            // the setter is back, the getter spy is still installed on the own copy
+            const own = Object.getOwnPropertyDescriptor(box, "size")!;
+            expect(own.get).toBe(getSpy);
+            expect(box.size).toBe(1);
+            box.size = 4;
+            expect(getSpy).toHaveBeenCalled();
             getSpy.mockRestore();
+            expect(box.size).toBe(4);
           }
           expect(Object.getOwnPropertyDescriptor(box, "size")).toBeUndefined();
           box.size = 5;

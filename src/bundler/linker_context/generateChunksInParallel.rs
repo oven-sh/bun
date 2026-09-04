@@ -73,6 +73,27 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
         // link step); `pool` is the arena-allocated bundler ThreadPool.
         c.worker_pool()
             .each_ptr(ctx, LinkerContext::generate_js_renamer, chunks);
+        if !c.options.minify_identifiers {
+            // Top-level names are final; name each file's nested scopes in
+            // parallel.
+            let mut tasks =
+                crate::linker_context::rename_symbols_in_chunk::nested_rename_tasks(chunks);
+            c.worker_pool().each_ptr(
+                ctx,
+                crate::linker_context::rename_symbols_in_chunk::run_nested_rename_task,
+                &mut tasks,
+            );
+            for task in tasks {
+                if let (crate::bun_renamer::ChunkRenamer::Number(r), Some(names)) =
+                    (&mut chunks[task.chunk_index as usize].renamer, task.names)
+                {
+                    r.absorb(names);
+                }
+            }
+            for chunk in chunks.iter_mut() {
+                chunk.nested_scopes_to_rename = Vec::new();
+            }
+        }
         if c.graph.code_splitting {
             if c.options.minify_identifiers {
                 // Counts are in; name the cross-chunk bindings, pin them, then

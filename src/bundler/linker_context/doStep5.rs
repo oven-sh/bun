@@ -328,12 +328,12 @@ impl LinkerContext<'_> {
                                 for (name, prop_use) in properties.iter() {
                                     if enum_data.get(name).is_none() {
                                         found_non_inlined_enum = true;
-                                        use_.count_estimate += prop_use.count_estimate;
+                                        use_.merge(SymbolUse::unscoped(prop_use.count_estimate));
                                     }
                                 }
 
                                 if !found_non_inlined_enum {
-                                    if use_.count_estimate == 0 {
+                                    if use_.count_estimate() == 0 {
                                         let _ = symbol_uses.swap_remove(ref_);
                                     }
                                     continue;
@@ -345,11 +345,11 @@ impl LinkerContext<'_> {
 
                 // Common path: this import isn't a TypeScript enum
                 for prop_use in properties.values() {
-                    use_.count_estimate += prop_use.count_estimate;
+                    use_.merge(SymbolUse::unscoped(prop_use.count_estimate));
                 }
                 // Every property read was bound straight to the namespace's
                 // export by `bind_import_property_accesses`.
-                if use_.count_estimate == 0 {
+                if use_.count_estimate() == 0 {
                     let _ = symbol_uses.swap_remove(ref_);
                 }
             }
@@ -371,7 +371,7 @@ impl LinkerContext<'_> {
                         .iter()
                         .position(|k| *k == ref_)
                         .unwrap();
-                    part.symbol_uses.values()[j].count_estimate > 0
+                    part.symbol_uses.values()[j].count_estimate() > 0
                 });
 
                 // Inlined `c.top_level_symbols_to_parts(id, ref_)` against the
@@ -621,8 +621,7 @@ impl LinkerContext<'_> {
                     ..Default::default()
                 });
             }
-            ns_export_symbol_uses
-                .put_assume_capacity(exp_data.import_ref, SymbolUse { count_estimate: 1 });
+            ns_export_symbol_uses.put_assume_capacity(exp_data.import_ref, SymbolUse::unscoped(1));
 
             // Make sure the part that declares the export is included
             let parts =

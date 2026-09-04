@@ -3,7 +3,7 @@
  * for local mode. Override via `--webkit-version=<hash>` to test a branch.
  * From https://github.com/oven-sh/WebKit releases.
  */
-export const WEBKIT_VERSION = "6119947592b6e1c1faef02a4c2e03174cf05d062";
+export const WEBKIT_VERSION = "autobuild-preview-pr-562-0554a4ba";
 
 /**
  * WebKit (JavaScriptCore) — the JS engine.
@@ -340,6 +340,9 @@ export const webkit: Dependency = {
       ENABLE_MEDIA_STREAM: "OFF",
       ENABLE_WEB_RTC: "OFF",
       ...(cfg.asan ? { ENABLE_SANITIZERS: "address" } : {}),
+      // Bun's C++ is compiled with ASSERT_ENABLED=1 when cfg.assertions (release-asan,
+      // release-assertions); WebKit must match or ASSERT-only symbols fail to link.
+      ...(cfg.assertions && cfg.release ? { ENABLE_ASSERTS: "ON" } : {}),
     };
 
     const spec: NestedCmakeBuild = {

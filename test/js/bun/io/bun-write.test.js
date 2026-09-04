@@ -1,5 +1,6 @@
 import { describe, expect, it, test } from "bun:test";
-import fs, { mkdirSync } from "fs";
+import { randomBytes } from "crypto";
+import fs from "fs";
 import {
   bunEnv,
   bunExe,
@@ -596,77 +597,34 @@ const IS_UV_FS_COPYFILE_DISABLED =
   // });
 
   if (process.platform === "linux") {
+    // The copy goes through copy_file_using_read_write_loop: a 64 KiB stack
+    // buffer, or above 1 MiB a heap slab capped at 8 MiB, so the large case
+    // takes several passes and ends on a partial one. Keep this async: the
+    // file is describe.concurrent, and a test that blocks the event loop for
+    // seconds times out every sibling in flight.
     describe("should work when copyFileRange is not available", () => {
-      it("on large files", () => {
-        using tmpbase = tempDir("copy-file-range-large", {});
-        var tempdir = `${tmpbase}/fs.test.js/${Date.now()}-1/bun-write/large`;
-        expect(fs.existsSync(tempdir)).toBe(false);
-        expect(tempdir.includes(mkdirSync(tempdir, { recursive: true }))).toBe(true);
-        var buffer = new Int32Array(1024 * 1024 * 64);
-        for (let i = 0; i < buffer.length; i++) {
-          buffer[i] = i % 256;
-        }
+      it.each([
+        ["small", 4 * 1024],
+        ["large", 2 * 8 * 1024 * 1024 + 100_000],
+      ])("on %s files", async (_, size) => {
+        const payload = randomBytes(size);
+        using dir = tempDir("bun-write-no-copy-file-range", { "src.blob": payload });
+        const src = join(String(dir), "src.blob");
+        const dest = join(String(dir), "dest.blob");
+        const script = `console.log(await Bun.write(${JSON.stringify(dest)}, Bun.file(${JSON.stringify(src)})))`;
 
-        const hash = Bun.hash(buffer.buffer);
-        const src = join(tempdir, "Bun.write.src.blob");
-        const dest = join(tempdir, "Bun.write.dest.blob");
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), "-e", script],
+          env: { ...bunEnv, BUN_CONFIG_DISABLE_COPY_FILE_RANGE: "1" },
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-        try {
-          fs.writeFileSync(src, buffer.buffer);
-
-          expect(fs.existsSync(dest)).toBe(false);
-
-          const { exitCode } = Bun.spawnSync({
-            stdio: ["inherit", "inherit", "inherit"],
-            cmd: [bunExe(), join(import.meta.dir, "./bun-write-exdev-fixture.js"), src, dest],
-            env: {
-              ...bunEnv,
-              BUN_CONFIG_DISABLE_COPY_FILE_RANGE: "1",
-            },
-          });
-          expect(exitCode).toBe(0);
-
-          expect(Bun.hash(fs.readFileSync(dest))).toBe(hash);
-        } finally {
-          fs.rmSync(src, { force: true });
-          fs.rmSync(dest, { force: true });
-        }
-      });
-
-      it("on small files", () => {
-        using tmpbase = tempDir("copy-file-range-small", {});
-        const tempdir = `${tmpbase}/fs.test.js/${Date.now()}-1/bun-write/small`;
-        expect(fs.existsSync(tempdir)).toBe(false);
-        expect(tempdir.includes(mkdirSync(tempdir, { recursive: true }))).toBe(true);
-        var buffer = new Int32Array(1 * 1024);
-        for (let i = 0; i < buffer.length; i++) {
-          buffer[i] = i % 256;
-        }
-
-        const hash = Bun.hash(buffer.buffer);
-        const src = join(tempdir, "Bun.write.src.blob");
-        const dest = join(tempdir, "Bun.write.dest.blob");
-
-        try {
-          fs.writeFileSync(src, buffer.buffer);
-
-          expect(fs.existsSync(dest)).toBe(false);
-
-          const { exitCode } = Bun.spawnSync({
-            stdio: ["inherit", "inherit", "inherit"],
-            cmd: [bunExe(), join(import.meta.dir, "./bun-write-exdev-fixture.js"), src, dest],
-            env: {
-              ...bunEnv,
-              BUN_CONFIG_DISABLE_COPY_FILE_RANGE: "1",
-            },
-          });
-          expect(exitCode).toBe(0);
-
-          expect(Bun.hash(fs.readFileSync(dest))).toBe(hash);
-        } finally {
-          fs.rmSync(src, { force: true });
-          fs.rmSync(dest, { force: true });
-        }
+        expect({ resolved: stdout, stderr }).toEqual({ resolved: `${size}\n`, stderr: "" });
+        expect(exitCode).toBe(0);
+        const copied = fs.readFileSync(dest);
+        expect({ size: copied.byteLength, identical: copied.equals(payload) }).toEqual({ size, identical: true });
       });
     });
 

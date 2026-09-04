@@ -25,10 +25,15 @@ const inputs = [
     2 ** 63 + 2048, -(2 ** 63 + 2048), 2 ** 64, 2 ** 84, 2 ** 85, 2 ** 100,
     Number.MAX_VALUE, -Number.MAX_VALUE, Number.MIN_VALUE, Infinity, -Infinity, NaN,
 ];
-
-// Plain arrays with a double butterfly, so the loads feed ValueToInt32 with DoubleRepUse.
-const doubles = inputs.map(x => x);
 const expected = inputs.map(toInt32Reference);
+
+// A Float64Array load is DoubleRepUse for every input, NaN included.
+const float64 = new Float64Array(inputs);
+
+// A plain array keeps a double butterfly only without NaN, which forces a
+// contiguous (JSValue) butterfly. The loads of this one are DoubleRepUse too.
+const doubles = inputs.filter(x => x === x);
+const expectedDoubles = doubles.map(toInt32Reference);
 
 function bitOr(array, i)
 {
@@ -48,6 +53,25 @@ function shiftRight(array, i)
 }
 noInline(shiftRight);
 
+// Separate functions for the typed array, so each GetByVal stays monomorphic.
+function bitOrTyped(array, i)
+{
+    return array[i] | 0;
+}
+noInline(bitOrTyped);
+
+function xorWithTyped(array, i, other)
+{
+    return array[i] ^ other;
+}
+noInline(xorWithTyped);
+
+function shiftRightTyped(array, i)
+{
+    return array[i] >> 0;
+}
+noInline(shiftRightTyped);
+
 // A JSValue operand, so the conversion takes the NumberUse path.
 function bitOrValue(object)
 {
@@ -57,9 +81,14 @@ noInline(bitOrValue);
 
 for (let iteration = 0; iteration < testLoopCount; ++iteration) {
     for (let i = 0; i < inputs.length; ++i) {
-        shouldBe(bitOr(doubles, i), expected[i], inputs[i]);
-        shouldBe(xorWith(doubles, i, 0x5a5a5a5a), expected[i] ^ 0x5a5a5a5a, inputs[i]);
-        shouldBe(shiftRight(doubles, i), expected[i], inputs[i]);
+        shouldBe(bitOrTyped(float64, i), expected[i], inputs[i]);
+        shouldBe(xorWithTyped(float64, i, 0x5a5a5a5a), expected[i] ^ 0x5a5a5a5a, inputs[i]);
+        shouldBe(shiftRightTyped(float64, i), expected[i], inputs[i]);
         shouldBe(bitOrValue({ value: inputs[i] }), expected[i], inputs[i]);
+    }
+    for (let i = 0; i < doubles.length; ++i) {
+        shouldBe(bitOr(doubles, i), expectedDoubles[i], doubles[i]);
+        shouldBe(xorWith(doubles, i, 0x5a5a5a5a), expectedDoubles[i] ^ 0x5a5a5a5a, doubles[i]);
+        shouldBe(shiftRight(doubles, i), expectedDoubles[i], doubles[i]);
     }
 }

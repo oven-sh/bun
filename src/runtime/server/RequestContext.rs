@@ -2055,7 +2055,7 @@ where
     /// The handler returned a `Response` whose body is `route`'s HTML bundle.
     /// Once the bundle is built, the page is rendered here as a blob body, so
     /// the Response's status, headers and cookies apply to it.
-    fn render_html_bundle(&self, route: bun_ptr::RefPtr<html_bundle::Route>) {
+    fn render_html_bundle(&self, route: &bun_ptr::RefPtr<html_bundle::Route>) {
         // The build can finish after this frame returns. The Response (its
         // status and headers) must still be there then.
         if !self.flags.response_protected() {
@@ -2850,7 +2850,7 @@ where
                 // The built page gives the Content-Length a GET would send.
                 let route = this.server().html_bundle_route(bundle.this_ptr());
                 *body_value = Body::Value::Used;
-                this.render_html_bundle(route);
+                this.render_html_bundle(&route);
             }
             Body::Value::Used | Body::Value::Null | Body::Value::Empty | Body::Value::Error(_) => {
                 this.render_metadata();
@@ -3324,7 +3324,7 @@ where
                 // releases the one it holds.
                 let route = this.server().html_bundle_route(bundle.this_ptr());
                 *value = Body::Value::Used;
-                this.render_html_bundle(route);
+                this.render_html_bundle(&route);
                 return;
             }
             Body::Value::Locked(lock) => {

@@ -60,6 +60,65 @@ pub(crate) type OnUnhandledRejection = fn(&mut VirtualMachine, &JSGlobalObject, 
 pub(crate) type MacroMap = bun_collections::ArrayHashMap<i32, JSValue>;
 pub type ExceptionList = Vec<crate::exception_list::JsException>;
 
+#[derive(Clone, Copy, Eq, PartialEq)]
+pub enum StackTraceStyle {
+    Default,
+    DeemphasizeNodeModules,
+}
+
+fn is_node_modules_path(source_url: &[u8]) -> bool {
+    const COMPONENT: &[u8] = b"node_modules";
+
+    let is_windows_path = (source_url.len() >= 3
+        && source_url[0].is_ascii_alphabetic()
+        && source_url[1] == b':'
+        && matches!(source_url[2], b'/' | b'\\'))
+        || source_url.starts_with(b"\\\\");
+    let scheme_end = bun_core::strings::index_of_char_usize(source_url, b':');
+    let has_url_scheme = !is_windows_path
+        && scheme_end.is_some_and(|colon| {
+            colon > 0
+                && source_url[0].is_ascii_alphabetic()
+                && source_url[1..colon]
+                    .iter()
+                    .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'+' | b'-' | b'.'))
+                && source_url.get(colon + 1..colon + 3) == Some(b"//")
+        });
+    let path = match scheme_end {
+        Some(scheme_end) if has_url_scheme => {
+            let authority_start = scheme_end + 3;
+            let url_end = bun_core::strings::index_of_any(&source_url[authority_start..], b"?#")
+                .map(|index| authority_start + index)
+                .unwrap_or(source_url.len());
+            let Some(path_start) =
+                bun_core::strings::index_of_char_usize(&source_url[authority_start..url_end], b'/')
+            else {
+                return false;
+            };
+            &source_url[authority_start + path_start..url_end]
+        }
+        _ => source_url,
+    };
+    // Relative paths may be Windows paths; absolute POSIX paths keep backslashes literal.
+    let backslash_is_separator =
+        is_windows_path || (!has_url_scheme && !source_url.starts_with(b"/"));
+    let is_separator = |byte| byte == b'/' || (backslash_is_separator && byte == b'\\');
+
+    let mut offset = 0;
+    while let Some(relative_index) = bun_core::strings::index_of(&path[offset..], COMPONENT) {
+        let index = offset + relative_index;
+        if (index == 0 || is_separator(path[index - 1]))
+            && path
+                .get(index + COMPONENT.len())
+                .is_some_and(|&byte| is_separator(byte))
+        {
+            return true;
+        }
+        offset = index + 1;
+    }
+    false
+}
+
 // ──────────────────────────────────────────────────────────────────────────
 // VirtualMachine struct (file-level @This())
 // ──────────────────────────────────────────────────────────────────────────
@@ -5522,6 +5581,20 @@ impl VirtualMachine {
         trace: &crate::ZigStackTrace,
         allow_ansi_colors: bool,
     ) -> crate::CrateResult<()> {
+        Self::print_stack_trace_with_style(
+            writer,
+            trace,
+            allow_ansi_colors,
+            StackTraceStyle::Default,
+        )
+    }
+
+    fn print_stack_trace_with_style(
+        writer: &mut bun_core::io::Writer,
+        trace: &crate::ZigStackTrace,
+        allow_ansi_colors: bool,
+        style: StackTraceStyle,
+    ) -> crate::CrateResult<()> {
         use crate::zig_stack_frame::LineColumn;
         let stack = trace.frames();
         if stack.is_empty() {
@@ -5563,6 +5636,28 @@ impl VirtualMachine {
                         write!(writer, bun_core::pretty_fmt!($fmt, false) $(, $arg)*)
                     }
                 };
+            }
+            if style == StackTraceStyle::DeemphasizeNodeModules && is_node_modules_path(file) {
+                if has_name && !frame.position.is_invalid() {
+                    pretty_write!(
+                        "<r>      <d>at {} ({})<r>\n",
+                        frame.name_formatter(false),
+                        frame.source_url_formatter(dir, origin, LineColumn::Include, false)
+                    )?;
+                } else if !frame.position.is_invalid() {
+                    pretty_write!(
+                        "<r>      <d>at {}<r>\n",
+                        frame.source_url_formatter(dir, origin, LineColumn::Include, false)
+                    )?;
+                } else if has_name {
+                    pretty_write!("<r>      <d>at {}<r>\n", frame.name_formatter(false))?;
+                } else {
+                    pretty_write!(
+                        "<r>      <d>at {}<r>\n",
+                        frame.source_url_formatter(dir, origin, LineColumn::Include, false)
+                    )?;
+                }
+                continue;
             }
             if has_name && !frame.position.is_invalid() {
                 pretty_write!(
@@ -6007,6 +6102,7 @@ impl VirtualMachine {
         writer: &mut bun_core::io::Writer,
         allow_side_effects: bool,
         allow_ansi_color: bool,
+        stack_trace_style: StackTraceStyle,
     ) -> crate::CrateResult<()> {
         let mut default_formatter = crate::console_object::Formatter::new(self.global());
         let f = formatter.unwrap_or(&mut default_formatter);
@@ -6018,6 +6114,7 @@ impl VirtualMachine {
             writer,
             allow_ansi_color,
             allow_side_effects,
+            stack_trace_style,
         )
         // `defer default_formatter.deinit()` → Drop.
     }
@@ -6099,6 +6196,7 @@ impl VirtualMachine {
             writer,
             allow_ansi_color,
             allow_side_effects,
+            StackTraceStyle::Default,
         );
 
         drop(source_code_slice);
@@ -6121,6 +6219,7 @@ impl VirtualMachine {
         writer: &mut bun_core::io::Writer,
         allow_ansi_color: bool,
         allow_side_effects: bool,
+        stack_trace_style: StackTraceStyle,
     ) -> crate::CrateResult<()> {
         use crate::JSType;
         use crate::console_object::formatter::TagOptions;
@@ -6579,7 +6678,12 @@ impl VirtualMachine {
             }
         }
 
-        Self::print_stack_trace(writer, &exception.stack, allow_ansi_color)?;
+        Self::print_stack_trace_with_style(
+            writer,
+            &exception.stack,
+            allow_ansi_color,
+            stack_trace_style,
+        )?;
 
         if !exception.browser_url.is_empty() {
             pretty_write!(

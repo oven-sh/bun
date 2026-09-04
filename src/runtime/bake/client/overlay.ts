@@ -589,7 +589,7 @@ function renderBundlerMessage(msg: BundlerMessage) {
 
 function renderTraceFrame(frame: Frame, className: string) {
   const hasFn = !!frame.fn;
-  return elem("div", { class: className }, [
+  return elem("div", { class: isNodeModulesPath(frame.file) ? className + " library-frame" : className }, [
     elemText("span", { class: "muted" }, "at "),
     ...(hasFn
       ? [
@@ -603,6 +603,37 @@ function renderTraceFrame(frame: Frame, className: string) {
       ? [elemText("code", { class: "muted" }, `:${frame.line}` + (frame.col ? `:${frame.col}` : ""))]
       : []),
   ]);
+}
+
+function isNodeModulesPath(sourceUrl: string | null) {
+  if (!sourceUrl) return false;
+
+  const isWindowsPath = /^[A-Za-z]:[\\/]/.test(sourceUrl) || sourceUrl.startsWith("\\\\");
+  const schemeEnd = sourceUrl.indexOf(":");
+  const hasUrlScheme =
+    !isWindowsPath &&
+    schemeEnd > 0 &&
+    /^[A-Za-z][A-Za-z0-9+.-]*$/.test(sourceUrl.slice(0, schemeEnd)) &&
+    sourceUrl.slice(schemeEnd + 1, schemeEnd + 3) === "//";
+  let path = sourceUrl;
+  if (hasUrlScheme) {
+    const queryOrHash = sourceUrl.slice(schemeEnd + 3).search(/[?#]/);
+    const urlEnd = queryOrHash === -1 ? sourceUrl.length : schemeEnd + 3 + queryOrHash;
+    const pathStart = sourceUrl.indexOf("/", schemeEnd + 3);
+    if (pathStart === -1 || pathStart >= urlEnd) return false;
+    path = sourceUrl.slice(pathStart, urlEnd);
+  }
+  // Relative paths may be Windows paths; absolute POSIX paths keep backslashes literal.
+  const backslashIsSeparator = isWindowsPath || (!hasUrlScheme && !sourceUrl.startsWith("/"));
+  const isSeparator = (char: string | undefined) => char === "/" || (backslashIsSeparator && char === "\\");
+
+  const component = "node_modules";
+  for (let index = path.indexOf(component); index !== -1; index = path.indexOf(component, index + 1)) {
+    if ((index === 0 || isSeparator(path[index - 1])) && isSeparator(path[index + component.length])) {
+      return true;
+    }
+  }
+  return false;
 }
 
 function renderErrorMessageLine(level: BundlerMessageLevel, text: string) {

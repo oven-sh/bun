@@ -136,7 +136,6 @@ JSValue rsaFunction(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* ca
                 CryptoKeyType::Public,
                 prepareResult.formatType,
                 prepareResult.encodingType,
-                prepareResult.cipher,
                 WTF::move(prepareResult.passphrase));
             RETURN_IF_EXCEPTION(scope, {});
         }
@@ -157,7 +156,6 @@ JSValue rsaFunction(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* ca
                 CryptoKeyType::Private,
                 prepareResult.formatType,
                 prepareResult.encodingType,
-                prepareResult.cipher,
                 WTF::move(prepareResult.passphrase));
             RETURN_IF_EXCEPTION(scope, {});
         }

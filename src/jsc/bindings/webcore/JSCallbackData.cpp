@@ -41,7 +41,7 @@ namespace WebCore {
 using namespace JSC;
 
 // https://webidl.spec.whatwg.org/#call-a-user-objects-operation
-JSValue JSCallbackData::invokeCallback(VM& vm, JSObject* callback, JSValue thisValue, MarkedArgumentBuffer& args, CallbackType method, PropertyName functionName, NakedPtr<JSC::Exception>& returnedException)
+JSValue JSCallbackData::invokeCallback(VM& vm, JSObject* callback, JSValue thisValue, MarkedArgumentBuffer& args, NakedPtr<JSC::Exception>& returnedException)
 {
     ASSERT(callback);
 

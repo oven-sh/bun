@@ -345,7 +345,6 @@ JSC_DEFINE_HOST_FUNCTION(jsVerifyProtoFuncVerify, (JSGlobalObject * globalObject
             CryptoKeyType::Public,
             prepareResult.formatType,
             prepareResult.encodingType,
-            prepareResult.cipher,
             WTF::move(prepareResult.passphrase));
         RETURN_IF_EXCEPTION(scope, {});
     }

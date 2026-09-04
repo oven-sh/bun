@@ -86,9 +86,7 @@ public:
     // Called once after an ActiveDOMObject is constructed: stops it if this context already stopped.
     void suspendActiveDOMObjectIfNeeded(ActiveDOMObject&);
 
-    enum class ShouldContinue : bool { No,
-        Yes };
-    void forEachActiveDOMObject(NOESCAPE const Function<ShouldContinue(ActiveDOMObject&)>&) const;
+    void forEachActiveDOMObject(NOESCAPE const Function<void(ActiveDOMObject&)>&) const;
 
     // WorkerOrWorkletGlobalScope::prepareForDestruction(): the one point, while script may still
     // run, where every ActiveDOMObject is stopped and every listener on context-owned targets is

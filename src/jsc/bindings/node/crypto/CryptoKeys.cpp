@@ -52,7 +52,6 @@ JSC_DEFINE_HOST_FUNCTION(jsCreatePublicKey, (JSC::JSGlobalObject * lexicalGlobal
             CryptoKeyType::Public,
             prepareResult.formatType,
             prepareResult.encodingType,
-            prepareResult.cipher,
             WTF::move(prepareResult.passphrase));
         RETURN_IF_EXCEPTION(scope, {});
     }
@@ -87,7 +86,6 @@ JSC_DEFINE_HOST_FUNCTION(jsCreatePrivateKey, (JSGlobalObject * lexicalGlobalObje
             CryptoKeyType::Private,
             prepareResult.formatType,
             prepareResult.encodingType,
-            prepareResult.cipher,
             WTF::move(prepareResult.passphrase));
         RETURN_IF_EXCEPTION(scope, {});
     }

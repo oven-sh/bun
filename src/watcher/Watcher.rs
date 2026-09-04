@@ -669,7 +669,8 @@ impl Watcher {
 
     // Below is platform-independent
 
-    pub(crate) fn append_file_maybe_lock<const CLONE_FILE_PATH: bool>(
+    /// The caller holds `self.mutex`.
+    pub(crate) fn append_file_locked<const CLONE_FILE_PATH: bool>(
         &mut self,
         fd: Fd,
         file_path: &[u8],
@@ -888,7 +889,7 @@ impl Watcher {
             return Ok(ownership);
         }
 
-        let r = self.append_file_maybe_lock::<CLONE_FILE_PATH>(
+        let r = self.append_file_locked::<CLONE_FILE_PATH>(
             fd,
             file_path,
             hash,

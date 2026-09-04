@@ -1063,11 +1063,6 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
         });
       }
     }
-    if (partial.webkit !== undefined && partial.webkit !== "prebuilt") {
-      throw new BuildError(`Cross-compiling for Windows requires --webkit=prebuilt (got ${partial.webkit})`, {
-        hint: "Building WebKit for Windows from a non-Windows host is not wired up yet: local mode builds ICU with msbuild, source mode only targets ELF so far.",
-      });
-    }
     const llvmArch = arch === "x64" ? "x86_64" : "aarch64";
     crossTarget = `${llvmArch}-pc-windows-msvc`;
   }
@@ -1088,6 +1083,11 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
   if (webkit !== "prebuilt" && webkit !== "source") {
     throw new BuildError(`Unknown --webkit=${webkit}`, {
       hint: "Use source (compile the pinned JSC in this build; add --local-deps=WebKit=<path> for your own clone) or prebuilt",
+    });
+  }
+  if (webkit === "source" && (darwin || windows)) {
+    throw new BuildError(`--webkit=source is not wired up for ${os} targets yet (ELF only: Linux, Android, FreeBSD)`, {
+      hint: "Use --webkit=prebuilt (the default) when targeting macOS or Windows.",
     });
   }
 

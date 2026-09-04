@@ -1213,9 +1213,7 @@ function writeStub(path: string, target: string): void {
 
 function emitWebKitDirect(n: Ninja, cfg: Config, ctx: CustomBuildContext): WebKitDirectResult {
   const { srcDir: W, ready, resolved } = ctx;
-  assert(!cfg.windows && !cfg.darwin, "webkit=source direct build: only ELF targets are wired up so far", {
-    hint: "Use --webkit=prebuilt (default) or --webkit=local on this platform for now.",
-  });
+  assert(!cfg.windows && !cfg.darwin, "--webkit=source: only ELF targets (Linux, Android, FreeBSD) so far");
 
   const hostWin = cfg.host.os === "windows";
   const q = (p: string) => quote(p, hostWin);

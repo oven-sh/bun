@@ -170,3 +170,11 @@ Each fetched dep gets one ninja build statement with `restat = 1`:
 The dep's sources are declared as implicit outputs of that edge, so the
 compile edges that follow wait for it; from there they are ordinary
 `cc`/`cxx` edges with depfiles.
+
+`custom` deps (`needsSourceAtConfigure: true` — ICU, WebKit) are the
+exception to "fetch is a ninja edge": configure describes their graph _from_
+the tree (ICU's `sources.txt`, JSC's `Sources.txt`, header directories), so
+`configure.ts` fetches them itself (`prefetchConfigureSources`) whenever the
+tree is missing or its `.ref` is stale, before `emitBun` runs. The
+`dep_fetch` edge is still emitted for them; by the time ninja runs it is a
+restat no-op that just anchors the `.ref` stamp in the graph.

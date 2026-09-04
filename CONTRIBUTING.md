@@ -269,7 +269,7 @@ In CI, we run our test suite with at least one target that is built with Address
 
 ## Building WebKit locally + Debug mode of JSC
 
-WebKit is not cloned by default (to save time and disk space); the build downloads a prebuilt JavaScriptCore. To build bun against JSC compiled from source at the pinned `WEBKIT_VERSION`, pass `--webkit=source` — the build fetches just `Source/{bmalloc,WTF,JavaScriptCore}` (seconds, not a 12 GB clone) into `vendor/WebKit` and compiles it in its own ninja graph like every other dependency (needs `ruby`, `python3` and `perl` for JSC's code generators and `zstd` for packing the ICU data):
+WebKit is not cloned by default (to save time and disk space); the build downloads a prebuilt JavaScriptCore. To build bun against JSC compiled from source at the pinned `WEBKIT_VERSION`, pass `--webkit=source` — the build fetches just `Source/{bmalloc,WTF,JavaScriptCore}` (seconds, not a 12 GB clone) into `vendor/WebKit` and compiles it in its own ninja graph like every other dependency (needs `ruby`, `python3` and `perl` for JSC's code generators and `zstd` for packing the ICU data). This covers Linux, Android and FreeBSD targets so far; macOS and Windows builds still use the prebuilt:
 
 ```bash
 $ bun run build --webkit=source

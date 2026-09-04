@@ -395,20 +395,23 @@ describe("@types/bun integration test", () => {
   });
 
   // Runs on debug builds too: spawning tsc over a single file is cheap,
-  // unlike the in-process LanguageService runs above.
-  describe("Bun.mmap", () => {
-    test("MMapOptions accepts offset and size", async () => {
-      const checkDir = join(TEMP_DIR, "mmap-options-check");
+  // unlike the in-process LanguageService runs above. The fixture/ files carry
+  // the full assertions for these declarations; this is the check of them that
+  // a debug build still runs.
+  describe("tsc over a single file", () => {
+    test("Bun.mmap offset/size and the DOMException options object are accepted", async () => {
+      const checkDir = join(TEMP_DIR, "single-file-check");
       const tsconfig = structuredClone(sourceTsconfig);
-      tsconfig.include = ["mmap-options.ts"];
+      tsconfig.include = ["check.ts"];
       tsconfig.compilerOptions.typeRoots = [join(BASE_FIXTURE_DIR, "node_modules", "@types")];
       await mkdir(checkDir, { recursive: true });
       await makeTree(checkDir, {
         "tsconfig.json": JSON.stringify(tsconfig, null, 2),
-        "mmap-options.ts": `const view = Bun.mmap("./data.bin", { shared: true, sync: false, offset: 4096, size: 1024 });
+        "check.ts": `const view = Bun.mmap("./data.bin", { shared: true, sync: false, offset: 4096, size: 1024 });
            view satisfies Uint8Array<ArrayBuffer>;
            Bun.mmap("./data.bin", { offset: 4096 }) satisfies Uint8Array<ArrayBuffer>;
-           Bun.mmap("./data.bin", { size: 1024 }) satisfies Uint8Array<ArrayBuffer>;`,
+           Bun.mmap("./data.bin", { size: 1024 }) satisfies Uint8Array<ArrayBuffer>;
+           new DOMException("boom", { name: "AbortError", cause: new Error("inner") }) satisfies DOMException;`,
       });
 
       await using proc = Bun.spawn({
@@ -888,6 +891,22 @@ describe("@types/bun integration test", () => {
           code: 2353,
           line: "globals.ts:307:5",
           message: "Object literal may only specify known properties, and 'headers' does not exist in type 'string[]'.",
+        },
+        {
+          code: 2345,
+          line: "globals.ts:340:37",
+          message:
+            "Argument of type '{ name: string; cause: Error; }' is not assignable to parameter of type 'string'.",
+        },
+        {
+          code: 2345,
+          line: "globals.ts:341:37",
+          message: "Argument of type '{ name: string; }' is not assignable to parameter of type 'string'.",
+        },
+        {
+          code: 2345,
+          line: "globals.ts:342:37",
+          message: "Argument of type '{ cause: string; }' is not assignable to parameter of type 'string'.",
         },
         {
           code: 2345,

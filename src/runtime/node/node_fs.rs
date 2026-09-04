@@ -5563,11 +5563,7 @@ impl NodeFS {
                 let parent = unsafe { OSPathSliceZ::from_raw(working_mem.as_ptr(), i as usize) };
                 match mkdir_os_path(parent, mode) {
                     Err(err) => {
-                        // The SEP-restore must NOT happen before the errno match:
-                        // `OSPathSliceZ` (`WStr`/`ZStr`) carries a hard
-                        // `ptr[len] == 0` invariant, and the EEXIST/`_` arms below still
-                        // read `parent`. Defer the SEP-restore into each arm so `parent`
-                        // is never observed with its terminator clobbered.
+                        // The SEP is restored per arm: the EEXIST arm still reads `parent` first.
                         match err.get_errno() {
                             E::EEXIST => {
                                 // On Windows, this may happen if trying to mkdir replacing a file
@@ -5602,25 +5598,15 @@ impl NodeFS {
                                 i -= 1;
                                 continue;
                             }
+                            // Names the requested path, like the other arms and node's mkdirSync.
                             _ => {
-                                #[cfg(windows)]
-                                let p = {
-                                    // `parent` aliases `working_mem` (== sync_error_buf). Copy it
-                                    // out to a temp before re-deriving `&mut PathBuffer` so we
-                                    // never hold `&mut buf` and `&buf[..]` simultaneously.
-                                    let stripped = without_nt_prefix(&parent[..]);
-                                    let n = stripped.len();
-                                    let mut tmp = paths::os_path_buffer_pool::get();
-                                    tmp[..n].copy_from_slice(stripped);
-                                    // SAFETY: `working_mem`/`parent` are not used after this return.
-                                    Self::os_path_into_buf(
-                                        unsafe { &mut *sync_error_buf_ptr },
-                                        &tmp[..n],
-                                    )
-                                };
-                                #[cfg(not(windows))]
-                                let p = without_nt_prefix(&parent[..]);
-                                return Err(err.with_path(p));
+                                // SAFETY: neither `working_mem` nor `parent` (which points into
+                                // it) is used after this return; the re-derived &mut PathBuffer
+                                // is scoped to the call.
+                                return Err(err.with_path(Self::os_path_into_buf(
+                                    unsafe { &mut *sync_error_buf_ptr },
+                                    without_nt_prefix(&path[..]),
+                                )));
                             }
                         }
                     }

@@ -530,6 +530,4 @@ Object.assign(EventEmitter, {
   listenerCount,
 });
 
-// CommonJS, so that `require("events")` and the default import are both
-// `EventEmitter`, as in Node. See `commonJSFiles` in build-fallbacks.ts.
 module.exports = EventEmitter;

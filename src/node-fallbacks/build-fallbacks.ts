@@ -8,9 +8,6 @@ const outdir = process.argv[2];
 const builtins = Module.builtinModules;
 let commands: Promise<void>[] = [];
 
-// `require()` of a CommonJS polyfill returns its `module.exports`, as in Node.
-// `require()` of an ES module polyfill returns a namespace object, which is
-// not callable.
 const commonJSFiles = ["assert.js", "events.js", "stream.js"];
 
 let moduleFiles: string[] = [];

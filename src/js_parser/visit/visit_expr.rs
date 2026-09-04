@@ -2797,6 +2797,26 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             return;
         }
 
+        // Legacy TS decorators are only lowered for class statements (`lower_class`); on a
+        // class expression they are dropped, matching tsc's output. Decorated `declare` and
+        // `abstract` fields only survive parsing so that lowering can emit their decorator
+        // calls, so without lowering they go too: they have no JS form of their own.
+        if TYPESCRIPT && e_.has_decorators {
+            let properties = e_.properties.slice_mut();
+            let mut end: usize = 0;
+            for i in 0..properties.len() {
+                if matches!(
+                    properties[i].kind,
+                    G::PropertyKind::Declare | G::PropertyKind::Abstract
+                ) {
+                    continue;
+                }
+                properties.swap(end, i);
+                end += 1;
+            }
+            e_.properties.truncate(end);
+        }
+
         // Remove unused class names when minifying (only when bundling is enabled)
         // unless --keep-names is specified
         if p.options.features.minify_syntax

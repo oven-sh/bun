@@ -156,7 +156,11 @@ interface CommandArgs {
  */
 function registerHoverProvider(context: vscode.ExtensionContext) {
   context.subscriptions.push(
-    vscode.languages.registerHoverProvider("json", {
+    vscode.languages.registerHoverProvider({
+        language: "json",
+        scheme: "file",
+        pattern: "**/package.json",
+      }, {
       provideHover(document, position) {
         const { scripts } = extractScriptsFromPackageJson(document);
 

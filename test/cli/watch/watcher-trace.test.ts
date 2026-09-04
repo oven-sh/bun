@@ -1,7 +1,69 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
-import { existsSync, readFileSync } from "node:fs";
+import { bunEnv, bunExe, isMacOS, isFreeBSD, isWindows, tempDir } from "harness";
+import { existsSync, readFileSync, renameSync, utimesSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+
+type TraceFileEvent = { events: string[]; changed?: string[] };
+
+/**
+ * Poll the trace file until some recorded event satisfies `pred`.
+ *
+ * Polls rather than sleeping a fixed amount: the watcher coalesces events over
+ * a short window, so the delay before an event lands is variable.
+ */
+async function waitForTraceEvent(
+  traceFile: string,
+  what: string,
+  pred: (path: string, event: TraceFileEvent) => boolean,
+  // Under the per-test default so this throws with the trace dump attached
+  // instead of being cut short by the harness timeout.
+  timeoutMs = 4000,
+): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  let contents = "";
+  while (Date.now() < deadline) {
+    if (existsSync(traceFile)) {
+      contents = readFileSync(traceFile, "utf-8");
+      for (const line of contents.split("\n")) {
+        if (!line.trim()) continue;
+        let parsed: { files?: Record<string, TraceFileEvent> };
+        try {
+          parsed = JSON.parse(line);
+        } catch {
+          continue; // a partially-flushed final line
+        }
+        for (const [path, event] of Object.entries(parsed.files ?? {})) {
+          if (pred(path, event)) return;
+        }
+      }
+    }
+    await Bun.sleep(20);
+  }
+  throw new Error(`timed out waiting for ${what}\ntrace file contents:\n${contents}`);
+}
+
+/** Spawn `bun --watch <entry>` with tracing on and wait for its first run. */
+async function spawnTraced(dir: string, entry: string, traceFile: string, ready: string) {
+  const proc = Bun.spawn({
+    cmd: [bunExe(), "--watch", entry],
+    env: { ...bunEnv, BUN_WATCHER_TRACE: traceFile },
+    cwd: dir,
+    stdout: "pipe",
+    stderr: "inherit",
+    stdin: "ignore",
+  });
+  const decoder = new TextDecoder();
+  let seen = "";
+  for await (const chunk of proc.stdout) {
+    seen += decoder.decode(chunk);
+    if (seen.includes(ready)) return proc;
+  }
+  // stdout ended without the readiness line, so the process died during startup.
+  // Surface that instead of letting the caller time out on a watcher that was
+  // never running.
+  const exitCode = await proc.exited;
+  throw new Error(`bun --watch exited (code ${exitCode}) before printing ${JSON.stringify(ready)}; stdout: ${seen}`);
+}
 
 test("BUN_WATCHER_TRACE creates trace file with watch events", async () => {
   using dir = tempDir("watcher-trace", {
@@ -261,3 +323,71 @@ test("BUN_WATCHER_TRACE appends across reloads", async () => {
     expect(event).toHaveProperty("files");
   }
 }, 10000);
+
+// Bumping mtime without touching contents is a metadata-only change: IN_ATTRIB
+// on Linux, NOTE_ATTRIB on kqueue. Both must surface as the `metadata` op.
+//
+// Skipped on Windows: ReadDirectoryChangesW reports metadata changes as
+// FILE_ACTION_MODIFIED, indistinguishable from a content write, so there is no
+// separate metadata op to assert on.
+test.skipIf(isWindows)("utimes on a watched file records a metadata event", async () => {
+  using dir = tempDir("watcher-trace-metadata", {
+    "script.js": `console.log("ready");`,
+  });
+  // Outside the watched tree: a trace file written *inside* it would record its
+  // own writes and feed itself.
+  using traceDir = tempDir("watcher-trace-metadata-out", {});
+  const traceFile = join(String(traceDir), "metadata-trace.log");
+  const proc = await spawnTraced(String(dir), "script.js", traceFile, "ready");
+
+  const when = new Date();
+  utimesSync(join(String(dir), "script.js"), when, when);
+
+  await waitForTraceEvent(
+    traceFile,
+    "a metadata event on script.js",
+    (path, event) => path.includes("script.js") && event.events.includes("metadata"),
+  );
+
+  proc.kill();
+  await proc.exited;
+});
+
+// A rename inside a watched directory has two halves, and both must be
+// reported: the departure as `move_from` (IN_MOVED_FROM /
+// FILE_ACTION_RENAMED_OLD_NAME) and the arrival as `move_to`. Without the
+// departure the vacated name is never invalidated.
+//
+// Skipped on kqueue: EVFILT_VNODE reports "this directory changed" with no
+// per-entry detail, so there is no departure event to map to move_from.
+test.skipIf(isMacOS || isFreeBSD)("renaming inside a watched directory records move_from", async () => {
+  using dir = tempDir("watcher-trace-movefrom", {
+    "script.js": `console.log("ready");`,
+  });
+  // See the note in the metadata test: keep the trace out of the watched tree.
+  using traceDir = tempDir("watcher-trace-movefrom-out", {});
+  const traceFile = join(String(traceDir), "movefrom-trace.log");
+  const proc = await spawnTraced(String(dir), "script.js", traceFile, "ready");
+
+  // A sibling that is not itself imported, so it has no per-file watch of its
+  // own and can only be observed through the parent directory's watch.
+  writeFileSync(join(String(dir), "sibling.js"), "export const x = 1;\n");
+  await waitForTraceEvent(
+    traceFile,
+    "a create event naming sibling.js",
+    (_path, event) =>
+      event.events.includes("create") && (event.changed ?? []).some(name => name.includes("sibling.js")),
+  );
+
+  renameSync(join(String(dir), "sibling.js"), join(String(dir), "renamed.js"));
+
+  await waitForTraceEvent(
+    traceFile,
+    "a move_from event naming sibling.js",
+    (_path, event) =>
+      event.events.includes("move_from") && (event.changed ?? []).some(name => name.includes("sibling.js")),
+  );
+
+  proc.kill();
+  await proc.exited;
+});

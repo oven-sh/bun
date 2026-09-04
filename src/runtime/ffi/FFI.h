@@ -125,6 +125,8 @@ napi_value asNapiValue;
 
 EncodedJSValue ValueUndefined = { TagValueUndefined };
 EncodedJSValue ValueTrue = { TagValueTrue };
+// What a host function returns after throwing; JSC unwinds to the pending exception and ignores it.
+EncodedJSValue ValueEmpty = { 0 };
 
 typedef void* JSContext;
 
@@ -159,7 +161,9 @@ static EncodedJSValue FLOAT_TO_JSVALUE(float val) __attribute__((__always_inline
 static EncodedJSValue BOOLEAN_TO_JSVALUE(bool val) __attribute__((__always_inline__));
 static EncodedJSValue PTR_TO_JSVALUE(void* ptr) __attribute__((__always_inline__));
 
-static void* JSVALUE_TO_PTR(EncodedJSValue val) __attribute__((__always_inline__));
+// The engine's conversion (the one dlopen()'d symbols use); on a non-pointer it throws and sets *threw.
+void* JSVALUE_TO_PTR_SLOW(void* jsGlobalObject, int32_t abiType, bool* threw, int64_t val);
+static void* JSVALUE_TO_PTR(void* jsGlobalObject, int32_t abiType, bool* threw, EncodedJSValue val) __attribute__((__always_inline__));
 static int32_t JSVALUE_TO_INT32(EncodedJSValue val) __attribute__((__always_inline__));
 static float JSVALUE_TO_FLOAT(EncodedJSValue val) __attribute__((__always_inline__));
 static double JSVALUE_TO_DOUBLE(EncodedJSValue val) __attribute__((__always_inline__));
@@ -207,21 +211,30 @@ static uint64_t JSVALUE_TO_TYPED_ARRAY_LENGTH(EncodedJSValue val) {
 // Now, they're stored at the beginning of the 64-bit value
 // This behavior change enables the JIT to handle it better
 // It also is better readability when console.log(myPtr)
-static void* JSVALUE_TO_PTR(EncodedJSValue val) {
-  if (val.asInt64 == TagValueNull)
-    return 0;
+static void* JSVALUE_TO_PTR(void* jsGlobalObject, int32_t abiType, bool* threw, EncodedJSValue val) {
+  // TinyCC does not inline, so the tag tests are spelled out instead of calling the helpers above.
+  int64_t bits = val.asInt64;
 
-  if (JSCELL_IS_TYPED_ARRAY(val)) {
-    return JSVALUE_TO_TYPED_ARRAY_VECTOR(val);
+  if (!(bits & NotCellMask)) {
+    uint8_t type = *(uint8_t*)((char*)val.asPtr + JSCell__offsetOfType);
+    if (type >= JSTypeArrayBufferViewMin && type <= JSTypeArrayBufferViewMax)
+      return *(void**)((char*)val.asPtr + JSArrayBufferView__offsetOfVector);
+  } else if (abiType != ABI_TYPE_BUFFER) {
+    if ((bits & NumberTag) == NumberTag)
+      return (void*)(uintptr_t)(int32_t)bits;
+
+    if (bits & NumberTag) {
+      val.asInt64 = bits - DoubleEncodeOffset;
+      return (void*)(uintptr_t)(int64_t)val.asDouble;
+    }
+
+    // null and undefined are NULL, except as a callback, where the slow path throws like dlopen() does.
+    if ((bits & ~UndefinedTag) == TagValueNull && abiType != ABI_TYPE_FUNCTION)
+      return 0;
   }
 
-  if (JSVALUE_IS_INT32(val)) {
-    return (void*)(uintptr_t)JSVALUE_TO_INT32(val);
-  }
-
-  // Assume the JSValue is a double
-  val.asInt64 -= DoubleEncodeOffset;
-  return (void*)(uintptr_t)val.asDouble;
+  // Other cells (JSCallback, ArrayBuffer, BigInt, objects with a `ptr`, strings), non-views for 'buffer', junk.
+  return JSVALUE_TO_PTR_SLOW(jsGlobalObject, abiType, threw, bits);
 }
 
 static EncodedJSValue PTR_TO_JSVALUE(void* ptr) {

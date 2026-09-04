@@ -1473,21 +1473,22 @@ impl Stream {
             let mut writer = client.to_writer();
 
             if frame_len == 0 {
-                // flush a zero payload frame
                 let Some(frame) = self.data_frame_queue.dequeue() else {
                     return FlushState::NoAction;
                 };
+                // Same rule as send_data: an empty DATA frame is only written to carry END_STREAM.
+                // Otherwise the entry is consumed for its callback / wantTrailers bookkeeping only.
+                let end_stream = frame.end_stream && !self.wait_for_trailers;
+                owned_frame = Some(frame);
+                if !end_stream {
+                    break 'brk true;
+                }
                 let data_header = FrameHeader {
                     type_: FrameType::HTTP_FRAME_DATA as u8,
-                    flags: if frame.end_stream && !self.wait_for_trailers {
-                        DataFrameFlags::END_STREAM as u8
-                    } else {
-                        0
-                    },
+                    flags: DataFrameFlags::END_STREAM as u8,
                     stream_identifier: self.id,
                     length: 0,
                 };
-                owned_frame = Some(frame);
                 break 'brk data_header.write(&mut writer, &client.frames_sent_legacy);
             } else {
                 let max_size = frame_remaining
@@ -5267,21 +5268,22 @@ impl H2FrameParser {
 
         let can_close = close && !stream.wait_for_trailers;
         if payload.is_empty() {
-            // empty payload we still need to send a frame
-            let data_header = FrameHeader {
-                type_: FrameType::HTTP_FRAME_DATA as u8,
-                flags: if can_close {
-                    DataFrameFlags::END_STREAM as u8
-                } else {
-                    0
-                },
-                stream_identifier: stream_id,
-                length: 0,
-            };
             if self.has_backpressure() || self.outbound_queue_size.get() > 0 {
+                // Queued so the END_STREAM / wantTrailers bookkeeping in flush_queue runs after
+                // the frames ahead of it are written.
                 enqueued = true;
                 stream.queue_frame(self, b"", callback, close);
-            } else {
+            } else if can_close {
+                // An empty DATA frame is only sent to carry END_STREAM. Without it the frame says
+                // nothing and receivers (node's maxSessionInvalidFrames, our own engine) count it
+                // as an invalid frame, so an empty write or an end() with trailers still pending
+                // puts nothing on the wire; the callback / wantTrailers dispatch below still runs.
+                let data_header = FrameHeader {
+                    type_: FrameType::HTTP_FRAME_DATA as u8,
+                    flags: DataFrameFlags::END_STREAM as u8,
+                    stream_identifier: stream_id,
+                    length: 0,
+                };
                 let mut writer = self.to_writer();
                 let _ = data_header.write(&mut writer, &self.frames_sent_legacy);
             }

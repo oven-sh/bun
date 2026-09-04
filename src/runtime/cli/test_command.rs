@@ -242,7 +242,8 @@ pub struct Metrics {
     pub(crate) assertions: u32,
     pub(crate) failures: u32,
     pub(crate) skipped: u32,
-    pub(crate) elapsed_time: u64,
+    /// Sum of the `<testcase>` durations in this suite, including nested suites.
+    pub(crate) elapsed_ns: u64,
 }
 
 impl Metrics {
@@ -251,6 +252,7 @@ impl Metrics {
         self.assertions += other.assertions;
         self.failures += other.failures;
         self.skipped += other.skipped;
+        self.elapsed_ns = self.elapsed_ns.saturating_add(other.elapsed_ns);
     }
 }
 
@@ -589,7 +591,7 @@ impl JunitReporter {
                 .saturating_sub(suite_info.started_ns) as f64
                 / bun::time::NS_PER_S as f64
         } else {
-            suite_info.metrics.elapsed_time as f64 / bun::time::MS_PER_S as f64
+            suite_info.metrics.elapsed_ns as f64 / bun::time::NS_PER_S as f64
         };
 
         // Reshaped for borrowck — get hostname first
@@ -689,10 +691,8 @@ impl JunitReporter {
         if !self.suite_stack.is_empty() {
             let last = self.suite_stack.len() - 1;
             let current_suite = &mut self.suite_stack[last];
-            current_suite.metrics.elapsed_time = current_suite
-                .metrics
-                .elapsed_time
-                .saturating_add(elapsed_ms as u64);
+            current_suite.metrics.elapsed_ns =
+                current_suite.metrics.elapsed_ns.saturating_add(elapsed_ns);
             current_suite.metrics.test_cases += 1;
             current_suite.metrics.assertions += assertions;
         }

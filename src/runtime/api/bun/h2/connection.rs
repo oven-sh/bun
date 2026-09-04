@@ -216,14 +216,9 @@ pub trait Sink {
     /// counter moves, while the connection is mutably borrowed — the embedder must only
     /// store the values.
     fn on_frame_counters(&self, _received: u64, _sent: u64) {}
-    /// Connection-level receive window update (node's session.state window fields): `size` is
-    /// the window the embedder asked for, and the peer may send `size - consumed` more (see
-    /// `RecvWindow`). Called whenever either moves, while the connection is mutably borrowed —
-    /// the embedder must only store the values.
+    /// The connection `RecvWindow` moved. Only store the values: the connection is borrowed.
     fn on_recv_window(&self, _size: i64, _consumed: i64) {}
-    /// Connection-level receive-window changes the embedder queued while the connection was
-    /// borrowed (see `Connection::apply_recv_window_change`). Taken before the connection decides
-    /// on a WINDOW_UPDATE, so a change made in a callback applies to the rest of the batch.
+    /// Receive-window changes queued while the connection was borrowed. Taken before replenishing.
     fn take_recv_window_change(&self) -> RecvWindowChange {
         RecvWindowChange::default()
     }
@@ -435,10 +430,7 @@ impl Connection {
         sink.on_recv_window(self.recv_window.size, self.recv_window.consumed);
     }
 
-    /// The embedder resized the connection-level receive window (`LocalWindow::resize`) and
-    /// wrote the WINDOW_UPDATE on stream 0 that the change needs itself. A raise that repays
-    /// withheld credit can make a WINDOW_UPDATE due at once. It goes out now: a peer with no
-    /// window left sends nothing, so no `receive()` would come to send it.
+    /// Applies a `LocalWindow::resize` change, then sends any WINDOW_UPDATE that it makes due.
     pub fn apply_recv_window_change(&mut self, sink: &impl Sink, change: RecvWindowChange) {
         self.recv_window.apply(change);
         self.note_recv_window(sink);

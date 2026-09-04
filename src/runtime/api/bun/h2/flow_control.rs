@@ -67,15 +67,12 @@ impl SendWindow {
     }
 }
 
-/// Inbound (recv) window. `size` is the window we want (nghttp2's `local_window_size`).
-/// `consumed` (`recv_window_size`) is the credit that WINDOW_UPDATE frames still have to give
-/// back, so the peer may send `size - consumed` more. DATA adds to it. Once enough is consumed we
-/// emit a WINDOW_UPDATE of the consumed amount and reset. A `LocalWindow` decrease makes it
-/// negative: the peer may still fill the window it was told about, and the first `old - new` of
-/// those bytes earn no WINDOW_UPDATE. A raise that repays the decrease adds the repaid bytes back.
+/// Inbound (recv) window. The peer may send `size - consumed` more bytes.
 #[derive(Clone, Copy, Debug)]
 pub struct RecvWindow {
+    /// The window we want (nghttp2's `local_window_size`).
     pub size: i64,
+    /// Credit still to give back (`recv_window_size`). Negative after a `LocalWindow` decrease.
     pub consumed: i64,
 }
 
@@ -150,8 +147,7 @@ pub struct RecvWindowChange {
 }
 
 impl RecvWindowChange {
-    /// The WINDOW_UPDATE increment that tells the peer about this change: the change in
-    /// `size - consumed`, which is what the peer may send.
+    /// The WINDOW_UPDATE increment for this change: the change in `size - consumed`.
     #[inline]
     pub fn increment(self) -> i64 {
         self.size - self.consumed
@@ -169,9 +165,7 @@ impl core::ops::Add for RecvWindowChange {
     }
 }
 
-/// The connection receive window that the application asks for (node's setLocalWindowSize,
-/// nghttp2's `local_window_size`), and the credit that a decrease still withholds from the peer
-/// (`recv_reduction`).
+/// nghttp2's `local_window_size` and `recv_reduction`: the window asked for, and withheld credit.
 #[derive(Clone, Copy, Debug)]
 pub struct LocalWindow {
     pub size: i64,
@@ -188,10 +182,7 @@ impl Default for LocalWindow {
 }
 
 impl LocalWindow {
-    /// nghttp2_session_set_local_window_size() for stream 0. A decrease sends nothing: the peer
-    /// may still fill the window it was told about, and the next `old - new` bytes it sends are
-    /// not granted back. A raise first repays that withheld credit. Only the rest goes out in a
-    /// WINDOW_UPDATE (`RecvWindowChange::increment`).
+    /// nghttp2_session_set_local_window_size() for stream 0. A raise repays withheld credit first.
     pub fn resize(&mut self, new_size: i64) -> RecvWindowChange {
         let delta = new_size - self.size;
         self.size = new_size;

@@ -1047,17 +1047,32 @@ impl<'a> Repl<'a> {
         }
         #[cfg(windows)]
         {
+            // ENABLE_PROCESSED_INPUT would turn Ctrl+C into a CTRL_C_EVENT (which
+            // exits the process) instead of the 0x03 byte behind Key::CtrlC.
             self.original_windows_mode = bun_sys::windows::update_stdio_mode_flags(
                 bun_sys::Stdio::StdIn,
                 bun_sys::windows::UpdateStdioModeFlagsOpts {
-                    set: bun_sys::windows::ENABLE_VIRTUAL_TERMINAL_INPUT
-                        | bun_sys::windows::ENABLE_PROCESSED_INPUT,
+                    set: bun_sys::windows::ENABLE_VIRTUAL_TERMINAL_INPUT,
                     unset: bun_sys::windows::ENABLE_LINE_INPUT
-                        | bun_sys::windows::ENABLE_ECHO_INPUT,
+                        | bun_sys::windows::ENABLE_ECHO_INPUT
+                        | bun_sys::windows::ENABLE_PROCESSED_INPUT,
                 },
             )
             .ok();
         }
+    }
+
+    /// Nothing reads stdin while JavaScript runs, so Ctrl+C has to raise
+    /// CTRL_C_EVENT (ending the process) to get out of a hung evaluation.
+    /// Dropping the guard restores the line editor's mode.
+    #[cfg(windows)]
+    fn processed_input_while_evaluating(&self) -> Option<bun_sys::windows::StdinModeGuard> {
+        self.original_windows_mode.is_some().then(|| {
+            bun_sys::windows::StdinModeGuard::set(bun_sys::windows::UpdateStdioModeFlagsOpts {
+                set: bun_sys::windows::ENABLE_PROCESSED_INPUT,
+                ..Default::default()
+            })
+        })
     }
 
     fn restore_terminal(&mut self) {
@@ -1100,7 +1115,7 @@ impl<'a> Repl<'a> {
                 bun_sys::posix::sigaction(libc::SIGINT, &raw const act, core::ptr::null_mut());
             }
         }
-        // On Windows, ENABLE_PROCESSED_INPUT is already set so Ctrl+C works
+        // Windows: covered by processed_input_while_evaluating().
     }
 
     /// Drive the loop until `promise` settles; `true` if a SIGINT (see `sigint_handler`) cut the wait short.
@@ -1619,6 +1634,8 @@ impl<'a> Repl<'a> {
         let Some(vm) = self.vm else {
             return;
         };
+        #[cfg(windows)]
+        let _processed_input = self.processed_input_while_evaluating();
 
         // Transform the code using REPL mode (hoists declarations, wraps result in { value: expr })
         let Some(transformed_code) = self.transform_for_repl(code) else {
@@ -1925,6 +1942,8 @@ impl<'a> Repl<'a> {
         let Some(vm) = self.vm else {
             return;
         };
+        #[cfg(windows)]
+        let _processed_input = self.processed_input_while_evaluating();
 
         let Some(transformed_code) = self.transform_for_repl(code) else {
             self.evaluate_raw(code);

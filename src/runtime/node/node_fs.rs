@@ -9464,7 +9464,10 @@ pub(crate) fn zig_delete_tree(
             let entry = match stack[top_idx].iter.next() {
                 Ok(Some(e)) => e,
                 Ok(None) => break,
-                Err(err) => return Err(dt_err(err.get_errno())),
+                Err(err) => match err.get_errno() {
+                    E::ENOENT => break,
+                    e => return Err(dt_err(e)),
+                },
             };
             // `entry.name` borrows the iterator's internal buffer and
             // is invalidated by the next `next()` call. Copy it once here so
@@ -9492,6 +9495,7 @@ pub(crate) fn zig_delete_tree(
                                 treat_as_dir = false;
                                 continue 'handle_entry;
                             }
+                            Err(E::ENOENT) => break 'handle_entry,
                             #[cfg(target_os = "macos")]
                             Err(e @ (E::EACCES | E::EPERM)) => {
                                 // Same as the pop-delete site below: node's rimraf
@@ -9518,17 +9522,19 @@ pub(crate) fn zig_delete_tree(
                         }
                     } else {
                         let top_fd = stack[top_idx].iter.iter.dir;
-                        zig_delete_tree_min_stack_size_with_kind_hint(
+                        match zig_delete_tree_min_stack_size_with_kind_hint(
                             sys::Dir::borrow(&top_fd),
                             &entry_name,
                             entry.kind,
-                        )?;
-                        break 'handle_entry;
+                        ) {
+                            Ok(()) | Err(crate::Error::FileNotFound) => break 'handle_entry,
+                            Err(e) => return Err(e),
+                        }
                     }
                 } else {
                     let top_fd = stack[top_idx].iter.iter.dir;
                     match dt_delete_file(sys::Dir::borrow(&top_fd), &entry_name) {
-                        Ok(()) => break 'handle_entry,
+                        Ok(()) | Err(E::ENOENT) => break 'handle_entry,
                         Err(E::EISDIR) => {
                             treat_as_dir = true;
                             continue 'handle_entry;
@@ -9727,7 +9733,10 @@ fn zig_delete_tree_min_stack_size_with_kind_hint(
                 let entry = match dir_it.next() {
                     Ok(Some(e)) => e,
                     Ok(None) => break 'dir_it,
-                    Err(err) => break 'scan_dir Err(dt_err(err.get_errno())),
+                    Err(err) => match err.get_errno() {
+                        E::ENOENT => break 'dir_it,
+                        e => break 'scan_dir Err(dt_err(e)),
+                    },
                 };
                 let entry_name: Vec<u8> = entry.name.slice().to_vec();
                 let mut treat_as_dir = entry.kind == sys::FileKind::Directory;

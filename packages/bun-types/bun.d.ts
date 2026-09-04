@@ -324,6 +324,10 @@ declare module "bun" {
      *
      * Some symbols can't be declared in a way that satisfies both \@types/bun and lib.dom.d.ts,
      * so when lib.dom.d.ts is loaded, its definition wins.
+     *
+     * This is the type of the global *value*, so for a class it is the constructor type: use it for
+     * `declare var`. A global instance interface instead extends a `LibEmptyOr*` helper (globals.d.ts)
+     * so that Bun's members only apply when lib.dom.d.ts is not loaded.
      */
     type UseLibDomIfAvailable<GlobalThisKeyName extends PropertyKey, Otherwise> =
       // `onabort` is defined in lib.dom.d.ts, so we can check to see if lib dom is loaded by checking if `onabort` is defined
@@ -398,7 +402,13 @@ declare module "bun" {
     detail?: T;
   }
 
-  /** A message received by a target object. */
+  /**
+   * A message received by a target object.
+   *
+   * Bun's declaration of the global `MessageEvent` interface, which extends it unless lib.dom.d.ts
+   * is loaded (see globals.d.ts). Refer to message events as {@link MessageEvent Bun.MessageEvent},
+   * which is the global interface either way.
+   */
   interface BunMessageEvent<T = any> extends Event {
     /** Returns the data of the message. */
     readonly data: T;
@@ -411,7 +421,11 @@ declare module "bun" {
     readonly source: Bun.MessageEventSource | null;
   }
 
-  type MessageEvent<T = any> = Bun.__internal.UseLibDomIfAvailable<"MessageEvent", BunMessageEvent<T>>;
+  /**
+   * The global `MessageEvent` interface (an instance, not the constructor): lib.dom.d.ts's when it
+   * is loaded, otherwise {@link BunMessageEvent}.
+   */
+  type MessageEvent<T = any> = globalThis.MessageEvent<T>;
 
   interface ReadableStreamDefaultReadManyResult<T> {
     done: boolean;

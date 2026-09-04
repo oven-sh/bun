@@ -1310,8 +1310,8 @@ LIBUS_SOCKET_DESCRIPTOR bsd_create_bound_socket(const char *host, int port, int 
      * fails). libuv's approach (UV_HANDLE_SHARED_TCP_SOCKET, win/tcp.c) is to
      * listen in the primary before WSADuplicateSocket; every worker's
      * duplicate is then already listening and SO_ACCEPTCONN is reliably set. */
-    if (listen(fd, SOMAXCONN) != 0) {
-        *error = WSAGetLastError();
+    if (listen(fd, 511) != 0) {
+        *error = LIBUS_ERR;
         bsd_close_socket(fd);
         return LIBUS_SOCKET_ERROR;
     }

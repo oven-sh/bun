@@ -345,6 +345,88 @@ describe("execArgv option", async () => {
   // TODO(@190n) get our handling of non-string array elements in line with Node's
 });
 
+// Node keeps this default in the module state of lib/net.js, so each thread has its own copy.
+describe.concurrent("net.setDefaultAutoSelectFamily() is per thread", () => {
+  // Runs `main` as an ES module. In it, `await workerDefault(options)` starts a worker and
+  // resolves to the default that the worker reads, after it applies `workerData.set`.
+  async function expectDefaults(main: string, expected: Record<string, boolean>, execArgv: string[] = []) {
+    using dir = tempDir("net-autoselect-default", {
+      "worker.mjs": `
+        import net from "node:net";
+        import { parentPort, workerData } from "node:worker_threads";
+        if (workerData?.set !== undefined) net.setDefaultAutoSelectFamily(workerData.set);
+        parentPort.postMessage(net.getDefaultAutoSelectFamily());
+      `,
+      "main.mjs": `
+        import { once } from "node:events";
+        import net from "node:net";
+        import { Worker } from "node:worker_threads";
+        async function workerDefault(options) {
+          const worker = new Worker(new URL("./worker.mjs", import.meta.url), options);
+          const [value] = await once(worker, "message");
+          return value;
+        }
+        ${main}
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), ...execArgv, "main.mjs"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual(expected);
+    expect(exitCode).toBe(0);
+  }
+
+  test("a worker that sets it does not change the main thread or a later worker", async () => {
+    await expectDefaults(
+      `
+      const worker = await workerDefault({ workerData: { set: false } });
+      const main = net.getDefaultAutoSelectFamily();
+      const laterWorker = await workerDefault();
+      console.log(JSON.stringify({ worker, main, laterWorker }));
+      `,
+      { worker: false, main: true, laterWorker: true },
+    );
+  });
+
+  test("a worker with --no-network-family-autoselection in execArgv does not change the main thread", async () => {
+    await expectDefaults(
+      `
+      const worker = await workerDefault({ execArgv: ["--no-network-family-autoselection"] });
+      console.log(JSON.stringify({ worker, main: net.getDefaultAutoSelectFamily() }));
+      `,
+      { worker: false, main: true },
+    );
+  });
+
+  test("a main thread that sets it does not change a new worker", async () => {
+    await expectDefaults(
+      `
+      net.setDefaultAutoSelectFamily(false);
+      const worker = await workerDefault();
+      console.log(JSON.stringify({ main: net.getDefaultAutoSelectFamily(), worker }));
+      `,
+      { main: false, worker: true },
+    );
+  });
+
+  test("a worker inherits --no-network-family-autoselection from the process", async () => {
+    await expectDefaults(
+      `
+      const worker = await workerDefault();
+      console.log(JSON.stringify({ main: net.getDefaultAutoSelectFamily(), worker }));
+      `,
+      { main: false, worker: false },
+      ["--no-network-family-autoselection"],
+    );
+  });
+});
+
 test("eval does not leak source code", async () => {
   const proc = Bun.spawn({
     cmd: [bunExe(), "eval-source-leak-fixture.js"],

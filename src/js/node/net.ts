@@ -56,10 +56,33 @@ function uv() {
 }
 const isWindows = process.platform === "win32";
 
-const getDefaultAutoSelectFamily = $rust("node_net_binding.rs", "getDefaultAutoSelectFamily");
-const setDefaultAutoSelectFamily = $rust("node_net_binding.rs", "setDefaultAutoSelectFamily");
-const getDefaultAutoSelectFamilyAttemptTimeout = $rust("node_net_binding.rs", "getDefaultAutoSelectFamilyAttemptTimeout"); // prettier-ignore
-const setDefaultAutoSelectFamilyAttemptTimeout = $rust("node_net_binding.rs", "setDefaultAutoSelectFamilyAttemptTimeout"); // prettier-ignore
+// Module state, like Node's lib/net.js, so each Worker has its own copy.
+let autoSelectFamilyDefault = true;
+// Node's default is 250ms with a documented floor of 10ms, but the CLI
+// default in node_options.h is 500ms; the vendored test/common multiplies
+// the default by 5 (upstream) assuming 500.
+let autoSelectFamilyAttemptTimeoutDefault = 500;
+
+function getDefaultAutoSelectFamily() {
+  return autoSelectFamilyDefault;
+}
+
+function setDefaultAutoSelectFamily(value) {
+  validateBoolean(value, "value");
+  autoSelectFamilyDefault = value;
+}
+
+function getDefaultAutoSelectFamilyAttemptTimeout() {
+  return autoSelectFamilyAttemptTimeoutDefault;
+}
+
+function setDefaultAutoSelectFamilyAttemptTimeout(value) {
+  validateInt32(value, "value", 1);
+  if (value < 10) {
+    value = 10;
+  }
+  autoSelectFamilyAttemptTimeoutDefault = value;
+}
 
 /**
  * `--tls-keylog=<file>`: every TLS socket appends its NSS key-log lines here,

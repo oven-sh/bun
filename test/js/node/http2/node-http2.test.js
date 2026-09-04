@@ -2691,6 +2691,148 @@ it("http2 request.close() validates input and manages stream state", async done 
   });
 });
 
+// A request that is still pending (no stream id yet) when its client session is destroyed is
+// cancelled with ERR_HTTP2_STREAM_CANCEL. The rstCode it reports is the one node v26.3.0 gives
+// such a stream (Http2Stream._destroy): the session's code when there is one, otherwise
+// NGHTTP2_INTERNAL_ERROR, the fallback for a stream destroyed with a non-abort error.
+// NGHTTP2_CANCEL is reserved for AbortSignal cancellations.
+describe.concurrent("http2 pending requests cancelled by client session.destroy() report node's rstCode", () => {
+  const { NGHTTP2_INTERNAL_ERROR, NGHTTP2_REFUSED_STREAM, NGHTTP2_ENHANCE_YOUR_CALM } = http2.constants;
+  const shapes = {
+    "destroy()": [],
+    "destroy(null)": [null],
+    "destroy(NGHTTP2_NO_ERROR)": [http2.constants.NGHTTP2_NO_ERROR],
+    "destroy(NGHTTP2_REFUSED_STREAM)": [NGHTTP2_REFUSED_STREAM],
+    "destroy(null, NGHTTP2_REFUSED_STREAM)": [null, NGHTTP2_REFUSED_STREAM],
+    "destroy(new Error('boom'))": [new Error("boom")],
+    "destroy(new Error('boom'), NGHTTP2_REFUSED_STREAM)": [new Error("boom"), NGHTTP2_REFUSED_STREAM],
+  };
+  const cancelled = (rstCode, cause) => ({ pending: true, rstCode, error: "ERR_HTTP2_STREAM_CANCEL", cause });
+  const expected = {
+    "destroy()": cancelled(NGHTTP2_INTERNAL_ERROR, undefined),
+    "destroy(null)": cancelled(NGHTTP2_INTERNAL_ERROR, undefined),
+    "destroy(NGHTTP2_NO_ERROR)": cancelled(NGHTTP2_INTERNAL_ERROR, undefined),
+    "destroy(NGHTTP2_REFUSED_STREAM)": cancelled(NGHTTP2_REFUSED_STREAM, "Session closed with error code 7"),
+    "destroy(null, NGHTTP2_REFUSED_STREAM)": cancelled(NGHTTP2_REFUSED_STREAM, undefined),
+    "destroy(new Error('boom'))": cancelled(NGHTTP2_INTERNAL_ERROR, "boom"),
+    "destroy(new Error('boom'), NGHTTP2_REFUSED_STREAM)": cancelled(NGHTTP2_REFUSED_STREAM, "boom"),
+  };
+
+  async function listen(onStream) {
+    const server = http2.createServer({ settings: { maxConcurrentStreams: 1 } });
+    server.on("session", session => session.on("error", () => {}));
+    server.on("stream", stream => {
+      stream.on("error", () => {});
+      onStream?.(stream);
+    });
+    await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
+    return server;
+  }
+
+  function connect(server) {
+    const client = http2.connect(`http://127.0.0.1:${server.address().port}`);
+    client.on("error", () => {});
+    return client;
+  }
+
+  // Resolves once `req` closes. A request torn down while queued never gets a stream id, so it is
+  // still `pending` after it closed.
+  function destroyAndObserve(req, destroySession) {
+    const { promise, resolve } = Promise.withResolvers();
+    let error;
+    req.on("error", e => (error = e));
+    req.on("close", () =>
+      resolve({ pending: req.pending, rstCode: req.rstCode, error: error?.code, cause: error?.cause?.message }),
+    );
+    destroySession();
+    return promise;
+  }
+
+  // The request is made while the socket is still connecting and the session is destroyed before
+  // the connect completes.
+  async function destroyBeforeConnect(server, args) {
+    const client = connect(server);
+    try {
+      return await destroyAndObserve(client.request({ ":path": "/" }), () => client.destroy(...args));
+    } finally {
+      client.destroy();
+    }
+  }
+
+  // The first request occupies the server's single SETTINGS_MAX_CONCURRENT_STREAMS slot, so the
+  // second stays queued (no id) on a connected session; `destroySession(client)` then tears it down.
+  async function destroyWithQueuedRequest(server, destroySession) {
+    const client = connect(server);
+    try {
+      await new Promise(resolve => client.once("remoteSettings", resolve));
+      const active = client.request({ ":path": "/active" });
+      active.on("error", () => {});
+      const queued = client.request({ ":path": "/queued" });
+      expect(active.pending).toBe(false);
+      return await destroyAndObserve(queued, () => destroySession(client));
+    } finally {
+      client.destroy();
+    }
+  }
+
+  // Runs destroyPending(server, args) for every destroy() shape against one server.
+  async function everyShape(destroyPending) {
+    const server = await listen();
+    try {
+      const names = Object.keys(shapes);
+      const results = await Promise.all(names.map(name => destroyPending(server, shapes[name])));
+      return Object.fromEntries(names.map((name, i) => [name, results[i]]));
+    } finally {
+      server.close();
+    }
+  }
+
+  it("for a request made before the session connected", async () => {
+    expect(await everyShape(destroyBeforeConnect)).toEqual(expected);
+  });
+
+  it("for a request queued behind the peer's maxConcurrentStreams", async () => {
+    const destroyWith = (server, args) => destroyWithQueuedRequest(server, client => client.destroy(...args));
+    expect(await everyShape(destroyWith)).toEqual(expected);
+  });
+
+  it("keeps the code a pending request was already close()d with", async () => {
+    const server = await listen();
+    const client = connect(server);
+    try {
+      const req = client.request({ ":path": "/" });
+      // close() on a pending stream records the code and waits for the stream id to send the
+      // RST_STREAM, so the request is still queued when the session goes away.
+      req.close(NGHTTP2_REFUSED_STREAM);
+      expect(req.destroyed).toBe(false);
+      expect(await destroyAndObserve(req, () => client.destroy(NGHTTP2_ENHANCE_YOUR_CALM))).toEqual(
+        cancelled(NGHTTP2_REFUSED_STREAM, "Session closed with error code 11"),
+      );
+    } finally {
+      client.destroy();
+      server.close();
+    }
+  });
+
+  it("uses the code of a GOAWAY the session received over the destroy code", async () => {
+    // The server answers the first request with GOAWAY(ENHANCE_YOUR_CALM); the client's 'goaway'
+    // listener destroys the session while the second request is still queued.
+    const server = await listen(stream => stream.session.goaway(NGHTTP2_ENHANCE_YOUR_CALM));
+    try {
+      const destroyFromGoawayListener = args => client => client.once("goaway", () => client.destroy(...args));
+      const results = await Promise.all(
+        [[], [NGHTTP2_REFUSED_STREAM]].map(args => destroyWithQueuedRequest(server, destroyFromGoawayListener(args))),
+      );
+      expect(results).toEqual([
+        cancelled(NGHTTP2_ENHANCE_YOUR_CALM, undefined),
+        cancelled(NGHTTP2_ENHANCE_YOUR_CALM, "Session closed with error code 7"),
+      ]);
+    } finally {
+      server.close();
+    }
+  });
+});
+
 it("http2 client.setNextStreamID validates input", async () => {
   const server = http2.createServer();
 

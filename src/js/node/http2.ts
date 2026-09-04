@@ -5822,15 +5822,19 @@ class ClientHttp2Session extends Http2Session {
       {
         // Requests still queued (waiting for connect or for a concurrency slot) never reached the
         // wire; node cancels them with ERR_HTTP2_STREAM_CANCEL (carrying the session error, if any,
-        // as its cause).
+        // as its cause). Their rstCode follows node's Http2Stream._destroy: the session's code (a
+        // received GOAWAY's, else this destroy's) unless the stream already close()d with one;
+        // with no session code _destroy derives NGHTTP2_INTERNAL_ERROR from the cancel error
+        // (NGHTTP2_CANCEL is only for AbortSignal cancellations).
         const pendingRequests = this.#pendingRequests;
         this.#pendingRequests = null;
         if (pendingRequests !== null && pendingRequests.length > 0) {
           const cancelError = createPendingStreamCancelError(error);
+          const sessionCode = this[kGoawayCode] || code;
           for (let i = 0; i < pendingRequests.length; i++) {
             const req = pendingRequests[i].req;
             if (!req.destroyed) {
-              req.rstCode = code !== undefined ? code : constants.NGHTTP2_CANCEL;
+              if (sessionCode && !req.rstCode) req.rstCode = sessionCode;
               req.destroy(cancelError);
             }
           }

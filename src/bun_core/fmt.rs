@@ -2331,45 +2331,6 @@ pub fn quote(self_: &[u8]) -> QuotedFormatter<'_> {
 }
 
 // ───────────────────────────────────────────────────────────────────────────
-// EnumTagListFormatter
-// ───────────────────────────────────────────────────────────────────────────
-
-// ConstParamTy is nightly, so use a runtime value instead.
-pub const SEP_DASH: bool = false;
-
-pub struct EnumTagListFormatter<E: strum::VariantNames, const LIST: bool> {
-    _marker: core::marker::PhantomData<E>,
-}
-
-impl<E: strum::VariantNames, const LIST: bool> Display for EnumTagListFormatter<E, LIST> {
-    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        // PERF: could be precomputed as a single &'static str.
-        let names = E::VARIANTS;
-        for (i, name) in names.iter().enumerate() {
-            if LIST {
-                if i > 0 {
-                    if i + 1 == names.len() {
-                        f.write_str(", or ")?;
-                    } else {
-                        f.write_str(", ")?;
-                    }
-                }
-                write!(f, "\"{}\"", name)?;
-            } else {
-                write!(f, "\n-  {}", name)?;
-            }
-        }
-        Ok(())
-    }
-}
-
-pub fn enum_tag_list<E: strum::VariantNames, const LIST: bool>() -> EnumTagListFormatter<E, LIST> {
-    EnumTagListFormatter {
-        _marker: core::marker::PhantomData,
-    }
-}
-
-// ───────────────────────────────────────────────────────────────────────────
 // formatIp
 // ───────────────────────────────────────────────────────────────────────────
 

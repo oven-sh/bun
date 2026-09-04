@@ -3,6 +3,7 @@ import { afterAll, beforeAll, describe, expect, it, mock, test } from "bun:test"
 import { bunEnv, bunExe, isASAN, isWindows, rmScope, rss, tempDir, tempDirWithFiles } from "harness";
 import { mkfifo } from "mkfifo";
 import { closeSync, openSync, unlinkSync, writeSync } from "node:fs";
+import { connect } from "node:net";
 import { join } from "node:path";
 
 const LARGE_SIZE = 1024 * 1024 * 8;
@@ -1513,4 +1514,36 @@ test("file route serves a burst of concurrent requests after reloads", async () 
 
   const a = await fetch(`${server.url}a`).then(r => r.text());
   expect(a).toBe("a-new");
+});
+
+// RFC 9110 §9.3.8: a TRACE response carries content. Announcing Content-Length
+// and then sending zero bytes desyncs the connection. Read the wire directly so
+// the assertion does not depend on Bun's own HTTP client.
+test("TRACE response backed by Bun.file sends the body", async () => {
+  using dir = tempDir("bun-serve-file-trace", { "hello.txt": "Hello, World!" });
+
+  await using server = Bun.serve({
+    port: 0,
+    fetch: () => new Response(Bun.file(join(String(dir), "hello.txt"))),
+  });
+
+  const wire = (method: string) =>
+    new Promise<string>((resolve, reject) => {
+      const chunks: Buffer[] = [];
+      const socket = connect(server.port, "127.0.0.1", () => {
+        socket.write(`${method} / HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n`);
+      });
+      socket.on("data", chunk => chunks.push(chunk));
+      socket.on("error", reject);
+      socket.on("end", () => resolve(Buffer.concat(chunks).toString("latin1")));
+    });
+
+  const [trace, head] = await Promise.all([wire("TRACE"), wire("HEAD")]);
+
+  expect(trace).toMatch(/^content-length: 13\r$/im);
+  expect(trace).toEndWith("\r\n\r\nHello, World!");
+
+  // HEAD is the one method still terminated at the end of the header section.
+  expect(head).toMatch(/^content-length: 13\r$/im);
+  expect(head).toEndWith("\r\n\r\n");
 });

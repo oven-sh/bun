@@ -3814,6 +3814,78 @@ class Foo {
       expectPrinted("a = !(b, c)", "a = (b, !c)");
     });
 
+    it("+, - and ~ fold a string that was itself constant folded", () => {
+      // "1" + "2" is folded into a rope (the pieces linked together, flattened
+      // when printed), not into one flat string literal.
+      // Asserts the output, and that transpiling the output again changes nothing.
+      const expectFixedPoint = (code, out) => {
+        const once = parsed(code, false);
+        expect(once).toBe(out);
+        expect(parsed(once, false)).toBe(out);
+      };
+
+      expectFixedPoint('x = +("1" + "2");', "x = 12;\n");
+      expectFixedPoint('x = -("1" + "2");', "x = -12;\n");
+      expectFixedPoint('x = ~("1" + "2");', "x = -13;\n");
+      expectFixedPoint('x = +("1" + "2" + "3");', "x = 123;\n");
+      expectFixedPoint('x = +("1" + ("2" + "3"));', "x = 123;\n");
+      expectFixedPoint('x = +("1" + `2`);', "x = 12;\n");
+      expectFixedPoint('x = +("1" + 2);', "x = 12;\n");
+      expectFixedPoint('x = +("" + "");', "x = 0;\n");
+      expectFixedPoint('x = +("1" + "e2");', "x = 100;\n");
+      expectFixedPoint('x = -(" 0x" + "10 ");', "x = -16;\n");
+      expectFixedPoint('x = -("1" + "2") * 2;', "x = -24;\n");
+      expectFixedPoint('x = +("1" + "2") === 12;', "x = !0;\n");
+
+      // Only a constant operand folds.
+      expectFixedPoint('x = +("1" + y);', 'x = +("1" + y);\n');
+      expectFixedPoint('x = -(y + "1");', 'x = -(y + "1");\n');
+    });
+
+    it("+, - and ~ fold an enum member whose value was constant folded", () => {
+      // Enum initializers are always folded, so A is stored as a rope and each
+      // use of A is inlined as that rope. This does not depend on minify.
+      const ts = new Bun.Transpiler({ loader: "ts" });
+      expect(ts.transformSync('enum E { A = "1" + "2", B = +("3" + "4"), C = -A, D = ~A }')).toBe(
+        'var E;\n((E) => {\n  E["A"] = "12";\n  E[E["B"] = 34] = "B";\n  E[E["C"] = -12] = "C";\n  E[E["D"] = -13] = "D";\n})(E ||= {});\n',
+      );
+      expect(ts.transformSync('const enum E { A = "1" + "2" }\nx = +E.A;\ny = -E.A;\n')).toBe(
+        'var E;\n((E) => {\n  E["A"] = "12";\n})(E ||= {});\nx = 12;\ny = -12;\n',
+      );
+    });
+
+    it("+, - and ~ do not fold a string containing non-ascii characters", () => {
+      // Source literals with non-ascii characters are stored as UTF-16 and never
+      // folded; strings from `define` are stored as UTF-8 and used to fold to NaN.
+      // U+00A0 is whitespace to StringToNumber: +"\u00a01" is 1 and +"\u00a0" is 0.
+      const defined = new Bun.Transpiler({
+        loader: "js",
+        minify: { syntax: true },
+        define: {
+          NBSP: JSON.stringify("\u00a0"),
+          NBSP_ONE: JSON.stringify("\u00a01"),
+          SPACE_ONE: JSON.stringify(" 1 "),
+        },
+      });
+      const expectPrintedDefined = (code, out) => {
+        const once = defined.transformSync(code);
+        expect(once).toBe(out);
+        expect(defined.transformSync(once)).toBe(out);
+      };
+
+      expectPrintedDefined("x = +NBSP_ONE;", 'x = +"\u00a01";\n');
+      expectPrintedDefined("x = -NBSP_ONE;", 'x = -"\u00a01";\n');
+      expectPrintedDefined("x = ~NBSP_ONE;", 'x = ~"\u00a01";\n');
+      expectPrintedDefined("x = +NBSP;", 'x = +"\u00a0";\n');
+      expectPrintedDefined('x = +(NBSP + "1");', 'x = +"\u00a01";\n');
+      expectPrintedDefined('x = +("1" + NBSP);', 'x = +"1\u00a0";\n');
+
+      // An ascii string from `define` folds, on its own and as part of a rope.
+      expectPrintedDefined("x = +SPACE_ONE;", "x = 1;\n");
+      expectPrintedDefined('x = +(SPACE_ONE + "");', "x = 1;\n");
+      expectPrintedDefined('x = ~(SPACE_ONE + "");', "x = -2;\n");
+    });
+
     it.todo("const inlining", () => {
       var transpiler = new Bun.Transpiler({
         inline: true,

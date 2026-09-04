@@ -117,6 +117,24 @@ fn exec_task(task_: &[u8], cwd: &[u8], path_env: &[u8], npm_client: Option<NPMCl
         }
     };
 
+    // cmd.exe re-tokenizes the arguments of a `.bat`/`.cmd` file, so they
+    // cannot be quoted safely (same check as `Bun.spawn`).
+    let program: &[u8] = exec_path.map_or(argv[0], bun_core::ZStr::as_bytes);
+    if cfg!(windows)
+        && bun_which::is_batch_file(program)
+        && let Some(arg) = argv
+            .iter()
+            .find(|arg| bun_which::batch_arg_has_cmd_metachars(arg))
+    {
+        return print_task_error(
+            task,
+            format_args!(
+                "argument {} contains a cmd.exe special character and cannot be passed to a .bat/.cmd file",
+                bun_core::fmt::quote(arg)
+            ),
+        );
+    }
+
     let result = spawn_sync::spawn(&spawn_sync::Options {
         argv: argv.iter().map(|s| Box::<[u8]>::from(*s)).collect(),
         argv0: exec_path.map(bun_core::ZStr::as_ptr),

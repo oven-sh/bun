@@ -661,6 +661,21 @@ describe.concurrent("bun-create tasks", () => {
     expect(exitCode).toBe(0);
   });
 
+  // cmd.exe re-tokenizes the arguments of a .cmd file, so an argument with a
+  // cmd.exe special character is rejected instead of spawned (as Bun.spawn does).
+  it.skipIf(!isWindows)("refuses to pass a cmd.exe special character to a .cmd task", async () => {
+    const { err, exitCode, ran } = await createFromTemplate("create-task-batch-metachar", {
+      name: "tmpl",
+      "bun-create": { postinstall: ['create-task first"second', "create-task third"] },
+    });
+
+    expect(err).toContain(
+      'error: Failed to run "create-task first\\"second": argument "first\\"second" contains a cmd.exe special character and cannot be passed to a .bat/.cmd file',
+    );
+    expect(ran).toEqual({ "task-ran.txt": "third" });
+    expect(exitCode).toBe(0);
+  });
+
   // The script needs a shebang to be spawned directly, so POSIX only.
   it.skipIf(!isPosix)("runs a task given as a path relative to the destination", async () => {
     const { out, err, exitCode, ran } = await createFromTemplate(

@@ -1483,7 +1483,17 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
             let opened_fd_res: bun_sys::Result<bun_sys::Fd> = {
                 let store = body.store().expect("needs_to_read_file implies store");
                 match &store.data.as_file().pathlike {
-                    PathOrFileDescriptor::Fd(fd) => bun_sys::dup(*fd),
+                    // On Windows `dup` yields a raw HANDLE. `read_file` below goes
+                    // through libuv, which would wrap that HANDLE in a CRT fd it
+                    // never releases, so hand the HANDLE to libuv here: closing the
+                    // uv fd then releases the CRT slot and the HANDLE together.
+                    // `open` already returns a uv fd; on POSIX this is the identity.
+                    PathOrFileDescriptor::Fd(fd) => bun_sys::dup(*fd).and_then(|duped| {
+                        duped.make_lib_uv_owned_for_syscall(
+                            bun_sys::Tag::dup,
+                            bun_sys::ErrorCase::CloseOnFail,
+                        )
+                    }),
                     PathOrFileDescriptor::Path(path) => {
                         let zpath = path.slice_z(&mut open_path_buf);
                         let flags = if cfg!(windows) {

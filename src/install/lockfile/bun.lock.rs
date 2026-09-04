@@ -1673,6 +1673,51 @@ pub(crate) enum ResolveError {
     Unresolvable,
 }
 
+/// Where `PkgMap::find_resolution` found the entry it returned.
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+enum FoundAt {
+    /// `<pkg_path>/<name>`.
+    OwnPath,
+    /// `<some enclosing path>/<name>`.
+    EnclosingPath,
+    /// The top-level `<name>` entry.
+    Root,
+}
+
+/// Which row binds an edge of a package printed at more than one path. `append_package_dedupe`
+/// gives every such row the same package, so each row binds the same edges again, and the
+/// rows can walk into different copies of a peer. A row overwrites an earlier row's binding
+/// only when its find says at least as much about the binding; rows whose finds say the same
+/// keep the last one, and a package printed once binds each edge exactly once, as before.
+///
+/// What a find says follows from where `Tree::hoist_dependency` puts the package an edge is
+/// bound to: nested in the dependent's own path when a copy above blocks it, or at the root
+/// when nothing above holds the name. It never ends up at an enclosing path in between; a copy
+/// found there was placed for another package's edge, and this edge deduped onto it (a peer
+/// the copy satisfies), which says nothing about what the edge is bound to.
+#[derive(Debug, Clone, Copy, Eq, PartialEq, PartialOrd, Ord)]
+enum RowEvidence {
+    Unbound,
+    /// A copy found by walking up. Every walked find of an optional peer ranks here: the
+    /// hoister rebinds those to whatever each placement dedupes onto
+    /// (`HoistDependencyResult::Rebind`), so which copy a row walked into decides nothing.
+    Walked,
+    /// The root's copy, which may be this edge's own binding, placed there from this row.
+    WalkedToRoot,
+    /// The copy printed in the package's own path, which is only there for the package's own edge.
+    OwnEntry,
+}
+
+impl RowEvidence {
+    fn of(found_at: FoundAt, dep: &Dependency) -> RowEvidence {
+        match found_at {
+            FoundAt::OwnPath => RowEvidence::OwnEntry,
+            FoundAt::Root if !dep.behavior.is_optional_peer() => RowEvidence::WalkedToRoot,
+            FoundAt::Root | FoundAt::EnclosingPath => RowEvidence::Walked,
+        }
+    }
+}
+
 impl<T> PkgMap<T> {
     // No `Entry` alias — inherent associated types are
     // unstable; callers name `T` directly.
@@ -1713,7 +1758,7 @@ impl<T> PkgMap<T> {
         dep: &Dependency,
         string_buf: &[u8],
         path_buf: &mut [u8],
-    ) -> Result<&T, ResolveError> {
+    ) -> Result<(&T, FoundAt), ResolveError> {
         self.find_resolution_impl(pkg_path, dep, string_buf, path_buf, None)
     }
 
@@ -1734,7 +1779,7 @@ impl<T> PkgMap<T> {
         string_buf: &[u8],
         path_buf: &mut [u8],
         bundled_pkgs: &PkgPathSet,
-    ) -> Result<&T, ResolveError> {
+    ) -> Result<(&T, FoundAt), ResolveError> {
         self.find_resolution_impl(pkg_path, dep, string_buf, path_buf, Some(bundled_pkgs))
     }
 
@@ -1745,7 +1790,7 @@ impl<T> PkgMap<T> {
         string_buf: &[u8],
         path_buf: &mut [u8],
         bundled_pkgs: Option<&PkgPathSet>,
-    ) -> Result<&T, ResolveError> {
+    ) -> Result<(&T, FoundAt), ResolveError> {
         let dep_name = dep.name.slice(string_buf);
 
         if pkg_path.len() + 1 + dep_name.len() > path_buf.len() {
@@ -1756,6 +1801,7 @@ impl<T> PkgMap<T> {
         path_buf[pkg_path.len()] = b'/';
         let mut offset = pkg_path.len() + 1;
 
+        let mut own_path = true;
         let mut at_bundle_root = false;
         let mut valid = true;
         while valid {
@@ -1763,7 +1809,14 @@ impl<T> PkgMap<T> {
             let res_path = &path_buf[0..offset + dep_name.len()];
 
             if let Some(entry) = self.map.get(res_path) {
-                return Ok(entry);
+                let found_at = if own_path {
+                    FoundAt::OwnPath
+                } else if offset == 0 {
+                    FoundAt::Root
+                } else {
+                    FoundAt::EnclosingPath
+                };
+                return Ok((entry, found_at));
             }
 
             if offset == 0 || at_bundle_root {
@@ -1773,6 +1826,7 @@ impl<T> PkgMap<T> {
             if let Some(bundled_pkgs) = bundled_pkgs {
                 at_bundle_root = bundled_pkgs.contains(&path_buf[0..offset - 1]);
             }
+            own_path = false;
 
             let Some(slash) = strings::last_index_of_char(&path_buf[0..offset - 1], b'/') else {
                 offset = 0;
@@ -3181,6 +3235,11 @@ pub(crate) fn parse_into_binary_lockfile(
         }
 
         // then each package dependency
+        //
+        // A package printed at several paths comes through here once per path; see
+        // `RowEvidence` for which path's find an edge ends up bound to. Edges bound by
+        // version below do not depend on the path, so every row writes them.
+        let mut bound_by: Vec<RowEvidence> = vec![RowEvidence::Unbound; dependencies.len()];
         for row in pkg_rows {
             let pkg_path = row.key.slice();
 
@@ -3232,7 +3291,14 @@ pub(crate) fn parse_into_binary_lockfile(
                             pkg_map.find_resolution(pkg_path, dep, string_buf, &mut path_buf[..])
                         };
                         match found {
-                            Ok(&id) => id,
+                            Ok((&id, found_at)) => {
+                                let evidence = RowEvidence::of(found_at, dep);
+                                if bound_by[dep_id as usize] > evidence {
+                                    continue 'deps;
+                                }
+                                bound_by[dep_id as usize] = evidence;
+                                id
+                            }
                             Err(ResolveError::InvalidPackageKey) => {
                                 log.add_error(Some(source), row.key_loc, b"Invalid package path");
                                 return Err(ParseError::InvalidPackageKey);

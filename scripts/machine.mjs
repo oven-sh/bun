@@ -1355,6 +1355,49 @@ async function ensurePacker() {
   return localPacker;
 }
 
+/**
+ * `wait-image --name=<ami name> --build=<build number> [--timeout-minutes=N]`:
+ * block until the Linux AMI produced by a `…-bake-image` step (see
+ * getLinuxBuildImageSteps in .buildkite/ci.mjs) is available. The AMI carries
+ * the number of the build that baked it.
+ *
+ * @param {{ name: string, build: string, timeoutMinutes: number }} options
+ * @returns {Promise<string>} the AMI id
+ */
+async function waitImage({ name, build, timeoutMinutes }) {
+  // Match on the build number too: an older image that merely shares the
+  // name (the previous `-vN` being re-published) is not the one to wait for.
+  const filters = [`Name=name,Values=${name}`, `Name=tag:buildkite:build-number,Values=${build}`];
+  const deadline = Date.now() + timeoutMinutes * 60_000;
+  let lastState;
+  let seen;
+  console.log(`Waiting for image ${name} (build ${build})...`);
+  while (Date.now() < deadline) {
+    const { Images } = await aws.spawn($`ec2 describe-images --owners self --filters ${filters}`);
+    const [image] = Images.sort((a, b) => (a.CreationDate < b.CreationDate ? 1 : -1));
+    const state = image?.State ?? (seen ? "gone" : "not created yet");
+    if (state !== lastState) {
+      console.log(`${new Date().toISOString()} ${name}: ${state}${image ? ` (${image.ImageId})` : ""}`);
+      lastState = state;
+    }
+    if (state === "available") {
+      return image.ImageId;
+    }
+    // failed/invalid/error: imaging failed. gone/deregistered: it failed and
+    // was already cleaned up (the build is annotated with why). Either way
+    // this image is not going to appear.
+    if (["failed", "invalid", "error", "deregistered", "gone"].includes(state)) {
+      const reason = image?.StateReason?.Message ?? "discarded after a failed create, see the build annotation";
+      throw new Error(`Image ${name} for build ${build} will not become available (${state}): ${reason}`);
+    }
+    seen ||= image?.ImageId;
+    await new Promise(done => setTimeout(done, 30_000));
+  }
+  throw new Error(
+    `Image ${name} for build ${build} was not available after ${timeoutMinutes} minutes (last state: ${lastState})`,
+  );
+}
+
 async function main() {
   const { positionals } = parseArgs({
     allowPositionals: true,
@@ -1362,9 +1405,33 @@ async function main() {
   });
 
   const [command] = positionals;
-  if (!/^(ssh|create-image|publish-image)$/.test(command)) {
+  if (!/^(ssh|create-image|publish-image|wait-image)$/.test(command)) {
     const scriptPath = relative(process.cwd(), fileURLToPath(import.meta.url));
-    throw new Error(`Usage: ./${scriptPath} [ssh|create-image|publish-image] [options]`);
+    throw new Error(
+      `Usage: ./${scriptPath} [ssh|create-image|publish-image] [options]\n` +
+        `       ./${scriptPath} wait-image --name=<ami name> --build=<build number> [--timeout-minutes=N]`,
+    );
+  }
+
+  if (command === "wait-image") {
+    const { values: args } = parseArgs({
+      allowPositionals: true,
+      options: {
+        "name": { type: "string" },
+        "build": { type: "string" },
+        "timeout-minutes": { type: "string", default: "110" },
+      },
+    });
+    if (!args["name"] || !args["build"]) {
+      throw new Error("wait-image needs --name=<ami name> --build=<build number>");
+    }
+    const imageId = await waitImage({
+      name: args["name"],
+      build: args["build"],
+      timeoutMinutes: parseInt(args["timeout-minutes"]),
+    });
+    console.log(`Image available: ${args["name"]} -> ${imageId}`);
+    return;
   }
 
   const { values: args } = parseArgs({

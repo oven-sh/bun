@@ -49,6 +49,64 @@ describe.each([true, false])("Bun.deepEquals(a, b, strict: %p)", strict => {
     expect(deepEquals(b, a)).toBe(false);
   });
 
+  describe("Headers", () => {
+    const headers = (...setCookies: string[]) => {
+      const result = new Headers({ "content-type": "text/plain", "x-a": "1" });
+      for (const cookie of setCookies) result.append("set-cookie", cookie);
+      return result;
+    };
+
+    it("compares every set-cookie value", () => {
+      expect(deepEquals(headers(), headers())).toBe(true);
+      expect(deepEquals(headers("k=1"), headers("k=1"))).toBe(true);
+      expect(deepEquals(headers("k=1", "j=2"), headers("k=1", "j=2"))).toBe(true);
+      expect(deepEquals(headers("k=1", "j=2", "i=3"), headers("k=1", "j=2", "i=3"))).toBe(true);
+      expect(deepEquals(headers("k=1", "j=2"), new Headers(headers("k=1", "j=2")))).toBe(true);
+      expect(
+        deepEquals(
+          headers("k=1", "j=2"),
+          new Headers([
+            ["Set-Cookie", "k=1"],
+            ["X-A", "1"],
+            ["set-cookie", "j=2"],
+            ["Content-Type", "text/plain"],
+          ]),
+        ),
+      ).toBe(true);
+      expect(deepEquals({ headers: headers("k=1", "j=2") }, { headers: headers("k=1", "j=2") })).toBe(true);
+
+      expect(deepEquals(headers("k=1", "j=2"), headers("k=1", "j=3"))).toBe(false);
+      expect(deepEquals(headers("k=1", "j=2"), headers("k=1"))).toBe(false);
+      expect(deepEquals(headers("k=1"), headers("k=1", "j=2"))).toBe(false);
+      expect(deepEquals(headers("k=1", "j=2"), headers("k=1, j=2"))).toBe(false);
+      expect(deepEquals(headers("k=1", "j=2"), headers())).toBe(false);
+      // set-cookie order is observable through getSetCookie() and iteration
+      expect(deepEquals(headers("k=1", "j=2"), headers("j=2", "k=1"))).toBe(false);
+      expect(deepEquals(headers("k=1", "k=1"), headers("k=1", "j=2"))).toBe(false);
+    });
+
+    it("still compares the other headers when set-cookie values match", () => {
+      const differentContentType = headers("k=1", "j=2");
+      differentContentType.set("content-type", "text/html");
+      expect(deepEquals(headers("k=1", "j=2"), differentContentType)).toBe(false);
+
+      const differentCustomHeader = headers("k=1", "j=2");
+      differentCustomHeader.set("x-a", "2");
+      expect(deepEquals(headers("k=1", "j=2"), differentCustomHeader)).toBe(false);
+
+      const extraHeader = headers("k=1", "j=2");
+      extraHeader.set("x-b", "2");
+      expect(deepEquals(headers("k=1", "j=2"), extraHeader)).toBe(false);
+      expect(deepEquals(extraHeader, headers("k=1", "j=2"))).toBe(false);
+
+      // same number of entries overall, distributed differently
+      const oneCookieOneExtraHeader = headers("k=1");
+      oneCookieOneExtraHeader.set("x-b", "2");
+      expect(deepEquals(headers("k=1", "j=2"), oneCookieOneExtraHeader)).toBe(false);
+      expect(deepEquals(oneCookieOneExtraHeader, headers("k=1", "j=2"))).toBe(false);
+    });
+  });
+
   // we may change this in the future
   it("functions that are not reference-equal are never equal", () => {
     function foo() {}

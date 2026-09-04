@@ -2742,10 +2742,13 @@ extern "C" [[ZIG_EXPORT(zero_is_throw)]] JSC::EncodedJSValue EncodedSlice__toJSO
             scope.throwException(globalObject, Bun::createError(globalObject, Bun::ErrorCode::ERR_STRING_TOO_LONG, "Cannot parse a JSON string longer than 2147483647 characters"_s));
             return {};
         }
+        // JSONParseWithException does not throw for a null string. Parse "" instead, so an empty
+        // input gets the error that JSON.parse("") throws.
+        if (!strPtr->len)
+            str = emptyString();
     }
 
-    // JSONParseWithException does not propagate exceptions as expected. See #5859
-    JSValue result = JSONParse(globalObject, str);
+    JSValue result = JSONParseWithException(globalObject, str);
     RETURN_IF_EXCEPTION(scope, {});
     if (!result) {
         scope.throwException(globalObject, createSyntaxError(globalObject, "Failed to parse JSON"_s));

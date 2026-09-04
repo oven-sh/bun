@@ -205,19 +205,20 @@ function handleSocketAfterProxy(err, req) {
   }
 }
 
-const kTunneledTLSOptions = [
-  "ca",
-  "cert",
-  "key",
-  "pfx",
-  "passphrase",
-  "rejectUnauthorized",
-  "ciphers",
-  "secureOptions",
-  "checkServerIdentity",
-];
+let kTunneledTLSOptions: string[] | undefined;
 function tunneledTLSOptions(connectOpts) {
   if (connectOpts == null) return undefined;
+  kTunneledTLSOptions ??= [
+    "ca",
+    "cert",
+    "key",
+    "pfx",
+    "passphrase",
+    "rejectUnauthorized",
+    "ciphers",
+    "secureOptions",
+    "checkServerIdentity",
+  ];
   let picked;
   for (let i = 0; i < kTunneledTLSOptions.length; i++) {
     const key = kTunneledTLSOptions[i];

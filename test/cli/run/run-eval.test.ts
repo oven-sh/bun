@@ -63,6 +63,8 @@ for (const flag of ["-e", "--print"]) {
       testProcessArgv(["abc", "def"], [exe, "abc", "def"]);
       testProcessArgv(["--", "abc", "def"], [exe, "abc", "def"]);
       // testProcessArgv(["--", "abc", "--", "def"], [exe, "abc", "--", "def"]);
+      // "run" is a script argument here, not the `bun run` subcommand
+      testProcessArgv(["run"], [exe, "run"]);
     });
 
     test("process._eval", async () => {
@@ -107,6 +109,76 @@ for (const flag of ["-e", "--print"]) {
     });
   });
 }
+
+// `bun run` accepts the same -e / -p flags as `bun` (they are listed in `bun run --help`);
+// it used to parse them and then print the `bun run` usage text instead of evaluating.
+// https://github.com/oven-sh/bun/issues/23631
+describe("bun run -e / --print", () => {
+  const exe = isWindows ? bunExe().replaceAll("/", "\\") : bunExe();
+
+  async function bunRun(...args: string[]) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "run", ...args],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  }
+
+  const evalSpellings: [args: string[], stdout: string][] = [
+    [["-e", 'console.log("hello world")'], "hello world\n"],
+    [["--eval", 'console.log("hello world")'], "hello world\n"],
+    [["--eval=console.log(1 + 2)"], "3\n"],
+    [["-p", "1 + 2"], "3\n"],
+    [["--print", "1 + 2"], "3\n"],
+    [["--print=1 + 2"], "3\n"],
+    // flags that belong to `bun run` still parse alongside the script
+    [["--silent", "-p", "1 + 2"], "3\n"],
+  ];
+  for (const [args, stdout] of evalSpellings) {
+    test.concurrent(`bun run ${args.join(" ")}`, async () => {
+      expect(await bunRun(...args)).toEqual({ stdout, stderr: "", exitCode: 0 });
+    });
+  }
+
+  for (const flag of ["-e", "-p"]) {
+    const argvCode = flag === "-p" ? "JSON.stringify(process.argv)" : "console.log(JSON.stringify(process.argv))";
+    const argvCases = [
+      { extraArgs: [], argv: [exe] },
+      { extraArgs: ["abc", "def"], argv: [exe, "abc", "def"] },
+      { extraArgs: ["--", "abc", "def"], argv: [exe, "abc", "def"] },
+      // only the `run` subcommand keyword is dropped, not a script argument that happens to be "run"
+      { extraArgs: ["run", "abc"], argv: [exe, "run", "abc"] },
+    ];
+    for (const { extraArgs, argv } of argvCases) {
+      test.concurrent(`process.argv: bun run ${flag} <code> ${extraArgs.join(" ")}`, async () => {
+        const { stdout, stderr, exitCode } = await bunRun(flag, argvCode, ...extraArgs);
+        expect(stderr).toBe("");
+        expect(JSON.parse(stdout)).toEqual(argv);
+        expect(exitCode).toBe(0);
+      });
+    }
+
+    test.concurrent(`bun run ${flag}: [eval] entry point and process._eval`, async () => {
+      const expr = "JSON.stringify([import.meta.path, process._eval])";
+      const code = flag === "-p" ? expr : `console.log(${expr})`;
+      const { stdout, stderr, exitCode } = await bunRun(flag, code);
+      expect(stderr).toBe("");
+      expect(JSON.parse(stdout)).toEqual([join(process.cwd(), "[eval]"), code]);
+      expect(exitCode).toBe(0);
+    });
+  }
+
+  test.concurrent("uncaught error exits 1 with the [eval] location", async () => {
+    const { stdout, stderr, exitCode } = await bunRun("-e", 'throw new Error("run-eval-uncaught")');
+    expect(stderr).toContain("run-eval-uncaught");
+    expect(stderr).toContain("[eval]");
+    expect(stdout).toBe("");
+    expect(exitCode).toBe(1);
+  });
+});
 
 describe("--print for cjs/esm", () => {
   test("eval result between esm imports", async () => {

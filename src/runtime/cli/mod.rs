@@ -1460,7 +1460,12 @@ pub mod command {
             }
         }
 
-        if tag == Tag::AutoCommand && !ctx.runtime_options.eval.script.is_empty() {
+        if !ctx.runtime_options.eval.script.is_empty() {
+            // `exec_eval` turns the positionals into the script's process.argv;
+            // `bun run -e code a b` must yield the same argv as `bun -e code a b`.
+            if tag == Tag::RunCommand && ctx.positionals.first().is_some_and(|p| &**p == b"run") {
+                ctx.positionals.remove(0);
+            }
             return run_command::RunCommand::exec_eval(ctx);
         }
 

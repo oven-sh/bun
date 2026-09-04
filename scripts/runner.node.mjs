@@ -573,10 +573,24 @@ async function runTests() {
   // it through the unix socket in BUN_DOCKER_COORDINATOR (inherited by every
   // spawned test process); ensure() waits for the coordinator's ready message
   // instead of shelling out to compose itself. Without the env var, ensure()
-  // falls back to running compose directly. Linux-only — macOS / Windows CI
-  // don't run docker tests. Lifetime is tied to this process via the stdin
-  // pipe.
-  if (isCI && isLinux && spawnSync("docker", ["compose", "version"], { stdio: "ignore" }).status === 0) {
+  // falls back to running compose directly. POSIX-only because the coordinator
+  // listens on a unix socket. darwin shards run the mysql/postgres/valkey
+  // regression tests via describeWithContainer (DOCKER_HOST points at a sidecar
+  // VM), so without this prestart the first mysql_plain consumer in a shard
+  // pays the full `compose build + up --wait` inline. Windows CI has no docker.
+  // On darwin, docker tests are optional: isDockerEnabled() returns false (not
+  // throws) when the sidecar is unreachable, and describeWithContainer becomes
+  // `.todo`. Setting BUN_DOCKER_COORDINATOR bypasses that check, so the darwin
+  // arm of the gate also probes the daemon with `docker version` and leaves the
+  // coordinator unspawned when it fails. Linux keeps the compose-only check so
+  // a slow-booting dockerd still gets the coordinator (whose later ensure()
+  // re-probes). Lifetime is tied to this process via the stdin pipe.
+  if (
+    isCI &&
+    !isWindows &&
+    spawnSync("docker", ["compose", "version"], { stdio: "ignore", timeout: 5_000 }).status === 0 &&
+    (isLinux || spawnSync("docker", ["version"], { stdio: "ignore", timeout: 5_000 }).status === 0)
+  ) {
     const coordinatorSocket = join(tmpdir(), `bun-docker-${process.pid}.sock`);
     const coordinator = spawn(execPath, [join(cwd, "test", "docker", "coordinator.ts"), ...tests], {
       stdio: ["pipe", "pipe", "inherit"],

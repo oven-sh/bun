@@ -311,4 +311,102 @@ describe("css", () => {
       expect(css).toContain(`.${betaOwn}`);
     },
   });
+
+  // Whether `composes` is allowed is decided per style rule. Parsing a rule
+  // nested in the body used to leave that rule's "disallowed" verdict behind,
+  // so every `composes` written after it was rejected with the nested-selector
+  // warning and dropped from the export.
+  itBundled("css-module/ComposesAfterNestedRule", {
+    files: {
+      "/entry.js": `
+        import styles from "./styles.module.css";
+        console.log(styles);
+      `,
+      "/styles.module.css": `
+        .base { color: red; }
+        .other { cursor: pointer; }
+        .button {
+          .icon { color: green; }
+          composes: base;
+          @media (min-width: 1px) { padding: 1px; }
+          composes: other;
+          color: blue;
+        }
+      `,
+    },
+    entryPoints: ["/entry.js"],
+    outdir: "/out",
+    onAfterBundle(api) {
+      api.expectFile("/out/entry.js").toMatchInlineSnapshot(`
+        "// styles.module.css
+        var styles_module_default = {
+          base: "base_-MSaAA",
+          other: "other_-MSaAA",
+          button: "base_-MSaAA other_-MSaAA button_-MSaAA",
+          icon: "icon_-MSaAA"
+        };
+
+        // entry.js
+        console.log(styles_module_default);
+        "
+      `);
+    },
+  });
+
+  // `.button` and the class it composes both set `color`, which the bundler
+  // reports. It can only do so if the `composes` was recorded and the
+  // properties of `.button` were tracked; a nested rule anywhere in the body
+  // used to break one or the other.
+  const composesWithNestedRuleCases = [
+    {
+      name: "Before",
+      body: /* css */ `.icon { color: green; } color: blue; composes: other from "./other.module.css";`,
+    },
+    {
+      name: "After",
+      body: /* css */ `color: blue; composes: other from "./other.module.css"; .icon { color: green; }`,
+    },
+  ];
+
+  for (const { name, body } of composesWithNestedRuleCases) {
+    itBundled(`css-module/ComposesConflictWithNestedRule${name}`, {
+      files: {
+        "/entry.js": `
+          import styles from "./styles.module.css";
+          console.log(styles);
+        `,
+        "/styles.module.css": `.button { ${body} }`,
+        "/other.module.css": `.other { color: red; }`,
+      },
+      entryPoints: ["/entry.js"],
+      outdir: "/out",
+      // Any error-level log that is not listed here, or listed but missing, fails the test.
+      bundleErrors: { "/styles.module.css": ["The value of color in the class button is undefined."] },
+    });
+  }
+
+  // `.c .d` is rejected for its own selector; it used to get the nested-selector
+  // warning left behind by `.icon`.
+  itBundled("css-module/ComposesRejectedInsideNestedRules", {
+    files: {
+      "/styles.module.css": /* css */ `
+        .base { color: red; }
+        .a { .icon { composes: base; } }
+        .b { @media (min-width: 1px) { composes: base; } }
+        .c .d { .icon { color: green; } composes: base; }
+      `,
+    },
+    entryPoints: ["/styles.module.css"],
+    outdir: "/out",
+    backend: "api",
+    onAfterApiBundle(build) {
+      expect(build.logs.filter(log => log.level !== "error").map(log => log.message)).toEqual([
+        '"composes" is not allowed inside nested selectors',
+        '"composes" is not allowed inside nested selectors',
+        '"composes" only works inside single class selectors',
+      ]);
+    },
+    // The printer still refuses to print a rejected `composes` declaration.
+    bundleErrors: { "/styles.module.css": ["Failed to generate CSS for this file (PrintError)"] },
+  });
 });

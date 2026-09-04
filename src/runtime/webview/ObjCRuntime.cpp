@@ -6,6 +6,7 @@
 #include "WebViewHost.h"
 #include <dlfcn.h>
 #include <mach/mach.h>
+#include <stdlib.h>
 #include <wtf/NeverDestroyed.h>
 #include <wtf/HashMap.h>
 #include <mutex>
@@ -120,6 +121,7 @@ Class WKWebViewConfiguration::cls_WKWebsiteDataStoreConfiguration;
 Class WKWebViewConfiguration::cls_WKProcessPool;
 SEL WKWebViewConfiguration::s_nonPersistentDataStore;
 SEL WKWebViewConfiguration::s_initWithDirectory;
+bool WKWebViewConfiguration::s_hasInitWithDirectory;
 SEL WKWebViewConfiguration::s_initWithConfiguration;
 SEL WKWebViewConfiguration::s_setProcessPool;
 
@@ -141,6 +143,7 @@ id WKWebViewConfiguration::sharedProcessPool()
 // share committed state. Retained once on insert, never released.
 id WKWebViewConfiguration::persistentStoreForDirectory(const WTF::String& directory)
 {
+    ASSERT(s_hasInitWithDirectory);
     static NeverDestroyed<HashMap<WTF::String, id>> cache;
     auto it = cache->find(directory);
     if (it != cache->end()) return it->value;
@@ -334,6 +337,7 @@ bool ObjCRuntime::load()
     SEL (*sel)(const char*);
     Class (*allocateClassPair)(Class, const char*, size_t);
     BOOL (*addMethod)(Class, SEL, IMP, const char*);
+    BOOL (*respondsToSelector)(Class, SEL);
     BOOL (*addProtocol)(Class, Protocol*);
     Protocol* (*getProtocol)(const char*);
     void (*registerClassPair)(Class);
@@ -342,6 +346,7 @@ bool ObjCRuntime::load()
     SYM(sel, libobjc, "sel_registerName");
     SYM(allocateClassPair, libobjc, "objc_allocateClassPair");
     SYM(addMethod, libobjc, "class_addMethod");
+    SYM(respondsToSelector, libobjc, "class_respondsToSelector");
     SYM(addProtocol, libobjc, "class_addProtocol");
     SYM(getProtocol, libobjc, "objc_getProtocol");
     SYM(registerClassPair, libobjc, "objc_registerClassPair");
@@ -461,12 +466,15 @@ bool ObjCRuntime::load()
     CLS(WKWebViewConfiguration::cls, "WKWebViewConfiguration");
     CLS(WKWebViewConfiguration::cls_WKWebsiteDataStore, "WKWebsiteDataStore");
     // _WKWebsiteDataStoreConfiguration is SPI but stable since macOS 10.13.
-    // initWithDirectory: is 15.2+.
+    // initWithDirectory: is in the WebKit of macOS 15.2+, which a Safari update also installs. Ask the class.
     CLS(WKWebViewConfiguration::cls_WKWebsiteDataStoreConfiguration, "_WKWebsiteDataStoreConfiguration");
     CLS(WKWebViewConfiguration::cls_WKProcessPool, "WKProcessPool");
     WKWebViewConfiguration::s_setProcessPool = sel("setProcessPool:");
     WKWebViewConfiguration::s_nonPersistentDataStore = sel("nonPersistentDataStore");
     WKWebViewConfiguration::s_initWithDirectory = sel("initWithDirectory:");
+    // Test-only: BUN_INTERNAL_WEBVIEW_NO_INIT_WITH_DIRECTORY acts like a WebKit without it.
+    WKWebViewConfiguration::s_hasInitWithDirectory = !getenv("BUN_INTERNAL_WEBVIEW_NO_INIT_WITH_DIRECTORY")
+        && respondsToSelector(WKWebViewConfiguration::cls_WKWebsiteDataStoreConfiguration, WKWebViewConfiguration::s_initWithDirectory);
     WKWebViewConfiguration::s_initWithConfiguration = sel("_initWithConfiguration:");
     WKWebViewConfiguration::s_setWebsiteDataStore = sel("setWebsiteDataStore:");
     WKWebViewConfiguration::s_userContentController = sel("userContentController");

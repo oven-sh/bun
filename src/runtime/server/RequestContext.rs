@@ -356,6 +356,30 @@ fn as_response(value: JSValue) -> Option<*mut Response> {
     response::from_js(value).map(|p| p.cast::<Response>())
 }
 
+/// The page's own headers (Content-Type, ETag, Cache-Control) fill in behind
+/// the handler's. Non-generic and out of line, like `release_body_stream`.
+#[inline(never)]
+fn add_html_page_headers(
+    response: &mut Response,
+    html: &StaticRoute,
+    global_this: &JSGlobalObject,
+) -> JsResult<()> {
+    use bun_http_types::ETag::HeaderEntryColumns;
+    let mut headers =
+        bun_http_jsc::headers_jsc::from_fetch_headers(response.get_init_headers(), None);
+    let entries = html.headers.entries.slice();
+    for (name, value) in entries.items_name().iter().zip(entries.items_value()) {
+        let name = html.headers.as_str(*name);
+        if headers.get(name).is_none() {
+            headers.append(name, html.headers.as_str(*value));
+        }
+    }
+    let fetch_headers = bun_http_jsc::headers_jsc::to_fetch_headers(&headers, global_this)?;
+    // SAFETY: `to_fetch_headers` returns a fresh +1 `FetchHeaders*`.
+    response.set_init_headers(Some(unsafe { response::HeadersRef::adopt(fetch_headers) }));
+    Ok(())
+}
+
 /// Release the body's hold on a stream the sink is done with, and mark a
 /// `Locked` body used. Non-generic and out of line: the eight `RequestContext`
 /// monomorphizations share one copy.
@@ -2104,26 +2128,9 @@ where
         };
 
         let response: &mut Response = self.response_mut().expect("the Response is protected");
-        let mut headers =
-            bun_http_jsc::headers_jsc::from_fetch_headers(response.get_init_headers(), None);
-        {
-            use bun_http_types::ETag::HeaderEntryColumns;
-            let entries = html.headers.entries.slice();
-            for (name, value) in entries.items_name().iter().zip(entries.items_value()) {
-                let name = html.headers.as_str(*name);
-                if headers.get(name).is_none() {
-                    headers.append(name, html.headers.as_str(*value));
-                }
-            }
-        }
-        match bun_http_jsc::headers_jsc::to_fetch_headers(&headers, global_this) {
-            // SAFETY: `to_fetch_headers` returns a fresh +1 `FetchHeaders*`.
-            Ok(fetch_headers) => response
-                .set_init_headers(Some(unsafe { response::HeadersRef::adopt(fetch_headers) })),
-            Err(err) => {
-                self.run_error_handler(global_this.take_exception(err));
-                return;
-            }
+        if let Err(err) = add_html_page_headers(response, &html, global_this) {
+            self.run_error_handler(global_this.take_exception(err));
+            return;
         }
 
         self.blob.set(html.dupe_blob());

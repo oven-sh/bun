@@ -1819,8 +1819,8 @@ enum EnsureRequest {
     HtmlBundleBody(AnyRequestContext),
 }
 
-/// SAFETY: `req` is a uWS `Request*` valid for the handler callback's duration.
 fn request_method(req: *mut Request) -> Method {
+    // SAFETY: `req` is a uWS `Request*` valid for the handler callback's duration.
     Method::which(unsafe { &*req }.method()).unwrap_or(Method::GET)
 }
 

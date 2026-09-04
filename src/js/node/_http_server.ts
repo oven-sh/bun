@@ -3294,7 +3294,8 @@ ServerResponse.prototype.write = function (chunk, encoding, callback) {
     return true;
   }
 
-  if (this[headerStateSymbol] !== NodeHTTPHeaderState.sent) {
+  const sentState = NodeHTTPHeaderState.sent;
+  if (this[headerStateSymbol] !== sentState) {
     const renderedHeaders = renderNativeHeaders(this);
     try {
       handle.writeHead(
@@ -3312,7 +3313,7 @@ ServerResponse.prototype.write = function (chunk, encoding, callback) {
 
     // If handle.writeHead throws, we don't want headersSent to be set to true.
     // So we set it here.
-    this[headerStateSymbol] = NodeHTTPHeaderState.sent;
+    this[headerStateSymbol] = sentState;
   }
   result = handle.write(chunk, encoding, allowWritesToContinue.bind(this), strictContentLength(this));
 
@@ -3474,7 +3475,8 @@ ServerResponse.prototype._send = function (data, encoding, callback, _byteLength
     return OutgoingMessagePrototype._send.$apply(this, arguments);
   }
 
-  if (this[headerStateSymbol] !== NodeHTTPHeaderState.sent) {
+  const sentState = NodeHTTPHeaderState.sent;
+  if (this[headerStateSymbol] !== sentState) {
     const renderedHeaders = renderNativeHeaders(this);
     try {
       handle.writeHead(
@@ -3489,7 +3491,7 @@ ServerResponse.prototype._send = function (data, encoding, callback, _byteLength
       // scratch array marked busy for the rest of the process.
       releaseRenderedHeaders(renderedHeaders);
     }
-    this[headerStateSymbol] = NodeHTTPHeaderState.sent;
+    this[headerStateSymbol] = sentState;
   }
   handle.write(data, encoding, callback, strictContentLength(this));
 };

@@ -641,6 +641,16 @@ void addParameter(WTF::StringBuilder& result, const StringView& arg_name)
     }
 }
 
+static bool isPrimitiveTypeName(StringView type);
+static bool isClassName(StringView type);
+
+// Node treats a string `expected` as a one-entry list, so a single entry is
+// classified the same way the list overload below classifies each of its
+// entries: kTypes names render "of type x", class names "an instance of X".
+// Callers of this overload also pass pre-rendered lists ("string or an
+// instance of Buffer"), which Node never sees; those keep the verbatim
+// "of type ..." rendering.
+// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/errors.js#L1404
 WTF::String ERR_INVALID_ARG_TYPE(JSC::ThrowScope& scope, JSC::JSGlobalObject* globalObject, const StringView& arg_name, const StringView& expected_type, JSValue actual_value)
 {
     WTF::StringBuilder result;
@@ -648,27 +658,35 @@ WTF::String ERR_INVALID_ARG_TYPE(JSC::ThrowScope& scope, JSC::JSGlobalObject* gl
     addParameter(result, arg_name);
     result.append(" must be "_s);
 
-    // Node categorizes a free-form phrase like "Array of unique strings"
-    // (spaces, but not a flattened "X, Y, or Z" list) as neither a primitive
-    // type name nor a class name: it renders "must be an Array of unique
-    // strings", not "must be of type ...". Flattened lists keep the legacy
-    // "of type" rendering.
-    bool isPhrase = expected_type.contains(' ') && !expected_type.contains(", "_s) && !expected_type.contains(" or "_s);
-    if (isPhrase) {
-        bool hasUppercase = false;
-        for (unsigned i = 0; i < expected_type.length(); i++) {
-            if (isASCIIUpper(expected_type[i])) {
-                hasUppercase = true;
-                break;
-            }
-        }
-        if (hasUppercase)
-            result.append("an "_s);
-    } else {
+    if (isPrimitiveTypeName(expected_type)) {
         result.append("of type "_s);
+        result.append(expected_type.convertToASCIILowercase());
+    } else if (isClassName(expected_type)) {
+        result.append("an instance of "_s);
+        result.append(expected_type);
+    } else {
+        // Node categorizes a free-form phrase like "Array of unique strings"
+        // (spaces, but not a flattened "X, Y, or Z" list) as neither a primitive
+        // type name nor a class name: it renders "must be an Array of unique
+        // strings", not "must be of type ...". Flattened lists keep the legacy
+        // "of type" rendering.
+        bool isPhrase = expected_type.contains(' ') && !expected_type.contains(", "_s) && !expected_type.contains(" or "_s);
+        if (isPhrase) {
+            bool hasUppercase = false;
+            for (unsigned i = 0; i < expected_type.length(); i++) {
+                if (isASCIIUpper(expected_type[i])) {
+                    hasUppercase = true;
+                    break;
+                }
+            }
+            if (hasUppercase)
+                result.append("an "_s);
+        } else {
+            result.append("of type "_s);
+        }
+        result.append(expected_type);
     }
 
-    result.append(expected_type);
     result.append(". Received "_s);
     determineSpecificType(JSC::getVM(globalObject), globalObject, result, actual_value);
     RETURN_IF_EXCEPTION(scope, {});
@@ -677,7 +695,7 @@ WTF::String ERR_INVALID_ARG_TYPE(JSC::ThrowScope& scope, JSC::JSGlobalObject* gl
 
 // Matches Node's kTypes list: primitive type names accepted by ERR_INVALID_ARG_TYPE.
 // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/errors.js#L72
-static bool isPrimitiveTypeName(const WTF::String& type)
+static bool isPrimitiveTypeName(StringView type)
 {
     return type == "string"_s || type == "function"_s || type == "number"_s
         || type == "object"_s || type == "Function"_s || type == "Object"_s
@@ -685,7 +703,7 @@ static bool isPrimitiveTypeName(const WTF::String& type)
 }
 
 // Matches Node's classRegExp /^[A-Z][a-zA-Z0-9]*$/.
-static bool isClassName(const WTF::String& type)
+static bool isClassName(StringView type)
 {
     if (type.isEmpty() || !isASCIIUpper(type[0]))
         return false;
@@ -889,7 +907,9 @@ JSC::EncodedJSValue INVALID_ARG_TYPE_INSTANCE(JSC::ThrowScope& throwScope, JSC::
     return {};
 }
 
-// When you want INVALID_ARG_TYPE to say "The argument must be an instance of X. Received Y." instead of "The argument must be of type X. Received Y."
+// Renders "must be an instance of <expected_type>" verbatim, so it also takes a
+// pre-rendered list like "Buffer, TypedArray, or DataView". INVALID_ARG_TYPE
+// produces the same text when given a single class name.
 JSC::EncodedJSValue INVALID_ARG_INSTANCE(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject, const WTF::String& arg_name, const WTF::String& expected_type, JSC::JSValue val_actual_value)
 {
     auto& vm = JSC::getVM(globalObject);

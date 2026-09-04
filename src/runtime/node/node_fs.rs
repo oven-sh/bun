@@ -4169,6 +4169,8 @@ pub mod args {
         pub(crate) recursive: bool,
         pub(crate) error_on_exist: bool,
         pub(crate) force: bool,
+        /// Keep link targets as stored (`cp -R`) instead of resolving relative ones (`fs.cp`).
+        pub(crate) verbatim_symlinks: bool,
     }
 
     pub struct Cp<'a> {
@@ -4209,6 +4211,7 @@ pub mod args {
                     recursive,
                     error_on_exist,
                     force,
+                    verbatim_symlinks: false,
                 },
             })
         }
@@ -8183,7 +8186,12 @@ impl NodeFS {
     }
 
     #[cfg_attr(any(windows, target_os = "macos"), allow(dead_code))]
-    fn cp_symlink(&mut self, src: &ZStr, dest: &ZStr) -> Maybe<ret::CopyFile> {
+    fn cp_symlink(
+        &mut self,
+        src: &ZStr,
+        dest: &ZStr,
+        flags: args::CpFlags,
+    ) -> Maybe<ret::CopyFile> {
         let mut target_buf = PathBuffer::uninit();
         // `bun_sys::readlink` returns the byte length on every
         // platform (the `Syscall` alias = `sys_uv` on Windows would return the
@@ -8198,7 +8206,7 @@ impl NodeFS {
         target_buf[link_len] = 0;
         // SAFETY: NUL written at `target_buf[link_len]`.
         let link_target = ZStr::from_buf(&target_buf[..], link_len);
-        if paths::is_absolute(link_target.as_bytes()) {
+        if flags.verbatim_symlinks || paths::is_absolute(link_target.as_bytes()) {
             return Syscall::symlink(link_target, dest);
         }
         let mut cwd_buf = PathBuffer::uninit();
@@ -8232,6 +8240,58 @@ impl NodeFS {
         Syscall::symlink(ZStr::from_buf(&resolved_buf[..], resolved_len), dest)
     }
 
+    #[cfg(windows)]
+    fn cp_symlink_verbatim(
+        src: &OSPathSliceZ,
+        dest: &OSPathSliceZ,
+        is_dir: bool,
+    ) -> Maybe<ret::CopyFile> {
+        let mut target_buf = paths::path_buffer_pool::get();
+        let target_len = {
+            let mut src_buf = paths::path_buffer_pool::get();
+            let src = strings::from_wpath(&mut src_buf[..], src.as_slice());
+            sys::readlink(src, &mut target_buf[..])?
+        };
+        target_buf[target_len] = 0;
+        // SAFETY: NUL written at `target_buf[target_len]`.
+        let target = ZStr::from_buf(&target_buf[..], target_len);
+        let mut dest_buf = paths::path_buffer_pool::get();
+        let dest = strings::from_wpath(&mut dest_buf[..], dest.as_slice());
+
+        let flags = if is_dir { uv::UV_FS_SYMLINK_DIR } else { 0 };
+        let result = match Syscall::symlink_uv(target, dest, flags) {
+            Err(err) if is_dir && err.get_errno() != E::EEXIST && err.get_errno() != E::ENOENT => {
+                // Junctions need an absolute target: the link resolved from the copy's directory.
+                let mut junction_buf = paths::path_buffer_pool::get();
+                let junction_buf_len = junction_buf.len();
+                let Some(junction_target) =
+                    paths::resolve_path::join_abs_string_buf_checked::<paths::platform::Windows>(
+                        dest.as_bytes(),
+                        &mut junction_buf[..junction_buf_len - 1],
+                        &[b"..", target.as_bytes()],
+                    )
+                else {
+                    return Err(sys::Error {
+                        errno: E::ENAMETOOLONG as _,
+                        syscall: sys::Tag::symlink,
+                        path: dest.as_bytes().into(),
+                        ..Default::default()
+                    });
+                };
+                let junction_target_len = junction_target.len();
+                junction_buf[junction_target_len] = 0;
+                // SAFETY: NUL written at `junction_buf[junction_target_len]`.
+                Syscall::symlink_uv(
+                    ZStr::from_buf(&junction_buf[..], junction_target_len),
+                    dest,
+                    uv::UV_FS_SYMLINK_JUNCTION,
+                )
+            }
+            result => result,
+        };
+        result.map_err(|err| err.with_path(dest.as_bytes()))
+    }
+
     /// This is `copyFile`, but it copies symlinks as-is
     pub(crate) fn copy_single_file_sync(
         &mut self,
@@ -8243,7 +8303,7 @@ impl NodeFS {
         #[cfg(not(windows))] reuse_stat: Option<&sys::Stat>,
         args: &args::Cp,
     ) -> Maybe<ret::CopyFile> {
-        let _ = args; // only the Windows branch consults `args` (shouldIgnoreEbusy)
+        let _ = args; // the macOS branch (copyfile handles symlinks) does not consult `args`
 
         // TODO: do we need to fchown?
         #[cfg(target_os = "macos")]
@@ -8393,7 +8453,7 @@ impl NodeFS {
                     if err.get_errno() == E::ELOOP {
                         // ELOOP is returned when you open a symlink with NOFOLLOW.
                         // as in, it does not actually let you open it.
-                        return self.cp_symlink(src, dest);
+                        return self.cp_symlink(src, dest, args.flags);
                     }
                     return Err(err);
                 }
@@ -8565,7 +8625,7 @@ impl NodeFS {
                     // open(2) returns EMLINK for this case, though POSIX
                     // specifies ELOOP; accept either.
                     if matches!(err.get_errno(), E::EMLINK | E::ELOOP) {
-                        return self.cp_symlink(src, dest);
+                        return self.cp_symlink(src, dest, args.flags);
                     }
                     return Err(err);
                 }
@@ -8737,6 +8797,10 @@ impl NodeFS {
                 }
                 return Ok(());
             } else {
+                let is_dir = stat_ & windows::FILE_ATTRIBUTE_DIRECTORY != 0;
+                if args.flags.verbatim_symlinks {
+                    return Self::cp_symlink_verbatim(src, dest, is_dir);
+                }
                 let handle = match sys::openat_windows(FD::INVALID, src, sys::O::RDONLY, 0) {
                     Err(err) => return Err(err),
                     Ok(fd) => fd,
@@ -8771,7 +8835,6 @@ impl NodeFS {
                 } else {
                     bun_core::WStr::from_buf(&wbuf[..], len)
                 };
-                let is_dir = stat_ & windows::FILE_ATTRIBUTE_DIRECTORY != 0;
                 // `symlink_w`/`symlink_or_junction` (not raw `CreateSymbolicLinkW`)
                 // so unprivileged creation is requested. UNC targets skip the junction
                 // fallback: libuv's `fs__create_junction` only accepts drive-letter targets.

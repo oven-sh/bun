@@ -723,6 +723,7 @@ impl ShellCpTask {
                 recursive: self.opts.recursive,
                 force: true,
                 error_on_exist: false,
+                verbatim_symlinks: true,
             },
         );
 

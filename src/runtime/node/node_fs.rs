@@ -1937,26 +1937,35 @@ mod _async_tasks {
 
             #[cfg(target_os = "macos")]
             {
-                // CLONE_NOFOLLOW: `src` was classified as a directory via lstat, so
-                // mirror the O_NOFOLLOW directory open below instead of dereferencing.
-                if let Some(err) = Maybe::<ret::Cp>::errno_sys_p(
-                    bun_sys::c::clonefile_rc(src, dest, CLONE_NOFOLLOW),
-                    sys::Tag::clonefile,
-                    src.as_bytes(),
-                ) {
-                    match err.get_errno() {
-                        E::EACCES | E::ENAMETOOLONG | E::EROFS | E::EPERM | E::EINVAL => {
-                            // `errno_sys_p`
-                            // already boxed `src.as_bytes()` into `err.path`, so just forward.
-                            this_ref.finish_concurrently(err);
-                            return false;
+                // clonefile() has no per-file callback, so shell `cp -v` needs the walk below.
+                let skip_clonefile = IS_SHELL
+                    && this_ref
+                        .shelltask
+                        .expect("IS_SHELL ⇒ shelltask")
+                        .opts
+                        .verbose;
+                if !skip_clonefile {
+                    // CLONE_NOFOLLOW: `src` was classified as a directory via lstat, so
+                    // mirror the O_NOFOLLOW directory open below instead of dereferencing.
+                    if let Some(err) = Maybe::<ret::Cp>::errno_sys_p(
+                        bun_sys::c::clonefile_rc(src, dest, CLONE_NOFOLLOW),
+                        sys::Tag::clonefile,
+                        src.as_bytes(),
+                    ) {
+                        match err.get_errno() {
+                            E::EACCES | E::ENAMETOOLONG | E::EROFS | E::EPERM | E::EINVAL => {
+                                // `errno_sys_p`
+                                // already boxed `src.as_bytes()` into `err.path`, so just forward.
+                                this_ref.finish_concurrently(err);
+                                return false;
+                            }
+                            // Other errors may be due to clonefile() not being supported
+                            // We'll fall back to other implementations
+                            _ => {}
                         }
-                        // Other errors may be due to clonefile() not being supported
-                        // We'll fall back to other implementations
-                        _ => {}
+                    } else {
+                        return true;
                     }
-                } else {
-                    return true;
                 }
             }
 

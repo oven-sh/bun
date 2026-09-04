@@ -3262,7 +3262,7 @@ pub(crate) fn parse_into_binary_lockfile(
         lockfile.tag_workspace_links(
             manager
                 .as_deref()
-                .map_or(true, |manager| manager.options.link_workspace_packages),
+                .is_none_or(|manager| manager.options.link_workspace_packages),
         );
 
         if let Err(tree::SubtreeError::OutOfMemory) = lockfile.resolve(log) {

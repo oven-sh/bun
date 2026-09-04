@@ -693,7 +693,7 @@ impl Lockfile {
 
         let link_workspace_packages = pm
             .as_deref()
-            .map_or(true, |pm| pm.options.link_workspace_packages);
+            .is_none_or(|pm| pm.options.link_workspace_packages);
         let load_result = match Serializer::load(self, &mut stream, log, pm) {
             Ok(r) => r,
             Err(e) => {

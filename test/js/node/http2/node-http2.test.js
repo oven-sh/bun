@@ -5238,6 +5238,228 @@ it("close() completes when the peer never ACKs an outstanding SETTINGS", async (
   server.close();
 });
 
+// Node's finishSessionClose: destroy() ends the socket and then hard-destroys it, so the
+// connection is released even when the peer never closes its own side (the peer a timeout or
+// an error handler is typically destroying). close() only ends it and waits for the peer. In
+// both cases the session's 'error'/'close' are emitted once the socket itself has closed.
+describe.concurrent("session teardown when the peer never closes its side of the connection", () => {
+  // allowHalfOpen keeps the peer's side open after our FIN arrives: from the server's point of
+  // view this is a peer that stays connected for as long as it likes, and `peer.end()` is the
+  // peer finally hanging up.
+  async function lingeringPeer(server) {
+    await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
+    const { port } = server.address();
+    const peer = net.connect({ port, host: "127.0.0.1", allowHalfOpen: true });
+    peer.on("error", () => {});
+    const sawFin = new Promise(resolve => peer.once("end", resolve));
+    peer.resume(); // 'end' only fires on a socket that is reading
+    return { peer, sawFin };
+  }
+  async function acceptH2c(server) {
+    const session = new Promise(resolve => server.once("session", resolve));
+    // The server's own 'connection' listener (which creates the session) is registered first,
+    // so this resolves with the socket behind the session above.
+    const socket = new Promise(resolve => server.once("connection", resolve));
+    const { peer, sawFin } = await lingeringPeer(server);
+    return { session: await session, socket: await socket, peer, sawFin };
+  }
+  function connectionCount(server) {
+    const { promise, resolve, reject } = Promise.withResolvers();
+    server.getConnections((err, count) => (err ? reject(err) : resolve(count)));
+    return promise;
+  }
+  // Records the session's terminal events, each tagged with whether its socket was already
+  // destroyed when the event fired; `closed` resolves with the list once 'close' has fired.
+  function recordTeardown(session, socket) {
+    const events = [];
+    const { promise: closed, resolve } = Promise.withResolvers();
+    session.on("error", err => events.push(["error", err.message, socket.destroyed]));
+    session.on("close", () => {
+      events.push(["close", socket.destroyed]);
+      resolve(events);
+    });
+    return { events, closed };
+  }
+  // A server that accepts and then says and does nothing, and whose side of each connection
+  // stays open after the client's FIN (allowHalfOpen): the client-side shape of the same peer.
+  async function silentServer() {
+    const accepted = [];
+    const server = net.createServer({ allowHalfOpen: true }, socket => {
+      accepted.push(socket);
+      socket.resume(); // 'end' only fires on a socket that is reading
+    });
+    await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
+    const { port } = server.address();
+    return {
+      port,
+      firstConnectionEnded: new Promise(resolve => server.once("connection", socket => socket.once("end", resolve))),
+      [Symbol.dispose]() {
+        for (const socket of accepted) socket.destroy();
+        server.close();
+      },
+    };
+  }
+  function connectOverOwnSocket(port) {
+    let socket;
+    const client = http2.connect(`http://127.0.0.1:${port}`, {
+      createConnection: () => (socket = net.connect({ port, host: "127.0.0.1" })),
+    });
+    return { client, socket };
+  }
+
+  it("server session.destroy() destroys the socket and releases the server connection", async () => {
+    const server = http2.createServer();
+    const { session, socket, peer, sawFin } = await acceptH2c(server);
+    try {
+      const { closed } = recordTeardown(session, socket);
+      session.destroy();
+      expect(session.destroyed).toBeTrue();
+      await sawFin; // the FIN still goes out first: the peer is told we are done before the hard close
+      expect(await closed).toEqual([["close", true]]);
+      expect(await connectionCount(server)).toBe(0);
+      await new Promise(resolve => server.close(resolve));
+    } finally {
+      peer.destroy();
+      server.close();
+    }
+  });
+
+  it("server session.destroy(err) emits 'error' and 'close' only once the socket is gone", async () => {
+    const server = http2.createServer();
+    const { session, socket, peer } = await acceptH2c(server);
+    try {
+      const { closed } = recordTeardown(session, socket);
+      session.destroy(new Error("boom"));
+      expect(await closed).toEqual([
+        ["error", "boom", true],
+        ["close", true],
+      ]);
+      expect(await connectionCount(server)).toBe(0);
+    } finally {
+      peer.destroy();
+      server.close();
+    }
+  });
+
+  it("server.setTimeout() reaping an idle session releases its connection", async () => {
+    const server = http2.createServer();
+    server.setTimeout(1); // armed on every accepted session; an unhandled 'timeout' destroys it
+    const { session, socket, peer } = await acceptH2c(server);
+    try {
+      const { closed } = recordTeardown(session, socket);
+      expect(await closed).toEqual([["close", true]]);
+      expect(await connectionCount(server)).toBe(0);
+    } finally {
+      peer.destroy();
+      server.close();
+    }
+  });
+
+  it("server session.close() leaves the socket to the peer and reports 'close' once it hangs up", async () => {
+    const server = http2.createServer();
+    const { session, socket, peer, sawFin } = await acceptH2c(server);
+    try {
+      const { events, closed } = recordTeardown(session, socket);
+      session.close();
+      await sawFin; // our GOAWAY + FIN are out and the peer has not answered either
+      expect({ events, socketDestroyed: socket.destroyed, connections: await connectionCount(server) }).toEqual({
+        events: [],
+        socketDestroyed: false,
+        connections: 1,
+      });
+      peer.end(); // the peer hangs up: now the socket closes, and the session reports it
+      expect(await closed).toEqual([["close", true]]);
+      expect(await connectionCount(server)).toBe(0);
+    } finally {
+      peer.destroy();
+      server.close();
+    }
+  });
+
+  it("secure server session.destroy() destroys the TLS socket and releases the server connection", async () => {
+    const server = http2.createSecureServer(TLS_CERT);
+    const session = new Promise(resolve => server.once("session", resolve));
+    const socket = new Promise(resolve => server.once("secureConnection", resolve));
+    const { peer, sawFin } = await lingeringPeer(server);
+    // The peer's TLS layer talks through a carrier Duplex that stops delivering inbound bytes
+    // once the handshake is done, so it never sees the server's close_notify and never answers
+    // it (a TLS peer that answered would close the connection itself and mask the bug).
+    let handshakeDone = false;
+    const carrier = new Duplex({
+      read() {},
+      write(chunk, _encoding, callback) {
+        peer.write(chunk, callback);
+      },
+    });
+    peer.on("data", chunk => {
+      if (!handshakeDone) carrier.push(chunk);
+    });
+    await new Promise(resolve => peer.once("connect", resolve));
+    const peerTls = tls.connect({ socket: carrier, ALPNProtocols: ["h2"], ...TLS_OPTIONS, servername: "localhost" });
+    peerTls.on("error", () => {});
+    await new Promise(resolve => peerTls.once("secureConnect", resolve));
+    handshakeDone = true;
+    const serverSession = await session;
+    const serverSocket = await socket;
+    try {
+      const { closed } = recordTeardown(serverSession, serverSocket);
+      serverSession.destroy();
+      await sawFin;
+      expect(await closed).toEqual([["close", true]]);
+      expect(await connectionCount(server)).toBe(0);
+      await new Promise(resolve => server.close(resolve));
+    } finally {
+      peerTls.destroy();
+      peer.destroy();
+      server.close();
+    }
+  });
+
+  it("client session.destroy() destroys the socket even though the server never closes", async () => {
+    using server = await silentServer();
+    const { client, socket } = connectOverOwnSocket(server.port);
+    try {
+      await new Promise(resolve => client.once("connect", resolve));
+      const { closed } = recordTeardown(client, socket);
+      client.destroy();
+      expect(client.destroyed).toBeTrue();
+      await server.firstConnectionEnded; // the FIN still goes out first
+      expect(await closed).toEqual([["close", true]]);
+    } finally {
+      client.destroy();
+    }
+  });
+
+  it("client session.destroy(err) emits 'error' and 'close' only once the socket is gone", async () => {
+    using server = await silentServer();
+    const { client, socket } = connectOverOwnSocket(server.port);
+    try {
+      await new Promise(resolve => client.once("connect", resolve));
+      const { closed } = recordTeardown(client, socket);
+      client.destroy(new Error("boom"));
+      expect(await closed).toEqual([
+        ["error", "boom", true],
+        ["close", true],
+      ]);
+    } finally {
+      client.destroy();
+    }
+  });
+
+  it("a session whose socket the peer already closed still reports 'close'", async () => {
+    const server = http2.createServer();
+    const { session, socket, peer } = await acceptH2c(server);
+    try {
+      const { closed } = recordTeardown(session, socket);
+      peer.destroy();
+      expect(await closed).toEqual([["close", true]]);
+      expect(await connectionCount(server)).toBe(0);
+    } finally {
+      server.close();
+    }
+  });
+});
+
 // A pull-mode consumer (pause() then on('readable')/read()) must reopen the receive
 // window via _read(): the 'resume' event never fires on that path, so without _read()
 // clearing the paused gate the peer stalls at the initial ~64KB stream window.

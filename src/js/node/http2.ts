@@ -436,12 +436,29 @@ function emitEventNT(self: any, event: string, ...args: any[]) {
     self.emit(event, ...args);
   }
 }
-// The frame is passed in: destroy() clears it off the session before emitting
-// 'error', so a throwing listener on either event cannot leave a retained
-// session pinning the store.
-function emitSessionCloseNT(self: Http2Session, frame) {
+// Node's emitClose. The frame is passed in: destroy() clears it off the session
+// before scheduling this, so a throwing listener on either event cannot leave a
+// retained session pinning the store.
+function emitSessionCloseNT(self: Http2Session, error: Error | undefined, frame) {
+  if (error) {
+    runInFrame(frame, self.emit, self, "error", error);
+  }
   if (self.listenerCount("close") > 0) {
     runInFrame(frame, self.emit, self, "close");
+  }
+}
+// Node's finishSessionClose emits the session's 'error'/'close' from the socket's
+// own 'close' listener, so by the time a session reports itself closed its
+// connection is gone (a server's getConnections() no longer counts it). Only a
+// session whose socket is already down (or that never had one) emits on the next
+// tick; even then it is asynchronous, so a listener attached right after
+// close()/destroy() returns still observes it.
+// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/http2/core.js#L1188
+function emitSessionCloseAfterSocket(self: Http2Session, socket, error: Error | undefined, frame) {
+  if (socket && !socket.destroyed) {
+    socket.once("close", () => emitSessionCloseNT(self, error, frame));
+  } else {
+    process.nextTick(emitSessionCloseNT, self, error, frame);
   }
 }
 function emitErrorNT(self: any, error: any, destroy: boolean) {
@@ -4712,7 +4729,8 @@ class ServerHttp2Session extends Http2Session {
       return;
     }
     this.#destroying = true;
-    emitHttp2SessionPerf(this, this.#parser, this[bunHTTP2Socket]);
+    const socket = this[bunHTTP2Socket];
+    emitHttp2SessionPerf(this, this.#parser, socket);
     try {
       const server = this[kServer];
       if (server) {
@@ -4736,7 +4754,6 @@ class ServerHttp2Session extends Http2Session {
         this[kSessionDestroyError] = error;
       }
 
-      const socket = this[bunHTTP2Socket];
       if (!this.#connected) return;
       this.#closed = true;
       this.#connected = false;
@@ -4747,24 +4764,7 @@ class ServerHttp2Session extends Http2Session {
           // a destroy(err) after close() must still put the error GOAWAY on the wire.
           this.goaway(code || constants.NGHTTP2_NO_ERROR, 0, Buffer.alloc(0));
         }
-        if (error) {
-          // node's finishSessionClose destroys the socket when the session dies
-          // with an error (a misbehaving peer must observe the connection going
-          // away) - but it still ends first and destroys a tick later, so the
-          // final GOAWAY flushes behind a FIN instead of an abortive close (see
-          // endThenDestroySessionSocket).
-          endThenDestroySessionSocket(socket, error);
-        } else {
-          // Node's finishSessionClose: "If we're gracefully closing the socket,
-          // call resume() so we can detect the peer closing in case
-          // binding.Http2Session is already gone." Without a reader, unread
-          // inbound bytes (a late GOAWAY from the peer) turn the close into an
-          // RST, which the peer surfaces as read ECONNRESET (routine on Windows
-          // loopback - the same reason Node delays the error-path destroy).
-          // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/http2/core.js#L1188
-          socket.resume();
-          socket.end();
-        }
+        closeSessionSocket(socket, this.#closeCalled && !error, error);
       }
       const parser = this.#parser;
       if (parser) {
@@ -4790,16 +4790,9 @@ class ServerHttp2Session extends Http2Session {
     }
     this[bunHTTP2Socket] = null;
 
-    // Read-and-clear the frame first: emitting 'error' with no listener throws,
-    // which would skip the clear and leave a retained session pinning the store.
     const asyncFrame = this[bunHTTP2AsyncContextFrame];
     this[bunHTTP2AsyncContextFrame] = undefined;
-    if (error) {
-      runInFrame(asyncFrame, this.emit, this, "error", error);
-    }
-    // node emits the session 'close' event asynchronously (a listener attached right after
-    // close()/destroy() returns must still observe it).
-    process.nextTick(emitSessionCloseNT, this, asyncFrame);
+    emitSessionCloseAfterSocket(this, socket, error, asyncFrame);
   }
 }
 function emitTimeout(session: ClientHttp2Session) {
@@ -4842,19 +4835,35 @@ function setSessionTimeout(this: Http2Session, msecs, callback) {
   return this;
 }
 
-// Node's finishSessionClose error path: socket.end() flushes and sends the FIN
-// first, and the hard destroy runs a tick later - "If session.destroy() was
-// called, destroy the underlying socket. Delay it a bit to try to avoid
-// ECONNRESET on Windows" - so the peer reads our final frames off a FIN'd
-// socket instead of observing an abortive close.
-// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/http2/core.js#L1188
 function destroySessionSocketDelayedNT(socket, error) {
   if (!socket.destroyed) {
     socket.destroy(error);
   }
 }
-function endThenDestroySessionSocket(socket, error) {
-  socket.end(() => setImmediate(destroySessionSocketDelayedNT, socket, error));
+// Node's finishSessionClose. Either way end() goes first, so the final GOAWAY
+// leaves behind a FIN instead of an abortive close.
+//
+// `graceful` is a session that was close()d (and is not dying with an error on
+// top of that): it has announced the shutdown and waits for the peer to hang
+// up, only resume()ing "so we can detect the peer closing" (unread inbound
+// bytes, e.g. the peer's own GOAWAY, would otherwise turn our eventual close
+// into an RST the peer reads as ECONNRESET).
+//
+// Everything else is a destroy(), and node hard-destroys the socket once the
+// FIN is out (a tick later, "to try to avoid ECONNRESET on Windows"). That
+// destroy is what releases the connection: destroy() is what timeouts and error
+// handling use against a peer that has stopped responding, and such a peer
+// does not answer the FIN either, so end() alone would keep the socket (and a
+// server's connection count) alive for as long as the peer cares to linger.
+// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/http2/core.js#L1188
+function closeSessionSocket(socket, graceful: boolean, error: Error | undefined) {
+  if (socket.destroyed) return;
+  if (graceful) {
+    socket.resume();
+    socket.end();
+  } else {
+    socket.end(() => setImmediate(destroySessionSocketDelayedNT, socket, error));
+  }
 }
 // node callTimeout (lib/internal/http2/core.js): when the timer expires while writes are still in
 // flight and bytes have reached the wire since the previous expiry, the session is not idle —
@@ -5843,18 +5852,7 @@ class ClientHttp2Session extends Http2Session {
           // a destroy(err) after close() must still put the error GOAWAY on the wire.
           this.goaway(code || constants.NGHTTP2_NO_ERROR, 0, Buffer.alloc(0));
         }
-        if (error) {
-          // See the client session: end first, destroy a tick later (node's
-          // finishSessionClose Windows-ECONNRESET avoidance).
-          endThenDestroySessionSocket(socket, error);
-        } else {
-          // See the client session's destroy: Node's finishSessionClose resumes
-          // the socket on a graceful close so unread inbound bytes cannot turn
-          // the FIN teardown into an RST.
-          // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/http2/core.js#L1188
-          socket.resume();
-          socket.end();
-        }
+        closeSessionSocket(socket, this.#closeCalled && !error, error);
       }
       const parser = this.#parser;
       if (parser) {
@@ -5884,16 +5882,9 @@ class ClientHttp2Session extends Http2Session {
     this.#parser = null;
     this[bunHTTP2Socket] = null;
 
-    // Read-and-clear the frame first: emitting 'error' with no listener throws,
-    // which would skip the clear and leave a retained session pinning the store.
     const asyncFrame = this[bunHTTP2AsyncContextFrame];
     this[bunHTTP2AsyncContextFrame] = undefined;
-    if (error) {
-      runInFrame(asyncFrame, this.emit, this, "error", error);
-    }
-    // node emits the session 'close' event asynchronously (a listener attached right after
-    // close()/destroy() returns must still observe it).
-    process.nextTick(emitSessionCloseNT, this, asyncFrame);
+    emitSessionCloseAfterSocket(this, socket, error, asyncFrame);
   }
 
   request(headers: any, options?: any) {

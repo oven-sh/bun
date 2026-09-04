@@ -1263,6 +1263,13 @@ function emitWebKitDirect(n: Ninja, cfg: Config, ctx: CustomBuildContext): WebKi
     "-fno-strict-aliasing",
     ...(cfg.windows ? [] : ["-gsimple-template-names", "-mllvm", "-dwarf-linkage-names=Abstract"]),
     ...(cfg.windows || cfg.darwin ? [] : ["-fdebug-types-section"]),
+    // ASAN: keep tail-call frames (WebKitCompilerFlags.cmake does the same),
+    // so LeakSanitizer's allocation stacks — and test/leaksan.supp, which
+    // matches JSC frames by name — see every caller.
+    ...(cfg.asan && cfg.unix ? ["-fno-optimize-sibling-calls"] : []),
+    // musl: optimized for size (-Os wins over the dep-global -O level), as
+    // the Alpine builds have always shipped JSC.
+    ...(cfg.abi === "musl" && cfg.release ? ["-Os"] : []),
   ];
   const webkitCxx = [...depFlags.cxxflags, ...webkitCommon, "-std=c++23"];
   const webkitC = [...depFlags.cflags, ...webkitCommon];

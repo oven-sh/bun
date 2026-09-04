@@ -34,21 +34,37 @@ function locateRecords(executable: Buffer) {
   const modulesLength = executable.readUInt32LE(offsetsAt + 12);
   const builtinTableAt = modulesAt + modulesLength + (modulesLength / MODULE_RECORD_SIZE) * 4;
   const builtinCount = executable.readUInt32LE(builtinTableAt);
+  // A serialized source map starts with { u32 file count, u32 map length }, then a pointer to each file name.
+  const sourceMapAt = graphAt + executable.readUInt32LE(modulesAt + 16);
   return {
     flags: executable.readUInt32LE(offsetsAt + 28),
     moduleCount: modulesLength / MODULE_RECORD_SIZE,
+    sourceMapLength: executable.readUInt32LE(modulesAt + 20),
     builtinCount,
     modulesLengthAt: offsetsAt + 12,
     entryPointIdAt: offsetsAt + 16,
     execArgvOffsetAt: offsetsAt + 20,
     firstModuleNameOffsetAt: modulesAt,
     firstModuleContentsLengthAt: modulesAt + 12,
+    firstSourceFileNameOffsetAt: sourceMapAt + 8,
     builtinCountAt: builtinTableAt,
     firstBuiltinOffsetAt: builtinTableAt + 4 + 4,
     bytecodeStringTableOffsetAt: builtinTableAt + 4 + 12 * builtinCount,
   };
 }
 type Records = ReturnType<typeof locateRecords>;
+
+/** Writes only the damaged field. The rest of the file stays as the build wrote it. */
+function writeUInt32At(path: string, position: number, value: number) {
+  const bytes = Buffer.alloc(4);
+  bytes.writeUInt32LE(value);
+  const fd = openSync(path, "r+");
+  try {
+    expect(writeSync(fd, bytes, 0, bytes.length, position)).toBe(bytes.length);
+  } finally {
+    closeSync(fd);
+  }
+}
 
 const cases = [
   {
@@ -140,21 +156,47 @@ test.skipIf(isMacOS).each(cases)(
       hasBuiltinBytecode: records.builtinCount > 0,
     }).toEqual({ flags: expectedFlags, moduleCount: 1, hasBuiltinBytecode: bytecode });
 
-    // Write only the damaged field. The rest of the file stays as the build wrote it.
-    const bytes = Buffer.alloc(4);
-    bytes.writeUInt32LE(value);
-    const fd = openSync(outfile, "r+");
-    try {
-      expect(writeSync(fd, bytes, 0, bytes.length, field(records))).toBe(bytes.length);
-    } finally {
-      closeSync(fd);
-    }
+    writeUInt32At(outfile, field(records), value);
 
     await using proc = Bun.spawn({ cmd: [outfile], env: bunEnv, stdout: "pipe", stderr: "pipe" });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect({ stdout, stderr, exitCode }).toEqual({
       stdout: "",
       stderr: expect.stringContaining(`Corrupted module graph: ${error}`),
+      exitCode: 1,
+    });
+  },
+  60_000,
+);
+
+// The source map is read only when a stack trace prints. A file name that is out of range
+// makes the map absent, so the trace shows the bundled path and not `app.js`.
+test.skipIf(isMacOS)(
+  "a source map file name that starts past the end of the source map makes the map absent",
+  async () => {
+    using dir = tempDir("compile-corrupted-source-map", {
+      "app.js": `throw new Error("thrown by the app");`,
+    });
+    const result = await Bun.build({
+      entrypoints: [join(String(dir), "app.js")],
+      compile: { outfile: join(String(dir), "app") },
+      sourcemap: "inline",
+    });
+    expect(result.success).toBe(true);
+    const outfile = result.outputs.find(output => output.kind === "entry-point")!.path;
+
+    const records = locateRecords(Buffer.from(await Bun.file(outfile).arrayBuffer()));
+    expect({ moduleCount: records.moduleCount, hasSourceMap: records.sourceMapLength > 0 }).toEqual({
+      moduleCount: 1,
+      hasSourceMap: true,
+    });
+    writeUInt32At(outfile, records.firstSourceFileNameOffsetAt, 0x7ffffff0);
+
+    await using proc = Bun.spawn({ cmd: [outfile], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({
+      stdout: "",
+      stderr: expect.stringMatching(/thrown by the app[\s\S]*(\$bunfs|~BUN)\/root\/app/),
       exitCode: 1,
     });
   },

@@ -770,6 +770,8 @@ impl LazySourceMap {
                 // Note: `from_internal` fills `internal = Some(ism)` +
                 // `input_line_count = ism.input_line_count()` and defaults the rest.
                 let mut stored = SourceMap::ParsedSourceMap::from_internal(ism);
+                // The blob is in the executable, so no drop of `stored` may free it, not even the early return below.
+                stored.is_standalone_module_graph = true;
 
                 let source_files_count = serialized.source_files_count();
                 // PERF: `external_source_names` is `Vec<Box<[u8]>>` so we
@@ -812,7 +814,6 @@ impl LazySourceMap {
                 stored.underlying_provider = SourceMap::SourceContentPtr::from_provider(
                     bun_core::heap::into_raw(data).cast::<SourceMap::SourceProviderMap>(),
                 );
-                stored.is_standalone_module_graph = true;
 
                 let parsed = Arc::new(stored);
                 // The Arc clone held in self keeps the parsed map alive.

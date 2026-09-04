@@ -1463,8 +1463,12 @@ impl Run<'_> {
             Err(err) => entry_point_load_failed(vm, &err.into()),
         }
 
-        // don't run the GC if we don't actually need to
-        if vm.is_event_loop_alive() || vm.event_loop_ref().tick_concurrent_with_count() > 0 {
+        // Drop what transpiling and linking the entry graph left behind before settling into the event loop. A
+        // standalone executable has no transpiler garbage, and its unlinked code blocks came from the embedded bytecode
+        // cache — deleting them here only means decoding them again on first call — so leave its heap to the collector.
+        if vm.standalone_module_graph.is_none()
+            && (vm.is_event_loop_alive() || vm.event_loop_ref().tick_concurrent_with_count() > 0)
+        {
             vm.global().vm().release_weak_refs();
             // `bun_alloc::Arena` has no per-heap collect to run alongside this
             // GC; it would only be a memory-usage hint, not correctness.

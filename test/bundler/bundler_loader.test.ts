@@ -407,9 +407,12 @@ describe("bundler", async () => {
     },
   });
 
-  const moon = await Bun.file(
-    fileURLToPath(import.meta.resolve("../js/bun/util/text-loader-fixture-text-file.backslashes.txt")),
-  ).text();
+  // (a Windows checkout may have given the fixture CRLF line endings; the harness compares LF-normalized output)
+  const moon = (
+    await Bun.file(
+      fileURLToPath(import.meta.resolve("../js/bun/util/text-loader-fixture-text-file.backslashes.txt")),
+    ).text()
+  ).replaceAll("\r\n", "\n");
 
   // https://github.com/oven-sh/bun/issues/3449
   itBundled("bun/loader-text-file-#3449", {

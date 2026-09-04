@@ -22,8 +22,7 @@ use crate::run_command::{ConfigureEnvOptions, RunCommand};
 #[cfg(unix)]
 use crate::api::bun::process::SpawnResultExt as _;
 use crate::api::bun::process::{
-    self as spawn, Process, Rusage, SpawnOptions, SpawnProcessResult, Status,
-    event_loop_handle_to_ctx,
+    self as spawn, Rusage, SpawnOptions, SpawnProcessResult, Status, event_loop_handle_to_ctx,
 };
 use bun_collections::index_sort;
 use bun_dotenv::Loader as DotEnvLoader;
@@ -104,9 +103,7 @@ bun_io::impl_buffered_reader_parent! {
 }
 
 struct ProcessSlot {
-    /// Intrusively ref-counted; allocated via `heap::alloc` in
-    /// `PosixSpawnResult::to_process`. Freed via `Process::deref`.
-    ptr: *mut Process,
+    process: spawn::ProcessHandle,
     status: Status,
     start_time: Instant,
     /// Set together with `status` when the exit arrives.
@@ -193,7 +190,7 @@ impl<'a> ProcessHandle<'a> {
         let stdout_fd = spawned.stdout;
         #[cfg(unix)]
         let stderr_fd = spawned.stderr;
-        let process = spawned.to_process(EventLoopHandle::init_mini(state.event_loop));
+        let process = spawned.to_process_handle(EventLoopHandle::init_mini(state.event_loop));
 
         self.stdout_reader.handle = std::ptr::from_mut(self);
         self.stderr_reader.handle = std::ptr::from_mut(self);
@@ -256,21 +253,20 @@ impl<'a> ProcessHandle<'a> {
         }
 
         self.process = Some(ProcessSlot {
-            ptr: process,
+            process,
             status: Status::Running,
             start_time,
             end_time: None,
         });
-        // SAFETY: `process` was just allocated by `to_process` (heap::alloc);
-        // owner backref set before any reap callback can fire.
-        let process = unsafe { &mut *process };
+        let self_ptr = std::ptr::from_mut::<Self>(self);
+        // The exit handler re-borrows `self.process`, so go through the
+        // `Process` allocation itself rather than a borrow of the slot.
+        // SAFETY: just spawned; the slot's handle keeps it live.
+        let process = unsafe { &mut *self.process.as_ref().unwrap().process.as_ptr() };
         // SAFETY: `self` is the live `ProcessHandle` slot in `State.handles`;
         // it lives for the whole event loop and outlives `process`.
         process.set_exit_handler(unsafe {
-            bun_spawn::ProcessExit::new(
-                bun_spawn::ProcessExitKind::MultiRunHandle,
-                std::ptr::from_mut::<Self>(self),
-            )
+            bun_spawn::ProcessExit::new(bun_spawn::ProcessExitKind::MultiRunHandle, self_ptr)
         });
 
         match process.watch_or_reap() {
@@ -580,9 +576,7 @@ impl<'a> State<'a> {
             // SAFETY: points into `self.handles`, live for the whole run loop.
             if let Some(proc) = unsafe { (*handle).process.as_ref() } {
                 if matches!(proc.status, Status::Running) {
-                    // SAFETY: proc.ptr is a live intrusively-ref-counted Process
-                    // allocated in `ProcessHandle::start`.
-                    let _ = unsafe { (*proc.ptr).kill(bun_sys::SignalCode::SIGINT.0) };
+                    let _ = proc.process.kill(bun_sys::SignalCode::SIGINT.0);
                 }
             }
             // An already-exited handle may be waiting on pipes a grandchild
@@ -969,15 +963,7 @@ pub(crate) fn run(ctx: &mut Command::ContextData) -> Result<core::convert::Infal
                 &package.dir,
                 run_in_bun,
             )?;
-            let pkg_name: Box<[u8]> = if !package.json.name.is_empty() {
-                Box::<[u8]>::from(&package.json.name[..])
-            } else {
-                // Fallback: use relative path from workspace root
-                Box::from(bun_paths::resolve_path::relative_platform::<
-                    bun_paths::resolve_path::platform::Posix,
-                    false,
-                >(resolve_root, &package.dir))
-            };
+            let pkg_name = package.display_name(resolve_root);
 
             matched_packages.push(MatchedPackage {
                 name: pkg_name,
@@ -1046,20 +1032,8 @@ pub(crate) fn run(ctx: &mut Command::ContextData) -> Result<core::convert::Infal
             if ctx.if_present {
                 Global::exit(0);
             }
-            if ctx.workspaces {
-                bun_core::pretty_errorln!(
-                    "<r><red>error<r>: No workspace packages have matching scripts"
-                );
-            } else {
-                let patterns: Vec<&[u8]> = ctx.filters.iter().map(|f| &**f).collect();
-                Output::err_generic(
-                    "{}",
-                    (bstr::BStr::new(&workspace_selection::unmatched_message(
-                        &patterns,
-                    )),),
-                );
-            }
-            Global::exit(1);
+            let names: Vec<&[u8]> = script_names.iter().map(|n| &**n).collect();
+            selected.error_script_not_found(ctx, &workspace_selection::quote_patterns(&names));
         }
     } else {
         // Single-package mode: use the root package.json

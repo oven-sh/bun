@@ -58,6 +58,7 @@ pub mod timer;
 macro_rules! impl_timer_object {
     ($T:ident, $tag:ident, $js_name:literal) => {
         #[::bun_jsc::JsClass(name = $js_name)]
+        #[derive(::bun_ptr::RefCounted)]
         pub struct $T {
             pub ref_count: ::bun_ptr::RefCount<Self>,
             pub event_loop_timer: super::EventLoopTimer,
@@ -66,18 +67,10 @@ macro_rules! impl_timer_object {
 
         ::bun_event_loop::impl_timer_owner!($T; from_timer_ptr => event_loop_timer);
 
-        // Intrusive single-thread refcount mixin.
-        impl ::bun_ptr::RefCounted for $T {
-            #[inline]
-            unsafe fn get_ref_count(this: *mut Self) -> *mut ::bun_ptr::RefCount<Self> {
-                // SAFETY: caller contract — `this` points to a live `Self`.
-                unsafe { &raw mut (*this).ref_count }
-            }
-            #[inline]
-            unsafe fn destructor(this: *mut Self) {
-                // SAFETY: `raw_count == 0` ⇒ unique ownership; `deinit`
-                // consumes the `heap::alloc`'d allocation from `init_with()`.
-                unsafe { Self::deinit(this) }
+        impl ::core::ops::Drop for $T {
+            fn drop(&mut self) {
+                // SAFETY: last ref gone; JS thread with RuntimeState installed.
+                unsafe { self.internals.deinit() }
             }
         }
 
@@ -109,9 +102,8 @@ macro_rules! impl_timer_object {
                 unsafe { ::bun_ptr::RefCount::<Self>::ref_(this) }
             }
 
-            /// Decrement the intrusive refcount; on zero runs `deinit` (drops
-            /// `internals`, frees the `Box`). After this returns `this` may
-            /// dangle.
+            /// Decrement the intrusive refcount; on zero drops the `Box`.
+            /// After this returns `this` may dangle.
             ///
             /// # Safety
             /// `this` must point to a live, `heap::alloc`-allocated `Self`.
@@ -167,20 +159,6 @@ macro_rules! impl_timer_object {
                 js_value
             }
 
-            /// Called via `RefCounted::destructor` when the refcount reaches
-            /// zero. Not `impl Drop`: this fn frees the backing `Box` itself.
-            ///
-            /// # Safety
-            /// `this` must be the unique owner (refcount == 0) of a
-            /// `heap::alloc`'d `Self`.
-            unsafe fn deinit(this: *mut Self) {
-                // SAFETY: refcount has reached zero ⇒ unique reference.
-                unsafe {
-                    (*this).internals.deinit();
-                    drop(::bun_core::heap::take(this));
-                }
-            }
-
             // C-ABI shim (`${name}Class__construct`) is emitted by
             // `#[bun_jsc::JsClass]` via `host_fn_construct_result`; do not also
             // annotate with `#[host_fn]` here.
@@ -227,13 +205,8 @@ macro_rules! impl_timer_object {
                 this.internals.has_ref()
             }
 
-            /// `.classes.ts` `finalize: true` — runs on the mutator thread
-            /// during lazy sweep. Do not touch any `JSValue`/`Strong` content.
-            pub fn finalize(self: ::std::boxed::Box<Self>) {
-                // Refcounted via `internals`: `internals.finalize()` derefs the
-                // intrusive count; allocation may outlive this call if other
-                // refs remain, so hand ownership back to the raw refcount.
-                ::bun_core::heap::release(self).internals.finalize()
+            pub fn finalize(&self) {
+                self.internals.finalize()
             }
 
             #[::bun_jsc::host_fn(getter)]

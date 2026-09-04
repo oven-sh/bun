@@ -111,11 +111,6 @@ impl HTMLBundle {
         })
     }
 
-    /// `.classes.ts` finalize: true — runs on mutator thread during lazy sweep.
-    pub fn finalize(self: Box<Self>) {
-        bun_ptr::finalize_js_box_noop(self);
-    }
-
     pub(crate) fn get_index(this: &Self, global: &JSGlobalObject) -> JsResult<JSValue> {
         bun_string_jsc::create_utf8_for_js(global, &this.path)
     }

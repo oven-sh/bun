@@ -161,7 +161,7 @@ impl<'a> Builtins<'a> {
         (0..self.count).find(|&id| self.module(id).is_some_and(|m| m.name == name))
     }
 
-    /// The modules `id` requires while it is being evaluated.
+    /// The modules `id` can require: at evaluation or later, from a lazy `require()` inside one of its functions.
     pub fn dependencies(&self, id: u32) -> impl Iterator<Item = u32> + 'a {
         let (start, end) = if id < self.count {
             (

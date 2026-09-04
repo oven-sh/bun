@@ -528,6 +528,47 @@ it.skipIf(isWindows || isMacOS)("handles filenames containing byte 0xFF", () => 
   expect(routes).toContain("/ab");
 });
 
+it("src is relative to dir when no origin is given", () => {
+  const { dir } = make(["index.tsx", "posts/[id].tsx"]);
+
+  for (const opts of [{}, { assetPrefix: "/_next/static/" }]) {
+    const router = new Bun.FileSystemRouter({ dir, style: "nextjs", ...opts });
+    expect({
+      index: router.match("/")!.src,
+      post: router.match("/posts/hello-world")!.src,
+    }).toEqual({
+      index: "index.tsx",
+      post: "posts/[id].tsx",
+    });
+  }
+});
+
+// The 0xFF byte is not valid UTF-8, so the JS string gets U+FFFD in its place.
+it.skipIf(isWindows || isMacOS)("src replaces invalid UTF-8 in the route path with U+FFFD", () => {
+  using dir = tempDir("fsr-src-byte-ff", {});
+  fs.writeFileSync(
+    Buffer.concat([Buffer.from(String(dir) + "/a"), Buffer.from([0xff]), Buffer.from(".tsx")]),
+    "export default 1;\n",
+  );
+
+  const relative = new Bun.FileSystemRouter({ dir: String(dir), style: "nextjs", fileExtensions: [".tsx"] });
+  const absolute = new Bun.FileSystemRouter({
+    dir: String(dir),
+    style: "nextjs",
+    fileExtensions: [".tsx"],
+    assetPrefix: "/_next/static/",
+    origin: "https://example.com",
+  });
+
+  expect({
+    relative: relative.match("/a%FF")!.src,
+    absolute: absolute.match("/a%FF")!.src,
+  }).toEqual({
+    relative: "a\uFFFD.tsx",
+    absolute: "https://example.com/_next/static/a\uFFFD.tsx",
+  });
+});
+
 it("MatchedRoute.params does not leak", async () => {
   using dir = tempDir("fsr-params-leak", {
     "pages/[a]/[b]/[c]/[d].tsx": "export default 1;",

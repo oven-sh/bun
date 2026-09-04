@@ -946,12 +946,31 @@ pub(crate) fn defines_from_transform_options(
 
     let drop_debugger = drop.iter().any(|item| *item == b"debugger");
 
-    Ok(defines::Define::init(
+    let user_hash = defines::Define::hash_user_inputs(
+        user_defines
+            .keys()
+            .iter()
+            .zip(user_defines.values().iter())
+            .map(|(k, v)| (k.as_ref(), v.as_ref())),
+        environment_defines
+            .keys()
+            .iter()
+            .zip(environment_defines.values().iter())
+            .filter_map(|(k, v)| match &v.value {
+                defines::DefineValue::EString(s) if s.is_utf8() => Some((k.as_ref(), s.slice8())),
+                _ => None,
+            }),
+        drop.iter().copied(),
+    );
+
+    let mut define = defines::Define::init(
         Some(resolved_defines),
         Some(environment_defines),
         drop_debugger,
         omit_unused_global_calls,
-    )?)
+    )?;
+    define.user_hash = user_hash;
+    Ok(define)
 }
 
 const DEFAULT_LOADER_EXT_BUN: &[&[u8]] = &[b".node", b".html"];
@@ -1300,10 +1319,17 @@ pub struct BundleOptions<'a> {
     /// Code splitting: also fold side-effect-free chunks whose source is
     /// smaller than this many bytes into a chunk more entry points load.
     /// 0 disables that; chunks with identical load conditions always fold.
-    pub min_chunk_size: u64,
+    /// `None` picks `default_min_chunk_size(target)`.
+    pub min_chunk_size: Option<u64>,
+    /// `<link rel=modulepreload>` for split browser chunks (HTML + `import()`).
+    pub module_preload: bool,
 
     pub ignore_dce_annotations: bool,
     pub emit_dce_annotations: bool,
+    /// Namespace objects (`import *`, `export * as`) get a setter per export so
+    /// assigning to them is silently accepted instead of throwing. Deprecated;
+    /// off makes them getter-only like real module namespace objects.
+    pub deprecated_namespace_object_setters: bool,
     pub bytecode: bool,
     /// How many levels of nested functions get bytecode (`u32::MAX` = all; 0 = only each module's top level).
     pub bytecode_depth: u32,
@@ -1314,6 +1340,8 @@ pub struct BundleOptions<'a> {
     pub debugger: bool,
 
     pub compile_mode: CompileMode,
+    /// `--compile`: the name of the entry point's chunk, `/$bunfs/root/<name>` in the executable.
+    pub compile_entry_point_name: Box<[u8]>,
     pub metafile: bool,
     /// Path to write JSON metafile (for Bun.build API)
     pub metafile_json_path: Box<[u8]>,
@@ -1413,7 +1441,9 @@ impl<'a> BundleOptions<'a> {
             define: Box::new(defines::Define {
                 identifiers: self.define.identifiers.clone(),
                 dots: self.define.dots.clone(),
+                dots_filter: self.define.dots_filter.clone(),
                 drop_debugger: self.define.drop_debugger,
+                user_hash: self.define.user_hash,
             }),
             drop: self.drop.clone(),
             bundler_feature_flags: self
@@ -1498,14 +1528,17 @@ impl<'a> BundleOptions<'a> {
             repl_mode: self.repl_mode,
             css_chunking: self.css_chunking,
             min_chunk_size: self.min_chunk_size,
+            module_preload: self.module_preload,
             ignore_dce_annotations: self.ignore_dce_annotations,
             emit_dce_annotations: self.emit_dce_annotations,
+            deprecated_namespace_object_setters: self.deprecated_namespace_object_setters,
             bytecode: self.bytecode,
             bytecode_depth: self.bytecode_depth,
             compile_target_builtins: self.compile_target_builtins.clone(),
             code_coverage: self.code_coverage,
             debugger: self.debugger,
             compile_mode: self.compile_mode,
+            compile_entry_point_name: self.compile_entry_point_name.clone(),
             metafile: self.metafile,
             metafile_json_path: self.metafile_json_path.clone(),
             metafile_markdown_path: self.metafile_markdown_path.clone(),
@@ -1663,11 +1696,7 @@ impl<'a> BundleOptions<'a> {
             log,
             // `define` is filled by `load_defines` later;
             // initialize empty so the struct is well-formed before `load_defines` runs.
-            define: Box::new(defines::Define {
-                identifiers: Default::default(),
-                dots: Default::default(),
-                drop_debugger: false,
-            }),
+            define: Box::new(defines::Define::default()),
             loaders,
             output_dir: Box::from(transform.output_dir.as_deref().unwrap_or(b"out")),
             target,
@@ -1678,7 +1707,8 @@ impl<'a> BundleOptions<'a> {
             env: Env::default(),
             transform_options: std::sync::Arc::clone(&transform),
             css_chunking: false,
-            min_chunk_size: 0,
+            min_chunk_size: None,
+            module_preload: true,
             drop: transform.drop.clone().into_boxed_slice(),
             bundler_feature_flags,
 
@@ -1748,12 +1778,14 @@ impl<'a> BundleOptions<'a> {
             repl_mode: false,
             ignore_dce_annotations: false,
             emit_dce_annotations: false,
+            deprecated_namespace_object_setters: true,
             bytecode: false,
             bytecode_depth: u32::MAX,
             compile_target_builtins: CompileTargetBuiltins::Host,
             code_coverage: false,
             debugger: false,
             compile_mode: CompileMode::None,
+            compile_entry_point_name: Box::default(),
             metafile: false,
             metafile_json_path: Box::default(),
             metafile_markdown_path: Box::default(),
@@ -2476,4 +2508,13 @@ impl From<PathTemplateConst> for PathTemplate {
             },
         }
     }
+}
+
+/// `--min-chunk-size` when none was given: off for now. In a browser every
+/// chunk is a request and what an entry point can gain is bounded (see
+/// `merge_small_chunks`), so `Target::Browser` is meant to default to 16 KiB
+/// once the pass has shipped opt-in for a release or two.
+pub fn default_min_chunk_size(target: Target) -> u64 {
+    let _ = target;
+    0
 }

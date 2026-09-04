@@ -62,16 +62,27 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     }
 
     pub(crate) fn record_declared_symbol(&mut self, r#ref: Ref) {
+        self.record_declared_symbol_in(r#ref, false);
+    }
+
+    /// `own_scope`: the name of a function or class expression, bound in the
+    /// expression's own scope rather than the one being visited.
+    pub(crate) fn record_declared_symbol_in(&mut self, r#ref: Ref, own_scope: bool) {
         debug_assert!(r#ref.is_symbol());
         self.declared_symbols
             .append(bun_ast::DeclaredSymbol {
                 ref_: r#ref,
-                is_top_level: self.current_scope == self.module_scope,
+                is_top_level: !own_scope && self.current_scope == self.module_scope,
             })
             .expect("oom");
     }
 
-    pub(crate) fn visit_func(&mut self, mut func: G::Fn, open_parens_loc: bun_ast::Loc) -> G::Fn {
+    pub(crate) fn visit_func(
+        &mut self,
+        mut func: G::Fn,
+        open_parens_loc: bun_ast::Loc,
+        is_expr: bool,
+    ) -> G::Fn {
         debug_assert!(
             !SCAN_ONLY,
             "only_scan_imports_and_do_not_visit must not run this."
@@ -89,7 +100,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         if let Some(name) = func.name {
             if let Some(name_ref) = name.ref_.to_nullable() {
-                self.record_declared_symbol(name_ref);
+                self.record_declared_symbol_in(name_ref, is_expr);
                 let symbol_name = self.load_name_from_ref(name_ref);
                 if is_eval_or_arguments(symbol_name) {
                     self.mark_strict_mode_feature(
@@ -173,6 +184,23 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             loc: body_loc,
         };
 
+        // A sloppy-mode function with a simple parameter list has a mapped
+        // `arguments` object: `arguments[0] = v` rebinds the first parameter.
+        if !self.is_strict_mode()
+            && func.arguments_ref.is_valid()
+            && self.symbols[func.arguments_ref.inner_index() as usize].use_count_estimate > 0
+            && Self::is_simple_parameter_list(
+                func.args.slice(),
+                func.flags.contains(flags::Function::HasRestArg),
+            )
+        {
+            for arg in func.args.slice() {
+                if let BData::BIdentifier(id) = arg.binding.data {
+                    self.record_assignment(id.r#ref);
+                }
+            }
+        }
+
         self.pop_scope();
         self.pop_scope();
 
@@ -240,8 +268,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     pub(crate) fn visit_decls<const IS_POSSIBLY_DECL_TO_REMOVE: bool>(
         &mut self,
         decls: &mut [G::Decl],
-        was_const: bool,
+        kind: LocalKind,
+        is_export: bool,
     ) -> usize {
+        let was_const = kind == LocalKind::KConst;
         let mut j: usize = 0;
         // Iterate by index so kept entries can be written back through `decls[j]`
         // while scanning ahead.
@@ -367,6 +397,168 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 }
                             }
                         }
+                    }
+                }
+
+                // `const|let|var <binding> = await import("str")` — record which
+                // exports of the importee are observed so the linker can drop
+                // the rest from its namespace. The statement is left as written.
+                'dyn_import_await: {
+                    if !self.options.bundle {
+                        break 'dyn_import_await;
+                    }
+                    // `await import(x)`, or a local already holding a tracked
+                    // namespace (`const ns = await import(x); const { a } = ns`).
+                    let (namespace_ref, records): (_, Vec<u32>) = match val.data {
+                        ExprData::EAwait(aw) => match aw.value.data {
+                            ExprData::EImport(im) if im.namespace_ref.is_valid() => {
+                                (im.namespace_ref, vec![im.import_record_index])
+                            }
+                            _ => break 'dyn_import_await,
+                        },
+                        ExprData::EIdentifier(id) => {
+                            match self.dynamic_import_namespace_locals.get(&id.ref_) {
+                                Some(records) if matches!(decl.binding.data, BData::BObject(_)) => {
+                                    (id.ref_, records.clone())
+                                }
+                                _ => break 'dyn_import_await,
+                            }
+                        }
+                        _ => break 'dyn_import_await,
+                    };
+                    match decl.binding.data {
+                        BData::BObject(obj) => {
+                            if self
+                                .try_track_dynamic_import_destructure(
+                                    namespace_ref,
+                                    &records,
+                                    obj.properties(),
+                                    is_export,
+                                )
+                                .is_some()
+                            {
+                                self.note_tracked_namespace_use(namespace_ref);
+                                // Another `var` declaration is the same variable.
+                                if kind != LocalKind::KVar && !is_export {
+                                    self.note_destructured_locals(obj.properties());
+                                }
+                            }
+                        }
+                        // `var ns` redeclaration resolves to the same ref;
+                        // accesses after the second decl would be tracked
+                        // against the FIRST decl's record.
+                        BData::BIdentifier(id) if kind != LocalKind::KVar && !is_export => {
+                            let local = id.r#ref;
+                            if self.import_items_for_namespace.contains_key(&local) {
+                                break 'dyn_import_await;
+                            }
+                            self.register_dynamic_import_namespace_local_multi(
+                                local,
+                                decl.binding.loc,
+                                &records,
+                            );
+                            self.note_tracked_namespace_use(namespace_ref);
+                        }
+                        _ => {}
+                    }
+                }
+
+                // `const ns = cond ? require("./a") : null` — a local bound to one
+                // of several namespaces (or nothing).
+                'conditional: {
+                    if !self.options.bundle || is_export || kind == LocalKind::KVar {
+                        break 'conditional;
+                    }
+                    let (ExprData::EIf(_), BData::BIdentifier(id)) = (val.data, decl.binding.data)
+                    else {
+                        break 'conditional;
+                    };
+                    let mut records = Vec::new();
+                    if self
+                        .conditional_namespace_records(val, &mut records)
+                        .is_none()
+                    {
+                        // `await import()` branches already consumed above must escape.
+                        for r in records {
+                            self.dynamic_import_escaped_records.insert(r, ());
+                        }
+                        break 'conditional;
+                    }
+                    // `ns.a` can't become `a`: `ns` may be null.
+                    for &r in &records {
+                        self.dynamic_import_needs_object.insert(r, ());
+                    }
+                    if !records.is_empty()
+                        && !self.import_items_for_namespace.contains_key(&id.r#ref)
+                    {
+                        self.register_dynamic_import_namespace_local_multi(
+                            id.r#ref,
+                            decl.binding.loc,
+                            &records,
+                        );
+                    }
+                }
+
+                // `const [{a}, ns] = await Promise.all([import("a"), import("b")])`
+                'promise_all: {
+                    if !self.options.bundle || is_export || kind == LocalKind::KVar {
+                        break 'promise_all;
+                    }
+                    let ExprData::EAwait(aw) = val.data else {
+                        break 'promise_all;
+                    };
+                    let ExprData::ECall(call) = aw.value.data else {
+                        break 'promise_all;
+                    };
+                    let BData::BArray(pattern) = decl.binding.data else {
+                        break 'promise_all;
+                    };
+                    let Some(items) = self.promise_all_import_items(&call) else {
+                        break 'promise_all;
+                    };
+                    self.track_promise_all_destructure(items, &pattern);
+                }
+
+                // `const {x} = require("str")` / `const ns = require("str")`
+                'split_require: {
+                    let ExprData::ERequireString(req) = val.data else {
+                        break 'split_require;
+                    };
+                    match decl.binding.data {
+                        BData::BObject(obj) => {
+                            let Some(ns) = self.require_namespace_ref(req) else {
+                                break 'split_require;
+                            };
+                            if self
+                                .try_track_dynamic_import_destructure(
+                                    ns,
+                                    &[req.import_record_index],
+                                    obj.properties(),
+                                    is_export,
+                                )
+                                .is_none()
+                            {
+                                self.dynamic_import_escaped_records
+                                    .insert(req.import_record_index, ());
+                            } else if kind != LocalKind::KVar && !is_export {
+                                self.note_destructured_locals(obj.properties());
+                            }
+                        }
+                        BData::BIdentifier(id) if kind != LocalKind::KVar && !is_export => {
+                            let local = id.r#ref;
+                            if self.import_items_for_namespace.contains_key(&local)
+                                || !self.options.bundle
+                                || req.unwrapped_id.get().is_some()
+                            {
+                                break 'split_require;
+                            }
+                            self.register_dynamic_import_namespace_local(
+                                local,
+                                decl.binding.loc,
+                                req.import_record_index,
+                            );
+                        }
+                        _ => {}
                     }
                 }
 
@@ -781,6 +973,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         name_scope_loc: bun_ast::Loc,
         class: &mut G::Class,
         default_name_ref: Ref,
+        is_expr: bool,
     ) -> Ref {
         debug_assert!(
             !SCAN_ONLY,
@@ -790,7 +983,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         self.visit_ts_decorators(&mut class.ts_decorators);
 
         if let Some(name) = class.class_name {
-            self.record_declared_symbol(name.ref_);
+            self.record_declared_symbol_in(name.ref_, is_expr);
         }
 
         self.push_scope_for_visit_pass(ScopeKind::ClassName, name_scope_loc)
@@ -812,16 +1005,16 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             let original_name: &'a [u8] = self.symbols[name_ref.inner_index() as usize]
                 .original_name
                 .slice();
-            self.vis_scope()
-                .members
-                .put(
+            // SAFETY: `original_name` is an AST-arena slice.
+            unsafe {
+                self.vis_scope().members.put(
                     original_name,
                     ScopeMember {
                         ref_: name.ref_,
                         loc: name.loc,
                     },
                 )
-                .expect("oom");
+            };
             name_ref
         } else {
             let name_str: &'a [u8] = if default_name_ref.is_empty() {
@@ -891,7 +1084,17 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     };
                     self.record_declared_symbol(priv_ref);
                 } else if let Some(key) = property.key.as_mut() {
+                    // Lowering may move a field's computed key into the
+                    // constructor along with its initializer.
+                    let is_field = !property.flags.contains(flags::Property::IsMethod);
+                    if is_field {
+                        let class_body = self.current_scope;
+                        self.field_init_class_bodies.push(class_body);
+                    }
                     self.visit_expr(key);
+                    if is_field {
+                        self.field_init_class_bodies.pop();
+                    }
                 }
 
                 // Make it an error to use "arguments" in a class body
@@ -970,7 +1173,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 }
 
                 if let Some(val) = property.initializer {
-                    // if (property.flags.is_static and )
+                    let class_body = self.current_scope;
+                    self.field_init_class_bodies.push(class_body);
                     if let Some(name) = name_to_keep {
                         let was_anon = val.is_anonymous_named();
                         let prev_dcn2 = self.decorator_class_name;
@@ -989,6 +1193,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     } else {
                         self.visit_expr(property.initializer.as_mut().unwrap());
                     }
+                    self.field_init_class_bodies.pop();
                 }
 
                 // manual restore for the two `defer`s above
@@ -1127,6 +1332,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                         target: this_target,
                                         index: key,
                                         optional_chain: None,
+                                        is_import_property_use: false,
                                     },
                                     key.loc,
                                 ),
@@ -1729,6 +1935,15 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     if symbol.use_count_estimate == 1
                         && p.substitute_single_use_symbol_in_stmt(stmt, id, replacement)
                     {
+                        // `const ns = await import(x); return ns` — the single use just
+                        // moved into `replacement`; unless it was an accounted-for read
+                        // (`f(ns.a)`), the namespace escapes there.
+                        if p.dynamic_import_namespace_locals.contains_key(&id)
+                            && p.namespace_tracked_uses.get(&id).copied().unwrap_or(0) == 0
+                        {
+                            // Read as "more uses than accounted for" when finalizing.
+                            p.namespace_tracked_uses.insert(id, u32::MAX);
+                        }
                         match local.decls.len_u32() {
                             1 => {
                                 local.decls.clear();

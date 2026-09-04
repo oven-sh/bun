@@ -4,7 +4,16 @@ pub use crate::posix::S;
 
 #[repr(u16)]
 #[derive(
-    Copy, Clone, Eq, PartialEq, Hash, Debug, strum::IntoStaticStr, strum::EnumString, enum_map::Enum,
+    Copy,
+    Clone,
+    Eq,
+    PartialEq,
+    Hash,
+    Debug,
+    strum::IntoStaticStr,
+    strum::EnumString,
+    strum::FromRepr,
+    enum_map::Enum,
 )]
 pub enum SystemErrno {
     SUCCESS = 0,
@@ -105,10 +114,12 @@ pub enum SystemErrno {
     ENOTRECOVERABLE = 95,
     EOWNERDEAD = 96,
     EINTEGRITY = 97,
+    /// Not a kernel errno: the `from_raw` result for an undeclared code.
+    EUNKNOWN = 98,
 }
 
 impl SystemErrno {
-    pub const MAX: u16 = 98;
+    pub const MAX: u16 = 99;
 
     /// On FreeBSD `ENOTSUP` is not a distinct errno; libc aliases it to
     /// `EOPNOTSUPP` (45). Provide the alias so cross-platform call sites that

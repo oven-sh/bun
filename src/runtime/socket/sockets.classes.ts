@@ -1,4 +1,4 @@
-import { define } from "../../codegen/class-definitions";
+import { define } from "../../codegen/class-definitions.ts";
 
 function generate(ssl) {
   return define({
@@ -246,7 +246,7 @@ function generate(ssl) {
       },
       ...(ssl ? sslOnly : {}),
     },
-    finalize: true,
+    refCounted: true,
     construct: true,
     klass: {},
   });
@@ -490,7 +490,7 @@ export default [
     name: "BlockList",
     construct: true,
     call: false,
-    finalize: true,
+    refCounted: true,
     estimatedSize: true,
     // inspectCustom: true,
     structuredClone: { transferable: false, tag: 251, storable: false },

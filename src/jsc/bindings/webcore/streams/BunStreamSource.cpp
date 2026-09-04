@@ -915,8 +915,14 @@ static JSValue rsisSinkEnd(JSC::VM& vm, JSGlobalObject* globalObject, JSReadStre
     return invokeMethod(vm, globalObject, op->m_sink.get(), builtinNames(vm).endPublicName(), noArgs);
 }
 
+// The source failed with `error`, which can be falsy (`controller.error()` with no reason). A native
+// sink gets the failure directly: its JS close(error) reads a falsy argument as a clean close.
 static void rsisSinkClose(JSC::VM& vm, JSGlobalObject* globalObject, JSObject* sink, JSValue error)
 {
+    if (auto* controller = dynamicDowncast<WebCore::JSReadableSinkControllerBase>(sink)) {
+        WebCore::closeSinkControllerWithError(globalObject, controller, error);
+        return;
+    }
     MarkedArgumentBuffer args;
     args.append(error);
     ASSERT(!args.hasOverflowed());

@@ -1,4 +1,6 @@
+import { mkdirSync, writeFileSync } from "fs";
 import { join, resolve } from "path";
+import { createHashTable } from "./create-hash-table.ts";
 
 const classes = [
   "ArrayBufferSink",
@@ -218,6 +220,10 @@ protected:
 JSObject* createJSSinkPrototype(JSC::VM& vm, JSC::JSGlobalObject* globalObject, WebCore::SinkID sinkID);
 JSObject* createJSSinkControllerPrototype(JSC::VM& vm, JSC::JSGlobalObject* globalObject, WebCore::SinkID sinkID);
 Structure* createJSSinkControllerStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, WebCore::SinkID sinkID);
+// readStreamIntoSink's close for a failed source: \`error\` reaches the sink
+// whatever its value. The controller's JS close(error) reads a falsy argument
+// as a clean close instead.
+void closeSinkControllerWithError(JSC::JSGlobalObject*, JSReadableSinkControllerBase*, JSC::JSValue error);
 } // namespace WebCore
 `;
   var templ = outer;
@@ -368,18 +374,13 @@ size_t ${controller}::estimatedSize(JSCell* cell, JSC::VM& vm) {
     return Base::estimatedSize(cell, vm) + ${controller}::memoryCost(uncheckedDowncast<${controller}>(cell)->wrapped());
 }
 
-JSC_DECLARE_HOST_FUNCTION(${controller}__close);
-JSC_DEFINE_HOST_FUNCTION(${controller}__close, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame *callFrame))
+// The body of the controller's close(). \`reason\` is the empty value for a
+// clean close; any other value, undefined included, tells the sink its
+// source failed with that reason.
+static JSC::EncodedJSValue ${controller}__closeWithReason(JSC::JSGlobalObject* lexicalGlobalObject, WebCore::${controller}* controller, JSC::EncodedJSValue reason)
 {
-    
     auto& vm = lexicalGlobalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
-    Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
-    WebCore::${controller}* controller = dynamicDowncast<WebCore::${controller}>(callFrame->thisValue());
-    if (!controller) {
-        scope.throwException(globalObject, JSC::createTypeError(globalObject, "Expected ${controller}"_s));
-        return JSC::JSValue::encode(JSC::jsUndefined());
-    }
 
     void *ptr = controller->wrapped();
     if (ptr == nullptr) {
@@ -394,10 +395,7 @@ JSC_DEFINE_HOST_FUNCTION(${controller}__close, (JSC::JSGlobalObject * lexicalGlo
     ${name}__controllerDetached(ptr, JSC::JSValue::encode(controller));
     controller->m_sinkPtr = nullptr;
 
-    // A failed source closes with its error (possibly undefined); a clean
-    // close passes no argument, encoded as the empty value.
-    ${name}__close(lexicalGlobalObject, ptr,
-        callFrame->argumentCount() > 0 ? JSC::JSValue::encode(callFrame->argument(0)) : JSC::JSValue::encode(JSC::JSValue()));
+    ${name}__close(lexicalGlobalObject, ptr, reason);
 
     // detach() must still fire onClose (it transitions the direct
     // ReadableStream to closed/errored and calls underlyingSource.cancel())
@@ -417,6 +415,26 @@ JSC_DEFINE_HOST_FUNCTION(${controller}__close, (JSC::JSGlobalObject * lexicalGlo
     controller->detach();
     RETURN_IF_EXCEPTION(scope, {});
     return JSC::JSValue::encode(JSC::jsUndefined());
+}
+
+JSC_DECLARE_HOST_FUNCTION(${controller}__close);
+JSC_DEFINE_HOST_FUNCTION(${controller}__close, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame *callFrame))
+{
+    auto& vm = lexicalGlobalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
+    WebCore::${controller}* controller = dynamicDowncast<WebCore::${controller}>(callFrame->thisValue());
+    if (!controller) {
+        scope.throwException(globalObject, JSC::createTypeError(globalObject, "Expected ${controller}"_s));
+        return JSC::JSValue::encode(JSC::jsUndefined());
+    }
+
+    // close(error?): a falsy argument is the same clean close as close(),
+    // the truthiness rule readDirectStreamCloseImpl uses for its reason. The
+    // pump reports a failed source through closeSinkControllerWithError.
+    JSC::JSValue error = callFrame->argument(0);
+    JSC::EncodedJSValue reason = error.toBoolean(lexicalGlobalObject) ? JSC::JSValue::encode(error) : JSC::JSValue::encode(JSC::JSValue());
+    RELEASE_AND_RETURN(scope, ${controller}__closeWithReason(lexicalGlobalObject, controller, reason));
 }
 
 JSC_DECLARE_HOST_FUNCTION(${controller}__end);
@@ -1022,6 +1040,21 @@ ${classes
   )
   .join("\n")}
 }
+
+namespace WebCore {
+
+void closeSinkControllerWithError(JSC::JSGlobalObject* globalObject, JSReadableSinkControllerBase* controller, JSC::JSValue error)
+{
+    JSC::EncodedJSValue reason = JSC::JSValue::encode(error);
+${classes
+  .map(
+    name =>
+      `    if (auto* typed = dynamicDowncast<${names(name).controller}>(controller)) { ${names(name).controller}__closeWithReason(globalObject, typed, reason); return; }`,
+  )
+  .join("\n")}
+}
+
+} // namespace WebCore
 `;
   return templ;
 }
@@ -1236,25 +1269,15 @@ function lutInput() {
 }
 
 const outDir = resolve(process.argv[2]);
+mkdirSync(outDir, { recursive: true });
 
-await Bun.write(resolve(outDir + "/JSSink.h"), header());
-await Bun.write(resolve(outDir + "/JSSink.cpp"), await implementation());
-await Bun.write(resolve(outDir + "/JSSink.lut.txt"), lutInput());
+writeFileSync(resolve(outDir + "/JSSink.h"), header());
+writeFileSync(resolve(outDir + "/JSSink.cpp"), await implementation());
+writeFileSync(resolve(outDir + "/JSSink.lut.txt"), lutInput());
 {
   const { src, symbols } = rustSink();
-  await Bun.write(resolve(outDir + "/generated_jssink.rs"), src);
+  writeFileSync(resolve(outDir + "/generated_jssink.rs"), src);
   console.log(`generated_jssink.rs: ${classes.length} sinks, ${symbols.length} exported symbols`);
 }
 
-Bun.spawnSync(
-  [
-    process.execPath,
-    "run",
-    join(import.meta.dir, "create-hash-table.ts"),
-    resolve(outDir + "/JSSink.lut.txt"),
-    join(outDir, "JSSink.lut.h"),
-  ],
-  {
-    stdio: ["inherit", "inherit", "inherit"],
-  },
-);
+createHashTable(resolve(outDir + "/JSSink.lut.txt"), join(outDir, "JSSink.lut.h"));

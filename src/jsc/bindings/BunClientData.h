@@ -69,6 +69,7 @@ class DOMWrapperWorld;
 #include <wtf/WeakHashSet.h>
 #include "JSCTaskScheduler.h"
 #include "HTTPHeaderIdentifiers.h"
+#include "BunCommonStrings.h"
 #include "DOMURLBaseCache.h"
 #include <JavaScriptCore/HeapObserver.h>
 namespace Zig {
@@ -235,6 +236,9 @@ public:
     // so there is no startup cost worth deferring.
     WebCore::HTTPHeaderIdentifiers& httpHeaderIdentifiers() { return m_httpHeaderIdentifiers; }
 
+    // Public so Bun::commonStrings(vm) below is a static_cast and a member load.
+    Bun::CommonStrings commonStrings;
+
     WebCore::DOMURLBaseCache& urlBaseCache() { return m_urlBaseCache; }
 
     // Live size of the heap as measured by the most recent collection, eden or full.
@@ -398,6 +402,15 @@ static inline BunBuiltinNames& builtinNames(JSC::VM& vm)
 }
 
 } // namespace WebCore
+
+namespace Bun {
+
+ALWAYS_INLINE CommonStrings& commonStrings(JSC::VM& vm)
+{
+    return static_cast<WebCore::JSVMClientData*>(vm.clientData)->commonStrings;
+}
+
+} // namespace Bun
 
 inline void* bunVM(JSC::VM& vm)
 {

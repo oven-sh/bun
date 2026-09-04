@@ -8,6 +8,19 @@ describe("Structured Clone Fast Path", () => {
     expect(cloned).toStrictEqual({});
   });
 
+  test("structuredClone({}) result is spreadable after adding a property", () => {
+    // The fast-path deserializer sized the clone with inline capacity 0 for an
+    // empty source, so spreading it tripped JSC's hasInlineStorage() debug
+    // assert once a property was added.
+    const x = structuredClone({});
+    x.a = 1;
+    expect({ ...x }).toEqual({ a: 1 });
+
+    const [y] = structuredClone([{}]);
+    y.b = 2;
+    expect({ ...y }).toEqual({ b: 2 });
+  });
+
   test("structuredClone should work with empty string", () => {
     const string = "";
     const cloned = structuredClone(string);

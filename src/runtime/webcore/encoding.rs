@@ -275,9 +275,7 @@ pub(crate) fn to_bun_string_from_owned_slice(input: Vec<u8>, encoding: Encoding)
             str
         }
         Encoding::Latin1 => create_external_globally_allocated_latin1(input),
-        Encoding::Buffer | Encoding::Utf8 => {
-            BunString::from_owned_utf8(input).unwrap_or(BunString::DEAD)
-        }
+        Encoding::Buffer | Encoding::Utf8 => BunString::from_owned_utf8(input),
         Encoding::Ucs2 | Encoding::Utf16le => {
             // Avoid incomplete characters - if input length is 0 or odd, handle gracefully
             let usable_len = if !input.len().is_multiple_of(2) {
@@ -369,7 +367,7 @@ fn to_bun_string_comptime<const ENCODING: u8>(input: &[u8]) -> BunString {
         Encoding::Buffer | Encoding::Utf8 => {
             let converted = match strings::to_utf16_alloc(input, false, false) {
                 Ok(v) => v,
-                Err(_) => return BunString::DEAD,
+                Err(_) => return BunString::utf16_transcode_failure(input),
             };
             if let Some(utf16) = converted {
                 return create_external_globally_allocated_utf16(utf16);
@@ -447,9 +445,14 @@ fn encode_base64_to_bun_string(input: &[u8], url_safe: bool) -> BunString {
         return str;
     }
 
+    // `create_external_globally_allocated_latin1` would reject this length
+    // after the encode; checked first so a failed reserve below is a true OOM.
+    if to_len > BunString::max_length() {
+        return BunString::DEAD;
+    }
     let mut to: Vec<u8> = Vec::new();
     if to.try_reserve_exact(to_len).is_err() {
-        return BunString::DEAD;
+        return BunString::OUT_OF_MEMORY;
     }
     // SAFETY: the spare bytes are write-only; the encoder reports how many it
     // initialized and only those are committed.

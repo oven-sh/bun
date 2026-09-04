@@ -63,7 +63,6 @@ struct node_module;
 #include "JSMockFunction.h"
 #include "InternalModuleRegistry.h"
 #include "headers-handwritten.h"
-#include "BunCommonStrings.h"
 #include "BunMarkdownTagStrings.h"
 #include "BunGlobalScope.h"
 #include <js_native_api.h>
@@ -192,7 +191,7 @@ public:
     static JSGlobalObject* deriveShadowRealmGlobalObject(JSGlobalObject* globalObject);
     static JSC::JSPromise* moduleLoaderImportModule(JSGlobalObject*, JSC::JSModuleLoader*, JSC::JSString* moduleNameValue, RefPtr<JSC::ScriptFetchParameters>, const JSC::SourceOrigin&, bool deferred);
     static JSC::Identifier moduleLoaderResolve(JSGlobalObject*, JSC::JSModuleLoader*, JSC::JSValue key, JSC::JSValue referrer, RefPtr<JSC::ScriptFetcher>, bool useImportMap);
-    static JSC::JSPromise* moduleLoaderFetch(JSGlobalObject*, JSC::JSModuleLoader*, JSC::JSValue key, RefPtr<JSC::ScriptFetchParameters>, RefPtr<JSC::ScriptFetcher>);
+    static JSC::JSPromise* moduleLoaderFetch(JSGlobalObject*, JSC::JSModuleLoader*, JSC::JSValue key, const WTF::String& referrer, RefPtr<JSC::ScriptFetchParameters>, RefPtr<JSC::ScriptFetcher>);
     static JSC::JSObject* moduleLoaderCreateImportMetaProperties(JSGlobalObject*, JSC::JSModuleLoader*, JSC::JSValue key, JSC::JSModuleRecord*, RefPtr<JSC::ScriptFetcher>);
     static JSC::JSValue moduleLoaderEvaluate(JSGlobalObject*, JSC::JSModuleLoader*, JSValue key, JSValue moduleRecordValue, RefPtr<JSC::ScriptFetcher>, JSValue sentValue, JSValue resumeMode);
     static void compileStreaming(JSGlobalObject*, JSC::JSPromise*, JSC::JSValue source, std::optional<JSC::WebAssemblyCompileOptions>&&);
@@ -431,7 +430,6 @@ public:
         return func;
     }
 
-    bool asyncHooksNeedsCleanup = false;
     double INSPECT_MAX_BYTES = 50;
     bool isInsideErrorPrepareStackTraceCallback = false;
 
@@ -554,7 +552,6 @@ public:
                                                                                                              \
     V(private, std::unique_ptr<WebCore::JSBuiltinInternalFunctions>, m_builtinInternalFunctions)             \
     V(private, std::unique_ptr<WebCore::DOMConstructors>, m_constructors)                                    \
-    V(private, Bun::CommonStrings, m_commonStrings)                                                          \
     V(private, Bun::MarkdownTagStrings, m_markdownTagStrings)                                                \
                                                                                                              \
     /* JSC's hashtable code-generator tries to access these properties, so we make them public. */           \
@@ -768,7 +765,6 @@ public:
     JSObject* nodeWorkerEntryEvaluatedHook() { return m_nodeWorkerEntryEvaluatedHook.get(); }
     void setNodeWorkerEntryEvaluatedHook(JSObject* hook);
 
-    Bun::CommonStrings& commonStrings() { return m_commonStrings; }
     Bun::MarkdownTagStrings& markdownTagStrings() { return m_markdownTagStrings; }
 #include "ZigGeneratedClasses+lazyStructureHeader.h"
 
@@ -851,7 +847,7 @@ class StandaloneGlobalObject : public GlobalObject {
 public:
     static const JSC::GlobalObjectMethodTable& globalObjectMethodTable();
     static JSC::Identifier moduleLoaderResolve(JSGlobalObject*, JSC::JSModuleLoader*, JSC::JSValue key, JSC::JSValue referrer, RefPtr<JSC::ScriptFetcher>, bool);
-    static JSC::JSPromise* moduleLoaderFetch(JSGlobalObject*, JSC::JSModuleLoader*, JSC::JSValue key, RefPtr<JSC::ScriptFetchParameters>, RefPtr<JSC::ScriptFetcher>);
+    static JSC::JSPromise* moduleLoaderFetch(JSGlobalObject*, JSC::JSModuleLoader*, JSC::JSValue key, const WTF::String& referrer, RefPtr<JSC::ScriptFetchParameters>, RefPtr<JSC::ScriptFetcher>);
 };
 
 } // namespace Zig

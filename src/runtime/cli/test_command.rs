@@ -23,15 +23,9 @@ use bun_sys::{self, Fd, File};
 // Debug log scope for test-runner entrypoint loading.
 bun_output::declare_scope!(bun_test, hidden);
 
-// ─── coverage façade ────────────────────────────────────────────────────────
-// Thin adapter over `bun_sourcemap_jsc::code_coverage` that preserves the
-// legacy call paths used in `print_code_coverage` below (the adapter
-// dispatches the runtime `enable_ansi_colors` bool to the const generic).
-// Drop once the body is normalised to call `code_coverage::{text,lcov}`
-// directly with `<ENABLE_ANSI_COLORS>`.
 mod coverage {
     pub(super) use bun_sourcemap_jsc::code_coverage::{
-        ByteRangeMapping, Fraction, Report as CodeCoverageReport, lcov as Lcov,
+        ByteRangeMapping, Fraction, Report as CodeCoverageReport, lcov, text,
     };
 
     /// Less-than predicate adapted to the `Ordering` shape `sort_by` wants.
@@ -43,68 +37,18 @@ mod coverage {
         bun_core::order(a.source_url.slice(), b.source_url.slice())
     }
 
-    #[allow(non_snake_case)]
-    pub(super) mod Text {
-        use super::*;
-        use bun_sourcemap_jsc::code_coverage::text;
-
-        /// Runtime-bool → const-generic dispatch for `text::write_format`.
-        #[inline]
-        pub(crate) fn write_format(
-            report: &CodeCoverageReport,
-            max_filename_length: usize,
-            fraction: &mut Fraction,
-            base_path: &[u8],
-            writer: &mut impl bun_io::Write,
-            enable_ansi_colors: bool,
-        ) -> bun_io::Result<()> {
-            if enable_ansi_colors {
-                text::write_format::<true>(report, max_filename_length, fraction, base_path, writer)
-            } else {
-                text::write_format::<false>(
-                    report,
-                    max_filename_length,
-                    fraction,
-                    base_path,
-                    writer,
-                )
-            }
+    pub(super) fn is_ignored(
+        opts: &bun_options_types::code_coverage_options::CodeCoverageOptions,
+        relative_dir: &[u8],
+        source_url: &[u8],
+    ) -> bool {
+        if opts.ignore_patterns.is_empty() {
+            return false;
         }
-
-        /// Runtime-bool → const-generic dispatch for `text::write_format_with_values`.
-        #[inline]
-        pub(crate) fn write_format_with_values(
-            filename: &[u8],
-            max_filename_length: usize,
-            vals: Fraction,
-            failing: Fraction,
-            failed: bool,
-            writer: &mut impl bun_io::Write,
-            indent_name: bool,
-            enable_ansi_colors: bool,
-        ) -> bun_io::Result<()> {
-            if enable_ansi_colors {
-                text::write_format_with_values::<true>(
-                    filename,
-                    max_filename_length,
-                    vals,
-                    failing,
-                    failed,
-                    writer,
-                    indent_name,
-                )
-            } else {
-                text::write_format_with_values::<false>(
-                    filename,
-                    max_filename_length,
-                    vals,
-                    failing,
-                    failed,
-                    writer,
-                    indent_name,
-                )
-            }
-        }
+        let relative_path = bun_paths::resolve_path::relative(relative_dir, source_url);
+        opts.ignore_patterns
+            .iter()
+            .any(|pattern| bun_glob::r#match(pattern, relative_path).matches())
     }
 }
 use coverage::{ByteRangeMapping, CodeCoverageReport, Fraction};
@@ -207,11 +151,39 @@ fn fmt_status_text_line(
 // `&mut io::Writer`; the previous local `err_w`/`out_w` wrappers were no-op
 // reborrows. Call sites use the `Output` accessors directly.
 
+/// Name, message and stack of the error(s) thrown by the test that is
+/// currently failing, captured as they are printed so structured reporters
+/// get them without re-running the exception formatter.
 #[derive(Default)]
-pub struct JunitFailure {
+pub struct TestFailure {
     pub name: Vec<u8>,
     pub(crate) message: Vec<u8>,
     pub(crate) body: Vec<u8>,
+}
+
+/// How a test file is named in the JUnit document: relative to the project
+/// root when inside it, else as given.
+pub(crate) fn junit_file_name(path: &[u8]) -> &[u8] {
+    let top = FileSystem::instance().top_level_dir;
+    if strings::has_prefix(path, top) {
+        without_leading_path_separator(&path[top.len()..])
+    } else {
+        path
+    }
+}
+
+/// One finished test as structured reporters see it.
+pub(crate) struct TestCaseReport<'a> {
+    /// Relative to the project root.
+    pub file: &'a [u8],
+    /// Enclosing named `describe` blocks, outermost first: (name, line).
+    pub scopes: Vec<(&'a [u8], u32)>,
+    pub name: &'a [u8],
+    pub status: bun_test::Execution::Result,
+    pub assertions: u32,
+    pub elapsed_ns: u64,
+    pub line_number: u32,
+    pub failure: Option<TestFailure>,
 }
 
 /// Append `input` to `out`, dropping CSI sequences (`ESC '[' ... final`), so a
@@ -243,18 +215,11 @@ pub struct JunitReporter {
     pub(crate) total_metrics: Metrics,
     pub(crate) offset_of_testsuites_value: usize,
     pub(crate) current_file: Box<[u8]>,
-    pub(crate) sent_upto: usize,
-    pub(crate) elements_only: bool,
     pub(crate) file_start_ns: u64,
-    pub(crate) file_end_ns: u64,
     pub(crate) properties_list_to_repeat_in_every_test_suite: Option<Box<[u8]>>,
 
     pub(crate) suite_stack: Vec<SuiteInfo>,
     pub(crate) current_depth: u32,
-
-    /// Error captured by `on_uncaught_exception` for the currently-failing
-    /// test; consumed by `write_test_case` on the next `Result::Fail`.
-    pub(crate) last_failure: Option<JunitFailure>,
 
     pub(crate) hostname_value: Option<Box<[u8]>>,
 }
@@ -327,15 +292,14 @@ impl JunitReporter {
     pub(crate) fn init() -> Box<JunitReporter> {
         Box::new(JunitReporter::default())
     }
+}
 
-    // `pub const new = bun.TrivialNew(JunitReporter);` → Box::new
-
-    /// Capture name/message/stack from the `ZigException` that
-    /// `print_error_instance_body` has already populated, so the next
-    /// `write_test_case` can emit a useful `<failure>` without re-running
-    /// the exception formatter.
-    pub(crate) fn record_failure(&mut self, exception: &jsc::ZigException) {
-        let failure = self.last_failure.get_or_insert_default();
+impl TestFailure {
+    /// Fold in a `ZigException` that `print_error_instance_body` has already
+    /// populated. A test can throw more than once (body, then `afterEach`);
+    /// the first name/message win and every stack is appended.
+    pub(crate) fn record(slot: &mut Option<TestFailure>, exception: &jsc::ZigException) {
+        let failure = slot.get_or_insert_default();
         let name = exception.name.to_utf8();
         let raw_message = exception.message.to_utf8();
         let mut message = Vec::with_capacity(raw_message.slice().len());
@@ -410,14 +374,16 @@ impl JunitReporter {
     }
 
     /// VirtualMachine::on_print_error_zig_exception thunk.
-    pub(crate) fn record_failure_cb(ctx: *mut core::ffi::c_void, exception: &jsc::ZigException) {
-        // SAFETY: `ctx` was set to `&mut JunitReporter` by `on_uncaught_exception`
-        // for the duration of a single `run_error_handler` call; single-threaded,
-        // no other borrow of the reporter is live across that call.
-        let this = unsafe { &mut *ctx.cast::<JunitReporter>() };
-        this.record_failure(exception);
+    pub(crate) fn record_cb(ctx: *mut core::ffi::c_void, exception: &jsc::ZigException) {
+        // SAFETY: `ctx` was set to `&mut CommandLineReporter.test_failure` by
+        // `on_uncaught_exception` for the duration of a single
+        // `run_error_handler` call; single-threaded, no other borrow live.
+        let slot = unsafe { &mut *ctx.cast::<Option<TestFailure>>() };
+        TestFailure::record(slot, exception);
     }
+}
 
+impl JunitReporter {
     fn generate_properties_list(&mut self) -> crate::Result<()> {
         struct PropertiesList<'a> {
             ci: &'a [u8],
@@ -517,6 +483,17 @@ impl JunitReporter {
         &SPACES[0..(total_spaces as usize).min(SPACES.len())]
     }
 
+    fn start_document(&mut self) {
+        if self.contents.is_empty() {
+            self.contents
+                .extend_from_slice(b"<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n");
+            self.contents
+                .extend_from_slice(b"<testsuites name=\"bun test\" ");
+            self.offset_of_testsuites_value = self.contents.len();
+            self.contents.extend_from_slice(b">\n");
+        }
+    }
+
     pub(crate) fn begin_test_suite(&mut self, name: &[u8]) -> crate::Result<()> {
         self.begin_test_suite_with_line(name, 0, true)
     }
@@ -527,14 +504,7 @@ impl JunitReporter {
         line_number: u32,
         is_file_suite: bool,
     ) -> crate::Result<()> {
-        if self.contents.is_empty() && !self.elements_only {
-            self.contents
-                .extend_from_slice(b"<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n");
-            self.contents
-                .extend_from_slice(b"<testsuites name=\"bun test\" ");
-            self.offset_of_testsuites_value = self.contents.len();
-            self.contents.extend_from_slice(b">\n");
-        }
+        self.start_document();
 
         let indent = Self::get_indent(self.current_depth);
         self.contents.extend_from_slice(indent);
@@ -590,7 +560,18 @@ impl JunitReporter {
         Ok(())
     }
 
-    pub(crate) fn end_test_suite(&mut self) -> crate::Result<()> {
+    /// Close every suite still open for the current file. The file suite's
+    /// `time` is `elapsed_ns` when the caller measured it (the `--parallel`
+    /// coordinator replaying a worker's file), else now − `file_start_ns`.
+    pub(crate) fn end_file(&mut self, elapsed_ns: Option<u64>) -> crate::Result<()> {
+        while !self.suite_stack.is_empty() {
+            self.end_test_suite(elapsed_ns)?;
+        }
+        self.current_file = Box::default();
+        Ok(())
+    }
+
+    fn end_test_suite(&mut self, file_elapsed_ns: Option<u64>) -> crate::Result<()> {
         if self.suite_stack.is_empty() {
             return Ok(());
         }
@@ -598,13 +579,15 @@ impl JunitReporter {
         self.current_depth -= 1;
         let suite_info = self.suite_stack.swap_remove(self.suite_stack.len() - 1);
 
-        let elapsed_time_seconds = if suite_info.is_file_suite && suite_info.started_ns > 0 {
-            let end_ns = if self.file_end_ns >= suite_info.started_ns {
-                self.file_end_ns
-            } else {
-                bun::Timespec::now(bun::TimespecMockMode::ForceRealTime).ns()
-            };
-            end_ns.saturating_sub(suite_info.started_ns) as f64 / bun::time::NS_PER_S as f64
+        let elapsed_time_seconds = if suite_info.is_file_suite
+            && let Some(ns) = file_elapsed_ns
+        {
+            ns as f64 / bun::time::NS_PER_S as f64
+        } else if suite_info.is_file_suite && suite_info.started_ns > 0 {
+            bun::Timespec::now(bun::TimespecMockMode::ForceRealTime)
+                .ns()
+                .saturating_sub(suite_info.started_ns) as f64
+                / bun::time::NS_PER_S as f64
         } else {
             suite_info.metrics.elapsed_time as f64 / bun::time::MS_PER_S as f64
         };
@@ -646,16 +629,59 @@ impl JunitReporter {
         Ok(())
     }
 
-    pub(crate) fn write_test_case(
-        &mut self,
-        status: bun_test::Execution::Result,
-        file: &[u8],
-        name: &[u8],
-        class_name: &[u8],
-        assertions: u32,
-        elapsed_ns: u64,
-        line_number: u32,
-    ) -> crate::Result<()> {
+    /// Open/close `<testsuite>` elements so the stack matches `t.file` and
+    /// `t.scopes`, then write the `<testcase>`.
+    pub(crate) fn record_test_case(&mut self, t: &TestCaseReport<'_>) -> crate::Result<()> {
+        if !strings::eql(&self.current_file, t.file) {
+            while let Some(top) = self.suite_stack.last()
+                && !top.is_file_suite
+            {
+                self.end_test_suite(None)?;
+            }
+            if !self.current_file.is_empty() {
+                self.end_test_suite(None)?;
+            }
+            self.begin_test_suite(t.file)?;
+        }
+
+        // Keep the longest prefix of open describe suites that matches
+        // `t.scopes`; close the rest, then open what is missing.
+        let open = &self.suite_stack[1..];
+        let keep = open
+            .iter()
+            .zip(&t.scopes)
+            .take_while(|(suite, (name, _))| strings::eql(&suite.name, name))
+            .count();
+        for _ in keep..open.len() {
+            self.end_test_suite(None)?;
+        }
+        for &(name, line) in &t.scopes[keep..] {
+            self.begin_test_suite_with_line(name, line, false)?;
+        }
+
+        // Innermost scope first, matching what the serial reporter always did.
+        let mut class_name: Vec<u8> = Vec::new();
+        for (i, &(name, _)) in t.scopes.iter().rev().enumerate() {
+            if i > 0 {
+                class_name.extend_from_slice(b" > ");
+            }
+            class_name.extend_from_slice(name);
+        }
+
+        self.write_test_case(t, &class_name)
+    }
+
+    fn write_test_case(&mut self, t: &TestCaseReport<'_>, class_name: &[u8]) -> crate::Result<()> {
+        let TestCaseReport {
+            file,
+            name,
+            status,
+            assertions,
+            elapsed_ns,
+            line_number,
+            ..
+        } = *t;
+        let failure = t.failure.as_ref();
         // Std::io::Write removed; bun_io::Write (top-level) provides write_fmt.
         let elapsed_ns_f64: f64 = elapsed_ns as f64;
         let elapsed_ms = elapsed_ns_f64 / bun::time::NS_PER_MS as f64;
@@ -709,7 +735,6 @@ impl JunitReporter {
                 }
                 self.contents.extend_from_slice(b">\n");
                 self.contents.extend_from_slice(indent);
-                let failure = self.last_failure.take();
                 let type_name: &[u8] = failure
                     .as_ref()
                     .map(|f| f.name.as_slice())
@@ -836,7 +861,6 @@ impl JunitReporter {
             }
             R::Pending => unreachable!(),
         }
-        self.last_failure = None;
         Ok(())
     }
 
@@ -845,9 +869,7 @@ impl JunitReporter {
             return Ok(());
         }
 
-        while !self.suite_stack.is_empty() {
-            self.end_test_suite()?;
-        }
+        self.end_file(None)?;
 
         {
             let metrics = self.total_metrics;
@@ -936,6 +958,10 @@ pub struct CommandLineReporter {
     /// is sent over the IPC pipe instead of to stderr; the coordinator owns
     /// the terminal.
     pub(crate) worker_ipc_file_idx: Option<u32>,
+    /// Errors thrown by the test now running, captured while a reporter
+    /// that attaches them to the test case (JUnit) is on. Taken by
+    /// `handle_test_completed`.
+    pub(crate) test_failure: Option<TestFailure>,
 
     pub(crate) failures_to_repeat_buf: Vec<u8>,
     pub(crate) skips_to_repeat_buf: Vec<u8>,
@@ -1175,31 +1201,18 @@ impl CommandLineReporter {
         }
     }
 
-    fn maybe_print_junit_line(
+    /// Everything a structured reporter needs about one finished test. Built
+    /// once in `handle_test_completed`; the serial runner hands it straight
+    /// to `JunitReporter::record_test_case`, a `--parallel` worker encodes it
+    /// on its `TestDone` frame and the coordinator replays it.
+    fn test_case_report<'a>(
         status: bun_test::Execution::Result,
-        buntest: &mut bun_test::BunTest,
-        sequence: &mut bun_test::Execution::ExecutionSequence,
-        test_entry: &mut bun_test::ExecutionEntry,
+        buntest: &bun_test::BunTest,
+        sequence: &bun_test::Execution::ExecutionSequence,
+        test_entry: &'a bun_test::ExecutionEntry,
         elapsed_ns: u64,
-    ) {
-        let Some(cmd_reporter) = buntest.reporter else {
-            return;
-        };
-        // SAFETY: `BunTest.reporter` is `NonNull<CommandLineReporter>` with write
-        // provenance from `enter_file`'s `&mut`; single-threaded test runner,
-        // exclusive access for the duration of this callback.
-        let cmd_reporter: &mut CommandLineReporter = unsafe { &mut *cmd_reporter.as_ptr() };
-        let Some(junit) = cmd_reporter.reporters.junit.as_mut() else {
-            return;
-        };
-
-        let mut scopes_stack: BoundedArray<*const bun_test::DescribeScope, 64> =
-            BoundedArray::default();
-        let mut parent_: Option<*const bun_test::DescribeScope> =
-            test_entry.base.parent.map(|p| p.cast_const());
-        let assertions = sequence.expect_call_count;
-        let line_number = test_entry.base.line_no;
-
+        failure: Option<TestFailure>,
+    ) -> TestCaseReport<'a> {
         let file: &[u8] = if let Some(runner) = jest::Jest::runner() {
             runner.files.items_source()[buntest.file_id as usize]
                 .path
@@ -1207,163 +1220,35 @@ impl CommandLineReporter {
         } else {
             b""
         };
+        let file = junit_file_name(file);
 
-        while let Some(scope) = parent_ {
-            if scopes_stack.push(scope).is_err() {
+        // Innermost first while walking up; reversed below.
+        let mut scopes: Vec<(&'a [u8], u32)> = Vec::new();
+        let mut parent = test_entry.base.parent.map(|p| p.cast_const());
+        while let Some(scope) = parent {
+            if scopes.len() == 64 {
                 break;
             }
-            // SAFETY: scope kept alive for the test run
-            parent_ = unsafe { (*scope).base.parent.map(|p| p.cast_const()) };
-        }
-
-        let scopes: &[*const bun_test::DescribeScope] = scopes_stack.as_slice();
-        let display_label: &[u8] = test_entry.base.name.as_deref().unwrap_or(b"(unnamed)");
-
-        {
-            let filename: &[u8] = 'brk: {
-                let top = FileSystem::instance().top_level_dir;
-                if strings::has_prefix(file, top) {
-                    break 'brk without_leading_path_separator(&file[top.len()..]);
-                } else {
-                    break 'brk file;
-                }
-            };
-
-            if !strings::eql(&junit.current_file, filename) {
-                while !junit.suite_stack.is_empty()
-                    && !junit.suite_stack[junit.suite_stack.len() - 1].is_file_suite
-                {
-                    junit.end_test_suite().expect("oom");
-                }
-
-                if !junit.current_file.is_empty() {
-                    junit.end_test_suite().expect("oom");
-                }
-
-                junit.begin_test_suite(filename).expect("oom");
-            }
-
-            // To make the juint reporter generate nested suites, we need to find the needed suites and create/print them.
-            // This assumes that the scopes are in the correct order.
-            let mut needed_suites: Vec<*const bun_test::DescribeScope> = Vec::new();
-
-            for i in 0..scopes.len() {
-                let index = (scopes.len() - 1) - i;
-                let scope = scopes[index];
-                // SAFETY: scope alive for test run
-                if let Some(name) = unsafe { (*scope).base.name.as_deref() } {
-                    if !name.is_empty() {
-                        needed_suites.push(scope);
-                    }
-                }
-            }
-
-            let mut current_suite_depth: u32 = 0;
-            if !junit.suite_stack.is_empty() {
-                for suite_info in &junit.suite_stack {
-                    if !suite_info.is_file_suite {
-                        current_suite_depth += 1;
-                    }
-                }
-            }
-
-            while (current_suite_depth as usize) > needed_suites.len() {
-                if !junit.suite_stack.is_empty()
-                    && !junit.suite_stack[junit.suite_stack.len() - 1].is_file_suite
-                {
-                    junit.end_test_suite().expect("oom");
-                    current_suite_depth -= 1;
-                } else {
-                    break;
-                }
-            }
-
-            let mut suites_to_close: u32 = 0;
-            let mut suite_index: usize = 0;
-            for suite_info in &junit.suite_stack {
-                if suite_info.is_file_suite {
-                    continue;
-                }
-
-                if suite_index < needed_suites.len() {
-                    let needed_scope = needed_suites[suite_index];
-                    // SAFETY: needed_scope alive for test run
-                    let needed_name =
-                        unsafe { (*needed_scope).base.name.as_deref() }.unwrap_or(b"");
-                    if !strings::eql(&suite_info.name, needed_name) {
-                        suites_to_close = current_suite_depth - u32::try_from(suite_index).unwrap();
-                        break;
-                    }
-                } else {
-                    suites_to_close = current_suite_depth - u32::try_from(suite_index).unwrap();
-                    break;
-                }
-                suite_index += 1;
-            }
-
-            while suites_to_close > 0 {
-                if !junit.suite_stack.is_empty()
-                    && !junit.suite_stack[junit.suite_stack.len() - 1].is_file_suite
-                {
-                    junit.end_test_suite().expect("oom");
-                    suites_to_close -= 1;
-                } else {
-                    break;
-                }
-            }
-
-            let mut describe_suite_index: usize = 0;
-            for suite_info in &junit.suite_stack {
-                if !suite_info.is_file_suite {
-                    describe_suite_index += 1;
-                }
-            }
-
-            while describe_suite_index < needed_suites.len() {
-                let scope = needed_suites[describe_suite_index];
-                // SAFETY: scope alive for test run
-                let (name, line_no) = unsafe {
-                    (
-                        (*scope).base.name.as_deref().unwrap_or(b""),
-                        (*scope).base.line_no,
-                    )
-                };
-                junit
-                    .begin_test_suite_with_line(name, line_no, false)
-                    .expect("oom");
-                describe_suite_index += 1;
-            }
-
-            let mut concatenated_describe_scopes: Vec<u8> = Vec::new();
-
+            // SAFETY: describe scopes outlive the file's test run.
+            let scope: &'a bun_test::DescribeScope = unsafe { &*scope };
+            if let Some(name) = scope.base.name.as_deref()
+                && !name.is_empty()
             {
-                let initial_length = concatenated_describe_scopes.len();
-                for &scope in scopes {
-                    // SAFETY: scope alive for test run
-                    if let Some(name) = unsafe { (*scope).base.name.as_deref() } {
-                        if !name.is_empty() {
-                            if initial_length != concatenated_describe_scopes.len() {
-                                concatenated_describe_scopes.extend_from_slice(b" > ");
-                            }
-
-                            // write_test_case escapes class_name once; do not pre-escape here.
-                            concatenated_describe_scopes.extend_from_slice(name);
-                        }
-                    }
-                }
+                scopes.push((name, scope.base.line_no));
             }
+            parent = scope.base.parent.map(|p| p.cast_const());
+        }
+        scopes.reverse();
 
-            junit
-                .write_test_case(
-                    status,
-                    filename,
-                    display_label,
-                    &concatenated_describe_scopes,
-                    assertions,
-                    elapsed_ns,
-                    line_number,
-                )
-                .expect("oom");
+        TestCaseReport {
+            file,
+            scopes,
+            name: test_entry.base.name.as_deref().unwrap_or(b"(unnamed)"),
+            status,
+            assertions: sequence.expect_call_count,
+            elapsed_ns,
+            line_number: test_entry.base.line_no,
+            failure,
         }
     }
 
@@ -1388,7 +1273,7 @@ impl CommandLineReporter {
             // SAFETY: `BunTest.reporter` is `NonNull<CommandLineReporter>` with write
             // provenance from `enter_file`'s `&mut`; single-threaded; reporter outlives
             // every BunTest. Scoped to this block so the SharedReadOnly tag is dead
-            // before `maybe_print_junit_line` derives `&mut` from the same `NonNull`
+            // before the `&mut` derived from the same `NonNull` below
             // (stacked-borrows hygiene).
             let reporter_ref: Option<&CommandLineReporter> =
                 buntest.reporter.map(|p| unsafe { &*p.as_ptr() });
@@ -1453,30 +1338,32 @@ impl CommandLineReporter {
                 }
             }
         }
-        // always print junit if needed (creates `&mut CommandLineReporter` from
-        // the same `NonNull` — any earlier shared borrow must be dead first).
-        Self::maybe_print_junit_line(result, buntest, sequence, test_entry, elapsed_ns);
-
         let formatted_line = &output_buf[initial_length..];
-        // SAFETY: `BunTest.reporter` is `NonNull<CommandLineReporter>`; re-derived
-        // here (not held across `maybe_print_junit_line`'s `&mut`) per stacked
-        // borrows.
-        let worker_idx = buntest
-            .reporter
-            .and_then(|p| unsafe { (*p.as_ptr()).worker_ipc_file_idx });
-        if let Some(idx) = worker_idx {
-            ParallelRunner::worker_emit_test_done(idx, formatted_line);
-        } else {
-            let _ = Output::error_writer().write_all(formatted_line);
-        }
 
         let Some(this) = buntest.reporter else {
+            let _ = Output::error_writer().write_all(formatted_line);
             return;
-        }; // command line reporter is missing! uh oh!
+        };
         // SAFETY: `BunTest.reporter` is `NonNull<CommandLineReporter>` with write
         // provenance from `enter_file`'s `&mut`; single-threaded test runner,
-        // sole writer for the duration of this completion callback.
+        // sole writer for the duration of this completion callback, and the
+        // shared borrow above is dead.
         let this: &mut CommandLineReporter = unsafe { &mut *this.as_ptr() };
+
+        // Under `--parallel` the flag is forwarded to workers, whose records
+        // the coordinator replays into its own `JunitReporter`.
+        let report = this.jest.test_options.reporters.junit.then(|| {
+            let failure = this.test_failure.take();
+            Self::test_case_report(result, buntest, sequence, test_entry, elapsed_ns, failure)
+        });
+        if let Some(idx) = this.worker_ipc_file_idx {
+            ParallelRunner::worker_emit_test_done(idx, formatted_line, report.as_ref());
+        } else {
+            let _ = Output::error_writer().write_all(formatted_line);
+            if let (Some(junit), Some(report)) = (this.reporters.junit.as_mut(), &report) {
+                junit.record_test_case(report).expect("oom");
+            }
+        }
 
         if !this.reporters.dots && !this.reporters.only_failures {
             match sequence.result.basic_result() {
@@ -1564,10 +1451,38 @@ impl CommandLineReporter {
     pub(crate) fn write_junit_report_if_needed(&mut self) {
         if let Some(junit) = self.reporters.junit.as_mut() {
             if let Some(outfile) = self.jest.test_options.reporter_outfile.as_deref() {
-                if !junit.current_file.is_empty() {
-                    let _ = junit.end_test_suite();
-                }
                 let _ = junit.write_to_file(outfile);
+            }
+        }
+    }
+
+    /// This process's coverage, one `Report` per instrumented file, sorted by
+    /// path, with `coveragePathIgnorePatterns` applied.
+    pub(crate) fn for_each_coverage_report(
+        vm: &mut VirtualMachine,
+        opts: &CodeCoverageOptions,
+        mut each: impl FnMut(CodeCoverageReport<'_>),
+    ) {
+        let Some(map) = ByteRangeMapping::map() else {
+            return;
+        };
+        // SAFETY: thread-local Box pinned for the thread; sole `&mut` for the
+        // collection loop below (single-threaded CLI report path).
+        let map = unsafe { &mut *map.as_ptr() };
+        let relative_dir = FileSystem::get().top_level_dir;
+        let mut byte_ranges: Vec<&mut ByteRangeMapping> = Vec::with_capacity(map.len());
+        for entry in map.values_mut() {
+            if !coverage::is_ignored(opts, relative_dir, entry.source_url.slice()) {
+                byte_ranges.push(entry);
+            }
+        }
+        index_sort::sort_slice_by(&mut byte_ranges, coverage::is_less_than_cmp);
+
+        for entry in byte_ranges {
+            if let Some(report) =
+                CodeCoverageReport::generate(vm.global(), entry, opts.ignore_sourcemap)
+            {
+                each(report);
             }
         }
     }
@@ -1576,464 +1491,198 @@ impl CommandLineReporter {
         &mut self,
         vm: &mut VirtualMachine,
         opts: &mut CodeCoverageOptions,
-        reporters_text: bool,
-        reporters_lcov: bool,
-        enable_ansi_colors: bool,
-    ) -> crate::Result<()> {
-        if !reporters_text && !reporters_lcov {
-            return Ok(());
+    ) {
+        let _trace = bun::perf::trace("TestCommand.printCodeCoverage");
+        if ByteRangeMapping::map().is_none_or(|m| {
+            // SAFETY: see `for_each_coverage_report`.
+            unsafe { m.as_ref() }.is_empty()
+        }) {
+            return;
         }
-
-        let Some(map) = ByteRangeMapping::map() else {
-            return Ok(());
-        };
-        // SAFETY: thread-local Box pinned for the thread; sole `&mut` for the
-        // collection loop below (single-threaded CLI report path).
-        let map = unsafe { &mut *map.as_ptr() };
-        // `ByteRangeMapping` owns a `MultiArrayList` and is not `Copy`, so
-        // collect mutable borrows into the thread-local map instead — no
-        // double-free risk.
-        let mut byte_ranges: Vec<&mut ByteRangeMapping> = Vec::with_capacity(map.len());
-        for entry in map.values_mut() {
-            byte_ranges.push(entry);
+        let mut reports: Vec<CodeCoverageReport<'static>> = Vec::new();
+        Self::for_each_coverage_report(vm, opts, |report| reports.push(report.into_owned()));
+        if let Err(err) = print_coverage_reports(opts, &reports) {
+            Output::err(err, "Failed to write lcov.info", ());
+            Global::exit(1);
         }
-
-        if byte_ranges.is_empty() {
-            return Ok(());
-        }
-
-        index_sort::sort_slice_by(&mut byte_ranges, coverage::is_less_than_cmp);
-
-        self.print_code_coverage(
-            vm,
-            opts,
-            &mut byte_ranges,
-            reporters_text,
-            reporters_lcov,
-            enable_ansi_colors,
-        )
     }
+}
 
-    pub(crate) fn render_lcov(
-        &mut self,
-        vm: &mut VirtualMachine,
-        opts: &CodeCoverageOptions,
-    ) -> Option<Vec<u8>> {
-        let map = ByteRangeMapping::map()?;
-        // SAFETY: thread-local Box pinned for the thread; sole `&mut` for the
-        // collection loop below (single-threaded CLI report path).
-        let map = unsafe { &mut *map.as_ptr() };
-        // See `generate_code_coverage` — collect borrows, not bitwise copies.
-        let mut byte_ranges: Vec<&mut ByteRangeMapping> = Vec::with_capacity(map.len());
-        for entry in map.values_mut() {
-            byte_ranges.push(entry);
-        }
-        if byte_ranges.is_empty() {
-            return None;
-        }
-        index_sort::sort_slice_by(&mut byte_ranges, coverage::is_less_than_cmp);
-
-        let relative_dir = bun_resolver::fs::FileSystem::get().top_level_dir;
-        let mut buffered: Vec<u8> = Vec::with_capacity(64 * 1024);
-        let writer = &mut buffered;
-
-        for entry in byte_ranges.iter_mut() {
-            if !opts.ignore_patterns.is_empty() {
-                let rel = resolve_path::relative(relative_dir, entry.source_url.slice());
-                let mut skip = false;
-                for p in &opts.ignore_patterns {
-                    if bun_glob::r#match(p, rel).matches() {
-                        skip = true;
-                        break;
-                    }
-                }
-                if skip {
-                    continue;
-                }
-            }
-            let Some(report) =
-                CodeCoverageReport::generate(vm.global(), entry, opts.ignore_sourcemap)
-            else {
-                continue;
-            };
-            // report dropped at end of iteration
-            if coverage::Lcov::write_format(&report, relative_dir, writer).is_err() {
-                continue;
-            }
-            drop(report);
-        }
-        Some(buffered)
+/// Write the `--coverage` text table to stderr and/or `lcov.info` for
+/// `reports` (sorted by path), and set `opts.fractions.failing`. The serial
+/// runner passes this process's reports; the `--parallel` coordinator passes
+/// reports merged from every worker. Errors only from writing `lcov.info`.
+pub(crate) fn print_coverage_reports(
+    opts: &mut CodeCoverageOptions,
+    reports: &[CodeCoverageReport<'_>],
+) -> bun_sys::Result<()> {
+    if Output::enable_ansi_colors_stderr() {
+        print_coverage_reports_::<true>(opts, reports)
+    } else {
+        print_coverage_reports_::<false>(opts, reports)
     }
+}
 
-    pub(crate) fn print_code_coverage(
-        &mut self,
-        vm: &mut VirtualMachine,
-        opts: &mut CodeCoverageOptions,
-        byte_ranges: &mut [&mut ByteRangeMapping],
-        reporters_text: bool,
-        reporters_lcov: bool,
-        enable_ansi_colors: bool,
-    ) -> crate::Result<()> {
-        // Both spellings are compile-time constants; pick one by the runtime flag.
-        macro_rules! pretty_lit {
-            ($fmt:literal) => {
-                if enable_ansi_colors {
-                    bun_core::pretty_fmt!($fmt, true).as_bytes()
-                } else {
-                    bun_core::pretty_fmt!($fmt, false).as_bytes()
-                }
-            };
-        }
-        // `perf::Ctx` ends its span on Drop.
-        let _trace = if reporters_text && reporters_lcov {
-            bun::perf::trace("TestCommand.printCodeCoverageLCovAndText")
-        } else if reporters_text {
-            bun::perf::trace("TestCommand.printCodeCoverageText")
-        } else if reporters_lcov {
-            bun::perf::trace("TestCommand.printCodeCoverageLCov")
-        } else {
-            // Unreachable by construction.
-            unreachable!("No reporters enabled")
-        };
+fn print_coverage_reports_<const COLORS: bool>(
+    opts: &mut CodeCoverageOptions,
+    reports: &[CodeCoverageReport<'_>],
+) -> bun_sys::Result<()> {
+    let relative_dir = FileSystem::get().top_level_dir;
+    let thresholds = opts.fractions;
 
-        if !reporters_text && !reporters_lcov {
-            unreachable!("No reporters enabled");
-        }
+    let fractions: Vec<Fraction> = reports.iter().map(|r| r.fraction(&thresholds)).collect();
+    let failing = fractions.iter().any(|f| f.failing);
+    opts.fractions.failing = failing;
 
-        let relative_dir = bun_resolver::fs::FileSystem::get().top_level_dir;
+    if opts.reporters.text {
+        print_coverage_table::<COLORS>(relative_dir, &thresholds, reports, &fractions, failing);
+    }
+    if opts.reporters.lcov {
+        write_lcov_report(opts, relative_dir, reports)?;
+    }
+    Ok(())
+}
 
-        // --- Text ---
-        let max_filepath_length: usize = if reporters_text {
-            'brk: {
-                let mut len = b"All files".len();
-                for entry in byte_ranges.iter() {
-                    let utf8 = entry.source_url.slice();
-                    let relative_path = resolve_path::relative(relative_dir, utf8);
+fn print_coverage_table<const COLORS: bool>(
+    relative_dir: &[u8],
+    thresholds: &Fraction,
+    reports: &[CodeCoverageReport<'_>],
+    fractions: &[Fraction],
+    failing: bool,
+) {
+    use coverage::text;
+    let thresholds = *thresholds;
+    let max_filepath_length = reports
+        .iter()
+        .map(|r| resolve_path::relative(relative_dir, &r.source_url).len())
+        .fold(b"All files".len(), usize::max);
 
-                    // Check if this file should be ignored based on coveragePathIgnorePatterns
-                    if !opts.ignore_patterns.is_empty() {
-                        let mut should_ignore = false;
-                        for pattern in &opts.ignore_patterns {
-                            if bun_glob::r#match(pattern, relative_path).matches() {
-                                should_ignore = true;
-                                break;
-                            }
-                        }
+    let zero = Fraction {
+        functions: 0.0,
+        lines: 0.0,
+        stmts: 0.0,
+        failing: false,
+    };
+    let mut avg = zero;
+    for f in fractions {
+        avg.functions += f.functions;
+        avg.lines += f.lines;
+        avg.stmts += f.stmts;
+    }
+    let avg_thresholds = if fractions.is_empty() {
+        zero
+    } else {
+        let n = fractions.len() as f64;
+        avg.functions /= n;
+        avg.lines /= n;
+        avg.stmts /= n;
+        thresholds
+    };
 
-                        if should_ignore {
-                            continue;
-                        }
-                    }
-
-                    len = relative_path.len().max(len);
-                }
-
-                break 'brk len;
-            }
-        } else {
-            0
-        };
-
-        // `&mut bun_core::io::Writer: bun_io::Write` (impl in `bun_core::io`);
-        // `splat_byte_all` / `write_all` resolve via the trait import at top.
-        let mut console = Output::error_writer();
-        let base_fraction = opts.fractions;
-        let mut failing = false;
-
-        if reporters_text {
-            if console.write_all(pretty_lit!("<r><d>")).is_err() {
-                return Ok(());
-            }
-            if console
-                .splat_byte_all(b'-', max_filepath_length + 2)
-                .is_err()
-            {
-                return Ok(());
-            }
-            if console
-                .write_all(pretty_lit!("|---------|---------|-------------------<r>\n"))
-                .is_err()
-            {
-                return Ok(());
-            }
-            if console.write_all(b"File").is_err() {
-                return Ok(());
-            }
-            if console
-                .splat_byte_all(b' ', max_filepath_length - b"File".len() + 1)
-                .is_err()
-            {
-                return Ok(());
-            }
-            if console
-                .write_all(pretty_lit!(
-                    " <d>|<r> % Funcs <d>|<r> % Lines <d>|<r> Uncovered Line #s\n"
-                ))
-                .is_err()
-            {
-                return Ok(());
-            }
-            if console.write_all(pretty_lit!("<d>")).is_err() {
-                return Ok(());
-            }
-            if console
-                .splat_byte_all(b'-', max_filepath_length + 2)
-                .is_err()
-            {
-                return Ok(());
-            }
-            if console
-                .write_all(pretty_lit!("|---------|---------|-------------------<r>\n"))
-                .is_err()
-            {
-                return Ok(());
-            }
-        }
-
-        let mut console_buffer: Vec<u8> = Vec::new();
-        let console_writer = &mut console_buffer;
-
-        let mut avg = Fraction {
-            functions: 0.0,
-            lines: 0.0,
-            stmts: 0.0,
-            ..Default::default()
-        };
-        let mut avg_count: f64 = 0.0;
-        // --- Text ---
-
-        // --- LCOV ---
-        let mut lcov_name_buf = PathBuffer::uninit();
-        let mut lcov_state: Option<(File, &bun_core::ZStr, /*buffered*/ Vec<u8>)> =
-            if reporters_lcov {
-                'brk: {
-                    // Ensure the directory exists
-                    let mut fs = crate::node::fs::NodeFS::default();
-                    let _ = fs.mkdir_recursive(&crate::node::fs::args::Mkdir {
-                        path: crate::node::PathLike::borrowed(&opts.reports_directory),
-                        always_return_none: true,
-                        recursive: true,
-                        ..Default::default()
-                    });
-
-                    // Write the lcov.info file to a temporary file we atomically rename to the final name after it succeeds
-                    let mut base64_bytes = [0u8; 8];
-                    let mut shortname_buf = [0u8; 512];
-                    bun_boringssl_sys::rand_bytes(&mut base64_bytes);
-                    // Temp name: `.lcov.info.<lowercase hex of 8 random bytes>.tmp`.
-                    let tmpname = {
-                        use std::io::Write as _;
-                        let mut cursor = &mut shortname_buf[..];
-                        let _ = cursor.write_all(b".lcov.info.");
-                        let _ = write!(cursor, "{}", bun_core::fmt::hex_lower(&base64_bytes));
-                        let _ = cursor.write_all(b".tmp\0");
-                        let s = bun_core::slice_to_nul(&shortname_buf);
-                        // NUL written above; `slice_to_nul` returns the prefix before it.
-                        bun_core::ZStr::from_buf(&shortname_buf[..], s.len())
-                    };
-                    let path = resolve_path::join_abs_string_buf_z::<bun_path::platform::Auto>(
-                        relative_dir,
-                        &mut lcov_name_buf,
-                        &[&opts.reports_directory, tmpname.as_bytes()],
-                    );
-                    let file = File::openat(
-                        Fd::cwd(),
-                        path,
-                        bun_sys::O::CREAT
-                            | bun_sys::O::WRONLY
-                            | bun_sys::O::TRUNC
-                            | bun_sys::O::CLOEXEC,
-                        0o644,
-                    );
-
-                    match file {
-                        bun_sys::Result::Err(err) => {
-                            Output::err(
-                                crate::Error::lcovCoverageError,
-                                "Failed to create lcov file",
-                                (),
-                            );
-                            Output::print_error(format_args!("\n{}", err));
-                            Global::exit(1);
-                        }
-                        bun_sys::Result::Ok(f) => {
-                            // Accumulate in a `Vec<u8>` (impl `bun_io::Write`)
-                            // and flush to the fd via `write_all` on success
-                            // below.
-                            let buffered: Vec<u8> = Vec::with_capacity(64 * 1024);
-                            break 'brk Some((f, path, buffered));
-                        }
-                    }
-                }
-            } else {
-                None
-            };
-        let mut lcov_guard = scopeguard::guard(
-            &mut lcov_state,
-            |s: &mut Option<(File, &bun_core::ZStr, Vec<u8>)>| {
-                if reporters_lcov {
-                    if let Some((file, name, _)) = s.take() {
-                        let _ = file.close(); // close error is non-actionable
-                        let _ = bun_sys::unlink(name);
-                    }
-                }
-            },
+    // Writes below target a Vec and cannot fail.
+    let mut out: Vec<u8> = Vec::new();
+    let separator = |out: &mut Vec<u8>| {
+        let _ = bun_core::write_pretty!(out, COLORS, "<r><d>");
+        out.resize(out.len() + max_filepath_length + 2, b'-');
+        let _ =
+            bun_core::write_pretty!(out, COLORS, "|---------|---------|-------------------<r>\n");
+    };
+    separator(&mut out);
+    out.extend_from_slice(b"File");
+    out.resize(out.len() + max_filepath_length - b"File".len() + 1, b' ');
+    let _ = bun_core::write_pretty!(
+        out,
+        COLORS,
+        " <d>|<r> % Funcs <d>|<r> % Lines <d>|<r> Uncovered Line #s\n"
+    );
+    separator(&mut out);
+    let _ = text::write_format_with_values::<COLORS>(
+        b"All files",
+        max_filepath_length,
+        avg,
+        avg_thresholds,
+        failing,
+        &mut out,
+        false,
+    );
+    let _ = bun_core::write_pretty!(out, COLORS, "<r><d> |<r>\n");
+    for (report, fraction) in reports.iter().zip(fractions) {
+        let _ = text::write_format::<COLORS>(
+            report,
+            max_filepath_length,
+            fraction,
+            &thresholds,
+            relative_dir,
+            &mut out,
         );
-        // --- LCOV ---
-
-        for entry in byte_ranges.iter_mut() {
-            // Check if this file should be ignored based on coveragePathIgnorePatterns
-            if !opts.ignore_patterns.is_empty() {
-                let utf8 = entry.source_url.slice();
-                let relative_path = resolve_path::relative(relative_dir, utf8);
-
-                let mut should_ignore = false;
-                for pattern in &opts.ignore_patterns {
-                    if bun_glob::r#match(pattern, relative_path).matches() {
-                        should_ignore = true;
-                        break;
-                    }
-                }
-
-                if should_ignore {
-                    continue;
-                }
-            }
-
-            let Some(report) =
-                CodeCoverageReport::generate(vm.global(), entry, opts.ignore_sourcemap)
-            else {
-                continue;
-            };
-
-            if reporters_text {
-                let mut fraction = base_fraction;
-                if coverage::Text::write_format(
-                    &report,
-                    max_filepath_length,
-                    &mut fraction,
-                    relative_dir,
-                    console_writer,
-                    enable_ansi_colors,
-                )
-                .is_err()
-                {
-                    continue;
-                }
-                avg.functions += fraction.functions;
-                avg.lines += fraction.lines;
-                avg.stmts += fraction.stmts;
-                avg_count += 1.0;
-                if fraction.failing {
-                    failing = true;
-                }
-
-                console_writer.extend_from_slice(b"\n");
-            }
-
-            if reporters_lcov {
-                if let Some((_, _, buffered)) = lcov_guard.as_mut() {
-                    if coverage::Lcov::write_format(&report, relative_dir, buffered).is_err() {
-                        continue;
-                    }
-                }
-            }
-
-            drop(report);
-        }
-
-        if reporters_text {
-            {
-                if avg_count == 0.0 {
-                    avg.functions = 0.0;
-                    avg.lines = 0.0;
-                    avg.stmts = 0.0;
-                } else {
-                    avg.functions /= avg_count;
-                    avg.lines /= avg_count;
-                    avg.stmts /= avg_count;
-                }
-
-                let failed = if avg_count > 0.0 {
-                    base_fraction
-                } else {
-                    Fraction {
-                        functions: 0.0,
-                        lines: 0.0,
-                        stmts: 0.0,
-                        ..Default::default()
-                    }
-                };
-
-                coverage::Text::write_format_with_values(
-                    b"All files",
-                    max_filepath_length,
-                    avg,
-                    failed,
-                    failing,
-                    &mut console,
-                    false,
-                    enable_ansi_colors,
-                )?;
-
-                console.write_all(pretty_lit!("<r><d> |<r>\n"))?;
-            }
-
-            console.write_all(&console_buffer)?;
-            console.write_all(pretty_lit!("<r><d>"))?;
-            // Disarm the lcov cleanup guard before the early `Ok(())`; the
-            // temp file is left for the OS.
-            if console
-                .splat_byte_all(b'-', max_filepath_length + 2)
-                .is_err()
-            {
-                let _ = scopeguard::ScopeGuard::into_inner(lcov_guard);
-                return Ok(());
-            }
-            if console
-                .write_all(pretty_lit!("|---------|---------|-------------------<r>\n"))
-                .is_err()
-            {
-                let _ = scopeguard::ScopeGuard::into_inner(lcov_guard);
-                return Ok(());
-            }
-
-            opts.fractions.failing = failing;
-            Output::flush();
-        }
-
-        if reporters_lcov {
-            // `try lcov_writer.flush()` — keep the errdefer guard armed across the
-            // write so an error here still closes + unlinks the temp file.
-            if let Some((lcov_file, _, buffered)) = &mut **lcov_guard {
-                if let bun_sys::Result::Err(e) = lcov_file.write_all(buffered) {
-                    // `lcov_guard` drops on this early return → close + unlink.
-                    return Err(crate::Error::from(e));
-                }
-            }
-            // Flush succeeded — disarm the errdefer cleanup.
-            let state = scopeguard::ScopeGuard::into_inner(lcov_guard);
-            if let Some((lcov_file, lcov_name, _)) = state.take() {
-                let _ = lcov_file.close();
-                let cwd = Fd::cwd();
-                if let Err(err) = bun_sys::move_file_z(
-                    cwd,
-                    lcov_name,
-                    cwd,
-                    resolve_path::join_abs_string_z::<bun_path::platform::Auto>(
-                        relative_dir,
-                        &[&opts.reports_directory, b"lcov.info"],
-                    ),
-                ) {
-                    Output::err(err, "Failed to save lcov.info file", ());
-                    Global::exit(1);
-                }
-            }
-        } else {
-            let _ = scopeguard::ScopeGuard::into_inner(lcov_guard);
-        }
-        Ok(())
+        out.push(b'\n');
     }
+    separator(&mut out);
+
+    // A closed stderr is not a reason to fail the run.
+    let _ = Output::error_writer().write_all(&out);
+    Output::flush();
+}
+
+/// Render to `<reports_directory>/.lcov.info.<hex>.tmp` and rename it over
+/// `lcov.info`, so an interrupted run never leaves a truncated report.
+fn write_lcov_report(
+    opts: &CodeCoverageOptions,
+    relative_dir: &[u8],
+    reports: &[CodeCoverageReport<'_>],
+) -> bun_sys::Result<()> {
+    let mut contents: Vec<u8> = Vec::with_capacity(64 * 1024);
+    for report in reports {
+        // Writing into a Vec cannot fail.
+        let _ = coverage::lcov::write_format(report, relative_dir, &mut contents);
+    }
+
+    let mut fs = crate::node::fs::NodeFS::default();
+    let _ = fs.mkdir_recursive(&crate::node::fs::args::Mkdir {
+        path: crate::node::PathLike::borrowed(&opts.reports_directory),
+        always_return_none: true,
+        recursive: true,
+        ..Default::default()
+    });
+
+    let mut rand = [0u8; 8];
+    bun_boringssl_sys::rand_bytes(&mut rand);
+    let mut tmpname: Vec<u8> = Vec::new();
+    let _ = write!(
+        &mut tmpname,
+        ".lcov.info.{}.tmp",
+        bun_core::fmt::hex_lower(&rand)
+    );
+    let mut buf = PathBuffer::uninit();
+    let tmp_path = resolve_path::join_abs_string_buf_z::<bun_path::platform::Auto>(
+        relative_dir,
+        &mut buf,
+        &[&opts.reports_directory, &tmpname],
+    );
+    let file = File::openat(
+        Fd::cwd(),
+        tmp_path,
+        bun_sys::O::CREAT | bun_sys::O::WRONLY | bun_sys::O::TRUNC | bun_sys::O::CLOEXEC,
+        0o644,
+    )?;
+    let written = file.write_all(&contents);
+    drop(file);
+    let moved = match written {
+        Ok(()) => bun_sys::move_file_z(
+            Fd::cwd(),
+            tmp_path,
+            Fd::cwd(),
+            resolve_path::join_abs_string_z::<bun_path::platform::Auto>(
+                relative_dir,
+                &[&opts.reports_directory, b"lcov.info"],
+            ),
+        ),
+        err => err,
+    };
+    if moved.is_err() {
+        let _ = bun_sys::unlink(tmp_path);
+    }
+    moved
 }
 
 #[unsafe(no_mangle)]
@@ -2223,6 +1872,7 @@ impl TestCommand {
             repeat_count: 1,
             last_printed_dot: core::cell::Cell::new(false),
             worker_ipc_file_idx: None,
+            test_failure: None,
             failures_to_repeat_buf: Vec::new(),
             skips_to_repeat_buf: Vec::new(),
             todos_to_repeat_buf: Vec::new(),
@@ -2244,7 +1894,7 @@ impl TestCommand {
         // `reporter.jest.test_options` is initialised in the struct
         // literal above (lifetime-erased); the post-init assignment is dropped.
 
-        if ctx.test_options.reporters.junit {
+        if ctx.test_options.reporters.junit && !ctx.test_options.test_worker {
             reporter.reporters.junit = Some(JunitReporter::init());
         }
         if ctx.test_options.reporters.dots {
@@ -2256,15 +1906,21 @@ impl TestCommand {
             reporter.reporters.only_failures = true; // only-failures defaults to true for ai agents
         }
 
+        // The worker's environment already holds the coordinator's env file values, and `BUN_OPTIONS` in it can carry `--env-file`.
+        if ctx.test_options.test_worker {
+            ctx.args.env_files.clear();
+            ctx.args.disable_default_env_files = true;
+        }
+
         bun_ast::initialize_store();
         // SAFETY: `init` returns the heap-allocated process-lifetime VM; deref once.
         let vm: &mut VirtualMachine = unsafe {
             &mut *VirtualMachine::init(jsc::virtual_machine::InitOptions {
                 // Clone (not take): ParallelRunner::run_as_coordinator → build_worker_argv
                 // reads ctx.args.{conditions,define,loaders,tsconfig_override,drop,
-                // main_fields,extension_order,env_files,feature_flags,preserve_symlinks,
-                // allow_addons,allow_ffi_cc,disable_default_env_files,jsx} after this point to forward
-                // them to workers.
+                // main_fields,extension_order,feature_flags,preserve_symlinks,
+                // allow_addons,allow_ffi_cc,jsx} after this point to forward them
+                // to workers.
                 transform_options: ctx.args.clone(),
                 debugger: core::mem::take(&mut ctx.runtime_options.debugger),
                 log: core::ptr::NonNull::new(ctx.log),
@@ -2333,6 +1989,14 @@ impl TestCommand {
             _ = vm
                 .global()
                 .set_time_zone(&EncodedSlice::from_bytes(tz_name));
+        }
+        if vm.test_isolation_enabled {
+            vm.test_isolation_state.time_zone = Some(Box::from(tz_name));
+            vm.test_isolation_state.proxy_env = Some(
+                bun_jsc::rare_data::ProxyEnvSnapshot::capture(&vm.env_loader().map),
+            );
+            vm.test_isolation_state.synthetic_allocation_limit =
+                Some(bun_jsc::virtual_machine::synthetic_allocation_limit());
         }
 
         if ctx.test_options.test_worker {
@@ -2836,17 +2500,7 @@ impl TestCommand {
             pretty_error!("\n");
 
             if coverage_options.enabled && !ran_parallel {
-                let (text, lcov) = (
-                    coverage_options.reporters.text,
-                    coverage_options.reporters.lcov,
-                );
-                reporter.generate_code_coverage(
-                    vm,
-                    &mut coverage_options,
-                    text,
-                    lcov,
-                    Output::enable_ansi_colors_stderr(),
-                )?;
+                reporter.generate_code_coverage(vm, &mut coverage_options);
             }
 
             // `Summary` is `Copy`; take a value snapshot so the `&mut` from
@@ -3381,11 +3035,7 @@ impl TestCommand {
             repeat_index += 1;
         }
         if let Some(junit) = reporter.reporters.junit.as_mut() {
-            junit.file_end_ns = bun::Timespec::now(bun::TimespecMockMode::ForceRealTime).ns();
-            while !junit.suite_stack.is_empty() {
-                let _ = junit.end_test_suite();
-            }
-            junit.current_file = Box::default();
+            let _ = junit.end_file(None);
         }
         Ok(())
     }

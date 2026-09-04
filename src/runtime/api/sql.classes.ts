@@ -1,4 +1,4 @@
-import { ClassDefinition, define } from "../../codegen/class-definitions";
+import { ClassDefinition, define } from "../../codegen/class-definitions.ts";
 
 const types = ["PostgresSQL", "MySQL"];
 const rustPaths = {
@@ -14,7 +14,7 @@ for (const type of types) {
       name: `${type}Connection`,
       rustPath: rustPaths[`${type}Connection`],
       construct: true,
-      finalize: true,
+      refCounted: true,
       configurable: false,
       hasPendingActivity: type === "PostgresSQL",
       klass: {},
@@ -71,7 +71,7 @@ for (const type of types) {
       name: `${type}Query`,
       rustPath: rustPaths[`${type}Query`],
       construct: true,
-      finalize: true,
+      refCounted: true,
       configurable: false,
       JSType: "0b11101110",
       klass: {},

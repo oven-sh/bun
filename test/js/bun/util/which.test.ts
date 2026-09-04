@@ -2,7 +2,7 @@ import { $, which } from "bun";
 import { dlopen, ptr } from "bun:ffi";
 import { expect, test } from "bun:test";
 import { isArm64, isIntelMacOS, isWindows, tempDir, tmpdirSync } from "harness";
-import { chmodSync, existsSync, mkdirSync, realpathSync, rmdirSync, rmSync, symlinkSync } from "node:fs";
+import { chmodSync, copyFileSync, existsSync, mkdirSync, realpathSync, rmdirSync, rmSync, symlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 
@@ -44,6 +44,74 @@ if (isWindows) {
     expect(which(exe, { PATH: "C:\\Windows\\system32;" + dir })).toBe(process.execPath);
     expect(which(exe, { PATH: dir + ";C:\\Windows\\system32" })).toBe(process.execPath);
     expect(which(exe, { PATH: dir })).toBe(process.execPath);
+  });
+
+  // `chcp.com`, `tree.com` and `more.com` live in System32 with no `.exe`
+  // sibling, so `.com` has to be probed like libuv does. It is probed after
+  // every $PATH directory failed `.exe`/`.cmd`/`.bat`, so a later `.exe` wins
+  // over an earlier `.com`. A path with a directory is stat'd as spelled
+  // whatever its extension (libuv again), a bare $PATH name only with an
+  // executable extension.
+  test("which finds .com executables, bare or spelled, relative or absolute", () => {
+    using dir = tempDir("which-com", {
+      "tool.com": "",
+      "dotted.name.exe": "",
+      "custom.bin": "",
+      "both.com": "",
+      "later/both.exe": "",
+    });
+    const base = String(dir);
+    const later = join(base, "later");
+    expect({
+      bare: which("tool", { PATH: base }),
+      spelled: which("tool.com", { PATH: base }),
+      absolute: which(join(base, "tool.com")),
+      relative: which("./tool.com", { cwd: base }),
+      dotted_bare: which("dotted.name", { PATH: base }),
+      dotted_spelled: which("dotted.name.exe", { PATH: base }),
+      custom_absolute: which(join(base, "custom.bin")),
+      custom_bare: which("custom.bin", { PATH: base }),
+      custom_no_ext: which("custom", { PATH: base }),
+      exe_in_later_dir_wins: which("both", { PATH: `${base};${later}` }),
+      com_alone: which("both", { PATH: base }),
+      missing: which("tool.exe", { PATH: base }),
+      system: which("chcp")?.toLowerCase(),
+    }).toEqual({
+      bare: join(base, "tool.com"),
+      spelled: join(base, "tool.com"),
+      absolute: join(base, "tool.com"),
+      relative: join(base, "tool.com"),
+      dotted_bare: join(base, "dotted.name.exe"),
+      dotted_spelled: join(base, "dotted.name.exe"),
+      custom_absolute: join(base, "custom.bin"),
+      custom_bare: null,
+      custom_no_ext: null,
+      exe_in_later_dir_wins: join(later, "both.exe"),
+      com_alone: join(base, "both.com"),
+      missing: null,
+      system: join(process.env.SystemRoot ?? "C:\\Windows", "System32", "chcp.com").toLowerCase(),
+    });
+  });
+
+  // Spawn resolves like which: a dotted `\` path without an executable
+  // extension still completes to `.cmd`, and a `.com` in the cwd is found
+  // once the $PATH walk failed.
+  test("spawn completes a dotted path to .cmd and finds a .com in the cwd", () => {
+    const chcp = join(process.env.SystemRoot ?? "C:\\Windows", "System32", "chcp.com");
+    using dir = tempDir("which-spawn", { "deploy.prod.cmd": "@echo cmd-ok\r\n" });
+    const base = String(dir);
+    copyFileSync(chcp, join(base, "whichtest.com"));
+    const run = (cmd: string[]) =>
+      Bun.spawnSync(cmd, { cwd: base, stdout: "pipe", stderr: "pipe" }).stdout.toString().trim();
+    expect({
+      which_dotted: which(join(base, "deploy.prod")),
+      spawn_dotted: run([join(base, "deploy.prod")]),
+      spawn_com_in_cwd: run(["whichtest"]),
+    }).toEqual({
+      which_dotted: join(base, "deploy.prod.cmd"),
+      spawn_dotted: "cmd-ok",
+      spawn_com_in_cwd: expect.stringMatching(/\d+$/),
+    });
   });
 
   // Non-name-surrogate reparse tags (APPEXECLINK) must be treated as existing;

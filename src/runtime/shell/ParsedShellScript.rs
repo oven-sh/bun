@@ -30,8 +30,8 @@ pub struct ParsedShellScript {
     pub(crate) quiet: Cell<bool>,
     pub(crate) cwd: JsCell<Option<BunString>>,
     /// Self-wrapper backref. `.classes.ts` has `finalize: true`, so the weak arm is
-    /// sound: codegen calls `finalize()` which flips this to `.Finalized` before sweep.
-    /// Read-only after construction; mutated only in `finalize(mut self: Box<Self>)`.
+    /// sound: the codegen finalizer drops this Box (and the `JsRef`) at sweep.
+    /// Read-only after construction.
     pub(crate) this_jsvalue: JsRef,
     /// Read-only after construction (set once before the JS wrapper exists).
     pub(crate) estimated_size_for_gc: usize,
@@ -92,18 +92,6 @@ impl ParsedShellScript {
         let cwd = self.cwd.replace(None);
         let export_env = self.export_env.replace(None);
         (args, jsobjs, quiet, cwd, export_env)
-    }
-
-    /// Called from the generated C++ wrapper's `finalize()`. Runs on the mutator
-    /// thread during lazy sweep — must not touch live JS cells.
-    // Codegen's `host_fn_finalize` thunk calls `ParsedShellScript::finalize(b)`
-    // and requires `fn finalize(self: Box<Self>)`; clippy::boxed_local is a
-    // false positive on that contract.
-    #[allow(clippy::boxed_local)]
-    pub fn finalize(mut self: Box<Self>) {
-        // Per PORTING.md §JSC: flip the self-wrapper ref to `.Finalized` first; other
-        // cells may already be swept so the weak JSValue must not be touched again.
-        self.this_jsvalue.finalize();
     }
 
     #[bun_jsc::host_fn(method)]

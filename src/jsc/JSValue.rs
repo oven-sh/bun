@@ -414,9 +414,9 @@ impl JSValue {
 
     /// `jsType()` — only valid when `is_cell()`. Reads the JSCell type byte.
     ///
-    /// Source-inlined body of `JSC__JSValue__jsType` (bindings.cpp:2755) so the
-    /// 2-insn fast path survives no-LTO targets (e.g. aarch64-musl, where
-    /// cross-language LTO is disabled — config.ts:631). With the FFI shim the
+    /// Implemented in Rust rather than through a C++ FFI shim so the 2-insn
+    /// fast path survives no-LTO targets (e.g. aarch64-musl, where
+    /// cross-language LTO is disabled — config.ts:631). Through an FFI shim the
     /// call cannot inline into Rust callers and shows up as a separate symbol;
     /// the real body is just `movzbl 0x5(%rdi),%eax` after the cell check.
     #[inline]
@@ -1528,7 +1528,8 @@ impl JSValue {
 
     /// `JSValue.getOptional` — loose, coercing property fetch.
     /// Absent / `undefined` / `null` → `None`; anything else is run through
-    /// [`coerce`](Self::coerce) (ToNumber for integer `T`). Distinct from
+    /// [`coerce`](Self::coerce) (ToNumber for integer `T`, the value itself
+    /// for `JSValue`). Distinct from
     /// [`get_optional_int`], which validates the property is already an
     /// in-range integer and throws otherwise.
     pub fn get_optional<T: CoerceTo>(
@@ -1920,6 +1921,12 @@ impl CoerceTo for i64 {
         // ToNumber here so string inputs above 2^31 round-trip to i64.
         let num = v.to_number(global)?;
         Ok(if num.is_nan() { 0 } else { num as i64 })
+    }
+}
+/// No coercion: `get_optional::<JSValue>` is `get` with `null` filtered out.
+impl CoerceTo for JSValue {
+    fn coerce_from(v: JSValue, _global: &JSGlobalObject) -> JsResult<JSValue> {
+        Ok(v)
     }
 }
 

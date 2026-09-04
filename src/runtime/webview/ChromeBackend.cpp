@@ -654,6 +654,25 @@ static void settle(JSGlobalObject* g, JSWebView* view, PendingSlot slot, bool ok
     settleSlot(g, view, slotFor(view, slot), ok, v);
 }
 
+// Reject one op's slot on a CDP failure. A Navigate-slot failure also fires
+// onNavigationFailed and clears loading, like WebKit's NavFailEvent, except
+// for PageTitle: that is the post-load title fetch, and its failure (for
+// example a redirect destroying the context) is not a navigation failure.
+// The slot settles before the callback runs, so a retry with navigate()
+// from inside the callback sees an empty slot instead of ERR_INVALID_STATE.
+static void settleFailure(JSGlobalObject* g, JSWebView* view, PendingSlot slot, Method method, JSValue errValue)
+{
+    bool navigationFailed = slot == PendingSlot::Navigate && method != Method::PageTitle;
+    if (navigationFailed) view->m_loading = false;
+    settle(g, view, slot, false, errValue);
+    if (navigationFailed) {
+        if (JSObject* cb = view->m_onNavigationFailed.get()) {
+            Bun__EventLoop__runCallback2(g, JSValue::encode(cb), JSValue::encode(jsUndefined()),
+                JSValue::encode(errValue), JSValue::encode(jsUndefined()));
+        }
+    }
+}
+
 // Slots, not m_pending: a navigation that Chrome has already answered is
 // waiting for Page.loadEventFired and exists only in its slot.
 static void rejectViewSlots(JSGlobalObject* g, JSWebView* view, JSValue err)
@@ -664,6 +683,17 @@ static void rejectViewSlots(JSGlobalObject* g, JSWebView* view, JSValue err)
     settleSlot(g, view, view->m_pendingScreenshot, false, err);
     settleSlot(g, view, view->m_pendingMisc, false, err);
     settleSlot(g, view, view->m_pendingCdp, false, err);
+}
+
+// close() variant of rejectViewSlots: see rejectSlotAsHandled (JSWebView.h).
+static void rejectViewSlotsAsHandled(JSGlobalObject* g, JSWebView* view, JSValue err)
+{
+    view->m_loading = false;
+    rejectSlotAsHandled(g, view, view->m_pendingNavigate, err);
+    rejectSlotAsHandled(g, view, view->m_pendingEval, err);
+    rejectSlotAsHandled(g, view, view->m_pendingScreenshot, err);
+    rejectSlotAsHandled(g, view, view->m_pendingMisc, err);
+    rejectSlotAsHandled(g, view, view->m_pendingCdp, err);
 }
 
 // Build an Error from CDP exceptionDetails. exception.description is V8's
@@ -734,7 +764,7 @@ void Transport::handleResponse(uint32_t id, std::span<const char> result, std::s
         // {"code":-32000,"message":"..."}
         auto msgSlice = jsonString(jsonField(error, { "message", 7 }));
         auto errStr = WTF::String::fromUTF8(std::span<const char>(msgSlice));
-        settle(g, view, entry.slot, false,
+        settleFailure(g, view, entry.slot, entry.method,
             createError(g, errStr.isEmpty() ? "CDP error"_s : errStr));
         return;
     }
@@ -813,7 +843,7 @@ void Transport::handleResponse(uint32_t id, std::span<const char> result, std::s
         // m_pending, so we just drop here.
         auto err = jsonString(jsonField(result, { "errorText", 9 }));
         if (!err.empty())
-            settle(g, view, entry.slot, false, createError(g, WTF::String::fromUTF8(err)));
+            settleFailure(g, view, entry.slot, entry.method, createError(g, WTF::String::fromUTF8(err)));
         // Else: don't settle — Page.loadEventFired does.
         return;
     }
@@ -1725,7 +1755,7 @@ JSPromise* reload(JSGlobalObject* g, JSWebView* view)
 void close(JSWebView* view)
 {
     auto& t = transport();
-    if (auto* g = t.m_global) rejectViewSlots(g, view, createError(g, "WebView closed"_s));
+    if (auto* g = t.m_global) rejectViewSlotsAsHandled(g, view, createError(g, "WebView closed"_s));
     // Prune m_pending entries for this view — the attach chain
     // (TargetCreateTarget → TargetAttachToTarget → PageEnable →
     // PageNavigate) holds Weak<view> per step and each step chains to the

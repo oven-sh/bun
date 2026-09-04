@@ -1181,6 +1181,25 @@ describe("Database.run", () => {
   });
 });
 
+describe("Database.prepare", () => {
+  // sqlite3_prepare_v3 returns SQLITE_OK with a NULL statement when the input
+  // has no SQL (only whitespace/comments). That must be rejected up front, not
+  // wrapped in a Statement that later derefs the NULL (crashed when params were
+  // passed, threw "Statement has finalized" otherwise).
+  it.each([" ", "\n", ";", " ; ", "-- comment", "/* block */"])("throws on SQL with no statement: %p", sql => {
+    const db = new Database(":memory:");
+    for (const call of [
+      () => db.prepare(sql),
+      () => db.prepare(sql, {}),
+      () => db.prepare(sql, []),
+      () => db.query(sql),
+    ]) {
+      expect(call).toThrow(RangeError);
+      expect(call).toThrow("Invalid SQL statement");
+    }
+  });
+});
+
 it("#3991", () => {
   const db = new Database(":memory:");
   db.prepare(

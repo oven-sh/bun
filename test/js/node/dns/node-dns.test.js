@@ -1029,3 +1029,25 @@ describe("pending cache", () => {
     expect(results).toEqual(Array(8).fill({ address: "127.0.0.1", family: 4 }));
   });
 });
+
+// The socket never answers. The QTYPE that reaches it and the syscall the
+// cancelled query reports pin resolve()'s rrtype dispatch to the query that
+// resolveNaptr() issues; decoding is covered by the resolveNaptr() tests.
+test.concurrent.each(["NAPTR", "naptr"])("resolve(hostname, %p) issues a NAPTR query", async rrtype => {
+  const socket = dgram.createSocket("udp4");
+  try {
+    socket.bind(0, "127.0.0.1");
+    await once(socket, "listening");
+    const resolver = new dns_promises.Resolver();
+    resolver.setServers(["127.0.0.1:" + socket.address().port]);
+    const received = once(socket, "message");
+    const promise = resolver.resolve("naptr.example.test", rrtype);
+    const [query] = await received;
+    // QNAME ends at the first zero byte after the 12-byte header; QTYPE follows it.
+    expect(query.readUInt16BE(query.indexOf(0, 12) + 1)).toBe(35);
+    resolver.cancel();
+    expect(await promise.catch(err => err)).toMatchObject({ code: "ECANCELLED", syscall: "queryNaptr" });
+  } finally {
+    socket.close();
+  }
+});

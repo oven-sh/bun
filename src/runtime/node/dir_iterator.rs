@@ -9,7 +9,9 @@
 use core::mem::offset_of;
 
 use bun_core::RawSlice;
-use bun_sys::{self as sys, Fd, Tag};
+#[cfg(not(target_os = "macos"))]
+use bun_sys::Tag;
+use bun_sys::{self as sys, Fd};
 
 // `Entry.Kind` is `bun_core::FileKind`, re-exported here as
 // `bun_sys::EntryKind` (and as `crate::node::types::DirentKind`).
@@ -109,18 +111,6 @@ mod platform {
         }
 
         fn next_darwin(&mut self) -> Result {
-            unsafe extern "C" {
-                // Private libsystem symbol (`__getdirentries64`).
-                // SAFETY precondition: `buf` must be writable for `nbytes` and
-                // `basep` must point to a valid i64 — raw-pointer contract,
-                // cannot be `safe fn`.
-                fn __getdirentries64(
-                    fd: libc::c_int,
-                    buf: *mut u8,
-                    nbytes: usize,
-                    basep: *mut i64,
-                ) -> isize;
-            }
             'start_over: loop {
                 if self.index >= self.end_index {
                     if self.received_eof {
@@ -130,39 +120,31 @@ mod platform {
                     // getdirentries64() writes to the last 4 bytes of the
                     // buffer to indicate EOF. If that value is not zero, we
                     // have reached the end of the directory and we can skip
-                    // the extra syscall.
+                    // the extra syscall. The wrapper zeroes those bytes
+                    // before each attempt.
                     // https://github.com/apple-oss-distributions/xnu/blob/94d3b452840153a99b38a3a9659680b2a006908e/bsd/vfs/vfs_syscalls.c#L10444-L10470
                     const GETDIRENTRIES64_EXTENDED_BUFSIZE: usize = 1024;
                     const _: () = assert!(8192 >= GETDIRENTRIES64_EXTENDED_BUFSIZE);
                     self.received_eof = false;
-                    // Always zero the bytes where the flag will be written
-                    // so we don't confuse garbage with EOF.
                     let len = self.buf.0.len();
-                    self.buf.0[len - 4..len].copy_from_slice(&[0, 0, 0, 0]);
 
-                    // SAFETY: FFI call into libc __getdirentries64; buf is 8192 bytes
-                    let rc = unsafe {
-                        __getdirentries64(
-                            self.dir.native(),
+                    // SAFETY: buf is 8192 writable bytes; seek is a valid *mut i64.
+                    let n = unsafe {
+                        sys::getdirentries64(
+                            self.dir,
                             self.buf.0.as_mut_ptr(),
-                            self.buf.0.len(),
+                            len,
                             &raw mut self.seek,
                         )
-                    };
+                    }?;
 
-                    if rc < 1 {
-                        if rc == 0 {
-                            self.received_eof = true;
-                            return Ok(None);
-                        }
-                        return Err(sys::Error::from_code_int(
-                            sys::last_errno(),
-                            Tag::getdirentries64,
-                        ));
+                    if n == 0 {
+                        self.received_eof = true;
+                        return Ok(None);
                     }
 
                     self.index = 0;
-                    self.end_index = usize::try_from(rc).expect("int cast");
+                    self.end_index = n;
                     let eof_flag = u32::from_ne_bytes(
                         self.buf.0[len - 4..len]
                             .try_into()
@@ -438,7 +420,7 @@ mod platform {
     use bun_sys::windows::ntdll;
     use bun_sys::windows::{
         BOOLEAN, FALSE, FILE_ATTRIBUTE_DIRECTORY, FILE_ATTRIBUTE_REPARSE_POINT,
-        FILE_DIRECTORY_INFORMATION, IO_STATUS_BLOCK, TRUE, UNICODE_STRING, Win32ErrorExt as _,
+        FILE_DIRECTORY_INFORMATION, IO_STATUS_BLOCK, TRUE, UNICODE_STRING,
     };
 
     // While the official api docs guarantee FILE_BOTH_DIR_INFORMATION to be aligned properly
@@ -633,13 +615,7 @@ mod platform {
 
                     if rc != w::NTSTATUS::SUCCESS {
                         sys::syslog!("NtQueryDirectoryFile({}) = {:#x}", self.dir, rc.0);
-                        let errno = w::Win32Error::from_nt_status(rc)
-                            .to_system_errno()
-                            .unwrap_or(SystemErrno::EUNKNOWN);
-                        return Err(sys::Error::from_code(
-                            errno.to_e(),
-                            Tag::NtQueryDirectoryFile,
-                        ));
+                        return Err(sys::Error::new(rc, Tag::NtQueryDirectoryFile));
                     }
 
                     if io.Information == 0 {

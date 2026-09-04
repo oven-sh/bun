@@ -50,7 +50,9 @@ pub use tsconfig_json::TSConfigJSON;
 // `result` / `standalone_module_graph` sibling modules.
 /// Re-export so dependents can spell `bun_resolver::install_types::AutoInstaller`.
 pub use ::bun_install_types::resolver_hooks as install_types;
-pub use resolver::{AnyResolveWatcher, BrowserMapPathKind, Bufs, Dirname, Resolver};
+pub use resolver::{
+    AnyResolveWatcher, BrowserMapPathKind, Bufs, Dirname, Resolver, module_type_from_ext,
+};
 pub use result::{
     DebugLogs, DirEntryResolveQueueItem, ExternalKind, FlushMode, LoadResult, MatchResult,
     MatchStatus, PathPair, PendingResolution, PendingResolutionTag, Result, ResultFlags,
@@ -73,8 +75,11 @@ pub mod fs {
 
     // `BSSStringList(2048, 128)` → `<{2048*2}, {128+1}>`
     bun_alloc::bss_string_list! { pub dirname_store_backing : 4096, 129 }
-    // `BSSStringList(4096, 64)` → `<{4096*2}, {64+1}>`
-    bun_alloc::bss_string_list! { pub filename_store_backing : 8192, 65 }
+    // `bss_singleton!` emits one private `STORAGE` per declare site, so the
+    // filename store is declared once, in `fs_full`, and shared with the
+    // `readdir` appender (`FilenameStoreAppender`). A second declaration here
+    // would be a separate store that `exists`/`as_interned` cannot see into.
+    pub use crate::fs_full::filename_store_backing;
 
     /// Port of `FileSystem.DirnameStore` (`BSSStringList<2048,128>`).
     pub struct DirnameStore(());
@@ -852,7 +857,6 @@ pub mod fs {
             #[cfg(windows)]
             {
                 use bun_sys::windows as w;
-                use w::Win32ErrorUnwrap as _;
                 let _ = from_name;
                 let mut existing_buf = bun_paths::WPathBuffer::uninit();
                 let mut new_buf = bun_paths::WPathBuffer::uninit();
@@ -884,7 +888,11 @@ pub mod fs {
                     )
                 } == w::FALSE
                 {
-                    w::Win32Error::get().unwrap()?;
+                    return Err(bun_sys::Error::from_win32(
+                        w::Win32Error::get(),
+                        bun_sys::Tag::rename,
+                    )
+                    .into());
                 }
                 Ok(())
             }

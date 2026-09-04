@@ -491,6 +491,42 @@ describe("Bun.build", () => {
     expect(exitCode).toBe(0);
   });
 
+  test.concurrent("an entry point that resolves to a builtin or to a non-code data: URL is a build error", async () => {
+    // Runs in a child: unfixed, "bun:wrap" was dropped (the bundler registers its runtime under that
+    // name) and the others were scheduled as files. The data: URL is an image, which resolves as
+    // external like a builtin does, and was emitted as a module exporting "". It is listed next to a
+    // file because a lone data: entry point fails earlier, when the build opens its directory.
+    using dir = tempDir("build-api-builtin-entrypoint", { "valid.js": "console.log(1);" });
+    const image = "data:image/png;base64,iVBORw0KGgo=";
+    const fixture = /* ts */ `
+      const report = async (entrypoints: string[]) => {
+        const { success, outputs, logs } = await Bun.build({ entrypoints, target: "bun", throw: false });
+        return { success, outputs: outputs.length, logs: logs.map(log => [log.name, log.message]) };
+      };
+      console.log(JSON.stringify([
+        await report(["bun:wrap"]),
+        await report(["node:fs"]),
+        await report(["./valid.js", ${JSON.stringify(image)}]),
+      ]));
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", fixture],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    const failedWith = (message: string) => ({ success: false, outputs: 0, logs: [["BuildMessage", message]] });
+    expect(JSON.parse(stdout)).toEqual([
+      failedWith('Cannot use "bun:wrap" as an entry point: it resolves to a builtin module'),
+      failedWith('Cannot use "node:fs" as an entry point: it resolves to a builtin module'),
+      failedWith(`ModuleNotFound resolving "${image}" (entry point)`),
+    ]);
+    expect(exitCode).toBe(0);
+  });
+
   test("returns output files", async () => {
     Bun.gc(true);
     const build = await Bun.build({
@@ -1907,6 +1943,57 @@ test("Bun.build does not corrupt folded string ropes shared across chunks", asyn
   expect(stdout.trim()).toBe("DONE 0");
   expect(exitCode).toBe(0);
 }, 180_000);
+
+// A plugin module's namespace lives in the bundle's arena. The `BuildMessage`
+// objects in `result.logs` outlive the arena, so they must own a copy.
+// MIMALLOC_PURGE_DELAY=0 makes mimalloc return the arena's pages to the OS as
+// soon as the bundle ends, so a stale pointer crashes instead of reading the
+// old bytes.
+test.concurrent("a BuildMessage keeps the namespace of a plugin module after the build", async () => {
+  using dir = tempDir("build-message-namespace", {
+    "entry.ts": `import "virtual:broken";`,
+    "run.ts": `
+      const result = await Bun.build({
+        entrypoints: ["./entry.ts"],
+        throw: false,
+        plugins: [{
+          name: "virtual",
+          setup(builder) {
+            builder.onResolve({ filter: /^virtual:/ }, args => ({
+              path: args.path.slice("virtual:".length),
+              namespace: "virtual",
+            }));
+            builder.onLoad({ filter: /.*/, namespace: "virtual" }, () => ({
+              contents: "let = ;",
+              loader: "js",
+            }));
+          },
+        }],
+      });
+      console.log(JSON.stringify({
+        success: result.success,
+        positions: result.logs.map(log => {
+          const { file, namespace } = log.position!;
+          return { file, namespace };
+        }),
+      }));
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "run.ts"],
+    cwd: String(dir),
+    env: { ...bunEnv, MIMALLOC_PURGE_DELAY: "0", MIMALLOC_ABANDONED_PAGE_PURGE: "1" },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(JSON.parse(stdout)).toEqual({
+    success: false,
+    positions: [{ file: "broken", namespace: "virtual" }],
+  });
+  expect(exitCode).toBe(0);
+});
 
 test("sourcemap sourcesContent is valid JSON when source contains C0 control chars", async () => {
   // RFC 8259 only allows \" \\ \/ \b \f \n \r \t and six-char \u escapes; \v

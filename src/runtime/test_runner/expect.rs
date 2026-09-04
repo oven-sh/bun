@@ -1061,12 +1061,7 @@ impl Expect {
             } else {
                 runner.snapshots.failed += 1;
                 let signature = Self::get_signature(fn_name, "<green>expected<r>", false);
-                let diff_format = DiffFormatter {
-                    received_string: Some(&pretty_value),
-                    expected_string: Some(trim_res.trimmed),
-                    global_this: Some(global_this),
-                    ..Default::default()
-                };
+                let diff_format = DiffFormatter::from_strings(&pretty_value, trim_res.trimmed, false);
                 return throw!(this, global_this, signature, "\n\n{}\n", diff_format);
             }
         } else {
@@ -1154,14 +1149,7 @@ impl Expect {
             }
         }
 
-        if value.jest_snapshot_pretty_format(pretty_value, global_this).is_err() {
-            let mut formatter = ConsoleObject::Formatter::new(global_this);
-            return Err(global_this.throw(format_args!(
-                "Failed to pretty format value: {}",
-                value.to_fmt(&mut formatter),
-            )));
-        }
-        Ok(())
+        value.jest_snapshot_pretty_format(pretty_value, global_this)
     }
 
     pub(crate) fn snapshot(
@@ -1240,12 +1228,7 @@ impl Expect {
 
             runner.snapshots.failed += 1;
             let signature = Self::get_signature(fn_name, "<green>expected<r>", false);
-            let diff_format = DiffFormatter {
-                received_string: Some(&pretty_value),
-                expected_string: Some(&saved_value),
-                global_this: Some(global_this),
-                ..Default::default()
-            };
+            let diff_format = DiffFormatter::from_strings(&pretty_value, &saved_value, false);
             return throw!(self, global_this, signature, "\n\n{}\n", diff_format);
         }
 
@@ -2835,14 +2818,7 @@ impl ExpectMatcherUtils {
         }
         let _ = (comment, promise, second_argument);
 
-        let diff_formatter = DiffFormatter {
-            received_string: None,
-            expected_string: None,
-            received: Some(received),
-            expected: Some(expected),
-            global_this: Some(global_this),
-            not: is_not,
-        };
+        let diff_formatter = DiffFormatter::new(global_this, received, expected, is_not)?;
 
         // Builds `getSignature("{f}", "<green>expected<r>", is_not) ++ "\n\n{f}\n"`
         // and substitutes `(matcher_name, diff_formatter)` into the two `{f}`

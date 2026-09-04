@@ -125,6 +125,7 @@ pub mod js_bundler {
         pub(crate) no_macros: bool,
         pub(crate) ignore_dce_annotations: bool,
         pub(crate) emit_dce_annotations: Option<bool>,
+        pub(crate) deprecated_namespace_object_setters: bool,
         pub(crate) tree_shaking: Option<bool>,
         pub(crate) names: Names,
         pub(crate) external: StringSet,
@@ -144,7 +145,8 @@ pub mod js_bundler {
         pub(crate) metafile_markdown_path: OwnedString,
         pub(crate) css_chunking: bool,
         /// `minChunkSize`: see `BundleOptions::min_chunk_size`.
-        pub(crate) min_chunk_size: u64,
+        pub(crate) min_chunk_size: Option<u64>,
+        pub(crate) module_preload: bool,
         pub(crate) drop: StringSet,
         pub(crate) features: StringSet,
         pub(crate) throw_on_error: bool,
@@ -191,6 +193,7 @@ pub mod js_bundler {
                 no_macros: false,
                 ignore_dce_annotations: false,
                 emit_dce_annotations: None,
+                deprecated_namespace_object_setters: true,
                 tree_shaking: None,
                 names: Names::default(),
                 external: StringSet::default(),
@@ -207,7 +210,8 @@ pub mod js_bundler {
                 metafile_json_path: OwnedString::default(),
                 metafile_markdown_path: OwnedString::default(),
                 css_chunking: false,
-                min_chunk_size: 0,
+                min_chunk_size: None,
+                module_preload: true,
                 drop: StringSet::default(),
                 features: StringSet::default(),
                 throw_on_error: true,
@@ -803,6 +807,9 @@ pub mod js_bundler {
             if let Some(split_require) = config.get_boolean_loose(global_this, "splitRequire")? {
                 this.split_require = split_require;
             }
+            if let Some(module_preload) = config.get_boolean_loose(global_this, "modulePreload")? {
+                this.module_preload = module_preload;
+            }
 
             if let Some(min_chunk_size) =
                 config.get_optional_int::<u64>(global_this, "minChunkSize")?
@@ -812,7 +819,7 @@ pub mod js_bundler {
                         "minChunkSize requires splitting to be true."
                     )));
                 }
-                this.min_chunk_size = min_chunk_size;
+                this.min_chunk_size = Some(min_chunk_size);
             }
 
             if let Some(minify) = config.get_truthy(global_this, "minify")? {
@@ -863,6 +870,11 @@ pub mod js_bundler {
                 this.files = file_map_from_js(global_this, JSValue::from_cell(files_obj))?;
             }
 
+            if let Some(flag) =
+                config.get_boolean_loose(global_this, "deprecatedNamespaceObjectSetters")?
+            {
+                this.deprecated_namespace_object_setters = flag;
+            }
             if let Some(flag) = config.get_boolean_loose(global_this, "emitDCEAnnotations")? {
                 this.emit_dce_annotations = Some(flag);
             }
@@ -1275,30 +1287,6 @@ pub mod js_bundler {
                             return Err(global_this.throw_invalid_arguments(format_args!("cannot use compile with an output file named 'bun' because bun won't realize it's a standalone executable. Please choose a different name for compile.outfile")));
                         }
 
-                        // NOTE: when no `outdir`/`outfile` was given, place the
-                        // auto-derived executable next to its entry point — the
-                        // only path the caller actually supplied. Resolving the
-                        // basename against the process-wide cwd instead would
-                        // make every `Bun.build({compile: true, entrypoints:
-                        // [tmp + "/app.js"]})` from any test process write the
-                        // *same* `<cwd>/app`, so concurrently-running test files
-                        // would race on the executable (observed flake in
-                        // bun-build-compile-sourcemap.test.ts). This keeps each
-                        // build's output inside its own (temp) directory and is
-                        // also the more intuitive default for a programmatic API.
-                        // Explicit `outfile`/`outdir` are unaffected.
-                        let entry_dir = bun_paths::resolve_path::dirname::<bun_paths::platform::Auto>(
-                            entry_point,
-                        );
-                        if this.outdir.is_empty()
-                            && !entry_dir.is_empty()
-                            && bun_paths::is_absolute(entry_dir)
-                        {
-                            compile.outfile.append_slice_exact(entry_dir)?;
-                            compile
-                                .outfile
-                                .append_slice_exact(core::slice::from_ref(&bun_paths::SEP))?;
-                        }
                         compile.outfile.append_slice_exact(outfile)?;
                     }
                 }
@@ -2002,7 +1990,10 @@ impl BuildArtifact {
 
     #[bun_jsc::host_fn(getter)]
     pub(crate) fn get_loader(this: &Self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
-        BunString::static_(<&'static str>::from(this.loader)).to_js(global_this)
+        match this.loader {
+            bun_ast::Loader::Base64 => Ok(global_this.common_strings().base64()),
+            loader => BunString::static_(<&'static str>::from(loader)).to_js(global_this),
+        }
     }
 
     #[bun_jsc::host_fn(getter)]

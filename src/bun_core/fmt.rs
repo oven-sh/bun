@@ -38,16 +38,13 @@ pub mod js_lexer {
 pub mod js_printer {
     use super::strings::Encoding;
     use core::fmt;
-    /// Minimal escape set for fmt.rs quoting.
-    /// bun_js_printer overrides with the full (ctrl-char, \u escape, encoding-aware) impl.
+    /// Always valid JSON and valid UTF-8: lone surrogates become `\u` escapes, malformed bytes U+FFFD.
     pub fn write_json_string(input: &[u8], f: &mut impl fmt::Write, enc: Encoding) -> fmt::Result {
         f.write_char('"')?;
-        match enc {
-            Encoding::Latin1 => super::encode_json_string_chars_latin1(f, input)?,
-            _ => super::encode_json_string_chars(f, input)?,
-        }
+        write_pre_quoted_string(input, f, b'"', false, enc)?;
         f.write_char('"')
     }
+    /// The escaped body without the quotes, in JSON mode (`json = true`).
     pub(crate) fn write_pre_quoted_string(
         input: &[u8],
         f: &mut impl fmt::Write,
@@ -55,17 +52,35 @@ pub mod js_printer {
         ascii_only: bool,
         enc: Encoding,
     ) -> fmt::Result {
-        // Writes the escaped body WITHOUT surrounding quotes. Delegate to the
-        // canonical impl in `string::printer` (a byte-sink writer) and bridge
-        // the result into the `fmt::Write`. In JSON mode (`json = true`) every
-        // non-printable scalar (including lone surrogates) is emitted as an
-        // ASCII escape.
-        let mut buf: Vec<u8> = Vec::with_capacity(input.len() + 8);
         crate::string::printer::write_pre_quoted_string(
-            input, &mut buf, quote, ascii_only, true, enc,
+            input,
+            &mut FmtSink(f),
+            quote,
+            ascii_only,
+            true,
+            enc,
         )
-        .map_err(|_| fmt::Error)?;
-        f.write_str(&String::from_utf8_lossy(&buf))
+        .map_err(|_| fmt::Error)
+    }
+
+    /// `string::printer` writes escapes, ASCII runs and whole code points, so each chunk is UTF-8 on its own.
+    struct FmtSink<'a, W: fmt::Write>(&'a mut W);
+
+    impl<W: fmt::Write> crate::io::Write for FmtSink<'_, W> {
+        fn write_all(&mut self, buf: &[u8]) -> crate::CrateResult<()> {
+            match super::strings::str_utf8(buf) {
+                Some(s) => self.0.write_str(s),
+                None => buf.utf8_chunks().try_for_each(|chunk| {
+                    self.0.write_str(chunk.valid())?;
+                    if chunk.invalid().is_empty() {
+                        Ok(())
+                    } else {
+                        self.0.write_char(char::REPLACEMENT_CHARACTER)
+                    }
+                }),
+            }
+            .map_err(|_| crate::CrateError::FmtError)
+        }
     }
 }
 use strum::IntoStaticStr;
@@ -1891,9 +1906,10 @@ impl Display for QuickAndDirtyJavaScriptSyntaxHighlighter<'_> {
 
                         prev_keyword = None;
                         let mut i: usize = 1;
-                        if text.len() > 1 && num == b'0' && text[1] == b'x' {
+                        if text.len() > 1 && num == b'0' && matches!(text[1], b'x' | b'X') {
                             i += 1;
-                            while i < text.len() && text[i].is_ascii_hexdigit() {
+                            while i < text.len() && (text[i].is_ascii_hexdigit() || text[i] == b'_')
+                            {
                                 i += 1;
                             }
                         } else {
@@ -1910,10 +1926,16 @@ impl Display for QuickAndDirtyJavaScriptSyntaxHighlighter<'_> {
                                         | b'B'
                                         | b'o'
                                         | b'O'
+                                        | b'_'
                                 )
                             {
                                 i += 1;
                             }
+                        }
+
+                        // BigInt suffix
+                        if i < text.len() && text[i] == b'n' {
+                            i += 1;
                         }
 
                         write!(
@@ -3494,7 +3516,7 @@ fn truncated_hash32_impl(int: u64, writer: &mut impl fmt::Write) -> fmt::Result 
 
 /// Const-fn core of [`truncated_hash32`] / [`TruncatedHash32`]: the 8-byte
 /// base32-ish encoding (native-endian byte reinterpretation).
-const fn truncated_hash32_bytes(int: u64) -> [u8; 8] {
+pub const fn truncated_hash32_bytes(int: u64) -> [u8; 8] {
     const CHARS: &[u8; 32] = b"0123456789abcdefghjkmnpqrstvwxyz";
     let b = int.to_ne_bytes();
     [
@@ -3535,107 +3557,7 @@ fn splat_byte_all(w: &mut impl fmt::Write, byte: u8, count: usize) -> fmt::Resul
     Ok(())
 }
 
-// ════════════════════════════════════════════════════════════════════════════
-// encode_json_string — single canonical impl.
-// Every duplicated copy of this JSON-string escaping logic funnels through
-// here.
-// ════════════════════════════════════════════════════════════════════════════
-
-/// Writes the escaped body of a JSON string **without** surrounding quotes
-/// (`escape_unicode = false` semantics).
-///
-/// Escape set:
-///   - `\"` `\\` `\b` `\f` `\n` `\r` `\t`
-///   - other `0x00..=0x1F` → `\u00XX` (lowercase hex)
-///   - `0x20..=0xFF` → emitted verbatim in run-batched `write_str` calls
-///     (input is treated as UTF-8/Latin-1 bytes; no transcoding).
-pub(crate) fn encode_json_string_chars(w: &mut impl fmt::Write, s: &[u8]) -> fmt::Result {
-    let mut run = 0;
-    for (i, &b) in s.iter().enumerate() {
-        let esc: &str = match b {
-            b'"' => "\\\"",
-            b'\\' => "\\\\",
-            0x08 => "\\b",
-            0x0C => "\\f",
-            b'\n' => "\\n",
-            b'\r' => "\\r",
-            b'\t' => "\\t",
-            0x00..=0x1F => {
-                if run < i {
-                    write_bytes(w, &s[run..i])?;
-                }
-                let hex = hex_u16::<true>(b as u16);
-                w.write_str("\\u")?;
-                write_bytes(w, &hex)?;
-                run = i + 1;
-                continue;
-            }
-            _ => continue,
-        };
-        if run < i {
-            write_bytes(w, &s[run..i])?;
-        }
-        w.write_str(esc)?;
-        run = i + 1;
-    }
-    if run < s.len() {
-        write_bytes(w, &s[run..])?;
-    }
-    Ok(())
-}
-
-/// Latin-1 sibling of [`encode_json_string_chars`]: same escape table, but
-/// non-escaped bytes are widened (`b as char`) so 0x80..=0xFF are emitted as
-/// their U+0080..U+00FF UTF-8 encodings rather than passed through as raw
-/// (invalid) single bytes. ASCII runs are still batched via `write_bytes`.
-pub(crate) fn encode_json_string_chars_latin1(w: &mut impl fmt::Write, s: &[u8]) -> fmt::Result {
-    let mut run = 0;
-    for (i, &b) in s.iter().enumerate() {
-        let esc: &str = match b {
-            b'"' => "\\\"",
-            b'\\' => "\\\\",
-            0x08 => "\\b",
-            0x0C => "\\f",
-            b'\n' => "\\n",
-            b'\r' => "\\r",
-            b'\t' => "\\t",
-            0x00..=0x1F => {
-                if run < i {
-                    write_bytes(w, &s[run..i])?;
-                }
-                let hex = hex_u16::<true>(b as u16);
-                w.write_str("\\u")?;
-                write_bytes(w, &hex)?;
-                run = i + 1;
-                continue;
-            }
-            0x80..=0xFF => {
-                if run < i {
-                    write_bytes(w, &s[run..i])?;
-                }
-                // Widen Latin-1 byte → Unicode scalar → UTF-8.
-                w.write_char(b as char)?;
-                run = i + 1;
-                continue;
-            }
-            _ => continue,
-        };
-        if run < i {
-            write_bytes(w, &s[run..i])?;
-        }
-        w.write_str(esc)?;
-        run = i + 1;
-    }
-    if run < s.len() {
-        write_bytes(w, &s[run..])?;
-    }
-    Ok(())
-}
-
-/// Surrounding `"` quotes around [`encode_json_string_chars`].
 #[inline]
 pub fn encode_json_string(w: &mut impl fmt::Write, s: &[u8]) -> fmt::Result {
-    w.write_char('"')?;
-    encode_json_string_chars(w, s)?;
-    w.write_char('"')
+    js_printer::write_json_string(s, w, strings::Encoding::Utf8)
 }

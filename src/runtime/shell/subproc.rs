@@ -186,11 +186,8 @@ impl CmdHandle {
 pub struct ShellSubprocess {
     pub(crate) cmd_parent: CmdHandle,
 
-    /// Intrusively ref-counted process (`bun_ptr::ThreadSafeRefCount`).
-    /// Stored raw because `Process` methods take `&mut self` and `RefPtr`
-    /// only implements `Deref`; the shell is single-threaded so raw mutable
-    /// access is sound.
-    pub(crate) process: *mut Process,
+    /// `None` once closed.
+    pub(crate) process: Option<bun_process::ProcessHandle>,
 
     pub(crate) stdin: Writable,
     pub(crate) stdout: Readable,
@@ -241,14 +238,12 @@ bun_spawn::link_impl_ProcessExit! {
 }
 
 impl ShellSubprocess {
-    /// Borrow the intrusively ref-counted Process mutably.
-    /// SAFETY-internal: shell is single-threaded; `self.process` is non-null
-    /// for the lifetime of `ShellSubprocess` (set in `spawn_maybe_sync_impl`).
+    /// The shell is single-threaded; `process` is set for the lifetime of
+    /// `ShellSubprocess` until `close_process`.
     #[inline]
     #[allow(clippy::mut_from_ref)]
     pub(crate) fn proc(&self) -> &mut Process {
-        // SAFETY: see doc comment.
-        unsafe { &mut *self.process }
+        self.process.as_ref().expect("process closed").process_mut()
     }
 
     pub(crate) fn on_static_pipe_writer_done(&mut self) {
@@ -299,19 +294,7 @@ impl ShellSubprocess {
     }
 
     fn close_process(&mut self) {
-        let process = core::mem::replace(&mut self.process, core::ptr::null_mut());
-        if process.is_null() {
-            return;
-        }
-        // SAFETY: `process` was produced by `to_process` (heap::alloc) and is
-        // live until the deref below drops the last strong ref.
-        unsafe {
-            (*process).set_exit_handler_default();
-            (*process).close();
-            // Release the intrusive ref taken by `to_process`. `*mut Process`
-            // has no Drop, so this must be explicit.
-            bun_ptr::ThreadSafeRefCount::<Process>::deref(process);
-        }
+        self.process = None;
     }
 
     pub(crate) fn close_io(&mut self, io: StdioKind) {
@@ -789,7 +772,7 @@ impl ShellSubprocess {
         // dropping garbage.
         unsafe {
             subprocess.write(Subprocess {
-                process: spawn_result.to_process(event_loop),
+                process: Some(spawn_result.to_process_handle(event_loop)),
                 stdin,
                 stdout,
                 stderr,
@@ -1005,29 +988,18 @@ impl Writable {
                         // Ownership of the `Box<uv::Pipe>` transfers into the
                         // FileSink's writer.
                         let uv_pipe: *mut _ = bun_core::heap::into_raw(buf);
-                        let pipe_ptr = FileSink::create_with_pipe(event_loop, uv_pipe);
-
-                        // SAFETY: `create_with_pipe` returns a freshly-boxed
-                        // non-null FileSink with refcount 1; sole reference.
-                        match unsafe {
-                            (*pipe_ptr).writer.with_mut(|w| w.start_with_current_pipe())
-                        } {
-                            bun_sys::Result::Ok(()) => {}
-                            bun_sys::Result::Err(_err) => {
-                                // SAFETY: pipe_ptr is live with refcount 1;
-                                // deref frees it.
-                                unsafe { FileSink::deref(pipe_ptr) };
-                                return Err(WritableInitError::UnexpectedCreatingStdin);
-                            }
+                        let pipe = FileSink::create_with_pipe(event_loop, uv_pipe);
+                        if let bun_sys::Result::Err(_err) =
+                            pipe.writer.with_mut(|w| w.start_with_current_pipe())
+                        {
+                            return Err(WritableInitError::UnexpectedCreatingStdin);
                         }
 
                         // TODO: uncoment this when is ready, commented because was not compiling
                         // subprocess.weak_file_sink_stdin_ptr = pipe;
                         // subprocess.flags.has_stdin_destructor_called = false;
 
-                        // SAFETY: `create_with_pipe` returns non-null with one
-                        // owned ref, taken over here.
-                        return Ok(Writable::Pipe(unsafe { RefPtr::from_raw(pipe_ptr) }));
+                        return Ok(Writable::Pipe(pipe));
                     }
                     return Ok(Writable::Inherit);
                 }
@@ -1899,6 +1871,17 @@ impl PipeReader {
         // SAFETY: see `arc_as_mut_ptr` + `try_signal_done_to_cmd` contract —
         // raw `*mut`, no `&mut PipeReader` protector across the Cmd re-entry.
         let y = unsafe { Self::try_signal_done_to_cmd(me) };
+        // Once the Cmd has taken the output it detaches this reader (`process`
+        // is `None`) and nothing reads `buffered_output` again. Drop it now
+        // rather than with `guard`: `y` can settle the shell promise, and its
+        // microtask checkpoint must not see a `> ${arraybuffer}` target that
+        // is still pinned.
+        // SAFETY: see `arc_as_mut_ptr`; raw accesses, no borrow held.
+        unsafe {
+            if (*me).process.is_none() {
+                (*me).buffered_output = BufferedOutput::default();
+            }
+        }
         Self::run_yield_with(interp, y);
         if let Some(process) = guard.process {
             // SAFETY: `process` is the heap-allocated `ShellSubprocess` (stable

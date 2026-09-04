@@ -1227,10 +1227,7 @@ impl UpdateInteractiveCommand {
         let result = match Self::process_multi_select(&mut state, terminal_size) {
             Ok(r) => r,
             Err(err) => {
-                if matches!(
-                    err,
-                    crate::Error::EndOfStream | crate::Error::Core(bun_core::Error::EndOfStream)
-                ) {
+                if matches!(err, crate::Error::Core(bun_core::Error::EndOfStream)) {
                     Output::flush();
                     bun_core::prettyln!("\n<r><red>x<r> Cancelled");
                     Global::exit(0);
@@ -1942,7 +1939,7 @@ impl UpdateInteractiveCommand {
                     // ctrl+c, ctrl+d
                     reprint_menu = false;
                     cleanup_and_reprint!(reprint_menu);
-                    return Err(crate::Error::EndOfStream);
+                    return Err(crate::Error::Core(bun_core::Error::EndOfStream));
                 }
                 b' ' => {
                     state.selected[state.cursor] = !state.selected[state.cursor];

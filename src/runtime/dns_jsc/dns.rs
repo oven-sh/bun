@@ -3,6 +3,7 @@
 use core::cell::Cell;
 use core::ffi::{c_char, c_int, c_void};
 use core::mem::MaybeUninit;
+use core::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 use core::ptr::{self, NonNull};
 use core::sync::atomic::{AtomicUsize, Ordering};
 
@@ -26,7 +27,7 @@ use bun_jsc::{
     self as jsc, CallFrame, JSGlobalObject, JSPromiseStrong, JSValue, JsCell, JsResult,
     SystemError, host_fn,
 };
-use bun_paths::{MAX_PATH_BYTES, PathBuffer};
+use bun_paths::PathBuffer;
 use bun_ptr::RefPtr;
 #[cfg(windows)]
 use bun_sys::windows::libuv;
@@ -58,6 +59,8 @@ pub(crate) mod netc {
         addrinfo, sockaddr, sockaddr_in, sockaddr_in6, sockaddr_storage,
     };
     pub(crate) use bun_sys::windows::ws2_32::{AF_INET, AF_INET6, AF_UNSPEC, SOCK_STREAM};
+    /// The libuv spelling: `c_ares::Error::init_eai` reads UV_EAI_* codes on Windows.
+    pub(crate) const EAI_NONAME: core::ffi::c_int = bun_libuv_sys::UV_EAI_NONAME;
 }
 type SockaddrStorage = netc::sockaddr_storage;
 type AddrInfo = netc::addrinfo;
@@ -1221,7 +1224,7 @@ impl GetAddrInfoRequest {
             let status = if !results.is_empty() {
                 0
             } else {
-                query.empty_status()
+                dns_sd::EMPTY_STATUS
             };
             bun_output::scoped_log!(
                 GetAddrInfoRequest,
@@ -1930,15 +1933,6 @@ impl GlobalData {
     }
 }
 
-impl Drop for GlobalData {
-    fn drop(&mut self) {
-        // `Resolver::deinit` ends with `heap::take(this)`, which is wrong for a
-        // value field — open-code the channel teardown so the c-ares state
-        // frees when this box drops in `deinit_runtime_state`.
-        self.resolver.destroy_channel();
-    }
-}
-
 impl Resolver {
     /// Worker-terminate / main-VM-destruct hook: tear down the c-ares channel
     /// while the JSC VM, `RareData.file_polls`, event loop, and `runtime_state`
@@ -1988,7 +1982,7 @@ impl Resolver {
         // Failing the pending queries releases their refs on this resolver from
         // inside `ares_destroy`; hold one so it outlives its own channel close.
         // SAFETY: fn contract.
-        unsafe { (*this).ref_() };
+        let _guard = unsafe { RefPtr::init_ref(this) };
         // SAFETY: alive under the ref just taken.
         let result = if unsafe { (*this).destroy_channel() } {
             SweepResult::Stopped
@@ -1998,11 +1992,8 @@ impl Resolver {
         // `GetAddrInfoRequest`'s EDESTRUCTION path does not call
         // `request_completed()`, so the c-ares timeout timer (and its +1 ref on
         // this resolver plus the uws active-handle bump) can still be linked.
-        // SAFETY: as above; then release our ref (may free `this`).
-        unsafe {
-            (*this).remove_timer();
-            Self::deref(this);
-        }
+        // SAFETY: as above. `_guard` then releases our ref (may free `this`).
+        unsafe { (*this).remove_timer() };
         result
     }
 }
@@ -2358,6 +2349,73 @@ pub mod internal {
         hints_copy
     }
 
+    /// Chrome's `IsLocalHostname` (RFC 6761 §6.3): `localhost` or `*.localhost`, ASCII case-insensitive, one trailing dot allowed.
+    fn is_localhost_name(host: &[u8]) -> bool {
+        const DOT_LOCALHOST: &[u8] = b".localhost";
+        let host = host.strip_suffix(b".").unwrap_or(host);
+        strings::eql_case_insensitive_ascii(host, b"localhost", true)
+            || (host.len() >= DOT_LOCALHOST.len()
+                && strings::eql_case_insensitive_ascii(
+                    &host[host.len() - DOT_LOCALHOST.len()..],
+                    DOT_LOCALHOST,
+                    true,
+                ))
+    }
+
+    /// Chrome's `ServeLocalhost`: a localhost name is `[::1, 127.0.0.1]` without asking the resolver, narrowed like every other lookup by the family feature flags.
+    fn localhost_results(port: u16) -> Box<[ResultEntry]> {
+        #[cfg(not(windows))]
+        let family = get_hints().ai_family;
+        #[cfg(windows)]
+        let family = netc::AF_UNSPEC;
+        let mut addrs: Vec<SockaddrStorage> = [
+            IpAddr::V6(Ipv6Addr::LOCALHOST),
+            IpAddr::V4(Ipv4Addr::LOCALHOST),
+        ]
+        .into_iter()
+        .filter(|ip| family == netc::AF_UNSPEC || ip.is_ipv6() == (family == netc::AF_INET6))
+        .map(|ip| bun_dns::Address::from_ip(ip, port).into_storage())
+        .collect();
+        let mut chain = addrinfo_chain(&mut addrs);
+        process_results(chain.as_mut_ptr())
+    }
+
+    /// Chrome's `IsAllLocalhostOfOneFamily`: every address is loopback and only one family is present, the shape glibc's AI_ADDRCONFIG produces for a hosts-file loopback name (crbug 42058 / 49024).
+    fn is_all_loopback_of_one_family(mut info: *const AddrInfo) -> bool {
+        let (mut saw_v4, mut saw_v6) = (false, false);
+        while !info.is_null() {
+            // SAFETY: `info` walks a live addrinfo list whose `ai_addr` matches `ai_family`.
+            unsafe {
+                let addr = (*info).ai_addr;
+                if addr.is_null() {
+                    return false;
+                }
+                match (*info).ai_family {
+                    netc::AF_INET => {
+                        let octets = (*addr.cast::<netc::sockaddr_in>())
+                            .sin_addr
+                            .s_addr
+                            .to_ne_bytes();
+                        if !Ipv4Addr::from(octets).is_loopback() {
+                            return false;
+                        }
+                        saw_v4 = true;
+                    }
+                    netc::AF_INET6 => {
+                        let octets = (*addr.cast::<netc::sockaddr_in6>()).sin6_addr.s6_addr;
+                        if !Ipv6Addr::from(octets).is_loopback() {
+                            return false;
+                        }
+                        saw_v6 = true;
+                    }
+                    _ => return false,
+                }
+                info = (*info).ai_next;
+            }
+        }
+        saw_v4 != saw_v6
+    }
+
     // `Request` is passed opaquely to usockets and round-tripped back into
     // Rust; the C side never dereferences fields, so layout is irrelevant.
     #[allow(improper_ctypes)]
@@ -2534,6 +2592,31 @@ pub mod internal {
         results
     }
 
+    /// addrinfo nodes for [`process_results`]; they point into `addrs`, which must outlive them.
+    fn addrinfo_chain(addrs: &mut [SockaddrStorage]) -> Box<[AddrInfo]> {
+        let mut nodes: Box<[AddrInfo]> = addrs
+            .iter_mut()
+            .map(|addr| {
+                let mut node: AddrInfo = bun_core::ffi::zeroed();
+                node.ai_family = addr.ss_family as c_int;
+                node.ai_socktype = netc::SOCK_STREAM;
+                node.ai_addrlen = if node.ai_family == netc::AF_INET6 {
+                    size_of::<netc::sockaddr_in6>() as _
+                } else {
+                    size_of::<netc::sockaddr_in>() as _
+                };
+                node.ai_addr = ptr::from_mut(addr).cast::<Sockaddr>();
+                node
+            })
+            .collect();
+        let base = nodes.as_mut_ptr();
+        for i in 1..nodes.len() {
+            // SAFETY: `i - 1` and `i` are in bounds of the boxed slice, which is not moved afterwards.
+            unsafe { (*base.add(i - 1)).ai_next = base.add(i) };
+        }
+        nodes
+    }
+
     fn after_result(req: *mut Request, info: *mut AddrInfo, err: c_int) {
         let results: Option<Box<[ResultEntry]>> = if !info.is_null() {
             let res = process_results(info);
@@ -2623,10 +2706,22 @@ pub mod internal {
                 .unwrap_or(ptr::null());
             let mut err = libc::getaddrinfo(host_ptr, service, &raw const hints, &raw mut addrinfo);
 
-            // optional fallback
-            if err == netc::EAI_NONAME && (hints.ai_flags & netc::AI_ADDRCONFIG) != 0 {
+            // Chrome's retries: AI_ADDRCONFIG left nothing, or only one family's loopback.
+            if (hints.ai_flags & netc::AI_ADDRCONFIG) != 0
+                && (err == netc::EAI_NONAME
+                    || (err == 0 && is_all_loopback_of_one_family(addrinfo)))
+            {
                 hints.ai_flags &= !netc::AI_ADDRCONFIG;
-                err = libc::getaddrinfo(host_ptr, service, &raw const hints, &raw mut addrinfo);
+                let mut unfiltered: *mut AddrInfo = ptr::null_mut();
+                let retry_err =
+                    libc::getaddrinfo(host_ptr, service, &raw const hints, &raw mut unfiltered);
+                if retry_err == 0 || err != 0 {
+                    if !addrinfo.is_null() {
+                        bun_dns::freeaddrinfo(addrinfo);
+                    }
+                    addrinfo = unfiltered;
+                    err = retry_err;
+                }
             }
             after_result(req, addrinfo, err);
         }
@@ -2697,66 +2792,30 @@ pub mod internal {
         let port = unsafe { (*req).key.port };
 
         if results.is_empty() {
-            let err = query.empty_status();
-            after_result_entries(req, None, err);
+            after_result_entries(req, None, dns_sd::EMPTY_STATUS);
             return;
         }
 
-        // Materialize sockaddr storage the addrinfo chain can point into.
         let mut addrs: Box<[SockaddrStorage]> = results
             .iter()
             .map(|r| {
-                let mut storage: SockaddrStorage = bun_core::ffi::zeroed();
-                let len = if r.address.family() == netc::AF_INET6 {
-                    core::mem::size_of::<netc::sockaddr_in6>()
-                } else {
-                    core::mem::size_of::<netc::sockaddr_in>()
-                };
-                // SAFETY: both are sockaddr_storage-sized, `len` fits the family, no overlap.
-                unsafe {
-                    core::ptr::copy_nonoverlapping(
-                        r.address.as_sockaddr().cast::<u8>(),
-                        (&raw mut storage).cast::<u8>(),
-                        len,
-                    );
+                let mut storage = r.address.into_storage();
+                match storage.ss_family as c_int {
+                    // SAFETY: ss_family == AF_INET ⇒ storage holds a sockaddr_in.
+                    netc::AF_INET => unsafe {
+                        (*(&raw mut storage).cast::<netc::sockaddr_in>()).sin_port = port.to_be()
+                    },
+                    // SAFETY: ss_family == AF_INET6 ⇒ storage holds a sockaddr_in6.
+                    netc::AF_INET6 => unsafe {
+                        (*(&raw mut storage).cast::<netc::sockaddr_in6>()).sin6_port = port.to_be()
+                    },
+                    _ => {}
                 }
                 storage
             })
             .collect();
-        let count = addrs.len();
-        let mut nodes: Box<[AddrInfo]> = (0..count)
-            .map(|_| bun_core::ffi::zeroed::<AddrInfo>())
-            .collect();
-        for i in 0..count {
-            let family = addrs[i].ss_family as i32;
-            let n = &mut nodes[i];
-            n.ai_family = family;
-            n.ai_socktype = netc::SOCK_STREAM;
-            n.ai_addr = (&raw mut addrs[i]).cast::<Sockaddr>();
-            n.ai_addrlen = if family == netc::AF_INET6 {
-                core::mem::size_of::<netc::sockaddr_in6>() as _
-            } else {
-                core::mem::size_of::<netc::sockaddr_in>() as _
-            };
-            if family == netc::AF_INET {
-                // SAFETY: ss_family == AF_INET ⇒ storage holds a sockaddr_in.
-                unsafe {
-                    (*(&raw mut addrs[i]).cast::<netc::sockaddr_in>()).sin_port = port.to_be()
-                };
-            } else if family == netc::AF_INET6 {
-                // SAFETY: ss_family == AF_INET6 ⇒ storage holds a sockaddr_in6.
-                unsafe {
-                    (*(&raw mut addrs[i]).cast::<netc::sockaddr_in6>()).sin6_port = port.to_be()
-                };
-            }
-        }
-        let base = nodes.as_mut_ptr();
-        for i in 0..count.saturating_sub(1) {
-            // SAFETY: i and i+1 are in-bounds; `nodes` is not reallocated past this point.
-            unsafe { (*base.add(i)).ai_next = base.add(i + 1) };
-        }
-
-        let results = process_results(nodes.as_mut_ptr());
+        let mut chain = addrinfo_chain(&mut addrs);
+        let results = process_results(chain.as_mut_ptr());
         after_result_entries(req, Some(results), 0);
     }
 
@@ -2806,6 +2865,58 @@ pub mod internal {
         Ok(object)
     }
 
+    /// The `addresses: string[]` argument of the testing hooks below, as sockaddrs.
+    fn addresses_for_testing(
+        global: &JSGlobalObject,
+        addresses: JSValue,
+    ) -> JsResult<Vec<SockaddrStorage>> {
+        if !addresses.is_array() {
+            return Err(
+                global.throw_invalid_arguments(format_args!("expected addresses: string[]"))
+            );
+        }
+        let len = addresses.get_length(global)? as usize;
+        if len > 64 {
+            return Err(global
+                .throw_invalid_arguments(format_args!("addresses must have at most 64 entries")));
+        }
+        (0..len)
+            .map(|i| {
+                let address = addresses.get_index(global, i as u32)?.to_utf8(global)?;
+                match bun_core::ip_address::to_ip_address(address.slice()) {
+                    Some(ip) => Ok(bun_dns::Address::from_ip(ip, 0).into_storage()),
+                    None => Err(global.throw_invalid_arguments(format_args!(
+                        "addresses[{i}] is not an IPv4 or IPv6 literal"
+                    ))),
+                }
+            })
+            .collect()
+    }
+
+    /// `bun:internal-for-testing`: [`is_localhost_name`] for one hostname.
+    pub(crate) fn is_localhost_name_for_testing(
+        global: &JSGlobalObject,
+        frame: &CallFrame,
+    ) -> JsResult<JSValue> {
+        let hostname = frame.argument(0);
+        if !hostname.is_string() {
+            return Err(global.throw_invalid_arguments(format_args!("expected (hostname: string)")));
+        }
+        let hostname = hostname.to_utf8(global)?;
+        Ok(JSValue::js_boolean(is_localhost_name(hostname.slice())))
+    }
+
+    /// `bun:internal-for-testing`: [`is_all_loopback_of_one_family`] over `addresses` laid out as a getaddrinfo() answer.
+    pub(crate) fn is_all_loopback_of_one_family_for_testing(
+        global: &JSGlobalObject,
+        frame: &CallFrame,
+    ) -> JsResult<JSValue> {
+        let mut addrs = addresses_for_testing(global, frame.argument(0))?;
+        let chain = addrinfo_chain(&mut addrs);
+        let head = chain.first().map_or(ptr::null(), ptr::from_ref);
+        Ok(JSValue::js_boolean(is_all_loopback_of_one_family(head)))
+    }
+
     /// `bun:internal-for-testing`: seed the connect-path DNS cache for `hostname`
     /// by running `addresses` through the real [`process_results`] interleave and
     /// storing the result, so a real `fetch()` / `Bun.connect()` consumes it.
@@ -2814,65 +2925,19 @@ pub mod internal {
         frame: &CallFrame,
     ) -> JsResult<JSValue> {
         let args = frame.arguments();
-        if args.len() < 2 || !args[0].is_string() || !args[1].is_array() {
+        if args.len() < 2 || !args[0].is_string() {
             return Err(global.throw_invalid_arguments(format_args!(
                 "expected (hostname: string, addresses: string[])"
             )));
         }
         let hostname_slice = args[0].to_utf8(global)?;
         let hostname_z = bun::ZBox::from_bytes(hostname_slice.slice());
-        let len = args[1].get_length(global)? as usize;
-        if len == 0 || len > 64 {
-            return Err(
-                global.throw_invalid_arguments(format_args!("addresses must have 1..=64 entries"))
-            );
+        let mut addrs = addresses_for_testing(global, args[1])?;
+        if addrs.is_empty() {
+            return Err(global.throw_invalid_arguments(format_args!("addresses must not be empty")));
         }
-
-        let mut addrs: Vec<SockaddrStorage> = (0..len).map(|_| bun_core::ffi::zeroed()).collect();
-        let mut nodes: Vec<AddrInfo> = (0..len).map(|_| bun_core::ffi::zeroed()).collect();
-        for i in 0..len {
-            let addr_slice = args[1].get_index(global, i as u32)?.to_utf8(global)?;
-            let addr_z = bun::ZBox::from_bytes(addr_slice.slice());
-            let node = &mut nodes[i];
-            node.ai_socktype = netc::SOCK_STREAM;
-            // SAFETY: sockaddr_in/in6 fit in the zeroed sockaddr_storage and
-            // ares_inet_pton writes at most sizeof(in_addr)/sizeof(in6_addr).
-            unsafe {
-                let v4 = (&raw mut addrs[i]).cast::<netc::sockaddr_in>();
-                let v6 = (&raw mut addrs[i]).cast::<netc::sockaddr_in6>();
-                if c_ares::ares_inet_pton(
-                    netc::AF_INET,
-                    addr_z.as_ptr().cast::<c_char>(),
-                    (&raw mut (*v4).sin_addr).cast::<c_void>(),
-                ) > 0
-                {
-                    (*v4).sin_family = netc::AF_INET as _;
-                    node.ai_family = netc::AF_INET;
-                    node.ai_addrlen = size_of::<netc::sockaddr_in>() as _;
-                } else if c_ares::ares_inet_pton(
-                    netc::AF_INET6,
-                    addr_z.as_ptr().cast::<c_char>(),
-                    (&raw mut (*v6).sin6_addr).cast::<c_void>(),
-                ) > 0
-                {
-                    (*v6).sin6_family = netc::AF_INET6 as _;
-                    node.ai_family = netc::AF_INET6;
-                    node.ai_addrlen = size_of::<netc::sockaddr_in6>() as _;
-                } else {
-                    return Err(global.throw_invalid_arguments(format_args!(
-                        "addresses[{i}] is not an IPv4 or IPv6 literal"
-                    )));
-                }
-            }
-            node.ai_addr = (&raw mut addrs[i]).cast::<Sockaddr>();
-        }
-        let base = nodes.as_mut_ptr();
-        for i in 0..len.saturating_sub(1) {
-            // SAFETY: i and i+1 are in-bounds; the Vec is never reallocated after this.
-            unsafe { (*base.add(i)).ai_next = base.add(i + 1) };
-        }
-
-        let results = process_results(nodes.as_mut_ptr());
+        let mut chain = addrinfo_chain(&mut addrs);
+        let results = process_results(chain.as_mut_ptr());
 
         let out = JSValue::create_empty_array(global, results.len())?;
         for (i, entry) in (0u32..).zip(results.iter()) {
@@ -2972,6 +3037,32 @@ pub mod internal {
         DNS_CACHE_MISSES.fetch_add(1, Ordering::Relaxed);
         DNS_CACHE_SIZE.store(guard.len, Ordering::Relaxed);
         drop(guard);
+
+        if host.is_some_and(|h| !bun_dns::is_valid_hostname(h.as_bytes())) {
+            bun_output::scoped_log!(
+                dns,
+                "getaddrinfo({}) = cache miss (not a hostname)",
+                bstr::BStr::new(host.map(|h| h.as_bytes()).unwrap_or(b""))
+            );
+            after_result_entries(req, None, netc::EAI_NONAME);
+            if let Some(is_cache_hit) = is_cache_hit {
+                *is_cache_hit = true;
+            }
+            return Some(req);
+        }
+
+        if host.is_some_and(|h| is_localhost_name(h.as_bytes())) {
+            bun_output::scoped_log!(
+                dns,
+                "getaddrinfo({}) = cache miss (localhost)",
+                bstr::BStr::new(host.map(|h| h.as_bytes()).unwrap_or(b""))
+            );
+            after_result_entries(req, Some(localhost_results(port)), 0);
+            if let Some(is_cache_hit) = is_cache_hit {
+                *is_cache_hit = true;
+            }
+            return Some(req);
+        }
 
         #[cfg(target_os = "macos")]
         {
@@ -3121,7 +3212,8 @@ pub mod internal {
         // touched under `global_cache().lock()`, which is held here.
         unsafe {
             if (*request).result.is_some() {
-                query.notify(request);
+                // Also wakes the loop: this can run inside the dns_ready_head drain itself.
+                query.notify_threadsafe(request);
                 return;
             }
             (*request).notify.push(DNSRequestOwner::Socket(socket));
@@ -3564,8 +3656,9 @@ type PollsMap = ArrayHashMap<c_ares::ares_socket_t, *mut PollType>;
 // cache them across re-entrant FFI calls (the proper fix for the
 // PROVEN_CACHED ref_count miscompile previously laundered with `black_box`).
 #[bun_jsc::JsClass(name = "DNSResolver", no_constructor)]
+#[derive(bun_ptr::RefCounted)]
 pub struct Resolver {
-    pub(crate) ref_count: bun_ptr::RefCount<Resolver>, // bun.ptr.RefCount(@This(), "ref_count", deinit, .{}) — already Cell-backed
+    pub(crate) ref_count: bun_ptr::RefCount<Resolver>,
     pub(crate) channel: Cell<Option<*mut c_ares::Channel>>, // FFI
     pub(crate) vm: bun_ptr::BackRef<VirtualMachine>, // JSC_BORROW (BACKREF — VirtualMachine outlives the resolver; read-only after init)
     pub(crate) polls: JsCell<PollsMap>,
@@ -3593,13 +3686,9 @@ pub struct Resolver {
 
 bun_event_loop::impl_timer_owner!(Resolver; from_timer_ptr => event_loop_timer);
 
-impl bun_ptr::RefCounted for Resolver {
-    unsafe fn get_ref_count(this: *mut Self) -> *mut bun_ptr::RefCount<Self> {
-        // SAFETY: caller contract — `this` points to a live Self.
-        unsafe { &raw mut (*this).ref_count }
-    }
-    unsafe fn destructor(this: *mut Self) {
-        Self::deinit(this);
+impl Drop for Resolver {
+    fn drop(&mut self) {
+        self.destroy_channel();
     }
 }
 
@@ -3819,6 +3908,7 @@ pub enum RecordType {
     CAA = 257,
     CNAME = 5,
     MX = 15,
+    NAPTR = 35,
     NS = 2,
     PTR = 12,
     SOA = 6,
@@ -3831,12 +3921,12 @@ bun_core::comptime_string_map! {
     pub(super) static RECORD_TYPE_MAP: RecordType = {
         b"A" => RecordType::A, b"AAAA" => RecordType::AAAA, b"ANY" => RecordType::ANY,
         b"CAA" => RecordType::CAA, b"CNAME" => RecordType::CNAME, b"MX" => RecordType::MX,
-        b"NS" => RecordType::NS, b"PTR" => RecordType::PTR, b"SOA" => RecordType::SOA,
-        b"SRV" => RecordType::SRV, b"TXT" => RecordType::TXT,
+        b"NAPTR" => RecordType::NAPTR, b"NS" => RecordType::NS, b"PTR" => RecordType::PTR,
+        b"SOA" => RecordType::SOA, b"SRV" => RecordType::SRV, b"TXT" => RecordType::TXT,
         b"a" => RecordType::A, b"aaaa" => RecordType::AAAA, b"any" => RecordType::ANY,
         b"caa" => RecordType::CAA, b"cname" => RecordType::CNAME, b"mx" => RecordType::MX,
-        b"ns" => RecordType::NS, b"ptr" => RecordType::PTR, b"soa" => RecordType::SOA,
-        b"srv" => RecordType::SRV, b"txt" => RecordType::TXT,
+        b"naptr" => RecordType::NAPTR, b"ns" => RecordType::NS, b"ptr" => RecordType::PTR,
+        b"soa" => RecordType::SOA, b"srv" => RecordType::SRV, b"txt" => RecordType::TXT,
     };
 }
 
@@ -3861,8 +3951,7 @@ impl Resolver {
         // SAFETY: `self` is live; ref_count uses interior mutability.
         unsafe { bun_ptr::RefCount::<Self>::ref_(std::ptr::from_ref::<Self>(self).cast_mut()) };
     }
-    /// Decrement the intrusive refcount; on last ref, runs `deinit` (frees the
-    /// allocation via `heap::take`).
+    /// Decrement the intrusive refcount; the last ref drops the Box.
     ///
     /// Takes a raw `*mut Self` (not `&self`) because the final deref must write
     /// through / deallocate `*this`; deriving a `*mut` from a `&self` borrow
@@ -3874,8 +3963,7 @@ impl Resolver {
     /// `heap::alloc` (see `init`). If this call may drop the last reference,
     /// the caller must not hold any live `&`/`&mut` borrow of `*this`.
     pub unsafe fn deref(this: *mut Self) {
-        // SAFETY: caller contract — `this` is live; `RefCount::deref` invokes
-        // `RefCounted::destructor` (→ `Self::deinit`) on the 1→0 transition.
+        // SAFETY: caller contract — `this` is live; the 1→0 transition drops the Box.
         unsafe { bun_ptr::RefCount::<Self>::deref(this) };
     }
 
@@ -3911,22 +3999,6 @@ impl Resolver {
     pub(crate) fn init(vm: &VirtualMachine) -> *mut Self {
         bun_output::scoped_log!(DNSResolver, "init");
         bun_core::heap::into_raw(Box::new(Self::setup(vm)))
-    }
-
-    pub fn finalize(self: Box<Self>) {
-        // Refcounted: release the JS wrapper's +1; allocation may outlive this
-        // call if other refs remain, so hand ownership back to the raw refcount.
-        // SAFETY: `self` is the heap allocation from `init`; `deref` frees on count==0.
-        unsafe { Self::deref(Box::into_raw(self)) };
-    }
-
-    fn deinit(this: *mut Self) {
-        // SAFETY: `this` is the heap allocation from `init()`; refcount has hit
-        // zero (sole caller is `Self::deref`), so we hold exclusive ownership.
-        unsafe {
-            (*this).destroy_channel();
-            drop(bun_core::heap::take(this));
-        }
     }
 
     // ─── R-2 interior-mutability helpers ────────────────────────────────────
@@ -4903,7 +4975,9 @@ impl Resolver {
                     None => {
                         return Err(global_this.throw_invalid_argument_property_value(
                             b"record",
-                            Some("one of: A, AAAA, ANY, CAA, CNAME, MX, NS, PTR, SOA, SRV, TXT"),
+                            Some(
+                                "one of: A, AAAA, ANY, CAA, CNAME, MX, NAPTR, NS, PTR, SOA, SRV, TXT",
+                            ),
                             record_type_value,
                         ));
                     }
@@ -4939,6 +5013,9 @@ impl Resolver {
             RecordType::CNAME => self.do_resolve_cares::<CnameHostent>(name.slice(), global_this),
             RecordType::MX => {
                 self.do_resolve_cares::<c_ares::struct_ares_mx_reply>(name.slice(), global_this)
+            }
+            RecordType::NAPTR => {
+                self.do_resolve_cares::<c_ares::struct_ares_naptr_reply>(name.slice(), global_this)
             }
             RecordType::NS => self.do_resolve_cares::<NsHostent>(name.slice(), global_this),
             RecordType::PTR => self.do_resolve_cares::<PtrHostent>(name.slice(), global_this),
@@ -5101,11 +5178,7 @@ impl Resolver {
         options: GetAddrInfoOptions,
         global_this: &JSGlobalObject,
     ) -> JsResult<JSValue> {
-        // The system backends copy the hostname into a fixed `bun.PathBuffer` on the
-        // stack before null-terminating it. Reject anything that cannot fit so we never
-        // index past that buffer. RFC 1035 caps hostnames at 253 octets and NI_MAXHOST
-        // is 1025, so this never rejects a name that could have resolved.
-        if name.len() >= MAX_PATH_BYTES || strings::contains_char(name, 0) {
+        if !bun_dns::is_valid_hostname(name) {
             let mut promise = JSPromiseStrong::init(global_this);
             let promise_value = promise.value();
             error_to_deferred(
@@ -6002,4 +6075,12 @@ export_host_fn!(
 export_host_fn!(
     internal::seed_cache_for_testing,
     "JS2Rust___src_runtime_dns_jsc_dns_rs__internal_seedCacheForTesting"
+);
+export_host_fn!(
+    internal::is_localhost_name_for_testing,
+    "JS2Rust___src_runtime_dns_jsc_dns_rs__internal_isLocalhostNameForTesting"
+);
+export_host_fn!(
+    internal::is_all_loopback_of_one_family_for_testing,
+    "JS2Rust___src_runtime_dns_jsc_dns_rs__internal_isAllLoopbackOfOneFamilyForTesting"
 );

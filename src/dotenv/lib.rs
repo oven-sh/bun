@@ -7,8 +7,8 @@ pub use error::{Error, Result};
 
 pub use env_loader::{
     DirEntryKeys, DirEntryProbe, DotEnvBehavior, DotEnvFileSuffix, HAS_NO_CLEAR_SCREEN_CLI_FLAG,
-    HashTable, HashTableValue, INSTANCE, Loader, Map, NullDelimitedEnvMap, S3Credentials,
-    StdEnvMapWrapper, instance, set_instance,
+    HashTable, HashTableValue, INSTANCE, Loader, Map, NullDelimitedEnvMap, S3Credentials, instance,
+    set_instance,
 };
 
 /// `dotenv::map::{HashTable, Entry}` namespace expected by `install_jsc::ini_jsc` et al.

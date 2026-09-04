@@ -947,6 +947,42 @@ describe.concurrent("bun pm diff (hostile and awkward inputs)", () => {
     expect(mixed.stdout.split("\n")[0]).toBe("./one.tar → diffme@2.0.0");
     expect(mixed.exitCode).toBe(0);
   });
+
+  test("a tarball entry larger than 64 MiB is read whole", async () => {
+    // The tarball reader used to reject any entry over 64 MiB as "invalid archive entry size". blob.bin is the same
+    // bytes on both sides, so a tarball read that is short, skips the entry, or scrambles it shows up as a blob.bin line.
+    using dir = tempDir("pm-diff-big", {});
+    await using mk = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        const size = 64 * 1024 * 1024 + 1;
+        // Each 64 KiB chunk has its own byte value, so a chunk read out of order or twice changes the bytes.
+        const blob = Buffer.alloc(size);
+        for (let i = 0; i < size; i += 65536) blob.fill((i / 65536) & 0xff, i, Math.min(i + 65536, size));
+        const pkg = JSON.stringify({ name: "diffme", version: "1.0.0" });
+        const files = { "package/package.json": pkg, "package/index.js": "module.exports = 1;\\n", "package/blob.bin": blob };
+        await Bun.write("big.tgz", await new Bun.Archive(files, { compress: "gzip" }).bytes());
+        await Bun.write("pkg/package.json", pkg);
+        await Bun.write("pkg/index.js", "module.exports = 2;\\n");
+        await Bun.write("pkg/blob.bin", blob);
+        `,
+      ],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [, mkErr, mkExit] = await Promise.all([mk.stdout.text(), mk.stderr.text(), mk.exited]);
+    expect(mkErr).toBe("");
+    expect(mkExit).toBe(0);
+    const { stdout, stderr, exitCode } = await diff(["./big.tgz", "./pkg", "--name-only"], String(dir));
+    expect(stderr).toBe("");
+    expect(stdout.split("\n")[0]).toBe("./big.tgz → ./pkg");
+    expect(stdout.split("\n").filter(l => /^[AMD] /.test(l))).toEqual(["M index.js"]);
+    expect(exitCode).toBe(0);
+  });
 });
 
 // The pieces underneath the terminal view — name-free symbol matching, the alignment fallbacks, key→display map

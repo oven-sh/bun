@@ -283,9 +283,9 @@ impl File {
         {
             let rt = windows::GetFileType(self.handle.native());
             if rt == windows::FILE_TYPE_UNKNOWN {
-                let err = windows::get_last_win32_error();
+                let err = windows::Win32Error::get();
                 if err != windows::Win32Error::SUCCESS {
-                    return Err(Error::from_code(err.to_e(), Tag::fstat));
+                    return Err(Error::from_win32(err, Tag::fstat));
                 }
             }
             Ok(match rt {

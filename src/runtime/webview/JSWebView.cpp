@@ -66,6 +66,16 @@ void settleSlot(JSGlobalObject* g, JSWebView* v,
         p->reject(g->vm(), value);
 }
 
+void rejectSlotAsHandled(JSGlobalObject* g, JSWebView* v,
+    WriteBarrier<JSPromise>& slot, JSValue err)
+{
+    JSPromise* p = slot.get();
+    if (!p) return;
+    slot.clear();
+    v->m_pendingActivityCount.fetch_sub(1, std::memory_order_release);
+    p->rejectAsHandled(g->vm(), err);
+}
+
 // --- WebViewEventTarget ----------------------------------------------------
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(WebViewEventTarget);

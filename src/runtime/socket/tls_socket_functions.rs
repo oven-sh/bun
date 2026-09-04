@@ -250,13 +250,10 @@ pub(super) mod ffi {
         );
         // Returns the borrowed cert store of a live `SSL_CTX*`.
         pub(crate) safe fn SSL_CTX_get_cert_store(ctx: &SSL_CTX) -> *mut X509_STORE;
-        // Emptiness probe for a cert store: `get0_objects` borrows the
-        // object stack and `OPENSSL_sk_num(NULL)` returns 0.
-        pub(crate) fn X509_STORE_get0_objects(store: *mut X509_STORE) -> *mut c_void;
-        pub(crate) fn OPENSSL_sk_num(sk: *const c_void) -> usize;
         // The process-wide default root store; up-refs before returning, so
         // the caller owns a reference it must release with X509_STORE_free.
         pub(crate) fn us_get_shared_default_ca_store() -> *mut X509_STORE;
+        pub(crate) fn us_ssl_ctx_has_user_ca(ctx: *mut SSL_CTX) -> c_int;
         pub(crate) fn X509_STORE_free(store: *mut X509_STORE);
         // X509_STORE_CTX lifecycle for issuer lookups; `new` allocates,
         // `init` borrows the store, `free` releases. Used to extend the peer
@@ -560,7 +557,8 @@ pub(super) fn get_peer_certificate(
         // contains the bundled roots. The getter up-refs, so the temporary
         // reference is released after the walk.
         let mut shared_store: *mut boringssl::X509_STORE = core::ptr::null_mut();
-        if store.is_null() || ffi::OPENSSL_sk_num(ffi::X509_STORE_get0_objects(store)) == 0 {
+        let ssl_ctx = ffi::SSL_get_SSL_CTX(boringssl::SSL::opaque_ref(ssl_ptr));
+        if store.is_null() || ffi::us_ssl_ctx_has_user_ca(ssl_ctx) == 0 {
             shared_store = ffi::us_get_shared_default_ca_store();
             if !shared_store.is_null() {
                 store = shared_store;
@@ -897,30 +895,29 @@ pub(crate) fn set_key_cert(
     let Some(ssl_ptr) = this.socket.get().ssl() else {
         return Ok(JSValue::UNDEFINED);
     };
-    // SAFETY: `sc` is a live SecureContext; borrow() hands back an owned
-    // reference and SSL_set_SSL_CTX takes its own, so release the temporary.
+    // SAFETY: `sc` is a live SecureContext; SSL_set_SSL_CTX takes its own reference.
     unsafe {
-        let ctx = (*sc).borrow();
-        ffi::SSL_set_SSL_CTX(ssl_ptr.cast(), ctx.cast());
+        let ctx = &(*sc).ctx;
+        ffi::SSL_set_SSL_CTX(ssl_ptr.cast(), ctx.as_ptr().cast());
         // SSL_set_SSL_CTX stops retargeting the certificate once ClientHello
         // processing has reached ALPN selection, and Node supports calling
         // setKeyCert from ALPNCallback - apply the identity directly.
-        let leaf = ffi::SSL_CTX_get0_certificate(ctx.cast());
-        let pkey = ffi::SSL_CTX_get0_privatekey(ctx.cast());
+        let leaf = ffi::SSL_CTX_get0_certificate(ctx.as_ptr().cast());
+        let pkey = ffi::SSL_CTX_get0_privatekey(ctx.as_ptr().cast());
         if !leaf.is_null() && !pkey.is_null() {
             let ok_cert = ffi::SSL_use_certificate(ssl_ptr.cast(), leaf);
             let ok_key = ffi::SSL_use_PrivateKey(ssl_ptr.cast(), pkey);
             let mut ok_chain = 1;
             let mut chain: *mut core::ffi::c_void = core::ptr::null_mut();
-            if ffi::SSL_CTX_get0_chain_certs(ctx.cast(), &raw mut chain) == 1 && !chain.is_null() {
+            if ffi::SSL_CTX_get0_chain_certs(ctx.as_ptr().cast(), &raw mut chain) == 1
+                && !chain.is_null()
+            {
                 ok_chain = ffi::SSL_set1_chain(ssl_ptr.cast(), chain);
             }
             if ok_cert != 1 || ok_key != 1 || ok_chain != 1 {
-                boringssl::SSL_CTX_free(ctx.cast());
                 return Err(global.throw(format_args!("setKeyCert failed to apply the context")));
             }
         }
-        boringssl::SSL_CTX_free(ctx.cast());
     }
     Ok(JSValue::UNDEFINED)
 }
@@ -1095,10 +1092,10 @@ pub(super) fn get_alpn_protocol(this: &This, global: &JSGlobalObject) -> JsResul
     // SAFETY: SSL_get0_alpn_selected guarantees alpn_proto points to alpn_proto_len bytes owned by the SSL.
     let slice = unsafe { bun_core::ffi::slice(alpn_proto, alpn_proto_len as usize) };
     if strings::eql(slice, b"h2") {
-        return BunString::static_("h2").to_js(global);
+        return Ok(global.common_strings().alpn_h2());
     }
     if strings::eql(slice, b"http/1.1") {
-        return BunString::static_("http/1.1").to_js(global);
+        return Ok(global.common_strings().alpn_http11());
     }
     bun_string_jsc::create_utf8_for_js(global, slice)
 }

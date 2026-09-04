@@ -4,7 +4,7 @@
 use bun_boringssl_sys as boring;
 use bun_core::Utf8Bytes;
 use bun_csrf as csrf;
-use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
+use bun_jsc::{CallFrame, IntegerRange, JSGlobalObject, JSValue, JsResult};
 
 use crate::api::crypto::evp::Algorithm as EvpAlgorithm;
 use crate::crypto::evp;
@@ -21,31 +21,24 @@ fn algorithm_from_js_case_insensitive(
     Ok(evp::lookup_ignore_case(slice.slice()))
 }
 
-/// Validates an optional integer property in `[0, MAX_SAFE_INTEGER]`.
-/// Differs from `JSValue::get_optional_int::<u64>` in rejecting NaN and in
-/// the error message wording expected by existing tests.
-fn get_optional_int_u64(
+/// `expiresIn` / `maxAge`. NaN maps to the default, and `0` would mean "no expiry".
+fn get_optional_duration_ms(
     target: JSValue,
     global: &JSGlobalObject,
-    property: &'static str,
+    field_name: &'static [u8],
 ) -> JsResult<Option<u64>> {
-    let Some(value) = target.get(global, property)? else {
+    let Some(value) = target.get(global, field_name)? else {
         return Ok(None);
     };
-    if value.is_undefined() || value.is_empty() {
-        return Ok(Some(0));
-    }
-    if !value.is_number() {
-        return Err(global.throw_invalid_argument_type_value(property, "number", value));
-    }
-    let num: f64 = value.as_number();
-    const MAX_SAFE_INTEGER: f64 = 9007199254740991.0;
-    if num.fract() != 0.0 || num < 0.0 || num > MAX_SAFE_INTEGER {
-        return Err(global.throw_invalid_arguments(format_args!(
-            "{property} must be an integer between 0 and {MAX_SAFE_INTEGER}"
-        )));
-    }
-    Ok(Some(num as u64))
+    Ok(Some(global.validate_integer_range::<u64>(
+        value,
+        csrf::DEFAULT_EXPIRATION_MS,
+        IntegerRange {
+            min: 0,
+            field_name,
+            ..Default::default()
+        },
+    )?))
 }
 
 /// Reads the optional `encoding` property. Parsed as a Buffer encoding name
@@ -105,8 +98,8 @@ pub(crate) fn csrf__generate(global: &JSGlobalObject, frame: &CallFrame) -> JsRe
         let options_value = args[1];
 
         // Extract expiresIn (optional)
-        if let Some(expires_in_js) = get_optional_int_u64(options_value, global, "expiresIn")? {
-            expires_in = expires_in_js;
+        if let Some(ms) = get_optional_duration_ms(options_value, global, b"expiresIn")? {
+            expires_in = ms;
         }
 
         // Extract sessionId (optional)
@@ -247,8 +240,8 @@ pub(crate) fn csrf__verify(global: &JSGlobalObject, frame: &CallFrame) -> JsResu
         }
 
         // Extract maxAge (optional)
-        if let Some(max_age_js) = get_optional_int_u64(options_value, global, "maxAge")? {
-            max_age = max_age_js;
+        if let Some(ms) = get_optional_duration_ms(options_value, global, b"maxAge")? {
+            max_age = ms;
         }
 
         // Extract encoding (optional)

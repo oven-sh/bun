@@ -1003,10 +1003,6 @@ const ServerHandlers: SocketHandler<NetSocket> = {
       if (server) {
         // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L1214-L1232
         if (!self.destroyed && self._releaseControl()) {
-          const connectionListener = server[bunSocketServerOptions]?.connectionListener;
-          if (typeof connectionListener === "function") {
-            server.prependOnceListener("secureConnection", connectionListener);
-          }
           server.emit("secureConnection", self);
         }
       }
@@ -1164,7 +1160,7 @@ function onconnection(err, clientHandle) {
   }
   clientHandle[kServerSocket] = handle;
   const options = self[bunSocketServerOptions];
-  const { connectionListener, [kSocketClass]: SClass } = options;
+  const { [kSocketClass]: SClass } = options;
   // Read per connection like node; the listener itself was created with the value listen() saw.
   const pauseOnConnect = self.pauseOnConnect;
   // Propagate the server's half-open/highWaterMark settings to the accepted
@@ -1239,9 +1235,6 @@ function onconnection(err, clientHandle) {
     pauseOnCreate(_socket, clientHandle);
   }
 
-  if (typeof connectionListener === "function" && !isTLS) {
-    self.prependOnceListener("connection", connectionListener);
-  }
   if (isTLS) initAcceptedTLSSocket(self, _socket);
 
   self.emit("connection", _socket);
@@ -3534,7 +3527,13 @@ function Server(options?, connectionListener?) {
   this.pauseOnConnect = Boolean(pauseOnConnect);
   this.noDelay = Boolean(noDelay);
 
-  options.connectionListener = connectionListener;
+  // Node registers the createServer callback as a plain "connection"
+  // listener in the constructor, so a manual emit("connection", socket)
+  // reaches it and listenerCount("connection") counts it.
+  // https://github.com/nodejs/node/blob/843dc5f0d5ad/lib/net.js#L1837-L1846
+  if (typeof connectionListener === "function") {
+    this.on("connection", connectionListener);
+  }
   this[bunSocketServerOptions] = options;
 
   const optionsBlockList = options.blockList;
@@ -4025,6 +4024,7 @@ function emitListeningNextTick(self) {
   self.emit("listening");
 }
 
+const { isPrimary } = require("internal/cluster/isPrimary");
 let cluster;
 function listenInCluster(
   server,
@@ -4048,10 +4048,12 @@ function listenInCluster(
 ) {
   exclusive = !!exclusive;
 
-  if (cluster === undefined) cluster = require("node:cluster");
+  // A worker's first require of node:cluster runs its bootstrap (IPC handlers, 'online'); listen() has always been one
+  // of the places that happens, exclusive or not.
+  if (!isPrimary && cluster === undefined) cluster = require("node:cluster");
 
   if (
-    !cluster.isPrimary &&
+    !isPrimary &&
     !exclusive &&
     typeof address === "string" &&
     address.length > 0 &&
@@ -4092,7 +4094,7 @@ function listenInCluster(
     return;
   }
 
-  if (cluster.isPrimary || exclusive) {
+  if (isPrimary || exclusive) {
     server[kRealListen](
       path,
       port,
@@ -4229,10 +4231,6 @@ function onClusterConnection(err, clientHandle) {
   socket.server = self;
   socket._server = self;
   self._connections++;
-  const connectionListener = self[bunSocketServerOptions]?.connectionListener;
-  if (typeof connectionListener === "function" && typeof self[bunTlsSymbol] !== "function") {
-    self.prependOnceListener("connection", connectionListener);
-  }
   self.emit("connection", socket);
 }
 

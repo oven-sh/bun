@@ -1,0 +1,169 @@
+# Test files that the CI runner may run again when they fail (up to 3 retries,
+# see --retries in scripts/runner.node.mjs). Every other file runs once, and a
+# failure is final. A crash is never retried, listed or not. The parallel batch
+# follows the same rules: a failure there counts as it does in a serial run.
+#
+# One path per line, relative to the repository root, with the reason after
+# `#`. Keep the failing test and its symptom next to the entry so the owner
+# of a fix can find it. Remove the entry when the file is no longer flaky.
+#
+# Seeded from the "flaky" annotations (failed, then passed on a retry) of the
+# 80 main builds #104822..#109434 (2026-08-24 to 2026-09-02), plus the files
+# that failed without a retry on the builds of oven-sh/bun#41204.
+
+test/bake/deinitialization.test.ts  # 13 of 80 builds; windows
+test/bake/dev-and-prod.test.ts  # 1 of 80 builds; debian; error: Selector 'body' was not found
+test/bundler/bun-build-api.test.ts  # bytecode: repeated builds don't retain the generated code: RSS grew 87 MB, the bound is 40 (build 109486, debian 13 x64, parallel batch)
+test/bundler/compile-node-compile-cache.test.ts  # 2 of 80 builds; parallel batch; NODE_COMPILE_CACHE is ignored by compiled executables and honored by bun: test timed o...
+test/bundler/transpiler/decorators.test.ts  # 2 of 80 builds; lowering many decorated instance fields into a large constructor body stays linear: ex...
+test/cli/bun.test.ts  # 20 of 80 builds; mac; completions > installs a bunx symlink: the symlink pointed at bin/bun in the temp dir i...
+test/cli/hot/hot.test.ts  # 3 of 80 builds; debian, ubuntu
+test/cli/inspect/BunFrontendDevServer.test.ts  # 1 of 80 builds; windows
+test/cli/inspect/bun-inspector-protocol.test.ts  # 40 of 80 builds; error: reported
+test/cli/inspect/inspect.test.ts  # 3 of 80 builds; debian, ubuntu
+test/cli/install/bun-add-catalog.test.ts  # 1 of 80 builds; windows
+test/cli/install/bun-add.test.ts  # 5 of 80 builds
+test/cli/install/bun-audit.test.ts  # 3 of 80 builds; debian, ubuntu
+test/cli/install/bun-install-native-binlink.test.ts  # 2 of 80 builds; debian, windows; timeout
+test/cli/install/bun-install-offline.test.ts  # 6 of 80 builds; alpine
+test/cli/install/bun-install-patch.test.ts  # 1 of 80 builds; ubuntu; timeout
+test/cli/install/bun-install-registry.test.ts  # 26 of 80 builds; manifest conditional requests > If-None-Match: 3 requests instead of 2; failed to open ...
+test/cli/install/bun-install.test.ts  # 1 of 80 builds; ubuntu
+test/cli/install/bun-lock.test.ts  # 34 of 80 builds; peer no published version satisfies > declared by a registry package: a /peer-target re...
+test/cli/install/bun-lockb.test.ts  # 9 of 80 builds
+test/cli/install/bun-patch.test.ts  # 36 of 80 builds; windows
+test/cli/install/bun-prune.test.ts  # 1 of 80 builds; windows
+test/cli/install/bun-security-scanner-matrix-with-node-modules.test.ts  # 1 of 80 builds; debian
+test/cli/install/bun-update.test.ts  # 2 of 80 builds; alpine, ubuntu
+test/cli/install/bun-workspaces.test.ts  # 1 of 80 builds; debian; timeout
+test/cli/install/config-precedence.test.ts  # 4 of 80 builds
+test/cli/install/frozen-lockfile-missing-workspace.test.ts  # 2 of 80 builds; mac, debian
+test/cli/install/frozen-lockfile-pruned.test.ts  # 3 of 80 builds; alpine, debian; Verdaccio exited with code 2 before the test ran (alpine aarch64)
+test/cli/install/hoist.test.ts  # 1 of 80 builds; debian
+test/cli/install/migration/complex-workspace.test.ts  # 1 of 80 builds; mac; error: Failed to install
+test/cli/install/migration/migrate.test.ts  # 6 of 80 builds; parallel batch; failed in the parallel batch
+test/cli/install/npmrc.test.ts  # 2 of 80 builds; debian, ubuntu
+test/cli/install/public-hoist-pattern.test.ts  # 2 of 80 builds; ubuntu
+test/cli/run/cpu-prof.test.ts  # 4 of 80 builds; windows
+test/cli/run/filter-workspace.test.ts  # 1 of 80 builds; windows
+test/cli/run/no-orphans.test.ts  # 8 of 80 builds
+test/cli/run/require-cache.test.ts  # 16 of 80 builds; error: Memory leak detected
+test/cli/run/run-crash-handler.test.ts  # 1 of 80 builds; windows; pid 2220 invoked crashbypanic() handler
+test/cli/update_interactive_formatting.test.ts  # 1 of 80 builds; ubuntu
+test/cli/watch/watch.test.ts  # 3 of 80 builds; windows; error: stream closed, output so far: "iter first\n"
+test/cli/watch/watcher-trace.test.ts  # 3 of 80 builds; windows
+test/integration/next-pages/test/dev-server-ssr-100.test.ts  # 15 of 80 builds; windows; ConnectionRefused from the next dev server after 98 of 100 requests (windows)
+test/js/bun/cron/in-process-cron.test.ts  # 5 of 80 builds; alpine
+test/js/bun/css/color.test.ts  # 3 of 80 builds; (worker crashed) before reporting results; ansi-16 never emits a 256-color escape: test...
+test/js/bun/http/bun-serve-file.test.ts  # pollable file response survives a client that stops reading and then disconnects: timed out (1 build, 109134, ubuntu 25.04 aarch64). A Bun bug, not fixed yet: on POSIX FileResponseStream does not pause its reader under backpressure
+test/js/bun/http/bun-serve-routes.test.ts  # 1 of 80 builds; parallel batch; decodes raw valid UTF-8 bytes in a parameter segment: expect(received).toContain(expec...
+test/js/bun/http/hspec.test.ts  # 1 of 80 builds; parallel batch; https://github.com/uNetworking/h1spec tests pass: expect(received).toBe(expected) (in ...
+test/js/bun/http/proxy-stress-concurrent.test.ts  # 1 of 80 builds; mac
+test/js/bun/http/proxy.test.js  # 3 of 80 builds; parallel batch; should use proxy when NO_PROXY has different port: expect(received).toBe(expected) (in...
+test/js/bun/http/proxy.test.ts  # 1 of 80 builds; parallel batch; https target (CONNECT): expect(received).toBe(expected)
+test/js/bun/http/request-smuggling.test.ts  # 3 of 80 builds; mac
+test/js/bun/http/serve-http2-lifecycle.test.ts  # stop with a stream open on each: test timed out (17 of the last 20 failures), HTTP3HandshakeFailed (2 of 20); PING frames do not keep a connection alive: no GOAWAY before the close (1 of 20)
+test/js/bun/http/serve-http2.test.ts  # 4 of 80 builds; parallel batch; 2 MB request body streamed to the handler (WINDOW_UPDATE path): expect(received).toBe(...
+test/js/bun/http/serve-http3.test.ts  # 3 of 80 builds; mac, windows
+test/js/bun/http/serve-stream-body-error.test.ts  # 1 of 80 builds; start-async-reject: the rejection is handled and the error is still reported: expect(r...
+test/js/bun/http/serve.test.ts  # 4 of 80 builds; mac
+test/js/bun/io/bun-write.test.js  # 1 of 80 builds; parallel batch; Bun.write() without uv_fs_copyfile: test timed out
+test/js/bun/jsc-stress/testFFI.test.ts  # 1 of 80 builds; debian
+test/js/bun/jsc/domjit.test.ts  # 3 of 80 builds; parallel batch; Script.runInNewContext: test timed out
+test/js/bun/net/socket.test.ts  # 1 of 80 builds; mac
+test/js/bun/resolve/bun-main-entry-point.test.ts  # 5 of 80 builds; windows
+test/js/bun/resolve/load-same-js-file-a-lot.test.ts  # 4 of 80 builds; parallel batch; load the same file 10000 times: test timed out
+test/js/bun/s3/s3.leak.test.ts  # 1 of 80 builds; windows
+test/js/bun/s3/s3.test.ts  # 10 of 80 builds
+test/js/bun/shell/commands/basename.test.ts  # 2 of 80 builds; parallel batch; shows usage: expect(received).toEqual(expected)
+test/js/bun/shell/commands/dirname.test.ts  # 2 of 80 builds; parallel batch; shows usage: expect(received).toEqual(expected)
+test/js/bun/shell/commands/exit.test.ts  # 3 of 80 builds; parallel batch; too many arguments: expect(received).toEqual(expected)
+test/js/bun/shell/commands/seq.test.ts  # 2 of 80 builds; parallel batch; prints usage: expect(received).toEqual(expected)
+test/js/bun/shell/exec.test.ts  # 1 of 80 builds; parallel batch; it works on command fail: expect(received).toEqual(expected) (in the parallel batch on...
+test/js/bun/shell/file-io.test.ts  # 2 of 80 builds; parallel batch; write to invalid path should fail: File exists
+test/js/bun/shell/leak.test.ts  # 1 of 80 builds; ubuntu
+test/js/bun/shell/lex.test.ts  # 2 of 80 builds; parallel batch; Unclosed subshell: test timed out
+test/js/bun/sourcemap/external-sourcemap-stack-leak.test.ts  # 1 of 80 builds; parallel batch; prepareStackTrace: RSS grew by 29 MB over 1500 .stack reads (in the parallel batch on ...
+test/js/bun/spawn/spawn-ipc-gc.test.ts  # 1 of 80 builds; Subprocess with ipc is collectable after the child exits: expect(received).toBeGreater...
+test/js/bun/spawn/spawn-maxbuf.test.ts  # 2 of 80 builds; windows, debian
+test/js/bun/spawn/spawn-stdin-readable-stream.test.ts  # 1 of 80 builds; debian
+test/js/bun/spawn/spawnsync-isolated-event-loop.test.ts  # 39 of 80 builds; spawnSync under GC pressure with a worker and a server keeps the main loop balanced and...
+test/js/bun/test/done-async.test.ts  # 2 of 80 builds; parallel batch; done() causes the test to fail when it should: expect(received).toBe(expected) (in the...
+test/js/bun/test/expect-assertions.test.ts  # 4 of 80 builds; parallel batch; expect.assertions causes the test to fail when it should: expect(received).toBe(expect...
+test/js/bun/test/parallel/test-docker-build-alpine.ts  # 1 of 80 builds; ubuntu
+test/js/bun/test/parallel/test-docker-build-distroless.ts  # 2 of 80 builds; debian, ubuntu; timeout
+test/js/bun/test/parallel/test-http-client-should-be-able-to-send-array-of-[key-value]-as-headers.ts  # 1 of 80 builds; mac; timeout
+test/js/bun/test/parallel/test-integration-rspack.ts  # 1 of 80 builds; ubuntu, debian; timeout
+test/js/bun/util/filesink.test.ts  # 1 of 80 builds; highWaterMark -> "(rope) abcdefghijklmnopqrstuvwxyz😋 Get Emoji: All Emojis to ✂️ C...
+test/js/bun/util/stripANSI.test.ts  # 3 of 80 builds; parallel batch; returns same string object when no ANSI sequences present: expect(received).toBe(expec...
+test/js/bun/websocket/websocket-server.test.ts  # returns 0 when the topic has no subscribers: Expected 101 status code (1 build, darwin 14 x64); server.publish() batched reports dropped / backpressure (1 build, darwin 14 aarch64)
+test/js/bun/webview/webview-chrome.test.ts  # 1 of 80 builds; alpine
+test/js/bun/webview/webview.test.ts  # 1 of 80 builds; parallel batch; survives more than 64 lifetime create/navigate/close cycles: test timed out (in the pa...
+test/js/node/async_hooks/AsyncLocalStorage.test.ts  # 1 of 80 builds; http2 clears the stream frame even if an 'aborted' listener throws: expect(received).t...
+test/js/node/child_process/child-process-exec.test.ts  # 7 of 80 builds
+test/js/node/http/node-http-backpressure.test.ts  # 1 of 80 builds; mac
+test/js/node/http/node-http-connect.test.ts  # 1 of 80 builds; CONNECT: process exits after the tunnel socket is re-emitted as a connection and the se...
+test/js/node/http/node-http-uaf.test.ts  # 2 of 80 builds; mac
+test/js/node/http2/h2-conformance.test.ts  # 22 of 80 builds
+test/js/node/net/node-net.test.ts  # 2 of 80 builds; parallel batch; should allow reconnecting after end(): write after end
+test/js/node/process/process-stdin.test.ts  # 1 of 80 builds; windows
+test/js/node/process/process.test.js  # 3 of 80 builds; mac, alpine
+test/js/node/test/parallel/test-child-process-send-keep-open.js  # 1 of 80 builds; mac; timeout
+test/js/node/test/parallel/test-cluster-send-deadlock.js  # 1 of 80 builds; windows; timeout
+test/js/node/test/parallel/test-cluster-shared-leak.js  # 8 of 80 builds; windows; timeout
+test/js/node/test/parallel/test-fastutf8stream-destroy.js  # 2 of 80 builds; alpine, ubuntu
+test/js/node/test/parallel/test-fs-read-stream-pos.js  # 3 of 80 builds; windows; Mismatched function calls. Expected at least 1, actual 0 (windows)
+test/js/node/test/parallel/test-quic-connection-limits.mjs  # 1 of 80 builds; mac
+test/js/node/test/parallel/test-watch-mode-kill-signal-default.mjs  # 4 of 80 builds; timeout
+test/js/node/test/parallel/test-watch-mode-kill-signal-override.mjs  # 2 of 80 builds; timeout
+test/js/node/tls/node-tls-server.test.ts  # 2 of 80 builds; mac
+test/js/node/tls/renegotiation.test.ts  # 1 of 80 builds; pauseOnConnect acts on the first handshake only, not on a renegotiation: expect(receiv...
+test/js/node/vm/vm.test.ts  # 6 of 80 builds; microtasks left on an afterEvaluate context by a timed-out script stay bounded: expect...
+test/js/node/watch/fs.watch.rewrite.test.ts  # 7 of 80 builds; parallel batch; recursive watch reports new path after subdirectory rename: expect(received).toBe(expe...
+test/js/node/worker_threads/worker_threads.test.ts  # terminate(): nothing of the worker's runs after the request: Received [12, 0] (build 109446, debian 13 x64-asan)
+test/js/sql/postgres-listen-notify.test.ts  # 1 of 80 builds; windows
+test/js/sql/postgres-tls-ctx-leak.test.ts  # 1 of 80 builds; Postgres connections with sslmode != disable are finalized after close: expect(receive...
+test/js/sql/sql-connect-error-reporting.test.ts  # mysql: a socket close during session setup is a connect failure: got Connection timeout...
+test/js/sql/sql-pool-transaction-isolation.test.ts  # 3 of 80 builds; a rejected reserved begin() is reported as unhandled only when the caller ignores it: ...
+test/js/third_party/es-module-lexer/es-module-lexer.test.ts  # 1 of 80 builds; windows
+test/js/third_party/express/app.router.test.ts  # 2 of 80 builds; mac; error: expected 200 "OK", got 404 "Not Found"
+test/js/third_party/express/express.json.test.ts  # 2 of 80 builds; mac; BadRequestError: request size did not match content length
+test/js/third_party/express/express.text.test.ts  # 4 of 80 builds; parallel batch; should accept number of bytes: expected 413 "Payload Too Large", got 404 "Not Found" (...
+test/js/third_party/express/res.json.test.ts  # 1 of 80 builds; should respond with json for null: expected "Content-Type" of "application/json; chars...
+test/js/third_party/express/res.location.test.ts  # 2 of 80 builds; parallel batch; should encode data uri1: expected "Location" header field
+test/js/third_party/express/res.redirect.test.ts  # 1 of 80 builds; parallel batch; should respond with an empty body: expected 302 "Found", got 200 "OK" (in the parallel...
+test/js/third_party/express/res.send.test.ts  # 3 of 80 builds; mac; error: expected "ETag" header field
+test/js/third_party/express/res.sendFile.test.ts  # 1 of 80 builds; parallel batch; should error for non-absolute path: expected body '<!DOCTYPE html>\n' + (in the ...
+test/js/third_party/grpc-js/test-tonic.test.ts  # 5 of 80 builds; mac
+test/js/third_party/socket.io/socket.io-connection-state-recovery.test.ts  # 1 of 80 builds; should not run middlewares upon recovery by default: JSON Parse error: Unable to parse...
+test/js/third_party/solc/solc.test.ts  # 3 of 80 builds; windows; timeout
+test/js/third_party/wpt-streams/wpt-streams.test.ts  # 7 of 80 builds; Piping from a ReadableStream to a WritableStream that desires more chunks before finish...
+test/js/web/fetch/abort-signal-leak.test.ts  # 4 of 80 builds; parallel batch; 'abort' event on req.signal should not cause AbortSignal to never be GCed: test timed ...
+test/js/web/fetch/body.test.ts  # 10 of 80 builds; rejects a fetch textStream() when the connection drops after an empty decode: expect(r...
+test/js/web/fetch/fetch-backpressure.test.ts  # stalled no consumer drains the full body: test timed out (16 builds). The stall gate needs 512 KiB of socket buffers; #41014 lowers it to the client high-water mark
+test/js/web/fetch/fetch-gzip.test.ts  # 2 of 80 builds; parallel batch; BUN_FEATURE_FLAG_NO_LIBDEFLATE=0: expect(received).toEqual(expected) (in the parallel ...
+test/js/web/fetch/fetch-http3-client.test.ts  # 3 of 80 builds; mac
+test/js/web/fetch/fetch-http3-cold-post.test.ts  # 1 of 80 builds; large first request on a cold connection does not strand the TLS Finished: expect(rece...
+test/js/web/fetch/fetch-leak.test.ts  # 35 of 80 builds; should not leak using readable stream: RSS sample 45.6 MB under the 47.2 MB floor; Requ...
+test/js/web/fetch/fetch.stream.test.ts  # 11 of 80 builds; should drain response body from HTTP thread when server sends chunk then stops (chunked...
+test/js/web/fetch/fetch.tls.wildcard.test.ts  # the peer closed the connection before the TLS handshake finished (3 builds, macOS), not root-caused
+test/js/web/streams/compression.test.ts  # 20 of 80 builds; alpine
+test/js/web/timers/timer-gc-roots.test.ts  # 1 of 80 builds; debian
+test/js/web/websocket/websocket.test.js  # 6 of 80 builds; parallel batch; should not accept untrusted certificates -
+test/js/web/workers/structuredClone-classes.test.ts  # 20 of 80 builds; parallel batch; (worker crashed): worker process crashed before reporting results (in the parallel bat...
+test/js/web/workers/worker-late-completion.test.ts  # work that comes back after its worker began tearing down > BroadcastChannel message from another thread: seen was false (build 109486, debian 13 x64-asan)
+test/js/web/workers/worker-terminate-lifetime.test.ts  # 11 of 80 builds; worker exit with streaming-request-body fetches whose response.body was touched: expec...
+test/js/workerd/html-rewriter.test.js  # 1 of 80 builds; mac
+test/napi/napi-value-ffi.test.ts  # 1 of 80 builds; mac; error: build failed
+test/napi/napi.test.ts  # 22 of 80 builds
+test/napi/node-napi-tests/test/js-native-api/6_object_wrap/do.test.ts  # 1 of 80 builds; parallel batch; failed in the parallel batch
+test/napi/node-napi-tests/test/js-native-api/test_conversions/do.test.ts  # 1 of 80 builds; parallel batch; (worker crashed): worker process crashed before reporting results (in the parallel bat...
+test/napi/node-napi-tests/test/js-native-api/test_reference_double_free/do.test.ts  # the worker crashed with SIGABRT in the parallel batch (build 109482, debian 13 x64-asan); 1 of 80 builds before
+test/napi/node-napi-tests/test/node-api/test_exception/do.test.ts  # 1 of 80 builds; parallel batch; (worker crashed): worker process crashed before reporting results (in the parallel bat...
+test/napi/node-napi-tests/test/node-api/test_worker_buffer_callback/do.test.ts  # 2 of 80 builds; parallel batch; failed in the parallel batch
+test/napi/node-napi-tests/test/node-api/test_worker_terminate/do.test.ts  # 4 of 80 builds; parallel batch; (worker crashed): worker process crashed before reporting results (in the parallel bat...
+test/napi/uv.test.ts  # 4 of 80 builds; parallel batch; (unnamed): Failed with exit code 17
+test/regression/issue/07500/07500.test.ts  # 1 of 80 builds; parallel batch; 7500 - Bun.stdin.text() doesn't read all data: test timed out (in the parallel batch o...
+test/regression/issue/1632.test.ts  # 1 of 80 builds; process.stdout.write() should exit non-zero on broken pipe: exit code 0 (parallel batch...
+test/regression/issue/17793.test.ts  # 1 of 80 builds; parallel batch; bun install with proxy does not hang on 304 cached response: expect(received).toBe(exp...
+test/regression/issue/27890.test.ts  # 1 of 80 builds; mac

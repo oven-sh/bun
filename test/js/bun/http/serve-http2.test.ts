@@ -16,11 +16,43 @@ import {
   connectH2,
   decodeStatus,
   frame,
+  hpackFields,
   hpackLiteral,
   request,
   sha256,
   startFixture,
 } from "./serve-http2-helpers";
+
+/** One HTTP/1.1 request on the fixture's port, written byte-exact (no
+ * client-side URL normalization), so HTTP/1.1 can serve as the oracle for what
+ * the handler must see over h2. Resolves once `content-length` bytes of body
+ * have arrived; rejects with whatever was received if the server closes first
+ * (a 400, or a response without content-length). */
+async function h1Request(port: number, secure: boolean, raw: string): Promise<{ status: number; body: string }> {
+  const socket: net.Socket = secure
+    ? tls.connect({ port, host: "127.0.0.1", rejectUnauthorized: false, ALPNProtocols: ["http/1.1"] })
+    : net.connect({ port, host: "127.0.0.1" });
+  const { promise, resolve, reject } = Promise.withResolvers<{ status: number; body: string }>();
+  let text = "";
+  socket.on("error", reject);
+  socket.on("close", () =>
+    reject(new Error("HTTP/1.1 oracle: connection closed before a complete response: " + JSON.stringify(text))),
+  );
+  socket.on("data", (chunk: Buffer) => {
+    text += chunk.toString("latin1");
+    const sep = text.indexOf("\r\n\r\n");
+    if (sep === -1) return;
+    const head = text.slice(0, sep);
+    const body = text.slice(sep + 4);
+    const length = Number(/\r\ncontent-length: (\d+)/i.exec(head)?.[1] ?? NaN);
+    if (body.length >= length) {
+      socket.destroy();
+      resolve({ status: Number(head.split(" ")[1]), body: body.slice(0, length) });
+    }
+  });
+  socket.on(secure ? "secureConnect" : "connect", () => socket.write(raw, "latin1"));
+  return promise;
+}
 
 for (const secure of [true, false]) {
   describe(`Bun.serve http2 (${secure ? "TLS + ALPN" : "cleartext prior-knowledge"})`, () => {
@@ -142,6 +174,67 @@ for (const secure of [true, false]) {
       expect(json.headers["cookie"]).toBe("k=v");
     });
 
+    // The HTTP/1 path builds req.url through the WHATWG parser (dot segments
+    // collapse, the path and query are percent-encoded). The h2 path used to
+    // paste :path in verbatim, so a guard or cache keyed on req.url saw a
+    // different string per transport for the same resource.
+    test("req.url is normalized the same way HTTP/1.1 normalizes it on the same port", async () => {
+      const scheme = secure ? "https" : "http";
+      const raw = await RawH2.connect(fx.port, secure);
+      let streamId = 1;
+      for (const [path, expected] of [
+        ["/a/../headers", "/headers"],
+        ["/./headers", "/headers"],
+        ["/%2e/headers", "/headers"],
+        ['/headers?q=a"b<c>', "/headers?q=a%22b%3Cc%3E"],
+      ]) {
+        raw.headers(streamId, baseHeaders(path));
+        const h2 = JSON.parse((await raw.body(streamId)).toString());
+        expect([path, h2.url]).toEqual([path, `${scheme}://localhost${expected}`]);
+        streamId += 2;
+        const h1 = await h1Request(fx.port, secure, `GET ${path} HTTP/1.1\r\nHost: localhost\r\n\r\n`);
+        expect([path, JSON.parse(h1.body).url]).toEqual([path, h2.url]);
+      }
+      raw.close();
+    });
+
+    // HTTP/1 gives req.body === null for a request that promises no body (no
+    // Content-Length, no Transfer-Encoding, or content-length: 0). The h2
+    // path used to hand every non-GET/HEAD request an empty stream instead, so
+    // `if (req.body)` and `fetch(upstream, { body: req.body })` diverged.
+    test.each(["GET", "POST", "DELETE", "OPTIONS", "PURGE"])(
+      "req.body is null for a %s whose HEADERS frame carries END_STREAM",
+      async method => {
+        const res = await request(session, { ":path": "/body-null", ":method": method }, null, { endStream: true });
+        expect([res.headers["x-method"], res.body.toString()]).toEqual([method, "true"]);
+      },
+    );
+
+    test("req.body is null for content-length: 0 and a stream otherwise, as over HTTP/1.1", async () => {
+      const withBody = await request(session, { ":path": "/body-null", ":method": "POST" }, "x");
+      expect(withBody.body.toString()).toBe("false");
+
+      const raw = await RawH2.connect(fx.port, secure);
+      // content-length: 0 without END_STREAM: no byte can follow, the empty
+      // DATA frame only completes the stream.
+      raw.headers(1, [...baseHeaders("/body-null", "POST"), ["content-length", "0"]], F.END_HEADERS);
+      raw.write(frame(T.DATA, F.END_STREAM, 1, Buffer.alloc(0)));
+      expect((await raw.body(1)).toString()).toBe("true");
+      // No content-length and no END_STREAM: bytes may still follow, so the
+      // body is a stream (an empty one here).
+      raw.headers(3, baseHeaders("/body-null", "POST"), F.END_HEADERS);
+      raw.write(frame(T.DATA, F.END_STREAM, 3, Buffer.alloc(0)));
+      expect((await raw.body(3)).toString()).toBe("false");
+      raw.close();
+
+      // The HTTP/1.1 oracle on the same port.
+      const h1 = (headers: string, body = "") =>
+        h1Request(fx.port, secure, `POST /body-null HTTP/1.1\r\nHost: localhost\r\n${headers}\r\n${body}`);
+      expect((await h1("")).body).toBe("true");
+      expect((await h1("Content-Length: 0\r\n")).body).toBe("true");
+      expect((await h1("Content-Length: 1\r\n", "x")).body).toBe("false");
+    });
+
     test("split cookie fields are joined with '; '", async () => {
       const raw = await RawH2.connect(fx.port, secure);
       await raw.waitFor(f => f.type === T.SETTINGS);
@@ -157,6 +250,40 @@ for (const secure of [true, false]) {
       expect(res.headers["x-multi"]).toBe("1, 2");
       const viaCookieMap = await request(session, { ":path": "/cookies", cookie: "seen=xx" });
       expect(viaCookieMap.headers["set-cookie"]).toEqual(["seen=xxx; Path=/; SameSite=Lax"]);
+    });
+
+    test("latin-1 header values are one byte per code unit for 8-bit and 16-bit strings", async () => {
+      // https://fetch.spec.whatwg.org/#concept-header-value
+      // U+00E9 is the single byte 0xE9 on the wire, not UTF-8 0xC3 0xA9, whether JSC
+      // stores the string as 8-bit or 16-bit. Both names are in the HPACK static table
+      // (content-disposition = 25, set-cookie = 55), so the fields arrive as literals
+      // with an indexed name. A fresh connection per request keeps the dynamic table
+      // out of the picture.
+      const expected = "63 61 66 e9 2d 80 ff";
+      const hex = (b: Buffer) => [...b].map(c => c.toString(16).padStart(2, "0")).join(" ");
+      for (const bits of ["8", "16"]) {
+        const raw = await RawH2.connect(fx.port, secure);
+        try {
+          await raw.waitFor(f => f.type === T.SETTINGS);
+          raw.headers(1, baseHeaders(`/latin1-headers?bits=${bits}`));
+          const headers = await raw.waitFor(f => f.type === T.HEADERS && f.streamId === 1);
+          const fields = hpackFields(headers.payload);
+          const literal = (index: number) => {
+            const field = fields.find(f => f.index === index && f.value);
+            if (!field?.value) throw new Error(`no literal for static name ${index} in ${JSON.stringify(fields)}`);
+            // These bytes cost more Huffman-coded than raw, so the encoder sends them as is.
+            expect(field.value.huffman).toBe(false);
+            return hex(field.value.bytes);
+          };
+          expect({ bits, "content-disposition": literal(25), "set-cookie": literal(55) }).toEqual({
+            bits,
+            "content-disposition": expected,
+            "set-cookie": "61 3d " + expected,
+          });
+        } finally {
+          raw.close();
+        }
+      }
     });
 
     test("5 MB response body (flow control + socket backpressure)", async () => {

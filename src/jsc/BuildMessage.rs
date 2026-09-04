@@ -4,6 +4,20 @@ use std::io::Write as _;
 use crate::bun_string_jsc;
 use crate::{CallFrame, JSGlobalObject, JSValue, JsClass, JsResult, StringJsc as _};
 
+/// `.level` of a `BuildMessage` / `ResolveMessage`.
+pub(crate) trait LogKindJsc {
+    fn to_js(self, global: &JSGlobalObject) -> JsResult<JSValue>;
+}
+
+impl LogKindJsc for bun_ast::Kind {
+    fn to_js(self, global: &JSGlobalObject) -> JsResult<JSValue> {
+        match self {
+            bun_ast::Kind::Err => Ok(global.common_strings().error()),
+            kind => bun_core::String::static_(kind.string()).to_js(global),
+        }
+    }
+}
+
 #[crate::JsClass] // codegen: JSBuildMessage (toJS / fromJS / fromJSDirect wired by derive)
 // R-2 (`sharedThis`): every JS-facing host-fn takes `&self`; the only field
 // mutated post-construction (`logged`, flipped by `VirtualMachine::print_error_*`)
@@ -130,7 +144,7 @@ impl BuildMessage {
         object.put(
             global,
             b"namespace",
-            bun_string_jsc::create_utf8_for_js(global, location.namespace)?,
+            bun_string_jsc::create_utf8_for_js(global, &location.namespace)?,
         );
         object.put(global, b"line", JSValue::from(location.line));
         object.put(global, b"column", JSValue::from(location.column));
@@ -171,6 +185,6 @@ impl BuildMessage {
 
     #[crate::host_fn(getter)]
     pub fn get_level(&self, global: &JSGlobalObject) -> JsResult<JSValue> {
-        bun_core::String::static_(self.msg.kind.string()).to_js(global)
+        self.msg.kind.to_js(global)
     }
 }

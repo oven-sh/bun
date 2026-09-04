@@ -119,14 +119,7 @@ impl DirWatcher {
         {
             let err = w::Win32Error::get();
             bun_core::scoped_log!(watcher, "failed to start watching directory: {}", err.0);
-            return Err(bun_sys::Error {
-                // Route the raw code through the `u32` `SystemErrnoInit` impl
-                // (same Win32→errno table as `Win32ErrorExt::to_system_errno`).
-                errno: bun_sys::SystemErrno::init(err.0 as u32)
-                    .unwrap_or(bun_sys::SystemErrno::EINVAL) as _,
-                syscall: bun_sys::Tag::watch,
-                ..Default::default()
-            });
+            return Err(bun_sys::Error::from_win32(err, bun_sys::Tag::watch));
         }
         bun_core::scoped_log!(watcher, "read directory changes!");
         Ok(())
@@ -327,13 +320,7 @@ impl WindowsWatcher {
                     return Ok(None);
                 } else {
                     bun_core::scoped_log!(watcher, "GetQueuedCompletionStatus failed: {}", err.0);
-                    return Err(bun_sys::Error {
-                        errno: bun_sys::SystemErrno::init(err.0 as u32)
-                            .unwrap_or(bun_sys::SystemErrno::EINVAL)
-                            as _,
-                        syscall: bun_sys::Tag::watch,
-                        ..Default::default()
-                    });
+                    return Err(bun_sys::Error::from_win32(err, bun_sys::Tag::watch));
                 }
             }
 

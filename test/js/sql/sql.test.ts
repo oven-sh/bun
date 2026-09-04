@@ -755,6 +755,9 @@ if (isDockerEnabled()) {
               expect(column).toBe(value);
               value++;
             }
+            // sizes past JSFinalObject::maxInlineCapacity take SQLClient.cpp's
+            // null-structure fallback; the row must still be spreadable.
+            expect({ ...result[0] }).toEqual(result[0]);
           });
         }
       }

@@ -1289,6 +1289,33 @@ describe("request pseudo-header requirements (RFC 9113 §8.3.1)", () => {
   });
 });
 
+// A stream nothing references any more can still survive a bounded number of collections: JSC scans
+// the machine stack conservatively and honors interior pointers, so a stale word left in a native
+// frame (seen on x64 as cell+0x84 in the microtask-drain frames; near-deterministic on aarch64) pins
+// one object until that slot is overwritten. The leaks these tests guard against retain every stream,
+// so they open many streams and tolerate a few stragglers instead of demanding exactly zero.
+const GC_STRAGGLERS = 3;
+
+/**
+ * Collects until every one of `refs` is gone, giving up after 50 passes or once the count has not
+ * moved for 10 passes, and resolves to how many survived.
+ */
+async function liveCount(refs: WeakRef<object>[]): Promise<number> {
+  const live = () => refs.filter(ref => ref.deref() !== undefined).length;
+  // A completed stream's JS teardown is spread over a few immediates (rstNextTick, deferred
+  // destroy), and a WeakRef target survives the job that dereferenced it, so every pass gets a
+  // fresh turn before collecting.
+  let last = live();
+  for (let pass = 0, stuck = 0; pass < 50 && last > 0 && stuck < 10; pass++) {
+    await new Promise(resolve => setImmediate(resolve));
+    await gcTick();
+    const now = live();
+    stuck = now === last ? stuck + 1 : 0;
+    last = now;
+  }
+  return last;
+}
+
 describe("inbound stream lifecycle", () => {
   test("releases server stream objects once the peer resets their streams", async () => {
     const total = 32;
@@ -1322,16 +1349,7 @@ describe("inbound stream lifecycle", () => {
         c.sendFrame(FrameType.RST_STREAM, 0, 1 + 2 * i, cancel);
       }
       await allClosed.promise;
-      // The streams' native release rides the deferred teardown chain
-      // (setImmediate: rstNextTick / delayed destroy), so drain an immediate
-      // turn before each GC pass - gcTick's Bun.sleep(0) alone leaves the
-      // release pending on slow FinalizationRegistry lanes (alpine/musl
-      // needed a retry at 20 passes; collection is late there, not stuck).
-      for (let i = 0; i < 50 && refs.some(ref => ref.deref() !== undefined); i++) {
-        await new Promise(resolve => setImmediate(resolve));
-        await gcTick();
-      }
-      expect(refs.filter(ref => ref.deref() !== undefined).length).toBe(0);
+      expect(await liveCount(refs)).toBeLessThanOrEqual(GC_STRAGGLERS);
     } finally {
       c.destroy();
       server.close();
@@ -1456,8 +1474,9 @@ describe("inbound stream lifecycle", () => {
         } catch (e) {
           console.log("destroy threw: " + e.message);
         }
-        // A numeric code must still tear every open stream down.
-        client.destroy(undefined, 8);
+        // A numeric code must still tear every open stream down. (null, not undefined: like node,
+        // an undefined error takes the NGHTTP2_NO_ERROR default and the code argument is ignored.)
+        client.destroy(null, 8);
         console.log("destroy:done");
       });
     `;
@@ -1541,6 +1560,42 @@ describe("inbound stream lifecycle", () => {
       server.close();
     }
   });
+
+  // grpc-js passes maxSessionMemory: Number.MAX_SAFE_INTEGER to disable the limit. node keeps the
+  // option as a double, so any huge value means "no limit"; it must saturate, not wrap to the
+  // 1MB minimum (#41294).
+  test.each([
+    ["Number.MAX_SAFE_INTEGER", Number.MAX_SAFE_INTEGER],
+    ["2**51", 2 ** 51],
+    ["2**32", 2 ** 32],
+  ])(
+    "serves a new request stream with queued response data when maxSessionMemory is %s",
+    async (_, maxSessionMemory) => {
+      const server = http2.createServer({ maxSessionMemory });
+      server.on("stream", (stream: any) => {
+        stream.on("error", () => {});
+        stream.respond({ ":status": 200 });
+        stream.write(Buffer.alloc(1 << 22, "a"));
+      });
+      server.listen(0);
+      await once(server, "listening");
+      const c = await RawH2.connect((server.address() as net.AddressInfo).port);
+      try {
+        c.sendPreface();
+        c.sendEmptySettings();
+        c.sendFrame(FrameType.HEADERS, 0x5, 1, requestHeaderBlock("GET"));
+        await c.waitFor(f => f.type === FrameType.DATA && f.streamId === 1);
+        c.sendFrame(FrameType.HEADERS, 0x5, 3, requestHeaderBlock("GET"));
+        const reply = await c.waitFor(
+          f => (f.type === FrameType.HEADERS || f.type === FrameType.RST_STREAM) && f.streamId === 3,
+        );
+        expect(reply.type).toBe(FrameType.HEADERS);
+      } finally {
+        c.destroy();
+        server.close();
+      }
+    },
+  );
 
   /** A maxSessionMemory:1 server whose first stream queues enough response data that the
    *  next inbound HEADERS is refused. Streams that do reach JS are recorded in `seen`. */
@@ -1674,7 +1729,8 @@ describe("inbound stream lifecycle", () => {
 // (end() without a body, or the empty frame that follows a body once no trailers are coming); the
 // queue writes the two through different branches, so both shapes are covered below.
 describe("stream release after a queued END_STREAM", () => {
-  const STREAMS = 4;
+  // Well above GC_STRAGGLERS: without the release every one of these survives.
+  const STREAMS = 16;
   // The peer advertises a 1 KiB stream window: a 4 KiB body cannot be written in one go, so its
   // tail (the frame carrying END_STREAM) is queued and flushed as the peer's WINDOW_UPDATEs arrive.
   const WINDOW = 1024;
@@ -1687,17 +1743,6 @@ describe("stream release after a queued END_STREAM", () => {
     server.listen(0);
     await once(server, "listening");
     return `http://127.0.0.1:${(server.address() as net.AddressInfo).port}`;
-  }
-
-  async function liveCount(refs: WeakRef<object>[]): Promise<number> {
-    const live = () => refs.filter(ref => ref.deref() !== undefined).length;
-    // A completed stream's JS teardown is spread over a few immediates, and a WeakRef target
-    // survives the job that dereferenced it, so every pass gets a fresh turn before collecting.
-    for (let i = 0; i < 50 && live() > 0; i++) {
-      await new Promise(resolve => setImmediate(resolve));
-      await gcTick();
-    }
-    return live();
   }
 
   /**
@@ -1743,7 +1788,7 @@ describe("stream release after a queued END_STREAM", () => {
         tailQueued: Array(STREAMS).fill(true),
         received: Array(STREAMS).fill(BODY.length),
       });
-      expect(await liveCount(refs)).toBe(0);
+      expect(await liveCount(refs)).toBeLessThanOrEqual(GC_STRAGGLERS);
     } finally {
       client.close();
       server.close();
@@ -1811,7 +1856,9 @@ describe("stream release after a queued END_STREAM", () => {
         finish(stream);
       });
     });
-    expect(await liveAfterRequestsBehindStalledResponse(server, refs, () => stalledFinished)).toBe(0);
+    expect(await liveAfterRequestsBehindStalledResponse(server, refs, () => stalledFinished)).toBeLessThanOrEqual(
+      GC_STRAGGLERS,
+    );
   });
 
   // The compat API's responses wait for trailers, so after the body END_STREAM always goes out on an
@@ -1831,7 +1878,9 @@ describe("stream release after a queued END_STREAM", () => {
       req.resume();
       req.on("end", () => res.end("ok"));
     });
-    expect(await liveAfterRequestsBehindStalledResponse(server, refs, () => stalledFinished)).toBe(0);
+    expect(await liveAfterRequestsBehindStalledResponse(server, refs, () => stalledFinished)).toBeLessThanOrEqual(
+      GC_STRAGGLERS,
+    );
   });
 
   test("client streams whose request body outgrew the server's window are released", async () => {
@@ -1872,7 +1921,7 @@ describe("stream release after a queued END_STREAM", () => {
         tailQueued: Array(STREAMS).fill(true),
         uploaded: Array(STREAMS).fill(BODY.length),
       });
-      expect(await liveCount(refs)).toBe(0);
+      expect(await liveCount(refs)).toBeLessThanOrEqual(GC_STRAGGLERS);
     } finally {
       client.close();
       server.close();

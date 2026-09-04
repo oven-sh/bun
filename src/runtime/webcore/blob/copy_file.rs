@@ -1605,18 +1605,12 @@ impl<'a> CopyFileWindows<'a> {
             )
         };
 
-        if let Some(errno) = rc.errno() {
-            self.throw(bun_sys::Error {
-                // #6336
-                errno: if errno == bun_sys::SystemErrno::EPERM as u16 {
-                    bun_sys::SystemErrno::ENOENT as u16
-                } else {
-                    errno
-                },
-                syscall: bun_sys::Tag::copyfile,
-                path: old_path.as_bytes().into(),
-                ..Default::default()
-            });
+        if let Some(mut err) = rc.to_error(bun_sys::Tag::copyfile) {
+            // https://github.com/oven-sh/bun/issues/6336
+            if err.get_errno() == bun_sys::E::EPERM {
+                err = bun_sys::Error::from_code(bun_sys::E::ENOENT, bun_sys::Tag::copyfile);
+            }
+            self.throw(err.with_path(old_path.as_bytes()));
             return;
         }
         self.event_loop.ref_keep_alive();
@@ -1691,12 +1685,7 @@ impl<'a> CopyFileWindows<'a> {
                 };
 
                 // chmod failed to start - reject the promise to report the error.
-                // previously `transmute::<c_int, SystemErrno>(errno)` — wrong on
-                // two counts: `errno` is `u16` (size mismatch with `c_int`), and libuv
-                // negative codes are NOT `SystemErrno` discriminants on Windows. Route
-                // through `Error::from_uv_rc` so `from_libuv` is set and translation is
-                // deferred to display, matching the other libuv error paths in this file.
-                if let Some(mut err) = bun_sys::Error::from_uv_rc(rc, bun_sys::Tag::chmod) {
+                if let Some(mut err) = rc.to_error(bun_sys::Tag::chmod) {
                     let destination = &self.destination_file_store.data.as_file();
                     if let PathOrFileDescriptor::Path(p) = &destination.pathlike {
                         err = err.with_path(p.slice());
@@ -1821,7 +1810,7 @@ extern "C" fn on_copy_file(req: *mut libuv::fs_t) {
     let rc = this.io_request.result;
 
     bun_sys::syslog!("uv_fs_copyfile() = {}", rc);
-    if let Some(errno) = rc.err_enum_e() {
+    if let Some(errno) = rc.errno() {
         // ENOENT from uv_fs_copyfile can mean either the source file or the
         // destination directory is missing. Disambiguate so a missing source
         // rejects directly instead of entering the mkdirp+retry path. Only an
@@ -1846,7 +1835,7 @@ extern "C" fn on_copy_file(req: *mut libuv::fs_t) {
         }
 
         let mut err = bun_sys::Error::from_code(
-            // #6336
+            // https://github.com/oven-sh/bun/issues/6336
             if errno == bun_sys::E::EPERM {
                 bun_sys::E::ENOENT
             } else {
@@ -1887,8 +1876,7 @@ extern "C" fn on_chmod(req: *mut libuv::fs_t) {
     event_loop.unref_keep_alive();
 
     let rc = this.io_request.result;
-    if let Some(errno) = rc.err_enum_e() {
-        let mut err = bun_sys::Error::from_code(errno, bun_sys::Tag::chmod);
+    if let Some(mut err) = rc.to_error(bun_sys::Tag::chmod) {
         let destination = &this.destination_file_store.data.as_file();
         if let PathOrFileDescriptor::Path(p) = &destination.pathlike {
             err = err.with_path(p.slice());

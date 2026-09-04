@@ -117,9 +117,24 @@ SEL WKWebView::s_callAsyncJavaScript;
 Class WKWebViewConfiguration::cls;
 Class WKWebViewConfiguration::cls_WKWebsiteDataStore;
 Class WKWebViewConfiguration::cls_WKWebsiteDataStoreConfiguration;
+Class WKWebViewConfiguration::cls_WKProcessPool;
 SEL WKWebViewConfiguration::s_nonPersistentDataStore;
 SEL WKWebViewConfiguration::s_initWithDirectory;
 SEL WKWebViewConfiguration::s_initWithConfiguration;
+SEL WKWebViewConfiguration::s_setProcessPool;
+
+// One pool shared by every view, retained for process lifetime. A private
+// pool per view spends one CVDisplayLink each (CoreVideo allows 64 per
+// process), so the 65th lifetime view wedged (oven-sh/bun#40951).
+id WKWebViewConfiguration::sharedProcessPool()
+{
+    static id pool;
+    if (!pool) {
+        Ref p(msgCls<id>(cls_WKProcessPool, s_alloc));
+        pool = p.msg<id>(s_init);
+    }
+    return pool;
+}
 
 // Keyed by directory path. Stores live for the process: each WKWebsiteDataStore
 // runs its own NetworkProcess session, so two instances at the same path don't
@@ -448,6 +463,8 @@ bool ObjCRuntime::load()
     // _WKWebsiteDataStoreConfiguration is SPI but stable since macOS 10.13.
     // initWithDirectory: is 15.2+.
     CLS(WKWebViewConfiguration::cls_WKWebsiteDataStoreConfiguration, "_WKWebsiteDataStoreConfiguration");
+    CLS(WKWebViewConfiguration::cls_WKProcessPool, "WKProcessPool");
+    WKWebViewConfiguration::s_setProcessPool = sel("setProcessPool:");
     WKWebViewConfiguration::s_nonPersistentDataStore = sel("nonPersistentDataStore");
     WKWebViewConfiguration::s_initWithDirectory = sel("initWithDirectory:");
     WKWebViewConfiguration::s_initWithConfiguration = sel("_initWithConfiguration:");

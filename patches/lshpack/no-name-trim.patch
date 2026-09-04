@@ -1,0 +1,16 @@
+--- a/lshpack.c	2026-08-28 00:15:39.411868808 +0000
++++ b/lshpack.c	2026-08-28 00:15:39.429205515 +0000
+@@ -1890,8 +1890,11 @@
+         }
+         if (len > UINT16_MAX)
+             return LSHPACK_ERR_TOO_LARGE;
+-        while(len > 0 && isspace(*(name + len - 1)))
+-            --len;
++        /* Bun: hand the literal name to the caller byte-exact. Upstream trims
++         * trailing whitespace here, which (a) lets a name such as "x-a " reach
++         * the application as "x-a" instead of being rejected as malformed
++         * (RFC 9113 8.2.1) and (b) enters the shortened name into the dynamic
++         * table, so the decoder's table size no longer matches the encoder's. */
+         if (len == 0)
+             return LSHPACK_ERR_BAD_DATA;
+ 

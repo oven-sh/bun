@@ -35,7 +35,7 @@ const view = new Bun.WebView({
 
 The constructor is synchronous — it returns immediately and spawns the browser subprocess in the background. The first operation you `await` (such as `navigate()` or `evaluate()`) waits for the browser to be ready.
 
-If you pass `url`, the view begins navigating before the constructor returns. Passing `url` is equivalent to calling `view.navigate(url)` on the next line.
+If you pass `url`, the view begins navigating before the constructor returns, the same way `view.navigate(url)` on the next line would. One difference: the constructor keeps the navigation's promise internal, so a failure never surfaces as a rejection. Set `onNavigationFailed` to observe it.
 
 ### Automatic cleanup with `using`
 
@@ -504,7 +504,7 @@ On the WebKit backend, `cdp()` throws `ERR_METHOD_NOT_IMPLEMENTED` — there is 
 view.close();
 ```
 
-Closing is synchronous and idempotent. It destroys the page's renderer process, rejects any pending promises on the view with `Error("WebView closed")`, and makes every subsequent method call throw `ERR_INVALID_STATE`.
+Closing is synchronous and idempotent. It destroys the page's renderer process, rejects any pending promises on the view with `Error("WebView closed")`, and makes every subsequent method call throw `ERR_INVALID_STATE`. The rejections are marked as handled: a promise you hold still rejects catchably, but a pending operation nothing holds never triggers `unhandledRejection`.
 
 `view[Symbol.dispose]` and `view[Symbol.asyncDispose]` both point to `close()`, so `using` / `await using` work.
 

@@ -1,6 +1,7 @@
 use crate::lockfile::package::PackageColumns as _;
 use bun_ptr::detach_lifetime;
 use core::mem::ManuallyDrop;
+use core::ptr::NonNull;
 use core::sync::atomic::Ordering;
 
 use crate::bun_fs::FileSystem;
@@ -27,7 +28,6 @@ use crate::package_manager_real::{
 };
 use crate::package_manager_task as Task;
 use crate::patch_install::EnqueueAfterState;
-use crate::repository_real::RepositoryExt as _;
 use crate::resolution::{
     NpmVersionInfo as ResolutionNpmValue, Tag as ResolutionTag, TaggedValue as ResolutionTagged,
 };
@@ -318,7 +318,7 @@ pub fn enqueue_git_for_checkout(
             resolved,
             patch_name_and_version_hash,
         );
-        this.task_batch.push(ThreadPool::Batch::from(task));
+        this.enqueue_git_task(task);
     } else {
         let clone_queue = this.task_queue.get_or_put(clone_id).expect("unreachable");
         if !clone_queue.found_existing {
@@ -335,7 +335,7 @@ pub fn enqueue_git_for_checkout(
 
         let dep = this.lockfile.buffers.dependencies[dependency_id as usize].clone();
         let task = enqueue_git_clone(this, clone_id, alias, &repository, &dep, resolution, None);
-        this.task_batch.push(ThreadPool::Batch::from(task));
+        this.enqueue_git_task(task);
     }
     GitEnqueueResult::Queued
 }
@@ -596,6 +596,10 @@ pub fn enqueue_dependency_to_root(
                 // raw `*mut` — `sleep_until`
                 // also receives this pointer, so `&mut` here would alias.
                 manager: *mut PackageManager,
+                // `sleep_until` ticks the JS event loop, and JS run there can
+                // swap `manager.log` and leave it pointing at a dead stack
+                // `Log`. `is_done` re-asserts this snapshot before each poll.
+                log: *mut bun_ast::Log,
             }
             impl Closure {
                 fn is_done(&mut self) -> bool {
@@ -603,6 +607,7 @@ pub fn enqueue_dependency_to_root(
                     // below; `sleep_until`/`tick_raw` hold no `&mut` across
                     // this callback, so this is the unique live borrow.
                     let manager = unsafe { &mut *self.manager };
+                    manager.log = self.log;
                     if manager.pending_task_count() > 0 {
                         // All callbacks void: `VoidRunTasksCallbacks` (below)
                         // has `Ctx = ()` and every `HAS_* = false`.
@@ -639,6 +644,7 @@ pub fn enqueue_dependency_to_root(
             let mut closure = Closure {
                 err: None,
                 manager: mgr,
+                log: this.log,
             };
             // SAFETY: `mgr` derived from the live exclusive `this` borrow;
             // `sleep_until` + `tick_raw` hold no `&mut PackageManager` across
@@ -1395,14 +1401,42 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                 };
                 let resolved = match pinned {
                     Some(resolved) => resolved,
-                    None => Repository::find_commit(
-                        this.env_mut(),
-                        this.log_mut(),
-                        repo_fd,
-                        alias,
-                        this.lockfile.str(&dep.committish),
-                        clone_id,
-                    )?,
+                    None => {
+                        // Waits on a `git log` task; `run_tasks` fills `git_commits` and re-enters here.
+                        let committish = this.lockfile.str_detached(&dep.committish);
+                        let commit_id = Task::Id::for_git_commit(url, committish);
+                        match this.git_commits.get(&commit_id) {
+                            Some(resolved) => resolved.clone(),
+                            None => {
+                                let entry = this
+                                    .task_queue
+                                    .get_or_put_context(commit_id, ())
+                                    .expect("unreachable");
+                                if !entry.found_existing {
+                                    *entry.value_ptr = TaskCallbackList::default();
+                                }
+                                entry.value_ptr.push(ctx);
+
+                                if dependency.behavior.is_peer() && !install_peer {
+                                    this.peer_dependencies.write_item(id)?;
+                                    return Ok(());
+                                }
+
+                                if this.has_created_network_task(
+                                    commit_id,
+                                    dependency.behavior.is_required(),
+                                ) {
+                                    return Ok(());
+                                }
+
+                                let task = enqueue_git_commit(
+                                    this, commit_id, clone_id, alias, url, committish,
+                                );
+                                this.enqueue_git_task(task);
+                                return Ok(());
+                            }
+                        }
+                    }
                 };
                 let checkout_id = Task::Id::for_git_checkout(url, &resolved);
 
@@ -1445,7 +1479,7 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                     &resolved,
                     None,
                 );
-                this.task_batch.push(ThreadPool::Batch::from(task));
+                this.enqueue_git_task(task);
             } else {
                 let entry = this
                     .task_queue
@@ -1471,7 +1505,7 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                 }
 
                 let task = enqueue_git_clone(this, clone_id, alias, &dep, dependency, &res, None);
-                this.task_batch.push(ThreadPool::Batch::from(task));
+                this.enqueue_git_task(task);
             }
             Ok(())
         }
@@ -1893,7 +1927,7 @@ fn enqueue_git_clone(
     res: &Resolution,
     // if patched then we need to do apply step after network task is done
     patch_name_and_version_hash: Option<u64>,
-) -> *mut ThreadPool::Task {
+) -> NonNull<Task::Task<'static>> {
     // Build the `Task` value *before* claiming a hive slot. Several initializers
     // below (`.expect()`, `.unwrap()`, `panic!`) can unwind; doing them with the
     // slot already claimed would leave a claimed-but-uninit `Task` (which carries
@@ -1932,7 +1966,6 @@ fn enqueue_git_clone(
                     &mut crate::network_task::filename_store_appender(),
                 )
                 .expect("unreachable"),
-                env: crate::repository::SharedEnv::get(this.env_mut()),
                 res: *res,
             }),
         },
@@ -1956,9 +1989,46 @@ fn enqueue_git_clone(
         },
         ..Task::uninit()
     };
-    let task = this.preallocated_resolve_tasks.get_init(value).as_ptr();
-    // SAFETY: `get_init` just fully initialized the slot.
-    unsafe { &raw mut (*task).threadpool_task }
+    this.preallocated_resolve_tasks.get_init(value)
+}
+
+/// `git log`: resolves `committish` in the bare repository of `clone_id`.
+fn enqueue_git_commit(
+    this: &mut PackageManager,
+    task_id: Task::Id,
+    clone_id: Task::Id,
+    name: &[u8],
+    url: &[u8],
+    committish: &[u8],
+) -> NonNull<Task::Task<'static>> {
+    let value = Task::Task {
+        package_manager: Some(bun_ptr::ParentRef::from_ref_mut(&mut *this)),
+        log: bun_ast::Log::init(),
+        tag: crate::package_manager_task::Tag::GitCommit,
+        request: crate::package_manager_task::Request {
+            git_commit: ManuallyDrop::new(crate::package_manager_task::GitCommitRequest {
+                clone_id,
+                name: StringOrTinyString::init_append_if_needed(
+                    name,
+                    &mut crate::network_task::filename_store_appender(),
+                )
+                .expect("unreachable"),
+                url: StringOrTinyString::init_append_if_needed(
+                    url,
+                    &mut crate::network_task::filename_store_appender(),
+                )
+                .expect("unreachable"),
+                committish: StringOrTinyString::init_append_if_needed(
+                    committish,
+                    &mut crate::network_task::filename_store_appender(),
+                )
+                .expect("unreachable"),
+            }),
+        },
+        id: task_id,
+        ..Task::uninit()
+    };
+    this.preallocated_resolve_tasks.get_init(value)
 }
 
 pub fn enqueue_git_checkout(
@@ -1971,7 +2041,7 @@ pub fn enqueue_git_checkout(
     resolved: &[u8],
     // if patched then we need to do apply step after network task is done
     patch_name_and_version_hash: Option<u64>,
-) -> *mut ThreadPool::Task {
+) -> NonNull<Task::Task<'static>> {
     // The patched-dependency entry can be missing (or its hash not yet
     // computed) when install state went stale — e.g. the patch was removed
     // from package.json, leaving the hash only in
@@ -2015,7 +2085,6 @@ pub fn enqueue_git_checkout(
                         &mut crate::network_task::filename_store_appender(),
                     )
                     .expect("unreachable"),
-                    env: crate::repository::SharedEnv::get(this.env_mut()),
                 }),
             },
             apply_patch_task: if let Some((h, patch_hash)) = patch {
@@ -2040,9 +2109,7 @@ pub fn enqueue_git_checkout(
             ..Task::uninit()
         }
     };
-    let task = this.preallocated_resolve_tasks.get_init(task_value);
-    // SAFETY: `task` points to a freshly initialized pool slot.
-    unsafe { &raw mut (*task.as_ptr()).threadpool_task }
+    this.preallocated_resolve_tasks.get_init(task_value)
 }
 
 fn enqueue_local_tarball(
@@ -2569,36 +2636,29 @@ fn get_or_put_resolved_package(
     match version.tag {
         dependency::version::Tag::Npm | dependency::version::Tag::DistTag => {
             'resolve_from_workspace: {
-                if version.tag == dependency::version::Tag::Npm {
-                    let workspace_path = if this.lockfile.workspace_paths.count() > 0 {
-                        this.lockfile.workspace_paths.get(&name_hash)
-                    } else {
-                        None
+                if version.tag == dependency::version::Tag::Npm
+                    && Lockfile::linked_workspace_path(
+                        this.options.link_workspace_packages,
+                        &this.lockfile.workspace_paths,
+                        &this.lockfile.workspace_versions,
+                        name_hash,
+                        &version.npm().version,
+                        this.lockfile.buffers.string_bytes.as_slice(),
+                    )
+                    .is_some()
+                {
+                    let Some(workspace_package_id) =
+                        root_workspace_package_id(&this.lockfile, name_hash)
+                    else {
+                        break 'resolve_from_workspace;
                     };
-                    let workspace_version = this.lockfile.workspace_versions.get(&name_hash);
-                    let buf = this.lockfile.buffers.string_bytes.as_slice();
-                    let npm_group = &version.npm().version;
-                    if this.options.link_workspace_packages
-                        && ((workspace_version.is_some()
-                            && npm_group.satisfies(*workspace_version.unwrap(), buf, buf))
-                            // https://github.com/oven-sh/bun/pull/10899#issuecomment-2099609419
-                            // if the workspace doesn't have a version, it can still be used if
-                            // dependency version is wildcard
-                            || (workspace_path.is_some() && npm_group.is_star()))
-                    {
-                        let Some(workspace_package_id) =
-                            root_workspace_package_id(&this.lockfile, name_hash)
-                        else {
-                            break 'resolve_from_workspace;
-                        };
-                        // make sure verifyResolutions sees this resolution as a valid package id
-                        success_fn(this, dependency_id, workspace_package_id);
-                        return Ok(Some(ResolvedPackageResult {
-                            package: *this.lockfile.packages.get(workspace_package_id as usize),
-                            is_first_time: false,
-                            task: None,
-                        }));
-                    }
+                    // make sure verifyResolutions sees this resolution as a valid package id
+                    success_fn(this, dependency_id, workspace_package_id);
+                    return Ok(Some(ResolvedPackageResult {
+                        package: *this.lockfile.packages.get(workspace_package_id as usize),
+                        is_first_time: false,
+                        task: None,
+                    }));
                 }
             }
 

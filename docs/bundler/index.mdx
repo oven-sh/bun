@@ -559,6 +559,21 @@ Each `import()` of a bundled JavaScript module also becomes its own chunk. Tree 
 
 With `target: "bun"`, a `require()` of a bundled ES module becomes a chunk of its own as well. The call is emitted as `import.meta.require("./chunk-<hash>.js")` and stays synchronous — Bun evaluates the chunk when the call runs — so a `require()` inside a function that never runs keeps its module out of the startup working set entirely. Tree shaking treats these chunks like `import()` chunks. `require()` of a CommonJS module is unaffected and keeps returning `module.exports`. A `require()` cycle between such chunks follows Bun's runtime `require()` of an ES module: a module required again while its chunk is still being loaded sees the partially initialized CommonJS placeholder (`{}`) rather than the live bindings the in-chunk wrapper provides. For other targets — and with `splitRequire: false` (`--no-split-require`) — the required module is inlined into the calling chunk behind a lazy wrapper instead, because the call must return synchronously.
 
+#### Tree-shaking `import()` and `require()` results
+
+When the result of a string-literal `import()` or `require()` of an ES module is only ever used to read specific exports, the exports nobody reads are dropped from that module — and whatever only they depended on tree-shakes with them. This applies with and without `splitting`; the module is still loaded lazily, exactly where the call is written.
+
+```ts title="entry.ts" icon="/icons/typescript.svg"
+const { render } = await import("./markdown"); // keeps `render`
+import("./telemetry").then(t => t.init()); // keeps `init`
+const { parse } = require("./yaml"); // keeps `parse` (ES module targets only)
+await import("./polyfill"); // keeps only side effects
+```
+
+Recognized uses: destructuring (`const { a, b: c, ...rest } = await import(x)`, also `let`/`var` and `export const { a } = …`), property access on the awaited value or on a local holding it (`(await import(x)).a`, `const ns = await import(x); ns.a; const { b } = ns`), `.then(({ a }) => …)` / `.then(ns => ns.a)` with an arrow function, per-element destructuring of `await Promise.all([import(x), import(y)])`, the same shapes for `require()`, and a bare `import(x);` / `await import(x);` / `require(x);` statement (nothing observed).
+
+The module keeps every export as soon as one use can't be followed: the namespace is passed, returned, stored, spread or iterated (`() => import(x)`, `fn(ns)`, `{ ...ns }`, `Object.keys(ns)`), accessed with a computed key (or `?.` directly on the `await import(x)` expression), handed to a non-arrow `.then` callback, reached via `import * as ns` elsewhere, or read under a direct `eval`. CommonJS targets always keep everything. The imported module itself is always evaluated; only with `"sideEffects": false` can a module it merely re-exports from be skipped when none of those re-exports are observed.
+
 <Tabs>
   <Tab title="JavaScript">
     ```ts title="build.ts" icon="/icons/typescript.svg"
@@ -589,7 +604,7 @@ With `splitting`, also fold small side-effect-free chunks into a chunk that more
       entrypoints: ['./index.tsx'],
       outdir: './out',
       splitting: true,
-      minChunkSize: 16 * 1024, // default 0 (disabled)
+      minChunkSize: 16 * 1024, // default 0 (off)
     })
     ```
   </Tab>
@@ -602,9 +617,15 @@ With `splitting`, also fold small side-effect-free chunks into a chunk that more
 
 Code splitting gives each distinct set of importers its own chunk, then folds chunks that are always loaded together: a module that `index.tsx` imports and that a lazily `import()`ed module also imports lives in `index.js`, and the lazy chunk imports it from there, because the lazy module can only load after `index.tsx` has run. That fold never makes an entrypoint load more code, so it is always on.
 
-`minChunkSize` goes further for chunks whose source files add up to fewer than this many bytes and whose modules run nothing at the top level: only declarations, `"sideEffects": false` in their `package.json`, or a lazily initialized CommonJS/ESM wrapper. Such a chunk folds into a chunk loaded by a superset of its importers. Everything it imports must already be loaded whenever that target is, or be side-effect free as well. The extra entrypoints then carry some unused definitions, capped at about 1.5% of what each entrypoint loaded to begin with. No side effect runs earlier than before and nothing lazy becomes eager. Because these rules bound what an entrypoint can end up loading, a large `minChunkSize` is reasonable.
+`minChunkSize` goes further for chunks whose source files add up to fewer than this many bytes and whose modules run nothing at the top level: only declarations, `"sideEffects": false` in their `package.json`, a lazily initialized CommonJS/ESM wrapper, or an import of a CommonJS module (such as `react`) that is already initialized wherever the chunk's code ends up. Such a chunk folds into a chunk loaded by a superset of its importers. Everything it imports must already be loaded whenever that target is, or be side-effect free as well. The extra entrypoints then carry some unused definitions, capped at about 1.5% of what each entrypoint loaded to begin with. No side effect runs earlier than before and nothing lazy becomes eager. Because these rules bound what an entrypoint can end up loading, a large `minChunkSize` is reasonable.
+
+For `target: "browser"`, where every chunk is a request, 16 KiB is a good starting point.
 
 A chunk that absorbs other chunks exports the symbols those chunks' importers need. An entrypoint that has exports of its own never absorbs one, so its module namespace stays as written; an entrypoint without exports can. With `--compile`, nothing folds into the entrypoint's own chunk.
+
+### modulePreload
+
+With `splitting` and `target: "browser"`, the browser would otherwise discover a chunk's own imports only after downloading and parsing it, one level per round trip. Bun writes a `<link rel="modulepreload">` into HTML entrypoints for every chunk the page's script statically imports, and every `import()` first inserts one for each chunk its target statically imports (transitively), so the whole dependency chain downloads in parallel. Outside a document (workers, server-side) the `import()` helper does nothing. Inserted links copy the nonce from a `<meta property="csp-nonce" nonce="...">` tag if the page has one. Enabled by default; set `modulePreload: false` (`--no-module-preload`) to emit plain `import()` calls and no links.
 
 ### plugins
 
@@ -1361,6 +1382,62 @@ The bundler always loads `export *` re-exports (it never defers them) to avoid c
 
 **Plugins:** Resolve and load plugins work with barrel optimization. Deferred submodules go through the plugin pipeline when they are eventually loaded.
 
+### Re-exported namespaces
+
+Property reads on an import that turns out to be a module namespace are linked straight to the export they name, the same as a named import. This covers namespaces reached indirectly:
+
+Each of these shapes of `lib.ts` qualifies:
+
+```ts icon="/icons/typescript.svg"
+// import { z } from "./lib";  z.object()
+import * as z from "./external";
+export { z };
+```
+
+```ts icon="/icons/typescript.svg"
+// import z from "./lib";  z.object()
+import * as z from "./external";
+export default z;
+```
+
+```ts icon="/icons/typescript.svg"
+// import { ns } from "./lib";  ns.object()
+export * as ns from "./external";
+```
+
+```ts icon="/icons/typescript.svg"
+// import lib from "./lib";  lib.object()
+export function object() {}
+export * as default from "./lib";
+```
+
+In each case the member access compiles to a direct reference to `object`, the `exports` object for `./external` is not created unless something else uses the namespace as a value (`Object.keys(z)`, `{ ...z }`, passing `z` around), and the exports you don't touch are tree-shaken. One level is resolved (`ns.a.b` binds `a`). Calling a function this way passes `undefined` as `this`, as with `import * as ns; ns.fn()`.
+
+Assignments (`z.x = 1`), optional chains, and non-literal computed keys (`z[key]`) are left as property accesses; `z["object"]` is treated like `z.object`. `export default someImport` is followed only when it ends at a namespace; a default that snapshots a `let` export keeps snapshot semantics.
+
+The same applies to the default import of a CommonJS module whose `exports.x = ...` assignments the bundler lifted to ES module exports, such as `react` and `scheduler`. The default import of a CommonJS module is its `module.exports`, which is that module's namespace, so `import React from "react"; React.useState()` compiles to a direct call of the lifted `useState` binding. The namespace object is created only when `React` itself is used as a value, and it lists the exports in assignment order, like `module.exports` does. A write through it, `React.useLayoutEffect = React.useEffect`, assigns the lifted binding, so every importer sees the new value, the same as a write to `module.exports`. `React.default`, and `ns.default` on `import * as ns`, is the lifted `default` export when the module has one, and otherwise the namespace itself, as `module.exports` is in Node. A module that sets both `exports.__esModule` and `exports.default` keeps its CommonJS wrapper when the importer is not an ES module by type (`.mjs`, `.mts`, or `"type": "module"`), because the default import then depends on that flag at run time. An `import()` of a module that does not set both resolves to that same namespace object as `default`, with or without code splitting.
+
+### deprecatedNamespaceObjectSetters
+
+Default `true`. When a namespace object does have to be created, each property currently gets a getter and a setter; the setter accepts `ns.foo = value` without throwing (reads still return the module's binding). Set this to `false` to emit getter-only namespace objects, which is what a future Bun release will do unconditionally. The namespace of a lifted CommonJS module is not affected: it stands in for `module.exports`, so its setters assign the lifted bindings either way.
+
+<Tabs>
+  <Tab title="JavaScript">
+    ```ts title="build.ts" icon="/icons/typescript.svg"
+    await Bun.build({
+      entrypoints: ['./index.tsx'],
+      outdir: './out',
+      deprecatedNamespaceObjectSetters: false,
+    })
+    ```
+  </Tab>
+  <Tab title="CLI">
+    ```bash terminal icon="terminal"
+    bun build ./index.tsx --outdir ./out --no-deprecated-namespace-object-setters
+    ```
+  </Tab>
+</Tabs>
+
 ### metafile
 
 Generate metadata about the build in a structured format. The metafile describes every input and output file: sizes, imports, and exports. Use it for:
@@ -1735,6 +1812,7 @@ interface BuildConfig {
   splitting?: boolean; // default false, enable code splitting
   splitRequire?: boolean; // default true, with splitting and target "bun": require() of an ES module is a chunk too
   minChunkSize?: number; // default 0, also fold side-effect-free chunks smaller than this many source bytes
+  modulePreload?: boolean; // default true, with splitting and target "browser": <link rel=modulepreload> the chunks an entrypoint or import() depends on
   plugins?: BunPlugin[];
   external?: string[];
   packages?: "bundle" | "external";
@@ -1779,6 +1857,12 @@ interface BuildConfig {
    * Force emitting @__PURE__ annotations even if minify.whitespace is true.
    */
   emitDCEAnnotations?: boolean;
+  /**
+   * Emit a setter per property on bundled module namespace objects (default).
+   * @deprecated set to `false` for getter-only namespace objects; this becomes
+   * the only behavior in a future release.
+   */
+  deprecatedNamespaceObjectSetters?: boolean;
 
   /**
    * Generate bytecode for the output. This can dramatically improve cold

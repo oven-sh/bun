@@ -193,7 +193,7 @@ test("should call only some functions", () => {
 File           | % Funcs | % Lines | Uncovered Line #s
 ---------------|---------|---------|-------------------
 All files      |   75.00 |   83.33 |
- include-me.ts |   50.00 |   66.67 | 
+ include-me.ts |   50.00 |   66.67 | 6
  test.test.ts  |  100.00 |  100.00 | 
 ---------------|---------|---------|-------------------
 
@@ -639,5 +639,61 @@ test("only imports the function", () => {
   expect(record).toMatch(/LF:4\nLH:4\n/);
 
   expect(stderr).toMatch(/ subject\.ts +\| +100\.00 +\| +100\.00 +\| +\n/);
+  expect(exitCode).toBe(0);
+});
+
+// https://github.com/oven-sh/bun/issues/40586
+// Each worker executes a different function of the same module; the merged
+// report must count a function as covered if any worker ran it.
+test("--parallel merges function coverage across workers", async () => {
+  // Each test file waits at import time until the other has started, so the
+  // two can only make progress in two different workers.
+  const rendezvous = (me: string, other: string) => `
+await Bun.write("${me}.started", "");
+for (const deadline = Date.now() + 60_000; !(await Bun.file("${other}.started").exists()); ) {
+  if (Date.now() > deadline) throw new Error("${other} never started in another worker");
+  await Bun.sleep(5);
+}
+`;
+  using dir = tempDir("cov-parallel-fn-merge", {
+    "bunfig.toml": `[test]\ncoverageSkipTestFiles = true\ncoverageThreshold = { lines = 1.0, functions = 1.0 }\n`,
+    "subject.ts": `export function first() {
+  return 1;
+}
+export function second() {
+  return 2;
+}
+`,
+    "first.test.ts": `${rendezvous("first", "second")}
+import { expect, test } from "bun:test";
+import { first } from "./subject.ts";
+
+test("calls first", () => {
+  expect(first()).toBe(1);
+});
+`,
+    "second.test.ts": `${rendezvous("second", "first")}
+import { expect, test } from "bun:test";
+import { second } from "./subject.ts";
+
+test("calls second", () => {
+  expect(second()).toBe(2);
+});
+`,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "test", "--coverage", "--coverage-reporter=text", "--coverage-reporter=lcov", "--parallel=2"],
+    env: { ...bunEnv, BUN_TEST_PARALLEL_SCALE_MS: "0" },
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stderr).toContain("2 pass");
+  expect(stderr).toMatch(/ subject\.ts +\| +100\.00 +\| +100\.00 +\| +\n/);
+  const lcov = readFileSync(path.join(String(dir), "coverage", "lcov.info"), "utf-8");
+  const record = lcov.split("end_of_record").find(r => r.includes("SF:subject.ts"));
+  expect(record).toMatch(/FNF:2\nFNH:2\n/);
   expect(exitCode).toBe(0);
 });

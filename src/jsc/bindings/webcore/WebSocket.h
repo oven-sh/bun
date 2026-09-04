@@ -134,6 +134,11 @@ public:
         CLOSED = 3,
     };
 
+    enum class BinaryType { Blob,
+        ArrayBuffer,
+        // non-standard:
+        NodeBuffer };
+
     enum Opcode : unsigned char {
         Continue = 0x0,
         Text = 0x1,
@@ -196,7 +201,7 @@ public:
     String protocol() const;
     String extensions() const;
 
-    String binaryType() const;
+    BinaryType binaryType() const { return m_binaryType; }
     ExceptionOr<void> setBinaryType(const String&);
 
     ScriptExecutionContext* scriptExecutionContext() const final;
@@ -311,11 +316,6 @@ private:
     void sendWebSocketString(const String& message, const Opcode opcode);
     void sendWebSocketData(const char* data, size_t length, const Opcode opcode);
     void setExtensionsFromDeflateParams(const PerMessageDeflateParams* deflate_params);
-
-    enum class BinaryType { Blob,
-        ArrayBuffer,
-        // non-standard:
-        NodeBuffer };
 
     State m_state { CONNECTING };
     URL m_url;

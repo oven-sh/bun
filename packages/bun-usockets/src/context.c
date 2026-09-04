@@ -35,15 +35,6 @@
 
 // clang-format off
 
-/* Forward-declared so this file does not depend on OpenSSL headers. */
-/* Opaque SSL_CTX ref helpers — defined in crypto/openssl.c so this file
- * stays free of OpenSSL headers. */
-
-int us_internal_raw_root_certs(struct us_cert_string_t** out);
-int us_raw_root_certs(struct us_cert_string_t**out){
-    return us_internal_raw_root_certs(out);
-}
-
 /* ── Group lifecycle ────────────────────────────────────────────────────── */
 
 void us_socket_group_init(struct us_socket_group_t *group, struct us_loop_t *loop,

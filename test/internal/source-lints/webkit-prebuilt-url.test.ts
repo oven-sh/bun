@@ -21,8 +21,6 @@ function mockToolchain(): Toolchain {
     ld64Lld: "/fake/llvm/bin/ld64.lld",
     rustLld: undefined,
     rustLlvmVersion: "22.1.4",
-    rustSysroot: undefined,
-    rustHostTriple: undefined,
     strip: "/fake/bin/strip",
     llvmStrip: "/fake/llvm/bin/llvm-strip",
     nm: "/fake/llvm/bin/llvm-nm",

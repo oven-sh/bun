@@ -311,18 +311,13 @@ fn collect_props(
                     }
                     // Promote the child's identifier to a named temporary
                     let child_id = child.identifier;
-                    let decl_id = env.identifiers[child_id.0 as usize].declaration_id;
                     if env.identifiers[child_id.0 as usize].name.is_none() {
-                        env.identifiers[child_id.0 as usize].name =
-                            Some(IdentifierName::promoted(b't', decl_id.0));
+                        env.promote_temporary(child_id);
                     }
 
                     let child_name = match &env.identifiers[child_id.0 as usize].name {
                         Some(IdentifierName::Named(n)) | Some(IdentifierName::Promoted(n)) => *n,
-                        None => match IdentifierName::promoted(b't', decl_id.0) {
-                            IdentifierName::Promoted(s) => s,
-                            _ => unreachable!(),
-                        },
+                        None => unreachable!("promoted above"),
                     };
                     let new_name = generate_name(b"t", env);
                     attributes.push(OutlinedJsxAttribute {
@@ -352,9 +347,7 @@ fn emit_outlined_jsx(
 
     // Create LoadGlobal for the outlined component
     let load_id = env.next_identifier_id();
-    // Promote it as a JSX tag temporary
-    let decl_id = env.identifiers[load_id.0 as usize].declaration_id;
-    env.identifiers[load_id.0 as usize].name = Some(IdentifierName::promoted(b'T', decl_id.0));
+    env.promote_temporary_jsx_tag(load_id);
 
     let load_place = Place {
         identifier: load_id,
@@ -409,8 +402,7 @@ fn emit_outlined_fn(
 
     // Create props parameter
     let props_obj_id = env.next_identifier_id();
-    let decl_id = env.identifiers[props_obj_id.0 as usize].declaration_id;
-    env.identifiers[props_obj_id.0 as usize].name = Some(IdentifierName::promoted(b't', decl_id.0));
+    env.promote_temporary(props_obj_id);
     let props_obj = Place {
         identifier: props_obj_id,
         effect: crate::hir::Effect::Unknown,

@@ -159,6 +159,183 @@ test.concurrent("the browser exiting rejects what it owed, and the next WebView 
   expect(result).toEqual({ death: transportLost, second: "alive again" });
 });
 
+// close() is a user-initiated teardown, so the rejection of an in-flight
+// operation must not surface as an unhandled rejection. The constructor's
+// `url:` navigation is the worst case: its promise is internal, so nothing in
+// user code could ever catch it (#40991).
+test.concurrent("close() during the constructor url navigation raises no unhandled rejection", async () => {
+  const result = await runScenario(`
+    const unhandled = [];
+    process.on("unhandledRejection", e => unhandled.push(e.message));
+    const view = new Bun.WebView({ backend, width: 100, height: 100, url: "http://fake/initial" });
+    view.close();
+    // Nothing announces "no unhandled rejection is coming"; this is a
+    // bounded window for one to appear (the reject itself ran synchronously).
+    await Bun.sleep(50);
+    print(unhandled);
+  `);
+  expect(result).toEqual([]);
+});
+
+test.concurrent("close() rejects a held navigate() catchably and a floating one quietly", async () => {
+  const result = await runScenario(`
+    const unhandled = [];
+    process.on("unhandledRejection", e => unhandled.push(e.message));
+    const first = newView();
+    const held = first.navigate("http://fake/held");
+    first.close();
+    const heldOutcome = await outcome(held);
+    const second = newView();
+    second.navigate("http://fake/floating");
+    second.close();
+    // Nothing announces "no unhandled rejection is coming"; this is a
+    // bounded window for one to appear (the reject itself ran synchronously).
+    await Bun.sleep(50);
+    print({ heldOutcome, unhandled });
+  `);
+  expect(result).toEqual({ heldOutcome: { rejected: "WebView closed" }, unhandled: [] });
+});
+
+// The browser dying (instead of close()) rejects the same internal
+// constructor-url promise; that must be quiet too. A floating user promise
+// is the opposite: a crash is not a requested teardown, so its rejection
+// must stay loud. --no-title-reply keeps the Navigate slot pending past
+// onNavigated, like a real browser whose title fetch has not come back yet.
+test.concurrent(
+  "a browser death is quiet for the constructor url promise and loud for a floating evaluate",
+  async () => {
+    const result = await runScenario(`
+    const unhandled = [];
+    process.on("unhandledRejection", e => unhandled.push(e.message));
+    const view = new Bun.WebView({
+      backend: { ...backend, argv: [...backend.argv, "--no-title-reply"] },
+      width: 100,
+      height: 100,
+      url: "http://fake/initial",
+    });
+    await new Promise(resolve => { view.onNavigated = resolve; });
+    view.evaluate("__fake_exit(3)"); // floating: a crash rejection must stay loud
+    const deadline = Date.now() + 5000;
+    while (unhandled.length === 0 && Date.now() < deadline) await Bun.sleep(10);
+    // Both slots reject in the same teardown call; if the internal navigate
+    // promise were loud too, its report would land in the same window.
+    await Bun.sleep(50);
+    print(unhandled);
+  `);
+    expect(result).toEqual([expect.stringMatching(/^Chrome (process closed the pipe|exited|killed by signal \d+)$/)]);
+  },
+);
+
+// A genuine navigation failure (Chrome answers Page.navigate with errorText)
+// stays observable: a held navigate() rejects with that text, and the
+// constructor url, whose promise is internal and marked handled, reports
+// through onNavigationFailed like the WebKit backend does.
+test.concurrent("a navigation that Chrome fails with errorText rejects and fires onNavigationFailed", async () => {
+  const result = await runScenario(`
+    const unhandled = [];
+    process.on("unhandledRejection", e => unhandled.push(e.message));
+    const errBackend = { ...backend, argv: [...backend.argv, "--navigate-error=net::ERR_NAME_NOT_RESOLVED"] };
+    const view = new Bun.WebView({ backend: errBackend, width: 100, height: 100 });
+    const held = await outcome(view.navigate("http://fake/held"));
+    view.close();
+    const ctor = new Bun.WebView({ backend: errBackend, width: 100, height: 100, url: "http://fake/ctor" });
+    const failed = await new Promise(resolve => { ctor.onNavigationFailed = resolve; });
+    const loadingAfterFail = ctor.loading;
+    ctor.close();
+    // Nothing announces "no unhandled rejection is coming"; this is a
+    // bounded window for one to appear (the reject itself ran synchronously).
+    await Bun.sleep(50);
+    print({ held, failedMessage: failed.message, loadingAfterFail, unhandled });
+  `);
+  expect(result).toEqual({
+    held: { rejected: "net::ERR_NAME_NOT_RESOLVED" },
+    failedMessage: "net::ERR_NAME_NOT_RESOLVED",
+    loadingAfterFail: false,
+    unhandled: [],
+  });
+});
+
+// A CDP protocol error ({"error":{"code":-32000}}) can fail a navigation at
+// any stage: the attach chain, or Page.navigate itself (real Chrome answers
+// "Cannot navigate to invalid URL" this way). The constructor url has no
+// promise the user can see, so the failure must reach onNavigationFailed and
+// clear loading, and must not surface as an unhandled rejection.
+test.concurrent("a CDP protocol error failing the constructor url fires onNavigationFailed", async () => {
+  const result = await runScenario(`
+    const unhandled = [];
+    process.on("unhandledRejection", e => unhandled.push(e.message));
+    const view = new Bun.WebView({
+      backend: { ...backend, argv: [...backend.argv, "--cdp-error-on=Page.navigate"] },
+      width: 100,
+      height: 100,
+      url: "http://fake/ctor",
+    });
+    const failed = await new Promise(resolve => { view.onNavigationFailed = resolve; });
+    const loadingAfterFail = view.loading;
+    view.close();
+    // Nothing announces "no unhandled rejection is coming"; this is a
+    // bounded window for one to appear (the reject itself ran synchronously).
+    await Bun.sleep(50);
+    print({ failedMessage: failed.message, loadingAfterFail, unhandled });
+  `);
+  expect(result).toEqual({
+    failedMessage: "Cannot navigate to invalid URL",
+    loadingAfterFail: false,
+    unhandled: [],
+  });
+});
+
+// The quiet close() is scoped to promises rejected BY the teardown. A
+// genuine failure of a floating user navigate() must stay loud, or a future
+// over-suppression refactor would pass the whole suite.
+test.concurrent("a floating navigate() that genuinely fails still raises an unhandled rejection", async () => {
+  const result = await runScenario(`
+    const unhandled = [];
+    process.on("unhandledRejection", e => unhandled.push(e.message));
+    const view = new Bun.WebView({
+      backend: { ...backend, argv: [...backend.argv, "--navigate-error=net::ERR_NAME_NOT_RESOLVED"] },
+      width: 100,
+      height: 100,
+    });
+    view.navigate("http://fake/floating"); // floating: nobody handles it
+    await new Promise(resolve => { view.onNavigationFailed = resolve; });
+    // Nothing announces "no unhandled rejection is coming"; this is a
+    // bounded window for one to appear (the reject itself ran synchronously).
+    await Bun.sleep(50);
+    view.close();
+    print(unhandled);
+  `);
+  expect(result).toEqual(["net::ERR_NAME_NOT_RESOLVED"]);
+});
+
+// The navigate slot settles before onNavigationFailed runs, so the callback
+// can retry with navigate() instead of hitting ERR_INVALID_STATE.
+test.concurrent("onNavigationFailed can retry navigate() immediately", async () => {
+  const result = await runScenario(`
+    const view = new Bun.WebView({
+      backend: { ...backend, argv: [...backend.argv, "--navigate-error=net::ERR_NAME_NOT_RESOLVED"] },
+      width: 100,
+      height: 100,
+    });
+    let retried = false;
+    const outcomeStr = await new Promise(resolve => {
+      view.onNavigationFailed = () => {
+        if (retried) return resolve("retry was accepted and failed too");
+        retried = true;
+        try {
+          view.navigate("http://fake/retry").catch(() => {});
+        } catch (err) {
+          resolve("retry threw " + err.code);
+        }
+      };
+      view.navigate("http://fake/first").catch(() => {});
+    });
+    view.close();
+    print(outcomeStr);
+  `);
+  expect(result).toBe("retry was accepted and failed too");
+});
+
 // `bun test --isolate` replaces the global object between files. The transport
 // is bound to the global that spawned the browser, so it has to go with that
 // file: its open views are closed, their pending promises rejected, and the

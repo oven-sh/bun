@@ -826,6 +826,12 @@ pub(crate) fn error_to_js_with_syscall_and_hostname(
     Ok(instance)
 }
 
+/// Thrown before uSockets' synchronous `getaddrinfo` can block on a name that can never resolve.
+pub(crate) fn not_a_hostname_error(global_this: &JSGlobalObject, hostname: &[u8]) -> JSValue {
+    system_error_with_syscall_and_hostname(c_ares::Error::ENOTFOUND, b"getaddrinfo", hostname)
+        .to_error_instance(global_this)
+}
+
 // ── canonicalizeIP host fn ─────────────────────────────────────────────────
 // `#[bun_jsc::host_fn(export = ...)]` emits the C-ABI shim under that link name.
 #[bun_jsc::host_fn(export = "Bun__canonicalizeIP")]

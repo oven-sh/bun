@@ -170,7 +170,8 @@ pub fn create_utf8_for_js(global_object: &JSGlobalObject, utf8_slice: &[u8]) -> 
 }
 
 /// UTF-8 `Vec<u8>` → JS string; the allocation (or its UTF-16 transcode) is
-/// adopted by JSC. Throws `STRING_TOO_LONG` when over [`String::max_length`].
+/// adopted by JSC. Throws `STRING_TOO_LONG` when over [`String::max_length`]
+/// and `MEMORY_ALLOCATION_FAILED` when the transcode could not allocate.
 pub fn owned_utf8_into_js(global_object: &JSGlobalObject, utf8: Vec<u8>) -> JsResult<JSValue> {
     if utf8.is_empty() {
         return Ok(JSValue::js_empty_string(global_object));
@@ -178,7 +179,19 @@ pub fn owned_utf8_into_js(global_object: &JSGlobalObject, utf8: Vec<u8>) -> JsRe
     match strings::to_utf16_alloc(&utf8, false, false) {
         Ok(None) => owned_latin1_into_js(global_object, utf8),
         Ok(Some(utf16)) => owned_utf16_into_js(global_object, utf16),
-        Err(_) => Err(global_object.throw_out_of_memory()),
+        Err(_) => Err(throw_utf16_transcode_failure(global_object, &utf8)),
+    }
+}
+
+/// The error for a `to_utf16_alloc` of `utf8` that could not allocate its
+/// output: `STRING_TOO_LONG` when the result could not have fit in a string
+/// anyway, `MEMORY_ALLOCATION_FAILED` otherwise.
+#[cold]
+pub fn throw_utf16_transcode_failure(global_object: &JSGlobalObject, utf8: &[u8]) -> JsError {
+    if String::utf16_transcode_too_long(utf8) {
+        global_object.throw_string_too_long()
+    } else {
+        global_object.throw_memory_allocation_failed()
     }
 }
 

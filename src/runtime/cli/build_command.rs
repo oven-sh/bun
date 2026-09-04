@@ -214,6 +214,8 @@ impl BuildCommand {
         this_transpiler.options.minify_identifiers = ctx.bundler_options.minify_identifiers;
         this_transpiler.options.keep_names = ctx.bundler_options.keep_names;
         this_transpiler.options.emit_dce_annotations = ctx.bundler_options.emit_dce_annotations;
+        this_transpiler.options.deprecated_namespace_object_setters =
+            ctx.bundler_options.deprecated_namespace_object_setters;
         this_transpiler.options.ignore_dce_annotations = ctx.bundler_options.ignore_dce_annotations;
 
         this_transpiler.options.banner =
@@ -237,6 +239,7 @@ impl BuildCommand {
             };
         this_transpiler.options.css_chunking = ctx.bundler_options.css_chunking;
         this_transpiler.options.min_chunk_size = ctx.bundler_options.min_chunk_size;
+        this_transpiler.options.module_preload = ctx.bundler_options.module_preload;
         this_transpiler.options.metafile =
             !ctx.bundler_options.metafile.is_empty() || !ctx.bundler_options.metafile_md.is_empty();
 
@@ -355,6 +358,9 @@ impl BuildCommand {
                     );
                     Global::exit(1);
                 }
+
+                this_transpiler.options.compile_entry_point_name =
+                    bun_paths::basename(compile_outfile(outfile)).into();
             }
         }
 
@@ -768,7 +774,7 @@ impl BuildCommand {
         if ctx.bundler_options.compile && !ctx.bundler_options.compile_assets.is_empty() {
             if let Err(msg) = collect_compile_assets(
                 &ctx.bundler_options.compile_assets,
-                outfile,
+                compile_outfile(outfile),
                 &mut output_files,
             ) {
                 Output::err_generic("{}", (msg.as_str(),));
@@ -796,20 +802,8 @@ impl BuildCommand {
 
             if output_dir.is_empty() && !outfile.is_empty() && will_be_one_file {
                 output_dir = bun_core::dirname(outfile).unwrap_or(b".");
-                if ctx.bundler_options.compile {
-                    // If the first output file happens to be a client-side chunk imported server-side
-                    // then don't rename it to something else, since an HTML
-                    // import manifest might depend on the file path being the
-                    // one we think it should be.
-                    for f in output_files.iter_mut() {
-                        if f.output_kind == options::OutputKind::EntryPoint
-                            && f.side.unwrap_or(options::Side::Server) == options::Side::Server
-                        {
-                            f.dest_path = bun_paths::basename(outfile).into();
-                            break;
-                        }
-                    }
-                } else {
+                // With --compile, the bundler already named the entry point's chunk after the outfile.
+                if !ctx.bundler_options.compile {
                     output_files[0].dest_path = bun_paths::basename(outfile).into();
                 }
             }
@@ -883,9 +877,7 @@ impl BuildCommand {
 
                 let is_cross_compile = !compile_target.is_default();
 
-                if outfile.is_empty() || outfile == b"." || outfile == b".." || outfile == b"../" {
-                    outfile = b"index";
-                }
+                outfile = compile_outfile(outfile);
 
                 let mut outfile_owned: Vec<u8>;
                 if compile_target.os == OperatingSystem::Windows
@@ -1192,6 +1184,14 @@ impl BuildCommand {
     }
 }
 
+fn compile_outfile(outfile: &[u8]) -> &[u8] {
+    if outfile.is_empty() || outfile == b"." || outfile == b".." || outfile == b"../" {
+        b"index"
+    } else {
+        outfile
+    }
+}
+
 fn exit_or_watch(code: u8, watch: bool) -> ! {
     if watch {
         // the watcher thread will exit the process. `std::thread::sleep`
@@ -1289,29 +1289,11 @@ pub(crate) fn collect_compile_assets(
     let entry_name = bun_paths::basename(outfile);
 
     let mut seen: StringArrayHashMap<()> = StringArrayHashMap::new();
-    let mut skipped_main_entry = false;
     for f in out.iter() {
         if !f.output_kind.is_file_in_standalone_mode() {
             continue;
         }
-        // First server EntryPoint is later renamed to basename(outfile); covered by `entry_name`.
-        if !skipped_main_entry
-            && f.output_kind == options::OutputKind::EntryPoint
-            && f.side.unwrap_or(options::Side::Server) == options::Side::Server
-        {
-            skipped_main_entry = true;
-            continue;
-        }
-        let key = strings::remove_leading_dot_slash(&f.dest_path);
-        #[cfg(windows)]
-        let _ = seen.put(
-            &key.iter()
-                .map(|&b| if b == b'\\' { b'/' } else { b })
-                .collect::<Vec<u8>>(),
-            (),
-        );
-        #[cfg(not(windows))]
-        let _ = seen.put(key, ());
+        let _ = seen.put(strings::remove_leading_dot_slash(&f.dest_path), ());
     }
     let mut push =
         |out: &mut Vec<options::OutputFile>, asset: &[u8], dest: Vec<u8>, bytes: Vec<u8>| {

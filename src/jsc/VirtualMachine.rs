@@ -370,6 +370,17 @@ pub struct VirtualMachine {
 #[derive(Default)]
 pub struct TestIsolationState {
     pub saved_cwd: Option<Box<[u8]>>,
+    /// The time zone the test runner applied at startup (`TZ`, default
+    /// `Etc/UTC`). Empty means no override (local time). Re-applied after
+    /// every file so a `process.env.TZ` write stays with the file that made it.
+    /// `Option` keeps the zero-initialized VM valid (a `Box` has no null niche).
+    pub time_zone: Option<Box<[u8]>>,
+    /// The proxy env keys as the env map held them at startup, restored after
+    /// every file. See [`crate::rare_data::ProxyEnvSnapshot`].
+    pub proxy_env: Option<crate::rare_data::ProxyEnvSnapshot>,
+    /// The synthetic allocation limit at startup, restored after every file.
+    /// `setSyntheticAllocationLimitForTesting` lowers it process-wide.
+    pub synthetic_allocation_limit: Option<usize>,
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -607,8 +618,6 @@ impl VMHolder {
     }
 }
 
-#[thread_local]
-pub static IS_BUNDLER_THREAD_FOR_BYTECODE_CACHE: Cell<bool> = Cell::new(false);
 #[thread_local]
 pub static IS_MAIN_THREAD_VM: Cell<bool> = Cell::new(false);
 
@@ -871,6 +880,8 @@ impl VirtualMachine {
         VM.get()
     }
 
+    /// The signal handler path (unix only) reaches the main VM through this.
+    #[cfg(unix)]
     pub(crate) fn get_main_thread_vm() -> Option<*mut VirtualMachine> {
         let p = MAIN_THREAD_VM.load(core::sync::atomic::Ordering::Acquire);
         if p.is_null() { None } else { Some(p) }
@@ -999,17 +1010,38 @@ impl VirtualMachine {
         self.event_loop_mut()
     }
 
+    /// Let the main VM's heap take the executable's initial module graph without collecting: everything allocated
+    /// while it loads is live, so collections before it finishes only re-mark it. The budget is what loading the graph
+    /// reads (bytecode, records, string table; capped); after the first collection JSC's usual sizing applies. Workers load a fraction of the graph and
+    /// keep the default.
+    fn let_heap_take_initial_module_graph(
+        &self,
+        graph: &'static dyn bun_resolver::StandaloneModuleGraph,
+    ) {
+        unsafe extern "C" {
+            safe fn JSC__Heap__setInitialAllocationBudget(vm: &VM, bytes: usize);
+        }
+        const MIN_BUDGET: usize = 8 * 1024 * 1024;
+        const MAX_BUDGET: usize = 128 * 1024 * 1024;
+        let budget = graph
+            .module_graph_load_bytes()
+            .clamp(MIN_BUDGET, MAX_BUDGET);
+        if budget > MIN_BUDGET {
+            JSC__Heap__setInitialAllocationBudget(self.jsc_vm(), budget);
+        }
+    }
+
     /// Hand the executable's shared bytecode string table (if any) to JSC as this VM's `DecoderStringTable`.
     fn install_bytecode_string_table(
         &self,
         graph: &'static dyn bun_resolver::StandaloneModuleGraph,
     ) {
+        unsafe extern "C" {
+            fn Bun__DecoderStringTable__install(vm: *mut VM, bytes: *const u8, len: usize);
+        }
         let table = graph.bytecode_string_table();
         if table.is_empty() {
             return;
-        }
-        unsafe extern "C" {
-            fn Bun__DecoderStringTable__install(vm: *mut VM, bytes: *const u8, len: usize);
         }
         // SAFETY: `jsc_vm` set in `init()`; `table` is a mmapped process-lifetime span from the executable's own section.
         unsafe { Bun__DecoderStringTable__install(self.jsc_vm, table.as_ptr(), table.len()) };
@@ -1371,7 +1403,7 @@ impl VirtualMachine {
         if sync {
             return vm.run_gc(true);
         }
-        vm.collect_async();
+        vm.collect_async(false);
         vm.heap_size()
     }
 
@@ -2706,7 +2738,7 @@ impl VirtualMachine {
             opts.eval_mode,
             opts.worker_ptr,
         );
-        // JSC may mess with the stack size.
+        // Sets the bound for a thread that skipped it at start (`configure_thread_no_js`).
         bun_core::StackCheck::configure_thread();
         // SAFETY: write through the raw `vm` ptr (not `vm_ref`) so no
         // `&mut VirtualMachine` is held live across the FFI call above; same
@@ -4067,6 +4099,7 @@ impl VirtualMachine {
         let vm_ref = unsafe { &mut *vm };
         vm_ref.transpiler.resolver.standalone_module_graph = Some(graph);
         vm_ref.install_bytecode_string_table(graph);
+        vm_ref.let_heap_take_initial_module_graph(graph);
         // Avoid reading from tsconfig.json & package.json when in standalone mode
         vm_ref.transpiler.configure_linker_with_auto_jsx(false);
         vm_ref.transpiler.resolver.store_fd = false;
@@ -4703,8 +4736,10 @@ impl VirtualMachine {
         // so the `Option` is purely a
         // zeroed-init nicety; the `expect` is infallible.
         let old_log: NonNull<bun_ast::Log> = jsc_vm.log.expect("vm.log set in init");
+        let old_transpiler_log: *mut bun_ast::Log = jsc_vm.transpiler.log;
         let mut log = bun_ast::Log::default();
         jsc_vm.log = NonNull::new(&raw mut log);
+        jsc_vm.transpiler.log = &raw mut log;
         jsc_vm.transpiler.resolver.log = NonNull::from(&mut log);
         jsc_vm.transpiler.linker.log = &raw mut log;
         if let Some(pm) = jsc_vm.transpiler.resolver.package_manager {
@@ -4721,6 +4756,7 @@ impl VirtualMachine {
         struct RestoreLog {
             vm: bun_ptr::BackRef<VirtualMachine>,
             old_log: NonNull<bun_ast::Log>,
+            old_transpiler_log: *mut bun_ast::Log,
         }
         impl Drop for RestoreLog {
             fn drop(&mut self) {
@@ -4728,6 +4764,7 @@ impl VirtualMachine {
                 // thread); `old_log` outlives the VM (Box::leak in `init`).
                 let jsc_vm = self.vm.get().as_mut();
                 jsc_vm.log = Some(self.old_log);
+                jsc_vm.transpiler.log = self.old_transpiler_log;
                 jsc_vm.transpiler.resolver.log = self.old_log;
                 jsc_vm.transpiler.linker.log = self.old_log.as_ptr();
                 // `_resolve` may have lazily created the PM with
@@ -4745,6 +4782,7 @@ impl VirtualMachine {
         let _restore = RestoreLog {
             vm: bun_ptr::BackRef::from(NonNull::new(jsc_vm_ptr).expect("vm non-null")),
             old_log,
+            old_transpiler_log,
         };
         // Note: reshaped for borrowck — re-derive from raw so the unique
         // borrow doesn't span the guard's drop.
@@ -5201,6 +5239,38 @@ impl VirtualMachine {
                     hook.global_this = new_global;
                 }
             }
+        }
+
+        self.undo_process_env_side_effects();
+        self.undo_synthetic_allocation_limit();
+    }
+
+    /// `setSyntheticAllocationLimitForTesting` lowers a process-wide limit.
+    /// Put the startup value back so a file's limit stays with that file.
+    fn undo_synthetic_allocation_limit(&mut self) {
+        if let Some(limit) = self.test_isolation_state.synthetic_allocation_limit {
+            SYNTHETIC_ALLOCATION_LIMIT.store(limit, core::sync::atomic::Ordering::Relaxed);
+            STRING_ALLOCATION_LIMIT.store(limit, core::sync::atomic::Ordering::Relaxed);
+        }
+    }
+
+    /// The `process.env` keys with a custom setter (`applySharedEnvSideEffects`
+    /// in JSEnvironmentVariableMap.cpp) write past the env object: TZ into the
+    /// WTF time zone override, NODE_TLS_REJECT_UNAUTHORIZED and
+    /// BUN_CONFIG_VERBOSE_FETCH into per-VM caches, and the proxy keys into the
+    /// env map that seeds the next global's `process.env`. Put each back to
+    /// its startup state so a file's write does not reach the files after it.
+    fn undo_process_env_side_effects(&mut self) {
+        self.default_tls_reject_unauthorized = None;
+        self.default_verbose_fetch.set(None);
+        if let Some(tz) = self.test_isolation_state.time_zone.as_deref() {
+            let _ = self
+                .global()
+                .set_time_zone(&bun_core::EncodedSlice::from_bytes(tz));
+        }
+        if let Some(snapshot) = self.test_isolation_state.proxy_env.as_ref() {
+            let mut slots = self.proxy_env_storage.lock();
+            slots.restore(&mut self.transpiler.env_mut().map, snapshot);
         }
     }
 

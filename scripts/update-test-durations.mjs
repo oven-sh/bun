@@ -15,11 +15,13 @@ import { writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
+import { isPhaseGroupHeader } from "./ci-log-phase.mjs";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const outputPath = join(__dirname, "..", "test", "expected-durations.json");
 
 const { values: opts } = parseArgs({
+  strict: false,
   options: {
     builds: { type: "string", default: "5" },
     org: { type: "string", default: "bun" },
@@ -28,20 +30,21 @@ const { values: opts } = parseArgs({
 });
 
 const token = process.env.BUILDKITE_API_TOKEN || process.env.BUILDKITE_TOKEN;
-if (!token) {
-  console.error("BUILDKITE_API_TOKEN is required");
-  process.exit(1);
-}
 
 // default + asan are both linux-x64-debian-13 (lowest-variance runner pool);
 // windows and musl get their own columns because process-spawn cost and
 // per-test skip behaviour differ enough from the glibc lane to leave
 // 150-300s of shard spread when packed with the debian timings.
+// windows-aarch64 is split from windows because its serial files run about
+// 2x slower than on x64 and not uniformly (bundler_compile.test.ts is 222s vs
+// 48s); packed with the x64 column its slowest shard carried 920s of work
+// against a 610s mean, and that lane is the last to finish in most builds.
 const lanes = {
   default: "linux-x64-debian-13-test-bun",
   asan: "linux-x64-asan-debian-13-test-bun",
   musl: "linux-x64-musl-alpine-323-test-bun",
   windows: "windows-x64-2019-test-bun",
+  "windows-aarch64": "windows-aarch64-11-test-bun",
 };
 
 const api = async path => {
@@ -66,12 +69,13 @@ const api = async path => {
 // prints the bare form. For that concurrent phase the gap is an inter-dispatch
 // delta, not wall clock; we clamp it so the last-dispatched file on each shard
 // does not absorb the N-wide tail drain or a sibling's 5-15 s retry backoff.
-function parseLog(raw) {
+export function parseLog(raw) {
   const out = [];
   const lines = raw.replace(/\x1b\[[0-9;]*m/g, "").split(/\r?\n/);
   let path = null;
   let start = null;
   let concurrent = false;
+  let lastTs = null;
   const emit = ts => {
     if (path === null || start === null || ts === null) return;
     out.push([path, concurrent ? Math.min(ts - start, 500) : ts - start]);
@@ -79,7 +83,7 @@ function parseLog(raw) {
   for (let line of lines) {
     if (line.endsWith("\r")) line = line.slice(0, -1);
     const m = /^\x1b_bk;t=(\d+)\x07(.*)$/.exec(line);
-    const ts = m ? Number(m[1]) : null;
+    const ts = m ? (lastTs = Number(m[1])) : null;
     const text = m ? m[2] : line;
     const hdr = /^(--- )?\[\d+\/\d+\] (.+)$/.exec(text);
     if (hdr) {
@@ -100,12 +104,17 @@ function parseLog(raw) {
       concurrent = isPath && !hdr[1];
       continue;
     }
-    if (/^--- (?:End\b|Running \d+ parallel-safe)/.test(text)) {
+    // The runner's other phase headers (`[A-B/M] K files in parallel`,
+    // `napi prebuild: ...`, `Running N parallel-safe ...`, End) close the open
+    // span so the preceding serial test is not charged for the phase that
+    // follows. See scripts/ci-log-phase.mjs.
+    if (isPhaseGroupHeader(text)) {
       emit(ts);
       path = start = null;
       concurrent = false;
     }
   }
+  emit(lastTs);
   return out;
 }
 
@@ -169,50 +178,57 @@ async function collect(build, stepKey, into) {
   await Promise.all(Array.from({ length: 4 }, worker));
 }
 
-const want = Math.max(1, parseInt(opts.builds, 10) || 5);
-console.error(`looking for ${want} recent builds with complete ${Object.values(lanes).join(" + ")} lanes`);
-const builds = await findSourceBuilds(want);
-if (builds.length === 0) {
-  console.error("no suitable builds found");
-  process.exit(1);
-}
-console.error(`using builds: ${builds.join(", ")}`);
-
-// lane -> path -> [ms, ...]
-const samples = Object.fromEntries(Object.keys(lanes).map(lane => [lane, {}]));
-for (const b of builds) {
-  for (const [lane, step] of Object.entries(lanes)) {
-    console.error(`  build ${b} ${lane}`);
-    await collect(b, step, samples[lane]);
+if (process.argv[1] === fileURLToPath(import.meta.url)) {
+  if (!token) {
+    console.error("BUILDKITE_API_TOKEN is required");
+    process.exit(1);
   }
-}
 
-const paths = new Set(Object.values(samples).flatMap(s => Object.keys(s)));
-// Guard the implicit contract with utils.mjs startGroup(): if the group-header
-// format ever changes, parseLog() quietly returns nothing. Fail loudly rather
-// than committing an empty table that would collapse every shard onto shard 0.
-if (paths.size < 1000) {
-  console.error(
-    `only parsed ${paths.size} test paths; expected >1000. ` +
-      `This usually means the '--- [N/M] <path>' log header format changed.`,
-  );
-  process.exit(1);
-}
-const out = {
-  // Consumers should tolerate missing paths (new tests) and missing lanes.
-  _meta: {
-    generated_at: new Date().toISOString(),
-    source_builds: builds,
-    lanes,
-  },
-};
-for (const p of [...paths].sort()) {
-  const entry = {};
-  for (const lane of Object.keys(lanes)) {
-    if (samples[lane][p]?.length) entry[lane] = median(samples[lane][p]);
+  const want = Math.max(1, parseInt(opts.builds, 10) || 5);
+  console.error(`looking for ${want} recent builds with complete ${Object.values(lanes).join(" + ")} lanes`);
+  const builds = await findSourceBuilds(want);
+  if (builds.length === 0) {
+    console.error("no suitable builds found");
+    process.exit(1);
   }
-  out[p] = entry;
-}
+  console.error(`using builds: ${builds.join(", ")}`);
 
-writeFileSync(outputPath, JSON.stringify(out, null, 2) + "\n");
-console.error(`wrote ${paths.size} entries to ${outputPath}`);
+  // lane -> path -> [ms, ...]
+  const samples = Object.fromEntries(Object.keys(lanes).map(lane => [lane, {}]));
+  for (const b of builds) {
+    for (const [lane, step] of Object.entries(lanes)) {
+      console.error(`  build ${b} ${lane}`);
+      await collect(b, step, samples[lane]);
+    }
+  }
+
+  const paths = new Set(Object.values(samples).flatMap(s => Object.keys(s)));
+  // Guard the implicit contract with utils.mjs startGroup(): if the group-header
+  // format ever changes, parseLog() quietly returns nothing. Fail loudly rather
+  // than committing an empty table that would collapse every shard onto shard 0.
+  if (paths.size < 1000) {
+    console.error(
+      `only parsed ${paths.size} test paths; expected >1000. ` +
+        `This usually means the '--- [N/M] <path>' log header format changed.`,
+    );
+    process.exit(1);
+  }
+  const out = {
+    // Consumers should tolerate missing paths (new tests) and missing lanes.
+    _meta: {
+      generated_at: new Date().toISOString(),
+      source_builds: builds,
+      lanes,
+    },
+  };
+  for (const p of [...paths].sort()) {
+    const entry = {};
+    for (const lane of Object.keys(lanes)) {
+      if (samples[lane][p]?.length) entry[lane] = median(samples[lane][p]);
+    }
+    out[p] = entry;
+  }
+
+  writeFileSync(outputPath, JSON.stringify(out, null, 2) + "\n");
+  console.error(`wrote ${paths.size} entries to ${outputPath}`);
+}

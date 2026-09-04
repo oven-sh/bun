@@ -285,6 +285,29 @@ describe.concurrent("Bun.serve http2 protocol", () => {
       ],
     ],
     ["response pseudo-header", [...baseHeaders("/hello"), [":status", "200"]]],
+    // Bytes the HTTP/1.1 parser on the same port answers 400 or 505 for. The
+    // handler must never see a method, path, or field name other than the one
+    // on the wire (a stripped HTAB would alias /sta\ttic to /static).
+    [":method with SP", baseHeaders("/hello", "GET /x HTTP/1.1")],
+    [":method with a control byte", baseHeaders("/hello", "\x01")],
+    [":method with non-token bytes", baseHeaders("/hello", "GET{}")],
+    [":path with HTAB", baseHeaders("/sta\ttic")],
+    [":path with SP", baseHeaders("/a b")],
+    [":path with a control byte", baseHeaders("/hello\x01")],
+    ["field name with trailing SP", [...baseHeaders("/hello"), ["x-a ", "1"]]],
+    ["field name with trailing HTAB", [...baseHeaders("/hello"), ["x-a\t", "1"]]],
+    ["field name with trailing LF", [...baseHeaders("/hello"), ["x-a\n", "1"]]],
+    ["field name with parentheses", [...baseHeaders("/hello"), ["x-(a)", "1"]]],
+    ["field name with comma", [...baseHeaders("/hello"), ["x-a,b", "1"]]],
+    ["field name with semicolon and equals", [...baseHeaders("/hello"), ["x-a;b=c", "1"]]],
+    ["field name with braces", [...baseHeaders("/hello"), ["x-{a}", "1"]]],
+    ["field name with DQUOTE", [...baseHeaders("/hello"), ['x-"a"', "1"]]],
+    ["field name with slash", [...baseHeaders("/hello"), ["x-a/b", "1"]]],
+    ["field name with @ [ ] ?", [...baseHeaders("/hello"), ["x-a@[b]?", "1"]]],
+    ["field name with DEL", [...baseHeaders("/hello"), ["x-a\x7f", "1"]]],
+    ["field name with a byte above 0x7f", [...baseHeaders("/hello"), ["x-a\xe9", "1"]]],
+    ["field value with a control byte", [...baseHeaders("/hello"), ["x-v", "a\x01b"]]],
+    ["field value with ESC", [...baseHeaders("/hello"), ["x-v", "a\x1bb"]]],
   ] as [string, [string, string][]][]) {
     test(`malformed request (${name}) → RST_STREAM PROTOCOL_ERROR, connection survives`, async () => {
       const raw = await RawH2.connect(fx.port, secure);
@@ -1087,6 +1110,36 @@ describe.concurrent("Bun.serve http2 protocol", () => {
     ]);
     const f = await raw.waitFor(f => f.streamId === 1 && (f.type === T.HEADERS || f.type === T.RST_STREAM));
     expect(f.type).toBe(T.HEADERS);
+    raw.close();
+  });
+
+  // A token Bun.serve has no Method for. The "any" route used to take it and
+  // the handler saw req.method === "GET"; HTTP/1.1 on the same port never
+  // dispatches it.
+  for (const method of ["BREW", "GETX", "get", "Get", "M_SEARCH"]) {
+    test(`unknown :method ${method} → 501 without reaching the handler, connection survives`, async () => {
+      const raw = await RawH2.connect(fx.port, secure);
+      raw.headers(1, baseHeaders("/headers", method));
+      const h = await raw.waitFor(f => f.streamId === 1 && (f.type === T.HEADERS || f.type === T.RST_STREAM));
+      expect(h.type).toBe(T.HEADERS);
+      expect(decodeStatus(h.payload)).toBe(501);
+      // /headers always answers with a JSON body; END_STREAM on the HEADERS
+      // frame means no handler ran.
+      expect(h.flags & F.END_STREAM).toBe(F.END_STREAM);
+      raw.headers(3, baseHeaders("/hello"));
+      expect((await raw.body(3)).toString()).toBe("hello");
+      raw.close();
+    });
+  }
+
+  test("a known method with a hyphen, every tchar in a field name, and HTAB inside a value reach the handler byte-exact", async () => {
+    const raw = await RawH2.connect(fx.port, secure);
+    const name = "x-a!#$%&'*+.^_`|~0";
+    raw.headers(1, [...baseHeaders("/headers", "M-SEARCH"), [name, "1"], ["x-tab", "a\tb"]]);
+    const body = JSON.parse((await raw.body(1)).toString());
+    expect(body.method).toBe("M-SEARCH");
+    expect(body.headers[name]).toBe("1");
+    expect(body.headers["x-tab"]).toBe("a\tb");
     raw.close();
   });
 

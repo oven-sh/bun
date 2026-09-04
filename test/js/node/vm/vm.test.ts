@@ -494,6 +494,124 @@ describe("Script", () => {
   });
 });
 
+describe("lineOffset/columnOffset validation (Node's validateInt32)", () => {
+  // JSC boxes these as doubles even though they are integers: -0 is what
+  // `lineOffset: -n` produces when n is 0, and double arithmetic / Float64Array
+  // reads produce integral doubles. Derived at runtime so nothing folds them
+  // back into int32 literals. Validation must look at the value, like Node.
+  const half = Number("1.5");
+  const threeAsDouble = half + half;
+  const fourAsDouble = new Float64Array([4])[0];
+
+  const source = "new Error().stack";
+  const location = (stack: unknown) => {
+    const match = String(stack).match(/offsets\.js:\d+:\d+/);
+    if (!match) throw new Error(`no offsets.js frame in:\n${stack}`);
+    return match[0];
+  };
+  const entryPoints: Record<string, (options: Record<string, unknown>) => unknown> = {
+    "new Script(code, options).runInThisContext()": options => new Script(source, options).runInThisContext(),
+    "new Script(code, options).runInContext(context, options)": options =>
+      new Script(source, options).runInContext(createContext(), options),
+    "vm.runInThisContext": options => runInThisContext(source, options),
+    "vm.runInContext": options => runInContext(source, createContext(), options),
+    "vm.runInNewContext": options => runInNewContext(source, {}, options),
+    // compileFunction does not apply columnOffset to runtime frames yet, so
+    // for this entry only the line half of the comparisons is discriminating.
+    "vm.compileFunction": options => compileFunction(`return ${source}`, [], options)(),
+  };
+
+  test.each(Object.keys(entryPoints))("%s accepts -0 and integral doubles and applies them as the integer", name => {
+    const run = (options: Record<string, unknown>) =>
+      location(entryPoints[name]({ filename: "offsets.js", ...options }));
+
+    expect(run({ lineOffset: -0, columnOffset: -0 })).toBe(run({ lineOffset: 0, columnOffset: 0 }));
+    const shifted = run({ lineOffset: threeAsDouble, columnOffset: fourAsDouble });
+    expect(shifted).toBe(run({ lineOffset: 3, columnOffset: 4 }));
+    expect(shifted).toMatch(/^offsets\.js:4:\d+$/);
+  });
+
+  // Both int32 bounds are accepted whichever way they are boxed. Compiling at
+  // INT32_MAX overflows JSC's line counter (#38228), and the run-side options
+  // are validated without compiling anything, so the bounds are checked there.
+  test.each(["lineOffset", "columnOffset"])("%s accepts INT32_MIN and INT32_MAX as int32 or double", option => {
+    const script = new Script("1");
+    const bounds = [-2147483648, 2147483647];
+    const boundsAsDoubles = new Float64Array(bounds);
+    for (let i = 0; i < bounds.length; i++) {
+      expect(script.runInThisContext({ [option]: bounds[i] })).toBe(1);
+      expect(script.runInThisContext({ [option]: boundsAsDoubles[i] })).toBe(1);
+    }
+  });
+
+  test("-0 and integral doubles position errors like the integers they equal", () => {
+    const header = (options: Record<string, unknown>) => {
+      try {
+        new Script("%%", { filename: "offsets.js", ...options });
+      } catch (e: any) {
+        return e.stack.split("\n", 1)[0];
+      }
+      throw new Error("expected a SyntaxError");
+    };
+    expect(header({ lineOffset: -0, columnOffset: -0 })).toBe("offsets.js:1");
+    expect(header({ lineOffset: threeAsDouble, columnOffset: fourAsDouble })).toBe("offsets.js:4");
+  });
+
+  // Expected outcomes are what Node v26 reports for the same values.
+  const int32Range = ">= -2147483648 && <= 2147483647";
+  const ok = () => "ok";
+  const outOfRange = (must: string, received: string) => (name: string) =>
+    `RangeError ERR_OUT_OF_RANGE: The value of "${name}" is out of range. It must be ${must}. Received ${received}`;
+  const invalidType = (received: string) => (name: string) =>
+    `TypeError ERR_INVALID_ARG_TYPE: The "${name}" property must be of type number. Received ${received}`;
+  const cases: [label: string, value: unknown, expected: (name: string) => string][] = [
+    ["-0", -0, ok],
+    ["integral double", threeAsDouble, ok],
+    ["Float64Array element", fourAsDouble, ok],
+    // Only the lower bound is compiled at; see the INT32_MAX test above.
+    ["INT32_MIN", -2147483648, ok],
+    ["INT32_MIN as a double", new Float64Array([-2147483648])[0], ok],
+    ["undefined", undefined, ok],
+    ["INT32_MAX + 1", 2147483648, outOfRange(int32Range, "2147483648")],
+    ["INT32_MIN - 1", -2147483649, outOfRange(int32Range, "-2147483649")],
+    ["2 ** 32", 2 ** 32, outOfRange(int32Range, "4294967296")],
+    // Past JSC's int52 range, but an integer to Node, so it gets the range
+    // message rather than "an integer".
+    ["MAX_SAFE_INTEGER", Number.MAX_SAFE_INTEGER, outOfRange(int32Range, "9_007_199_254_740_991")],
+    ["0.1", 0.1, outOfRange("an integer", "0.1")],
+    ["NaN", NaN, outOfRange("an integer", "NaN")],
+    ["Infinity", Infinity, outOfRange("an integer", "Infinity")],
+    ["null", null, invalidType("null")],
+    ["string", "1", invalidType("type string ('1')")],
+    ["bigint", 1n, invalidType("type bigint (1n)")],
+    ["array", [1], invalidType("an instance of Array")],
+  ];
+
+  const outcome = (fn: () => unknown) => {
+    try {
+      fn();
+      return "ok";
+    } catch (e: any) {
+      return `${e.name} ${e.code}: ${e.message}`;
+    }
+  };
+
+  const compilers: Record<string, (options: Record<string, unknown>) => unknown> = {
+    "new Script": options => new Script("1", options),
+    "vm.compileFunction": options => compileFunction("return 1", [], options),
+  };
+
+  test.each(
+    Object.keys(compilers).flatMap(compiler =>
+      ["lineOffset", "columnOffset"].map(option => [compiler, option] as const),
+    ),
+  )("%s validates %s like Node", (compiler, option) => {
+    const expected = cases.map(([label, , expectedFor]) => [label, expectedFor(`options.${option}`)]);
+    const actual = cases.map(([label, value]) => [label, outcome(() => compilers[compiler]({ [option]: value }))]);
+    expect(actual).toEqual(expected);
+  });
+});
+
 type TestRunInContextArg =
   | { fn: typeof runInContext; isIsolated: true; isNew?: boolean }
   | { fn: typeof runInThisContext; isIsolated?: false; isNew?: boolean };

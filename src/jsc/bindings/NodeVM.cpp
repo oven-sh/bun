@@ -1840,42 +1840,22 @@ bool BaseVMOptions::fromJS(JSC::JSGlobalObject* globalObject, JSC::VM& vm, JSC::
 
         auto lineOffsetOpt = options->getIfPropertyExists(globalObject, Identifier::fromString(vm, "lineOffset"_s));
         RETURN_IF_EXCEPTION(scope, false);
-        if (lineOffsetOpt) {
-            if (lineOffsetOpt.isAnyInt()) {
-                if (!lineOffsetOpt.isInt32()) {
-                    ERR::OUT_OF_RANGE(scope, globalObject, "options.lineOffset"_s, std::numeric_limits<int32_t>().min(), std::numeric_limits<int32_t>().max(), lineOffsetOpt);
-                    return false;
-                }
-                this->lineOffset = OrdinalNumber::fromZeroBasedInt(lineOffsetOpt.asInt32());
-                any = true;
-            } else if (lineOffsetOpt.isNumber()) {
-                ERR::OUT_OF_RANGE(scope, globalObject, "options.lineOffset"_s, "an integer"_s, lineOffsetOpt);
-                return false;
-            } else if (!lineOffsetOpt.isUndefined()) {
-                ERR::INVALID_ARG_TYPE(scope, globalObject, "options.lineOffset"_s, "number"_s, lineOffsetOpt);
-                return false;
-            }
+        if (lineOffsetOpt && !lineOffsetOpt.isUndefined()) {
+            int32_t lineOffsetValue = 0;
+            V::validateInt32(scope, globalObject, lineOffsetOpt, "options.lineOffset"_s, jsUndefined(), jsUndefined(), &lineOffsetValue);
+            RETURN_IF_EXCEPTION(scope, false);
+            this->lineOffset = OrdinalNumber::fromZeroBasedInt(lineOffsetValue);
+            any = true;
         }
 
         auto columnOffsetOpt = options->getIfPropertyExists(globalObject, Identifier::fromString(vm, "columnOffset"_s));
         RETURN_IF_EXCEPTION(scope, false);
-        if (columnOffsetOpt) {
-            if (columnOffsetOpt.isAnyInt()) {
-                if (!columnOffsetOpt.isInt32()) {
-                    ERR::OUT_OF_RANGE(scope, globalObject, "options.columnOffset"_s, std::numeric_limits<int32_t>().min(), std::numeric_limits<int32_t>().max(), columnOffsetOpt);
-                    return false;
-                }
-                int columnOffsetValue = columnOffsetOpt.asInt32();
-
-                this->columnOffset = OrdinalNumber::fromZeroBasedInt(columnOffsetValue);
-                any = true;
-            } else if (columnOffsetOpt.isNumber()) {
-                ERR::OUT_OF_RANGE(scope, globalObject, "options.columnOffset"_s, "an integer"_s, columnOffsetOpt);
-                return false;
-            } else if (!columnOffsetOpt.isUndefined()) {
-                ERR::INVALID_ARG_TYPE(scope, globalObject, "options.columnOffset"_s, "number"_s, columnOffsetOpt);
-                return false;
-            }
+        if (columnOffsetOpt && !columnOffsetOpt.isUndefined()) {
+            int32_t columnOffsetValue = 0;
+            V::validateInt32(scope, globalObject, columnOffsetOpt, "options.columnOffset"_s, jsUndefined(), jsUndefined(), &columnOffsetValue);
+            RETURN_IF_EXCEPTION(scope, false);
+            this->columnOffset = OrdinalNumber::fromZeroBasedInt(columnOffsetValue);
+            any = true;
         }
     }
 

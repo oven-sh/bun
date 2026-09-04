@@ -347,8 +347,10 @@ impl Snapshots {
 
     pub(crate) fn write_snapshot_file(&mut self) -> Result<(), Error> {
         if let Some(file) = self._current_file.take() {
+            // The open in `get_snapshot_file` does not truncate, so drop the old tail here.
             file.file
-                .write_all(&self.file_buf)
+                .pwrite_all(&self.file_buf, 0)
+                .and_then(|()| bun_sys::ftruncate(file.file.handle, self.file_buf.len() as i64))
                 .map_err(|_| crate::Error::FailedToWriteSnapshotFile)?;
             let _ = file.file.close();
             self.file_buf.clear();
@@ -880,10 +882,8 @@ impl Snapshots {
             // SAFETY: buf[pos] == 0 written above
             let snapshot_file_path = ZStr::from_buf(&buf[..], pos);
 
-            let mut flags: i32 = bun_sys::O::CREAT | bun_sys::O::RDWR;
-            if self.update_snapshots {
-                flags |= bun_sys::O::TRUNC;
-            }
+            // Never O_TRUNC: the old contents stay on disk until `write_snapshot_file` replaces them.
+            let flags: i32 = bun_sys::O::CREAT | bun_sys::O::RDWR;
             let fd = match bun_sys::open(snapshot_file_path, flags, 0o644) {
                 bun_sys::Result::Ok(fd) => fd,
                 bun_sys::Result::Err(err) => return Ok(bun_sys::Result::Err(err)),
@@ -903,10 +903,6 @@ impl Snapshots {
                 } else {
                     let mut tmp = vec![0u8; length];
                     let _ = file.file.pread_all(&mut tmp, 0).map_err(Error::from)?;
-                    #[cfg(windows)]
-                    {
-                        file.file.seek_to(0).map_err(Error::from)?;
-                    }
                     self.file_buf.extend_from_slice(&tmp);
                 }
             }

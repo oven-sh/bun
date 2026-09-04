@@ -1960,38 +1960,6 @@ function createPendingStreamCancelError(cause?: any) {
   cancelError.code = "ERR_HTTP2_STREAM_CANCEL";
   return cancelError;
 }
-// The keys node reads from `options.settings` only. The same key at the top level of the session
-// options is ignored by node: it is not validated and it does not go on the wire.
-const kSettingsOnlyKeys = [
-  "headerTableSize",
-  "enablePush",
-  "maxConcurrentStreams",
-  "initialWindowSize",
-  "maxFrameSize",
-  "maxHeaderListSize",
-  "maxHeaderSize",
-  "enableConnectProtocol",
-  "customSettings",
-];
-
-// The native layer reads the session options (maxSessionMemory, maxHeaderListPairs, ...) and the
-// SETTINGS parameters from one object.
-function nativeSessionSettings(options) {
-  const sessionOptions = { ...options };
-  for (const key of kSettingsOnlyKeys) {
-    delete sessionOptions[key];
-  }
-  return { ...sessionOptions, ...options?.settings };
-}
-
-// The native settings object for a server session, with enablePush forced off only when the
-// caller explicitly provided it (see the RFC 9113 §6.5.2 note at the construction site). Only
-// explicitly-present settings are serialized by the native layer.
-function serverNativeSettings(options) {
-  const merged = nativeSessionSettings(options);
-  if (merged.enablePush !== undefined) merged.enablePush = false;
-  return merged;
-}
 
 function sessionErrorFromCode(code: number) {
   if (code === 0xe) {
@@ -4497,18 +4465,11 @@ class ServerHttp2Session extends Http2Session {
     if (options?.settings !== undefined) {
       validateSettings(options.settings);
     }
-    const nativeSettings = serverNativeSettings(options);
-    this.#localSettings = initialLocalSettings(nativeSettings);
+    this.#localSettings = initialLocalSettings(options?.settings);
     this.#parser = new H2FrameParser({
       native: nativeSocket,
       context: this,
-      // RFC 9113 §6.5.2: a server MUST NOT send SETTINGS_ENABLE_PUSH with a
-      // value other than 0 — any non-zero value is treated by a client as a
-      // PROTOCOL_ERROR (nghttp2 reports this as callback failure). When the
-      // caller asked for enablePush it is forced to false; when it is absent
-      // the setting is simply never serialized (node's initial SETTINGS frame
-      // is empty for default options).
-      settings: nativeSettings,
+      options,
       type: 0, // server type
       handlers: ServerHttp2Session.#Handlers,
     });
@@ -5734,12 +5695,11 @@ class ClientHttp2Session extends Http2Session {
     if (options?.settings !== undefined) {
       validateSettings(options.settings);
     }
-    const nativeSettings = nativeSessionSettings(options);
-    this.#localSettings = initialLocalSettings(nativeSettings);
+    this.#localSettings = initialLocalSettings(options?.settings);
     this.#parser = new H2FrameParser({
       native: nativeSocket,
       context: this,
-      settings: nativeSettings,
+      options,
       handlers: ClientHttp2Session.#Handlers,
     });
     socket.on("data", this.#onRead.bind(this));

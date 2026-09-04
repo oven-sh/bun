@@ -445,9 +445,12 @@ describe("SETTINGS value ranges (checklist §6.5.2)", () => {
     expect(goawayErrorCode(goaway)).toBe(ErrorCode.FLOW_CONTROL_ERROR);
     c.destroy();
   });
+});
 
-  // node reads the SETTINGS parameters from `options.settings` only. The same key at the top level
-  // of the session options is ignored: it is not validated and it does not go on the wire.
+// node reads the SETTINGS parameters from `options.settings`, and the session limits from the top
+// level of the options. A key in the other place is ignored: it is not validated, and a SETTINGS
+// key does not go on the wire.
+describe("session options and SETTINGS parameters", () => {
   test.each([
     ["Infinity", Infinity],
     ["-1", -1],
@@ -515,6 +518,40 @@ describe("SETTINGS value ranges (checklist §6.5.2)", () => {
     expect(
       await initialSettings({ maxHeaderListSize: -1, settings: { maxHeaderListSize: 1000, maxConcurrentStreams: 7 } }),
     ).toEqual({ 3: 7, 6: 1000 });
+    // RFC 9113 §6.5.2: a server MUST NOT send SETTINGS_ENABLE_PUSH with a value other than 0.
+    expect(await initialSettings({ settings: { enablePush: true } })).toEqual({ 2: 0 });
+  });
+
+  test("a session limit applies at the top level of the options, not under options.settings", async () => {
+    // 4 pseudo-headers and 10 regular headers: over a maxHeaderListPairs of 4.
+    const headers: Record<string, string> = { ":path": "/" };
+    for (let i = 0; i < 10; i++) headers[`x-header-${i}`] = "1";
+
+    async function request(options: object) {
+      const server = http2.createServer(options);
+      server.on("stream", (stream: any) => {
+        stream.respond({ ":status": 204 });
+        stream.end();
+      });
+      server.listen(0);
+      await once(server, "listening");
+      const client = http2.connect(`http://127.0.0.1:${(server.address() as net.AddressInfo).port}`);
+      client.on("error", () => {});
+      try {
+        const req = client.request(headers);
+        req.end();
+        const [response] = await once(req, "response");
+        return response[":status"];
+      } catch (err: any) {
+        return err.code;
+      } finally {
+        client.destroy();
+        server.close();
+      }
+    }
+
+    expect(await request({ settings: { maxHeaderListPairs: 4 } })).toBe(204);
+    expect(await request({ maxHeaderListPairs: 4 })).toBe("ERR_HTTP2_STREAM_ERROR");
   });
 });
 

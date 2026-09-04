@@ -1,0 +1,73 @@
+# ===========================================================================
+# ast-grep rule: dealloc-through-from-ref
+# ---------------------------------------------------------------------------
+# Catches the audit pattern U2.x8 (pass-2, reconfirmed pass-3): freeing
+# memory through a pointer that is derived from `core::ptr::from_ref(x).cast_mut()`.
+#
+# WHY THIS IS UB
+#   `core::ptr::from_ref(x)` carries `SharedReadOnly` provenance under the
+#   Stacked Borrows / Tree Borrows aliasing models. Reading is sound; writing
+#   is UB; *deallocation* is the writing-est write of all. Use the owning
+#   pointer (e.g. retain a `*mut T` returned by `Box::into_raw` / `heap::into_raw`)
+#   instead.
+#
+# REAL SITES IN THE BUN TREE (audit/synthesis/refactor-clusters.md U2):
+#   src/http/AsyncHTTP.rs:117      heap::destroy(core::ptr::from_ref(href).cast_mut())
+#   src/http/lib.rs:176            heap::destroy(core::ptr::from_ref(list).cast_mut())
+#   (plus 6 more sites — `node_fs.rs`, `bun_alloc/lib.rs`, `bun_core/string`,
+#    `jsc/lib.rs`, `ZigString.rs` ×2 — same shape)
+#
+# FALSE POSITIVES TO STAY UNDER:
+#   - `ThreadSafeRefCount::<Self>::ref_(core::ptr::from_ref(self).cast_mut())`
+#     (jsc/webcore_types.rs:997 et al.) — that call does NOT dealloc, it
+#     atomically increments. It's still UB under TB, but classified as a
+#     different cluster (U3) with a separate fix. This rule deliberately only
+#     fires on dealloc-shaped sinks: `destroy`, `Box::from_raw`, `mi_free`,
+#     `drop_in_place`, and `dealloc`.
+#
+# SEVERITY: warning (turn into error after the U2 cluster lands fixed)
+#
+# WIRING:
+#   .github/workflows/ast-grep.yml step:
+#     - run: sg scan --config .unsafe-audit/audit/tests/clippy_lint_from_ref_cast_mut/sgconfig.yml src/
+# ===========================================================================
+id: dealloc-through-from-ref
+language: Rust
+severity: warning
+message: |
+  Deallocating through a pointer derived from `core::ptr::from_ref(x).cast_mut()`
+  is UB under Stacked / Tree Borrows. The `&T`-derived raw pointer carries
+  SharedReadOnly provenance and cannot be used to free the allocation.
+
+  Fix: retain the owning `*mut T` from the original allocation
+  (`heap::into_raw` / `Box::into_raw`) and free through that pointer instead.
+  See audit/synthesis/refactor-clusters.md cluster U2 for the canonical fix
+  template.
+
+note: |
+  Same-shape sites this lint targets:
+    http/AsyncHTTP.rs:117, http/lib.rs:176, node_fs.rs, bun_alloc/lib.rs,
+    bun_core/string/*, jsc/lib.rs, ZigString.rs (×2).
+
+# The rule fires on a function-call sink whose argument is the
+# `core::ptr::from_ref(_).cast_mut()` expression. We use ast-grep's `any`
+# union so all dealloc-shaped sinks match.
+rule:
+  any:
+    # ── direct `from_ref(_).cast_mut()` args to a dealloc-shaped sink ────
+    - pattern: bun_core::heap::destroy(core::ptr::from_ref($X).cast_mut())
+    - pattern: heap::destroy(core::ptr::from_ref($X).cast_mut())
+    - pattern: Box::from_raw(core::ptr::from_ref($X).cast_mut())
+    - pattern: alloc::boxed::Box::from_raw(core::ptr::from_ref($X).cast_mut())
+    - pattern: std::boxed::Box::from_raw(core::ptr::from_ref($X).cast_mut())
+    - pattern: drop_in_place(core::ptr::from_ref($X).cast_mut())
+    - pattern: core::ptr::drop_in_place(core::ptr::from_ref($X).cast_mut())
+    - pattern: std::ptr::drop_in_place(core::ptr::from_ref($X).cast_mut())
+    # ── trailing `as *mut u8` cast (matches `dealloc` / `mi_free` calls) ──
+    - pattern: dealloc(core::ptr::from_ref($X).cast_mut() as *mut u8, $$$)
+    - pattern: dealloc(core::ptr::from_ref($X).cast_mut(), $$$)
+    - pattern: alloc::alloc::dealloc(core::ptr::from_ref($X).cast_mut() as *mut u8, $$$)
+    - pattern: std::alloc::dealloc(core::ptr::from_ref($X).cast_mut() as *mut u8, $$$)
+    - pattern: mi_free(core::ptr::from_ref($X).cast_mut() as *mut u8)
+    - pattern: mi_free(core::ptr::from_ref($X).cast_mut())
+    - pattern: libmimalloc_sys::mi_free(core::ptr::from_ref($X).cast_mut() as *mut u8)

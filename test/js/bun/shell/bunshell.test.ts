@@ -6,7 +6,7 @@
  */
 import { $ } from "bun";
 import { afterAll, beforeAll, describe, expect, it, test } from "bun:test";
-import { chmodSync, mkdirSync } from "fs";
+import { chmodSync, mkdirSync, readdirSync } from "fs";
 import { mkdir, rm, stat } from "fs/promises";
 import { bunExe, isPosix, isWindows, rss, runWithErrorPromise, tempDir, tempDirWithFiles, tmpdirSync } from "harness";
 import { join, sep } from "path";
@@ -3469,4 +3469,58 @@ test.skipIf(isWindows)("external command resolution uses the PATH from the shell
     expect(stdout.toString()).toBe("from-onlyintool\n");
     expect(exitCode).toBe(0);
   }
+});
+
+describe.concurrent("options a builtin rejects", () => {
+  const unsupported = (builtin: string, option: string) =>
+    `${builtin}: unsupported option, please open a GitHub issue -- ${option}\n`;
+  const illegal = (builtin: string) => expect.stringMatching(new RegExp(`^${builtin}: illegal option -- `));
+
+  // `--name=value` used to be offered to the builtin as one token, so it
+  // matched none of its options and was reported as an illegal option; the
+  // `-m` message used to end in a space.
+  test.each([
+    ["mkdir -m 755 d", unsupported("mkdir", "-m")],
+    ["mkdir -m755 d", unsupported("mkdir", "-m")],
+    ["mkdir -pm 755 d", unsupported("mkdir", "-m")],
+    ["mkdir --mode 755 d", unsupported("mkdir", "--mode")],
+    ["mkdir --mode=755 d", unsupported("mkdir", "--mode")],
+    ["mkdir --mode= d", unsupported("mkdir", "--mode")],
+    ["mkdir -p --mode=755 d", unsupported("mkdir", "--mode")],
+    ["touch --date x d", unsupported("touch", "--date")],
+    ["touch --date=x d", unsupported("touch", "--date")],
+    // Unsupported in any spelling, even one the real touch would reject.
+    ["touch --no-create=1 d", unsupported("touch", "--no-create")],
+    // Options the builtin does not have, and a value on one it implements but
+    // which takes none, are still illegal options.
+    ["mkdir --modes d", illegal("mkdir")],
+    ["mkdir --bogus=1 d", illegal("mkdir")],
+    ["mkdir --parents=1 d", illegal("mkdir")],
+  ])("%s fails without touching the filesystem", async (command, stderr) => {
+    using dir = tempDir("builtin-unsupported-option", {});
+    const cwd = String(dir);
+
+    const result = await $`${command.split(" ")}`.cwd(cwd).quiet();
+
+    expect({
+      stdout: result.stdout.toString(),
+      stderr: result.stderr.toString(),
+      exitCode: result.exitCode,
+      created: readdirSync(cwd),
+    }).toEqual({ stdout: "", stderr, exitCode: 1, created: [] });
+  });
+
+  test("the spelling without a value is still accepted", async () => {
+    using dir = tempDir("builtin-long-option", {});
+    const cwd = String(dir);
+
+    const result = await $`mkdir --parents d`.cwd(cwd).quiet();
+
+    expect({
+      stdout: result.stdout.toString(),
+      stderr: result.stderr.toString(),
+      exitCode: result.exitCode,
+      created: readdirSync(cwd),
+    }).toEqual({ stdout: "", stderr: "", exitCode: 0, created: ["d"] });
+  });
 });

@@ -2428,7 +2428,7 @@ pub(crate) const fn unsupported_flag(name: &'static [u8]) -> *const [u8] {
 
 /// Per-builtin opts type implements this to plug into `FlagParser::parse_flags`.
 pub trait FlagParser {
-    /// Handle a `--long` flag. Return `None` to fall through to short parsing.
+    /// Handle a `--long` flag (minus any `=value`). Return `None` to fall through to short parsing.
     fn parse_long(&mut self, flag: &[u8]) -> Option<ParseFlagResult>;
     /// Handle one byte of a `-abc` cluster. Return `None` to keep iterating.
     fn parse_short(&mut self, ch: u8, smallflags: &[u8], i: usize) -> Option<ParseFlagResult>;
@@ -2465,8 +2465,17 @@ fn parse_one_flag<O: FlagParser>(opts: &mut O, flag: &[u8]) -> ParseFlagResult {
         return ParseFlagResult::IllegalOption(std::ptr::from_ref::<[u8]>(b"-"));
     }
     if flag.len() > 2 && flag[1] == b'-' {
-        if let Some(r) = opts.parse_long(flag) {
-            return r;
+        let (name, has_value) = match bun_core::strings::split_once_char(flag, b'=') {
+            Some((name, _value)) => (name, true),
+            None => (flag, false),
+        };
+        match opts.parse_long(name) {
+            Some(r @ (ParseFlagResult::Unsupported(_) | ParseFlagResult::IllegalOption(_))) => {
+                return r;
+            }
+            Some(r) if !has_value => return r,
+            // No long option takes a value; with one, even an accepted name is rejected below.
+            Some(_) | None => {}
         }
     }
     let small_flags = &flag[1..];

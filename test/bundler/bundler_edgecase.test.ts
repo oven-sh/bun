@@ -1674,10 +1674,11 @@ describe("bundler", () => {
     },
     root: "/src",
     entryPointsRaw: ["src/entry.ts"],
+    outputPaths: ["/out/entry.js"],
     packages: "external",
     target: "bun",
     run: {
-      file: "/src/entry.ts",
+      file: "/out/entry.js",
       stdout: `
         Hello World
       `,

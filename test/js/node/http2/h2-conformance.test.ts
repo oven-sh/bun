@@ -800,6 +800,223 @@ describe("push stream states (checklist §5.1, RFC 9113 §6.4/§8.4)", () => {
   });
 });
 
+// Server side of a push (RFC 9113 §5.1 / §8.4): a promised stream has no client half, so it is
+// complete as soon as the server's response on it ends. Node then closes it right away (rstCode 0)
+// and lets it be collected while the session lives on. These streams used to be modelled like a
+// request stream, so ending the response only half-closed them: they never emitted 'close', stayed
+// rooted until the session died, still counted as open for session.close(), and a session torn
+// down later errored every one of them.
+describe("server push stream lifecycle (RFC 9113 §5.1 / §8.4)", () => {
+  const PUSHES = 8;
+
+  type PushLog = {
+    refs: WeakRef<object>[];
+    closes: number[]; // rstCode seen by each push's 'close'
+    errors: string[];
+    remoteClose: number[]; // stream.state.remoteClose as handed to the pushStream callback
+  };
+
+  /** An h2c server that answers every request with one push, finished by `finish`, then the response. */
+  async function listenPushServer(
+    pushHeaders: http2.OutgoingHttpHeaders,
+    finish: (push: http2.ServerHttp2Stream) => void,
+  ) {
+    const log: PushLog = { refs: [], closes: [], errors: [], remoteClose: [] };
+    let session: http2.ServerHttp2Session | undefined;
+    const pushServer = http2.createServer();
+    pushServer.on("session", s => (session = s));
+    pushServer.on("stream", stream => {
+      stream.pushStream(pushHeaders, (err, push) => {
+        if (err) throw err;
+        log.refs.push(new WeakRef(push));
+        log.remoteClose.push(push.state.remoteClose!);
+        push.on("error", (e: any) => log.errors.push(e.code));
+        push.on("close", () => log.closes.push(push.rstCode));
+        finish(push);
+        stream.respond({ ":status": 200 });
+        stream.end("main");
+      });
+    });
+    pushServer.listen(0);
+    await once(pushServer, "listening");
+    return {
+      server: pushServer,
+      port: (pushServer.address() as net.AddressInfo).port,
+      log,
+      session: () => session!,
+    };
+  }
+
+  /** Gives deferred teardown work (immediates) and the GC a bounded number of turns to reach `done`. */
+  async function settle(done: () => boolean) {
+    for (let i = 0; i < 50 && !done(); i++) {
+      await new Promise(resolve => setImmediate(resolve));
+      await gcTick();
+    }
+  }
+
+  const live = (refs: WeakRef<object>[]) => refs.filter(ref => ref.deref() !== undefined).length;
+
+  // One case per native path that sends the server's END_STREAM: a DATA frame (end(body)), the
+  // response HEADERS (respond({ endStream }), and a HEAD push whose end() precedes respond()), and
+  // a trailers HEADERS frame.
+  const endings: Array<[string, http2.OutgoingHttpHeaders, (push: http2.ServerHttp2Stream) => void]> = [
+    [
+      "end(body)",
+      { ":path": "/pushed" },
+      push => {
+        push.respond({ ":status": 200 });
+        push.end("pushed");
+      },
+    ],
+    [
+      "respond({ endStream: true })",
+      { ":path": "/pushed" },
+      push => push.respond({ ":status": 200 }, { endStream: true }),
+    ],
+    [
+      "a HEAD push (ended before respond())",
+      { ":path": "/pushed", ":method": "HEAD" },
+      push => push.respond({ ":status": 200 }),
+    ],
+    [
+      "trailers",
+      { ":path": "/pushed" },
+      push => {
+        push.respond({ ":status": 200 }, { waitForTrailers: true });
+        push.on("wantTrailers", () => push.sendTrailers({ "x-pushed": "done" }));
+        push.end("pushed");
+      },
+    ],
+  ];
+
+  test.each(endings)(
+    "pushes finished with %s close with rstCode 0 and are released",
+    async (_, pushHeaders, finish) => {
+      const { server: pushServer, port: pushPort, log, session } = await listenPushServer(pushHeaders, finish);
+      const client = http2.connect(`http://127.0.0.1:${pushPort}`);
+      let pushedClosed = 0;
+      client.on("stream", pushed => {
+        pushed.on("error", () => {});
+        pushed.on("close", () => pushedClosed++);
+        pushed.resume();
+      });
+      try {
+        for (let i = 0; i < PUSHES; i++) {
+          const { promise, resolve, reject } = Promise.withResolvers<void>();
+          const req = client.request({ ":path": "/" });
+          req.on("error", reject);
+          req.on("close", resolve);
+          req.resume();
+          req.end();
+          await promise;
+        }
+        // The pushed responses precede each main response on the wire, so once the client has
+        // closed every pushed stream the server has long sent each push's END_STREAM.
+        await settle(() => pushedClosed === PUSHES);
+        expect(pushedClosed).toBe(PUSHES);
+
+        await settle(() => log.closes.length === PUSHES && live(log.refs) === 0);
+        expect(log.closes).toEqual(Array(PUSHES).fill(0));
+        expect(live(log.refs)).toBe(0);
+        // The peer's half is closed from the moment the stream exists (node reports the same).
+        expect(log.remoteClose).toEqual(Array(PUSHES).fill(1));
+
+        // The pushes are gone from the session: its teardown must not touch them again.
+        const serverSessionClosed = once(session(), "close");
+        client.destroy();
+        await serverSessionClosed;
+        await new Promise(resolve => setImmediate(resolve));
+        expect(log.errors).toEqual([]);
+        expect(log.closes).toHaveLength(PUSHES);
+      } finally {
+        client.destroy();
+        pushServer.close();
+      }
+    },
+  );
+
+  /** Connects a raw client, sends one GET on stream 1, and waits for the push (stream 2) and the response to end. */
+  async function pushOverRawClient(pushPort: number) {
+    const c = await RawH2.connect(pushPort);
+    c.sendPreface();
+    c.sendEmptySettings(); // SETTINGS_ENABLE_PUSH stays at its default of 1
+    await c.waitFor(f => f.type === FrameType.SETTINGS && (f.flags & 0x1) === 0);
+    c.sendSettingsAck();
+    c.sendFrame(FrameType.HEADERS, 0x5 /* END_STREAM | END_HEADERS */, 1, requestHeaderBlock("GET"));
+    const endStreamOn = (id: number) => (f: Frame) =>
+      f.type === FrameType.DATA && f.streamId === id && (f.flags & 0x1) !== 0;
+    await c.waitFor(endStreamOn(2));
+    await c.waitFor(endStreamOn(1));
+    return c;
+  }
+
+  const finishWithBody = (push: http2.ServerHttp2Stream) => {
+    push.respond({ ":status": 200 });
+    push.end("pushed");
+  };
+
+  test("a completed push is closed by its END_STREAM alone and no longer holds session.close() open", async () => {
+    const {
+      server: pushServer,
+      port: pushPort,
+      log,
+      session,
+    } = await listenPushServer({ ":path": "/pushed" }, finishWithBody);
+    let c: RawH2 | undefined;
+    try {
+      c = await pushOverRawClient(pushPort);
+      const promise = c.frames.find(f => f.type === FrameType.PUSH_PROMISE)!;
+      expect([promise.streamId, promise.payload.readUInt32BE(0) & 0x7fffffff]).toEqual([1, 2]);
+
+      await settle(() => log.closes.length === 1);
+      expect(log.closes).toEqual([0]);
+      expect(c.frames.filter(f => f.type === FrameType.RST_STREAM)).toEqual([]);
+
+      // Both streams are done, so a graceful close has nothing to wait for. This raw client never
+      // reacts to the GOAWAY, so the session can only end through its own stream accounting.
+      const serverSession = session();
+      const closed = once(serverSession, "close");
+      serverSession.close();
+      await c.waitForGoaway();
+      await closed;
+      expect(log.errors).toEqual([]);
+    } finally {
+      c?.destroy();
+      pushServer.close();
+    }
+  });
+
+  test("a client's RST_STREAM arriving after the push completed is ignored", async () => {
+    const { server: pushServer, port: pushPort, log } = await listenPushServer({ ":path": "/pushed" }, finishWithBody);
+    let c: RawH2 | undefined;
+    try {
+      c = await pushOverRawClient(pushPort);
+      await settle(() => log.closes.length === 1);
+      expect(log.closes).toEqual([0]);
+
+      // A client typically cancels a push it does not want as soon as it sees the PUSH_PROMISE; a
+      // small push has often completed on the server by the time that reset arrives (§5.1: frames
+      // for a closed stream are tolerated). The server stream is gone, so nothing may be reported
+      // on it, and the connection stays usable.
+      const cancel = Buffer.alloc(4);
+      cancel.writeUInt32BE(ErrorCode.CANCEL, 0);
+      c.sendFrame(FrameType.RST_STREAM, 0, 2, cancel);
+      const ping = Buffer.from("late-rst");
+      c.sendFrame(FrameType.PING, 0, 0, ping);
+      const ack = await c.waitFor(f => f.type === FrameType.PING && (f.flags & 0x1) !== 0);
+      expect(ack.payload.equals(ping)).toBe(true);
+      await new Promise(resolve => setImmediate(resolve));
+      expect(c.frames.filter(f => f.type === FrameType.GOAWAY || f.type === FrameType.RST_STREAM)).toEqual([]);
+      expect(log.closes).toEqual([0]);
+      expect(log.errors).toEqual([]);
+    } finally {
+      c?.destroy();
+      pushServer.close();
+    }
+  });
+});
+
 describe("inbound flow control after local end-stream (RFC 9113 §6.9)", () => {
   // Regression coverage for the test-http2-pipe failure mode: the server responds and ends its
   // side before the request body arrives, the request body is piped into a backpressured

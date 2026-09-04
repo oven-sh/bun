@@ -3374,7 +3374,7 @@ impl H2FrameParser {
         } else {
             self.local_settings.get().initial_window_size
         };
-        let stream = bun_core::heap::into_raw(Box::new(Stream::init(
+        let mut new_stream = Stream::init(
             stream_identifier,
             local_window_size,
             self.remote_settings
@@ -3382,7 +3382,14 @@ impl H2FrameParser {
                 .map(|s| s.initial_window_size)
                 .unwrap_or(DEFAULT_WINDOW_SIZE as u32),
             self.padding_strategy.get(),
-        )));
+        );
+        // A server-initiated (even) stream is a push: the peer never has a half to close on it
+        // (RFC 9113 §5.1, reserved (local) -> half-closed (remote)), so our END_STREAM must take
+        // it straight to CLOSED. Left OPEN it would settle at HALF_CLOSED_LOCAL and never be freed.
+        if self.is_server.get() && stream_identifier.is_multiple_of(2) {
+            new_stream.state = StreamState::HALF_CLOSED_REMOTE;
+        }
+        let stream = bun_core::heap::into_raw(Box::new(new_stream));
         self.streams
             .with_mut(|s| s.insert(stream_identifier, stream));
 

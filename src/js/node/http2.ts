@@ -2075,16 +2075,6 @@ function isFinalWrite(stream: Http2Stream, pendingLength: number) {
   );
 }
 
-// writeStream settled the stream to HALF_CLOSED_LOCAL synchronously with the dispatch
-// suppressed: the JS side runs the bookkeeping the onStreamEnd(5) handler would have.
-function onEndStreamSettled(stream: Http2Stream) {
-  markWritableDone(stream);
-  if ((stream.id & 1) === 0 && stream[bunHTTP2Session]?.type === constants.NGHTTP2_SESSION_SERVER) {
-    if (!stream.rstCode) stream.rstCode = 0;
-    markStreamClosed(stream);
-  }
-}
-
 function markWritableDone(stream: Http2Stream) {
   const _final = stream[bunHTTP2StreamFinal];
   if (typeof _final === "function") {
@@ -2694,8 +2684,9 @@ class Http2Stream extends Duplex {
         if (this instanceof ServerHttp2Stream && !this.headersSent && (this.id & 1) === 0) {
           // A locally-pushed (even-id) stream ended before respond() (HEAD/endStream pushes): an
           // empty DATA frame would precede the response HEADERS on the wire. respond() forces
-          // endStream for these streams, so END_STREAM rides on the HEADERS frame and the
-          // onStreamEnd(5) dispatch completes this callback through markWritableDone.
+          // endStream for these streams, so END_STREAM rides on the HEADERS frame; that closes
+          // the stream (a push has no client half) and the streamEnd(7) handler completes this
+          // callback through markStreamClosed -> markWritableDone.
           this[bunHTTP2StreamFinal] = callback;
           return;
         }
@@ -2753,16 +2744,10 @@ class Http2Stream extends Duplex {
         // program's last live turn.
         native.flush();
         if (settled === 5) {
-          // HALF_CLOSED_LOCAL settled synchronously; the dispatch was suppressed.
+          // HALF_CLOSED_LOCAL settled synchronously; the dispatch was suppressed. A full close
+          // (the peer's half was already closed, which is always the case for a server push) was
+          // dispatched as streamEnd(7) from inside writeStream instead.
           markWritableDone(this);
-          // A server-initiated push (even id) has no client→server half, so HALF_CLOSED_LOCAL is
-          // its CLOSED state — mark it closed here so the diagnostics close-channel observes
-          // destroyed === false and rstCode === NGHTTP2_NO_ERROR, like node's nghttp2
-          // onStreamClose path.
-          if ((this.#id & 1) === 0 && this[bunHTTP2Session]?.type === constants.NGHTTP2_SESSION_SERVER) {
-            if (!this.rstCode) this.rstCode = 0;
-            markStreamClosed(this);
-          }
         }
         return;
       }
@@ -2875,7 +2860,9 @@ class Http2Stream extends Duplex {
         if (status & kWriteFlushedWithoutCallback) session[kDeferWriteCallback](callback);
         if (endStream) {
           this[bunHTTP2StreamStatus] |= StreamState.EndStreamSent;
-          if ((status & ~kWriteFlushedWithoutCallback) === 5) onEndStreamSettled(this);
+          // 5 = HALF_CLOSED_LOCAL settled synchronously with its onStreamEnd dispatch suppressed;
+          // a full close (7) was already dispatched as streamEnd from inside writeStream.
+          if ((status & ~kWriteFlushedWithoutCallback) === 5) markWritableDone(this);
         }
         if (onClientStreamBodyChunkSentChannel.hasSubscribers && this instanceof ClientHttp2Stream) {
           onClientStreamBodyChunkSentChannel.publish({ stream: this, writev: true, data, encoding: "" });
@@ -2916,7 +2903,8 @@ class Http2Stream extends Duplex {
         if (status & kWriteFlushedWithoutCallback) session[kDeferWriteCallback](callback);
         if (endStream) {
           this[bunHTTP2StreamStatus] |= StreamState.EndStreamSent;
-          if ((status & ~kWriteFlushedWithoutCallback) === 5) onEndStreamSettled(this);
+          // See _writev.
+          if ((status & ~kWriteFlushedWithoutCallback) === 5) markWritableDone(this);
         }
         if (onClientStreamBodyChunkSentChannel.hasSubscribers && this instanceof ClientHttp2Stream) {
           onClientStreamBodyChunkSentChannel.publish({ stream: this, writev: false, data: chunk, encoding });

@@ -404,7 +404,10 @@ impl<'a> Parser<'a> {
         if cmd == CommandTag::RunCommand || cmd == CommandTag::AutoCommand {
             if let Some(expr) = json.get(b"smol") {
                 self.expect(&expr, ExprTag::EBoolean)?;
-                self.ctx.runtime_options.smol = expr.as_bool().expect("infallible: type checked");
+                if !self.ctx.cli_overrides.smol {
+                    self.ctx.runtime_options.smol =
+                        expr.as_bool().expect("infallible: type checked");
+                }
             }
         }
 
@@ -420,8 +423,10 @@ impl<'a> Parser<'a> {
 
                 if let Some(expr) = test.get(b"smol") {
                     self.expect(&expr, ExprTag::EBoolean)?;
-                    self.ctx.runtime_options.smol =
-                        expr.as_bool().expect("infallible: type checked");
+                    if !self.ctx.cli_overrides.smol {
+                        self.ctx.runtime_options.smol =
+                            expr.as_bool().expect("infallible: type checked");
+                    }
                 }
 
                 if let Some(expr) = test.get(b"coverage") {
@@ -754,7 +759,9 @@ impl<'a> Parser<'a> {
                     self.expect_string(&prefer_expr)?;
                     let key = prefer_expr.as_string(self.bump).unwrap_or(b"");
                     if let Some(setting) = OFFLINE_PREFER.get(key) {
-                        self.ctx.debug.offline_mode_setting = Some(*setting);
+                        if !self.ctx.cli_overrides.install_prefer {
+                            self.ctx.debug.offline_mode_setting = Some(*setting);
+                        }
                     } else {
                         self.add_error(
                             prefer_expr.loc,

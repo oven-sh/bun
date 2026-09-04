@@ -3079,10 +3079,12 @@ struct RemoteImageDownload {
     // prefetchRemoteImages (can't be set in the literal because
     // AsyncHTTP.init needs a pointer to response_buffer, which only
     // has a stable address once the owning struct is live).
-    // Self-referential: borrows from `url: Box<[u8]>` below.
+    // Self-referential: borrows from `url` and `proxy` below.
     async_http: bun_http::AsyncHTTP<'static>,
     response_buffer: bun_core::MutableString,
     url: Box<[u8]>,
+    /// Proxy href the env selects for `url`, if any.
+    proxy: Option<Box<[u8]>>,
     done: *const DoneChannel,
 }
 
@@ -3174,6 +3176,10 @@ impl RunCommand {
 
         bun_http::http_thread::init(&Default::default());
 
+        let mut env = DotEnv::Loader::init();
+        env.load_process().unwrap_or_oom();
+        let reject_unauthorized = Some(env.get_tls_reject_unauthorized());
+
         // Heap-allocate each Download so AsyncHTTP.task has a stable
         // address (see RemoteImageDownload doc comment).
         let mut downloads: Vec<Box<RemoteImageDownload>> = Vec::new();
@@ -3190,11 +3196,14 @@ impl RunCommand {
             let Ok(response_buffer) = bun_core::MutableString::init(8 * 1024) else {
                 continue;
             };
+            let proxy: Option<Box<[u8]>> = env
+                .get_http_proxy_for(&bun_url::URL::parse(&raw_url))
+                .map(|proxy| Box::from(proxy.href));
             // `AsyncHTTP` holds non-nullable `fn()` pointers (result_callback,
             // task.callback), so `mem::zeroed()` would be instant UB. Allocate
             // an uninit `Box`, write the cheap fields first to obtain stable
-            // heap addresses for `url`/`response_buffer`, then `ptr::write`
-            // the fully-formed `AsyncHTTP` last.
+            // heap addresses for `url`/`proxy`/`response_buffer`, then
+            // `ptr::write` the fully-formed `AsyncHTTP` last.
             let mut d: Box<::core::mem::MaybeUninit<RemoteImageDownload>> =
                 Box::new(::core::mem::MaybeUninit::uninit());
             let slot = d.as_mut_ptr();
@@ -3203,18 +3212,24 @@ impl RunCommand {
             unsafe {
                 ::core::ptr::addr_of_mut!((*slot).response_buffer).write(response_buffer);
                 ::core::ptr::addr_of_mut!((*slot).url).write(raw_url);
+                ::core::ptr::addr_of_mut!((*slot).proxy).write(proxy);
                 ::core::ptr::addr_of_mut!((*slot).done).write(&raw const done_channel);
             }
-            // SAFETY: `(*slot).url` is heap-owned and outlives the AsyncHTTP
-            // (freed only when `downloads` drops after the channel drains).
-            let url_static: &'static [u8] = unsafe {
-                let url = &*::core::ptr::addr_of!((*slot).url);
-                ::core::slice::from_raw_parts(url.as_ptr(), url.len())
+            // SAFETY: `(*slot).url` and `(*slot).proxy` are heap-owned and outlive
+            // the AsyncHTTP (freed only when `downloads` drops after the channel
+            // drains).
+            let (url, http_proxy): (bun_url::URL<'static>, Option<bun_url::URL<'static>>) = unsafe {
+                let url: &[u8] = &*::core::ptr::addr_of!((*slot).url);
+                let proxy: Option<&[u8]> = (*::core::ptr::addr_of!((*slot).proxy)).as_deref();
+                (
+                    bun_url::URL::parse(bun_ptr::detach_lifetime(url)),
+                    proxy.map(|href| bun_url::URL::parse(bun_ptr::detach_lifetime(href))),
+                )
             };
             let d_ptr: *mut RemoteImageDownload = slot;
             let async_http = bun_http::AsyncHTTP::init(
                 bun_http::Method::GET,
-                bun_url::URL::parse(url_static),
+                url,
                 Default::default(),
                 b"",
                 b"",
@@ -3223,9 +3238,13 @@ impl RunCommand {
                     RemoteImageDownload::on_done,
                 ),
                 bun_http::FetchRedirect::Follow,
-                Default::default(),
+                bun_http::async_http::Options {
+                    http_proxy,
+                    reject_unauthorized,
+                    ..Default::default()
+                },
             );
-            // SAFETY: last field — all four fields are now initialized.
+            // SAFETY: last field — all five fields are now initialized.
             unsafe { ::core::ptr::addr_of_mut!((*slot).async_http).write(async_http) };
             // SAFETY: every field of `RemoteImageDownload` was `ptr::write`n above.
             let mut d: Box<RemoteImageDownload> = unsafe {

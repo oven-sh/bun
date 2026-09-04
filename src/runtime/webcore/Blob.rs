@@ -1929,10 +1929,12 @@ impl BlobExt for Blob {
             return Ok(unsafe { BlobExt::to_js(&*ptr, global_this) });
         }
 
+        let size_i64 = i64::try_from(self.size.get()).unwrap_or(i64::MAX);
+
         // If the optional start parameter is not used as a parameter, let relativeStart be 0.
         let mut relative_start: i64 = 0;
         // If the optional end parameter is not used, let relativeEnd be size.
-        let mut relative_end: i64 = i64::try_from(self.size.get()).expect("int cast");
+        let mut relative_end: i64 = size_i64;
 
         // Mutate the fixed-3 args array in place to shift the string arg into [2].
         if args[0].is_string() {
@@ -1949,11 +1951,9 @@ impl BlobExt for Blob {
             if start_.is_number() {
                 let start = start_.to_int64();
                 if start < 0 {
-                    relative_start = (start
-                        .wrapping_add(i64::try_from(self.size.get()).expect("int cast")))
-                    .max(0);
+                    relative_start = start.saturating_add(size_i64).max(0);
                 } else {
-                    relative_start = start.min(i64::try_from(self.size.get()).expect("int cast"));
+                    relative_start = start.min(size_i64);
                 }
             }
         }
@@ -1962,11 +1962,9 @@ impl BlobExt for Blob {
             if end_.is_number() {
                 let end = end_.to_int64();
                 if end < 0 {
-                    relative_end = (end
-                        .wrapping_add(i64::try_from(self.size.get()).expect("int cast")))
-                    .max(0);
+                    relative_end = end.saturating_add(size_i64).max(0);
                 } else {
-                    relative_end = end.min(i64::try_from(self.size.get()).expect("int cast"));
+                    relative_end = end.min(size_i64);
                 }
             }
         }
@@ -3964,10 +3962,13 @@ fn on_structured_clone_deserialize<B: AsRef<[u8]>>(
                 }
                 PathOrFileDescriptorSerializeTag::Path => {
                     let path_len = reader.read_int_le::<u32>()?;
+                    // Same constraints the JS entry (`Valid::path_string_length` /
+                    // `Valid::path_null_bytes`) enforces: the path must fit a
+                    // `PathBuffer` with its NUL and cannot embed a NUL.
+                    if path_len as usize >= bun_paths::MAX_PATH_BYTES {
+                        return Err(crate::Error::InvalidValue);
+                    }
                     let path = read_slice(reader, path_len as usize)?;
-                    // Same constraint the JS entry (`Valid::path_null_bytes`)
-                    // enforces: a NUL-embedded path cannot be handed to the
-                    // syscall layer (`ZStr::as_cstr` would truncate / panic).
                     if strings::index_of_char(&path, 0).is_some() {
                         return Err(crate::Error::InvalidValue);
                     }
@@ -4025,8 +4026,9 @@ fn on_structured_clone_deserialize<B: AsRef<[u8]>>(
     // make shared_view() slice past the end of the backing store (OOB heap read).
     blob.offset.set(offset as SizeType); // intentional truncate
     if let Some(size) = file_size {
-        // resolve_size() clamps this to the actual file size on first use.
-        if size != MAX_SIZE {
+        // resolve_size() clamps this to the actual file size on first use;
+        // anything at or past MAX_SIZE is the "unknown" sentinel.
+        if size < MAX_SIZE {
             blob.size.set(size as SizeType);
         }
     }

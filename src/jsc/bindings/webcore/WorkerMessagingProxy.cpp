@@ -128,6 +128,9 @@ ExceptionOr<void> WorkerMessagingProxy::startWorkerGlobalScope(const String& scr
             WTF::URL urlObject = WTF::URL(str);
             if (!urlObject.isValid())
                 return Exception { TypeError, makeString("Invalid file URL: \""_s, str, '"') };
+            auto hostCheck = validateFileURLHost(m_scriptExecutionContext->jsGlobalObject(), urlObject);
+            if (hostCheck.hasException())
+                return hostCheck.releaseException();
             str = urlObject.fileSystemPath();
         }
         preloadModules.append(Bun::toString(str));

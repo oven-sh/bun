@@ -449,6 +449,16 @@ console.log("survived", require("./late.js"));`,
     );
   });
 
+  // https://github.com/oven-sh/bun/issues/28861
+  test.skipIf(isWindows)("createRequire rejects a file:// URL with a non-localhost host", () => {
+    expect(() => createRequire("file://example.com/foo.js")).toThrow(
+      expect.objectContaining({
+        code: "ERR_INVALID_ARG_VALUE",
+        message: expect.stringContaining("must be a file URL object, file URL string, or absolute path string"),
+      }),
+    );
+  });
+
   test("Module exists", () => {
     expect(Module).toBeDefined();
   });

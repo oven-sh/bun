@@ -252,6 +252,13 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionNodeModuleCreateRequire,
                 "must be a file URL object, file URL string, or absolute path string"_s);
             RELEASE_AND_RETURN(scope, {});
         }
+        // Matches Node: createRequire reports a forbidden host as an invalid filename.
+        if (Bun::isForbiddenFileURLHost(url)) [[unlikely]] {
+            ERR::INVALID_ARG_VALUE(scope, globalObject,
+                "filename"_s, argument,
+                "must be a file URL object, file URL string, or absolute path string"_s);
+            RELEASE_AND_RETURN(scope, {});
+        }
         val = url.fileSystemPath();
     }
 

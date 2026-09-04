@@ -866,23 +866,8 @@ JSC_DEFINE_HOST_FUNCTION(functionFileURLToPath, (JSC::JSGlobalObject * globalObj
         return {};
     }
 
-// NOTE: On Windows, WTF::URL::fileSystemPath will handle UNC paths
-// (`file:\\server\share\etc` -> `\\server\share\etc`), so hostname check only
-// needs to happen on posix systems
-#if !OS(WINDOWS)
-    // file://host/path is illegal if `host` is not `localhost`.
-    // Should be `file:///` instead
-    if (url.host().length() > 0 && url.host() != "localhost"_s) [[unlikely]] {
-
-#if OS(DARWIN)
-        Bun::ERR::INVALID_FILE_URL_HOST(scope, globalObject, "darwin"_s);
+    if (Bun::throwIfInvalidFileURLHost(scope, globalObject, url)) [[unlikely]]
         return {};
-#else
-        Bun::ERR::INVALID_FILE_URL_HOST(scope, globalObject, "linux"_s);
-        return {};
-#endif
-    }
-#endif
 
     // ban url-encoded slashes. '/' on posix, '/' and '\' on windows.
     const StringView p = url.path();

@@ -9,6 +9,10 @@
 #include "ErrorCode+List.h"
 #include "CryptoKeyType.h"
 
+namespace WTF {
+class URL;
+}
+
 #define RELEASE_RETURN_IF_EXCEPTION(scope__, value__)                                                              \
     do {                                                                                                           \
         SUPPRESS_UNCOUNTED_LOCAL JSC::VM& vm = (scope__).vm();                                                     \
@@ -162,6 +166,11 @@ JSC::EncodedJSValue INVALID_FILE_URL_HOST(JSC::ThrowScope& throwScope, JSC::JSGl
 JSC::EncodedJSValue INVALID_FILE_URL_PATH(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject, const ASCIILiteral suffix);
 
 }
+
+/// Posix only: on Windows a file:// host is a UNC server name.
+bool isForbiddenFileURLHost(const WTF::URL&);
+/// Throws ERR_INVALID_FILE_URL_HOST for a forbidden host. Returns true if it threw.
+bool throwIfInvalidFileURLHost(JSC::ThrowScope&, JSC::JSGlobalObject*, const WTF::URL&);
 
 void throwBoringSSLError(JSGlobalObject* globalObject, JSC::ThrowScope& scope, int errorCode);
 void throwCryptoOperationFailed(JSGlobalObject* globalObject, JSC::ThrowScope& scope);

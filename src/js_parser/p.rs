@@ -6112,8 +6112,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 }),
             };
         }
-        // Node.js does not have import.meta.main, so we end up lowering
-        // this to `require.main === module`, but with the ESM format,
+        // When the output has no import.meta.main (e.g. ESM for Node.js), this
+        // is lowered to `require.main === module`, but with the ESM format,
         // both `require` and `module` are not present, so the code
         // generation we need is:
         //
@@ -6123,7 +6123,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         //
         // The printer can handle this for us, but we need to reference
         // a handle to the `__require` function.
-        if self.options.lower_import_meta_main_for_node_js {
+        if self.options.lower_import_meta_main {
             self.record_usage_of_runtime_require();
         }
         Expr {

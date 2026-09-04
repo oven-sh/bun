@@ -2272,6 +2272,76 @@ describe("bundler", () => {
       api.expectFile("/out.js").not.toMatch(/[^\.:]module/); // `.module` and `node:module` are ok.
     },
   });
+  // Output for bun starts with a `// @bun` pragma, which makes bun load it as an
+  // ES module in every format but cjs. `import.meta.main` works there and
+  // `module` does not exist, so the `require.main == module` lowering is only
+  // right for cjs output.
+  const importMetaMainFiles = {
+    "/entry.ts": /* js */ `
+      import {other} from './other';
+      console.log(capture(import.meta.main), capture(require.main === module), ...other);
+    `,
+    "/other.ts": /* js */ `
+      globalThis['ca' + 'pture'] = x => x;
+
+      export const other = [capture(require.main === module), capture(import.meta.main)];
+    `,
+  };
+  itBundled("edgecase/ImportMetaMainIIFETargetBun", {
+    files: importMetaMainFiles,
+    target: "bun",
+    format: "iife",
+    capture: ["false", "false", "import.meta.main", "import.meta.main"],
+    onAfterBundle(api) {
+      api.expectFile("/out.js").toStartWith("// @bun\n");
+      api.expectFile("/out.js").not.toContain("require");
+      api.expectFile("/out.js").not.toContain("module");
+    },
+    run: { stdout: "true true false false" },
+  });
+  itBundled("edgecase/ImportMetaMainCJSTargetBun", {
+    files: importMetaMainFiles,
+    target: "bun",
+    format: "cjs",
+    capture: ["false", "false", "require.main == module", "require.main == module"],
+    onAfterBundle(api) {
+      api.expectFile("/out.js").toStartWith("// @bun @bun-cjs\n");
+    },
+    run: { stdout: "true true false false" },
+  });
+  // A `#!/usr/bin/env bun` hashbang switches the entry point to target bun, so
+  // its output gets the pragma no matter which target the bundle was built for.
+  const importMetaMainBunHashbangFiles = {
+    "/entry.ts": /* js */ `
+      #!/usr/bin/env bun
+      import {other} from './other';
+      console.log(capture(import.meta.main), capture(require.main === module), ...other);
+    `,
+    "/other.ts": importMetaMainFiles["/other.ts"],
+  };
+  itBundled("edgecase/ImportMetaMainBunHashbangTargetNode", {
+    files: importMetaMainBunHashbangFiles,
+    target: "node",
+    capture: ["false", "false", "import.meta.main", "import.meta.main"],
+    onAfterBundle(api) {
+      api.expectFile("/out.js").toStartWith("#!/usr/bin/env bun\n// @bun\n");
+      api.expectFile("/out.js").not.toContain("require");
+      api.expectFile("/out.js").not.toContain("module");
+    },
+    run: { stdout: "true true false false" },
+  });
+  itBundled("edgecase/ImportMetaMainIIFEBunHashbangTargetNode", {
+    files: importMetaMainBunHashbangFiles,
+    target: "node",
+    format: "iife",
+    capture: ["false", "false", "import.meta.main", "import.meta.main"],
+    onAfterBundle(api) {
+      api.expectFile("/out.js").toStartWith("#!/usr/bin/env bun\n// @bun\n");
+      api.expectFile("/out.js").not.toContain("require");
+      api.expectFile("/out.js").not.toContain("module");
+    },
+    run: { stdout: "true true false false" },
+  });
   itBundled("edgecase/build-cjs-module#20308", {
     files: {
       "/entry.ts": /* js */ `

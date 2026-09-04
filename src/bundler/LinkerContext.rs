@@ -2406,7 +2406,10 @@ impl<'a> LinkerContext<'a> {
             require_or_import_meta_for_source_callback:
                 js_printer::RequireOrImportMetaCallback::init(self),
             line_offset_tables: Some(line_offset_table),
-            target: self.options.target,
+            // The file's target, not the bundle's: an entry point starting with
+            // `#!/usr/bin/env bun` is parsed for bun and its chunk gets the `// @bun`
+            // pragma, which is what decides how `import.meta.main` has to be printed.
+            target: ast.target,
 
             hmr_ref: if self.options.output_format == Format::InternalBakeDev {
                 ast.wrapper_ref

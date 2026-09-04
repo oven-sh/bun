@@ -507,7 +507,9 @@ struct us_bun_socket_context_options_t {
     int request_cert;
     unsigned int client_renegotiation_limit;
     unsigned int client_renegotiation_window;
-    /* Session timeout in seconds applied via SSL_CTX_set_timeout; 0 = library default. */
+    /* Lifetime in seconds of the sessions this context creates, for every
+     * protocol version (SSL_CTX_set_timeout for TLS <= 1.2 plus
+     * SSL_CTX_set_session_psk_dhe_timeout for TLS 1.3); 0 = library defaults. */
     int session_timeout;
     /* PEM-encoded CRLs added to the context's X509_STORE (enables CRL checking). */
     const char * const *crl;

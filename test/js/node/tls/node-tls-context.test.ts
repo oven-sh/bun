@@ -5,6 +5,7 @@ import { describe, expect, it } from "bun:test";
 
 import { bunEnv, bunExe, tempDir } from "harness";
 import { X509Certificate } from "node:crypto";
+import { once } from "node:events";
 import { readFileSync } from "node:fs";
 import { AddressInfo } from "node:net";
 import { join } from "node:path";
@@ -776,4 +777,140 @@ it("validates sigalgs on every secure context like Node's configSecureContext", 
   expect(() => tls.createSecureContext({ sigalgs: 42 as never })).toThrow(
     expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE" }),
   );
+});
+
+describe("sessionTimeout", () => {
+  // The 'session' event carries BoringSSL's serialized SSL_SESSION
+  // (vendor/boringssl/ssl/ssl_asn1.cc):
+  //   SSLSession ::= SEQUENCE { ..., timeout [2] INTEGER, ..., ticketLifetimeHint [9] INTEGER OPTIONAL, ... }
+  // timeout is the lifetime the client will honour. For a TLS 1.3 session it
+  // is the lifetime the server put in its NewSessionTicket, capped by the
+  // client's own sessionTimeout; a TLS 1.2 session keeps the client's own
+  // lifetime there and records the server's value as ticketLifetimeHint.
+  function sessionLifetimes(der: Uint8Array) {
+    let pos = 0;
+    function readHeader() {
+      const tag = der[pos++];
+      let length = der[pos++];
+      if (length & 0x80) {
+        const lengthBytes = length & 0x7f;
+        length = 0;
+        for (let i = 0; i < lengthBytes; i++) length = length * 256 + der[pos++];
+      }
+      return { tag, end: pos + length };
+    }
+    function readInteger(end: number) {
+      const integer = readHeader();
+      expect(integer.tag).toBe(0x02);
+      expect(integer.end).toBe(end);
+      let value = 0;
+      for (; pos < integer.end; pos++) value = value * 256 + der[pos];
+      return value;
+    }
+    const sequence = readHeader();
+    expect(sequence.tag).toBe(0x30);
+    let timeout: number | undefined;
+    let ticketLifetimeHint: number | undefined;
+    while (pos < sequence.end) {
+      const element = readHeader();
+      if (element.tag === 0xa2) timeout = readInteger(element.end);
+      else if (element.tag === 0xa9) ticketLifetimeHint = readInteger(element.end);
+      pos = element.end;
+    }
+    return { timeout, ticketLifetimeHint };
+  }
+
+  type Observed = ReturnType<typeof sessionLifetimes> & { protocol: string | null; skew: number };
+
+  // BoringSSL holds TLS 1.3 tickets back until the server's first write, so
+  // every server below writes something; `request` is what the client has to
+  // send first to provoke that write.
+  async function firstSessionFrom(
+    port: number,
+    clientOptions: tls.ConnectionOptions = {},
+    request?: string,
+  ): Promise<Observed> {
+    const startedAt = Date.now();
+    const socket = tls.connect({ port, host: "127.0.0.1", rejectUnauthorized: false, ...clientOptions });
+    try {
+      socket.resume();
+      if (request !== undefined) {
+        await once(socket, "secureConnect");
+        socket.write(request);
+      }
+      const session = await new Promise<Buffer>((resolve, reject) => {
+        socket.once("session", resolve);
+        socket.once("error", reject);
+        socket.once("close", () => reject(new Error("connection closed before the server issued a session")));
+      });
+      // Both peers count a lifetime from ticket issuance, so a connection that
+      // straddles second boundaries reports that many seconds less than was
+      // configured. `skew` bounds how many it can have straddled.
+      const skew = Math.ceil((Date.now() - startedAt) / 1000) + 1;
+      return { protocol: socket.getProtocol(), ...sessionLifetimes(session), skew };
+    } finally {
+      socket.destroy();
+    }
+  }
+
+  function expectLifetime(actual: number | undefined, configured: number, { skew }: Observed) {
+    expect(actual).toBeWithin(configured - skew, configured + 1);
+  }
+
+  async function withTlsServer(options: tls.TlsOptions, clientOptions?: tls.ConnectionOptions) {
+    const server = tls.createServer({ key: agent1Key, cert: agent1Cert, ...options }, socket => socket.end("x"));
+    server.listen(0, "127.0.0.1");
+    await once(server, "listening");
+    try {
+      return await firstSessionFrom((server.address() as AddressInfo).port, clientOptions);
+    } finally {
+      server.close();
+    }
+  }
+
+  const TWO_HOURS = 2 * 60 * 60; // SSL_DEFAULT_SESSION_TIMEOUT
+  const TWO_DAYS = 2 * 24 * 60 * 60; // SSL_DEFAULT_SESSION_PSK_DHE_TIMEOUT
+
+  it("tls.createServer({ sessionTimeout }) is the lifetime of the TLS 1.3 tickets it issues", async () => {
+    const observed = await withTlsServer({ sessionTimeout: 7 });
+    expect(observed.protocol).toBe("TLSv1.3");
+    expectLifetime(observed.timeout, 7, observed);
+  });
+
+  it("tls.createServer({ sessionTimeout }) is the lifetime hint of the TLS 1.2 tickets it issues", async () => {
+    const observed = await withTlsServer({ sessionTimeout: 7, maxVersion: "TLSv1.2" });
+    expect(observed.protocol).toBe("TLSv1.2");
+    expectLifetime(observed.ticketLifetimeHint, 7, observed);
+    expectLifetime(observed.timeout, TWO_HOURS, observed);
+  });
+
+  it("tls.connect({ sessionTimeout }) caps the lifetime of the TLS 1.3 sessions the client keeps", async () => {
+    const observed = await withTlsServer({}, { sessionTimeout: 9 } as tls.ConnectionOptions);
+    expect(observed.protocol).toBe("TLSv1.3");
+    expectLifetime(observed.timeout, 9, observed);
+  });
+
+  it("leaves BoringSSL's per-version defaults alone when the option is not given", async () => {
+    const tls13 = await withTlsServer({});
+    expect(tls13.protocol).toBe("TLSv1.3");
+    expect(tls13.ticketLifetimeHint).toBeUndefined();
+    expectLifetime(tls13.timeout, TWO_DAYS, tls13);
+
+    const tls12 = await withTlsServer({ maxVersion: "TLSv1.2" });
+    expect(tls12.protocol).toBe("TLSv1.2");
+    expectLifetime(tls12.ticketLifetimeHint, TWO_HOURS, tls12);
+    expectLifetime(tls12.timeout, TWO_HOURS, tls12);
+  });
+
+  it("Bun.serve({ tls: { sessionTimeout } }) is the lifetime of the TLS 1.3 tickets it issues", async () => {
+    using server = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      tls: { key: agent1Key, cert: agent1Cert, sessionTimeout: 7 } as Bun.TLSOptions,
+      fetch: () => new Response("ok"),
+    });
+    const observed = await firstSessionFrom(server.port!, {}, "GET / HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n");
+    expect(observed.protocol).toBe("TLSv1.3");
+    expectLifetime(observed.timeout, 7, observed);
+  });
 });

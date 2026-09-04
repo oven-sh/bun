@@ -523,10 +523,8 @@ pub enum Value {
     /// Single-use Blob
     /// Avoids a heap allocation.
     InternalBlob(InternalBlob),
-    /// `new Response(htmlBundle)`: the page an `import index from
-    /// "./index.html"` bundles to. Only `Bun.serve` can send it (it builds
-    /// the bundle on the server that serves it), so the body readers
-    /// (`.text()`, `.body`, ...) reject it.
+    /// `new Response(htmlBundle)`. Only `Bun.serve` can send it; the body
+    /// readers reject it.
     HTMLBundle(bun_ptr::RefPtr<crate::server::HTMLBundle>),
     Locked(PendingValue),
     Used,
@@ -1416,8 +1414,7 @@ impl Drop for Value {
             Value::WTFStringImpl(s) => wtf_impl(s).deref(),
             Value::Blob(b) => b.deinit(),
             Value::Error(e) => e.reset(),
-            // `InternalBlob`'s `Vec<u8>` and `HTMLBundle`'s `RefPtr` are
-            // released by the compiler's drop glue.
+            // Freed by the compiler's drop glue.
             Value::InternalBlob(_)
             | Value::HTMLBundle(_)
             | Value::Used

@@ -251,15 +251,12 @@ impl AnyRequestContext {
         dispatch!(self, (), |_T, ctx| ctx.deref())
     }
 
-    /// The dev server bundled the page of a handler-returned
-    /// `new Response(htmlBundle)`. Consumes the +1 the dev server held.
+    /// Consumes the +1 the dev server held.
     pub(crate) fn on_html_bundle_built(self, html: bun_ptr::ThisPtr<crate::server::StaticRoute>) {
         dispatch!(self, (), ptr | T, ptr | T::on_html_bundle_built(ptr, html))
     }
 
-    /// Detach the response from the context so another owner can answer it.
-    /// Ends the context's own claim on the request. `None` once the
-    /// connection closed or the context already answered.
+    /// `None` once the connection closed or the context already answered.
     pub(crate) fn take_response(self) -> Option<uws::AnyResponse> {
         dispatch!(self, None, |_T, ctx| ctx.take_response())
     }

@@ -297,10 +297,7 @@ pub struct NewServer<const SSL: bool, const DEBUG: bool> {
     /// times due to SNI, so we have to store them.
     pub(crate) user_routes: Vec<UserRoute<SSL, DEBUG>>,
 
-    /// One route per `HTMLBundle` a handler returned in a `Response`, so the
-    /// bundle builds once and its assets register once. A bundle that is
-    /// also in `routes` reuses the route in `config.static_routes` instead.
-    /// `reload()` clears it with the static routes.
+    /// Routes for bundles that handlers return. `reload()` clears it.
     pub(crate) handler_html_routes: bun_jsc::JsCell<Vec<bun_ptr::RefPtr<html_bundle::Route>>>,
 
     /// Raw shadow of the wrapper's `m_onClientError` WriteBarrier slot.
@@ -1549,8 +1546,6 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         self.deinit_if_we_can();
     }
 
-    /// The route that builds and serves `bundle` on this server, for a
-    /// handler that returned `new Response(bundle)`.
     pub(crate) fn html_bundle_route(
         &self,
         bundle: bun_ptr::ThisPtr<HTMLBundle>,

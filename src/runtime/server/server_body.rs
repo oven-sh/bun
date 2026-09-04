@@ -757,9 +757,6 @@ impl AnyRoute {
         use bun_collections::zig_hash_map::MapEntry as StdEntry;
         let html_bundle = match argument.as_class_this_ptr::<HTMLBundle>() {
             Some(html_bundle) => Some(html_bundle),
-            // `new Response(index)` as a route value is the bundle itself. An
-            // init cannot apply here: the route serves the page and its assets
-            // through the bundle's own route.
             None => match argument.as_class_ref::<Response>() {
                 Some(response) => match response.get_body_value() {
                     BodyValue::HTMLBundle(html_bundle) => {
@@ -2177,8 +2174,6 @@ where
         // a move-assign frees the old `static_routes`.
         self.config.static_routes = core::mem::take(&mut new_config.static_routes);
         self.config.negative_routes = core::mem::take(&mut new_config.negative_routes);
-        // Their asset routes went with the old `static_routes`: the next
-        // handler-returned bundle builds again and registers them again.
         self.handler_html_routes.with_mut(Vec::clear);
 
         if new_config.had_routes_object {

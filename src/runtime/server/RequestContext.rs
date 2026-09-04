@@ -356,8 +356,7 @@ fn as_response(value: JSValue) -> Option<*mut Response> {
     response::from_js(value).map(|p| p.cast::<Response>())
 }
 
-/// A handler that returns the `HTMLBundle` of an HTML import means
-/// `new Response(htmlBundle)`. Any other value comes back as is.
+/// A bare `HTMLBundle` means `new Response(htmlBundle)`.
 fn wrap_html_bundle(global_this: &JSGlobalObject, value: JSValue) -> JSValue {
     let Some(html_bundle) = value.as_class_this_ptr::<crate::server::HTMLBundle>() else {
         return value;
@@ -2052,12 +2051,7 @@ where
             .do_render_with_body(std::ptr::from_mut(value), None);
     }
 
-    /// The handler returned a `Response` whose body is `route`'s HTML bundle.
-    /// Once the bundle is built, the page is rendered here as a blob body, so
-    /// the Response's status, headers and cookies apply to it.
     fn render_html_bundle(&self, route: &bun_ptr::RefPtr<html_bundle::Route>) {
-        // The build can finish after this frame returns. The Response (its
-        // status and headers) must still be there then.
         if !self.flags.response_protected() {
             self.response_jsvalue.get().protect();
             self.flags.set_response_protected(true);
@@ -2066,8 +2060,7 @@ where
         if self.server().config().is_development() {
             if let Some(dev) = any_ctx.dev_server_mut() {
                 let resp = self.resp.get().expect("infallible: not aborted or ended");
-                // The dev server calls `on_html_bundle_built` once the page is
-                // bundled. Until then it owns this +1.
+                // `on_html_bundle_built` consumes this +1.
                 self.ref_();
                 self.flags.set_has_marked_pending(true);
                 // SAFETY: the server boxes the dev server and outlives this
@@ -2128,8 +2121,6 @@ where
             }
         };
 
-        // The page's own headers (Content-Type, ETag, Cache-Control) fill in
-        // behind the handler's.
         let response: &mut Response = self.response_mut().expect("the Response is protected");
         let mut headers =
             bun_http_jsc::headers_jsc::from_fetch_headers(response.get_init_headers(), None);
@@ -2175,9 +2166,7 @@ where
         this.end_without_body(this.should_close_connection());
     }
 
-    /// Detach the response so another owner can answer it. Ends this
-    /// context's own claim on the request, like `end_without_body` does,
-    /// without a write to the socket.
+    /// `end_without_body` without the write: another owner answers `resp`.
     pub(crate) fn take_response(&self) -> Option<uws::AnyResponse> {
         let resp = self.resp.get()?;
         self.detach_response();
@@ -2847,7 +2836,6 @@ where
                 this.end_without_body(this.should_close_connection());
             }
             Body::Value::HTMLBundle(bundle) => {
-                // The built page gives the Content-Length a GET would send.
                 let route = this.server().html_bundle_route(bundle.this_ptr());
                 *body_value = Body::Value::Used;
                 this.render_html_bundle(&route);
@@ -3320,8 +3308,6 @@ where
                 if this.is_aborted_or_ended() {
                     return;
                 }
-                // The route takes its own ref on the bundle before the body
-                // releases the one it holds.
                 let route = this.server().html_bundle_route(bundle.this_ptr());
                 *value = Body::Value::Used;
                 this.render_html_bundle(&route);

@@ -158,18 +158,13 @@ pub struct Route {
     pub(crate) dev_server_id: Cell<Option<route_bundle::Index>>,
     /// When state == .pending, incomplete responses are stored here.
     pending_responses: JsCell<Vec<PendingResponse>>,
-    /// Request contexts that render the page themselves once the build is
-    /// done (a handler returned `new Response(htmlBundle)`).
     build_waiters: JsCell<Vec<BuildWaiter>>,
 }
 
-/// A callback `finish_building` runs once the route leaves `State::Building`.
-/// The callback reads the result from `Route::built_html`.
+/// Run by `finish_building`. The callback reads `Route::built_html`.
 pub(crate) struct BuildWaiter {
     callback: fn(NonNull<core::ffi::c_void>, &Route),
     ctx: NonNull<core::ffi::c_void>,
-    /// Keeps the route alive while this waiter waits on it, as a
-    /// `PendingResponse` does.
     _route: RefPtr<Route>,
 }
 
@@ -218,11 +213,7 @@ impl Route {
         })
     }
 
-    /// The built page for a handler-returned `new Response(htmlBundle)`.
-    /// `Some` when the build is done: the page, or `Err` when it failed.
-    /// `None` while it runs: the caller registers a `BuildWaiter`.
-    /// Schedules the build when nothing has yet. Only for a route without a
-    /// dev server, which serves its page through `DevServer` instead.
+    /// `None` while the build runs: the caller registers a `BuildWaiter`.
     pub(crate) fn built_html_or_schedule(
         this: ThisPtr<Self>,
     ) -> Option<Result<ThisPtr<StaticRoute>, ()>> {
@@ -413,14 +404,11 @@ impl Route {
     fn finish_building(&self) {
         debug_assert!(matches!(self.state.get(), State::Err(_) | State::Html(_)));
         self.resume_pending_responses();
-        // The waiters' route refs outlive the release below.
         let _waiters = self.resume_build_waiters();
         self.server.get().expect("server set").on_request_complete();
     }
 
     fn resume_build_waiters(&self) -> Vec<BuildWaiter> {
-        // R-2: take the list first. A callback renders a response, which can
-        // re-enter this route through uws callbacks.
         let waiters = self.build_waiters.replace(Vec::new());
         for waiter in &waiters {
             (waiter.callback)(waiter.ctx, self);

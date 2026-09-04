@@ -889,13 +889,8 @@ impl Watcher {
             return Ok(ownership);
         }
 
-        let r = self.append_file_locked::<CLONE_FILE_PATH>(
-            fd,
-            file_path,
-            hash,
-            dir_fd,
-            package_json,
-        );
+        let r =
+            self.append_file_locked::<CLONE_FILE_PATH>(fd, file_path, hash, dir_fd, package_json);
         self.mutex.unlock();
         r
     }

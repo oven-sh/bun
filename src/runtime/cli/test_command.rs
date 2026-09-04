@@ -2869,9 +2869,6 @@ impl TestCommand {
                 vm.clear_entry_point()?;
                 let entry = EncodedSlice::from_bytes(file_path);
                 vm.global().delete_module_registry_entry(&entry)?;
-                // Reset per-test snapshot counters so rerun N matches the same
-                // snapshot keys as run 1 instead of looking for "test name 2", etc.
-                reporter.jest.snapshots.reset_counts();
             }
 
             let bun_test_root = &mut jest::Jest::runner().unwrap().bun_test_root;

@@ -182,9 +182,20 @@ pub(crate) fn crc32(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsRe
 /// Backing-stream surface used by [`CompressionStream`] (zlib / brotli / zstd
 /// `Context` types).
 pub(crate) trait CompressionContext {
+    /// The codec's flush-operation type (brotli `BrotliEncoderOperation`, zlib
+    /// `FlushValue`, …). Holding a value of this type is proof the flush mode
+    /// is valid for this codec — invalid ints can't be converted, so they
+    /// can't reach the encoder.
+    type FlushOp: Copy;
+
     fn set_buffers(&mut self, in_: Option<&[u8]>, out: Option<&mut [u8]>);
-    fn set_flush(&mut self, flush: i32);
-    fn flush_value_is_valid(flush: u32) -> bool;
+    /// Convert a raw flush int (from JS) into this codec's flush op, or `None`
+    /// if it isn't a valid op for this codec. This is the single validation
+    /// point: brotli only has `BrotliEncoderOperation` 0..=3, so a zlib-only
+    /// mode like Z_FINISH(4)/Z_BLOCK(5) fails here instead of reaching the
+    /// encoder (where it would spin — see nodejs/node#63701).
+    fn flush_op_from_u32(flush: u32) -> Option<Self::FlushOp>;
+    fn set_flush(&mut self, op: Self::FlushOp);
     fn do_work(&mut self);
     fn reset(&mut self) -> Error;
     fn close(&mut self);
@@ -317,14 +328,19 @@ impl<T: CompressionStreamImpl> CompressionStream<T> {
                 .throw());
         }
         let flush: u32 = jsv_to_u32(arguments[0]);
-        if !<T::Stream as CompressionContext>::flush_value_is_valid(flush) {
+        // Convert to the codec's typed flush op up front — failure means the
+        // value isn't a flush mode this codec defines. zlib.ts's `.flush()`
+        // already rejects out-of-range kinds (ERR_OUT_OF_RANGE) before queuing
+        // the flush chunk; this is defense-in-depth for direct handle.write()
+        // and `_processChunk()` callers that bypass `.flush()`.
+        let Some(flush_op) = <T::Stream as CompressionContext>::flush_op_from_u32(flush) else {
             return Err(global_this
                 .err(
                     ErrorCode::INVALID_ARG_VALUE,
                     format_args!("Invalid flush value"),
                 )
                 .throw());
-        }
+        };
 
         if arguments[1].is_null() {
             // just a flush
@@ -440,7 +456,7 @@ impl<T: CompressionStreamImpl> CompressionStream<T> {
 
         this.stream().with_mut(|s| {
             s.set_buffers(in_, out);
-            s.set_flush(i32::try_from(flush).expect("int cast"));
+            s.set_flush(flush_op);
         });
 
         // Only create the strong handle when we have a pending write
@@ -625,14 +641,19 @@ impl<T: CompressionStreamImpl> CompressionStream<T> {
                 .throw());
         }
         let flush: u32 = jsv_to_u32(arguments[0]);
-        if !<T::Stream as CompressionContext>::flush_value_is_valid(flush) {
+        // Convert to the codec's typed flush op up front — failure means the
+        // value isn't a flush mode this codec defines. zlib.ts's `.flush()`
+        // already rejects out-of-range kinds (ERR_OUT_OF_RANGE) before queuing
+        // the flush chunk; this is defense-in-depth for direct handle.write()
+        // and `_processChunk()` callers that bypass `.flush()`.
+        let Some(flush_op) = <T::Stream as CompressionContext>::flush_op_from_u32(flush) else {
             return Err(global_this
                 .err(
                     ErrorCode::INVALID_ARG_VALUE,
                     format_args!("Invalid flush value"),
                 )
                 .throw());
-        }
+        };
 
         // Hoisted so `in_` can borrow it past the `else` arm (mirrors `out_buf`).
         let in_buf: jsc::ArrayBuffer;
@@ -710,7 +731,7 @@ impl<T: CompressionStreamImpl> CompressionStream<T> {
 
         this.stream().with_mut(|s| {
             s.set_buffers(in_, out);
-            s.set_flush(i32::try_from(flush).expect("int cast"));
+            s.set_flush(flush_op);
         });
         let this_value = callframe.this();
 
@@ -973,10 +994,14 @@ pub(crate) fn native_zstd(global: &JSGlobalObject) -> JSValue {
 /// emits a `pub mod js { … }` with the cached-property accessors
 /// (`writeCallback` / `errorCallback` / …) wired to the
 /// `${TypeName}Prototype__${prop}{Get,Set}CachedValue` extern symbols.
+///
+/// `$flush_op` is the codec's [`CompressionContext::FlushOp`] — the typed
+/// flush operation its fallible `flush_op_from_u32` produces and its
+/// `set_flush` consumes.
 #[macro_export]
 #[doc(hidden)]
 macro_rules! __impl_compression_stream {
-    ($native:ident, $ctx:ty, $type_name:literal) => {
+    ($native:ident, $ctx:ty, $type_name:literal, $flush_op:ty) => {
         impl ::bun_event_loop::Taskable for $native {
             const TAG: ::bun_event_loop::TaskTag = ::bun_event_loop::task_tag::$native;
             /// An async write whose completion will not run: unpin, unref, drop
@@ -995,9 +1020,11 @@ macro_rules! __impl_compression_stream {
         }
 
         impl $crate::node::node_zlib_binding::CompressionContext for $ctx {
+            type FlushOp = $flush_op;
+
             #[inline] fn set_buffers(&mut self, in_: Option<&[u8]>, out: Option<&mut [u8]>) { Self::set_buffers(self, in_, out) }
-            #[inline] fn set_flush(&mut self, flush: i32) { Self::set_flush(self, flush) }
-            #[inline] fn flush_value_is_valid(flush: u32) -> bool { Self::flush_value_is_valid(flush) }
+            #[inline] fn flush_op_from_u32(flush: u32) -> Option<$flush_op> { Self::flush_op_from_u32(flush) }
+            #[inline] fn set_flush(&mut self, op: $flush_op) { Self::set_flush(self, op) }
             #[inline] fn do_work(&mut self) { Self::do_work(self) }
             #[inline] fn reset(&mut self) -> $crate::node::node_zlib_binding::Error { Self::reset(self) }
             #[inline] fn close(&mut self) { Self::close(self) }

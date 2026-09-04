@@ -29,6 +29,7 @@
 
 #include <JavaScriptCore/JSModuleLoader.h>
 #include <JavaScriptCore/ModuleRegistryEntry.h>
+#include <JavaScriptCore/CyclicModuleRecord.h>
 #include <JavaScriptCore/Completion.h>
 #include <JavaScriptCore/JSModuleNamespaceObject.h>
 #include <JavaScriptCore/JSMap.h>
@@ -637,6 +638,46 @@ void evaluateCommonJSCustomExtension(
     RETURN_IF_EXCEPTION(scope, );
 }
 
+static bool moduleRegistryEntryFailed(JSC::ModuleRegistryEntry* entry)
+{
+    switch (entry->status()) {
+    case JSC::ModuleRegistryEntry::Status::FetchFailed:
+    case JSC::ModuleRegistryEntry::Status::InstantiationFailed:
+    case JSC::ModuleRegistryEntry::Status::EvaluationFailed:
+        return true;
+    default:
+        break;
+    }
+    // A module that threw while being evaluated as a dependency of some other
+    // module's graph keeps Status::Fetched; the error is recorded on its record.
+    auto* record = dynamicDowncast<JSC::CyclicModuleRecord>(entry->record());
+    return record && record->evaluationError();
+}
+
+// A require() that throws removes the module from the require map
+// (finishRequireWithError, the catch blocks in CommonJS.ts) so that, as in Node,
+// the next require() runs the file again. If that load went through the module
+// registry (a file the transpiler classified as ESM, a CommonJS file first
+// reached via import(), a plugin module), the registry still holds the entry
+// with the error stored on it, and JSModuleLoader::loadModule settles every
+// later load of that key with the stored error without running anything. Only
+// failed entries are dropped: an entry that is still loading or loaded fine may
+// belong to an in-flight import(), and dropping it would evaluate that module
+// twice.
+void evictFailedModuleRegistryEntry(Zig::GlobalObject* globalObject, const WTF::String& specifier)
+{
+    auto* moduleLoader = globalObject->moduleLoader();
+    auto key = JSC::Identifier::fromString(globalObject->vm(), specifier);
+    auto* entry = moduleLoader->registryEntry(key);
+    if (!entry || !moduleRegistryEntryFailed(entry))
+        return;
+
+    // JSModuleLoader::visitChildrenImpl iterates these maps on the GC thread
+    // under cellLock(); take the same lock so the removal can't race it.
+    WTF::Locker locker { moduleLoader->cellLock() };
+    moduleLoader->removeEntry(key);
+}
+
 JSValue fetchCommonJSModule(
     Zig::GlobalObject* globalObject,
     JSCommonJSModule* target,
@@ -652,6 +693,8 @@ JSValue fetchCommonJSModule(
     ErrorableResolvedSource* res = &resValue;
 
     BunString specifier = Bun::toString(specifierWtfString);
+
+    evictFailedModuleRegistryEntry(globalObject, specifierWtfString);
 
     bool wasModuleMock = false;
 

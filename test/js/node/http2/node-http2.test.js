@@ -3944,36 +3944,39 @@ describe.concurrent(
 
     // HEADERS sized so the cork sits within 8 bytes of full: the 9-byte DATA frame header is
     // what straddles, so the Duplex runs before the payload itself is written at all. The
-    // header value uses a character HPACK will not huffman-encode, so the block length tracks
-    // N byte for byte; the sweep keeps the case on target if the fixed overhead ever shifts.
+    // header value uses a character HPACK will not huffman-encode, so the HEADERS frame corks
+    // the pad length plus a fixed overhead: a probe request measures that overhead and the second
+    // request pads to leave exactly 4 bytes of cork, whatever the overhead is. (Each request is a
+    // fresh session plus a full GC, which adds up quickly on a debug build, hence two requests
+    // rather than a sweep of pad lengths.)
     it("DATA frame header straddling the cork flush", async () => {
       const result = await run(/* js */ `
-      const results = [];
-      for (let n = 16344; n <= 16352; n++) {
+      async function post(padLength) {
         const holder = { src: payload(8000, false) };
         const snap = Buffer.from(holder.src);
         let armed = false, fired = 0;
         const duplex = wireDuplex(() => { if (armed && !fired++) yank(holder, "transfer"); });
         const session = await connect(duplex);
         const req = session.request(
-          { ":method": "POST", ":path": "/", "x-pad": Buffer.alloc(n, "\\\\").toString() },
+          { ":method": "POST", ":path": "/", "x-pad": Buffer.alloc(padLength, "\\\\").toString() },
           { endStream: false },
         );
         req.on("error", die("stream error"));
         armed = true;
         req.write(holder.src);
         await duplex.dataSeen(8000);
-        const corkOffset = 9 + duplex.headersLen();
-        results.push({ inWindow: corkOffset >= 16376 && corkOffset <= 16383, fired: fired > 0, foreign: foreign(duplex.data(), snap) });
+        return { corked: 9 + duplex.headersLen(), fired: fired > 0, foreign: foreign(duplex.data(), snap) };
       }
+      const probe = await post(15000);
+      const straddle = await post(15000 + (16380 - probe.corked));
       console.log(JSON.stringify({
-        hitWindow: results.some(r => r.inWindow),
-        allFired: results.every(r => r.fired),
-        foreign: results.reduce((a, r) => a + r.foreign, 0),
+        corked: straddle.corked,
+        fired: [probe.fired, straddle.fired],
+        foreign: [probe.foreign, straddle.foreign],
       }));
       process.exit(0);
     `);
-      expect(result).toEqual({ hitWindow: true, allFired: true, foreign: 0 });
+      expect(result).toEqual({ corked: 16380, fired: [true, true], foreign: [0, 0] });
     });
 
     // A write larger than the peer's window: the in-window part is batched and flushed (running

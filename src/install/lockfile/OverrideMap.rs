@@ -4,7 +4,6 @@ use core::cmp::Ordering;
 use crate::DependencyID;
 use crate::Error;
 use crate::package_manager::workspace_package_json_cache::{GetJSONOptions, GetResult};
-use crate::resolution::Tag as ResolutionTag;
 use crate::{PackageID, invalid_package_id};
 use bun_collections::{ArrayHashMap, index_sort};
 use bun_install::dependency::{
@@ -249,15 +248,10 @@ impl OverrideMap {
         if owner_id == invalid_package_id {
             return None;
         }
-        let owner_id = owner_id as usize;
-        let owner_name_hash = lockfile.packages.items_name_hash()[owner_id];
-        let resolution = &lockfile.packages.items_resolution()[owner_id];
-        let owner_version = match resolution.tag {
-            ResolutionTag::Npm => Some(resolution.npm().version),
-            ResolutionTag::Workspace => lockfile.workspace_versions.get(&owner_name_hash).copied(),
-            _ => None,
-        };
-        Some((owner_name_hash, owner_version))
+        Some((
+            lockfile.packages.items_name_hash()[owner_id as usize],
+            lockfile.package_version(owner_id),
+        ))
     }
 
     fn owner_package_id(&self, lockfile: &Lockfile, dependency_id: DependencyID) -> PackageID {

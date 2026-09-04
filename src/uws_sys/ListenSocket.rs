@@ -36,8 +36,7 @@ impl ListenSocket {
         ))
     }
 
-    /// Call before another process gets a duplicate of this socket. On Windows,
-    /// the accept path then cannot block when that process takes a connection.
+    /// Call before another process gets a duplicate of this socket (see `bsd_accept_socket`).
     pub fn set_shared(&mut self) {
         us_listen_socket_set_shared(self)
     }

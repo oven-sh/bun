@@ -31,6 +31,21 @@ async function runDecorator(code: string) {
   return { stdout, stderr: filterStderr(rawStderr), exitCode };
 }
 
+async function runDecoratorTS(code: string) {
+  using dir = tempDir("es-dec-ts", {
+    "tsconfig.json": JSON.stringify({ compilerOptions: {} }),
+    "test.ts": code,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "test.ts"],
+    env: bunEnv,
+    cwd: String(dir),
+    stderr: "pipe",
+  });
+  const [stdout, rawStderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  return { stdout, stderr: filterStderr(rawStderr), exitCode };
+}
+
 describe("ES Decorators", () => {
   describe("class decorators", () => {
     test("basic class decorator", async () => {
@@ -391,21 +406,6 @@ describe("ES Decorators", () => {
       expect(exitCode).toBe(0);
     });
 
-    async function runDecoratorTS(code: string) {
-      using dir = tempDir("es-dec-ts", {
-        "tsconfig.json": JSON.stringify({ compilerOptions: {} }),
-        "test.ts": code,
-      });
-      await using proc = Bun.spawn({
-        cmd: [bunExe(), "test.ts"],
-        env: bunEnv,
-        cwd: String(dir),
-        stderr: "pipe",
-      });
-      const [stdout, rawStderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-      return { stdout, stderr: filterStderr(rawStderr), exitCode };
-    }
-
     test("non-null assertion in decorator member expression", async () => {
       const { stdout, stderr, exitCode } = await runDecoratorTS(`
         const ns = {
@@ -677,6 +677,120 @@ describe("ES Decorators", () => {
       expect(filterStderr(rawStderr)).toBe("");
       expect(stdout).toBe("class Foo\n");
       expect(exitCode).toBe(0);
+    });
+  });
+
+  describe("decorators on members TypeScript erases", () => {
+    // Without experimentalDecorators, tsc (TS1206/TS1249) and esbuild drop a
+    // decorated `declare`/`abstract` field, overload signature or index
+    // signature along with its decorators: the decorator expression is never
+    // evaluated and the class is emitted as if the member were not written.
+    const transpiler = new Bun.Transpiler({ loader: "ts", target: "bun" });
+    const transform = (code: string) => transpiler.transformSync(code);
+
+    // [member as written, what is left of it after erasure]
+    const erased: [string, string][] = [
+      ["@dec declare x: number;", ""],
+      ["@dec static declare x: number;", ""],
+      ["@dec public declare readonly x: number;", ""],
+      ["@dec declare [key]: number;", ""],
+      ["@dec foo(): void; foo() {}", "foo() {}"],
+      ["@dec [key: string]: unknown;", ""],
+    ];
+    const wrappers = {
+      "class statement": (body: string) => `class A { ${body} y = 1 }`,
+      "class expression": (body: string) => `const A = class { ${body} y = 1 };`,
+      "export default class": (body: string) => `export default class { ${body} y = 1 }`,
+    };
+    for (const [name, wrap] of Object.entries(wrappers)) {
+      test.each(erased)(`${name}: %s`, (member, remaining) => {
+        expect(transform(wrap(member))).toBe(transform(wrap(remaining)));
+      });
+    }
+
+    const erasedAbstract = [
+      "@dec abstract x: number;",
+      "@dec abstract readonly x: number;",
+      "@dec abstract m(): void;",
+      "@dec abstract get x(): number;",
+    ];
+    const abstractWrappers = {
+      "abstract class statement": (body: string) => `abstract class A { ${body} y = 1 }`,
+      "export default abstract class": (body: string) => `export default abstract class { ${body} y = 1 }`,
+    };
+    for (const [name, wrap] of Object.entries(abstractWrappers)) {
+      test.each(erasedAbstract)(`${name}: %s`, member => {
+        expect(transform(wrap(member))).toBe(transform(wrap("")));
+      });
+    }
+
+    test("erased members still vanish from a class that has other decorated members", () => {
+      const kept = "@dec m() {} @dec z = 1;";
+      expect(transform(`abstract class A { @dec declare x: number; ${kept} @dec abstract w: string; }`)).toBe(
+        transform(`abstract class A { ${kept} }`),
+      );
+    });
+
+    test.concurrent("decorators on erased members are not evaluated or applied at runtime", async () => {
+      const { stdout, stderr, exitCode } = await runDecoratorTS(`
+        const applied: string[] = [];
+        function dec(_: unknown, ctx: { kind: string; name: string | symbol }) {
+          applied.push(ctx.kind + " " + String(ctx.name));
+        }
+        let evaluated = 0;
+        function erasedDec() {
+          evaluated++;
+          return dec;
+        }
+        class A {
+          @erasedDec() declare x: number;
+          @dec y = 1;
+        }
+        const B = class {
+          @erasedDec() declare x: number;
+          y = 1;
+        };
+        abstract class C {
+          @erasedDec() abstract x: number;
+          y = 1;
+        }
+        class D extends C {
+          x = 2;
+        }
+        console.log(JSON.stringify({
+          evaluated,
+          applied,
+          a: Object.keys(new A()),
+          b: Object.keys(new B()),
+          d: Object.keys(new D()),
+          ownSymbolsOfB: Object.getOwnPropertySymbols(B).length,
+        }));
+      `);
+      expect(stderr).toBe("");
+      expect(JSON.parse(stdout)).toEqual({
+        evaluated: 0,
+        applied: ["field y"],
+        a: ["y"],
+        b: ["y"],
+        d: ["y", "x"],
+        ownSymbolsOfB: 0,
+      });
+      expect(exitCode).toBe(0);
+    });
+
+    test("experimentalDecorators keeps applying decorators to declare and abstract fields", () => {
+      const legacy = new Bun.Transpiler({
+        loader: "ts",
+        target: "bun",
+        tsconfig: { compilerOptions: { experimentalDecorators: true } },
+      });
+      const output = legacy.transformSync(`
+        class A { @dec declare x: number; y = 1 }
+        abstract class B { @dec abstract x: number; y = 1 }
+      `);
+      expect(output).toContain('A.prototype, "x"');
+      expect(output).toContain('B.prototype, "x"');
+      expect(output).not.toContain("this.x");
     });
   });
 

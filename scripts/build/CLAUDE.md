@@ -245,7 +245,7 @@ Why not auto-register in emit functions? Some rules are shared (`dep_configure` 
 
 ## Node compatibility
 
-The build system runs under Node 24.2+ with `--experimental-strip-types` (or Node 25+ without the flag). CI invokes it this way via `process.execPath` in `.buildkite/ci.mjs`.
+The build system runs under Node 25+ (configure checks the version). CI installs Node 26 and invokes it via `process.execPath` in `.buildkite/ci.mjs`.
 
 `cfg.jsRuntime` holds the shell-ready command prefix for running `.ts` subprocesses (stream.ts, fetch-cli.ts, the regen rule, the `codegen` rule) — it's `process.execPath` when bun runs configure, or `node --experimental-strip-types` when node does. The subprocesses inherit whichever runtime started the build.
 

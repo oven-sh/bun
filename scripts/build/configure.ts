@@ -86,12 +86,13 @@ export function resolveToolchain(targetOs?: OS, packageManager: PackageManager =
   //
   // A codegen script that a module can also import runs its command line
   // only when import.meta.main is true. Node 24.2 added import.meta.main.
-  // Before that it is undefined, and the script would write nothing.
+  // Before that it is undefined, and the script would write nothing. CI
+  // installs Node 26 (scripts/bootstrap.sh), so the minimum is 25.
   if (process.versions.bun === undefined) {
-    const [major = 0, minor = 0] = process.versions.node.split(".").map(Number);
-    if (major < 24 || (major === 24 && minor < 2)) {
+    const major = Number(process.versions.node.split(".")[0]);
+    if (major < 25) {
       throw new BuildError(`Node ${process.versions.node} cannot run the codegen scripts`, {
-        hint: "Install Node 24.2 or later, or run the build with bun.",
+        hint: "Install Node 25 or later, or run the build with bun.",
       });
     }
   }

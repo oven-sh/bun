@@ -66,12 +66,15 @@ fn dangerously_run_without_jit_protections<R>(func: impl FnOnce() -> R) -> R {
     func()
 }
 
+/// Mirrors `FFIFields` in `src/jsc/bindings/ffi.cpp`.
 #[repr(C)]
 struct Offsets {
     js_array_buffer_view_offset_of_length: u32,
     js_array_buffer_view_offset_of_byte_offset: u32,
     js_array_buffer_view_offset_of_vector: u32,
     js_cell_offset_of_type: u32,
+    call_frame_argument_count_including_this_slot: u32,
+    call_frame_first_argument_slot: u32,
 }
 
 unsafe extern "C" {
@@ -2101,41 +2104,16 @@ impl Function {
             )?;
         }
 
-        if !self.arg_types.is_empty() {
+        // napi_env comes from `to_c` but still occupies its JS argument position, so `i` is the JS index.
+        if self.arg_types.iter().any(|arg| *arg != ABIType::NapiEnv) {
             writer.write_all(b"  LOAD_ARGUMENTS_FROM_CALL_FRAME;\n")?;
             for (i, arg) in self.arg_types.iter().enumerate() {
-                if *arg == ABIType::NapiEnv {
-                    write!(
-                        writer,
-                        "  napi_env arg{} = (napi_env)&Bun__thisFFIModuleNapiEnv;\n  argsPtr++;\n",
-                        i
-                    )?;
-                } else if *arg == ABIType::NapiValue {
+                if *arg != ABIType::NapiEnv {
+                    // Member store: TinyCC emits a memset call for a brace-initialized local and a memmove call (unresolvable under -nostdlib) for a union copy.
                     writeln!(
                         writer,
-                        "  EncodedJSValue arg{} = {{ .asInt64 = *argsPtr++ }};",
-                        i
+                        "  EncodedJSValue arg{i};\n  arg{i}.asInt64 = ARGUMENT({i});"
                     )?;
-                } else if arg.needs_a_cast_in_c() {
-                    if i < self.arg_types.len() - 1 {
-                        writeln!(
-                            writer,
-                            "  EncodedJSValue arg{} = {{ .asInt64 = *argsPtr++ }};",
-                            i
-                        )?;
-                    } else {
-                        write!(
-                            writer,
-                            "  EncodedJSValue arg{};\n  arg{}.asInt64 = *argsPtr;\n",
-                            i, i
-                        )?;
-                    }
-                } else {
-                    if i < self.arg_types.len() - 1 {
-                        writeln!(writer, "  int64_t arg{} = *argsPtr++;", i)?;
-                    } else {
-                        writeln!(writer, "  int64_t arg{} = *argsPtr;", i)?;
-                    }
                 }
             }
         }
@@ -2159,11 +2137,7 @@ impl Function {
 
             let length_buf = bun_core::fmt::print_int(&mut arg_buf[3..], i);
             let arg_name = &arg_buf[0..3 + length_buf];
-            if arg.needs_a_cast_in_c() {
-                write!(writer, "{}", arg.to_c(arg_name))?;
-            } else {
-                writer.write_all(arg_name)?;
-            }
+            write!(writer, "{}", arg.to_c(arg_name))?;
         }
         writer.write_all(b");\n")?;
 
@@ -2488,7 +2462,11 @@ impl CompilerRT {
         state.define_symbols(&[
             (
                 "Bun_FFI_PointerOffsetToArgumentsList",
-                bun_jsc::sizes::BUN_FFI_POINTER_OFFSET_TO_ARGUMENTS_LIST as i64,
+                offsets.call_frame_first_argument_slot as i64,
+            ),
+            (
+                "Bun_FFI_PointerOffsetToArgumentCountIncludingThis",
+                offsets.call_frame_argument_count_including_this_slot as i64,
             ),
             (
                 "JSArrayBufferView__offsetOfLength",

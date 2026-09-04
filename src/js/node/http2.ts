@@ -378,6 +378,7 @@ const kRequestHeaders = Symbol("requestHeaders");
 // set so a second sendTrailers() in the same tick reports ERR_HTTP2_TRAILERS_ALREADY_SENT, not
 // ERR_HTTP2_INVALID_STREAM.
 const kSendingTrailers = Symbol("sendingTrailers");
+const kWantTrailers = Symbol("wantTrailers");
 const kSettingsAckGraceTimer = Symbol("settingsAckGraceTimer");
 // node: a socket can be bound to at most one Http2Session (ERR_HTTP2_SOCKET_BOUND).
 const kBoundSession = Symbol("boundSession");
@@ -2438,6 +2439,19 @@ class Http2Stream extends Duplex {
     }
   }
 
+  // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/http2/core.js#L484-L493 (onStreamTrailers):
+  // a closed stream is not asked (close()'s RST_STREAM follows on its own); with no listener the
+  // stream sends empty trailers itself, which is what makes a later sendTrailers() fail.
+  [kWantTrailers](native) {
+    if ((this[bunHTTP2StreamStatus] & StreamState.Closed) !== 0) return;
+    if (this.listenerCount("wantTrailers") === 0) {
+      this.#sentTrailers = {};
+      native.noTrailers(this.#id);
+    } else {
+      this.emit("wantTrailers");
+    }
+  }
+
   setTimeout(timeout, callback) {
     const session = this[bunHTTP2Session];
     if (!session) return;
@@ -2717,22 +2731,7 @@ class Http2Stream extends Duplex {
             // markWritableDone before control returns here: stash the callback there so the
             // writable finishes ('finish' before 'close') instead of being torn down mid-final.
             this[bunHTTP2StreamFinal] = callback;
-            if ((this[bunHTTP2StreamStatus] & StreamState.Closed) !== 0 || this.listenerCount("wantTrailers") === 0) {
-              // No 'wantTrailers' listener — or the stream was close()d while the last write
-              // was still in flight, in which case node never asks for trailers (the compat
-              // onStreamTrailersReady would throw ERR_HTTP2_INVALID_STREAM on a closed
-              // stream): end the writable with the empty END_STREAM DATA frame directly.
-              native.noTrailers(this.#id);
-              // Mark trailers as "sent" so a later stream.sendTrailers()
-              // call hits the ERR_HTTP2_TRAILERS_ALREADY_SENT guard instead
-              // of invoking native noTrailers() a second time on an
-              // already-half-closed stream. The emit("wantTrailers") path
-              // below reaches the same result via sendTrailers({}) which
-              // assigns #sentTrailers itself.
-              this.#sentTrailers = {};
-            } else {
-              this.emit("wantTrailers");
-            }
+            this[kWantTrailers](native);
             // Hand the END_STREAM (or trailer) frame to the socket now: with deferred write
             // completion, _final can run on the program's last live turn and a frame left in
             // the cork for the auto-flusher would strand a generic-streams (duplexPair) peer
@@ -4257,14 +4256,9 @@ class ServerHttp2Session extends Http2Session {
       if (!self || typeof stream !== "object") return;
       const status = stream[bunHTTP2StreamStatus];
       if ((status & StreamState.WantTrailer) !== 0) return;
-
       stream[bunHTTP2StreamStatus] = status | StreamState.WantTrailer;
-
-      if (stream.listenerCount("wantTrailers") === 0) {
-        self[bunHTTP2Native]?.noTrailers(stream.id);
-      } else {
-        stream.emit("wantTrailers");
-      }
+      const native = self[bunHTTP2Native];
+      if (native) stream[kWantTrailers](native);
     },
     goaway(self: ServerHttp2Session, errorCode: number, lastStreamId: number, opaqueData: Buffer) {
       if (!self) return;
@@ -5260,11 +5254,8 @@ class ClientHttp2Session extends Http2Session {
       const status = stream[bunHTTP2StreamStatus];
       if ((status & StreamState.WantTrailer) !== 0) return;
       stream[bunHTTP2StreamStatus] = status | StreamState.WantTrailer;
-      if (stream.listenerCount("wantTrailers") === 0) {
-        self[bunHTTP2Native]?.noTrailers(stream.id);
-      } else {
-        stream.emit("wantTrailers");
-      }
+      const native = self[bunHTTP2Native];
+      if (native) stream[kWantTrailers](native);
     }),
     goaway(self: ClientHttp2Session, errorCode: number, lastStreamId: number, opaqueData: Buffer) {
       if (!self) return;

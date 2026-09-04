@@ -316,6 +316,11 @@ describe("endpoint.close() while a session is live", () => {
 // endpoint that closed before the retry leaked the reset's connection object.
 // The endpoint socket has IP_RECVERR: on Linux, the ICMP port unreachable for
 // one reset fails the next send with ECONNREFUSED.
+//
+// On a debug build, LeakSanitizer takes more than the default 5 s to print its
+// report. With the default, a leak shows up as a timeout and not as the report.
+const LEAK_REPORT_TIMEOUT = 60_000;
+
 describe("endpoint.close() with an unsent stateless reset", () => {
   test.skipIf(!isASAN || !isLinux)(
     "frees the reset's connection object",
@@ -387,6 +392,6 @@ describe("endpoint.close() with an unsent stateless reset", () => {
         exitCode: 0,
       });
     },
-    60_000,
+    LEAK_REPORT_TIMEOUT,
   );
 });

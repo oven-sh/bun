@@ -2091,8 +2091,7 @@ where
     /// `html_bundle::BuildWaiter` callback.
     fn on_html_route_built(ctx: NonNull<c_void>, route: ThisPtr<html_bundle::Route>) {
         let Some(built) = route.built_html() else {
-            // An earlier waiter scheduled a new build (development mode
-            // rebundles). Wait for that one; the +1 stays with the waiter.
+            // An earlier waiter started a new build; wait for that one.
             html_bundle::Route::add_build_waiter(route, Self::on_html_route_built, ctx);
             return;
         };
@@ -3857,11 +3856,7 @@ where
                             // falls through to the default error page below.
                             // SAFETY: `response` is the live, rooted cell pointer.
                             if HTTPStatusText::is_sendable(unsafe { (*response).status_code() }) {
-                                // A file or streaming body defers `render_metadata`
-                                // past this frame, where `_keep` is the only root,
-                                // so root the Response the way the async error
-                                // path does or the deferred flush can read a
-                                // collected weakref.
+                                // Root it like the async error path: a deferred body outlives `_keep`.
                                 if self.flags.response_protected() {
                                     self.response_jsvalue.get().unprotect();
                                 }

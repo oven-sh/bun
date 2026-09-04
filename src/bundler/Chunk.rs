@@ -290,7 +290,9 @@ impl Chunk {
     /// Stable short name for this chunk in generated code: its final content hash, as `[hash]` prints it.
     pub(crate) fn id(&self) -> bun_core::fmt::ContentHash {
         self.template
-            .content_hash(self.template.placeholder.hash.unwrap_or(self.isolated_hash))
+            .placeholder
+            .hash
+            .unwrap_or(bun_core::fmt::ContentHash::short(self.isolated_hash))
     }
 
     /// The chunks reachable from chunk `start` through cross-chunk imports of the given kinds, `start` first.

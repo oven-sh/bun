@@ -960,7 +960,7 @@ The `naming` field customizes the names and locations of the generated files. It
 
 - `[name]` - The name of the entrypoint file, without the extension.
 - `[ext]` - The extension of the generated bundle.
-- `[hash]` - A hash of the bundle contents: 8 lowercase alphanumeric characters. `[hash9]` through `[hash13]` print more of the same hash for apps with thousands of chunks, where two chunks sharing an 8-character name (a build error) becomes plausible; `[hash13]` is the full 64-bit hash.
+- `[hash]` - A hash of the bundle contents: 8 lowercase alphanumeric characters. If two outputs with different contents would print the same characters, both get enough extra characters to differ (as do the outputs that reference them). `[hash9]` through `[hash13]` set a wider minimum; `[hash13]` is the full 64-bit hash.
 - `[dir]` - The relative path from the project root to the parent directory of the source file.
 
 For example:

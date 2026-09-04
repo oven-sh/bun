@@ -2591,7 +2591,16 @@ impl<'a> LinkerContext<'a> {
     /// is a fixpoint over bitsets, and each chunk digests its own hash first,
     /// then the rest of its closure in chunk order (so two chunks that reach
     /// each other still differ).
-    pub(crate) fn final_chunk_hashes(&self, chunks: &[Chunk]) -> Result<Vec<u64>, AllocError> {
+    ///
+    /// The width is the template's (`[hash]` = 8, `[hashN]` = N) unless two
+    /// chunks with different hashes would print the same characters; those
+    /// widen until they differ, and every chunk that reaches a widened chunk
+    /// (its output embeds that chunk's path or id) has the widths folded into
+    /// its own hash so that its name changes with its bytes.
+    pub(crate) fn final_chunk_hashes(
+        &self,
+        chunks: &[Chunk],
+    ) -> Result<Vec<bun_core::fmt::ContentHash>, AllocError> {
         let n = chunks.len();
         let mut own: Vec<u64> = Vec::with_capacity(n);
         let mut edges: Vec<Vec<u32>> = Vec::with_capacity(n);
@@ -2674,7 +2683,7 @@ impl<'a> LinkerContext<'a> {
             }
         }
 
-        Ok(reach
+        let closure: Vec<u64> = reach
             .iter()
             .enumerate()
             .map(|(i, bits)| {
@@ -2688,7 +2697,33 @@ impl<'a> LinkerContext<'a> {
                 }
                 hash.digest()
             })
-            .collect())
+            .collect();
+
+        use bun_core::fmt::ContentHash;
+        let min_len: Vec<usize> = chunks.iter().map(|chunk| chunk.template.hash_len()).collect();
+        let mut names: Vec<ContentHash> =
+            (0..n).map(|i| ContentHash::new(closure[i], min_len[i])).collect();
+        for _ in 0..ContentHash::MAX_LEN {
+            if !ContentHash::widen_to_distinguish(&mut names) {
+                break;
+            }
+            for i in 0..n {
+                let mut hash = ContentHasher::default();
+                let mut any = false;
+                let mut iter = reach[i].iterator::<true, true>();
+                while let Some(j) = iter.next() {
+                    if j != i && names[j].len() != min_len[j] {
+                        hash.write_ints(&[j as u32, names[j].len() as u32]);
+                        any = true;
+                    }
+                }
+                if any {
+                    hash.write(&closure[i].to_ne_bytes());
+                    names[i] = ContentHash::new(hash.digest(), names[i].len());
+                }
+            }
+        }
+        Ok(names)
     }
 
     // Sort cross-chunk exports by chunk name for determinism

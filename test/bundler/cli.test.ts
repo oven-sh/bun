@@ -828,25 +828,28 @@ test.concurrent("bun build names every input that maps to a shared output path",
   expect(exitCode).toBe(1);
 });
 
-test.concurrent("bun build suggests a wider [hashN] when hashed names collide", async () => {
+test.concurrent("bun build widens [hash] names that would otherwise collide", async () => {
+  // 40 entry points under `[hash1]` naming cannot all differ in one character
+  // (the alphabet has 32), so some names widen to 2+; none collide.
   const files: Record<string, string> = {};
-  for (let i = 0; i < 33; i++) files[`e${i}.ts`] = `export const v = ${i};\n`;
-  using dir = tempDir("bundle-hash-collision", files);
+  for (let i = 0; i < 40; i++) files[`e${i}.ts`] = `export const v = ${i};\n`;
+  using dir = tempDir("bundle-hash-widen", files);
 
   await using proc = Bun.spawn({
-    cmd: [bunExe(), "build", ...Object.keys(files), "--outdir=dist", "--entry-naming=[hash1].js"],
+    cmd: [bunExe(), "build", ...Object.keys(files), "--outdir=dist", "--entry-naming=[hash1].[ext]"],
     env: bunEnv,
     cwd: String(dir),
     stdout: "pipe",
     stderr: "pipe",
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect(stderr).toContain("Multiple files share the same output path");
-  expect(stderr).toContain(
-    "note: entry naming is './[hash1].js'; if these inputs differ, their hashes share their first 1 characters, use '[hash13]' for more",
-  );
-  expect(stdout).toBe("");
-  expect(exitCode).toBe(1);
+  expect(stderr).toBe("");
+  const names = fs.readdirSync(path.join(String(dir), "dist")).sort();
+  expect(names.length).toBe(40);
+  expect(names.every(n => /^[0-9a-z]{1,13}\.js$/.test(n))).toBe(true);
+  expect(names.some(n => n.length > "x.js".length)).toBe(true);
+  expect(names.some(n => n.length == "x.js".length)).toBe(true);
+  expect(exitCode).toBe(0);
 });
 
 describe("CLI argument error messages", () => {

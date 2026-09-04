@@ -3588,6 +3588,32 @@ impl ContentHash {
     }
 }
 
+impl ContentHash {
+    /// Widen any two names that have different values but print the same, to
+    /// one character past their common prefix. Returns whether any changed.
+    pub fn widen_to_distinguish(names: &mut [ContentHash]) -> bool {
+        let mut order: Vec<usize> = (0..names.len()).collect();
+        order.sort_unstable_by_key(|&i| (names[i].bytes(), names[i].len()));
+        let mut widened = false;
+        for pair in order.windows(2) {
+            let (a, b) = (names[pair[0]], names[pair[1]]);
+            if a.value == b.value || a.bytes()[..a.len()] != b.bytes()[..b.len()] {
+                continue;
+            }
+            let common = (a.bytes().iter().zip(b.bytes().iter()))
+                .take_while(|(x, y)| x == y)
+                .count();
+            for &i in pair {
+                if names[i].len() <= common {
+                    names[i] = ContentHash::new(names[i].value, common + 1);
+                    widened = true;
+                }
+            }
+        }
+        widened
+    }
+}
+
 impl Display for ContentHash {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         write_bytes(f, &self.bytes()[..self.len()])

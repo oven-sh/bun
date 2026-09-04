@@ -494,27 +494,20 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                 let Some(template) = template else { continue };
 
                 let mut text: Vec<u8> = Vec::new();
-                match crate::options::path_template_hash_len(template) {
-                    None => write!(
+                if crate::options::path_template_hash_len(template).is_some() {
+                    write!(
+                        &mut text,
+                        "{} naming is '{}'; these inputs produce identical content",
+                        name,
+                        bstr::BStr::new(template),
+                    )?;
+                } else {
+                    write!(
                         &mut text,
                         "{} naming is '{}', consider adding '[hash]' to make filenames unique",
                         name,
                         bstr::BStr::new(template),
-                    )?,
-                    Some(len) if len < bun_core::fmt::ContentHash::MAX_LEN => write!(
-                        &mut text,
-                        "{} naming is '{}'; if these inputs differ, their hashes share their first {} characters, use '[hash{}]' for more",
-                        name,
-                        bstr::BStr::new(template),
-                        len,
-                        bun_core::fmt::ContentHash::MAX_LEN,
-                    )?,
-                    Some(_) => write!(
-                        &mut text,
-                        "{} naming is '{}'",
-                        name,
-                        bstr::BStr::new(template)
-                    )?,
+                    )?;
                 }
                 c.log_mut().add_msg(bun_ast::Msg {
                     kind: bun_ast::Kind::Note,
@@ -1244,11 +1237,7 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                     data: options::OutputFileData::Buffer {
                         data: code_result.buffer,
                     },
-                    hash: chunk
-                        .template
-                        .placeholder
-                        .hash
-                        .map(|h| chunk.template.content_hash(h)),
+                    hash: chunk.template.placeholder.hash,
                     loader: chunk.content.loader(),
                     input_path,
                     display_size: display_size as u32,

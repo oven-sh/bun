@@ -2186,7 +2186,7 @@ fn path_template_print<W: bun_io::Write>(
     dir: &[u8],
     name: &[u8],
     ext: &[u8],
-    hash: Option<u64>,
+    hash: Option<bun_core::fmt::ContentHash>,
     target: &[u8],
     sanitize_parent_dirs: bool,
 ) -> bun_io::Result<()> {
@@ -2250,7 +2250,7 @@ fn path_template_print<W: bun_io::Write>(
                 if let Some(hash) = hash {
                     writer.write_fmt(format_args!(
                         "{}",
-                        bun_core::fmt::ContentHash::new(hash, hash_len)
+                        bun_core::fmt::ContentHash::new(hash.value, hash_len.max(hash.len()))
                     ))?;
                 }
             }
@@ -2364,11 +2364,17 @@ impl PathTemplate {
         path_template_needs(&self.data, field)
     }
 
-    /// `hash` at the width this template's `[hash]`/`[hashN]` prints it.
+    /// The width this template's `[hash]`/`[hashN]` asks for.
+    pub(crate) fn hash_len(&self) -> usize {
+        path_template_hash_len(&self.data).unwrap_or(bun_core::fmt::ContentHash::DEFAULT_LEN)
+    }
+
+    /// `hash` at the width this template prints its own hash: what `[hashN]`
+    /// asks for, or wider if the linker widened it to keep names distinct.
     pub(crate) fn content_hash(&self, hash: u64) -> bun_core::fmt::ContentHash {
         bun_core::fmt::ContentHash::new(
             hash,
-            path_template_hash_len(&self.data).unwrap_or(bun_core::fmt::ContentHash::DEFAULT_LEN),
+            self.placeholder.hash.map_or_else(|| self.hash_len(), |h| h.len()),
         )
     }
 
@@ -2459,7 +2465,7 @@ pub struct Placeholder {
     pub(crate) dir: Box<[u8]>,
     pub(crate) name: Box<[u8]>,
     pub(crate) ext: Box<[u8]>,
-    pub(crate) hash: Option<u64>,
+    pub(crate) hash: Option<bun_core::fmt::ContentHash>,
     pub(crate) target: Box<[u8]>,
 }
 
@@ -2486,7 +2492,7 @@ pub struct PlaceholderConst {
     pub(crate) dir: &'static [u8],
     pub(crate) name: &'static [u8],
     pub(crate) ext: &'static [u8],
-    pub(crate) hash: Option<u64>,
+    pub(crate) hash: Option<bun_core::fmt::ContentHash>,
     pub(crate) target: &'static [u8],
 }
 

@@ -542,11 +542,7 @@ pub(crate) fn write_output_files_to_disk(
             } else {
                 Loader::Js
             },
-            hash: chunk
-                .template
-                .placeholder
-                .hash
-                .map(|h| chunk.template.content_hash(h)),
+            hash: chunk.template.placeholder.hash,
             output_kind,
             loader: chunk.content.loader(),
             source_map_index,

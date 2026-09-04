@@ -296,6 +296,28 @@ test("re-entering a storage inside run() does not grow the context", () => {
   });
 });
 
+// Node's run() exits through enterWith(prior), a fresh frame: a disable() after
+// run() returned reaches continuations captured since, not ones from before it.
+test("disable() after a run() does not reach continuations captured before the run()", () => {
+  const a = new AsyncLocalStorage();
+  const b = new AsyncLocalStorage();
+  const seen: unknown[] = [];
+  a.run("outer", () => {
+    b.run(2, () => {
+      const before = AsyncLocalStorage.snapshot();
+      a.run(1, () => {
+        b.run(5, () => {});
+      });
+      const after = AsyncLocalStorage.snapshot();
+      b.disable();
+      seen.push(before(() => b.getStore()), after(() => b.getStore()), b.getStore(), a.getStore());
+    });
+    seen.push(a.getStore(), b.getStore());
+  });
+  seen.push(a.getStore(), b.getStore());
+  expect(seen).toEqual([2, undefined, undefined, "outer", "outer", undefined, undefined, undefined]);
+});
+
 // Node's run() enters a fresh frame, so a disable() inside it only reaches
 // continuations captured since; ones captured before keep their binding.
 test("disable() inside another storage's run() does not reach earlier continuations", async () => {

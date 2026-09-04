@@ -20,11 +20,11 @@
 //
 // AsyncContextData is the innermost Frame of a persistent linked list managed in
 // here: each Frame binds one AsyncLocalStorage to a value and points at the frame
-// it was pushed onto, so run() allocates one small object (re-linking only the
-// frames of other storages above an existing binding of the same storage),
-// getStore() walks a chain no longer than the number of storages, and a
-// captured context is a single reference that shares its tail with every other
-// capture.
+// it was pushed onto, so run() allocates one small object on entry and, when
+// nested, one on exit (re-linking only the frames of other storages above an
+// existing binding of the same storage), getStore() walks a chain no longer
+// than the number of storages, and a captured context is a single reference
+// that shares its tail with every other capture.
 //
 const setAsyncHooksEnabled = $newCppFunction("NodeAsyncHooks.cpp", "jsSetAsyncHooksEnabled", 1);
 const { validateFunction, validateString, validateObject } = require("internal/validators");
@@ -136,8 +136,9 @@ function push(head: Frame | undefined, storage: AsyncLocalStorage, value: unknow
 // `frame` with the binding of `storage` removed. Frames above it are copied
 // (they may be shared with other captures); the tail below it is shared. The
 // view from the result is the view from `frame` minus that binding, masks
-// included. run() and enterWith() both go through here, so a chain never holds
-// two bindings of one storage and a capture never keeps a shadowed value alive.
+// included. run() (inlined on entry) and enterWith() both drop the old binding
+// this way, so a chain never holds two bindings of one storage and a capture
+// never keeps a shadowed value alive.
 function without(frame: Frame | undefined, storage: AsyncLocalStorage): Frame | undefined {
   var found = find(frame, storage);
   if (found === undefined) return frame;
@@ -276,8 +277,17 @@ class AsyncLocalStorage {
       // which userland can delete (node uses ReflectApply here for the same reason).
       return callback.$apply(undefined, args);
     } finally {
-      if (get() === frame && mutations === frameMutations) {
-        set(prior);
+      var head = get();
+      if (
+        mutations === frameMutations &&
+        (head === frame ||
+          (head !== undefined && head.prev === frame.prev && head.storage === this && head.masked === frame.masked))
+      ) {
+        // Node exits through enterWith(prior), a fresh frame object: a later
+        // disable() reaches continuations captured after run() returned but not
+        // ones captured before it, so `prior` itself must not become current
+        // again. An enclosing run() recognises the copy of its frame above.
+        set(prior === undefined ? undefined : new Frame(prior.storage, prior.value, prior.prev, prior.masked));
       } else {
         // enterWith()/disable() ran inside the callback. Node's finally is
         // enterWith(prior store): keep whatever else the callback installed and
@@ -286,7 +296,7 @@ class AsyncLocalStorage {
         // copies everything above it), so go by value, not identity: drop the
         // binding of this storage and put the prior one back on top. Enclosing
         // run()s of the same storage restore their own value likewise.
-        set(push(without(get(), this), this, beforeValue));
+        set(push(without(head, this), this, beforeValue));
       }
       $assert(sameValue(this.getStore(), beforeValue), "run: previous value was not restored");
     }

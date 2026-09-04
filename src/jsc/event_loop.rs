@@ -451,10 +451,23 @@ impl EventLoop {
         self.drain_microtasks_with_global(global, jsc_vm)
     }
 
+    /// Whether the callbacks this loop runs from the current frame get their
+    /// microtask checkpoint here (`exit()` drains at depth 1). False while the
+    /// loop is being ticked from inside JS (`wait_for_promise` under a
+    /// callback), from a deferred task, or with draining suppressed (spawnSync):
+    /// there the enclosing frame's `tick()` drains, and reports rejections,
+    /// afterwards, and a promise whose `.catch()` is still queued must not be
+    /// reported before it.
+    fn checkpoints_here(&self) -> bool {
+        let vm = self.vm_ref();
+        self.entered_event_loop_count == 0
+            && !vm.is_inside_deferred_task_queue.get()
+            && !vm.suppress_microtask_drain.get()
+    }
+
     // should be called after exit()
     pub fn maybe_drain_microtasks(&mut self) -> Result<(), Stopped> {
-        if self.entered_event_loop_count == 0 && !self.vm_ref().is_inside_deferred_task_queue.get()
-        {
+        if self.checkpoints_here() {
             return self.drain_microtasks();
         }
         Ok(())
@@ -963,8 +976,9 @@ impl EventLoop {
     }
 
     /// `tickImmediateTasks` — swaps the two
-    /// immediate queues, drains the now-current batch, then recycles the
-    /// drained Vec as the next-tick buffer.
+    /// immediate queues, drains the now-current batch, reports the promise
+    /// rejections it left unhandled (as `tick()` does for its tasks), then
+    /// recycles the drained Vec as the next-tick buffer.
     ///
     /// Note: the real `ImmediateObject` lives in `bun_runtime` (cycle), so
     /// the per-task body dispatches through `__bun_run_immediate_task` (link-
@@ -996,19 +1010,36 @@ impl EventLoop {
 
         let mut exception_thrown = false;
         for task in to_run_now.iter() {
+            // `|=`: a callback that threw skipped its own checkpoint
+            // (`run_immediate_task`), which the batch tail below owes it even
+            // when a later task returns `false` (cleared, or unref'd and skipped).
             // SAFETY: ImmediateObject pointers are kept alive by the JS heap
             // until `__bun_run_immediate_task` consumes them; `virtual_machine` is the
             // live owning VM per caller contract.
-            exception_thrown = unsafe { __bun_run_immediate_task(*task, virtual_machine) };
+            exception_thrown |= unsafe { __bun_run_immediate_task(*task, virtual_machine) };
         }
         // Re-escape `this` after the re-entrant loop so nothing about `*this`
         // is carried across it.
         let this: *mut Self = core::hint::black_box(this);
 
-        // make sure microtasks are drained if the last task had an exception
-        if exception_thrown {
+        // SAFETY: as above.
+        if !to_run_now.is_empty() && unsafe { (*this).checkpoints_here() } {
             // SAFETY: as above.
-            let _ = unsafe { (*this).maybe_drain_microtasks() };
+            let stopped = exception_thrown && unsafe { (*this).drain_microtasks() }.is_err();
+            // Every callback of the batch has had its checkpoint, so what they
+            // left rejected is unhandled: report it before the caller polls.
+            // The poll parks until the next timer or I/O event, which can be far
+            // off or never come, and the places that otherwise report these
+            // (the caller's next `tick()`, `auto_tick`'s tail) come after it.
+            // Not with an exception pending (as in `tick()`: by now that is the
+            // termination, or one that escaped its fold), which the handlers
+            // would run on top of.
+            // SAFETY: as above; `global_ref()` is `'static`, so no borrow of
+            // `*this` is live while the handlers re-enter this loop.
+            let global = unsafe { (*this).global_ref() };
+            if !stopped && !global.has_exception() {
+                global.handle_rejected_promises();
+            }
         }
 
         // SAFETY: as above; this read MUST observe pushes JS made during the

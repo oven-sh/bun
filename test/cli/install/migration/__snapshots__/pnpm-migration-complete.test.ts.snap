@@ -363,6 +363,7 @@ exports[`PNPM Migration Complete Test Suite comprehensive PNPM migration with al
     },
     "packages/pkg1": {
       "name": "@workspace/pkg1",
+      "version": "1.0.0",
       "dependencies": {
         "@workspace/pkg2": "workspace:*",
         "lodash": "^4.17.21",
@@ -370,12 +371,14 @@ exports[`PNPM Migration Complete Test Suite comprehensive PNPM migration with al
     },
     "packages/pkg2": {
       "name": "@workspace/pkg2",
+      "version": "1.0.0",
       "dependencies": {
         "@workspace/pkg3": "workspace:*",
       },
     },
     "packages/pkg3": {
       "name": "@workspace/pkg3",
+      "version": "1.0.0",
       "dependencies": {
         "@workspace/pkg1": "workspace:*",
       },

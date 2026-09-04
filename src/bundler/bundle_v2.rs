@@ -1807,6 +1807,8 @@ pub mod bv2_impl {
 
     pub(crate) struct ReachableFileVisitor<'a> {
         pub(crate) reachable: Vec<Index>,
+        pub(crate) pre_order: Vec<u32>,
+        pub(crate) next_pre_order: u32,
         pub(crate) visited: DynamicBitSet,
         pub(crate) all_import_records: &'a mut [import_record::List<'a>],
         pub(crate) all_loaders: &'a [Loader],
@@ -1898,6 +1900,8 @@ pub mod bv2_impl {
                     continue;
                 }
                 self.visited.set(source_index.get() as usize);
+                self.pre_order[source_index.get() as usize] = self.next_pre_order;
+                self.next_pre_order += 1;
 
                 let mark = self.stack.len();
 
@@ -2107,6 +2111,8 @@ pub mod bv2_impl {
 
             let mut visitor = ReachableFileVisitor {
                 reachable: Vec::with_capacity(self.graph.entry_points.len() + 1),
+                pre_order: vec![u32::MAX; self.graph.input_files.len()],
+                next_pre_order: 0,
                 visited: DynamicBitSet::init_empty(self.graph.input_files.len())?,
                 redirects: self.graph.ast.items_redirect_import_record_index(),
                 all_import_records,
@@ -2164,7 +2170,12 @@ pub mod bv2_impl {
             // reshaped for borrowck — release the visitor's `&mut`
             // borrows on the two bitsets and `input_files` columns before the
             // cleanup loop reads them.
-            let ReachableFileVisitor { reachable, .. } = visitor;
+            let ReachableFileVisitor {
+                reachable,
+                pre_order,
+                ..
+            } = visitor;
+            self.linker.graph.dfs_pre_order = pre_order;
 
             // reshaped for borrowck — three disjoint mutable SoA
             // columns via `split_mut()` on a value-type `Slice` snapshot.

@@ -251,6 +251,10 @@ pub struct LinkerGraph<'a> {
     /// Index from `.parse_graph.input_files` to index in `.files`
     pub(crate) stable_source_indices: Vec<u32>,
 
+    /// DFS entry order selects cycle roots; post-order remains the stable index
+    /// used for symbol naming and cross-chunk dependencies.
+    pub(crate) dfs_pre_order: Vec<u32>,
+
     pub(crate) is_scb_bitset: BitSet,
 
     /// This is for cross-module inlining of detected inlinable constants
@@ -268,7 +272,7 @@ pub struct LinkerGraph<'a> {
 //   (no new allocations) for the duration of any worker-pool fan-out that
 //   holds `&LinkerGraph`.
 // - `files_live` / `parts_live` / `is_scb_bitset` / `reachable_files` /
-//   `stable_source_indices` / `code_splitting` / `ts_enums` are populated
+//   `stable_source_indices` / `dfs_pre_order` / `code_splitting` / `ts_enums` are populated
 //   before fan-out and only read by workers.
 // - `ast` / `meta` / `files` columns that workers mutate are split out via
 //   `split_mut()` into disjoint `&mut [_]` *before* the pool runs (see
@@ -316,6 +320,7 @@ impl Default for LinkerGraph<'_> {
             meta: MultiArrayList::default(),
             reachable_files: Vec::new(),
             stable_source_indices: Vec::new(),
+            dfs_pre_order: Vec::new(),
             is_scb_bitset: BitSet::default(),
             ts_enums: bun_ast::ast_result::TsEnumsMap::default(),
             import_member_bindings: bun_ast::ast_result::ImportMemberBindings::default(),

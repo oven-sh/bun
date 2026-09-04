@@ -1490,6 +1490,179 @@ describe("bundler", () => {
     run: { file: "/out/e1.js", stdout: 'e1 ab ["b","a"]' },
   });
 
+  // Removing a tree-shaken importer from a shared chunk must not discard its
+  // import order when selecting the root of the A/B cycle. Otherwise A runs
+  // first and permanently captures B's uninitialized namespace property.
+  itBundled("splitting/TreeShakenImporterPreservesCyclicChunkOrder", {
+    files: {
+      "/a.ts": /* js */ `
+        export * as A from "./a";
+        import { B } from "./b";
+        export const node = { name: "a", deps: [B.node] };
+      `,
+      "/b.ts": /* js */ `
+        export * as B from "./b";
+        import { A } from "./a";
+        export const readA = () => A.node.name;
+        export const node = { name: "b", deps: [] };
+      `,
+      "/p.ts": /* js */ `
+        export * as P from "./p";
+        import { A } from "./a";
+        export const node = { name: "p", deps: [A.node] };
+      `,
+      "/group.ts": /* js */ `
+        import { A } from "./a";
+        import { B } from "./b";
+        import { P } from "./p";
+        export const nodes = [P.node, B.node, A.node];
+      `,
+      "/hub1.ts": /* js */ `
+        import { A } from "./a";
+        import { B } from "./b";
+        import { P } from "./p";
+        export const orderAnchor = "HUB1_ORDER_ANCHOR";
+        export const a = A.node;
+        export const b = B.node;
+        export const p = P.node;
+      `,
+      "/hub3.ts": /* js */ `
+        import { A } from "./a";
+        import { B } from "./b";
+        import { P } from "./p";
+        export const a = A.node;
+        export const b = B.node;
+        export const p = P.node;
+      `,
+      "/hub4.ts": /* js */ `
+        import { A } from "./a";
+        import { B } from "./b";
+        import { P } from "./p";
+        export const a = A.node;
+        export const b = B.node;
+        export const p = P.node;
+      `,
+      "/lazy.ts": /* js */ `
+        import { p as lazyP } from "./hub4";
+        import { p as deadP } from "./hub1";
+        console.log("lazy", lazyP.name);
+      `,
+      "/entry.ts": /* js */ `
+        import { nodes } from "./group";
+        import { p as entryP } from "./hub3";
+        import { b as entryB, orderAnchor } from "./hub1";
+        await import("./lazy");
+        if (orderAnchor !== "HUB1_ORDER_ANCHOR") throw new Error("bad anchor");
+        console.log("entry", entryB.name, entryP.name);
+        console.log("dependency", nodes[2].deps[0]?.name ?? "undefined");
+      `,
+    },
+    entryPoints: ["/entry.ts"],
+    splitting: true,
+    outdir: "/out",
+    format: "esm",
+    onAfterBundle(api) {
+      const outputs = jsFilesIn(api);
+      expect(outputs).toHaveLength(3);
+      expect(api.readFile("/out/entry.js")).toContain("HUB1_ORDER_ANCHOR");
+      for (const output of outputs) {
+        if (output !== "entry.js") expect(api.readFile("/out/" + output)).not.toContain("HUB1_ORDER_ANCHOR");
+      }
+    },
+    run: {
+      file: "/out/entry.js",
+      stdout: "lazy p\nentry b p\ndependency b",
+    },
+  });
+
+  // Do not topologically sort the initializer parts. Here the live importer
+  // intentionally reaches B before A, so A must observe B before B initializes.
+  itBundled("splitting/CyclicChunkPreservesLiveImporterOrder", {
+    files: {
+      "/a.ts": /* js */ `
+        export * as A from "./a";
+        import { B } from "./b";
+        export var node = { name: "a", dependency: B.node?.name ?? "undefined" };
+      `,
+      "/b.ts": /* js */ `
+        export * as B from "./b";
+        import { A } from "./a";
+        export var node = { name: "b" };
+        export const readA = () => A.node.name;
+      `,
+      "/hub.ts": /* js */ `
+        import { B } from "./b";
+        import { A } from "./a";
+        export const nodes = [B.node, A.node];
+        export const readA = () => B.readA();
+      `,
+      "/lazy.ts": /* js */ `
+        import { nodes } from "./hub";
+        console.log("lazy", nodes[1].dependency);
+      `,
+      "/entry.ts": /* js */ `
+        import { nodes, readA } from "./hub";
+        await import("./lazy");
+        console.log("entry", nodes[0].name, readA());
+      `,
+    },
+    entryPoints: ["/entry.ts"],
+    splitting: true,
+    outdir: "/out",
+    format: "esm",
+    run: {
+      file: "/out/entry.js",
+      stdout: "lazy undefined\nentry b a",
+    },
+  });
+
+  // The first DFS path reaches A through X, but BFS reaches B through M first.
+  // Both the static entry and the lazy entry require B to initialize before A.
+  for (const splitting of [false, true]) {
+    itBundled(`splitting/CyclicChunkPreservesDeepImporterOrder${splitting ? "Split" : "Unsplit"}`, {
+      files: {
+        "/a.js": `
+          import { B } from "./b.js";
+          export * as A from "./a.js";
+          export var node = { name: "a", dependency: B.node?.name ?? "undefined" };
+        `,
+        "/b.js": `
+          import { A } from "./a.js";
+          export * as B from "./b.js";
+          export var node = { name: "b" };
+          export const readA = () => A.node.name;
+        `,
+        "/x.js": `import { A } from "./a.js"; export const a = A.node;`,
+        "/m.js": `
+          import { a } from "./x.js";
+          import { B } from "./b.js";
+          export const nodes = [a, B.node];
+          export const readA = B.readA;
+        `,
+        "/n.js": `import { A } from "./a.js"; export const a = A.node;`,
+        "/w.js": `import { A } from "./a.js"; export const a = A.node;`,
+        "/lazy.js": `
+          import { a } from "./w.js";
+          console.log("lazy", a.dependency);
+        `,
+        "/entry.js": `
+          import { nodes, readA } from "./m.js";
+          import { a } from "./n.js";
+          await import("./lazy.js");
+          console.log("entry", nodes[0].dependency, nodes[1].name, readA(), a.dependency);
+        `,
+      },
+      entryPoints: ["/entry.js", "/lazy.js"],
+      splitting,
+      outdir: "/out",
+      format: "esm",
+      run: [
+        { file: "/out/entry.js", stdout: "lazy b\nentry b b a b" },
+        { file: "/out/lazy.js", stdout: "lazy b" },
+      ],
+    });
+  }
+
   // import() of another chunk is printed as import(); it does not pull the
   // runtime's __require into the bundle.
   itBundled("splitting/DynamicImportDoesNotNeedRequireShim", {

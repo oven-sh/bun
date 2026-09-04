@@ -323,7 +323,6 @@ impl Stdio {
         global: &JSGlobalObject,
         i: i32,
         body: &mut webcore::body::Value,
-        is_sync: bool,
     ) -> JsResult<()> {
         body.to_blob_if_possible();
 
@@ -353,12 +352,6 @@ impl Stdio {
             | webcore::body::Value::WTFStringImpl(_)
             | webcore::body::Value::InternalBlob(_) => unreachable!(),
             webcore::body::Value::Locked(_) => {
-                if is_sync {
-                    return Err(global.throw_invalid_arguments(format_args!(
-                        "ReadableStream cannot be used in sync mode"
-                    )));
-                }
-
                 match i {
                     0 => {}
                     1 => {
@@ -504,9 +497,9 @@ impl Stdio {
             // `value` is on the stack. `dupe()` only bumps the store refcount.
             return out_stdio.extract_blob(global, webcore::blob::Any::Blob(blob.dupe()), i);
         } else if let Some(req) = value.as_class_ref::<webcore::Request>() {
-            return Self::extract_body_value(out_stdio, global, i, req.get_body_value(), is_sync);
+            return Self::extract_body_value(out_stdio, global, i, req.get_body_value());
         } else if let Some(res) = value.as_class_ref::<webcore::Response>() {
-            return Self::extract_body_value(out_stdio, global, i, res.get_body_value(), is_sync);
+            return Self::extract_body_value(out_stdio, global, i, res.get_body_value());
         }
 
         if let Some(stream_) = webcore::ReadableStream::from_js(value, global)? {
@@ -526,7 +519,7 @@ impl Stdio {
                 }
             };
 
-            if is_sync {
+            if is_sync && i != 0 {
                 return Err(global.throw_invalid_arguments(format_args!(
                     "'{}' ReadableStream cannot be used in sync mode",
                     bstr::BStr::new(name),

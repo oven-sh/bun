@@ -911,6 +911,54 @@ fn spawn_maybe_sync(
     }
     let _ = &inherited_env_storage;
 
+    if IS_SYNC {
+        // The isolated uws loop cannot receive HTTP data or run microtasks,
+        // so drain a streaming stdin to bytes on the main loop first.
+        // `timeout`/`signal` do not bound this drain (Node's `timeout` is
+        // child runtime only).
+        if matches!(stdio[0], Stdio::ReadableStream(_)) {
+            let Stdio::ReadableStream(stream) = core::mem::replace(&mut stdio[0], Stdio::Ignore)
+            else {
+                unreachable!()
+            };
+            let stream_value = stream.value;
+            stream_value.ensure_still_alive();
+            let bytes_result = jsc::from_js_host_call(global_this, || {
+                global_this.readable_stream_to_bytes(stream_value)
+            })?;
+            let bytes_value = match bytes_result.as_any_promise() {
+                Some(promise) => {
+                    jsc_vm.wait_for_promise(promise);
+                    match promise.unwrap(global_this.vm(), jsc::js_promise::UnwrapMode::MarkHandled)
+                    {
+                        jsc::js_promise::Unwrapped::Fulfilled(v) => v,
+                        jsc::js_promise::Unwrapped::Rejected(err) => {
+                            return Err(global_this.throw_value(err));
+                        }
+                        jsc::js_promise::Unwrapped::Pending => {
+                            return Err(global_this.throw_invalid_arguments(format_args!(
+                                "stdin ReadableStream did not settle before spawnSync"
+                            )));
+                        }
+                    }
+                }
+                None => bytes_result,
+            };
+            bytes_value.ensure_still_alive();
+            match bytes_value.as_array_buffer(global_this) {
+                Some(ab) if !ab.byte_slice().is_empty() => {
+                    stdio[0] = Stdio::ArrayBuffer(jsc::array_buffer::ArrayBufferStrong {
+                        array_buffer: ab,
+                        held: jsc::StrongOptional::create(bytes_value, global_this),
+                    });
+                }
+                _ => {
+                    stdio[0] = Stdio::Ignore;
+                }
+            }
+        }
+    }
+
     for fd_index in 0..stdio.len() {
         if stdio[fd_index].can_use_memfd() {
             if stdio[fd_index].use_memfd(fd_index as u32) {

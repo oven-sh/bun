@@ -55,6 +55,62 @@ for (const [impl, name] of [
   });
 }
 
+// https://github.com/oven-sh/bun/issues/13390
+test("node-fetch Response accepts a legacy Stream body that is not a stream.Readable", async () => {
+  class MinipassLike extends stream.Stream {
+    end(chunk) {
+      if (chunk) this.emit("data", chunk);
+      this.emit("end");
+    }
+  }
+
+  const body = new MinipassLike();
+  expect(body instanceof stream.Stream).toBe(true);
+  expect(body instanceof stream.Readable).toBe(false);
+  expect(body._readableState).toBeUndefined();
+
+  const res = new Response(body, { status: 200 });
+  queueMicrotask(() => body.end(Buffer.from("hello world")));
+
+  expect(res.body).toBeInstanceOf(stream.Readable);
+  expect(await res.text()).toBe("hello world");
+});
+
+test("node-fetch Response rejects body consumers when a legacy Stream body errors", async () => {
+  class MinipassLike extends stream.Stream {}
+
+  const body = new MinipassLike();
+  body.on("error", () => {});
+
+  const res = new Response(body, { status: 200 });
+  queueMicrotask(() => body.emit("error", new Error("integrity check failed")));
+
+  await expect(res.text()).rejects.toThrow("integrity check failed");
+});
+
+test("node-fetch fetch() rejects when a legacy Stream request body errors", async () => {
+  using server = Bun.serve({
+    port: 0,
+    fetch: () => new Response("ok"),
+  });
+
+  class Legacy extends stream.Stream {}
+  const body = new Legacy();
+  body.on("error", () => {});
+
+  const p = fetch2(server.url.href, { method: "POST", body });
+  queueMicrotask(() => body.emit("error", new Error("upload failed")));
+
+  await expect(p).rejects.toThrow("upload failed");
+});
+
+test("node-fetch Response accepts a stream.Readable body", async () => {
+  const body = stream.Readable.from([Buffer.from("from "), Buffer.from("readable")]);
+  const res = new Response(body, { status: 200 });
+  expect(res.body).toBeInstanceOf(stream.Readable);
+  expect(await res.text()).toBe("from readable");
+});
+
 test("node-fetch uses node streams instead of web streams", async () => {
   using server = Bun.serve({
     port: 0,

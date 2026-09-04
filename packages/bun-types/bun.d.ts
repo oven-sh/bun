@@ -3593,13 +3593,15 @@ declare module "bun" {
     files?: Record<string, string | Blob | NodeJS.TypedArray | ArrayBufferLike>;
 
     /**
-     * Generate a JSON file containing metadata about the build.
+     * Generate metadata about the build.
      *
      * The metafile contains information about inputs, outputs, imports, and exports
      * which can be used for bundle analysis, visualization, or integration with
      * other tools.
      *
-     * When `true`, the metafile JSON string is included in the {@link BuildOutput.metafile} property.
+     * When `true`, the metafile is returned as the {@link BuildOutput.metafile}
+     * object (a {@link BuildMetafile}, not a JSON string); serialize it with
+     * `JSON.stringify` to write it to disk.
      *
      * @default false
      *
@@ -3611,15 +3613,13 @@ declare module "bun" {
      *   metafile: true,
      * });
      *
-     * // Write metafile to disk for analysis
      * if (result.metafile) {
-     *   await Bun.write('./dist/meta.json', result.metafile);
-     * }
+     *   console.log('Input files:', Object.keys(result.metafile.inputs));
+     *   console.log('Output files:', Object.keys(result.metafile.outputs));
      *
-     * // Parse and analyze the metafile
-     * const meta = JSON.parse(result.metafile!);
-     * console.log('Input files:', Object.keys(meta.inputs));
-     * console.log('Output files:', Object.keys(meta.outputs));
+     *   // Write the metafile to disk for analysis tools
+     *   await Bun.write('./dist/meta.json', JSON.stringify(result.metafile));
+     * }
      * ```
      */
     metafile?: boolean;
@@ -3629,8 +3629,14 @@ declare module "bun" {
     /**
      * Create a standalone executable or self-contained HTML.
      *
-     * When `true`, creates an executable for the current platform.
-     * When a target string, creates an executable for that platform.
+     * When `true`, creates an executable for the current platform. When a
+     * {@link Bun.Build.CompileTarget} string such as `"bun-linux-x64"`,
+     * cross-compiles for that platform. Both derive the executable's name from
+     * the entrypoint (`app.ts` becomes `app`, or `app.exe` for Windows targets;
+     * an `index.*` entrypoint uses its directory's name instead). Pass a
+     * {@link CompileBuildOptions} object to set the output path explicitly
+     * (`outfile` lives in that object, `Bun.build()` has no top-level `outfile`)
+     * or any of the other executable options.
      *
      * When used with `target: "browser"`, produces self-contained HTML files
      * with all scripts, styles, and assets inlined. All `<script>` tags become
@@ -3640,20 +3646,25 @@ declare module "bun" {
      *
      * @example
      * ```ts
-     * // Create executable for current platform
+     * // Create an executable for the current platform
      * await Bun.build({
      *   entrypoints: ['./app.js'],
-     *   compile: {
-     *     target: 'linux-x64',
-     *   },
-     *   outfile: './my-app'
+     *   compile: true,
      * });
      *
      * // Cross-compile for Linux x64
      * await Bun.build({
      *   entrypoints: ['./app.js'],
-     *   compile: 'linux-x64',
-     *   outfile: './my-app'
+     *   compile: 'bun-linux-x64',
+     * });
+     *
+     * // Cross-compile and choose the output path
+     * await Bun.build({
+     *   entrypoints: ['./app.js'],
+     *   compile: {
+     *     target: 'bun-linux-x64',
+     *     outfile: './my-app',
+     *   },
      * });
      *
      * // Produce self-contained HTML
@@ -4422,8 +4433,8 @@ declare module "bun" {
    *   entrypoints: ['./src/index.tsx'],
    *   outdir: './dist',
    *   loader: {
-   *     '.png': 'dataurl',
-   *     '.svg': 'file',
+   *     '.png': 'file',
+   *     '.svg': 'text',
    *     '.txt': 'text',
    *     '.json': 'json'
    *   },

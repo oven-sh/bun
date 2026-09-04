@@ -125,7 +125,7 @@ Tables: `cpuTargetFlags` (`-march`/`-mcpu`/`-mtune` — also forwarded to local 
 
 **Iterate on a dependency from a local checkout** — `bun bd --local-deps=mimalloc=~/code/mimalloc …` builds that dep from the clone instead of the pinned tarball (no fetch, no patches; edits rebuild incrementally). Any `github-archive` dep the graph compiles (not lolhtml or rust-argon2 — cargo reads those via `Cargo.toml`); details in `deps/README.md`.
 
-**Add a codegen step** — add a function in `codegen.ts` following the shape of `emitErrorCode` (simple) or `emitCppBind` (needs file-list input). Call it from `emitCodegen()` and add outputs to the right `CodegenOutputs` group (`rustInputs` if the Rust build reads it (the `include!`d generated `.rs` files) — `cppSources` if it's a `.cpp` to compile, `cppAll` if it's a header).
+**Add a codegen step** — add a function in `codegen.ts` following the shape of `emitErrorCode` (simple) or `emitCppBind` (needs file-list input). Use the `codegen` rule: it runs the script with `cfg.jsRuntime`, so the script must run under node and bun. Call it from `emitCodegen()` and add outputs to the right `CodegenOutputs` group (`rustInputs` if the Rust build reads it (the `include!`d generated `.rs` files) — `cppSources` if it's a `.cpp` to compile, `cppHeaders` if it's a header. `emitCodegen()` builds `cppAll` from those groups at the end, so do not push to it).
 
 **Add a Config field** — add to `Config` interface and `PartialConfig` in `config.ts`, resolve in `resolveConfig()`. If it needs a CLI flag, `build.ts`'s arg parser already handles `--anyfield=value` generically.
 
@@ -245,14 +245,14 @@ Why not auto-register in emit functions? Some rules are shared (`dep_configure` 
 
 ## Node compatibility
 
-The build system runs under Node 24+ with `--experimental-strip-types` (or Node 25+ without the flag). CI invokes it this way via `process.execPath` in `.buildkite/ci.mjs`.
+The build system runs under Node 25+ (configure checks the version). CI installs Node 26 and invokes it via `process.execPath` in `.buildkite/ci.mjs`.
 
-`cfg.jsRuntime` holds the shell-ready command prefix for running `.ts` subprocesses (stream.ts, fetch-cli.ts, the regen rule) — it's `process.execPath` when bun runs configure, or `node --experimental-strip-types` when node does. The subprocesses inherit whichever runtime started the build.
+`cfg.jsRuntime` holds the shell-ready command prefix for running `.ts` subprocesses (stream.ts, fetch-cli.ts, the regen rule, the `codegen` rule) — it's `process.execPath` when bun runs configure, or `node --experimental-strip-types` when node does. The subprocesses inherit whichever runtime started the build.
 
-**TODO — remaining `cfg.bun` usage (codegen only):** For a fully bun-optional build:
+**Remaining `cfg.bun` usage (codegen only):** For a fully bun-optional build:
 
-- `cfg.packageManager` — `bun install` or `npm install` for the one codegen install step.
-- Codegen `.ts` scripts (~20 ninja rules) — either verify they're node-compatible and switch to `cfg.jsRuntime`, or bundle them via esbuild first and run the output with plain node.
+- `cfg.packageManager` — `--package-manager=npm` runs the codegen installs with npm (`npm-ci.ts`). The default is bun.
+- Codegen scripts on the `codegen_bun` rule still need bun. Move a script to the `codegen` rule once it runs under node, and check that both runtimes write the same output.
 - `cfg.esbuild` — already separate.
 
 With those done, `cfg.bun` disappears.

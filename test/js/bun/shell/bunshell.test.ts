@@ -1380,6 +1380,20 @@ ${temp_dir}`
     });
   });
 
+  // A lone `-` is an operand (a file named `-`), as with getopt(3). The option
+  // parsers used to reject it as `illegal option -- -` (rm and mv swallowed it
+  // as an empty flag cluster instead).
+  describe("lone - operand", () => {
+    TestBuilder.command`touch -`.ensureTempDir().stderr("").exitCode(0).fileEquals("-", "").runAsTest("touch -");
+
+    TestBuilder.command`mkdir -p -; echo inside > -/file.txt`
+      .ensureTempDir()
+      .stderr("")
+      .exitCode(0)
+      .fileEquals("-/file.txt", "inside\n")
+      .runAsTest("mkdir -p - creates a directory named -");
+  });
+
   /**
    *
    */

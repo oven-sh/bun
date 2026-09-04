@@ -871,7 +871,7 @@ bun run --silent dev
 
 ### `run.elide-lines` - truncate filtered output
 
-The number of lines of script output shown per script when using `--filter`. Default `10`. Set to `0` to show all lines. Equivalent to the `--elide-lines` flag.
+When using `--filter` in a terminal, show at most the last N lines of each finished script's output. Default `0` (show all lines). Equivalent to the `--elide-lines` flag.
 
 ```toml title="bunfig.toml" icon="settings"
 [run]

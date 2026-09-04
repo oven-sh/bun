@@ -65,6 +65,8 @@ pub(crate) struct ProcessHandle<'a> {
     /// `remaining_scripts`, so a later pipe/exit event or the abort sweep
     /// cannot finish it twice.
     finished: bool,
+    /// Pretty mode: the final block has been written above the live region.
+    flushed: bool,
     buffer: Vec<u8>,
 
     process: Option<ProcessInfo>,
@@ -324,7 +326,8 @@ struct State<'a> {
     remaining_scripts: usize,
     // buffer for batched output
     draw_buf: Vec<u8>,
-    last_lines_written: usize,
+    /// Lines currently on screen below the flushed output, erased on each redraw.
+    live_lines: usize,
     pretty_output: bool,
     shell_bin: &'static ZStr, // intentionally leaked (process exits)
     aborted: bool,
@@ -503,6 +506,99 @@ impl<'a> State<'a> {
         }
     }
 
+    /// Upper bound on the redrawn region; everything else is append-only.
+    const MAX_LIVE_LINES: usize = 50;
+
+    fn write_header(out: &mut Vec<u8>, config: &ScriptConfig) -> crate::Result<()> {
+        config.color.label(out, &config.package_name);
+        write!(
+            out,
+            fmt!(" {s} <d>$ {s}<r>  "),
+            bstr::BStr::new(&config.script_name),
+            bstr::BStr::new(&config.script_content),
+        )?;
+        Ok(())
+    }
+
+    fn line_count(buf: &[u8]) -> usize {
+        strings::count_char(buf, b'\n') + (!buf.is_empty() && !buf.ends_with(b"\n")) as usize
+    }
+
+    fn write_lines(out: &mut Vec<u8>, color: LabelColor, mut content: &[u8]) {
+        while !content.is_empty() {
+            let (line, rest) = match strings::index_of_char(content, b'\n') {
+                Some(i) => content.split_at(i as usize + 1),
+                None => (content, &b""[..]),
+            };
+            color.gutter(out);
+            out.extend_from_slice(fmt!("│<r> ").as_bytes());
+            out.extend_from_slice(line);
+            if !line.ends_with(b"\n") {
+                out.push(b'\n');
+            }
+            content = rest;
+        }
+    }
+
+    /// A script's permanent block: header with its final status, then its output.
+    fn write_final(
+        out: &mut Vec<u8>,
+        handle: &ProcessHandle<'a>,
+        is_abort: bool,
+    ) -> crate::Result<()> {
+        Self::write_header(out, handle.config)?;
+        match handle.process.as_ref().map(|p| (&p.status, p)) {
+            None => out.extend_from_slice(fmt!("<d>[not started]<r>\n").as_bytes()),
+            Some((Status::Running, _)) => {
+                out.extend_from_slice(fmt!("<red>[interrupted]<r>\n").as_bytes())
+            }
+            Some((Status::Exited(exited), p)) if exited.code == 0 => match p.end_time {
+                Some(end) => {
+                    let ms = end.duration_since(p.start_time).as_secs_f64() * 1000.0;
+                    if ms > 1000.0 {
+                        write!(out, fmt!("<d>[{:.2} s]<r>\n"), ms / 1000.0)?;
+                    } else {
+                        write!(out, fmt!("<d>[{:.0} ms]<r>\n"), ms)?;
+                    }
+                }
+                None => out.extend_from_slice(fmt!("<d>[done]<r>\n").as_bytes()),
+            },
+            Some((Status::Exited(exited), _)) => {
+                write!(out, fmt!("<red>[exit {d}]<r>\n"), exited.code)?;
+            }
+            Some((Status::Signaled(code), _)) => {
+                if *code == bun_sys::SignalCode::SIGINT.0 {
+                    out.extend_from_slice(fmt!("<red>[interrupted]<r>\n").as_bytes());
+                } else {
+                    write!(
+                        out,
+                        fmt!("<red>[{s}]<r>\n"),
+                        bun_sys::SignalCode(*code).name().unwrap_or("UNKNOWN"),
+                    )?;
+                }
+            }
+            Some((Status::Err(_), _)) => {
+                out.extend_from_slice(fmt!("<red>[failed to start]<r>\n").as_bytes());
+            }
+        }
+        // on abort we print everything to aid debugging
+        let max = if is_abort {
+            None
+        } else {
+            handle.config.elide_count.filter(|&n| n > 0)
+        };
+        let e = Self::elide(&handle.buffer, max);
+        if e.elided_count > 0 {
+            handle.config.color.gutter(out);
+            write!(out, fmt!("│<r> <d>[{d} lines elided]<r>\n"), e.elided_count)?;
+        }
+        Self::write_lines(out, handle.config.color, e.content);
+        Ok(())
+    }
+
+    /// Finished scripts are written once, in completion order, and never
+    /// touched again; below them a bounded region (running scripts with the
+    /// tail of their output, then what is still waiting) is erased and redrawn.
     fn redraw(&mut self, is_abort: bool) -> crate::Result<()> {
         if !self.pretty_output {
             return Ok(());
@@ -510,122 +606,117 @@ impl<'a> State<'a> {
         self.draw_buf.clear();
         self.draw_buf
             .extend_from_slice(Output::SYNCHRONIZED_START.as_bytes());
-        if self.last_lines_written > 0 {
-            // move cursor to the beginning of the line and clear it
-            self.draw_buf.extend_from_slice(b"\x1b[0G\x1b[K");
-            for _ in 0..self.last_lines_written {
-                // move cursor up and clear the line
-                self.draw_buf.extend_from_slice(b"\x1b[1A\x1b[K");
-            }
+        for _ in 0..self.live_lines {
+            // cursor up one line, clear it
+            self.draw_buf.extend_from_slice(b"\x1b[1A\x1b[2K");
         }
-        // Reshaped for borrowck — iterating handles by index since draw_buf is also &mut self.
+        self.draw_buf.extend_from_slice(b"\x1b[0G");
+
         for idx in 0..self.handles.len() {
             let handle = &self.handles[idx];
-            // normally we truncate the output to 10 lines, but on abort we print everything to aid debugging
-            let elide_lines = if is_abort {
-                None
-            } else {
-                Some(handle.config.elide_count.unwrap_or(10))
-            };
-            let e = Self::elide(&handle.buffer, elide_lines);
-            let color = handle.config.color;
+            if handle.flushed || !(handle.finished || is_abort) {
+                continue;
+            }
+            if is_abort && handle.process.is_none() {
+                continue;
+            }
+            // Reshaped for borrowck: draw_buf and handles are both fields of self.
+            let mut out = core::mem::take(&mut self.draw_buf);
+            Self::write_final(&mut out, &self.handles[idx], is_abort)?;
+            self.draw_buf = out;
+            self.handles[idx].flushed = true;
+        }
 
-            color.label(&mut self.draw_buf, &handle.config.package_name);
-            write!(
-                &mut self.draw_buf,
-                fmt!(" {s} $ <d>{s}<r>\n"),
-                bstr::BStr::new(&handle.config.script_name),
-                bstr::BStr::new(&handle.config.script_content),
-            )?;
-            if e.elided_count > 0 {
-                color.gutter(&mut self.draw_buf);
-                write!(
-                    &mut self.draw_buf,
-                    fmt!("│<r> <d>[{d} lines elided]<r>\n"),
-                    e.elided_count,
-                )?;
+        let winsize = bun_core::output::File::from(bun_core::Fd::stdout()).winsize();
+        let rows = winsize.map_or(24, |w| w.row as usize);
+        let budget = Self::MAX_LIVE_LINES.min(rows.saturating_sub(1));
+        let running = self
+            .handles
+            .iter()
+            .filter(|h| !h.flushed && h.process.is_some())
+            .count();
+        let waiting = self
+            .handles
+            .iter()
+            .filter(|h| !h.flushed && h.process.is_none())
+            .count();
+        let waiting_lines = waiting
+            .min(budget.saturating_sub(running * 2))
+            .max((waiting > 0) as usize);
+        let tail_each = if running == 0 {
+            0
+        } else {
+            budget.saturating_sub(running + waiting_lines) / running
+        };
+
+        // Lines here are clipped, not wrapped, so `live_lines` is exact.
+        self.draw_buf.extend_from_slice(b"\x1b[?7l");
+        let mut live_lines = 0usize;
+        for handle in self.handles.iter() {
+            if handle.flushed || handle.process.is_none() || live_lines >= budget {
+                continue;
             }
-            let mut content = e.content;
-            while let Some(i) = strings::index_of_char(content, b'\n') {
-                let i = i as usize;
-                let line = &content[0..i + 1];
-                color.gutter(&mut self.draw_buf);
-                self.draw_buf.extend_from_slice(fmt!("│<r> ").as_bytes());
-                self.draw_buf.extend_from_slice(line);
-                content = &content[i + 1..];
-            }
-            if !content.is_empty() {
-                color.gutter(&mut self.draw_buf);
-                self.draw_buf.extend_from_slice(fmt!("│<r> ").as_bytes());
-                self.draw_buf.extend_from_slice(content);
-                self.draw_buf.push(b'\n');
-            }
-            color.gutter(&mut self.draw_buf);
-            self.draw_buf.extend_from_slice("└─ ".as_bytes());
-            if let Some(proc) = &handle.process {
-                match &proc.status {
-                    Status::Running => {
-                        self.draw_buf
-                            .extend_from_slice(fmt!("Running...<r>\n").as_bytes());
-                    }
-                    Status::Exited(exited) => {
-                        if exited.code == 0 {
-                            if let Some(end) = proc.end_time {
-                                let duration = end.duration_since(proc.start_time);
-                                let ms = duration.as_nanos() as f64 / 1_000_000.0;
-                                if ms > 1000.0 {
-                                    write!(
-                                        &mut self.draw_buf,
-                                        fmt!("Done in {:.2} s<r>\n"),
-                                        ms / 1_000.0,
-                                    )?;
-                                } else {
-                                    write!(&mut self.draw_buf, fmt!("Done in {:.0} ms<r>\n"), ms,)?;
-                                }
-                            } else {
-                                self.draw_buf
-                                    .extend_from_slice(fmt!("Done<r>\n").as_bytes());
-                            }
-                        } else {
-                            write!(
-                                &mut self.draw_buf,
-                                fmt!("<r><red>Exited with code {d}<r>\n"),
-                                exited.code,
-                            )?;
-                        }
-                    }
-                    Status::Signaled(code) => {
-                        if *code == bun_sys::SignalCode::SIGINT.0 {
-                            write!(&mut self.draw_buf, fmt!("<r><red>Interrupted<r>\n"))?;
-                        } else {
-                            write!(
-                                &mut self.draw_buf,
-                                fmt!("<r><red>Signaled with code {s}<r>\n"),
-                                bun_sys::SignalCode(*code).name().unwrap_or("UNKNOWN"),
-                            )?;
-                        }
-                    }
-                    Status::Err(_) => {
-                        self.draw_buf
-                            .extend_from_slice(fmt!("<r><red>Error<r>\n").as_bytes());
-                    }
+            Self::write_header(&mut self.draw_buf, handle.config)?;
+            handle.config.color.gutter(&mut self.draw_buf);
+            self.draw_buf.extend_from_slice("…".as_bytes());
+            let max = match handle.config.elide_count {
+                Some(n) if n > 0 => n.min(tail_each),
+                _ => tail_each,
+            };
+            let e = if max == 0 {
+                ElideResult {
+                    content: &[],
+                    elided_count: Self::line_count(&handle.buffer),
                 }
             } else {
+                Self::elide(&handle.buffer, Some(max))
+            };
+            if e.elided_count > 0 {
                 write!(
                     &mut self.draw_buf,
-                    fmt!("<d>Waiting for {d} other script(s)<r>\n"),
-                    handle.remaining_dependencies,
+                    fmt!("<r> <d>({d} lines)<r>"),
+                    e.elided_count + Self::line_count(e.content),
                 )?;
             }
+            self.draw_buf.extend_from_slice(fmt!("<r>\n").as_bytes());
+            live_lines += 1;
+            let before = self.draw_buf.len();
+            Self::write_lines(&mut self.draw_buf, handle.config.color, e.content);
+            live_lines += strings::count_char(&self.draw_buf[before..], b'\n');
         }
+        if waiting > 0 {
+            let shown = if waiting_lines < waiting {
+                waiting_lines - 1
+            } else {
+                waiting
+            };
+            let mut n = 0;
+            for handle in self.handles.iter() {
+                if handle.flushed || handle.process.is_some() {
+                    continue;
+                }
+                if n == shown {
+                    break;
+                }
+                Self::write_header(&mut self.draw_buf, handle.config)?;
+                self.draw_buf
+                    .extend_from_slice(fmt!("<d>[waiting]<r>\n").as_bytes());
+                n += 1;
+            }
+            if shown < waiting {
+                write!(
+                    &mut self.draw_buf,
+                    fmt!("<d>[{d} more waiting]<r>\n"),
+                    waiting - shown
+                )?;
+                n += 1;
+            }
+            live_lines += n;
+        }
+        self.draw_buf.extend_from_slice(b"\x1b[?7h");
+        self.live_lines = live_lines;
         self.draw_buf
             .extend_from_slice(Output::SYNCHRONIZED_END.as_bytes());
-        self.last_lines_written = 0;
-        for &c in &self.draw_buf {
-            if c == b'\n' {
-                self.last_lines_written += 1;
-            }
-        }
         self.flush_draw_buf();
         Ok(())
     }
@@ -807,10 +898,18 @@ pub(crate) fn run_scripts_with_filter(
     )?;
 
     let mut scripts: Vec<ScriptConfig> = Vec::new();
-    for package in &selected.packages {
+    for (package_idx, package) in selected.packages.iter().enumerate() {
         let path: &[u8] = &package.dir;
         let Some(pkgscripts) = &package.json.scripts else {
             continue;
+        };
+        let package_name: Box<[u8]> = if package.json.name.is_empty() {
+            Box::from(bun_paths::resolve_path::relative_platform::<
+                bun_paths::resolve_path::platform::Posix,
+                false,
+            >(&selected.root_dir, path))
+        } else {
+            Box::from(&package.json.name[..])
         };
 
         let run_in_bun = ctx.debug.run_in_bun;
@@ -877,14 +976,14 @@ pub(crate) fn run_scripts_with_filter(
 
             scripts.push(ScriptConfig {
                 package_json_path: package.package_json_path.clone(),
-                package_name: Box::<[u8]>::from(&package.json.name[..]),
+                package_name: package_name.clone(),
                 script_name: Box::<[u8]>::from(*name),
                 script_content: Box::<[u8]>::from(&interned[0..len_command_only]),
                 combined,
                 deps,
                 PATH: Box::<[u8]>::from(&path_var[..]),
                 elide_count: ctx.bundler_options.elide_lines,
-                color: LabelColor::for_label(&package.json.name, scripts.len()),
+                color: LabelColor::for_label(&package_name, package_idx),
             });
         }
     }
@@ -960,7 +1059,7 @@ pub(crate) fn run_scripts_with_filter(
         event_loop_handle: EventLoopHandle::init_mini(event_loop),
         remaining_scripts: 0,
         draw_buf: Vec::new(),
-        last_lines_written: 0,
+        live_lines: 0,
         pretty_output: {
             #[cfg(windows)]
             {
@@ -996,6 +1095,7 @@ pub(crate) fn run_scripts_with_filter(
             buffer: Vec::new(),
             remaining_fds: 0,
             finished: false,
+            flushed: false,
             process: None,
             options: SpawnOptions {
                 stdin: spawn::Stdio::Ignore,

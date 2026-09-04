@@ -458,7 +458,7 @@ impl<'a> State<'a> {
         // raw-ptr-based throughout this file).
         let handle_ptr = std::ptr::from_mut::<ProcessHandle>(handle);
         // SAFETY: handle_ptr is live for this call; flush_pipe_buffer reads only
-        // `config`/`color` from `handle` and writes only `pipe.line_buffer`.
+        // `prefix` from `handle` and writes only `pipe.line_buffer`.
         unsafe {
             self.flush_pipe_buffer(&*handle_ptr, &mut (*handle_ptr).stdout_reader)?;
             self.flush_pipe_buffer(&*handle_ptr, &mut (*handle_ptr).stderr_reader)?;

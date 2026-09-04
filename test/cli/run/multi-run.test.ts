@@ -1785,7 +1785,7 @@ describe.concurrent("color cycling", () => {
         stderr: "pipe",
         stdout: "pipe",
       });
-      const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+      const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
       return { stdout, exitCode };
     };
 
@@ -1801,16 +1801,16 @@ describe.concurrent("color cycling", () => {
     // The color is a function of the package name, not the script or position.
     expect(colorOfLabel(lint, "pkg-a:lint")).toBe(a);
     expect(colorOfLabel(lint, "pkg-b:lint")).toBe(b);
-    expect(buildExit).toBe(0);
-    expect(lintExit).toBe(0);
     // ...and `--filter` without `--parallel` paints the same package the same color.
     // (Windows only draws the `--filter` UI on a real console; see filter-workspace.test.ts.)
-    if (!isWindows) {
-      const { stdout: filter, exitCode } = await run("--filter", "*", "build");
-      expect(colorOfLabel(filter, "pkg-a")).toBe(a);
-      expect(colorOfLabel(filter, "pkg-b")).toBe(b);
-      expect(exitCode).toBe(0);
+    const filter = isWindows ? undefined : await run("--filter", "*", "build");
+    if (filter) {
+      expect(colorOfLabel(filter.stdout, "pkg-a")).toBe(a);
+      expect(colorOfLabel(filter.stdout, "pkg-b")).toBe(b);
     }
+    expect(buildExit).toBe(0);
+    expect(lintExit).toBe(0);
+    if (filter) expect(filter.exitCode).toBe(0);
   });
 });
 

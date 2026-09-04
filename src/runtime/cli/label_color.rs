@@ -2,8 +2,8 @@
 //!
 //! On truecolor terminals the color is a pure function of the label, so a
 //! package keeps its color across runs: a hash picks the hue, drawn at a fixed
-//! OKLCH lightness that reads on light and dark backgrounds with as much chroma
-//! as sRGB has at that hue (CSS gamut mapping trims the excess). The
+//! OKLCH lightness that reads on light and dark backgrounds, asking for more
+//! chroma than sRGB has so each hue comes out as saturated as it can. The
 //! mustard/olive hues are skipped. Other terminals rotate through the six basic
 //! ANSI colors by position.
 

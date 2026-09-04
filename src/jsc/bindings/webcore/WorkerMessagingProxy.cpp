@@ -384,6 +384,12 @@ void WorkerMessagingProxy::workerThreadStarted()
     // top-level code posts (node's bootstrap sends UP_AND_RUNNING before it evaluates the entry).
     // The state stays Pending: a task or message a parent-side 'online' handler posts is queued and
     // delivered by workerGlobalScopeStarted() once the entry has evaluated.
+    {
+        // An exiting parent (parentContextWillDestroy) may already have moved this to Closing.
+        Locker lock { m_pendingTasksLock };
+        if (m_state.load() != State::Pending)
+            return;
+    }
     ScriptExecutionContext::postTaskTo(m_loaderContextIdentifier, m_loaderLoopKind, [protectedThis = Ref { *this }](ScriptExecutionContext&) {
         RefPtr workerObject = protectedThis->m_workerObject;
         if (!workerObject || !workerObject->hasEventListeners(eventNames().openEvent))

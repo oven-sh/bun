@@ -361,6 +361,29 @@ describe("web worker", () => {
     });
   });
 
+  describe("open event", () => {
+    // 'open' is posted before the entry runs, so it precedes anything the
+    // entry's top-level code posts (node:worker_threads turns it into 'online').
+    test("precedes the worker's first message", async () => {
+      const worker = new Worker("data:text/javascript,postMessage('ready')");
+      const order: string[] = [];
+      worker.addEventListener("open", () => order.push("open"));
+      worker.addEventListener("message", e => order.push("message:" + e.data));
+      await once(worker, "close");
+      expect(order).toEqual(["open", "message:ready"]);
+    });
+
+    test("is fired for a worker whose entry does not resolve", async () => {
+      using dir = tempDir("worker-open-missing-entry", {});
+      const worker = new Worker(path.join(String(dir), "missing.js"));
+      const order: string[] = [];
+      worker.addEventListener("open", () => order.push("open"));
+      worker.addEventListener("error", () => order.push("error"));
+      await once(worker, "close");
+      expect(order).toEqual(["open", "error"]);
+    });
+  });
+
   describe("error event", () => {
     test("is fired with a string of the error", async () => {
       const worker = new Worker("data:text/javascript,throw 5");

@@ -408,10 +408,11 @@ describe("web worker", () => {
   // queued in order, as a MessagePort / node's parentPort does. #40141
   describe("messages to the worker global scope wait for a listener", () => {
     // Batches: `early` right after construction (worker still starting), `onOpen` from the
-    // worker's 'open' event, `onStarted` when the worker posts "started". Once every batch is
-    // posted (and the worker is up) the parent signals `gate` over a BroadcastChannel; a worker
-    // body that installs its handler on `await gate` therefore does so strictly after the
-    // messages were queued — no timer racing the parent. The worker echoes what it receives.
+    // worker's 'open' event, `onStarted` when the worker posts "started". The worker's first
+    // statement joins a BroadcastChannel and says "ready" on it; once it has and every batch is
+    // posted, the parent answers "go", which settles the worker's `gate`. A worker body that
+    // installs its handler on `await gate` therefore does so strictly after the messages were
+    // queued — no timer racing the parent. The worker echoes what it receives.
     async function expectEchoed(
       body: string,
       {
@@ -423,21 +424,25 @@ describe("web worker", () => {
       }: { early?: unknown[]; onOpen?: unknown[]; onStarted?: unknown[]; transfer?: boolean; expected: unknown[] },
     ) {
       const gateName = "worker-inbox-gate-" + crypto.randomUUID();
-      const src = `const gate = new Promise(go => { const c = new BroadcastChannel(${JSON.stringify(gateName)}); c.onmessage = () => { c.close(); go(); }; });\n${body}`;
+      const src = `const gate = new Promise(go => { const c = new BroadcastChannel(${JSON.stringify(gateName)}); c.onmessage = () => { c.close(); go(); }; c.postMessage("ready"); });\n${body}`;
       const gate = new BroadcastChannel(gateName);
-      let opened = false;
+      let joined = false;
       let batchesLeft = [early, onOpen, onStarted].filter(b => b.length).length;
+      const signal = () => {
+        if (joined && batchesLeft === 0) gate.postMessage("go");
+      };
+      gate.onmessage = () => {
+        joined = true;
+        signal();
+      };
       const post = (w: Worker, batch: unknown[]) => {
         for (const m of batch) transfer ? w.postMessage(m, [m as ArrayBuffer]) : w.postMessage(m);
         if (batch.length) batchesLeft--;
-        if (opened && batchesLeft === 0) gate.postMessage("go");
+        signal();
       };
       const w = new Worker(URL.createObjectURL(new Blob([src])));
       post(w, early);
-      w.addEventListener("open", () => {
-        opened = true;
-        post(w, onOpen);
-      });
+      w.addEventListener("open", () => post(w, onOpen));
       const got: unknown[] = [];
       const done = Promise.withResolvers<void>();
       w.onerror = e => done.reject(e.error ?? e.message);

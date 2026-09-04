@@ -10,11 +10,16 @@ import { ConnectionType, createClient, ctx, isEnabled } from "../test-utils";
  * - Realistic use cases
  */
 describe.skipIf(!isEnabled)("Valkey: Complex Operations", () => {
-  beforeEach(() => {
+  // Tests use unique keys, so one client can serve the whole file. The
+  // best-effort DISCARD clears any MULTI left open by a mid-transaction
+  // assertion failure so it doesn't cascade into the other tests.
+  beforeEach(async () => {
+    ctx.id++;
     if (ctx.redis?.connected) {
-      ctx.redis.close?.();
+      await ctx.redis.send("DISCARD", []).catch(() => {});
+    } else {
+      ctx.redis = createClient(ConnectionType.TCP);
     }
-    ctx.redis = createClient(ConnectionType.TCP);
   });
   describe("Multi/Exec Transactions", () => {
     test("should execute commands in a transaction", async () => {
@@ -24,7 +29,7 @@ describe.skipIf(!isEnabled)("Valkey: Complex Operations", () => {
       const key3 = `${prefix}-3`;
 
       // Start transaction
-      await ctx.redis.send("MULTI", []);
+      expect(await ctx.redis.send("MULTI", [])).toBe("OK");
 
       // Queue commands in transaction
       const queueResults = await Promise.all([
@@ -35,32 +40,14 @@ describe.skipIf(!isEnabled)("Valkey: Complex Operations", () => {
       ]);
 
       // All queue commands should return "QUEUED"
-      for (const result of queueResults) {
-        expect(result).toBe("QUEUED");
-      }
+      expect(queueResults).toEqual(["QUEUED", "QUEUED", "QUEUED", "QUEUED"]);
 
       // Execute transaction
       const execResult = await ctx.redis.send("EXEC", []);
-
-      // Should get an array of results
-      expect(Array.isArray(execResult)).toBe(true);
-      expect(execResult.length).toBe(4);
-
-      // Check individual results
-      expect(execResult[0]).toBe("OK"); // SET result
-      expect(execResult[1]).toBe("OK"); // SET result
-      expect(execResult[2]).toBe(1); // INCR result
-      expect(execResult[3]).toBe("value1"); // GET result
+      expect(execResult).toEqual(["OK", "OK", 1, "value1"]);
 
       // Verify the transaction was applied
-      const key1Value = await ctx.redis.get(key1);
-      expect(key1Value).toBe("value1");
-
-      const key2Value = await ctx.redis.get(key2);
-      expect(key2Value).toBe("value2");
-
-      const key3Value = await ctx.redis.get(key3);
-      expect(key3Value).toBe("1");
+      expect(await ctx.redis.mget(key1, key2, key3)).toEqual(["value1", "value2", "1"]);
     });
 
     test("should handle transaction discards", async () => {
@@ -68,26 +55,20 @@ describe.skipIf(!isEnabled)("Valkey: Complex Operations", () => {
       const key = `${prefix}-key`;
 
       // Set initial value
-      await ctx.redis.set(key, "initial");
+      expect(await ctx.redis.set(key, "initial")).toBe("OK");
 
       // Start transaction
-      await ctx.redis.send("MULTI", []);
+      expect(await ctx.redis.send("MULTI", [])).toBe("OK");
 
       // Queue some commands
-      await ctx.redis.set(key, "changed");
-      await ctx.redis.incr(`${prefix}-counter`);
+      expect(await ctx.redis.set(key, "changed")).toBe("QUEUED");
+      expect(await ctx.redis.incr(`${prefix}-counter`)).toBe("QUEUED");
 
       // Discard the transaction
-      const discardResult = await ctx.redis.send("DISCARD", []);
-      expect(discardResult).toBe("OK");
+      expect(await ctx.redis.send("DISCARD", [])).toBe("OK");
 
-      // Verify the key was not changed
-      const value = await ctx.redis.get(key);
-      expect(value).toBe("initial");
-
-      // Verify counter was not incremented
-      const counterValue = await ctx.redis.get(`${prefix}-counter`);
-      expect(counterValue).toBeNull();
+      // Verify nothing was applied
+      expect(await ctx.redis.mget(key, `${prefix}-counter`)).toEqual(["initial", null]);
     });
 
     test("should handle transaction errors", async () => {
@@ -98,7 +79,7 @@ describe.skipIf(!isEnabled)("Valkey: Complex Operations", () => {
       await ctx.redis.set(key, "string-value");
 
       // Start transaction
-      await ctx.redis.send("MULTI", []);
+      expect(await ctx.redis.send("MULTI", [])).toBe("OK");
 
       // Queue valid command
       await ctx.redis.set(`${prefix}-valid`, "valid");
@@ -123,11 +104,7 @@ describe.skipIf(!isEnabled)("Valkey: Complex Operations", () => {
       `);
 
       // Verify the valid commands were executed
-      const validValue = await ctx.redis.get(`${prefix}-valid`);
-      expect(validValue).toBe("valid");
-
-      const afterValue = await ctx.redis.get(`${prefix}-after`);
-      expect(afterValue).toBe("after");
+      expect(await ctx.redis.mget(`${prefix}-valid`, `${prefix}-after`)).toEqual(["valid", "after"]);
     });
 
     test("should handle nested commands in transaction", async () => {
@@ -136,7 +113,7 @@ describe.skipIf(!isEnabled)("Valkey: Complex Operations", () => {
       const setKey = `${prefix}-set`;
 
       // Start transaction
-      await ctx.redis.send("MULTI", []);
+      expect(await ctx.redis.send("MULTI", [])).toBe("OK");
 
       // Queue complex data type commands
       await ctx.redis.send("HSET", [hashKey, "field1", "value1", "field2", "value2"]);
@@ -147,37 +124,15 @@ describe.skipIf(!isEnabled)("Valkey: Complex Operations", () => {
       // Execute transaction
       const execResult = await ctx.redis.send("EXEC", []);
 
-      // Should get an array of results
-      expect(Array.isArray(execResult)).toBe(true);
-      expect(execResult.length).toBe(4);
-
-      // HSET should return number of fields added
-      expect(execResult[0]).toBe(2);
-
-      // SADD should return number of members added
-      expect(execResult[1]).toBe(3);
-
-      // HGETALL should return hash object or array
-      const hashResult = execResult[2];
-      if (typeof hashResult === "object" && hashResult !== null) {
-        // RESP3 style (map)
-        expect(hashResult.field1).toBe("value1");
-        expect(hashResult.field2).toBe("value2");
-      } else if (Array.isArray(hashResult)) {
-        // RESP2 style (array of field-value pairs)
-        expect(hashResult.length).toBe(4);
-        expect(hashResult).toContain("field1");
-        expect(hashResult).toContain("value1");
-        expect(hashResult).toContain("field2");
-        expect(hashResult).toContain("value2");
-      }
-
-      // SMEMBERS should return array
-      expect(Array.isArray(execResult[3])).toBe(true);
-      expect(execResult[3].length).toBe(3);
-      expect(execResult[3]).toContain("member1");
-      expect(execResult[3]).toContain("member2");
-      expect(execResult[3]).toContain("member3");
+      // HSET returns field count, SADD returns member count, HGETALL returns a
+      // RESP3 map, SMEMBERS returns an array (set order is unspecified).
+      expect(execResult).toEqual([
+        2,
+        3,
+        { field1: "value1", field2: "value2" },
+        expect.arrayContaining(["member1", "member2", "member3"]),
+      ]);
+      expect(execResult[3]).toHaveLength(3);
     });
   });
 
@@ -188,9 +143,11 @@ describe.skipIf(!isEnabled)("Valkey: Complex Operations", () => {
       const baseKey = ctx.generateKey(`user:${userId}`);
 
       // Set multiple fields
-      await ctx.redis.set(`${baseKey}:name`, "John Doe");
-      await ctx.redis.set(`${baseKey}:email`, "john@example.com");
-      await ctx.redis.set(`${baseKey}:age`, "30");
+      await Promise.all([
+        ctx.redis.set(`${baseKey}:name`, "John Doe"),
+        ctx.redis.set(`${baseKey}:email`, "john@example.com"),
+        ctx.redis.set(`${baseKey}:age`, "30"),
+      ]);
 
       // Create a counter
       await ctx.redis.incr(`${baseKey}:visits`);
@@ -199,13 +156,8 @@ describe.skipIf(!isEnabled)("Valkey: Complex Operations", () => {
       // Get all keys matching the pattern
       const patternResult = await ctx.redis.send("KEYS", [`${baseKey}:*`]);
 
-      // Should find all our keys
-      expect(Array.isArray(patternResult)).toBe(true);
-      expect(patternResult.length).toBe(4);
-
-      // Sort for consistent snapshot
-      const sortedKeys = [...patternResult].sort();
-      expect(sortedKeys).toMatchInlineSnapshot(`
+      // Should find all our keys (sorted for a stable snapshot)
+      expect([...patternResult].sort()).toMatchInlineSnapshot(`
         [
           "${baseKey}:age",
           "${baseKey}:email",
@@ -215,11 +167,7 @@ describe.skipIf(!isEnabled)("Valkey: Complex Operations", () => {
       `);
 
       // Verify values
-      const nameValue = await ctx.redis.get(`${baseKey}:name`);
-      expect(nameValue).toBe("John Doe");
-
-      const visitsValue = await ctx.redis.get(`${baseKey}:visits`);
-      expect(visitsValue).toBe("2");
+      expect(await ctx.redis.mget(`${baseKey}:name`, `${baseKey}:visits`)).toEqual(["John Doe", "2"]);
     });
 
     test("should handle complex key patterns with expiry", async () => {
@@ -237,12 +185,10 @@ describe.skipIf(!isEnabled)("Valkey: Complex Operations", () => {
 
       // Verify TTLs
       const dataTtl = await ctx.redis.ttl(`${baseKey}:data`);
-      expect(typeof dataTtl).toBe("number");
       expect(dataTtl).toBeGreaterThan(0);
       expect(dataTtl).toBeLessThanOrEqual(30);
 
       const heartbeatTtl = await ctx.redis.ttl(`${baseKey}:heartbeat`);
-      expect(typeof heartbeatTtl).toBe("number");
       expect(heartbeatTtl).toBeGreaterThan(0);
       expect(heartbeatTtl).toBeLessThanOrEqual(10);
 
@@ -339,17 +285,17 @@ describe.skipIf(!isEnabled)("Valkey: Complex Operations", () => {
 
       // First fetch should call the function
       const result1 = await getOrSetCache("test-key", 30, fetchData);
-      expect(result1).toBeDefined();
+      expect(result1.data).toBe("example");
       expect(fetchCount).toBe(1);
 
       // Second fetch should use cache
       const result2 = await getOrSetCache("test-key", 30, fetchData);
-      expect(result2).toBeDefined();
+      expect(result2).toEqual(result1);
       expect(fetchCount).toBe(1); // Still 1 because we used cache
 
       // Different key should call function again
       const result3 = await getOrSetCache("other-key", 30, fetchData);
-      expect(result3).toBeDefined();
+      expect(result3.data).toBe("example");
       expect(fetchCount).toBe(2);
 
       // Verify cache entry has TTL
@@ -361,12 +307,22 @@ describe.skipIf(!isEnabled)("Valkey: Complex Operations", () => {
     test("should implement a simple leaderboard", async () => {
       const leaderboardKey = ctx.generateKey("leaderboard");
 
-      // Add scores
-      await ctx.redis.send("ZADD", [leaderboardKey, "100", "player1"]);
-      await ctx.redis.send("ZADD", [leaderboardKey, "200", "player2"]);
-      await ctx.redis.send("ZADD", [leaderboardKey, "150", "player3"]);
-      await ctx.redis.send("ZADD", [leaderboardKey, "300", "player4"]);
-      await ctx.redis.send("ZADD", [leaderboardKey, "50", "player5"]);
+      // Add scores (single ZADD with multiple score/member pairs)
+      expect(
+        await ctx.redis.send("ZADD", [
+          leaderboardKey,
+          "100",
+          "player1",
+          "200",
+          "player2",
+          "150",
+          "player3",
+          "300",
+          "player4",
+          "50",
+          "player5",
+        ]),
+      ).toBe(5);
 
       // Get top 3 players (highest scores)
       const topPlayers = await ctx.redis.send("ZREVRANGE", [leaderboardKey, "0", "2", "WITHSCORES"]);
@@ -397,7 +353,7 @@ describe.skipIf(!isEnabled)("Valkey: Complex Operations", () => {
       expect(player3Score).toBe(150);
 
       // Increment a score
-      await ctx.redis.send("ZINCRBY", [leaderboardKey, "25", "player3"]);
+      expect(await ctx.redis.send("ZINCRBY", [leaderboardKey, "25", "player3"])).toBe(175);
 
       // Verify score was updated
       const updatedScore = await ctx.redis.send("ZSCORE", [leaderboardKey, "player3"]);

@@ -24,6 +24,21 @@ Values may reference environment variables. Bun replaces `${NAME}` with the vari
 
 ---
 
+## Which files are read
+
+Bun reads up to two `.npmrc` files. Options in the later file override the earlier one:
+
+1. The user-level file. This is the file `NPM_CONFIG_USERCONFIG` (npm's `userconfig` option) points at when that variable is set; otherwise `$XDG_CONFIG_HOME/.npmrc` if it exists, otherwise `$HOME/.npmrc`.
+2. The `.npmrc` next to your project's root `package.json`.
+
+<Note>
+  `actions/setup-node` with `registry-url` writes an `.npmrc` to `$RUNNER_TEMP` and exports `NPM_CONFIG_USERCONFIG`
+  pointing at it, so `bun publish` reads the token from `NODE_AUTH_TOKEN` in that workflow the same way `npm publish`
+  does.
+</Note>
+
+---
+
 ## Supported options
 
 ### Set the default registry

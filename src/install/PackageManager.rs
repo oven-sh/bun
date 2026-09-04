@@ -1932,10 +1932,24 @@ pub fn init(
         let mut buf = PathBuffer::uninit();
         let parts = [b"./.npmrc" as &[u8]];
 
-        // npm reads `$HOME/.npmrc` and ignores XDG_CONFIG_HOME; keep
-        // `$XDG_CONFIG_HOME/.npmrc` only when that file actually exists.
         let mut global_len: usize = 0;
-        if let Some(xdg_dir) = bun_core::env_var::XDG_CONFIG_HOME.get_not_empty() {
+        // npm's `userconfig`: when set, this file is the per-user .npmrc and
+        // neither $XDG_CONFIG_HOME/.npmrc nor ~/.npmrc is looked at.
+        // actions/setup-node writes one to $RUNNER_TEMP and exports
+        // NPM_CONFIG_USERCONFIG pointing at it.
+        if let Some(userconfig) = [b"NPM_CONFIG_USERCONFIG" as &[u8], b"npm_config_userconfig"]
+            .into_iter()
+            .find_map(|key| env.get(key).filter(|path| !path.is_empty()))
+        {
+            global_len = resolve_path::join_abs_string_buf_z::<platform::Auto>(
+                &original_cwd_clone,
+                &mut buf,
+                &[userconfig],
+            )
+            .len();
+        } else if let Some(xdg_dir) = bun_core::env_var::XDG_CONFIG_HOME.get_not_empty() {
+            // npm reads `$HOME/.npmrc` and ignores XDG_CONFIG_HOME; keep
+            // `$XDG_CONFIG_HOME/.npmrc` only when that file actually exists.
             let p =
                 resolve_path::join_abs_string_buf_z::<platform::Auto>(xdg_dir, &mut buf, &parts);
             if bun_sys::exists_z(p) {

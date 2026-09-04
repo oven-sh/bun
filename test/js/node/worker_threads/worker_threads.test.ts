@@ -345,23 +345,40 @@ describe("execArgv option", async () => {
   // TODO(@190n) get our handling of non-string array elements in line with Node's
 });
 
-// Node keeps this default in the module state of lib/net.js, so each thread has its own copy.
-describe.concurrent("net.setDefaultAutoSelectFamily() is per thread", () => {
-  // Runs `main` as an ES module. In it, `await workerDefault(options)` starts a worker and
-  // resolves to the default that the worker reads, after it applies `workerData.set`.
-  async function expectDefaults(main: string, expected: Record<string, boolean>, execArgv: string[] = []) {
+// Node keeps these defaults in the module state of lib/net.js, so each thread has its own copy.
+describe.concurrent("node:net autoSelectFamily defaults are per thread", () => {
+  type Defaults = { family: boolean; timeout: number };
+  // 500 is the attempt timeout default of Node and of Bun.
+  const initial: Defaults = { family: true, timeout: 500 };
+  const changed: Defaults = { family: false, timeout: 1234 };
+  const flags = ["--no-network-family-autoselection", "--network-family-autoselection-attempt-timeout=1234"];
+
+  // Runs `main` as an ES module. In it, `defaults()` reads the defaults of the main thread, and
+  // `await workerDefaults(options)` starts a worker and resolves to the defaults that the worker
+  // reads, after it applies `workerData.family` and `workerData.timeout`.
+  async function expectDefaults(main: string, expected: Record<string, Defaults>, execArgv: string[] = []) {
     using dir = tempDir("net-autoselect-default", {
       "worker.mjs": `
         import net from "node:net";
         import { parentPort, workerData } from "node:worker_threads";
-        if (workerData?.set !== undefined) net.setDefaultAutoSelectFamily(workerData.set);
-        parentPort.postMessage(net.getDefaultAutoSelectFamily());
+        if (workerData?.family !== undefined) net.setDefaultAutoSelectFamily(workerData.family);
+        if (workerData?.timeout !== undefined) net.setDefaultAutoSelectFamilyAttemptTimeout(workerData.timeout);
+        parentPort.postMessage({
+          family: net.getDefaultAutoSelectFamily(),
+          timeout: net.getDefaultAutoSelectFamilyAttemptTimeout(),
+        });
       `,
       "main.mjs": `
         import { once } from "node:events";
         import net from "node:net";
         import { Worker } from "node:worker_threads";
-        async function workerDefault(options) {
+        function defaults() {
+          return {
+            family: net.getDefaultAutoSelectFamily(),
+            timeout: net.getDefaultAutoSelectFamilyAttemptTimeout(),
+          };
+        }
+        async function workerDefaults(options) {
           const worker = new Worker(new URL("./worker.mjs", import.meta.url), options);
           const [value] = await once(worker, "message");
           return value;
@@ -382,47 +399,48 @@ describe.concurrent("net.setDefaultAutoSelectFamily() is per thread", () => {
     expect(exitCode).toBe(0);
   }
 
-  test("a worker that sets it does not change the main thread or a later worker", async () => {
+  test("a worker that sets them does not change the main thread or a later worker", async () => {
     await expectDefaults(
       `
-      const worker = await workerDefault({ workerData: { set: false } });
-      const main = net.getDefaultAutoSelectFamily();
-      const laterWorker = await workerDefault();
+      const worker = await workerDefaults({ workerData: { family: false, timeout: 1234 } });
+      const main = defaults();
+      const laterWorker = await workerDefaults();
       console.log(JSON.stringify({ worker, main, laterWorker }));
       `,
-      { worker: false, main: true, laterWorker: true },
+      { worker: changed, main: initial, laterWorker: initial },
     );
   });
 
-  test("a worker with --no-network-family-autoselection in execArgv does not change the main thread", async () => {
+  test("a worker with the flags in execArgv does not change the main thread", async () => {
     await expectDefaults(
       `
-      const worker = await workerDefault({ execArgv: ["--no-network-family-autoselection"] });
-      console.log(JSON.stringify({ worker, main: net.getDefaultAutoSelectFamily() }));
+      const worker = await workerDefaults({ execArgv: ${JSON.stringify(flags)} });
+      console.log(JSON.stringify({ worker, main: defaults() }));
       `,
-      { worker: false, main: true },
+      { worker: changed, main: initial },
     );
   });
 
-  test("a main thread that sets it does not change a new worker", async () => {
+  test("a main thread that sets them does not change a new worker", async () => {
     await expectDefaults(
       `
       net.setDefaultAutoSelectFamily(false);
-      const worker = await workerDefault();
-      console.log(JSON.stringify({ main: net.getDefaultAutoSelectFamily(), worker }));
+      net.setDefaultAutoSelectFamilyAttemptTimeout(1234);
+      const worker = await workerDefaults();
+      console.log(JSON.stringify({ main: defaults(), worker }));
       `,
-      { main: false, worker: true },
+      { main: changed, worker: initial },
     );
   });
 
-  test("a worker inherits --no-network-family-autoselection from the process", async () => {
+  test("a worker inherits the flags of the process", async () => {
     await expectDefaults(
       `
-      const worker = await workerDefault();
-      console.log(JSON.stringify({ main: net.getDefaultAutoSelectFamily(), worker }));
+      const worker = await workerDefaults();
+      console.log(JSON.stringify({ main: defaults(), worker }));
       `,
-      { main: false, worker: false },
-      ["--no-network-family-autoselection"],
+      { main: changed, worker: changed },
+      flags,
     );
   });
 });

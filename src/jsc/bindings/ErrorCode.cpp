@@ -1060,21 +1060,9 @@ JSC::EncodedJSValue INVALID_ARG_VALUE_RangeError(JSC::ThrowScope& throwScope, JS
 }
 JSC::EncodedJSValue INVALID_ARG_VALUE(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject, JSC::JSValue name, JSC::JSValue value, const WTF::String& reason)
 {
-    WTF::StringBuilder builder;
-    builder.append("The argument '"_s);
-    auto& vm = JSC::getVM(globalObject);
-    determineSpecificType(vm, globalObject, builder, name);
+    auto nameString = name.toWTFString(globalObject);
     RELEASE_RETURN_IF_EXCEPTION(throwScope, {});
-
-    builder.append("' "_s);
-    builder.append(reason);
-    builder.append(". Received "_s);
-    JSValueToStringSafe(globalObject, builder, value, true);
-    RELEASE_RETURN_IF_EXCEPTION(throwScope, {});
-
-    throwScope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_INVALID_ARG_VALUE, builder.toString()));
-    throwScope.release();
-    return {};
+    return INVALID_ARG_VALUE(throwScope, globalObject, nameString, value, reason);
 }
 
 // for validateOneOf

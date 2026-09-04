@@ -2816,8 +2816,9 @@ impl RunCommand {
         Self::boot_and_handle_error(ctx, &absolute_script_path, None)
     }
 
-    /// `bun run -` — read script from stdin into `ctx.runtime_options.eval`
-    /// and boot the VM with the synthetic `[stdin]` path.
+    /// `bun run -` / `node -` — read script from stdin into
+    /// `ctx.runtime_options.eval` and boot the VM with the synthetic `[stdin]`
+    /// path. `false` means stdin could not be read; the caller exits 1.
     fn exec_stdin(ctx: &mut ContextData) -> crate::Result<bool> {
         bun_core::scoped_log!(RUN_LOG, "Executing from stdin");
 
@@ -2956,6 +2957,16 @@ impl RunCommand {
                 return Self::exec_node_repl(ctx);
             }
             Self::exec_as_if_node_missing_script();
+        }
+
+        // `node -` reads the script from stdin. `Arguments::parse` stopped at
+        // this positional, so everything after the `-` is already in
+        // `ctx.passthrough`; `exec_stdin` puts the `-` itself back in front.
+        if ctx.positionals[0].as_ref() == b"-" {
+            if Self::exec_stdin(ctx)? {
+                return Ok(());
+            }
+            Global::exit(1);
         }
 
         // borrowck — `boot_and_handle_error` takes `&mut ctx`, so

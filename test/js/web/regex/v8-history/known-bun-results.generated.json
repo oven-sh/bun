@@ -1,0 +1,18 @@
+{
+ "vi-negated-property-early-case-fold-lowercase": true,
+ "vset-string-disjunction-empty-string-last": {
+  "match": [
+   ""
+  ],
+  "index": 0
+ },
+ "quantifier-huge-braces-no-throw": {
+  "error": "SyntaxError"
+ },
+ "min-match-length-overflow-no-match": {
+  "error": "SyntaxError"
+ },
+ "min-match-length-overflow-still-matches": {
+  "error": "SyntaxError"
+ }
+}

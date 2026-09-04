@@ -1,0 +1,10 @@
+const out = typeof print === "function" ? print : console.log; const s = v => JSON.stringify(v);
+const g = (label, src, fl, str) => { const re = new RegExp(src, fl); const r = []; let m, n = 0;
+  while ((m = re.exec(str)) !== null && n++ < 25) { r.push(m.index); if (m[0] === "") re.lastIndex++; } out(label.padEnd(30) + s(r)); };
+g("(?<=\\b(?:.)+?)", "(?<=\\b(?:.)+?)", "g", "prefix yaa suffix");
+g("(?<=\\b(?:.)+)", "(?<=\\b(?:.)+)", "g", "prefix yaa suffix");
+g("(?<=(?:ab)+?c)!", "(?<=(?:ab)+?c)!", "", "abababc!");
+g("(?<=(?:ab)*?x)!", "(?<=(?:ab)*?x)!", "", "xababx!");
+g("(?<=(?:a|bc)+?)!", "(?<=(?:a|bc)+?)!", "g", "abca!bc!");
+g("(?<!(?:xy)+?)z", "(?<!(?:xy)+?)z", "g", "xyz qz");
+g("(?<=(?:\\d)+?\\.)", "(?<=(?:\\d)+?\\.)", "g", "12.34.");

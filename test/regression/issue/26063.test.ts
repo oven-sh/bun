@@ -1,140 +1,105 @@
 import { SQL, randomUUIDv7 } from "bun";
 import { afterAll, beforeAll, expect, test } from "bun:test";
-import { describeWithContainer, isDockerEnabled } from "harness";
+import { describeWithContainer } from "harness";
 
 // Regression test for https://github.com/oven-sh/bun/issues/26063
-// MySQL VARCHAR columns with binary collations (like utf8mb4_bin) were incorrectly
-// returned as Buffer instead of string since version 1.3.6.
+// Since 1.3.6, MySQL VARCHAR/CHAR/TEXT columns with a binary collation (like
+// utf8mb4_bin) were returned as Buffer instead of string: such columns carry the
+// BINARY column flag, and the decoder treated that flag alone as "true binary
+// column". Only columns with the binary pseudo-charset (BINARY, VARBINARY, BLOB)
+// may decode as Buffer. Both decode paths were affected: the binary protocol
+// (prepared statements) and the text protocol (.simple()).
 
-if (isDockerEnabled()) {
-  describeWithContainer(
-    "issue #26063: VARCHAR with binary collation returns Buffer instead of string",
-    {
-      image: "mysql_plain",
-      concurrent: true,
-    },
-    container => {
-      let sql: SQL;
+describeWithContainer(
+  "issue #26063: VARCHAR with binary collation returns Buffer instead of string",
+  {
+    image: "mysql_plain",
+    concurrent: true,
+  },
+  container => {
+    let sql: SQL;
+    const table = "test_" + randomUUIDv7("hex").replaceAll("-", "");
 
-      beforeAll(async () => {
-        await container.ready;
-        sql = new SQL({
-          url: `mysql://root@${container.host}:${container.port}/bun_sql_test`,
-          max: 1,
-        });
+    const rows = [
+      {
+        id: "1",
+        code: "ABC",
+        content: "Hello, World!",
+        bin: Buffer.from([1, 2, 3, 4]),
+        varbin: Buffer.from([5, 6]),
+        blob_col: Buffer.from([7, 8, 9]),
+      },
+      {
+        id: "2",
+        code: "XYZ",
+        content: "naïve 🙂",
+        bin: Buffer.from([0xde, 0xad, 0xbe, 0xef]),
+        varbin: Buffer.from([0, 255]),
+        blob_col: Buffer.from("blob"),
+      },
+      // Empty/NULL edges: an empty string must stay a string, a zero-length
+      // buffer must stay a Buffer, and NULL must decode as null.
+      {
+        id: "3",
+        code: "",
+        content: null,
+        bin: null,
+        varbin: Buffer.alloc(0),
+        blob_col: null,
+      },
+    ];
+
+    beforeAll(async () => {
+      await container.ready;
+      // Temporary tables are connection-scoped; max: 1 keeps every query on the
+      // connection that created the table.
+      sql = new SQL({
+        url: `mysql://root@${container.host}:${container.port}/bun_sql_test`,
+        max: 1,
       });
+      // One table covers the whole matrix: _bin-collated string columns
+      // (VARCHAR, CHAR, TEXT) next to true binary columns (BINARY, VARBINARY, BLOB).
+      // The table-level collation stays non-binary so the _bin collations are
+      // explicit column-level overrides, matching the original report.
+      await sql`
+        CREATE TEMPORARY TABLE ${sql(table)} (
+          id VARCHAR(32) COLLATE utf8mb4_bin NOT NULL,
+          code CHAR(10) COLLATE utf8mb4_bin NOT NULL,
+          content TEXT COLLATE utf8mb4_bin,
+          bin BINARY(4),
+          varbin VARBINARY(10),
+          blob_col BLOB,
+          PRIMARY KEY (id)
+        ) ENGINE=InnoDB DEFAULT CHARACTER SET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+      `;
+      await sql`INSERT INTO ${sql(table)} ${sql(rows)}`;
+    });
 
-      afterAll(async () => {
-        await sql.close();
-      });
+    afterAll(async () => {
+      await sql.close();
+    });
 
-      test("VARCHAR with utf8mb4_bin collation should return string (binary protocol)", async () => {
-        const tableName = "test_" + randomUUIDv7("hex").replaceAll("-", "");
+    function decodedType(value: unknown): string {
+      return value === null ? "null" : Buffer.isBuffer(value) ? "Buffer" : typeof value;
+    }
 
-        await sql`
-          CREATE TEMPORARY TABLE ${sql(tableName)} (
-            id VARCHAR(32) COLLATE utf8mb4_bin NOT NULL,
-            PRIMARY KEY (id)
-          ) ENGINE=InnoDB DEFAULT CHARACTER SET=utf8mb4 COLLATE=utf8mb4_unicode_ci
-        `;
+    function typeMap(row: Record<string, unknown>) {
+      return Object.fromEntries(Object.entries(row).map(([key, value]) => [key, decodedType(value)]));
+    }
 
-        await sql`INSERT INTO ${sql(tableName)} ${sql([{ id: "1" }, { id: "2" }])}`;
+    function expectDecodedRows(result: Record<string, unknown>[]) {
+      // The _bin collation columns must decode as strings; only the
+      // binary-pseudo-charset columns may come back as Buffer.
+      expect(result.map(typeMap)).toEqual(rows.map(typeMap));
+      expect(result).toEqual(rows);
+    }
 
-        const result = await sql`SELECT * FROM ${sql(tableName)}`;
+    test("binary protocol (prepared statement)", async () => {
+      expectDecodedRows(await sql`SELECT * FROM ${sql(table)} ORDER BY id`);
+    });
 
-        // Should return strings, not Buffers
-        expect(typeof result[0].id).toBe("string");
-        expect(typeof result[1].id).toBe("string");
-        expect(result[0].id).toBe("1");
-        expect(result[1].id).toBe("2");
-      });
-
-      test("VARCHAR with utf8mb4_bin collation should return string (text protocol)", async () => {
-        const tableName = "test_" + randomUUIDv7("hex").replaceAll("-", "");
-
-        await sql`
-          CREATE TEMPORARY TABLE ${sql(tableName)} (
-            id VARCHAR(32) COLLATE utf8mb4_bin NOT NULL,
-            PRIMARY KEY (id)
-          ) ENGINE=InnoDB DEFAULT CHARACTER SET=utf8mb4 COLLATE=utf8mb4_unicode_ci
-        `;
-
-        await sql`INSERT INTO ${sql(tableName)} ${sql([{ id: "1" }, { id: "2" }])}`;
-
-        // Use .simple() to force text protocol
-        const result = await sql`SELECT * FROM ${sql(tableName)}`.simple();
-
-        // Should return strings, not Buffers
-        expect(typeof result[0].id).toBe("string");
-        expect(typeof result[1].id).toBe("string");
-        expect(result[0].id).toBe("1");
-        expect(result[1].id).toBe("2");
-      });
-
-      test("CHAR with utf8mb4_bin collation should return string", async () => {
-        const tableName = "test_" + randomUUIDv7("hex").replaceAll("-", "");
-
-        await sql`
-          CREATE TEMPORARY TABLE ${sql(tableName)} (
-            code CHAR(10) COLLATE utf8mb4_bin NOT NULL
-          )
-        `;
-
-        await sql`INSERT INTO ${sql(tableName)} VALUES (${"ABC"})`;
-
-        const result = await sql`SELECT * FROM ${sql(tableName)}`;
-        const resultSimple = await sql`SELECT * FROM ${sql(tableName)}`.simple();
-
-        // Should return strings, not Buffers
-        expect(typeof result[0].code).toBe("string");
-        expect(typeof resultSimple[0].code).toBe("string");
-      });
-
-      test("TEXT with utf8mb4_bin collation should return string", async () => {
-        const tableName = "test_" + randomUUIDv7("hex").replaceAll("-", "");
-
-        await sql`
-          CREATE TEMPORARY TABLE ${sql(tableName)} (
-            content TEXT COLLATE utf8mb4_bin
-          )
-        `;
-
-        await sql`INSERT INTO ${sql(tableName)} VALUES (${"Hello, World!"})`;
-
-        const result = await sql`SELECT * FROM ${sql(tableName)}`;
-        const resultSimple = await sql`SELECT * FROM ${sql(tableName)}`.simple();
-
-        // Should return strings, not Buffers
-        expect(typeof result[0].content).toBe("string");
-        expect(result[0].content).toBe("Hello, World!");
-        expect(typeof resultSimple[0].content).toBe("string");
-        expect(resultSimple[0].content).toBe("Hello, World!");
-      });
-
-      test("true BINARY/VARBINARY columns should still return Buffer", async () => {
-        const tableName = "test_" + randomUUIDv7("hex").replaceAll("-", "");
-
-        await sql`
-          CREATE TEMPORARY TABLE ${sql(tableName)} (
-            a BINARY(4),
-            b VARBINARY(10),
-            c BLOB
-          )
-        `;
-
-        await sql`INSERT INTO ${sql(tableName)} VALUES (${Buffer.from([1, 2, 3, 4])}, ${Buffer.from([5, 6])}, ${Buffer.from([7, 8, 9])})`;
-
-        const result = await sql`SELECT * FROM ${sql(tableName)}`;
-        const resultSimple = await sql`SELECT * FROM ${sql(tableName)}`.simple();
-
-        // True binary types should return Buffers
-        expect(Buffer.isBuffer(result[0].a)).toBe(true);
-        expect(Buffer.isBuffer(result[0].b)).toBe(true);
-        expect(Buffer.isBuffer(result[0].c)).toBe(true);
-        expect(Buffer.isBuffer(resultSimple[0].a)).toBe(true);
-        expect(Buffer.isBuffer(resultSimple[0].b)).toBe(true);
-        expect(Buffer.isBuffer(resultSimple[0].c)).toBe(true);
-      });
-    },
-  );
-}
+    test("text protocol (simple query)", async () => {
+      expectDecodedRows(await sql`SELECT * FROM ${sql(table)} ORDER BY id`.simple());
+    });
+  },
+);

@@ -1143,8 +1143,7 @@ unsafe fn auto_tick(vm: *mut VirtualMachine) {
     }
 
     // Check phase, then timers. The timers run last, so the caller sees what
-    // they did before the next poll. On Windows, the uv timer only ends the
-    // poll, so the timers run here too.
+    // they did before the next poll.
     // SAFETY: `el` is the live per-thread event loop; `vm` per fn contract.
     unsafe { run_check_phase(vm, el) };
     // Note (§Forbidden aliased-&mut): `drain_timers` fires user

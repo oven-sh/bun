@@ -694,8 +694,7 @@ impl All {
     /// Lazily `uv_timer_init` the
     /// per-`All` libuv timer, then (re)start it for the soonest deadline
     /// across both heaps. On Windows there is no epoll/kqueue fallback; this
-    /// `uv_timer_t` is the ONLY thing that wakes `uv_run` for JS timers. It
-    /// stays unref'd: `increment_timer_ref` keeps the loop alive, as on POSIX.
+    /// `uv_timer_t` is the ONLY thing that wakes `uv_run` for JS timers.
     #[cfg(windows)]
     fn ensure_uv_timer(&mut self) {
         // `vm` here means the OWNING VM (the one this timer is embedded in),
@@ -761,9 +760,7 @@ impl All {
         }
     }
 
-    /// [`Self::ensure_uv_timer`] for a heap that may have changed since the
-    /// handle last fired. The handle is one-shot, and its callback does not
-    /// arm it again. Does nothing before the first insert or after teardown.
+    /// Arms the one-shot handle again, once it exists and until teardown closes it.
     #[cfg(windows)]
     fn rearm_uv_timer(&mut self) {
         if !self.uv_timer.data.is_null() && !self.uv_timer.is_closing() {
@@ -771,10 +768,7 @@ impl All {
         }
     }
 
-    /// libuv timer callback. It only ends the poll at the deadline. The
-    /// timers run after `uv_run` returns (`auto_tick` -> `drain_timers`), after
-    /// the check phase, as on POSIX. Run here, they would come before the
-    /// immediates that the poll's I/O callbacks queued.
+    /// Only ends the poll. `auto_tick` runs the timers after the check phase, as on POSIX.
     #[cfg(windows)]
     extern "C" fn on_uv_timer(_: *mut uv::Timer) {}
 
@@ -965,8 +959,7 @@ impl All {
         // SAFETY: `this` is the live per-thread `All`; `vm` per fn contract.
         let (wtf_next, _) = unsafe { Self::drain_due_wtf_timers(this, maybe_now, vm) };
 
-        // The Windows tick takes no timeout. The uv timer ends its poll, and a
-        // tick that does not drain the timers can have used up its last fire.
+        // A tick that drained no timers can have used the last fire of the uv timer.
         #[cfg(windows)]
         // SAFETY: `this` is live, and the re-arm does not run JS.
         unsafe {
@@ -1164,8 +1157,7 @@ impl All {
         let new = old + delta;
         debug_assert!(new >= 0);
         self.active_timer_count = new;
-        // On Windows too, the keep-alive is the loop's count, not the uv
-        // timer: the timer is inactive from its fire until the next re-arm.
+        // Not the uv timer on Windows: it is inactive from its fire to the next re-arm.
         if old <= 0 && new > 0 {
             // SAFETY: caller passes the VM's live uws loop
             unsafe { &mut *uws_loop }.ref_();

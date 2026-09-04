@@ -444,9 +444,11 @@ describe("web worker", () => {
       expect(got).toEqual(["early", 0, 1, 2]);
     });
 
-    // The worker joins a BroadcastChannel first thing and says "ready"; the parent posts 0..2, then
-    // answers "go". Those reach the worker as tasks in that order, so 0..2 are dispatched — to no
-    // handler — strictly before `await gate` resumes and installs one. 3 and 4 come after it.
+    // The worker joins a BroadcastChannel first thing and says "ready"; once the worker is also
+    // 'open' (its port is live, so a post becomes a task at once instead of startup buffering that
+    // runs other tasks first), the parent posts 0..2, then answers "go". Those reach the worker as
+    // tasks in that order, so 0..2 are dispatched — to no handler — strictly before `await gate`
+    // resumes and installs one. 3 and 4 come after it.
     test("a handler installed after a top-level await misses what was dispatched before it", async () => {
       const gateName = "worker-gate-" + crypto.randomUUID();
       const gate = new BroadcastChannel(gateName);
@@ -457,10 +459,21 @@ describe("web worker", () => {
            self.onmessage = e => postMessage(e.data);
            postMessage("installed");`,
           (w, got, done) => {
-            gate.onmessage = () => {
+            let ready = false;
+            let opened = false;
+            const release = () => {
+              if (!ready || !opened) return;
               [0, 1, 2].forEach(m => w.postMessage(m));
               gate.postMessage("go");
             };
+            gate.onmessage = () => {
+              ready = true;
+              release();
+            };
+            w.addEventListener("open", () => {
+              opened = true;
+              release();
+            });
             w.onmessage = e => {
               if (e.data === "installed") return [3, 4].forEach(m => w.postMessage(m));
               got.push(e.data);

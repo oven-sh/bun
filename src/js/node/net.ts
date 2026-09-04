@@ -58,9 +58,7 @@ const isWindows = process.platform === "win32";
 
 // Module state, like Node's lib/net.js, so each Worker has its own copy.
 let autoSelectFamilyDefault = true;
-// Node's default is 250ms with a documented floor of 10ms, but the CLI
-// default in node_options.h is 500ms; the vendored test/common multiplies
-// the default by 5 (upstream) assuming 500.
+// Node's docs say 250, but its CLI default in node_options.h is 500.
 let autoSelectFamilyAttemptTimeoutDefault = 500;
 
 function getDefaultAutoSelectFamily() {

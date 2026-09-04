@@ -602,6 +602,24 @@ static std::span<const char> sidSpan(const WTF::String& s)
     return { reinterpret_cast<const char*>(span.data()), span.size() };
 }
 
+// Emulation.setDeviceMetricsOverride pinning the page's viewport to the
+// view's m_width x m_height. This is the only thing that sizes the page: sent
+// once when the page session is attached (before the first Page.navigate;
+// the override persists across navigations) and again by resize(). Sizing
+// the window instead (Target.createTarget width/height) is not the same
+// thing: chrome-headless-shell gives the page the whole window, but full
+// Chrome's headless mode keeps ~87px of it for its invisible browser UI and
+// clamps to a minimum window size, so innerHeight and screenshots came out
+// short of the requested size. Same approach as puppeteer/playwright.
+static Command deviceMetricsOverride(uint32_t id, JSWebView* view, std::span<const char> sid)
+{
+    return Command(id, "Emulation.setDeviceMetricsOverride"_s, sid)
+        .num("width"_s, static_cast<int32_t>(view->m_width))
+        .num("height"_s, static_cast<int32_t>(view->m_height))
+        .num("deviceScaleFactor"_s, 1)
+        .boolean("mobile"_s, false);
+}
+
 // Bun click button → CDP button enum string. CDP's Input.dispatchMouseEvent
 // takes a string: "none", "left", "middle", "right".
 static constexpr ASCIILiteral cdpButton(uint8_t b)
@@ -795,10 +813,16 @@ void Transport::handleResponse(uint32_t id, std::span<const char> result, std::s
         m_sessions.add(view->m_sessionId, entry.viewId);
         updateKeepAlive();
 
-        // Page.enable lets us receive frameNavigated / loadEventFired.
         // sessionId now available — the remaining chain goes to the page.
         auto ss = view->m_sessionId.utf8();
         std::span<const char> sidSpan(ss.data(), ss.length());
+
+        // Viewport first, fire-and-forget (untracked, like Runtime.enable).
+        // CDP handles a session's commands in order, so it is applied
+        // before the Page.navigate sent from the PageEnable arm.
+        send(0, deviceMetricsOverride(nextId(), view, sidSpan));
+
+        // Page.enable lets us receive frameNavigated / loadEventFired.
         uint32_t cid = nextId();
         m_pending.add(cid, Pending { Method::PageEnable, entry.slot, entry.viewId });
         send(cid, Command(cid, "Page.enable"_s, sidSpan));
@@ -1450,19 +1474,23 @@ JSPromise* navigate(JSGlobalObject* g, JSWebView* view, const WTF::String& url)
     // Page.loadEventFired. The chain carries the same Weak<view> forward
     // so the pending activity count keeps this object rooted the whole time.
     //
-    // newWindow:true is required for width/height — without it Chrome
-    // reuses an existing window and rejects position params. Headless has
-    // no visible window either way; "new window" just means "new top-level
-    // browsing context".
+    // newWindow:true gives every view its own (headless, invisible) window.
+    // Without it each new view opens as a tab of the existing window and
+    // the views already open become background tabs: their
+    // document.visibilityState flips to "hidden", rAF stops and screenshots
+    // never return. The window is left at Chrome's default size on purpose:
+    // createTarget's width/height size the window, not the page (see
+    // deviceMetricsOverride), and a window smaller than Chrome's minimum
+    // comes up hidden (0x0, no frames). The viewport is set once the session
+    // is attached, and Chrome renders, screenshots and maps input for a
+    // viewport of any size independent of the window it sits in.
     view->m_pendingChromeNavigateUrl = url;
     uint32_t id = t.nextId();
     return sendChromeOp(g, view, view->m_pendingNavigate, PendingSlot::Navigate,
         Method::TargetCreateTarget, id,
         Command(id, "Target.createTarget"_s)
             .str("url"_s, "about:blank"_s)
-            .boolean("newWindow"_s, true)
-            .num("width"_s, static_cast<int32_t>(view->m_width))
-            .num("height"_s, static_cast<int32_t>(view->m_height)));
+            .boolean("newWindow"_s, true));
 }
 
 // Runtime.evaluate with returnByValue + awaitPromise. Chrome JSON-serializes
@@ -1713,11 +1741,7 @@ JSPromise* resize(JSGlobalObject* g, JSWebView* view, uint32_t width, uint32_t h
     uint32_t id = t.nextId();
     return sendChromeOp(g, view, view->m_pendingMisc, PendingSlot::Misc,
         Method::EmulationSetDeviceMetricsOverride, id,
-        Command(id, "Emulation.setDeviceMetricsOverride"_s, sidSpan(view->m_sessionId))
-            .num("width"_s, static_cast<int32_t>(width))
-            .num("height"_s, static_cast<int32_t>(height))
-            .num("deviceScaleFactor"_s, 1)
-            .boolean("mobile"_s, false));
+        deviceMetricsOverride(id, view, sidSpan(view->m_sessionId)));
 }
 
 // Page.getNavigationHistory → Page.navigateToHistoryEntry chain. Playwright

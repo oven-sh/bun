@@ -601,9 +601,7 @@ pub(crate) fn scan_imports_and_exports(
                     // The wrapper prints `exports.x = ...` again, so it takes `exports`.
                     col!(ast_flags_list)[source_index].insert(AstFlags::USES_EXPORTS_REF);
                 } else if is_lifted_commonjs && export_kind != ExportsKind::Cjs {
-                    // The namespace of a lifted file stands in for `module.exports`: its
-                    // properties get setters. Step 5 runs in parallel, so the setters'
-                    // parameter symbol is created here.
+                    // Step 5 runs in parallel, so the export setters' parameter is made here.
                     col!(lifted_setter_params)[source_index] = this.graph.generate_new_symbol(
                         source_index_.get(),
                         SymbolKind::Other,

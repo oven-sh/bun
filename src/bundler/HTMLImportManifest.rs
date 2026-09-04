@@ -347,7 +347,7 @@ pub(crate) fn write<W: Write + ?Sized>(
                     writer,
                     path_for_key,
                     path,
-                    output_file.hash,
+                    output_file.hash.value,
                     output_file.loader,
                     output_file.output_kind,
                 )?;

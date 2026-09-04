@@ -4435,7 +4435,10 @@ pub mod bv2_impl {
                                 input_loader: Loader::File,
                                 output_kind: crate::options::OutputKind::Asset,
                                 loader,
-                                hash: Some(content_hashes_for_additional_files[index]),
+                                hash: Some(
+                                    template
+                                        .content_hash(content_hashes_for_additional_files[index]),
+                                ),
                                 side: Some(crate::options::Side::Client),
                                 entry_point_index: None,
                                 is_executable: false,

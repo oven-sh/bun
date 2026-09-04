@@ -3531,37 +3531,64 @@ pub const fn truncated_hash32_bytes(int: u64) -> [u8; 8] {
     ]
 }
 
-/// A content hash as it prints in bundler output names (`[hash]`): ten
-/// lowercase base36 digits, log2(36^10) ≈ 51.7 bits of the hash. Lowercase
-/// alphanumeric is the largest alphabet that is safe in URLs and on
-/// case-insensitive filesystems. [`truncated_hash32`]'s 40 bits let two of a
-/// few thousand chunks share a name about once per million builds, and that
-/// build fails; this width makes it about once per billion.
-pub struct ContentHash(pub u64);
+/// A 64-bit content hash as bundler output names print it: `[hash]` is the
+/// 8 characters of [`truncated_hash32`] (40 bits); `[hashN]` prints `N ≤ 13`,
+/// the first 8 identical to `[hash]` and the rest carrying the remaining 24
+/// bits, so `[hash13]` distinguishes any two distinct hashes. At 40 bits two
+/// of a few thousand chunks share a name about once per million builds.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ContentHash {
+    pub value: u64,
+    pub len: u8,
+}
 
-pub fn content_hash(int: u64) -> ContentHash {
-    ContentHash(int)
+impl ContentHash {
+    pub const DEFAULT_LEN: usize = 8;
+    pub const MAX_LEN: usize = 13;
+
+    pub const fn new(value: u64, len: usize) -> ContentHash {
+        let len = if len == 0 {
+            1
+        } else if len > Self::MAX_LEN {
+            Self::MAX_LEN
+        } else {
+            len
+        };
+        ContentHash { value, len: len as u8 }
+    }
+
+    pub const fn short(value: u64) -> ContentHash {
+        ContentHash::new(value, Self::DEFAULT_LEN)
+    }
+
+    pub const fn len(self) -> usize {
+        self.len as usize
+    }
+
+    pub const fn bytes(self) -> [u8; Self::MAX_LEN] {
+        const CHARS: &[u8; 32] = b"0123456789abcdefghjkmnpqrstvwxyz";
+        let b = self.value.to_ne_bytes();
+        let mut out = [0u8; Self::MAX_LEN];
+        let mut rest: u32 = 0;
+        let mut i = 0;
+        while i < 8 {
+            out[i] = CHARS[(b[i] & 31) as usize];
+            rest |= ((b[i] >> 5) as u32) << (3 * i);
+            i += 1;
+        }
+        while i < Self::MAX_LEN {
+            out[i] = CHARS[(rest & 31) as usize];
+            rest >>= 5;
+            i += 1;
+        }
+        out
+    }
 }
 
 impl Display for ContentHash {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        write_bytes(f, &content_hash_bytes(self.0))
+        write_bytes(f, &self.bytes()[..self.len()])
     }
-}
-
-pub const CONTENT_HASH_LEN: usize = 10;
-
-pub const fn content_hash_bytes(int: u64) -> [u8; CONTENT_HASH_LEN] {
-    const CHARS: &[u8; 36] = b"0123456789abcdefghijklmnopqrstuvwxyz";
-    let mut out = [0u8; CONTENT_HASH_LEN];
-    let mut rest = int;
-    let mut i = CONTENT_HASH_LEN;
-    while i > 0 {
-        i -= 1;
-        out[i] = CHARS[(rest % 36) as usize];
-        rest /= 36;
-    }
-    out
 }
 
 /// Zero-validation `&[u8] -> impl Display` adapter — short alias of [`raw`]

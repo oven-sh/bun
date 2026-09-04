@@ -586,27 +586,45 @@ describe("Bun.build", () => {
     Bun.gc(true);
   });
 
-  // [hash] is ten base36 digits (~52 bits of the content hash). At 8 base32
-  // characters (40 bits), two of a few thousand `--splitting` chunks printed
-  // the same name about once per million builds and the build failed with
-  // "Multiple files share the same output path".
-  test("[hash] is ten base36 digits of the content hash", async () => {
+  // [hash] is 8 characters (40 bits of the content hash); with a few thousand
+  // `--splitting` chunks two of them print the same name about once per
+  // million builds and the build fails with "Multiple files share the same
+  // output path". [hashN] prints N ≤ 13 characters; [hash13] carries all 64 bits.
+  test("[hashN] prints N characters of the content hash", async () => {
     const dir = tempDirWithFiles("build-hash-width", {
       "a.js": `export default "a" + (await import("./shared.js")).default;`,
       "b.js": `export default "b" + (await import("./shared.js")).default;`,
       "shared.js": `export default "shared";`,
     });
-    const build = await Bun.build({
-      entrypoints: [join(dir, "a.js"), join(dir, "b.js")],
-      splitting: true,
-      naming: { entry: "[name]-[hash].[ext]", chunk: "chunk-[hash].[ext]" },
-    });
-    expect(build.success).toBe(true);
-    for (const output of build.outputs) {
-      expect(output.hash).toMatch(/^[0-9a-z]{10}$/);
-      expect(path.basename(output.path)).toEndWith(`-${output.hash}.js`);
+    const hashes = async (naming: string) => {
+      const build = await Bun.build({
+        entrypoints: [join(dir, "a.js"), join(dir, "b.js")],
+        splitting: true,
+        naming: { entry: `[name]-${naming}.[ext]`, chunk: `chunk-${naming}.[ext]` },
+      });
+      expect(build.success).toBe(true);
+      for (const output of build.outputs) {
+        expect(path.basename(output.path)).toEndWith(`-${output.hash}.js`);
+      }
+      return Object.fromEntries(
+        build.outputs.map(o => [path.basename(o.path).replace(/-[0-9a-z]+\.js$/, ""), o.hash!]),
+      );
+    };
+    // The naming template is itself part of the content hash, so values are
+    // only comparable within one template; check widths.
+    for (const [naming, width] of [
+      ["[hash]", 8],
+      ["[hash8]", 8],
+      ["[hash10]", 10],
+      ["[hash13]", 13],
+      ["[hash99]", 13],
+    ] as const) {
+      const h = await hashes(naming);
+      expect(Object.keys(h).sort()).toEqual(["a", "b", "chunk"]);
+      for (const value of Object.values(h)) {
+        expect(value).toMatch(new RegExp(`^[0-9a-z]{${width}}$`));
+      }
     }
-    expect(new Set(build.outputs.map(o => o.hash)).size).toBe(build.outputs.length);
   });
 
   test("BuildArtifact properties + entry.naming", async () => {

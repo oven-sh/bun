@@ -777,7 +777,7 @@ describe("bundler", () => {
       "/exec.js": `
         import assert from 'node:assert';
         import the_path from './out/entry.js';
-        assert.strictEqual(the_path, './entry-0y04mly0u7.zig');
+        assert.strictEqual(the_path, './entry-z5artd5z.zig');
       `,
     },
     run: {

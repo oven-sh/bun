@@ -1116,11 +1116,9 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                                 output_path: Box::from(source_provider_url_str.slice()),
                                 input_path: input_path_buf.into_boxed_slice(),
                                 input_loader: Loader::Js,
-                                hash: if chunk.template.placeholder.hash.is_some() {
-                                    Some(bun_wyhash::hash(&bytecode))
-                                } else {
-                                    None
-                                },
+                                hash: chunk.template.placeholder.hash.map(|_| {
+                                    chunk.template.content_hash(bun_wyhash::hash(&bytecode))
+                                }),
                                 output_kind: options::OutputKind::Bytecode,
                                 loader: Loader::File,
                                 size: Some(bytecode.len()),
@@ -1180,11 +1178,11 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                                         output_path: out_path.into_boxed_slice(),
                                         input_path: in_path.into_boxed_slice(),
                                         input_loader: Loader::Js,
-                                        hash: if chunk.template.placeholder.hash.is_some() {
-                                            Some(bun_wyhash::hash(module_info_bytes))
-                                        } else {
-                                            None
-                                        },
+                                        hash: chunk.template.placeholder.hash.map(|_| {
+                                            chunk
+                                                .template
+                                                .content_hash(bun_wyhash::hash(module_info_bytes))
+                                        }),
                                         output_kind: options::OutputKind::ModuleInfo,
                                         loader: Loader::File,
                                         size: Some(module_info_bytes.len()),
@@ -1230,7 +1228,11 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                     data: options::OutputFileData::Buffer {
                         data: code_result.buffer,
                     },
-                    hash: chunk.template.placeholder.hash,
+                    hash: chunk
+                        .template
+                        .placeholder
+                        .hash
+                        .map(|h| chunk.template.content_hash(h)),
                     loader: chunk.content.loader(),
                     input_path,
                     display_size: display_size as u32,

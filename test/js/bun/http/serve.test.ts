@@ -4896,12 +4896,18 @@ it("interleaved responses written from timers never mix bytes across sockets", a
   }
   for (const [tag, text] of await Promise.all(jobs)) {
     if (text !== expected(tag)) {
-      // Report which response got foreign or missing bytes without dumping 70 KB.
-      expect({ tag, length: text.length, head: text.slice(0, 40) }).toEqual({
+      // Say which response got foreign or missing bytes, and where, without
+      // dumping 70 KB per side.
+      const want = expected(tag);
+      let at = 0;
+      while (at < text.length && text[at] === want[at]) at++;
+      expect({ tag, length: text.length, at, got: text.slice(at, at + 40) }).toEqual({
         tag,
-        length: expected(tag).length,
-        head: expected(tag).slice(0, 40),
+        length: want.length,
+        at,
+        got: want.slice(at, at + 40),
       });
+      expect.unreachable();
     }
   }
 });

@@ -1443,10 +1443,13 @@ fn overrides_field_name(
         return "overrides";
     };
     let root = entry.root;
-    if root.as_property(b"overrides").is_none() && root.as_property(b"resolutions").is_some() {
-        "resolutions"
-    } else {
-        "overrides"
+    match (
+        root.as_property(b"overrides").is_some(),
+        root.as_property(b"resolutions").is_some(),
+    ) {
+        (false, true) => "resolutions",
+        (true, true) => "overrides or resolutions",
+        _ => "overrides",
     }
 }
 

@@ -717,6 +717,16 @@ export interface DeadPort {
  * `listen(0)`, and not listening, so `connect()` to it is refused. Do not
  * simplify to bind-then-close: that frees the port into exactly the pool
  * `listen(0)` draws from, and a sibling `test.concurrent` will take it.
+ *
+ * `localAddress` makes the holder `bind()` its port before it connects. On
+ * Linux, a later `connect()` to a port that an earlier `connect()` picked can
+ * get that same port as its source port. The socket then connects to itself
+ * (about 1 in 14k dials), and a proxy test sees `ConnectionRefused` or
+ * `Malformed_HTTP_Response`, not a 502. Linux does not do this with a port
+ * that `bind()` picked.
+ *
+ * Do not return `sink`'s port instead. On Windows, `listen(0)` hands out the
+ * port of a closed listener while its accepted socket is still open.
  */
 export async function deadPort(): Promise<DeadPort> {
   let accepted: net.Socket | undefined;
@@ -726,7 +736,11 @@ export async function deadPort(): Promise<DeadPort> {
   });
   sink.listen(0, "127.0.0.1");
   await once(sink, "listening");
-  const holder = net.connect({ host: "127.0.0.1", port: (sink.address() as net.AddressInfo).port });
+  const holder = net.connect({
+    host: "127.0.0.1",
+    port: (sink.address() as net.AddressInfo).port,
+    localAddress: "127.0.0.1",
+  });
   holder.on("error", () => {});
   await once(holder, "connect");
   const port = (holder.address() as net.AddressInfo).port;

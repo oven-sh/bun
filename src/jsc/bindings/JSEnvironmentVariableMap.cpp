@@ -11,7 +11,6 @@
 #include <JavaScriptCore/JSString.h>
 #include <JavaScriptCore/JSStringInlines.h>
 #include <JavaScriptCore/DateInstance.h>
-#include <JavaScriptCore/DateInstanceCache.h>
 #include <JavaScriptCore/JSCast.h>
 #include <JavaScriptCore/HeapIterationScope.h>
 #include <JavaScriptCore/MarkedSpaceInlines.h>
@@ -49,16 +48,9 @@ using namespace WebCore;
 
 void invalidateLiveDateInstanceCaches(JSC::VM& vm)
 {
-    // HeapIterationScope stops every allocator (walks all BlockDirectories); only
-    // forEachLiveCell is subspace-local. Acceptable for rare TZ writes — V8's O(1)
-    // alternative is a tz-generation counter on DateInstanceData.
     JSC::HeapIterationScope iterationScope(vm.heap);
     vm.heap.dateInstanceSpace.forEachLiveCell([](JSC::HeapCell* cell, JSC::HeapCell::Kind) -> IterationStatus {
-        auto* date = static_cast<JSC::DateInstance*>(static_cast<JSC::JSCell*>(cell));
-        // m_data is private, but its offset is exported for the JIT.
-        auto& dataSlot = *reinterpret_cast<RefPtr<JSC::DateInstanceData>*>(reinterpret_cast<uint8_t*>(date) + JSC::DateInstance::offsetOfData());
-        if (dataSlot)
-            dataSlot->m_gregorianDateTimeCachedForMS = PNaN;
+        static_cast<JSC::DateInstance*>(static_cast<JSC::JSCell*>(cell))->invalidateCachedLocalGregorianDateTime();
         return IterationStatus::Continue;
     });
 }

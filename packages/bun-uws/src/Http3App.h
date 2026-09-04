@@ -20,8 +20,6 @@ struct H3App {
         return new H3App{ctx};
     }
 
-    bool constructorFailed() { return http3Context == nullptr; }
-
     ~H3App() {
         if (http3Context) http3Context->free();
     }
@@ -60,7 +58,6 @@ struct H3App {
         memcpy(&raw, &options, sizeof(raw));
         return http3Context->addServerName(hostname, raw);
     }
-    void *getNativeHandle() { return http3Context; }
 };
 
 }

@@ -33,7 +33,6 @@
 #include <winsock2.h>
 #include <ws2tcpip.h>
 #pragma comment(lib, "ws2_32.lib")
-#define SETSOCKOPT_PTR_TYPE const char *
 #define LIBUS_SOCKET_ERROR INVALID_SOCKET
 #else /* POSIX */
 #ifndef _GNU_SOURCE
@@ -42,7 +41,6 @@
 /* For socklen_t */
 #include <sys/socket.h>
 #include <netdb.h>
-#define SETSOCKOPT_PTR_TYPE int *
 #define LIBUS_SOCKET_ERROR -1
 #endif
 

@@ -158,20 +158,12 @@ void us_socket_group_close_all(struct us_socket_group_t *group) {
     us_socket_group_close_all_ex(group, 1);
 }
 
-unsigned short us_socket_group_timestamp(struct us_socket_group_t *group) {
-    return group->timestamp;
-}
-
 __attribute__((always_inline)) struct us_loop_t *us_socket_group_loop(struct us_socket_group_t *group) {
     return group->loop;
 }
 
 __attribute__((always_inline)) void *us_socket_group_ext(struct us_socket_group_t *group) {
     return group->ext;
-}
-
-struct us_socket_group_t *us_socket_group_next(struct us_socket_group_t *group) {
-    return group->next;
 }
 
 /* ── Link / unlink ──────────────────────────────────────────────────────── */
@@ -493,10 +485,6 @@ void us_listen_socket_close(struct us_listen_socket_t *ls) {
     /* We cannot immediately free a listen socket as we can be inside an accept loop */
 }
 
-__attribute__((always_inline)) void *us_listen_socket_ext(struct us_listen_socket_t *ls) {
-    return ls + 1;
-}
-
 struct us_listen_socket_t *us_socket_group_head_listen_socket(struct us_socket_group_t *group) {
     return group->head_listen_sockets;
 }
@@ -507,10 +495,6 @@ struct us_listen_socket_t *us_listen_socket_next(struct us_listen_socket_t *ls) 
 
 LIBUS_SOCKET_DESCRIPTOR us_listen_socket_get_fd(struct us_listen_socket_t *ls) {
     return us_poll_fd(&ls->s.p);
-}
-
-int us_listen_socket_port(struct us_listen_socket_t *ls) {
-    return us_socket_local_port(&ls->s);
 }
 
 struct us_socket_group_t *us_listen_socket_group(struct us_listen_socket_t *ls) {

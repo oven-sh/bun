@@ -133,15 +133,12 @@ struct Http3Response {
         return !(getHttpResponseData()->state & Http3ResponseData::HTTP_RESPONSE_PENDING);
     }
 
-    uint64_t getWriteOffset() { return getHttpResponseData()->offset; }
-    void overrideWriteOffset(uint64_t o) { getHttpResponseData()->offset = o; }
     size_t getBufferedAmount() { return getHttpResponseData()->backpressure.length(); }
 
     Http3Response *pause() { us_quic_stream_want_read((us_quic_stream_t *) this, 0); return this; }
     Http3Response *resume() { us_quic_stream_want_read((us_quic_stream_t *) this, 1); return this; }
 
     Http3Response *cork(MoveOnlyFunction<void()> &&fn) { fn(); return this; }
-    void *getSocketData() { return getHttpResponseData()->socketData; }
 
     Http3Response *onWritable(void *userData, Http3ResponseData::OnWritableCallback h) {
         Http3ResponseData *d = getHttpResponseData();

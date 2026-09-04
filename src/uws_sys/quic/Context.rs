@@ -2,7 +2,7 @@
 //! For the client there is exactly one of these per HTTP-thread loop and it
 //! lives for the process; the server creates one per `Bun.serve({http3:true})`.
 
-use core::ffi::{CStr, c_char, c_int, c_uint, c_void};
+use core::ffi::{CStr, c_char, c_int, c_uint};
 
 use crate::Loop;
 use crate::quic::{PendingConnect, Socket, Stream};
@@ -31,7 +31,6 @@ unsafe extern "C" {
         reject_unauthorized: c_int,
         out_qs: *mut *mut Socket,
         out_pending: *mut *mut PendingConnect,
-        user: *mut c_void,
     ) -> c_int;
 
     safe fn us_quic_socket_context_on_hsk_done(
@@ -110,7 +109,6 @@ impl Context {
         port: u16,
         sni: &CStr,
         reject_unauthorized: bool,
-        user: *mut c_void,
     ) -> ConnectResult {
         let mut qs: *mut Socket = core::ptr::null_mut();
         let mut pc: *mut PendingConnect = core::ptr::null_mut();
@@ -124,7 +122,6 @@ impl Context {
                 reject_unauthorized as c_int,
                 &raw mut qs,
                 &raw mut pc,
-                user,
             )
         };
         match rc {

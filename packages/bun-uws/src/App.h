@@ -181,41 +181,6 @@ public:
         return std::move(*this);
     }
 
-    TemplatedApp &&removeServerName(const std::string &hostname_pattern) {
-        if constexpr (SSL) {
-            /* The SNI tree on each listener stores a *borrowed* router pointer
-             * (and its own SSL_CTX_up_ref). pendingServerNames is the single
-             * owner — drop the borrowers first, then free the owner exactly
-             * once. The old loop deleted the router once per listener. */
-            forEachListenSocket([&](us_listen_socket_t *ls) {
-                us_listen_socket_remove_server_name(ls, hostname_pattern.c_str());
-            });
-            for (auto it = pendingServerNames.begin(); it != pendingServerNames.end(); ) {
-                if (it->hostname == hostname_pattern) {
-                    us_internal_ssl_ctx_unref(it->ctx);
-                    delete it->router;
-                    it = pendingServerNames.erase(it);
-                } else ++it;
-            }
-        }
-        return std::move(*this);
-    }
-
-    TemplatedApp &&missingServerName(MoveOnlyFunction<void(const char *hostname)> &&handler) {
-        if (!constructorFailed()) {
-            httpContext->getSocketContextData()->missingServerNameHandler = std::move(handler);
-            forEachListenSocket([&](us_listen_socket_t *ls) {
-                us_listen_socket_on_server_name(ls, &onMissingServerName);
-            });
-        }
-        return std::move(*this);
-    }
-
-    /* Returns the SSL_CTX* of this app, or nullptr. */
-    void *getNativeHandle() {
-        return sslCtx;
-    }
-
     /* Attaches a "filter" function to track socket connections/disconnections */
     TemplatedApp &&filter(MoveOnlyFunction<void(HttpResponse<SSL> *, int)> &&filterHandler) {
         httpContext->filter(std::move(filterHandler));
@@ -320,21 +285,6 @@ public:
     TemplatedApp(TemplatedApp &&other) = delete;
 
 private:
-    static struct ssl_ctx_st *onMissingServerName(struct us_listen_socket_t *ls, const char *hostname, int *abort_handshake, struct us_socket_t *socket) {
-        /* Bun.serve's missingServerName handler registers a context or lets the
-         * default serve the request - it never aborts or suspends the handshake. */
-        (void) abort_handshake;
-        (void) socket;
-        auto *httpContext = (HttpContext<SSL> *) us_socket_group_ext(us_listen_socket_group(ls));
-        httpContext->getSocketContextData()->missingServerNameHandler(hostname);
-        /* The handler is expected to have registered the name via
-         * addServerName(); hand the newly-registered context back so the
-         * in-flight handshake uses it (the resolver no longer re-checks the
-         * SNI tree after this callback returns). The handler may also have
-         * closed the listener, freeing the tree. */
-        return us_listen_socket_find_server_name_ctx(ls, hostname);
-    }
-
     TemplatedApp(SocketContextOptions options) {
         if constexpr (SSL) {
             enum create_bun_socket_error_t err = CREATE_BUN_SOCKET_ERROR_NONE;
@@ -717,9 +667,6 @@ private:
         if constexpr (SSL) {
             for (auto &p : pendingServerNames) {
                 us_listen_socket_add_server_name(ls, p.hostname.c_str(), p.ctx, p.router);
-            }
-            if (httpContext->getSocketContextData()->missingServerNameHandler) {
-                us_listen_socket_on_server_name(ls, &onMissingServerName);
             }
         }
         return ls;

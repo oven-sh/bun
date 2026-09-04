@@ -37,7 +37,6 @@
 #include "ChunkedEncoding.h"
 
 #include "BloomFilter.h"
-#include "QueryParser.h"
 #include "HttpErrors.h"
 
 #if defined(_WIN32)
@@ -436,13 +435,6 @@ struct HttpResponseData;
             }
 
             return headers->key;
-        }
-
-        /* Finds and decodes the URI component. */
-        std::string_view getQuery(std::string_view key)
-        {
-            /* Raw querystring including initial '?' sign */
-            return getDecodedQueryValue(key, headers->value.substr(querySeparator));
         }
 
         void setParameters(std::pair<int, std::string_view *> parameters)

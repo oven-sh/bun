@@ -30,20 +30,9 @@ extern "C" int bun_is_exiting();
 namespace uWS {
 struct Loop {
 private:
+    /* us_wakeup_loop only interrupts the poll; nothing is queued for this callback to run. */
     static void wakeupCb(us_loop_t *loop) {
-        LoopData *loopData = (LoopData *) us_loop_ext(loop);
-
-        /* Swap current deferQueue */
-        loopData->deferMutex.lock();
-        int oldDeferQueue = loopData->currentDeferQueue;
-        loopData->currentDeferQueue = (loopData->currentDeferQueue + 1) % 2;
-        loopData->deferMutex.unlock();
-
-        /* Drain the queue */
-        for (auto &x : loopData->deferQueues[oldDeferQueue]) {
-            x();
-        }
-        loopData->deferQueues[oldDeferQueue].clear();
+        (void) loop;
     }
 
     static void preCb(us_loop_t *loop) {
@@ -175,18 +164,6 @@ public:
         LoopData *loopData = (LoopData *) us_loop_ext((us_loop_t *) this);
 
         loopData->preHandlers.erase(key);
-    }
-
-    /* Defer this callback on Loop's thread of execution */
-    void defer(MoveOnlyFunction<void()> &&cb) {
-        LoopData *loopData = (LoopData *) us_loop_ext((us_loop_t *) this);
-
-        //if (std::thread::get_id() == ) // todo: add fast path for same thread id
-        loopData->deferMutex.lock();
-        loopData->deferQueues[loopData->currentDeferQueue].emplace_back(std::move(cb));
-        loopData->deferMutex.unlock();
-
-        us_wakeup_loop((us_loop_t *) this);
     }
 
     /* Actively block and run this loop */

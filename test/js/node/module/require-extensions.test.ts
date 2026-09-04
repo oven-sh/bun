@@ -1,6 +1,6 @@
 import assert from "assert";
 import { expect, mock, test } from "bun:test";
-import { tempDir } from "harness";
+import { bunEnv, bunExe, tempDir } from "harness";
 import path from "path";
 
 test("require.extensions shape makes sense", () => {
@@ -161,6 +161,59 @@ test("wrapping an existing extension but it's secretly sync esm", () => {
   } finally {
     require.extensions[".cjs"] = original;
   }
+});
+test("a custom extension handler stays alive and current across GC", async () => {
+  using dir = tempDir("require-extensions-gc", {
+    "lib.custom": `module.exports = "plain js";`,
+    "main.js": `
+      const calls = [];
+      function install(name) {
+        // Once this returns, the extensions table is the only thing that can
+        // keep the handler alive.
+        require.extensions[".custom"] = function (module, filename) {
+          calls.push(name);
+          module._compile("module.exports = " + JSON.stringify(name) + ";", filename);
+        };
+      }
+      const reload = () => {
+        delete require.cache[require.resolve("./lib.custom")];
+        return require("./lib.custom");
+      };
+
+      install("first");
+      Bun.gc(true);
+      const handler = require.extensions[".custom"];
+      Bun.gc(true);
+      const first = reload();
+
+      install("second");
+      Bun.gc(true);
+      const second = reload();
+      const replaced = require.extensions[".custom"] !== handler;
+
+      delete require.extensions[".custom"];
+      Bun.gc(true);
+      const fallback = reload();
+
+      console.log(JSON.stringify({ first, second, replaced, fallback, calls }));
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "main.js"],
+    env: bunEnv,
+    cwd: String(dir),
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(JSON.parse(stdout)).toEqual({
+    first: "first",
+    second: "second",
+    replaced: true,
+    fallback: "plain js",
+    calls: ["first", "second"],
+  });
+  expect(exitCode).toBe(0);
 });
 test("mutating extensions is banned by some files", () => {
   // vercel is not allowed to mutate require.extensions

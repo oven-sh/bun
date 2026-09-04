@@ -2,7 +2,6 @@
 #define UWS_H3REQUEST_H
 
 #include "quic.h"
-#include "QueryParser.h"
 
 #include <cctype>
 #include <string_view>
@@ -30,9 +29,6 @@ struct Http3Request {
                 fullUrl = value;
                 size_t q = value.find('?');
                 url = q == std::string_view::npos ? value : value.substr(0, q);
-                /* Keep the leading '?' — getDecodedQueryValue expects it and
-                 * unconditionally drops the first byte. */
-                query = q == std::string_view::npos ? std::string_view{} : value.substr(q);
             } else if (name == ":authority") {
                 authority = value;
             } else if (authority.empty() && name.size() == 4 && equalsIgnoreCase(name, "host")) {
@@ -51,10 +47,6 @@ struct Http3Request {
 
     std::string_view getUrl() { return url; }
     std::string_view getFullUrl() { return fullUrl; }
-    std::string_view getQuery() { return query.empty() ? query : query.substr(1); }
-    std::string_view getQuery(std::string_view key) {
-        return getDecodedQueryValue(key, query);
-    }
 
     /* HttpRequest::getMethod() lowercases in place; we own no writable
      * buffer, so write into a per-request scratch instead. */
@@ -112,7 +104,7 @@ private:
 
     const us_quic_header_t *headers;
     unsigned int headerCount;
-    std::string_view method, url, fullUrl, query, authority;
+    std::string_view method, url, fullUrl, authority;
     std::pair<int, std::string_view *> params{-1, nullptr};
     char methodLower[32];
     bool yield = false;

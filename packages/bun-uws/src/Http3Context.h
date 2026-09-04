@@ -1,6 +1,8 @@
 #ifndef UWS_H3CONTEXT_H
 #define UWS_H3CONTEXT_H
 
+#include <vector>
+
 #include "quic.h"
 #include "Loop.h"
 #include "Http3ContextData.h"

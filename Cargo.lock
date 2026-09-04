@@ -282,7 +282,6 @@ dependencies = [
  "bun_wyhash",
  "bun_zstd",
  "bytemuck",
- "const_format",
  "enum-map",
  "lol_html",
  "scopeguard",
@@ -324,7 +323,6 @@ dependencies = [
  "bun_resolver",
  "bun_standalone_graph",
  "bun_sys",
- "enum-map",
  "scopeguard",
  "thiserror",
 ]
@@ -376,8 +374,6 @@ dependencies = [
  "paste",
  "rustc-hash",
  "smallvec",
- "strum",
- "thiserror",
 ]
 
 [[package]]
@@ -434,7 +430,6 @@ dependencies = [
  "bun_zlib",
  "const_format",
  "libc",
- "scopeguard",
  "thiserror",
 ]
 
@@ -465,14 +460,9 @@ dependencies = [
  "bun_paths",
  "bun_ptr",
  "bun_wyhash",
- "const_format",
- "enum-map",
- "enumset",
- "libc",
  "scopeguard",
  "strum",
  "thiserror",
- "typed-arena",
 ]
 
 [[package]]
@@ -634,7 +624,6 @@ dependencies = [
  "bun_wyhash",
  "bun_zlib",
  "bun_zstd",
- "scopeguard",
  "strum",
  "thiserror",
 ]
@@ -694,7 +683,6 @@ dependencies = [
  "bun_core",
  "bun_dotenv",
  "bun_install_types",
- "bun_js_parser",
  "bun_parsers",
  "bun_url",
  "strum",
@@ -745,7 +733,6 @@ dependencies = [
  "bun_threading",
  "bun_transpiler",
  "bun_url",
- "bun_uws",
  "bun_which",
  "bun_wyhash",
  "bytemuck",
@@ -799,15 +786,11 @@ dependencies = [
  "bun_core",
  "bun_dispatch",
  "bun_errno",
- "bun_opaque",
- "bun_paths",
  "bun_ptr",
  "bun_spawn_sys",
  "bun_sys",
  "bun_threading",
  "bun_uws_sys",
- "const_format",
- "enum-map",
  "enumset",
  "libc",
  "scopeguard",
@@ -881,10 +864,8 @@ dependencies = [
  "bun_sourcemap",
  "bun_wyhash",
  "bytemuck",
- "const_format",
  "enum-map",
  "enumset",
- "scopeguard",
  "thiserror",
 ]
 
@@ -928,7 +909,6 @@ dependencies = [
  "bun_spawn",
  "bun_sys",
  "bun_threading",
- "bun_transpiler",
  "bun_url",
  "bun_uws",
  "bun_watcher",
@@ -981,7 +961,6 @@ dependencies = [
  "bun_core",
  "bun_windows_sys",
  "bun_wyhash",
- "libc",
  "strum",
 ]
 
@@ -1141,7 +1120,6 @@ dependencies = [
 name = "bun_platform"
 version = "0.0.0"
 dependencies = [
- "bun_core",
  "libc",
 ]
 
@@ -1153,7 +1131,6 @@ dependencies = [
  "bun_alloc",
  "bun_core",
  "bun_core_macros",
- "scopeguard",
 ]
 
 [[package]]
@@ -2881,12 +2858,6 @@ dependencies = [
  "serde",
  "serde_json",
 ]
-
-[[package]]
-name = "typed-arena"
-version = "2.0.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6af6ae20167a9ece4bcb41af5b80f8a1f1df981f6391189ce00fd257af04126a"
 
 [[package]]
 name = "typenum"

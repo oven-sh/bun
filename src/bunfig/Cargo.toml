@@ -17,7 +17,6 @@ workspace = true
 bun_io.workspace = true
 bstr.workspace = true
 scopeguard.workspace = true
-enum-map.workspace = true
 thiserror.workspace = true
 bun_alloc.workspace = true
 bun_api.workspace = true

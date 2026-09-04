@@ -35,7 +35,6 @@ inline constexpr std::string_view ERR_TOO_BIG_MESSAGE("Received too big message"
 inline constexpr std::string_view ERR_WEBSOCKET_TIMEOUT("WebSocket timed out from inactivity");
 inline constexpr std::string_view ERR_INVALID_TEXT("Received invalid UTF-8");
 inline constexpr std::string_view ERR_TOO_BIG_MESSAGE_INFLATION("Received too big message, or other inflation error");
-inline constexpr std::string_view ERR_INVALID_CLOSE_PAYLOAD("Received invalid close payload");
 inline constexpr std::string_view ERR_INVALID_MASKING("Received an incorrectly masked frame");
 inline constexpr std::string_view ERR_INVALID_RSV1("Received unexpected RSV1 bit");
 
@@ -48,17 +47,10 @@ enum OpCode : unsigned char {
     PONG = 10
 };
 
-enum {
-    CLIENT,
-    SERVER
-};
-
 // 24 bytes perfectly
 template <bool isServer>
 struct WebSocketState {
 public:
-    static constexpr unsigned int SHORT_MESSAGE_HEADER = isServer ? 6 : 2;
-    static constexpr unsigned int MEDIUM_MESSAGE_HEADER = isServer ? 8 : 4;
     static constexpr unsigned int LONG_MESSAGE_HEADER = isServer ? 14 : 10;
 
     // 16 bytes
@@ -168,8 +160,6 @@ static inline size_t messageFrameSize(size_t messageSize) {
 }
 
 enum {
-    SND_CONTINUATION = 1,
-    SND_NO_FIN = 2,
     SND_COMPRESSED = 64
 };
 
@@ -393,10 +383,6 @@ protected:
     }
 
 public:
-    WebSocketProtocol() {
-
-    }
-
     static inline void consume(char *src, unsigned int length, WebSocketState<isServer> *wState, void *user) {
         if (wState->state.spillLength) {
             src -= wState->state.spillLength;
@@ -462,8 +448,6 @@ public:
         }
     }
 
-    static constexpr int CONSUME_POST_PADDING = 4;
-    static constexpr int CONSUME_PRE_PADDING = LONG_MESSAGE_HEADER - 1;
 };
 
 }

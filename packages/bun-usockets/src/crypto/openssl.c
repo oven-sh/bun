@@ -3315,27 +3315,6 @@ void us_listen_socket_remove_server_name(struct us_listen_socket_t *ls,
   sni_node_destructor(node);
 }
 
-void *us_listen_socket_find_server_name_userdata(struct us_listen_socket_t *ls,
-                                                 const char *hostname_pattern) {
-  if (!ls->sni) return NULL;
-  struct sni_node_t *node = (struct sni_node_t *)sni_find(ls->sni, hostname_pattern);
-  return node ? node->user : NULL;
-}
-
-/* Returns the SSL_CTX registered for `hostname_pattern` via
- * us_listen_socket_add_server_name, or NULL. Owned - the caller must release
- * the reference. The on_server_name resolvers return owned references (the
- * SNI dispatcher frees them after SSL_set_SSL_CTX takes its own), so the
- * tree's reference must not be handed out as a borrow. */
-struct ssl_ctx_st *us_listen_socket_find_server_name_ctx(struct us_listen_socket_t *ls,
-                                                         const char *hostname_pattern) {
-  if (!ls->sni) return NULL;
-  struct sni_node_t *node = (struct sni_node_t *)sni_find(ls->sni, hostname_pattern);
-  if (!node || !node->ctx) return NULL;
-  SSL_CTX_up_ref(node->ctx);
-  return node->ctx;
-}
-
 void us_listen_socket_on_server_name(struct us_listen_socket_t *ls,
                                      struct ssl_ctx_st *(*cb)(struct us_listen_socket_t *, const char *, int *, struct us_socket_t *)) {
   ls->on_server_name = cb;

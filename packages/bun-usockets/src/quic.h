@@ -88,9 +88,8 @@ struct addrinfo_request;
 int us_quic_socket_context_connect(
     us_quic_socket_context_t *ctx, const char *host, int port, const char *sni,
     int reject_unauthorized, us_quic_socket_t **out_qs,
-    struct us_quic_pending_connect_s **out_pending, void *user);
+    struct us_quic_pending_connect_s **out_pending);
 
-void *us_quic_pending_connect_user(struct us_quic_pending_connect_s *pc);
 struct addrinfo_request *us_quic_pending_connect_addrinfo(
     struct us_quic_pending_connect_s *pc);
 us_quic_socket_t *us_quic_pending_connect_resolved(
@@ -105,8 +104,6 @@ unsigned us_quic_socket_streams_avail(us_quic_socket_t *s);
 int us_quic_socket_status(us_quic_socket_t *s, char *buf, unsigned int len);
 
 /* Connection-level callbacks */
-void us_quic_socket_context_on_open(us_quic_socket_context_t *ctx,
-    void (*on_open)(us_quic_socket_t *));
 /* Fires once the TLS handshake completes (client only). ok=0 means the
  * handshake failed; on_close follows shortly. */
 void us_quic_socket_context_on_hsk_done(us_quic_socket_context_t *ctx,
@@ -140,11 +137,9 @@ int us_quic_stream_send_headers(us_quic_stream_t *s,
  * header block follows separately. */
 int us_quic_stream_send_informational(us_quic_stream_t *s, const char *status3);
 void us_quic_stream_shutdown(us_quic_stream_t *s);
-void us_quic_stream_flush(us_quic_stream_t *s);
 void us_quic_stream_shutdown_read(us_quic_stream_t *s);
 void us_quic_stream_close(us_quic_stream_t *s);
 void us_quic_stream_reset(us_quic_stream_t *s);
-int us_quic_stream_has_unacked(us_quic_stream_t *s);
 
 void *us_quic_stream_ext(us_quic_stream_t *s);
 us_quic_socket_t *us_quic_stream_socket(us_quic_stream_t *s);
@@ -163,7 +158,6 @@ const struct us_quic_header_t *us_quic_stream_header(us_quic_stream_t *s, unsign
 
 /* Connection accessors */
 void *us_quic_socket_ext(us_quic_socket_t *s);
-us_quic_socket_context_t *us_quic_socket_context(us_quic_socket_t *s);
 void us_quic_socket_remote_address(us_quic_socket_t *s, char *buf, int *len, int *port, int *is_ipv6);
 void us_quic_socket_close(us_quic_socket_t *s);
 

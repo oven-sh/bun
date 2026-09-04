@@ -31,9 +31,6 @@
 #include <cstdlib>
 #include <algorithm>
 
-/* We only handle a maximum of 10 labels per hostname */
-#define MAX_LABELS 10
-
 /* This cannot be shared */
 thread_local void (*sni_free_cb)(void *);
 

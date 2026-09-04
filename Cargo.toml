@@ -362,7 +362,6 @@ rustix = { version = "0.38", default-features = false, features = ["std", "fs", 
 bitflags = "2"
 thiserror = "2"
 smallvec = "1"
-typed-arena = "2"
 itoa = "1"
 encoding_rs = "0.8.35"
 # Vendored, not crates.io — see the `exclude = ["vendor"]` note above.

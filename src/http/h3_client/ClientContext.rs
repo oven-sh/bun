@@ -2,7 +2,7 @@
 //! client engine and the live-session registry. Never freed — the engine
 //! lives for the process, same as the HTTP thread itself.
 
-use core::ffi::{c_uint, c_void};
+use core::ffi::c_uint;
 use core::ptr::NonNull;
 use core::sync::atomic::Ordering;
 
@@ -139,9 +139,7 @@ impl ClientContext {
         self.sessions.push(session);
         session_mut(session).enqueue(client);
 
-        let result =
-            self.qctx_mut()
-                .connect(host_z, port, host_z, reject, session.cast::<c_void>());
+        let result = self.qctx_mut().connect(host_z, port, host_z, reject);
         match result {
             ConnectResult::Socket(qs) => {
                 session_mut(session).qsocket = NonNull::new(qs);

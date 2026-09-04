@@ -102,7 +102,6 @@
 #define LIBUS_RECV_BUFFER_PADDING 32
 /* Guaranteed alignment of extension memory */
 #define LIBUS_EXT_ALIGNMENT 16
-#define ALLOW_SERVER_RENEGOTIATION 0
 
 /* close() codes — two orthogonal bits collapsed into three states:
  *   0  graceful: TLS sends close_notify and DEFERS the fd close until the
@@ -205,15 +204,7 @@ char *us_udp_packet_buffer_peer(struct us_udp_packet_buffer_t *buf, int index);
 /* Peeks ECN of received packet */
 // int us_udp_packet_buffer_ecn(struct us_udp_packet_buffer_t *buf, int index);
 
-/* Receives a set of packets into specified packet buffer */
-int us_udp_socket_receive(struct us_udp_socket_t *s, struct us_udp_packet_buffer_t *buf);
-
-void us_udp_buffer_set_packet_payload(struct us_udp_packet_buffer_t *send_buf, int index, int offset, void *payload, int length, void *peer_addr);
-
 int us_udp_socket_send(struct us_udp_socket_t *s, void** payloads, size_t* lengths, void** addresses, int num);
-
-/* Allocates a packet buffer that is reuable per thread. Mutated by us_udp_socket_receive. */
-struct us_udp_packet_buffer_t *us_create_udp_packet_buffer();
 
 /* Creates a (heavy-weight) UDP socket with a user space ring buffer. Again, this one is heavy weight and
  * shoud be reused. One entire QUIC server can be implemented using only one single UDP socket so weight
@@ -244,9 +235,6 @@ struct us_udp_socket_t *us_create_udp_socket_from_fd(us_loop_r loop, void (*data
 
 /* This one is ugly, should be ext! not user */
 void *us_udp_socket_user(struct us_udp_socket_t *s);
-
-/* Binds the UDP socket to an interface and port */
-int us_udp_socket_bind(struct us_udp_socket_t *s, const char *hostname, unsigned int port);
 
 /* Public interfaces for timers. libuv (Windows) only — epoll/kqueue schedules
  * on bun.JSC.EventLoopTimer, no file descriptor or syscall. */
@@ -355,10 +343,8 @@ void us_socket_group_close_all_ex(us_socket_group_r group, int also_listeners) n
  * (see close_all_ex). */
 int us_loop_close_all_groups(us_loop_r loop) nonnull_fn_decl;
 
-unsigned short us_socket_group_timestamp(us_socket_group_r group) nonnull_fn_decl;
 struct us_loop_t *us_socket_group_loop(us_socket_group_r group) nonnull_fn_decl __attribute((returns_nonnull));
 void *us_socket_group_ext(us_socket_group_r group) nonnull_fn_decl;
-struct us_socket_group_t *us_socket_group_next(us_socket_group_r group) nonnull_fn_decl;
 
 /* Move an open socket between groups / kinds, optionally resizing its ext.
  * Replaces us_socket_context_adopt_socket + us_create_child_socket_context.
@@ -405,11 +391,6 @@ int us_listen_socket_add_server_name(struct us_listen_socket_t *ls,
     const char *hostname_pattern, struct ssl_ctx_st *ssl_ctx, void *user)
     __attribute__((nonnull(1, 2, 3)));
 void us_listen_socket_remove_server_name(struct us_listen_socket_t *ls,
-    const char *hostname_pattern) nonnull_fn_decl;
-void *us_listen_socket_find_server_name_userdata(struct us_listen_socket_t *ls,
-    const char *hostname_pattern) nonnull_fn_decl;
-/* Returns an owned reference; the caller must release it. */
-struct ssl_ctx_st *us_listen_socket_find_server_name_ctx(struct us_listen_socket_t *ls,
     const char *hostname_pattern) nonnull_fn_decl;
 /* Parses a PKCS#12 blob into malloc'd PEM key/cert/ca strings (caller frees);
  * returns 0 with a static *err_reason tag on failure. */
@@ -692,12 +673,9 @@ int us_socket_remote_port(us_socket_r s) nonnull_fn_decl;
 void us_socket_remote_address(us_socket_r s, char *nonnull_arg buf, int *nonnull_arg length) nonnull_fn_decl;
 void us_socket_local_address(us_socket_r s, char *nonnull_arg buf, int *nonnull_arg length) nonnull_fn_decl;
 
-struct us_socket_t *us_socket_detach(us_socket_r s) nonnull_fn_decl;
 int us_socket_ipc_write_fd(us_socket_r s, const char *data, int length, int fd) nonnull_fn_decl;
 void us_socket_sendfile_needs_more(us_socket_r s) nonnull_fn_decl;
-void *us_listen_socket_ext(struct us_listen_socket_t *ls) nonnull_fn_decl;
 LIBUS_SOCKET_DESCRIPTOR us_listen_socket_get_fd(struct us_listen_socket_t *ls) nonnull_fn_decl;
-int us_listen_socket_port(struct us_listen_socket_t *ls) nonnull_fn_decl;
 struct us_socket_group_t *us_listen_socket_group(struct us_listen_socket_t *ls) nonnull_fn_decl;
 /* Walk a group's live listeners. The list is the source of truth — anything
  * that caches us_listen_socket_t* across event-loop ticks (e.g. a std::vector

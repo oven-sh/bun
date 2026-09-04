@@ -108,7 +108,22 @@ worker.addEventListener("open", () => {
 });
 ```
 
-Bun queues messages posted to a worker until the worker installs a `"message"` listener (`self.onmessage` or `self.addEventListener("message", ...)`), so you don't need to wait for the `"open"` event before sending, and a worker that installs its handler after a top-level `await` still receives everything in order. (Browsers deliver as soon as the worker script has run and drop messages that arrive before a handler exists.)
+Messages posted before the worker's script has run are queued and delivered once it has, so you don't need to wait for the `"open"` event before sending.
+
+As in browsers, a message is dispatched to the worker as soon as the synchronous part of its script has run, whether or not a `"message"` handler exists yet, and a message dispatched while there is no handler is dropped. Install `self.onmessage` / `self.addEventListener("message", ...)` before the first top-level `await`:
+
+```ts worker.ts icon="file-code"
+declare var self: Worker;
+
+// installed before any `await`: nothing posted during startup is missed
+self.onmessage = (event: MessageEvent) => {
+  console.log(event.data);
+};
+
+const config = await loadConfig();
+```
+
+[`node:worker_threads`](https://nodejs.org/api/worker_threads.html) differs here, in Bun as in Node.js: `parentPort` keeps messages queued until a `"message"` listener is attached (and again whenever the last one is removed), so a worker that runs `await init()` before `parentPort.on("message", ...)` still receives everything in order.
 
 ## Messages with `postMessage`
 

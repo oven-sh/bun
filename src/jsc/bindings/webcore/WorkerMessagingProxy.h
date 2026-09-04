@@ -100,7 +100,7 @@ public:
     // -- WorkerObjectProxy / WorkerReportingProxy (worker thread) ---------------------------------
     // Before the entry point loads: posts 'online' to the parent, as node does before user code.
     void workerThreadStarted();
-    // The entry point has evaluated: Pending -> Running, queued tasks run and the inbox may drain.
+    // The entry point has evaluated: Pending -> Running, queued tasks and messages are delivered.
     void workerGlobalScopeStarted(Zig::GlobalObject&);
     void postMessageToWorkerObject(MessageWithMessagePorts&&);
     void postErrorToWorkerObject(Zig::GlobalObject&, const String& message, JSC::JSValue error);
@@ -110,9 +110,6 @@ public:
     void drainMessagesToWorkerGlobalScope(ScriptExecutionContext&);
 
     // -- Either thread ---------------------------------------------------------------------------
-    // Post an inbox drain to the worker thread if it is Running, messages are queued and no drain is
-    // in flight. The drain delivers only while the worker global scope has a 'message' listener.
-    void scheduleDrainToWorkerGlobalScope();
     WorkerOptions& options() { return m_options; }
     ScriptExecutionContextIdentifier workerContextIdentifier() const { return m_workerContextIdentifier; }
 
@@ -128,8 +125,6 @@ private:
     void workerGlobalScopeDestroyedInternal(int32_t exitCode, bool stoppedByParent);
     void releaseWorkerThread();
     void drainMessagesToWorkerObject(ScriptExecutionContext&, DrainBudget);
-    bool claimDrainToWorkerGlobalScope() WTF_REQUIRES_LOCK(m_toWorker.lock);
-    void postDrainToWorkerGlobalScope();
     void rejectAllCrossVMRequests();
     void postMessageErrorToWorkerObject(String&& message);
     bool postSerializedErrorToWorkerObject(Zig::GlobalObject&, JSC::JSValue error);
@@ -163,8 +158,5 @@ private:
     MessageInbox m_toWorker;
     MessageInbox m_toParent;
 };
-
-// The proxy of the worker whose global scope runs on `bunVM`'s thread, or null on the main thread.
-extern "C" WorkerMessagingProxy* WebWorker__getMessagingProxy(void* bunVM);
 
 } // namespace WebCore

@@ -3,7 +3,6 @@
 #include "GlobalEventScope.h"
 #include "MessagePort.h"
 #include "ScriptExecutionContext.h"
-#include "WorkerMessagingProxy.h"
 #include "ZigGlobalObject.h"
 #include <wtf/TZoneMallocInlines.h>
 
@@ -19,11 +18,6 @@ void GlobalEventScope::onDidChangeListenerImpl(EventTarget& self, const AtomStri
         case Add:
             if (global.m_messageEventCount == 0) {
                 global.scriptExecutionContext()->refEventLoop();
-                // A worker's inbox delivers only while a 'message' listener exists; resume it.
-                if (auto* jsGlobalObject = global.scriptExecutionContext()->globalObject()) {
-                    if (auto* proxy = WebWorker__getMessagingProxy(defaultGlobalObject(jsGlobalObject)->bunVM()))
-                        proxy->scheduleDrainToWorkerGlobalScope();
-                }
             }
             global.m_messageEventCount++;
             break;

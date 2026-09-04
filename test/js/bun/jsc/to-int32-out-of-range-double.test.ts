@@ -7,9 +7,14 @@ import { bunEnv, bunExe } from "harness";
 // doubles, so half of its entries took that call. The fix keeps every |x| < 2^63
 // in JIT code, so the table with large values costs the same as the table with
 // small values. The unfixed engine is 8x to 10x slower on the large table.
+//
+// x64 only: arm64 with the FJCVTZS instruction has no slow path at all, and
+// arm64 without it (Neoverse N1) still takes a C++ call for every such value.
 
-test("ToInt32 of a double outside the int32 range stays on the JIT fast path", async () => {
-  const source = `
+test.skipIf(process.arch !== "x64")(
+  "ToInt32 of a double outside the int32 range stays on the JIT fast path",
+  async () => {
+    const source = `
     const N = 4_000_000;
     // Both tables are Float64Array, so both loops load a double and convert it
     // with ToInt32. Only the magnitude of the values differs.
@@ -53,17 +58,18 @@ test("ToInt32 of a double outside the int32 range stays on the JIT fast path", a
     console.log(JSON.stringify({ small: best(small), large: best(large) }));
   `;
 
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), "-e", source],
-    env: bunEnv,
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect(stderr).toBe("");
-  expect(exitCode).toBe(0);
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", source],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
 
-  const { small, large } = JSON.parse(stdout);
-  expect(small).toBeGreaterThan(0);
-  expect(large / small).toBeLessThan(3);
-});
+    const { small, large } = JSON.parse(stdout);
+    expect(small).toBeGreaterThan(0);
+    expect(large / small).toBeLessThan(3);
+  },
+);

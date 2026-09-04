@@ -41,6 +41,12 @@ fn splat_byte_all(
     Ok(())
 }
 
+/// Name printed in the per-file summary; the size column is padded from the same string.
+#[inline]
+fn summary_path(f: &options::OutputFile) -> &[u8] {
+    strings::trim_prefix(&f.dest_path, b"./")
+}
+
 pub(crate) struct BuildCommand;
 
 impl BuildCommand {
@@ -855,8 +861,7 @@ impl BuildCommand {
             let mut size_padding: usize = 0;
 
             for f in output_files.iter() {
-                max_path_len =
-                    max_path_len.max(from_path.len().max(f.dest_path.len()) + 2 - from_path.len());
+                max_path_len = max_path_len.max(summary_path(f).len());
                 size_padding = size_padding.max(bun_fmt::count(format_args!(
                     "{}",
                     bun_fmt::size(f.size, Default::default())
@@ -1095,10 +1100,10 @@ impl BuildCommand {
 
                 debug_assert!(!bun_paths::is_absolute(&f.dest_path));
 
-                let rel_path = strings::trim_prefix(&f.dest_path, b"./");
+                let rel_path = summary_path(f);
 
                 // Print summary
-                let padding_count = 2usize.max(rel_path.len().max(max_path_len) - rel_path.len());
+                let padding_count = max_path_len.saturating_sub(rel_path.len()) + 2;
                 splat_byte_all(writer, b' ', 2)?;
 
                 if Output::enable_ansi_colors_stdout() {

@@ -219,7 +219,7 @@ function channel(name) {
   if (channel) return channel;
 
   if (typeof name !== "string" && typeof name !== "symbol") {
-    throw $ERR_INVALID_ARG_TYPE("channel", "string or symbol", name);
+    throw $ERR_INVALID_ARG_TYPE("channel", ["string", "symbol"], name);
   }
 
   return new Channel(name);
@@ -277,7 +277,8 @@ class TracingChannel {
       this.asyncEnd = asyncEnd;
       this.error = error;
     } else {
-      throw $ERR_INVALID_ARG_TYPE("nameOrChannels", ["string, object, or Channel"], nameOrChannels);
+      // https://github.com/nodejs/node/blob/v26.3.0/lib/diagnostics_channel.js#L315-L317
+      throw $ERR_INVALID_ARG_TYPE("nameOrChannels", ["string", "object", "TracingChannel"], nameOrChannels);
     }
   }
 

@@ -1021,7 +1021,8 @@ function _toUnixTimestamp(time: any, name = "time") {
     // Convert to 123.456 UNIX timestamp
     return time.getTime() / 1000;
   }
-  throw $ERR_INVALID_ARG_TYPE(name, "number or Date", time);
+  // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/fs/utils.js#L795
+  throw $ERR_INVALID_ARG_TYPE(name, ["Date", "Time in seconds"], time);
 }
 
 function onOpendirStatFulfilled(callback, path, result, stats) {

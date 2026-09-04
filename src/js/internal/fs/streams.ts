@@ -170,7 +170,7 @@ function ReadStream(this: FSStream, path, options): void {
     fd[kRef]();
     fd.on("close", this.close.bind(this));
   } else {
-    throw $ERR_INVALID_ARG_TYPE("options.fd", "number or FileHandle", fd);
+    throw $ERR_INVALID_ARG_TYPE("options.fd", ["number", "FileHandle"], fd);
   }
 
   if (customFs) {
@@ -415,7 +415,7 @@ function WriteStream(this: FSStream, path: string | null, options?: any): void {
     fd.on("close", this.close.bind(this));
     this.fd = fd = fd[kFd];
   } else {
-    throw $ERR_INVALID_ARG_TYPE("options.fd", "number or FileHandle", fd);
+    throw $ERR_INVALID_ARG_TYPE("options.fd", ["number", "FileHandle"], fd);
   }
 
   const autoDestroy = (autoClose = options.autoDestroy = autoClose === undefined ? true : autoClose);

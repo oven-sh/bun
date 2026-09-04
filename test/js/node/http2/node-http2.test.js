@@ -3000,6 +3000,76 @@ it("http2 session.origin() with several origins rejects one longer than 65535 by
   expect(exitCode).toBe(0);
 });
 
+it("http2 session.altsvc() sends an object origin unchanged, like Node", async () => {
+  // Node does not parse the origin property of a plain object. It rejects only
+  // "" and "null" and writes the string as is. A string or URL argument still
+  // goes through URL parsing, so "https://a.example/path" becomes its origin.
+  const { promise, resolve, reject } = Promise.withResolvers();
+  const received = [];
+  const outcomes = [];
+
+  const server = http2.createServer();
+  server.on("session", session => {
+    for (const originOrStream of [
+      { origin: "" },
+      { origin: "null" },
+      { origin: "https://example.org:8111/path" },
+      { origin: "not a url" },
+      { origin: "https://m\u00fcnich.example/path" },
+      "https://a.example/path",
+      new URL("https://b.example/path"),
+    ]) {
+      try {
+        session.altsvc('h2=":8000"', originOrStream);
+        outcomes.push("SENT");
+      } catch (err) {
+        outcomes.push(err.code);
+      }
+    }
+  });
+  server.on("stream", stream => {
+    stream.respond({ ":status": 200 });
+    stream.end("ok");
+  });
+  server.on("error", reject);
+  server.listen(0, "127.0.0.1", () => {
+    const client = http2.connect(`http://127.0.0.1:${server.address().port}`);
+    client.on("error", reject);
+    // The ALTSVC frames are sent from the "session" handler, so they arrive
+    // before the response. Tear down only after the request closes, so the
+    // GOAWAY from client.close() does not reject the request stream.
+    client.on("altsvc", (alt, origin, stream) => {
+      received.push({ alt, origin, stream });
+    });
+    const req = client.request({ ":path": "/" });
+    req.resume();
+    req.on("close", () => {
+      client.close();
+      server.close();
+      resolve();
+    });
+    req.end();
+  });
+
+  await promise;
+  expect(outcomes).toEqual([
+    "ERR_HTTP2_ALTSVC_INVALID_ORIGIN",
+    "ERR_HTTP2_ALTSVC_INVALID_ORIGIN",
+    "SENT",
+    "SENT",
+    "SENT",
+    "SENT",
+    "SENT",
+  ]);
+  expect(received).toEqual([
+    { alt: 'h2=":8000"', origin: "https://example.org:8111/path", stream: 0 },
+    { alt: 'h2=":8000"', origin: "not a url", stream: 0 },
+    { alt: 'h2=":8000"', origin: "https://m\u00fcnich.example/path", stream: 0 },
+    { alt: 'h2=":8000"', origin: "https://a.example", stream: 0 },
+    { alt: 'h2=":8000"', origin: "https://b.example", stream: 0 },
+  ]);
+});
+
 it("http2 client.request() propagates a throwing header-value toString() instead of masking it", async () => {
   // Node calls `${value}` and lets the user's exception escape; it must not be
   // replaced with ERR_HTTP2_INVALID_HEADER_VALUE.
@@ -3280,6 +3350,159 @@ describe("http2 header values are latin-1 byte strings", () => {
       ]);
     } finally {
       socket.destroy();
+      server.close();
+    }
+  });
+
+  // The outbound side writes one byte per code unit too. Node's NgHeaders
+  // writes the header string with StringBytes::Write(..., LATIN1), so obs-text
+  // round-trips between two peers. UTF-8 makes the peer read two code units
+  // per byte above 0x7F. JSC stores a string as 8-bit or 16-bit, so each
+  // encode path gets both forms.
+  const latin1 = "caf\xe9-\x80\xff";
+  const latin1In16Bit = new TextDecoder("utf-16le").decode(Buffer.from(latin1, "utf16le"));
+
+  it.each(["object", "raw array"])(
+    "client and server write header values and trailers as latin-1 (%s form)",
+    async form => {
+      expect(jscDescribe(latin1In16Bit)).toContain("8Bit:(0)");
+      const withFields = pseudo =>
+        form === "object"
+          ? { ...pseudo, "x-latin1": latin1, "x-latin1-16bit": latin1In16Bit, "x-list": [latin1, latin1In16Bit] }
+          : [
+              ...Object.entries(pseudo).flat(),
+              ...["x-latin1", latin1, "x-latin1-16bit", latin1In16Bit, "x-list", latin1, "x-list", latin1In16Bit],
+            ];
+      const trailerFields = {
+        "x-trailer": latin1,
+        "x-trailer-16bit": latin1In16Bit,
+        "x-trailer-list": [latin1, latin1In16Bit],
+      };
+      const expected = {
+        headers: { "x-latin1": latin1, "x-latin1-16bit": latin1, "x-list": `${latin1}, ${latin1}` },
+        trailers: { "x-trailer": latin1, "x-trailer-16bit": latin1, "x-trailer-list": `${latin1}, ${latin1}` },
+      };
+      const received = (headers, names) => Object.fromEntries(names.map(name => [name, headers[name]]));
+
+      const request = Promise.withResolvers();
+      const requestTrailers = Promise.withResolvers();
+      const server = http2.createServer();
+      server.on("error", request.reject);
+      server.on("stream", (stream, headers) => {
+        request.resolve(headers);
+        stream.on("trailers", requestTrailers.resolve);
+        stream.on("wantTrailers", () => stream.sendTrailers(trailerFields));
+        stream.respond(withFields({ ":status": "200" }), { waitForTrailers: true });
+        stream.end();
+      });
+      await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
+
+      const client = http2.connect(`http://127.0.0.1:${server.address().port}`);
+      try {
+        const response = Promise.withResolvers();
+        const responseTrailers = Promise.withResolvers();
+        const fail = err => {
+          request.reject(err);
+          requestTrailers.reject(err);
+          response.reject(err);
+          responseTrailers.reject(err);
+        };
+        client.on("error", fail);
+        const req = client.request(withFields({ ":method": "POST", ":path": "/" }), { waitForTrailers: true });
+        req.on("error", fail);
+        req.on("wantTrailers", () => req.sendTrailers(trailerFields));
+        req.on("response", response.resolve);
+        req.on("trailers", responseTrailers.resolve);
+        req.on("close", () => fail(new Error(`stream closed without trailers (rstCode ${req.rstCode})`)));
+        req.resume();
+        req.end("body");
+
+        const headerNames = Object.keys(expected.headers);
+        const trailerNames = Object.keys(expected.trailers);
+        expect({
+          request: received(await request.promise, headerNames),
+          requestTrailers: received(await requestTrailers.promise, trailerNames),
+          response: received(await response.promise, headerNames),
+          responseTrailers: received(await responseTrailers.promise, trailerNames),
+        }).toEqual({
+          request: expected.headers,
+          requestTrailers: expected.trailers,
+          response: expected.headers,
+          responseTrailers: expected.trailers,
+        });
+      } finally {
+        client.close();
+        server.close();
+      }
+    },
+  );
+
+  it("server writes push promise header values as latin-1", async () => {
+    const blocks = await pushedHeaderBlocks(stream => {
+      stream.pushStream({ ":path": "/pushed", "x-latin1": latin1, "x-latin1-16bit": latin1In16Bit }, (err, push) => {
+        if (err) {
+          stream.destroy(err);
+          return;
+        }
+        push.respond({ ":status": 200 });
+        push.end();
+      });
+      stream.respond({ ":status": 200 });
+      stream.end();
+    });
+    expect(blocks.map(block => block.fields)).toEqual([["x-latin1", latin1, "x-latin1-16bit", latin1]]);
+  });
+
+  // Bun has no single rule for a code unit above 0xFF. Node truncates it to its
+  // low byte, and object-form respond() drops the value (headerValueIsUnsendable).
+  // request() and sendTrailers() send the UTF-8 bytes, and this test pins them.
+  // Truncation turns U+4E0D into a CR byte, which request() rejects.
+  it("request() and sendTrailers() send the UTF-8 bytes of a value with a code unit above 0xFF", async () => {
+    const wide = "\u4e0d\u4e2d";
+    const mixed = "caf\xe9 \u4e2d";
+    const utf8AsLatin1 = value => Buffer.from(value, "utf8").toString("latin1");
+
+    const delivered = Promise.withResolvers();
+    const server = http2.createServer();
+    server.on("error", delivered.reject);
+    server.on("stream", (stream, headers) => {
+      stream.on("trailers", trailers => {
+        delivered.resolve({
+          headers: { "x-wide": headers["x-wide"], "x-mixed": headers["x-mixed"] },
+          trailers: { "x-wide-trailer": trailers["x-wide-trailer"] },
+        });
+        stream.respond({ ":status": 200 });
+        stream.end();
+      });
+      stream.resume();
+    });
+    await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
+
+    const client = http2.connect(`http://127.0.0.1:${server.address().port}`);
+    try {
+      const response = Promise.withResolvers();
+      const fail = err => {
+        delivered.reject(err);
+        response.reject(err);
+      };
+      client.on("error", fail);
+      const req = client.request(
+        { ":method": "POST", ":path": "/", "x-wide": wide, "x-mixed": mixed },
+        { waitForTrailers: true },
+      );
+      req.on("error", fail);
+      req.on("wantTrailers", () => req.sendTrailers({ "x-wide-trailer": wide }));
+      req.on("response", headers => response.resolve(headers[":status"]));
+      req.resume();
+      req.end("body");
+
+      expect(await delivered.promise).toEqual({
+        headers: { "x-wide": utf8AsLatin1(wide), "x-mixed": utf8AsLatin1(mixed) },
+        trailers: { "x-wide-trailer": utf8AsLatin1(wide) },
+      });
+      expect(await response.promise).toBe(200);
+    } finally {
+      client.close();
       server.close();
     }
   });

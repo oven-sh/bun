@@ -2596,10 +2596,13 @@ pub(crate) mod __gated_printer {
                 // However, they could also be signed or unsigned int 32 (when doing bit shifts)
                 // In this case, it's always going to unsigned since that conversion has already happened.
                 let val = float as u64;
-                if let Some(e) = bun_core::fmt::pow10_exp_1e4_to_1e9(val) {
-                    self.print(b"1e");
-                    self.print(&[b'0' + e]);
-                    return;
+                // JSON.stringify prints every integer below 1e21 as plain digits.
+                if !IS_JSON {
+                    if let Some(e) = bun_core::fmt::pow10_exp_1e4_to_1e9(val) {
+                        self.print(b"1e");
+                        self.print(&[b'0' + e]);
+                        return;
+                    }
                 }
                 let mut buf = bun_core::fmt::ItoaBuf::new();
                 self.print(bun_core::fmt::itoa(&mut buf, val));
@@ -2960,6 +2963,15 @@ pub(crate) mod __gated_printer {
                 self.print(b"(");
                 self.print_import_record_path(record);
                 self.print(b")");
+
+                // A split `require()` of a module that is CommonJS at link
+                // time: the chunk's only export is `default: module.exports`.
+                if record
+                    .flags
+                    .contains(ImportRecordFlags::CROSS_CHUNK_REQUIRE_DEFAULT)
+                {
+                    self.print(b".default");
+                }
 
                 if wrap_with_to_esm {
                     self.print_to_esm_suffix();
@@ -3417,60 +3429,7 @@ pub(crate) mod __gated_printer {
                     }
                 },
                 ExprData::ECommonjsExportIdentifier(id) => {
-                    self.print_space_before_identifier();
-                    self.add_source_mapping(expr.loc);
-
-                    // reshaped for borrowck — find the matching index first,
-                    // then drop the immutable iter borrow before printing.
-                    let mut found: Option<usize> = None;
-                    if let Some(exports) = self.options.commonjs_named_exports {
-                        for (idx, value) in exports.values().iter().enumerate() {
-                            if value.loc_ref.ref_.eql(id.ref_) {
-                                found = Some(idx);
-                                break;
-                            }
-                        }
-                    }
-                    if let Some(idx) = found {
-                        let exports = self.options.commonjs_named_exports.unwrap();
-                        // `commonjs_named_exports` keys borrow `'a` (Options<'a>); capture
-                        // as `BackRef<[u8]>` so the `&self` borrow is dropped before the
-                        // `&mut self` print calls below.
-                        let key = BackRef::<[u8]>::new(&exports.keys()[idx][..]);
-                        let value_loc_ref = exports.values()[idx].loc_ref;
-                        let value_needs_decl = exports.values()[idx].needs_decl;
-                        struct V {
-                            loc_ref: js_ast::LocRef,
-                            needs_decl: bool,
-                        }
-                        let value = V {
-                            loc_ref: value_loc_ref,
-                            needs_decl: value_needs_decl,
-                        };
-                        if self.options.commonjs_named_exports_deoptimized || value.needs_decl {
-                            if self.options.commonjs_module_exports_assigned_deoptimized
-                                && id.base() == E::CommonJSExportIdentifierBase::ModuleDotExports
-                                && self.options.commonjs_module_ref.is_valid()
-                            {
-                                self.print_symbol(self.options.commonjs_module_ref);
-                                self.print(b".exports");
-                            } else {
-                                self.print_symbol(self.options.commonjs_named_exports_ref);
-                            }
-
-                            let key: &[u8] = key.get();
-                            if lexer::is_identifier(key) {
-                                self.print(b".");
-                                self.print(key);
-                            } else {
-                                self.print(b"[");
-                                self.print_string_literal_utf8(key, false);
-                                self.print(b"]");
-                            }
-                        } else {
-                            self.print_symbol(value.loc_ref.ref_);
-                        }
-                    }
+                    self.print_commonjs_export_identifier(*id, expr.loc, false);
                 }
                 ExprData::ENew(e) => {
                     let has_pure_comment = e.can_be_unwrapped_if_unused == E::CallUnwrap::IfUnused
@@ -3553,6 +3512,8 @@ pub(crate) mod __gated_printer {
                         self.print_space();
                         self.print_expr(e.target, Level::Postfix, ExprFlag::none());
                         self.print(b")");
+                    } else if let ExprData::ECommonjsExportIdentifier(id) = e.target.data {
+                        self.print_commonjs_export_identifier(id, e.target.loc, true);
                     } else {
                         self.print_expr(e.target, Level::Postfix, target_flags);
                     }
@@ -4239,6 +4200,8 @@ pub(crate) mod __gated_printer {
                             self.print(b"(");
                             self.print_expr(*tag, Level::Lowest, ExprFlag::none());
                             self.print(b")");
+                        } else if let ExprData::ECommonjsExportIdentifier(id) = tag.data {
+                            self.print_commonjs_export_identifier(id, tag.loc, true);
                         } else {
                             self.print_expr(*tag, Level::Postfix, ExprFlag::none());
                         }
@@ -4650,6 +4613,63 @@ pub(crate) mod __gated_printer {
             } else {
                 self.print(b"[");
                 self.print_string_literal_utf8(namespace.alias.slice(), false);
+                self.print(b"]");
+            }
+        }
+
+        /// `exports.name`: the binding `$name`, or a property for a call that reads `this`.
+        fn print_commonjs_export_identifier(
+            &mut self,
+            id: E::CommonJSExportIdentifier,
+            loc: bun_ast::Loc,
+            is_call_target: bool,
+        ) {
+            self.print_space_before_identifier();
+            self.add_source_mapping(loc);
+
+            let Some(exports) = self.options.commonjs_named_exports else {
+                return;
+            };
+            let Some(idx) = exports
+                .values()
+                .iter()
+                .position(|value| value.loc_ref.ref_.eql(id.ref_))
+            else {
+                return;
+            };
+            // `commonjs_named_exports` keys borrow `'a` (Options<'a>); capture
+            // as `BackRef<[u8]>` so the `&self` borrow is dropped before the
+            // `&mut self` print calls below.
+            let key = BackRef::<[u8]>::new(&exports.keys()[idx][..]);
+            let value = &exports.values()[idx];
+            let (binding, needs_decl) = (value.loc_ref.ref_, value.needs_decl);
+            let call_needs_this = is_call_target
+                && self
+                    .symbols()
+                    .get_const(id.ref_)
+                    .is_some_and(|symbol| symbol.called_as_method() && !symbol.call_ignores_this());
+
+            if !(self.options.commonjs_named_exports_deoptimized || needs_decl || call_needs_this) {
+                self.print_symbol(binding);
+                return;
+            }
+            if self.options.commonjs_module_exports_assigned_deoptimized
+                && id.base() == E::CommonJSExportIdentifierBase::ModuleDotExports
+                && self.options.commonjs_module_ref.is_valid()
+            {
+                self.print_symbol(self.options.commonjs_module_ref);
+                self.print(b".exports");
+            } else {
+                self.print_symbol(self.options.commonjs_named_exports_ref);
+            }
+
+            let key: &[u8] = key.get();
+            if lexer::is_identifier(key) {
+                self.print(b".");
+                self.print(key);
+            } else {
+                self.print(b"[");
+                self.print_string_literal_utf8(key, false);
                 self.print(b"]");
             }
         }

@@ -1561,6 +1561,42 @@ describe("inbound stream lifecycle", () => {
     }
   });
 
+  // grpc-js passes maxSessionMemory: Number.MAX_SAFE_INTEGER to disable the limit. node keeps the
+  // option as a double, so any huge value means "no limit"; it must saturate, not wrap to the
+  // 1MB minimum (#41294).
+  test.each([
+    ["Number.MAX_SAFE_INTEGER", Number.MAX_SAFE_INTEGER],
+    ["2**51", 2 ** 51],
+    ["2**32", 2 ** 32],
+  ])(
+    "serves a new request stream with queued response data when maxSessionMemory is %s",
+    async (_, maxSessionMemory) => {
+      const server = http2.createServer({ maxSessionMemory });
+      server.on("stream", (stream: any) => {
+        stream.on("error", () => {});
+        stream.respond({ ":status": 200 });
+        stream.write(Buffer.alloc(1 << 22, "a"));
+      });
+      server.listen(0);
+      await once(server, "listening");
+      const c = await RawH2.connect((server.address() as net.AddressInfo).port);
+      try {
+        c.sendPreface();
+        c.sendEmptySettings();
+        c.sendFrame(FrameType.HEADERS, 0x5, 1, requestHeaderBlock("GET"));
+        await c.waitFor(f => f.type === FrameType.DATA && f.streamId === 1);
+        c.sendFrame(FrameType.HEADERS, 0x5, 3, requestHeaderBlock("GET"));
+        const reply = await c.waitFor(
+          f => (f.type === FrameType.HEADERS || f.type === FrameType.RST_STREAM) && f.streamId === 3,
+        );
+        expect(reply.type).toBe(FrameType.HEADERS);
+      } finally {
+        c.destroy();
+        server.close();
+      }
+    },
+  );
+
   /** A maxSessionMemory:1 server whose first stream queues enough response data that the
    *  next inbound HEADERS is refused. Streams that do reach JS are recorded in `seen`. */
   async function exhaustedSession() {

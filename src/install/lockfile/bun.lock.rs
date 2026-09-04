@@ -13,6 +13,13 @@ use bun_semver::semver_string::{
 };
 use bun_semver::{self as Semver, ExternalString, String};
 
+use crate::bin_real::ToJsonStyle;
+use crate::config_version::ConfigVersion;
+use crate::extract_tarball as ExtractTarball;
+use crate::integrity::Integrity;
+use crate::npm::Negatable;
+use crate::package_manager_real::Options as PackageManagerOptions;
+use crate::repository::RepositoryExt as _;
 use crate::{
     DependencyID, Npm, Origin, PackageID, PackageManager, PackageNameHash, Repository, Resolution,
     TruncatedPackageNameHash,
@@ -24,17 +31,6 @@ use crate::{
     invalid_package_id,
     resolution::Tag as ResolutionTag,
 };
-// Canonical `Dependency.Version.Tag` — `crate::dependency::Tag` is a duplicate
-// enum (different nominal type) that does not unify with the
-// `bun_install_types::DependencyVersion::tag` field; use the install_types one
-// so assignments at the two `.tag = Workspace` sites type-check.
-use crate::bin_real::ToJsonStyle;
-use crate::config_version::ConfigVersion;
-use crate::extract_tarball as ExtractTarball;
-use crate::integrity::Integrity;
-use crate::npm::Negatable;
-use crate::package_manager_real::Options as PackageManagerOptions;
-use crate::repository::RepositoryExt as _;
 use bun_install_types::DependencyVersionTag;
 // this file is `crate::lockfile_real::bun_lock`; `super` is the
 // real `Lockfile` module, distinct from the `crate::lockfile` stub.
@@ -406,7 +402,6 @@ impl Stringifier {
                     extern_strings,
                     deps_buf,
                     &lockfile.workspace_versions,
-                    &lockfile.self_contained_workspaces,
                     &mut optional_peers_buf,
                     &pkg_map,
                     b"",
@@ -450,7 +445,6 @@ impl Stringifier {
                         extern_strings,
                         deps_buf,
                         &lockfile.workspace_versions,
-                        &lockfile.self_contained_workspaces,
                         &mut optional_peers_buf,
                         &pkg_map,
                         pkg_names[workspace_pkg_id as usize].slice(buf),
@@ -1244,11 +1238,6 @@ impl Stringifier {
         extern_strings: &[ExternalString],
         deps_buf: &[Dependency],
         workspace_versions: &VersionHashMap,
-        self_contained_workspaces: &bun_collections::ArrayHashMap<
-            PackageNameHash,
-            (),
-            bun_collections::ArrayIdentityContextU64,
-        >,
         optional_peers_buf: &mut Vec<String>,
         pkg_map: &PkgMap<()>,
         relative_path: &[u8],
@@ -1299,12 +1288,6 @@ impl Stringifier {
                 writer.write_all(b",\n")?;
                 Self::write_indent(writer, *indent)?;
                 write!(writer, "\"version\": \"{}\"", version.fmt(buf))?;
-            }
-
-            if self_contained_workspaces.contains(&pkg_name_hashes[pkg_id as usize]) {
-                writer.write_all(b",\n")?;
-                Self::write_indent(writer, *indent)?;
-                writer.write_all(b"\"hoistingLimits\": \"workspaces\"")?;
             }
 
             if pkg_bins[pkg_id as usize].tag != BinTag::None {
@@ -2360,21 +2343,6 @@ pub(crate) fn parse_into_binary_lockfile(
                 .workspace_versions
                 .insert(name_hash, parsed.version.min());
         }
-
-        // `installConfig.hoistingLimits` mirrored from the workspace manifest, so the
-        // tree is hoisted the same way when it is rebuilt from this lockfile
-        if let Some(h) = value.get(b"hoistingLimits") {
-            if h.as_utf8_string_literal() == Some(b"workspaces".as_slice()) {
-                lockfile.self_contained_workspaces.insert(name_hash, ());
-            } else {
-                log.add_error(
-                    Some(source),
-                    value_loc_of(source, h.loc),
-                    b"Expected \"workspaces\" for hoistingLimits",
-                );
-                return Err(ParseError::InvalidWorkspaceObject);
-            }
-        }
     }
 
     let mut optional_peers_buf: HashMap<u64, ()> = HashMap::default();
@@ -3082,10 +3050,6 @@ pub(crate) fn parse_into_binary_lockfile(
             .resize(lockfile.buffers.dependencies.len(), invalid_package_id);
         lockfile.buffers.resolutions.fill(invalid_package_id);
 
-        // a package can list the same dependency in each dependnecy group, but only the first
-        // is chosen (dev -> optional -> prod -> peer)
-        let mut seen_deps: bun_collections::StringArrayHashMap<()> = Default::default();
-
         // The two `[0]` writes are done first via
         // sequential `&mut` accessors so the loops can take all column views
         // immutably without overlapping exclusive borrows or `unsafe`.
@@ -3106,18 +3070,18 @@ pub(crate) fn parse_into_binary_lockfile(
         let catalogs: &CatalogMap = &lockfile.catalogs;
 
         // Disjoint-field split of `lockfile.buffers` so each loop body can hold
-        // `&mut dependencies[i]` and `&mut resolutions[i]` together with a shared
+        // `&dependencies[i]` and `&mut resolutions[i]` together with a shared
         // `string_bytes` view.
         let buffers = &mut lockfile.buffers;
         let string_buf: &[u8] = buffers.string_bytes.as_slice();
-        let dependencies: &mut [Dependency] = buffers.dependencies.as_mut_slice();
+        let dependencies: &[Dependency] = buffers.dependencies.as_slice();
         let resolutions: &mut [PackageID] = buffers.resolutions.as_mut_slice();
 
         {
             // first the root dependencies are resolved
             for _dep_id in pkg_deps[0].begin()..pkg_deps[0].end() {
                 let dep_id: DependencyID = _dep_id;
-                let dep = &mut dependencies[dep_id as usize];
+                let dep = &dependencies[dep_id as usize];
 
                 let peer_res_id = resolve_peer_dep_version_based(
                     dep,
@@ -3144,23 +3108,7 @@ pub(crate) fn parse_into_binary_lockfile(
                     return Err(ParseError::InvalidPackageInfo);
                 };
 
-                if !dep.behavior.is_workspace()
-                    && seen_deps
-                        .get_or_put(dep.name.slice(string_buf))?
-                        .found_existing
-                {
-                    resolutions[dep_id as usize] = res_id;
-                    continue;
-                }
-
-                map_dep_to_pkg(
-                    dep,
-                    dep_id,
-                    res_id,
-                    resolutions,
-                    lockfile_version,
-                    pkg_resolutions,
-                );
+                resolutions[dep_id as usize] = res_id;
             }
         }
 
@@ -3172,12 +3120,10 @@ pub(crate) fn parse_into_binary_lockfile(
                 let pkg_id: PackageID = _pkg_id;
                 let workspace_name = pkg_names[pkg_id as usize].slice(string_buf);
 
-                seen_deps.clear_retaining_capacity();
-
                 let deps = pkg_deps[pkg_id as usize];
                 for _dep_id in deps.begin()..deps.end() {
                     let dep_id: DependencyID = _dep_id;
-                    let dep = &mut dependencies[dep_id as usize];
+                    let dep = &dependencies[dep_id as usize];
                     let dep_name = dep.name.slice(string_buf);
 
                     let workspace_node_modules = {
@@ -3229,19 +3175,7 @@ pub(crate) fn parse_into_binary_lockfile(
                         return Err(ParseError::InvalidPackageInfo);
                     };
 
-                    if seen_deps.get_or_put(dep_name)?.found_existing {
-                        resolutions[dep_id as usize] = res_id;
-                        continue;
-                    }
-
-                    map_dep_to_pkg(
-                        dep,
-                        dep_id,
-                        res_id,
-                        resolutions,
-                        lockfile_version,
-                        pkg_resolutions,
-                    );
+                    resolutions[dep_id as usize] = res_id;
                 }
             }
         }
@@ -3265,7 +3199,7 @@ pub(crate) fn parse_into_binary_lockfile(
             let deps = pkg_deps[pkg_id as usize];
             'deps: for _dep_id in deps.begin()..deps.end() {
                 let dep_id: DependencyID = _dep_id;
-                let dep = &mut dependencies[dep_id as usize];
+                let dep = &dependencies[dep_id as usize];
 
                 // A stripped `catalog:` edge (`CatalogMap::strip_reference`) stays unresolved, as in a fresh install.
                 if dep.version.tag == DependencyVersionTag::Uninitialized {
@@ -3321,16 +3255,15 @@ pub(crate) fn parse_into_binary_lockfile(
                     }
                 };
 
-                map_dep_to_pkg(
-                    dep,
-                    dep_id,
-                    res_id,
-                    resolutions,
-                    lockfile_version,
-                    pkg_resolutions,
-                );
+                resolutions[dep_id as usize] = res_id;
             }
         }
+
+        lockfile.tag_workspace_links(
+            manager
+                .as_deref()
+                .is_none_or(|manager| manager.options.link_workspace_packages),
+        );
 
         if let Err(tree::SubtreeError::OutOfMemory) = lockfile.resolve(log) {
             return Err(ParseError::OutOfMemory);
@@ -3461,38 +3394,6 @@ pub(crate) fn resolve_peer_dep_version_based(
     }
 
     None
-}
-
-// Taking `&mut BinaryLockfile` plus a `&mut Dependency` that
-// points into `lockfile.buffers.dependencies` would be illegal aliasing.
-// The function only touches `buffers.resolutions[dep_id]` and reads
-// `text_lockfile_version`, so accept those disjoint pieces directly and let the
-// caller split-borrow `lockfile.buffers`.
-fn map_dep_to_pkg(
-    dep: &mut Dependency,
-    dep_id: DependencyID,
-    pkg_id: PackageID,
-    resolutions: &mut [PackageID],
-    text_lockfile_version: Version,
-    pkg_resolutions: &[Resolution],
-) {
-    resolutions[dep_id as usize] = pkg_id;
-
-    if text_lockfile_version != Version::V0 {
-        let res = &pkg_resolutions[pkg_id as usize];
-        if res.tag == ResolutionTag::Workspace {
-            // Whole-struct assign so `DependencyVersion::Drop` frees any prior
-            // npm chain. SAFETY: `res.tag == Workspace` checked above.
-            let literal = dep.version.literal;
-            dep.version = DependencyVersion {
-                tag: DependencyVersionTag::Workspace,
-                literal,
-                value: DependencyVersionValue {
-                    workspace: *res.workspace(),
-                },
-            };
-        }
-    }
 }
 
 /// Edges a fresh install may itself leave unresolved, so bun.lock lists them without a package.

@@ -1434,7 +1434,7 @@ describe.concurrent("bundler", () => {
     },
     run: {
       file: "/test.js",
-      stdout: '{"inner":{"b":456},"a":123,"b":456}',
+      stdout: '{"inner":{"b":456},"a":123}',
     },
   });
   itBundled("importstar/ReExportStarEntryPointAndInnerFile", {
@@ -1954,6 +1954,19 @@ describe.concurrent("bundler", () => {
     },
     dce: true,
     run: { stdout: "a ext" },
+  });
+  // The enum members fold to the keys "ab" and "x". The first part of each
+  // folded string is "a" and "".
+  itBundled("importstar/MemberOfImportFoldedStringKey", {
+    files: {
+      "/entry.ts": /* ts */ `
+        import * as ns from './lib'
+        enum K { AB = 'a' + 'b', X = '' + 'x' }
+        console.log(ns[K.AB], ns[K.X])
+      `,
+      "/lib.js": `export const a = 'a', ab = 'ab', x = 'x'`,
+    },
+    run: { stdout: "ab x" },
   });
   for (const deprecatedNamespaceObjectSetters of [true, false]) {
     itBundled(`importstar/NamespaceObjectSetters${deprecatedNamespaceObjectSetters ? "Deprecated" : "Off"}`, {

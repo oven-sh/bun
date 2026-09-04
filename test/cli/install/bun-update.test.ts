@@ -584,6 +584,49 @@ it("--filter pkg-a removes the nested copy whose row it collapsed", async () => 
   expect(code).toBe(0);
 });
 
+// The collapsed-copy pass compares node_modules with a tree of every dependency type, so a copy
+// under a dependency this run skips is not mistaken for one the root now provides.
+it("--omit dev keeps the nested copies of the dev dependencies it skips", async () => {
+  setHandler(
+    dummyRegistry([], { "0.0.3": {}, "0.0.5": {}, "0.1.0": { dependencies: { baz: "0.0.3" } }, latest: "0.0.5" }),
+  );
+  await writeFile(
+    join(package_dir, "package.json"),
+    JSON.stringify({
+      name: "root",
+      private: true,
+      workspaces: ["packages/*"],
+      dependencies: { baz: "0.0.5" },
+      devDependencies: { moo: "0.1.0" },
+    }),
+  );
+  await mkdir(join(package_dir, "packages", "pkg-a"), { recursive: true });
+  await writeFile(
+    join(package_dir, "packages", "pkg-a", "package.json"),
+    JSON.stringify({ name: "pkg-a", devDependencies: { baz: "0.0.3" } }),
+  );
+  await runInstall();
+  const mooBazVersion = async () =>
+    (await file(join(package_dir, "node_modules", "moo", "node_modules", "baz", "package.json")).json()).version;
+  expect(await rootBazVersion()).toBe("0.0.5");
+  expect(await mooBazVersion()).toBe("0.0.3");
+  expect(await pkgABazVersion()).toBe("0.0.3");
+
+  const { stderr, exited } = spawn({
+    cmd: [bunExe(), "update", "--omit", "dev", "--linker=hoisted"],
+    cwd: package_dir,
+    stdout: "ignore",
+    stderr: "pipe",
+    env,
+  });
+  const [err, code] = await Promise.all([stderr.text(), exited]);
+  expect(err).not.toContain("error:");
+  expect(await rootBazVersion()).toBe("0.0.5");
+  expect(await mooBazVersion()).toBe("0.0.3");
+  expect(await pkgABazVersion()).toBe("0.0.3");
+  expect(code).toBe(0);
+});
+
 it("--filter excluding a workspace leaves that workspace's node_modules alone", async () => {
   await nestedBazRepo("0.0.3", "0.0.5", { root: "~0.0.3" });
   expect(await rootBazVersion()).toBe("0.0.3");

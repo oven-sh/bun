@@ -37,7 +37,14 @@ import { writeIfChanged } from "../fs.ts";
 import type { Ninja } from "../ninja.ts";
 import { quote, quoteArgs } from "../shell.ts";
 import { machoPostlinkImplicitInputs } from "../shims.ts";
-import { depBuildDir, depSourceDir, type CustomBuildContext, type Dependency, type Source } from "../source.ts";
+import {
+  depBuildDir,
+  depSourceDir,
+  type CustomBuildContext,
+  type CustomBuildResult,
+  type Dependency,
+  type Source,
+} from "../source.ts";
 import { migcomPath } from "./bootstrap-cmds.ts";
 import { buildsIcu, icuIncludes } from "./icu.ts";
 
@@ -1233,22 +1240,6 @@ const llintAsm: readonly string[] = [
 // prefetchConfigureSources) instead of as the first ninja edge.
 // ───────────────────────────────────────────────────────────────────────────
 
-interface WebKitDirectResult {
-  /** bmalloc + WTF + JSC objects for bun's link line. */
-  objects: string[];
-  includes: string[];
-  /** testFFI — shipped in the CI artifact for jsc-stress/testFFI.test.ts. */
-  extras: string[];
-  /**
-   * What a bun TU that includes JSC headers must wait for: the source tree
-   * and every generated header — all declared outputs with restat, so this
-   * is exact and bun's C++ compiles alongside JSC's instead of after the
-   * archives (nested-cmake mode has to hand over the libs here, because its
-   * headers are undeclared side effects of the lib edge).
-   */
-  outputs: string[];
-}
-
 // ───────────────────────────────────────────────────────────────────────────
 // Platform description → the variables WebKit's CMakeLists branch on
 // ───────────────────────────────────────────────────────────────────────────
@@ -1299,7 +1290,7 @@ function writeStub(path: string, target: string): void {
 // The emitter
 // ───────────────────────────────────────────────────────────────────────────
 
-function emitWebKitDirect(n: Ninja, cfg: Config, ctx: CustomBuildContext): WebKitDirectResult {
+function emitWebKit(n: Ninja, cfg: Config, ctx: CustomBuildContext): CustomBuildResult {
   const { srcDir: W, ready, resolved } = ctx;
 
   const hostWin = cfg.host.os === "windows";
@@ -2014,18 +2005,27 @@ function emitWebKitDirect(n: Ninja, cfg: Config, ctx: CustomBuildContext): WebKi
   });
 
   const llintAssembly = join(DS, "LLIntAssembly.h");
+  // asm.rb leaves an existing output untouched when the "input hash" trailer
+  // matches, and that hash covers the .asm inputs, the offsets and
+  // --platform but not --binary-format. Reusing one build dir for another
+  // --os (ELF directives on/off) would keep a stale header, so a change in
+  // the invocation discards it here.
+  const llintAssemblyCmd = [
+    ruby,
+    join(offlineasm, "asm.rb"),
+    `-I${DS}/`,
+    lowLevelInterpreterAsm,
+    offsetsExe,
+    llintAssembly,
+    buildVariants,
+    ...offlineAsmFormatArgs,
+  ];
+  if (writeIfChanged(join(DS, "LLIntAssembly.h.cmd"), llintAssemblyCmd.join("\n") + "\n")) {
+    rmSync(llintAssembly, { force: true });
+  }
   gen({
     outputs: [llintAssembly],
-    cmd: [
-      ruby,
-      join(offlineasm, "asm.rb"),
-      `-I${DS}/`,
-      lowLevelInterpreterAsm,
-      offsetsExe,
-      llintAssembly,
-      buildVariants,
-      ...offlineAsmFormatArgs,
-    ],
+    cmd: llintAssemblyCmd,
     inputs: [offsetsExe, ...llintAsmFiles, ...offlineAsmRb, join(DS, "InitBytecodes.asm")],
     env: { CMAKE_CXX_COMPILER_ID: "Clang", GCC_OFFLINEASM_SOURCE_MAP: "OFF" },
     desc: "LLIntAssembly.h",
@@ -2151,6 +2151,23 @@ function emitWebKitDirect(n: Ninja, cfg: Config, ctx: CustomBuildContext): WebKi
     objects,
     extras: [testFFI],
     outputs: [...treeReady, ...generatedHeaders, ...migOutputs.filter(f => f.endsWith(".h"))],
+    // What configure read from the tree to lay out this graph: the unified
+    // source lists (run through the bundler above) and the directories it
+    // globbed (forwarding headers, generator script deps, offlineasm). A
+    // directory's mtime moves when a file is added or removed in it.
+    configureInputs: [
+      ...unifiedListFiles,
+      ...jscHeaderDirs.map(d => join(JSC, d)),
+      join(BM, "bmalloc"),
+      join(BM, "libpas", "src", "libpas"),
+      join(JSC, "generator"),
+      join(JSC, "ucd"),
+      join(JSC, "Scripts"),
+      join(JSC, "Scripts", "wkbuiltins"),
+      join(JSC, "inspector", "scripts"),
+      join(JSC, "inspector", "scripts", "codegen"),
+      offlineasm,
+    ],
     includes: [
       B,
       jscHeaders,
@@ -2168,7 +2185,7 @@ function emitWebKitDirect(n: Ninja, cfg: Config, ctx: CustomBuildContext): WebKi
  * Ninja rules for the edges above. Registered from registerDepRules so they
  * exist before any dep emits.
  */
-export function registerWebKitDirectRules(n: Ninja, cfg: Config): void {
+export function registerWebKitRules(n: Ninja, cfg: Config): void {
   const hostWin = cfg.host.os === "windows";
   // Generators write several outputs and are deterministic; restat prunes
   // downstream when a re-run produces identical bytes (offlineasm and the
@@ -2226,7 +2243,7 @@ export const webkit: Dependency = {
     if (cfg.webkit === "prebuilt") {
       return { kind: "none" };
     }
-    return { kind: "custom", needsSourceAtConfigure: true, emit: emitWebKitDirect };
+    return { kind: "custom", needsSourceAtConfigure: true, emit: emitWebKit };
   },
 
   provides: cfg => {
@@ -2249,7 +2266,7 @@ export const webkit: Dependency = {
       return { libs, includes };
     }
 
-    // emitWebKitDirect reports include dirs itself (CustomBuild) and its
+    // emitWebKit reports include dirs itself (CustomBuild) and its
     // objects go straight on the link line.
     return { libs: [], includes: [] };
   },

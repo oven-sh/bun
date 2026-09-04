@@ -23,7 +23,7 @@ import { ar, cc, cxx, nasm } from "./compile.ts";
 import type { Config } from "./config.ts";
 import { registerBootstrapCmdsRules } from "./deps/bootstrap-cmds.ts";
 import { registerIcuRules } from "./deps/icu.ts";
-import { registerWebKitDirectRules } from "./deps/webkit.ts";
+import { registerWebKitRules } from "./deps/webkit.ts";
 import { gitArchiveUrl, githubArchiveUrl } from "./download.ts";
 import { assert } from "./error.ts";
 import { assertManagedSource, fetchCliPath, fetchDep, sourceIsCurrent } from "./fetch-cli.ts";
@@ -215,6 +215,8 @@ export interface CustomBuildResult {
   outputs: string[];
   /** See ResolvedDep.extras. */
   extras?: string[];
+  /** See ResolvedDep.configureInputs. */
+  configureInputs?: string[];
 }
 
 export interface CustomBuildContext {
@@ -527,6 +529,13 @@ export interface ResolvedDep {
    * suite). Added to the default targets so a plain build produces them.
    */
   extras: string[];
+  /**
+   * Files and directories in the dep's source tree that configure read to
+   * describe the graph (WebKit's Sources.txt, the header dirs it globs).
+   * They are inputs of the reconfigure edge, so editing them in a
+   * `--local-deps` clone and running bare `ninja` re-runs configure.
+   */
+  configureInputs: string[];
 }
 
 // ───────────────────────────────────────────────────────────────────────────
@@ -537,7 +546,7 @@ export interface ResolvedDep {
  * Register ninja rules shared by all deps. Call once before any resolveDep().
  */
 export function registerDepRules(n: Ninja, cfg: Config): void {
-  registerWebKitDirectRules(n, cfg);
+  registerWebKitRules(n, cfg);
   registerIcuRules(n, cfg);
   registerBootstrapCmdsRules(n, cfg);
   // Shell quoting: tool/script paths may contain spaces (e.g. cargo
@@ -890,6 +899,7 @@ export function resolveDep(
   let checks: string[] = [];
   let customIncludes: string[] | undefined;
   let extras: string[] = [];
+  let depConfigureInputs: string[] = [];
 
   if (buildSpec.kind === "cargo") {
     const result = emitCargo(n, cfg, dep.name, buildSpec, { srcDir, sourceStamp: sourceStamp! }); // .ref or Cargo.toml
@@ -912,6 +922,7 @@ export function resolveDep(
     outputs = result.outputs;
     customIncludes = result.includes;
     extras = result.extras ?? [];
+    depConfigureInputs = result.configureInputs ?? [];
   } else {
     // No build step. The fetch stamp (if any) is the only output. For deps
     // with provides.sources (picohttpparser), emitBun adds a phony pointing
@@ -943,6 +954,7 @@ export function resolveDep(
     outputs,
     checks,
     extras,
+    configureInputs: depConfigureInputs,
   };
 }
 
@@ -1122,6 +1134,7 @@ function emitPrebuilt(
     objects: [],
     checks: [],
     extras: [],
+    configureInputs: [],
     includes,
     defines: provides.defines ?? [],
     sources: [],

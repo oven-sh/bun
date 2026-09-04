@@ -165,7 +165,7 @@ export interface ConfigureInput {
  * profiles.ts. Edits to a profile therefore take effect on the next
  * `ninja` in an existing build dir without `rm -rf`.
  */
-function emitGeneratorRule(n: Ninja, cfg: Config, input: ConfigureInput): void {
+function emitGeneratorRule(n: Ninja, cfg: Config, input: ConfigureInput, depInputs: string[]): void {
   const configFile = resolve(cfg.buildDir, "configure.json");
   const buildScript = resolve(cfg.cwd, "scripts", "build.ts");
 
@@ -193,7 +193,7 @@ function emitGeneratorRule(n: Ninja, cfg: Config, input: ConfigureInput): void {
     outputs: [resolve(cfg.buildDir, "build.ninja")],
     rule: "regen",
     inputs: [configFile],
-    implicitInputs: configureInputs(cfg.cwd),
+    implicitInputs: [...configureInputs(cfg.cwd), ...depInputs],
   });
 }
 
@@ -246,7 +246,19 @@ export async function configure(input: ConfigureInput): Promise<ConfigureResult>
   // `--local-deps=zstd=…` on top must add to that, not replace it; a repeated
   // name still takes the CLI's path since later entries win).
   const profile = input.profile !== undefined ? getProfile(input.profile) : {};
-  const overrides = input.overrides ?? {};
+  const overrides = (input.overrides ??= {});
+  // $BUN_WEBKIT_PATH relocates a *-local profile's WebKit clone. It is folded
+  // into the persisted overrides here, once, so ninja-driven reconfigures use
+  // the path this build dir was configured with regardless of the environment
+  // they run in.
+  const webkitPathEnv = process.env.BUN_WEBKIT_PATH;
+  if (
+    webkitPathEnv &&
+    /(^|,)WebKit=/.test(profile.localDeps ?? "") &&
+    !/(^|,)WebKit=/.test(overrides.localDeps ?? "")
+  ) {
+    overrides.localDeps = [overrides.localDeps, `WebKit=${webkitPathEnv}`].filter(Boolean).join(",");
+  }
   const partial: PartialConfig = { ...profile, ...overrides };
   if (profile.localDeps !== undefined && overrides.localDeps !== undefined) {
     partial.localDeps = `${profile.localDeps},${overrides.localDeps}`;
@@ -328,7 +340,6 @@ export async function configure(input: ConfigureInput): Promise<ConfigureResult>
   // Emit ninja.
   const n = new Ninja({ buildDir: cfg.buildDir });
   registerAllRules(n, cfg);
-  emitGeneratorRule(n, cfg, input);
   // Deps whose graph is described from their own tree (WebKit's file lists)
   // need that tree before emitBun can enumerate edges. No-op once fetched;
   // skipped in the split modes that compile no C++.
@@ -339,6 +350,7 @@ export async function configure(input: ConfigureInput): Promise<ConfigureResult>
 
   const output = emitBun(n, cfg, sources);
   mark("emitBun");
+  emitGeneratorRule(n, cfg, input, output.deps.flatMap(d => d.configureInputs).sort());
 
   // Default targets. cpp-only sets its own default inside emitBun (archive,
   // no smoke test). Full/link-only: `bun` phony (or stripped file) + `check`.

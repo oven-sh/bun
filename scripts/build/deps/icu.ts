@@ -23,6 +23,7 @@ import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { cc, cxx } from "../compile.ts";
 import type { Config } from "../config.ts";
+import { BuildError } from "../error.ts";
 import { computeDepFlags } from "../flags.ts";
 import type { Ninja } from "../ninja.ts";
 import { quote, quoteArgs } from "../shell.ts";
@@ -89,6 +90,14 @@ function emitIcu(n: Ninja, cfg: Config, { srcDir, ready }: CustomBuildContext): 
   const S = join(srcDir, "source");
   const common = join(S, "common");
   const i18n = join(S, "i18n");
+  // The data below is zstd-repacked per item; loading it needs the
+  // decompress hook that patches/icu adds to udata.cpp. A --local-deps tree
+  // is used as-is (no patches applied), so it must already carry it.
+  if (!readFileSync(join(common, "udata.cpp"), "utf8").includes("bun_icu_maybe_decompress")) {
+    throw new BuildError(`ICU source at ${srcDir} lacks the udata decompress hook`, {
+      hint: "apply patches/icu/*.patch to that tree (git apply), or drop icu from --local-deps",
+    });
+  }
 
   n.comment("─── icu (common + i18n + data) ───");
 
@@ -214,7 +223,12 @@ function emitIcu(n: Ninja, cfg: Config, { srcDir, ready }: CustomBuildContext): 
 
   const objects = [...i18nObjects, ...ucObjects, dataObj];
   n.phony("icu", objects);
-  return { objects, includes: icuIncludes(cfg, srcDir), outputs: [...ready] };
+  return {
+    objects,
+    includes: icuIncludes(cfg, srcDir),
+    outputs: [...ready],
+    configureInputs: [join(common, "sources.txt"), join(i18n, "sources.txt")],
+  };
 }
 
 /** Rules for the edges above (host tool compile/link, data pipeline). */

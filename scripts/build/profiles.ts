@@ -35,11 +35,11 @@ export const profiles = {
     webkit: "prebuilt",
   },
 
-  /** Debug, WebKit compiled from your clone ($BUN_WEBKIT_PATH or vendor/WebKit/). */
+  /** Debug, WebKit compiled from your clone (vendor/WebKit/, or $BUN_WEBKIT_PATH — see configure()). */
   "debug-local": {
     buildType: "Debug",
     webkit: "source",
-    localDeps: `WebKit=${process.env.BUN_WEBKIT_PATH || "vendor/WebKit"}`,
+    localDeps: "WebKit=vendor/WebKit",
   },
 
   /** Debug without ASAN — faster builds, less safety. */
@@ -160,7 +160,7 @@ export const profiles = {
   "release-local": {
     buildType: "Release",
     webkit: "source",
-    localDeps: `WebKit=${process.env.BUN_WEBKIT_PATH || "vendor/WebKit"}`,
+    localDeps: "WebKit=vendor/WebKit",
     lto: false,
   },
 

@@ -7046,7 +7046,6 @@ impl H2FrameParser {
             if let Some(trailes_js) = options.get(global_object, "waitForTrailers")? {
                 if trailes_js.is_boolean() {
                     wait_for_trailers = trailes_js.as_boolean();
-                    stream.wait_for_trailers = wait_for_trailers;
                 }
             }
 
@@ -7066,10 +7065,7 @@ impl H2FrameParser {
                 if end_stream_js.is_boolean() {
                     if end_stream_js.as_boolean() {
                         end_stream = true;
-                        // will end the stream after trailers
-                        if !wait_for_trailers || this.is_server.get() {
-                            flags |= HeadersFrameFlags::END_STREAM as u8;
-                        }
+                        flags |= HeadersFrameFlags::END_STREAM as u8;
                     }
                 } else {
                     return Err(global_object.throw_invalid_argument_type_value(
@@ -7178,6 +7174,12 @@ impl H2FrameParser {
                 }
             }
         }
+
+        // endStream puts END_STREAM on this HEADERS frame, so neither a body nor trailers can
+        // follow it: waitForTrailers is ignored and onWantTrailers never fires for the stream.
+        // Same as node, where endStream submits the stream without the nghttp2 data provider
+        // that trailers are requested through.
+        stream.wait_for_trailers = wait_for_trailers && !end_stream;
 
         // too much memory being use
         if this.is_over_session_memory_limit() {
@@ -7389,12 +7391,6 @@ impl H2FrameParser {
         if end_stream {
             stream.end_after_headers = true;
 
-            if wait_for_trailers {
-                stream.state = StreamState::HALF_CLOSED_LOCAL;
-                this.dispatch(JSH2FrameParser::Gc::onWantTrailers, stream.get_identifier());
-                return Ok(JSValue::js_number(stream_id as f64));
-            }
-
             // A HEADERS frame carrying END_STREAM half-closes our side; when
             // the peer already half-closed (a server responding after the
             // request body finished) the stream is now fully closed. Mirror
@@ -7416,8 +7412,6 @@ impl H2FrameParser {
                 identifier,
                 JSValue::js_number(stream.state as u8 as f64),
             );
-        } else {
-            stream.wait_for_trailers = wait_for_trailers;
         }
 
         if silent {

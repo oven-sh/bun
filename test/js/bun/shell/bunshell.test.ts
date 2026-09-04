@@ -1315,6 +1315,87 @@ booga"
       expect(exitCode).toBe(0);
     });
 
+    // The root shell env used to be seeded from the process cwd before `.cwd()` was applied, so once the
+    // process cwd was unusable every `$` call failed, even with an absolute `.cwd()` (oven-sh/bun#37348).
+    // Runs in a child because the child's own cwd is what gets deleted / made unreadable.
+    async function runShellWithBrokenProcessCwd(cwd: string, script: string): Promise<Record<string, unknown>> {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", script],
+        env: bunEnv,
+        cwd,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
+      return JSON.parse(stdout);
+    }
+
+    const reportShellResults = `
+      const results = {};
+      async function run(name, shell) {
+        try {
+          results[name] = (await shell.quiet()).stdout.toString().trim();
+        } catch (e) {
+          results[name] = { code: e.code, syscall: e.syscall };
+        }
+      }
+    `;
+
+    test.if(isPosix)("absolute .cwd() still works after the process cwd was deleted", async () => {
+      using dir = tempDir("shell-deleted-cwd", { target: {}, doomed: {} });
+      const target = join(String(dir), "target");
+      const results = await runShellWithBrokenProcessCwd(
+        join(String(dir), "doomed"),
+        `
+          import { $ } from "bun";
+          import { rmdirSync } from "fs";
+          rmdirSync(process.cwd());
+          ${reportShellResults}
+          const target = ${JSON.stringify(target)};
+          await run("absolute", $\`pwd\`.cwd(target));
+          await run("absoluteMissing", $\`pwd\`.cwd(target + "/missing"));
+          await run("relative", $\`pwd\`.cwd("target"));
+          await run("none", $\`pwd\`);
+          await run("globalDefault", $.cwd(target)\`pwd\`);
+          console.log(JSON.stringify(results));
+        `,
+      );
+      expect(results).toEqual({
+        absolute: target,
+        absoluteMissing: { code: "ENOENT", syscall: "open" },
+        relative: { code: "ENOENT", syscall: "getcwd" },
+        none: { code: "ENOENT", syscall: "getcwd" },
+        globalDefault: target,
+      });
+    });
+
+    test.if(isPosix && !isRoot)("absolute .cwd() still works when the process cwd is not readable", async () => {
+      using dir = tempDir("shell-unreadable-cwd", { target: {}, unreadable: {} });
+      const target = join(String(dir), "target");
+      const unreadable = join(String(dir), "unreadable");
+      // Search permission only: the child can chdir into it, but not open() it.
+      chmodSync(unreadable, 0o311);
+      try {
+        const results = await runShellWithBrokenProcessCwd(
+          unreadable,
+          `
+            import { $ } from "bun";
+            ${reportShellResults}
+            await run("absolute", $\`pwd\`.cwd(${JSON.stringify(target)}));
+            await run("none", $\`pwd\`);
+            console.log(JSON.stringify(results));
+          `,
+        );
+        expect(results).toEqual({
+          absolute: target,
+          none: { code: "EACCES", syscall: "open" },
+        });
+      } finally {
+        chmodSync(unreadable, 0o755);
+      }
+    });
+
     // handleChangeCwdErr's `else` arm previously returned `.failed` without writing
     // to stderr or calling done(), so any errno other than NOTDIR/NOENT/NAMETOOLONG
     // (e.g. EACCES, ELOOP) left the shell promise unresolved forever.

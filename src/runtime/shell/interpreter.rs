@@ -447,8 +447,9 @@ impl Interpreter {
     }
 
     /// Builds the root `ShellExecEnv` (export env from the event loop's
-    /// `DotEnv::Loader`, cwd from `getcwd()`, cwd_fd from `open(O_DIRECTORY)`),
-    /// dups stdin into an `IOReader`, and heap-allocates the interpreter.
+    /// `DotEnv::Loader`, cwd + cwd_fd from [`open_root_cwd`], then `cwd_`
+    /// applied on top), dups stdin into an `IOReader`, and heap-allocates the
+    /// interpreter.
     /// stdout/stderr stay `.pipe` here — `setup_io_before_run()` (called from
     /// `run()`) upgrades them to real `IOWriter`s unless `quiet` was set.
     ///
@@ -497,19 +498,12 @@ impl Interpreter {
         // on Windows `MAX_PATH_BYTES` is ~96 KiB and `init` runs from
         // JS-triggered paths that may already be deep on the stack.
         let mut pathbuf = bun_paths::path_buffer_pool::get();
-        let cwd_len = match bun_sys::getcwd(&mut pathbuf[..]) {
-            Ok(n) => n,
-            Err(e) => return Err(ShellErr::new_sys(&e)),
-        };
-        // NUL-terminate for `open()`; downstream `cwd()` strips the trailing 0.
-        pathbuf[cwd_len] = 0;
-        let cwd_z = bun_core::ZStr::from_buf(pathbuf.as_slice(), cwd_len);
-
-        let cwd_fd = match bun_sys::open(cwd_z, bun_sys::O::DIRECTORY | bun_sys::O::RDONLY, 0) {
-            Ok(fd) => fd,
+        let (cwd_len, cwd_fd) = match open_root_cwd(&mut pathbuf[..], cwd_) {
+            Ok(cwd) => cwd,
             Err(e) => return Err(ShellErr::new_sys(&e)),
         };
 
+        // Includes the trailing NUL; downstream `cwd()` strips it.
         let mut cwd_arr = Vec::with_capacity(cwd_len + 1);
         cwd_arr.extend_from_slice(&pathbuf[..cwd_len + 1]);
         debug_assert_eq!(*cwd_arr.last().unwrap(), 0);
@@ -2224,6 +2218,42 @@ pub(crate) fn is_pollable_from_mode(mode: bun_sys::Mode) -> bool {
             }
         }
         fmt == libc::S_IFIFO as u32 || fmt == libc::S_IFSOCK as u32
+    }
+}
+
+/// Opens the directory the root shell starts in, leaving its NUL-terminated
+/// path in `buf`. Normally the process cwd; when that is unusable (deleted or
+/// unreadable), an absolute `.cwd()` override is opened instead, since `init`
+/// applies the override right afterwards and never needs the process cwd
+/// (oven-sh/bun#37348). A relative override resolves against the process cwd,
+/// so it keeps that error.
+fn open_root_cwd(buf: &mut [u8], cwd_override: Option<&[u8]>) -> bun_sys::Result<(usize, Fd)> {
+    fn open_dir(buf: &mut [u8], len: usize) -> bun_sys::Result<Fd> {
+        buf[len] = 0;
+        bun_sys::open(
+            bun_core::ZStr::from_buf(buf, len),
+            bun_sys::O::DIRECTORY | bun_sys::O::RDONLY,
+            0,
+        )
+    }
+
+    let process_cwd = bun_sys::getcwd(buf).and_then(|len| Ok((len, open_dir(buf, len)?)));
+    let process_cwd_err = match process_cwd {
+        Ok(cwd) => return Ok(cwd),
+        Err(e) => e,
+    };
+    match cwd_override {
+        Some(dir) if bun_paths::is_absolute(dir) => {
+            if dir.len() >= buf.len() {
+                return Err(bun_sys::Error::from_code(
+                    bun_sys::E::ENAMETOOLONG,
+                    bun_sys::Tag::chdir,
+                ));
+            }
+            buf[..dir.len()].copy_from_slice(dir);
+            Ok((dir.len(), open_dir(buf, dir.len())?))
+        }
+        _ => Err(process_cwd_err),
     }
 }
 

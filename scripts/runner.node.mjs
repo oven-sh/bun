@@ -3494,6 +3494,97 @@ function escapeXml(str) {
     .replace(/'/g, "&apos;");
 }
 
+/**
+ * Temporary diagnostic for the darwin tart fleet's intermittent ssh
+ * "Permission denied" and mid-job stall failures (another VM answering the
+ * guest's IP). Prints the guest's view of the vmnet subnet: interface, DHCP
+ * lease, ARP table, and which neighbors answer ssh with a Linux banner.
+ * Only runs inside tart guests; bounded to 45s; never throws.
+ */
+async function printTartSubnetDiagnostics() {
+  const isTartGuest =
+    process.platform === "darwin" &&
+    (/-tart-/.test(process.env["BUILDKITE_AGENT_NAME"] ?? "") ||
+      /^tcp:\/\/192\.168\.64\.1:\d+$/.test(process.env["DOCKER_HOST"] ?? ""));
+  if (!isTartGuest) {
+    return;
+  }
+  const work = async () => {
+    const { default: net } = await import("node:net");
+    const sh = (...cmd) => {
+      try {
+        const { stdout, stderr } = spawnSync(cmd[0], cmd.slice(1), { encoding: "utf-8", timeout: 5_000 });
+        return ((stdout || "") + (stderr || "")).trim();
+      } catch (error) {
+        return `spawn error: ${error}`;
+      }
+    };
+    console.log("[tart-net] en0:", sh("ifconfig", "en0").replace(/\n\s*/g, " | "));
+    console.log("[tart-net] dhcp:", sh("ipconfig", "getpacket", "en0").replace(/\n\s*/g, " | "));
+    console.log("[tart-net] arp before sweep:", sh("arp", "-an").replace(/\n/g, " ; "));
+    const ips = [];
+    for (let i = 2; i <= 32; i++) ips.push(`192.168.64.${i}`);
+    const limit = pLimit(12);
+    const alive = [];
+    await Promise.all(
+      ips.map(ip =>
+        limit(async () => {
+          const ok = await new Promise(resolve => {
+            const child = spawn("ping", ["-c", "1", "-W", "600", "-t", "1", ip], { stdio: "ignore" });
+            child.on("close", code => resolve(code === 0));
+            child.on("error", () => resolve(false));
+          });
+          if (ok) alive.push(ip);
+        }),
+      ),
+    );
+    alive.sort((a, b) => Number(a.split(".")[3]) - Number(b.split(".")[3]));
+    console.log("[tart-net] alive:", alive.join(" "));
+    console.log("[tart-net] arp after sweep:", sh("arp", "-an").replace(/\n/g, " ; "));
+    // Deliberately probe ssh on addresses nothing should hold (plus the
+    // gateway). If a banner comes back from an unowned address, packets are
+    // being delivered by segment/route rather than destination IP, and the
+    // banner identifies which VM currently captures them.
+    const bannerTargets = [...new Set([...alive, "192.168.64.1", "192.168.64.199", "192.168.64.250"])];
+    await Promise.all(
+      bannerTargets.map(ip =>
+        limit(async () => {
+          const banner = await new Promise(resolve => {
+            const socket = net.connect({ host: ip, port: 22 });
+            const timer = setTimeout(() => {
+              socket.destroy();
+              resolve("(timeout)");
+            }, 2_000);
+            socket.once("data", data => {
+              clearTimeout(timer);
+              socket.destroy();
+              resolve(String(data).split("\n")[0].trim());
+            });
+            socket.once("error", error => {
+              clearTimeout(timer);
+              socket.destroy();
+              resolve(`(${error?.code ?? error})`);
+            });
+            socket.once("close", () => {
+              clearTimeout(timer);
+              resolve("(closed)");
+            });
+          });
+          console.log(`[tart-net] ssh ${ip}: ${banner}`);
+        }),
+      ),
+    );
+  };
+  try {
+    const result = await Promise.race([work(), setTimeoutPromise(45_000, "timeout")]);
+    if (result === "timeout") {
+      console.log("[tart-net] diagnostics timed out");
+    }
+  } catch (error) {
+    console.log(`[tart-net] diagnostics failed: ${error}`);
+  }
+}
+
 export async function main() {
   for (const signal of ["SIGINT", "SIGTERM", "SIGHUP"]) {
     process.on(signal, () => onExit(signal));
@@ -3502,6 +3593,8 @@ export async function main() {
   if (!isQuiet) {
     printEnvironment();
   }
+
+  await printTartSubnetDiagnostics();
 
   // FIXME: Some DNS tests hang unless we set the DNS server to 8.8.8.8
   // It also appears to hang on 1.1.1.1, which could explain this issue:

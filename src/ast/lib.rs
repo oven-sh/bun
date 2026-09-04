@@ -1867,23 +1867,13 @@ impl Log {
         )
     }
 
+    /// For producers that already know the (1-based) line and column of the
+    /// warning but have no `Source` to compute a `Range` against, such as the
+    /// CSS parser.
     #[cold]
-    pub fn add_warning_fmt_line_col(
+    pub fn add_warning_fmt_with_location(
         &mut self,
-        filepath: Str,
-        line: u32,
-        col: u32,
-        args: fmt::Arguments<'_>,
-    ) {
-        self.add_warning_fmt_line_col_with_notes(filepath, line, col, args, Box::default())
-    }
-
-    #[cold]
-    pub fn add_warning_fmt_line_col_with_notes(
-        &mut self,
-        filepath: Str,
-        line: u32,
-        col: u32,
+        location: Location,
         args: fmt::Arguments<'_>,
         notes: Box<[Data]>,
     ) {
@@ -1892,18 +1882,9 @@ impl Log {
         }
         self.warnings += 1;
 
-        // TODO: do this properly
-
         let data = Data {
             text: alloc_print(args),
-            location: Some(Location {
-                // `Location.file` borrows the lifetime-erased `Str`; see the
-                // module-level OWNERSHIP note.
-                file: Cow::Borrowed(filepath),
-                line: i32::try_from(line).expect("int cast"),
-                column: i32::try_from(col).expect("int cast"),
-                ..Default::default()
-            }),
+            location: Some(location),
         }
         .clone_line_text(self.clone_line_text);
 

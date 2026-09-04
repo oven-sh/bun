@@ -152,15 +152,6 @@ impl VendorPrefix {
 pub use crate::SourceLocation;
 
 impl SourceLocation {
-    pub(crate) fn to_logger_location(self, file: &'static [u8]) -> bun_ast::Location {
-        bun_ast::Location {
-            file: std::borrow::Cow::Borrowed(file),
-            line: i32::try_from(self.line).expect("int cast"),
-            column: i32::try_from(self.column).expect("int cast"),
-            ..Default::default()
-        }
-    }
-
     /// Create a new BasicParseError at this location for an unexpected token
     pub(crate) fn new_basic_unexpected_token_error(self, token: Token) -> ParseError<ParserError> {
         BasicParseError {
@@ -2932,41 +2923,38 @@ pub struct ParserOptions<'a> {
 }
 
 impl<'a> ParserOptions<'a> {
-    pub(crate) fn warn(&self, warning: &ParseError<ParserError>) {
-        if let Some(lg) = self.logger {
-            // SAFETY: `logger` was constructed from a unique `&'a mut Log` (see
-            // `default`); the pointee outlives `'a` and no other borrow of the
-            // Log exists for the duration of parsing.
-            let lg: &mut Log = unsafe { &mut *lg.as_ptr() };
-            lg.add_warning_fmt_line_col(
-                self.filename,
-                warning.location.line,
-                warning.location.column,
-                format_args!("{}", warning.kind),
-            );
+    /// Every warning (and warning note) crosses into the logger through here,
+    /// like errors do through `ErrorLocation::to_location`: `SourceLocation`
+    /// lines are 0-based, `bun_ast::Location` lines are 1-based.
+    pub(crate) fn logger_location(&self, loc: SourceLocation) -> bun_ast::Location {
+        bun_ast::Location {
+            file: std::borrow::Cow::Borrowed(self.filename),
+            line: i32::try_from(loc.line + 1).expect("int cast"),
+            column: i32::try_from(loc.column).expect("int cast"),
+            ..Default::default()
         }
     }
 
-    pub(crate) fn warn_fmt(&self, args: fmt::Arguments<'_>, line: u32, column: u32) {
-        if let Some(lg) = self.logger {
-            // SAFETY: see `warn` — `logger` carries `*mut Log` provenance from a
-            // unique `&'a mut Log`; no other borrow exists during this call.
-            let lg: &mut Log = unsafe { &mut *lg.as_ptr() };
-            lg.add_warning_fmt_line_col(self.filename, line, column, args);
-        }
+    pub(crate) fn warn(&self, warning: &ParseError<ParserError>) {
+        self.warn_fmt(format_args!("{}", warning.kind), warning.location);
+    }
+
+    pub(crate) fn warn_fmt(&self, args: fmt::Arguments<'_>, loc: SourceLocation) {
+        self.warn_fmt_with_notes(args, loc, Box::default());
     }
 
     pub(crate) fn warn_fmt_with_notes(
         &self,
         args: fmt::Arguments<'_>,
-        line: u32,
-        column: u32,
+        loc: SourceLocation,
         notes: Box<[bun_ast::Data]>,
     ) {
         if let Some(lg) = self.logger {
-            // SAFETY: see `warn`.
+            // SAFETY: `logger` was constructed from a unique `&'a mut Log` (see
+            // `default`); the pointee outlives `'a` and no other borrow of the
+            // Log exists for the duration of parsing.
             let lg: &mut Log = unsafe { &mut *lg.as_ptr() };
-            lg.add_warning_fmt_line_col_with_notes(self.filename, line, column, args, notes);
+            lg.add_warning_fmt_with_location(self.logger_location(loc), args, notes);
         }
     }
 

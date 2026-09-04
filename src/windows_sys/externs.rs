@@ -926,8 +926,6 @@ pub mod kernel32 {
             dwWriteCoord: COORD,
             lpNumberOfCharsWritten: *mut DWORD,
         ) -> BOOL;
-        /// `SetConsoleCursorPosition` (`wincon.h`).
-        pub fn SetConsoleCursorPosition(hConsoleOutput: HANDLE, dwCursorPosition: COORD) -> BOOL;
         /// `ExitThread` (`processthreadsapi.h`). No preconditions; terminates
         /// the calling thread.
         pub safe fn ExitThread(dwExitCode: DWORD) -> !;

@@ -270,7 +270,6 @@ describe("bundler", () => {
     },
   });
   itBundled("browser/NodePolyfillExternal", {
-    todo: true,
     skipOnEsbuild: true,
     files: {
       "/entry.js": NodePolyfills.options.files["/entry.js"],
@@ -286,6 +285,105 @@ describe("bundler", () => {
           path: "node:" + x,
         })),
       );
+    },
+  });
+  // #13941: --external for a node builtin must match regardless of which
+  // spelling ("stream" vs "node:stream") the import and the --external value
+  // use. Before the fix, only --external='*' worked; exact names were
+  // swallowed by the polyfill substitution.
+  for (const [label, importSpec, externalSpec] of [
+    ["NodePrefixImportNodePrefixExternal", "node:stream", "node:stream"],
+    ["NodePrefixImportBareExternal", "node:stream", "stream"],
+    ["BareImportNodePrefixExternal", "stream", "node:stream"],
+    ["BareImportBareExternal", "stream", "stream"],
+  ] as const) {
+    itBundled(`browser/NodeBuiltinExternal${label}#13941`, {
+      skipOnEsbuild: true,
+      files: {
+        "/entry.js": `import { Readable } from ${JSON.stringify(importSpec)};\nconsole.log(Readable);\n`,
+      },
+      target: "browser",
+      external: [externalSpec],
+      onAfterBundle(api) {
+        const file = api.readFile("/out.js");
+        const imports = new Bun.Transpiler().scanImports(file);
+        expect(imports).toEqual([{ kind: "import-statement", path: importSpec }]);
+        api.expectFile("/out.js").not.toInclude("bun-vfs$$");
+      },
+    });
+  }
+  // #35210: same ordering bug via dynamic import + minify.
+  itBundled("browser/NodePolyfillExternalNodePrefix#35210", {
+    files: {
+      "/entry.js": /* js */ `
+        export async function go(data) {
+          const { deflateSync } = await import("node:zlib");
+          return new Uint8Array(deflateSync(data));
+        }
+      `,
+    },
+    target: "browser",
+    external: ["node:zlib"],
+    minifyWhitespace: true,
+    onAfterBundle(api) {
+      const file = api.readFile("/out.js");
+      const imports = new Bun.Transpiler().scanImports(file);
+      expect(imports).toStrictEqual([{ kind: "dynamic-import", path: "node:zlib" }]);
+    },
+  });
+  // #13941: builtins without a polyfill (stubbed to `{}`) must also honor
+  // --external instead of emitting the `(() => ({}))` no-op.
+  itBundled("browser/NodeBuiltinExternalNoOp#13941", {
+    skipOnEsbuild: true,
+    files: {
+      "/entry.js": `import fs from "node:fs";\nimport cp from "node:child_process";\nconsole.log(fs, cp);\n`,
+    },
+    target: "browser",
+    external: ["node:fs", "child_process"],
+    onAfterBundle(api) {
+      const file = api.readFile("/out.js");
+      const imports = new Bun.Transpiler().scanImports(file);
+      expect(imports).toEqual([
+        { kind: "import-statement", path: "node:fs" },
+        { kind: "import-statement", path: "node:child_process" },
+      ]);
+      api.expectFile("/out.js").not.toInclude("() => ({})");
+    },
+  });
+
+  // A node:-spelled external must not capture a bare import of an npm package
+  // that merely shares the builtin-free name.
+  itBundled("browser/NodePrefixExternalDoesNotCaptureNpmPackage", {
+    files: {
+      "/entry.js": `import { x } from "ws";\nconsole.log(x);\n`,
+      "/node_modules/ws/package.json": `{ "name": "ws", "version": "1.0.0", "main": "index.js" }`,
+      "/node_modules/ws/index.js": `export const x = "npm-ws";`,
+    },
+    target: "browser",
+    external: ["node:ws"],
+    onAfterBundle(api) {
+      const file = api.readFile("/out.js");
+      const imports = new Bun.Transpiler().scanImports(file);
+      expect(imports).toEqual([]);
+      api.expectFile("/out.js").toInclude("npm-ws");
+    },
+  });
+  // Subpath imports of a builtin follow the parent's external, matching the
+  // general external check's behavior for "foo/bar" with --external foo.
+  itBundled("browser/NodeBuiltinExternalSubpath#13941", {
+    skipOnEsbuild: true,
+    files: {
+      "/entry.js": `import { pipeline } from "node:stream/promises";\nimport { readFile } from "fs/promises";\nconsole.log(pipeline, readFile);\n`,
+    },
+    target: "browser",
+    external: ["stream", "node:fs"],
+    onAfterBundle(api) {
+      const file = api.readFile("/out.js");
+      const imports = new Bun.Transpiler().scanImports(file);
+      expect(imports).toEqual([
+        { kind: "import-statement", path: "node:stream/promises" },
+        { kind: "import-statement", path: "fs/promises" },
+      ]);
     },
   });
 

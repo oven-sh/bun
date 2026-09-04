@@ -76,6 +76,7 @@ unsafe extern "C" {
         global_object: *const JSGlobalObject,
         value: JSValue,
     ) -> i8;
+    fn Bun__RegExp__validatePattern(global_object: *const JSGlobalObject, pattern: JSValue) -> bool;
 }
 
 impl AsymmetricMatcherConstructorType {
@@ -2321,6 +2322,18 @@ impl ExpectStringMatching {
         }
 
         let test_value = args[0];
+
+        if test_value.is_string() {
+            // Jest compiles a string sample with `new RegExp(sample)` up front, so an invalid
+            // pattern fails here rather than only when a string is matched against it.
+            bun_jsc::validation_scope!(scope, global_this);
+            // SAFETY: FFI call with a valid &JSGlobalObject; JSValue is Copy/repr(transparent)
+            let valid = unsafe { Bun__RegExp__validatePattern(global_this, test_value) };
+            scope.assert_exception_presence_matches(!valid);
+            if !valid {
+                return Err(JsError::Thrown);
+            }
+        }
 
         let string_matching_js_value = ExpectStringMatching { flags: Cell::new(Flags::default()) }.to_js(global_this);
         expect_string_matching_js::test_value_set_cached(string_matching_js_value, global_this, test_value);

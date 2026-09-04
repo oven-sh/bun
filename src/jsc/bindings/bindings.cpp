@@ -274,6 +274,22 @@ template bool Bun__deepMatch<false>(
 
 extern "C" bool Expect_readFlagsAndProcessPromise(JSC::EncodedJSValue instanceValue, JSC::JSGlobalObject* globalObject, ExpectFlags* flags, JSC::EncodedJSValue* value, AsymmetricMatcherConstructorType* constructorType);
 
+// expect.stringMatching(string): Jest compiles the sample with `new RegExp(sample)` when the
+// matcher is created, so an invalid pattern throws there rather than at match time.
+extern "C" bool Bun__RegExp__validatePattern(JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue encodedPattern)
+{
+    auto& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    String pattern = JSValue::decode(encodedPattern).toWTFString(globalObject);
+    RETURN_IF_EXCEPTION(scope, false);
+    RegExp* regExp = RegExp::create(vm, pattern, {});
+    if (!regExp->isValid()) {
+        throwSyntaxError(globalObject, scope, String(regExp->errorMessage()));
+        return false;
+    }
+    return true;
+}
+
 extern "C" int8_t AsymmetricMatcherConstructorType__fromJS(JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue encodedValue)
 {
     JSValue value = JSValue::decode(encodedValue);

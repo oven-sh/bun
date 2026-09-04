@@ -5035,3 +5035,13 @@ function tmpFile(exists) {
   }
   return tmpFile;
 }
+
+test("expect.stringMatching rejects an invalid string pattern when it is created", () => {
+  // Jest compiles the sample with `new RegExp(sample)` at construction time.
+  expect(() => expect.stringMatching("(")).toThrow(SyntaxError);
+  expect(() => expect.stringMatching("[a")).toThrow(SyntaxError);
+  expect(() => expect.stringMatching("a{2,1}")).toThrow(SyntaxError);
+  // a valid string is still a pattern
+  expect("hello world").toEqual(expect.stringMatching("^hello"));
+  expect({ a: 1 }).toEqual({ a: expect.not.stringMatching("^x") });
+});

@@ -393,6 +393,14 @@ impl Stdio {
                         )
                         .throw());
                 }
+                if stream.is_locked(global) {
+                    return Err(global
+                        .err(
+                            jsc::ErrorCode::INVALID_STATE,
+                            format_args!("ReadableStream is locked"),
+                        )
+                        .throw());
+                }
 
                 *out_stdio = Stdio::ReadableStream(stream);
             }
@@ -541,6 +549,14 @@ impl Stdio {
                             "'{}' ReadableStream has already been used",
                             bstr::BStr::new(name),
                         ),
+                    )
+                    .throw());
+            }
+            if stream.is_locked(global) {
+                return Err(global
+                    .err(
+                        jsc::ErrorCode::INVALID_STATE,
+                        format_args!("'{}' ReadableStream is locked", bstr::BStr::new(name)),
                     )
                     .throw());
             }

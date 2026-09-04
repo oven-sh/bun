@@ -2272,6 +2272,87 @@ describe("bundler", () => {
       api.expectFile("/out.js").not.toMatch(/[^\.:]module/); // `.module` and `node:module` are ok.
     },
   });
+  // https://github.com/oven-sh/bun/issues/14594
+  itBundled("edgecase/BunEnvTargetNode", {
+    files: {
+      "/entry.ts": /* js */ `
+        capture(Bun.env.VAR);
+        capture(Bun.env);
+        capture(Bun.env["computed"]);
+        capture(import.meta.env.VAR);
+        capture(import.meta.env);
+      `,
+    },
+    target: "node",
+    capture: [
+      "globalThis.process.env.VAR",
+      "globalThis.process.env",
+      'globalThis.process.env["computed"]',
+      "globalThis.process.env.VAR",
+      "globalThis.process.env",
+    ],
+    onAfterBundle(api) {
+      api.expectFile("/out.js").not.toContain("Bun");
+      api.expectFile("/out.js").not.toContain("import.meta.env");
+    },
+  });
+  itBundled("edgecase/BunEnvTargetNodeRun", {
+    files: {
+      "/entry.ts": /* js */ `
+        console.log(Bun.env.FOO);
+        console.log(JSON.stringify(Bun.env.MISSING));
+        console.log(typeof Bun.env);
+        console.log(import.meta.env.FOO);
+      `,
+    },
+    target: "node",
+    run: {
+      runtime: "node",
+      env: { FOO: "from-node" },
+      stdout: "from-node\nundefined\nobject\nfrom-node",
+    },
+  });
+  itBundled("edgecase/BunEnvTargetNodeLocalProcessShadow", {
+    files: {
+      "/entry.ts": /* js */ `
+        const process = { env: { FOO: "local" }, other: "ok" };
+        console.log(process.other);
+        console.log(Bun.env.FOO);
+      `,
+    },
+    target: "node",
+    run: {
+      runtime: "node",
+      env: { FOO: "global" },
+      stdout: "ok\nglobal",
+    },
+  });
+  itBundled("edgecase/BunEnvTargetNodeUserDefineWins", {
+    files: {
+      "/entry.ts": /* js */ `
+        capture(Bun.env);
+        capture(Bun.env.X);
+        capture(import.meta.env);
+      `,
+    },
+    target: "node",
+    define: {
+      "Bun.env": "globalThis.myEnv",
+      "import.meta.env": "globalThis.otherEnv",
+    },
+    capture: ["globalThis.myEnv", "globalThis.myEnv.X", "globalThis.otherEnv"],
+  });
+  itBundled("edgecase/BunEnvTargetBunUnchanged", {
+    files: {
+      "/entry.ts": /* js */ `
+        capture(Bun.env.VAR);
+        capture(Bun.env);
+        capture(import.meta.env.VAR);
+      `,
+    },
+    target: "bun",
+    capture: ["Bun.env.VAR", "Bun.env", "import.meta.env.VAR"],
+  });
   itBundled("edgecase/build-cjs-module#20308", {
     files: {
       "/entry.ts": /* js */ `

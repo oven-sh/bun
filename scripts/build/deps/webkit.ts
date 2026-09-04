@@ -22,8 +22,8 @@ export const WEBKIT_VERSION = "40e43a82a755af3cc9eb4a4e025e4e020a7a3cfd";
  * **prebuilt**: Download tarball from oven-sh/WebKit releases. Tarball name
  *   encodes {os, arch, musl, debug|lto, asan} — each is a separate ABI.
  *   ASAN MUST match bun's setting: WTF::Vector layout changes with ASAN
- *   (see WTF/Vector.h:682), so mixing → silent memory corruption. Remains
- *   only until the direct build covers macOS and Windows.
+ *   (see WTF/Vector.h:682), so mixing → silent memory corruption. The local
+ *   default (no JSC compile); CI builds every target from source.
  */
 
 import { spawnSync } from "node:child_process";

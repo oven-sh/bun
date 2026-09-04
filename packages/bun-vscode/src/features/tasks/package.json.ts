@@ -162,11 +162,13 @@ function registerHoverProvider(context: vscode.ExtensionContext) {
         pattern: "**/package.json",
       }, {
       provideHover(document, position) {
-        const { scripts } = extractScriptsFromPackageJson(document);
+        const extracted = extractScriptsFromPackageJson(document);
+        if (!extracted) return;
+        const { scripts } = extracted;
 
         return {
           contents: scripts.map(script => {
-            if (!script.range.contains(position)) return null;
+            if (!script?.range?.contains(position)) return null;
 
             const command = encodeURI(JSON.stringify({ script: script.command, name: script.name }));
 

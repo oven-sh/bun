@@ -427,32 +427,103 @@ it("process.env is spreadable and editable", () => {
   expect(eval(`globalThis.process.env.USER = "${orig}"`)).toBe(String(orig));
 });
 
-it("process.env reads are never stale after a write (JIT inline-cache soundness)", async () => {
-  // process.env only sets OverridesPut (not ProhibitsPropertyCaching), so
-  // reads hit the ordinary self-access IC. This test verifies that writes
-  // through the overridden put() still invalidate that IC: same-key Replace,
-  // delete-then-set, and a hot read loop that FTL constant-folds before a
-  // single write. Spawned so the subprocess gets its own tier-up.
+it("process.env coerces to string on every execution of the same assignment", () => {
+  // The first execution of an assignment goes through JSEnvironmentVariableMap::put,
+  // which ToStrings the value like node's EnvSetter. JSC then wants to cache the
+  // site as a plain store that never calls put() again; process.env must opt out
+  // of that caching or the second/third execution stores the raw value.
+  const computedKey = "BUN_TEST_ENV_REPEATED_BYVAL";
+  process.env.BUN_TEST_ENV_REPEATED_EXISTING = "preset";
+  try {
+    const fresh = [];
+    const existing = [];
+    const byVal = [];
+    const objects = [];
+    for (let i = 0; i < 4; i++) {
+      process.env.BUN_TEST_ENV_REPEATED_FRESH = i;
+      fresh.push(process.env.BUN_TEST_ENV_REPEATED_FRESH);
+      process.env.BUN_TEST_ENV_REPEATED_EXISTING = i;
+      existing.push(process.env.BUN_TEST_ENV_REPEATED_EXISTING);
+      process.env[computedKey] = i;
+      byVal.push(process.env[computedKey]);
+      process.env.BUN_TEST_ENV_REPEATED_OBJECT = { toString: () => "object-" + i };
+      objects.push(process.env.BUN_TEST_ENV_REPEATED_OBJECT);
+    }
+    expect({ fresh, existing, byVal, objects }).toEqual({
+      fresh: ["0", "1", "2", "3"],
+      existing: ["0", "1", "2", "3"],
+      byVal: ["0", "1", "2", "3"],
+      objects: ["object-0", "object-1", "object-2", "object-3"],
+    });
+  } finally {
+    delete process.env.BUN_TEST_ENV_REPEATED_FRESH;
+    delete process.env.BUN_TEST_ENV_REPEATED_EXISTING;
+    delete process.env[computedKey];
+    delete process.env.BUN_TEST_ENV_REPEATED_OBJECT;
+  }
+});
+
+it("process.env coerces integer-like keys to string on every assignment", () => {
+  // Integer-like keys go through putByIndex. The first store used to give the
+  // object ordinary indexed storage, after which JSC stores into that vector
+  // directly, so later stores (to the same index or a neighbouring one) never
+  // reached putByIndex. process.env has to keep indexed keys on the slow path.
+  try {
+    const repeated = [];
+    const stringForm = [];
+    for (let i = 0; i < 4; i++) {
+      process.env[700] = i;
+      repeated.push(process.env[700]);
+      process.env["701"] = i;
+      stringForm.push(process.env["701"]);
+    }
+    process.env[702] = 7;
+    const keys = Object.keys(process.env).filter(key => key === "700" || key === "701" || key === "702");
+    expect({ repeated, stringForm, neighbour: process.env[702], keys }).toEqual({
+      repeated: ["0", "1", "2", "3"],
+      stringForm: ["0", "1", "2", "3"],
+      neighbour: "7",
+      keys: ["700", "701", "702"],
+    });
+  } finally {
+    delete process.env[700];
+    delete process.env[701];
+    delete process.env[702];
+  }
+});
+
+it.concurrent("process.env reads are never stale and writes always coerce across JIT tiers", async () => {
+  // process.env sets ProhibitsPropertyCaching (JSEnvironmentVariableMap.h), so
+  // neither reads nor writes to it may be served by an inline cache or folded by
+  // the DFG. writeAndRead() and readHot() are called often enough to be compiled
+  // by every tier (FTL lands around call 10000 in a debug build): every call of
+  // the write must reach put() (and ToString) and every read must see the latest
+  // value, including one written after the read site went hot. Then
+  // delete-then-set by value. Spawned so the subprocess gets its own tier-up.
   await using proc = Bun.spawn({
     cmd: [
       bunExe(),
       "-e",
       `
         const env = process.env;
-        const N = 100000;
-        for (let i = 0; i < N; i++) {
-          const expected = "v" + i;
-          env.PROBE_KEY = expected;
-          if (env.PROBE_KEY !== expected) throw new Error("same-key stale at " + i + ": " + env.PROBE_KEY);
+        const N = 30000;
+        function writeAndRead(value) {
+          env.PROBE_KEY = value;
+          return env.PROBE_KEY;
         }
-        env.PROBE_KEY = 42;
-        if (env.PROBE_KEY !== "42") throw new Error("coerce: " + env.PROBE_KEY);
+        for (let i = 0; i < N; i++) {
+          const stored = writeAndRead(i);
+          if (stored !== String(i)) throw new Error("call " + i + " stored " + typeof stored + " " + stored);
+        }
+        function readHot() {
+          return env.HOT;
+        }
         env.HOT = "initial";
-        let sink = "";
-        for (let i = 0; i < 2 * N; i++) sink = env.HOT;
-        if (sink !== "initial") throw new Error("hot warmup: " + sink);
+        for (let i = 0; i < N; i++) {
+          if (readHot() !== "initial") throw new Error("hot warmup at " + i + ": " + readHot());
+        }
         env.HOT = "changed";
-        if (env.HOT !== "changed") throw new Error("hot post-write: " + env.HOT);
+        if (readHot() !== "changed") throw new Error("hot post-write: " + readHot());
         const key = "PROBE_BYVAL";
         for (let i = 0; i < 2000; i++) {
           env[key] = "b" + i;
@@ -464,6 +535,60 @@ it("process.env reads are never stale after a write (JIT inline-cache soundness)
       `,
     ],
     env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr: exitCode === 0 ? "" : stderr, exitCode }).toEqual({
+    stdout: "ok\n",
+    stderr: "",
+    exitCode: 0,
+  });
+});
+
+it.concurrent("process.env.TZ and NODE_TLS_REJECT_UNAUTHORIZED writes still reach put() once optimized", async () => {
+  // put() stores these two keys with putDirect and applies their native side
+  // effect first. After the first write they are ordinary data properties, so
+  // without ProhibitsPropertyCaching the DFG folds the write site into a plain
+  // store once it is hot: the string still lands in process.env but the timezone
+  // stops changing and non-strings are stored raw. The fold only happens if the
+  // Baseline read IC has started watching the property and a write has fired that
+  // watchpoint before the DFG compiles the function, which the default thresholds
+  // do at about call 100 (unfixed, this fails at call 99); non-concurrent JIT pins
+  // that order. jitPolicyScale=0 would compile before the watchpoint exists and
+  // make the unfixed build pass, so the thresholds are deliberately left alone.
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+        const env = process.env;
+        const N = 200;
+        const zones = ["Asia/Tokyo", "UTC"];
+        const offsets = [-540, 0];
+        function writeTZ(i) {
+          env.TZ = zones[i & 1];
+          return env.TZ;
+        }
+        for (let i = 0; i < N; i++) {
+          const stored = writeTZ(i);
+          const offset = new Date(0).getTimezoneOffset();
+          if (stored !== zones[i & 1] || offset !== offsets[i & 1]) {
+            throw new Error("call " + i + ": stored " + stored + ", offset " + offset);
+          }
+        }
+        function writeTLS(i) {
+          env.NODE_TLS_REJECT_UNAUTHORIZED = i;
+          return env.NODE_TLS_REJECT_UNAUTHORIZED;
+        }
+        for (let i = 0; i < N; i++) {
+          const stored = writeTLS(i);
+          if (stored !== String(i)) throw new Error("call " + i + ": stored " + typeof stored + " " + stored);
+        }
+        console.log("ok");
+      `,
+    ],
+    env: { ...bunEnv, BUN_JSC_useConcurrentJIT: "0" },
     stdout: "pipe",
     stderr: "pipe",
   });

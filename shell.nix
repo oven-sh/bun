@@ -81,11 +81,6 @@ pkgs.mkShell rec {
     export CXX="${pkgs.lib.getExe' pkgs.clang_21 "clang++"}"
     export AR="${pkgs.llvm_21}/bin/llvm-ar"
     export RANLIB="${pkgs.llvm_21}/bin/llvm-ranlib"
-    export CMAKE_C_COMPILER="$CC"
-    export CMAKE_CXX_COMPILER="$CXX"
-    export CMAKE_AR="$AR"
-    export CMAKE_RANLIB="$RANLIB"
-    export CMAKE_SYSTEM_PROCESSOR=$(uname -m)
     export TMPDIR=''${TMPDIR:-/tmp}
   '' + pkgs.lib.optionalString pkgs.stdenv.isLinux ''
     export LD="${pkgs.lib.getExe' pkgs.lld_21 "ld.lld"}"

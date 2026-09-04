@@ -1807,6 +1807,88 @@ describe("stream operators argument validation (nodejs/node#59529)", () => {
   });
 });
 
+// These modules reach the Readable class without loading node:stream, which is where the
+// operators used to be installed. Every script below runs in a fresh process for that reason.
+describe("stream operators exist on Readables created without loading node:stream", () => {
+  const operators = [
+    "drop",
+    "filter",
+    "flatMap",
+    "map",
+    "take",
+    "every",
+    "forEach",
+    "reduce",
+    "toArray",
+    "some",
+    "find",
+  ];
+
+  async function run(script) {
+    // `bun -e` exposes the builtin modules as globals, and a top-level `const stream = ...` in the
+    // script would be enough to load node:stream. Block scoping the script keeps it away from them.
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", `{${script}}`],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  }
+
+  it.concurrent.each([
+    ["net.Socket", `new (require("node:net").Socket)()`],
+    ["crypto.createHash()", `require("node:crypto").createHash("sha256")`],
+    [
+      "child_process stdout",
+      `require("node:child_process").spawn(process.execPath, ["--version"], { stdio: ["ignore", "pipe", "ignore"] }).stdout`,
+    ],
+    ["_stream_readable", `require("node:_stream_readable").prototype`],
+    ["_stream_duplex", `require("node:_stream_duplex").prototype`],
+    ["_stream_transform", `require("node:_stream_transform").prototype`],
+    ["_stream_passthrough", `require("node:_stream_passthrough").prototype`],
+  ])("%s", async (_, expression) => {
+    const result = await run(`
+      const target = ${expression};
+      const found = {};
+      for (const name of ${JSON.stringify(operators)}) found[name] = typeof target[name];
+      console.log(JSON.stringify(found));
+    `);
+    expect(result).toEqual({
+      stdout: JSON.stringify(Object.fromEntries(operators.map(name => [name, "function"]))) + "\n",
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  it.concurrent("map() and toArray() work on a net.Socket", async () => {
+    const result = await run(`
+      const net = require("node:net");
+      const server = net.createServer(socket => socket.end("hello"));
+      server.listen(0, "127.0.0.1", async () => {
+        const socket = net.connect(server.address().port, "127.0.0.1");
+        const chunks = await socket.map(chunk => chunk.toString().toUpperCase()).toArray();
+        server.close();
+        console.log(chunks.join(""));
+      });
+    `);
+    expect(result).toEqual({ stdout: "HELLO\n", stderr: "", exitCode: 0 });
+  });
+
+  it.concurrent("filter(), map() and toArray() work on a _stream_readable Readable", async () => {
+    const result = await run(`
+      const Readable = require("node:_stream_readable");
+      Readable.from([1, 2, 3, 4, 5])
+        .filter(n => n % 2 === 1)
+        .map(n => n * 10)
+        .toArray()
+        .then(values => console.log(JSON.stringify(values)));
+    `);
+    expect(result).toEqual({ stdout: "[10,30,50]\n", stderr: "", exitCode: 0 });
+  });
+});
+
 describe("duplexPair teardown (test-duplex-error.js)", () => {
   const once = (emitter, event) => new Promise(resolve => emitter.once(event, resolve));
 

@@ -1,10 +1,8 @@
 "use strict";
 
-const ObjectKeys = Object.keys;
 const ObjectDefineProperty = Object.defineProperty;
 
 const customPromisify = Symbol.for("nodejs.util.promisify.custom");
-const { streamReturningOperators, promiseReturningOperators } = require("internal/streams/operators");
 const compose = require("internal/streams/compose");
 const { setDefaultHighWaterMark, getDefaultHighWaterMark } = require("internal/streams/state");
 const { pipeline } = require("internal/streams/pipeline");
@@ -21,46 +19,6 @@ Stream.isReadable = utils.isReadable;
 Stream.isWritable = utils.isWritable;
 
 Stream.Readable = require("internal/streams/readable");
-const streamKeys = ObjectKeys(streamReturningOperators);
-for (let i = 0; i < streamKeys.length; i++) {
-  const key = streamKeys[i];
-  const op = streamReturningOperators[key];
-  function fn(...args) {
-    if (new.target) {
-      throw $ERR_ILLEGAL_CONSTRUCTOR();
-    }
-    return Stream.Readable.from(op.$apply(this, args));
-  }
-  ObjectDefineProperty(fn, "name", { __proto__: null, value: op.name });
-  ObjectDefineProperty(fn, "length", { __proto__: null, value: op.length });
-  ObjectDefineProperty(Stream.Readable.prototype, key, {
-    __proto__: null,
-    value: fn,
-    enumerable: false,
-    configurable: true,
-    writable: true,
-  });
-}
-const promiseKeys = ObjectKeys(promiseReturningOperators);
-for (let i = 0; i < promiseKeys.length; i++) {
-  const key = promiseKeys[i];
-  const op = promiseReturningOperators[key];
-  function fn(...args) {
-    if (new.target) {
-      throw $ERR_ILLEGAL_CONSTRUCTOR();
-    }
-    return Promise.$resolve().then(() => op.$apply(this, args));
-  }
-  ObjectDefineProperty(fn, "name", { __proto__: null, value: op.name });
-  ObjectDefineProperty(fn, "length", { __proto__: null, value: op.length });
-  ObjectDefineProperty(Stream.Readable.prototype, key, {
-    __proto__: null,
-    value: fn,
-    enumerable: false,
-    configurable: true,
-    writable: true,
-  });
-}
 Stream.Writable = require("internal/streams/writable");
 Stream.Duplex = require("internal/streams/duplex");
 Stream.Transform = require("internal/streams/transform");

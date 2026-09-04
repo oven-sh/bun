@@ -1616,6 +1616,7 @@ pub(crate) fn migrate_pnpm_lockfile<'a>(
     // pnpm records `os`/`cpu` for every `packages:` entry whose manifest
     // declares them, including `file:` folders, tarballs, and git packages.
     crate::migration::clear_non_registry_platform_constraints(lockfile);
+    declare_folder_dependencies_relative_to_their_package(lockfile)?;
 
     lockfile.tag_workspace_links(manager.options.link_workspace_packages);
     lockfile.resolve(log)?;
@@ -1775,6 +1776,48 @@ fn declared_package_peers(
     }
 
     Ok(peers)
+}
+
+/// pnpm records a folder package's `file:` dependencies relative to the lockfile
+/// (`file:sub-dep/child` for a declared `file:./child`), which the resolution
+/// pass above keys on; bun.lock stores them relative to the declaring package,
+/// as declared. Importers already carry the declared `specifier`.
+fn declare_folder_dependencies_relative_to_their_package(
+    lockfile: &mut Lockfile,
+) -> Result<(), AllocError> {
+    let mut literal: Vec<u8> = Vec::new();
+    for pkg_id in 0..lockfile.packages.len() {
+        let pkg_resolution = lockfile.packages.items_resolution()[pkg_id];
+        if pkg_resolution.tag != resolution::Tag::Folder {
+            continue;
+        }
+        let pkg_dir = *pkg_resolution.folder();
+        let rows = lockfile.packages.items_dependencies()[pkg_id];
+
+        for dep_id in rows.begin() as usize..rows.end() as usize {
+            let dep = &lockfile.buffers.dependencies[dep_id];
+            if dep.version.tag != dependency::VersionTag::Folder {
+                continue;
+            }
+            let folder = *dep.version.folder();
+
+            literal.clear();
+            literal.extend_from_slice(b"file:");
+            let relative = bun_paths::resolve_path::relative(
+                pkg_dir.slice(string_bytes!(lockfile)),
+                folder.slice(string_bytes!(lockfile)),
+            );
+            literal.extend_from_slice(if relative.is_empty() { b"." } else { relative });
+            #[cfg(windows)]
+            bun_paths::dangerously_convert_path_to_posix_in_place::<u8>(
+                &mut literal[b"file:".len()..],
+            );
+
+            let appended = sbuf!(lockfile).append(&literal)?;
+            lockfile.buffers.dependencies[dep_id].version.literal = appended;
+        }
+    }
+    Ok(())
 }
 
 fn parse_append_package_dependencies(

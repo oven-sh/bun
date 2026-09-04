@@ -171,6 +171,21 @@ fn call_as_function(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSVa
             let mut formatter = bun_jsc::ConsoleObject::Formatter::new(global);
             return Err(global.throw(format_args!("Expected array, got {}", this.each.to_fmt(&mut formatter))));
         }
+        // `done` arity uses the widest array row so an omitted optional tuple slot
+        // binds as `undefined`, not `done` (#24347; intentionally diverges from Jest).
+        let max_row_width: usize = {
+            let mut width: usize = 0;
+            let mut width_iter = this.each.array_iterator(global)?;
+            while let Some(item) = width_iter.next()? {
+                if item.is_empty() {
+                    break;
+                }
+                if item.is_array() {
+                    width = width.max(item.get_length(global)? as usize);
+                }
+            }
+            width
+        };
         let mut iter = this.each.array_iterator(global)?;
         let mut test_idx: usize = 0;
         while let Some(item) = iter.next()? {
@@ -204,6 +219,17 @@ fn call_as_function(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSVa
                     None
                 };
 
+                // Pad to the table's width only when a `done` slot follows, so it lands
+                // past omitted optional elements without inflating `arguments.length`.
+                let bound_width =
+                    if item.is_array() { args_list.len().max(max_row_width) } else { args_list.len() };
+                let residual_length = callback_length.saturating_sub(bound_width);
+                if residual_length > 0 {
+                    while args_list.len() < bound_width {
+                        args_list.push(JSValue::UNDEFINED);
+                    }
+                }
+
                 let bound = if let Some(cb) = args.callback {
                     Some(JSValueTestExt::bind(cb, global, item, &BunString::static_("cb"), 0.0, args_list.as_slice())?)
                 } else {
@@ -218,7 +244,7 @@ fn call_as_function(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSVa
                     bound,
                     formatted_label.as_deref(),
                     &args.options,
-                    callback_length.saturating_sub(args_list.len()),
+                    residual_length,
                     line_no,
                 )
             })?;

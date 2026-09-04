@@ -3552,6 +3552,12 @@ mod windows_impl {
         if fd.kind() == FdKind::Uv {
             return sys_uv::read(fd, buf);
         }
+        // Stdin is the only fd that can be a console here.
+        if fd == Fd::stdin()
+            && let Some(result) = w::console_stdin::read(fd, buf)
+        {
+            return result;
+        }
         let adjusted_len = buf.len().min(MAX_COUNT) as w::DWORD;
         // Stdin callers route through this function (via
         // `File::stdin().read_to_end_into` / `output_sink().read`), so the

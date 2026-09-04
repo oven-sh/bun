@@ -161,7 +161,7 @@ We update this page regularly. It reflects the latest version of Bun's compatibi
 
 ### [`node:worker_threads`](https://nodejs.org/api/worker_threads.html)
 
-🟡 `Worker` ignores the `resourceLimits` and `trackUnmanagedFds` options. In `execArgv`, only `--no-addons` and `--no-ffi-cc` take effect. Other flags only set `process.execArgv` in the worker. `worker.performance.eventLoopUtilization()` is a stub. Missing `moveMessagePortToContext` and `locks`.
+🟡 `Worker` ignores the `resourceLimits` and `trackUnmanagedFds` options. Some `execArgv` flags take effect in the worker, for example `--no-addons`, `--stack-trace-limit` and `--tls-min-v1.3`. Others, for example `--conditions` and `--no-deprecation`, only set `process.execArgv`. `worker.performance.eventLoopUtilization()` is a stub. Missing `moveMessagePortToContext` and `locks`.
 
 ### [`node:inspector`](https://nodejs.org/api/inspector.html)
 

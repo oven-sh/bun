@@ -647,7 +647,7 @@ impl Process {
         // SAFETY: `this` is live. The guard's ref keeps it allocated across the
         // exit handler, which may drop the owner's ref and tick the loop far
         // enough to run the deferred `on_close_uv` (which drops the handle's).
-        let _keep = unsafe { bun_ptr::ScopedRef::<Process>::new(this) };
+        let _keep = unsafe { RefPtr::init_ref(this) };
         // SAFETY: as above; each call takes its own short `&mut`.
         unsafe {
             if !matches!(status, Status::Err(_)) {

@@ -181,15 +181,29 @@ describeWithContainer("untyped sql.array against postgres", { image: "postgres_p
     const [row] = await sql`INSERT INTO ${sql(table)} (tags, ints, blobs) VALUES (
       ${sql.array(["a", null])},
       ${sql.array([1, null])},
-      ${sql.array([Buffer.from("hi"), null])}
+      ${sql.array([Buffer.from("hi"), Buffer.from([0, 255]), null])}
     ) RETURNING tags, ints::text[] AS ints, blobs`;
     expect(row).toEqual({
       tags: ["a", null],
       ints: ["1", null],
-      blobs: [Buffer.from("hi"), null],
+      blobs: [Buffer.from("hi"), Buffer.from([0, 255]), null],
     });
     const [typed] = await sql`SELECT ${sql.array([Buffer.from("hi")], "BYTEA")} AS blobs`;
     expect(typed).toEqual({ blobs: [Buffer.from("hi")] });
+  });
+
+  test("an explicit type binds a null element as NULL", async () => {
+    await container.ready;
+    await using sql = connect();
+    const [row] = await sql`SELECT
+      ${sql.array(["a", null, undefined, "null"], "TEXT")} AS texts,
+      ${sql.array([{ a: 1 }, null, undefined], "JSON")} AS docs,
+      ${sql.array([true, null], "BOOLEAN")} AS flags`;
+    expect(row).toEqual({
+      texts: ["a", null, null, "null"],
+      docs: [{ a: 1 }, null, null],
+      flags: [true, null],
+    });
   });
 
   test("prepare: false binds the same literal", async () => {
@@ -212,8 +226,8 @@ describeWithContainer("untyped sql.array against postgres", { image: "postgres_p
     await using sql = connect();
     const [{ x }] = await sql`SELECT ${sql.array([1, 2])}::int[] AS x`;
     expect(Array.from(x)).toEqual([1, 2]);
-    const [{ t }] = await sql`SELECT pg_typeof(${sql.array(["a"])}::text[])::text AS t`;
-    expect(t).toBe("text[]");
+    const [{ t }] = await sql`SELECT ${sql.array(["a", 'b"c'])}::text[] AS t`;
+    expect(t).toEqual(["a", 'b"c']);
   });
 
   test("ANY() infers the element type from the compared value", async () => {

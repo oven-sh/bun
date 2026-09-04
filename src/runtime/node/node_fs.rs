@@ -441,18 +441,16 @@ fn openat_os_path(dirfd: FD, path: &OSPathSliceZ, flags: i32, mode: Mode) -> May
     sys::openat_windows(dirfd, path.as_slice(), flags, mode)
 }
 
-/// Check whether a directory exists at `(fd, path)` — dispatches on path element width. On
-/// Windows `OSPathSliceZ` is already `&WStr`, so forward to the wide overload
-/// instead of narrowing to UTF-8 and re-widening. POSIX is a forwarder.
+/// Follows symlinks on both platforms (`fstatat`; the wide arm on Windows).
 #[inline]
-fn directory_exists_at_os_path(dir: FD, path: &OSPathSliceZ) -> Maybe<bool> {
+fn exists_at_type_os_path(dir: FD, path: &OSPathSliceZ) -> Maybe<sys::ExistsAtType> {
     #[cfg(not(windows))]
     {
-        sys::directory_exists_at(dir, path)
+        sys::exists_at_type(dir, path)
     }
     #[cfg(windows)]
     {
-        sys::directory_exists_at_w(dir, path.as_slice())
+        sys::exists_at_type_w(dir, path.as_slice())
     }
 }
 
@@ -5481,8 +5479,9 @@ impl NodeFS {
                 // it is unclear if macOS lies about if the existing item is
                 // a directory or not, so it is checked.
                 E::EISDIR | E::EEXIST => {
-                    return match directory_exists_at_os_path(FD::INVALID, path) {
-                        Err(_) => Err(sys::Error {
+                    return match exists_at_type_os_path(FD::INVALID, path) {
+                        Ok(sys::ExistsAtType::Directory) => Ok(StringOrUndefined::None),
+                        Ok(sys::ExistsAtType::File) | Err(_) => Err(sys::Error {
                             errno: err.errno,
                             syscall: sys::Tag::mkdir,
                             path: self
@@ -5490,21 +5489,6 @@ impl NodeFS {
                                 .into(),
                             ..Default::default()
                         }),
-                        // if is a directory, OK. otherwise failure
-                        Ok(result) => {
-                            if result {
-                                Ok(StringOrUndefined::None)
-                            } else {
-                                Err(sys::Error {
-                                    errno: err.errno,
-                                    syscall: sys::Tag::mkdir,
-                                    path: self
-                                        .os_path_into_sync_error_buf(without_nt_prefix(&path[..]))
-                                        .into(),
-                                    ..Default::default()
-                                })
-                            }
-                        }
                     };
                 }
                 // continue
@@ -5570,27 +5554,24 @@ impl NodeFS {
                         // is never observed with its terminator clobbered.
                         match err.get_errno() {
                             E::EEXIST => {
-                                // On Windows, this may happen if trying to mkdir replacing a file
+                                // Files: ENOTDIR. Unfollowable links: the next mkdir's ENOENT.
                                 #[cfg(windows)]
                                 {
-                                    if let Ok(res) =
-                                        directory_exists_at_os_path(FD::INVALID, parent)
+                                    if let Ok(sys::ExistsAtType::File) =
+                                        exists_at_type_os_path(FD::INVALID, parent)
                                     {
-                                        // is a directory. break.
-                                        if !res {
-                                            // SAFETY: `working_mem` is not used after this return; the
-                                            // re-derived &mut PathBuffer is scoped to the call.
-                                            return Err(sys::Error {
-                                                errno: E::ENOTDIR as _,
-                                                syscall: sys::Tag::mkdir,
-                                                path: Self::os_path_into_buf(
-                                                    unsafe { &mut *sync_error_buf_ptr },
-                                                    without_nt_prefix(&(&path[..])[..len as usize]),
-                                                )
-                                                .into(),
-                                                ..Default::default()
-                                            });
-                                        }
+                                        // SAFETY: `working_mem` is not used after this return; the
+                                        // re-derived &mut PathBuffer is scoped to the call.
+                                        return Err(sys::Error {
+                                            errno: E::ENOTDIR as _,
+                                            syscall: sys::Tag::mkdir,
+                                            path: Self::os_path_into_buf(
+                                                unsafe { &mut *sync_error_buf_ptr },
+                                                without_nt_prefix(&(&path[..])[..len as usize]),
+                                            )
+                                            .into(),
+                                            ..Default::default()
+                                        });
                                     }
                                 }
                                 working_mem[i as usize] = paths::SEP as OSPathChar;

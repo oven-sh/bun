@@ -2912,8 +2912,12 @@ impl<'a> Transpiler<'a> {
 
         let mut file_path = Fs::Path::init(file_path_text);
 
+        // Forward slashes on every platform, like the bundler's `Source.path.pretty`.
         let top_level_dir = self.fs().top_level_dir;
-        let rel = bun_paths::resolve_path::relative(top_level_dir, file_path_text);
+        let rel = bun_paths::resolve_path::relative_platform::<
+            bun_paths::resolve_path::platform::Loose,
+            false,
+        >(top_level_dir, file_path_text);
         file_path.pretty = crate::linker::dupe(rel);
 
         let mut output_file = options::OutputFile::zero_value();
@@ -3178,12 +3182,14 @@ impl<'a> Transpiler<'a> {
         // `'bump`-threading note).
         let alloc: &'static Arena = unsafe { bun_ptr::detach_lifetime_ref::<Arena>(self.arena) };
 
+        // CSS module locals are `Ref`s into the one-list symbol map built below.
+        let source_index = bun_ast::Index::RUNTIME;
         let (mut sheet, extra) = match bun_css::StyleSheet::<bun_css::DefaultAtRule>::parse(
             alloc,
             entry.contents(),
             opts,
             None,
-            bun_ast::Index::INVALID,
+            source_index,
         ) {
             Ok(v) => v,
             Err(e) => {
@@ -3203,7 +3209,22 @@ impl<'a> Transpiler<'a> {
             );
             return None;
         }
-        let symbols = bun_ast::symbol::Map::init_list(Default::default());
+        // Same names `LinkerContext::mangle_local_css` gives these locals in a bundle.
+        let mut local_names = bun_css::LocalsResultsMap::default();
+        if !sheet.local_scope.is_empty() {
+            let path_hash = ::bun_base64::wyhash_url_safe(
+                alloc,
+                format_args!("{}", bstr::BStr::new(file_path_pretty)),
+                false,
+            );
+            for (local, entry) in sheet.local_scope.iter() {
+                local_names.insert(
+                    entry.ref_.to_real_ref(source_index.get()),
+                    strings::concat(&[local, b"_", path_hash]),
+                );
+            }
+        }
+        let symbols = bun_ast::symbol::Map::init_with_one_list(extra.symbols);
         let result = match sheet.to_css(
             alloc,
             &bun_css::PrinterOptions {
@@ -3212,7 +3233,7 @@ impl<'a> Transpiler<'a> {
                 ..bun_css::PrinterOptions::default()
             },
             None,
-            None,
+            Some(&local_names),
             &symbols,
         ) {
             Ok(v) => v,

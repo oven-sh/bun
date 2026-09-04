@@ -8745,7 +8745,11 @@ declare module "bun" {
     match(input: string | Request | Response): MatchedRoute | null;
 
     readonly assetPrefix: string;
-    readonly origin: string;
+    /**
+     * The `origin` passed to the constructor. `null` when the router was
+     * created without one (or with `""`).
+     */
+    readonly origin: string | null;
     readonly style: string;
     readonly routes: Record<string, string>;
 
@@ -8772,7 +8776,24 @@ declare module "bun" {
     readonly params: Record<string, string>;
     readonly filePath: string;
     readonly pathname: string;
-    readonly query: Record<string, string>;
+    /**
+     * The parsed query string, merged with {@link MatchedRoute.params}. A
+     * route parameter wins over a query string entry of the same name. A
+     * name that appears more than once in the query string maps to an array
+     * of its values.
+     *
+     * @example
+     * ```ts
+     * // with a pages/blog/[slug].tsx route:
+     * const router = new FileSystemRouter({
+     *   dir: "/path/to/pages",
+     *   style: "nextjs",
+     * });
+     * router.match("/blog/hello?tag=a&tag=b&page=2")?.query;
+     * // { slug: "hello", tag: ["a", "b"], page: "2" }
+     * ```
+     */
+    readonly query: Record<string, string | string[]>;
     readonly name: string;
     readonly kind: "exact" | "catch-all" | "optional-catch-all" | "dynamic";
     readonly src: string;

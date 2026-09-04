@@ -1,15 +1,23 @@
 import { expect, test } from "bun:test";
 import { readFileSync } from "fs";
-import { tmpdirSync } from "harness";
+import { isDebug, tmpdirSync } from "harness";
 import { join } from "path";
+
 // This test checks that printing stack traces increments and decrements
 // reference-counted strings
+//
+// Debug builds run Bun.inspect(err) ~30x and Bun.gc(true) ~20x slower than release, which puts every
+// test below past the default 5s timeout at the release counts. They also assert the first time a
+// string's refcount goes wrong (WTFStringImplStruct::ref/deref in bun_alloc), so they don't need the
+// repetition release builds rely on to turn an unbalanced ref into a visible failure.
 test("error gc test", () => {
-  for (let i = 0; i < 100; i++) {
+  const errors = isDebug ? 5 : 100;
+  const inspectsPerError = isDebug ? 100 : 1000;
+  for (let i = 0; i < errors; i++) {
     var fn = function yo() {
       var err = (function innerOne() {
         var err = new Error();
-        for (let i = 0; i < 1000; i++) {
+        for (let i = 0; i < inspectsPerError; i++) {
           Bun.inspect(err);
         }
         Bun.gc(true);
@@ -30,14 +38,16 @@ test("error gc test", () => {
 });
 
 test("error gc test #2", () => {
-  for (let i = 0; i < 1000; i++) {
+  const iterations = isDebug ? 100 : 1000;
+  for (let i = 0; i < iterations; i++) {
     new Error().stack;
     Bun.gc();
   }
 });
 
 test("error gc test #3", () => {
-  for (let i = 0; i < 1000; i++) {
+  const iterations = isDebug ? 100 : 1000;
+  for (let i = 0; i < iterations; i++) {
     var err = new Error();
     Error.captureStackTrace(err);
     Bun.inspect(err);
@@ -90,7 +100,8 @@ test("error gc test #4", () => {
     }
   }
 
-  for (let i = 0; i < 1000; i++) {
+  const iterations = isDebug ? 10 : 1000;
+  for (let i = 0; i < iterations; i++) {
     iterate();
   }
 });

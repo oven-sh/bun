@@ -435,21 +435,6 @@ check_package_manager() {
 	case "$pm" in
 	apt)
 		export DEBIAN_FRONTEND=noninteractive
-		# EC2 Ubuntu images point apt at the per-region cache mirrors
-		# (<region>.ec2.archive.ubuntu.com / <region>.ec2.ports.ubuntu.com) via
-		# cloud-init. Those have 503'd whole image bakes — typically serving
-		# the indexes fine and then failing individual .debs mid-install, so
-		# probing `apt-get update` first does not catch it. Use the primary
-		# archive directly.
-		if [ "$distro" = "ubuntu" ]; then
-			for f in /etc/apt/sources.list /etc/apt/sources.list.d/*.list /etc/apt/sources.list.d/*.sources; do
-				[ -f "$f" ] || continue
-				execute_sudo sed -i -E \
-					-e 's#https?://[a-z0-9-]+\.ec2\.archive\.ubuntu\.com/ubuntu#http://archive.ubuntu.com/ubuntu#g' \
-					-e 's#https?://[a-z0-9-]+\.ec2\.ports\.ubuntu\.com/ubuntu-ports#http://ports.ubuntu.com/ubuntu-ports#g' \
-					"$f"
-			done
-		fi
 		package_manager update -y
 		;;
 	apk)

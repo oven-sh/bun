@@ -330,9 +330,12 @@ export async function configure(input: ConfigureInput): Promise<ConfigureResult>
   registerAllRules(n, cfg);
   emitGeneratorRule(n, cfg, input);
   // Deps whose graph is described from their own tree (WebKit's file lists)
-  // need that tree before emitBun can enumerate edges. No-op once fetched.
-  await prefetchConfigureSources(cfg, allDeps);
-  mark("prefetchConfigureSources");
+  // need that tree before emitBun can enumerate edges. No-op once fetched;
+  // skipped in the split modes that compile no C++.
+  if (cfg.mode !== "rust-only" && cfg.mode !== "link-only" && cfg.mode !== "rust-and-link") {
+    await prefetchConfigureSources(cfg, allDeps);
+    mark("prefetchConfigureSources");
+  }
 
   const output = emitBun(n, cfg, sources);
   mark("emitBun");

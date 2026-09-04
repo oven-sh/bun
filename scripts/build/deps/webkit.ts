@@ -185,7 +185,14 @@ const sourceSparse = [
 // ───────────────────────────────────────────────────────────────────────────
 
 const on = (b: boolean): number => (b ? 1 : 0);
-const mimalloc = (c: Config): number => on(!c.asan);
+/** bmalloc/libpas on top of mimalloc: the fork's release configuration (Debug and ASAN prebuilts had it off). */
+const usesMimalloc = (c: Config): boolean => !c.debug && !c.asan;
+/**
+ * macOS Debug (non-ASAN): the fork's mac build script turns on
+ * ENABLE_MALLOC_HEAP_BREAKDOWN, and OptionsJSCOnly.cmake then forces system
+ * malloc and libpas off ("to workaround ASSERT(cell->heap() != heap())").
+ */
+const usesMallocHeapBreakdown = (c: Config): boolean => c.darwin && c.debug && !c.asan;
 /**
  * A header/function probe row (WEBKIT_CHECK_HAVE_*). OptionsCommon.cmake
  * skips those on APPLE, so the row is absent there; under clang-cl against
@@ -205,6 +212,7 @@ type Row = [name: string, value: number | undefined | ((c: Config) => number | u
 
 const rows: Row[] = [
   ["ALLOW_LINE_AND_COLUMN_NUMBER_IN_BUILTINS", 1],
+  ["BENABLE_MALLOC_HEAP_BREAKDOWN", c => (usesMallocHeapBreakdown(c) ? 1 : undefined)],
   ["BUN_SKIP_FAILING_ASSERTIONS", 1],
   ["BUSE_TZONE", 0],
   ["ENABLE_ACCESSIBILITY_ISOLATED_TREE", 0],
@@ -271,8 +279,9 @@ const rows: Row[] = [
   ["ENABLE_LAYOUT_TESTS", 0],
   ["ENABLE_LEGACY_CUSTOM_PROTOCOL_MANAGER", 0],
   ["ENABLE_LEGACY_ENCRYPTED_MEDIA", 0],
+  ["ENABLE_LIBPAS", c => (usesMallocHeapBreakdown(c) ? 0 : undefined)],
   ["ENABLE_LLVM_PROFILE_GENERATION", 0],
-  ["ENABLE_MALLOC_HEAP_BREAKDOWN", 0],
+  ["ENABLE_MALLOC_HEAP_BREAKDOWN", c => on(usesMallocHeapBreakdown(c))],
   ["ENABLE_MATHML", 1],
   ["ENABLE_MEDIA_CAPTURE", 0],
   ["ENABLE_MEDIA_CONTROLS_CONTEXT_MENUS", 0],
@@ -387,17 +396,17 @@ const rows: Row[] = [
   ["USE_AVIF", 1],
   ["USE_BUN_EVENT_LOOP", 1],
   ["USE_BUN_JSC_ADDITIONS", 1],
-  ["USE_EXTERNAL_MIMALLOC", c => mimalloc(c)],
+  ["USE_EXTERNAL_MIMALLOC", c => on(usesMimalloc(c))],
   ["USE_INSPECTOR_SOCKET_SERVER", 1],
   ["USE_ISO_MALLOC", c => on(!c.darwin)],
   ["USE_JPEGXL", 1],
   ["USE_LCMS", 1],
   ["USE_LIBBACKTRACE", 0],
-  ["USE_MIMALLOC", c => mimalloc(c)],
+  ["USE_MIMALLOC", c => on(usesMimalloc(c))],
   ["USE_PGO_PROFILE", 0],
   ["USE_SKIA", 0],
   ["USE_SKIA_ENCODERS", 0],
-  ["USE_SYSTEM_MALLOC", 0],
+  ["USE_SYSTEM_MALLOC", c => on(usesMallocHeapBreakdown(c))],
   ["USE_SYSTEM_UNIFDEF", 0],
   ["USE_TZONE_MALLOC", 0],
   ["USE_UNIX_DOMAIN_SOCKETS", 1],
@@ -447,7 +456,12 @@ function inspectorFeatureDefines(cfg: Config): string {
     const v = typeof value === "function" ? value(cfg) : value;
     if (v !== undefined && v !== 0) names.push(name);
   }
-  return names.sort().join(" ");
+  // cmake builds the string as `"${list} ${name}"` starting from empty, so it
+  // carries a leading space; CombinedDomains.json records it verbatim.
+  return names
+    .sort()
+    .map(n => ` ${n}`)
+    .join("");
 }
 
 // ───────────────────────────────────────────────────────────────────────────
@@ -1330,7 +1344,7 @@ function emitWebKitDirect(n: Ninja, cfg: Config, ctx: CustomBuildContext): WebKi
   // ─── Forwarding headers ───
   // bmalloc.h includes "mimalloc.h" as a flattened sibling; cmake copies it in
   // from WebKit's vendored mimalloc, here it is the mimalloc bun links.
-  const useMimalloc = !cfg.asan;
+  const useMimalloc = usesMimalloc(cfg);
   const mimallocInclude = join(depSourceDir(cfg, "mimalloc"), "include");
   writeForwardingHeaders(join(bmallocHeaders, "bmalloc"), [
     ...headersIn(join(BM, "bmalloc")),
@@ -1477,6 +1491,7 @@ function emitWebKitDirect(n: Ninja, cfg: Config, ctx: CustomBuildContext): WebKi
     "-DBUILDING_bmalloc",
     "-D_GNU_SOURCE",
     ...(useMimalloc ? ["-DUSE_MIMALLOC=1"] : []),
+    ...(usesMallocHeapBreakdown(cfg) ? ["-DBENABLE_MALLOC_HEAP_BREAKDOWN=1"] : []),
     ...bmIncludes.map(i => `-I${q(i)}`),
     "-Wno-cast-align",
     "-Wno-missing-field-initializers",
@@ -2088,14 +2103,11 @@ function emitWebKitDirect(n: Ninja, cfg: Config, ctx: CustomBuildContext): WebKi
   // LLIntAssembly.h). Its own edge, like cmake's LowLevelInterpreterLib: no
   // PCH, and an implicit dep on the generated assembly.
   // Debug: -O1 (after the global -O0) keeps the IPInt instruction handlers
-  // within their aligned slots, as JSC's CMakeLists does for this file.
+  // within their aligned slots, as JSC's CMakeLists does for this file under
+  // COMPILER_IS_GCC_OR_CLANG (so not for clang-cl).
   jscObjects.push(
     cxx(n, cfg, join(JSC, "llint", "LowLevelInterpreter.cpp"), {
-      flags: [
-        ...jscFlags,
-        ...(cfg.debug ? [cfg.windows ? "/O1" : "-O1"] : []),
-        ...noUnwindTables("LowLevelInterpreter.cpp"),
-      ],
+      flags: [...jscFlags, ...(cfg.debug && !cfg.windows ? ["-O1"] : []), ...noUnwindTables("LowLevelInterpreter.cpp")],
       implicitInputs: [llintAssembly],
       orderOnlyInputs: codegenReady,
     }),

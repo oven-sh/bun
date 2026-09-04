@@ -50,16 +50,22 @@ const extractedDir = resolve(dest, "extracted");
 // Enumerate URL-affecting config variants for the current host.
 //
 // github sources are config-independent, so one base config covers them
-// (plus one with webkit: "source" for WebKit's own tree). WebKit prebuilt URL
-// varies by (musl, baseline, debug|lto, asan). Iterate the cross-product,
-// dedupe URLs.
+// (plus webkit: "source" configs for WebKit's own tree and the target-only
+// source deps). WebKit prebuilt URL varies by (musl, baseline, debug|lto,
+// asan). Iterate the cross-product, dedupe URLs.
 // ───────────────────────────────────────────────────────────────────────────
 
 const toolchain = resolveToolchain();
 const base: PartialConfig = { buildType: "Release", ci: true, webkit: "prebuilt" };
 const baseCfg = resolveConfig(base, toolchain);
 
-const variants: PartialConfig[] = [{ ...base, webkit: "source" }];
+// Source mode: the host target plus the cross targets CI builds from this
+// host, so target-only source deps (bootstrap_cmds for darwin) are warm too.
+const variants: PartialConfig[] = [
+  { ...base, webkit: "source" },
+  { ...base, webkit: "source", os: "darwin", arch: "aarch64" },
+  { ...base, webkit: "source", os: "windows", arch: "x64" },
+];
 for (const asan of [false, true]) {
   for (const lto of [false, true]) {
     for (const baseline of baseCfg.x64 ? [false, true] : [false]) {

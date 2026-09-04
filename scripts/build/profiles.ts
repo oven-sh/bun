@@ -196,7 +196,7 @@ export const profiles = {
     mode: "cpp-only",
     ci: true,
     buildkite: true,
-    webkit: "prebuilt",
+    webkit: "source",
   },
 
   /**
@@ -209,7 +209,7 @@ export const profiles = {
     mode: "rust-only",
     ci: true,
     buildkite: true,
-    webkit: "prebuilt",
+    webkit: "source",
   },
 
   /** CI: link prebuilt objects downloaded from sibling BuildKite jobs. */
@@ -218,7 +218,7 @@ export const profiles = {
     mode: "link-only",
     ci: true,
     buildkite: true,
-    webkit: "prebuilt",
+    webkit: "source",
   },
 
   /**
@@ -232,7 +232,7 @@ export const profiles = {
     mode: "rust-and-link",
     ci: true,
     buildkite: true,
-    webkit: "prebuilt",
+    webkit: "source",
   },
 
   /** CI: deps + C++ + cargo + link on one agent; libbun-*.a, libbun_runtime.a and dep libs are uploaded as artifacts. */
@@ -241,7 +241,7 @@ export const profiles = {
     mode: "archive-link",
     ci: true,
     buildkite: true,
-    webkit: "prebuilt",
+    webkit: "source",
   },
 
   /** CI full build with LTO. */
@@ -249,7 +249,7 @@ export const profiles = {
     buildType: "Release",
     ci: true,
     buildkite: true,
-    webkit: "prebuilt",
+    webkit: "source",
     // lto default resolves to ON (ci + release + linux + !asan + !assertions)
   },
 } as const satisfies Record<string, PartialConfig>;

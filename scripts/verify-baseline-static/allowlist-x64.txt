@@ -1360,8 +1360,7 @@ jsimd_ycc_rgb_convert_avx2.return                    [AVX, AVX2]
 # single-digit hit here is decode noise. Ceiling [AVX] so a multi-feature leak
 # still fails. On ELF each opcode handler has its own symbol, so layout shifts
 # can move the desync between llint_op_* siblings; add them here as they trip.
-# (3 symbols)
+# (2 symbols)
 # ----------------------------------------------------------------------------
 llint_op_enter_wide32  [AVX]
-llint_op_jmp_wide32  [PREFETCHWT1]
 llint_op_wide16_wide16  [AVX]

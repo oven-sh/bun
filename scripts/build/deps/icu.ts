@@ -94,30 +94,16 @@ function emitIcu(n: Ninja, cfg: Config, { srcDir, ready }: CustomBuildContext): 
 
   // ─── Target libraries ───
   const dep = computeDepFlags(cfg);
-  // ICU needs RTTI (dynamic_cast in i18n) and is size- not speed-sensitive:
-  // -frtti / -Os after the dep-global -fno-rtti / -O<n> so they win. PIC
+  // ICU needs RTTI (dynamic_cast in i18n). Optimization level is the one the
+  // fork's ICU stage used regardless of WebKit build type — -Os on unix, -O2
+  // (/O2) on Windows — placed after the dep-global -O<n> so it wins. PIC
   // policy as for bun's own objects (non-PIE executable except on Android).
   const pic = cfg.abi === "android" ? ["-fPIC"] : cfg.unix ? ["-fno-pic", "-fno-pie"] : [];
   const cxxflags = cfg.windows
     ? // clang-cl spellings; /GR after the dep-global /GR-. _CRT_SECURE_NO_DEPRECATE
       // as ICU's own MSVC project files set.
-      [
-        ...dep.cxxflags,
-        "/std:c++20",
-        "/GR",
-        ...(cfg.release ? ["/Os"] : []),
-        "-D_CRT_SECURE_NO_DEPRECATE",
-        ...icuDefines,
-      ]
-    : [
-        ...dep.cxxflags,
-        ...pic,
-        "-std=c++20",
-        "-frtti",
-        ...(cfg.release ? ["-Os"] : []),
-        "-fno-exceptions",
-        ...icuDefines,
-      ];
+      [...dep.cxxflags, "/std:c++20", "/GR", "/O2", "-D_CRT_SECURE_NO_DEPRECATE", ...icuDefines]
+    : [...dep.cxxflags, ...pic, "-std=c++20", "-frtti", "-Os", "-fno-exceptions", ...icuDefines];
   const ucObjects = sourcesTxt(common).map(src =>
     cxx(n, cfg, src, { flags: [...cxxflags, "-DU_COMMON_IMPLEMENTATION", `-I${q(common)}`], orderOnlyInputs: ready }),
   );

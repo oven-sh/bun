@@ -125,11 +125,11 @@ describe("bundler", () => {
       "/entry.js": /* js */ `
         import assert, { strictEqual } from "node:assert";
         import * as ns from "assert";
-        import { required } from "./required.cjs";
+        import { required, bare } from "./required.cjs";
         console.log(JSON.stringify({
           default: typeof assert,
           require: typeof required,
-          same: assert === required && ns.default === assert,
+          same: assert === required && bare === required && ns.default === assert,
           named: strictEqual === assert.strictEqual,
         }));
         assert(true);
@@ -137,8 +137,10 @@ describe("bundler", () => {
         console.log("called");
       `,
       "/required.cjs": /* js */ `
-        const assert = require("assert");
+        const assert = require("node:assert");
+        const bare = require("assert");
         exports.required = assert;
+        exports.bare = bare;
       `,
     },
     target: "browser",
@@ -153,11 +155,15 @@ describe("bundler", () => {
       "/entry.js": /* js */ `
         import EventEmitter, { once } from "node:events";
         import * as ns from "events";
-        import { required } from "./required.cjs";
+        import { required, bare } from "./required.cjs";
         console.log(JSON.stringify({
           default: typeof EventEmitter,
           require: typeof required,
-          same: EventEmitter === required && ns.default === EventEmitter && EventEmitter.EventEmitter === EventEmitter,
+          same:
+            EventEmitter === required &&
+            bare === required &&
+            ns.default === EventEmitter &&
+            EventEmitter.EventEmitter === EventEmitter,
           named: once === EventEmitter.once,
         }));
         const emitter = new required();
@@ -165,8 +171,10 @@ describe("bundler", () => {
         emitter.emit("ping", 1);
       `,
       "/required.cjs": /* js */ `
-        const EventEmitter = require("events");
+        const EventEmitter = require("node:events");
+        const bare = require("events");
         exports.required = EventEmitter;
+        exports.bare = bare;
       `,
     },
     target: "browser",

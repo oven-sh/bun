@@ -24,12 +24,11 @@ describe.concurrent("Streaming body via", () => {
     const res = await fetch(`${server.url}/`);
     const chunks = [];
     for await (const chunk of res.body) {
-      chunks.push(chunk);
+      chunks.push(new TextDecoder().decode(chunk));
       firstChunkRead.resolve();
     }
 
-    expect(Buffer.concat(chunks).toString()).toBe("Hello, world!");
-    expect(chunks).toHaveLength(2);
+    expect(chunks).toEqual(["Hello, ", "world!"]);
   });
 
   test("a hand-written async iterator without return() completes", async () => {
@@ -201,12 +200,13 @@ describe.concurrent("Streaming body via", () => {
     const res = await fetch(`${server.url}/`);
     const chunks = [];
     for await (const chunk of res.body) {
-      chunks.push(chunk);
+      chunks.push(new TextDecoder().decode(chunk));
       firstChunkRead.resolve();
     }
 
-    expect(Buffer.concat(chunks).toString()).toBe("my string goes here\nmy buffer goes here\nend!\n");
-    expect(chunks).toHaveLength(2);
+    // The two yields before the await are one chunk: the response sink queues
+    // small writes and flushes them once the microtask queue drains.
+    expect(chunks).toEqual(["my string goes here\nmy buffer goes here\n", "end!\n"]);
   });
 
   test("[Symbol.asyncIterator] with a custom iterator", async () => {

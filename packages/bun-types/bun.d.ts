@@ -3252,7 +3252,7 @@ declare module "bun" {
      * `[target]`, and `[hash]` (8 characters of the content hash) or
      * `[hash9]`…`[hash13]` for more of it.
      *
-     * @default { entry: "[dir]/[name].[ext]", chunk: "[name]-[hash].[ext]", asset: "[name]-[hash].[ext]" }
+     * @default { entry: "[dir]/[name].[ext]", chunk: "./chunk-[hash].[ext]", asset: "./[name]-[hash].[ext]" }
      */
     naming?:
       | string

@@ -2129,6 +2129,9 @@ fn placeholder_field(name: &[u8]) -> Option<(PlaceholderField, usize)> {
     let len = digits
         .iter()
         .fold(0usize, |n, &d| n * 10 + (d - b'0') as usize);
+    if len == 0 {
+        return None;
+    }
     Some((PlaceholderField::Hash, len))
 }
 

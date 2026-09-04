@@ -6,9 +6,19 @@
  */
 import { $ } from "bun";
 import { afterAll, beforeAll, describe, expect, it, test } from "bun:test";
-import { chmodSync, mkdirSync } from "fs";
+import { chmodSync, existsSync, mkdirSync, symlinkSync } from "fs";
 import { mkdir, rm, stat } from "fs/promises";
-import { bunExe, isPosix, isWindows, rss, runWithErrorPromise, tempDir, tempDirWithFiles, tmpdirSync } from "harness";
+import {
+  bunExe,
+  isMacOS,
+  isPosix,
+  isWindows,
+  rss,
+  runWithErrorPromise,
+  tempDir,
+  tempDirWithFiles,
+  tmpdirSync,
+} from "harness";
 import { join, sep } from "path";
 import { createTestBuilder, sortedShellOutput } from "./util";
 const TestBuilder = createTestBuilder(import.meta.path);
@@ -1377,6 +1387,45 @@ ${temp_dir}`
           .split("\n")
           .sort(),
       );
+    });
+  });
+
+  // `mkdir -p` on a name held by a symlink reports what stat() says about the
+  // link (as BSD mkdir and node's recursive mkdir do), not the EEXIST text. Skipped
+  // on Windows, where the existence probe does not follow links yet.
+  describe.skipIf(isWindows)("mkdir -p on a symlink", () => {
+    let dir: string;
+    beforeAll(() => {
+      dir = tempDirWithFiles("temp-mkdir-p", { file: "", realdir: {} });
+      symlinkSync("missing", join(dir, "dangling"));
+      symlinkSync("loop", join(dir, "loop"));
+      symlinkSync("realdir", join(dir, "dirlink"));
+    });
+
+    test("to a missing target", async () => {
+      const target = join(dir, "dangling");
+      const { stderr, exitCode } = await $`mkdir -p ${target}`;
+      expect(stderr.toString()).toEqual(`mkdir: ${target}: No such file or directory\n`);
+      expect(exitCode).toBe(1);
+      expect(existsSync(join(dir, "missing"))).toBe(false);
+    });
+
+    test("that loops", async () => {
+      const target = join(dir, "loop");
+      const { stderr, exitCode } = await $`mkdir -p ${target}`;
+      expect(stderr.toString()).toEqual(`mkdir: ${target}: Too many levels of symbolic links\n`);
+      expect(exitCode).toBe(1);
+    });
+
+    test("to a directory succeeds, a file still reports EEXIST", async () => {
+      const dirlink = join(dir, "dirlink");
+      expect((await $`mkdir -p ${dirlink}`).exitCode).toBe(0);
+      const file = join(dir, "file");
+      const { stderr, exitCode } = await $`mkdir -p ${file}`;
+      // The shell's errno text follows the platform's strerror wording.
+      const eexist = isMacOS ? "File or folder exists" : "File exists";
+      expect(stderr.toString()).toEqual(`mkdir: ${file}: ${eexist}\n`);
+      expect(exitCode).toBe(1);
     });
   });
 

@@ -7192,7 +7192,7 @@ pub fn exists_at_type(dir: Fd, sub: &ZStr) -> Maybe<ExistsAtType> {
 /// `OSPathSliceZ`) and routes through
 /// `toNTPath16` instead of re-widening from UTF-8.
 #[cfg(windows)]
-pub(crate) fn exists_at_type_w(dir: Fd, sub: &[u16]) -> Maybe<ExistsAtType> {
+pub fn exists_at_type_w(dir: Fd, sub: &[u16]) -> Maybe<ExistsAtType> {
     let mut wbuf = bun_paths::w_path_buffer_pool::get();
     let path = bun_paths::string_paths::to_nt_path16(&mut wbuf.0[..], sub).as_slice();
     exists_at_type_nt(dir, path)
@@ -7206,18 +7206,6 @@ pub fn directory_exists_at(dir: impl AsFd, sub: &ZStr) -> Maybe<bool> {
         Err(e) => Err(e),
     }
 }
-/// `directoryExistsAt` — wide-path (`u16`) overload for Windows
-/// `OSPathSliceZ` callers (mkdir-recursive, cpSync auto-detect). Avoids
-/// a UTF-16 → UTF-8 → UTF-16 round-trip.
-#[cfg(windows)]
-pub fn directory_exists_at_w(dir: Fd, sub: &[u16]) -> Maybe<bool> {
-    match exists_at_type_w(dir, sub) {
-        Ok(t) => Ok(t == ExistsAtType::Directory),
-        Err(e) if e.get_errno() == E::ENOENT => Ok(false),
-        Err(e) => Err(e),
-    }
-}
-
 // ── fcntl / nonblocking / dup ──
 
 /// `fcntl(fd, F_GETFL, 0)`.

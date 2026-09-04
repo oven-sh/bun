@@ -49,12 +49,15 @@ void us_socket_group_deinit(struct us_socket_group_t *group) {
     /* The owner is about to free the embedding storage. Every list head and the
      * low-prio count must be zero or some socket/listener/DNS request still
      * holds s->group / c->group / ls->accept_group into us — that's a UAF the
-     * caller must close_all() away first. close_all() leaves open a connect
-     * that one of its own handlers starts, so it empties a group only when no
-     * handler connects into it. iterator != NULL means we're inside
-     * a dispatch on this very group; the on_close that triggers deinit is fine
-     * (unlink_socket already advanced iterator), but a re-entrant deinit from
-     * inside on_timeout/on_data would tear the floor out from under the sweep. */
+     * caller must close_all() away first. close_all() leaves two kinds of
+     * socket linked: a connect that one of its handlers starts, and a socket
+     * whose SSL call is on the stack (the SSL driver closes that one when the
+     * call returns). So an owner must not free the group from inside such a
+     * call, or while a handler can still connect in it. iterator != NULL means
+     * we're inside a dispatch on this very group; the on_close that triggers
+     * deinit is fine (unlink_socket already advanced iterator), but a
+     * re-entrant deinit from inside on_timeout/on_data would tear the floor out
+     * from under the sweep. */
     US_ASSERT(group->head_sockets == NULL);
     US_ASSERT(group->head_connecting_sockets == NULL);
     US_ASSERT(group->head_listen_sockets == NULL);

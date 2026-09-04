@@ -1133,9 +1133,9 @@ class ChildProcess extends EventEmitter {
       for (let j = 0; j < stdinPumps.length; j += 3) {
         const source = stdinPumps[j];
         const writable = stdinPumps[j + 1];
-        const endSinkOnSourceDeath = stdinPumps[j + 2];
-        source.removeListener("error", endSinkOnSourceDeath);
-        source.removeListener("close", endSinkOnSourceDeath);
+        const onSourceDeath = stdinPumps[j + 2];
+        source.removeListener("error", onSourceDeath);
+        source.removeListener("close", onSourceDeath);
         source.unpipe(writable);
         writable.destroy();
       }
@@ -1309,8 +1309,14 @@ class ChildProcess extends EventEmitter {
   #stdioObject;
   #stdioOptions;
   #stdinPumps;
-  #stdoutPumps;
 
+  // A stream stdio entry with no fd. Node only accepts a handle-backed stream
+  // here and hands its fd to the child, so the slot has no socket of its own
+  // (https://github.com/nodejs/node/blob/v26.3.0/lib/internal/child_process.js#L460-L470).
+  // Bun's native streams expose no fd, so the slot is a pipe and the data is
+  // pumped through it after the spawn. The pump's readable stands in for the
+  // socket that counts towards 'close'
+  // (https://github.com/nodejs/node/blob/v26.3.0/lib/internal/child_process.js#L472-L482).
   #wireWrappedStdio(wrappedStdio) {
     const handle = this.#handle;
     for (let j = 0; j < wrappedStdio.length; j += 2) {
@@ -1318,39 +1324,37 @@ class ChildProcess extends EventEmitter {
       const stream = wrappedStdio[j + 1];
       if (i === 0) {
         const sink = handle.stdin;
-        if (!sink) continue;
-        const writable = require("internal/fs/streams").writableFromFileSink(sink);
-        writable.on("error", swallowStreamError);
-        if (stream.destroyed) {
-          writable.end();
-          continue;
-        }
-        stream.pipe(writable);
-        const endSinkOnSourceDeath = function endSinkOnSourceDeath() {
-          if (!writable.destroyed && !writable.writableEnded) writable.end();
-        };
-        stream.once("error", endSinkOnSourceDeath);
-        stream.once("close", endSinkOnSourceDeath);
-        (this.#stdinPumps ??= []).push(stream, writable, endSinkOnSourceDeath);
+        if (sink) this.#pumpIntoChildStdin(sink, stream);
       } else {
         const source = handle[i === 1 ? "stdout" : "stderr"];
-        if (!source) continue;
-        const readable = require("internal/streams/native-readable").constructNativeReadable(source, {});
-        readable.on("error", swallowStreamError);
-        this.#closesNeeded++;
-        readable.once("close", this.#maybeClose.bind(this));
-        readable.pipe(stream, { end: false });
-        const destroyPumpOnUnpipe = function destroyPumpOnUnpipe(src) {
-          if (src === readable) {
-            stream.removeListener("unpipe", destroyPumpOnUnpipe);
-            readable.destroy();
-          }
-        };
-        stream.on("unpipe", destroyPumpOnUnpipe);
-        readable.once("close", () => stream.removeListener("unpipe", destroyPumpOnUnpipe));
-        (this.#stdoutPumps ??= []).push(readable);
+        if (source) this.#pumpOutOfChild(source, stream);
       }
     }
+  }
+
+  #pumpIntoChildStdin(sink, source) {
+    const writable = require("internal/fs/streams").writableFromFileSink(sink);
+    writable.on("error", swallowStreamError);
+    if (source.destroyed) {
+      writable.end();
+      return;
+    }
+    source.pipe(writable);
+    const onSourceDeath = endWritableOnSourceDeath.bind(writable);
+    source.once("error", onSourceDeath);
+    source.once("close", onSourceDeath);
+    (this.#stdinPumps ??= []).push(source, writable, onSourceDeath);
+  }
+
+  #pumpOutOfChild(source, destination) {
+    const readable = require("internal/streams/native-readable").constructNativeReadable(source, {});
+    readable.on("error", swallowStreamError);
+    this.#closesNeeded++;
+    readable.once("close", this.#maybeClose.bind(this));
+    readable.pipe(destination, { end: false });
+    const onUnpipe = destroyReadableOnUnpipe.bind(null, readable);
+    destination.on("unpipe", onUnpipe);
+    readable.once("close", removeUnpipeListener.bind(null, destination, onUnpipe));
   }
 
   #createStdioObject() {
@@ -1859,6 +1863,19 @@ function isNodeStreamWritable(item) {
 }
 
 function swallowStreamError() {}
+
+// `this` is the writable over the child's stdin sink.
+function endWritableOnSourceDeath() {
+  if (!this.destroyed && !this.writableEnded) this.end();
+}
+
+function destroyReadableOnUnpipe(readable, src) {
+  if (src === readable) readable.destroy();
+}
+
+function removeUnpipeListener(destination, listener) {
+  destination.removeListener("unpipe", listener);
+}
 
 function fdToStdioName(fd: number) {
   switch (fd) {

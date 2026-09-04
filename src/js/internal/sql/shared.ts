@@ -79,10 +79,11 @@ class SQLArrayParameter {
 }
 
 class SQLResultArray<T> extends PublicArray<T> {
-  public count!: number | null;
-  public command!: string | null;
-  public lastInsertRowid!: number | bigint | null;
-  public affectedRows!: number | bigint | null;
+  // Types only: real class fields would be defined (enumerable) after super() and redefined below.
+  declare count: number | null;
+  declare command: string | null;
+  declare lastInsertRowid: number | bigint | null;
+  declare affectedRows: number | bigint | null;
 
   static [Symbol.toStringTag] = "SQLResults";
 
@@ -92,10 +93,10 @@ class SQLResultArray<T> extends PublicArray<T> {
     // match postgres's result array, in this way for in will not list the
     // properties and .map will not return undefined command and count
     Object.defineProperties(this, {
-      count: { value: null, writable: true },
-      command: { value: null, writable: true },
-      lastInsertRowid: { value: null, writable: true },
-      affectedRows: { value: null, writable: true },
+      count: { value: null, writable: true, enumerable: false, configurable: true },
+      command: { value: null, writable: true, enumerable: false, configurable: true },
+      lastInsertRowid: { value: null, writable: true, enumerable: false, configurable: true },
+      affectedRows: { value: null, writable: true, enumerable: false, configurable: true },
     });
   }
 

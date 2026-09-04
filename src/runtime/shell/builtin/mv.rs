@@ -633,20 +633,26 @@ impl ShellMvBatchedTask {
         buf: &mut PathBuffer,
     ) -> Result<(), bun_sys::Error> {
         let base = resolve_path::basename(src.as_bytes());
-        let len =
-            resolve_path::normalize_buf::<bun_paths::platform::Auto>(base, &mut buf[..]).len();
-        if len + 1 >= bun_paths::MAX_PATH_BYTES {
-            return Err(bun_sys::Error::from_code(
+        // `normalize_buf_z` writes into `buf` unchecked, so over-long names are
+        // rejected before it runs. Normalizing grows a name by at most one byte
+        // (`""` becomes `"."`); the NUL needs one more.
+        let result = if base.len() + 1 >= bun_paths::MAX_PATH_BYTES {
+            Err(bun_sys::Error::from_code(
                 bun_sys::E::ENAMETOOLONG,
                 bun_sys::Tag::rename,
-            ));
-        }
-        buf[len] = 0;
-        let path_in_dir = ZStr::from_buf(buf.as_slice(), len);
-        Self::do_rename(cwd, src, target_fd, path_in_dir).map_err(|e| {
-            // Surface `target/basename(src)` as the failing path.
-            let joined = resolve_path::join_z::<bun_paths::platform::Auto>(&[target, base]);
-            e.with_path(joined.as_bytes())
+            ))
+        } else {
+            let path_in_dir =
+                resolve_path::normalize_buf_z::<bun_paths::platform::Auto>(base, &mut buf[..]);
+            Self::do_rename(cwd, src, target_fd, path_in_dir)
+        };
+        result.map_err(|e| {
+            // Surface `target/basename(src)` as the failing path. Both are
+            // argv-sized, so the join may outgrow the thread-local buffer.
+            let mut spill = Vec::new();
+            let joined =
+                resolve_path::join_spill::<bun_paths::platform::Auto>(&mut spill, &[target, base]);
+            e.with_path(joined)
         })
     }
 

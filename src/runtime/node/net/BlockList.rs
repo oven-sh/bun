@@ -32,8 +32,8 @@ use core::cmp::Ordering;
 use core::sync::atomic::{AtomicU32, Ordering as AtomicOrdering};
 
 use bun_core::{String as BunString, ZStr};
-use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsCell, JsResult, StringJsc as _};
-use bun_threading::{Guarded, Mutex};
+use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult, StringJsc as _};
+use bun_threading::Guarded;
 
 /// `(serialize_nonce, address)` of `BlockList` instances currently embedded in
 /// a live `SerializedScriptValue` (one entry per serialize; removed by
@@ -65,12 +65,9 @@ pub struct BlockList {
     // `ref()`/`deref()` (provided by the derive) bump it; hitting zero drops
     // the `Box` via the trait's default destructor.
     ref_count: bun_ptr::ThreadSafeRefCount<BlockList>,
-    // R-2: interior mutability so every host_fn takes `&self`. All access is
-    // serialized by `mutex` (held across every read and every `with_mut`), so
-    // the `JsCell` single-thread invariant is upheld even though `BlockList`
-    // can be touched from multiple JS realms via structured clone.
-    da_rules: JsCell<Vec<Rule>>,
-    mutex: Mutex,
+    /// Structured clone shares one `BlockList` between JS threads, hence a
+    /// lock rather than a `JsCell`.
+    rules: Guarded<Vec<Rule>>,
 
     /// We cannot lock/unlock a mutex
     estimated_size: AtomicU32,
@@ -103,8 +100,7 @@ impl BlockList {
     pub(crate) fn constructor(_global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<*mut Self> {
         let ptr = bun_core::heap::into_raw(Box::new(Self {
             ref_count: bun_ptr::ThreadSafeRefCount::init(),
-            da_rules: JsCell::new(Vec::new()),
-            mutex: Mutex::default(),
+            rules: Guarded::new(Vec::new()),
             estimated_size: AtomicU32::new(0),
             serialize_nonce: {
                 let mut n = [0u8; 8];
@@ -148,8 +144,7 @@ impl BlockList {
             SocketAddress::init_from_addr_family(global, address_js, family_js)?._addr
         };
 
-        let _guard = this.mutex.lock_guard();
-        this.da_rules.with_mut(|r| r.insert(0, Rule::Addr(address)));
+        this.rules.lock().insert(0, Rule::Addr(address));
         this.estimated_size.fetch_add(
             u32::try_from(core::mem::size_of::<Rule>()).expect("int cast"),
             AtomicOrdering::Relaxed,
@@ -190,9 +185,7 @@ impl BlockList {
                 ));
             }
         }
-        let _guard = this.mutex.lock_guard();
-        this.da_rules
-            .with_mut(|r| r.insert(0, Rule::Range { start, end }));
+        this.rules.lock().insert(0, Rule::Range { start, end });
         this.estimated_size.fetch_add(
             u32::try_from(core::mem::size_of::<Rule>()).expect("int cast"),
             AtomicOrdering::Relaxed,
@@ -238,9 +231,9 @@ impl BlockList {
             )?)
             .unwrap();
         }
-        let _guard = this.mutex.lock_guard();
-        this.da_rules
-            .with_mut(|r| r.insert(0, Rule::Subnet { network, prefix }));
+        this.rules
+            .lock()
+            .insert(0, Rule::Subnet { network, prefix });
         this.estimated_size.fetch_add(
             u32::try_from(core::mem::size_of::<Rule>()).expect("int cast"),
             AtomicOrdering::Relaxed,
@@ -280,8 +273,7 @@ impl BlockList {
     }
 
     pub(crate) fn check_sockaddr(&self, address: &sockaddr) -> bool {
-        let _guard = self.mutex.lock_guard();
-        for item in self.da_rules.get().iter() {
+        for item in self.rules.lock().iter() {
             match item {
                 Rule::Addr(a) => {
                     let Some(order) = compare(address, a) else {
@@ -364,8 +356,7 @@ impl BlockList {
 
     #[bun_jsc::host_fn(getter)]
     pub(crate) fn rules(this: &Self, global: &JSGlobalObject) -> JsResult<JSValue> {
-        let _guard = this.mutex.lock_guard();
-        let rules = this.da_rules.get();
+        let rules = this.rules.lock();
         // GC must be able to visit
         let array = JSValue::create_empty_array(global, rules.len())?;
 
@@ -412,7 +403,7 @@ impl BlockList {
         write_bytes: crate::generated_classes::WriteBytesFn,
     ) {
         use bun_io::Write as _;
-        let _guard = this.mutex.lock_guard();
+        let _guard = this.rules.lock();
         this.ref_();
         let addr = std::ptr::from_ref::<Self>(this) as usize;
         SERIALIZED_REFS.lock().push((this.serialize_nonce, addr));

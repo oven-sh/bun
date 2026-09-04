@@ -214,6 +214,19 @@ export class Ninja {
 
     const outs = node.outputs.map(p => ninjaEscapePath(this.rel(p)));
     const implOuts = (node.implicitOutputs ?? []).map(p => ninjaEscapePath(this.rel(p)));
+    // Ninja matches paths textually: `codegen/X.h` (how edges name files under
+    // buildDir) and `/abs/build/codegen/X.h` (how a compiler's depfile names
+    // the same file, found through an absolute -I) are two nodes, and only
+    // the first would have this edge as its producer — so a TU whose depfile
+    // names a generated header would not be recompiled in the build that
+    // regenerates it, only in the next one. Declaring the absolute spelling
+    // as an implicit output of the same edge makes both names resolve here
+    // (CMake's Ninja generator does the same for custom-command outputs).
+    if (node.rule !== "phony") {
+      for (const p of allOuts) {
+        if (isAbsolute(p) && this.rel(p) !== resolve(p)) implOuts.push(ninjaEscapePath(resolve(p)));
+      }
+    }
     const ins = node.inputs.map(p => ninjaEscapePath(this.rel(p)));
     const implIns = (node.implicitInputs ?? []).map(p => ninjaEscapePath(this.rel(p)));
     const orderIns = (node.orderOnlyInputs ?? []).map(p => ninjaEscapePath(this.rel(p)));

@@ -1342,11 +1342,11 @@ function emitWebKitDirect(n: Ninja, cfg: Config, ctx: CustomBuildContext): WebKi
   // from physically flattening copies into one dir.
   const bmallocConsumerIncludes = [bmallocHeaders, join(bmallocHeaders, "bmalloc")];
   writeForwardingHeaders(join(jscHeaders, "JavaScriptCore"), inTree(JSC, jscPublicHeaders));
-  // The generated headers cmake also exposes as <JavaScriptCore/X.h> are part
-  // of the same set, so the stale-stub sweep leaves them alone (re-creating
-  // them each configure would touch their mtime and rebuild every bun TU
-  // that includes them).
-  const forwardedGeneratedHeaders = [
+  // The generated headers cmake lists in JavaScriptCore_PRIVATE_FRAMEWORK_HEADERS
+  // are part of the same flattened dir, so <JavaScriptCore/X.h> resolves the
+  // same set of names here as against the prebuilt's include/JavaScriptCore.
+  writeForwardingHeaders(join(jscPrivateHeaders, "JavaScriptCore"), [
+    ...jscHeaderDirs.flatMap(d => headersIn(join(JSC, d))),
     join(DS, "Bytecodes.h"),
     join(DS, "JSCBuiltins.h"),
     join(DS, "JSCWebPreferenceOptions.h"),
@@ -1355,10 +1355,6 @@ function emitWebKitDirect(n: Ninja, cfg: Config, ctx: CustomBuildContext): WebKi
     join(DS, "inspector", "InspectorBackendDispatchers.h"),
     join(DS, "inspector", "InspectorFrontendDispatchers.h"),
     join(DS, "inspector", "InspectorProtocolObjects.h"),
-  ];
-  writeForwardingHeaders(join(jscPrivateHeaders, "JavaScriptCore"), [
-    ...jscHeaderDirs.flatMap(d => headersIn(join(JSC, d))),
-    ...forwardedGeneratedHeaders,
   ]);
 
   // ─── Flags ───

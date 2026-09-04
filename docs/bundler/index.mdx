@@ -1677,10 +1677,11 @@ The `bytecodeDepth: number` option (a non-negative integer) limits how many leve
     // ESM bytecode (requires compile)
     await Bun.build({
       entrypoints: ["./index.tsx"],
-      outfile: "./mycli",
       bytecode: true,
       format: "esm",
-      compile: true,
+      compile: {
+        outfile: "./mycli",
+      },
     })
     ```
 

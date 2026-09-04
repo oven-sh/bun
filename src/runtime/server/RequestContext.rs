@@ -2089,9 +2089,14 @@ where
     }
 
     /// `html_bundle::BuildWaiter` callback.
-    fn on_html_route_built(ctx: NonNull<c_void>, route: &html_bundle::Route) {
+    fn on_html_route_built(ctx: NonNull<c_void>, route: ThisPtr<html_bundle::Route>) {
+        let Some(built) = route.built_html() else {
+            // An earlier waiter scheduled a new build (development mode
+            // rebundles). Wait for that one; the +1 stays with the waiter.
+            html_bundle::Route::add_build_waiter(route, Self::on_html_route_built, ctx);
+            return;
+        };
         let pinned = RequestContextRef::adopt(ctx.cast::<Self>().as_ptr());
-        let built = route.built_html().expect("the route left State::Building");
         pinned
             .ctx()
             .render_built_html_bundle(built.map_err(|()| &*route.bundle.path));
@@ -3844,24 +3849,28 @@ where
                         return;
                     // `result` is GC-rooted by `_keep` (EnsureStillAlive)
                     // across the render() call.
-                    } else if let Some(response) = as_response(result) {
-                        // An unsendable Response from the error handler itself
-                        // falls through to the default error page below.
-                        // SAFETY: `response` is the live, rooted cell pointer.
-                        if HTTPStatusText::is_sendable(unsafe { (*response).status_code() }) {
-                            // A file or streaming body defers `render_metadata`
-                            // past this frame, where `_keep` is the only root,
-                            // so root the Response the way the async error
-                            // path does or the deferred flush can read a
-                            // collected weakref.
-                            if self.flags.response_protected() {
-                                self.response_jsvalue.get().unprotect();
+                    } else {
+                        let result = wrap_html_bundle(server.global_this(), result);
+                        let _keep = jsc::EnsureStillAlive(result);
+                        if let Some(response) = as_response(result) {
+                            // An unsendable Response from the error handler itself
+                            // falls through to the default error page below.
+                            // SAFETY: `response` is the live, rooted cell pointer.
+                            if HTTPStatusText::is_sendable(unsafe { (*response).status_code() }) {
+                                // A file or streaming body defers `render_metadata`
+                                // past this frame, where `_keep` is the only root,
+                                // so root the Response the way the async error
+                                // path does or the deferred flush can read a
+                                // collected weakref.
+                                if self.flags.response_protected() {
+                                    self.response_jsvalue.get().unprotect();
+                                }
+                                self.response_jsvalue.set(result);
+                                self.flags.set_response_protected(false);
+                                // SAFETY: as above.
+                                unsafe { self.protect_for_body_and_render(result, response) };
+                                return;
                             }
-                            self.response_jsvalue.set(result);
-                            self.flags.set_response_protected(false);
-                            // SAFETY: as above.
-                            unsafe { self.protect_for_body_and_render(result, response) };
-                            return;
                         }
                     }
                 }
@@ -3897,6 +3906,7 @@ where
             jsc::PromiseResult::Fulfilled(fulfilled_value) => {
                 // `fulfilled_value` is rooted via ensure_still_alive() below for
                 // as long as `response` is used.
+                let fulfilled_value = wrap_html_bundle(server.global_this(), fulfilled_value);
                 let Some(response) = as_response(fulfilled_value) else {
                     ctx.finish_running_error_handler(value, status);
                     return;

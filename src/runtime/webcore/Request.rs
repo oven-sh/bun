@@ -1216,6 +1216,9 @@ impl Request {
                         }
                         match BodyValue::from_js(global_this, body_) {
                             Ok(v) => {
+                                if let Err(e) = v.throw_if_html_bundle(global_this) {
+                                    bail!(Err(e));
+                                }
                                 *req.body_value_mut() = v;
                             }
                             Err(e) => bail!(Err(e)),

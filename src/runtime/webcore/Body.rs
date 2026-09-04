@@ -2210,3 +2210,13 @@ pub(crate) const HTML_BUNDLE_BODY_UNREADABLE: &str = "An HTMLBundle body can onl
 fn throw_html_bundle_body_unreadable(global_object: &JSGlobalObject) -> jsc::JsError {
     global_object.throw_type_error(format_args!("{HTML_BUNDLE_BODY_UNREADABLE}"))
 }
+
+impl Value {
+    /// For a consumer other than `Bun.serve`, which cannot read an `HTMLBundle`.
+    pub(crate) fn throw_if_html_bundle(&self, global_object: &JSGlobalObject) -> JsResult<()> {
+        if matches!(self, Value::HTMLBundle(_)) {
+            return Err(throw_html_bundle_body_unreadable(global_object));
+        }
+        Ok(())
+    }
+}

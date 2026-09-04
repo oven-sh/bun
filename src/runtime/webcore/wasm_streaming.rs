@@ -101,6 +101,7 @@ fn get_body_stream_or_bytes_for_wasm_streaming(
         if let BodyValue::Error(err) = body {
             return Err(this.throw_value(err.to_js(this)));
         }
+        body.throw_if_html_bundle(this)?;
 
         // We're done validating. From now on, deal with extracting the body.
         body.to_blob_if_possible();

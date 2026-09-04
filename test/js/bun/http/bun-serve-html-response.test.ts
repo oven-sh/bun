@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { writeFileSync } from "fs";
 import { bunEnv, bunExe, isASAN, isWindows, tempDir } from "harness";
 import { join } from "path";
 
@@ -195,6 +196,52 @@ test("a build failure reaches the error handler", async () => {
   expect((error as Error).message).toContain("Failed to bundle");
 });
 
+describe.each(["sync", "async"])("the error handler returns a bundle (%s)", kind => {
+  test("the page is sent like any other Response", async () => {
+    using dir = tempDir("html-response-error-handler", files);
+    const { default: html } = await import(join(dir, "index.html"));
+    using server = Bun.serve({
+      port: 0,
+      development: false,
+      fetch() {
+        throw new Error("boom");
+      },
+      error: kind === "sync" ? () => html : () => Promise.resolve(new Response(html, { status: 500 })),
+    });
+    const res = await fetch(server.url);
+    const page = await res.text();
+    expect(page).toContain("<h1>Hello HTML</h1>");
+    expect(res.status).toBe(kind === "sync" ? 200 : 500);
+  });
+});
+
+// Several requests wait on one failing build. The first waiter's error handler
+// repairs the source and returns the same bundle, which starts a new build
+// while the other waiters are still being resumed. They wait for that build.
+test("a waiter whose error handler rebuilds the bundle does not strand the others", async () => {
+  using dir = tempDir("html-response-rebuild", brokenFiles);
+  const { default: html } = await import(join(dir, "index.html"));
+  let errors = 0;
+  using server = Bun.serve({
+    port: 0,
+    development: true,
+    fetch() {
+      return new Response(html);
+    },
+    error() {
+      errors++;
+      writeFileSync(join(dir, "app.ts"), files["app.ts"]);
+      return new Response(html, { status: 503 });
+    },
+  });
+  const responses = await Promise.all(Array.from({ length: 4 }, () => fetch(server.url)));
+  const pages = await Promise.all(responses.map(res => res.text()));
+  expect(errors).toBe(1);
+  expect(responses.map(res => res.status).sort()).toEqual([200, 200, 200, 503]);
+  expect(new Set(pages).size).toBe(1);
+  expect(pages[0]).toContain("<body>broken</body>");
+});
+
 test("with the dev server: a build failure renders the error page", async () => {
   using dir = tempDir("html-response-build-error-hmr", brokenFiles);
   const { default: html } = await import(join(dir, "index.html"));
@@ -287,4 +334,7 @@ test("an HTMLBundle body cannot be read outside Bun.serve", async () => {
   await expect(response.text()).rejects.toThrow(TypeError);
   expect(() => response.body).toThrow(TypeError);
   await expect(Bun.write(join(dir, "out.html"), new Response(html))).rejects.toThrow(TypeError);
+  expect(() => new Request("http://localhost/", { method: "POST", body: html })).toThrow(TypeError);
+  expect(() => new HTMLRewriter().transform(new Response(html))).toThrow(TypeError);
+  await expect(WebAssembly.compileStreaming(new Response(html))).rejects.toThrow(TypeError);
 });

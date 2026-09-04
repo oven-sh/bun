@@ -163,7 +163,7 @@ pub struct Route {
 
 /// Run by `finish_building`. The callback reads `Route::built_html`.
 pub(crate) struct BuildWaiter {
-    callback: fn(NonNull<core::ffi::c_void>, &Route),
+    callback: fn(NonNull<core::ffi::c_void>, ThisPtr<Route>),
     ctx: NonNull<core::ffi::c_void>,
     _route: RefPtr<Route>,
 }
@@ -241,7 +241,7 @@ impl Route {
 
     pub(crate) fn add_build_waiter(
         this: ThisPtr<Self>,
-        callback: fn(NonNull<core::ffi::c_void>, &Route),
+        callback: fn(NonNull<core::ffi::c_void>, ThisPtr<Route>),
         ctx: NonNull<core::ffi::c_void>,
     ) {
         debug_assert!(matches!(this.state.get(), State::Building));
@@ -411,7 +411,7 @@ impl Route {
     fn resume_build_waiters(&self) -> Vec<BuildWaiter> {
         let waiters = self.build_waiters.replace(Vec::new());
         for waiter in &waiters {
-            (waiter.callback)(waiter.ctx, self);
+            (waiter.callback)(waiter.ctx, waiter._route.this_ptr());
         }
         waiters
     }

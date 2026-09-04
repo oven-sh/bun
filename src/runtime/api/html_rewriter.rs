@@ -425,6 +425,7 @@ impl HTMLRewriter {
             if let webcore::body::Value::Error(err) = body_value {
                 return Err(global.throw_value(err.to_js(global)));
             }
+            body_value.throw_if_html_bundle(global)?;
             if matches!(*body_value, webcore::body::Value::Used) {
                 return Err(
                     global.throw_invalid_arguments(format_args!("Response body already used"))
@@ -454,6 +455,7 @@ impl HTMLRewriter {
 
         if kind != ResponseKind::Other {
             let body_value = webcore::body::extract(global, response_value)?;
+            body_value.value_mut().throw_if_html_bundle(global)?;
             let resp = RefPtr::new(Response::init(
                 webcore::response::Init {
                     status_code: 200,

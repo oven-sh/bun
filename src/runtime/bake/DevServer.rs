@@ -2162,9 +2162,7 @@ impl DevServer {
                             Some(request_method(r)),
                         )? {
                         Some(saved) => saved,
-                        // Abort the deferral on failure.
-                        // `deferred_slot` drops here, releasing the
-                        // still-uninitialized slot without `drop_in_place`.
+                        // `deferred_slot` drops here and releases the uninitialized slot.
                         None => return Ok(()),
                     };
                     server_handler.ctx.ref_();

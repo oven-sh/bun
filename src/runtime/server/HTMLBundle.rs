@@ -159,8 +159,7 @@ pub struct Route {
     /// When state == .pending, incomplete responses are stored here.
     pending_responses: JsCell<Vec<PendingResponse>>,
     build_waiters: JsCell<Vec<BuildWaiter>>,
-    /// The route's own ref while it is in `State::Building`, so the waiters
-    /// above always have a route to resume on (`StaticRoute::pending_ref`).
+    /// The route's own ref while in `State::Building`, like `StaticRoute::pending_ref`.
     building_ref: Cell<Option<RefPtr<Route>>>,
 }
 

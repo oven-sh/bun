@@ -3140,8 +3140,9 @@ describe("bundler", () => {
         const { blockFn } = require("./sloppy.cjs");
         console.log(JSON.stringify([
           L.make(true)(1), L.loop(), L.deep(), L.sibling(), L.param("p"), L.arrow("a"), L.dflt(),
-          L.caught(), L.caughtVar(), L.paramUnused("p"), L.caughtUnused(), L.destructured(),
-          L.forIn(), L.inSwitch(1), L.inTry(), L.klass(), L.nested(), blockFn(), Check(2),
+          L.caught(), L.caughtVar(), L.paramUnused("p"), L.caughtUnused(), L.paramVar("p"),
+          L.catchParamVar(), L.destructured(), L.forIn(), L.inSwitch(1), L.inTry(), L.klass(),
+          L.nested(), blockFn(), Check(2),
         ]));
       `,
       "/lib.js": /* js */ `
@@ -3215,6 +3216,20 @@ describe("bundler", () => {
             return Check2;
           }
         }
+        // Here the renamed "var Check" is the one that would take a
+        // parameter's or catch binding's name "Check2". That output loads but
+        // merges the var with the parameter (or assigns the catch binding), so
+        // the values are wrong instead of a SyntaxError.
+        export function paramVar(Check2) {
+          OuterCheck(0);
+          var Check;
+          return Check;
+        }
+        export function catchParamVar() {
+          OuterCheck(0);
+          try { throw 0; } catch (Check2) { var Check = "set"; }
+          return Check;
+        }
         export function destructured() {
           OuterCheck(0);
           { let Check2 = 5; var { a: Check = Check2, ...rest } = { b: 1 }; }
@@ -3279,7 +3294,7 @@ describe("bundler", () => {
       expect(out).not.toMatch(/catch \(Check2\) \{\s*[^}]*let Check2\b/);
     },
     run: {
-      stdout: `[1,1,["mid","var"],["let","var"],["p","body"],["a","arrow"],["default","inner"],["err","catch"],"v","unused-param","unused-catch",[5,{"b":1}],"k","sw","try","cls",["nested","v"],[["let","g-inner"],"g-inner"],"other 2"]`,
+      stdout: `[1,1,["mid","var"],["let","var"],["p","body"],["a","arrow"],["default","inner"],["err","catch"],"v","unused-param","unused-catch",null,"set",[5,{"b":1}],"k","sw","try","cls",["nested","v"],[["let","g-inner"],"g-inner"],"other 2"]`,
     },
   });
   itBundled("edgecase/MacroProtoKeyIsOwnProperty", {

@@ -4951,6 +4951,272 @@ console.log("boop");
       export var q = r;
     `);
   });
+
+  // Port of esbuild's TestLowerUsingHoisting (internal/bundler_tests/bundler_lower_test.go):
+  // once a top-level `using` moves the module body into a try/catch, everything that has to
+  // stay at the top level (directives, imports, re-exports, function declarations and every
+  // export) must be hoisted out of it or turned into a binding plus an export clause.
+  //
+  // Each entry is [source, names reported by scan()]. Not ported yet because their output is
+  // still wrong: hoist-export-class-direct, hoist-export-class-indirect (top-level classes are
+  // left block-scoped inside the try) and hoist-export-local-direct (exported destructuring
+  // patterns lose their exports). hoist-use-strict only differs from hoist-directive by the
+  // "use strict" that Bun strips anyway.
+  describe("using top level hoisting", () => {
+    const fixtures = {
+      "hoist-directive": [
+        `
+          "use wtf"
+          using a = b
+          function foo() {
+            "use wtf"
+            using a = b
+          }
+        `,
+        [],
+      ],
+      "hoist-import": [
+        `
+          using a = b
+          import "./foo"
+          using c = d
+        `,
+        [],
+      ],
+      "hoist-export-star": [
+        `
+          using a = b
+          export * from './foo'
+          using c = d
+        `,
+        [],
+      ],
+      "hoist-export-from": [
+        `
+          using a = b
+          export {x, y} from './foo'
+          using c = d
+        `,
+        ["x", "y"],
+      ],
+      "hoist-export-clause": [
+        `
+          using a = b
+          export {a, c as 'c!'}
+          using c = d
+        `,
+        ["a", "c!"],
+      ],
+      "hoist-export-local-indirect": [
+        `
+          using a = b
+          var ac1 = [a, c], { x: [x1] } = foo
+          let a1 = a, { y: [y1] } = foo
+          const c1 = c, { z: [z1] } = foo
+          var ac2 = [a, c], { x: [x2] } = foo
+          let a2 = a, { y: [y2] } = foo
+          const c2 = c, { z: [z2] } = foo
+          using c = d
+          export {x1, y1, z1}
+        `,
+        ["x1", "y1", "z1"],
+      ],
+      "hoist-export-function-direct": [
+        `
+          using a = b
+          export function foo1() { return [a, c] }
+          export function bar1() { return [a, c, bar1] }
+          function foo2() { return [a, c] }
+          function bar2() { return [a, c, bar2] }
+          using c = d
+        `,
+        ["bar1", "foo1"],
+      ],
+      "hoist-export-function-indirect": [
+        `
+          using a = b
+          function foo1() { return [a, c] }
+          function bar1() { return [a, c, bar1] }
+          function foo2() { return [a, c] }
+          function bar2() { return [a, c, bar2] }
+          using c = d
+          export {foo1, bar1}
+        `,
+        ["bar1", "foo1"],
+      ],
+      "hoist-export-default-class-name-unused": [
+        `
+          using a = b
+          export default class Foo {
+            ac = [a, c]
+          }
+          using c = d
+        `,
+        ["default"],
+      ],
+      "hoist-export-default-class-name-used": [
+        `
+          using a = b
+          export default class Foo {
+            ac = [a, c, Foo]
+          }
+          using c = d
+        `,
+        ["default"],
+      ],
+      "hoist-export-default-class-anonymous": [
+        `
+          using a = b
+          export default class {
+            ac = [a, c]
+          }
+          using c = d
+        `,
+        ["default"],
+      ],
+      "hoist-export-default-function-name-unused": [
+        `
+          using a = b
+          export default function foo() {
+            return [a, c]
+          }
+          using c = d
+        `,
+        ["default"],
+      ],
+      "hoist-export-default-function-name-used": [
+        `
+          using a = b
+          export default function foo() {
+            return [a, c, foo]
+          }
+          using c = d
+        `,
+        ["default"],
+      ],
+      "hoist-export-default-function-anonymous": [
+        `
+          using a = b
+          export default function() {
+            return [a, c]
+          }
+          using c = d
+        `,
+        ["default"],
+      ],
+      "hoist-export-default-expr": [
+        `
+          using a = b
+          export default [a, c]
+          using c = d
+        `,
+        ["default"],
+      ],
+      // Not in esbuild's suite: `await using` takes the same path with an async finally block.
+      "await-using-export-default-class-anonymous": [
+        `
+          await using a = b
+          export default class {
+            ac = [a]
+          }
+        `,
+        ["default"],
+      ],
+      "await-using-export-default-async-generator": [
+        `
+          await using a = b
+          export default async function* () {
+            yield a
+          }
+        `,
+        ["default"],
+      ],
+    };
+
+    for (const [name, [code, exportNames]] of Object.entries(fixtures)) {
+      it(name, () => {
+        expect(prepareForSnapshot(parsed(code, false, false))).toMatchSnapshot();
+        expect(transpiler.scan(code).exports.sort()).toEqual(exportNames);
+      });
+    }
+  });
+
+  describe("using top level with a default export", () => {
+    it("a second default export is still a duplicate", () => {
+      ts.expectParseError(
+        `using a = b;\nexport default function foo() {}\nexport { a as default };`,
+        'Multiple exports with the same name "default"',
+      );
+      ts.expectParseError(
+        `using a = b;\nexport default class Foo {}\nexport { a as default };`,
+        'Multiple exports with the same name "default"',
+      );
+    });
+
+    it("exports.replace replaces the value", () => {
+      const replace = new Bun.Transpiler({ loader: "js", target: "browser", exports: { replace: { default: 42 } } });
+      // `export default class` ignores exports.replace with or without `using`; not covered here.
+      for (const code of [
+        `using a = b;\nexport default a.value;`,
+        `using a = b;\nexport default function foo() { return a; }`,
+        `using a = b;\nexport default function () { return a; }`,
+      ]) {
+        expect(prepareForSnapshot(replace.transformSync(code))).toMatchSnapshot();
+      }
+    });
+
+    it("exports.eliminate still drops the default export", () => {
+      const eliminate = new Bun.Transpiler({ loader: "js", target: "browser", exports: { eliminate: ["default"] } });
+      for (const code of [
+        `using a = b;\nexport default function foo() {}`,
+        `using a = b;\nexport default class Foo {}`,
+        `using a = b;\nexport default foo;`,
+      ]) {
+        const out = eliminate.transformSync(code);
+        expect(out).toContain("__using");
+        expect(out).not.toContain("export");
+        expect(out).not.toMatch(/foo/i);
+      }
+    });
+
+    it("the lowered modules export the declaration and still dispose", async () => {
+      const js = new Bun.Transpiler({ loader: "js", target: "browser" });
+      using dir = tempDir("using-export-default", {
+        "fn.mjs": js.transformSync(`
+          using a = { [Symbol.dispose]() { console.log("dispose fn"); } };
+          export default function fn() { return "fn"; }
+        `),
+        "klass.mjs": js.transformSync(`
+          using a = { [Symbol.dispose]() { console.log("dispose klass"); }, tag: "klass" };
+          export default class Klass {
+            static tag = a.tag;
+            static describe() { return Klass.tag; }
+          }
+        `),
+        "anonymous.mjs": js.transformSync(`
+          using a = { [Symbol.dispose]() { console.log("dispose anonymous"); } };
+          export default class { static tag = "anonymous"; }
+        `),
+        "main.mjs": `
+          import fn from "./fn.mjs";
+          import Klass from "./klass.mjs";
+          import Anonymous from "./anonymous.mjs";
+          console.log(fn(), Klass.describe(), Anonymous.tag);
+        `,
+      });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "main.mjs"],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(stdout).toBe("dispose fn\ndispose klass\ndispose anonymous\nfn klass anonymous\n");
+      expect(exitCode).toBe(0);
+    });
+  });
 });
 
 describe("await can only be used inside an async function message", () => {

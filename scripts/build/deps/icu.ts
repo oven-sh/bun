@@ -20,7 +20,7 @@
  */
 
 import { readFileSync } from "node:fs";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { cc, cxx } from "../compile.ts";
 import type { Config } from "../config.ts";
 import { computeDepFlags } from "../flags.ts";
@@ -252,9 +252,12 @@ export function registerIcuRules(n: Ninja, cfg: Config): void {
     description: "icu data (filter + zstd repack)",
     restat: true,
   });
-  // Windows: the GNU-driver clang next to clang-cl assembles the data .S.
+  // Windows target: the GNU-driver clang assembles the data .S (clang-cl does
+  // not take .S). Cross builds have it as hostCc; on a Windows host hostCc is
+  // clang-cl itself, so take the clang.exe beside it.
+  const gnuClang = cfg.host.os === "windows" ? join(dirname(cfg.cxx), `clang${cfg.host.exeSuffix}`) : cfg.hostCc;
   n.rule("icu_asm", {
-    command: `${q(cfg.hostCc)} --target=$target -c $in -o $out`,
+    command: `${q(gnuClang)} --target=$target -c $in -o $out`,
     description: "asm $out",
   });
 }

@@ -1305,7 +1305,14 @@ function emitWebKitDirect(n: Ninja, cfg: Config, ctx: CustomBuildContext): WebKi
     hint: "configure fetches it before emitting the graph — this is a bug in prefetchConfigureSources",
   });
 
-  for (const d of [DS, join(DS, "yarr"), join(DS, "inspector"), join(DS, "runtime"), binDir]) {
+  for (const d of [
+    DS,
+    join(DS, "yarr"),
+    join(DS, "inspector"),
+    join(DS, "runtime"),
+    join(B, "WTF", "DerivedSources"),
+    binDir,
+  ]) {
     mkdirSync(d, { recursive: true });
   }
 
@@ -1544,7 +1551,7 @@ function emitWebKitDirect(n: Ninja, cfg: Config, ctx: CustomBuildContext): WebKi
   };
 
   // ─── WTF ───
-  const WTF_DS = join(B, "WTF", "DerivedSources");
+  const WTF_DS = join(B, "WTF", "DerivedSources"); // created with the other output dirs above
   // macOS: WTF's signal handling (wasm fault trapping, VM traps) speaks Mach
   // exceptions through MIG-generated RPC stubs (PlatformJSCOnly.cmake's APPLE
   // branch). `mig` = preprocess MachExceptions.defs with the target compiler

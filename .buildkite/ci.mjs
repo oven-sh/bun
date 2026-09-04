@@ -943,7 +943,7 @@ function getWindowsBuildImageStep(platform, options) {
     },
     retry: getRetry(),
     cancel_on_build_failing: isMergeQueue(),
-    command: `node ./scripts/machine.mjs ${action} --os=${os} --arch=${arch} --release=${release} --ci`,
+    command: `node ./scripts/machine.mjs ${action} --os=${os} --arch=${arch} --release=${release} --cloud=azure --ci --authorized-org=oven-sh`,
     timeout_in_minutes: 3 * 60,
   };
 }

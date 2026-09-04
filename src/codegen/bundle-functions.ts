@@ -795,7 +795,10 @@ JSBuiltinInternalFunctions::JSBuiltinInternalFunctions(JSC::VM& vm) : m_vm(vm)
     `;
   // Handle builtin names
   {
-    const BunBuiltinNamesHeader = readFileSync(path.join(import.meta.dirname, "../js/builtins/BunBuiltinNames.h"), "utf8");
+    const BunBuiltinNamesHeader = readFileSync(
+      path.join(import.meta.dirname, "../js/builtins/BunBuiltinNames.h"),
+      "utf8",
+    );
     let definedBuiltinNamesStartI = BunBuiltinNamesHeader.indexOf(
       "#define BUN_COMMON_PRIVATE_IDENTIFIERS_EACH_PROPERTY_NAME",
     );

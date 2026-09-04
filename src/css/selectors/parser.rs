@@ -1312,17 +1312,18 @@ impl<'a> SelectorParser<'a> {
             if let Some(pseudo) = lookup_non_ts_pseudo_class(name) {
                 break 'pseudo_class pseudo;
             }
-            if strings::starts_with_char(name, b'_') {
-                self.options.warn(&loc.new_custom_error(
-                    SelectorParseErrorKind::UnsupportedPseudoClassOrElement(name),
-                ));
-            } else if (self.options.css_modules.is_some()
+            if (self.options.css_modules.is_some()
                 && strings::eql_case_insensitive_ascii_check_length(name, b"local"))
                 || strings::eql_case_insensitive_ascii_check_length(name, b"global")
             {
                 return Err(
                     loc.new_custom_error(SelectorParseErrorKind::AmbiguousCssModuleClass(name))
                 );
+            }
+            if !strings::starts_with_char(name, b'-') {
+                self.options.warn(&loc.new_custom_error(
+                    SelectorParseErrorKind::UnsupportedPseudoClassOrElement(name),
+                ));
             }
             return Ok(PseudoClass::Custom { name });
         };

@@ -1,6 +1,6 @@
 // Internal bindings for node:os
 // The entrypoint for node:os is `src/js/node/os.ts`
-import { fn, t } from "bindgen";
+import { fn, t } from "../../codegen/bindgen-lib.ts";
 
 export const cpus = fn({
   args: {

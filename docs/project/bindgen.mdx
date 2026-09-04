@@ -37,10 +37,11 @@ pub fn add(global: &JSGlobalObject, a: i32, b: i32) -> JsResult<i32> {
 ```
 
 Then describe the API schema using a `.bind.ts` file. The binding file goes
-next to the Rust file.
+next to the Rust file. It imports `fn` and `t` from `src/codegen/bindgen-lib.ts`
+by a path relative to the binding file.
 
 ```ts src/jsc/bindgen_test.bind.ts icon="/icons/typescript.svg"
-import { fn, t } from "bindgen";
+import { fn, t } from "../codegen/bindgen-lib.ts";
 
 export const add = fn({
   args: {
@@ -108,7 +109,7 @@ TLDRs from the WebIDL spec:
 The `variants` key declares multiple variants (also known as overloads) of a function.
 
 ```ts
-import { fn, t } from "bindgen";
+import { fn, t } from "../codegen/bindgen-lib.ts";
 
 export const action = fn({
   variants: [
@@ -230,7 +231,7 @@ and you must apply it last.
 Integer types take `clamp` or `enforceRange` to customize overflow behavior:
 
 ```ts
-import { fn, t } from "bindgen";
+import { fn, t } from "../codegen/bindgen-lib.ts";
 
 export const add = fn({
   args: {
@@ -258,7 +259,7 @@ validator checks `typeof value === 'number'`, while WebIDL uses `ToNumber` for
 lossy conversion.
 
 ```ts
-import { fn, t } from "bindgen";
+import { fn, t } from "../codegen/bindgen-lib.ts";
 
 export const add = fn({
   args: {

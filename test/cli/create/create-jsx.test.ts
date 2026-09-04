@@ -1,7 +1,7 @@
 import type { Subprocess } from "bun";
 import { beforeEach, describe, expect, test } from "bun:test";
 import { cp, readdir } from "fs/promises";
-import { bunEnv, bunExe, isCI, isWindows, tempDir, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, isCI, isWindows, normalizeBunSnapshot, tempDir, tempDirWithFiles } from "harness";
 import path from "path";
 
 async function getServerUrl(process: Subprocess<any, "pipe", any>, all = { text: "" }) {
@@ -353,6 +353,39 @@ export default function Component() {
   const installLine = stdout.split("\n").find(line => line.includes("--only-missing install"));
   expect(installLine).toBeDefined();
   expect(installLine).toContain(" install -- ");
+});
+
+test("a file without a component export prints a hint with valid example code", async () => {
+  using dir = tempDir("create-no-export", {
+    "Component.tsx": `function Component() {
+  return <div>Hello</div>;
+}
+console.log(Component);
+`,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "create", "./Component.tsx"],
+    cwd: String(dir),
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+    stdin: "ignore",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stdout).toBe("");
+  expect(normalizeBunSnapshot(stderr, String(dir))).toMatchInlineSnapshot(`
+    "error: No component export found in "<dir>/Component.tsx"
+
+    Please add an export to your file. For example:
+
+       export default function MyApp() {
+         return <div>Hello World</div>;
+       }"
+  `);
+  expect(exitCode).toBe(1);
 });
 
 function normalizeHTMLFn(development: boolean = true) {

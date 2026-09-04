@@ -6,10 +6,7 @@
     "noImplicitAny": true,
     "noImplicitThis": true,
     "exactOptionalPropertyTypes": true,
-    "types": ["../../../packages/bun-types"],
-    "paths": {
-      "bindgenv2": ["./lib.ts"]
-    }
+    "types": ["../../../packages/bun-types"]
   },
   "include": ["**/*.ts", "../helpers.ts", "../../**/*.bindv2.ts"]
 }

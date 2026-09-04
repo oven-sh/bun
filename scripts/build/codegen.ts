@@ -876,18 +876,24 @@ export function emitBindgenV2({ n, cfg, sources, o, dirStamp }: Ctx): void {
 
   // The script's output set depends on which NamedTypes the .bindv2.ts files
   // export. We run `--command=list-outputs` SYNCHRONOUSLY at configure time
-  // to get the real list. This is a configure-time dependency on bun +
+  // to get the real list. This is a configure-time dependency on the
   // sources — same tradeoff CMake makes with execute_process().
+  //
+  // It runs with cfg.jsRuntime, the runtime that runs configure. It is a
+  // child process, not an import: in this process, node would print
+  // MODULE_TYPELESS_PACKAGE_JSON for the .ts files under src/. cfg.jsRuntime
+  // is a shell command prefix, so the command goes through the host shell.
   //
   // If list-outputs fails (e.g. syntax error in a .bindv2.ts file), we fail
   // configure immediately with a clear error. Better to catch that here than
   // get a cryptic "multiple rules generate <unknown>" from ninja.
   const sourcesArg = sources.bindgenV2.join(",");
-  const listResult = spawnSync(
-    cfg.bun,
-    ["run", script, "--command=list-outputs", `--sources=${sourcesArg}`, `--codegen-path=${cfg.codegenDir}`],
-    { cwd: cfg.cwd, encoding: "utf8" },
-  );
+  const listArgs = [script, "--command=list-outputs", `--sources=${sourcesArg}`, `--codegen-path=${cfg.codegenDir}`];
+  const listResult = spawnSync(`${cfg.jsRuntime} ${shJoin(cfg, listArgs)}`, {
+    cwd: cfg.cwd,
+    encoding: "utf8",
+    shell: true,
+  });
   if (listResult.status !== 0) {
     throw new BuildError(`bindgenv2 list-outputs failed (exit ${listResult.status})`, {
       file: script,
@@ -909,19 +915,13 @@ export function emitBindgenV2({ n, cfg, sources, o, dirStamp }: Ctx): void {
 
   n.build({
     outputs: allOutputs,
-    rule: "codegen_bun",
+    rule: "codegen",
     inputs: [script, ...sources.bindgenV2, ...sources.bindgenV2Internal],
     orderOnlyInputs: [dirStamp],
     vars: {
       cwd: cfg.cwd,
       desc: "bindgenv2",
-      args: shJoin(cfg, [
-        "run",
-        script,
-        "--command=generate",
-        `--codegen-path=${cfg.codegenDir}`,
-        `--sources=${sourcesArg}`,
-      ]),
+      args: shJoin(cfg, [script, "--command=generate", `--codegen-path=${cfg.codegenDir}`, `--sources=${sourcesArg}`]),
     },
   });
 

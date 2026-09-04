@@ -1,5 +1,5 @@
-import { isAny } from "./any";
-import { CodeStyle, Type } from "./base";
+import { isAny } from "./any.ts";
+import { type CodeStyle, Type } from "./base.ts";
 
 function bindgenOptional(payload: Type): string {
   return `bindgen.BindgenOptional(${payload.bindgenType})`;

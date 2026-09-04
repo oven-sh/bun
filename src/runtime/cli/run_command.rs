@@ -2923,6 +2923,56 @@ impl RunCommand {
         // values. Explicit `--env-file` is still honored. #6338
         ctx.args.disable_default_env_files = true;
 
+        // `bun node <file>`: argv[1]=="node" made which() take the node
+        // emulation path, but the literal "node" positional is still in
+        // ctx.positionals[0] — clap's stop_after_positional_at=1 parked
+        // everything after it in passthrough, so node flags like `-e` were
+        // never parsed either. Remove the "node" placeholder and re-parse the
+        // passthrough head as node flags. argv0=node (symlink) keeps
+        // IS_NODE_ARG false and never takes this path.
+        if crate::cli::IS_NODE_ARG.load(::core::sync::atomic::Ordering::Relaxed) {
+            if ctx.positionals.first().is_some_and(|p| p.as_ref() == b"node") {
+                ctx.positionals.remove(0);
+                // Re-parse node flags parked in passthrough (they were never
+                // seen by clap): -e/--eval <code>, -p/--print <code>,
+                // --version, --revision, --help.
+                while let Some(first) = ctx.passthrough.first().cloned() {
+                    let first: &[u8] = &first;
+                    if first == b"--" {
+                        ctx.passthrough.remove(0);
+                        break;
+                    }
+                    if first == b"-e" || first == b"--eval" {
+                        ctx.passthrough.remove(0);
+                        if !ctx.passthrough.is_empty() {
+                            ctx.runtime_options.eval.script = ctx.passthrough.remove(0);
+                        }
+                    } else if first == b"-p" || first == b"--print" {
+                        ctx.passthrough.remove(0);
+                        if !ctx.passthrough.is_empty() {
+                            ctx.runtime_options.eval.script = ctx.passthrough.remove(0);
+                            ctx.runtime_options.eval.eval_and_print = true;
+                        }
+                    } else if first == b"--version" {
+                        crate::cli::print_version_and_exit();
+                    } else if first == b"--revision" {
+                        crate::cli::print_revision_and_exit();
+                    } else if first == b"--help" || first == b"-h" {
+                        crate::cli::command::tag_print_help(CommandTag::RunAsNodeCommand, true);
+                        Output::flush();
+                        bun_core::Global::exit(0);
+                    } else {
+                        break;
+                    }
+                }
+                if ctx.positionals.is_empty() && !ctx.passthrough.is_empty() {
+                    // The real target file (or remaining arg) parked in
+                    // passthrough; promote it back.
+                    ctx.positionals.push(ctx.passthrough.remove(0));
+                }
+            }
+        }
+
         // `node --interactive [-e code]`: same gate as AutoCommand — a script
         // positional wins, and `-p` currently bypasses the REPL (see mod.rs).
         if ctx.runtime_options.interactive

@@ -689,7 +689,7 @@ static void rejectWithCause(Ref<DeferredPromise>&& promise, ExceptionCode ec, co
         JSC::JSValue cause = makeCause(globalObject);
         auto exception = createDOMException(&globalObject, ec, message);
         if (auto* exceptionObject = exception.getObject(); exceptionObject && cause)
-            exceptionObject->putDirect(vm, vm.propertyNames->cause, cause);
+            exceptionObject->putDirect(vm, vm.propertyNames->cause, cause, JSC::PropertyAttribute::DontEnum | 0);
         return exception;
     });
 }

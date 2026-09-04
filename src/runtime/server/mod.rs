@@ -265,9 +265,10 @@ pub struct NewServer<const SSL: bool, const DEBUG: bool> {
     /// `AnyServer` handles on the JS thread.
     pub(crate) active_websocket_count: core::cell::Cell<u32>,
     /// Set across [`NewServer::deinit_if_we_can`] and the synchronous
-    /// `app.close()` drain in `stop_listening`; lets a nested call (reached
-    /// via a callback the body fires) early-return instead of re-running the
-    /// downgrade/teardown while the outer frame still holds `&mut self`.
+    /// `app.close()` drains in `stop_listening` and `deinit`; lets a nested
+    /// call (reached via a callback the body fires) early-return instead of
+    /// re-running the downgrade/teardown while the outer frame still holds
+    /// `&mut self`.
     deinit_running: core::cell::Cell<bool>,
     pub(crate) request_pool:
         *mut request_context::RequestContextStackAllocator<Self, SSL, DEBUG, false>,
@@ -2091,6 +2092,20 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
     /// must not be used after this returns.
     pub(super) fn deinit(this: *mut Self) {
         httplog!("deinit");
+        // `NewApp::destroy` below closes nothing itself; close while `this` is
+        // still a raw pointer, since close callbacks re-derive `&Self` from it.
+        // SAFETY: live, uniquely owned server (fn contract); nothing borrows it
+        // across the `close()` call.
+        unsafe {
+            if !(*this).flags.contains(ServerFlags::TERMINATED)
+                && let Some(app) = (*this).app
+            {
+                (*this).flags.insert(ServerFlags::TERMINATED);
+                (*this).deinit_running.set(true);
+                // S012: `NewApp<SSL>` is a ZST opaque — safe `*mut → &mut` deref.
+                bun_opaque::opaque_deref_mut(app).close();
+            }
+        }
         // SAFETY: paired with heap::alloc in `init()`; `this` is uniquely
         // owned here, so reclaim the Box up front and let its `&mut` drive
         // the teardown (dropped — and freed — at scope exit).
@@ -2122,7 +2137,8 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             unsafe { uws_sys::h2::App::destroy(h2a) };
         }
         if let Some(app) = server.app.take() {
-            // SAFETY: live uws App handle owned by this server.
+            // SAFETY: live uws App handle owned by this server, closed above or
+            // by whoever set `TERMINATED`.
             unsafe { uws_sys::NewApp::<SSL>::destroy(app) };
         }
     }

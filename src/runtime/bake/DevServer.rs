@@ -2121,9 +2121,7 @@ impl ReqOrSaved {
     }
 }
 
-/// Answers an `HtmlBundleBody` request with the dev server's own page through
-/// `write`, then releases the context, including the dev server's +1.
-/// `write` does not run once the connection closed.
+/// `write` answers the request, then the context and the dev server's +1 go.
 fn answer_html_bundle_body(ctx: AnyRequestContext, write: impl FnOnce(AnyResponse)) {
     if let Some(resp) = ctx.take_response() {
         write(resp);

@@ -1245,7 +1245,7 @@ pub mod js_bundler {
                     let define_values = compile.compile_target.define_values();
                     debug_assert_eq!(define_keys.len(), define_values.len());
                     for (key, value) in define_keys.iter().zip(define_values) {
-                        this.define.insert(key, value)?;
+                        this.define.insert(key, &value)?;
                     }
 
                     let base_public_path = StandaloneModuleGraph::target_base_public_path(

@@ -105,15 +105,10 @@ impl<'a> Interval<'a> {
         } else if l.inclusive {
             return true;
         } else {
-            let Some(patch) = l.version.patch.checked_add(1) else {
-                return true;
+            let Some(release) = next_release(l.version) else {
+                return false;
             };
-            Version {
-                major: l.version.major,
-                minor: l.version.minor,
-                patch,
-                ..Default::default()
-            }
+            release
         };
 
         let admitted = match release.order_without_build(u.version, &[], u.buf) {
@@ -127,6 +122,24 @@ impl<'a> Interval<'a> {
 
         allows_pre_of(a, release) && allows_pre_of(b, release)
     }
+}
+
+/// The smallest version without a prerelease tag above `v`'s major.minor.patch.
+/// `>3` desugars to `>3.MAX.MAX`, so the carry matters.
+fn next_release(v: Version) -> Option<Version> {
+    let release = |major, minor, patch| Version {
+        major,
+        minor,
+        patch,
+        ..Default::default()
+    };
+    if let Some(patch) = v.patch.checked_add(1) {
+        return Some(release(v.major, v.minor, patch));
+    }
+    if let Some(minor) = v.minor.checked_add(1) {
+        return Some(release(v.major, minor, 0));
+    }
+    v.major.checked_add(1).map(|major| release(major, 0, 0))
 }
 
 fn allows_pre_of(query: &Query, release: Version) -> bool {

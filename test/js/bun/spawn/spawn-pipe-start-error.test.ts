@@ -117,10 +117,10 @@ long syscall(long number, ...) {
 // pidfd once its exit is reaped, a wrapper that becomes collectable only then)
 // get a bounded window; whatever is still there when it lapses is reported.
 const FIXTURE = /* js */ `
-const fs = require("node:fs");
-const { heapStats } = require("bun:jsc");
+import { readdirSync } from "node:fs";
+import { heapStats } from "bun:jsc";
 const kind = process.argv[2];
-const openFds = () => fs.readdirSync("/proc/self/fd").length;
+const openFds = () => readdirSync("/proc/self/fd").length;
 const wrappers = () => {
   const counts = heapStats().objectTypeCounts;
   return (counts.Subprocess ?? 0) + (counts.Terminal ?? 0);

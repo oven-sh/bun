@@ -62,6 +62,18 @@ impl PollOrFd {
         #[cfg(windows)]
         let _ = close_fd;
         let fd = self.get_fd();
+        #[cfg(all(debug_assertions, any(target_os = "linux", target_os = "android")))]
+        if fd != Fd::INVALID {
+            bun_sys::close_ledger::record_registration_event(
+                match (self.tag_name(), close_fd) {
+                    ("poll", true) => "close_impl(poll, close_fd)",
+                    ("poll", false) => "close_impl(poll, keep fd)",
+                    (_, true) => "close_impl(bare fd, close_fd)",
+                    (_, false) => "close_impl(bare fd, keep fd)",
+                },
+                fd.native(),
+            );
+        }
         #[cfg(target_os = "macos")]
         let mut close_async = true;
         #[cfg(all(not(target_os = "macos"), not(windows)))]

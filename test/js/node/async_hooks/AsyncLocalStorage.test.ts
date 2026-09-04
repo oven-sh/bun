@@ -1556,3 +1556,46 @@ test("an active store adds no per-await / per-then helper allocations", () => {
   expect(keep.length).toBe(N * 3);
   expect(delta).toBeLessThan(50);
 });
+
+// A callback captured inside exit() or a nested run() cannot see the outer
+// store, so it must not keep it alive either.
+test("exit() and nested run() release the shadowed outer store", async () => {
+  const als = new AsyncLocalStorage();
+  const other = new AsyncLocalStorage();
+  const N = 20;
+  const timers: ReturnType<typeof setTimeout>[] = [];
+  const pending: Promise<unknown>[] = [];
+  const never = new Promise(() => {});
+  function arm() {
+    timers.push(setTimeout(() => {}, 1_000_000));
+    pending.push(never.then(() => {}));
+  }
+  const modes = [
+    (fn: () => void) => als.exit(fn),
+    (fn: () => void) => als.run(undefined, fn),
+    (fn: () => void) => als.run({ inner: true }, fn),
+    (fn: () => void) => other.run(1, () => als.run({ inner: true }, () => other.run(2, fn))),
+  ];
+  const refs: WeakRef<object>[] = [];
+  for (const mode of modes) {
+    for (let i = 0; i < N; i++) {
+      const outer = { payload: new Uint8Array(64 * 1024) };
+      refs.push(new WeakRef(outer));
+      als.run(outer, () => {
+        mode(arm);
+        expect(als.getStore()).toBe(outer);
+      });
+    }
+  }
+  expect(als.getStore()).toBeUndefined();
+  let alive = refs.length;
+  for (let i = 0; i < 20 && alive > N; i++) {
+    Bun.gc(true);
+    await new Promise(r => setTimeout(r, 10));
+    alive = refs.filter(r => r.deref() !== undefined).length;
+  }
+  for (const t of timers) clearTimeout(t);
+  expect(timers.length + pending.length).toBe(modes.length * N * 2);
+  // without the fix every one of the modes.length * N stores is retained
+  expect(alive).toBeLessThanOrEqual(N);
+});

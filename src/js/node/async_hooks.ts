@@ -20,9 +20,11 @@
 //
 // AsyncContextData is the innermost Frame of a persistent linked list managed in
 // here: each Frame binds one AsyncLocalStorage to a value and points at the frame
-// it was pushed onto, so run() allocates one three-field object and never copies,
-// getStore() walks the (short) chain, and a captured context is a single
-// reference that shares its tail with every other capture.
+// it was pushed onto, so run() allocates one small object (re-linking only the
+// frames of other storages above an existing binding of the same storage),
+// getStore() walks a chain no longer than the number of storages, and a
+// captured context is a single reference that shares its tail with every other
+// capture.
 //
 const setAsyncHooksEnabled = $newCppFunction("NodeAsyncHooks.cpp", "jsSetAsyncHooksEnabled", 1);
 const { validateFunction, validateString, validateObject } = require("internal/validators");
@@ -131,22 +133,15 @@ function push(head: Frame | undefined, storage: AsyncLocalStorage, value: unknow
   return new Frame(storage, value, head, head === undefined ? undefined : unmask(head.masked, storage));
 }
 
-// `frame` with the innermost binding of `storage` removed. Frames above it are
-// copied (they may be shared with other captures); the tail below it is shared.
-// The view from the result is the view from `frame` minus that binding, masks
-// included.
+// `frame` with the binding of `storage` removed. Frames above it are copied
+// (they may be shared with other captures); the tail below it is shared. The
+// view from the result is the view from `frame` minus that binding, masks
+// included. run() and enterWith() both go through here, so a chain never holds
+// two bindings of one storage and a capture never keeps a shadowed value alive.
 function without(frame: Frame | undefined, storage: AsyncLocalStorage): Frame | undefined {
   var found = find(frame, storage);
   if (found === undefined) return frame;
   return copyUntil(frame!, found, found.prev);
-}
-
-// `frame` with every binding of `storage` removed (nested run() of one storage
-// stacks shadowed bindings).
-function withoutAll(frame: Frame | undefined, storage: AsyncLocalStorage): Frame | undefined {
-  var found = find(frame, storage);
-  if (found === undefined) return frame;
-  return copyUntil(frame!, found, withoutAll(found.prev, storage));
 }
 
 // Copies [from, stop) onto tail so that the view from the result is the view
@@ -261,8 +256,8 @@ class AsyncLocalStorage {
   run(store_value, callback, ...args) {
     $debug("run " + (this as any).__id__);
     var prior = get();
-    var before = lookup(prior, this);
-    var beforeValue = before !== undefined ? before.value : this.#defaultValue;
+    var bound = find(prior, this);
+    var beforeValue = bound !== undefined && !isMasked(prior, this) ? bound.value : this.#defaultValue;
     // Node short-circuits when the value is unchanged: no enterWith, no
     // finally-restore. Observable when the callback calls enterWith() —
     // the new value survives past run() (verified against Node v22/v26).
@@ -270,8 +265,11 @@ class AsyncLocalStorage {
       return callback.$apply(undefined, args);
     }
     var mutations = frameMutations;
-    // Shadows any outer binding of this storage: lookups stop at the innermost.
-    var frame = push(prior, this, store_value);
+    // Replace rather than shadow an outer binding of this storage, so a callback
+    // captured inside exit() or a nested run() does not retain the outer value.
+    // Only frames of other storages pushed since that binding are copied; when
+    // it is the innermost frame (or absent) this is just `prior` / `prior.prev`.
+    var frame = push(bound === undefined ? prior : copyUntil(prior!, bound, bound.prev), this, store_value);
     set(frame);
     try {
       // $apply, not a spread: spreading goes through Array.prototype[Symbol.iterator],
@@ -285,10 +283,10 @@ class AsyncLocalStorage {
         // enterWith(prior store): keep whatever else the callback installed and
         // rebind this storage to what getStore() returned on entry. Frames may
         // have been copied since (enterWith() of a storage bound further down
-        // copies everything above it), so go by value, not identity: drop every
+        // copies everything above it), so go by value, not identity: drop the
         // binding of this storage and put the prior one back on top. Enclosing
         // run()s of the same storage restore their own value likewise.
-        set(push(withoutAll(get(), this), this, beforeValue));
+        set(push(without(get(), this), this, beforeValue));
       }
       $assert(sameValue(this.getStore(), beforeValue), "run: previous value was not restored");
     }

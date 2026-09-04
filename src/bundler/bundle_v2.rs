@@ -6546,7 +6546,12 @@ pub mod bv2_impl {
                                                 Some(source),
                                                 import_record.range,
                                                 format_args!(
-                                                    "Browser build cannot {} Bun builtin: \"{}\"{}",
+                                                    "{} build cannot {} Bun builtin: \"{}\"{}",
+                                                    if ctx.target.is_node() {
+                                                        "Node.js"
+                                                    } else {
+                                                        "Browser"
+                                                    },
                                                     bstr::BStr::new(
                                                         import_record.kind.error_label()
                                                     ),

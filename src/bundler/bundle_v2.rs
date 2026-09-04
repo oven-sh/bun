@@ -7324,7 +7324,26 @@ pub mod bv2_impl {
                     }
 
                     // Record which loader we used for this file
-                    this.graph.input_files.items_loader_mut()[result_source_index] = result.loader;
+                    let enqueued_loader = core::mem::replace(
+                        &mut this.graph.input_files.items_loader_mut()[result_source_index],
+                        result.loader,
+                    );
+                    // A native onBeforeParse plugin can switch loaders on the parse
+                    // thread. `process_resolve_queue` & co. already did the
+                    // copy-for-bundling bookkeeping for `enqueued_loader`, so redo it
+                    // if the plugin moved the file into or out of that class.
+                    if result.loader.should_copy_for_bundling()
+                        != enqueued_loader.should_copy_for_bundling()
+                    {
+                        let side_effects = if result.loader.should_copy_for_bundling() {
+                            this.graph.estimated_file_loader_count += 1;
+                            bun_ast::SideEffects::NoSideEffectsPureData
+                        } else {
+                            result.side_effects
+                        };
+                        this.graph.input_files.items_side_effects_mut()[result_source_index] =
+                            side_effects;
+                    }
 
                     bun_core::scoped_log!(
                         Bundle,

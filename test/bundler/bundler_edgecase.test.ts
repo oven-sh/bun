@@ -3415,6 +3415,23 @@ describe("bundler", () => {
       `);
     },
   });
+  itBundled("edgecase/PrefixOperatorAtOutputStart", {
+    files: {
+      "/entry.js": `
+        ++globalThis.x;
+        +globalThis.y;
+      `,
+    },
+    target: "node",
+    onAfterBundle(api) {
+      api.expectFile("out.js").toMatchInlineSnapshot(`
+        "// entry.js
+        ++globalThis.x;
+        +globalThis.y;
+        "
+      `);
+    },
+  });
   itBundled("edgecase/NonAsciiIdentifierPreserved", {
     files: {
       "/entry.js": /* js */ `

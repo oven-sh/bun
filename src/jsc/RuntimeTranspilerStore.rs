@@ -1034,7 +1034,7 @@ impl TranspilerJob {
             source_code_printer,
             BufferPrinter::init(BufferWriter::init()),
         );
-        printer.ctx.reset();
+        printer.reset();
 
         // Cap buffer size to prevent unbounded growth
         const MAX_BUFFER_CAP: usize = 512 * 1024;

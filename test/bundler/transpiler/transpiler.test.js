@@ -2966,6 +2966,45 @@ console.log(<div {...obj} key="after" />);`),
       );
     });
 
+    it("first token of the output", async () => {
+      // The printer tracks "position after the previous operator / number /
+      // regexp" to decide when a space or parentheses are required. Those
+      // positions start out as "none", which must not match the empty output.
+      expectPrintedNoTrim("++x;", "++x;\n");
+      expectPrintedNoTrim("--x;", "--x;\n");
+      expectPrintedNoTrim("+x;", "+x;\n");
+      expectPrintedNoTrim("-x;", "-x;\n");
+      expectPrintedNoTrim("let;", "let;\n");
+      expectPrintedNoTrim("delete x.y;", "delete x.y;\n");
+      expectPrintedNoTrim("/a/.test(x);", "/a/.test(x);\n");
+
+      // The same statements later in the output
+      expectPrintedNoTrim("x;\n++x;", "x;\n++x;\n");
+      expectPrintedNoTrim("x;\nlet;", "x;\nlet;\n");
+
+      // The async form uses the printer's returned byte count to decide whether the output is empty
+      const plain = new Bun.Transpiler({ loader: "js" });
+      expect(await plain.transform("++x;")).toBe("++x;\n");
+      expect(await plain.transform("x;")).toBe("x;\n");
+      expect(await plain.transform("1;")).toBe("");
+
+      // The rules themselves still apply between two tokens
+      const minify = new Bun.Transpiler({ loader: "js", minifyWhitespace: true });
+      const print = code => minify.transformSync(code);
+      expect(print("++x;")).toBe("++x;");
+      expect(print("+x;")).toBe("+x;");
+      expect(print("x + ++y;")).toBe("x+ ++y;");
+      expect(print("x - --y;")).toBe("x- --y;");
+      expect(print("x + +y;")).toBe("x+ +y;");
+      expect(print("x - -y;")).toBe("x- -y;");
+      expect(print("x < !--y;")).toBe("x<! --y;");
+      expect(print("x-- > y;")).toBe("x-- >y;");
+      expect(print("x instanceof y;")).toBe("x instanceof y;");
+      expect(print("a / /b/;")).toBe("a/ /b/;");
+      expect(print("/a/ in b;")).toBe("/a/ in b;");
+      expect(print("x = 1..toString();")).toBe("x=1 .toString();");
+    });
+
     it("await", () => {
       expectPrinted("await x", "await x");
       expectPrinted("await +x", "await +x");

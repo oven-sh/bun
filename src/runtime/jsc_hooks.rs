@@ -3091,7 +3091,7 @@ fn transpile_source_code_inner(
                 // from the raw pointer, which would invalidate any earlier
                 // Unique tag under Stacked Borrows. Rederive at each use-site
                 // instead (reset, mapper, print, get_written).
-                unsafe { (*(*extra).source_code_printer).ctx.reset() };
+                unsafe { (*(*extra).source_code_printer).reset() };
                 // Install the VM's sourcemap handler on the printer, then
                 // print the parse result (ESM, ASCII) with sourcemaps.
                 //

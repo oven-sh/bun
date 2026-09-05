@@ -1178,22 +1178,7 @@ impl SendQueue {
                 log!("SendQueue#closeSocketTask");
                 sq.close_socket(CloseReason::Normal, CloseFrom::User);
             }
-            if sq.pending_after_close.replace(false) {
-                log!("SendQueue#_onAfterIPCClosed");
-                if !sq.close_event_sent.replace(true) {
-                    let global = sq.get_global_this();
-                    if let Some(item) = sq.waiting_for_ack.with_mut(|w| w.take()) {
-                        item.complete(&global);
-                    }
-                    // on_write_complete already dequeued everything fully written; the rest was never delivered.
-                    for item in sq.queue.with_mut(std::mem::take) {
-                        item.abort_unsent(&global);
-                    }
-                    if let Some(owner) = sq.owner.get() {
-                        owner.handle_ipc_close();
-                    }
-                }
-            }
+            sq.run_after_close();
         }
         // Release the task's ref; the SendQueue may be freed here.
         // SAFETY: `this` is live and owns the ref taken at schedule.
@@ -1208,6 +1193,49 @@ impl SendQueue {
     pub unsafe fn release_deferred_unrun(this: *mut SendQueue) {
         // SAFETY: caller contract.
         unsafe { <SendQueue as bun_ptr::CellRefCounted>::deref(this) };
+    }
+
+    fn run_after_close(&self) {
+        if !self.pending_after_close.replace(false) {
+            return;
+        }
+        log!("SendQueue#_onAfterIPCClosed");
+        if self.close_event_sent.replace(true) {
+            return;
+        }
+        let global = self.get_global_this();
+        if let Some(item) = self.waiting_for_ack.with_mut(|w| w.take()) {
+            item.complete(&global);
+        }
+        // on_write_complete already dequeued everything fully written; the rest was never delivered.
+        for item in self.queue.with_mut(std::mem::take) {
+            item.abort_unsent(&global);
+        }
+        if let Some(owner) = self.owner.get() {
+            owner.handle_ipc_close();
+        }
+    }
+
+    /// The peer process has exited: closes what is left of the channel and reports the close now,
+    /// for the owner to report before the exit (node's order). The deferred task, which may also
+    /// have been scheduled for it, runs later and finds nothing to do.
+    pub fn close_after_peer_exit(&self) {
+        log!("SendQueue#closeAfterPeerExit");
+        if self.socket_is_open() {
+            // A disconnect() still postponed (behind a handle's ack, or on its task) is overtaken.
+            self.close_after_flush.set(false);
+            self.pending_close.set(false);
+            // As is a write still in flight: nothing is left to complete it.
+            #[cfg(windows)]
+            self.windows_close(true);
+            #[cfg(not(windows))]
+            self.close_socket(CloseReason::Normal, CloseFrom::User);
+        }
+        if !self.pending_after_close.get() {
+            return;
+        }
+        let _scope = self.get_global_this().bun_vm().enter_event_loop_scope();
+        self.run_after_close();
     }
 
     /// `uv::open_handles` closes the channel's pipe through here at a thread

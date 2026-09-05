@@ -1554,6 +1554,147 @@ async function runTests() {
  */
 
 /**
+ * Describe the live descendants of `rootPid` at the moment a run stalls or
+ * times out: the process tree from `ps`, each process's kernel state and
+ * signal masks from /proc, and, where ptrace is allowed, a gdb backtrace of
+ * every thread in each bun process. The output goes to the job log so a stall
+ * that never reproduces locally still names the blocked process and its stack.
+ *
+ * The whole report has to finish within `budgetMs` of wall-clock time. It runs
+ * synchronously, so the caller's kill waits for it: one `ps`, a few /proc
+ * reads, then gdb attaches only while time remains.
+ * @param {number} rootPid
+ * @param {string} execPath the bun binary under test
+ * @param {number} [budgetMs]
+ * @returns {string}
+ */
+function describeStalledProcessTree(rootPid, execPath, budgetMs = 60_000) {
+  if (isWindows) return "";
+  const deadline = Date.now() + budgetMs;
+  const remaining = () => deadline - Date.now();
+  let out = `\n======== process tree under ${rootPid} at the stall ========\n`;
+  const ps = spawnSync("ps", ["-eo", "pid=,ppid=,stat=,etime=,args="], {
+    encoding: "utf-8",
+    timeout: Math.min(10_000, budgetMs),
+  });
+  if (ps.status !== 0 || !ps.stdout) {
+    return `${out}ps failed: ${ps.error?.message ?? ps.stderr ?? `code ${ps.status}`}\n`;
+  }
+  const children = new Map();
+  let root;
+  for (const line of ps.stdout.split("\n")) {
+    const row = /^\s*(\d+)\s+(\d+)\s+(\S+)\s+(\S+)\s+(.*)$/.exec(line);
+    if (!row) continue;
+    const [, pid, ppid, stat, etime, args] = row;
+    const proc = { pid: parseInt(pid, 10), stat, etime, args };
+    if (proc.pid === rootPid) root = proc;
+    if (!children.has(ppid)) children.set(ppid, []);
+    children.get(ppid).push(proc);
+  }
+  if (!root) {
+    return `${out}${rootPid} is not running\n`;
+  }
+  // A runaway fork storm could list thousands of processes. The first few dozen
+  // are the coordinator, its workers and their children, which is what matters.
+  const maxListed = 64;
+  const tree = [];
+  let truncated = false;
+  // Depth-first, in ps order, without recursion: a deep chain must not
+  // overflow the stack while we are trying to report a stall.
+  const pending = [{ ...root, depth: 0 }];
+  while (pending.length) {
+    const proc = pending.pop();
+    tree.push(proc);
+    // Queue only the children that can still be listed, so the queue itself
+    // never grows past the cap.
+    const kids = children.get(String(proc.pid)) ?? [];
+    const room = Math.max(0, maxListed - tree.length - pending.length);
+    if (kids.length > room) truncated = true;
+    for (let k = Math.min(kids.length, room) - 1; k >= 0; k--) {
+      pending.push({ ...kids[k], depth: proc.depth + 1 });
+    }
+  }
+  const bunName = basename(execPath);
+  const isBun = args => {
+    const argv0 = args.split(" ", 1)[0];
+    return argv0 === execPath || basename(argv0) === bunName;
+  };
+  for (const { pid, stat, etime, args, depth } of tree) {
+    out += `${"  ".repeat(depth)}${pid} ${stat} ${etime} ${args.length > 200 ? `${args.slice(0, 197)}...` : args}\n`;
+    if (!isLinux) continue;
+    // State names a zombie (Z), a stopped (T) or an uninterruptible (D) process.
+    // SigBlk/SigPnd together show a signal that was sent and never delivered.
+    try {
+      const status = readFileSync(`/proc/${pid}/status`, "utf-8")
+        .split("\n")
+        .filter(line => /^(State|Threads|SigPnd|ShdPnd|SigBlk|SigIgn|SigCgt):/.test(line))
+        .map(line => line.replace(/\s+/g, " "))
+        .join(", ");
+      let wchan = "";
+      try {
+        wchan = readFileSync(`/proc/${pid}/wchan`, "utf-8").trim();
+      } catch {}
+      out += `${"  ".repeat(depth)}  ${status}${wchan ? `, wchan: ${wchan}` : ""}\n`;
+    } catch (error) {
+      out += `${"  ".repeat(depth)}  /proc/${pid}/status: ${error?.message ?? error}\n`;
+    }
+  }
+  if (truncated) out += `... list capped at ${maxListed} processes\n`;
+  if (!isLinux) return out;
+  const maxBacktraces = 8;
+  const targets = tree.filter(({ args, stat }) => isBun(args) && !stat.startsWith("Z")).slice(0, maxBacktraces);
+  // Yama ptrace_scope 1 (Ubuntu's default) only lets an ancestor attach, and
+  // gdb is a sibling of the batch. Fall back to passwordless sudo when the
+  // agent has it.
+  let prefix = [];
+  // A permission failure is the same for every process. Any other attach
+  // failure (the process exited after `ps`, for one) is local to this pid.
+  const denied = lines => lines.some(line => /Operation not permitted|^Could not attach/.test(line));
+  const backtrace = pid => {
+    const [command, ...argv] = [...prefix, "gdb", "-p", String(pid), "-batch", "-ex", "thread apply all bt 16"];
+    // spawnSync treats timeout 0 as "none", so never let it reach 0.
+    const gdb = spawnSync(command, argv, {
+      encoding: "utf-8",
+      timeout: Math.max(1, Math.min(20_000, remaining())),
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    // A timeout still returns what gdb printed so far. Only a spawn failure
+    // (no gdb on this agent) has no output and ends the search.
+    const missing = gdb.error && gdb.error.code !== "ETIMEDOUT" ? gdb.error.message : undefined;
+    const lines = `${gdb.stdout ?? ""}\n${gdb.stderr ?? ""}`
+      .split("\n")
+      .filter(line => /^(Thread \d+|#\d+|ptrace:|warning: .*ptrace|Could not attach)/.test(line));
+    return { status: gdb.status, timedOut: gdb.error?.code === "ETIMEDOUT", missing, lines };
+  };
+  for (const { pid, args } of targets) {
+    if (remaining() < 5_000) {
+      out += `\nno time left in the ${budgetMs / 1000}s report budget for more backtraces\n`;
+      break;
+    }
+    out += `\n======== gdb ${pid}: ${args.length > 120 ? `${args.slice(0, 117)}...` : args} ========\n`;
+    let result = backtrace(pid);
+    if (
+      denied(result.lines) &&
+      prefix.length === 0 &&
+      remaining() >= 10_000 &&
+      spawnSync("sudo", ["-n", "true"], { stdio: "ignore", timeout: 5_000 }).status === 0 &&
+      remaining() >= 5_000
+    ) {
+      prefix = ["sudo", "-n"];
+      result = backtrace(pid);
+    }
+    if (result.missing) {
+      out += `gdb failed: ${result.missing}\n`;
+      break;
+    }
+    out += result.lines.length ? `${result.lines.join("\n")}\n` : `no backtrace (exit ${result.status})\n`;
+    if (result.timedOut) out += `(gdb timed out, output above is partial)\n`;
+    if (denied(result.lines)) break;
+  }
+  return out;
+}
+
+/**
  * @typedef {object} SpawnResult
  * @property {boolean} ok
  * @property {string} [error]
@@ -1647,9 +1788,25 @@ async function spawnSafe(options) {
       subprocess.on("spawn", () => {
         timestamp = Date.now();
         const expire = () => {
+          // The idle timer and the total timer both call this. The second
+          // call would write a second report and arm a second kill timer.
+          if (timedOut) return;
           timedOut = true;
           clearTimeout(idleTimer);
+          clearTimeout(timer);
           if (options.gracefulTimeout && !isWindows) {
+            // The batch is about to be killed for a stall. Record who was
+            // blocked, and where, while the processes are still alive. The
+            // report is synchronous and holds the kill for at most its budget.
+            const elapsed = ((Date.now() - timestamp) / 1000).toFixed(0);
+            const reason = idledOut ? `no output for ${options.idleTimeout / 1000}s` : `timeout after ${elapsed}s`;
+            let report = `\n${reason}, killing the batch.`;
+            try {
+              report += describeStalledProcessTree(subprocess.pid, command);
+            } catch (error) {
+              report += `\nprocess tree unavailable: ${error?.message ?? error}\n`;
+            }
+            stderr?.(report);
             subprocess.kill("SIGTERM");
             timer = setTimeout(() => {
               subprocess.kill(9);

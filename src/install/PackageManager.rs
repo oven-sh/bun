@@ -26,7 +26,7 @@ use bun_paths::resolve_path::{self, PosixToWinNormalizer, platform};
 use bun_paths::{DELIMITER, PathBuffer, SEP, SEP_STR};
 use bun_semver as Semver;
 use bun_sys::{self, Fd};
-use bun_threading::{ThreadPool, UnboundedQueue, thread_pool};
+use bun_threading::{Futex, ThreadPool, UnboundedQueue, thread_pool};
 use bun_transpiler as transpiler;
 use bun_url::URL;
 
@@ -375,6 +375,8 @@ pub struct PackageManager {
     /// TODO: Does this need to be atomic? It seems to be accessed only from the main thread.
     pub(crate) pending_pre_calc_hashes: AtomicU32,
     pub pending_tasks: AtomicU32,
+    /// Bumped by [`wake_raw`]; futex target for [`sleep_until`] on the Js arm.
+    pub wake_counter: AtomicU32,
     pub total_tasks: u32,
     pub(crate) preallocated_network_tasks: PreallocatedNetworkTasks,
     pub(crate) preallocated_resolve_tasks: PreallocatedTaskStore,
@@ -944,6 +946,9 @@ impl PackageManager {
                 // type); cast back to `*mut c_void` here.
                 (on_wake.get_handler())(ctx.as_ptr(), this.cast::<c_void>());
             }
+            let wake_counter = &*core::ptr::addr_of!((*this).wake_counter);
+            wake_counter.fetch_add(1, Ordering::Release);
+            Futex::wake(wake_counter, u32::MAX);
             (*core::ptr::addr_of_mut!((*this).event_loop)).wakeup();
         }
     }
@@ -964,6 +969,38 @@ impl PackageManager {
         is_done_fn: fn(&mut C) -> bool,
     ) {
         Output::flush();
+
+        // Derive the event-loop pointer through `this`'s raw provenance (NOT
+        // via a `&mut self.event_loop` reborrow) so it shares `this`'s SRW tag
+        // and survives the callback's `&mut *this` retag.
+        // SAFETY: `this` is valid per fn contract; `&raw mut` does not create a
+        // reference, only a place projection.
+        let event_loop: *mut AnyEventLoop = unsafe { &raw mut (*this).event_loop };
+
+        // On the Js arm this wait is inside a synchronous module-resolution
+        // call; ticking the JS loop here would run user callbacks inside
+        // `Bun.resolveSync` / `require.resolve` / `import.meta.resolve`.
+        // `wake_raw` bumps `wake_counter` for every completion the HTTP thread
+        // or thread pool publishes, so futex-wait on that instead.
+        // SAFETY: `this`/`event_loop` valid per fn contract; only the
+        // discriminant is read here.
+        if matches!(unsafe { &*event_loop }, AnyEventLoop::Js { .. }) {
+            // SAFETY: `&raw const` through `this`'s provenance; each
+            // `&AtomicU32` is dropped before `is_done_fn` retags `*this`.
+            let wake_counter: *const AtomicU32 = unsafe { &raw const (*this).wake_counter };
+            loop {
+                // SAFETY: short-lived `&AtomicU32`; dropped before `is_done_fn`.
+                let before = unsafe { (*wake_counter).load(Ordering::Acquire) };
+                if is_done_fn(closure) {
+                    return;
+                }
+                // SAFETY: short-lived `&AtomicU32`; no borrow of `*this` is
+                // live across the futex wait. Bounded so a lost wake cannot
+                // hang.
+                let _ = Futex::wait(unsafe { &*wake_counter }, before, Some(1_000_000_000));
+            }
+        }
+
         // `AnyEventLoop::tick_raw` takes the type-erased
         // `(*mut c_void, fn(*mut c_void) -> bool)`; trampoline through a small wrapper so
         // `is_done_fn` receives `&mut C` and can drive `run_tasks` / record `err`.
@@ -987,12 +1024,6 @@ impl PackageManager {
             ctx: std::ptr::from_mut::<C>(closure),
             is_done: is_done_fn,
         };
-        // Derive the event-loop pointer through `this`'s raw provenance (NOT
-        // via a `&mut self.event_loop` reborrow) so it shares `this`'s SRW tag
-        // and survives the callback's `&mut *this` retag.
-        // SAFETY: `this` is valid per fn contract; `&raw mut` does not create a
-        // reference, only a place projection.
-        let event_loop: *mut AnyEventLoop = unsafe { &raw mut (*this).event_loop };
         // SAFETY: `tick_raw` reborrows `*event_loop` only between `is_done`
         // calls (never across them), so the callback's `&mut PackageManager`
         // never overlaps a live `&mut AnyEventLoop`.
@@ -2116,6 +2147,7 @@ pub fn init(
         wr!(patch_task_queue, PatchTaskQueue::default());
         wr!(pending_pre_calc_hashes, AtomicU32::new(0));
         wr!(pending_tasks, AtomicU32::new(0));
+        wr!(wake_counter, AtomicU32::new(0));
         wr!(total_tasks, 0);
         wr!(pending_lifecycle_script_tasks, AtomicU32::new(0));
         wr!(finished_installing, AtomicBool::new(false));
@@ -2578,6 +2610,7 @@ fn init_with_runtime_once(
         wr!(patch_task_queue, PatchTaskQueue::default());
         wr!(pending_pre_calc_hashes, AtomicU32::new(0));
         wr!(pending_tasks, AtomicU32::new(0));
+        wr!(wake_counter, AtomicU32::new(0));
         wr!(total_tasks, 0);
         wr!(pending_lifecycle_script_tasks, AtomicU32::new(0));
         wr!(finished_installing, AtomicBool::new(false));

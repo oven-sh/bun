@@ -966,6 +966,18 @@ pub fn is_utf8_char_boundary(c: u8) -> bool {
     (c as i8) >= -0x40
 }
 
+/// Longest prefix of `self_` within `max_len` bytes that does not split a UTF-8 sequence.
+pub fn truncate_to_char_boundary(self_: &[u8], max_len: usize) -> &[u8] {
+    if self_.len() <= max_len {
+        return self_;
+    }
+    let mut end = max_len;
+    while !is_on_char_boundary(self_, end) {
+        end -= 1;
+    }
+    &self_[..end]
+}
+
 pub fn starts_with_case_insensitive_ascii(self_: &[u8], prefix: &[u8]) -> bool {
     self_.len() >= prefix.len()
         && eql_case_insensitive_ascii(&self_[0..prefix.len()], prefix, false)
@@ -2757,6 +2769,22 @@ mod tests {
         assert_eq!(super::first_non_ascii(b"ab\xC3"), Some(2));
         assert!(super::eql_case_insensitive_ascii(b"A", b"a", true));
         assert!(!super::eql_case_insensitive_ascii(b"Ab", b"a", true));
+    }
+
+    #[test]
+    fn truncate_to_char_boundary_never_splits_a_sequence() {
+        assert_eq!(super::truncate_to_char_boundary(b"abc", 3), b"abc");
+        assert_eq!(super::truncate_to_char_boundary(b"abc", 4), b"abc");
+        assert_eq!(super::truncate_to_char_boundary(b"abcd", 3), b"abc");
+        assert_eq!(super::truncate_to_char_boundary(b"abc", 0), b"");
+        // "aé" is `61 C3 A9`: a cut at byte 2 would land inside `é`.
+        assert_eq!(super::truncate_to_char_boundary("aéz".as_bytes(), 2), b"a");
+        assert_eq!(
+            super::truncate_to_char_boundary("aéz".as_bytes(), 3),
+            "aé".as_bytes()
+        );
+        // A 4-byte sequence that does not fit at all yields the empty prefix.
+        assert_eq!(super::truncate_to_char_boundary("😀".as_bytes(), 3), b"");
     }
 
     #[test]

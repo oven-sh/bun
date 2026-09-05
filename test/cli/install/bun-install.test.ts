@@ -11380,3 +11380,88 @@ it.each([
     expect(exitCode).not.toBe(0);
   });
 });
+
+// The progress bar copies the name it is currently showing into a fixed
+// 768-byte buffer (PackageManager.progress_name_buf). Dependency and package
+// names have no length limit, so a longer name used to abort the install with
+// "panic: range end index 900 out of range for slice of length 768" whenever
+// the progress bar was on. BUN_INSTALL_PROGRESS=1 turns it on without a TTY;
+// with colors enabled an emoji shares the buffer with the name, so both color
+// settings are covered.
+describe("progress bar with a name longer than its name buffer", () => {
+  const longName = Buffer.alloc(900, "a").toString();
+  const progressEnvs = [
+    ["NO_COLOR", { ...env, BUN_INSTALL_PROGRESS: "1", NO_COLOR: "1" }],
+    ["FORCE_COLOR", { ...env, BUN_INSTALL_PROGRESS: "1", NO_COLOR: undefined, FORCE_COLOR: "1" }],
+  ] as const;
+
+  it.each(progressEnvs)("dependency whose manifest is fetched (%s)", async (_colors, progressEnv) => {
+    await withContext(defaultOpts, async ctx => {
+      const requests: string[] = [];
+      setContextHandler(ctx, request => {
+        requests.push(request.url);
+        return new Response("Not Found", { status: 404 });
+      });
+      await writeFile(
+        join(ctx.package_dir, "package.json"),
+        JSON.stringify({
+          name: "foo",
+          version: "0.0.1",
+          dependencies: {
+            [longName]: "1.0.0",
+          },
+        }),
+      );
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "install"],
+        cwd: ctx.package_dir,
+        stdout: "pipe",
+        stderr: "pipe",
+        env: progressEnv,
+      });
+      const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      expect(requests).toEqual([`${ctx.registry_url}${longName}`]);
+      expect(Bun.stripANSI(err)).toContain(`error: GET ${ctx.registry_url}${longName} - 404`);
+      expect(Bun.stripANSI(err)).toContain(`error: ${longName}@1.0.0 failed to resolve`);
+      expect(out).not.toContain("1 package installed");
+      expect(exitCode).toBe(1);
+    });
+  });
+
+  it.each(progressEnvs)("workspace package running a lifecycle script (%s)", async (_colors, progressEnv) => {
+    using dir = tempDir("install-progress-long-name", {
+      "package.json": JSON.stringify({
+        name: "foo",
+        workspaces: ["packages/*"],
+      }),
+      "packages/long/package.json": JSON.stringify({
+        name: longName,
+        version: "1.0.0",
+        scripts: {
+          postinstall: "echo ran > postinstall-ran",
+        },
+      }),
+    });
+
+    // Nothing depends on the workspace package, so the isolated linker never
+    // creates a node_modules entry with this name: the progress bar is the
+    // only thing that has to cope with it.
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "install", "--linker", "isolated"],
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+      env: progressEnv,
+    });
+    const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect({ stderr: Bun.stripANSI(err), exitCode }).toEqual({
+      stderr: expect.not.stringContaining("error:"),
+      exitCode: 0,
+    });
+    expect(Bun.stripANSI(out)).toContain("Checked 2 packages");
+    expect(await file(join(String(dir), "packages", "long", "postinstall-ran")).text()).toBe("ran\n");
+  });
+});

@@ -177,6 +177,25 @@ export const workarounds: Workaround[] = [
       `(options.detached block), replace the local 0x80 with libc::POSIX_SPAWN_SETSID, ` +
       `drop the explanatory comments, and delete this entry.`,
   },
+  {
+    id: "lolhtml-integration-point-stale-hint",
+    issue: "https://github.com/cloudflare/lol-html/pull/329",
+    description:
+      "lol-html skips selector matching for the second of two consecutive SVG/MathML " +
+      "integration-point siblings (stale got_flags_from_hint in the dispatcher). Fixed " +
+      "upstream in v3.0.1; the oven-sh/lol-html bun branch is based on v2.7.2, so the " +
+      "fix is carried as a vendored patch until the fork rebases.",
+    applies: () => true,
+    expectedToBeFixed: cfg => {
+      // Trips when the fork rebases onto upstream v3.0.1 or later, which
+      // carries the fix (merged as cloudflare/lol-html#329).
+      const v = lockedCrateVersion(cfg, "lol_html");
+      return v !== undefined && satisfiesRange(v, ">3.0.0");
+    },
+    cleanup:
+      `Delete patches/lolhtml/integration-point-stale-hint-flag.patch, the patches: list in ` +
+      `scripts/build/deps/lolhtml.ts, and this entry.`,
+  },
 ];
 
 /**

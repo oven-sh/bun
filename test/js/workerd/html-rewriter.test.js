@@ -3207,3 +3207,82 @@ describe("GC pressure mid-rewrite", () => {
     });
   });
 });
+
+describe("SVG/MathML integration-point elements reach handlers after a sibling integration point", () => {
+  // A stale dispatcher flag made the second consecutive integration-point
+  // sibling skip selector matching: https://github.com/cloudflare/lol-html/pull/329
+
+  async function census(doc) {
+    const tags = [];
+    await new HTMLRewriter()
+      .on("*", {
+        element(el) {
+          tags.push(el.tagName);
+        },
+      })
+      .transform(new Response(doc))
+      .text();
+    return tags;
+  }
+
+  it("matches consecutive SVG html-integration-point siblings", async () => {
+    expect(await census(`<svg><desc>d</desc><title>t</title></svg>`)).toEqual(["svg", "desc", "title"]);
+    expect(await census(`<svg><desc>d</desc><title>t</title><foreignObject>f</foreignObject></svg>`)).toEqual([
+      "svg",
+      "desc",
+      "title",
+      "foreignobject",
+    ]);
+    // intervening whitespace/text must not mask the bug
+    expect(await census(`<svg><desc>d</desc> <title>t</title></svg>`)).toEqual(["svg", "desc", "title"]);
+    // intervening non-integration-point element (always worked, regression guard)
+    expect(await census(`<svg><desc>d</desc><circle/><title>t</title></svg>`)).toEqual([
+      "svg",
+      "desc",
+      "circle",
+      "title",
+    ]);
+  });
+
+  it("matches consecutive MathML text-integration-point siblings", async () => {
+    expect(await census(`<math><mi>x</mi><mo>+</mo><mn>1</mn></math>`)).toEqual(["math", "mi", "mo", "mn"]);
+    expect(await census(`<math><mi>x</mi><ms>s</ms><mtext>t</mtext></math>`)).toEqual(["math", "mi", "ms", "mtext"]);
+  });
+
+  it("sanitizer rules on foreignObject are not bypassed by a preceding <title>/<desc>", async () => {
+    const strip = doc =>
+      new HTMLRewriter()
+        .on("foreignobject", {
+          element(el) {
+            el.remove();
+          },
+        })
+        .transform(new Response(doc))
+        .text();
+
+    // Baseline: element is first child, handler fires.
+    expect(await strip(`<svg><foreignObject><script>evil()</script></foreignObject></svg>`)).toBe(`<svg></svg>`);
+    // Previously bypassed: preceded by another integration-point element.
+    expect(await strip(`<svg><title>x</title><foreignObject><script>evil()</script></foreignObject></svg>`)).toBe(
+      `<svg><title>x</title></svg>`,
+    );
+    expect(await strip(`<svg><desc>d</desc><foreignObject><script>evil()</script></foreignObject></svg>`)).toBe(
+      `<svg><desc>d</desc></svg>`,
+    );
+  });
+
+  it("matches annotation-xml html-integration-point after a sibling text-integration-point", async () => {
+    const handlers = [];
+    await new HTMLRewriter()
+      .on("annotation-xml", {
+        element(el) {
+          handlers.push(el.tagName);
+        },
+      })
+      .transform(
+        new Response(`<math><mi>x</mi><annotation-xml encoding="text/html"><span>y</span></annotation-xml></math>`),
+      )
+      .text();
+    expect(handlers).toEqual(["annotation-xml"]);
+  });
+});

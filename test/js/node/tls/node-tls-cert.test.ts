@@ -551,7 +551,7 @@ it("tls.connect should not accept untrusted certificates", async () => {
 });
 
 it("tls.connect with rejectUnauthorized: null still rejects untrusted certificates", async () => {
-  const { promise, resolve, reject } = Promise.withResolvers();
+  const { promise, resolve, reject } = Promise.withResolvers<NodeJS.ErrnoException>();
   let server: Server | null = null;
   let socket: TLSSocket | null = null;
 
@@ -581,7 +581,7 @@ it("tls.connect with rejectUnauthorized: null still rejects untrusted certificat
 });
 
 it("tls.connect with rejectUnauthorized: 0 keeps verification on like node", async () => {
-  const { promise, resolve, reject } = Promise.withResolvers();
+  const { promise, resolve, reject } = Promise.withResolvers<NodeJS.ErrnoException>();
   let server: Server | null = null;
   let socket: TLSSocket | null = null;
 

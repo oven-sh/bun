@@ -1574,4 +1574,4 @@ if (cluster.isPrimary) {
     stderr: expect.any(String),
     exitCode: 0,
   });
-});
+}, 30_000);

@@ -781,6 +781,10 @@ pub fn is_package_in_cache(
 // ─────────────────────────── global directories ───────────────────────────────
 
 pub fn setup_global_dir(manager: &mut PackageManager, ctx: &Command::Context) -> Result<(), Error> {
+    // `bun pm -g fetch` gets here from both the `bun pm` dispatcher and `install_with_manager`.
+    if manager.options.global_bin_dir.is_valid() {
+        return Ok(());
+    }
     manager.options.global_bin_dir = options::open_global_bin_dir(ctx.install.as_deref())?;
     let mut out_buffer = PathBuffer::uninit();
     let result = sys::get_fd_path_z(manager.options.global_bin_dir, &mut out_buffer)?;

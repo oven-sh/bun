@@ -1613,6 +1613,9 @@ fn run_tasks_erased(
                     continue;
                 }
 
+                manager.extracted_count += 1;
+                bun_core::analytics::Features::extracted_packages_inc();
+
                 if cb.has_on_extract {
                     // We've populated the cache, package already exists in memory. Call the package installer callback
                     // and don't enqueue dependencies

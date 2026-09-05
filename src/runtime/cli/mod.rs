@@ -360,6 +360,8 @@ pub mod pm_diff_normalize;
 pub mod pm_diff_profile;
 pub mod pm_diff_relayout;
 pub mod pm_diff_semantic;
+#[path = "pm_fetch_command.rs"]
+pub(crate) mod pm_fetch_command;
 #[path = "pm_licenses_command.rs"]
 pub(crate) mod pm_licenses_command;
 #[path = "pm_pkg_command.rs"]

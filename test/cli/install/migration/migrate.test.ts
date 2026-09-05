@@ -456,6 +456,20 @@ test.concurrent("package-lock.json migration does not platform-skip a regular fi
   expect(await Bun.file(join(testDir, "bun.lock")).text()).toContain(`"a": ["a@file:vendor/a", {}]`);
 });
 
+test.concurrent("`bun install --dry-run` does not write the bun.lock migrated from package-lock.json", async () => {
+  await using testDir = tempDir("migrate-dry-run", filePlatformFixture("a", "vendor/a", [], []));
+
+  const { stderr, exitCode } = await install(testDir, "--dry-run");
+  expect(stderr).toContain("migrated lockfile from package-lock.json");
+  expect(stderr).not.toContain("Saved lockfile");
+  expect(exitCode).toBe(0);
+  expect(["bun.lock", "bun.lockb", "node_modules"].map(name => fs.existsSync(join(testDir, name)))).toEqual([
+    false,
+    false,
+    false,
+  ]);
+});
+
 test.concurrent.each([
   ["a", "vendor/a"],
   ["@scope/a", "vendor/@scope/a"],

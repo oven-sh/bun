@@ -1751,7 +1751,10 @@ declare var PerformanceEntry: Bun.__internal.UseLibDomIfAvailable<
 interface PerformanceMark extends Bun.__internal.LibEmptyOrPerformanceMark {}
 declare var PerformanceMark: Bun.__internal.UseLibDomIfAvailable<
   "PerformanceMark",
-  { prototype: PerformanceMark; new (): PerformanceMark }
+  {
+    prototype: PerformanceMark;
+    new (markName: string, markOptions?: { detail?: any; startTime?: number | undefined }): PerformanceMark;
+  }
 >;
 
 interface PerformanceMeasure extends Bun.__internal.LibEmptyOrPerformanceMeasure {}
@@ -1763,7 +1766,11 @@ declare var PerformanceMeasure: Bun.__internal.UseLibDomIfAvailable<
 interface PerformanceObserver extends Bun.__internal.LibEmptyOrPerformanceObserver {}
 declare var PerformanceObserver: Bun.__internal.UseLibDomIfAvailable<
   "PerformanceObserver",
-  { prototype: PerformanceObserver; new (): PerformanceObserver }
+  {
+    prototype: PerformanceObserver;
+    new (callback: (entries: PerformanceObserverEntryList, observer: PerformanceObserver) => void): PerformanceObserver;
+    readonly supportedEntryTypes: readonly string[];
+  }
 >;
 
 interface PerformanceObserverEntryList extends Bun.__internal.LibEmptyOrPerformanceObserverEntryList {}
@@ -1787,7 +1794,10 @@ declare var ReadableByteStreamController: Bun.__internal.UseLibDomIfAvailable<
 interface ReadableStreamBYOBReader extends Bun.__internal.LibEmptyOrReadableStreamBYOBReader {}
 declare var ReadableStreamBYOBReader: Bun.__internal.UseLibDomIfAvailable<
   "ReadableStreamBYOBReader",
-  { prototype: ReadableStreamBYOBReader; new (): ReadableStreamBYOBReader }
+  {
+    prototype: ReadableStreamBYOBReader;
+    new (stream: ReadableStream<Uint8Array<ArrayBuffer>>): ReadableStreamBYOBReader;
+  }
 >;
 
 interface ReadableStreamBYOBRequest extends Bun.__internal.LibEmptyOrReadableStreamBYOBRequest {}
@@ -1799,7 +1809,10 @@ declare var ReadableStreamBYOBRequest: Bun.__internal.UseLibDomIfAvailable<
 interface TextDecoderStream extends Bun.__internal.LibEmptyOrNodeStreamWebTextDecoderStream {}
 declare var TextDecoderStream: Bun.__internal.UseLibDomIfAvailable<
   "TextDecoderStream",
-  { prototype: TextDecoderStream; new (): TextDecoderStream }
+  {
+    prototype: TextDecoderStream;
+    new (label?: string, options?: { fatal?: boolean | undefined; ignoreBOM?: boolean | undefined }): TextDecoderStream;
+  }
 >;
 
 interface TextEncoderStream extends Bun.__internal.LibEmptyOrNodeStreamWebTextEncoderStream {}

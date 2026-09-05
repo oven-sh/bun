@@ -172,6 +172,16 @@ impl HotReloaderCtx for VirtualMachine {
         // via `heap::alloc` and is live for the VM's lifetime.
         self.transpiler.resolver.watcher = Some(unsafe { (*watcher_ptr).get_resolve_watcher() });
 
+        if reload_immediately {
+            // `--watch` reloads by execve'ing in place, so this image starts out
+            // owning whatever the previous one spawned. Nothing has been spawned
+            // yet at this point (the entry point has not run), so every existing
+            // child is inherited.
+            bun_spawn::Process::reap_inherited_children(crate::EventLoopHandle::init(
+                self.event_loop().cast::<()>(),
+            ));
+        }
+
         watcher_ptr
     }
 

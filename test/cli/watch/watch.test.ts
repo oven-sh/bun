@@ -11,13 +11,23 @@ function stdoutWaiter(proc: Subprocess<"ignore", "pipe", any>) {
   const reader = proc.stdout.getReader();
   const decoder = new TextDecoder();
   let output = "";
+  const readUntil = async (predicate: () => boolean) => {
+    while (!predicate()) {
+      const { value, done } = await reader.read();
+      if (done) throw new Error(`stream closed, output so far: ${JSON.stringify(output)}`);
+      output += decoder.decode(value, { stream: true });
+    }
+  };
   return {
-    waitFor: async (needle: string) => {
-      while (!output.includes(needle)) {
-        const { value, done } = await reader.read();
-        if (done) throw new Error(`stream closed, output so far: ${JSON.stringify(output)}`);
-        output += decoder.decode(value, { stream: true });
-      }
+    waitFor: (needle: string) => readUntil(() => output.includes(needle)),
+    /** Waits for the whole line containing `needle` and returns it. */
+    waitForLine: async (needle: string) => {
+      await readUntil(() => {
+        const start = output.indexOf(needle);
+        return start !== -1 && output.indexOf("\n", start) !== -1;
+      });
+      const start = output.lastIndexOf("\n", output.indexOf(needle)) + 1;
+      return output.slice(start, output.indexOf("\n", start));
     },
     release: () => reader.releaseLock(),
     output: () => output,
@@ -429,6 +439,91 @@ it("NODE_COMPILE_CACHE persists across a --watch reload", async () => {
   const entries = readdirSync(cacheDir, { recursive: true, withFileTypes: true });
   expect(entries.filter(e => e.isFile()).length).toBeGreaterThan(0);
 }, 30000);
+
+// --watch reloads by execve'ing in place, so children spawned before the
+// reload are still children of the reloaded process. It has to wait on them
+// once they exit, otherwise every one of them (e.g. every node:cluster worker,
+// on every save) stays a zombie for as long as the watcher lives.
+it.skipIf(isWindows)(
+  "children spawned before a --watch reload are reaped by the reloaded process",
+  async () => {
+    // `early` exits as soon as the reload closes its stdin pipe, so it is
+    // usually already a zombie when the new image starts; `late` is told to
+    // exit by the new image, so it is still running when that image starts.
+    // Both self-destruct so a failure elsewhere in the test cannot leak them.
+    const exitOnRequest = `
+      setInterval(() => { if (require("fs").existsSync("exit-now")) process.exit(0); }, 10);
+      setTimeout(() => process.exit(1), 30_000);
+    `;
+    using dir = tempDir("watch-reap-inherited-children", {
+      "app.js": `
+        const fs = require("fs");
+        if (!fs.existsSync("children.json")) {
+          const early = Bun.spawn({
+            cmd: [process.execPath, "-e", 'process.stdin.on("end", () => process.exit(0)); process.stdin.resume();' + ${JSON.stringify(exitOnRequest)}],
+            stdin: "pipe",
+            stdout: "ignore",
+            stderr: "inherit",
+          });
+          const late = Bun.spawn({
+            cmd: [process.execPath, "-e", ${JSON.stringify(exitOnRequest)}],
+            stdin: "ignore",
+            stdout: "ignore",
+            stderr: "inherit",
+          });
+          fs.writeFileSync("children.json", JSON.stringify([early.pid, late.pid]));
+          console.log("iter first");
+        } else {
+          const pids = JSON.parse(fs.readFileSync("children.json", "utf8"));
+          fs.writeFileSync("exit-now", "");
+          // kill(pid, 0) keeps succeeding for a zombie; it only fails with
+          // ESRCH once the pid has been waited on.
+          const deadline = Date.now() + 10_000;
+          const timer = setInterval(() => {
+            const remaining = pids.filter(pid => {
+              try {
+                process.kill(pid, 0);
+                return true;
+              } catch {
+                return false;
+              }
+            });
+            if (remaining.length === 0) {
+              console.log("iter second: reaped");
+            } else if (Date.now() < deadline) {
+              return;
+            } else {
+              console.log("iter second: still have " + JSON.stringify(remaining));
+            }
+            clearInterval(timer);
+          }, 10);
+        }
+        setInterval(() => {}, 1000);
+      `,
+    });
+    const path = join(String(dir), "app.js");
+
+    watchee = spawn({
+      cmd: [bunExe(), "--watch", "app.js"],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "inherit",
+      stdin: "ignore",
+    });
+
+    const { waitFor, waitForLine, release } = stdoutWaiter(watchee);
+    await waitFor("iter first");
+    await Bun.write(path, (await Bun.file(path).text()) + "\n// touched");
+    const verdict = await waitForLine("iter second: ");
+    release();
+    watchee.kill("SIGKILL");
+    await watchee.exited;
+
+    expect(verdict).toBe("iter second: reaped");
+  },
+  30000,
+);
 
 // NODE_CHANNEL_FD survives in environ across execve; the fd it names must
 // survive too, so the reloaded image re-attaches to a live socket instead

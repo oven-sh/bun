@@ -1766,6 +1766,71 @@ impl SpawnResultExt for PosixSpawnResult {
     }
 }
 
+impl Process {
+    /// Wait on every child this process already has.
+    ///
+    /// `--watch` restarts by `execve`'ing in place, so the children the previous
+    /// image spawned (cluster workers, `unref()`'d subprocesses, ...) are still
+    /// this process's children, but nothing in the new image waits on them: once
+    /// they exit they stay zombies for as long as the watcher lives. Each one is
+    /// registered with the regular exit poller, unref'd so it never keeps the
+    /// event loop alive, and reaped like a child spawned by this image.
+    ///
+    /// Must run before this image spawns anything itself: every child found here
+    /// is treated as inherited, and waiting on a pid that a live `Process` is
+    /// also waiting on would steal its exit status.
+    pub fn reap_inherited_children(event_loop: EventLoopHandle) {
+        #[cfg(not(unix))]
+        {
+            let _ = event_loop;
+        }
+        #[cfg(unix)]
+        {
+            let mut pids = [0 as PidT; 4096];
+            for &pid in ParentDeathWatchdog::snapshot_children(&mut pids) {
+                if pid <= 1 {
+                    continue;
+                }
+                bun_core::scoped_log!(PROCESS, "reaping inherited child {}", pid);
+                Self::adopt_inherited(pid, event_loop);
+            }
+        }
+    }
+
+    #[cfg(unix)]
+    fn adopt_inherited(pid: PidT, event_loop: EventLoopHandle) {
+        #[cfg(any(target_os = "linux", target_os = "android"))]
+        let pidfd = match PosixSpawnResult::pidfd_for_child(pid) {
+            Ok(pidfd) => Some(pidfd),
+            // Without a pidfd only the waiter thread can watch this child; if
+            // that isn't armed either there is no way to observe its exit.
+            Err(_) if WaiterThread::should_use_waiter_thread() => None,
+            Err(_) => return,
+        };
+        #[cfg(not(any(target_os = "linux", target_os = "android")))]
+        let pidfd = None;
+
+        let mut spawned = PosixSpawnResult::default();
+        spawned.pid = pid;
+        spawned.pidfd = pidfd;
+        let process = spawned.to_process(event_loop);
+        // SAFETY: `process` was just created with the one ref released at the end
+        // of this block. `watch()` takes its own ref for the registration, which
+        // the exit dispatch releases (`on_wait_pid_from_event_loop_task` /
+        // `on_wait_pid_from_waiter_thread`), so the poller is the sole owner
+        // afterwards. A child that is already a zombie is readable on its pidfd
+        // right away; kqueue refuses to attach to one (ESRCH), which makes
+        // `watch_or_reap` wait on it inline, and the deref below frees it.
+        unsafe {
+            match (*process).watch_or_reap() {
+                Ok(_) => (*process).disable_keeping_event_loop_alive(),
+                Err(_) => (*process).close(),
+            }
+            Process::deref(process);
+        }
+    }
+}
+
 #[cfg(unix)]
 pub type SpawnOptions = PosixSpawnOptions;
 #[cfg(windows)]

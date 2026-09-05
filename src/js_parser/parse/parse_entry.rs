@@ -2349,8 +2349,18 @@ impl<'a> Parser<'a> {
             parts.append(&mut after);
         }
 
-        // Pop the module scope to apply the "ContainsDirectEval" rules
-        // p.popScope();
+        // Apply the "ContainsDirectEval" rules to the module scope (see
+        // `pop_scope`). Bundled ESM is exempt because its module scope is
+        // hoisted into the shared chunk scope.
+        if p.module_scope().contains_direct_eval
+            && !(p.options.bundle && exports_kind != js_ast::ExportsKind::Cjs)
+        {
+            let module_scope = p.module_scope_ref();
+            let mut iter = module_scope.members.iter();
+            while let Some(member) = iter.next() {
+                p.symbols[member.1.ref_.inner_index() as usize].set_must_not_be_renamed(true);
+            }
+        }
 
         #[cfg(not(target_arch = "wasm32"))]
         if bun_core::feature_flags::RUNTIME_TRANSPILER_CACHE {

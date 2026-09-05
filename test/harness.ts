@@ -1635,6 +1635,27 @@ String.prototype.isUTF16 = function () {
   return require("bun:internal-for-testing").jscInternals.isUTF16String(this);
 };
 
+/**
+ * Returns a copy of `s` stored as a 16-bit (UTF-16) JSC string, so a test can
+ * run the 16-bit code path of an API on content that would otherwise be stored
+ * as Latin-1. Throws if the result is not actually 16-bit.
+ *
+ * `(s + "\u0100").slice(0, -1)` does not do this: slicing a rope whose first
+ * fiber covers the whole range hands back that fiber, i.e. the original 8-bit
+ * string.
+ *
+ * Strings shorter than 2 code units cannot be forced (JSC interns the empty
+ * string and single Latin-1 characters as 8-bit) and are returned as-is.
+ */
+export function forceUTF16(s: string): string {
+  if (s.length < 2) return s;
+  const out = Buffer.from(s, "utf16le").toString("utf16le");
+  if (!out.isUTF16()) {
+    throw new Error(`forceUTF16: ${JSON.stringify(s)} was not stored as a 16-bit string`);
+  }
+  return out;
+}
+
 interface BunHarnessTestMatchers {
   toBeLatin1String(): void;
   toBeUTF16String(): void;

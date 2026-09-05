@@ -2,7 +2,7 @@
 // These complement sliceAnsi.test.ts with property-based and adversarial cases.
 
 import { describe, expect, test } from "bun:test";
-import { isASAN, isDebug } from "harness";
+import { forceUTF16, isASAN, isDebug } from "harness";
 
 // Seeded PRNG for reproducibility. Change seed to explore different cases.
 function makeRng(seed: number) {
@@ -572,9 +572,8 @@ describe("sliceAnsi encoding equivalence", () => {
     for (let i = 0; i < 50; i++) {
       // Build a string that COULD be Latin-1 (all < 0x100).
       const latin1 = randomAnsiAscii(rng, 10, 50);
-      // Force to UTF-16 by concatenating then removing a high char.
-      const utf16 = (latin1 + "\u{1F600}").slice(0, -2);
-      // Now latin1 is probably Latin-1, utf16 is definitely UTF-16. Same content.
+      // Same content in 16-bit storage.
+      const utf16 = forceUTF16(latin1);
       for (const a of [0, 2, 5]) {
         for (const b of [10, 20, 100]) {
           expect(Bun.sliceAnsi(utf16, a, b)).toBe(Bun.sliceAnsi(latin1, a, b));
@@ -586,7 +585,7 @@ describe("sliceAnsi encoding equivalence", () => {
   test("Latin-1-range non-ASCII in both encodings", () => {
     // Chars 0x80-0xFF exist in both encodings. 0xA9 (©), 0xE9 (é), etc.
     const s8 = "\u00A9\u00E9\u00DF\u00F1"; // ©éßñ — likely Latin-1 internally
-    const s16 = (s8 + "\u{1F600}").slice(0, -2); // force UTF-16
+    const s16 = forceUTF16(s8);
     for (let a = 0; a <= 4; a++) {
       for (let b = a; b <= 4; b++) {
         expect(Bun.sliceAnsi(s16, a, b)).toBe(Bun.sliceAnsi(s8, a, b));

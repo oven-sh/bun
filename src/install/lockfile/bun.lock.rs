@@ -22,7 +22,6 @@ use crate::package_manager_real::Options as PackageManagerOptions;
 use crate::repository::RepositoryExt as _;
 use crate::{
     DependencyID, Npm, Origin, PackageID, PackageManager, PackageNameHash, Repository, Resolution,
-    TruncatedPackageNameHash,
     bin::{Bin, Tag as BinTag},
     dependency,
     dependency::{
@@ -526,12 +525,8 @@ impl Stringifier {
 
                     // intentionally not checking default trusted dependencies
                     if let Some(trusted_dependencies) = &lockfile.trusted_dependencies {
-                        if let Some(trusted_name) =
-                            trusted_dependencies.get(&(dep.name_hash as TruncatedPackageNameHash))
-                        {
-                            if **trusted_name == *dep.name.slice(buf) {
-                                found_trusted_dependencies.insert(dep.name_hash, dep.name);
-                            }
+                        if trusted_dependencies.contains_name(dep.name.slice(buf)) {
+                            found_trusted_dependencies.insert(dep.name_hash, dep.name);
                         }
                     }
                 }
@@ -1938,10 +1933,9 @@ pub(crate) fn parse_into_binary_lockfile(
                 );
                 return Err(ParseError::InvalidTrustedDependenciesSet);
             };
-            let name: Box<[u8]> = Box::from(name_str);
-            let name_hash: TruncatedPackageNameHash =
-                StringBuilder::string_hash(&name) as TruncatedPackageNameHash;
-            trusted_dependencies.insert(name_hash, name);
+            trusted_dependencies
+                .insert(name_str)
+                .map_err(|_| ParseError::OutOfMemory)?;
         }
 
         lockfile.trusted_dependencies = Some(trusted_dependencies);

@@ -1681,6 +1681,37 @@ describe("bundler", () => {
       expect(code.match(/let keep = /g)).toHaveLength(10);
     },
   });
+
+  // A `using` binding is a constant. When bundling with minify-syntax, every
+  // `const` is printed as `let`, so both the `using x = null` fold and the
+  // lowered `using` must end up as `let`, like esbuild prints them.
+  itBundled("minify/LoweredUsingIsPrintedLikeConst", {
+    files: {
+      "/entry.js": /* js */ `
+        function open() {
+          return { [Symbol.dispose]() { console.log("disposed"); } };
+        }
+        function f() {
+          using a = null;
+          using b = open();
+          console.log("body", a, typeof b);
+        }
+        f();
+      `,
+    },
+    target: "browser",
+    minifySyntax: true,
+    minifyIdentifiers: false,
+    onAfterBundle(api) {
+      const code = api.readFile("/out.js");
+      expect(code).toMatch(/\blet a = null\b/);
+      expect(code).toMatch(/\blet b = __using\(/);
+      expect(code).not.toMatch(/\b(const|var) [ab]\b/);
+    },
+    run: {
+      stdout: "body null object\ndisposed\n",
+    },
+  });
 });
 
 // The runtime transpiler (`bun run`/`bun test`) implicitly enables

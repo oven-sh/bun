@@ -9925,14 +9925,7 @@ impl LowerUsingDeclarationsContext {
                     ));
                 }
             }
-            // SAFETY: arena-owned Scope pointer valid for parser 'a lifetime; no aliasing &mut outstanding
-            if p.will_wrap_module_in_try_catch_for_using
-                && p.current_scope().kind == js_ast::scope::Kind::Entry
-            {
-                local.kind = js_ast::s::Kind::KVar;
-            } else {
-                local.kind = js_ast::s::Kind::KConst;
-            }
+            local.kind = p.select_local_kind(js_ast::s::Kind::KConst);
         }
     }
 

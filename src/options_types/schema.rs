@@ -198,6 +198,8 @@ pub mod api {
     /// `BunInstall.hoist_pattern` and `bun_ini`'s callers all name the
     /// same type.
     pub use bun_install_types::NodeLinker::{NodeLinker, PnpmMatcher};
+    /// Parsed `packageExtensions` entries; canonical in `bun_install_types`.
+    pub use bun_install_types::PackageExtensions::PackageExtension;
 
     /// Full field set.
     /// `Default` is every field `None`/empty.
@@ -262,6 +264,8 @@ pub mod api {
         pub hoist: Option<bool>,
         /// `offline = true`: `bun install` never touches the network.
         pub offline: Option<bool>,
+        /// `[install.packageExtensions."<name>@<range>"]`
+        pub package_extensions: Option<Vec<PackageExtension>>,
     }
 
     #[repr(u8)]

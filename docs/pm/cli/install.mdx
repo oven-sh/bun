@@ -134,6 +134,28 @@ Bun supports npm's `"overrides"` and Yarn's `"resolutions"` in `package.json`. B
 
 ---
 
+## Package extensions
+
+Bun supports pnpm's and Yarn's `"packageExtensions"` in `package.json` (and `bunfig.toml`) for adding `dependencies`, `optionalDependencies`, `peerDependencies` and `peerDependenciesMeta` entries that a third-party package forgot to declare — most often needed with [isolated installs](/pm/isolated-installs). See [package extensions](/pm/package-extensions).
+
+{/* prettier-ignore */}
+```json package.json icon="file-json"
+{
+  "name": "my-app",
+  "dependencies": {
+    "react": "^18.0.0",
+    "react-redux": "^7.0.0"
+  },
+  "packageExtensions": { // [!code ++]
+    "react-redux@7": { // [!code ++]
+      "peerDependencies": { "react": "*" } // [!code ++]
+    } // [!code ++]
+  } // [!code ++]
+}
+```
+
+---
+
 ## Global packages
 
 To install a package globally, use the `-g`/`--global` flag. Use it to install command-line tools.
@@ -600,6 +622,7 @@ Bun preserves dependencies that use pnpm's `catalog:` protocol:
 Bun migrates the following pnpm configuration from both `pnpm-lock.yaml` and `pnpm-workspace.yaml`:
 
 - **Overrides**: Moved from `pnpm.overrides` to root-level `overrides` in `package.json`
+- **Package Extensions**: Moved from `pnpm.packageExtensions` in the root `package.json` and `packageExtensions` in `pnpm-workspace.yaml` to root-level `packageExtensions` in `package.json`
 - **Patched Dependencies**: Moved from `pnpm.patchedDependencies` to root-level `patchedDependencies` in `package.json`
 - **Workspace Overrides**: Applied from `pnpm-workspace.yaml` to root `package.json`
 

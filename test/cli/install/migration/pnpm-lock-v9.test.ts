@@ -2722,6 +2722,106 @@ importers:
     });
   });
 
+  // packageExtensions live in `pnpm.packageExtensions` (package.json) or in
+  // pnpm-workspace.yaml; both move to the root `packageExtensions` bun reads.
+  // pnpm already wrote the injected edges into its lockfile snapshots, so the
+  // migrated bun.lock carries them as-is.
+  test.concurrent("packageExtensions move to the root of package.json", async () => {
+    using dir = tempDir("pnpm-v9-package-extensions", {
+      "package.json": JSON.stringify({
+        name: "package-extensions",
+        dependencies: { "is-even": "1.0.0" },
+        pnpm: { packageExtensions: { "is-even@1": { dependencies: { "is-buffer": "^1.1.5" } } } },
+      }),
+      "pnpm-workspace.yaml": `packageExtensions:
+  is-odd:
+    peerDependencies:
+      is-number: '*'
+`,
+      "pnpm-lock.yaml": `lockfileVersion: '9.0'
+
+settings:
+  autoInstallPeers: true
+  excludeLinksFromLockfile: false
+
+packageExtensionsChecksum: sha256-x
+
+importers:
+
+  .:
+    dependencies:
+      is-even:
+        specifier: 1.0.0
+        version: 1.0.0
+
+packages:
+
+  is-buffer@1.1.6:
+    resolution: {integrity: sha512-NcdALwpXkTm5Zvvbk7owOUSvVvBKDgKP5/ewfXEznmQFfs4ZRmanOeKBTjRVjka3QFoN6XJ+9F3USqfHqTaU5w==}
+
+  is-even@1.0.0:
+    resolution: {integrity: sha512-LEhnkAdJqic4Dbqn58A0y52IXoHWlsueqQkKfMfdEnIYG8A1sm/GHidKkS6yvXlMoRrkM34csHnXQtOqcb+Jzg==}
+    engines: {node: '>=0.10.0'}
+
+  is-number@3.0.0:
+    resolution: {integrity: sha512-4cboCqIpliH+mAvFNegjZQ4kgKc3ZUhQVr3HvWbSh5q3WH2v82ct+T2Y1hdU5Gdtorx/cLifQjqCbL7bpznLTg==}
+    engines: {node: '>=0.10.0'}
+
+  is-odd@0.1.2:
+    resolution: {integrity: sha512-Ri7C2K7o5IrUU9UEI8losXJCCD/UtsaIrkR5sxIcFg4xQ9cRJXlWA5DQvTE0yDc0krvSNLsRGXN11UPS6KyfBw==}
+    engines: {node: '>=0.10.0'}
+    peerDependencies:
+      is-number: '*'
+
+  kind-of@3.2.2:
+    resolution: {integrity: sha512-NOW9QQXMoZGg/oqnVNoNTTIFEIid1627WCffUBJEdMxYApq7mNE7CpzucIPc+ZQg25Phej7IJSmX3hO+oblOtQ==}
+    engines: {node: '>=0.10.0'}
+
+snapshots:
+
+  is-buffer@1.1.6: {}
+
+  is-even@1.0.0:
+    dependencies:
+      is-buffer: 1.1.6
+      is-odd: 0.1.2(is-number@3.0.0)
+
+  is-number@3.0.0:
+    dependencies:
+      kind-of: 3.2.2
+
+  is-odd@0.1.2(is-number@3.0.0):
+    dependencies:
+      is-number: 3.0.0
+
+  kind-of@3.2.2:
+    dependencies:
+      is-buffer: 1.1.6
+`,
+    });
+
+    const { stderr, exitCode } = await migrate(String(dir));
+
+    expect(stderr).not.toContain("error:");
+    expect(stderr).toContain("moved pnpm.packageExtensions to packageExtensions");
+    expect(stderr).toContain("pnpm-workspace.yaml packageExtensions to packageExtensions");
+    expect(stderr).toContain("migrated lockfile from pnpm-lock.yaml");
+    expect(exitCode).toBe(0);
+    expect(await Bun.file(join(String(dir), "package.json")).json()).toStrictEqual({
+      name: "package-extensions",
+      dependencies: { "is-even": "1.0.0" },
+      packageExtensions: {
+        "is-even@1": { dependencies: { "is-buffer": "^1.1.5" } },
+        "is-odd": { peerDependencies: { "is-number": "*" } },
+      },
+    });
+    const bunLock = await bunLockOf(String(dir));
+    expect(bunLock).toMatch(
+      /"is-even": \["is-even@1\.0\.0", "[^"]*", \{ "dependencies": \{ "is-buffer": "1\.1\.6", "is-odd": "0\.1\.2" \} \}/,
+    );
+    expect(bunLock).toMatch(/"is-odd": \["is-odd@0\.1\.2", "[^"]*", \{ "peerDependencies": \{ "is-number": "\*" \} \}/);
+  });
+
   test.concurrent("link: version with a semver specifier resolves to the workspace (pnpm/pnpm#7712)", async () => {
     // save-workspace-protocol=false / link-workspace-packages shape
     using dir = fixture("v9-link-semver-specifier");

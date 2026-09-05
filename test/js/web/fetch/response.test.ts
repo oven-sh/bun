@@ -49,7 +49,7 @@ describe("2-arg form", () => {
 test("print size", () => {
   expect(normalizeBunSnapshot(Bun.inspect(new Response(Bun.file(import.meta.filename)))), import.meta.dir)
     .toMatchInlineSnapshot(`
-    "Response (8.0 KB) {
+    "Response (11.89 KB) {
       ok: true,
       url: "",
       status: 200,
@@ -150,11 +150,17 @@ test("new Response(123, { method: 456 }) does not throw", () => {
 });
 
 test("handle stack overflow", () => {
+  // Covers https://github.com/oven-sh/bun/pull/23961: a stack overflow during
+  // text()'s promise resolution must surface as a catchable JS error.
+  // The wide recursive call fattens each frame: debug builds spend ~0.2ms per
+  // frame in the Response constructor, and overflowing the stack with small
+  // frames takes ~26k frames, longer than the test timeout.
+  const pad = new Array(1024).fill(0);
   function f0(a1, a2) {
     const v4 = new Response();
     // @ts-ignore
     const v5 = v4.text(a2, a2, v4, f0, f0);
-    a1(a1); // Recursive call causes stack overflow
+    a1(a1, a2, ...pad); // Recursive call causes stack overflow
     return v5;
   }
   expect(() => {
@@ -213,5 +219,86 @@ describe("clone()", () => {
 
     expect(originalText).toBe("Hello, world!");
     expect(clonedText).toBe("Hello, world!");
+  });
+});
+
+// https://github.com/oven-sh/bun/issues/32043
+describe("null body status", () => {
+  // https://fetch.spec.whatwg.org/#null-body-status
+  // The spec throws a TypeError for a non-null body with one of these
+  // statuses; Bun drops the body instead so existing code that builds such
+  // responses keeps working. 103 is excluded here: the constructor's status
+  // range check rejects it first.
+  const nullBodyStatuses = [101, 204, 205, 304];
+
+  describe.each(nullBodyStatuses)("status %i", status => {
+    test("constructor drops a string body", async () => {
+      const res = new Response("body", { status });
+      expect({ status: res.status, body: res.body }).toEqual({ status, body: null });
+      expect(await res.text()).toBe("");
+    });
+
+    test("constructor drops an empty string body", () => {
+      expect(new Response("", { status }).body).toBe(null);
+    });
+
+    test("constructor accepts null and undefined bodies", () => {
+      const fromNull = new Response(null, { status });
+      const fromUndefined = new Response(undefined, { status });
+      expect({ status: fromNull.status, body: fromNull.body }).toEqual({ status, body: null });
+      expect({ status: fromUndefined.status, body: fromUndefined.body }).toEqual({ status, body: null });
+    });
+
+    test("Response.json drops the body", async () => {
+      const res = Response.json({ a: 1 }, { status });
+      expect({ status: res.status, body: res.body }).toEqual({ status, body: null });
+      expect(await res.text()).toBe("");
+      // Bun also accepts a bare number as init
+      expect(Response.json({ a: 1 }, status).body).toBe(null);
+    });
+  });
+
+  test("constructor drops other body types", () => {
+    expect(new Response(new Blob(["body"]), { status: 204 }).body).toBe(null);
+    expect(new Response(new Uint8Array([1, 2, 3]), { status: 205 }).body).toBe(null);
+    expect(new Response(new URLSearchParams({ a: "1" }), { status: 304 }).body).toBe(null);
+  });
+
+  test("a ReadableStream body is left unlocked and usable", async () => {
+    const stream = new ReadableStream({
+      start(controller) {
+        controller.enqueue(new Uint8Array([1]));
+        controller.close();
+      },
+    });
+    const res = new Response(stream, { status: 204 });
+    expect(res.body).toBe(null);
+    expect(stream.locked).toBe(false);
+    expect((await stream.getReader().read()).value).toEqual(new Uint8Array([1]));
+  });
+
+  test("Response.json(null) still serializes to a body, so it is dropped too", () => {
+    expect(Response.json(null, { status: 204 }).body).toBe(null);
+  });
+
+  test("Response.json with bare number init 103 drops the body", () => {
+    // the bare-number init path skips the [200, 599] range check, so 103 is
+    // reachable here (unlike in the constructor)
+    expect(Response.json({ a: 1 }, 103).body).toBe(null);
+  });
+
+  test("Response.json with object init 103 is rejected by the range check first", () => {
+    expect(() => Response.json({ a: 1 }, { status: 103 })).toThrow(RangeError);
+  });
+
+  test("statuses outside the null body set still accept a body", () => {
+    for (const status of [200, 203, 206, 303, 305]) {
+      const res = new Response("body", { status });
+      expect({ status: res.status, hasBody: res.body !== null }).toEqual({ status, hasBody: true });
+    }
+  });
+
+  test("103 with a body is rejected by the range check first", () => {
+    expect(() => new Response("body", { status: 103 })).toThrow(RangeError);
   });
 });

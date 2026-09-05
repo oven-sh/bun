@@ -2,15 +2,15 @@ import { expect, test } from "bun:test";
 import { bunEnv, bunExe, isWindows } from "harness";
 import { join } from "node:path";
 
-// The fixture needs tryEnd() to park under socket backpressure so
+// The fixture needs the body write to park under socket backpressure so
 // pending_flush is set when the stream rejects. On Windows that can't happen:
 // Winsock's non-blocking send() never returns a partial write — it either
 // copies the entire buffer into the AFD queue (which grows to fit) or returns
 // WSAEWOULDBLOCK only when the queue is already full from a *previous* send.
-// tryEnd() is the first write on a fresh socket, so it always reports full
-// success regardless of payload size, and pending_flush is never created.
-// The leak being guarded (handleRejectStream not unprotecting pending_flush)
-// is therefore POSIX-only by construction.
+// The 8 MiB write is effectively the first body send on a fresh socket, so it
+// always reports full success and pending_flush is never created. The leak
+// being guarded (handleRejectStream not unprotecting pending_flush) is
+// therefore POSIX-only by construction.
 test.skipIf(isWindows)(
   "handleRejectStream unprotects pending_flush (no Promise GC-root leak)",
   async () => {

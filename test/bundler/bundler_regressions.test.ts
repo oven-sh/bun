@@ -40,6 +40,35 @@ describe("bundler", () => {
     },
   });
 
+  // https://github.com/oven-sh/bun/issues/11476
+  itBundled("regression/MultiEntryPointPartLiveness#11476", {
+    files: {
+      "/entry-a.js": `
+        import { entryA } from "./shared.js";
+        console.log(entryA());
+      `,
+      "/entry-b.js": `
+        import { entryB } from "./shared.js";
+        console.log(entryB());
+      `,
+      "/shared.js": `
+        export function entryA() { return "entry-a-only"; }
+        export function entryB() { return "entry-b-only"; }
+      `,
+    },
+    entryPoints: ["/entry-a.js", "/entry-b.js"],
+    splitting: false,
+    outdir: "/out",
+    assertNotPresent: {
+      "/out/entry-a.js": "entry-b-only",
+      "/out/entry-b.js": "entry-a-only",
+    },
+    run: [
+      { file: "/out/entry-a.js", stdout: "entry-a-only" },
+      { file: "/out/entry-b.js", stdout: "entry-b-only" },
+    ],
+  });
+
   // https://x.com/jeroendotdot/status/1740651288239460384?s=46&t=0Uhw6mmGT650_9M2pXUsCw
   itBundled("regression/PublicPathCLIFlagNotWorking", {
     files: {

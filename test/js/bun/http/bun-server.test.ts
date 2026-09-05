@@ -352,6 +352,28 @@ describe.concurrent("Server", () => {
     }
   });
 
+  test("server.fetch(url, { headers: Headers }) copies the headers; the Headers object stays usable across GC", async () => {
+    using server = Bun.serve({
+      port: 0,
+      fetch(req) {
+        return new Response(req.headers.get("x-i") ?? "none");
+      },
+    });
+    const url = `http://${server.hostname}:${server.port}/`;
+    const kept: Headers[] = [];
+    for (let i = 0; i < 200; i++) {
+      const headers = new Headers({ "x-i": String(i) });
+      const response = await server.fetch(url, { headers });
+      expect(await response.text()).toBe(String(i));
+      if (i % 2 === 0) kept.push(headers);
+      if (i % 50 === 0) Bun.gc(true);
+    }
+    Bun.gc(true);
+    // The Request built by server.fetch() has been collected; the Headers we
+    // kept must still own their list.
+    expect(kept.map(h => h.get("x-i"))).toEqual(kept.map((_, i) => String(i * 2)));
+  });
+
   test("server should return a body for a OPTIONS Request", async () => {
     using server = Bun.serve({
       port: 0,

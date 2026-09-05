@@ -2311,22 +2311,15 @@ where
 
                 if let Some(headers_) = opts.fast_get(ctx, jsc::BuiltinName::Headers)? {
                     if let Some(headers__) = FetchHeaders::cast_(headers_, ctx.vm()) {
-                        // NOTE: `cast_` returns the `FetchHeaders*` held by the
-                        // JS `Headers` wrapper (`JSFetchHeaders`'s internal
-                        // `Ref<FetchHeaders>`) without bumping the refcount —
-                        // the FFI surface has `WebCore__FetchHeaders__deref` but
-                        // no `ref()`, so a +1 cannot be taken here. Adopting
-                        // hands that wrapper-held ref to the constructed
-                        // `Request` (via `Request::init2` below): the eventual
-                        // single deref happens when the Request's finalizer
-                        // drops its `headers` field (`HeadersRef::Drop`,
-                        // Response.rs), pairing with the wrapper's +1.
-                        // SAFETY: `headers__` is live (rooted by `headers_`),
-                        // and ownership of one ref transfers as described above.
-                        headers = Some(unsafe { HeadersRef::adopt(headers__) });
-                    } else if let Some(headers__) = FetchHeaders::create_from_js(ctx, headers_)? {
-                        // SAFETY: create_from_js returns a +1 ref.
-                        headers = Some(unsafe { HeadersRef::adopt(headers__) });
+                        // The JS `Headers` keeps its own reference; the Request
+                        // gets a copy, as `new Request(url, { headers })` does.
+                        // S008: `FetchHeaders` is an opaque ZST FFI handle — safe deref.
+                        headers = bun_opaque::opaque_deref_mut(headers__.as_ptr())
+                            .clone_this(ctx)?
+                            // SAFETY: `clone_this` returns a +1 ref.
+                            .map(|p| unsafe { HeadersRef::adopt(p) });
+                    } else {
+                        headers = HeadersRef::create_from_js(ctx, headers_)?;
                     }
                 }
 

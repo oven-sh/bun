@@ -1,6 +1,7 @@
 // https://github.com/oven-sh/bun/issues/15734
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, isWindows, tempDir } from "harness";
+import { rmSync } from "node:fs";
 import { join, sep } from "path";
 
 // `bun build --compile` copies + rewrites the whole bun binary (~1GB under
@@ -241,6 +242,51 @@ describe.concurrent("compile --asset and /$bunfs/ directory semantics", () => {
       expect(r.client.recursive.join("\n")).not.toContain(sep === "/" ? "\\" : "/");
       // data.txt + config.json + 5 under client/
       expect(r.client.embeddedFileCount).toBeGreaterThanOrEqual(7);
+      expect(code).toBe(0);
+    },
+    TIMEOUT,
+  );
+
+  // --asset embeds files under the same /$bunfs/root/ directory the entry
+  // chunk lives in, so the usual CommonJS idiom for locating files shipped
+  // next to the code has to see that directory as __dirname. The source tree
+  // is deleted before the binary runs so a build-machine path cannot satisfy
+  // the read.
+  //
+  // ESM output gets the value from import.meta (platform separators). With
+  // --bytecode the output is CJS and the value comes from the module wrapper,
+  // whose parameters are the standalone graph key: forward-slashed even on
+  // Windows, where the wrapper used to split on backslash only and produce "".
+  test.each([
+    ["esm", [], isWindows ? "B:\\~BUN\\root" : "/$bunfs/root"],
+    ["--bytecode (cjs wrapper)", ["--bytecode"], isWindows ? "B:/~BUN/root" : "/$bunfs/root"],
+  ])(
+    "--asset files are reachable through __dirname after the build tree is gone (%s)",
+    async (_, extraArgs, expectedDirname) => {
+      using dir = tempDir("bunfs-asset-dirname", {
+        "index.ts": /* ts */ `
+          const fs = require("node:fs");
+          const path = require("node:path");
+          console.log(JSON.stringify({
+            dirname: __dirname,
+            filename: __filename,
+            dirnameIsImportMetaDir: __dirname === import.meta.dir,
+            greeting: fs.readFileSync(path.join(__dirname, "data", "greeting.txt"), "utf8"),
+          }));
+        `,
+        "data/greeting.txt": "hello from an embedded asset",
+      });
+      await compile(String(dir), ["--asset", "./data", ...extraArgs]);
+      rmSync(join(String(dir), "data"), { recursive: true });
+
+      const { stdout, stderr, code } = await run(String(dir));
+      expect(stderr.trim()).toBe("");
+      expect(JSON.parse(stdout.trim())).toEqual({
+        dirname: expectedDirname,
+        filename: expect.stringMatching(/^.*[/\\]root[/\\]app(\.exe)?$/),
+        dirnameIsImportMetaDir: true,
+        greeting: "hello from an embedded asset",
+      });
       expect(code).toBe(0);
     },
     TIMEOUT,

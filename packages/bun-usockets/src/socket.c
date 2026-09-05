@@ -844,6 +844,10 @@ void us_socket_unref(struct us_socket_t *s) {
     // do nothing if not using libuv
 }
 
+int us_socket_is_paused(struct us_socket_t *s) {
+    return s->flags.is_paused;
+}
+
 void us_socket_pause(struct us_socket_t *s) {
     if (s->flags.is_paused) return;
     // closed cannot be paused because it is already closed

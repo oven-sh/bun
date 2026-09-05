@@ -1553,10 +1553,10 @@ function getNodeHTTPServerSocket() {
         this[kStreamingEnabled] = enable;
         if (enable) {
           handle.ondata = this.#onData.bind(this);
-          handle.ondrain = this.#onDrain.bind(this);
+          handle.ondrain ??= this.#onDrain.bind(this);
         } else {
           handle.ondata = undefined;
-          handle.ondrain = undefined;
+          // ondrain stays armed: _write relies on it too.
         }
       }
     }
@@ -1566,9 +1566,9 @@ function getNodeHTTPServerSocket() {
       const callback = this.#pendingCallback;
       if (callback) {
         this.#pendingCallback = null;
+        // Writable emits 'drain' from here when a write() returned false.
         (callback as Function)();
       }
-      this.emit("drain");
     }
     #onData(chunk, last) {
       this._unrefTimer();
@@ -1613,6 +1613,11 @@ function getNodeHTTPServerSocket() {
       releaseServerParserShim(this);
       this[kHandle] = null;
       this.server?.[kTrackedConnections]?.delete(this);
+      const pendingWriteCallback = this.#pendingCallback;
+      if (pendingWriteCallback) {
+        this.#pendingCallback = null;
+        (pendingWriteCallback as Function)(new ConnResetException("aborted"));
+      }
       const timer = this[kSocketTimeoutTimer];
       if (timer) {
         clearTimeout(timer);
@@ -1955,9 +1960,9 @@ function getNodeHTTPServerSocket() {
       try {
         if (handle) {
           const flushed = handle.write(_chunk, _encoding);
-          if (!flushed && handle.ondrain) {
-            // Streaming mode (CONNECT tunnels): wait for the native drain
-            // callback before completing the write.
+          if (flushed === false) {
+            // The remainder is buffered natively; complete the write on drain.
+            handle.ondrain ??= this.#onDrain.bind(this);
             this.#pendingCallback = _callback;
             return false;
           }

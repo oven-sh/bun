@@ -1525,6 +1525,49 @@ size_t uws_req_get_header(uws_req_t *res, const char *lower_case_header,
     }
   }
 
+  /* Returns true while bytes remain buffered. */
+  bool uws_async_socket_write(int ssl, us_socket_t *s, const char *data, size_t length)
+  {
+    if (us_socket_is_closed(s)) {
+      return false;
+    }
+    auto body = [&](auto *asyncSocket) {
+      /* The corked response head must precede these raw bytes. */
+      auto [uncorked, bp0] = asyncSocket->uncork();
+      (void)uncorked;
+      bool backpressure = bp0;
+      while (length > 0) {
+        int len = (int)std::min(length, (size_t)INT_MAX);
+        auto [written, bp] = asyncSocket->write(data, len);
+        (void)written;
+        backpressure |= bp;
+        data += (size_t)len;
+        length -= (size_t)len;
+      }
+      return backpressure || !asyncSocket->hasFullyDrained();
+    };
+    return ssl ? body(reinterpret_cast<uWS::AsyncSocket<true> *>(s))
+               : body(reinterpret_cast<uWS::AsyncSocket<false> *>(s));
+  }
+
+  /* Returns true when the shutdown is deferred until the buffer drains. */
+  bool uws_async_socket_end(int ssl, us_socket_t *s)
+  {
+    if (us_socket_is_closed(s)) {
+      return false;
+    }
+    auto body = [](auto *asyncSocket) {
+      asyncSocket->uncork();
+      if (!asyncSocket->hasFullyDrained()) {
+        return true;
+      }
+      asyncSocket->shutdown();
+      return false;
+    };
+    return ssl ? body(reinterpret_cast<uWS::AsyncSocket<true> *>(s))
+               : body(reinterpret_cast<uWS::AsyncSocket<false> *>(s));
+  }
+
   void us_socket_mark_needs_more_not_ssl(uws_res_r res)
   {
     us_socket_r s = (us_socket_t *)res;

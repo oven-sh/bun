@@ -601,76 +601,14 @@ mod c {
 }
 
 #[repr(C)]
+#[derive(Default)]
 pub struct us_socket_stream_buffer_t {
-    pub(crate) list_ptr: *mut u8,
-    pub(crate) list_cap: usize,
-    pub(crate) list_len: usize,
-    pub(crate) total_bytes_written: usize,
-    pub(crate) cursor: usize,
-}
-
-/// Minimal structural mirror of `bun_io::StreamBuffer` for tier-0 interop.
-/// The higher-tier `bun_io::StreamBuffer` is field-identical and converts via
-/// `From`/`Into` (added in the move-in pass).
-pub struct StreamBuffer {
-    pub list: Vec<u8>,
-    pub cursor: usize,
+    pub total_bytes_written: usize,
 }
 
 impl us_socket_stream_buffer_t {
-    pub fn update(&mut self, stream_buffer: StreamBuffer) {
-        // Decompose the Vec<u8> backing `stream_buffer.list` into raw parts so
-        // the C side can read ptr/len/cap directly.
-        let mut list = core::mem::ManuallyDrop::new(stream_buffer.list);
-        if list.capacity() > 0 {
-            self.list_ptr = list.as_mut_ptr();
-        } else {
-            self.list_ptr = ptr::null_mut();
-        }
-        self.list_len = list.len();
-        self.list_cap = list.capacity();
-        self.cursor = stream_buffer.cursor;
-    }
-
     pub fn wrote(&mut self, written: usize) {
         self.total_bytes_written = self.total_bytes_written.saturating_add(written);
     }
-
-    pub fn to_stream_buffer(&self) -> StreamBuffer {
-        StreamBuffer {
-            list: if !self.list_ptr.is_null() {
-                unsafe {
-                    // SAFETY: list_ptr/list_len/list_cap were produced by decomposing a
-                    // Vec<u8> in `update`; global allocator (mimalloc) matches.
-                    Vec::from_raw_parts(self.list_ptr, self.list_len, self.list_cap)
-                }
-            } else {
-                Vec::new()
-            },
-            cursor: self.cursor,
-        }
-    }
-
-    /// Explicit teardown — this struct is `#[repr(C)]` and freed via the
-    /// exported `us_socket_free_stream_buffer`, so no `Drop` impl.
-    ///
-    /// SAFETY: `list_ptr`/`list_cap` were produced by `update` (decomposed
-    /// `Vec<u8>` on the global mimalloc allocator). Not called more than once.
-    pub(crate) unsafe fn destroy(&mut self) {
-        if !self.list_ptr.is_null() {
-            unsafe {
-                // SAFETY: list_ptr/list_cap came from a decomposed Vec<u8> (global mimalloc).
-                drop(Vec::from_raw_parts(self.list_ptr, 0, self.list_cap));
-            }
-            self.list_ptr = core::ptr::null_mut();
-            self.list_cap = 0;
-        }
-    }
-}
-
-#[unsafe(no_mangle)]
-extern "C" fn us_socket_free_stream_buffer(buffer: *mut us_socket_stream_buffer_t) {
-    // SAFETY: caller (C) passes a live us_socket_stream_buffer_t*
-    unsafe { (*buffer).destroy() };
 }
 // us_socket_buffered_js_write moved to src/runtime/socket/uws_jsc.rs

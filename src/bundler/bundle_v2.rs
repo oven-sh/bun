@@ -5016,6 +5016,7 @@ pub mod bv2_impl {
                                 contents_or_fd: parse_task::ContentsOrFd::Fd {
                                     dir: bun_sys::Fd::INVALID,
                                     file: bun_sys::Fd::INVALID,
+                                    owns_file: false,
                                 },
                                 side_effects: bun_ast::SideEffects::HasSideEffects,
                                 jsx: this
@@ -7225,34 +7226,37 @@ pub mod bv2_impl {
             }
 
             // To minimize contention, watchers are appended on the bundle thread.
-            if this.bun_watcher.is_some() {
-                if parse_result.watcher_data.fd != bun_sys::Fd::INVALID {
-                    let source_index = parse_result.value.source_index();
-                    // borrowck — read the source path before
-                    // `should_add_watcher(&self)` so the column borrow is released.
-                    let source_path = this.graph.input_files.items_source()[source_index as usize]
-                        .path
-                        .text;
-                    if this.should_add_watcher(source_path) {
-                        let fd = parse_result.watcher_data.fd;
-                        let dir_fd = parse_result.watcher_data.dir_fd;
-                        let hash = bun_wyhash::hash(source_path) as u32;
-                        let bun_watcher = this.bun_watcher_mut().unwrap();
-                        // The watcher keeps the path past this bundle; borrow it
-                        // only when it is interned for the process lifetime
-                        // (`dupe_alloc` leaves other paths in the bundle arena).
-                        let _ = if Fs::as_interned_path(source_path).is_some() {
-                            bun_watcher.add_file::<{ cfg!(windows) }>(
-                                fd,
-                                source_path,
-                                hash,
-                                dir_fd,
-                                None,
-                            )
-                        } else {
-                            bun_watcher.add_file::<true>(fd, source_path, hash, dir_fd, None)
-                        };
-                    }
+            let watcher_data = &parse_result.watcher_data;
+            if this.bun_watcher.is_some() && watcher_data.fd.is_valid() {
+                let source_index = parse_result.value.source_index();
+                // Read the source path before `should_add_watcher(&self)` so the column borrow is released.
+                let source_path = this.graph.input_files.items_source()[source_index as usize]
+                    .path
+                    .text;
+                let adopted = this.should_add_watcher(source_path) && {
+                    let fd = watcher_data.fd;
+                    let dir_fd = watcher_data.dir_fd;
+                    let hash = bun_wyhash::hash(source_path) as u32;
+                    let bun_watcher = this.bun_watcher_mut().unwrap();
+                    // The watcher keeps the path past this bundle; borrow it
+                    // only when it is interned for the process lifetime
+                    // (`dupe_alloc` leaves other paths in the bundle arena).
+                    let added = if Fs::as_interned_path(source_path).is_some() {
+                        bun_watcher.add_file::<{ cfg!(windows) }>(
+                            fd,
+                            source_path,
+                            hash,
+                            dir_fd,
+                            None,
+                        )
+                    } else {
+                        bun_watcher.add_file::<true>(fd, source_path, hash, dir_fd, None)
+                    };
+                    matches!(added, Ok(bun_watcher::FdOwnership::Watcher))
+                };
+                // Nothing else closes the fd this parse opened.
+                if !adopted && watcher_data.owns_fd {
+                    let _ = bun_sys::close(watcher_data.fd);
                 }
             }
 

@@ -78,6 +78,7 @@ unsafe extern "C" {
         timer: JSValue,
         callback: JSValue,
         arguments: JSValue,
+        async_context: JSValue,
     ) -> bool;
 }
 
@@ -231,6 +232,7 @@ impl TimerObjectInternals {
         timer: JSValue,
         callback: JSValue,
         arguments: JSValue,
+        async_context: JSValue,
         async_id: u64,
         vm: *mut VirtualMachine,
     ) -> bool {
@@ -250,7 +252,7 @@ impl TimerObjectInternals {
         // `Cell<Flags>` RMW so the `in_callback` write reaches memory before JS
         // runs (re-entrant `_destroyed` getter reads it via a different pointer).
         s.update_flags(|f| f.set_in_callback(true));
-        let result = Bun__JSTimeout__call(global, timer, callback, arguments);
+        let result = Bun__JSTimeout__call(global, timer, callback, arguments, async_context);
         // No early returns between the `in_callback` set and this clear.
         // `Cell<Flags>` RMW: must reload `flags` from memory — re-entrant
         // `cancel()` may have set `has_cleared_timer` / cleared
@@ -302,9 +304,13 @@ impl TimerObjectInternals {
             this_value: JsCell::new(JsRef::empty()),
         };
 
+        // Stored on the timer, not around the callback, so `_onTimeout` is the bare function.
+        let async_context = global.async_context();
+
         if kind == Kind::SetImmediate {
             JSImmediate::arguments_set_cached(timer, global, arguments);
             JSImmediate::callback_set_cached(timer, global, callback);
+            JSImmediate::async_context_set_cached(timer, global, async_context);
             // `flags.kind` was just set to `SetImmediate` above.
             let TimerParent::Immediate(parent) = self.parent_ptr() else {
                 unreachable!()
@@ -319,6 +325,7 @@ impl TimerObjectInternals {
         } else {
             JSTimeout::arguments_set_cached(timer, global, arguments);
             JSTimeout::callback_set_cached(timer, global, callback);
+            JSTimeout::async_context_set_cached(timer, global, async_context);
             JSTimeout::idle_timeout_set_cached(
                 timer,
                 global,
@@ -408,14 +415,26 @@ impl TimerObjectInternals {
             JSImmediate::callback_get_cached(timer).expect("ImmediateObject callback slot");
         let arguments =
             JSImmediate::arguments_get_cached(timer).expect("ImmediateObject arguments slot");
+        let async_context = JSImmediate::async_context_get_cached(timer)
+            .expect("ImmediateObject asyncContext slot");
 
         let exception_thrown = {
             s.ref_();
             let async_id = s.async_id();
             // SAFETY: `this` is the live `internals` per fn contract; `ref_()`
             // above pins the parent across re-entrancy.
-            let result =
-                unsafe { Self::run(this, global_this, timer, callback, arguments, async_id, vm) };
+            let result = unsafe {
+                Self::run(
+                    this,
+                    global_this,
+                    timer,
+                    callback,
+                    arguments,
+                    async_context,
+                    async_id,
+                    vm,
+                )
+            };
             // `Self::run` has no early return so the deref ordering below is
             // preserved. After the second `deref()` `*this` may be
             // freed; do not touch it past this block.
@@ -504,7 +523,8 @@ impl TimerObjectInternals {
             return;
         };
 
-        let (callback, arguments, mut idle_timeout, mut repeat): (
+        let (callback, arguments, async_context, mut idle_timeout, mut repeat): (
+            JSValue,
             JSValue,
             JSValue,
             JSValue,
@@ -515,12 +535,16 @@ impl TimerObjectInternals {
                     .expect("ImmediateObject callback slot"),
                 JSImmediate::arguments_get_cached(this_object)
                     .expect("ImmediateObject arguments slot"),
+                JSImmediate::async_context_get_cached(this_object)
+                    .expect("ImmediateObject asyncContext slot"),
                 JSValue::UNDEFINED,
                 JSValue::UNDEFINED,
             ),
             KindBig::SetTimeout | KindBig::SetInterval => (
                 JSTimeout::callback_get_cached(this_object).expect("TimeoutObject callback slot"),
                 JSTimeout::arguments_get_cached(this_object).expect("TimeoutObject arguments slot"),
+                JSTimeout::async_context_get_cached(this_object)
+                    .expect("TimeoutObject asyncContext slot"),
                 JSTimeout::idle_timeout_get_cached(this_object)
                     .expect("TimeoutObject idleTimeout slot"),
                 JSTimeout::repeat_get_cached(this_object).expect("TimeoutObject repeat slot"),
@@ -579,6 +603,7 @@ impl TimerObjectInternals {
                     this_object,
                     callback,
                     arguments,
+                    async_context,
                     async_id.async_id(),
                     vm,
                 )

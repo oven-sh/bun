@@ -194,7 +194,7 @@ export default [
         invalidThisBehavior: InvalidThisBehavior.NoOp,
       },
     },
-    values: ["arguments", "callback", "idleTimeout", "repeat", "idleStart"],
+    values: ["arguments", "callback", "idleTimeout", "repeat", "idleStart", "asyncContext"],
   }),
   define({
     name: "Immediate",
@@ -235,7 +235,7 @@ export default [
         invalidThisBehavior: InvalidThisBehavior.NoOp,
       },
     },
-    values: ["arguments", "callback"],
+    values: ["arguments", "callback", "asyncContext"],
   }),
   define({
     name: "NodeJSFS",

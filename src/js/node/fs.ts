@@ -1073,8 +1073,9 @@ const kAlreadyValidated = Symbol("kAlreadyValidated");
 
 class Dir {
   /**
-   * `-1` when closed. stdio handles (0, 1, 2) don't actually get closed by
-   * {@link close} or {@link closeSync}.
+   * Open/closed state sentinel (`-1` once closed). This implementation is
+   * path-bound and never owns a real fd, so close() only flips this marker;
+   * it must not `fs.closeSync` a value the constructor was handed.
    */
   #handle: number;
   #path: PathLike;
@@ -1194,9 +1195,7 @@ class Dir {
   }
 
   #closeOp() {
-    const handle = this.#handle;
-    if (handle < 0) throw $ERR_DIR_CLOSED();
-    if (handle > 2) fs.closeSync(handle);
+    if (this.#handle < 0) throw $ERR_DIR_CLOSED();
     this.#handle = -1;
   }
 
@@ -1211,10 +1210,8 @@ class Dir {
   }
 
   closeSync() {
-    const handle = this.#handle;
-    if (handle < 0) throw $ERR_DIR_CLOSED();
+    if (this.#handle < 0) throw $ERR_DIR_CLOSED();
     if (this.#pendingCount > 0) throw this.#dirConcurrentError();
-    if (handle > 2) fs.closeSync(handle);
     this.#handle = -1;
   }
 

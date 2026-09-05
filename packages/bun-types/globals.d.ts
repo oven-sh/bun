@@ -1206,6 +1206,13 @@ interface Console {
    */
   count(label?: string): void;
   countReset(label?: string): void;
+  /**
+   * Create a named task to which async operations can be attributed by
+   * inspector frontends. The returned task's `run` method calls the given
+   * function and returns its result.
+   * @param name The task name. Must be a non-empty string.
+   */
+  createTask(name: string): { run<T>(fn: () => T): T };
   debug(...data: any[]): void;
   dir(item?: any, options?: any): void;
   dirxml(...data: any[]): void;

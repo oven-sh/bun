@@ -2704,6 +2704,25 @@ JSC_DEFINE_CUSTOM_GETTER(getConsoleConstructor, (JSGlobalObject * globalObject, 
     return JSValue::encode(result);
 }
 
+// `console.createTask`, materialized on first access
+JSC_DEFINE_CUSTOM_GETTER(getConsoleCreateTask, (JSGlobalObject * globalObject, EncodedJSValue thisValue, PropertyName property))
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto console = JSValue::decode(thisValue).getObject();
+    JSC::JSFunction* createCreateTask = JSC::JSFunction::create(vm, globalObject, consoleObjectCreateCreateTaskCodeGenerator(vm), globalObject);
+    JSC::MarkedArgumentBuffer args;
+    JSC::CallData callData = JSC::getCallData(createCreateTask);
+    NakedPtr<JSC::Exception> returnedException = nullptr;
+    auto result = JSC::profiledCall(globalObject, ProfilingReason::API, createCreateTask, callData, console, args, returnedException);
+    if (returnedException) {
+        auto scope = DECLARE_THROW_SCOPE(vm);
+        throwException(globalObject, scope, returnedException.get());
+        return {};
+    }
+    console->putDirect(vm, property, result, 0);
+    return JSValue::encode(result);
+}
+
 // `console._stdout` is equal to `process.stdout`
 JSC_DEFINE_CUSTOM_GETTER(getConsoleStdout, (JSGlobalObject * globalObject, EncodedJSValue thisValue, PropertyName property))
 {
@@ -2965,6 +2984,7 @@ void GlobalObject::addBuiltinGlobals(JSC::VM& vm)
     consoleObject->putDirectBuiltinFunction(vm, this, vm.propertyNames->asyncIteratorSymbol, consoleObjectAsyncIteratorCodeGenerator(vm), PropertyAttribute::Builtin | 0);
     consoleObject->putDirectBuiltinFunction(vm, this, clientData->builtinNames().writePublicName(), consoleObjectWriteCodeGenerator(vm), PropertyAttribute::Builtin | 0);
     consoleObject->putDirectCustomAccessor(vm, Identifier::fromString(vm, "Console"_s), CustomGetterSetter::create(vm, getConsoleConstructor, nullptr), PropertyAttribute::CustomValue | 0);
+    consoleObject->putDirectCustomAccessor(vm, Identifier::fromString(vm, "createTask"_s), CustomGetterSetter::create(vm, getConsoleCreateTask, nullptr), PropertyAttribute::CustomValue | 0);
     consoleObject->putDirectCustomAccessor(vm, Identifier::fromString(vm, "_stdout"_s), CustomGetterSetter::create(vm, getConsoleStdout, nullptr), PropertyAttribute::DontEnum | PropertyAttribute::CustomValue | 0);
     consoleObject->putDirectCustomAccessor(vm, Identifier::fromString(vm, "_stderr"_s), CustomGetterSetter::create(vm, getConsoleStderr, nullptr), PropertyAttribute::DontEnum | PropertyAttribute::CustomValue | 0);
 }

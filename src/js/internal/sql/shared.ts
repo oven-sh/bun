@@ -86,8 +86,16 @@ class SQLResultArray<T> extends PublicArray<T> {
 
   static [Symbol.toStringTag] = "SQLResults";
 
-  constructor(values: T[] = []) {
-    super(...values);
+  constructor(values?: T[]) {
+    super();
+
+    // Not super(...values): spreading puts every row on the JS stack, which overflows
+    // once a result set has a few hundred thousand rows.
+    if (values) {
+      for (let i = 0, length = values.length; i < length; i++) {
+        $putByValDirect(this, i, values[i]);
+      }
+    }
 
     // match postgres's result array, in this way for in will not list the
     // properties and .map will not return undefined command and count

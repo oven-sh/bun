@@ -6218,23 +6218,12 @@ impl<'a> Resolver<'a> {
                 if !parent_package_json.name.is_empty() || self.care_about_bin_folder {
                     info.enclosing_package_json = Some(parent_package_json);
                 }
-
-                if parent_package_json.dependencies.map.count() > 0
-                    || parent_package_json.package_manager_package_id != Install::INVALID_PACKAGE_ID
-                {
-                    // NOTE: store the raw `NonNull` field (not the
-                    // `&'static` accessor result) so mut-provenance flows
-                    // through to `enqueue_dependency_to_resolve`.
-                    info.package_json_for_dependencies = parent_.package_json;
-                }
             }
 
             info.enclosing_package_json = info
                 .enclosing_package_json
                 .or(parent_.enclosing_package_json);
-            info.package_json_for_dependencies = info
-                .package_json_for_dependencies
-                .or(parent_.package_json_for_dependencies);
+            info.package_json_for_dependencies = parent_.package_json_for_dependencies;
 
             // Make sure "absRealPath" is the real path of the directory (resolving any symlinks)
             if !self.opts.preserve_symlinks {
@@ -6362,8 +6351,14 @@ impl<'a> Resolver<'a> {
                             info.enclosing_package_json = Some(pkg);
                         }
 
-                        if pkg.dependencies.map.count() > 0
-                            || pkg.package_manager_package_id != Install::INVALID_PACKAGE_ID
+                        let root_package_id: Install::PackageID = 0;
+                        let enclosing_is_cache_installed =
+                            info.package_json_for_dependencies().is_some_and(|p| {
+                                p.package_manager_package_id != Install::INVALID_PACKAGE_ID
+                                    && p.package_manager_package_id != root_package_id
+                            });
+                        if pkg.package_manager_package_id != Install::INVALID_PACKAGE_ID
+                            || (pkg.dependencies.map.count() > 0 && !enclosing_is_cache_installed)
                         {
                             // NOTE: store the raw `NonNull` field (not the
                             // `&'static` accessor result) so mut-provenance flows

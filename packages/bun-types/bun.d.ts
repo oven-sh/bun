@@ -10074,6 +10074,25 @@ declare module "bun" {
   }
 
   /**
+   * Generate a ULID using the current timestamp and cryptographically secure randomness.
+   *
+   * ULIDs contain a 48-bit Unix timestamp in milliseconds followed by 80 bits
+   * of randomness. Their 26-character Crockford Base32 representation sorts by
+   * timestamp. IDs generated within the same millisecond are not guaranteed to
+   * be ordered.
+   *
+   * @param timestamp Unix timestamp in milliseconds. Defaults to `Date.now()`.
+   *
+   * @example
+   * ```js
+   * import { randomULID } from "bun";
+   * const id = randomULID();
+   * // "01ARZ3NDEKTSV4RRFFQ69G5FAV"
+   * ```
+   */
+  function randomULID(timestamp?: number | Date): string;
+
+  /**
    * Generate a UUIDv7, a sequential ID based on the current timestamp with a random component.
    *
    * When the same timestamp is used multiple times, a monotonically increasing

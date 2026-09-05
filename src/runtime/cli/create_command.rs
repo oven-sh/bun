@@ -790,8 +790,16 @@ impl CreateCommand {
                 // process-static `Cli::LOG_` is live across this scope.
                 let log: &mut bun_ast::Log = unsafe { ctx.log_mut() };
                 let bump: &'static bun_alloc::Arena = crate::cli::cli_arena();
-                let mut package_json_expr = match JSON::parse_utf8(&source, log, bump) {
-                    Ok(e) => e,
+                let parsed = match JSON::parse_package_json_utf8_with_opts(
+                    JSON::JSONOptions {
+                        guess_indentation: true,
+                        ..JSON::JSONOptions::DEFAULT
+                    },
+                    &source,
+                    log,
+                    bump,
+                ) {
+                    Ok(r) => r,
                     Err(_) => {
                         if log.errors > 0 {
                             let _ = log.print(std::ptr::from_mut(Output::error_writer()));
@@ -799,6 +807,8 @@ impl CreateCommand {
                         break 'process_package_json;
                     }
                 };
+                let indentation = parsed.indentation;
+                let mut package_json_expr = parsed.root;
 
                 if package_json_expr.data.e_object().is_none() {
                     break 'process_package_json;
@@ -1037,7 +1047,7 @@ impl CreateCommand {
                     &source,
                     JSPrinter::PrintJsonOptions {
                         mangled_props: None,
-                        indent: Default::default(),
+                        indent: indentation,
                         ..Default::default()
                     },
                 ) {

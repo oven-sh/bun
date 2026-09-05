@@ -2417,7 +2417,7 @@ void GlobalObject::finishCreation(VM& vm)
                  init.vm,
                  Identifier::fromString(init.vm, "subtle"_s),
                  JSC::CustomGetterSetter::create(init.vm, getterSubtleCrypto, setterSubtleCrypto),
-                 PropertyAttribute::DontDelete | PropertyAttribute::CustomAccessor);
+                 static_cast<unsigned>(PropertyAttribute::CustomAccessor));
 
              init.set(crypto);
          } },

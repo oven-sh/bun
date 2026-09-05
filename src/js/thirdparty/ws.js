@@ -986,6 +986,23 @@ const RUNNING = 0;
 const CLOSING = 1;
 const CLOSED = 2;
 
+// Same tags as npm ws's event-target shim; removeEventListener skips `onmessage`-assigned wrappers.
+const kForOnEventAttribute = Symbol("kForOnEventAttribute");
+const kListener = Symbol("kListener");
+
+function createMessageEventWrapper(target, listener, forOnEventAttribute = false) {
+  const wrapper = (data, isBinary) => {
+    listener.$call(target, {
+      type: "message",
+      data: isBinary ? data : data.toString(),
+      target,
+    });
+  };
+  wrapper[kForOnEventAttribute] = forOnEventAttribute;
+  wrapper[kListener] = listener;
+  return wrapper;
+}
+
 class BunWebSocketMocked extends EventEmitter {
   #ws;
   #state;
@@ -1043,14 +1060,8 @@ class BunWebSocketMocked extends EventEmitter {
 
     let isBinary = false;
     if (typeof message === "string") {
-      if (this.#binaryType === "arraybuffer") {
-        message = encoder.encode(message).buffer;
-      } else if (this.#binaryType === "blob") {
-        message = new Blob([message], { type: "text/plain" });
-      } else {
-        // nodebuffer
-        message = Buffer.from(message);
-      }
+      // npm ws emits text frames as Buffer regardless of binaryType
+      message = Buffer.from(message);
     } else {
       // The ServerWebSocket already built the Buffer, ArrayBuffer or Blob that binaryType selects.
       isBinary = true;
@@ -1269,8 +1280,10 @@ class BunWebSocketMocked extends EventEmitter {
   set onmessage(cb) {
     if (this.#onmessage) {
       this.removeListener("message", this.#onmessage);
+      this.#onmessage = undefined;
     }
-    const l = data => cb({ data });
+    if (!$isCallable(cb)) return;
+    const l = createMessageEventWrapper(this, cb, true);
     this.on("message", l);
     this.#onmessage = l;
   }
@@ -1292,26 +1305,33 @@ class BunWebSocketMocked extends EventEmitter {
   }
 
   get onmessage() {
-    return this.#onmessage;
+    return this.#onmessage?.[kListener] ?? null;
   }
 
   get onopen() {
     return this.#onopen;
   }
 
-  // TODO: implement this more proper
-  addEventListener(type, listener, _options) {
-    if (type === "message") {
-      const l = data => listener({ data });
-      l.listener = listener;
+  addEventListener(type, listener, options) {
+    const l = type === "message" ? createMessageEventWrapper(this, listener) : listener;
+    if (options?.once) {
+      this.once(type, l);
+    } else {
       this.on(type, l);
-      return;
     }
-    this.on(type, listener);
   }
 
   removeEventListener(type, listener) {
-    this.off(type, listener);
+    // a non-function would match any untagged listener via l[kListener] === undefined
+    if (!$isCallable(listener)) return;
+    // message listeners match only their kListener tag, so plain .on() subscriptions stay untouched like npm ws
+    for (const l of this.listeners(type)) {
+      if (l[kForOnEventAttribute]) continue;
+      if (type === "message" ? l[kListener] === listener : l === listener) {
+        this.removeListener(type, l);
+        break;
+      }
+    }
   }
 }
 

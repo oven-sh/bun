@@ -2782,14 +2782,14 @@ impl StdinReader {
 }
 
 /// Fresh, unbuffered stdin
-/// reader. Used by `alert()`/`confirm()` which read a handful of bytes.
+/// reader. Used by `alert()`/`confirm()`/`prompt()`.
 #[inline]
 pub fn stdin_reader() -> StdinReader {
     StdinReader { fd: Fd::stdin() }
 }
 
 /// `bun.Output.buffered_stdin` — raw pointer to the process-global 4 KiB
-/// buffered stdin. Used by `prompt()`/`bun init`/`bun publish` line reads.
+/// buffered stdin. Used by `bun init`/`bun publish` line reads.
 ///
 /// Returns `*mut` (not `&'static mut`) to avoid handing out two live aliasing
 /// `&mut` to the same static (PORTING.md §Forbidden); callers materialise the
@@ -2801,12 +2801,6 @@ pub fn stdin_reader() -> StdinReader {
 #[inline]
 pub fn buffered_stdin() -> *mut BufferedStdin {
     BUFFERED_STDIN.get()
-}
-
-/// `bun.Output.buffered_stdin.reader()` — same accessor as [`buffered_stdin`].
-#[inline]
-pub fn buffered_stdin_reader() -> *mut BufferedStdin {
-    buffered_stdin()
 }
 
 /// Convenience for `bun.Output.buffered_stdin.reader().readUntilDelimiterArrayList`.

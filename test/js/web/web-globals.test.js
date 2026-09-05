@@ -419,6 +419,87 @@ test("confirm (no) windows newline", async () => {
   expect(await proc.stderr.text()).toBe("No\n");
 });
 
+async function runWithPipedStdin(script, input) {
+  await using proc = spawn({
+    cmd: [bunExe(), "-e", script],
+    stdin: "pipe",
+    stderr: "pipe",
+    stdout: "ignore",
+    env: bunEnv,
+  });
+  proc.stdin.write(input);
+  await proc.stdin.end();
+  const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+  return { stderr, exitCode };
+}
+
+test.concurrent.each([
+  ["LF", "hello\nrest-of-stdin\nmore\n", "hello"],
+  ["CRLF", "hello\r\nrest-of-stdin\nmore\n", "hello"],
+  ["empty LF", "\nrest-of-stdin\nmore\n", null],
+  ["empty CRLF", "\r\nrest-of-stdin\nmore\n", null],
+])("prompt() does not consume stdin past the newline (Bun.stdin, %s)", async (_, input, answer) => {
+  const { stderr, exitCode } = await runWithPipedStdin(
+    `const r = prompt("Q?");
+     const rest = await Bun.stdin.text();
+     console.error(JSON.stringify({ r, rest }));`,
+    input,
+  );
+  expect(JSON.parse(stderr)).toEqual({ r: answer, rest: "rest-of-stdin\nmore\n" });
+  expect(exitCode).toBe(0);
+});
+
+test.concurrent("prompt() does not consume stdin past the newline (console async iterator)", async () => {
+  const { stderr, exitCode } = await runWithPipedStdin(
+    `const r = prompt("Q?");
+     const lines = [];
+     for await (const line of console) lines.push(line);
+     console.error(JSON.stringify({ r, lines }));`,
+    "p\nx\ny",
+  );
+  expect(JSON.parse(stderr)).toEqual({ r: "p", lines: ["x", "y"] });
+  expect(exitCode).toBe(0);
+});
+
+test.concurrent("prompt() does not consume stdin past the newline (stdin:'inherit' child)", async () => {
+  const { stderr, exitCode } = await runWithPipedStdin(
+    `const r = prompt("parent?");
+     const child = Bun.spawnSync({
+       cmd: [process.execPath, "-e", 'console.error(JSON.stringify({ c: prompt("child?") }))'],
+       stdin: "inherit",
+       stderr: "pipe",
+     });
+     console.error(JSON.stringify({ r, child: JSON.parse(child.stderr.toString()) }));`,
+    "PARENT\nCHILD\n",
+  );
+  expect(JSON.parse(stderr)).toEqual({ r: "PARENT", child: { c: "CHILD" } });
+  expect(exitCode).toBe(0);
+});
+
+test.concurrent("prompt() called twice leaves remaining stdin intact", async () => {
+  const { stderr, exitCode } = await runWithPipedStdin(
+    `const a = prompt("A?");
+     const b = prompt("B?");
+     const rest = await Bun.stdin.text();
+     console.error(JSON.stringify({ a, b, rest }));`,
+    "first\nsecond\nleftover\n",
+  );
+  expect(JSON.parse(stderr)).toEqual({ a: "first", b: "second", rest: "leftover\n" });
+  expect(exitCode).toBe(0);
+});
+
+test.concurrent("prompt() with input spanning the 4 KiB read-buffer boundary", async () => {
+  const payload = Buffer.alloc(20000, "A").toString();
+  const { stderr, exitCode } = await runWithPipedStdin(
+    `const r = prompt("Q?");
+     const rest = await Bun.stdin.text();
+     console.error(JSON.stringify({ r, restLen: rest.length }));`,
+    "0123456789\n" + payload,
+  );
+  expect(JSON.parse(stderr)).toEqual({ r: "0123456789", restLen: 20000 });
+  expect(exitCode).toBe(0);
+});
+
 test("globalThis.self = 123 works", () => {
   expect(Object.getOwnPropertyDescriptor(globalThis, "self")).toMatchObject({
     configurable: true,

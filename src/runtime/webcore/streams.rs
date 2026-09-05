@@ -216,6 +216,7 @@ impl Start {
                         input_path: crate::webcore::PathOrFileDescriptor::Path(
                             path.to_utf8(global_this)?,
                         ),
+                        truncate: true,
                         ..Default::default()
                     }));
                 } else if let Some(fd_value) = value.get_truthy(global_this, b"fd")? {

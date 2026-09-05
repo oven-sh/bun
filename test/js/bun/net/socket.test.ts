@@ -4479,9 +4479,9 @@ describe.concurrent("close() error after the peer resets the connection", () => 
   describe.each(["tcp", "tls"] as const)("%s", transport => {
     // The peer lives in a child process that is killed while data it never read sits
     // in its receive buffer: the kernel then closes its socket with an RST, and
-    // nothing (no FIN, and for TLS no close_notify) is queued ahead of the reset. An
-    // in-process terminate() is not usable for the TLS case: it writes a close_notify
-    // first, and on POSIX the reading side consumes that as a clean end.
+    // nothing (no FIN, and for TLS no close_notify) is queued ahead of the reset,
+    // whatever Bun's own terminate() sends (until #39632 it sent a close_notify first
+    // for TLS, which the reading side consumed as a clean end).
     const peerSource = `
       await Bun.connect({
         hostname: "127.0.0.1",

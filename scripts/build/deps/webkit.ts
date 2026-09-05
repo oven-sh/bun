@@ -17,8 +17,8 @@ export const WEBKIT_VERSION = "2e2aa2290fac856d6f451ceacb58f7f5b44dd057";
  *   12 GB clone) — and compiles it in our own ninja graph, no cmake ("Source
  *   mode: direct build" below). Generated headers land in the BUILD dir. To
  *   build your own WebKit clone instead of the pinned commit, point at it
- *   like any dep: `--local-deps=WebKit[=<path>]` (`bun run build:local`;
- *   a bare name means `$BUN_WEBKIT_PATH` or vendor/WebKit).
+ *   like any dep: `--local-deps=WebKit=<path>` (`bun run build:local` passes
+ *   `--local-deps=WebKit`, shorthand for `$BUN_WEBKIT_PATH`).
  *
  * **prebuilt** (explicit `--webkit=prebuilt` only): download the tarball
  *   oven-sh/WebKit's release workflow publishes for WEBKIT_VERSION instead of

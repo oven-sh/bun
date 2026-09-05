@@ -15,7 +15,8 @@
  *                        pinned WEBKIT_VERSION like every other dep.
  *   release            → Release build, no LTO
  *                        (your own WebKit clone: either profile plus
- *                        `--local-deps=WebKit`, which is `bun run build:local`)
+ *                        `--local-deps=WebKit=<path>`; `bun run build:local`
+ *                        passes `--local-deps=WebKit`, i.e. $BUN_WEBKIT_PATH)
  *   release-assertions → Release + runtime assertions enabled
  *   release-asan       → Release + address sanitizer
  *   ci-*               → CI-specific modes (cpp-only/link-only/full)

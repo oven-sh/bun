@@ -2,7 +2,7 @@
 description: Upgrade Bun's WebKit fork to the latest upstream version of WebKit
 ---
 
-Upgrade Bun's WebKit fork (vendor/WebKit = oven-sh/WebKit) to the latest upstream WebKit.
+Upgrade Bun's WebKit fork (oven-sh/WebKit, cloned at $BUN_WEBKIT_PATH) to the latest upstream WebKit.
 
 Two modes — pick from ARGUMENTS:
 
@@ -11,7 +11,7 @@ Two modes — pick from ARGUMENTS:
 
 To do that:
 
-- cd vendor/WebKit (must be a real clone with an `upstream` remote pointing at WebKit/WebKit)
+- cd $BUN_WEBKIT_PATH (must be a real clone with an `upstream` remote pointing at WebKit/WebKit; vendor/WebKit is only the build's sparse fetch of the pinned commit)
 - git fetch upstream
 - OLD_BASE=$(git merge-base origin/main upstream/main) — save this for the changelog
 - Preview mode: create a working branch (e.g. `bun/upgrade-to-<upstream-short-sha>`) instead of staying on main
@@ -19,14 +19,14 @@ To do that:
 - Fix the merge conflicts (preserve the fork's Bun-specific changes)
 - bun run jsc:build:debug — from the bun repo root, builds just JSC
 - While it compiles, in another task review the JSC commits between $OLD_BASE and upstream/main (Source/JavaScriptCore, Source/WTF, Source/bmalloc). Write up a summary in a file called "webkit-changes.md"
-- bun run build:local — full Bun build with JSC compiled from vendor/WebKit (or $BUN_WEBKIT_PATH) — `--local-deps=WebKit` on the debug profile; same graph as the JSC build above
+- bun run build:local — full Bun build with JSC compiled from $BUN_WEBKIT_PATH (`--local-deps=WebKit` on the debug profile); same graph as the JSC build above
 - After it compiles, run some code to make sure things work: `bun run build:local -p '42'`
 - Publish the new WebKit:
-  - Direct: cd vendor/WebKit, commit, `git push origin main`. The push triggers a release tagged `autobuild-<full-sha>`.
+  - Direct: cd $BUN_WEBKIT_PATH, commit, `git push origin main`. The push triggers a release tagged `autobuild-<full-sha>`.
   - Preview: push the branch and open a PR on oven-sh/WebKit. CI publishes a prerelease tagged `autobuild-preview-pr-<PR#>-<first-8-chars-of-head-sha>`. (Auto-triggers only for authors with write access; otherwise `gh workflow run build-preview.yml --repo oven-sh/WebKit -f pr_number=<N>`.)
 - Wait until the release exists: `gh release view <tag> --repo oven-sh/WebKit`. It is created only after ALL platform builds succeed (takes a while). Local (non-CI) builds download prebuilts from it; CI compiles the pinned commit from source, so the commit must at least be pushed to oven-sh/WebKit.
 - cd back to bun and update WEBKIT_VERSION in scripts/build/deps/webkit.ts:
-  - Direct: the new vendor/WebKit commit sha
+  - Direct: the new commit sha in your clone
   - Preview: the full preview tag (`autobuild-preview-pr-...`)
 - Carry WebKit's build changes into `scripts/build/deps/webkit.ts` (bun compiles JSC itself; nothing reads WebKit's cmake). In the WebKit clone, diff the old base against the new one for exactly these files:
   `git diff $OLD_BASE upstream/main -- Source/JavaScriptCore/CMakeLists.txt Source/JavaScriptCore/Sources.txt Source/JavaScriptCore/inspector/remote/SourcesSocket.txt Source/WTF/wtf/CMakeLists.txt Source/WTF/wtf/PlatformJSCOnly.cmake Source/bmalloc/CMakeLists.txt Source/cmake/OptionsJSCOnly.cmake Source/cmake/OptionsCommon.cmake Source/cmake/WebKitFeatures.cmake Source/cmake/WebKitCompilerFlags.cmake Source/cmake/OptionsMSVC.cmake`

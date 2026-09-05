@@ -275,13 +275,12 @@ JavaScriptCore (with WTF, bmalloc and, off macOS, ICU) is compiled from source a
 $ bun run build --webkit=prebuilt
 ```
 
-To work on JSC itself you want a full clone with history instead. Clone it, then build with `bun run build:local` — the same build with `--local-deps=WebKit`, i.e. compiling whatever is checked out in your clone (`$BUN_WEBKIT_PATH`, default `vendor/WebKit`) instead of the pinned commit, into `build/debug-local`:
+To work on JSC itself you want a full clone with history instead. Clone it anywhere outside `vendor/` (that directory is the build's own fetch of the pinned commit), point `$BUN_WEBKIT_PATH` at it, and build with `bun run build:local` — the same build with `--local-deps=WebKit=$BUN_WEBKIT_PATH`, compiling whatever is checked out in your clone instead of the pinned commit, into `build/debug-local` (any profile takes `--local-deps=WebKit=<path>` directly, like every other dep):
 
 ```bash
-# Clone WebKit into ./vendor/WebKit. If a `--webkit=source` build already put the
-# sparse tree there, remove it first (it is a fetch cache, not a clone), or clone
-# elsewhere and export BUN_WEBKIT_PATH=<that path>.
-$ git clone https://github.com/oven-sh/WebKit vendor/WebKit
+# Clone WebKit next to bun (anywhere outside vendor/) and tell the build where it is
+$ git clone https://github.com/oven-sh/WebKit ../WebKit
+$ export BUN_WEBKIT_PATH=$PWD/../WebKit
 
 # Check out the version pinned in WEBKIT_VERSION in scripts/build/deps/webkit.ts
 # (a commit sha or an autobuild-* release tag; this handles both)

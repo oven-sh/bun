@@ -77,8 +77,8 @@ incrementally: `direct` deps through the compiler depfiles,
 `cargo` deps by re-invoking cargo every run. The build banner shows
 `local:<name>` while this is on. Don't edit `vendor/<name>/` in place
 instead — it is wiped whenever the pin or patches change. For WebKit this is
-what `bun run build:local` does (`--local-deps=WebKit`; a bare name means
-`vendor/<name>`, and for WebKit `$BUN_WEBKIT_PATH` if set).
+what `bun run build:local` does (`--local-deps=WebKit`, shorthand for
+`--local-deps=WebKit=$BUN_WEBKIT_PATH`).
 
 ## Common fields
 

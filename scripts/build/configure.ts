@@ -268,19 +268,27 @@ export async function configure(input: ConfigureInput): Promise<ConfigureResult>
   // name still takes the CLI's path since later entries win).
   const profile = input.profile !== undefined ? getProfile(input.profile) : {};
   const overrides = (input.overrides ??= {});
-  // A bare `--local-deps=NAME` means the conventional clone location:
-  // vendor/NAME — for WebKit, $BUN_WEBKIT_PATH if set (`bun run build:local`).
-  // Resolved into the persisted overrides here, once, so ninja-driven
-  // reconfigures use the path this build dir was configured with regardless
-  // of the environment they run in.
+  // `--local-deps=WebKit` without a path is shorthand for
+  // `WebKit=$BUN_WEBKIT_PATH` (what `bun run build:local` passes). Resolved
+  // into the persisted overrides here, once, so ninja-driven reconfigures use
+  // the path this build dir was configured with regardless of the
+  // environment they run in. Every other dep spells its path out.
   if (overrides.localDeps !== undefined) {
     overrides.localDeps = overrides.localDeps
       .split(",")
-      .map(entry =>
-        entry === "" || entry.includes("=")
-          ? entry
-          : `${entry}=${(entry === "WebKit" && process.env.BUN_WEBKIT_PATH) || `vendor/${entry}`}`,
-      )
+      .map(entry => {
+        if (entry !== "WebKit") return entry;
+        const fromEnv = process.env.BUN_WEBKIT_PATH;
+        if (!fromEnv) {
+          throw new BuildError(
+            "--local-deps=WebKit needs a path: set $BUN_WEBKIT_PATH to your WebKit clone, or pass --local-deps=WebKit=<path>",
+            {
+              hint: "Clone oven-sh/WebKit somewhere outside vendor/ (vendor/WebKit is the build's own fetch of the pinned commit)",
+            },
+          );
+        }
+        return `WebKit=${fromEnv}`;
+      })
       .join(",");
   }
   const partial: PartialConfig = { ...profile, ...overrides };

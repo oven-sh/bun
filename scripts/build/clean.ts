@@ -57,8 +57,9 @@ const profile = (name: string) => () => [resolve(cwd, "build", name)];
 
 // Deps whose vendor/<name>/ dir is user-managed (manual clone, not fetched
 // by the build system). `deep` skips these; everything else in allDeps gets
-// its vendor dir nuked.
-const userManagedDeps = new Set(["WebKit"]);
+// its vendor dir nuked. None today: a WebKit clone lives at $BUN_WEBKIT_PATH,
+// outside vendor/.
+const userManagedDeps = new Set<string>();
 
 const presets: Record<string, () => string[]> = {
   "debug": profile("debug"),

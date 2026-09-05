@@ -589,10 +589,9 @@ Options:
                           on/off/true/false/yes/no/1/0.
                           Fields: asan, lto, assertions, logs, baseline,
                                   canary, valgrind, webkit (prebuilt|source),
-                                  local-deps (name[=path][,…] — build a
-                                  vendored dep from a local checkout;
-                                  a bare name means vendor/<name>,
-                                  WebKit also honours $BUN_WEBKIT_PATH),
+                                  local-deps (name=path[,name=path] — build a
+                                  vendored dep from your own checkout;
+                                  `WebKit` alone means $BUN_WEBKIT_PATH),
                                   package-manager (bun|npm, installs the
                                   package.json files the build needs),
                                   buildDir, mode (full|cpp-only|link-only),

@@ -21,7 +21,7 @@ use bun_sql::mysql::ssl_mode::SSLMode;
 use bun_uws::{self as uws, AnySocket, NewSocketHandler, SocketTCP};
 
 use super::js_mysql_query::JSMySQLQuery;
-use crate::mysql::protocol::any_mysql_error_jsc::mysql_error_to_js;
+use crate::mysql::protocol::any_mysql_error_jsc::{MaybeBytes, mysql_error_to_js};
 use crate::mysql::protocol::error_packet_jsc::ErrorPacketJsc;
 // `my_sql_connection::MySQLConnection` (the protocol-layer struct)
 // is intentionally NOT imported by name — that ident is taken in this module's
@@ -701,7 +701,7 @@ impl JSMySQLConnection {
         );
     }
 
-    fn fail(&self, message: &[u8], err: AnyMySQLErrorT) {
+    fn fail(&self, message: impl MaybeBytes, err: AnyMySQLErrorT) {
         let instance = mysql_error_to_js(&self.global_object, message, err);
         self.fail_with_js_value(instance);
     }
@@ -811,15 +811,7 @@ impl JSMySQLConnection {
             if let Some(err_) = self.global_object.try_take_exception() {
                 self.fail_with_js_value(err_);
             } else {
-                let message: &[u8] = match err {
-                    AnyMySQLErrorT::PublicKeyRetrievalNotAllowed => {
-                        b"The server requested RSA public key retrieval to complete \
-                          authentication, which is not allowed over an insecure connection. \
-                          Enable TLS or set allowPublicKeyRetrieval: true"
-                    }
-                    _ => b"Connection closed",
-                };
-                self.fail(message, err);
+                self.fail(None::<&[u8]>, err);
             }
         }
     }

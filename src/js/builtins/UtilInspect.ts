@@ -14,6 +14,8 @@ export function getStylizeWithColor(inspect: Inspect) {
   };
 }
 
+// Same name as util.inspect's stylizeNoColor
+$overriddenName = "stylizeNoColor";
 export function stylizeWithNoColor(str: string) {
   return str;
 }

@@ -6,7 +6,8 @@
  * can configure once then run specific targets.
  */
 
-import { existsSync, globSync, mkdirSync } from "node:fs";
+import { spawnSync } from "node:child_process";
+import { existsSync, globSync, mkdirSync, utimesSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { globAllSources } from "../glob-sources.ts";
 import { type BunOutput, bunExeName, emitBun, shouldStrip, validateBunConfig } from "./bun.ts";
@@ -227,10 +228,13 @@ function ccacheEnv(cfg: Config): Record<string, string> {
     // source at different checkout locations shares cache entries.
     CCACHE_BASEDIR: cfg.cwd,
     CCACHE_NOHASHDIR: "1",
-    // Not CCACHE_FILECLONE: on APFS a cloned cache hit keeps the cache
-    // entry's mtime, so objects come out "older" than headers generated in
-    // the same run and the next build recompiles everything. Plain copies
-    // are stamped now.
+    // Not CCACHE_FILECLONE: entries stored under it are raw files, and a hit
+    // on one is materialized by clone (APFS) or CopyFile (Windows), both of
+    // which keep the entry's mtime — the object comes out "older" than
+    // headers generated in the same run and the next build recompiles it.
+    // Embedded entries are written fresh. The namespace keeps the raw
+    // entries earlier builds stored from ever being hit again.
+    CCACHE_NAMESPACE: "bun",
     CCACHE_STATSLOG: resolve(cfg.buildDir, "ccache.log"),
   };
   if (!cfg.ci) {
@@ -254,7 +258,12 @@ function ccacheEnv(cfg: Config): Record<string, string> {
  * no buildDir is set, one is computed from the build type (build/debug,
  * build/release, etc).
  */
-export async function configure(input: ConfigureInput): Promise<ConfigureResult> {
+/**
+ * `fromNinja`: this run is ninja's own `regen` edge replaying configure.json
+ * (build.ts --config-file), as opposed to build.ts configuring before it
+ * spawns ninja.
+ */
+export async function configure(input: ConfigureInput, fromNinja = false): Promise<ConfigureResult> {
   const start = performance.now();
   const trace = process.env.BUN_BUILD_TRACE === "1";
   const mark = (label: string) => {
@@ -359,7 +368,8 @@ export async function configure(input: ConfigureInput): Promise<ConfigureResult>
   emitGeneratorRule(n, cfg, input);
 
   // Default targets. cpp-only sets its own default inside emitBun (archive,
-  // no smoke test). Full/link-only: `bun` phony (or stripped file) + `check`.
+  // no smoke test). Full/link-only: `bun` phony (or stripped file); the
+  // smoke test and ClassInfo check ride along as validations of the link.
   // Release builds produce both bun-profile and stripped bun; `bun` is the
   // stripped one. Debug produces bun-debug; `bun` is a phony pointing at it.
   // dsym: darwin release only — pulled into defaults so ninja actually builds
@@ -367,7 +377,7 @@ export async function configure(input: ConfigureInput): Promise<ConfigureResult>
   // auto-trigger).
   if (output.exe !== undefined) {
     const defaultTarget = output.strippedExe !== undefined ? n.rel(output.strippedExe) : "bun";
-    const targets = [defaultTarget, "check"];
+    const targets = [defaultTarget];
     if (output.dsym !== undefined) targets.push(n.rel(output.dsym));
     for (const stamp of output.uploadStamps ?? []) targets.push(n.rel(stamp));
     if (output.testFFI !== undefined) targets.push(n.rel(output.testFFI));
@@ -376,7 +386,25 @@ export async function configure(input: ConfigureInput): Promise<ConfigureResult>
 
   // Write build.ninja (only if changed).
   const changed = await n.write();
+  const ninjaPath = resolve(cfg.buildDir, "build.ninja");
   mark("n.write");
+
+  // build.ninja is also the output of the `regen` edge, whose inputs are the
+  // build scripts and configure.json. ninja compares those against the mtime
+  // it *recorded* for build.ninja when it last ran that edge itself, so after
+  // a script edit a manifest brought up to date here (outside ninja) still
+  // looks stale and ninja would run configure a second time on startup.
+  // Having just configured, the manifest is current as of now: stamp it and
+  // let `-t restat` record that. (Not when ninja is the one running us — it
+  // records its own edge — and nothing to record into in a fresh dir.)
+  if (!fromNinja) {
+    const now = new Date();
+    utimesSync(ninjaPath, now, now);
+    if (existsSync(resolve(cfg.buildDir, ".ninja_log"))) {
+      spawnSync("ninja", ["-C", cfg.buildDir, "-t", "restat", "build.ninja"], { stdio: "ignore" });
+    }
+  }
+  mark("restat");
 
   // Pre-create all object file parent directories. Ninja doesn't mkdir;
   // CMake pre-creates CMakeFiles/<target>.dir/* at generate time, we do
@@ -396,7 +424,7 @@ export async function configure(input: ConfigureInput): Promise<ConfigureResult>
   }
   mark("orderFile");
 
-  const ninjaFile = resolve(cfg.buildDir, "build.ninja");
+  const ninjaFile = ninjaPath;
 
   const elapsed = Math.round(performance.now() - start);
   const exe = bunExeName(cfg) + (shouldStrip(cfg) ? " → bun (stripped)" : "");

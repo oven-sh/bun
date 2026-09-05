@@ -116,7 +116,9 @@ async function main(): Promise<void> {
   if (isCI) {
     // CI: machine/env dump + collapsible groups + annotation-on-failure.
     printEnvironment();
-    const result = (await startGroup("Configure", () => configure(input))) as ConfigureResult;
+    const result = (await startGroup("Configure", () =>
+      configure(input, args.configFile !== undefined),
+    )) as ConfigureResult;
     if (args.configureOnly) return;
 
     // link-only: download cpp-only + rust-only artifacts before ninja.
@@ -199,7 +201,7 @@ async function main(): Promise<void> {
     }
   } else {
     // Local: configure, then spawn ninja.
-    const result = await configure(input);
+    const result = await configure(input, args.configFile !== undefined);
 
     // Quiet one-liner when configure was a no-op — the full banner only
     // prints when build.ninja changed. Timing matters: a regression here

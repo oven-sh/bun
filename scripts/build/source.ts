@@ -1451,8 +1451,12 @@ function emitDirect(n: Ninja, cfg: Config, name: string, spec: DirectBuild, inpu
     assert(!objectsByGroup.has(g.name), `${name}: duplicate source group '${g.name}'`);
     const isCxxGroup = g.lang === "cxx";
     const { c: cFlags, cxx: cxxFlags } = groupCompileFlags(cfg, srcDir, g, depFlags);
-    // Generated files: relative names are this dep's build-dir outputs.
-    const orderOnly = [...ready, ...(g.orderOnly ?? []).map(inBuild)];
+    // Generated files: relative names are this dep's build-dir outputs. One
+    // phony per group stands for the list, so each object names a single
+    // order-only input (JSC's groups wait on ~150 generated headers).
+    const groupReady = resolve(buildDir, `.${g.name}-ready`);
+    n.phony(groupReady, [...ready, ...(g.orderOnly ?? []).map(inBuild)]);
+    const orderOnly = [groupReady];
     const implicit = (g.implicitInputs ?? []).map(inBuild);
 
     let groupPch: { pch: string; wrapperHeader: string } | undefined;

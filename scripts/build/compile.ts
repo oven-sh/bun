@@ -15,7 +15,6 @@ import { writeIfChanged } from "./fs.ts";
 import type { BuildNode, Ninja, Rule } from "./ninja.ts";
 import { quote } from "./shell.ts";
 import { elfDebugCompressPostlinkCommand, machoPostlinkCommand } from "./shims.ts";
-import { streamPath } from "./stream.ts";
 
 // ---------------------------------------------------------------------------
 // Rule registration — call once per Ninja instance
@@ -150,11 +149,11 @@ export function registerCompileRules(n: Ninja, cfg: Config): void {
   });
 
   // ─── Link executable ───
-  // Uses response file because object lists get long (>32k args breaks on windows).
-  // console pool: link is inherently serial (one exe), takes 30s+ on large
-  // binaries, and lld prints useful progress (undefined symbol errors,
-  // --verbose timing). Streaming beats sitting at [N/N] wondering if it hung.
-  // stream.ts --console: passthrough + ninja Windows buffering fix — see stream.ts.
+  // Uses response file because object lists get long (>32k args breaks on
+  // windows). Not in the console pool: that pool has depth 1, and the graph
+  // links several executables (bun, testFFI, JSC's LLInt extractors) whose
+  // links should overlap; lld's only output is diagnostics, which ninja
+  // shows when the edge finishes.
   //
   // Windows: -fuse-ld=lld forces lld-link (VS dev shell puts link.exe
   // first in PATH, clang-cl would default to it). /link separator —
@@ -175,15 +174,13 @@ export function registerCompileRules(n: Ninja, cfg: Config): void {
   // empty everywhere else): ninja runs the whole command through `sh -c`,
   // so the fixup runs after the link succeeds and the declared output is
   // already the final, patched, re-signed artifact. See shims.ts.
-  const wrap = `${cfg.jsRuntime} ${q(streamPath)} link --console`;
   n.rule("link", {
     command: cfg.windows
-      ? `${wrap} ${cxx} /nologo -fuse-ld=lld ${q(`/clang:-B${dirname(cfg.ld)}`)} @$out.rsp /Fe$out /link $ldflags`
-      : `${wrap} ${cxx} @$out.rsp $ldflags -o $out${elfDebugCompressPostlinkCommand(cfg)}${machoPostlinkCommand(cfg)}`,
+      ? `${cxx} /nologo -fuse-ld=lld ${q(`/clang:-B${dirname(cfg.ld)}`)} @$out.rsp /Fe$out /link $ldflags`
+      : `${cxx} @$out.rsp $ldflags -o $out${elfDebugCompressPostlinkCommand(cfg)}${machoPostlinkCommand(cfg)}`,
     description: "link $out",
     rspfile: "$out.rsp",
     rspfile_content: "$in_newline",
-    pool: "console",
   });
 
   // ─── Static library archive ───
@@ -452,6 +449,8 @@ export interface LinkOpts {
   implicitInputs?: string[];
   /** Map files the link's flags make it write alongside the executable (flags.ts linkerMapOutputs). */
   linkerMapOutputs?: string[];
+  /** Checks to run on the executable whenever it is linked (ninja validations): stamp paths of edges emitted elsewhere. */
+  validations?: string[];
 }
 
 /**
@@ -476,6 +475,7 @@ export function link(n: Ninja, cfg: Config, out: string, objects: string[], opts
   if (opts.implicitInputs !== undefined && opts.implicitInputs.length > 0) {
     node.implicitInputs = opts.implicitInputs;
   }
+  if (opts.validations !== undefined && opts.validations.length > 0) node.validations = opts.validations;
   n.build(node);
 
   return absOut;

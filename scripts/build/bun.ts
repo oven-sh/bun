@@ -220,6 +220,12 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
   const cxxFlagsFull = [...flags.cxxflags, ...includeFlags, ...defineFlags];
   const cFlagsFull = [...flags.cflags, ...includeFlags, ...defineFlags];
 
+  // The codegen outputs compiles wait for, behind one phony so each compile
+  // edge names one order-only input instead of repeating the list (the ninja
+  // idiom: order-only inputs never dirty an edge; depfiles track the reads).
+  const codegenReady = resolve(cfg.buildDir, "obj", ".codegen-ready");
+  n.phony(codegenReady, codegen.cppAll);
+
   // ─── Step 4: PCH ───
   // CI full mode (unused by the pipeline) skips the PCH; cpp-only/archive-link use it.
   const usePch = !cfg.ci || cfg.mode !== "full";
@@ -243,7 +249,7 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
     pchOut = pch(n, cfg, "src/jsc/bindings/root-pch.h", {
       flags: cxxFlagsFull,
       implicitInputs: depHeaderSignal,
-      orderOnlyInputs: codegen.cppAll,
+      orderOnlyInputs: [codegenReady],
     });
   }
 
@@ -312,7 +318,7 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
   // PCH also has implicit deps on depHeaderSignal (see above). When PCH is enabled,
   // cxx inherits the dep transitively via its implicit dep on the PCH, so we
   // don't add it again.
-  const codegenOrderOnly = codegen.cppAll;
+  const codegenOrderOnly = [codegenReady];
 
   // Compile all .cpp with PCH.
   // Emit compile_commands.json entries for the ORIGINAL bundled .cpp files
@@ -469,6 +475,7 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
     // Declare the maps the release link writes as side-products (`perf`
     // symbolication on linux; the order file tracer's symbol table on windows).
     linkerMapOutputs: linkerMapOutputs(cfg),
+    validations: postLinkChecks(cfg, exeName),
   });
 
   // ─── Step 7: post-link (strip, dsymutil, smoke test) ───
@@ -621,6 +628,7 @@ function emitLinkOnly(n: Ninja, cfg: Config): BunOutput {
     flags: ldflags,
     implicitInputs: [...linkImplicitInputs(cfg), ...shims.implicitInputs],
     linkerMapOutputs: linkerMapOutputs(cfg),
+    validations: postLinkChecks(cfg, exeName),
   });
 
   // Strip + smoke test — same as full mode.
@@ -698,6 +706,7 @@ function emitRustAndLink(n: Ninja, cfg: Config, sources: Sources): BunOutput {
     flags: ldflags,
     implicitInputs: [...linkImplicitInputs(cfg), ...shims.implicitInputs],
     linkerMapOutputs: linkerMapOutputs(cfg),
+    validations: postLinkChecks(cfg, exeName),
   });
 
   const { strippedExe, dsym } = emitPostLink(n, cfg, exe, exeName, flags.stripflags);
@@ -762,10 +771,33 @@ export function emitPostLink(
   // ASAN binaries to run from subprocesses (shadow memory layout conflict
   // with ELF_ET_DYN_BASE, see sanitizers/856). We try with setarch first,
   // fall back to direct invocation.
-  // `ninja check`: the smoke test plus the JSC ClassInfo canary.
+  // The smoke test plus the JSC ClassInfo canary: validations of the link
+  // edge (they run whenever the executable is relinked, see postLinkChecks)
+  // and, for running them by name, the `check` phony.
   n.phony("check", [...emitSmokeTest(n, cfg, exe, exeName, strippedExe), ...emitClassInfoCheck(n, cfg, exe, exeName)]);
 
   return { strippedExe, dsym };
+}
+
+/** Stamp of the `<exe> --revision` smoke test, when the host can run the target. */
+function smokeTestStamp(cfg: Config, exeName: string): string | undefined {
+  return cfg.canRunOnHost ? resolve(cfg.buildDir, `${exeName}.smoke-test-passed`) : undefined;
+}
+
+/** Stamp of the JSC ClassInfo uniqueness check, when this build has the script. */
+function classInfoStamp(cfg: Config, exeName: string): string | undefined {
+  return webkitClassInfoCheckScript(cfg) !== undefined
+    ? resolve(cfg.buildDir, `${exeName}.classinfo-unique`)
+    : undefined;
+}
+
+/**
+ * The checks emitPostLink attaches to an executable, as the stamp paths the
+ * link edge names as its ninja validations — so `ninja bun` (or anything
+ * that relinks it) runs them, without making them inputs of anything.
+ */
+export function postLinkChecks(cfg: Config, exeName: string): string[] {
+  return [smokeTestStamp(cfg, exeName), classInfoStamp(cfg, exeName)].filter((p): p is string => p !== undefined);
 }
 
 /**
@@ -817,8 +849,8 @@ function emitTestFFI(
  */
 function emitClassInfoCheck(n: Ninja, cfg: Config, exe: string, exeName: string): string[] {
   const script = webkitClassInfoCheckScript(cfg);
-  if (script === undefined) return [];
-  const stamp = resolve(cfg.buildDir, `${exeName}.classinfo-unique`);
+  const stamp = classInfoStamp(cfg, exeName);
+  if (script === undefined || stamp === undefined) return [];
   // NM: the toolchain's llvm-nm (the script otherwise searches PATH).
   n.rule("classinfo_check", {
     command: `${cfg.nm === undefined ? "" : `env NM=${quote(cfg.nm, false)} `}python3 ${quote(script, false)} $in && touch $out`,
@@ -841,8 +873,8 @@ function emitClassInfoCheck(n: Ninja, cfg: Config, exe: string, exeName: string)
 function emitSmokeTest(n: Ninja, cfg: Config, exe: string, exeName: string, strippedExe: string | undefined): string[] {
   // Skip when the binary can't run on this host (different os/arch/abi) —
   // `ninja check` then just depends on the exe.
-  if (!cfg.canRunOnHost) return [exe];
-  const stamp = resolve(cfg.buildDir, `${exeName}.smoke-test-passed`);
+  const stamp = smokeTestStamp(cfg, exeName);
+  if (stamp === undefined) return [exe];
 
   // Linux+ASAN: wrap in `setarch <arch> -R` to disable ASLR. Fall back
   // to direct invocation if setarch fails (not all systems have it).

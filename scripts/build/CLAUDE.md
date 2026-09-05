@@ -74,9 +74,12 @@ Edge dependency types:
 
 - **explicit inputs** (`$in`) — listed on the build line, passed to the command
 - **implicit inputs** (`| foo`) — tracked for rebuild but not in `$in`. Use for the PCH, dep lib outputs (invalidation signal for their headers), or a per-file generated header this source is known to read
-- **order-only inputs** (`|| stamp`) — must exist before this edge runs, but mtime doesn't trigger rebuild. Use for bulk codegen headers: "must be generated first, but the compiler's `.d` depfile will track which ones I actually read"
+- **order-only inputs** (`|| stamp`) — must exist before this edge runs, but mtime doesn't trigger rebuild. Use for bulk codegen headers: "must be generated first, but the compiler's `.d` depfile will track which ones I actually read". A group of them goes behind one phony (`obj/.codegen-ready`, a dep group's `.<group>-ready`) so each compile edge names one input, not the list
+- **validations** (`|@ check`) — built whenever this edge is, but not an input of it or of anything downstream. The smoke test and the ClassInfo check are validations of bun's link: relinking runs them, nothing waits on them
 
 **`restat = 1`** — after the command runs, re-stat outputs; if mtime didn't change, prune downstream. Critical for idempotent steps (fetch no-op, codegen unchanged).
+
+**`console` pool** — depth 1 and owns the terminal. Only for jobs with a TTY UI worth watching (cargo, dsymutil, the smoke test); never for links or anything else the graph has several of, since it serializes them.
 
 **`depfile`** — compiler writes `foo.o.d` listing every `#include`d header. Ninja reads it on the next build to know which headers this `.o` depends on. Codegen headers are order-only for this reason: they're declared outputs with restat, the depfile gives exact per-file header deps on build 2+, and order-only just ensures they exist for build 1. Prebuilt/cargo dep outputs are a different story — PCH, cc, and no-PCH cxx use them as _implicit_ deps, because those edges rewrite headers as undeclared side effects and order-only would lag one build behind (see Gotchas).
 
@@ -148,7 +151,7 @@ Tables: `cpuTargetFlags` (`-march`/`-mcpu`/`-mtune` — also translated for rust
 5. `new Ninja({buildDir})` + `registerAllRules(n, cfg)` — register every rule template.
 6. `emitBun(n, cfg, sources)` — assemble the build graph (see Phase 2).
 7. `emitGeneratorRule(n, cfg, partial)` — persist `configure.json`, emit `regen` rule so editing any build script triggers reconfigure.
-8. `n.default([...])` + `n.write()` — set default targets, write `build.ninja` + `compile_commands.json`.
+8. `n.default([...])` + `n.write()` — set default targets, write `build.ninja` + `compile_commands.json`; then stamp `build.ninja` and `ninja -t restat` it so ninja's log agrees the manifest is current (otherwise its own `regen` edge would rerun configure once more after any script edit).
 9. `mkdirAll(...)` — pre-create all object output dirs.
 
 ### Phase 2 — emitBun (`bun.ts::emitBun`)
@@ -163,7 +166,7 @@ For `mode: "full"` (the normal case):
 6. **Compile** — loop sources, `cxx()`/`cc()` per file.
 7. **Link** — `emitShims(n, cfg)` for platform workaround dylibs, then `link(n, cfg, exeName, objects, {libs, flags})`.
 8. **Post-link** — strip (release only), dsymutil (darwin release only).
-9. **Smoke test** — `<exe> --revision` catches load-time failures.
+9. **Checks** — `<exe> --revision` (load-time failures) and the JSC ClassInfo audit, as validations of the link edge (`ninja check` names them too).
 
 Split CI modes: `rust-only` (path deps+codegen+cargo → libbun_runtime.a), `cpp-only` (deps+codegen+compile → archive), `link-only` (download artifacts → link), `rust-and-link` (cargo + poll build-cpp + download archive → link). The pipeline's `build-bun` step uses `archive-link` (`ci-build` profile): the full graph on one agent, linking from the same archive `cpp-only` produces, with the archive, libbun_runtime.a and dep libs uploaded from ninja edges as soon as each exists.
 

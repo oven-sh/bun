@@ -284,6 +284,10 @@ impl JSValue {
     pub fn is_array(self) -> bool {
         self.is_cell() && self.js_type().is_array()
     }
+    /// ECMA-262 `IsArray`: [`Self::is_array`], or a `Proxy` of an array. Throws for a revoked `Proxy`.
+    pub fn is_array_including_proxy(self, global: &JSGlobalObject) -> JsResult<bool> {
+        crate::cpp::JSC__JSValue__isArrayIncludingProxy(self, global)
+    }
     #[inline]
     pub fn is_date(self) -> bool {
         self.is_cell() && self.js_type() == JSType::JSDate
@@ -1491,6 +1495,16 @@ impl JSValue {
         host_fn::from_js_host_call_generic(global, || {
             JSC__JSValue__putMayBeIndex(self, global, key, value)
         })
+    }
+    /// `[[Get]]` of any key, numeric keys included: the counterpart of [`Self::put_may_be_index`].
+    pub fn get_may_be_index(
+        self,
+        global: &JSGlobalObject,
+        key: &bun_core::String,
+    ) -> JsResult<JSValue> {
+        debug_assert!(self.is_object());
+        // SAFETY: `key` borrows a live `String` for the duration of the call.
+        unsafe { crate::cpp::JSC__JSValue__getMayBeIndex(self, global, key) }
     }
     pub fn put_to_property_key(
         target: JSValue,

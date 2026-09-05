@@ -1098,19 +1098,39 @@ declare module "bun" {
      * @category Utilities
      *
      * @param input The JavaScript object to serialize.
-     * @param replacer Not supported; pass `undefined` or `null`.
+     * @param replacer Works like the `replacer` of `JSON.stringify`. A function is
+     * called once for the document (with the key `""`) and once for every property
+     * and array element, with the holder as `this`, and what it returns is written
+     * instead of the value. An array lists the properties to write, for the document
+     * and for every table in it, and puts them in that order; array elements are not
+     * filtered. A value the replacer returns follows the same rules as any other
+     * value: `undefined` drops the property, `null` throws, a `Date` or Temporal
+     * value becomes a date/time, and an array of tables is detected after replacement.
+     * Unlike `JSON.stringify`, no `toJSON` method is called: the replacer receives
+     * values such as `Date` objects as they are. Anything that is neither a function
+     * nor an array is ignored.
      * @param space Accepted for signature parity with `YAML.stringify` and
      * `JSON5.stringify`, but ignored: TOML output is line-oriented.
-     * @returns A TOML document string, or `undefined` if the input is `undefined`, a function, or a symbol.
+     * @returns A TOML document string, or `undefined` if the input, or what the replacer returns for it, is `undefined`, a function, or a symbol.
      *
      * @example
      * ```js
      * import { TOML } from "bun";
      * TOML.stringify({ name: "app", server: { port: 8080 } });
      * // 'name = "app"\n\n[server]\nport = 8080\n'
+     *
+     * TOML.stringify({ name: "app", token: "secret" }, (key, value) => (key === "token" ? undefined : value));
+     * // 'name = "app"\n'
+     *
+     * TOML.stringify({ name: "app", token: "secret", server: { port: 8080 } }, ["name", "server", "port"]);
+     * // 'name = "app"\n\n[server]\nport = 8080\n'
      * ```
      */
-    export function stringify(input: unknown, replacer?: undefined | null, space?: string | number): string | undefined;
+    export function stringify(
+      input: unknown,
+      replacer?: ((this: any, key: string, value: any) => any) | (string | number)[] | null,
+      space?: string | number,
+    ): string | undefined;
   }
 
   /**
@@ -1507,12 +1527,22 @@ declare module "bun" {
      * @category Utilities
      *
      * @param input The JavaScript value to stringify.
-     * @param replacer Not supported.
+     * @param replacer Works like the `replacer` of `JSON.stringify`. A function is
+     * called once for the root value (with the key `""`) and once for every property
+     * and array element, with the holder as `this`, and what it returns is written
+     * instead of the value. An array lists the properties to write, for every object
+     * at every depth, and puts them in that order; array elements are not filtered.
+     * A value the replacer returns follows the same rules as any other value:
+     * `undefined` is left out. A function replacer runs once per key an object
+     * appears under, so such an object is written once per key instead of once with
+     * an anchor and aliases; a cycle keeps its anchor. Unlike `JSON.stringify`, no
+     * `toJSON` method is called: the replacer receives values such as `Date` objects
+     * as they are. Anything that is neither a function nor an array is ignored.
      * @param space A number for how many spaces each level of indentation gets, or a string used as indentation.
      *              Without this parameter, outputs flow-style (single-line) YAML.
      *              With this parameter, outputs block-style (multi-line) YAML.
      *              The number is clamped between 0 and 10, and the first 10 characters of the string are used.
-     * @returns A string containing the YAML document.
+     * @returns A YAML string, or `undefined` if the input, or what the replacer returns for it, is `undefined`, a function, or a symbol.
      *
      * @example
      * ```ts
@@ -1532,6 +1562,17 @@ declare module "bun" {
      * // abc: def
      * // num: 123
      *
+     * // With a replacer function
+     * console.log(YAML.stringify({ id: 1n, token: "secret" }, (key, value) => {
+     *   if (key === "token") return undefined;
+     *   return typeof value === "bigint" ? value.toString() : value;
+     * }));
+     * // {id: "1"}
+     *
+     * // With a replacer array
+     * console.log(YAML.stringify({ abc: "def", token: "secret", num: 123 }, ["num", "abc"]));
+     * // {num: 123,abc: def}
+     *
      * const cycle = {};
      * cycle.obj = cycle;
      * console.log(YAML.stringify(cycle, null, 2));
@@ -1539,7 +1580,11 @@ declare module "bun" {
      * // obj: *1
      * ```
      */
-    export function stringify(input: unknown, replacer?: undefined | null, space?: string | number): string;
+    export function stringify(
+      input: unknown,
+      replacer?: ((this: any, key: string, value: any) => any) | (string | number)[] | null,
+      space?: string | number,
+    ): string | undefined;
   }
 
   /**
@@ -2074,33 +2119,52 @@ declare module "bun" {
 
     /**
      * Convert a JavaScript value into a JSON5 string. Object keys that are
-     * valid identifiers are unquoted, strings use double quotes, `Infinity`
+     * valid identifiers are unquoted, strings use single quotes, `Infinity`
      * and `NaN` are represented as literals, and indented output includes
      * trailing commas.
      *
      * @category Utilities
      *
      * @param input The JavaScript value to stringify.
-     * @param replacer Not supported.
+     * @param replacer Works like the `replacer` of `JSON.stringify`. A function is
+     * called once for the root value (with the key `""`) and once for every property
+     * and array element, with the holder as `this`, and what it returns is written
+     * instead of the value. An array lists the properties to write, for every object
+     * at every depth, and puts them in that order; array elements are not filtered.
+     * A value the replacer returns follows the same rules as any other value:
+     * `undefined` drops a property and becomes `null` in an array. Unlike
+     * `JSON.stringify`, no `toJSON` method is called: the replacer receives values
+     * such as `Date` objects as they are. Anything that is neither a function nor an
+     * array is ignored.
      * @param space A number for how many spaces each level of indentation gets, or a string used as indentation.
      *              The number is clamped between 0 and 10, and the first 10 characters of the string are used.
-     * @returns A JSON5 string, or `undefined` if the input is `undefined`, a function, or a symbol.
+     * @returns A JSON5 string, or `undefined` if the input, or what the replacer returns for it, is `undefined`, a function, or a symbol.
      *
      * @example
      * ```ts
      * import { JSON5 } from "bun";
      *
      * console.log(JSON5.stringify({ a: 1, b: "two" }));
-     * // {a:1,b:"two"}
+     * // {a:1,b:'two'}
      *
      * console.log(JSON5.stringify({ a: 1, b: 2 }, null, 2));
      * // {
      * //   a: 1,
      * //   b: 2,
      * // }
+     *
+     * console.log(JSON5.stringify({ a: 1n, b: 2 }, (key, value) => (typeof value === "bigint" ? value.toString() : value)));
+     * // {a:'1',b:2}
+     *
+     * console.log(JSON5.stringify({ a: 1, b: 2, c: 3 }, ["c", "a"]));
+     * // {c:3,a:1}
      * ```
      */
-    export function stringify(input: unknown, replacer?: undefined | null, space?: string | number): string | undefined;
+    export function stringify(
+      input: unknown,
+      replacer?: ((this: any, key: string, value: any) => any) | (string | number)[] | null,
+      space?: string | number,
+    ): string | undefined;
   }
 
   /**

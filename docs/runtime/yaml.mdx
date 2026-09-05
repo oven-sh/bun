@@ -5,7 +5,7 @@ description: Use Bun's built-in support for YAML files through both runtime APIs
 
 In Bun, YAML is a first-class citizen alongside JSON and TOML. You can:
 
-- Parse YAML strings with `Bun.YAML.parse`
+- Parse YAML strings with `Bun.YAML.parse` and write them with `Bun.YAML.stringify`
 - `import` & `require` YAML files as modules at runtime (including hot reloading & watch mode support)
 - `import` & `require` YAML files in frontend apps with Bun's bundler
 
@@ -120,6 +120,49 @@ try {
   console.error("Failed to parse YAML:", error.message);
 }
 ```
+
+### `Bun.YAML.stringify()`
+
+Convert a JavaScript value into a YAML string. Without the `space` argument, Bun writes flow style on one line. With it, Bun writes block style, indented by that many spaces (or by that string):
+
+```ts
+const config = { name: "app", port: 8080 };
+
+Bun.YAML.stringify(config);
+// {name: app,port: 8080}
+
+Bun.YAML.stringify(config, null, 2);
+// name: app
+// port: 8080
+```
+
+#### Replacer
+
+The `replacer` argument works like the `replacer` of `JSON.stringify`.
+
+Pass a function to change or drop values. Bun calls it once for the root value, with the key `""`, and once for every property and array element. The holder of the value is `this`. Bun writes what the function returns. The returned value follows the same rules as any other value. Bun leaves out `undefined`, and returns `undefined` when the function drops the root value. Bun calls the function once per key an object appears under, as `JSON.stringify` does, so such an object is written once per key instead of once with an anchor and aliases. A cycle keeps its anchor.
+
+```ts
+const data = { id: 1n, token: "secret", tags: ["a", "b"] };
+
+Bun.YAML.stringify(data, (key, value) => {
+  if (key === "token") return undefined;
+  if (typeof value === "bigint") return value.toString();
+  return value;
+});
+// {id: "1",tags: [a,b]}
+```
+
+Pass an array of property names to write only those properties. Bun applies the list to every object at every depth and writes the properties in the order of the list. Bun writes every element of an array.
+
+```ts
+Bun.YAML.stringify({ b: 1, a: 2, token: "secret", nested: { a: 3, token: "secret" } }, ["a", "b", "nested"]);
+// {a: 2,b: 1,nested: {a: 3}}
+```
+
+Unlike `JSON.stringify`, Bun does not call `toJSON` methods. The replacer receives values such as `Date` objects as they are.
+
+Bun ignores a `replacer` that is neither a function nor an array, as `JSON.stringify` does.
 
 ---
 

@@ -781,16 +781,264 @@ describe("stringify", () => {
     expect(JSON5.stringify([Infinity, -Infinity, NaN])).toEqual("[Infinity,-Infinity,NaN]");
   });
 
-  test("replacer function throws", () => {
-    expect(() => JSON5.stringify({ a: 1 }, (key: string, value: any) => value)).toThrow(
-      "JSON5.stringify does not support the replacer argument",
-    );
+  // The replacer follows the protocol of JSON.stringify's replacer, so most
+  // cases are checked against JSON.stringify on the same input.
+  describe("replacer function", () => {
+    test("is called like JSON.stringify's replacer: same keys, holders, values and order", () => {
+      const input = () => ({ a: 1, arr: [10, { b: 2, c: 3 }], o: { d: 4 } });
+      function record(calls: unknown[][]) {
+        return function (this: any, key: string, value: unknown) {
+          calls.push([key, value, this[key] === value, Array.isArray(this), Object.keys(this)]);
+          return value;
+        };
+      }
+      const json5Calls: unknown[][] = [];
+      const jsonCalls: unknown[][] = [];
+      expect(JSON5.stringify(input(), record(json5Calls))).toBe("{a:1,arr:[10,{b:2,c:3}],o:{d:4}}");
+      JSON.stringify(input(), record(jsonCalls));
+      expect(json5Calls).toEqual(jsonCalls);
+      expect(json5Calls[0]).toEqual(["", input(), true, false, [""]]);
+    });
+
+    test("the returned value is written in place of the original", () => {
+      const replacer = (key: string, value: unknown) => (typeof value === "bigint" ? value.toString() : value);
+      expect(JSON5.stringify({ id: 10n, list: [1n, { n: 2n }] }, replacer)).toBe("{id:'10',list:['1',{n:'2'}]}");
+      expect(
+        JSON5.stringify({ d: new Date(0) }, (key, value) => (value instanceof Date ? value.toISOString() : value)),
+      ).toBe("{d:'1970-01-01T00:00:00.000Z'}");
+    });
+
+    test("is applied to the properties of an object the replacer returned", () => {
+      const replacer = (key: string, value: unknown) =>
+        value instanceof Map ? Object.fromEntries(value) : typeof value === "bigint" ? `${value}n` : value;
+      const input = () => ({ m: new Map([["k", 1n]]) });
+      expect(JSON5.stringify(input(), replacer)).toBe("{m:{k:'1n'}}");
+      expect(JSON5.parse(JSON5.stringify(input(), replacer))).toEqual(JSON.parse(JSON.stringify(input(), replacer)));
+    });
+
+    test("undefined, a function or a symbol drops the property and writes null for an array element", () => {
+      const drop = (key: string, value: unknown) => (key === "a" || key === "0" ? undefined : value);
+      expect(JSON5.stringify({ a: 1, b: 2, list: [1, 2] }, drop)).toBe("{b:2,list:[null,2]}");
+      expect(JSON5.stringify({ a: 1, b: 2 }, (key, value) => (key === "a" ? () => {} : value))).toBe("{b:2}");
+      expect(JSON5.stringify({ a: 1, b: 2 }, (key, value) => (key === "a" ? Symbol("a") : value))).toBe("{b:2}");
+    });
+
+    test("holes are written as without a replacer", () => {
+      const holey = [1, , 3];
+      expect(JSON5.stringify(holey)).toBe("[1,null,3]");
+      expect(JSON5.stringify(holey, (key, value) => value)).toBe("[1,null,3]");
+      expect(JSON5.stringify(holey, ["x"])).toBe("[1,null,3]");
+      expect(JSON5.stringify({ list: new Array(2) }, ["list"])).toBe("{list:[null,null]}");
+    });
+
+    test("leaves the input as it was", () => {
+      const nested = { keep: 1, drop: 2, n: 3n };
+      const input = { nested, list: [nested, 4n], drop: 5 };
+      const snapshot = structuredClone(input);
+      const replacer = (key: string, value: unknown) =>
+        key === "drop" ? undefined : typeof value === "bigint" ? Number(value) : value;
+      expect(JSON5.stringify(input, replacer)).toBe("{nested:{keep:1,n:3},list:[{keep:1,n:3},4]}");
+      expect(JSON5.stringify(input, ["nested", "keep"])).toBe("{nested:{keep:1}}");
+      expect(input).toEqual(snapshot);
+      expect(input.nested).toBe(nested);
+      expect(input.list[0]).toBe(nested);
+    });
+
+    test('is called for the root with the key "" and a { "": value } holder', () => {
+      expect(JSON5.stringify("x", (key, value) => (key === "" ? { wrapped: value } : value))).toBe("{wrapped:'x'}");
+      expect(JSON5.stringify(undefined, () => 1)).toBe("1");
+      expect(JSON5.stringify(1, () => undefined)).toBeUndefined();
+      expect(JSON5.stringify(1, () => () => {})).toBeUndefined();
+    });
+
+    test("a boxed primitive returned by the replacer is unboxed; the replacer sees the original value as is", () => {
+      expect(JSON5.stringify({ a: 1 }, (key, value) => (key === "a" ? new String("boxed") : value))).toBe(
+        "{a:'boxed'}",
+      );
+      expect(JSON5.stringify({ a: new Number(7) }, (key, value) => (key === "a" ? typeof value : value))).toBe(
+        "{a:'object'}",
+      );
+    });
+
+    test("reads each property once", () => {
+      let reads = 0;
+      const input = {
+        get a() {
+          return ++reads;
+        },
+      };
+      expect(JSON5.stringify({ input }, (key, value) => value)).toBe("{input:{a:1}}");
+      expect(reads).toBe(1);
+    });
+
+    test("a replacer can break a cycle; one that does not still gets the circular error", () => {
+      const cyclic: any = { x: 1 };
+      cyclic.self = cyclic;
+      const seen = new WeakSet();
+      const breakCycles = (key: string, value: any) => {
+        if (typeof value === "object" && value !== null) {
+          if (seen.has(value)) return "[Circular]";
+          seen.add(value);
+        }
+        return value;
+      };
+      expect(JSON5.stringify(cyclic, breakCycles)).toBe("{x:1,self:'[Circular]'}");
+      expect(() => JSON5.stringify(cyclic, (key, value) => value)).toThrow("Converting circular structure to JSON5");
+    });
+
+    test("an object that appears twice is replaced and written twice, as JSON.stringify does", () => {
+      const shared = { x: 1 };
+      const input = { a: shared, b: shared };
+      const keys: string[] = [];
+      let n = 0;
+      const count = (key: string, value: unknown) => {
+        keys.push(key);
+        return key === "x" ? ++n : value;
+      };
+      expect(JSON5.stringify(input, count)).toBe("{a:{x:1},b:{x:2}}");
+      expect(keys).toEqual(["", "a", "x", "b", "x"]);
+      expect(JSON.stringify(input, count)).toBe('{"a":{"x":3},"b":{"x":4}}');
+    });
+
+    test("an exception thrown by the replacer propagates", () => {
+      expect(() =>
+        JSON5.stringify({ a: 1 }, () => {
+          throw new TypeError("from the replacer");
+        }),
+      ).toThrow(new TypeError("from the replacer"));
+    });
+
+    test("works together with space", () => {
+      expect(JSON5.stringify({ a: 1, b: 2 }, (key, value) => (key === "a" ? undefined : value), 2)).toBe(
+        "{\n  b: 2,\n}",
+      );
+    });
+
+    test("a callable that is not a function object is a replacer too", () => {
+      const replacer = new Proxy(() => {}, {
+        apply: (target, thisArg, [key, value]) => (key === "a" ? 2 : value),
+      });
+      expect(JSON5.stringify({ a: 1 }, replacer)).toBe("{a:2}");
+    });
+
+    test("throws a RangeError instead of overflowing the stack on a very deep value", () => {
+      const deep: any = {};
+      let current = deep;
+      for (let i = 0; i < 200_000; i++) {
+        current.next = {};
+        current = current.next;
+      }
+      expect(() => JSON5.stringify(deep, (key, value) => value)).toThrow(RangeError);
+      expect(() => JSON5.stringify(deep, ["next"])).toThrow(RangeError);
+    });
+
+    test("objects the replacer returns survive garbage collection during the walk", () => {
+      const input: Record<string, unknown> = {};
+      for (let i = 0; i < 30; i++) input[`k${i}`] = { i, inner: { j: i }, list: [i, { z: i }] };
+      let calls = 0;
+      const output = JSON5.stringify(input, (key, value) => {
+        if (++calls % 30 === 0) Bun.gc(true);
+        if (typeof value === "object" && value !== null && !Array.isArray(value) && key !== "") {
+          return { ...value, fresh: key };
+        }
+        return value;
+      });
+      const parsed: any = JSON5.parse(output!);
+      expect(Object.keys(parsed)).toHaveLength(30);
+      expect(parsed.k7).toEqual({
+        i: 7,
+        inner: { j: 7, fresh: "inner" },
+        list: [7, { z: 7, fresh: "1" }],
+        fresh: "k7",
+      });
+    });
   });
 
-  test("replacer array throws", () => {
-    expect(() => JSON5.stringify({ a: 1, b: 2 }, ["a"])).toThrow(
-      "JSON5.stringify does not support the replacer argument",
-    );
+  describe("replacer array", () => {
+    test("writes only the listed properties, in the order of the list, at every level", () => {
+      const input = { b: 1, a: 2, secret: 3, nested: { secret: 4, a: 5 }, list: [{ secret: 6, b: 7 }, 8] };
+      expect(JSON5.stringify(input, ["a", "b", "nested", "list"])).toBe("{a:2,b:1,nested:{a:5},list:[{b:7},8]}");
+    });
+
+    test("does not filter arrays, and leaves a primitive root alone", () => {
+      expect(JSON5.stringify([1, { a: 2, b: 3 }], ["a"])).toBe("[1,{a:2}]");
+      expect(JSON5.stringify({ a: 1 }, [])).toBe("{}");
+      expect(JSON5.stringify([{ a: 1 }], [])).toBe("[{}]");
+      expect(JSON5.stringify(5, ["a"])).toBe("5");
+      expect(JSON5.stringify("s", ["a"])).toBe("'s'");
+    });
+
+    test("accepts the entries JSON.stringify accepts: strings, numbers and their wrapper objects, deduplicated", () => {
+      class WithGetter {
+        own = 1;
+        other = 2;
+        get fromPrototype() {
+          return "getter";
+        }
+      }
+      const input = Object.assign(new WithGetter(), { 5: "five" });
+      const list = ["fromPrototype", "own", "missing", new String("other"), 5, null, true, {}, Symbol.iterator, "own"];
+      expect(JSON5.stringify(input, list as any)).toBe("{fromPrototype:'getter',own:1,other:2,'5':'five'}");
+      expect(JSON.stringify(input, list as any)).toBe('{"fromPrototype":"getter","own":1,"other":2,"5":"five"}');
+    });
+
+    test("writes the keys in the order of the list, index-like keys included", () => {
+      const input = { b: 1, 0: "zero", a: 2 };
+      expect(JSON5.stringify(input, ["b", "a", "0"])).toBe("{b:1,a:2,'0':'zero'}");
+      expect(JSON.stringify(input, ["b", "a", "0"])).toBe('{"b":1,"a":2,"0":"zero"}');
+    });
+
+    test("looks keys up by their full name", () => {
+      expect(JSON5.stringify({ ключ: 1, 键: 2, x: 3 }, ["键", "ключ"])).toBe("{键:2,ключ:1}");
+      expect(JSON5.stringify({ "": 1, x: 2 }, [""])).toBe("{'':1}");
+    });
+
+    test("reads each listed property once", () => {
+      let reads = 0;
+      const input = {
+        get a() {
+          return ++reads;
+        },
+      };
+      expect(JSON5.stringify({ input }, ["input", "a"])).toBe("{input:{a:1}}");
+      expect(reads).toBe(1);
+    });
+
+    test("an exception thrown while the list is read propagates", () => {
+      class Throws extends String {
+        override toString(): string {
+          throw new Error("from toString");
+        }
+      }
+      expect(() => JSON5.stringify({ a: 1 }, [new Throws("a")] as any)).toThrow("from toString");
+    });
+
+    test("works together with space", () => {
+      expect(JSON5.stringify({ a: 1, b: 2 }, ["b"], 2)).toBe("{\n  b: 2,\n}");
+    });
+
+    test("a Proxy of an array is a list too, read through its traps", () => {
+      const input = { a: 1, b: 2, c: 3 };
+      expect(JSON5.stringify(input, new Proxy(["b"], {}))).toBe("{b:2}");
+
+      const trapped = new Proxy(["a"], {
+        get(target, key, receiver) {
+          return key === "length" ? 2 : key === "1" ? "c" : Reflect.get(target, key, receiver);
+        },
+      });
+      expect(JSON5.stringify(input, trapped)).toBe("{a:1,c:3}");
+      expect(JSON.stringify(input, trapped)).toBe('{"a":1,"c":3}');
+
+      const { proxy, revoke } = Proxy.revocable(["a"], {});
+      revoke();
+      expect(() => JSON5.stringify(input, proxy)).toThrow(TypeError);
+    });
+  });
+
+  test("a replacer that is neither callable nor an array is ignored, as JSON.stringify ignores it", () => {
+    for (const replacer of [undefined, null, "a", 1, true, { 0: "a", length: 1 }]) {
+      expect(JSON5.stringify({ a: 1, b: 2 }, replacer as any)).toBe("{a:1,b:2}");
+    }
   });
 
   test("space parameter with number", () => {

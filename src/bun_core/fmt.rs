@@ -1071,12 +1071,6 @@ pub fn parse_f64(s: &[u8]) -> Option<f64> {
     None // partial match → trailing garbage
 }
 
-/// `parse_f64` truncated to `f32`.
-#[inline]
-pub fn parse_f32(s: &[u8]) -> Option<f32> {
-    parse_f64(s).map(|v| v as f32)
-}
-
 /// Parse `s` as `T` for grammars whose alphabet is pure ASCII (IP addresses,
 /// booleans). Any non-ASCII byte short-circuits to `None`, so the `&str` view
 /// is always valid without a UTF-8 walk. **Do not** use for integers/floats —

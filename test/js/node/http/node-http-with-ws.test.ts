@@ -162,3 +162,49 @@ describe.concurrent("request handlers run to completion before the callbacks the
     expect(order).toEqual(["rest of handler", "nextTick", "microtask"]);
   });
 });
+
+test.concurrent("http.Server.close() does not close open WebSocket connections", async () => {
+  const server = http.createServer();
+  const wss = new WebSocketServer({ server });
+  const echoed = Promise.withResolvers<string>();
+  wss.on("connection", ws => {
+    ws.on("message", m => ws.send("echo:" + m));
+  });
+  await once(server.listen(0, "127.0.0.1"), "listening");
+  const port = (server.address() as AddressInfo).port;
+
+  const client = new WebSocket(`ws://127.0.0.1:${port}/`);
+  const opened = Promise.withResolvers<void>();
+  const closed = Promise.withResolvers<CloseEvent>();
+  client.onopen = () => opened.resolve();
+  client.onerror = e => opened.reject(e);
+  client.onmessage = e => echoed.resolve(String(e.data));
+  client.onclose = e => closed.resolve(e);
+  await opened.promise;
+  try {
+    // Node's server.close() stops accepting but leaves upgraded sockets to
+    // the user; the ws connection must stay open.
+    server.close();
+    client.send("hi");
+    expect(await echoed.promise).toBe("echo:hi");
+    expect(client.readyState).toBe(WebSocket.OPEN);
+
+    // close() did take effect: the listener is gone for new connections.
+    const late = new WebSocket(`ws://127.0.0.1:${port}/`);
+    const lateResult = await new Promise<string>(resolve => {
+      late.onopen = () => resolve("open");
+      late.onerror = () => resolve("error");
+    });
+    expect(lateResult).toBe("error");
+    expect(client.readyState).toBe(WebSocket.OPEN);
+
+    // User-chosen code reaches the peer.
+    for (const c of wss.clients) c.close(4001, "draining");
+    const ev = await closed.promise;
+    expect({ code: ev.code, reason: ev.reason }).toEqual({ code: 4001, reason: "draining" });
+  } finally {
+    for (const c of wss.clients) c.terminate();
+    client.close();
+    server.closeAllConnections();
+  }
+});

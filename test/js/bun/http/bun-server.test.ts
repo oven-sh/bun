@@ -1224,27 +1224,36 @@ describe.concurrent("server.stop() drain promise counts open connections", () =>
     // active_connection_count == 0 and only the has_active_web_sockets() term
     // in get_all_closed_promise's early-return keeps a repeat stop() call from
     // handing back a fresh resolved promise while the first one is pending.
+    // stop() ends websockets that are already open, so the upgrade is held in
+    // fetch() until after the first stop() to get a live ws on a stopped server.
     await using proc = Bun.spawn({
       cmd: [
         bunExe(),
         "-e",
         `
+          const entered = Promise.withResolvers();
+          const release = Promise.withResolvers();
           const server = Bun.serve({
             port: 0,
             hostname: "127.0.0.1",
-            fetch(req, server) {
+            async fetch(req, server) {
+              entered.resolve();
+              await release.promise;
               if (server.upgrade(req)) return;
               return new Response("no");
             },
             websocket: { open() {}, message() {}, close() {} },
           });
           const ws = new WebSocket("ws://127.0.0.1:" + server.port + "/");
-          await new Promise((resolve, reject) => {
+          const opened = new Promise((resolve, reject) => {
             ws.onopen = resolve;
             ws.onerror = reject;
           });
+          await entered.promise;
           let resolved1 = false, resolved2 = false;
           const p1 = server.stop(false).then(() => { resolved1 = true; });
+          release.resolve();
+          await opened;
           await new Promise(r => setImmediate(r));
           const p2 = server.stop(false).then(() => { resolved2 = true; });
           await new Promise(r => setImmediate(r));
@@ -1885,6 +1894,8 @@ test("server wrapper survives GC while a websocket is connected after stop()", a
   // m_routeList — while the connection was still in use. With the downgrade
   // deferred into deinit_if_we_can's idle predicate, the wrapper must outlive
   // the websocket and become collectable only after the last close.
+  // stop() now ends websockets that are already open, so the upgrade is held
+  // in fetch() until after stop() to reach the stopped-with-live-ws state.
   await using proc = Bun.spawn({
     cmd: [
       bunExe(),
@@ -1923,11 +1934,15 @@ test("server wrapper survives GC while a websocket is connected after stop()", a
         })();
 
         const ws = await (async () => {
+          const entered = Promise.withResolvers();
+          const release = Promise.withResolvers();
           const server = Bun.serve({
             port: 0,
             hostname: "127.0.0.1",
             routes: { "/r": () => new Response("ok") },
-            fetch(req, server) {
+            async fetch(req, server) {
+              entered.resolve();
+              await release.promise;
               if (server.upgrade(req)) return;
               return new Response("nope", { status: 404 });
             },
@@ -1938,10 +1953,13 @@ test("server wrapper survives GC while a websocket is connected after stop()", a
           const ws = new WebSocket("ws://127.0.0.1:" + server.port);
           ws.onopen = () => opened.resolve();
           ws.onerror = e => opened.reject(e);
-          await opened.promise;
+          await entered.promise;
 
-          // Graceful stop: listener closes, the live websocket stays open.
+          // Graceful stop: listener closes; the in-flight request then
+          // upgrades, leaving a live websocket on the stopped server.
           server.stop();
+          release.resolve();
+          await opened.promise;
           return ws;
         })();
         // The only \`server\` binding is now out of scope; only the live
@@ -3269,11 +3287,20 @@ describe.concurrent("handler GC tracing (heapStats wrapper-count)", () => {
         // Nothing is returned from the arrow: a returned value would keep the
         // async frame's scope (which contains server) alive via the
         // resolved-value chain in JSC.
+        // stop() ends websockets that are already open, so the upgrade is held
+        // in fetch() until after stop() to reach the stopped-with-live-ws state.
+        const entered = Promise.withResolvers();
+        const release = Promise.withResolvers();
         await (async () => {
           const server = Bun.serve({
             port: 0,
             development: true,
-            fetch(req, s) { if (s.upgrade(req)) return; return new Response("ok"); },
+            async fetch(req, s) {
+              entered.resolve();
+              await release.promise;
+              if (s.upgrade(req)) return;
+              return new Response("ok");
+            },
             websocket: {
               open() { opened.resolve(); },
               // Closes over server — the cycle through wsHandlers.
@@ -3281,9 +3308,11 @@ describe.concurrent("handler GC tracing (heapStats wrapper-count)", () => {
             },
           });
           connect(server.url.href.replace("http", "ws"));
+          await entered.promise;
+          server.stop(); // graceful — listener gone, request still in flight
+          release.resolve();
           await opened.promise;      // server-side ws created (roots wrapper)
           await clientOpen.promise;  // client ready to send (avoid InvalidStateError)
-          server.stop(); // graceful — listener gone, ws stays
         })();
 
         // server out of scope. Wrapper is rooted only via:
@@ -3664,11 +3693,19 @@ describe.concurrent("handler GC tracing (heapStats wrapper-count)", () => {
         // Scope server so the module-level frame holds no reference to the
         // wrapper when message(ws) runs; after ws.close() downgrades js_value
         // and clears m_server, the wrapper must have zero roots for Bun.gc to
-        // reach wsOnError.
+        // reach wsOnError. stop() ends websockets that are already open, so
+        // the upgrade is held in fetch() until after stop().
+        const entered = Promise.withResolvers();
+        const release = Promise.withResolvers();
         await (async () => {
           const server = Bun.serve({
             port: 0, hostname: "127.0.0.1",
-            fetch(req, s) { if (s.upgrade(req)) return; return new Response("no"); },
+            async fetch(req, s) {
+              entered.resolve();
+              await release.promise;
+              if (s.upgrade(req)) return;
+              return new Response("no");
+            },
             websocket: {
               open() {},
               message(ws) {
@@ -3683,8 +3720,10 @@ describe.concurrent("handler GC tracing (heapStats wrapper-count)", () => {
           ws.onopen = () => opened.resolve();
           ws.onerror = e => opened.reject(e);
           ws.onclose = () => closed.resolve();
+          await entered.promise;
+          server.stop(); // graceful: listener gone, the upgrade below keeps wrapper Strong
+          release.resolve();
           await opened.promise;
-          server.stop(); // graceful: listener gone, this ws keeps wrapper Strong
         })();
         ws.send("go");
         await closed.promise;

@@ -1689,6 +1689,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             // mask the TCP teardown.
             if abrupt && !already_terminated {
                 self.unref();
+                self.end_all_websockets_going_away();
                 if let Some(ws) = self.config.websocket.as_mut() {
                     ws.handler.app = None;
                 }
@@ -1705,6 +1706,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             }
             return;
         };
+        self.end_all_websockets_going_away();
         if abrupt || self.is_closed() {
             self.unref();
         }
@@ -1735,8 +1737,8 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             // S012: `app::ListenSocket<SSL>` is a ZST opaque — safe deref.
             bun_opaque::opaque_deref_mut(listener).close();
             // Close idle keep-alive connections now and mark busy ones to
-            // close once their in-flight work completes; open websockets are
-            // untouched and drain on their own. Each close reaches
+            // close once their in-flight work completes (open websockets were
+            // ended with 1001 above). Each close reaches
             // `on_connection_filter(-2)` synchronously, so hold the guard so
             // that path cannot form a second `&mut self` under this frame —
             // `stop()` runs `deinit_if_we_can` right after this returns.
@@ -1777,6 +1779,27 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                 ws.handler.server = None;
             }
         }
+    }
+
+    /// Send `1001 Going Away` to every open websocket so peers see a clean
+    /// close (not 1006) and the live-socket count drains for the stop promise.
+    fn end_all_websockets_going_away(&mut self) {
+        if !self.has_active_web_sockets() {
+            return;
+        }
+        // node:http `Server#close()` leaves upgraded sockets to the user;
+        // the `ws` shim drains its own `clients` set.
+        if self.config.is_node_http_server {
+            return;
+        }
+        let Some(app) = self.app else { return };
+        // `end()` fires close handlers synchronously; hold (and save/restore)
+        // the re-entrance guard so nested `deinit_if_we_can` / `stop(true)`
+        // early-return instead of running under this frame's `&mut self`.
+        let prev = self.deinit_running.replace(true);
+        // S012: `NewApp<SSL>` is a ZST opaque — safe `*mut → &mut` deref.
+        bun_opaque::opaque_deref_mut(app).end_all_websockets(1001, b"Server closed");
+        self.deinit_running.set(prev);
     }
 
     pub(crate) fn stop(&mut self, abrupt: bool) {

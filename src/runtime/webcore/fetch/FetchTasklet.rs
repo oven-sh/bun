@@ -4,7 +4,7 @@ use core::sync::atomic::{AtomicBool, Ordering};
 
 use bun_boringssl as boringssl;
 use bun_cares_sys::c_ares_draft as c_ares;
-use bun_core::{MutableString, String as BunString};
+use bun_core::{BStr, MutableString, String as BunString};
 use bun_event_loop::{
     ConcurrentTask::{AutoDeinit, ConcurrentTask},
     Task, Taskable,
@@ -1321,10 +1321,21 @@ impl FetchTasklet {
             }
         }
 
-        let code = if fail == http::Error::ConnectionClosed {
-            BunString::static_("ECONNRESET")
-        } else {
-            BunString::static_(fail.name())
+        let code = match fail {
+            http::Error::ConnectionClosed => BunString::static_("ECONNRESET"),
+            // `ERR_SSL_<REASON>` like node:tls's `tlsHandshakeError`; `EPROTO` if unparsed.
+            http::Error::EPROTO => match self
+                .result
+                .tls_handshake_reason
+                .as_deref()
+                .and_then(ssl_error_reason)
+            {
+                Some(reason) => {
+                    BunString::create_format(format_args!("ERR_SSL_{}", BStr::new(reason)))
+                }
+                None => BunString::static_("EPROTO"),
+            },
+            _ => BunString::static_(fail.name()),
         };
 
         let message = match fail {
@@ -1343,6 +1354,10 @@ impl FetchTasklet {
             http::Error::RedirectURLInvalid => {
                 BunString::static_("Redirect URL in Location header is invalid.")
             }
+            http::Error::EPROTO => match self.result.tls_handshake_reason.as_deref() {
+                Some(reason) => BunString::clone_utf8(reason),
+                None => BunString::static_("TLS handshake failed"),
+            },
 
             http::Error::Cert(http::CertError::UNABLE_TO_GET_ISSUER_CERT) => {
                 BunString::static_("unable to get issuer certificate")
@@ -2480,6 +2495,23 @@ impl FetchTasklet {
             FetchTasklet::hand_back(task);
         }
     }
+}
+
+/// The `REASON` of an OpenSSL error string
+/// (`error:100000f7:SSL routines:OPENSSL_internal:WRONG_VERSION_NUMBER`).
+fn ssl_error_reason(error_string: &[u8]) -> Option<&[u8]> {
+    let mut parts = bun_core::strings::split(error_string, b":");
+    if parts.next()? != b"error" {
+        return None;
+    }
+    let hex = parts.next()?;
+    if parts.next()? != b"SSL routines" {
+        return None;
+    }
+    let function = parts.next()?;
+    let start = "error:".len() + hex.len() + ":SSL routines:".len() + function.len() + 1;
+    let reason = error_string.get(start..)?;
+    (!reason.is_empty()).then_some(reason)
 }
 
 fn on_resolve_request_stream(

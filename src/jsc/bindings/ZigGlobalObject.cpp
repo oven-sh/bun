@@ -1940,31 +1940,6 @@ extern "C" napi_env ZigGlobalObject__makeNapiEnvForFFI(Zig::GlobalObject* global
 }
 
 extern "C" JSC::EncodedJSValue CryptoObject__create(JSGlobalObject*);
-JSC_DEFINE_CUSTOM_GETTER(moduleNamespacePrototypeGetESModuleMarker, (JSGlobalObject * globalObject, JSC::EncodedJSValue encodedThisValue, PropertyName))
-{
-    JSValue thisValue = JSValue::decode(encodedThisValue);
-    JSModuleNamespaceObject* moduleNamespaceObject = dynamicDowncast<JSModuleNamespaceObject>(thisValue);
-    if (!moduleNamespaceObject || moduleNamespaceObject->m_hasESModuleMarker != WTF::TriState::True) {
-        return JSC::JSValue::encode(jsUndefined());
-    }
-
-    return JSC::JSValue::encode(jsBoolean(true));
-}
-
-JSC_DEFINE_CUSTOM_SETTER(moduleNamespacePrototypeSetESModuleMarker, (JSGlobalObject * globalObject, JSC::EncodedJSValue encodedThisValue, JSC::EncodedJSValue encodedValue, PropertyName))
-{
-    auto& vm = JSC::getVM(globalObject);
-    JSValue thisValue = JSValue::decode(encodedThisValue);
-    JSModuleNamespaceObject* moduleNamespaceObject = dynamicDowncast<JSModuleNamespaceObject>(thisValue);
-    if (!moduleNamespaceObject) {
-        return false;
-    }
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    JSValue value = JSValue::decode(encodedValue);
-    WTF::TriState triState = value.toBoolean(globalObject) ? WTF::TriState::True : WTF::TriState::False;
-    moduleNamespaceObject->m_hasESModuleMarker = triState;
-    return true;
-}
 
 namespace {
 
@@ -2294,11 +2269,6 @@ void GlobalObject::finishCreation(VM& vm)
              init.set(
                  createMemoryFootprintStructure(
                      init.vm, static_cast<Zig::GlobalObject*>(init.owner)));
-         } },
-        { OBJECT_OFFSETOF(GlobalObject, m_moduleNamespaceObjectStructure), [](const LazyProperty<JSGlobalObject, Structure>::Initializer& init) {
-             JSObject* moduleNamespacePrototype = JSC::constructEmptyObject(init.vm, init.owner->nullPrototypeObjectStructure());
-             moduleNamespacePrototype->putDirectCustomAccessor(init.vm, init.vm.propertyNames->__esModule, CustomGetterSetter::create(init.vm, moduleNamespacePrototypeGetESModuleMarker, moduleNamespacePrototypeSetESModuleMarker), PropertyAttribute::DontEnum | PropertyAttribute::DontDelete | PropertyAttribute::CustomAccessor | 0);
-             init.set(JSModuleNamespaceObject::createStructure(init.vm, init.owner, moduleNamespacePrototype));
          } },
         { OBJECT_OFFSETOF(GlobalObject, m_JSBufferSubclassStructure), [](const LazyProperty<JSGlobalObject, Structure>::Initializer& init) {
              auto scope = DECLARE_TOP_EXCEPTION_SCOPE(init.vm);

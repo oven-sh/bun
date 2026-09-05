@@ -156,7 +156,7 @@ test("wrapping an existing extension but it's secretly sync esm", () => {
       original(module, filename);
     }));
     const mod = require("./extensions-fixture/secretly_esm");
-    expect(mod).toEqual({ default: 1 });
+    expect({ ...mod }).toEqual({ __esModule: true, default: 1 });
     expect(mocked).toBeCalled();
   } finally {
     require.extensions[".cjs"] = original;

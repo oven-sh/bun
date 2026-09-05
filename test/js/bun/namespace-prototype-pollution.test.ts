@@ -19,8 +19,15 @@ test("namespace imports should not inherit from Object.prototype", async () => {
         console.log("PASS: prototype pollution prevented");
       }
 
-      // Verify __esModule still works
-      console.log("__esModule settable:", (mod.__esModule = true, mod.__esModule === true));
+      // The namespace is non-extensible with a null prototype, so __esModule
+      // is absent and an assignment throws (same as Node).
+      console.log("__esModule absent:", !("__esModule" in mod));
+      try {
+        mod.__esModule = true;
+        console.log("FAIL: __esModule assignment did not throw");
+      } catch {
+        console.log("__esModule assignment throws: true");
+      }
 
       // Original exports should work
       console.log("Original export:", mod.value);
@@ -38,6 +45,7 @@ test("namespace imports should not inherit from Object.prototype", async () => {
 
   expect(exitCode).toBe(0);
   expect(stdout).toContain("PASS: prototype pollution prevented");
-  expect(stdout).toContain("__esModule settable: true");
+  expect(stdout).toContain("__esModule absent: true");
+  expect(stdout).toContain("__esModule assignment throws: true");
   expect(stdout).toContain("Original export: original");
 });

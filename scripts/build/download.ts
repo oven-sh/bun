@@ -53,6 +53,7 @@ import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import type { ReadableStream as NodeWebReadable } from "node:stream/web";
 import { BuildError, assert, describeError } from "./error.ts";
+import { formatElapsed } from "./tty.ts";
 
 // On Windows, prefer the OS-shipped bsdtar. Git-for-Windows / MSYS put GNU tar
 // earlier in PATH, and GNU tar parses `C:\...` as an rsh `host:path` spec
@@ -531,6 +532,7 @@ export async function fetchPrebuilt(
   if (await tryPrefetchExtracted(dest, ".identity", identity)) return;
 
   console.log(`fetching ${url}`);
+  const started = performance.now();
 
   // Process-unique temp paths so concurrent builds (shared cacheDir across
   // checkouts) can't stomp each other's download/extraction.
@@ -588,7 +590,7 @@ export async function fetchPrebuilt(
       throw err;
     }
 
-    console.log(`extracted to ${dest}`);
+    console.log(`extracted to ${dest} (${formatElapsed(performance.now() - started)})`);
   } finally {
     await rm(stagingDir, { recursive: true, force: true });
     await rm(tarballPath, { force: true });

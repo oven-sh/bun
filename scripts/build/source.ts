@@ -17,6 +17,7 @@
  * re-extraction after a failed patch doesn't re-download.
  */
 
+import { AsyncLocalStorage } from "node:async_hooks";
 import { existsSync, lstatSync, mkdirSync, rmSync } from "node:fs";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { ar, cc, cxx, link, nasm, pch } from "./compile.ts";
@@ -30,6 +31,7 @@ import type { Ninja } from "./ninja.ts";
 import { quote, quoteArgs } from "./shell.ts";
 import { machoPostlinkImplicitInputs } from "./shims.ts";
 import { streamPath } from "./stream.ts";
+import { nameColor } from "./tty.ts";
 
 /**
  * If the source dir exists with a stale (or missing) identity stamp,
@@ -822,6 +824,7 @@ function fetchSpec(source: Extract<Source, { kind: "github" | "tarball" }>): {
  * already matches, so the always-configure cost stays a stat.
  */
 export async function prefetchConfigureSources(cfg: Config, deps: readonly Dependency[]): Promise<void> {
+  const stale: Array<{ name: string; run: () => Promise<void> }> = [];
   for (const dep of deps) {
     if (dep.enabled && !dep.enabled(cfg)) continue;
     const source = depSource(cfg, dep);
@@ -832,7 +835,25 @@ export async function prefetchConfigureSources(cfg: Config, deps: readonly Depen
     const patchPaths = patches.map(p => resolve(cfg.cwd, p));
     const { url, ref, sparse } = fetchSpec(source);
     if (sourceIsCurrent(srcDir, ref, sparse, patchPaths)) continue;
-    await fetchDep(dep.name, url, ref, srcDir, resolve(cfg.cacheDir, "tarballs"), patchPaths);
+    stale.push({
+      name: dep.name,
+      run: () => fetchDep(dep.name, url, ref, srcDir, resolve(cfg.cacheDir, "tarballs"), patchPaths),
+    });
+  }
+  if (stale.length === 0) return;
+  // Same `[name] …` lines the ninja-time fetches print through stream.ts;
+  // these run inside this process, concurrently, so prefix console output
+  // for the duration.
+  const plainLog = console.log;
+  const names = new AsyncLocalStorage<string>();
+  console.log = (...args: unknown[]) => {
+    const name = names.getStore();
+    plainLog(...(name === undefined ? args : [nameColor(name, `[${name}]`), ...args]));
+  };
+  try {
+    await Promise.all(stale.map(f => names.run(f.name, f.run)));
+  } finally {
+    console.log = plainLog;
   }
 }
 

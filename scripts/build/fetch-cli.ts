@@ -25,6 +25,7 @@ import { createHash } from "node:crypto";
 import { createReadStream, existsSync, readFileSync } from "node:fs";
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { basename, join } from "node:path";
+import { formatElapsed } from "./tty.ts";
 import { downloadWithRetry, extractTarGz, fetchPrebuilt, gitArchive, parseGitArchiveUrl } from "./download.ts";
 import { BuildError, assert } from "./error.ts";
 import { writeIfChanged } from "./fs.ts";
@@ -253,6 +254,7 @@ export async function fetchDep(
   }
 
   console.log(`fetching ${git ? `${git.repo}@${git.commit.slice(0, 8)}` : url}`);
+  const started = performance.now();
 
   // ─── Download (with cache) ───
   const urlHash = createHash("sha256").update(url).digest("hex").slice(0, 16);
@@ -305,7 +307,7 @@ export async function fetchDep(
   // ─── Write stamp ───
   // Written LAST — if anything above failed, no stamp means next build retries.
   await writeFile(refPath, identity + "\n");
-  console.log(`done → ${dest}`);
+  console.log(`done → ${dest} (${formatElapsed(performance.now() - started)})`);
 }
 
 /**

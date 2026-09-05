@@ -27,9 +27,18 @@ const mismatchedTls = {
   key: "-----BEGIN PRIVATE KEY-----\nMIIEvAIBADANBgkqhkiG9w0BAQEFAASCBKYwggSiAgEAAoIBAQCtOMsk7M5X9jX7\nJp5DjC/CgPxaDmDmv5Thy/9jwiVsKBQySwVxHot3/O7Y7yerFPHb7hqK6rADyTVP\nH3OIFrmd81craTr02Zby4iDJXZfmG/Iv7aeX0w79Ma56bapiHBXN1Uujt2Beuy6m\nCFfsWpfeMmbhLVu/VfJYWXAEdQDyu4v8vZtJhBiwpike+Pwso+SnD42UESH2Cn/A\nJcGxiUyKs8R2x3od+eN+gE3wFbEbzNru3dbiqtjNNv5ixOoZaFJnj20EyPotp9jG\ncPzUZBZ5YnKeCD3RzR0neWNBIi6zn2JmMX/VOns3GduBB1iWaRgYA3fbqI4kLeqZ\nujf7f0RjAgMBAAECggEAI4q+q+Hm6Md9Bf5DhOqTth4PKU8/9LikjLv1t/tTAGEs\n27Dm+fHhfgoo29weUI0onw645X4IBY7YYFa8ttSq20zduuuJjEnFHirlvUt16mIb\njFgABjfpIGx8N2SfDChlFOnJ7lqm7GkNxkV5/OYNuSqwT02mQJka86PORyvWuPcJ\nX6NmhhEJDCnVTL1D7FaEHrRUCC0n4hDMe0LLRNo7JrGljPIqPvpuQXEP52wdbzMC\nYfXJb7NbsiGOKLfrs9RXnR9ztr04gJ7jD5pMoeubbsM/tivRDm2VOY/U3NK2LN2q\ngFJ4hokBbUtIxU46RCTWSyQRRpNzFIBrL5y3a30DOQKBgQDsd/jvDPg55TzCNxFq\n6gLuoemIu4JIkSG4hSn6dtSpE5myQl9HuKvGlIS/kgB44zly8X8havxDuAinpzJc\n+oCnFWOFqi2IOt+OhiqjgeK2p0nsAxFVgWepdnPpv0LZXTj2SR09ZZ74YTh+ZQV8\nBiSuuEKZ064wwAg6esXVEMpkHwKBgQC7h360xoo/+m/ncANtDuA7zuHtE8fdsUaM\nLJ+zqlBsivsmM7ohqKqreIMKdw9b1aW/WrVmJavj9zX8ht/kt8vAYwmjk3lc7wso\nEa7EKF7Qa/IPhDkxQwnn/XTpzFsitItn1JCnnwoQUWcGtH/Su6b2I6T8+WZ8ia4Z\nXFpjyeV3PQKBgFVm2uPTBk86iGAILWU0kMyIc2RrfBkjOU9/4HJRumo55vdnWyv2\n+Srl9q+NVlhSkCwAJg72qZb3f0C1dM35tr8hTWk31evuf1DlCb81qKCY+GyhiwAb\nlUmxuxk/dzAzp9/i9gl3ixtfWVzktT9epJ7pczxFJBL9N7uPHaXew4m3AoGAUwwT\nKb2O9fxTWFv7uG1REktxNAuBhIUAaA1PAELZcOgvhuB7enJ2eo9ZAOZvD81SpKZo\nFP9z2vXcm6OjPWfDvMRfPWiO44AdIbaK/eWe75AOV57HsTAuD+Xnw64zYfAwmF/D\nW+gLjeRuysJepRVjQDfS1hEguOBEEIkconqDu0UCgYAQpb1SRymW/40bD3cTnF41\nDPH6Veqgdzu/6MOlD3oWTugPisH1aPq4UIsK03h+NJlVemQ92fTW47ZUjBuRZojZ\nrxah/Jl1Ta1Ww1q98fpZ2julkm+zEmErTw6plfveSVMC+jmgRjWXGbXYPxfxcUsb\nQlPkp7bJgio6h32XI0nWzA==\n-----END PRIVATE KEY-----\n",
 };
 
+// Dual-stack, because the fetches below dial `localhost` and race ::1 against
+// 127.0.0.1. A leg with no listener can TCP self-connect: when the kernel
+// hands the connecting socket the ephemeral port equal to its destination
+// port, the SYN meets itself (a simultaneous open) and the connect succeeds
+// with the client as its own peer. The TLS handshake then fails with EPROTO
+// (the "server flight" is the client's own ClientHello). With 16384
+// ephemeral ports on macOS and thousands of ::1 legs per run, that hit about
+// one run in four. With a listener on both addresses the kernel never picks
+// the bound port.
 function listen(server: net.Server): Promise<number> {
   return new Promise(resolve => {
-    server.listen(0, "127.0.0.1", () => resolve((server.address() as net.AddressInfo).port));
+    server.listen(0, () => resolve((server.address() as net.AddressInfo).port));
   });
 }
 

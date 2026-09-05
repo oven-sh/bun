@@ -169,6 +169,7 @@ unsafe extern "C" {
         is_connect: bool,
         is_node_inspector: bool,
     );
+    safe fn Bun__debugger__drain();
 }
 
 static FUTEX_ATOMIC: AtomicU32 = AtomicU32::new(0);
@@ -363,6 +364,11 @@ impl Debugger {
                 Wait::Off => break,
             }
         }
+    }
+
+    /// Bounded wait for the debugger thread to deliver queued inspector messages before `exit()` kills it mid-delivery; see `Bun__debugger__drain` in `BunDebugger.cpp`.
+    pub fn drain() {
+        Bun__debugger__drain();
     }
 
     /// `Debugger.create(vm, global)` — first-time debugger setup: create the

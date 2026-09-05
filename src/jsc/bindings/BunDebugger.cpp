@@ -4,6 +4,8 @@
 #include "ZigGlobalObject.h"
 
 #include <JavaScriptCore/InspectorFrontendChannel.h>
+#include <JavaScriptCore/TopExceptionScope.h>
+#include <wtf/threads/BinarySemaphore.h>
 #include <JavaScriptCore/JSGlobalObjectDebuggable.h>
 #include <JavaScriptCore/JSGlobalObjectDebugger.h>
 #include <JavaScriptCore/Debugger.h>
@@ -49,6 +51,9 @@ static PausedWait& pausedWait()
     static PausedWait instance;
     return instance;
 }
+
+// Entry gate for Bun__debugger__drain (process-global, not per-connection).
+static std::atomic<uint64_t> totalPendingDebuggerMessages { 0 };
 
 static bool waitingForConnection = false;
 static bool bunControllerInstalled = false;
@@ -435,13 +440,20 @@ public:
             this->debuggerThreadMessages.swap(messages);
         }
 
-        if (!jsBunDebuggerOnMessageFunction)
+        size_t messageCount = messages.size();
+
+        if (!jsBunDebuggerOnMessageFunction) {
+            // Disconnected: batch dropped, account for it so Bun__debugger__drain's gate doesn't count it pending forever.
+            if (messageCount > 0)
+                totalPendingDebuggerMessages.fetch_sub(messageCount, std::memory_order_release);
             return;
+        }
 
         JSFunction* onMessageFn = uncheckedDowncast<JSFunction>(jsBunDebuggerOnMessageFunction.get());
         MarkedArgumentBuffer arguments;
-        arguments.ensureCapacity(messages.size());
+        arguments.ensureCapacity(messageCount);
         auto& vm = debuggerGlobalObject->vm();
+        auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
 
         for (auto& message : messages) {
             arguments.append(jsString(vm, message));
@@ -450,6 +462,16 @@ public:
         messages.clear();
 
         JSC::call(debuggerGlobalObject, onMessageFn, arguments, "BunInspectorConnection::receiveMessagesOnDebuggerThread - onMessageFn"_s);
+
+        // On throw, leave the batch's count pending (can't know how many reached write(); costs at most one capped wait at exit).
+        bool delivered = true;
+        if (auto* exception = scope.exception()) [[unlikely]] {
+            delivered = false;
+            if (scope.clearExceptionExceptTermination())
+                debuggerGlobalObject->reportUncaughtExceptionAtEventLoop(debuggerGlobalObject, exception);
+        }
+        if (messageCount > 0 && delivered)
+            totalPendingDebuggerMessages.fetch_sub(messageCount, std::memory_order_release);
     }
 
     void sendMessageToDebuggerThread(WTF::String&& inputMessage)
@@ -457,6 +479,8 @@ public:
         {
             Locker<Lock> locker(debuggerThreadMessagesLock);
             debuggerThreadMessages.append(inputMessage);
+            // Inside the lock so receiveMessagesOnDebuggerThread's swap+decrement can't undercount.
+            totalPendingDebuggerMessages.fetch_add(1, std::memory_order_release);
         }
 
         if (this->debuggerThreadMessageScheduledCount++ == 0) {
@@ -660,6 +684,35 @@ extern "C" void Bun__ensureDebugger(ScriptExecutionContextIdentifier scriptId, b
     if (pauseOnStart) {
         waitingForConnection = true;
     }
+}
+
+// Ref-counted so a timed-out wait doesn't leave a dangling pointer for the already-posted task.
+struct DebuggerDrainSignal : public ThreadSafeRefCounted<DebuggerDrainSignal> {
+public:
+    static Ref<DebuggerDrainSignal> create() { return adoptRef(*new DebuggerDrainSignal()); }
+    WTF::BinarySemaphore semaphore;
+
+private:
+    DebuggerDrainSignal() = default;
+};
+
+static constexpr double kDrainHandoffTimeoutMs = 250;
+
+// Called from VirtualMachine::global_exit so exit() doesn't kill the detached debugger thread mid-delivery of queued inspector messages (e.g. `bun test`'s final TestReporter events).
+extern "C" void Bun__debugger__drain()
+{
+    if (debuggerScriptExecutionContext == nullptr)
+        return;
+
+    if (totalPendingDebuggerMessages.load(std::memory_order_acquire) == 0)
+        return;
+
+    // FIFO sentinel: tasks on this context are FIFO, so once it runs every earlier receiveMessagesOnDebuggerThread has already called write() on the socket.
+    auto signal = DebuggerDrainSignal::create();
+    debuggerScriptExecutionContext->postTaskConcurrently([signal](ScriptExecutionContext&) {
+        signal->semaphore.signal();
+    });
+    signal->semaphore.waitFor(WTF::Seconds::fromMilliseconds(kDrainHandoffTimeoutMs));
 }
 
 extern "C" void BunDebugger__willHotReload()

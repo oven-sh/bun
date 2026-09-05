@@ -15,11 +15,25 @@ function normalizeJUnit(xml: string) {
   return xml.replace(/ time="[^"]*"/g, ' time="<time>"').replace(/ hostname="[^"]*"/g, ' hostname="<hostname>"');
 }
 
+// The reporter adds a <properties> block to each testsuite when one of these is set.
+const env = { ...bunEnv };
+for (const key of [
+  "GITHUB_RUN_ID",
+  "GITHUB_SERVER_URL",
+  "GITHUB_REPOSITORY",
+  "GITHUB_SHA",
+  "CI_JOB_URL",
+  "CI_COMMIT_SHA",
+  "GIT_SHA",
+]) {
+  delete env[key];
+}
+
 async function runBailWithJUnit(dir: string, args: string[]) {
   const outfile = join(dir, "results.xml");
   await using proc = Bun.spawn({
     cmd: [bunExe(), "test", "--bail", "--reporter=junit", `--reporter-outfile=${outfile}`, ...args],
-    env: bunEnv,
+    env,
     cwd: dir,
     stdout: "pipe",
     stderr: "pipe",

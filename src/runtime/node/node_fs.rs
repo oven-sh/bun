@@ -2638,7 +2638,12 @@ pub mod args {
         /// Passing a file descriptor is deprecated and may result in an error being thrown in the future.
         pub path: PathOrFileDescriptor<'a>,
         pub(crate) len: u64, // u63
+        /// Full `open(2)` flags for the path form, access mode included.
+        /// `node:fs` uses `O::RDWR` (Node's `'r+'`); `Bun.write` callers pass
+        /// `O::WRONLY` so a write-only file stays truncatable.
         pub(crate) flags: i32,
+        /// Creation mode for the open. Only used when `flags` has `O::CREAT`.
+        pub(crate) mode: Mode,
     }
     impl Truncate<'static> {
         pub fn from_js(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<Self> {
@@ -2655,7 +2660,8 @@ pub mod args {
             Ok(Truncate {
                 path,
                 len,
-                flags: 0,
+                flags: bun_sys::O::RDWR,
+                mode: 0o644,
             })
         }
     }
@@ -7707,49 +7713,27 @@ impl NodeFS {
         }
     }
 
-    fn truncate_inner(&mut self, path: &PathLike, len: u64, flags: i32) -> Maybe<ret::Truncate> {
+    fn truncate_inner(
+        &mut self,
+        path: &PathLike,
+        len: u64,
+        flags: i32,
+        mode: Mode,
+    ) -> Maybe<ret::Truncate> {
         // Mask `len` to a `u63` envelope so the `i64` cast is always in range,
         // rather than `try_from().unwrap()`-panicking
         // on a hostile `> i64::MAX` value.
         let len_i64 = (len & ((1u64 << 63) - 1)) as i64;
-        #[cfg(windows)]
-        {
-            let file = sys::open(
-                path.slice_z(&mut self.sync_error_buf),
-                sys::O::WRONLY | flags,
-                0o644,
-            );
-            let Ok(fd) = file else {
-                let Err(e) = file else { unreachable!() };
-                return Err(sys::Error {
-                    errno: e.errno,
-                    path: path.slice().into(),
-                    syscall: sys::Tag::truncate,
-                    ..Default::default()
-                });
-            };
-            let _close = scopeguard::guard(fd, |fd| fd.close());
-            return match Syscall::ftruncate(fd, len_i64) {
-                Ok(r) => Ok(r),
-                Err(err) => Err(err.with_path_and_syscall(path.slice(), sys::Tag::truncate)),
-            };
-        }
-        #[cfg(not(windows))]
-        {
-            let _ = flags;
-            // SAFETY: path is NUL-terminated by slice_z; truncate(2) is the libc FFI
-            Maybe::<ret::Truncate>::errno_sys_p(
-                unsafe {
-                    libc::truncate(
-                        path.slice_z(&mut self.sync_error_buf).as_ptr().cast(),
-                        len_i64,
-                    )
-                },
-                sys::Tag::truncate,
-                path.slice(),
-            )
-            .unwrap_or(Ok(()))
-        }
+        // Node implements fs.truncate(path) as open(path, 'r+') + ftruncate
+        // (lib/fs.js), so each error reports the syscall that failed: a
+        // missing path is an "open" error, not "truncate".
+        let file = sys::open(path.slice_z(&mut self.sync_error_buf), flags, mode);
+        let fd = match file {
+            Ok(fd) => fd,
+            Err(e) => return Err(e.with_path(path.slice())),
+        };
+        let _close = scopeguard::guard(fd, |fd| fd.close());
+        Syscall::ftruncate(fd, len_i64)
     }
 
     pub(crate) fn truncate(&mut self, args: &args::Truncate, _: Flavor) -> Maybe<ret::Truncate> {
@@ -7758,7 +7742,9 @@ impl NodeFS {
             PathOrFileDescriptor::Fd(fd) => {
                 Syscall::ftruncate(*fd, (args.len & ((1u64 << 63) - 1)) as i64)
             }
-            PathOrFileDescriptor::Path(p) => self.truncate_inner(p, args.len, args.flags),
+            PathOrFileDescriptor::Path(p) => {
+                self.truncate_inner(p, args.len, args.flags, args.mode)
+            }
         }
     }
 

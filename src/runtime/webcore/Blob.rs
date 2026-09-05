@@ -4257,11 +4257,14 @@ fn write_file_with_empty_source_to_destination(
             // `NodeFS` (it carries no per-call state for
             // `truncate`/`mkdir_recursive`).
             let mut node_fs = node::fs::NodeFS::default();
+            // NONBLOCK keeps a FIFO destination from blocking the JS thread
+            // in open(2): with no reader it fails ENXIO instead.
             let mut result = node_fs.truncate(
                 &node::fs::args::Truncate {
                     path: file.pathlike.clone(),
                     len: 0,
-                    flags: bun_sys::O::CREAT,
+                    flags: bun_sys::O::WRONLY | bun_sys::O::CREAT | bun_sys::O::NONBLOCK,
+                    mode: options.mode.unwrap_or(node::fs::DEFAULT_PERMISSION),
                 },
                 node::fs::Flavor::Sync,
             );

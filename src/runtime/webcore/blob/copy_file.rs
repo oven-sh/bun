@@ -1730,7 +1730,8 @@ impl<'a> CopyFileWindows<'a> {
             &node_fs::Arguments::Truncate {
                 path: self.destination_file_store.data.as_file().pathlike.clone(),
                 len: u64::try_from(self.size).expect("int cast"),
-                flags: 0,
+                flags: bun_sys::O::WRONLY,
+                mode: 0o644,
             },
             node_fs::Flavor::Sync,
         );

@@ -944,6 +944,20 @@ for (const connectionType of [ConnectionType.TLS, ConnectionType.TCP]) {
         }).toThrowErrorMatchingInlineSnapshot(`"Expected key to be a string or buffer for 'setrange'."`);
       });
 
+      test("should reject invalid start in GETRANGE", async () => {
+        const redis = ctx.redis;
+        expect(async () => {
+          await redis.getrange("getrange-invalid-start", {} as any, 5);
+        }).toThrowErrorMatchingInlineSnapshot(`"Expected start to be a string or buffer for 'getrange'."`);
+      });
+
+      test("should reject invalid end in GETRANGE", async () => {
+        const redis = ctx.redis;
+        expect(async () => {
+          await redis.getrange("getrange-invalid-end", 0, null as any);
+        }).toThrowErrorMatchingInlineSnapshot(`"Expected end to be a string or buffer for 'getrange'."`);
+      });
+
       test("should reject invalid key in INCRBY", async () => {
         const redis = ctx.redis;
         expect(async () => {
@@ -6680,6 +6694,41 @@ for (const connectionType of [ConnectionType.TLS, ConnectionType.TCP]) {
         );
 
         await subscriber.unsubscribe(testChannel());
+      });
+
+      test("every command shape is rejected in subscriber mode with its own method name", async () => {
+        const subscriber = await ctx.newSubscriberClient(connectionType);
+        const channel = testChannel();
+        await subscriber.subscribe(channel, () => {});
+
+        const key = testKey();
+        const value = testValue();
+        // One command per shared implementation: no args, key, key + varargs,
+        // key + value, key + value + value, strings varargs, key + value + varargs.
+        const calls: [name: string, call: () => unknown][] = [
+          ["dbsize", () => subscriber.dbsize()],
+          ["get", () => subscriber.get(key)],
+          ["del", () => subscriber.del(key)],
+          ["sismember", () => subscriber.sismember(key, value)],
+          ["lrange", () => subscriber.lrange(key, 0, -1)],
+          ["mset", () => subscriber.mset(key, value)],
+          ["lpush", () => subscriber.lpush(key, value)],
+        ];
+
+        const messages = calls.map(([, call]) => {
+          try {
+            call();
+            return "did not throw";
+          } catch (error) {
+            return (error as Error).message;
+          }
+        });
+
+        expect(messages).toEqual(
+          calls.map(([name]) => `RedisClient.prototype.${name} cannot be called while in subscriber mode.`),
+        );
+
+        await subscriber.unsubscribe(channel);
       });
 
       test("setting after unsubscribing works", async () => {

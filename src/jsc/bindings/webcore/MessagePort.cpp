@@ -26,7 +26,6 @@
 
 #include "config.h"
 #include "MessagePort.h"
-#include <wtf/SetForScope.h>
 #include <JavaScriptCore/JSArrayBuffer.h>
 
 #include "BunClientData.h"
@@ -105,7 +104,8 @@ ExceptionOr<void> MessagePort::postMessage(JSC::JSGlobalObject& state, JSC::JSVa
     }
     RETURN_IF_EXCEPTION(warnScope, {});
 
-    if (!isEntangled())
+    // m_isClosing: the close is pending under a DispatchScope. Node drops these posts too.
+    if (!isEntangled() || m_isClosing)
         return {};
 
     Vector<TransferredMessagePort> transferredPorts;
@@ -188,9 +188,9 @@ void MessagePort::flushQueuedMessagesBeforeClose()
     if (Zig::GlobalObject::scriptExecutionStatus(globalObject, globalObject) != ScriptExecutionStatus::Running)
         return;
 
-    // Cap iterations (whatever was queued, at least 1000) so a 'message' handler
-    // re-injecting into this closing port (via its entangled peer) can't starve the loop.
+    // Same per-call cap as node's OnMessage(): whatever was queued, at least 1000.
     size_t limit = std::max<size_t>(MessagePortPipe::queuedCount(m_pipe->state(m_side)), 1000);
+    DispatchScope dispatchScope { *this };
     for (size_t i = 0; i < limit; ++i) {
         // A handler (or a microtask it queued) may have transferred this port; the
         // remaining inbox now belongs to the new owner. drainAndDispatch()'s
@@ -206,19 +206,36 @@ void MessagePort::flushQueuedMessagesBeforeClose()
     }
 }
 
+MessagePort::DispatchScope::DispatchScope(MessagePort& port)
+    : m_port(port)
+    , m_wasDispatching(port.m_isDispatching)
+{
+    port.m_isDispatching = true;
+}
+
+MessagePort::DispatchScope::~DispatchScope()
+{
+    m_port->m_isDispatching = m_wasDispatching;
+    if (!m_wasDispatching && m_port->m_isClosing)
+        m_port->closeNow();
+}
+
 void MessagePort::close()
 {
     if (m_isDetached || m_isClosing)
         return;
     m_isClosing = true;
 
-    // Only an in-flight drain finishes: node keeps delivering the rest of the batch
-    // when a 'message' handler calls close(), but drops everything still queued when
-    // close() runs outside a dispatch. Reentrant close() is short-circuited by
-    // m_isClosing; later sends are rejected by the pipe's Closed check.
+    // ~DispatchScope closes the port once the loop has delivered the rest of the inbox.
     if (m_isDispatching)
-        flushQueuedMessagesBeforeClose();
+        return;
+    closeNow();
+}
 
+void MessagePort::closeNow()
+{
+    if (m_isDetached)
+        return;
     m_isDetached = true;
 
     // m_pipe is held for the port's whole lifetime (the GC thread reads
@@ -352,8 +369,6 @@ void MessagePort::dispatchOneMessage(ScriptExecutionContext& context, MessageWit
     if (m_isDetached || !context.globalObject())
         return;
 
-    SetForScope dispatching { m_isDispatching, true };
-
     auto* globalObject = defaultGlobalObject(context.globalObject());
     Ref vm = globalObject->vm();
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
@@ -410,7 +425,7 @@ void MessagePort::contextDestroyed()
 {
     ASSERT(scriptExecutionContext());
 
-    close();
+    closeNow();
     ActiveDOMObject::contextDestroyed();
 }
 

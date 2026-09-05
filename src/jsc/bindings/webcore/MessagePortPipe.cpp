@@ -128,6 +128,7 @@ void MessagePortPipe::drainAndDispatch(uint8_t side, ScriptExecutionContextIdent
 
     static constexpr size_t takeAtOnce = 64;
     ScriptExecutionContextIdentifier rescheduleCtx = 0;
+    MessagePort::DispatchScope dispatchScope { *port };
     while (true) {
         std::optional<MessageWithMessagePorts> message;
         {
@@ -185,7 +186,7 @@ void MessagePortPipe::drainAndDispatch(uint8_t side, ScriptExecutionContextIdent
 
     // Budget spent with messages left. We are on `context`'s thread: continue on
     // its next loop iteration (after I/O and timers), not in this drain.
-    if (rescheduleCtx) {
+    if (rescheduleCtx && !port->isClosing()) {
         context->postTaskAfterYield([pipe = Ref { *this }, side, rescheduleCtx](ScriptExecutionContext&) {
             pipe->drainAndDispatch(side, rescheduleCtx);
         });

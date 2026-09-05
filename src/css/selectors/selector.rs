@@ -79,6 +79,19 @@ pub(crate) fn is_equivalent(selectors: &[Selector], other: &[Selector]) -> bool 
     true
 }
 
+/// Downlevels the selectors for the targets and returns the vendor prefixes to print the rule with.
+pub(crate) fn update_prefix<'bump>(
+    bump: &'bump Bump,
+    selectors: &mut [Selector],
+    targets: &Targets,
+) -> VendorPrefix {
+    let prefix = get_prefix(selectors);
+    if prefix.contains(VendorPrefix::NONE) && targets.should_compile_selectors() {
+        return downlevel_selectors(bump, selectors, targets);
+    }
+    prefix
+}
+
 /// Downlevels the given selectors to be compatible with the given browser targets.
 /// Returns the necessary vendor prefixes.
 pub(crate) fn downlevel_selectors<'bump>(
@@ -224,9 +237,9 @@ fn lang_list_to_selectors<'bump>(_bump: &'bump Bump, langs: &[&'static [u8]]) ->
 
 /// Returns the vendor prefix (if any) used in the given selector list.
 /// If multiple vendor prefixes are seen, this is invalid, and an empty result is returned.
-pub(crate) fn get_prefix(selectors: &SelectorList) -> VendorPrefix {
+pub(crate) fn get_prefix(selectors: &[Selector]) -> VendorPrefix {
     let mut prefix = VendorPrefix::empty();
-    for selector in selectors.v.slice() {
+    for selector in selectors {
         for component in selector.components.iter() {
             let component: &Component = component;
             let p = match component {
@@ -261,10 +274,88 @@ pub(crate) fn get_prefix(selectors: &SelectorList) -> VendorPrefix {
     prefix
 }
 
+/// Grouping bits past the compat features, for components that print unlike their compat bucket.
+const BIT_NESTING_LEADING: usize = Feature::COUNT;
+const BIT_NESTING_INNER: usize = Feature::COUNT + 1;
+const BIT_SCOPE: usize = Feature::COUNT + 2;
+const BIT_COUNT: usize = Feature::COUNT + 3;
+
+/// A set of [`Feature`]s (one bit per discriminant) plus the `BIT_*` grouping bits.
+#[derive(Clone, Copy, PartialEq, Eq, Default)]
+pub(crate) struct FeatureSet([u64; BIT_COUNT.div_ceil(64)]);
+
+impl FeatureSet {
+    fn insert(&mut self, bit: usize) {
+        self.0[bit / 64] |= 1 << (bit % 64);
+    }
+}
+
+/// Why a selector is incompatible with the targets. See [`incompatibility`].
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Incompatibility {
+    /// Unsupported features. Equal sets print the same way for every target, so they share a rule.
+    Features(FeatureSet),
+    /// A component with no support data (unknown or prefixed pseudo, `:nth-col()`): never shared.
+    Unknown,
+}
+
+/// What one selector component needs from the targets.
+enum Requirement {
+    Feature(Feature),
+    /// `&` compiled away. Checked as `:is()`; keyed apart since a lone parent inlines without it.
+    Nesting {
+        leading: bool,
+    },
+    /// `:scope`. Checked as Shadow DOM v1 like `:host`, but keyed apart: it shipped years earlier.
+    Scope,
+    /// No support data.
+    Unknown,
+}
+
+/// Returns why the targets do not all support `selector`, or `None` when they do.
+pub(crate) fn incompatibility(
+    selector: &parser::Selector,
+    targets: &Targets,
+) -> Option<Incompatibility> {
+    let mut features = FeatureSet::default();
+    let mut unknown = false;
+    visit_incompatible(
+        core::slice::from_ref(selector),
+        targets,
+        &mut |requirement| {
+            match requirement {
+                Requirement::Feature(feature) => features.insert(feature as usize),
+                Requirement::Nesting { leading: true } => features.insert(BIT_NESTING_LEADING),
+                Requirement::Nesting { leading: false } => features.insert(BIT_NESTING_INNER),
+                Requirement::Scope => features.insert(BIT_SCOPE),
+                Requirement::Unknown => unknown = true,
+            }
+            !unknown
+        },
+    );
+    if unknown {
+        Some(Incompatibility::Unknown)
+    } else if features == FeatureSet::default() {
+        None
+    } else {
+        Some(Incompatibility::Features(features))
+    }
+}
+
 pub(crate) fn is_compatible(selectors: &[parser::Selector], targets: &Targets) -> bool {
+    visit_incompatible(selectors, targets, &mut |_| false)
+}
+
+/// Feeds each unmet [`Requirement`] of `selectors` to `sink` until `sink` returns `false`.
+fn visit_incompatible(
+    selectors: &[parser::Selector],
+    targets: &Targets,
+    sink: &mut impl FnMut(Requirement) -> bool,
+) -> bool {
     use Feature as F;
     for selector in selectors {
-        for component in selector.components.iter() {
+        let mut leading_nesting = has_leading_nesting(selector);
+        'components: for component in selector.components.iter() {
             let feature = match component {
                 Component::Id(_) | Component::Class(_) | Component::LocalName(_) => continue,
 
@@ -281,19 +372,15 @@ pub(crate) fn is_compatible(selectors: &[parser::Selector], targets: &Targets) -
                     case_sensitivity,
                     operator,
                     ..
-                } => 'brk: {
-                    if *case_sensitivity != parser::attrs::ParsedCaseSensitivity::CaseSensitive {
-                        break 'brk F::CaseInsensitive;
+                } => match attribute_requirement(*case_sensitivity, *operator) {
+                    Requirement::Feature(feature) => feature,
+                    requirement => {
+                        if !sink(requirement) {
+                            return false;
+                        }
+                        continue;
                     }
-                    match operator {
-                        parser::attrs::AttrSelectorOperator::Equal
-                        | parser::attrs::AttrSelectorOperator::Includes
-                        | parser::attrs::AttrSelectorOperator::DashMatch => F::Selectors2,
-                        parser::attrs::AttrSelectorOperator::Prefix
-                        | parser::attrs::AttrSelectorOperator::Substring
-                        | parser::attrs::AttrSelectorOperator::Suffix => F::Selectors3,
-                    }
-                }
+                },
 
                 Component::AttributeOther(attr) => match &attr.operation {
                     parser::attrs::ParsedAttrSelectorOperation::Exists => F::Selectors2,
@@ -301,26 +388,23 @@ pub(crate) fn is_compatible(selectors: &[parser::Selector], targets: &Targets) -
                         case_sensitivity,
                         operator,
                         ..
-                    } => 'brk: {
-                        if *case_sensitivity != parser::attrs::ParsedCaseSensitivity::CaseSensitive
-                        {
-                            break 'brk F::CaseInsensitive;
+                    } => match attribute_requirement(*case_sensitivity, *operator) {
+                        Requirement::Feature(feature) => feature,
+                        requirement => {
+                            if !sink(requirement) {
+                                return false;
+                            }
+                            continue;
                         }
-                        match operator {
-                            parser::attrs::AttrSelectorOperator::Equal
-                            | parser::attrs::AttrSelectorOperator::Includes
-                            | parser::attrs::AttrSelectorOperator::DashMatch => F::Selectors2,
-                            parser::attrs::AttrSelectorOperator::Prefix
-                            | parser::attrs::AttrSelectorOperator::Substring
-                            | parser::attrs::AttrSelectorOperator::Suffix => F::Selectors3,
-                        }
-                    }
+                    },
                 },
 
                 Component::Empty | Component::Root => F::Selectors3,
                 Component::Negation(sels) => {
                     // :not() selector list is not forgiving.
-                    if !targets.is_compatible(F::Selectors3) || !is_compatible(sels, targets) {
+                    if !require(F::Selectors3, targets, sink)
+                        || !visit_incompatible(sels, targets, sink)
+                    {
                         return false;
                     }
                     continue;
@@ -331,13 +415,16 @@ pub(crate) fn is_compatible(selectors: &[parser::Selector], targets: &Targets) -
                         break 'brk F::Selectors2;
                     }
                     if data.ty == parser::NthType::Col || data.ty == parser::NthType::LastCol {
-                        return false;
+                        if !sink(Requirement::Unknown) {
+                            return false;
+                        }
+                        continue 'components;
                     }
                     F::Selectors3
                 }
                 Component::NthOf(n) => {
-                    if !targets.is_compatible(F::NthChildOf)
-                        || !is_compatible(&n.selectors, targets)
+                    if !require(F::NthChildOf, targets, sink)
+                        || !visit_incompatible(&n.selectors, targets, sink)
                     {
                         return false;
                     }
@@ -346,22 +433,68 @@ pub(crate) fn is_compatible(selectors: &[parser::Selector], targets: &Targets) -
 
                 // These support forgiving selector lists, so no need to check nested selectors.
                 Component::Is(sels) => {
-                    // ... except if we are going to unwrap them.
-                    if should_unwrap_is(sels) && is_compatible(sels, targets) {
+                    // ... except if we unwrap them: the printer writes the inner selector instead.
+                    if should_unwrap_is(sels) {
+                        if !visit_incompatible(sels, targets, sink) {
+                            return false;
+                        }
                         continue;
                     }
                     F::IsSelector
                 }
-                Component::Where(_) | Component::Nesting => F::IsSelector,
-                Component::Any { .. } => return false,
+                Component::Where(_) => F::IsSelector,
+                Component::Nesting => {
+                    let leading = core::mem::take(&mut leading_nesting);
+                    if !require_as(
+                        F::IsSelector,
+                        Requirement::Nesting { leading },
+                        targets,
+                        sink,
+                    ) {
+                        return false;
+                    }
+                    continue;
+                }
+                Component::Any { .. } => {
+                    if !sink(Requirement::Unknown) {
+                        return false;
+                    }
+                    continue;
+                }
                 Component::Has(sels) => {
-                    if !targets.is_compatible(F::HasSelector) || !is_compatible(sels, targets) {
+                    if !require(F::HasSelector, targets, sink)
+                        || !visit_incompatible(sels, targets, sink)
+                    {
                         return false;
                     }
                     continue;
                 }
 
-                Component::Scope | Component::Host(_) | Component::Slotted(_) => F::Shadowdomv1,
+                Component::Scope => {
+                    if !require_as(F::Shadowdomv1, Requirement::Scope, targets, sink) {
+                        return false;
+                    }
+                    continue;
+                }
+                // :host() and ::slotted() take one compound selector, not a forgiving list.
+                Component::Host(selector) => {
+                    if !require(F::Shadowdomv1, targets, sink)
+                        || !selector.as_ref().is_none_or(|selector| {
+                            visit_incompatible(core::slice::from_ref(selector), targets, sink)
+                        })
+                    {
+                        return false;
+                    }
+                    continue;
+                }
+                Component::Slotted(selector) => {
+                    if !require(F::Shadowdomv1, targets, sink)
+                        || !visit_incompatible(core::slice::from_ref(selector), targets, sink)
+                    {
+                        return false;
+                    }
+                    continue;
+                }
 
                 Component::Part(_) => F::PartPseudo,
 
@@ -438,13 +571,16 @@ pub(crate) fn is_compatible(selectors: &[parser::Selector], targets: &Targets) -
                         | PseudoClass::Blank
                         | PseudoClass::UserInvalid
                         | PseudoClass::UserValid
-                        | PseudoClass::Defined => return false,
+                        | PseudoClass::Defined => {}
 
                         PseudoClass::Custom { .. } => {}
 
                         _ => {}
                     }
-                    return false;
+                    if !sink(Requirement::Unknown) {
+                        return false;
+                    }
+                    continue 'components;
                 }
 
                 Component::PseudoElement(pseudo) => 'brk: {
@@ -469,11 +605,25 @@ pub(crate) fn is_compatible(selectors: &[parser::Selector], targets: &Targets) -
                             }
                         }
                         PseudoElement::Cue => break 'brk F::Cue,
-                        PseudoElement::CueFunction { .. } => break 'brk F::CueFunction,
-                        PseudoElement::Custom { .. } => return false,
+                        PseudoElement::CueFunction { selector } => {
+                            if !require(F::CueFunction, targets, sink)
+                                || !visit_incompatible(
+                                    core::slice::from_ref(selector.as_ref()),
+                                    targets,
+                                    sink,
+                                )
+                            {
+                                return false;
+                            }
+                            continue 'components;
+                        }
+                        PseudoElement::Custom { .. } => {}
                         _ => {}
                     }
-                    return false;
+                    if !sink(Requirement::Unknown) {
+                        return false;
+                    }
+                    continue 'components;
                 }
 
                 Component::Combinator(combinator) => match combinator {
@@ -483,13 +633,63 @@ pub(crate) fn is_compatible(selectors: &[parser::Selector], targets: &Targets) -
                 },
             };
 
-            if !targets.is_compatible(feature) {
+            if !require(feature, targets, sink) {
                 return false;
             }
         }
     }
 
     true
+}
+
+/// Reports `feature` to `sink` when the targets lack it; `false` means `sink` stopped the walk.
+fn require(
+    feature: Feature,
+    targets: &Targets,
+    sink: &mut impl FnMut(Requirement) -> bool,
+) -> bool {
+    require_as(feature, Requirement::Feature(feature), targets, sink)
+}
+
+/// Like [`require`], but reports `requirement` in place of the checked `feature`.
+fn require_as(
+    feature: Feature,
+    requirement: Requirement,
+    targets: &Targets,
+    sink: &mut impl FnMut(Requirement) -> bool,
+) -> bool {
+    targets.is_compatible(feature) || sink(requirement)
+}
+
+/// Whether the selector's first `&` prints in the leading form (`&div` swaps to `div&`: inner).
+fn has_leading_nesting(selector: &parser::Selector) -> bool {
+    let mut compounds = CompoundSelectorIter {
+        sel: selector,
+        i: 0,
+    };
+    let Some(compound) = compounds.next() else {
+        return false;
+    };
+    matches!(compound.first(), Some(Component::Nesting)) && !is_type_selector(compound.get(1))
+}
+
+/// The `i` flag needs `CaseInsensitive`, `s` has no support data, otherwise the operator decides.
+fn attribute_requirement(
+    case_sensitivity: parser::attrs::ParsedCaseSensitivity,
+    operator: parser::attrs::AttrSelectorOperator,
+) -> Requirement {
+    use parser::attrs::AttrSelectorOperator as Op;
+    use parser::attrs::ParsedCaseSensitivity as C;
+    match case_sensitivity {
+        C::AsciiCaseInsensitive => Requirement::Feature(Feature::CaseInsensitive),
+        C::ExplicitCaseSensitive => Requirement::Unknown,
+        C::CaseSensitive | C::AsciiCaseInsensitiveIfInHtmlElementInHtmlDocument => {
+            Requirement::Feature(match operator {
+                Op::Equal | Op::Includes | Op::DashMatch => Feature::Selectors2,
+                Op::Prefix | Op::Substring | Op::Suffix => Feature::Selectors3,
+            })
+        }
+    }
 }
 
 /// Determines whether a selector list contains only unused selectors.

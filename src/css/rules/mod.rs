@@ -662,9 +662,17 @@ fn minify_style_arm<R: for<'b> css::generics::DeepClone<'b>>(
         return Ok(());
     }
 
+    /// Incompatible selectors that share a reason and a prefix. Each group becomes one rule.
+    struct IncompatibleSelectors {
+        /// `None` when the downleveled selector prints compatibly, as `:dir()` does as `:lang()`.
+        reason: Option<selector::Incompatibility>,
+        vendor_prefix: css::VendorPrefix,
+        selectors: SmallList<Selector, 1>,
+    }
+
     // If some of the selectors in this rule are not compatible with the targets,
     // we need to either wrap in :is() or split them into multiple rules.
-    let mut incompatible: SmallList<Selector, 1> = if sty.selectors.v.len() > 1
+    let mut incompatible: SmallList<IncompatibleSelectors, 1> = if sty.selectors.v.len() > 1
         && context.targets.should_compile_selectors()
         && !sty.is_compatible(context.targets)
     {
@@ -686,16 +694,36 @@ fn minify_style_arm<R: for<'b> css::generics::DeepClone<'b>>(
         } else {
             // Otherwise, partition the selectors and keep the compatible ones in this rule.
             // We will generate additional rules for incompatible selectors later.
-            let mut incompatible = SmallList::<Selector, 1>::default();
+            // Same reason and prefix means the same browsers drop them, so they share one rule.
+            let mut incompatible = SmallList::<IncompatibleSelectors, 1>::default();
             let mut i: u32 = 0;
             while i < sty.selectors.v.len() {
-                if selector::is_compatible(
-                    &sty.selectors.v.slice()[i as usize..i as usize + 1],
-                    context.targets,
-                ) {
+                if selector::incompatibility(sty.selectors.v.at(i), context.targets).is_none() {
                     i += 1;
-                } else {
-                    incompatible.append(sty.selectors.v.ordered_remove(i));
+                    continue;
+                }
+                let mut sel = sty.selectors.v.ordered_remove(i);
+                let vendor_prefix = selector::update_prefix(
+                    context.arena,
+                    core::slice::from_mut(&mut sel),
+                    context.targets,
+                );
+                // Downleveling can rewrite the selector, so key the group on what will print.
+                let reason = selector::incompatibility(&sel, context.targets);
+                let group = match reason {
+                    Some(selector::Incompatibility::Unknown) => None,
+                    _ => incompatible
+                        .slice_mut()
+                        .iter_mut()
+                        .find(|g| g.reason == reason && g.vendor_prefix == vendor_prefix),
+                };
+                match group {
+                    Some(group) => group.selectors.append(sel),
+                    None => incompatible.append(IncompatibleSelectors {
+                        reason,
+                        vendor_prefix,
+                        selectors: SmallList::with_one(sel),
+                    }),
                 }
             }
             incompatible
@@ -782,13 +810,11 @@ fn minify_style_arm<R: for<'b> css::generics::DeepClone<'b>>(
     let mut incompatible_rules: SmallList<IncompatibleRuleEntry<R>, 1> =
         SmallList::init_capacity(incompatible.len());
     while incompatible.len() > 0 {
-        let sel = incompatible.ordered_remove(0);
-        let list = SelectorList {
-            v: SmallList::with_one(sel),
-        };
-        let mut clone = style::StyleRule::<R> {
-            selectors: list,
-            vendor_prefix: sty.vendor_prefix,
+        let group = incompatible.ordered_remove(0);
+        // The prefix was computed per selector when the group was formed.
+        let clone = style::StyleRule::<R> {
+            selectors: SelectorList { v: group.selectors },
+            vendor_prefix: group.vendor_prefix,
             declarations: dc::decl_block_static(
                 incompatible_decls.as_ref().unwrap_or(&sty.declarations),
                 context.arena,
@@ -796,7 +822,6 @@ fn minify_style_arm<R: for<'b> css::generics::DeepClone<'b>>(
             rules: sty.rules.deep_clone(context.arena),
             loc: sty.loc,
         };
-        clone.update_prefix(context);
         let s = context.handler_context.get_supports_rules::<R>(&clone);
         let l = context.handler_context.get_additional_rules::<R>(&clone);
         incompatible_rules.append(IncompatibleRuleEntry {

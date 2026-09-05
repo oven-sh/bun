@@ -1,6 +1,6 @@
 import { deflateSync, gunzipSync, gzipSync, inflateSync } from "bun";
 import { describe, expect, it } from "bun:test";
-import { tmpdirSync } from "harness";
+import { bunEnv, bunExe, tmpdirSync } from "harness";
 import * as buffer from "node:buffer";
 import { randomFillSync } from "node:crypto";
 import * as fs from "node:fs";
@@ -798,6 +798,147 @@ describe("dictionary buffer lifetime", () => {
     await promise;
 
     expect(Buffer.concat(chunks).toString()).toBe(input.toString());
+  });
+});
+
+// Each scenario runs in a child process: the bug is an exception thrown out of
+// a native write callback, which surfaces as an uncaught exception that kills
+// the process (non-zero exit, nothing printed) rather than as a failed
+// assertion. The fixtures print their observations as JSON on 'close'.
+describe("Zlib.prototype.params", () => {
+  async function run(fixture) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", `const zlib = require("node:zlib");\n${fixture}`],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+    return JSON.parse(stdout);
+  }
+
+  it.concurrent("a params() call pipelined between two write() calls applies to the second write", async () => {
+    expect(
+      await run(/* js */ `
+        const a = Buffer.alloc(32 * 1024, "a");
+        const b = Buffer.alloc(32 * 1024, "b");
+        const d = zlib.createDeflate({ level: 9 });
+        const out = [], order = [], errors = [];
+        d.on("data", c => out.push(c));
+        d.on("error", e => errors.push(e.code));
+        d.on("close", () => {
+          const compressed = Buffer.concat(out);
+          console.log(JSON.stringify({
+            errors,
+            order,
+            level: d._level,
+            strategy: d._strategy,
+            roundTrip: zlib.inflateSync(compressed).equals(Buffer.concat([a, b])),
+            // "a" was deflated at level 9; "b" went out as stored blocks at level 0.
+            bStored: compressed.length > b.length && compressed.length < a.length + b.length,
+          }));
+        });
+        // "a" is on the threadpool when params() is called, so its flush and "b" both queue up behind it.
+        d.write(a, () => order.push("a"));
+        d.params(0, zlib.constants.Z_FILTERED, () => order.push("params"));
+        d.write(b, () => order.push("b"));
+        d.end();
+      `),
+    ).toEqual({
+      errors: [],
+      order: ["a", "params", "b"],
+      level: 0,
+      strategy: zlib.constants.Z_FILTERED,
+      roundTrip: true,
+      bStored: true,
+    });
+  });
+
+  it.concurrent("pipelined params() calls apply in order and each one runs its callback", async () => {
+    const rounds = 20;
+    expect(
+      await run(/* js */ `
+        const d = zlib.createDeflateRaw({ level: 1 });
+        const input = [], out = [], applied = [], errors = [];
+        d.on("data", c => out.push(c));
+        d.on("error", e => errors.push(e.code));
+        d.on("close", () => console.log(JSON.stringify({
+          errors,
+          applied,
+          level: d._level,
+          strategy: d._strategy,
+          roundTrip: zlib.inflateRawSync(Buffer.concat(out)).equals(Buffer.concat(input)),
+        })));
+        for (let i = 0; i < ${rounds}; i++) {
+          const chunk = Buffer.alloc(64, i);
+          input.push(chunk);
+          d.write(chunk);
+          d.params(i % 10, i % 5, () => applied.push(i));
+        }
+        // Some data has to follow the last params() call: a params() flush that ends up being the final chunk
+        // is finished instead of flushed, and deflateParams() on a finished stream fails (in node as well).
+        const last = Buffer.alloc(64, ${rounds});
+        input.push(last);
+        d.end(last);
+      `),
+    ).toEqual({
+      errors: [],
+      applied: Array.from({ length: rounds }, (_, i) => i),
+      level: (rounds - 1) % 10,
+      strategy: (rounds - 1) % 5,
+      roundTrip: true,
+    });
+  });
+
+  // Zlib.prototype.params only range-checks its arguments, and node's binding
+  // truncates them with Int32Value(), so these all reach deflateParams() as an
+  // integer instead of failing once the flush has gone through.
+  it.concurrent.each([1.5, NaN, undefined])("params(%p) is truncated to an integer like node", async level => {
+    expect(
+      await run(/* js */ `
+        const input = Buffer.alloc(1024, "x");
+        const d = zlib.createDeflate({ level: 9 });
+        const out = [], errors = [];
+        let callbacks = 0;
+        d.on("data", c => out.push(c));
+        d.on("error", e => errors.push(e.code));
+        d.on("close", () => console.log(JSON.stringify({
+          errors,
+          callbacks,
+          roundTrip: zlib.inflateSync(Buffer.concat(out)).equals(input),
+        })));
+        d.params(${level}, zlib.constants.Z_DEFAULT_STRATEGY, () => {
+          callbacks++;
+          d.end(input);
+        });
+      `),
+    ).toEqual({ errors: [], callbacks: 1, roundTrip: true });
+  });
+
+  // zlib streams emit 'finish' while the Z_FINISH chunk is still on the
+  // threadpool. params() then has to wait for it to retire; deflateParams() on
+  // the finished stream is reported through 'error', as node does for a
+  // params() call made after end().
+  it.concurrent("params() from a 'finish' handler waits for the final chunk and reports through 'error'", async () => {
+    expect(
+      await run(/* js */ `
+        const input = Buffer.alloc(1024, "x");
+        const d = zlib.createDeflate({ level: 9 });
+        const out = [], errors = [];
+        let callbacks = 0;
+        d.on("data", c => out.push(c));
+        d.on("error", e => errors.push(e.code));
+        d.on("close", () => console.log(JSON.stringify({
+          errors,
+          callbacks,
+          roundTrip: zlib.inflateSync(Buffer.concat(out)).equals(input),
+        })));
+        d.on("finish", () => d.params(0, zlib.constants.Z_DEFAULT_STRATEGY, () => callbacks++));
+        d.end(input);
+      `),
+    ).toEqual({ errors: ["Z_STREAM_ERROR"], callbacks: 0, roundTrip: true });
   });
 });
 

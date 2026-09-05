@@ -238,13 +238,13 @@ mod _impl {
                     )
                     .throw());
             }
-            // `set_params` calls `deflateParams` on the same `z_stream` an
-            // in-flight async write's `deflate()` is using.
-            CompressionStream::<Self>::throw_unless_idle(self, global)?;
+            // ToInt32 (zlib.ts only range-checks, so 1.5 / NaN reach here), like node's `Int32Value()`:
+            // https://github.com/nodejs/node/blob/v24.0.0/src/node_zlib.cc#L763-L766
+            let level = arguments.ptr[0].coerce_to_i32(global)?;
+            let strategy = arguments.ptr[1].coerce_to_i32(global)?;
 
-            let level = validators::validate_int32(global, arguments.ptr[0], "level", None, None)?;
-            let strategy =
-                validators::validate_int32(global, arguments.ptr[1], "strategy", None, None)?;
+            // After the coercions: a `valueOf()` in there can start a write that `set_params` would race.
+            CompressionStream::<Self>::throw_unless_idle(self, global)?;
 
             let err = self.stream.with_mut(|s| s.set_params(level, strategy));
             if err.is_error() {

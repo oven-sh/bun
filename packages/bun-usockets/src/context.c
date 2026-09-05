@@ -474,7 +474,7 @@ void us_listen_socket_close(struct us_listen_socket_t *ls) {
         struct us_socket_group_t *group = ls->accept_group;
         struct us_loop_t *loop = s->group->loop;
         us_poll_stop((struct us_poll_t *) s, loop);
-        bsd_close_socket(us_poll_fd((struct us_poll_t *) s));
+        us_internal_poll_close_fd((struct us_poll_t *) s);
 
         us_internal_listen_socket_ssl_free(ls);
 

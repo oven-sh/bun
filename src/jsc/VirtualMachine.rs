@@ -3687,6 +3687,10 @@ impl VirtualMachine {
             self.transpiler_store.enabled = false;
         }
 
+        // Consumed by `configure_debugger`; a child inheriting them starts a second inspector.
+        map.remove(b"BUN_INSPECT");
+        map.remove(b"BUN_INSPECT_NOTIFY");
+
         if let Some(idx) = map.map.get_index(b"NODE_CHANNEL_FD") {
             let (_, kv) = map.map.swap_remove_at(idx);
             let fd_s = kv.value;

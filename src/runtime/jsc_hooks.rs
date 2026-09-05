@@ -593,6 +593,7 @@ unsafe fn configure_debugger(
 
     let unix: &'static [u8] = env_var::BUN_INSPECT.get().unwrap_or(b"");
     let connect_to: &'static [u8] = env_var::BUN_INSPECT_CONNECT_TO.get().unwrap_or(b"");
+    let notify: &'static [u8] = env_var::BUN_INSPECT_NOTIFY.get().unwrap_or(b"");
 
     let set_breakpoint_on_first_line = !unix.is_empty() && unix.ends_with(b"?break=1");
     let wait_for_debugger = !unix.is_empty() && unix.ends_with(b"?wait=1");
@@ -609,6 +610,7 @@ unsafe fn configure_debugger(
                 Some(Debugger {
                     path_or_port: None,
                     from_environment_variable: unix,
+                    notify,
                     wait_for_connection,
                     set_breakpoint_on_first_line,
                     ..Default::default()
@@ -633,6 +635,7 @@ unsafe fn configure_debugger(
             Some(Debugger {
                 path_or_port: Some(path_or_port),
                 from_environment_variable: unix,
+                notify,
                 wait_for_connection: if enable.wait_for_connection {
                     Wait::Forever
                 } else {

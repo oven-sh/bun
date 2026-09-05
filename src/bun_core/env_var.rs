@@ -97,6 +97,7 @@ new!(pub BUN_IDLE_GC_SECONDS: string, "BUN_IDLE_GC_SECONDS", {});
 new!(pub BUN_INOTIFY_COALESCE_INTERVAL: unsigned, "BUN_INOTIFY_COALESCE_INTERVAL", { default: 100_000 });
 new!(pub BUN_INSPECT: string, "BUN_INSPECT", { default: b"" });
 new!(pub BUN_INSPECT_CONNECT_TO: string, "BUN_INSPECT_CONNECT_TO", { default: b"" });
+new!(pub BUN_INSPECT_NOTIFY: string, "BUN_INSPECT_NOTIFY", { default: b"" });
 new!(pub BUN_INSPECT_PRELOAD: string, "BUN_INSPECT_PRELOAD", {});
 new!(pub BUN_INSTALL: string, "BUN_INSTALL", {});
 new!(pub BUN_INSTALL_BIN: string, "BUN_INSTALL_BIN", {});

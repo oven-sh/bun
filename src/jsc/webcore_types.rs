@@ -616,6 +616,11 @@ pub mod store {
     /// rather than `Vec<u8>` so the memfd-backed path
     /// (`LinuxMemFdAllocator::create` → `mmap`'d region freed via `munmap`)
     /// can carry its allocator vtable with the buffer.
+    ///
+    /// `ptr[..len]` is immutable. The allocation may be shared: the stores
+    /// `bun_runtime`'s `AppendBuffer` builds are several `Bytes` viewing
+    /// prefixes of one allocation, so writing through `ptr` needs more than
+    /// `&mut self` (see `as_array_list_leak`).
     pub struct Bytes {
         pub ptr: Option<NonNull<u8>>,
         pub len: SizeType,
@@ -626,11 +631,11 @@ pub mod store {
         pub stored_name: Box<[u8]>,
     }
 
-    // SAFETY: `Bytes` is morally `Vec<u8>`-with-custom-free. The raw
-    // `NonNull<u8>` is uniquely owned (`ptr` is the sole alias) and
-    // `StdAllocator` is `Send + Sync`.
+    // SAFETY: `Bytes` is morally `Vec<u8>`-with-custom-free over immutable
+    // bytes; every allocator's `free` is thread-safe and `StdAllocator` is
+    // `Send + Sync`.
     unsafe impl Send for Bytes {}
-    // SAFETY: `&Bytes` only reads the uniquely-owned slice via `slice()`; no
+    // SAFETY: `&Bytes` only reads the immutable `ptr[..len]` via `slice()`; no
     // interior mutability, so sharing references across threads is sound.
     unsafe impl Sync for Bytes {}
 
@@ -755,9 +760,13 @@ pub mod store {
             self.as_array_list_leak()
         }
 
+        /// Only write through the result (or hand it out writable) when no
+        /// other `Bytes` shares the allocation: a fresh store, or one that
+        /// `AppendBuffer::shares_allocation` clears.
         pub fn as_array_list_leak(&mut self) -> &mut [u8] {
             match self.ptr {
-                // SAFETY: `ptr[..len]` is live and uniquely owned by `*self`.
+                // SAFETY: `ptr[..len]` is live while `*self` is; exclusivity of
+                // the memory is the caller's (see above).
                 Some(p) => unsafe {
                     core::slice::from_raw_parts_mut(p.as_ptr(), self.len as usize)
                 },

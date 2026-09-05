@@ -51,6 +51,9 @@ use crate::node::types::{PathLikeExt as _, PathOrFdExt as _};
 pub use store::Store;
 use store::{BytesExt as _, FileExt as _, S3Ext as _, StoreExt as _};
 
+#[path = "blob/AppendBuffer.rs"]
+pub(crate) mod append_buffer;
+use append_buffer::AppendBuffer;
 #[path = "blob/copy_file.rs"]
 pub mod copy_file;
 #[cfg(not(windows))]
@@ -2940,7 +2943,11 @@ impl BlobExt for Blob {
                 }
             }
             Lifetime::Transfer => {
-                if self.store().is_some_and(|s| !s.has_one_ref()) {
+                // JS gets the bytes writable, so they must not be shared either.
+                if self
+                    .store()
+                    .is_some_and(|s| !s.has_one_ref() || AppendBuffer::shares_allocation(s))
+                {
                     // SAFETY: same `buf` contract as the caller; the `Clone` arm only reads it.
                     let copied = unsafe {
                         self.to_array_buffer_view_with_bytes::<{ Lifetime::Clone }, TYPED_ARRAY_VIEW>(
@@ -3239,6 +3246,9 @@ impl BlobExt for Blob {
         let mut stack: Vec<JSValue> = Vec::new();
         let mut joiner = bun_core::string_joiner::StringJoiner::default();
         let mut could_have_non_ascii = false;
+        // A leading Blob part is appended onto (`AppendBuffer`) instead of
+        // joined; the ref keeps it alive while later parts may run user JS.
+        let mut append_prefix: Option<StoreRef> = None;
 
         loop {
             match current.js_type_loose() {
@@ -3328,6 +3338,12 @@ impl BlobExt for Blob {
                                     if let Some(blob) = item.as_class_ref::<Blob>() {
                                         could_have_non_ascii = could_have_non_ascii
                                             || blob.charset.get() != strings::AsciiStatus::AllAscii;
+                                        if append_prefix.is_none() && joiner.len == 0 {
+                                            if let Some(store) = AppendBuffer::prefix_store(blob) {
+                                                append_prefix = Some(store.clone());
+                                                continue;
+                                            }
+                                        }
                                         // A later part may run user JS that drops the
                                         // last ref to this Blob's Store before `done()`.
                                         if parts_can_run_js {
@@ -3395,6 +3411,17 @@ impl BlobExt for Blob {
                 Some(v) => v,
                 None => break,
             };
+        }
+
+        if let Some(prefix) = append_prefix {
+            // As below, only a positive ASCII answer is recorded.
+            let is_all_ascii = (!could_have_non_ascii).then_some(true);
+            // The joiner's borrowed parts are still alive here, as for `done()`.
+            let store = AppendBuffer::concat(&prefix, &joiner, is_all_ascii);
+            let blob = Blob::init_with_store(store, global);
+            blob.charset
+                .set(strings::AsciiStatus::from_bool(is_all_ascii));
+            return Ok(blob);
         }
 
         let joined: Vec<u8> = joiner.done().expect("oom").into_vec();

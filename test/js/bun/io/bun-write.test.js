@@ -7,10 +7,12 @@ import {
   exampleSite,
   gcTick,
   isASAN,
+  isLinux,
   isWindows,
   tempDir,
   withoutAggressiveGC,
 } from "harness";
+import { mkfifo } from "mkfifo";
 import { once } from "node:events";
 import http from "node:http";
 import path, { join } from "path";
@@ -537,6 +539,94 @@ const IS_UV_FS_COPYFILE_DISABLED =
       resolved: String(size),
     });
     expect(exitCode).toBe(0);
+  });
+
+  // The destination is opened with O_CREAT | O_TRUNC, so every check that can
+  // reject the source has to run before it is opened: a rejected copy must
+  // leave the destination exactly as it was.
+  describe("Bun.write(dest, Bun.file(unusable source)) leaves the destination alone", () => {
+    const original = Buffer.alloc(16384, "Z").toString();
+    const settle = promise =>
+      promise.then(
+        value => ({ resolved: value }),
+        error => ({ rejected: error.message }),
+      );
+
+    // Windows copies through uv_fs_copyfile(), which reports a directory
+    // source as a generic copyfile failure (and never touches the
+    // destination); the message below is the POSIX CopyFile one.
+    describe.skipIf(isWindows)("directory source", () => {
+      it.each([
+        { dest: "path", src: "path" },
+        { dest: "Bun.file", src: "path" },
+        { dest: "path", src: "fd" },
+        { dest: "Bun.file", src: "fd" },
+      ])("$dest destination, directory $src source", async ({ dest: destKind, src: srcKind }) => {
+        using dir = tempDir("bun-write-dir-src", { "important.db": original });
+        const destPath = join(String(dir), "important.db");
+        const dest = destKind === "Bun.file" ? Bun.file(destPath) : destPath;
+        const dirFd = srcKind === "fd" ? fs.openSync(String(dir), "r") : -1;
+        try {
+          const outcome = await settle(Bun.write(dest, Bun.file(srcKind === "fd" ? dirFd : String(dir))));
+          expect({ outcome, content: fs.readFileSync(destPath, "utf8") }).toEqual({
+            outcome: { rejected: "That doesn't work on folders" },
+            content: original,
+          });
+        } finally {
+          if (dirFd !== -1) fs.closeSync(dirFd);
+        }
+      });
+
+      it("does not create a missing destination", async () => {
+        using dir = tempDir("bun-write-dir-src-absent", {});
+        const destPath = join(String(dir), "new.db");
+
+        const outcome = await settle(Bun.write(destPath, Bun.file(String(dir))));
+
+        expect({ outcome, destExists: fs.existsSync(destPath) }).toEqual({
+          outcome: { rejected: "That doesn't work on folders" },
+          destExists: false,
+        });
+      });
+    });
+
+    // Only Linux rejects a FIFO -> regular file copy (macOS falls back to a
+    // read/write loop and copies it). Holding the FIFO open read/write from
+    // this process gives Bun's O_RDONLY open a writer, so it returns at once.
+    it.skipIf(!isLinux)("FIFO source", async () => {
+      using dir = tempDir("bun-write-fifo-src", { "important.db": original });
+      const destPath = join(String(dir), "important.db");
+      const fifoPath = join(String(dir), "fifo");
+      mkfifo(fifoPath);
+      const holder = fs.openSync(fifoPath, "r+");
+      try {
+        const outcome = await settle(Bun.write(destPath, Bun.file(fifoPath)));
+        expect({ outcome, content: fs.readFileSync(destPath, "utf8") }).toEqual({
+          outcome: { rejected: "Non-regular files aren't supported yet" },
+          content: original,
+        });
+      } finally {
+        fs.closeSync(holder);
+      }
+    });
+
+    // Also covers the Windows read/write fallback (this file re-runs itself
+    // with BUN_FEATURE_FLAG_DISABLE_UV_FS_COPYFILE=1 on Windows), which used
+    // to open the destination before the source.
+    it("missing source", async () => {
+      using dir = tempDir("bun-write-missing-src-keeps-dest", { "important.db": original });
+      const destPath = join(String(dir), "important.db");
+
+      const outcome = await Bun.write(destPath, Bun.file(join(String(dir), "missing.txt"))).then(
+        value => ({ resolved: value }),
+        error => ({ rejected: error.code }),
+      );
+
+      expect({ outcome, content: fs.readFileSync(destPath, "utf8") }).toEqual({
+        outcome: { rejected: "ENOENT" },
+        content: original,
+      });
+    });
   });
 
   it("Bun.file(0) survives GC", async () => {

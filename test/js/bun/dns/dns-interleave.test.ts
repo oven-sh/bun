@@ -256,27 +256,57 @@ describe("loopback names", () => {
   });
 });
 
+// The dial through the name tries both loopback addresses at once. The
+// fixture's server listens on one of them, so it has to hold the same port on
+// the other one too: a port 0 bind in another process (a sibling fixture, any
+// test in the batch) can land on the same number, and a listener there would
+// answer the dial. A client socket bound to that address and port holds it
+// without a listener, so the dial to it is refused as on an idle host. The
+// socket stays bound while it is connected to a helper listener on some other
+// port. If the other address is already taken, the server takes a new port.
 function reachThroughName(name: string, addresses: string[]) {
   return /* js */ `
+    const net = require("node:net");
     const name = ${JSON.stringify(name)};
     const bound = [];
     const results = [];
     for (const address of ${JSON.stringify(addresses)}) {
+      const other = address.includes(":") ? "127.0.0.1" : "::1";
+      const serve = () => Bun.serve({
+        hostname: address,
+        port: 0,
+        fetch(req, server) {
+          if (server.upgrade(req)) return;
+          return new Response("http via " + address);
+        },
+        websocket: { open(ws) { ws.send("ws via " + address); }, message() {} },
+      });
       let server;
       try {
-        server = Bun.serve({
-          hostname: address,
-          port: 0,
-          fetch(req, server) {
-            if (server.upgrade(req)) return;
-            return new Response("http via " + address);
-          },
-          websocket: { open(ws) { ws.send("ws via " + address); }, message() {} },
-        });
+        server = serve();
       } catch {
         continue;
       }
-      const listener = Bun.listen({ hostname: address, port: 0, socket: { open(s) { s.end(); }, data() {} } });
+      // An address the kernel refuses to bind has no listener in any process,
+      // so there is nothing to hold there.
+      let helper;
+      try {
+        helper = Bun.listen({ hostname: other, port: 0, socket: { open() {}, data() {} } });
+      } catch {}
+      let guard;
+      while (helper && !guard) {
+        try {
+          guard = await new Promise((resolve, reject) => {
+            const socket = net.connect({ host: other, port: helper.port, localAddress: other, localPort: server.port });
+            socket.once("connect", () => resolve(socket));
+            socket.once("error", reject);
+          });
+        } catch (e) {
+          if (e.code !== "EADDRINUSE") throw e;
+          server.stop(true);
+          server = serve();
+        }
+      }
       bound.push(address);
       const result = { address };
       try {
@@ -292,7 +322,7 @@ function reachThroughName(name: string, addresses: string[]) {
       result.connect = await new Promise(resolve => {
         Bun.connect({
           hostname: name,
-          port: listener.port,
+          port: server.port,
           socket: {
             open(s) { resolve(s.remoteAddress); s.end(); },
             connectError(_s, e) { resolve(e.code); },
@@ -301,7 +331,8 @@ function reachThroughName(name: string, addresses: string[]) {
         }).catch(e => resolve(e.code));
       });
       results.push(result);
-      listener.stop(true);
+      guard?.destroy();
+      helper?.stop(true);
       server.stop(true);
     }
     console.log(JSON.stringify({ bound, results }));

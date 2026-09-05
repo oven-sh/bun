@@ -3549,6 +3549,26 @@ JSC::JSPromise* GlobalObject::moduleLoaderImportModule(JSGlobalObject* jsGlobalO
         }
     }
 
+    // Only "type" is supported for dynamic imports. Runs after the NodeVM
+    // dispatch above so user importModuleDynamically hooks still receive
+    // every attribute, as in Node.js.
+    if (parameters) {
+        const auto& attributes = parameters->attributes();
+        if (!attributes.isEmpty()) {
+            const auto* typeKey = vm.propertyNames->type.impl();
+            for (const auto& [key, value] : attributes) {
+                if (key.get() != typeKey) {
+                    auto keyString = String(key.get());
+                    auto* promise = JSC::JSPromise::create(vm, globalObject->promiseStructure());
+                    promise->reject(vm,
+                        Bun::createError(globalObject, Bun::ErrorCode::ERR_IMPORT_ATTRIBUTE_UNSUPPORTED,
+                            makeString("Import attribute \""_s, keyString, "\" with value \""_s, value, "\" is not supported"_s)));
+                    return promise;
+                }
+            }
+        }
+    }
+
     JSC::Identifier resolvedIdentifier;
 
     // Not `auto` (GCOwnedDataScope): importModule below can drive moduleLoaderFetch synchronously; see that function for why no scope may be live.

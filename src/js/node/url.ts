@@ -27,7 +27,7 @@
 
 const { URL, URLSearchParams, URLPattern } = globalThis;
 const [domainToASCII, domainToUnicode, idnaToASCII] = $cpp("NodeURL.cpp", "Bun::createNodeURLBinding");
-const { urlToHttpOptions } = require("internal/url");
+const { isURL, urlToHttpOptions } = require("internal/url");
 const { validateString, validateObject } = require("internal/validators");
 const ObjectSetPrototypeOf = Object.setPrototypeOf;
 
@@ -1328,14 +1328,6 @@ function hexByteToNumber(byte: number): number {
   if (byte >= 0x41 && byte <= 0x46) return byte - 0x41 + 10; // A-F
   if (byte >= 0x61 && byte <= 0x66) return byte - 0x61 + 10; // a-f
   return -1;
-}
-
-// Node's isURL (lib/internal/url.js): a duck-type check rather than
-// `instanceof`, so cross-realm URLs and compatible foreign implementations
-// are accepted; `auth`/`path` must be absent to exclude legacy `url.parse`
-// objects, which carry both.
-function isURL(self: any): boolean {
-  return Boolean(self?.href && self.protocol && self.auth === undefined && self.path === undefined);
 }
 
 function fileURLToPathBuffer(path: unknown, options?: { windows?: boolean }): Buffer {

@@ -9,6 +9,7 @@ const {
   validateArray,
   validateObject,
   validateOneOf,
+  isUint8Array,
 } = require("internal/validators");
 
 var NetModule;
@@ -1923,10 +1924,6 @@ function getValidatedPath(fileURLOrPath, propName = "path") {
   const path = toPathIfFileURL(fileURLOrPath);
   validatePath(path, propName);
   return path;
-}
-
-function isUint8Array(value) {
-  return typeof value === "object" && value !== null && value instanceof Uint8Array;
 }
 
 //------------------------------------------------------------------------------

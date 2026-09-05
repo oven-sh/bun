@@ -311,6 +311,11 @@ pub struct JSValkeyClient {
     /// `RareData.defaultClientSslCtx()` instead; `tls: false` leaves this null.
     pub(crate) _secure: JsCell<Option<boringssl::c::OwnedSslCtx>>,
 
+    /// The url the client was constructed with, as UTF-8: the first
+    /// constructor argument, or the `REDIS_URL` / `VALKEY_URL` / built-in
+    /// default it fell back to. Exposed as `client.url`.
+    pub(crate) url: Box<[u8]>,
+
     pub(crate) timer: RefCountedTimer,
     pub(crate) reconnect_timer: RefCountedTimer,
     pub(crate) ref_count: bun_ptr::RefCount<JSValkeyClient>,
@@ -478,11 +483,16 @@ impl JSValkeyClient {
 
     /// Create a Valkey client that does not have an associated JS object nor a SubscriptionCtx.
     ///
+    /// Also returns the `tls` option object the caller passed (or `UNDEFINED`),
+    /// so the caller can cache it on the JS wrapper once that exists. The
+    /// lowered `SSLConfig` cannot be turned back into the caller's object, and
+    /// `client.options.tls` has to hand it back.
+    ///
     /// This whole client needs a refactor.
     pub(crate) fn create_no_js_no_pubsub(
         global_object: &JSGlobalObject,
         arguments: &[JSValue],
-    ) -> JsResult<*mut JSValkeyClient> {
+    ) -> JsResult<(*mut JSValkeyClient, JSValue)> {
         let global_object = GlobalRef::from(global_object);
         let vm: &'static VirtualMachine = global_object.bun_vm();
         let vm_ref = vm;
@@ -496,6 +506,7 @@ impl JSValkeyClient {
                 None => BunString::static_("valkey://localhost:6379"),
             }
         };
+        let url: Box<[u8]> = Box::<[u8]>::from(url_str.to_utf8().slice());
         let mut fallback_url_buf = [0u8; 2048];
 
         // Parse and validate the URL using `Parsed::from_utf8`, which returns null for invalid URLs
@@ -625,13 +636,13 @@ impl JSValkeyClient {
             }
         };
 
-        let options = if arguments.len() >= 2
+        let (options, tls_js) = if arguments.len() >= 2
             && !arguments[1].is_undefined_or_null()
             && arguments[1].is_object()
         {
             Options::from_js(&global_object, arguments[1])?
         } else {
-            valkey::Options::default()
+            (valkey::Options::default(), JSValue::UNDEFINED)
         };
 
         // Copy strings into a persistent buffer since the URL object will be deinitialized
@@ -687,7 +698,7 @@ impl JSValkeyClient {
         bun_core::analytics::Features::VALKEY.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
 
         // `_subscription_ctx` is a placeholder here; properly initialized later by `create()`.
-        Ok(JSValkeyClient::new(JSValkeyClient {
+        let client = JSValkeyClient::new(JSValkeyClient {
             ref_count: bun_ptr::RefCount::init(),
             _subscription_ctx: JsCell::new(SubscriptionCtx::default()),
             client: JsCell::new(valkey::ValkeyClient {
@@ -738,9 +749,11 @@ impl JSValkeyClient {
             this_value: JsCell::new(JsRef::empty()),
             poll_ref: JsCell::new(KeepAlive::default()),
             _secure: JsCell::new(None),
+            url,
             timer: RefCountedTimer::new(Timer::Tag::ValkeyConnectionTimeout),
             reconnect_timer: RefCountedTimer::new(Timer::Tag::ValkeyConnectionReconnect),
-        }))
+        });
+        Ok((client, tls_js))
     }
 
     pub(crate) fn create(
@@ -748,12 +761,16 @@ impl JSValkeyClient {
         arguments: &[JSValue],
         js_this: JSValue,
     ) -> JsResult<*mut JSValkeyClient> {
-        let new_client_ptr = JSValkeyClient::create_no_js_no_pubsub(global_object, arguments)?;
+        let (new_client_ptr, tls_js) =
+            JSValkeyClient::create_no_js_no_pubsub(global_object, arguments)?;
         // SAFETY: just allocated above
         let new_client = unsafe { &*new_client_ptr };
 
         // Initially, we only need to hold a weak reference to the JS object.
         new_client.this_value.set(JsRef::init_weak(js_this));
+        if !tls_js.is_undefined() {
+            Js::tls_set_cached(js_this, global_object, tls_js);
+        }
 
         // Need to associate the subscription context, after the JS ref has been populated.
         new_client
@@ -850,6 +867,7 @@ impl JSValkeyClient {
             this_value: JsCell::new(JsRef::empty()),
             poll_ref: JsCell::new(KeepAlive::default()),
             _secure: JsCell::new(None),
+            url: Box::<[u8]>::from(&self.url[..]),
             timer: RefCountedTimer::new(Timer::Tag::ValkeyConnectionTimeout),
             reconnect_timer: RefCountedTimer::new(Timer::Tag::ValkeyConnectionReconnect),
         }))
@@ -920,6 +938,77 @@ impl JSValkeyClient {
         let client = self.client.get();
         let len = client.write_buffer.len() + client.read_buffer.len();
         JSValue::js_number(f64::from(len))
+    }
+
+    #[bun_jsc::host_fn(getter)]
+    pub(crate) fn get_url(&self, global: &JSGlobalObject) -> JsResult<JSValue> {
+        jsc::bun_string_jsc::create_utf8_for_js(global, &self.url)
+    }
+
+    /// `client.options`: a fresh object with the options the client runs
+    /// with, in the shape the constructor accepts. A subscriber reports the
+    /// `enableOfflineQueue` / `enableAutoPipelining` it was constructed with,
+    /// not the values subscribe mode forces while it is active.
+    ///
+    /// `this: true` in valkey.classes.ts: codegen passes the JS wrapper as
+    /// `this_value`, which holds the cached `tls` option object.
+    pub(crate) fn get_options(
+        &self,
+        this_value: JSValue,
+        global: &JSGlobalObject,
+    ) -> JsResult<JSValue> {
+        let client = self.client.get();
+        let sub_ctx = self._subscription_ctx.get();
+        let (enable_offline_queue, enable_auto_pipelining) = if sub_ctx.is_subscriber {
+            (
+                sub_ctx.original_enable_offline_queue,
+                sub_ctx.original_enable_auto_pipelining,
+            )
+        } else {
+            (
+                client.flags.enable_offline_queue,
+                client.flags.enable_auto_pipelining,
+            )
+        };
+        let tls = match client.tls {
+            valkey::TLS::None => JSValue::FALSE,
+            valkey::TLS::Enabled => JSValue::TRUE,
+            valkey::TLS::Custom(_) => Js::tls_get_cached(this_value).unwrap_or(JSValue::TRUE),
+        };
+
+        let object = JSValue::create_empty_object(global, 7);
+        object.put(
+            global,
+            b"connectionTimeout",
+            JSValue::js_number(f64::from(client.connection_timeout_ms)),
+        );
+        object.put(
+            global,
+            b"idleTimeout",
+            JSValue::js_number(f64::from(client.idle_timeout_interval_ms)),
+        );
+        object.put(
+            global,
+            b"autoReconnect",
+            JSValue::from(client.flags.enable_auto_reconnect),
+        );
+        object.put(
+            global,
+            b"maxRetries",
+            JSValue::js_number(f64::from(client.max_retries)),
+        );
+        object.put(
+            global,
+            b"enableOfflineQueue",
+            JSValue::from(enable_offline_queue),
+        );
+        object.put(
+            global,
+            b"enableAutoPipelining",
+            JSValue::from(enable_auto_pipelining),
+        );
+        object.put(global, b"tls", tls);
+        Ok(object)
     }
 
     pub(crate) fn do_connect(
@@ -1877,7 +1966,13 @@ impl<const SSL: bool> SocketHandler<SSL> {
 struct Options;
 
 impl Options {
-    fn from_js(global_object: &JSGlobalObject, options_obj: JSValue) -> JsResult<valkey::Options> {
+    /// Returns the parsed options and the `tls` option object when one was
+    /// given (`UNDEFINED` otherwise), so `client.options.tls` can return it.
+    fn from_js(
+        global_object: &JSGlobalObject,
+        options_obj: JSValue,
+    ) -> JsResult<(valkey::Options, JSValue)> {
+        let mut tls_js = JSValue::UNDEFINED;
         let mut this = valkey::Options {
             enable_auto_pipelining:
                 !bun_core::env_var::feature_flag::BUN_FEATURE_FLAG_DISABLE_REDIS_AUTO_PIPELINING
@@ -1935,6 +2030,7 @@ impl Options {
                     SSLConfig::from_js(global_object.bun_vm(), global_object, tls)?
                 {
                     this.tls = valkey::TLS::Custom(Box::new(ssl_config));
+                    tls_js = tls;
                 } else {
                     return Err(global_object.throw_invalid_argument_type("tls", "tls", "object"));
                 }
@@ -1947,7 +2043,7 @@ impl Options {
             }
         }
 
-        Ok(this)
+        Ok((this, tls_js))
     }
 }
 

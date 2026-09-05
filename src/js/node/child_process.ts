@@ -1105,6 +1105,9 @@ class ChildProcess extends EventEmitter {
   #handle;
   #closesNeeded = 1;
   #closesGot = 0;
+  #hasIpc = false;
+  #disconnectEmitted = false;
+  #pendingExit;
 
   signalCode = null;
   exitCode = null;
@@ -1121,6 +1124,15 @@ class ChildProcess extends EventEmitter {
   }
 
   #handleOnExit(exitCode, signalCode, err) {
+    // 'disconnect' precedes 'exit' in Node; the native side always closes the channel on exit.
+    if (this.#hasIpc && !this.#disconnectEmitted) {
+      this.#pendingExit = [exitCode, signalCode, err];
+      return;
+    }
+    this.#emitExit(exitCode, signalCode, err);
+  }
+
+  #emitExit(exitCode, signalCode, err) {
     if (signalCode) {
       this.signalCode = signalCode;
     } else {
@@ -1454,6 +1466,7 @@ class ChildProcess extends EventEmitter {
       });
 
       if (has_ipc) {
+        this.#hasIpc = true;
         this.send = this.#send;
         this.disconnect = this.#disconnect;
         this.channel = new Control();
@@ -1552,7 +1565,19 @@ class ChildProcess extends EventEmitter {
       return;
     }
     $assert(!this.connected);
-    process.nextTick(() => this.emit("disconnect"));
+    // The flag flips in the same tick that emits, so a #handleOnExit tick queued
+    // ahead of this one still defers and is flushed by the tick below.
+    process.nextTick(() => {
+      this.#disconnectEmitted = true;
+      this.emit("disconnect");
+    });
+    process.nextTick(() => {
+      const pendingExit = this.#pendingExit;
+      if (pendingExit !== undefined) {
+        this.#pendingExit = undefined;
+        this.#emitExit(pendingExit[0], pendingExit[1], pendingExit[2]);
+      }
+    });
     process.nextTick(() => this.#maybeClose());
   }
   #disconnect() {

@@ -22,9 +22,9 @@ use crate::lockfile::PackageIndexEntry;
 use crate::lockfile::package::Package;
 use crate::lockfile_real as Lockfile;
 use crate::package_manager_real::{
-    self, FailFn, PackageManager, SuccessFn, TaskCallbackList, determine_preinstall_state,
-    get_cache_directory, get_preinstall_state, get_temporary_directory, run_tasks,
-    set_preinstall_state,
+    self, DeferredFolderPeer, FailFn, PackageManager, SuccessFn, TaskCallbackList,
+    determine_preinstall_state, get_cache_directory, get_preinstall_state, get_temporary_directory,
+    run_tasks, set_preinstall_state,
 };
 use crate::package_manager_task as Task;
 use crate::patch_install::EnqueueAfterState;
@@ -1107,6 +1107,12 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                                 result.package.meta.id,
                             );
                         }
+                    } else if this
+                        .deferred_folder_peers
+                        .last()
+                        .is_some_and(|deferred| deferred.dependency_id == id)
+                    {
+                        // Held back by `find_peer_provider`; `resolve_deferred_folder_peers` decides it.
                     } else if version.tag.is_npm() {
                         // reshaped for borrowck — `name_str` borrows
                         // `this.lockfile.buffers.string_bytes`. Route the whole
@@ -2569,6 +2575,18 @@ fn get_or_put_resolved_package(
                                 ..Default::default()
                             }));
                         }
+
+                        if let Some(handled) = bind_peer_provider(
+                            this,
+                            &[existing_id],
+                            dependency,
+                            dependency_id,
+                            name_hash,
+                            version,
+                            success_fn,
+                        ) {
+                            return Ok(handled);
+                        }
                     }
                 }
                 PackageIndexEntry::Ids(list) => {
@@ -2620,6 +2638,19 @@ fn get_or_put_resolved_package(
                                 ..Default::default()
                             }));
                         }
+                    }
+
+                    let candidates = list.to_vec();
+                    if let Some(handled) = bind_peer_provider(
+                        this,
+                        &candidates,
+                        dependency,
+                        dependency_id,
+                        name_hash,
+                        version,
+                        success_fn,
+                    ) {
+                        return Ok(handled);
                     }
                 }
             }
@@ -3136,6 +3167,119 @@ fn locked_version_in_lockfile<'a>(
         .map(|res| res.npm().version)
         .find(|&locked| range.satisfies(locked, buf, buf))
         .map(|locked| (locked, buf))
+}
+
+/// Binds a non-registry provider to the peer, or holds the peer back for `resolve_deferred_folder_peers`; `None` means the callers' registry path takes over.
+fn bind_peer_provider(
+    this: &mut PackageManager,
+    candidates: &[PackageID],
+    dependency: &Dependency,
+    dependency_id: DependencyID,
+    name_hash: PackageNameHash,
+    version: &dependency::Version,
+    success_fn: SuccessFn,
+) -> Option<Option<ResolvedPackageResult>> {
+    match find_peer_provider(this, candidates, dependency, dependency_id, version) {
+        PeerProvider::Package(provider) => {
+            success_fn(this, dependency_id, provider);
+            Some(Some(ResolvedPackageResult {
+                // we must fetch it from the packages array again, incase the package array mutates the value in the `successFn`
+                package: *this.lockfile.packages.get(provider as usize),
+                ..Default::default()
+            }))
+        }
+        PeerProvider::Deferred => {
+            this.deferred_folder_peers.push(DeferredFolderPeer {
+                dependency_id,
+                name_hash,
+                version: version.clone(),
+            });
+            Some(None)
+        }
+        PeerProvider::None => None,
+    }
+}
+
+pub(crate) enum PeerProvider {
+    Package(PackageID),
+    /// A root folder/link could satisfy the peer; decided once the dependency graph is complete.
+    Deferred,
+    None,
+}
+
+/// Non-registry package satisfying an npm-range peer: the declarer's own same-named dependency, else a tarball/git package, else the root's folder/link when the declarer is installed directly under the root.
+pub(crate) fn find_peer_provider(
+    this: &PackageManager,
+    candidates: &[PackageID],
+    dependency: &Dependency,
+    dependency_id: DependencyID,
+    version: &dependency::Version,
+) -> PeerProvider {
+    if !matches!(
+        version.tag,
+        dependency::version::Tag::Npm | dependency::version::Tag::DistTag
+    ) {
+        return PeerProvider::None;
+    }
+    let lockfile = &this.lockfile;
+    let resolutions = lockfile.packages.items_resolution();
+    // Some(true): installed from the cache, works anywhere; Some(false): a folder/link path that only resolves from the right spot; None: registry, left to the callers' version checks.
+    let usable_anywhere = |package_id: PackageID| {
+        let resolution = resolutions.get(package_id as usize)?;
+        match resolution.tag {
+            ResolutionTag::LocalTarball
+            | ResolutionTag::RemoteTarball
+            | ResolutionTag::Git
+            | ResolutionTag::Github => Some(true),
+            ResolutionTag::Folder | ResolutionTag::Symlink => Some(false),
+            _ => None,
+        }
+    };
+    let declarer = lockfile.declaring_package(dependency_id);
+    // The declarer loads whatever it installs under this name itself, so nothing else can satisfy the peer.
+    let own = lockfile.resolution_of_dependency_named(
+        declarer,
+        dependency.name_hash,
+        dependency_id,
+        None,
+    );
+    if own != invalid_package_id {
+        return if candidates.contains(&own) && usable_anywhere(own).is_some() {
+            PeerProvider::Package(own)
+        } else {
+            PeerProvider::None
+        };
+    }
+    if let Some(anywhere) = candidates
+        .iter()
+        .copied()
+        .find(|&candidate| usable_anywhere(candidate) == Some(true))
+    {
+        return PeerProvider::Package(anywhere);
+    }
+    let root_features = this.options.local_package_features;
+    let roots = lockfile.resolution_of_dependency_named(
+        0,
+        dependency.name_hash,
+        dependency_id,
+        Some(root_features),
+    );
+    if !candidates.contains(&roots) || usable_anywhere(roots) != Some(false) {
+        return PeerProvider::None;
+    }
+    // A filtered install may leave the root's dependencies out of node_modules altogether.
+    if !this.options.filter_patterns.is_empty() || this.filtered_link_targets.is_some() {
+        return PeerProvider::None;
+    }
+    // Whether every copy of the declarer sees the root's folder depends on edges that may still be arriving.
+    if !this.peer_graph_complete {
+        return PeerProvider::Deferred;
+    }
+    if lockfile.dedupes_onto_root_dependency(declarer, root_features) {
+        PeerProvider::Package(roots)
+    } else {
+        PeerProvider::None
+    }
 }
 
 fn resolution_satisfies_dependency(

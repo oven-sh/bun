@@ -1034,6 +1034,13 @@ impl Tree {
             // or hoist if peer version allows it
 
             if dependency.behavior.is_peer() {
+                // Only dedupe onto the same package name: an npm alias can hold
+                // a different package than the one the lockfile bound this peer to.
+                let pkg_name_hashes = builder.lockfile().packages.items_name_hash();
+                if pkg_name_hashes[res_id as usize] != pkg_name_hashes[package_id as usize] {
+                    return HoistDependencyResult::DependencyLoop; // 3
+                }
+
                 // An optional peer's binding follows the dedupe, but only in the tree being saved.
                 let dedupe = || {
                     if METHOD == BuilderMethod::Resolvable && dependency.behavior.is_optional_peer()

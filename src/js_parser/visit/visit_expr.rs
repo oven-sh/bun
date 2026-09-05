@@ -1840,7 +1840,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // const binding = await import(`./${process.platform}-${process.arch}.node`);
         //
         // Restored manually before each return.
-        let prev_should_fold_typescript_constant_expressions = true;
+        let prev_should_fold_typescript_constant_expressions =
+            p.should_fold_typescript_constant_expressions;
         p.should_fold_typescript_constant_expressions = true;
 
         p.visit_expr(&mut e_.expr);

@@ -1681,6 +1681,47 @@ describe("bundler", () => {
       expect(code.match(/let keep = /g)).toHaveLength(10);
     },
   });
+
+  // The parser forces constant folding on while it visits an import() so a
+  // computed specifier still resolves without minify-syntax. That must not
+  // leave folding on for the code that follows the import().
+  itBundled("minify/DynamicImportDoesNotEnableConstantFoldingWithoutMinifySyntax", {
+    files: {
+      "/entry.js": /* js */ `
+        capture("a" + "b");
+        export const mod = import("./" + "x.js");
+        capture("c" + "d");
+        capture(1 + 2);
+      `,
+      "/x.js": /* js */ `export const fromX = "from " + "x";`,
+    },
+    minifySyntax: false,
+    capture: ['"a" + "b"', '"c" + "d"', "1 + 2"],
+    onAfterBundle(api) {
+      // The folded specifier was resolved and x.js ended up in the bundle.
+      expect(api.readFile("/out.js")).toContain('"from " + "x"');
+    },
+  });
+  // Not `capture(import(...))`: a call expression restores the folding flag
+  // around its arguments, which would hide the leak this test is about.
+  itBundled("minify/DynamicImportDoesNotEnableConstantFoldingWhenNotBundling", {
+    files: {
+      "/entry.js": /* js */ `
+        const x = import("./" + "x.js");
+        capture("a" + "b");
+        const y = import(\`./\${"y"}.js\`, opts());
+        capture("c" + "d");
+      `,
+    },
+    bundling: false,
+    minifySyntax: false,
+    capture: ['"a" + "b"', '"c" + "d"'],
+    onAfterBundle(api) {
+      const code = api.readFile("/out.js");
+      expect(code).toContain('import("./x.js")');
+      expect(code).toContain('import("./y.js", opts())');
+    },
+  });
 });
 
 // The runtime transpiler (`bun run`/`bun test`) implicitly enables

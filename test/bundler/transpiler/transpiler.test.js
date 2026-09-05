@@ -2747,6 +2747,36 @@ console.log(<div {...obj} key="after" />);`),
     );
   });
 
+  it("import() folds its own arguments without turning folding on for the rest of the file", () => {
+    const nodeTranspiler = new Bun.Transpiler({ platform: "node", minify: { syntax: false } });
+
+    // Constant folding is forced on while the import() specifier is visited, and
+    // must be switched back off afterwards. It used to stay on, so everything
+    // after the first import() in a file was folded as if --minify-syntax was set.
+    expect(nodeTranspiler.transformSync('import("hi" + 123); foo("a" + "b", 1 + 2);')).toBe(
+      'import("hi123");\nfoo("a" + "b", 1 + 2);\n',
+    );
+    expect(nodeTranspiler.transformSync('import(`./${"a"}-${1 + 2}.js`); foo("a" + "b");')).toBe(
+      'import("./a-3.js");\nfoo("a" + "b");\n',
+    );
+    expect(nodeTranspiler.transformSync('import(cond ? "a" + "1" : "b" + "2"); foo("a" + "b");')).toBe(
+      'cond ? import("a1") : import("b2");\nfoo("a" + "b");\n',
+    );
+    // Options with side effects take the path that skips import transposition.
+    expect(nodeTranspiler.transformSync('import("./" + "x.js", opts()); foo("a" + "b");')).toBe(
+      'import("./x.js", opts());\nfoo("a" + "b");\n',
+    );
+    expect(
+      nodeTranspiler.transformSync('foo("a" + "b"); import("./x.js"); foo("c" + "d"); import("./y.js"); foo(1 + 2);'),
+    ).toBe('foo("a" + "b");\nimport("./x.js");\nfoo("c" + "d");\nimport("./y.js");\nfoo(1 + 2);\n');
+
+    // When folding is on for the whole file it stays on after an import().
+    const minifyTranspiler = new Bun.Transpiler({ platform: "node", minify: { syntax: true } });
+    expect(minifyTranspiler.transformSync('import("hi" + 123); foo("a" + "b", 1 + 2);')).toBe(
+      'import("hi123");\nfoo("ab", 3);\n',
+    );
+  });
+
   describe("regressions", () => {
     it("unexpected super", () => {
       const input = `

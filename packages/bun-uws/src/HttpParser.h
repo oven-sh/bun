@@ -484,6 +484,15 @@ struct HttpResponseData;
             return remainingStreamingBytes != 0;
         }
 
+        /* node:http server compat: the JS layer ended the connection (socket.end())
+         * but the close itself is left to the connection-close gates so that the
+         * message being parsed can still be delivered. Nothing after that message
+         * may be dispatched, exactly as after a message that forbade keep-alive:
+         * a further request head is reported as HPE_CLOSED_CONNECTION instead. */
+        void nodeHttpStopDispatchingAfterCurrentMessage() {
+            nodeHttpSawConnectionClose = true;
+        }
+
         /* Maximum number of trailer fields surfaced to JS (the section size cap
          * already bounds memory; this matches the regular-header count cap). */
         static constexpr unsigned MAX_TRAILER_FIELDS = UWS_HTTP_MAX_HEADERS_COUNT - 1;
@@ -604,8 +613,9 @@ struct HttpResponseData;
          /* This guy really has only 30 bits since we reserve two highest bits to chunked encoding parsing state */
         uint64_t remainingStreamingBytes = 0;
         /* node:http compat: a completed request on this connection forbade keep-alive
-         * (Connection: close, or HTTP/1.0), so no further message may be dispatched
-         * (llhttp parses nothing after such a message: HPE_CLOSED_CONNECTION). */
+         * (Connection: close, or HTTP/1.0), or the JS layer ended the connection
+         * (nodeHttpStopDispatchingAfterCurrentMessage), so no further message may be
+         * dispatched (llhttp parses nothing after such a message: HPE_CLOSED_CONNECTION). */
         bool nodeHttpSawConnectionClose = false;
 
         const size_t MAX_FALLBACK_SIZE = BUN_DEFAULT_MAX_HTTP_HEADER_SIZE;

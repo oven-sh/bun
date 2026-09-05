@@ -243,28 +243,33 @@ bool JSNodeHTTPServerSocket::isClosed() const
 }
 
 template<bool SSL>
-static bool deferShutdownUntilResponseDrains(us_socket_t* socket)
+static bool deferShutdownUntilResponseDrains(us_socket_t* socket, bool afterResponseFinished)
 {
-    if (reinterpret_cast<uWS::AsyncSocket<SSL>*>(socket)->getBufferedAmount() == 0) {
+    /* The 'finish' end() of a handler that answered before reading its body:
+     * Node parses everything already read before destroySoon() runs. */
+    bool bodyStillParsing = afterResponseFinished && reinterpret_cast<uWS::HttpResponse<SSL>*>(socket)->isDeliveringBodyAfterResponse();
+    if (!bodyStillParsing && reinterpret_cast<uWS::AsyncSocket<SSL>*>(socket)->getBufferedAmount() == 0) {
         return false;
     }
-    /* HttpContext<SSL>::onWritable shuts the socket down once the buffered
-     * response data has flushed and HTTP_CONNECTION_CLOSE is set, so the FIN
-     * is sequenced after the response bytes (like Node's destroySoon). */
+    /* uWS shuts down after the current parse and flush, sequencing the FIN
+     * after the response and the body bytes already read (Node's destroySoon).
+     * Dispatching another request meanwhile would start a new response and
+     * clear HTTP_CONNECTION_CLOSE, so stop dispatching too. */
     auto* httpResponseData = reinterpret_cast<uWS::HttpResponseData<SSL>*>(us_socket_ext(socket));
     httpResponseData->state |= uWS::HttpResponseData<SSL>::HTTP_CONNECTION_CLOSE;
+    httpResponseData->nodeHttpStopDispatchingAfterCurrentMessage();
     return true;
 }
 
-bool JSNodeHTTPServerSocket::shutdownAfterResponseDrains()
+bool JSNodeHTTPServerSocket::shutdownAfterResponseDrains(bool afterResponseFinished)
 {
     if (!socket || upgraded || us_socket_is_closed(socket) || us_socket_is_shut_down(socket)) {
         return false;
     }
     if (is_ssl) {
-        return deferShutdownUntilResponseDrains<true>(socket);
+        return deferShutdownUntilResponseDrains<true>(socket, afterResponseFinished);
     }
-    return deferShutdownUntilResponseDrains<false>(socket);
+    return deferShutdownUntilResponseDrains<false>(socket, afterResponseFinished);
 }
 
 template<bool SSL>

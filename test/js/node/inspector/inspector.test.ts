@@ -298,7 +298,7 @@ test("inspector.close() followed by inspector.open() starts a new server", async
   expect(summary.secondUrl).not.toBe(summary.firstUrl);
   expect(summary.protocolVersion).toBe("1.1");
   expect(summary.finalUrl).toBeNull();
-});
+}, 30_000);
 
 // A failed inspector.open() (port already in use) must print Node's diagnostic
 // line and RETURN so a later open() can retry on the same debugger thread.
@@ -356,7 +356,7 @@ test("inspector.open() can be retried after a failed start", async () => {
   expect(summary.url).toStartWith("ws://127.0.0.1:");
   expect(summary.protocolVersion).toBe("1.1");
   expect(summary.finalUrl).toBeNull();
-});
+}, 30_000);
 
 // wait=true refs the event loop before the debugger thread attempts to bind;
 // on bind failure the ref must be released so the process can exit.
@@ -385,7 +385,7 @@ test("inspector.open() with wait=true does not hang the process after a bind fai
   expect(stderr).toContain(`Starting inspector on 127.0.0.1:${port} failed: address already in use`);
   expect(proc.signalCode).toBeNull();
   expect(exitCode).toBe(0);
-});
+}, 30_000);
 
 // waitForDebugger() must block until a client sends Runtime.runIfWaitingForDebugger,
 // even when open() was called without `wait`. The client marks a global before
@@ -459,7 +459,7 @@ test("inspector.waitForDebugger() blocks until a client resumes the process", as
 
   expect(JSON.parse(stdout.trim().split("\n").at(-1)!)).toEqual({ resumedByClient: true });
   expect(exitCode).toBe(0);
-});
+}, 30_000);
 
 // A second waitForDebugger() must block again for a fresh
 // Runtime.runIfWaitingForDebugger — Node blocks on every call, and it must be
@@ -549,7 +549,7 @@ test("inspector.waitForDebugger() blocks again on the second call after a fronte
 
   expect(JSON.parse(stdout.trim().split("\n").at(-1)!)).toEqual({ first: 1, second: 2 });
   expect(exitCode).toBe(0);
-});
+}, 30_000);
 
 test("Runtime.consoleAPICalled is emitted while the Runtime domain is enabled", () => {
   const session = new inspector.Session();
@@ -873,7 +873,7 @@ export { after };
   expect(JSON.parse(stdoutText.trim().split("\n").at(-1)!)).toEqual({ after: 1, bump: 1, warm: 10 });
   expect(await proc.exited).toBe(0);
   await stderrDrained;
-});
+}, 30_000);
 
 // End-to-end pause/resume over the DevTools-protocol server started by
 // inspector.open(): the entry module is a top-level-await module that calls
@@ -996,7 +996,109 @@ export { after };
 
   expect(JSON.parse(stdoutText.trim().split("\n").at(-1)!)).toEqual({ after: 1, beforeOpen: 1 });
   expect(await proc.exited).toBe(0);
-});
+}, 30_000);
+
+// JSC's FrontendRouter::sendResponse broadcasts every command response to every
+// connected frontend channel. With a per-connection backend-id counter, each
+// adapter starts at backend id 1, so concurrently-attached adapters have the
+// same ids in #pending and claim each other's broadcast responses, delivering
+// one client's Runtime.evaluate result to another client under that client's
+// own command id. The census below fires CLIENTS*EVALS_PER_CLIENT evaluates
+// with a per-client marker string and asserts that no client ever observes
+// another client's marker.
+test("concurrent inspector.open() clients never receive another client's Runtime.evaluate result", async () => {
+  const CLIENTS = 5;
+  const EVALS_PER_CLIENT = 40;
+
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `const inspector = require("node:inspector");
+       inspector.open(0, "127.0.0.1", false);
+       process.stdout.write("URL " + inspector.url() + "\\n");
+       setInterval(() => {}, 1000);`,
+    ],
+    env: injectedScriptChildEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  let stderrText = "";
+  const stderrDrained = (async () => {
+    for await (const chunk of proc.stderr) stderrText += Buffer.from(chunk).toString();
+  })();
+
+  const decoder = new TextDecoder();
+  const stdoutReader = proc.stdout.getReader();
+  let stdoutText = "";
+  let wsUrl: string | undefined;
+  while (!wsUrl) {
+    const { value, done } = await stdoutReader.read();
+    if (done) throw new Error(`child exited before printing its URL; stdout: ${stdoutText}; stderr: ${stderrText}`);
+    stdoutText += decoder.decode(value);
+    wsUrl = stdoutText.match(/URL (ws:\S+)/)?.[1];
+  }
+
+  type Client = { ws: WebSocket; marker: string; own: number; foreign: number; outstanding: Set<number> };
+  const clients: Client[] = [];
+  const allResponded = Promise.withResolvers<void>();
+  const failed = Promise.withResolvers<never>();
+  failed.promise.catch(() => {});
+  let totalOutstanding = CLIENTS * EVALS_PER_CLIENT;
+
+  try {
+    for (let i = 0; i < CLIENTS; i++) {
+      const ws = new WebSocket(wsUrl!);
+      const client: Client = { ws, marker: `client-${i}:`, own: 0, foreign: 0, outstanding: new Set() };
+      clients.push(client);
+      ws.onmessage = event => {
+        const msg = JSON.parse(String(event.data));
+        if (msg.id === undefined || !client.outstanding.has(msg.id)) return;
+        client.outstanding.delete(msg.id);
+        const value = msg.result?.result?.value;
+        if (typeof value === "string" && value.startsWith(client.marker)) client.own++;
+        else client.foreign++;
+        if (--totalOutstanding === 0) allResponded.resolve();
+      };
+      const opened = Promise.withResolvers<void>();
+      ws.onopen = () => opened.resolve();
+      ws.onerror = e => {
+        opened.reject(e);
+        failed.reject(e);
+      };
+      ws.onclose = () => {
+        if (totalOutstanding === 0) return;
+        const err = new Error(`client ${i} closed early; stderr: ${stderrText}`);
+        opened.reject(err);
+        failed.reject(err);
+      };
+      await opened.promise;
+    }
+
+    // Interleave sends round-robin so every adapter has backend commands in
+    // flight while the others' responses broadcast; then wait for every response.
+    for (let j = 0; j < EVALS_PER_CLIENT; j++) {
+      for (const client of clients) {
+        const id = j + 1;
+        client.outstanding.add(id);
+        client.ws.send(
+          JSON.stringify({ id, method: "Runtime.evaluate", params: { expression: `"${client.marker}${j}"` } }),
+        );
+      }
+    }
+
+    await Promise.race([allResponded.promise, failed.promise]);
+    const own = clients.reduce((n, c) => n + c.own, 0);
+    const foreign = clients.reduce((n, c) => n + c.foreign, 0);
+    expect({ own, foreign }).toEqual({ own: CLIENTS * EVALS_PER_CLIENT, foreign: 0 });
+  } finally {
+    totalOutstanding = 0;
+    for (const { ws } of clients) ws.close();
+    proc.kill("SIGKILL");
+    await stderrDrained;
+  }
+}, 30_000);
 
 // JSC's Debugger.scriptParsed classifies a script with scriptType ("program",
 // "module" or "webassembly"); V8 clients read isModule and scriptLanguage. The

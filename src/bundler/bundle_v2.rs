@@ -5243,9 +5243,11 @@ pub mod bv2_impl {
             {
                 let mut assignments = pool.workers_assignments.lock();
                 if assignments.count() > 0 {
-                    for worker in assignments.values() {
-                        // SAFETY: worker ptrs are live until `deinit_soon`.
-                        unsafe { (**worker).deinit_soon() };
+                    for &worker in assignments.values() {
+                        // SAFETY: the map only holds live Workers from
+                        // `get_worker`, each exactly once, and it is cleared
+                        // below, so this is the one teardown of each.
+                        unsafe { crate::thread_pool::Worker::deinit_soon(worker) };
                     }
                     pool.worker_pool().wake_for_idle_events();
                 }

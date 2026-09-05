@@ -898,8 +898,13 @@ impl SourceHandle {
                 if global.has_exception() {
                     return;
                 }
+                // The reason reaches the piped ReadableStream's cancel().
+                let reason = match &err {
+                    Some(err) => err.to_js(global),
+                    None => JSValue::UNDEFINED,
+                };
                 crate::dispatch::fold(::bun_jsc::call_check_slow(global, || {
-                    controller_abi::on_close(cpp, JSValue::UNDEFINED)
+                    controller_abi::on_close(cpp, reason)
                 }));
             }
             SourceHandle::ByteStream(p) => p.on_close(err),

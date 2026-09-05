@@ -3363,6 +3363,41 @@ describe("stdin redirect from a zero-length buffer delivers EOF to the spawned c
   });
 });
 
+describe.skipIf(isWindows)("stdin redirect whose pipe outlives the command's process", () => {
+  // `< ${input}` is pumped into the child over a pipe. A command finishes once
+  // its exit code and the stdin, stdout and stderr closes are all in, and the
+  // four arrive as separate event-loop callbacks. Here the child hands its
+  // stdin to a background `sleep` and exits without reading the redirect,
+  // which is bigger than the pipe buffer: the exit and the stdout/stderr EOFs
+  // are processed first, and the pending stdin write only fails once `sleep`
+  // lets go of the pipe. That stdin close is what has to finish the command.
+  // Without it the promise never settles.
+  const SIZE = 1 << 20;
+  const script = "exec 3<&0; sleep 1 <&3 >/dev/null 2>&1 & echo out; echo err >&2; exit 3";
+  const redirects: Array<[string, () => Buffer | Blob]> = [
+    ["Buffer", () => Buffer.alloc(SIZE, "a")],
+    ["Blob", () => new Blob([Buffer.alloc(SIZE, "a")])],
+  ];
+
+  test.concurrent.each(redirects)("%s", async (_name, input) => {
+    const r = await $`sh -c ${script} < ${input()}`.quiet().nothrow();
+    expect({ stdout: r.stdout.toString(), stderr: r.stderr.toString(), exitCode: r.exitCode }).toEqual({
+      stdout: "out\n",
+      stderr: "err\n",
+      exitCode: 3,
+    });
+  });
+
+  test.concurrent("inside a pipeline", async () => {
+    const r = await $`sh -c ${script} < ${Buffer.alloc(SIZE, "a")} | cat`.quiet().nothrow();
+    expect({ stdout: r.stdout.toString(), stderr: r.stderr.toString(), exitCode: r.exitCode }).toEqual({
+      stdout: "out\n",
+      stderr: "err\n",
+      exitCode: 0,
+    });
+  });
+});
+
 test("output redirect buffer for an external command stays attached until the command finishes", async () => {
   // `> ${buf}` for an external (non-builtin) command stores the buffer and
   // copies the child's stdout into it as chunks arrive across event-loop

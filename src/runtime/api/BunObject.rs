@@ -1806,8 +1806,9 @@ fn get_s3_default_client(global_this: &JSGlobalObject, _: &JSObject) -> JsResult
 fn get_valkey_default_client(global_this: &JSGlobalObject, _: &JSObject) -> JSValue {
     use crate::valkey_jsc::JSValkeyClient;
 
+    // No options are passed, so there is no `tls` object to cache on the wrapper.
     let valkey = match JSValkeyClient::create_no_js_no_pubsub(global_this, &[JSValue::UNDEFINED]) {
-        Ok(p) => p,
+        Ok((p, _)) => p,
         Err(jsc::JsError::Thrown) => return JSValue::ZERO,
         Err(err) => {
             let _ =

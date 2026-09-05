@@ -155,6 +155,7 @@
 #include "streams/JSWritableStreamDefaultWriter.h"
 #include "libusockets.h"
 #include "ModuleLoader.h"
+#include "DLHandleMap.h"
 #include "napi_external.h"
 #include "napi_handle_scope.h"
 #include "napi_type_tag.h"
@@ -4352,6 +4353,7 @@ extern "C" void Bun__GlobalObject__clearExceptionsForExit(Zig::GlobalObject* glo
 
 static void destroyVM(JSC::VM& vm)
 {
+    auto identifier = vm.identifier();
     vm.heap.collectNow(JSC::Sync, JSC::CollectionScope::Full);
     // Every JSLockHolder still on the native stack (process.exit() from inside a JS callback,
     // the worker thread's manual API lock) holds a RefPtr<VM> that will never destruct because
@@ -4360,6 +4362,7 @@ static void destroyVM(JSC::VM& vm)
     for (uint32_t n = vm.refCount(); n > 1; --n)
         vm.derefSuppressingSaferCPPChecking();
     vm.derefSuppressingSaferCPPChecking();
+    Bun::DLHandleMap::singleton().vmDestroyed(identifier);
 }
 
 extern "C" void Zig__GlobalObject__prepareForDestruction(Zig::GlobalObject* globalObject)

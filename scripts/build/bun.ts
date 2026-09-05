@@ -852,9 +852,12 @@ function emitClassInfoCheck(n: Ninja, cfg: Config, exe: string, exeName: string)
   const stamp = classInfoStamp(cfg, exeName);
   if (script === undefined || stamp === undefined) return [];
   // NM: the toolchain's llvm-nm (the script otherwise searches PATH).
+  // stream.ts prefix mode: its one summary line prints as `[check] …` like
+  // every other post-link check; --stamp writes $out on success.
+  const nmEnv = cfg.nm === undefined ? "" : ` --env=NM=${quote(cfg.nm, false)}`;
   n.rule("classinfo_check", {
-    command: `${cfg.nm === undefined ? "" : `env NM=${quote(cfg.nm, false)} `}python3 ${quote(script, false)} $in && touch $out`,
-    description: "check JSC ClassInfo uniqueness in $in",
+    command: `${cfg.jsRuntime} ${quote(streamPath, false)} check --stamp=$out${nmEnv} python3 ${quote(script, false)} $in`,
+    description: `check ${exeName} JSC ClassInfo uniqueness`,
   });
   n.build({ outputs: [stamp], rule: "classinfo_check", inputs: [exe], implicitInputs: [script] });
   return [stamp];
@@ -880,32 +883,23 @@ function emitSmokeTest(n: Ninja, cfg: Config, exe: string, exeName: string, stri
   // to direct invocation if setarch fails (not all systems have it).
   // The `|| true` on the outer command isn't there — if BOTH fail, we
   // want the rule to error.
-  const envWrap = "env BUN_DEBUG_QUIET_LOGS=1";
+  const q = (p: string) => quote(p, cfg.windows);
   let testCmd: string;
   if (cfg.linux && cfg.asan) {
     const arch = cfg.x64 ? "x86_64" : "aarch64";
-    testCmd = `${envWrap} setarch ${arch} -R ${exe} --revision || ${envWrap} ${exe} --revision`;
-  } else if (cfg.windows) {
-    // Windows: no setarch, no env wrapper syntax differences matter for
-    // this simple case. cmd /c handles the pipe.
-    testCmd = `${exe} --revision`;
+    // sh -c with parens: without grouping the `||` fallback would swallow a
+    // failure of the first form.
+    testCmd = `sh -c '( setarch ${arch} -R ${q(exe)} --revision || ${q(exe)} --revision )'`;
   } else {
-    testCmd = `${envWrap} ${exe} --revision`;
+    testCmd = `${q(exe)} --revision`;
   }
 
-  // stream.ts --console: passthrough + ninja Windows buffering fix.
-  // sh -c with parens: testCmd may contain `||` (ASAN setarch fallback);
-  // without grouping, `a || b && touch` parses as `a || (b && touch)` —
-  // stamp wouldn't get written when setarch succeeds.
-  const q = (p: string) => quote(p, cfg.windows);
-  const wrap = `${cfg.jsRuntime} ${q(streamPath)} check --console`;
+  // stream.ts prefix mode: the revision prints as `[check] <version>`, the
+  // same label/colour as the other post-link checks; --stamp writes $out
+  // when the command exits 0.
   n.rule("smoke_test", {
-    command: cfg.windows
-      ? `${wrap} cmd /c "${testCmd} && type nul > $out"`
-      : `${wrap} sh -c '( ${testCmd} ) && touch $out'`,
-    description: `${exeName} --revision`,
-    // pool = console: user wants to see the revision output.
-    pool: "console",
+    command: `${cfg.jsRuntime} ${q(streamPath)} check --stamp=$out --env=BUN_DEBUG_QUIET_LOGS=1 ${testCmd}`,
+    description: `check ${exeName} --revision`,
   });
 
   n.build({

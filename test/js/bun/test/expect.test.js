@@ -141,6 +141,102 @@ describe("expect()", () => {
     ).resolves.toBe(1);
   });
 
+  test("resolves/rejects on a thenable that is not a Promise", async () => {
+    /**
+     * @param {"resolve" | "reject"} how
+     * @param {unknown} value
+     */
+    const thenable = (how, value) => ({
+      /**
+       * @param {(value: unknown) => void} resolve
+       * @param {(reason: unknown) => void} reject
+       */
+      then(resolve, reject) {
+        (how === "resolve" ? resolve : reject)(value);
+      },
+    });
+
+    await expect(thenable("resolve", 4)).resolves.toBe(4);
+    await expect(thenable("resolve", 4)).resolves.not.toBe(5);
+    await expect(thenable("reject", new Error("thenable boom"))).rejects.toThrow("thenable boom");
+    await expect(thenable("reject", 4)).rejects.toBe(4);
+
+    if (isBun) {
+      await expectFailure(() => expect(thenable("resolve", 4)).rejects.toBe(4)).toThrow(
+        /Received promise that resolved/,
+      );
+      await expectFailure(() => expect(thenable("reject", 4)).resolves.toBe(4)).toThrow(
+        /Received promise that rejected/,
+      );
+      // A non-callable `then` does not make a thenable.
+      await expectFailure(() => expect({ then: 4 }).resolves.toBe(4)).toThrow(/Expected promise/);
+    }
+  });
+
+  // Bun.SQL's Query and Bun.$'s ShellPromise are Promise subclasses that start
+  // their work in an overridden then(). The matcher must call then(), as `await` does.
+  test("resolves/rejects on a Promise subclass whose then() starts the work", async () => {
+    /** @type {ReturnType<typeof setTimeout>[]} */
+    const fallbacks = [];
+    /**
+     * @param {"resolve" | "reject"} how
+     * @param {unknown} value
+     */
+    function lazy(how, value) {
+      /** @type {(value: unknown) => void} */
+      let settle = () => {};
+      /** @extends {Promise<unknown>} */
+      class Lazy extends Promise {
+        static get [Symbol.species]() {
+          return Promise;
+        }
+        /** @override */
+        // @ts-expect-error
+        then(onFulfilled, onRejected) {
+          queueMicrotask(() => settle(value));
+          return super.then(onFulfilled, onRejected);
+        }
+      }
+      const promise = new Lazy((resolve, reject) => {
+        settle = how === "resolve" ? resolve : reject;
+      });
+      // A matcher that never calls then() would wait forever. This timer makes
+      // such a regression fail the assertion instead. It never fires otherwise:
+      // then() runs in the first microtask drain, before any timer.
+      fallbacks.push(setTimeout(() => settle(new Error("then() was never called")), 1000));
+      return promise;
+    }
+
+    try {
+      await expect(lazy("resolve", 42)).resolves.toBe(42);
+      await expect(lazy("resolve", 42)).resolves.not.toBe(43);
+      await expect(lazy("reject", new Error("lazy boom"))).rejects.toThrow("lazy boom");
+      await expect(lazy("reject", 7)).rejects.toBe(7);
+
+      if (isBun) {
+        await expectFailure(() => expect(lazy("resolve", 1)).rejects.toBe(1)).toThrow(/Received promise that resolved/);
+        await expectFailure(() => expect(lazy("reject", 1)).resolves.toBe(1)).toThrow(/Received promise that rejected/);
+
+        // expect(fn).toThrow() awaits a promise returned by fn (Bun only)
+        expect(() => lazy("reject", new Error("lazy boom"))).toThrow("lazy boom");
+        expect(() => lazy("resolve", 1)).not.toThrow();
+
+        // a custom matcher may return the lazy subclass
+        expect.extend({
+          _toBeViaLazyThen(/** @type {unknown} */ received, /** @type {unknown} */ expected) {
+            return lazy("resolve", { pass: Object.is(received, expected), message: () => "_toBeViaLazyThen" });
+          },
+        });
+        // @ts-expect-error custom matcher
+        expect(1)._toBeViaLazyThen(1);
+        // @ts-expect-error custom matcher
+        expect(() => expect(1)._toBeViaLazyThen(2)).toThrow("_toBeViaLazyThen");
+      }
+    } finally {
+      for (const timer of fallbacks) clearTimeout(timer);
+    }
+  });
+
   test("can call without an argument", () => {
     expect().toBe(undefined);
   });

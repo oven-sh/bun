@@ -5,7 +5,7 @@ use core::fmt;
 use bun_core::Output;
 use bun_jsc::bun_string_jsc;
 use bun_jsc::{
-    CallFrame, JSGlobalObject, JSValue, JsError, JsResult,
+    AnyPromise, CallFrame, JSGlobalObject, JSValue, JsError, JsResult,
     ConsoleObject, JSFunction, JSPropertyIterator, JSString,
 };
 use bun_jsc::{JsClass as _, StringJsc as _};
@@ -471,6 +471,28 @@ impl Expect {
         }
     }
 
+    /// The promise `wait_for_promise` polls for `value`'s outcome, or `None` for a non-thenable.
+    /// A pending promise or a thenable is adopted through `resolve`, which calls its own `then()`.
+    fn thenable_to_wait_for(global_this: &JSGlobalObject, value: JSValue) -> JsResult<Option<AnyPromise>> {
+        if let Some(promise) = value.as_any_promise() {
+            promise.set_handled(global_this.vm());
+            if promise.status() != js_promise::Status::Pending {
+                return Ok(Some(promise));
+            }
+        } else if !value.is_object() {
+            return Ok(None);
+        }
+        let adopter = js_promise::JSPromise::create(global_this);
+        adopter.set_handled();
+        adopter.resolve(global_this, value)?;
+        // A thenable's `then()` runs in a queued job, so the adopter is still pending here. An
+        // object without a callable `then` fulfilled it at once and is not a promise.
+        if adopter.status() == js_promise::Status::Fulfilled {
+            return Ok(None);
+        }
+        Ok(Some(AnyPromise::Normal(core::ptr::from_mut(adopter))))
+    }
+
     /// Processes the async flags (resolves/rejects), waiting for the async value if needed.
     /// If no flags, returns the original value
     /// If either flag is set, waits for the result, and returns either it as a JSValue, or null if the expectation failed (in which case if silent is false, also throws a js exception)
@@ -485,9 +507,8 @@ impl Expect {
     ) -> JsResult<JSValue> {
         match flags.promise() {
             resolution @ (Promise::Resolves | Promise::Rejects) => {
-                if let Some(promise) = value.as_any_promise() {
+                if let Some(promise) = Self::thenable_to_wait_for(global_this, value)? {
                     let vm = global_this.vm();
-                    promise.set_handled(vm);
 
                     // SAFETY: bun_vm() returns the live thread-local VirtualMachine.
             global_this
@@ -868,7 +889,14 @@ impl Expect {
             return_value = return_value_from_function;
         }
 
-        if let Some(promise) = return_value.as_any_promise() {
+        let promise = match Self::thenable_to_wait_for(global_this, return_value) {
+            Ok(promise) => promise,
+            Err(err) => {
+                scope.apply(vm);
+                return Err(err);
+            }
+        };
+        if let Some(promise) = promise {
             let waited = vm.wait_for_promise(promise);
             scope.apply(vm);
             waited.map_err(|stopped| stopped.throw(global_this))?;
@@ -1437,9 +1465,8 @@ impl Expect {
         // call the custom matcher implementation
         let mut result = matcher_fn.call(global_this, matcher_context_jsvalue, args)?;
         // support for async matcher results
-        if let Some(promise) = result.as_any_promise() {
+        if let Some(promise) = Self::thenable_to_wait_for(global_this, result)? {
             let vm = global_this.vm();
-            promise.set_handled(vm);
 
             // SAFETY: bun_vm() returns the live thread-local VirtualMachine.
             global_this

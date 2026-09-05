@@ -1894,6 +1894,50 @@ test.concurrent("timeout during a nested event-loop wait beneath the script", as
   expect(exitCode).toBe(0);
 });
 
+// Node names module frames after the identifier (the V8 resource name). JSC prints the
+// source provider's URL, so the identifier has to reach the provider.
+describe.concurrent("node:vm SourceTextModule frames name the identifier", () => {
+  async function stackOf(identifierOption: string) {
+    const code = `
+      const vm = require("node:vm");
+      const ctx = vm.createContext({});
+      const src = "export const a = 1;\\nfunction boom() { throw new Error('from module'); }\\nboom();";
+      const mod = new vm.SourceTextModule(src, { ${identifierOption} context: ctx });
+      await mod.link(() => { throw new Error("no imports"); });
+      try {
+        await mod.evaluate();
+      } catch (e) {
+        console.log(e.stack);
+      }
+    `;
+    await using proc = Bun.spawn({ cmd: [bunExe(), "-e", code], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stack: stdout.split("\n").slice(0, 3), stderr, exitCode };
+  }
+
+  test("an explicit identifier", async () => {
+    const { stack, stderr, exitCode } = await stackOf('identifier: "file:///virtual/probe-module.mjs",');
+    expect(stack).toEqual([
+      "Error: from module",
+      expect.stringMatching(/^ {4}at boom \(file:\/\/\/virtual\/probe-module\.mjs:2:\d+\)$/),
+      expect.stringMatching(/^ {4}at file:\/\/\/virtual\/probe-module\.mjs:3:\d+$/),
+    ]);
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+  });
+
+  test("the generated vm:module(N) identifier", async () => {
+    const { stack, stderr, exitCode } = await stackOf("");
+    expect(stack).toEqual([
+      "Error: from module",
+      expect.stringMatching(/^ {4}at boom \(vm:module\(\d+\):2:\d+\)$/),
+      expect.stringMatching(/^ {4}at vm:module\(\d+\):3:\d+$/),
+    ]);
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+  });
+});
+
 describe("node:vm lineOffset/columnOffset at the edge of int32", () => {
   // Node's validator accepts any int32 here. JSC stores positions as ints,
   // converts the offset to one-based and counts the source's own lines on top

@@ -90,7 +90,11 @@ NodeVMSourceTextModule* NodeVMSourceTextModule::create(VM& vm, JSGlobalObject* g
 
     RefPtr fetcher(NodeVMScriptFetcher::create(vm, dynamicImportCallback, moduleWrapper));
 
+    // No origin URL: SourceCodeKey compares it, and cachedData must not depend on the identifier.
     SourceOrigin sourceOrigin { {}, *fetcher };
+
+    WTF::String identifier = identifierValue.toWTFString(globalObject);
+    RETURN_IF_EXCEPTION(scope, nullptr);
 
     WTF::String sourceText = sourceTextValue.toWTFString(globalObject);
     RETURN_IF_EXCEPTION(scope, nullptr);
@@ -100,13 +104,11 @@ NodeVMSourceTextModule* NodeVMSourceTextModule::create(VM& vm, JSGlobalObject* g
         clampOffsetForSource(OrdinalNumber::fromZeroBasedInt(columnOffset), sourceText.length()),
     };
 
-    Ref<StringSourceProvider> sourceProvider = StringSourceProvider::create(WTF::move(sourceText), sourceOrigin, String {}, SourceTaintedOrigin::Untainted, startPosition, SourceProviderSourceType::Module);
+    Ref<StringSourceProvider> sourceProvider = StringSourceProvider::create(WTF::move(sourceText), sourceOrigin, identifier, SourceTaintedOrigin::Untainted, startPosition, SourceProviderSourceType::Module);
 
     SourceCode sourceCode(WTF::move(sourceProvider), startPosition.m_line.zeroBasedInt(), startPosition.m_column.zeroBasedInt());
 
     auto* zigGlobalObject = defaultGlobalObject(globalObject);
-    WTF::String identifier = identifierValue.toWTFString(globalObject);
-    RETURN_IF_EXCEPTION(scope, nullptr);
     NodeVMSourceTextModule* ptr = new (NotNull, allocateCell<NodeVMSourceTextModule>(vm)) NodeVMSourceTextModule(
         vm, zigGlobalObject->NodeVMSourceTextModuleStructure(), WTF::move(identifier), contextValue,
         WTF::move(sourceCode), moduleWrapper, initializeImportMeta);

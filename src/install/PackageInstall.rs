@@ -258,6 +258,8 @@ impl Step {
 // so `Relaxed` adds no contention).
 pub(crate) static SUPPORTED_METHOD: AtomicU8 = AtomicU8::new(if cfg!(target_os = "macos") {
     Method::Clonefile as u8
+} else if cfg!(target_os = "android") {
+    Method::Symlink as u8
 } else {
     Method::Hardlink as u8
 });

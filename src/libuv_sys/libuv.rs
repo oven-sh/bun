@@ -514,7 +514,8 @@ impl Loop {
                         let _ = unsafe { uv_run(loop_, RunMode::NoWait) };
                         // SAFETY: as above.
                         rc = unsafe { uv_loop_close(loop_) };
-                        if rc == ReturnCode::ZERO || started.elapsed() >= CLOSE_THREAD_LOOP_DEADLINE {
+                        if rc == ReturnCode::ZERO || started.elapsed() >= CLOSE_THREAD_LOOP_DEADLINE
+                        {
                             break;
                         }
                         std::thread::sleep(Duration::from_millis(1));

@@ -35,6 +35,7 @@ pub struct InternalLoopData {
     pub quic_next_tick_us: i64,
     /// `us_nq_driver_s *` — node:quic's loop driver list.
     pub(crate) nq_head: *mut c_void,
+    pub(crate) nq_cursor: *mut c_void,
     #[cfg(windows)]
     pub quic_timer: *mut Timer,
     pub iterator: *mut SocketGroup,

@@ -912,6 +912,12 @@ impl JSValue {
             None
         }
     }
+    /// Pin this value's backing `JSC::ArrayBuffer` so it cannot be detached
+    /// or transferred (see [`as_pinned_arraybuffer`](Self::as_pinned_arraybuffer)).
+    /// Returns whether a buffer was pinned.
+    pub fn pin_array_buffer(self) -> bool {
+        JSC__JSValue__pinArrayBuffer(self) == 1
+    }
     /// `as_array_buffer`, but pins the backing `JSC::ArrayBuffer` first so it
     /// cannot be detached. The pin does not prevent collection.
     ///

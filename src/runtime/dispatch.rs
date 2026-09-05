@@ -1135,7 +1135,9 @@ pub(crate) unsafe fn __bun_fire_timer(
         EventLoopTimerTag::QuicEndpoint => {
             let c: *mut crate::node::quic::QuicEndpoint =
                 owner!(crate::node::quic::QuicEndpoint, event_loop_timer);
-            crate::node::quic::QuicEndpoint::on_timer_fire(c);
+            // SAFETY: as `owner!`; an armed timer's endpoint is live (its
+            // `Drop` removes the timer).
+            crate::node::quic::QuicEndpoint::on_timer_fire(unsafe { bun_ptr::ThisPtr::new(c) });
             Ok(())
         }
     };

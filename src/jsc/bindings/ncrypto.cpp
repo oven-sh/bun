@@ -1177,48 +1177,6 @@ Result<X509Pointer, int> X509Pointer::Parse(
     return Result<X509Pointer, int>(ERR_get_error());
 }
 
-// When adding or removing errors below, please also update the list in the API
-// documentation. See the "OpenSSL Error Codes" section of doc/api/errors.md
-// Also *please* update the respective section in doc/api/tls.md as well
-WTF::ASCIILiteral X509Pointer::ErrorCode(int32_t err)
-{ // NOLINT(runtime/int)
-#define CASE(CODE)          \
-    case X509_V_ERR_##CODE: \
-        return #CODE##_s;
-    switch (err) {
-        CASE(UNABLE_TO_GET_ISSUER_CERT)
-        CASE(UNABLE_TO_GET_CRL)
-        CASE(UNABLE_TO_DECRYPT_CERT_SIGNATURE)
-        CASE(UNABLE_TO_DECRYPT_CRL_SIGNATURE)
-        CASE(UNABLE_TO_DECODE_ISSUER_PUBLIC_KEY)
-        CASE(CERT_SIGNATURE_FAILURE)
-        CASE(CRL_SIGNATURE_FAILURE)
-        CASE(CERT_NOT_YET_VALID)
-        CASE(CERT_HAS_EXPIRED)
-        CASE(CRL_NOT_YET_VALID)
-        CASE(CRL_HAS_EXPIRED)
-        CASE(ERROR_IN_CERT_NOT_BEFORE_FIELD)
-        CASE(ERROR_IN_CERT_NOT_AFTER_FIELD)
-        CASE(ERROR_IN_CRL_LAST_UPDATE_FIELD)
-        CASE(ERROR_IN_CRL_NEXT_UPDATE_FIELD)
-        CASE(OUT_OF_MEM)
-        CASE(DEPTH_ZERO_SELF_SIGNED_CERT)
-        CASE(SELF_SIGNED_CERT_IN_CHAIN)
-        CASE(UNABLE_TO_GET_ISSUER_CERT_LOCALLY)
-        CASE(UNABLE_TO_VERIFY_LEAF_SIGNATURE)
-        CASE(CERT_CHAIN_TOO_LONG)
-        CASE(CERT_REVOKED)
-        CASE(INVALID_CA)
-        CASE(PATH_LENGTH_EXCEEDED)
-        CASE(INVALID_PURPOSE)
-        CASE(CERT_UNTRUSTED)
-        CASE(CERT_REJECTED)
-        CASE(HOSTNAME_MISMATCH)
-    }
-#undef CASE
-    return "UNSPECIFIED";
-}
-
 // ============================================================================
 // BIOPointer
 
@@ -3740,11 +3698,3 @@ const Digest Digest::FromName(WTF::StringView name)
 }
 
 } // namespace ncrypto
-
-// `X509_V_ERR_*` -> the code name node reports for a peer-certificate
-// validation failure (crypto::GetValidationErrorCode -> X509Pointer::ErrorCode).
-// Every arm returns a string literal, so the pointer outlives any caller.
-extern "C" const char* Bun__X509__validationErrorCode(int32_t err)
-{
-    return ncrypto::X509Pointer::ErrorCode(err).characters();
-}

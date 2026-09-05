@@ -1,8 +1,11 @@
-use core::ffi::c_int;
-use core::ptr::null_mut;
+use core::ffi::{CStr, c_int, c_long, c_ulong};
 
 use bun_boringssl_sys as ssl;
 use bun_jsc::{JSGlobalObject, JSValue, JsResult, StringJsc};
+use bun_lsquic_sys as lsquic;
+
+use super::endpoint::QuicEndpoint;
+use super::session::{QuicSession, SessionEvent, StoredAddr};
 
 pub(super) struct TlsConfig {
     pub is_server: bool,
@@ -19,7 +22,7 @@ pub(super) struct TlsConfig {
     /// 0-RTT early data (`enableEarlyData`, default on — RFC 8446 §2.3).
     pub enable_early_data: bool,
     pub ciphers: Option<Vec<u8>>,
-    pub groups: Option<Vec<u8>>,
+    pub groups: Option<std::ffi::CString>,
 }
 
 fn value_to_bytes(global: &JSGlobalObject, value: JSValue) -> JsResult<Option<Vec<u8>>> {
@@ -50,6 +53,15 @@ fn collect_pem(global: &JSGlobalObject, value: JSValue) -> JsResult<Vec<Vec<u8>>
         out.push(bytes);
     }
     Ok(out)
+}
+
+/// Interior NULs cannot be represented in the C string the option feeds;
+/// truncate at the first one, as the C side would have read it.
+fn cstring_lossy(mut bytes: Vec<u8>) -> std::ffi::CString {
+    if let Some(nul) = bun_core::strings::index_of_char_usize(&bytes, 0) {
+        bytes.truncate(nul);
+    }
+    std::ffi::CString::new(bytes).unwrap_or_default()
 }
 
 /// The TLS 1.3 cipher suites BoringSSL implements (RFC 8446 appendix B.4
@@ -84,6 +96,11 @@ fn tls13_policy_for_ciphers(ciphers: &[u8]) -> Option<c_int> {
 }
 
 impl TlsConfig {
+    /// The SNI to send, as lsquic takes it.
+    pub(super) fn servername_cstr(&self) -> Option<std::ffi::CString> {
+        self.servername.clone().map(cstring_lossy)
+    }
+
     pub(super) fn from_js(
         global: &JSGlobalObject,
         tls: JSValue,
@@ -114,9 +131,7 @@ impl TlsConfig {
             }
         }
         if let Some(v) = tls.get(global, "servername")?.filter(|v| v.is_string()) {
-            let mut bytes = bun_core::String::from_js(v, global)?.to_owned_slice();
-            bytes.push(0);
-            config.servername = Some(bytes);
+            config.servername = Some(bun_core::String::from_js(v, global)?.to_owned_slice());
         }
         if let Some(v) = tls.get(global, "certs")? {
             config.certs_pem = collect_pem(global, v)?;
@@ -149,37 +164,24 @@ impl TlsConfig {
             config.ciphers = Some(bun_core::String::from_js(v, global)?.to_owned_slice());
         }
         if let Some(v) = tls.get(global, "groups")?.filter(|v| v.is_string()) {
-            let mut bytes = bun_core::String::from_js(v, global)?.to_owned_slice();
-            bytes.push(0);
-            config.groups = Some(bytes);
+            let bytes = bun_core::String::from_js(v, global)?.to_owned_slice();
+            config.groups = Some(cstring_lossy(bytes));
         }
         // Node defaults the servername to "localhost" when none is given
         // (node/src/quic/tlscontext.h TLSContext::Options::servername).
         if config.servername.is_none() {
-            config.servername = Some(b"localhost\0".to_vec());
+            config.servername = Some(b"localhost".to_vec());
         }
         Ok(config)
     }
 }
 
-pub(super) fn early_data_info(ssl_ptr: *mut ssl::SSL) -> (bool, bool) {
+pub(super) fn early_data_info(ssl: &ssl::SSL) -> (bool, bool) {
     const SSL_EARLY_DATA_UNKNOWN: c_int = 0;
     const SSL_EARLY_DATA_DISABLED: c_int = 1;
     const SSL_EARLY_DATA_NO_SESSION_OFFERED: c_int = 5;
-    unsafe extern "C" {
-        fn SSL_early_data_accepted(ssl: *const ssl::SSL) -> c_int;
-        fn SSL_get_early_data_reason(ssl: *const ssl::SSL) -> c_int;
-    }
-    if ssl_ptr.is_null() {
-        return (false, false);
-    }
-    // SAFETY: `ssl_ptr` is the live SSL for this handshake (caller contract).
-    let (accepted, reason) = unsafe {
-        (
-            SSL_early_data_accepted(ssl_ptr) != 0,
-            SSL_get_early_data_reason(ssl_ptr),
-        )
-    };
+    let accepted = ssl.early_data_accepted();
+    let reason = ssl.early_data_reason();
     let attempted = accepted
         || !matches!(
             reason,
@@ -188,341 +190,203 @@ pub(super) fn early_data_info(ssl_ptr: *mut ssl::SSL) -> (bool, bool) {
     (attempted, accepted)
 }
 
-/// lsquic borrows the raw pointer; this struct owns it.
+/// lsquic borrows the raw pointer; this struct owns one reference.
 pub(super) struct TlsContext {
     ctx: ssl::OwnedSslCtx,
-    /// Keep the wire-format ALPN alive at a stable heap address: BoringSSL
-    /// stores the `arg` pointer we pass to `SSL_CTX_set_alpn_select_cb` and
-    /// the callback dereferences it on every ClientHello.
-    #[expect(
-        clippy::box_collection,
-        reason = "BoringSSL keeps the `arg` pointer (this Vec's header address) across ClientHellos, so the Vec must not move; the Box pins it"
-    )]
-    _alpn: Option<Box<Vec<u8>>>,
 }
 
-unsafe extern "C" fn keylog_cb(ssl: *const ssl::SSL, line: *const core::ffi::c_char) {
-    if line.is_null() {
-        return;
-    }
-    // SAFETY: `line` is the NUL-terminated NSS key log line BoringSSL
-    // guarantees valid for this callback; the SSL → conn → session walk is
-    // safe because lsquic owns all three for the SSL's lifetime.
-    let bytes = unsafe { core::ffi::CStr::from_ptr(line).to_bytes().to_vec() };
-    // SAFETY: lsquic stored the conn on the SSL via SSL_set_app_data — but
-    // we can't rely on that index; use lsquic_ssl_to_conn instead.
-    let conn = unsafe { bun_lsquic_sys::lsquic_ssl_to_conn(ssl.cast()) };
-    if conn.is_null() {
-        return;
-    }
-    // SAFETY: as above.
-    let ctx = unsafe { bun_lsquic_sys::lsquic_conn_get_ctx(conn) };
-    if ctx.is_null() {
-        // SAFETY: peer_ctx is the Rust QuicEndpoint for every conn on it.
-        let peer_ctx = unsafe { bun_lsquic_sys::lsquic_conn_get_peer_ctx(conn, core::ptr::null()) };
-        if !peer_ctx.is_null() {
-            // SAFETY: as above.
-            let endpoint = unsafe { &*peer_ctx.cast::<super::endpoint::QuicEndpoint>() };
-            let mut local = core::ptr::null();
-            let mut peer = core::ptr::null();
-            // SAFETY: `conn` is live; out-params point at stack slots.
-            let peer_addr = if unsafe {
-                bun_lsquic_sys::lsquic_conn_get_sockaddr(
-                    conn,
-                    core::ptr::from_mut(&mut local),
-                    core::ptr::from_mut(&mut peer),
-                )
-            } == 0
-            {
-                super::endpoint::stored_addr_from_sockaddr(peer)
-            } else {
-                return;
-            };
-            endpoint.buffer_early_keylog(ssl.cast_mut().cast(), peer_addr, bytes);
-        }
-        return;
-    }
-    // SAFETY: ctx is the QuicSession (conn-ctx).
-    let session = unsafe { &*ctx.cast::<super::session::QuicSession>() };
-    session.push_event(super::session::SessionEvent::Keylog(bytes));
-}
+/// Routes BoringSSL's key log lines to the session (or, before the session
+/// is bound, the endpoint) of the conn the handshake belongs to.
+struct QuicKeylog;
 
-unsafe extern "C" fn alpn_select_cb(
-    _ssl: *mut ssl::SSL,
-    out: *mut *const u8,
-    outlen: *mut u8,
-    inbuf: *const u8,
-    inlen: u32,
-    arg: *mut core::ffi::c_void,
-) -> c_int {
-    if arg.is_null() {
-        return ssl::SSL_TLSEXT_ERR_NOACK;
-    }
-    // SAFETY: non-null `arg` is the Vec<u8> the context owns and keeps alive for
-    // the SSL_CTX's life; `inbuf[..inlen]` is the client's wire-format ALPN
-    // list, valid for this callback.
-    unsafe {
-        let server: &Vec<u8> = &*arg.cast::<Vec<u8>>();
-        if ssl::SSL_select_next_proto(
-            out.cast_mut().cast(),
-            outlen,
-            server.as_ptr(),
-            server.len() as u32,
-            inbuf,
-            inlen,
-        ) == ssl::OPENSSL_NPN_NEGOTIATED
-        {
-            ssl::SSL_TLSEXT_ERR_OK
-        } else {
-            ssl::SSL_TLSEXT_ERR_ALERT_FATAL
+impl ssl::KeylogCallback for QuicKeylog {
+    fn log(ssl: &ssl::SSL, line: &[u8]) {
+        let Some(conn) = lsquic::HandshakeConn::from_ssl(ssl) else {
+            return;
+        };
+        if let Some(session) = conn.ctx::<QuicSession>() {
+            session.push_event(SessionEvent::Keylog(line.to_vec()));
+            return;
         }
+        let Some(endpoint) = conn.peer_ctx::<QuicEndpoint>() else {
+            return;
+        };
+        let Some((_, peer)) = conn.sockaddrs() else {
+            return;
+        };
+        endpoint.buffer_early_keylog(ssl, StoredAddr::from_lsquic(&peer), line.to_vec());
     }
 }
 
-fn load_cert_chain(ctx: *mut ssl::SSL_CTX, pem: &[u8]) -> Result<(), &'static str> {
-    // SAFETY: `pem` is a live slice; the BIO copies what it parses.
-    unsafe {
-        let bio = ssl::BIO_new_mem_buf(pem.as_ptr().cast(), pem.len() as _);
-        if bio.is_null() {
-            return Err("failed to allocate BIO for certificate");
+fn load_cert_chain(ctx: &ssl::SSL_CTX, pem: &[u8]) -> Result<(), &'static str> {
+    let Some(mut bio) = ssl::MemBio::new(pem) else {
+        return Err("failed to allocate BIO for certificate");
+    };
+    let Some(leaf) = bio.read_pem_x509_aux() else {
+        return Err("failed to parse certificate PEM");
+    };
+    if !ctx.use_certificate(&leaf) {
+        return Err("failed to install certificate");
+    }
+    drop(leaf);
+    while let Some(extra) = bio.read_pem_x509() {
+        if ctx.add0_chain_cert(extra).is_err() {
+            return Err("failed to add chain certificate");
         }
-        let leaf = ssl::PEM_read_bio_X509_AUX(bio, null_mut(), None, null_mut());
-        if leaf.is_null() {
-            ssl::BIO_free(bio);
-            return Err("failed to parse certificate PEM");
-        }
-        // `use_certificate` ups the X509's refcount.
-        if ssl::SSL_CTX_use_certificate(ctx, leaf) != 1 {
-            ssl::X509_free(leaf);
-            ssl::BIO_free(bio);
-            return Err("failed to install certificate");
-        }
-        ssl::X509_free(leaf);
-        loop {
-            let extra = ssl::PEM_read_bio_X509(bio, null_mut(), None, null_mut());
-            if extra.is_null() {
-                break;
-            }
-            // `add0_chain_cert` takes ownership (no refcount bump).
-            if ssl::SSL_CTX_add0_chain_cert(ctx, extra) != 1 {
-                ssl::X509_free(extra);
-                ssl::BIO_free(bio);
-                return Err("failed to add chain certificate");
-            }
-        }
-        ssl::ERR_clear_error();
-        ssl::BIO_free(bio);
+    }
+    ssl::ERR_clear_error();
+    Ok(())
+}
+
+fn load_private_key(ctx: &ssl::SSL_CTX, pem: &[u8]) -> Result<(), &'static str> {
+    let Some(mut bio) = ssl::MemBio::new(pem) else {
+        return Err("failed to allocate BIO for key");
+    };
+    let pkey = bio.read_pem_private_key();
+    drop(bio);
+    let Some(pkey) = pkey else {
+        return Err("failed to parse private key PEM");
+    };
+    if !ctx.use_private_key(&pkey) {
+        return Err("failed to install private key");
     }
     Ok(())
 }
 
-fn load_private_key(ctx: *mut ssl::SSL_CTX, pem: &[u8]) -> Result<(), &'static str> {
-    // SAFETY: as above.
-    unsafe {
-        let bio = ssl::BIO_new_mem_buf(pem.as_ptr().cast(), pem.len() as _);
-        if bio.is_null() {
-            return Err("failed to allocate BIO for key");
-        }
-        let pkey = ssl::PEM_read_bio_PrivateKey(bio, null_mut(), None, null_mut());
-        ssl::BIO_free(bio);
-        if pkey.is_null() {
-            return Err("failed to parse private key PEM");
-        }
-        let ok = ssl::SSL_CTX_use_PrivateKey(ctx, pkey);
-        ssl::EVP_PKEY_free(pkey);
-        if ok != 1 {
-            return Err("failed to install private key");
-        }
-    }
-    Ok(())
-}
-
-const X509_V_FLAG_CRL_CHECK: core::ffi::c_ulong = 0x4;
+const X509_V_FLAG_CRL_CHECK: c_ulong = 0x4;
 /// `X509_V_FLAG_CRL_CHECK_ALL` — also check intermediate CAs (Node sets both).
-const X509_V_FLAG_CRL_CHECK_ALL: core::ffi::c_ulong = 0x8;
+const X509_V_FLAG_CRL_CHECK_ALL: c_ulong = 0x8;
 /// `X509_V_FLAG_IGNORE_EXPIRED_TRUST_ANCHORS` (oven-sh/boringssl) — as every other Bun SSL_CTX: an expired CA in the
 /// trust set does not shadow the valid certificate for the same issuer that the peer sends.
-const X509_V_FLAG_IGNORE_EXPIRED_TRUST_ANCHORS: core::ffi::c_ulong = 0x2000000;
+const X509_V_FLAG_IGNORE_EXPIRED_TRUST_ANCHORS: c_ulong = 0x2000000;
 
-fn load_crl_store(ctx: *mut ssl::SSL_CTX, pem: &[u8]) -> Result<(), &'static str> {
-    // SAFETY: as above.
-    unsafe {
-        let store = ssl::SSL_CTX_get_cert_store(ctx);
-        let bio = ssl::BIO_new_mem_buf(pem.as_ptr().cast(), pem.len() as _);
-        if bio.is_null() {
-            return Err("failed to allocate BIO for CRL");
+fn load_crl_store(ctx: &ssl::SSL_CTX, pem: &[u8]) -> Result<(), &'static str> {
+    let store = ctx.cert_store();
+    let Some(mut bio) = ssl::MemBio::new(pem) else {
+        return Err("failed to allocate BIO for CRL");
+    };
+    let mut added = 0;
+    while let Some(crl) = bio.read_pem_x509_crl() {
+        if !store.add_crl(&crl) {
+            ssl::ERR_clear_error();
+            return Err("failed to add CRL to trust store");
         }
-        let mut added = 0;
-        loop {
-            let crl = ssl::PEM_read_bio_X509_CRL(bio, null_mut(), None, null_mut());
-            if crl.is_null() {
-                break;
-            }
-            let ok = ssl::X509_STORE_add_crl(store, crl);
-            ssl::X509_CRL_free(crl);
-            if ok != 1 {
-                ssl::ERR_clear_error();
-                ssl::BIO_free(bio);
-                return Err("failed to add CRL to trust store");
-            }
-            added += 1;
-        }
-        ssl::ERR_clear_error();
-        ssl::BIO_free(bio);
-        if added == 0 {
-            return Err("CRL PEM contained no revocation lists");
-        }
-        ssl::X509_STORE_set_flags(store, X509_V_FLAG_CRL_CHECK | X509_V_FLAG_CRL_CHECK_ALL);
+        added += 1;
     }
+    ssl::ERR_clear_error();
+    drop(bio);
+    if added == 0 {
+        return Err("CRL PEM contained no revocation lists");
+    }
+    store.set_flags(X509_V_FLAG_CRL_CHECK | X509_V_FLAG_CRL_CHECK_ALL);
     Ok(())
 }
 
-fn load_ca_store(ctx: *mut ssl::SSL_CTX, pem: &[u8]) -> Result<(), &'static str> {
-    // SAFETY: as above.
-    unsafe {
-        let store = ssl::SSL_CTX_get_cert_store(ctx);
-        let bio = ssl::BIO_new_mem_buf(pem.as_ptr().cast(), pem.len() as _);
-        if bio.is_null() {
-            return Err("failed to allocate BIO for CA");
+fn load_ca_store(ctx: &ssl::SSL_CTX, pem: &[u8]) -> Result<(), &'static str> {
+    let store = ctx.cert_store();
+    let Some(mut bio) = ssl::MemBio::new(pem) else {
+        return Err("failed to allocate BIO for CA");
+    };
+    let mut added = 0;
+    while let Some(cert) = bio.read_pem_x509() {
+        if !store.add_cert(&cert) {
+            ssl::ERR_clear_error();
+            return Err("failed to add CA certificate to trust store");
         }
-        let mut added = 0;
-        loop {
-            let cert = ssl::PEM_read_bio_X509(bio, null_mut(), None, null_mut());
-            if cert.is_null() {
-                break;
-            }
-            let ok = ssl::X509_STORE_add_cert(store, cert);
-            ssl::X509_free(cert);
-            if ok != 1 {
-                ssl::ERR_clear_error();
-                ssl::BIO_free(bio);
-                return Err("failed to add CA certificate to trust store");
-            }
-            added += 1;
-        }
-        ssl::ERR_clear_error();
-        ssl::BIO_free(bio);
-        if added == 0 {
-            return Err("CA PEM contained no certificates");
-        }
+        added += 1;
+    }
+    ssl::ERR_clear_error();
+    drop(bio);
+    if added == 0 {
+        return Err("CA PEM contained no certificates");
     }
     Ok(())
 }
 
 impl TlsContext {
     pub(super) fn new(config: &TlsConfig) -> Result<Self, &'static str> {
-        // SAFETY: each SSL_CTX call below is paired with the matching free on
-        // failure via Drop (the half-built `this` is dropped on early return).
-        unsafe {
-            let Some(owned) = ssl::OwnedSslCtx::from_raw(ssl::SSL_CTX_new(ssl::TLS_method()))
-            else {
-                return Err("failed to allocate SSL_CTX");
-            };
-            let ctx = owned.as_ptr();
-            let mut this = TlsContext {
-                ctx: owned,
-                _alpn: None,
-            };
+        let Some(ctx) = ssl::OwnedSslCtx::new_tls() else {
+            return Err("failed to allocate SSL_CTX");
+        };
 
-            if let Some(policy) = config.ciphers.as_deref().and_then(tls13_policy_for_ciphers) {
-                if ssl::SSL_CTX_set_compliance_policy(ctx, policy) != 1 {
-                    return Err("failed to apply cipher policy");
-                }
+        if let Some(policy) = config.ciphers.as_deref().and_then(tls13_policy_for_ciphers) {
+            if !ctx.set_compliance_policy(policy) {
+                return Err("failed to apply cipher policy");
             }
-            if ssl::SSL_CTX_set_min_proto_version(ctx, ssl::TLS1_3_VERSION) != 1
-                || ssl::SSL_CTX_set_max_proto_version(ctx, ssl::TLS1_3_VERSION) != 1
-            {
-                return Err("failed to pin TLS 1.3");
-            }
-            ssl::X509_VERIFY_PARAM_set_flags(
-                ssl::SSL_CTX_get0_param(ctx),
-                X509_V_FLAG_IGNORE_EXPIRED_TRUST_ANCHORS,
-            );
-            if let Some(groups) = &config.groups {
-                if ssl::SSL_CTX_set1_groups_list(ctx, groups.as_ptr().cast()) != 1 {
-                    return Err("invalid TLS groups list");
-                }
-            }
-            if config.ca_pem.is_empty() {
-                ssl::SSL_CTX_set_default_verify_paths(ctx);
-            }
-
-            // Node pairs `certs[i]` with `keys[i]`.
-            for (i, pem) in config.certs_pem.iter().enumerate() {
-                if i > 0 {
-                    ssl::SSL_CTX_clear_chain_certs(ctx);
-                }
-                load_cert_chain(ctx, pem)?;
-                if let Some(key) = config.keys_pem.get(i) {
-                    load_private_key(ctx, key)?;
-                }
-            }
-            if config.certs_pem.is_empty() {
-                if let Some(key) = config.keys_pem.first() {
-                    load_private_key(ctx, key)?;
-                }
-            }
-            for pem in &config.ca_pem {
-                load_ca_store(ctx, pem)?;
-            }
-            for pem in &config.crl_pem {
-                load_crl_store(ctx, pem)?;
-            }
-
-            ssl::SSL_CTX_set_early_data_enabled(ctx, config.enable_early_data as c_int);
-            if config.keylog {
-                ssl::SSL_CTX_set_keylog_callback(ctx, Some(keylog_cb));
-            }
-            if config.is_server {
-                if config.verify_client {
-                    // SSL_VERIFY_PEER alone matches Node's TLS 1.3 semantics (see QuicSession::maybe_report_handshake).
-                    ssl::SSL_CTX_set_verify(ctx, ssl::SSL_VERIFY_PEER, None);
-                }
-                if !config.alpn.is_empty() {
-                    let alpn = Box::new(config.alpn.clone());
-                    // The callback's `arg` is the heap address of the boxed
-                    // Vec (stable for the box's life, which is `this`'s).
-                    ssl::SSL_CTX_set_alpn_select_cb(
-                        ctx,
-                        Some(alpn_select_cb),
-                        (&raw const *alpn).cast_mut().cast(),
-                    );
-                    this._alpn = Some(alpn);
-                }
-            } else {
-                if !config.alpn.is_empty()
-                    && ssl::SSL_CTX_set_alpn_protos(ctx, config.alpn.as_ptr(), config.alpn.len())
-                        != 0
-                {
-                    return Err("failed to set ALPN protocols");
-                }
-                let mode = if config.verify_peer_strict {
-                    ssl::SSL_VERIFY_PEER
-                } else {
-                    ssl::SSL_VERIFY_NONE
-                };
-                ssl::SSL_CTX_set_verify(ctx, mode, None);
-                if config.verify_hostname {
-                    let Some(servername) = &config.servername else {
-                        return Err("verifyHostname requires a servername");
-                    };
-                    let host = servername.strip_suffix(b"\0").unwrap_or(servername);
-                    if host.is_empty() {
-                        return Err("verifyHostname requires a non-empty servername");
-                    }
-                    let param = ssl::SSL_CTX_get0_param(ctx);
-                    if param.is_null()
-                        || ssl::X509_VERIFY_PARAM_set1_host(param, host.as_ptr().cast(), host.len())
-                            != 1
-                    {
-                        return Err("failed to bind hostname for certificate verification");
-                    }
-                }
-            }
-
-            ssl::ERR_clear_error();
-            Ok(this)
         }
+        if !ctx.set_proto_version_range(ssl::TLS1_3_VERSION, ssl::TLS1_3_VERSION) {
+            return Err("failed to pin TLS 1.3");
+        }
+        ctx.set_verify_flags(X509_V_FLAG_IGNORE_EXPIRED_TRUST_ANCHORS);
+        if let Some(groups) = &config.groups {
+            if !ctx.set1_groups_list(groups) {
+                return Err("invalid TLS groups list");
+            }
+        }
+        if config.ca_pem.is_empty() {
+            ctx.set_default_verify_paths();
+        }
+
+        // Node pairs `certs[i]` with `keys[i]`.
+        for (i, pem) in config.certs_pem.iter().enumerate() {
+            if i > 0 {
+                ctx.clear_chain_certs();
+            }
+            load_cert_chain(&ctx, pem)?;
+            if let Some(key) = config.keys_pem.get(i) {
+                load_private_key(&ctx, key)?;
+            }
+        }
+        if config.certs_pem.is_empty() {
+            if let Some(key) = config.keys_pem.first() {
+                load_private_key(&ctx, key)?;
+            }
+        }
+        for pem in &config.ca_pem {
+            load_ca_store(&ctx, pem)?;
+        }
+        for pem in &config.crl_pem {
+            load_crl_store(&ctx, pem)?;
+        }
+
+        ctx.set_early_data_enabled(config.enable_early_data);
+        if config.keylog {
+            ctx.set_keylog_callback::<QuicKeylog>();
+        }
+        if config.is_server {
+            if config.verify_client {
+                // SSL_VERIFY_PEER alone matches Node's TLS 1.3 semantics (see QuicSession::maybe_report_handshake).
+                ctx.set_verify_mode(ssl::SSL_VERIFY_PEER);
+            }
+            if !config.alpn.is_empty() && !ctx.set_alpn_select_from(&config.alpn) {
+                return Err("failed to set ALPN protocols");
+            }
+        } else {
+            if !config.alpn.is_empty() && !ctx.set_alpn_protos(&config.alpn) {
+                return Err("failed to set ALPN protocols");
+            }
+            let mode = if config.verify_peer_strict {
+                ssl::SSL_VERIFY_PEER
+            } else {
+                ssl::SSL_VERIFY_NONE
+            };
+            ctx.set_verify_mode(mode);
+            if config.verify_hostname {
+                let Some(servername) = &config.servername else {
+                    return Err("verifyHostname requires a servername");
+                };
+                let host = servername.as_slice();
+                if host.is_empty() {
+                    return Err("verifyHostname requires a non-empty servername");
+                }
+                if !ctx.set1_verify_host(host) {
+                    return Err("failed to bind hostname for certificate verification");
+                }
+            }
+        }
+
+        ssl::ERR_clear_error();
+        Ok(TlsContext { ctx })
     }
 
     pub(super) fn raw(&self) -> *mut ssl::SSL_CTX {
@@ -540,94 +404,69 @@ impl TlsContext {
     }
 }
 
-pub(super) fn negotiated_alpn(ssl: *mut ssl::SSL) -> Option<Vec<u8>> {
-    if ssl.is_null() {
-        return None;
-    }
-    let mut data: *const u8 = core::ptr::null();
-    let mut len: u32 = 0;
-    // SAFETY: lsquic guarantees the SSL outlives the conn.
-    unsafe {
-        ssl::SSL_get0_alpn_selected(
-            ssl,
-            core::ptr::from_mut(&mut data),
-            core::ptr::from_mut(&mut len),
-        )
-    };
-    if data.is_null() || len == 0 {
-        return None;
-    }
-    // SAFETY: BoringSSL guarantees `data[..len]` is valid until the SSL is
-    // freed.
-    Some(unsafe { core::slice::from_raw_parts(data, len as usize).to_vec() })
+pub(super) fn negotiated_alpn(ssl: &ssl::SSL) -> Option<Vec<u8>> {
+    ssl.alpn_selected().map(<[u8]>::to_vec)
 }
 
-unsafe extern "C" {
-    /// `X509_V_ERR_*` -> node's code name; see ncrypto.cpp.
-    fn Bun__X509__validationErrorCode(err: i32) -> *const core::ffi::c_char;
+/// The code name node reports for a peer-certificate validation failure.
+fn validation_error_code(err: c_long) -> &'static str {
+    match err {
+        ssl::X509_V_ERR_UNABLE_TO_GET_ISSUER_CERT => "UNABLE_TO_GET_ISSUER_CERT",
+        ssl::X509_V_ERR_UNABLE_TO_GET_CRL => "UNABLE_TO_GET_CRL",
+        ssl::X509_V_ERR_UNABLE_TO_DECRYPT_CERT_SIGNATURE => "UNABLE_TO_DECRYPT_CERT_SIGNATURE",
+        ssl::X509_V_ERR_UNABLE_TO_DECRYPT_CRL_SIGNATURE => "UNABLE_TO_DECRYPT_CRL_SIGNATURE",
+        ssl::X509_V_ERR_UNABLE_TO_DECODE_ISSUER_PUBLIC_KEY => "UNABLE_TO_DECODE_ISSUER_PUBLIC_KEY",
+        ssl::X509_V_ERR_CERT_SIGNATURE_FAILURE => "CERT_SIGNATURE_FAILURE",
+        ssl::X509_V_ERR_CRL_SIGNATURE_FAILURE => "CRL_SIGNATURE_FAILURE",
+        ssl::X509_V_ERR_CERT_NOT_YET_VALID => "CERT_NOT_YET_VALID",
+        ssl::X509_V_ERR_CERT_HAS_EXPIRED => "CERT_HAS_EXPIRED",
+        ssl::X509_V_ERR_CRL_NOT_YET_VALID => "CRL_NOT_YET_VALID",
+        ssl::X509_V_ERR_CRL_HAS_EXPIRED => "CRL_HAS_EXPIRED",
+        ssl::X509_V_ERR_ERROR_IN_CERT_NOT_BEFORE_FIELD => "ERROR_IN_CERT_NOT_BEFORE_FIELD",
+        ssl::X509_V_ERR_ERROR_IN_CERT_NOT_AFTER_FIELD => "ERROR_IN_CERT_NOT_AFTER_FIELD",
+        ssl::X509_V_ERR_ERROR_IN_CRL_LAST_UPDATE_FIELD => "ERROR_IN_CRL_LAST_UPDATE_FIELD",
+        ssl::X509_V_ERR_ERROR_IN_CRL_NEXT_UPDATE_FIELD => "ERROR_IN_CRL_NEXT_UPDATE_FIELD",
+        ssl::X509_V_ERR_OUT_OF_MEM => "OUT_OF_MEM",
+        ssl::X509_V_ERR_DEPTH_ZERO_SELF_SIGNED_CERT => "DEPTH_ZERO_SELF_SIGNED_CERT",
+        ssl::X509_V_ERR_SELF_SIGNED_CERT_IN_CHAIN => "SELF_SIGNED_CERT_IN_CHAIN",
+        ssl::X509_V_ERR_UNABLE_TO_GET_ISSUER_CERT_LOCALLY => "UNABLE_TO_GET_ISSUER_CERT_LOCALLY",
+        ssl::X509_V_ERR_UNABLE_TO_VERIFY_LEAF_SIGNATURE => "UNABLE_TO_VERIFY_LEAF_SIGNATURE",
+        ssl::X509_V_ERR_CERT_CHAIN_TOO_LONG => "CERT_CHAIN_TOO_LONG",
+        ssl::X509_V_ERR_CERT_REVOKED => "CERT_REVOKED",
+        ssl::X509_V_ERR_INVALID_CA => "INVALID_CA",
+        ssl::X509_V_ERR_PATH_LENGTH_EXCEEDED => "PATH_LENGTH_EXCEEDED",
+        ssl::X509_V_ERR_INVALID_PURPOSE => "INVALID_PURPOSE",
+        ssl::X509_V_ERR_CERT_UNTRUSTED => "CERT_UNTRUSTED",
+        ssl::X509_V_ERR_CERT_REJECTED => "CERT_REJECTED",
+        ssl::X509_V_ERR_HOSTNAME_MISMATCH => "HOSTNAME_MISMATCH",
+        _ => "UNSPECIFIED",
+    }
 }
-
-/// node's `X509_V_ERR_UNSPECIFIED`, reported when a peer sent no certificate
-/// at all (`verifyPeerCertificate()` nullopt -> `value_or`).
-pub(super) const X509_V_ERR_UNSPECIFIED: i32 = 1;
 
 /// The `(code name, reason)` pair node reports as
 /// `validationErrorCode` / `validationErrorReason`.
-pub(super) fn validation_error_strings(code: i32) -> (&'static str, &'static str) {
-    // SAFETY: every arm of the C++ switch returns a string literal.
-    let name = unsafe { Bun__X509__validationErrorCode(code) };
-    let name = if name.is_null() {
-        "UNSPECIFIED"
-    } else {
-        // SAFETY: as above; NUL-terminated and 'static.
-        unsafe {
-            core::ffi::CStr::from_ptr(name)
-                .to_str()
-                .unwrap_or("UNSPECIFIED")
-        }
-    };
-    // SAFETY: the returned string is a static name owned by BoringSSL.
-    let s = unsafe { ssl::X509_verify_cert_error_string(code as _) };
-    let reason = if s.is_null() {
-        ""
-    } else {
-        // SAFETY: as above.
-        unsafe { core::ffi::CStr::from_ptr(s).to_str().unwrap_or("") }
-    };
+pub(super) fn validation_error_strings(code: c_long) -> (&'static str, &'static str) {
+    let name = validation_error_code(code);
+    let reason = ssl::verify_cert_error_string(code).to_str().unwrap_or("");
     (name, reason)
 }
 
-pub(super) fn validation_error(ssl: *mut ssl::SSL) -> Option<(&'static str, &'static str)> {
-    if ssl.is_null() {
+pub(super) fn validation_error(ssl: &ssl::SSL) -> Option<(&'static str, &'static str)> {
+    let code = ssl.verify_result();
+    if code == ssl::X509_V_OK {
         return None;
     }
-    // SAFETY: as above.
-    let code = unsafe { ssl::SSL_get_verify_result(ssl) };
-    if code == 0 {
-        return None;
-    }
-    Some(validation_error_strings(code as i32))
+    Some(validation_error_strings(code))
 }
 
 pub(super) fn ephemeral_key_info(
-    ssl: *mut ssl::SSL,
+    ssl: &ssl::SSL,
 ) -> Option<(&'static str, Option<&'static str>, u32)> {
-    if ssl.is_null() {
-        return None;
-    }
-    // SAFETY: as above.
-    let group = unsafe { ssl::SSL_get_group_id(ssl) };
+    let group = ssl.group_id();
     if group == 0 {
         return None;
     }
-    // SAFETY: returned string is static.
-    let name_ptr = unsafe { ssl::SSL_get_group_name(group) };
-    let name = if name_ptr.is_null() {
-        None
-    } else {
-        // SAFETY: as above.
-        unsafe { core::ffi::CStr::from_ptr(name_ptr).to_str().ok() }
-    };
+    let name = ssl::group_name(group).and_then(|s| CStr::to_str(s).ok());
     // Named-group sizes (RFC 8446 §4.2.7 / Node's GetEphemeralKey).
     let bits = match group {
         ssl::SSL_GROUP_X25519 => 253,
@@ -640,76 +479,10 @@ pub(super) fn ephemeral_key_info(
     Some(("ECDH", name, bits))
 }
 
-pub(super) fn local_certificate_der(ssl: *mut ssl::SSL) -> Option<Vec<u8>> {
-    if ssl.is_null() {
-        return None;
-    }
-    // SAFETY: returns a borrowed X509 owned by the SSL.
-    let cert = unsafe { ssl::SSL_get_certificate(ssl) };
-    if cert.is_null() {
-        return None;
-    }
-    let mut der: *mut u8 = null_mut();
-    // SAFETY: cert is live; i2d allocates.
-    let len = unsafe { ssl::i2d_X509(cert, core::ptr::from_mut(&mut der)) };
-    if len <= 0 || der.is_null() {
-        return None;
-    }
-    // SAFETY: i2d allocated `der[..len]`.
-    let bytes = unsafe { core::slice::from_raw_parts(der, len as usize).to_vec() };
-    // SAFETY: i2d's allocation is freed with OPENSSL_free.
-    unsafe { ssl::OPENSSL_free(der.cast()) };
-    Some(bytes)
+pub(super) fn local_certificate_der(ssl: &ssl::SSL) -> Option<Vec<u8>> {
+    ssl.certificate()?.to_der()
 }
 
-pub(super) fn peer_certificate_der(ssl_ptr: *mut ssl::SSL) -> Option<Vec<u8>> {
-    if ssl_ptr.is_null() {
-        return None;
-    }
-    // SAFETY: `ssl_ptr` is non-null (checked above) and live for this call;
-    // SSL_get_peer_certificate returns an owned +1 X509 reference we release
-    // below.
-    unsafe {
-        let cert = ssl::SSL_get_peer_certificate(ssl_ptr);
-        if cert.is_null() {
-            return None;
-        }
-        let mut der: *mut u8 = null_mut();
-        let len = ssl::i2d_X509(cert, core::ptr::from_mut(&mut der));
-        let result = if len > 0 && !der.is_null() {
-            let bytes = core::slice::from_raw_parts(der, len as usize).to_vec();
-            ssl::OPENSSL_free(der.cast());
-            Some(bytes)
-        } else {
-            None
-        };
-        ssl::X509_free(cert);
-        result
-    }
-}
-
-pub(super) fn leaf_certificate_der(stack: *mut core::ffi::c_void) -> Option<Vec<u8>> {
-    if stack.is_null() {
-        return None;
-    }
-    // SAFETY: lsquic returns a STACK_OF(X509)* the caller must free; the
-    // leaf is at index 0.
-    unsafe {
-        let cert = ssl::sk_X509_value(stack.cast(), 0);
-        let result = if cert.is_null() {
-            None
-        } else {
-            let mut der: *mut u8 = null_mut();
-            let len = ssl::i2d_X509(cert, core::ptr::from_mut(&mut der));
-            if len > 0 && !der.is_null() {
-                let bytes = core::slice::from_raw_parts(der, len as usize).to_vec();
-                ssl::OPENSSL_free(der.cast());
-                Some(bytes)
-            } else {
-                None
-            }
-        };
-        ssl::sk_X509_pop_free(stack.cast());
-        result
-    }
+pub(super) fn peer_certificate_der(ssl: &ssl::SSL) -> Option<Vec<u8>> {
+    ssl.peer_certificate()?.to_der()
 }

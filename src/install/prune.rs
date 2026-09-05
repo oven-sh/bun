@@ -1763,9 +1763,7 @@ fn store_entry_names(
     names
 }
 
-/// The aliases `bun install` links into the `node_modules` of the root or workspace `pkg_id`:
-/// its enabled lockfile dependencies, plus the dependencies of its store entries. The store
-/// entries add the peers an ancestor provides, which `--omit=peer` filters from the lockfile walk.
+/// The aliases `bun install` links into the `node_modules` of the root or workspace `pkg_id`.
 fn direct_aliases(manager: &PackageManager, store: &Store, pkg_id: PackageID) -> Vec<Box<[u8]>> {
     let lockfile: &Lockfile = &manager.lockfile;
     let buf = lockfile.buffers.string_bytes.as_slice();

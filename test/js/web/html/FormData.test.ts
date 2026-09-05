@@ -339,6 +339,93 @@ describe("FormData", () => {
     }
   });
 
+  // RFC 2045 §5.1: an unquoted parameter value is a token and ends at `;`.
+  // Previously the unquoted-value scan only stopped at `"` or end of line, so
+  // `name=k; filename=x.txt` swallowed the whole tail into the name.
+  describe("Content-Disposition unquoted parameter values", () => {
+    const boundary = "BXa";
+    const parse = async (C: typeof Response | typeof Request, disposition: string) => {
+      const body = `--${boundary}\r\nContent-Disposition: ${disposition}\r\n\r\nv\r\n--${boundary}--\r\n`;
+      const headers = { "Content-Type": `multipart/form-data; boundary=${boundary}` };
+      const req =
+        C === Response ? new Response(body, { headers }) : new Request("http://x/", { method: "POST", body, headers });
+      const fd = await req.formData();
+      return Promise.all(
+        [...fd].map(async ([k, v]) =>
+          typeof v === "string" ? { key: k, string: v } : { key: k, file: v.name, text: await v.text() },
+        ),
+      );
+    };
+
+    for (const C of [Response, Request] as const) {
+      describe(C.name, () => {
+        it.each([
+          [`form-data; name=k; filename=x.txt`, [{ key: "k", file: "x.txt", text: "v" }]],
+          [`form-data; name=k; filename="x.txt"`, [{ key: "k", file: "x.txt", text: "v" }]],
+          [`form-data; name="k"; filename=x.txt`, [{ key: "k", file: "x.txt", text: "v" }]],
+          [`form-data; filename=x.txt; name=k`, [{ key: "k", file: "x.txt", text: "v" }]],
+          [`form-data; name=k; foo=bar; filename=x.txt`, [{ key: "k", file: "x.txt", text: "v" }]],
+          [`form-data; name="a;b"; filename=x.txt`, [{ key: "a;b", file: "x.txt", text: "v" }]],
+          [`form-data; name=k`, [{ key: "k", string: "v" }]],
+          // .NET 8 MultipartFormDataContent emits unquoted name/filename plus a
+          // trailing RFC 5987 filename*= parameter.
+          [
+            `form-data; name=image; filename=test.jpg; filename*=utf-8''test.jpg`,
+            [{ key: "image", file: "test.jpg", text: "v" }],
+          ],
+        ] as const)("%s", async (disposition, expected) => {
+          expect(await parse(C, disposition)).toEqual(expected);
+        });
+      });
+    }
+
+    // https://github.com/oven-sh/bun/issues/11779
+    // .NET 8 MultipartFormDataContent: quoted boundary in the request
+    // Content-Type, Content-Type header before Content-Disposition in the part,
+    // unquoted name/filename tokens, and a trailing filename*= parameter.
+    it("parses a .NET 8 MultipartFormDataContent upload via Bun.serve req.formData()", async () => {
+      const b = "9a63f0e1-8e4c-4dbf-8f11-cafefeedbeef";
+      const img = Buffer.alloc(102404, 0xab);
+      const body = Buffer.concat([
+        Buffer.from(
+          `--${b}\r\n` +
+            `Content-Type: image/jpeg\r\n` +
+            `Content-Disposition: form-data; name=image; filename=test.jpg; filename*=utf-8''test.jpg\r\n` +
+            `\r\n`,
+        ),
+        img,
+        Buffer.from(`\r\n--${b}--\r\n`),
+      ]);
+
+      let got: { keys: string[]; file: unknown } | undefined;
+      await using server = Bun.serve({
+        port: 0,
+        async fetch(req) {
+          const fd = await req.formData();
+          const file = fd.get("image");
+          got = {
+            keys: [...fd.keys()],
+            file:
+              file instanceof Blob
+                ? { name: (file as File).name, size: file.size, type: file.type, isFile: file instanceof File }
+                : file,
+          };
+          return new Response("ok");
+        },
+      });
+      const res = await fetch(server.url, {
+        method: "POST",
+        headers: { "Content-Type": `multipart/form-data; boundary="${b}"` },
+        body,
+      });
+      expect(await res.text()).toBe("ok");
+      expect(got).toEqual({
+        keys: ["image"],
+        file: { name: "test.jpg", size: 102404, type: "image/jpeg", isFile: true },
+      });
+    });
+  });
+
   test("FormData.from (URLSearchParams)", () => {
     expect(
       // @ts-expect-error

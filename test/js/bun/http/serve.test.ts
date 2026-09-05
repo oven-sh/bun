@@ -2271,6 +2271,12 @@ describe("should support Content-Range with Bun.file()", () => {
     [full.byteLength - 10, full.byteLength - 1],
     [full.byteLength - 1, full.byteLength],
     [0, full.byteLength],
+    // A negative index counts back from the end of the file.
+    [-10, Infinity],
+    [-(full.byteLength / 2) | 0, Infinity],
+    [-10, -1],
+    [0, -10],
+    [-full.byteLength, Infinity],
   ] as const;
 
   for (const [start, end] of good) {
@@ -2279,8 +2285,9 @@ describe("should support Content-Range with Bun.file()", () => {
         const response = await fetch(`${server.url.origin}/?start=${start}&end=${end}`, {
           verbose: true,
         });
-        expect(await response.arrayBuffer()).toEqual(full.buffer.slice(start, end));
-        expect(response.status).toBe(start > 0 || end < full.byteLength ? 206 : 200);
+        const expected = full.buffer.slice(start, end);
+        expect(await response.arrayBuffer()).toEqual(expected);
+        expect(response.status).toBe(expected.byteLength < full.byteLength ? 206 : 200);
       });
     });
   }
@@ -2292,8 +2299,9 @@ describe("should support Content-Range with Bun.file()", () => {
           verbose: true,
         });
         expect(parseInt(response.headers.get("Content-Range")?.split("/")[1])).toEqual(full.byteLength);
-        expect(await response.arrayBuffer()).toEqual(full.buffer.slice(start, end));
-        expect(response.status).toBe(start > 0 || end < full.byteLength ? 206 : 200);
+        const expected = full.buffer.slice(start, end);
+        expect(await response.arrayBuffer()).toEqual(expected);
+        expect(response.status).toBe(expected.byteLength < full.byteLength ? 206 : 200);
       });
     });
   }
@@ -2324,7 +2332,6 @@ describe("should support Content-Range with Bun.file()", () => {
   const badRanges = [
     [10, NaN],
     [10, -Infinity],
-    [-(full.byteLength / 2) | 0, Infinity],
     [-(full.byteLength / 2) | 0, -Infinity],
     [full.byteLength + 100, full.byteLength],
     [full.byteLength + 100, full.byteLength + 100],

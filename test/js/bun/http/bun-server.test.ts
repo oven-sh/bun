@@ -1409,6 +1409,136 @@ describe.concurrent("server.stop() drain promise counts open connections", () =>
   });
 });
 
+test("a Connection: close response still closes when its cork slot is evicted while it completes", async () => {
+  // A 304 from an async handler completes through the no-body end path; its
+  // close check on the Bun side is skipped while the socket is corked, which
+  // leaves the gate at the end of HttpResponse::cork() as the only one. Ending
+  // the response rejects the unread request body, and that rejection handler
+  // runs in the microtask drain the end performs while the response still
+  // holds its cork slot. Corking two other sockets from there fills both of the
+  // loop's cork slots, so the second cork() force-flushes the response's slot
+  // (LRU). cork() used to treat its missing slot as "nothing left to do" and
+  // skip the gate, so the 304 reached the client but the connection was never
+  // shut down: a client reading until EOF hung until idleTimeout.
+  const wsServerSide: ServerWebSocket<unknown>[] = [];
+  const bothOpen = Promise.withResolvers<void>();
+  let evicted = false;
+  using server = Bun.serve<unknown>({
+    port: 0,
+    hostname: "127.0.0.1",
+    idleTimeout: 255,
+    websocket: {
+      open(ws) {
+        if (wsServerSide.push(ws) === 2) bothOpen.resolve();
+      },
+      message() {},
+    },
+    async fetch(req, server) {
+      if (new URL(req.url).pathname === "/ws") {
+        if (server.upgrade(req)) return;
+        return new Response(null, { status: 400 });
+      }
+      const [b, c] = wsServerSide;
+      req.text().catch(() => {
+        b.cork(() => {
+          b.send("b");
+          c.cork(() => c.send("c"));
+        });
+        evicted = true;
+      });
+      // Leave the parser's dispatch (uws corks the socket itself there) so the
+      // response below is rendered through HttpResponse::cork().
+      await Bun.sleep(0);
+      return new Response(null, { status: 304 });
+    },
+  });
+  const wsClients = [
+    new WebSocket(`ws://127.0.0.1:${server.port}/ws`),
+    new WebSocket(`ws://127.0.0.1:${server.port}/ws`),
+  ];
+  for (const ws of wsClients) ws.onerror = event => bothOpen.reject(new Error(`websocket client ${event.type}`));
+  await bothOpen.promise;
+
+  // The body never arrives, so the request body is still pending when the
+  // response completes.
+  const received = await requestUntilServerCloses(
+    server.port,
+    "POST / HTTP/1.1\r\nHost: x\r\nConnection: close\r\nContent-Length: 10\r\n\r\n",
+  );
+  for (const ws of wsClients) ws.close();
+
+  expect({ evicted, statusLine: received.slice(0, received.indexOf("\r\n")) }).toEqual({
+    evicted: true,
+    statusLine: "HTTP/1.1 304 Not Modified",
+  });
+});
+
+test("a Connection: close streaming response ended on a socket its own body write corked still closes", async () => {
+  // Companion of the test above for the other gate: nothing below completes
+  // inside HttpResponse::cork(). flush() writes the chunk through uws_res_write,
+  // which corks the socket by itself, and end() then completes the response on
+  // that socket. The loop's leftover-cork drain only flushes, so internalEnd's
+  // own close check is what has to shut the connection down.
+  using server = Bun.serve({
+    port: 0,
+    hostname: "127.0.0.1",
+    idleTimeout: 255,
+    async fetch() {
+      await Bun.sleep(0);
+      return new Response(
+        new ReadableStream({
+          type: "direct",
+          async pull(controller) {
+            // pull() is first invoked by the render, inside cork(); produce
+            // the body only once that (and the loop's cork drain) is over.
+            await Bun.sleep(0);
+            controller.write("x");
+            controller.flush();
+            await controller.end();
+          },
+        }),
+      );
+    },
+  });
+
+  const received = await requestUntilServerCloses(
+    server.port,
+    "GET / HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n",
+  );
+
+  expect(received).toMatch(/^HTTP\/1\.1 200 OK\r\n[^]*\r\n\r\n1\r\nx\r\n0\r\n\r\n$/);
+});
+
+// Writes one request and returns everything received once the server shuts
+// the connection down. The client itself never half-closes before that (a
+// client FIN would make the server close the connection for its own reasons),
+// and the callers' servers put idleTimeout out of reach, so a missing
+// server-side close stalls here until the runner timeout.
+async function requestUntilServerCloses(port: number, request: string): Promise<string> {
+  let received = "";
+  const shutDown = Promise.withResolvers<string>();
+  using client = await Bun.connect({
+    hostname: "127.0.0.1",
+    port,
+    socket: {
+      data(_socket, chunk) {
+        received += chunk.toString();
+      },
+      end() {
+        shutDown.resolve(received);
+      },
+      close() {
+        shutDown.resolve(received);
+      },
+      error(_socket, error) {
+        shutDown.reject(error);
+      },
+    },
+  });
+  client.write(request);
+  return await shutDown.promise;
+}
+
 test("should be able to await server.stop(true) with keep alive", async () => {
   const { promise, resolve } = Promise.withResolvers();
   const ready = Promise.withResolvers();

@@ -1151,16 +1151,29 @@ pub enum URLProto {
 
 impl Display for URLFormatter<'_> {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        write!(
-            f,
-            "{}://",
-            match self.proto {
-                URLProto::Http => "http",
-                URLProto::Https => "https",
-                URLProto::Unix => "unix",
-                URLProto::Abstract => "abstract",
+        match self.proto {
+            URLProto::Unix => {
+                let path = self.hostname.unwrap_or(b"");
+                // Without a leading `/`, the first segment lands in the URL host slot.
+                let host_len = if path.first() == Some(&b'/') {
+                    0
+                } else {
+                    strings::index_of_char_usize(path, b'/').unwrap_or(path.len())
+                };
+                return write!(
+                    f,
+                    "unix://{}{}",
+                    PercentEncoded::host(&path[..host_len]),
+                    PercentEncoded::path(&path[host_len..])
+                );
             }
-        )?;
+            URLProto::Abstract => {
+                let name = self.hostname.unwrap_or(b"");
+                return write!(f, "abstract://{}/", PercentEncoded::host(name));
+            }
+            URLProto::Http => f.write_str("http://")?,
+            URLProto::Https => f.write_str("https://")?,
+        }
 
         if let Some(hostname) = self.hostname {
             let needs_brackets =
@@ -1174,10 +1187,6 @@ impl Display for URLFormatter<'_> {
             f.write_str("localhost")?;
         }
 
-        if self.proto == URLProto::Unix {
-            return Ok(());
-        }
-
         let is_port_optional = self.port.is_none()
             || (self.proto == URLProto::Https && self.port == Some(443))
             || (self.proto == URLProto::Http && self.port == Some(80));
@@ -1186,6 +1195,68 @@ impl Display for URLFormatter<'_> {
         } else {
             write!(f, ":{}/", self.port.unwrap())
         }
+    }
+}
+
+/// The URL component that raw bytes land in once they follow `scheme://`.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum URLSlot {
+    Host,
+    Path,
+}
+
+/// Socket path bytes percent-encoded for one URL slot, so the WHATWG parser takes them losslessly.
+struct PercentEncoded<'a> {
+    bytes: &'a [u8],
+    slot: URLSlot,
+}
+
+impl<'a> PercentEncoded<'a> {
+    fn host(bytes: &'a [u8]) -> Self {
+        Self {
+            bytes,
+            slot: URLSlot::Host,
+        }
+    }
+
+    fn path(bytes: &'a [u8]) -> Self {
+        Self {
+            bytes,
+            slot: URLSlot::Path,
+        }
+    }
+}
+
+/// Only bytes the parser rejects, strips, reads as a delimiter or encodes itself, plus `%`.
+fn needs_percent_encoding(b: u8, slot: URLSlot) -> bool {
+    // C0 controls, DEL and non-ASCII: the parser strips tab, LF, CR and encodes the rest.
+    if b < 0x20 || b >= 0x7F {
+        return true;
+    }
+    match b {
+        // Delimiters, bytes both slots reject, and `%` so the output decodes back.
+        b' ' | b'#' | b'%' | b'<' | b'>' | b'?' | b'^' => true,
+        // Forbidden host code points. A path keeps them as-is.
+        b'/' | b':' | b'@' | b'[' | b'\\' | b']' | b'|' => slot == URLSlot::Host,
+        // The path percent-encode set. An opaque host keeps them as-is.
+        b'"' | b'`' | b'{' | b'}' => slot == URLSlot::Path,
+        _ => false,
+    }
+}
+
+impl Display for PercentEncoded<'_> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        for &b in self.bytes {
+            if needs_percent_encoding(b, self.slot) {
+                let h = hex_byte_upper(b);
+                f.write_char('%')?;
+                f.write_char(h[0] as char)?;
+                f.write_char(h[1] as char)?;
+            } else {
+                f.write_char(b as char)?;
+            }
+        }
+        Ok(())
     }
 }
 

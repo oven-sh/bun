@@ -3318,6 +3318,13 @@ function internalConnectMultipleTimeout(context, req, handle) {
   // leaves this armed; don't emit a spurious timeout or re-close the handle.
   if (!context.socket.connecting) return;
 
+  // TLS reports connect after handshake, so this timer can fire with TCP already
+  // up. Closing that socket makes getPeerCertificate() empty.
+  if (handle === context.socket._handle && handle?.remotePort > 0) {
+    $debug("connect/multiple: TCP peer already up for %s:%s, not timing out", req.address, req.port);
+    return;
+  }
+
   $debug("connect/multiple: connection to %s:%s timed out", req.address, req.port);
   context.socket.emit("connectionAttemptTimeout", req.address, req.port, req.addressType);
 

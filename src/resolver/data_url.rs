@@ -170,6 +170,43 @@ impl<'a> DataURL<'a> {
         bun_http_types::MimeType::MimeType::init(self.mime_type, false, None)
     }
 
+    /// MIME type for a `data:` URL: by extension, else a binary-byte sniff.
+    pub fn guess_mime_type(path: &[u8], contents: &[u8]) -> Vec<u8> {
+        let ext = strings::trim_leading_char(bun_paths::extension(path), b'.');
+        let mut lower = [0u8; 32];
+        let ext: &[u8] = if ext.len() <= lower.len() {
+            for (i, &b) in ext.iter().enumerate() {
+                lower[i] = b.to_ascii_lowercase();
+            }
+            &lower[..ext.len()]
+        } else {
+            ext
+        };
+        if let Some(mime) = bun_http_types::MimeType::by_extension_no_default(ext) {
+            let value = &*mime.value;
+            if strings::has_prefix_comptime(value, b"text/")
+                && !strings::contains(value, b"charset")
+            {
+                let mut v = Vec::with_capacity(value.len() + b";charset=utf-8".len());
+                v.extend_from_slice(value);
+                v.extend_from_slice(b";charset=utf-8");
+                return v;
+            }
+            return value.to_vec();
+        }
+        // https://mimesniff.spec.whatwg.org/#binary-data-byte
+        let n = contents.len().min(512);
+        let binary = !strings::is_valid_utf8(contents)
+            || contents[..n]
+                .iter()
+                .any(|&b| matches!(b, 0x00..=0x08 | 0x0B | 0x0E..=0x1A | 0x1C..=0x1F));
+        if binary {
+            b"application/octet-stream".to_vec()
+        } else {
+            b"text/plain;charset=utf-8".to_vec()
+        }
+    }
+
     /// Decodes the data from the data URL. Always returns an owned slice.
     pub fn decode_data(&self) -> Result<Vec<u8>, DecodeDataError> {
         let percent_decoded_owned: Option<Vec<u8>> = PercentEncoding::decode_unstrict(self.data)?;

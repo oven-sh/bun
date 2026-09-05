@@ -4581,7 +4581,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         break;
                     }
                 }
-            } else if loader == options::Loader::File || loader == options::Loader::Text {
+            } else if matches!(
+                loader,
+                options::Loader::File
+                    | options::Loader::Text
+                    | options::Loader::Base64
+                    | options::Loader::Dataurl
+                    | options::Loader::Md
+            ) {
                 // arena-owned `StoreSlice<ClauseItem>` valid for parser 'a.
                 for item in stmt.items.iter() {
                     // `ClauseItem.alias` is an arena-owned `StoreStr` valid for 'a.

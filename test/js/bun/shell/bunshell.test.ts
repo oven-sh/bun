@@ -3470,3 +3470,70 @@ test.skipIf(isWindows)("external command resolution uses the PATH from the shell
     expect(exitCode).toBe(0);
   }
 });
+
+// On Windows the shell rewrites each file operand against the cwd it tracks
+// before opening or stat-ing it: relative names are joined onto the cwd and a
+// `/name` is put on the cwd's drive. The rewrite goes through one 98302-byte
+// path buffer, and an operand that did not fit used to be copied in unchecked
+// and take the process down. It has to fail like any other over-long name.
+// POSIX hands operands to the *at() syscalls as-is, so there is nothing to
+// rewrite there. Runs in a child process so a regression fails the test
+// instead of killing the test runner.
+test.if(isWindows)("operands longer than the path buffer fail with ENAMETOOLONG instead of crashing", async () => {
+  using dir = tempDir("shell-long-operand", { "in.txt": "content\n" });
+  const script = `
+    import { $ } from "bun";
+    $.nothrow();
+    $.cwd(process.env.SHELL_CWD);
+    const long = Buffer.alloc(100_000, "a").toString();
+    // Longer than the buffer as written, but normalizes back down to a name
+    // inside the cwd; this worked before and has to keep working.
+    const collapsing = Buffer.alloc(100_000, "a/../").toString();
+    const show = buf => buf.toString().replaceAll(long, "<long>").replaceAll(collapsing, "<collapsing>");
+    const run = async promise => {
+      const { exitCode, stdout, stderr } = await promise.quiet();
+      return { exitCode, stdout: show(stdout), stderr: show(stderr) };
+    };
+    console.log(
+      JSON.stringify({
+        cat: await run($\`cat \${long}\`),
+        redirect: await run($\`echo hi > \${long}\`),
+        isFile: await run($\`[[ -f \${long} ]]\`),
+        rootedCat: await run($\`cat \${"/" + long}\`),
+        rootedLs: await run($\`ls \${"/" + long}\`),
+        rootedMvTarget: await run($\`mv in.txt \${"/" + long}\`),
+        rootedRedirect: await run($\`echo hi > \${"/" + long}\`),
+        rootedIsDir: await run($\`[[ -d \${"/" + long} ]]\`),
+        collapsingCat: await run($\`cat \${collapsing + "in.txt"}\`),
+        collapsingIsFile: await run($\`[[ -f \${collapsing + "in.txt"} ]]\`),
+        collapsingRedirect: await run($\`echo hi > \${collapsing + "out.txt"}\`),
+      }),
+    );
+  `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", script],
+    env: { ...bunEnv, SHELL_CWD: String(dir) },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  const failed = (stderr: string) => ({ exitCode: 1, stdout: "", stderr });
+  const succeeded = (stdout: string) => ({ exitCode: 0, stdout, stderr: "" });
+  expect(JSON.parse(stdout)).toEqual({
+    cat: failed("cat: <long>: File name too long\n"),
+    redirect: failed("bun: File name too long: <long>"),
+    isFile: failed(""),
+    rootedCat: failed("cat: /<long>: File name too long\n"),
+    rootedLs: failed("ls: /<long>: File name too long\n"),
+    rootedMvTarget: failed("mv: /<long>: File name too long\n"),
+    rootedRedirect: failed("bun: File name too long: /<long>"),
+    rootedIsDir: failed(""),
+    collapsingCat: succeeded("content\n"),
+    collapsingIsFile: succeeded(""),
+    collapsingRedirect: succeeded(""),
+  });
+  expect(await Bun.file(join(String(dir), "in.txt")).text()).toBe("content\n");
+  expect(await Bun.file(join(String(dir), "out.txt")).text()).toBe("hi\n");
+  expect(exitCode).toBe(0);
+});

@@ -153,16 +153,21 @@ async function tryBuildFast(dir: string): Promise<boolean> {
 // links its bin dependencies (nopt, which, glob, semver) into the shared bin dir.
 // Several addon builds doing that at once race on those links (EEXIST) and fail,
 // so callers that build concurrently warm the cache once, serially, first.
+//
+// The warm-up also installs the node headers when they are not cached. Without them
+// tryBuildFast() falls back to node-gyp, and on a cold machine each concurrent build
+// then downloads and extracts the same header tree (about 65 MB in 2,700 files).
 export async function warmNodeGyp() {
+  const command = findNodeHeaders() === null ? "install" : "--version";
   // Best effort: a failed warm-up must never stop the addon builds, which
-  // install node-gyp themselves if the cache is cold.
+  // install node-gyp and the headers themselves if the cache is cold.
   try {
     const child = spawn({
-      cmd: [bunExe(), "--bun", "x", "node-gyp@11", "--version"],
+      cmd: [bunExe(), "--bun", "x", "node-gyp@11", command],
       stderr: "pipe",
       stdout: "ignore",
       stdin: "ignore",
-      env: bunEnv,
+      env: { ...bunEnv, npm_config_target: `v${NODE_HEADERS_VERSION}` },
     });
     const [stderr, exitCode] = await Promise.all([new Response(child.stderr).text(), child.exited]);
     if (exitCode !== 0) console.warn(`warming node-gyp failed (builds will install it themselves):\n${stderr}`);

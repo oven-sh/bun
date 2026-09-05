@@ -1831,6 +1831,25 @@ impl BlobExt for Blob {
 
         #[cfg(not(windows))]
         {
+            let is_stdout_or_stderr = 'brk: {
+                let PathOrFileDescriptor::Fd(fd) = &store.data.as_file().pathlike else {
+                    break 'brk false;
+                };
+                if let Some(rare) = global_this.bun_vm().rare_data.as_ref() {
+                    let store_ptr = store.as_ptr().cast::<c_void>();
+                    if rare.stdout_store.map(|p| p.as_ptr()) == Some(store_ptr) {
+                        break 'brk true;
+                    }
+                    if rare.stderr_store.map(|p| p.as_ptr()) == Some(store_ptr) {
+                        break 'brk true;
+                    }
+                }
+                matches!(
+                    fd.stdio_tag(),
+                    Some(bun_core::Stdio::StdOut) | Some(bun_core::Stdio::StdErr)
+                )
+            };
+
             let sink = webcore::FileSink::init(
                 bun_sys::Fd::INVALID,
                 jsc::EventLoopHandle::init(
@@ -1843,6 +1862,12 @@ impl BlobExt for Blob {
                 ),
             );
             // `to_js` takes its own per-wrapper +1; init's ref drops at scope end.
+
+            if is_stdout_or_stderr {
+                // Same as the Windows arm and `process.stdout`/`process.stderr`.
+                sink.force_sync.set(true);
+            }
+
             let input_path: webcore::PathOrFileDescriptor = match &store.data.as_file().pathlike {
                 PathOrFileDescriptor::Fd(fd) => webcore::PathOrFileDescriptor::Fd(*fd),
                 PathOrFileDescriptor::Path(p) => webcore::PathOrFileDescriptor::Path(

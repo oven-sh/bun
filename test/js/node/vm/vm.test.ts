@@ -1974,3 +1974,33 @@ describe("node:vm lineOffset/columnOffset at the edge of int32", () => {
     expect(position).toBeLessThanOrEqual(INT32_MAX);
   });
 });
+
+describe("Script.prototype methods", () => {
+  // Node defines them as ordinary writable methods, so test doubles can
+  // replace them (jest.spyOn(vm.Script.prototype, "runInContext")).
+  test.each(["runInContext", "runInNewContext", "runInThisContext", "createCachedData"])(
+    "%s is writable and configurable",
+    name => {
+      const descriptor = Object.getOwnPropertyDescriptor(Script.prototype, name)!;
+      expect(descriptor.writable).toBe(true);
+      expect(descriptor.configurable).toBe(true);
+      expect(descriptor.enumerable).toBe(false);
+    },
+  );
+
+  test("runInContext can be replaced and restored", () => {
+    const original = Script.prototype.runInContext;
+    const calls: unknown[] = [];
+    Script.prototype.runInContext = function (this: Script, ...args: unknown[]) {
+      calls.push(args);
+      return "replaced";
+    } as typeof original;
+    try {
+      expect(new Script("1 + 1").runInContext(createContext({}))).toBe("replaced");
+      expect(calls).toHaveLength(1);
+    } finally {
+      Script.prototype.runInContext = original;
+    }
+    expect(new Script("1 + 1").runInContext(createContext({}))).toBe(2);
+  });
+});

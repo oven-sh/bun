@@ -16,6 +16,8 @@ use bun_exe_format::{elf as bun_elf, macho as bun_macho, pe as bun_pe};
 use bun_options_types::bundle_enums::{Format, WindowsOptions};
 #[cfg(not(windows))]
 use bun_paths::SEP_STR;
+
+use crate::error::Corruption;
 use bun_paths::fs as bun_fs;
 use bun_paths::{self as path, PathBuffer, strings};
 #[cfg(windows)]
@@ -42,7 +44,7 @@ pub struct StandaloneModuleGraph {
     pub files: StringArrayHashMap<File>,
     /// Directory prefixes derived from `files` keys (no trailing `/`, always posix-separated).
     pub dirs: StringArrayHashMap<()>,
-    pub entry_point_id: u32,
+    entry_point_id: u32,
     pub compile_exec_argv: &'static [u8],
     pub flags: Flags,
     /// InternalModuleRegistry id → its bytecode inside `bytes` (JSC reads it in place; see `File::bytecode`).
@@ -780,15 +782,19 @@ impl LazySourceMap {
                         .collect();
                 for i in 0..source_files_count {
                     // SAFETY: `serialized.bytes` is a 'static read-only sourcemap subrange
-                    // (disjoint from bytecode); StringPointer offsets were serialized by
-                    // `to_bytes` and are in-bounds.
-                    file_names.push(Box::from(unsafe {
+                    // (disjoint from bytecode); `slice_to` checks the name pointer against it.
+                    let Ok(name) = (unsafe {
                         slice_to(
                             serialized.bytes.as_ptr(),
                             serialized.bytes.len(),
                             serialized.source_file_name(i),
+                            Corruption::ModuleSourceMap,
                         )
-                    }));
+                    }) else {
+                        *self = LazySourceMap::None;
+                        return None;
+                    };
+                    file_names.push(Box::from(name));
                 }
 
                 let data = Box::new(SerializedSourceMapLoaded {
@@ -903,9 +909,19 @@ impl StandaloneModuleGraph {
         // the bytecode/module_info regions never have a shared reference formed over them.
         let raw_const: *const u8 = raw_ptr;
 
+        if offsets.byte_count > raw_len {
+            return Err(Corruption::ByteCount.into());
+        }
         // SAFETY: modules metadata blob is a read-only subrange of `[0, raw_len)` disjoint
         // from bytecode/module_info, serialized by `to_bytes`.
-        let modules_list_bytes = unsafe { slice_to(raw_const, raw_len, offsets.modules_ptr) };
+        let modules_list_bytes = unsafe {
+            slice_to(
+                raw_const,
+                raw_len,
+                offsets.modules_ptr,
+                Corruption::ModuleList,
+            )?
+        };
         // Note: the modules blob sits at an arbitrary byte offset in the section, and
         // `&[CompiledModuleGraphFile]` would require natural alignment (StringPointer's u32 fields
         // → 4-byte). We instead iterate by index and `read_unaligned` each fixed-size record into a
@@ -913,8 +929,11 @@ impl StandaloneModuleGraph {
         let modules_list_count = modules_list_bytes.len() / size_of::<CompiledModuleGraphFile>();
         let modules_list_base = modules_list_bytes.as_ptr();
 
-        if offsets.entry_point_id as usize > modules_list_count {
-            return Err(crate::Error::CorruptedModuleGraphEntryPointIDIsGreaterThanModuleListCount);
+        // `entry_point()` indexes `files` by this id. `to_bytes` writes one file per
+        // record with distinct names, and a repeated name is rejected below, so the
+        // record count is the file count.
+        if offsets.entry_point_id as usize >= modules_list_count {
+            return Err(Corruption::EntryPointId.into());
         }
 
         let read_u32 = |at: usize| -> u32 {
@@ -1017,17 +1036,35 @@ impl StandaloneModuleGraph {
                 )
             };
             let module = &module;
-            // SAFETY: each name/contents/sourcemap/bytecode_origin_path subrange is in-bounds
-            // (serialized by `to_bytes`) and disjoint from the writable bytecode/module_info
-            // subranges; section bytes are a live 'static allocation.
+            // SAFETY: each name/contents/sourcemap/bytecode_origin_path subrange is checked
+            // against `raw_len` and is disjoint from the writable bytecode/module_info
+            // subranges (serialized by `to_bytes`); section bytes are a live 'static allocation.
             let (name, contents, sourcemap_bytes, bytecode_origin) = unsafe {
                 (
-                    slice_to_z(raw_const, raw_len, module.name),
-                    slice_to_z(raw_const, raw_len, module.contents),
-                    slice_to(raw_const, raw_len, module.sourcemap),
-                    slice_to_z(raw_const, raw_len, module.bytecode_origin_path),
+                    slice_to_z(raw_const, raw_len, module.name, Corruption::ModuleName)?,
+                    slice_to_z(
+                        raw_const,
+                        raw_len,
+                        module.contents,
+                        Corruption::ModuleContents,
+                    )?,
+                    slice_to(
+                        raw_const,
+                        raw_len,
+                        module.sourcemap,
+                        Corruption::ModuleSourceMap,
+                    )?,
+                    slice_to_z(
+                        raw_const,
+                        raw_len,
+                        module.bytecode_origin_path,
+                        Corruption::BytecodeOriginPath,
+                    )?,
                 )
             };
+            if modules.contains_key(name.as_bytes()) {
+                return Err(Corruption::DuplicateModuleName.into());
+            }
             let _ = modules.put(
                 name.as_bytes(),
                 File {
@@ -1046,16 +1083,30 @@ impl StandaloneModuleGraph {
                     },
                     bytecode: if module.bytecode.length > 0 {
                         // SAFETY: section bytes are a writable 'static allocation; JSC mutates
-                        // bytecode in place. Subrange is in-bounds (serialized by to_bytes) and
+                        // bytecode in place. Subrange is checked against `raw_len` and is
                         // disjoint from every read-only subslice handed out above — no
                         // `&[u8]` is ever formed over this range.
-                        unsafe { slice_to_mut(raw_ptr, raw_len, module.bytecode) }
+                        unsafe {
+                            slice_to_mut(
+                                raw_ptr,
+                                raw_len,
+                                module.bytecode,
+                                Corruption::ModuleBytecode,
+                            )?
+                        }
                     } else {
                         std::ptr::from_mut::<[u8]>(&mut [])
                     },
                     module_info: if module.module_info.length > 0 {
                         // SAFETY: see bytecode above.
-                        unsafe { slice_to_mut(raw_ptr, raw_len, module.module_info) }
+                        unsafe {
+                            slice_to_mut(
+                                raw_ptr,
+                                raw_len,
+                                module.module_info,
+                                Corruption::ModuleInfo,
+                            )?
+                        }
                     } else {
                         std::ptr::from_mut::<[u8]>(&mut [])
                     },
@@ -1103,7 +1154,12 @@ impl StandaloneModuleGraph {
             entry_point_id: offsets.entry_point_id,
             // SAFETY: read-only argv string subrange, disjoint from writable regions.
             compile_exec_argv: unsafe {
-                slice_to_z(raw_const, raw_len, offsets.compile_exec_argv_ptr)
+                slice_to_z(
+                    raw_const,
+                    raw_len,
+                    offsets.compile_exec_argv_ptr,
+                    Corruption::CompileExecArgv,
+                )?
             }
             .as_bytes(),
             flags: offsets.flags,
@@ -1127,48 +1183,76 @@ impl StandaloneModuleGraph {
 /// shared reference ever spans the writable bytecode/module_info regions of the same
 /// allocation (which would be invalidated by JSC's in-place writes).
 ///
+/// `Err(what)` when the pointer reaches past `len`: every offset comes from the
+/// executable, so a damaged one is reported instead of read.
+///
 /// SAFETY: caller guarantees `base[..len]` is a live 'static allocation and
-/// `[ptr.offset, ptr.offset + ptr.length)` is in-bounds and never written through a
-/// `*mut` alias for the lifetime of the returned reference.
-unsafe fn slice_to(base: *const u8, len: usize, ptr: StringPointer) -> &'static [u8] {
+/// `[ptr.offset, ptr.offset + ptr.length)` is never written through a `*mut`
+/// alias for the lifetime of the returned reference.
+unsafe fn slice_to(
+    base: *const u8,
+    len: usize,
+    ptr: StringPointer,
+    what: Corruption,
+) -> crate::Result<&'static [u8]> {
     if ptr.length == 0 {
-        return b"";
+        return Ok(b"");
     }
+    let (off, n) = checked_range(len, ptr, 0).ok_or(what)?;
+    // SAFETY: `[off, off+n)` is within `len` (checked above) and, per the caller
+    // contract, is a live 'static read-only allocation.
+    Ok(unsafe { core::slice::from_raw_parts(base.add(off), n) })
+}
+
+/// `(offset, length)` of `ptr` if `[offset, offset + length + tail)` fits in `len`.
+fn checked_range(len: usize, ptr: StringPointer, tail: usize) -> Option<(usize, usize)> {
     let off = ptr.offset as usize;
     let n = ptr.length as usize;
-    debug_assert!(off.checked_add(n).is_some_and(|end| end <= len));
-    let _ = len;
-    // SAFETY: caller contract — `[off, off+n)` lies within a live 'static read-only allocation.
-    unsafe { core::slice::from_raw_parts(base.add(off), n) }
+    off.checked_add(n)?
+        .checked_add(tail)
+        .filter(|&end| end <= len)
+        .map(|_| (off, n))
 }
 
 /// Mutable-subslice helper for `from_bytes`. Derives a `*mut [u8]` directly from the raw
 /// section base so the result carries write provenance — going through `slice_to` (which
 /// returns `&[u8]`) and casting `*const [u8] as *mut [u8]` would be UB on write.
 ///
-/// SAFETY: caller guarantees `base[..len]` is a live allocation with write permission and
-/// that `[ptr.offset, ptr.offset + ptr.length)` is in-bounds.
-unsafe fn slice_to_mut(base: *mut u8, len: usize, ptr: StringPointer) -> *mut [u8] {
-    let off = ptr.offset as usize;
-    let n = ptr.length as usize;
-    debug_assert!(off.checked_add(n).is_some_and(|end| end <= len));
-    let _ = len;
-    // SAFETY: caller contract — `off` is in-bounds of the writable allocation at `base`.
-    core::ptr::slice_from_raw_parts_mut(unsafe { base.add(off) }, n)
+/// SAFETY: caller guarantees `base[..len]` is a live allocation with write permission.
+unsafe fn slice_to_mut(
+    base: *mut u8,
+    len: usize,
+    ptr: StringPointer,
+    what: Corruption,
+) -> crate::Result<*mut [u8]> {
+    let (off, n) = checked_range(len, ptr, 0).ok_or(what)?;
+    // SAFETY: `off` is within `len` (checked above) of the writable allocation at `base`.
+    Ok(core::ptr::slice_from_raw_parts_mut(
+        unsafe { base.add(off) },
+        n,
+    ))
 }
 
-/// SAFETY: as `slice_to`, plus `base[ptr.offset + ptr.length] == 0` (written by
-/// `to_bytes` via `appendCountZ`).
-unsafe fn slice_to_z(base: *const u8, len: usize, ptr: StringPointer) -> &'static ZStr {
+/// As `slice_to`, and also `Err(what)` unless `base[ptr.offset + ptr.length] == 0`
+/// (written by `to_bytes` via `appendCountZ`).
+///
+/// SAFETY: as `slice_to`.
+unsafe fn slice_to_z(
+    base: *const u8,
+    len: usize,
+    ptr: StringPointer,
+    what: Corruption,
+) -> crate::Result<&'static ZStr> {
     if ptr.length == 0 {
-        return ZStr::EMPTY;
+        return Ok(ZStr::EMPTY);
     }
-    let off = ptr.offset as usize;
-    let n = ptr.length as usize;
-    debug_assert!(off.checked_add(n).is_some_and(|end| end < len));
-    let _ = len;
-    // SAFETY: caller contract — `[off, off+n]` is in-bounds with a NUL terminator at `base[off+n]`.
-    unsafe { ZStr::from_raw(base.add(off), n) }
+    let (off, n) = checked_range(len, ptr, 1).ok_or(what)?;
+    // SAFETY: `off + n < len` (checked above), so the terminator byte is in bounds.
+    if unsafe { *base.add(off + n) } != 0 {
+        return Err(what.into());
+    }
+    // SAFETY: `[off, off+n]` is in-bounds with a NUL terminator at `base[off+n]`.
+    Ok(unsafe { ZStr::from_raw(base.add(off), n) })
 }
 
 /// A text import the bundler emitted as an asset (`Loader::Text` arm of

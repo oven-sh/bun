@@ -336,6 +336,103 @@ describe("compiled binary validity", () => {
     }
   });
 
+  // The embedded module graph ends with `Offsets` (repr(C): byte_count u64, modules_ptr {offset u32, length u32},
+  // entry_point_id u32, compile_exec_argv_ptr, flags) followed by the trailer. `byte_count` is the size of the
+  // graph before `Offsets`, and `modules_ptr` points into it at the 52-byte `CompiledModuleGraphFile` records,
+  // each of which starts with the module name as {offset u32, length u32} into the graph.
+  const GRAPH_TRAILER = "\n---- Bun! ----\n";
+  const OFFSETS_SIZE = 32;
+  const MODULE_RECORD_SIZE = 52;
+
+  function locateModuleGraph(executable: Buffer) {
+    const trailerAt = executable.lastIndexOf(GRAPH_TRAILER);
+    expect(trailerAt).toBeGreaterThan(OFFSETS_SIZE);
+    const offsetsAt = trailerAt - OFFSETS_SIZE;
+    const graphAt = offsetsAt - Number(executable.readBigUInt64LE(offsetsAt));
+    return {
+      modulesAt: graphAt + executable.readUInt32LE(offsetsAt + 8),
+      moduleRecordCount: executable.readUInt32LE(offsetsAt + 12) / MODULE_RECORD_SIZE,
+      entryPointIdAt: offsetsAt + 16,
+    };
+  }
+  type ModuleGraphLayout = ReturnType<typeof locateModuleGraph>;
+
+  const twoFiles = { "app.js": `console.log("should not run");`, "worker.js": `console.log("should not run");` };
+  const corruptedGraphs = [
+    {
+      label: "entry_point_id equal to the module count",
+      files: { "app.js": `console.log("should not run");` },
+      error: "entry point ID is out of range for the module list",
+      corrupt(executable: Buffer, { moduleRecordCount, entryPointIdAt }: ModuleGraphLayout) {
+        executable.writeUInt32LE(moduleRecordCount, entryPointIdAt);
+      },
+    },
+    {
+      // Files are keyed by name, so a repeated name would collapse two records into one
+      // and leave every later id pointing at the wrong file.
+      label: "two module records with the same name",
+      files: twoFiles,
+      error: "two modules share a name",
+      corrupt(executable: Buffer, { modulesAt }: ModuleGraphLayout) {
+        executable.copy(executable, modulesAt + MODULE_RECORD_SIZE, modulesAt, modulesAt + 8);
+      },
+    },
+    {
+      label: "a module name pointing past the end of the graph",
+      files: twoFiles,
+      error: "module name is out of range",
+      corrupt(executable: Buffer, { modulesAt }: ModuleGraphLayout) {
+        executable.writeUInt32LE(0xfffffff0, modulesAt);
+      },
+    },
+    {
+      // Record layout: name {offset, length}, contents {offset, length}, ...
+      label: "module contents longer than the graph",
+      files: twoFiles,
+      error: "module contents are out of range",
+      corrupt(executable: Buffer, { modulesAt }: ModuleGraphLayout) {
+        executable.writeUInt32LE(0x7fffffff, modulesAt + MODULE_RECORD_SIZE + 12);
+      },
+    },
+  ];
+
+  // A damaged graph must surface as an error, not an out-of-bounds panic in
+  // `entry_point()`. macOS is skipped: the patched Mach-O would need re-signing
+  // with Bun's own ad-hoc signer, and `from_bytes` is shared across platforms.
+  // Higher per-test timeout: the whole executable (~1GB under debug+ASAN) is
+  // compiled, read back and rewritten.
+  test.skipIf(isMacOS).each(corruptedGraphs)(
+    "$label is reported instead of crashing",
+    async ({ files, error, corrupt }) => {
+      using dir = tempDir("build-compile-corrupt-entry", files);
+      const result = await Bun.build({
+        entrypoints: Object.keys(files).map(file => join(String(dir), file)),
+        compile: { outfile: join(String(dir), "app-corrupt") },
+      });
+      expect(result.success).toBe(true);
+      const outfile = result.outputs[0].path;
+
+      const executable = Buffer.from(await Bun.file(outfile).arrayBuffer());
+      const layout = locateModuleGraph(executable);
+      expect({
+        moduleRecordCount: layout.moduleRecordCount,
+        entryPointId: executable.readUInt32LE(layout.entryPointIdAt),
+      }).toEqual({ moduleRecordCount: Object.keys(files).length, entryPointId: 0 });
+      corrupt(executable, layout);
+      await Bun.write(outfile, executable);
+      chmodSync(outfile, 0o755);
+
+      await using proc = Bun.spawn({ cmd: [outfile], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout, stderr, exitCode }).toEqual({
+        stdout: "",
+        stderr: expect.stringContaining("Corrupted module graph: " + error),
+        exitCode: 1,
+      });
+    },
+    60_000,
+  );
+
   test("compiled binary runs and produces expected output", async () => {
     using dir = tempDir("build-compile-runs", {
       "app.js": `console.log("compile-test-output");`,

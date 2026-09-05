@@ -225,6 +225,8 @@ pub struct BundlerOptions {
     pub env_behavior: api::DotEnvBehavior,
     pub env_prefix: Box<[u8]>,
     pub elide_lines: Option<usize>,
+    /// `--elide-lines` was passed, so `run.elide-lines` in bunfig.toml must not override it.
+    pub elide_lines_from_cli: bool,
     // Compile options
     pub compile: bool,
     pub compile_target: CompileTarget,
@@ -282,6 +284,7 @@ impl Default for BundlerOptions {
             env_behavior: api::DotEnvBehavior::disable,
             env_prefix: Box::default(),
             elide_lines: None,
+            elide_lines_from_cli: false,
             compile: false,
             compile_target: CompileTarget::default(),
             compile_exec_argv: None,
@@ -344,6 +347,9 @@ pub fn try_get<'a>() -> Option<&'a ContextData> {
 pub struct DebugOptions {
     pub dump_environment_variables: bool,
     pub silent: bool,
+    /// `--silent` was passed, so `run.silent` in bunfig.toml must not override it.
+    /// (bunfig.toml can be loaded after CLI flags are applied, e.g. for `bun run`.)
+    pub silent_from_cli: bool,
     pub hot_reload: HotReload,
     /// `--watch-kill-signal`: signal whose JS handlers run before a `--watch`
     /// reload (node delivers this signal to its watched child; default SIGTERM).
@@ -351,9 +357,13 @@ pub struct DebugOptions {
     pub global_cache: GlobalCache,
     pub offline_mode_setting: Option<OfflineMode>,
     pub run_in_bun: bool,
+    /// `--bun` was passed, so `run.bun` in bunfig.toml must not override it.
+    pub run_in_bun_from_cli: bool,
     pub loaded_bunfig: bool,
     /// Disables using bun.shell.Interpreter for `bun run`, instead spawning cmd.exe
     pub use_system_shell: bool,
+    /// `--shell` was passed, so `run.shell` in bunfig.toml must not override it.
+    pub use_system_shell_from_cli: bool,
 
     // technical debt
     pub macros: MacroOptions,
@@ -371,13 +381,16 @@ impl Default for DebugOptions {
         Self {
             dump_environment_variables: false,
             silent: false,
+            silent_from_cli: false,
             hot_reload: HotReload::None,
             watch_kill_signal: bun_core::SignalCode::DEFAULT,
             global_cache: GlobalCache::auto,
             offline_mode_setting: None,
             run_in_bun: false,
+            run_in_bun_from_cli: false,
             loaded_bunfig: false,
             use_system_shell: !cfg!(windows),
+            use_system_shell_from_cli: false,
             macros: MacroOptions::Unspecified,
             editor: Box::default(),
             package_bundle_map: ArrayHashMap::default(),

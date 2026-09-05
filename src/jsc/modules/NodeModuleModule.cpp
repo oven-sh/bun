@@ -18,6 +18,7 @@
 
 #include "PathInlines.h"
 #include "ZigGlobalObject.h"
+#include "BunProcess.h"
 #include "headers.h"
 #include "ErrorCode.h"
 
@@ -782,6 +783,22 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionRunMain, (JSGlobalObject * globalObject, JSC:
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto arg1 = callFrame->argument(0);
+
+    // Node: `function executeUserEntryPoint(main = process.argv[1])`
+    if (arg1.isUndefined()) {
+        auto* zigGlobalObject = defaultGlobalObject(globalObject);
+        if (auto* process = zigGlobalObject->processObject()) {
+            JSValue argv = process->getArgv(globalObject);
+            RETURN_IF_EXCEPTION(scope, {});
+            arg1 = argv.get(globalObject, 1u);
+            RETURN_IF_EXCEPTION(scope, {});
+        }
+    }
+    if (!arg1.isString()) {
+        // Node: resolveMainPath() calls path.resolve(main) and throws this
+        return Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, "paths[0]"_s, "string"_s, arg1);
+    }
+
     auto name = arg1.toWTFString(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
 

@@ -406,15 +406,15 @@ console.log("survived", require("./late.js"));`,
     expect(Module._resolveFilename("fs")).toBe("fs");
   });
 
-  test("Module.runMain propagates an error from stringifying its argument", () => {
-    const boom = new Error("boom");
+  test("Module.runMain rejects a non-string argument without stringifying it", () => {
+    // Node validates typeof before any coercion, so the toString never runs.
     expect(() =>
       Module.runMain({
         toString() {
-          throw boom;
+          throw new Error("boom");
         },
       }),
-    ).toThrow(boom);
+    ).toThrow('The "paths[0]" argument must be of type string');
   });
 
   test("module.filename/id/path setters propagate a failed string conversion", () => {
@@ -890,6 +890,111 @@ console.log("survived", require("./late.js"));`,
     expect(stdout.trim()).toBe("pass");
     expect(await proc.exited).toBe(0);
   });
+
+  // https://github.com/oven-sh/bun/issues/31773
+  // runMain() with no argument must default to process.argv[1] (the current
+  // main entry) like Node, instead of coercing `undefined` to the string
+  // "undefined" and failing to resolve it as a module.
+  describe.each([
+    ["esm", "entry.mjs", `import { runMain } from "node:module";\nrunMain();\nconsole.log("ran");\n`],
+    ["cjs", "entry.cjs", `const { runMain } = require("node:module");\nrunMain();\nconsole.log("ran");\n`],
+  ])("runMain() with no argument (%s)", (_name, filename, source) => {
+    test("defaults to the main entry", async () => {
+      using dir = tempDir("run-main-no-arg", { [filename]: source });
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), filename],
+        env: bunEnv,
+        cwd: String(dir),
+        stderr: "pipe",
+        stdout: "pipe",
+      });
+
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      expect(stderr).not.toContain("Cannot find package");
+      expect(stdout.trim()).toBe("ran");
+      expect(exitCode).toBe(0);
+    });
+  });
+
+  // With `-e` there is no process.argv[1]. Node throws ERR_INVALID_ARG_TYPE
+  // from path.resolve(undefined) instead of resolving a module named
+  // "undefined". Non-string arguments take the same path: Node's default
+  // parameter only substitutes `undefined`, so `runMain(null)` reaches
+  // path.resolve(null) and throws the same error.
+  describe.each([
+    ["no argument, no main entry", `require("node:module").runMain()`],
+    ["null argument", `require("node:module").runMain(null)`],
+    ["number argument", `require("node:module").runMain(42)`],
+  ])("runMain() with an invalid main (%s)", (_name, source) => {
+    test("throws ERR_INVALID_ARG_TYPE", async () => {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", source],
+        env: bunEnv,
+        stderr: "pipe",
+        stdout: "pipe",
+      });
+
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      expect(stderr).not.toContain("Cannot find package");
+      expect(stderr).toContain('The "paths[0]" argument must be of type string');
+      expect(stdout).toBe("");
+      expect(exitCode).toBe(1);
+    });
+  });
+
+  // Node reads the default through a plain property get (`process.argv[1]`),
+  // so any replacement of process.argv behaves like JS property access: an
+  // array-like object works, a string indexes, and null throws a TypeError.
+  describe.each([
+    [
+      "array-like object works",
+      `process.argv = { 1: process.argv[1] };\nrequire("node:module").runMain();\nconsole.log("ran");\n`,
+      proc => {
+        expect(proc.stderr).not.toContain("Cannot find package");
+        expect(proc.stdout.trim()).toBe("ran");
+        expect(proc.exitCode).toBe(0);
+      },
+    ],
+    [
+      "string indexes like Node",
+      // "x/"[1] is "/": resolution fails on module "/", not on "undefined"
+      // and not with the paths[0] TypeError. An absolute path never triggers
+      // auto-install, so the failure is deterministic and offline.
+      `process.argv = "x/";\ntry { require("node:module").runMain(); console.log("bad: no throw"); } catch (e) { console.log(e.message.includes("undefined") || e.message.includes("paths[0]") ? "bad" : "indexed"); }\n`,
+      proc => {
+        expect(proc.stdout.trim()).toBe("indexed");
+        expect(proc.exitCode).toBe(0);
+      },
+    ],
+    [
+      "null throws a property-access TypeError",
+      `process.argv = null;\ntry { require("node:module").runMain(); console.log("bad: no throw"); } catch (e) { console.log(e instanceof TypeError && !e.message.includes("paths[0]") ? "typeerror" : "bad"); }\n`,
+      proc => {
+        expect(proc.stdout.trim()).toBe("typeerror");
+        expect(proc.exitCode).toBe(0);
+      },
+    ],
+  ])("runMain() with a replaced process.argv (%s)", (_name, source, check) => {
+    test("matches Node property access", async () => {
+      using dir = tempDir("run-main-argv-replaced", { "entry.cjs": source });
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "entry.cjs"],
+        env: bunEnv,
+        cwd: String(dir),
+        stderr: "pipe",
+        stdout: "pipe",
+      });
+
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      check({ stdout, stderr, exitCode });
+    });
+  });
+
   test.each(["no args", "--access-early"])("children, %s", async arg => {
     await using proc = Bun.spawn({
       cmd: [bunExe(), path.join(import.meta.dir, "children-fixture/a.cjs"), arg],

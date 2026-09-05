@@ -971,6 +971,11 @@ pub fn starts_with_case_insensitive_ascii(self_: &[u8], prefix: &[u8]) -> bool {
         && eql_case_insensitive_ascii(&self_[0..prefix.len()], prefix, false)
 }
 
+#[inline]
+pub fn ends_with_case_insensitive_ascii(self_: &[u8], suffix: &[u8]) -> bool {
+    self_.len() >= suffix.len() && self_[self_.len() - suffix.len()..].eq_ignore_ascii_case(suffix)
+}
+
 pub use crate::strings_impl::{
     has_prefix_t, has_prefix_t as starts_with_generic, has_suffix_t,
     has_suffix_t as ends_with_generic,
@@ -2757,6 +2762,26 @@ mod tests {
         assert_eq!(super::first_non_ascii(b"ab\xC3"), Some(2));
         assert!(super::eql_case_insensitive_ascii(b"A", b"a", true));
         assert!(!super::eql_case_insensitive_ascii(b"Ab", b"a", true));
+    }
+
+    #[test]
+    fn ends_with_case_insensitive_ascii_handles_empty_and_oversized_suffixes() {
+        assert!(super::ends_with_case_insensitive_ascii(
+            b"bunx.EXE",
+            b"bunx.exe"
+        ));
+        assert!(super::ends_with_case_insensitive_ascii(
+            b"C:\\bin\\BUNX.EXE",
+            b"bunx.exe"
+        ));
+        assert!(super::ends_with_case_insensitive_ascii(b"BUNX", b"bunx"));
+        assert!(!super::ends_with_case_insensitive_ascii(
+            b"bun.exe", b"bunx"
+        ));
+        assert!(!super::ends_with_case_insensitive_ascii(b"bun", b"bunx"));
+        assert!(super::ends_with_case_insensitive_ascii(b"bunx", b""));
+        assert!(super::ends_with_case_insensitive_ascii(b"", b""));
+        assert!(!super::ends_with_case_insensitive_ascii(b"", b"bunx"));
     }
 
     #[test]

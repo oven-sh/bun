@@ -6442,25 +6442,22 @@ pub fn normalize_path_windows_opts<'a>(
         return Ok(unsafe { WStr::from_raw(norm.as_ptr(), len) });
     }
 
-    // Strip a leading drive letter (`C:`) on the relative part; the bypass
-    // below still copies the original `path` verbatim.
-    let rel = if path.len() >= 2
+    // Strip a leading drive letter (`C:`) on the relative part.
+    let drive_qualified = path.len() >= 2
         && bun_paths::resolve_path::is_drive_letter_t::<u16>(path[0])
-        && path[1] == b':' as u16
-    {
-        &path[2..]
-    } else {
-        path
-    };
+        && path[1] == b':' as u16;
+    let rel = if drive_qualified { &path[2..] } else { path };
 
     // Routing = any separator or `.`; clamp relevance = `..` resolving above
     // the dirfd. One pass via the shared classifier.
     let facts = bun_paths::classify_rel_t(rel, bun_paths::PathFormat::Windows);
     let saw_sep_or_dot = facts.has_sep || facts.has_dot;
 
-    // Relative path with no separators or `.` can be passed straight through
-    // to `NtCreateFile` against `RootDirectory`.
-    if !saw_sep_or_dot {
+    // Relative, no separators or `.`: pass straight through to `NtCreateFile`
+    // against `RootDirectory`. Drive-qualified names are excluded (NT reads
+    // `C:name` as stream `name` of file `C`) unless the caller is Win32,
+    // which resolves drive-relative names itself.
+    if !saw_sep_or_dot && (!drive_qualified || !opts.add_nt_prefix) {
         if path.len() >= buf.len() {
             return Err(too_long());
         }
@@ -9994,11 +9991,19 @@ mod normalize_path_windows_tests {
     }
 
     #[test]
-    fn drive_qualified_bare_name_passes_through() {
+    fn drive_qualified_bare_name_resolves_under_base() {
         let _g = crate::file::tests::FD_TEST_LOCK.lock();
-        // The bypass copies the ORIGINAL path (drive prefix included); only
-        // the post-strip remainder decides the routing.
-        assert_eq!(normalize(Fd::INVALID, "C:foo"), "C:foo");
+        let tree = TempTree::new("nt_norm_drive_bare");
+        let dir = scopeguard::guard(open_dir_handle(&tree.0), |fd| {
+            let _ = close(fd);
+        });
+        // Passed through, `C:foo` would name the stream `foo` of a file `C`.
+        assert_eq!(
+            normalize(*dir, "C:foo"),
+            format!("{}\\foo", normalize(*dir, "."))
+        );
+        // Win32 consumers get the drive-relative spelling unchanged.
+        assert_eq!(normalize_opts(*dir, "C:foo", false), "C:foo");
     }
 
     #[test]

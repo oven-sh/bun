@@ -612,7 +612,7 @@ impl PackageJSON {
                         // do this in the wild.
                         let key: &[u8] = resolve_path::resolve_path::normalize_string_spill::<
                             true,
-                            resolve_path::platform::Auto,
+                            resolve_path::platform::Posix,
                         >(&mut key_spill, prop.key.slice());
 
                         match &prop.value {

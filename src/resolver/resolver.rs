@@ -5075,14 +5075,22 @@ impl<'a> Resolver<'a> {
         }
 
         // Normalize the path so we can compare against it without getting confused by "./"
-        let cleaned = self
-            .fs_ref()
-            .normalize_buf(bufs!(check_browser_map), input_path);
+        let cleaned: &[u8] = bun_paths::resolve_path::normalize_string_buf::<
+            false,
+            bun_paths::platform::Posix,
+            false,
+        >(input_path, bufs!(check_browser_map));
 
         if cleaned.len() == 1 && cleaned[0] == b'.' {
             // No bundler supports remapping ".", so we don't either
             return None;
         }
+
+        // A path inside the package is compared normalized, a package path as written.
+        let input_path: &[u8] = match KIND {
+            BrowserMapPathKind::AbsolutePath => cleaned,
+            BrowserMapPathKind::PackagePath => input_path,
+        };
 
         let mut checker = BrowserMapPath {
             remapped: b"",
@@ -6658,15 +6666,12 @@ impl<'b> BrowserMapPath<'b> {
         // If that failed, try assuming this is a directory and looking for an "index" file
 
         let index_path: &[u8] = {
-            let trimmed = strings::trim_right(path_to_check, &[SEP]);
-            let parts = [
-                trimmed,
-                const_format::concatcp!(SEP_STR, "index").as_bytes(),
-            ];
+            let trimmed = strings::trim_right(path_to_check, b"/");
+            let parts = [trimmed, b"/index".as_slice()];
             ResolvePath::join_string_buf(
                 bufs!(tsconfig_base_url),
                 &parts,
-                bun_paths::Platform::AUTO,
+                bun_paths::Platform::Posix,
             )
         };
 

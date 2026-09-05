@@ -486,7 +486,14 @@ class Debugger {
 
   #fetch(request: Request, server: WebSocketServer): Response | undefined {
     const { method, url, headers } = request;
-    const { pathname } = new URL(url);
+    // request.url is the raw request-target (e.g. "/json/version") when the
+    // request has no Host header (HTTP/1.0); give URL a base so it parses.
+    let pathname: string;
+    try {
+      ({ pathname } = new URL(url, "http://localhost/"));
+    } catch {
+      return new Response(null, { status: 400 });
+    }
 
     if (method !== "GET") {
       return new Response(null, {

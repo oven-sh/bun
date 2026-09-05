@@ -554,7 +554,11 @@ export function runOnLoadPlugins(
         }
 
         if (!(typeof contents === "string") && !$isTypedArrayView(contents)) {
-          throw new TypeError('onLoad plugins must return an object with "contents" as a string or Uint8Array');
+          if (!require("node:util/types").isAnyArrayBuffer(contents)) {
+            throw new TypeError(
+              'onLoad plugins must return an object with "contents" as a string, Uint8Array, or ArrayBuffer',
+            );
+          }
         }
 
         if (!(typeof loader === "string")) {

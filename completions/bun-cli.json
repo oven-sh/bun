@@ -1886,6 +1886,13 @@
           "multiple": false
         },
         {
+          "name": "check",
+          "description": "Exit with code 1 if node_modules has packages that can be removed, without deleting anything",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
           "name": "os",
           "description": "Prune for a different operating system than the current one",
           "hasValue": true,
@@ -1950,7 +1957,7 @@
           "type": "string"
         }
       ],
-      "examples": ["bun prune", "bun prune --production", "bun prune --dry-run"],
+      "examples": ["bun prune", "bun prune --production", "bun prune --dry-run", "bun prune --check"],
       "usage": "Usage: bun prune [flags]",
       "documentationUrl": "https://bun.com/docs/pm/cli/prune.",
       "dynamicCompletions": {}

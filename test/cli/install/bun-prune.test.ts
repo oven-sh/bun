@@ -438,6 +438,42 @@ test.concurrent("--dry-run prints without deleting; --silent deletes without pri
   expect(clean.exitCode).toBe(0);
 });
 
+// `--check` is the CI gate: the same report as `--dry-run`, but exits 1 when anything would be removed, like `bun dedupe --check`.
+test.concurrent("--check reports and exits 1 without deleting", async () => {
+  const dir = await setup({ name: "foo", dependencies: { "no-deps": "1.0.0" } });
+  const junk = plant(dir, "node_modules/junk");
+
+  const check = await prune(dir, "--check");
+  expect(lines(check.stdout)).toStrictEqual([BANNER, "", "- junk", CAN_BE_REMOVED(1, 2), APPLY_HINT()]);
+  expect(check.stderr).toBe("");
+  expect(existsSync(junk)).toBeTrue();
+  expect(check.exitCode).toBe(1);
+
+  // The report is identical to --dry-run; only the exit code differs.
+  const dryRun = await prune(dir, "--dry-run");
+  expect(out(dryRun.stdout)).toBe(out(check.stdout));
+  expect(dryRun.exitCode).toBe(0);
+
+  // The hint omits both flags, so it stays copy-pasteable.
+  const both = await prune(dir, "--dry-run", "--check");
+  expect(lines(both.stdout)).toStrictEqual(lines(check.stdout));
+  expect(both.exitCode).toBe(1);
+
+  const silent = await prune(dir, "--check", "--silent");
+  expect(silent.stdout).toBe("");
+  expect(silent.stderr).toBe("");
+  expect(existsSync(junk)).toBeTrue();
+  expect(silent.exitCode).toBe(1);
+
+  const apply = await prune(dir);
+  expect(apply.exitCode).toBe(0);
+  expect(existsSync(junk)).toBeFalse();
+
+  const clean = await prune(dir, "--check");
+  expect(lines(clean.stdout)).toStrictEqual([BANNER, "", NOTHING(1, 1)]);
+  expect(clean.exitCode).toBe(0);
+});
+
 test.concurrent("nothing to prune when node_modules is missing or clean", async () => {
   const { packageDir, packageJson } = await registry.createTestDir();
   await write(packageJson, JSON.stringify({ name: "foo", dependencies: { "no-deps": "1.0.0" } }));
@@ -3575,6 +3611,7 @@ test.concurrent("--help lists every flag; -F is --filter, -p is --production", a
     Flags:
       -p, --production      Also remove packages that are only needed by devDependencies (alias: --prod)
           --omit=<val>      Also remove packages that are only needed by the given dependency types
+          --check           Exit with code 1 if node_modules has packages that can be removed, without deleting anything
           --dry-run         Print what would be removed without deleting anything
           --os=<val>        Prune for a different operating system than the current one
           --cpu=<val>       Prune for a different CPU architecture than the current one
@@ -3593,6 +3630,9 @@ test.concurrent("--help lists every flag; -F is --filter, -p is --production", a
 
       Show what would be removed without deleting anything
       bun prune --dry-run
+
+      Only report what would be removed; exit code 1 if there is anything (for CI)
+      bun prune --check
 
       Only prune what the app workspace no longer needs
       bun prune --production --filter app

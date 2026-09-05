@@ -699,8 +699,10 @@ impl FileSink {
                         return sys::Result::Err(err);
                     }
                     sys::Result::Ok(()) => {
-                        self.writer
-                            .with_mut(|w| w.update_ref(self.io_evtloop(), false));
+                        self.writer.with_mut(|w| {
+                            w.owns_fd = true;
+                            w.update_ref(self.io_evtloop(), false);
+                        });
                     }
                 }
                 return sys::Result::Ok(());
@@ -714,6 +716,9 @@ impl FileSink {
                 return sys::Result::Err(err);
             }
             sys::Result::Ok(()) => {
+                // `open_for_writing` opened or dup'd `fd` for this sink: `end()` closes it.
+                #[cfg(windows)]
+                self.writer.with_mut(|w| w.owns_fd = true);
                 // Only keep the event loop ref'd while there's a pending write in progress.
                 // If there's no pending write, no need to keep the event loop ref'd.
                 self.writer

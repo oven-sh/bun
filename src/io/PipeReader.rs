@@ -1732,7 +1732,7 @@ impl WindowsBufferedReader {
                         // `iov`) whenever it completes; this reader may be
                         // dropped before then, so the buffer goes with the File.
                         if self.flags.contains(WindowsFlags::HAS_INFLIGHT_READ) {
-                            (*raw).orphaned_read_buf = core::mem::take(&mut self._buffer);
+                            (*raw).orphaned_buf = core::mem::take(&mut self._buffer);
                         }
                         if self.flags.contains(WindowsFlags::CLOSE_HANDLE) {
                             (*raw).detach();
@@ -1816,7 +1816,7 @@ impl WindowsBufferedReader {
                 // linked into the loop's handle queue → UAF. Restore the source
                 // so close_impl can do the proper take + hand-off to libuv
                 // (into_raw + uv_close). close_impl also parks `_buffer` on
-                // the File for an in-flight uv_fs_read (orphaned_read_buf),
+                // the File for an in-flight uv_fs_read (orphaned_buf),
                 // which is why `_buffer` is freed after this, not before.
                 self.source = Some(source);
                 self.close_impl::<false>();

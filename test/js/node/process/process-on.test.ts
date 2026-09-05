@@ -84,3 +84,101 @@ describe("process.on", () => {
     expect(result2.exitCode).toBe(0);
   });
 });
+
+describe.concurrent("process.on('unhandledRejection')", () => {
+  it("keeps the process alive for work the handler schedules after a microtask hop", async () => {
+    // The handler only reaches setTimeout after one nextTick/microtask hop, which
+    // is what `await` compiles to. That checkpoint has to drain before the loop
+    // decides it has no work left, or the timers never run.
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          process.on("unhandledRejection", reason => {
+            if (reason === "a") Promise.resolve().then(() => setTimeout(() => console.log("then"), 1));
+            if (reason === "b") queueMicrotask(() => setTimeout(() => console.log("queueMicrotask"), 1));
+            if (reason === "c") process.nextTick(() => setTimeout(() => console.log("nextTick"), 1));
+          });
+          Promise.reject("a");
+          Promise.reject("b");
+          Promise.reject("c");
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    // nextTick drains before the microtask queue, so its timer is armed first.
+    expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+      stdout: "nextTick\nthen\nqueueMicrotask",
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  it("runs before beforeExit when the rejection comes from a timer", async () => {
+    // The rejection lands in the timer phase, after the last thing keeping the
+    // loop alive is gone. Node notifies it inside that phase, so the handler
+    // still gets to schedule work and `beforeExit` observes the real state.
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          const log = [];
+          process.on("beforeExit", () => {
+            log.push("beforeExit");
+            console.log(log.join(","));
+          });
+          process.on("unhandledRejection", () => {
+            log.push("handler");
+            Promise.resolve().then(() => setTimeout(() => log.push("recovered"), 1));
+          });
+          setTimeout(() => {
+            Promise.reject(new Error("late"));
+          }, 1);
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+      stdout: "handler,recovered,beforeExit",
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  it("runs for a rejection raised by a beforeExit listener", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          let n = 0;
+          process.on("beforeExit", () => {
+            console.log("beforeExit#" + ++n);
+            if (n === 1) Promise.reject(new Error("from beforeExit"));
+          });
+          process.on("unhandledRejection", () => {
+            console.log("handler");
+            Promise.resolve().then(() => setTimeout(() => console.log("recovered"), 1));
+          });
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+      stdout: "beforeExit#1\nhandler\nrecovered\nbeforeExit#2",
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+});

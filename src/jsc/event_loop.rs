@@ -798,9 +798,21 @@ impl EventLoop {
             self.tick_concurrent();
         }
 
-        self.global_ref()
-            .handle_rejected_promises()
-            .map_err(|_| Stopped)
+        self.drain_rejected_promises()
+    }
+
+    /// Deliver pending `unhandledRejection` notifications, then drain the `nextTick` +
+    /// microtask checkpoint the handlers filled, as node's `processTicksAndRejections`
+    /// does; otherwise work a handler schedules behind an `await` is lost.
+    /// `Err(Stopped)` is the VM's termination, taken at this loop-level boundary.
+    pub fn drain_rejected_promises(&mut self) -> Result<(), Stopped> {
+        while self.global_ref().has_pending_rejected_promises() {
+            self.global_ref()
+                .handle_rejected_promises()
+                .map_err(|_| Stopped)?;
+            self.drain_microtasks()?;
+        }
+        Ok(())
     }
 
     /// Tick the task queue without draining microtasks afterward.

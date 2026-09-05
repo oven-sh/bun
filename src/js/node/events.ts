@@ -154,11 +154,21 @@ function applyHandlers(handlers, emitter, args) {
   }
 }
 
-function addCatch(emitter, promise, type, args) {
-  promise.then(undefined, function (err) {
-    // The callback is called with nextTick to avoid a follow-up rejection from this promise.
-    process.nextTick(emitUnhandledRejectionOrErr, emitter, err, type, args);
-  });
+function addCatch(emitter, thenable, type, args) {
+  // The prototype may hold the capturing emit while this instance opted out.
+  if (!emitter[kCapture]) return;
+  // Promises/A+: `then` may be a getter, so read it once; a throw is an 'error' event.
+  try {
+    const then = thenable.then;
+    if (typeof then === "function") {
+      then.$call(thenable, undefined, function (err) {
+        // The callback is called with nextTick to avoid a follow-up rejection from this promise.
+        process.nextTick(emitUnhandledRejectionOrErr, emitter, err, type, args);
+      });
+    }
+  } catch (err) {
+    emitter.emit("error", err);
+  }
 }
 
 function emitUnhandledRejectionOrErr(emitter, err, type, args) {
@@ -263,7 +273,7 @@ const emitWithRejectionCapture = function emit(type, ...args) {
         result = handler.$apply(this, args);
         break;
     }
-    if (result !== undefined && $isPromise(result)) {
+    if (result !== undefined && result !== null) {
       addCatch(this, result, type, args);
     }
     return true;
@@ -291,7 +301,7 @@ const emitWithRejectionCapture = function emit(type, ...args) {
         result = listener.$apply(this, args);
         break;
     }
-    if (result !== undefined && $isPromise(result)) {
+    if (result !== undefined && result !== null) {
       addCatch(this, result, type, args);
     }
   }
@@ -954,6 +964,12 @@ Object.defineProperties(EventEmitter, {
       validateBoolean(value, "EventEmitter.captureRejections");
 
       EventEmitterPrototype[kCapture] = value;
+      // Reaches emitters with no own `emit` (constructor never ran). Swap only our own
+      // function so a userland `emit` patch survives a toggle.
+      const emit = EventEmitterPrototype.emit;
+      if (emit === emitWithoutRejectionCapture || emit === emitWithRejectionCapture) {
+        EventEmitterPrototype.emit = value ? emitWithRejectionCapture : emitWithoutRejectionCapture;
+      }
     },
     enumerable: true,
   },

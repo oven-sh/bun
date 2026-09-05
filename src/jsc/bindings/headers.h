@@ -163,6 +163,7 @@ CPP_DECL JSC::EncodedJSValue JSC__JSGlobalObject__createAggregateError(JSC::JSGl
 CPP_DECL void JSC__JSGlobalObject__deleteModuleRegistryEntry(JSC::JSGlobalObject* arg0, const EncodedSlice* arg1);
 CPP_DECL JSC::EncodedJSValue JSC__JSGlobalObject__generateHeapSnapshot(JSC::JSGlobalObject* arg0);
 CPP_DECL void JSC__JSGlobalObject__handleRejectedPromises(JSC::JSGlobalObject* arg0);
+CPP_DECL bool JSC__JSGlobalObject__hasPendingRejectedPromises(JSC::JSGlobalObject* arg0);
 CPP_DECL void JSC__JSGlobalObject__addGc(JSC::JSGlobalObject* globalObject);
 CPP_DECL double JSC__JSGlobalObject__jsDateNow(JSC::JSGlobalObject* globalObject);
 CPP_DECL void JSC__JSGlobalObject__queueMicrotaskJob(JSC::JSGlobalObject* arg0, JSC::EncodedJSValue JSValue1, JSC::EncodedJSValue JSValue2, JSC::EncodedJSValue JSValue3);

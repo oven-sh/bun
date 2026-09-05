@@ -241,6 +241,26 @@ const MINIFY_SYNTAX_DIVERGENCE: Record<string, { compiledFunctions: number; buil
       buildError: true,
       reason: "constant folding rewrites the useMemo deps array entry `x` to the literal `0`",
     },
+    // minify.syntax drops a bare `<div>{x}</div>;` expression statement before the
+    // compiler sees it, so `infer` mode no longer recognises the function as a
+    // component. Without minify the statement is preserved and the function is
+    // compiled, matching upstream.
+    "array-map-frozen-array": {
+      compiledFunctions: 0,
+      reason: "bare JSX expression statement dropped before compiler inference",
+    },
+    "array-map-frozen-array-noAlias": {
+      compiledFunctions: 0,
+      reason: "bare JSX expression statement dropped before compiler inference",
+    },
+    "computed-load-primitive-as-dependency": {
+      compiledFunctions: 0,
+      reason: "bare JSX expression statement dropped before compiler inference",
+    },
+    "transitive-freeze-array": {
+      compiledFunctions: 0,
+      reason: "bare JSX expression statement dropped before compiler inference",
+    },
   });
 
 type Fixture = {

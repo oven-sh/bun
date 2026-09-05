@@ -612,10 +612,16 @@ describe("Bun.Transpiler", () => {
       const exp = ts.expectPrinted_;
       const err = ts.expectParseError;
 
-      exp("declare = (...t) => R;e((a) => {(u=> uge);\r\n})", "declare = (...t) => R;\ne((a) => {});\n");
-      exp("declare = t => 0; () => () => 0", "declare = (t) => 0;\n");
-      exp("declare = function () {}; () => () => 0", "declare = function() {};\n");
-      exp("declare = t => 0; function f() { () => 0; }\nf();", "declare = (t) => 0;\nfunction f() {}\nf();\n");
+      exp(
+        "declare = (...t) => R;e((a) => {(u=> uge);\r\n})",
+        "declare = (...t) => R;\ne((a) => {\n  (u) => uge;\n});\n",
+      );
+      exp("declare = t => 0; () => () => 0", "declare = (t) => 0;\n() => () => 0;\n");
+      exp("declare = function () {}; () => () => 0", "declare = function() {};\n() => () => 0;\n");
+      exp(
+        "declare = t => 0; function f() { () => 0; }\nf();",
+        "declare = (t) => 0;\nfunction f() {\n  () => 0;\n}\nf();\n",
+      );
 
       exp(
         "abstract = (t) => 0\nclass Foo { m() { return () => () => 0 } }",
@@ -1311,7 +1317,7 @@ function foo() {}
       err("let foo = (bar\nas (null))", 'Expected ")" but found "as"');
 
       exp("a as any ? b : c;", "a ? b : c;\n");
-      exp("a as any ? async () => b : c;", "a || c;\n");
+      exp("a as any ? async () => b : c;", "a ? async () => b : c;\n");
 
       exp("foo as number extends Object ? any : any;", "foo;\n");
       exp("foo as number extends Object ? () => void : any;", "foo;\n");
@@ -2470,6 +2476,42 @@ console.log(<div {...obj} key="after" />);`),
     );
   });
 
+  // https://github.com/oven-sh/bun/issues/14789
+  it("preserves bare expression statements when minify.syntax is off", async () => {
+    const jsx = new Bun.Transpiler({ loader: "jsx" });
+    // JSX lowers to a call the parser marks as pure; without minify.syntax
+    // that annotation must not cause the statement to be dropped.
+    expect(jsx.transformSync("<div>first</div>")).toBe(
+      'jsxDEV_7x81h0kn("div", {\n  children: "first"\n}, undefined, false, undefined, this);\n',
+    );
+    expect(await jsx.transform("<div>first</div>")).toBe(
+      'jsxDEV_7x81h0kn("div", {\n  children: "first"\n}, undefined, false, undefined, this);\n',
+    );
+    expect(jsx.transformSync("<>a</>")).toBe(
+      'jsxDEV_7x81h0kn(Fragment_8vg9x3sq, {\n  children: "a"\n}, undefined, false, undefined, this);\n',
+    );
+
+    // Classic runtime goes through the same code path.
+    const classic = new Bun.Transpiler({
+      loader: "jsx",
+      tsconfig: JSON.stringify({ compilerOptions: { jsx: "react" } }),
+    });
+    expect(classic.transformSync("<div>first</div>")).toBe('React.createElement("div", null, "first");\n');
+
+    // Other side-effect-free expression statements are likewise kept.
+    const js = new Bun.Transpiler({ loader: "js" });
+    expect(js.transformSync("/* @__PURE__ */ foo();")).toBe("foo();\n");
+    expect(js.transformSync("1;")).toBe("1;\n");
+    expect(js.transformSync("[1, 2, 3];")).toBe("[1, 2, 3];\n");
+    expect(js.transformSync("a === b;")).toBe("a === b;\n");
+
+    // Opting into minify.syntax restores the simplification.
+    const min = new Bun.Transpiler({ loader: "jsx", minify: { syntax: true } });
+    expect(min.transformSync("<div>first</div>")).toBe("");
+    expect(min.transformSync("/* @__PURE__ */ foo();")).toBe("");
+    expect(min.transformSync("1;")).toBe("");
+  });
+
   // Non-bundle transpile without `minify.identifiers` uses NoOpRenamer
   // (prints symbol.original_name verbatim), so the `generatedSymbolName`
   // hash suffix on the automatic JSX runtime import is the sole collision
@@ -3496,10 +3538,15 @@ console.log(resolve.length)
     describe("dead code elimination", () => {
       const transpilerNoDCE = new Bun.Transpiler({ deadCodeElimination: false });
       it("should DCE with deadCodeElimination: true or by default", () => {
-        expect(parsed("123", true, false)).toBe("");
-        expect(parsed("[-1, 2n, null]", true, false)).toBe("");
-        expect(parsed("true", true, false)).toBe("");
-        expect(parsed("!0", true, false)).toBe("");
+        // Trimming side-effect-free expression statements additionally requires
+        // minify.syntax; by default the transpiler preserves what was written.
+        expect(parsed("123", true, false, transpilerMinifySyntax)).toBe("");
+        expect(parsed("[-1, 2n, null]", true, false, transpilerMinifySyntax)).toBe("");
+        expect(parsed("true", true, false, transpilerMinifySyntax)).toBe("");
+        expect(parsed("!0", true, false, transpilerMinifySyntax)).toBe("");
+        expect(parsed("123", true, false)).toBe("123");
+        expect(parsed("[-1, 2n, null]", true, false)).toBe("[-1, 2n, null]");
+        // Dead branches are still eliminated without minify.syntax.
         expect(parsed('if (!1) "dead";', true, false)).toBe("if (false)");
         expect(parsed("if (!1) var x = 2;", true, false)).toBe("if (false)\n  var x");
         expect(parsed("if (undefined) { let y = Math.random(); }", true, false)).toBe("if (undefined) {}");
@@ -5252,7 +5299,7 @@ it("running a file with deeply nested unary operators does not crash the process
 });
 
 it("does not duplicate the branch when simplifying an unused ternary with a comma test", () => {
-  const transpiler = new Bun.Transpiler({ loader: "js" });
+  const transpiler = new Bun.Transpiler({ loader: "js", minify: { syntax: true } });
   expect(transpiler.transformSync("(f(), g()) ? 1 : h();").trim()).toBe("f(), g() || h();");
   expect(transpiler.transformSync("(f(), g()) ? h() : 1;").trim()).toBe("f(), g() && h();");
 });
@@ -5751,7 +5798,7 @@ describe("multi-line comment scanning", () => {
   it("treats newlines inside a large block comment as line terminators (ASI)", () => {
     for (const newline of ["\n", "\r", "\r\n", "\u2028", "\u2029"]) {
       const out = transpiler.transformSync(`function f() { return /*${pad600}${newline}${pad600}*/ 1 }`);
-      expect({ newline, out }).toEqual({ newline, out: "function f() {\n  return;\n}\n" });
+      expect({ newline, out }).toEqual({ newline, out: "function f() {\n  return;\n  1;\n}\n" });
     }
     // control: no newline anywhere inside the comment, so no ASI
     expect(transpiler.transformSync(`function f() { return /*${pad600}${pad600}*/ 1 }`)).toBe(

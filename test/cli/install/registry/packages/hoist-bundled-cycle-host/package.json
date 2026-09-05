@@ -1,0 +1,25 @@
+{
+  "_id": "hoist-bundled-cycle-host",
+  "name": "hoist-bundled-cycle-host",
+  "dist-tags": {
+    "latest": "1.0.0"
+  },
+  "versions": {
+    "1.0.0": {
+      "name": "hoist-bundled-cycle-host",
+      "version": "1.0.0",
+      "dependencies": {
+        "hoist-bundled-cycle-plugin": "1.0.0"
+      },
+      "bundleDependencies": [
+        "hoist-bundled-cycle-plugin"
+      ],
+      "_id": "hoist-bundled-cycle-host@1.0.0",
+      "dist": {
+        "integrity": "sha512-SFFfaFA5g9jnrCbqHjFhQ2jfd+GFqWQWrwJw3RboD8z/Pn091rfOCiVfyoYwCoByZuCUyCiHojzoXIXYFlSYXA==",
+        "shasum": "51b0aeed7e396f12316b46e763fa6cb1972ecb63",
+        "tarball": "http://localhost:4873/hoist-bundled-cycle-host/-/hoist-bundled-cycle-host-1.0.0.tgz"
+      }
+    }
+  }
+}

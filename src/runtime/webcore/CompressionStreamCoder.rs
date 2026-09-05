@@ -557,9 +557,8 @@ impl CompressionStreamCoder {
                         brotli::BrotliDecoderResult::needs_more_input => {
                             // Brotli reports `needs_more_input` even with output left in its ring buffer.
                             // SAFETY: `p` is a live decoder.
-                            if written > 0
-                                && brotli::BrotliDecoder::has_more_output(unsafe { &*p.as_ptr() })
-                            {
+                            let decoder = unsafe { &*p.as_ptr() };
+                            if written > 0 && brotli::BrotliDecoder::has_more_output(decoder) {
                                 continue;
                             }
                             if finish {

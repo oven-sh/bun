@@ -5304,17 +5304,22 @@ impl Token {
                 debug_assert!(*x <= 0x7F);
                 writer.write_byte(*x as u8)
             }
-            Token::Number(n) => serializer::write_numeric(n.value, n.int_value, n.has_sign, writer),
+            Token::Number(n) => serializer::write_numeric(n, writer),
             Token::Percentage {
                 unit_value,
                 int_value,
                 has_sign,
             } => {
-                serializer::write_numeric(*unit_value * 100.0, *int_value, *has_sign, writer)?;
+                let num = Num {
+                    has_sign: *has_sign,
+                    value: *unit_value * 100.0,
+                    int_value: *int_value,
+                };
+                serializer::write_numeric(&num, writer)?;
                 writer.write_all(b"%")
             }
             Token::Dimension(d) => {
-                serializer::write_numeric(d.num.value, d.num.int_value, d.num.has_sign, writer)?;
+                serializer::write_numeric(&d.num, writer)?;
                 // Disambiguate with scientific notation.
                 let unit = d.unit;
                 if (unit.len() == 1 && unit[0] == b'e')
@@ -5404,6 +5409,11 @@ pub use crate::{Dimension, Num};
 impl Num {
     pub(crate) fn hash(&self, hasher: &mut bun_wyhash::Wyhash) {
         generic::implement_hash(self, hasher)
+    }
+
+    /// `int_value`, unless it saturated and no longer describes `value`.
+    pub(crate) fn exact_int(&self) -> Option<i32> {
+        self.int_value.filter(|&int| int as f32 == self.value)
     }
 }
 
@@ -5770,7 +5780,23 @@ pub mod serializer {
         unit: &'static [u8],
         dest: &mut Printer,
     ) -> Result<(), PrintErr> {
-        let int_value: Option<i32> = if fract(value) == 0.0 {
+        let num = Num {
+            has_sign: false,
+            value,
+            int_value: None,
+        };
+        serialize_dimension_num(&num, unit, dest)
+    }
+
+    pub(crate) fn serialize_dimension_num(
+        num: &Num,
+        unit: &'static [u8],
+        dest: &mut Printer,
+    ) -> Result<(), PrintErr> {
+        let value = num.value;
+        let int_value: Option<i32> = if let Some(int) = num.exact_int() {
+            Some(int)
+        } else if fract(value) == 0.0 {
             Some(value as i32) // saturating cast
         } else {
             None
@@ -5853,11 +5879,15 @@ pub mod serializer {
     }
 
     pub(crate) fn write_numeric<W: WriteAll + ?Sized>(
-        value: f32,
-        int_value: Option<i32>,
-        has_sign: bool,
+        num: &Num,
         writer: &mut W,
     ) -> bun_io::Result<()> {
+        let Num {
+            has_sign,
+            value,
+            int_value,
+        } = *num;
+
         // `value >= 0` is true for negative 0.
         if has_sign && !value.is_sign_negative() {
             writer.write_all(b"+")?;
@@ -5870,6 +5900,10 @@ pub mod serializer {
                 decimal_point: false,
                 scientific: false,
             }
+        } else if let Some(int) = num.exact_int() {
+            // `dtoa_short` rounds to 6 significant digits.
+            let mut buf = bun_core::fmt::ItoaBuf::new();
+            return writer.write_all(bun_core::fmt::itoa(&mut buf, int));
         } else {
             let mut buf = [0u8; 129];
             let (str, maybe_notation) = dtoa_short(&mut buf, value, 6);

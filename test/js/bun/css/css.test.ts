@@ -7701,6 +7701,65 @@ describe("css tests", () => {
     minify_test(".foo{grid-template-areas:none}", ".foo{grid-template-areas:none}");
   });
 
+  describe("integer tokens", () => {
+    // Properties that are not in the typed property table (z-index, orphans, counter-*, grid
+    // lines, custom properties) round-trip their <integer> values as tokens. These used to be
+    // printed from the token's f32 with 6 significant digits, so 2147483647 and 2147483646
+    // both came out as 2147480000 and the two stacking levels collapsed into one.
+    minify_test(".foo{z-index:2147483647}", ".foo{z-index:2147483647}");
+    minify_test(".foo{z-index:2147483646}", ".foo{z-index:2147483646}");
+    minify_test(".foo{z-index:-2147483648}", ".foo{z-index:-2147483648}");
+    minify_test(".foo{z-index:999999999}", ".foo{z-index:999999999}");
+    minify_test(".foo{z-index:100000001}", ".foo{z-index:100000001}");
+    cssTest(
+      indoc`
+        .a { z-index: 2147483647 }
+        .b { z-index: 2147483646 }
+      `,
+      indoc`
+        .a {
+          z-index: 2147483647;
+        }
+
+        .b {
+          z-index: 2147483646;
+        }
+      `,
+    );
+    // Above 2^24 the f32 itself is already rounded (16777217 is stored as 16777216); the
+    // token still carries the integer that was written.
+    minify_test(".foo{orphans:16777217}", ".foo{orphans:16777217}");
+    minify_test(".foo{counter-set:n 2147483647}", ".foo{counter-set:n 2147483647}");
+    minify_test(".foo{grid-row:2147483647}", ".foo{grid-row:2147483647}");
+    minify_test(":root{--z:2147483647}", ":root{--z:2147483647}");
+    minify_test(":root{--z:calc(2147483647 - 1)}", ":root{--z:calc(2147483647 - 1)}");
+    minify_test(".foo{z-index:var(--z,2147483647)}", ".foo{z-index:var(--z,2147483647)}");
+    // Token lists still drop a redundant sign.
+    minify_test(".foo{z-index:+2147483647}", ".foo{z-index:2147483647}");
+    minify_test(".foo{z-index:-0}", ".foo{z-index:0}");
+    // Arguments of unknown functional pseudo-classes are printed verbatim.
+    minify_test(
+      ".foo:-x-level(+2147483647 16777217 -0 1.0){color:red}",
+      ".foo:-x-level(+2147483647 16777217 -0 1.0){color:red}",
+    );
+    // Integral percentages and dimensions are printed in full as well.
+    minify_test(":root{--p:1234567%}", ":root{--p:1234567%}");
+    minify_test(".foo{width:1234567px}", ".foo{width:1234567px}");
+    minify_test(".foo{height:1234567%}", ".foo{height:1234567%}");
+    minify_test(".foo{grid-template-columns:1234567fr}", ".foo{grid-template-columns:1234567fr}");
+    minify_test(".foo{grid-template-columns:16777217fr}", ".foo{grid-template-columns:16777217fr}");
+    minify_test(".foo{grid-template-columns:+2fr 2.0fr}", ".foo{grid-template-columns:2fr 2fr}");
+    // An integer outside the i32 range saturates the token's integer. 2147483648 rounds to the
+    // same f32 as i32::MAX, so the saturated integer is still what gets printed (browsers clamp
+    // an <integer> to the same bound); further out it no longer matches the float, which is
+    // printed as before.
+    minify_test(".foo{z-index:2147483648}", ".foo{z-index:2147483647}");
+    minify_test(".foo{z-index:3000000000}", ".foo{z-index:3000000000}");
+    // Non-integer tokens keep the 6 significant digit float output.
+    minify_test(":root{--n:1234567.0}", ":root{--n:1234570}");
+    minify_test(":root{--n:1234567.5}", ":root{--n:1234570}");
+  });
+
   describe("edge cases", () => {
     describe("invalid gradient", () => {
       cssTest(

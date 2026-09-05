@@ -1,7 +1,8 @@
 import { describe, expect, setDefaultTimeout, test } from "bun:test";
 import fs from "fs";
 import { bunEnv, bunExe, pack, tempDir, tmpdirSync } from "harness";
-import { dirname, join } from "path";
+import { join } from "path";
+import { ARBORIST, OFFLINE_REGISTRY, fixture, readLock, run, writeExtra } from "./migration-harness";
 
 setDefaultTimeout(1000 * 60 * 5);
 
@@ -693,43 +694,7 @@ test.concurrent("pnpm-lock.yaml migration does not platform-skip a regular file:
 });
 
 describe("package-lock.json migration fixes", () => {
-  const ARBORIST = join(import.meta.dir, "npm-arborist");
-  const arboristFixtures: { name: string; root?: string }[] = JSON.parse(
-    fs.readFileSync(join(ARBORIST, "fixtures.json"), "utf8"),
-  );
-  // Port 1 refuses connections, so any accidental registry access fails the test.
-  const OFFLINE_REGISTRY = "http://localhost:1/";
   const REGISTRY_PACKAGES = join(import.meta.dir, "..", "registry", "packages");
-
-  function writeExtra(dir: string, extra: Record<string, string>, registry = OFFLINE_REGISTRY) {
-    fs.writeFileSync(join(dir, "bunfig.toml"), `[install]\nregistry = "${registry}"\n`);
-    for (const [name, contents] of Object.entries(extra)) {
-      fs.mkdirSync(dirname(join(dir, name)), { recursive: true });
-      fs.writeFileSync(join(dir, name), contents);
-    }
-  }
-
-  // The project dir of a fixture copy; disposing removes the whole copy, including out-of-tree link targets.
-  class FixtureDir extends String {
-    constructor(
-      dir: string,
-      private copy: Disposable,
-    ) {
-      super(dir);
-    }
-    [Symbol.dispose]() {
-      this.copy[Symbol.dispose]();
-    }
-  }
-
-  function fixture(name: string, extra: Record<string, string> = {}) {
-    const entry = arboristFixtures.find(f => f.name === name);
-    if (!entry) throw new Error(`${name} is not listed in npm-arborist/fixtures.json`);
-    const copy = tempDir("npm-migrate-" + name, join(ARBORIST, name));
-    const dir = entry.root ? join(String(copy), entry.root) : String(copy);
-    writeExtra(dir, extra);
-    return new FixtureDir(dir, copy) as unknown as string & Disposable;
-  }
 
   // Some arborist fixtures ship a package.json that disagrees with their lockfile, which --frozen-lockfile rejects.
   function manifestFromLockfile(name: string) {
@@ -779,23 +744,6 @@ describe("package-lock.json migration fixes", () => {
 
   const npmLock = (name: string, packages: Record<string, unknown>, extra: Record<string, unknown> = {}) =>
     JSON.stringify({ name, lockfileVersion: 3, requires: true, ...extra, packages: { "": { name }, ...packages } });
-
-  async function run(dir: string, ...args: string[]) {
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), ...args],
-      env: { ...bunEnv, BUN_INSTALL_CACHE_DIR: join(String(dir), ".bun-cache") },
-      cwd: String(dir),
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    return { stdout, stderr, exitCode };
-  }
-
-  async function readLock(dir: string) {
-    const text = await Bun.file(join(String(dir), "bun.lock")).text();
-    return { text, lock: Bun.JSONC.parse(text) as any };
-  }
 
   async function migrate(dir: string) {
     const result = await run(dir, "pm", "migrate");
@@ -1819,20 +1767,5 @@ describe("package-lock.json migration fixes", () => {
     expect(exitCode).toBe(0);
     expect(lock.workspaces).toStrictEqual({ "": { name: "link-no-resolved" } });
     expect(lock.packages).toStrictEqual({});
-  });
-
-  describe("arborist fixtures", () => {
-    // Snapshot matchers are unsupported inside a concurrent group, so these stay sequential.
-    test.each(arboristFixtures.map(f => f.name))("%s", async name => {
-      using dir = fixture(name);
-      const { stderr, exitCode } = await run(dir, "pm", "migrate");
-      const report = [stderr.replace(/^\[[\d.]+m?s\] /gm, "").trimEnd(), `bun pm migrate exit code: ${exitCode}`];
-      if (exitCode === 0) {
-        const { text } = await readLock(dir);
-        const check = await run(dir, "install", "--frozen-lockfile", "--lockfile-only");
-        report.push(`bun install --frozen-lockfile exit code: ${check.exitCode}`, "", text);
-      }
-      expect(report.join("\n")).toMatchSnapshot();
-    });
   });
 });

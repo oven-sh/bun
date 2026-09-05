@@ -472,6 +472,21 @@ impl Group {
         }
     }
 
+    /// The `*` range (`>=0.0.0`): matches every release and no prerelease.
+    pub fn star() -> Group {
+        Group {
+            head: List {
+                head: Query {
+                    range: Range::init_wildcard(Version::default(), Wildcard::Major),
+                    next: None,
+                },
+                tail: None,
+                next: None,
+            },
+            ..Default::default()
+        }
+    }
+
     pub fn is_exact(&self) -> bool {
         self.head.next.is_none()
             && self.head.head.next.is_none()

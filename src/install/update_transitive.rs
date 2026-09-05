@@ -1187,10 +1187,13 @@ fn plan_edges(
                 (v, Some(v), later_than(manifest, v, min_age, excludes))
             } else {
                 let tag = want.version.dist_tag().tag.slice(buf);
-                let Some(found) = manifest
-                    .find_by_dist_tag_with_filter(tag, min_age, excludes)
-                    .unwrap()
-                else {
+                // Matches how re-resolution handles a deprecated `latest`.
+                let result = if tag == b"latest" {
+                    manifest.find_by_latest_tag_with_filter(min_age, excludes)
+                } else {
+                    manifest.find_by_dist_tag_with_filter(tag, min_age, excludes)
+                };
+                let Some(found) = result.unwrap() else {
                     continue;
                 };
                 if found.version.order(inst.current, manifest_buf, buf) == Ordering::Equal {
@@ -1245,8 +1248,9 @@ fn later_than(
         return Box::default();
     }
     let manifest_buf: &[u8] = &manifest.string_buf;
+    // Matches resolution: a deprecated `latest` is not "available".
     let latest = manifest
-        .find_by_dist_tag_with_filter(b"latest", min_age, excludes)
+        .find_by_latest_tag_with_filter(min_age, excludes)
         .unwrap()
         .map(|found| found.version)
         .filter(|latest| latest.order(v, manifest_buf, manifest_buf) == Ordering::Greater);

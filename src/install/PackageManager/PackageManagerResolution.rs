@@ -68,9 +68,9 @@ impl PackageManager {
                     .manifests
                     .by_name_hash_in_memory(package_name, name_hash)?;
 
+                // Matches resolution: a deprecated `latest` is not "available".
                 if let Some(latest_version) = manifest
-                    .find_by_dist_tag_with_filter(
-                        b"latest",
+                    .find_by_latest_tag_with_filter(
                         self.options.minimum_release_age_ms,
                         self.options.minimum_release_age_excludes,
                     )
@@ -385,6 +385,12 @@ impl PackageManager {
                         Output::err_generic(
                             "<b>{}<r><d> failed to resolve<r>",
                             (failed_dep.version.literal.fmt(string_buf),),
+                        );
+                    } else if failed_dep.version.literal.slice(string_buf).is_empty() {
+                        // A bare specifier: print the name without a dangling `@`.
+                        Output::err_generic(
+                            "<b>{}<r><d> failed to resolve<r>",
+                            (bstr::BStr::new(failed_dep.name.slice(string_buf)),),
                         );
                     } else {
                         Output::err_generic(

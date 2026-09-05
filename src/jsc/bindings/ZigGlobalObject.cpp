@@ -279,6 +279,8 @@ extern "C" long Bun__crashHandlerFromJSCFrame(void*, void*, void*, void*);
 
 // bun_icu_default_locale.cpp
 extern "C" void Bun__ensureICUDefaultLocale();
+// CxxTerminateHandler.cpp
+extern "C" void Bun__installCxxTerminateHandler();
 
 extern "C" void JSCInitialize(const char* envp[], size_t envc, void (*onCrash)(const char* ptr, size_t length), bool evalMode, bool oneShotStartup, bool shortLivedGlobals)
 {
@@ -290,7 +292,7 @@ extern "C" void JSCInitialize(const char* envp[], size_t envc, void (*onCrash)(c
         // JSC options come from BUN_JSC_* (applied in the callback below), not JSC_*.
         JSC::Config::disableEnvironmentOptions();
 
-        std::set_terminate([]() { Zig__GlobalObject__onCrash(); });
+        Bun__installCxxTerminateHandler();
         WTF::initializeMainThread();
 
         // Use JSC::initialize with a callback to set Options during initialization.

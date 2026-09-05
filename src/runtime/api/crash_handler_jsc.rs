@@ -29,6 +29,7 @@ pub(crate) mod js_bindings {
             ("abort", __jsc_host_js_abort),
             ("fastfail", __jsc_host_js_fastfail),
             ("trap", __jsc_host_js_trap),
+            ("uncaughtCxxException", __jsc_host_js_uncaught_cxx_exception),
             (
                 "raiseIgnoringPanicHandler",
                 __jsc_host_js_raise_ignoring_panic_handler,
@@ -194,6 +195,20 @@ pub(crate) mod js_bindings {
             crash_handler::TraceSeed::BeginAddr(crash_handler::debug::return_address()),
         );
         #[allow(unreachable_code)]
+        Ok(JSValue::UNDEFINED)
+    }
+
+    /// Ends in the C++ terminate handler: with a `std::runtime_error` in flight on macOS, with nothing in flight elsewhere.
+    #[bun_jsc::host_fn]
+    fn js_uncaught_cxx_exception(
+        _global: &JSGlobalObject,
+        _frame: &CallFrame,
+    ) -> JsResult<JSValue> {
+        unsafe extern "C" {
+            safe fn Bun__throwUncaughtCxxExceptionForTesting();
+        }
+        crash_handler::suppress_core_dumps_if_necessary();
+        Bun__throwUncaughtCxxExceptionForTesting();
         Ok(JSValue::UNDEFINED)
     }
 

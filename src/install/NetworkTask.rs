@@ -613,10 +613,6 @@ impl NetworkTask {
                 ACCEPT_HEADER_VALUE
             };
             header_builder.count("Accept", accept_header);
-            let trailing_last_modified = !last_modified.is_empty() && !etag.is_empty();
-            if trailing_last_modified {
-                header_builder.content.count(last_modified);
-            }
             header_builder.allocate()?;
 
             append_auth(&mut header_builder, scope);
@@ -629,18 +625,9 @@ impl NetworkTask {
 
             header_builder.append("Accept", accept_header);
 
-            let last_modified_start = header_builder.content.len;
-            if trailing_last_modified {
-                let _ = header_builder.content.append(last_modified);
-            }
             debug_assert_eq!(header_builder.content.len, header_builder.content.cap);
             self.header_buf = header_builder.content.move_to_slice();
-            if trailing_last_modified {
-                // SAFETY: `self.header_buf` outlives the request; it is freed when the slot returns to the pool.
-                last_modified =
-                    unsafe { bun_ptr::detach_lifetime(&self.header_buf[last_modified_start..]) };
-            }
-            // SAFETY: same invariant as `last_modified` above.
+            // SAFETY: `self.header_buf` outlives the request; it is freed when the slot returns to the pool.
             unsafe { bun_ptr::detach_lifetime(&*self.header_buf) }
         } else {
             let header_buf: &'static str = if needs_extended {
@@ -702,18 +689,6 @@ impl NetworkTask {
 
         if PackageManager::verbose_install() {
             self.http_mut().client.verbose = HTTPVerboseLevel::Headers;
-        }
-
-        // Incase the ETag causes invalidation, we fallback to the last modified date.
-        if !last_modified.is_empty()
-            && bun_core::env_var::feature_flag::BUN_FEATURE_FLAG_LAST_MODIFIED_PRETEND_304
-                .get()
-                .unwrap_or(false)
-        {
-            self.http_mut().client.flags.force_last_modified = true;
-            // SAFETY: `last_modified` points into `self.header_buf` or into the manifest `string_buf` cloned into `self.callback`; both outlive the request.
-            self.http_mut().client.if_modified_since =
-                unsafe { bun_ptr::detach_lifetime(last_modified) };
         }
 
         Ok(())

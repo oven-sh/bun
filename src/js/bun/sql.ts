@@ -14,6 +14,26 @@ const { validateAbortSignal } = require("internal/validators");
 const { resistStopPropagation } = require("internal/shared");
 
 const defineProperties = Object.defineProperties;
+const getOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
+
+/**
+ * Template objects (GetTemplateObject, and the ES5 downlevel helpers of tsc/babel/swc/esbuild)
+ * define `raw` as an own, non-enumerable, read-only, non-configurable array of the same length.
+ * Data can only ever reach `sql()` with an enumerable `raw` (structuredClone, Object.assign, a
+ * deep-merged request body) or an inherited one (polluted Array.prototype.raw); such arrays must
+ * take the helper path, otherwise their elements would be spliced into the query as SQL text.
+ */
+function isTemplateStringsArray(strings: readonly unknown[]): boolean {
+  const raw = getOwnPropertyDescriptor(strings, "raw");
+  return (
+    raw !== undefined &&
+    !raw.enumerable &&
+    !raw.writable &&
+    !raw.configurable &&
+    $isArray(raw.value) &&
+    raw.value.length === strings.length
+  );
+}
 
 type TransactionCallback = (sql: (strings: string, ...values: any[]) => Query<any, any>) => Promise<any>;
 
@@ -361,8 +381,7 @@ const SQL: typeof Bun.SQL = function SQL(
         return Promise.$reject(pool.connectionClosedError());
       }
       if ($isArray(strings)) {
-        // detect if is tagged template
-        if (!$isArray(strings.raw)) {
+        if (!isTemplateStringsArray(strings)) {
           return new SQLHelper(strings, values);
         }
       } else if (typeof strings === "object" && !(strings instanceof Query) && !(strings instanceof SQLHelper)) {
@@ -668,8 +687,7 @@ const SQL: typeof Bun.SQL = function SQL(
         return Promise.$reject(pool.connectionClosedError());
       }
       if ($isArray(strings)) {
-        // detect if is tagged template
-        if (!$isArray((strings as unknown as TemplateStringsArray).raw)) {
+        if (!isTemplateStringsArray(strings)) {
           return new SQLHelper(strings, values);
         }
       } else if (typeof strings === "object" && !(strings instanceof Query) && !(strings instanceof SQLHelper)) {
@@ -898,8 +916,7 @@ const SQL: typeof Bun.SQL = function SQL(
     ...values: any[]
   ) {
     if ($isArray(strings)) {
-      // detect if is tagged template
-      if (!$isArray((strings as unknown as TemplateStringsArray).raw)) {
+      if (!isTemplateStringsArray(strings)) {
         return new SQLHelper(strings, values);
       }
     } else if (typeof strings === "object" && !(strings instanceof Query) && !(strings instanceof SQLHelper)) {

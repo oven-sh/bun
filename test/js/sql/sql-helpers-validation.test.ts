@@ -7,6 +7,11 @@
 // mysql rows need no live server: their URLs point at a closed port that is
 // never actually dialed. The sqlite row uses an in-memory database.
 // https://github.com/oven-sh/bun/issues/32155
+//
+// The same matrix also covers how sql(x) tells a tagged-template call apart
+// from the sql(array) helper: that decision is made synchronously, before any
+// connection, and a wrong answer splices the array's elements into the query
+// as SQL text (demonstrated end to end against sqlite at the bottom).
 import { SQL } from "bun";
 import { describe, expect, test } from "bun:test";
 
@@ -174,5 +179,156 @@ describe("sqlite helper behavior preserved", () => {
     expect(await sql`SELECT 1 as num WHERE 1 IN ${sql([{ id: null }, { id: 1 }], "id")}`).toEqual([{ num: 1 }]);
     // a null item without a column binds NULL
     expect(await sql`SELECT 1 as num WHERE 1 IN ${sql([null, 1])}`).toEqual([{ num: 1 }]);
+  });
+});
+
+const payload = "(0) UNION SELECT id, s FROM secrets";
+
+// Data arrays that nevertheless carry a `raw` array. JSON.parse cannot produce
+// these, but structuredClone/postMessage, Object.assign and deep-merge style
+// body parsers all preserve or add arbitrary enumerable properties.
+const arraysWithRaw: [string, () => string[]][] = [
+  [
+    "an array with an own raw of the same length",
+    () => {
+      const items: any = [payload];
+      items.raw = [payload];
+      return items;
+    },
+  ],
+  [
+    "an array with an own empty raw",
+    () => {
+      const items: any = [payload];
+      items.raw = [];
+      return items;
+    },
+  ],
+  [
+    "a structuredClone of an array with raw",
+    () => {
+      const items: any = [payload];
+      items.raw = [payload];
+      return structuredClone(items);
+    },
+  ],
+  ["an array with raw merged in by Object.assign", () => Object.assign([], { 0: payload, raw: [payload] })],
+];
+
+// Runs fn while every array inherits a `raw` array, as after a prototype
+// pollution bug in the application. Only synchronous work happens inside.
+function withPollutedArrayPrototype<T>(fn: () => T): T {
+  (Array.prototype as any).raw = [];
+  try {
+    return fn();
+  } finally {
+    delete (Array.prototype as any).raw;
+  }
+}
+
+// Template objects as created by the engine and by downlevel compilers. All of
+// them define `raw` as an own, non-enumerable, read-only, non-configurable array.
+const templateObjects: [string, () => TemplateStringsArray][] = [
+  ["an engine template object", () => ((strings: TemplateStringsArray) => strings)`SELECT 1 AS one`],
+  [
+    "a tsc __makeTemplateObject template (target es5)",
+    () => {
+      const cooked: any = ["SELECT 1 AS one"];
+      Object.defineProperty(cooked, "raw", { value: ["SELECT 1 AS one"] });
+      return cooked;
+    },
+  ],
+  [
+    "a babel/swc/esbuild taggedTemplateLiteral template",
+    () => {
+      const strings: any = ["SELECT 1 AS one"];
+      return Object.freeze(Object.defineProperties(strings, { raw: { value: Object.freeze(strings.slice(0)) } }));
+    },
+  ],
+];
+
+describe.each(adapters)("%s template detection", (_adapter, makeSql) => {
+  test.each(arraysWithRaw)("%s is a helper, not a query", async (_shape, makeItems) => {
+    await using sql = makeSql();
+    const items = makeItems();
+    const helper = sql(items) as unknown as SQL.Helper<string>;
+    expect(helper).not.toBeInstanceOf(Promise);
+    expect(helper.value).toBe(items);
+    expect(helper.columns).toEqual([]);
+  });
+
+  test("a polluted Array.prototype.raw does not turn arrays into queries", async () => {
+    await using sql = makeSql();
+    const items = [payload];
+    const rows = [{ id: 2, name: "bob" }];
+    const [inHelper, insertHelper] = withPollutedArrayPrototype(
+      () =>
+        [
+          sql(items) as unknown as SQL.Helper<string>,
+          sql(rows) as unknown as SQL.Helper<(typeof rows)[number]>,
+        ] as const,
+    );
+    expect(inHelper).not.toBeInstanceOf(Promise);
+    expect(inHelper.value).toBe(items);
+    expect(inHelper.columns).toEqual([]);
+    expect(insertHelper).not.toBeInstanceOf(Promise);
+    expect(insertHelper.value).toBe(rows);
+    expect(insertHelper.columns).toEqual(["id", "name"]);
+  });
+
+  test.each(templateObjects)("%s passed programmatically is still a query", async (_shape, makeTemplate) => {
+    await using sql = makeSql();
+    // Queries only connect once awaited, so this never dials the closed port.
+    expect(sql(makeTemplate())).toBeInstanceOf(Promise);
+  });
+});
+
+// What the decision above protects: spliced into the query as text, `payload`
+// reads the secrets table; bound as a parameter it matches nothing.
+describe("sqlite binds arrays carrying a raw property as parameters", () => {
+  async function makeDatabase() {
+    const sql = new SQL("sqlite://:memory:");
+    await sql`CREATE TABLE users (id INTEGER, name TEXT)`;
+    await sql`INSERT INTO users VALUES (1, 'alice')`;
+    await sql`CREATE TABLE secrets (id INTEGER, s TEXT)`;
+    await sql`INSERT INTO secrets VALUES (7, 'TOPSECRET')`;
+    return sql;
+  }
+
+  test.each(arraysWithRaw)("WHERE IN given %s", async (_shape, makeItems) => {
+    await using sql = await makeDatabase();
+    expect(await sql`SELECT * FROM users WHERE id IN ${sql(makeItems())}`).toEqual([]);
+  });
+
+  test("every element of such an array is bound", async () => {
+    await using sql = await makeDatabase();
+    const names: any = ["alice", payload];
+    names.raw = ["alice", payload];
+    expect(await sql`SELECT * FROM users WHERE name IN ${sql(names)}`).toEqual([{ id: 1, name: "alice" }]);
+  });
+
+  test("WHERE IN inside a transaction", async () => {
+    await using sql = await makeDatabase();
+    const items: any = [payload];
+    items.raw = [payload];
+    expect(await sql.begin(tx => tx`SELECT * FROM users WHERE id IN ${tx(items)}`)).toEqual([]);
+  });
+
+  test("helpers created while Array.prototype.raw is polluted", async () => {
+    await using sql = await makeDatabase();
+    const [inHelper, insertHelper] = withPollutedArrayPrototype(
+      () => [sql([payload] as any), sql([{ id: 2, name: "bob" }] as any)] as const,
+    );
+    expect(await sql`SELECT * FROM users WHERE id IN ${inHelper}`).toEqual([]);
+    await sql`INSERT INTO users ${insertHelper}`;
+    expect(await sql`SELECT * FROM users ORDER BY id`).toEqual([
+      { id: 1, name: "alice" },
+      { id: 2, name: "bob" },
+    ]);
+  });
+
+  test.each(templateObjects)("%s passed programmatically executes", async (_shape, makeTemplate) => {
+    await using sql = await makeDatabase();
+    expect(await sql(makeTemplate())).toEqual([{ one: 1 }]);
   });
 });

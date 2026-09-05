@@ -49,7 +49,7 @@ jobs:
           file ./bin/bun
 
       - name: Run in FreeBSD VM
-        uses: vmactions/freebsd-vm@83b151f58c6047089f4c80eb5ba2039d158ce093 # v1
+        uses: vmactions/freebsd-vm@f0552d3b69211736abd97f02ff3d4674c56b73b1 # v1
         with:
           release: ${{ matrix.version }}
           usesh: true

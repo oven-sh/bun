@@ -181,6 +181,33 @@ describe("Bun.semver.order()", () => {
 });
 
 describe("Bun.semver.satisfies()", () => {
+  test("tab/newline/CR between comparators", () => {
+    // node-semver splits comparator sets on /\s+/. A comparator preceded by a
+    // non-space ASCII whitespace byte must not be discarded.
+    for (const ws of ["\t", "\n", "\r", "\v", "\f", " \t", "\t\n "]) {
+      // under-match: the dropped comparator was a ||-branch
+      testSatisfies(`>=1.0.0 ||${ws}<0.5.0`, "0.1.0", true);
+      testSatisfies(`>=1.0.0${ws}||${ws}<0.5.0`, "0.1.0", true);
+      testSatisfies(`1 ||${ws}2 || 9`, "2.0.0", true);
+      // over-match: the dropped comparator was the only one
+      testSatisfies(`${ws}<0.5.0`, "9.9.9", false);
+      testSatisfies(`${ws}<0.5.0`, "0.1.0", true);
+      // hyphen ranges
+      testSatisfies(`0.1.0${ws}- 0.2.0`, "0.1.0", true);
+      testSatisfies(`0.1.0${ws}- 0.2.0`, "0.3.0", false);
+      testSatisfies(`0.1.0 -${ws}0.2.0`, "0.1.0", true);
+      testSatisfies(`0.1.0${ws}-${ws}0.2.0`, "0.3.0", false);
+      // whitespace after comparator operators
+      testSatisfies(`<${ws}2.0.0`, "0.2.9", true);
+      testSatisfies(`>=${ws}2.0.0`, "0.2.9", false);
+      testSatisfies(`^${ws}1.0.0`, "1.2.0", true);
+      testSatisfies(`~${ws}1.2.0`, "1.2.9", true);
+      // a real tagged version separated by non-space whitespace is still skipped
+      testSatisfies(`1.0.0 ||${ws}boop`, "1.0.0", true);
+      testSatisfies(`boop${ws}|| 1.0.0`, "1.0.0", true);
+    }
+  });
+
   test("expected errors", () => {
     expect(satisfies).toBeInstanceOf(Function);
     expect(() => {

@@ -856,6 +856,89 @@ console.log("survived", require("./late.js"));`,
     expect(require("./esm_to_cjs_interop.mjs")).toEqual(Symbol.for("meow"));
   });
 
+  test("require.cache does not depend on user-writable globals", async () => {
+    // require.cache is built lazily by a JS builtin. Native code hands it the
+    // Proxy constructor and the inspect symbol, so it never reads the globals.
+    const code = `
+      const Module = require("node:module");
+      const { Proxy, Map, Symbol } = globalThis;
+      delete globalThis.Proxy;
+      globalThis.Map = globalThis.Symbol = undefined;
+      const cache = require.cache;
+      const moduleCache = Module._cache;
+      Object.assign(globalThis, { Proxy, Map, Symbol });
+      console.log(
+        JSON.stringify([
+          Object.getPrototypeOf(cache),
+          moduleCache === cache,
+          Object.keys(cache).map(key => key.endsWith("[eval]")),
+          Bun.inspect(cache).includes("[eval]"),
+        ]),
+      );
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", code],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout.trim()).toBe(JSON.stringify([null, true, [true], true]));
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+  });
+
+  test("require.cache first accessed near the stack limit throws, and the next access builds it", async () => {
+    // Building the cache can fail for reasons that have nothing to do with user
+    // code, such as a stack overflow inside the builtin. The failure must throw,
+    // nothing may be cached, and a later access at normal depth must build the
+    // real cache, not a stand-in object.
+    const code = `
+      const Module = require("node:module");
+      // One recursion per accessor. Only the deepest frame catches the overflow,
+      // and there any call into the builtin overflows again, so the probe result
+      // does not depend on frame sizes.
+      function probe(useModuleCache) {
+        let outcome;
+        function recurse() {
+          try {
+            recurse();
+          } catch {
+            try {
+              outcome = typeof (useModuleCache ? Module._cache : require.cache);
+            } catch (err) {
+              outcome = err.constructor.name;
+            }
+          }
+        }
+        recurse();
+        return outcome;
+      }
+      const probes = [probe(false), probe(true)];
+      const cache = require.cache;
+      const hasEvalEntry = Object.keys(cache).some(key => key.endsWith("[eval]"));
+      const marker = {};
+      cache.fs = { exports: marker };
+      console.log(
+        JSON.stringify([
+          probes,
+          Object.getPrototypeOf(cache),
+          Module._cache === cache,
+          hasEvalEntry,
+          require("fs") === marker,
+        ]),
+      );
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", code],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout.trim()).toBe(JSON.stringify([["RangeError", "RangeError"], null, true, true, true]));
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+  });
+
   test("Module.runMain", async () => {
     await using proc = Bun.spawn({
       cmd: [

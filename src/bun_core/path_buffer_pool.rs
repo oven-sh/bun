@@ -71,10 +71,8 @@ impl PoolStorage for WPathBuffer {
     }
 }
 
-/// A pooled buffer lives as long as its guard or its thread's pool. A guard
-/// that is still live when the process calls `exit` has no drop, and in an
-/// optimized build its stack slot can be dead by then, so LeakSanitizer would
-/// report the buffer. Scratch storage is never a leak worth reporting.
+/// A guard still live at `exit` never drops, and an optimized build may have
+/// discarded its stack slot, so LeakSanitizer would report the buffer.
 #[inline]
 fn lsan_ignore<T>(buf: Box<T>) -> Box<T> {
     crate::asan::ignore_object((&raw const *buf).cast());

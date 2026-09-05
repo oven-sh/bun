@@ -2014,6 +2014,11 @@ impl BlobExt for Blob {
         if self.name.get().tag() != bun_core::Tag::Dead {
             return Some(self.name.get());
         }
+        // `Bytes.stored_name` is File identity: a bytes-backed Blob without
+        // the File bit has no name.
+        if !self.is_jsdom_file.get() && !self.needs_to_read_file() && !self.is_s3() {
+            return None;
+        }
         if let Some(path) = self.store_path() {
             self.name.set(BunString::clone_utf8(path));
             return Some(self.name.get());
@@ -5886,6 +5891,198 @@ pub(crate) extern "C" fn Blob__getSize(value: JSValue) -> usize {
     unsafe { (*blob).shared_view().len() }
 }
 
+// Impl-level accessors for `src/jsc/bindings/webcore/ClipboardBlob.h`.
+
+/// Borrows the Blob's resident bytes; empty when it has none.
+/// # Safety
+/// `out_ptr` and `out_len` must be valid for writes.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn Blob__implGetSpan(
+    blob: &Blob,
+    out_ptr: *mut *const u8,
+    out_len: *mut usize,
+) {
+    let data = blob.shared_view();
+    // SAFETY: forwarded from the caller's contract.
+    unsafe {
+        *out_ptr = if data.is_empty() {
+            core::ptr::null()
+        } else {
+            data.as_ptr()
+        };
+        *out_len = data.len();
+    }
+}
+
+/// Whether reading this Blob would have to touch a file or the network.
+#[unsafe(no_mangle)]
+pub extern "C" fn Blob__implNeedsToReadFile(blob: &Blob) -> bool {
+    blob.needs_to_read_file() || blob.is_s3()
+}
+
+/// Invoked on the JS thread exactly once; `err` is null on success. Neither
+/// span outlives the call.
+type BlobReadBytesCallback = unsafe extern "C" fn(
+    ctx: *mut c_void,
+    ptr: *const u8,
+    len: usize,
+    err: *const u8,
+    err_len: usize,
+);
+
+struct ClipboardBlobReadHandler {
+    ctx: *mut c_void,
+    callback: BlobReadBytesCallback,
+}
+
+impl ClipboardBlobReadHandler {
+    fn finish(self, result: ReadBytesResult) {
+        match result {
+            ReadBytesResult::Ok(bytes) => {
+                // SAFETY: per this type's contract, `callback`/`ctx` are valid
+                // to invoke once on the JS thread.
+                unsafe {
+                    (self.callback)(self.ctx, bytes.as_ptr(), bytes.len(), core::ptr::null(), 0)
+                }
+            }
+            ReadBytesResult::Err(e) => {
+                let code = e.code.to_owned_slice();
+                let message = e.message.to_owned_slice();
+                let text = match (code.is_empty(), message.is_empty()) {
+                    // fs errors already read "ENOENT: no such file or directory, ...".
+                    (false, false) if message.starts_with(&code) => message,
+                    (false, false) => {
+                        let mut joined = code;
+                        joined.extend_from_slice(b": ");
+                        joined.extend_from_slice(&message);
+                        joined
+                    }
+                    (false, true) => code,
+                    (true, false) => message,
+                    (true, true) => b"The Blob's bytes could not be read.".to_vec(),
+                };
+                // SAFETY: same contract as the success arm.
+                unsafe {
+                    (self.callback)(self.ctx, core::ptr::null(), 0, text.as_ptr(), text.len())
+                }
+            }
+        }
+    }
+}
+
+impl ReadBytesHandler for ClipboardBlobReadHandler {
+    unsafe fn on_read_bytes(this: *mut Self, result: ReadBytesResult) -> JsResult<()> {
+        // SAFETY: `this` is the Box leaked in `Blob__implReadBytes`, delivered
+        // here exactly once per the trait's contract; reclaiming it frees it on
+        // return.
+        let boxed = unsafe { bun_core::heap::take(this) };
+        // The C++ completion settles its promise itself and leaves nothing pending.
+        boxed.finish(result);
+        Ok(())
+    }
+}
+
+/// Reads the Blob's bytes (file, S3, or in-memory) and delivers them to
+/// `callback` on the JS thread exactly once, synchronously when resident.
+/// # Safety
+/// `callback` must be callable on the JS thread with `ctx` until it runs.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn Blob__implReadBytes(
+    blob: &Blob,
+    global: &JSGlobalObject,
+    ctx: *mut c_void,
+    callback: BlobReadBytesCallback,
+) {
+    let handler = bun_core::heap::into_raw(Box::new(ClipboardBlobReadHandler { ctx, callback }));
+    // SAFETY: `handler` is freshly leaked and not used again here; the read
+    // dispatch hands it to `on_read_bytes` exactly once, also when it returns
+    // `Err` (a termination hit while delivering synchronously, i.e. after the
+    // handler has already run the callback), so there is nothing to report.
+    let _ = unsafe { blob.read_bytes_to_handler(handler, global) };
+}
+
+/// Clears the File-specific fields so a dupe of a File surfaces as a plain
+/// Blob; getType() resolves "a new Blob" per
+/// https://w3c.github.io/clipboard-apis/#dom-clipboarditem-gettype
+#[unsafe(no_mangle)]
+pub extern "C" fn Blob__implClearFile(blob: &mut Blob) {
+    blob.is_jsdom_file.set(false);
+    blob.name.set(BunString::DEAD);
+}
+
+/// Sets the Blob's content type verbatim.
+/// # Safety
+/// `[mime, mime+len)` must be readable.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn Blob__implSetContentType(blob: &mut Blob, mime: *const u8, len: usize) {
+    if mime.is_null() || len == 0 {
+        return;
+    }
+    // SAFETY: forwarded from the caller's contract.
+    let slice = unsafe { bun_core::ffi::slice(mime, len) };
+    if !is_valid_blob_type(slice) {
+        return;
+    }
+    blob.content_type.set(BlobContentType::Owned(slice.into()));
+    blob.content_type_was_set.set(true);
+}
+
+/// Borrows the Blob's content type. The bytes live as long as the Blob.
+/// # Safety
+/// `out_ptr` and `out_len` must be valid for writes.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn Blob__implGetContentType(
+    blob: &Blob,
+    out_ptr: *mut *const u8,
+    out_len: *mut usize,
+) {
+    let slice = blob.content_type_slice();
+    // SAFETY: forwarded from the caller's contract.
+    unsafe {
+        *out_ptr = slice.as_ptr();
+        *out_len = slice.len();
+    }
+}
+
+/// Like `Blob__fromBytesWithType`, but normalizes `mime` like the `Blob` constructor's `type`.
+/// # Safety
+/// `[ptr, ptr+len)` and `[mime, mime+mime_len)` must be readable (or null with length 0).
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn Blob__fromBytesWithNormalizedType(
+    global_this: &JSGlobalObject,
+    ptr: *const u8,
+    len: usize,
+    mime: *const u8,
+    mime_len: usize,
+    normalize: bool,
+) -> *mut Blob {
+    // SAFETY: forwarded from the caller's contract.
+    let blob = unsafe { Blob__fromBytes(global_this, ptr, len) };
+    if mime.is_null() || mime_len == 0 {
+        return blob;
+    }
+    // SAFETY: forwarded from the caller's contract.
+    let slice = unsafe { bun_core::ffi::slice(mime, mime_len) };
+    if !is_valid_blob_type(slice) {
+        return blob;
+    }
+    // SAFETY: `blob` is a fresh heap allocation we solely own until returned.
+    unsafe {
+        // The same lookup `new Blob([...], { type })` performs, so a Blob built
+        // here is indistinguishable from one built in JS.
+        (*blob).content_type.set(if normalize {
+            match global_this.bun_vm().as_mut().mime_type(slice) {
+                Some(mime) => BlobContentType::from(mime),
+                None => BlobContentType::from_lowercased(slice),
+            }
+        } else {
+            BlobContentType::Owned(slice.into())
+        });
+        (*blob).content_type_was_set.set(true);
+    }
+    blob
+}
+
 /// # Safety
 /// `[ptr, ptr+len)` must be a valid readable byte range (or `ptr` null / `len` 0).
 #[unsafe(no_mangle)]
@@ -5903,13 +6100,12 @@ pub(crate) unsafe extern "C" fn Blob__fromBytes(
     Blob::new(Blob::init_with_store(store, global_this))
 }
 
-/// Same as Blob__fromBytes but stamps content_type. `mime` must be a
-/// string literal with process lifetime (not freed by deinit — the caller
-/// passes one of the image/* constants).
+/// Same as Blob__fromBytes but stamps content_type with a copy of `mime`.
 ///
 /// # Safety
 /// `[ptr, ptr+len)` must be a valid readable byte range and `mime` a
-/// NUL-terminated `'static` C string.
+/// NUL-terminated C string valid for the duration of the call (its bytes are
+/// copied into the Blob's owned content type).
 #[unsafe(no_mangle)]
 pub(crate) unsafe extern "C" fn Blob__fromBytesWithType(
     global_this: &JSGlobalObject,
@@ -5919,7 +6115,8 @@ pub(crate) unsafe extern "C" fn Blob__fromBytesWithType(
 ) -> *mut Blob {
     // SAFETY: forwarded from caller's contract.
     let blob = unsafe { Blob__fromBytes(global_this, ptr, len) };
-    // SAFETY: caller guarantees `mime` is a NUL-terminated 'static C string.
+    // SAFETY: caller guarantees `mime` is a NUL-terminated C string valid for
+    // this call; the bytes are copied below.
     let mime_slice = unsafe { bun_core::ffi::cstr(mime) }.to_bytes();
     if !mime_slice.is_empty() {
         // SAFETY: `blob` is a fresh heap allocation returned by `Blob__fromBytes`;

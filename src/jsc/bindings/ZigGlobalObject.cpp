@@ -92,6 +92,9 @@
 #include "JSBroadcastChannel.h"
 #include "JSBuffer.h"
 #include "streams/JSByteLengthQueuingStrategy.h"
+#include "JSClipboard.h"
+#include "JSClipboardEvent.h"
+#include "JSClipboardItem.h"
 #include "JSCloseEvent.h"
 #include "JSCommonJSExtensions.h"
 #include "streams/JSCountQueuingStrategy.h"
@@ -1224,6 +1227,9 @@ WEBCORE_GENERATED_CONSTRUCTOR_GETTER(AbortController);
 WEBCORE_GENERATED_CONSTRUCTOR_GETTER(AbortSignal);
 WEBCORE_GENERATED_CONSTRUCTOR_GETTER(BroadcastChannel);
 WEBCORE_GENERATED_CONSTRUCTOR_GETTER(ByteLengthQueuingStrategy)
+WEBCORE_GENERATED_CONSTRUCTOR_GETTER(Clipboard);
+WEBCORE_GENERATED_CONSTRUCTOR_GETTER(ClipboardEvent);
+WEBCORE_GENERATED_CONSTRUCTOR_GETTER(ClipboardItem);
 WEBCORE_GENERATED_CONSTRUCTOR_GETTER(CloseEvent);
 WEBCORE_GENERATED_CONSTRUCTOR_GETTER(CompressionStream);
 WEBCORE_GENERATED_CONSTRUCTOR_GETTER(CountQueuingStrategy)
@@ -1762,6 +1768,14 @@ JSC_DEFINE_HOST_FUNCTION(functionNavigatorGetPlatform, (JSC::JSGlobalObject * gl
 JSC_DEFINE_HOST_FUNCTION(functionNavigatorGetHardwareConcurrency, (JSC::JSGlobalObject*, JSC::CallFrame*))
 {
     return JSValue::encode(JSC::jsNumber(WTF::numberOfProcessorCores()));
+}
+
+// `navigator.clipboard`: the spec's lazy `[SameObject]` singleton, a native
+// `JSClipboard` wrapping the per-global `WebCore::Clipboard` EventTarget.
+JSC_DEFINE_HOST_FUNCTION(functionNavigatorGetClipboard, (JSC::JSGlobalObject * globalObject, JSC::CallFrame*))
+{
+    auto* global = defaultGlobalObject(globalObject);
+    return JSValue::encode(global->m_clipboardInstance.getInitializedOnMainThread(global));
 }
 
 JSC_DECLARE_HOST_FUNCTION(makeGetterTypeErrorForBuiltins);
@@ -2445,15 +2459,23 @@ void GlobalObject::finishCreation(VM& vm)
 
              init.set(ErrorCodeCache::create(init.vm, structure));
          } },
+        { OBJECT_OFFSETOF(GlobalObject, m_clipboardInstance), [](const LazyProperty<JSGlobalObject, JSObject>::Initializer& init) {
+             auto* globalObject = uncheckedDowncast<Zig::GlobalObject>(init.owner);
+             // The wrapper (cached by the DOM wrapper map) owns the impl.
+             auto clipboard = WebCore::Clipboard::create(globalObject->scriptExecutionContext());
+             init.set(WebCore::toJS(init.owner, globalObject, clipboard.get()).getObject());
+         } },
         { OBJECT_OFFSETOF(GlobalObject, m_navigatorObject), [](const LazyProperty<JSGlobalObject, JSObject>::Initializer& init) {
              JSC::JSGlobalObject* globalObject = init.owner;
              unsigned accessorAttributes = PropertyAttribute::Accessor | 0;
 
-             JSC::JSObject* obj = JSC::constructEmptyObject(globalObject, globalObject->objectPrototype(), 4);
+             JSC::JSObject* obj = JSC::constructEmptyObject(globalObject, globalObject->objectPrototype(), 5);
 
              obj->putDirectNativeIntrinsicGetter(init.vm, globalObject, JSC::Identifier::fromString(init.vm, "userAgent"_s), functionNavigatorGetUserAgent, JSC::NoIntrinsic, accessorAttributes);
              obj->putDirectNativeIntrinsicGetter(init.vm, globalObject, JSC::Identifier::fromString(init.vm, "platform"_s), functionNavigatorGetPlatform, JSC::NoIntrinsic, accessorAttributes);
              obj->putDirectNativeIntrinsicGetter(init.vm, globalObject, JSC::Identifier::fromString(init.vm, "hardwareConcurrency"_s), functionNavigatorGetHardwareConcurrency, JSC::NoIntrinsic, accessorAttributes);
+             // https://w3c.github.io/clipboard-apis/#navigator-interface
+             obj->putDirectNativeIntrinsicGetter(init.vm, globalObject, JSC::Identifier::fromString(init.vm, "clipboard"_s), functionNavigatorGetClipboard, JSC::NoIntrinsic, accessorAttributes);
 
              obj->putDirect(init.vm, init.vm.propertyNames->toStringTagSymbol,
                  jsNontrivialString(init.vm, "Navigator"_s), PropertyAttribute::DontEnum | PropertyAttribute::ReadOnly);

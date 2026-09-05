@@ -39,6 +39,11 @@ use core::ffi::{CStr, c_int, c_uint, c_void};
 use core::ptr;
 use std::sync::Once;
 
+use bun_sys::windows::clipboard::{
+    GetClipboardSequenceNumber, GlobalLock, GlobalSize, GlobalUnlock, IsClipboardFormatAvailable,
+    OpenedClipboard, register_format,
+};
+
 use crate::image::codecs;
 use bun_sys::windows;
 
@@ -844,11 +849,6 @@ unsafe extern "system" {
     ) -> HRESULT;
     fn GetHGlobalFromStream(stream: *mut IUnknown, out: *mut *mut c_void) -> HRESULT;
 }
-#[link(name = "kernel32")]
-unsafe extern "system" {
-    fn GlobalLock(h: *mut c_void) -> *mut c_void;
-    fn GlobalUnlock(h: *mut c_void) -> c_int;
-}
 
 /// `WICConvertBitmapSource` is the one flat export from windowscodecs.dll we
 /// need. Loaded lazily (LoadLibraryA inside `loadFactory`) so the binary
@@ -934,27 +934,14 @@ fn load_factory() {
 
 // ───────────────────────────── Win32 clipboard ──────────────────────────────
 //
-// JS-thread only — `OpenClipboard` is process-serialised and the static
-// `fromClipboard()` accessor calls this synchronously, so no cross-thread
-// HGLOBAL hand-off. We prefer the registered "PNG" format (Chrome/Edge/
+// Called synchronously on the JS thread by the static `fromClipboard()`;
+// `OpenedClipboard` excludes the `navigator.clipboard` jobs on the work pool
+// (and any other thread) for the duration, and every HGLOBAL is copied out
+// before it closes. We prefer the registered "PNG" format (Chrome/Edge/
 // Snipping Tool put it; no transcode loss) and fall back to CF_DIBV5/CF_DIB,
 // which we re-wrap as a BMP file by prepending the 14-byte BITMAPFILEHEADER
 // the clipboard omits. Either way the result is bytes the regular Bun.Image
 // decoder understands; nothing is decoded here.
-
-#[link(name = "user32")]
-unsafe extern "system" {
-    fn OpenClipboard(hwnd: *mut c_void) -> c_int;
-    fn CloseClipboard() -> c_int;
-    fn IsClipboardFormatAvailable(format: c_uint) -> c_int;
-    fn GetClipboardData(format: c_uint) -> *mut c_void;
-    fn RegisterClipboardFormatA(name: *const core::ffi::c_char) -> c_uint;
-    fn GetClipboardSequenceNumber() -> u32;
-}
-#[link(name = "kernel32")]
-unsafe extern "system" {
-    fn GlobalSize(h: *mut c_void) -> usize;
-}
 
 const CF_DIB: c_uint = 8;
 const CF_DIBV5: c_uint = 17;
@@ -965,23 +952,17 @@ const CF_DIBV5: c_uint = 17;
 const NAMED_FORMATS: [&CStr; 4] = [c"PNG", c"image/png", c"JFIF", c"image/webp"];
 
 pub(crate) fn clipboard_change_count() -> i64 {
-    // SAFETY: GetClipboardSequenceNumber has no preconditions.
-    unsafe { GetClipboardSequenceNumber() as i64 }
+    GetClipboardSequenceNumber() as i64
 }
 
 pub(crate) fn has_clipboard_image() -> bool {
     // IsClipboardFormatAvailable doesn't require OpenClipboard.
-    // SAFETY: no preconditions.
-    if unsafe { IsClipboardFormatAvailable(CF_DIBV5) } != 0
-        || unsafe { IsClipboardFormatAvailable(CF_DIB) } != 0
-    {
+    if IsClipboardFormatAvailable(CF_DIBV5) != 0 || IsClipboardFormatAvailable(CF_DIB) != 0 {
         return true;
     }
     for name in NAMED_FORMATS {
-        // SAFETY: name is a static NUL-terminated C string.
-        let id = unsafe { RegisterClipboardFormatA(name.as_ptr()) };
-        // SAFETY: no preconditions.
-        if id != 0 && unsafe { IsClipboardFormatAvailable(id) } != 0 {
+        let id = register_format(name);
+        if id != 0 && IsClipboardFormatAvailable(id) != 0 {
             return true;
         }
     }
@@ -991,23 +972,13 @@ pub(crate) fn has_clipboard_image() -> bool {
 // The wider `BackendError` type matches the macOS backend so the caller in
 // Image.rs handles both identically.
 pub(crate) fn clipboard() -> Result<Option<Vec<u8>>, BackendError> {
-    // hwnd=null associates the open with the current task; fine for read-only.
-    // SAFETY: null hwnd is documented as valid.
-    if unsafe { OpenClipboard(ptr::null_mut()) } == 0 {
-        return Err(BackendUnavailable);
-    }
-    scopeguard::defer! {
-        // SAFETY: clipboard is open.
-        let _ = unsafe { CloseClipboard() };
-    }
+    let clipboard = OpenedClipboard::open().ok_or(BackendUnavailable)?;
 
     // 1. Registered file-format chunks — copy verbatim.
     for name in NAMED_FORMATS {
-        // SAFETY: name is a static NUL-terminated C string.
-        let id = unsafe { RegisterClipboardFormatA(name.as_ptr()) };
+        let id = register_format(name);
         if id != 0 {
-            // SAFETY: clipboard is open.
-            let h = unsafe { GetClipboardData(id) };
+            let h = clipboard.get(id);
             if !h.is_null() {
                 if let Some(b) = dup_global::<0>(h)? {
                     return Ok(Some(b));
@@ -1021,8 +992,7 @@ pub(crate) fn clipboard() -> Result<Option<Vec<u8>>, BackendError> {
     //    hostile: a 1-byte CF_DIB or a header with biSize≈u32::MAX must drop
     //    the format, not panic the process.
     for cf in [CF_DIBV5, CF_DIB] {
-        // SAFETY: clipboard is open.
-        let h = unsafe { GetClipboardData(cf) };
+        let h = clipboard.get(cf);
         if h.is_null() {
             continue;
         }

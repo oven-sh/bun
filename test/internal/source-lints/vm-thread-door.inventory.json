@@ -245,6 +245,11 @@
       "WriteFile"
     ]
   },
+  "src/runtime/webcore/clipboard.rs": {
+    "unsafe impl Send": [
+      "CancelProbe"
+    ]
+  },
   "src/runtime/webcore/fetch/FetchTasklet.rs": {
     "HTTPThread::schedule": 1
   },

@@ -77,6 +77,8 @@ public:
 #include "ZigGeneratedClasses+DOMIsoSubspaces.h"
     /*-- BUN --*/
 
+    IsoSubspace* m_subspaceForClipboard { nullptr };
+    IsoSubspace* m_subspaceForClipboardItem { nullptr };
     IsoSubspace* m_subspaceForFetchHeaders { nullptr };
     IsoSubspace* m_subspaceForFetchHeadersIterator { nullptr };
     IsoSubspace* m_subspaceForByteLengthQueuingStrategy { nullptr };
@@ -128,6 +130,7 @@ public:
     IsoSubspace* m_subspaceForSubtleCrypto { nullptr };
 
     IsoSubspace* m_subspaceForBroadcastChannel { nullptr };
+    IsoSubspace* m_subspaceForClipboardEvent { nullptr };
     IsoSubspace* m_subspaceForCustomEvent { nullptr };
 
     IsoSubspace* m_subspaceForMessageChannel { nullptr };

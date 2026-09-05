@@ -1,6 +1,5 @@
 /*
- * Copyright (C) 2013-2017 Apple Inc. All rights reserved.
- * Copyright (C) 2017 Yusuke Suzuki <utatane.tea@gmail.com>.
+ * Copyright (C) 2019 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -26,42 +25,16 @@
 
 #pragma once
 
-#include "JSDOMGuardedObject.h"
-#include <JavaScriptCore/JSPromise.h>
+#include "root.h"
+#include "blob.h"
+#include <wtf/KeyValuePair.h>
+#include <wtf/Vector.h>
+#include <wtf/text/WTFString.h>
 
 namespace WebCore {
 
-class DOMPromise : public DOMGuarded<JSC::JSPromise> {
-public:
-    static Ref<DOMPromise> create(JSDOMGlobalObject& globalObject, JSC::JSPromise& promise)
-    {
-        return adoptRef(*new DOMPromise(globalObject, promise));
-    }
-
-    JSC::JSPromise* promise() const
-    {
-        ASSERT(!isSuspended());
-        return guarded();
-    }
-
-    enum class IsCallbackRegistered { No,
-        Yes };
-
-    static IsCallbackRegistered whenPromiseIsSettled(JSDOMGlobalObject*, JSC::JSObject* promise, Function<void()>&&);
-
-    IsCallbackRegistered whenSettled(Function<void()>&&);
-    JSC::JSValue result() const;
-
-    enum class Status { Pending,
-        Fulfilled,
-        Rejected };
-    Status status() const;
-
-private:
-    DOMPromise(JSDOMGlobalObject& globalObject, JSC::JSPromise& promise)
-        : DOMGuarded<JSC::JSPromise>(globalObject, promise)
-    {
-    }
-};
+// One item's representations as refcounted Blobs — Bun's stand-in for
+// WebCore::PasteboardCustomData (Bun has no Pasteboard/SharedBuffer).
+using ClipboardItemData = Vector<KeyValuePair<String, Ref<Blob>>>;
 
 } // namespace WebCore

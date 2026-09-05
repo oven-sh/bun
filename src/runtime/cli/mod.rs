@@ -2009,6 +2009,9 @@ Examples<d>:<r>
                 pretty!("<b>Flags:<r>");
                 Output::flush();
                 bun_clap::simple_help(arguments::BUILD_ONLY_PARAMS);
+                // --tsconfig-override applies to build too (parsed via TRANSPILER_PARAMS_)
+                // but lives outside BUILD_ONLY_PARAMS, so print it explicitly.
+                bun_clap::simple_help(arguments::TSCONFIG_OVERRIDE_PARAM);
                 pretty!(
                     "\n\n\
 <b>Examples:<r>
@@ -2037,6 +2040,9 @@ A full list of flags is available at <magenta>https://bun.com/docs/bundler<r>
                 pretty!("\n\n<b>Flags:<r>");
                 Output::flush();
                 bun_clap::simple_help(arguments::TEST_ONLY_PARAMS);
+                // --tsconfig-override applies to test too (parsed via TRANSPILER_PARAMS_)
+                // but lives outside TEST_ONLY_PARAMS, so print it explicitly.
+                bun_clap::simple_help(arguments::TSCONFIG_OVERRIDE_PARAM);
                 pretty!(
                     "\n\n\
 <b>Examples:<r>

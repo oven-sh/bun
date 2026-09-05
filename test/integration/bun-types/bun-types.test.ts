@@ -769,6 +769,34 @@ describe("@types/bun integration test", () => {
     });
   });
 
+  describe("navigator.platform", () => {
+    typeTest("includes Bun's FreeBSD platform values", {
+      files: {
+        "navigator-platform.ts": `
+          // navigator.platform values come from functionNavigatorGetPlatform in
+          // src/jsc/bindings/ZigGlobalObject.cpp — Bun ships MacIntel, Win32,
+          // Linux x86_64, and the two FreeBSD variants.
+          const macIntel: typeof navigator.platform = "MacIntel";
+          const win32: typeof navigator.platform = "Win32";
+          const linux: typeof navigator.platform = "Linux x86_64";
+          const freebsdArm: typeof navigator.platform = "FreeBSD arm64";
+          const freebsdAmd: typeof navigator.platform = "FreeBSD amd64";
+          void macIntel;
+          void win32;
+          void linux;
+          void freebsdArm;
+          void freebsdAmd;
+          export {};
+        `,
+      },
+      emptyInterfaces: expectedEmptyInterfacesWhenNoDOM,
+      diagnostics: diagnostics => {
+        const relevantDiagnostics = diagnostics.filter(d => d.line?.startsWith("navigator-platform.ts"));
+        expect(relevantDiagnostics).toEqual([]);
+      },
+    });
+  });
+
   describe("Bunland reaching for JSX", () => {
     typeTest("Bun.markdown.react() returns type compatible with React.ReactElement", {
       packages: ["@types/react", "@types/react-dom"],

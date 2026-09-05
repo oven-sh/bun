@@ -1,8 +1,5 @@
 interface HighlighterOptions {
   enableColors: boolean;
-  redactSensitiveInformation: boolean;
-  languageName?: string;
-  showLineNumbers?: boolean;
 }
 
 const enum TokenClass {
@@ -206,8 +203,6 @@ const htmlTags = new Set([
   "wbr",
 ]);
 
-const sensitivePatterns = new Set(["_auth", "_authToken", "token", "_password", "email"]);
-
 // Character sets for lexing
 const IDENTIFIER_START = new Set("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ$_");
 const IDENTIFIER_PART = new Set("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789$_");
@@ -270,9 +265,6 @@ export class DraculaSyntaxHighlighter {
     this.text = text;
     this.options = {
       enableColors: true,
-      redactSensitiveInformation: false,
-      languageName: "javascript",
-      showLineNumbers: false,
       ...options,
     };
 
@@ -523,45 +515,6 @@ export class DraculaSyntaxHighlighter {
     }
   }
 
-  public highlight(): string {
-    const containerClass = this.options.languageName
-      ? `dracula-theme language-${this.options.languageName}`
-      : "dracula-theme";
-
-    const classAttr = this.options.showLineNumbers ? `${containerClass} with-line-numbers` : containerClass;
-
-    let result = "";
-    let lineContent = "";
-    let currentLine = 1;
-
-    const startNewLine = () => {
-      if (lineContent) {
-        result += this.buildHtmlElement("div", { "class": "line" }, lineContent);
-        lineContent = "";
-      }
-    };
-
-    for (const token of this.tokenize()) {
-      if (token.type === TokenType.Newline) {
-        startNewLine();
-        currentLine++;
-        continue;
-      }
-
-      if (token.tokenClass) {
-        lineContent += this.wrap(token.value, token.tokenClass);
-      } else {
-        lineContent += this.escapeHtml(token.value);
-      }
-    }
-
-    // Handle any remaining content
-    startNewLine();
-
-    // Wrap everything in pre tag
-    return this.buildHtmlElement("pre", { "class": classAttr }, result);
-  }
-
   public highlightLine() {
     let lineContent = "";
 
@@ -587,14 +540,6 @@ export class DraculaSyntaxHighlighter {
       .replace(/>/g, "&gt;")
       .replace(/"/g, "&quot;")
       .replace(/'/g, "&#039;");
-  }
-
-  private buildHtmlElement(tag: string, attributes: Record<string, string>, content: string): string {
-    const attrs = Object.entries(attributes)
-      .map(([key, value]) => `${key}="${this.escapeHtml(value)}"`)
-      .join(" ");
-
-    return `<${tag}${attrs ? " " + attrs : ""}>${content}</${tag}>`;
   }
 
   private wrap(content: string, tokenClass: string): string {
@@ -666,44 +611,6 @@ export class DraculaSyntaxHighlighter {
       if (char === quote) {
         str += this.consume();
         break;
-      }
-
-      str += this.consume();
-    }
-
-    return str;
-  }
-
-  private consumeTemplateString(): string {
-    let str = "";
-    let pos = this.pos;
-    let isEscaped = false;
-
-    // Consume initial backtick
-    str += this.consume();
-
-    while (this.pos < this.text.length) {
-      const char = this.peek();
-
-      if (isEscaped) {
-        str += this.consume();
-        isEscaped = false;
-        continue;
-      }
-
-      if (char === "\\") {
-        str += this.consume();
-        isEscaped = true;
-        continue;
-      }
-
-      if (char === "`") {
-        str += this.consume();
-        break;
-      }
-
-      if (char === "$" && this.peek(1) === "{") {
-        return str;
       }
 
       str += this.consume();
@@ -788,28 +695,6 @@ export class DraculaSyntaxHighlighter {
       }
     }
     return operator;
-  }
-
-  private shouldRedactSensitive(str: string): boolean {
-    // Simple string matching without regex
-    // Check for UUID-like pattern
-    if (str.length === 36 && str[8] === "-" && str[13] === "-" && str[18] === "-" && str[23] === "-") {
-      const isValidChar = (c: string) => this.isHexDigit(c) || c === "-";
-      return [...str].every(isValidChar);
-    }
-
-    // Check for URL with credentials
-    if (str.includes("@") && (str.startsWith("http://") || str.startsWith("https://") || str.startsWith("ftp://"))) {
-      return true;
-    }
-
-    // Check for NPM token
-    if (str.startsWith("npm_") && str.length === 68) {
-      const isValidTokenChar = (c: string) => this.isIdentifierPart(c);
-      return str.slice(4).every(isValidTokenChar);
-    }
-
-    return false;
   }
 }
 

@@ -24,10 +24,9 @@ This directory generates `build.ninja`. The scripts **describe** the build; ninj
 
 - `direct` — list the dep's sources explicitly; each becomes a first-class `cc`/`cxx` edge in our graph and the `.o`s go straight into bun's link. The default for the C/C++ deps (zlib, zstd, boringssl, libarchive, mimalloc, …). Skips a sub-process configure entirely and lets LTO see across the dep boundary.
 - `nested-cmake` — invoke the dep's own cmake configure + build as ninja edges. For deps whose build is too entangled to list by hand. Flags forwarded via `-DCMAKE_C_FLAGS`; cmake's own dependency tracking handles incrementality inside.
-- `cargo` — invoke cargo build (lolhtml, rust-argon2). Cargo's incremental build is reliable; `restat = 1` keeps our downstream no-ops fast.
 - `prebuilt` — skip build entirely, download compiled `.a`/`.lib` (WebKit, nodejs-headers).
 
-The `dep` pool (depth 4) throttles concurrent nested cmake/cargo sub-builds so they don't oversubscribe cores.
+The `dep` pool (depth 4) throttles concurrent nested cmake sub-builds so they don't oversubscribe cores.
 
 **Self-obsoleting workarounds** — see "Adding a workaround" below.
 
@@ -158,7 +157,7 @@ For `mode: "full"` (the normal case):
 
 1. **Codegen** — `emitCodegen(n, cfg, sources)` emits ~20 generation steps (bindgen, `.classes.ts` → C++, bundled modules, LUTs). Returns grouped outputs.
 2. **Rust** — `emitRust(n, cfg, {...})` emits `cargo build -p bun_runtime` → `libbun_runtime.a` (after resolving its path deps, lolhtml and rust-argon2). Codegen and cargo are emitted before the deps on purpose. Scheduling: with no `.ninja_log` (every CI build) ninja weighs each edge as 1 and runs the longest remaining chain first, ties in emission order — so cargo ties with `cc → link` in full mode and wins on emission order, but in `archive-link` mode `cc → ar → link` outranks it and cargo would start only after every compile had been dispatched (~50s into a CI build). The `compile` pool in `compile.ts` (depth = core count, below ninja's default `-j` of cores+2) is what actually guarantees cargo a slot the moment it is ready.
-3. **Deps** — loop `allDeps`, call `resolveDep(n, cfg, dep)`. Each emits fetch → configure → build (nested-cmake), or fetch → cargo, or fetch → direct cc+ar, or prebuilt download. Collects lib paths, include dirs, outputs.
+3. **Deps** — loop `allDeps`, call `resolveDep(n, cfg, dep)`. Each emits fetch → configure → build (nested-cmake), or fetch → direct cc+ar, or prebuilt download. Collects lib paths, include dirs, outputs.
 4. **Flags** — `computeFlags(cfg)` evaluates flag tables → cflags/cxxflags/defines/ldflags/stripflags.
 5. **PCH** — compile `root-pch.h` → PCH (skipped in CI full mode).
 6. **Compile** — loop sources, `cxx()`/`cc()` per file.

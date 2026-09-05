@@ -1,4 +1,4 @@
-import { DebugSession, OutputEvent } from "@vscode/debugadapter";
+import { DebugSession } from "@vscode/debugadapter";
 import { tmpdir } from "node:os";
 import * as path from "node:path";
 import { join } from "node:path";
@@ -262,23 +262,6 @@ interface DebugProtocolEvent extends DAP.Event {
   };
 }
 
-interface RuntimeConsoleAPICalledEvent {
-  type: string;
-  args: Array<{
-    type: string;
-    value: any;
-  }>;
-}
-
-interface RuntimeExceptionThrownEvent {
-  exceptionDetails: {
-    text: string;
-    exception?: {
-      description?: string;
-    };
-  };
-}
-
 interface PathMapping {
   localRoot?: string;
   remoteRoot?: string;
@@ -410,10 +393,6 @@ class FileDebugSession extends DebugSession {
       });
     }
 
-    this.adapter.on("Adapter.reverseRequest", ({ command, arguments: args }) =>
-      this.sendRequest(command, args, 5000, () => {}),
-    );
-
     adapters.set(url, this);
   }
 
@@ -466,19 +445,6 @@ class TerminalDebugSession extends FileDebugSession {
       });
     });
   }
-
-  get terminalProfile(): vscode.TerminalProfile {
-    return new vscode.TerminalProfile({
-      name: "Bun Terminal",
-      env: {
-        "BUN_INSPECT": `${this.adapter.url}?wait=1`,
-        "BUN_INSPECT_NOTIFY": this.signal.url,
-        BUN_INSPECT_CONNECT_TO: "",
-      },
-      isTransient: true,
-      iconPath: new vscode.ThemeIcon("debug-console"),
-    });
-  }
 }
 
 function getActivePath(target?: vscode.Uri): string | undefined {
@@ -491,73 +457,6 @@ function getRuntime(scope?: vscode.ConfigurationScope): string {
     return value;
   }
   return "bun";
-}
-
-export async function runUnsavedCode() {
-  const editor = vscode.window.activeTextEditor;
-  if (!editor || !editor.document.isUntitled) return;
-
-  const code = editor.document.getText();
-  const startTime = performance.now();
-
-  try {
-    // Start debugging
-    await vscode.debug.startDebugging(undefined, {
-      ...DEBUG_CONFIGURATION,
-      program: "-",
-      __code: code,
-      __untitledName: editor.document.uri.toString(),
-      console: "debugConsole",
-      internalConsoleOptions: "openOnSessionStart",
-    });
-
-    // Find our debug session instance
-    const debugSession = Array.from(adapters.values()).find(
-      adapter => adapter.sessionId === vscode.debug.activeDebugSession?.id,
-    );
-
-    if (debugSession) {
-      // Wait for both the inspector to connect AND the adapter to be initialized
-      await new Promise<void>(resolve => {
-        let inspectorConnected = false;
-        let adapterInitialized = false;
-
-        const checkDone = () => {
-          if (inspectorConnected && adapterInitialized) {
-            resolve();
-          }
-        };
-
-        debugSession.adapter.once("Inspector.connected", () => {
-          inspectorConnected = true;
-          checkDone();
-        });
-
-        debugSession.adapter.once("Adapter.initialized", () => {
-          adapterInitialized = true;
-          checkDone();
-        });
-      });
-
-      // Now wait for debug session to complete
-      await new Promise<void>(resolve => {
-        const disposable = vscode.debug.onDidTerminateDebugSession(() => {
-          const duration = (performance.now() - startTime).toFixed(1);
-          debugSession.sendEvent(new OutputEvent(`✓ Code execution completed in ${duration}ms\n`));
-          disposable.dispose();
-          resolve();
-        });
-      });
-    }
-  } catch (err) {
-    if (vscode.debug.activeDebugSession) {
-      const duration = (performance.now() - startTime).toFixed(1);
-      const errorSession = adapters.get(vscode.debug.activeDebugSession.id);
-      errorSession?.sendEvent(
-        new OutputEvent(`✕ Error after ${duration}ms: ${err instanceof Error ? err.message : String(err)}\n`),
-      );
-    }
-  }
 }
 
 const languageIds = ["javascript", "typescript", "javascriptreact", "typescriptreact"];

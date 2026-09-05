@@ -2,15 +2,11 @@
 
 use core::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 
-/// Multi-producer, multi-consumer pending-signal counts. `add` is one
-/// relaxed increment and one release or, so signal handlers on any thread may
-/// run it at once or nested, and it can never be full. `take` hands each
-/// number's count to one consumer, lowest number first.
+/// Multi-producer, multi-consumer pending-signal counts. Never full.
 pub struct PendingSignals {
     /// How many times each signal number arrived since it was last taken.
     counts: [AtomicU32; 256],
-    /// Bit `n` set: `counts[n]` may be nonzero. A hint that keeps `take`
-    /// from scanning every counter on an idle tick.
+    /// Bit `n` set: `counts[n]` may be nonzero (a hint, never authoritative).
     mask: [AtomicU64; 4],
 }
 
@@ -33,8 +29,7 @@ impl PendingSignals {
         }
     }
 
-    /// Producer side, any thread. Atomics only, so it is async-signal-safe.
-    /// `signal` is never 0.
+    /// Producer side, any thread, async-signal-safe. `signal` is never 0.
     pub fn add(&self, signal: u8) {
         debug_assert_ne!(signal, 0, "signal numbers start at 1");
         self.counts[usize::from(signal)].fetch_add(1, Ordering::Relaxed);
@@ -42,9 +37,8 @@ impl PendingSignals {
         self.mask[word].fetch_or(bit, Ordering::Release);
     }
 
-    /// Consumer side. Calls `f(signal, count)` once for each number that
-    /// arrived since the last `take`, lowest number first, and resets its
-    /// count. Several consumers may race: each arrival is handed out once.
+    /// Consumer side, any number of them. Calls `f(signal, count)` for each
+    /// pending number, lowest first, and resets its count.
     pub fn take(&self, mut f: impl FnMut(u8, u32)) {
         for (index, word) in self.mask.iter().enumerate() {
             if word.load(Ordering::Acquire) == 0 {
@@ -56,8 +50,7 @@ impl PendingSignals {
                 bits &= bits - 1;
                 let signal = (index * 64 + bit as usize) as u8;
                 let count = self.counts[usize::from(signal)].swap(0, Ordering::AcqRel);
-                // 0 when another consumer took it, or when the producer set
-                // the bit after this consumer already read the count.
+                // 0 when another consumer took it or the bit outran the count.
                 if count != 0 {
                     f(signal, count);
                 }
@@ -104,8 +97,7 @@ mod tests {
         assert_eq!(seen, [(2, 1)]);
     }
 
-    /// Producers on several threads never lose an arrival, whether the
-    /// consumer runs between them or not.
+    /// Producers on several threads never lose an arrival.
     #[test]
     fn concurrent_producers_deliver_every_arrival_once() {
         let pending = PendingSignals::new();

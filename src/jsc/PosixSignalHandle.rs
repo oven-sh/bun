@@ -7,8 +7,7 @@ use crate::{JSGlobalObject, Task};
 use bun_event_loop::{Taskable, task_tag};
 use bun_threading::PendingSignals;
 
-/// A storm of one signal between two ticks runs its JS listeners at most
-/// this many times.
+/// Cap on JS listener calls per signal number per loop tick.
 const MAX_TASKS_PER_SIGNAL: u32 = 8192;
 
 /// Signal numbers queued by signal handlers on any thread for the main loop.
@@ -25,14 +24,13 @@ impl PosixSignalHandle {
         Box::new(init)
     }
 
-    /// Async-signal-safe. Never full, so no signal is lost.
+    /// Async-signal-safe and never full.
     #[allow(dead_code)]
     pub(crate) fn enqueue(&self, signal: u8) {
         self.pending.add(signal);
     }
 
-    /// Enqueue one task per pending arrival, lowest signal number first.
-    /// Called by the main thread.
+    /// Main thread: enqueue one task per pending arrival, lowest number first.
     #[allow(dead_code)]
     pub(crate) fn drain(&self, event_loop: &mut EventLoop) {
         self.pending.take(|signal, count| {

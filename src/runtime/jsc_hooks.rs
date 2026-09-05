@@ -1275,7 +1275,6 @@ fn print_exception(
             colors,
             true,
         );
-        // `defer formatter.deinit()` → Drop.
     }
 
     let _ = writer.flush();
@@ -3953,7 +3952,7 @@ unsafe fn get_loader_and_virtual_source<'a>(
     specifier_str: &'a [u8],
     jsc_vm: *mut VirtualMachine,
     virtual_source_to_use: &'a mut Option<bun_ast::Source>,
-    blob_to_deinit: &mut Option<crate::webcore::Blob>,
+    resolved_blob: &mut Option<crate::webcore::Blob>,
     type_attribute_str: Option<&[u8]>,
 ) -> crate::Result<LoaderResult<'a>> {
     let (normalized_file_path_from_specifier, specifier, query) =
@@ -3994,12 +3993,12 @@ unsafe fn get_loader_and_virtual_source<'a>(
             .resolve_and_dupe(&specifier[b"blob:".len()..], unsafe { &*jsc_vm }.global())
         {
             Some(blob) => {
-                *blob_to_deinit = Some(blob);
-                // SAFETY: `blob_to_deinit` is `Some` (just written); we hold
+                *resolved_blob = Some(blob);
+                // SAFETY: `resolved_blob` is `Some` (just written); we hold
                 // `&mut` for the duration of this body, so `as_mut().unwrap()`
                 // is sound and the `&'a` reborrow points at storage owned by
                 // the *caller's* `Option<Blob>` slot (outlives `LoaderResult`).
-                let blob = blob_to_deinit.as_mut().unwrap();
+                let blob = resolved_blob.as_mut().unwrap();
                 // SAFETY: per fn contract — `jsc_vm` is the live per-thread VM.
                 loader = blob.get_loader(unsafe { &*jsc_vm });
 
@@ -4008,10 +4007,10 @@ unsafe fn get_loader_and_virtual_source<'a>(
                     // Only treat it as a file if it is a `Bun.file()`.
                     if blob.needs_to_read_file() {
                         // Note: borrowck — `Fs::Path<'a>` borrows
-                        // `filename`, which borrows `*blob_to_deinit`. The
+                        // `filename`, which borrows `*resolved_blob`. The
                         // caller owns that slot for `'a`, so erase via raw ptr.
                         // SAFETY: `filename` borrows the blob's backing store,
-                        // which the caller's `blob_to_deinit` slot keeps alive
+                        // which the caller's `resolved_blob` slot keeps alive
                         // for `'a`; reconstructing the slice preserves provenance.
                         path = Fs::Path::init(unsafe {
                             core::slice::from_raw_parts(filename.as_ptr(), filename.len())
@@ -4022,7 +4021,7 @@ unsafe fn get_loader_and_virtual_source<'a>(
                 if !blob.needs_to_read_file() {
                     // SAFETY: same lifetime erasure as above — `shared_view()`
                     // borrows the blob's backing store (held in the caller's
-                    // `blob_to_deinit` slot for the synchronous transpile).
+                    // `resolved_blob` slot for the synchronous transpile).
                     // `bun_ast::Source` stores `&'static [u8]` (see
                     // logger/lib.rs §`type Str`), so erase to
                     // `'static`; sound because the blob outlives the
@@ -4189,14 +4188,14 @@ pub unsafe extern "C" fn Bun__transpileFile(
     let type_attribute_str: Option<&[u8]> = type_attribute.and_then(|s| s.as_utf8());
 
     let mut virtual_source_to_use: Option<bun_ast::Source> = None;
-    let mut blob_to_deinit: Option<crate::webcore::Blob> = None;
+    let mut resolved_blob: Option<crate::webcore::Blob> = None;
     // SAFETY: per fn contract — `jsc_vm` is the live per-thread VM.
     let mut lr = match unsafe {
         get_loader_and_virtual_source(
             _specifier.slice(),
             jsc_vm,
             &mut virtual_source_to_use,
-            &mut blob_to_deinit,
+            &mut resolved_blob,
             type_attribute_str,
         )
     } {
@@ -4212,17 +4211,6 @@ pub unsafe extern "C" fn Bun__transpileFile(
             return ptr::null_mut();
         }
     };
-    // Deinit the blob (if any) on scope exit.
-    // Note: reshaped for borrowck — capture the `is_some()` flag *before*
-    // moving the option into the scopeguard so the `transpile_async` predicate
-    // can still read it without aliasing the guard's `&mut`.
-    let had_blob = blob_to_deinit.is_some();
-    let _blob_guard = scopeguard::guard(blob_to_deinit, |mut slot| {
-        if let Some(mut blob) = slot.take() {
-            blob.deinit();
-        }
-    });
-
     // ── force_loader / require.extensions override ──────────────────────────
     if let Some(loader_type) = force_loader_type {
         // Note: `@branchHint(.unlikely)` dropped (no stable Rust equiv).
@@ -4300,7 +4288,7 @@ pub unsafe extern "C" fn Bun__transpileFile(
                 (*jsc_vm).transpiler_store.enabled,
             )
         };
-        if !had_blob
+        if resolved_blob.is_none()
             && allow_promise
             && (has_loaded || is_in_preload)
             && concurrent_loader.is_java_script_like()

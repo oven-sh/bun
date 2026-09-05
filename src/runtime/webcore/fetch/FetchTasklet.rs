@@ -188,9 +188,7 @@ impl HTTPRequestBody {
     pub(crate) fn detach(&mut self) {
         match self {
             HTTPRequestBody::AnyBlob(blob) => blob.detach(),
-            HTTPRequestBody::ReadableStream(stream) => {
-                stream.deinit();
-            }
+            HTTPRequestBody::ReadableStream(stream) => *stream = ReadableStreamStrong::Empty,
             HTTPRequestBody::Sendfile(sendfile) => {
                 if sendfile.offset.max(sendfile.remain) > 0 {
                     sendfile.fd.close();
@@ -215,10 +213,8 @@ impl HTTPRequestBody {
         }
         if let BodyValue::Locked(locked) = &mut body_value {
             if locked.readable.has() {
-                // `BodyValue` now has `Drop` (H3), so we cannot move
-                // `l.readable` out by value (E0509). `mem::take` leaves a default
-                // readable; `Value::drop` on the residual `Locked` then runs
-                // `readable.deinit()` on that default — a no-op.
+                // `BodyValue` has `Drop`, so `locked.readable` cannot move out by
+                // value (E0509); `mem::take` leaves an empty one.
                 return Ok(HTTPRequestBody::ReadableStream(core::mem::take(
                     &mut locked.readable,
                 )));
@@ -2614,14 +2610,11 @@ impl FetchTaskletPromiseSettle {
         let prom = self.promise.value_or_empty().as_any_promise().unwrap();
         let res = self.held.swap();
         res.ensure_still_alive();
-        let r = if self.success {
+        if self.success {
             prom.resolve(&self.global_object, res)
         } else {
             prom.reject_with_async_stack(&self.global_object, res)
-        };
-        self.held.deinit();
-        self.promise = jsc::JSPromiseStrong::empty();
-        r
+        }
     }
 }
 

@@ -52,9 +52,6 @@ impl readable_stream::SourceContext for ByteBlobLoader {
     fn on_cancel(&mut self) {
         Self::on_cancel(self);
     }
-    fn deinit_fn(&mut self) {
-        Self::deinit(self)
-    }
     fn drain_internal_buffer(&mut self) -> Vec<u8> {
         Self::drain(self)
     }
@@ -180,14 +177,6 @@ impl ByteBlobLoader {
     }
 
     pub(crate) fn on_cancel(&mut self) {
-        self.clear_data();
-    }
-
-    // Kept as inherent method (not `Drop`) — invoked via `SourceContext::deinit_fn`.
-    // Only side-effect teardown lives here; the enclosing `Box<Source>` is freed by
-    // the caller (`NewSource::decrement_count`) *after* this returns. Freeing the
-    // parent here would deallocate the storage backing `&mut self` (dangling UAF).
-    pub(crate) fn deinit(&mut self) {
         self.clear_data();
     }
 

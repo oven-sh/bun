@@ -571,7 +571,6 @@ impl BlobExt for Blob {
             impl<H: ReadBytesHandler> Task<H> {
                 fn done(mut self: Box<Self>, r: ReadBytesResult) -> JsResult<()> {
                     self.poll.unref(bun_io::js_vm_ctx());
-                    self.blob.deinit();
                     let ctx = self.ctx;
                     drop(self);
                     // SAFETY: `ctx` is the pointer handed to `read_bytes_to_handler`;
@@ -1724,7 +1723,6 @@ impl BlobExt for Blob {
 
                 let credentials_with_options =
                     s3.get_credentials_with_options(Some(options), global_this)?;
-                // `defer credentialsWithOptions.deinit()` → Drop handles slices.
                 // `writable_stream` adopts the dup'd ref by value; the
                 // MultiPartUpload derefs on done.
                 return crate::webcore::s3::client::writable_stream(
@@ -3904,11 +3902,8 @@ fn on_structured_clone_deserialize<B: AsRef<[u8]>>(
             let bytes_len = reader.read_int_le::<u32>()?;
             let bytes = read_slice(reader, bytes_len as usize)?;
 
+            // Owns `bytes` (via its Store when non-empty); an early `?` drops it.
             let blob = Blob::init(bytes, global_this);
-            // `blob` now owns `bytes` (via its Store when non-empty). If any
-            // of the remaining reads fail before we heap-promote it, Drop on
-            // `blob` releases the store so the payload bytes don't leak.
-            let guard = scopeguard::guard(blob, |mut b| b.deinit());
 
             'versions: {
                 if version == 1 {
@@ -3918,8 +3913,7 @@ fn on_structured_clone_deserialize<B: AsRef<[u8]>>(
                 let name_len = reader.read_int_le::<u32>()?;
                 let name = read_slice(reader, name_len as usize)?;
 
-                // ScopeGuard derefs to its inner Blob.
-                if let Some(store) = (*guard).store() {
+                if let Some(store) = blob.store() {
                     if let store::Data::Bytes(bytes_store) = &mut Store::data_mut(store) {
                         // Transfer ownership of the local `name: Vec<u8>` into
                         // `stored_name` (a `Box<[u8]>`); freed by `Bytes::Drop`.
@@ -3933,7 +3927,6 @@ fn on_structured_clone_deserialize<B: AsRef<[u8]>>(
                 }
             }
 
-            let blob = scopeguard::ScopeGuard::into_inner(guard);
             break 'bytes Blob::new(blob);
         }
         store::SerializeTag::File => 'file: {
@@ -3986,8 +3979,8 @@ fn on_structured_clone_deserialize<B: AsRef<[u8]>>(
     // (truncated trailer fields) tear down both the heap object and its
     // store. `content_type` is handled by its own Drop above since it
     // hasn't been attached to `blob` yet.
-    // SAFETY: blob is a freshly-allocated heap pointer from Blob::new.
-    let blob_guard = scopeguard::guard(blob, |b| unsafe { (*b).deinit() });
+    // SAFETY: blob is a freshly-allocated heap pointer from Blob::new; sole owner.
+    let blob_guard = scopeguard::guard(blob, |b| unsafe { Blob::destroy(b) });
     // SAFETY: `blob_guard` holds the sole pointer to the fresh heap allocation.
     // Shared access only — Blob state is Cell/JsCell-based.
     let blob = unsafe { &**blob_guard };
@@ -5756,9 +5749,7 @@ impl S3BlobDownloadTask {
 
 impl Drop for S3BlobDownloadTask {
     fn drop(&mut self) {
-        Blob::deinit(&mut self.blob);
         self.poll_ref.unref(bun_io::js_vm_ctx());
-        // promise: Drop handles deinit.
     }
 }
 

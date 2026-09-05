@@ -470,12 +470,6 @@ impl FileRoute {
     }
 }
 
-impl Drop for FileRoute {
-    fn drop(&mut self) {
-        self.blob.deinit();
-    }
-}
-
 /// RFC 9110 §13.2.2 precondition evaluation for a GET/HEAD file response.
 /// Order: (1) If-Match, else (2) If-Unmodified-Since; then (3) If-None-Match,
 /// else (4) If-Modified-Since. Steps 1/2 yield 412 on failure and must run

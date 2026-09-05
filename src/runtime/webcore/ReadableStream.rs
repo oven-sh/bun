@@ -83,10 +83,6 @@ impl Strong {
         }
     }
 
-    pub(crate) fn deinit(&mut self) {
-        *self = Self::Empty;
-    }
-
     /// The held stream, re-tagged. Pure: no script, no exception, no trap poll (unlike
     /// [`ReadableStream::from_js`], which converts arbitrary values).
     pub(crate) fn get(&self) -> Option<ReadableStream> {
@@ -767,12 +763,12 @@ pub trait SourceContext: Sized {
     fn on_start(&mut self) -> streams::Start;
     fn on_pull(&mut self, buf: &mut [u8], view: JSValue) -> streams::Result;
     fn on_cancel(&mut self);
-    /// Per-context teardown side-effects (unref pollers, flush pending callbacks,
-    /// release handles). **Must NOT free the enclosing `NewSource<Self>` allocation** —
+    /// Per-context teardown side-effects beyond field `Drop` (unref pollers, flush
+    /// pending callbacks). **Must NOT free the enclosing `NewSource<Self>` allocation** —
     /// that is done by the caller ([`NewSource::decrement_count`]) *after* this
     /// returns, via `Box::from_raw`, which then runs `Drop` on every field. Freeing
     /// here would deallocate the storage backing the live `&mut self` borrow (UAF).
-    fn deinit_fn(&mut self);
+    fn deinit_fn(&mut self) {}
 
     fn finalize_detach(&mut self) -> bool {
         false

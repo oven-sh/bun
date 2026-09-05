@@ -75,12 +75,7 @@ const BANNED = new RegExp(`${RECLAIM}(?:${SELF_AS_POINTER})`, "g");
 
 // Documented, ratcheted exceptions: files allowed to keep exactly N of the
 // shape. Prefer converting over adding an entry here.
-const ALLOW: Record<string, number> = {
-  // `Blob::deinit(&mut self)` frees heap-allocated blobs through its receiver.
-  // It is being converted separately (#37672); delete this entry when that
-  // lands.
-  "src/jsc/webcore_types.rs": 1,
-};
+const ALLOW: Record<string, number> = {};
 
 const counts: Record<string, number> = {};
 const offenders: string[] = [];

@@ -47,13 +47,6 @@ impl Entry {
     }
 }
 
-impl Drop for Entry {
-    fn drop(&mut self) {
-        self.blob.deinit();
-        // The allocation itself is freed by the `Box<Entry>` drop.
-    }
-}
-
 impl ObjectURLRegistry {
     pub(crate) fn register(&self, vm: &mut VirtualMachine, blob: &Blob) -> UUID {
         let uuid = vm.rare_data().next_uuid();

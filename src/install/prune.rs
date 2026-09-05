@@ -1745,26 +1745,28 @@ fn push_store_entry_names(
 }
 
 // Peer hashes differ between a full install and one narrowed by `--production`/`--omit`; entries laid out by either stay.
-fn store_entry_names(manager: &mut PackageManager, wanted: &DynamicBitSet) -> Vec<Box<[u8]>> {
-    if manager.lockfile.packages.len() == 0 {
-        return Vec::new();
-    }
+fn store_entry_names(
+    manager: &mut PackageManager,
+    own_store: &Store,
+    wanted: &DynamicBitSet,
+) -> Vec<Box<[u8]>> {
     let own = install_features(manager);
     let full = full_install_features(own);
     let mut names: Vec<Box<[u8]>> = Vec::new();
-    for features in [Some(full), (own != full).then_some(own)]
-        .into_iter()
-        .flatten()
-    {
-        let store = build_store_with(manager, features);
-        push_store_entry_names(&manager.lockfile, &store, wanted, &mut names);
+    push_store_entry_names(&manager.lockfile, own_store, wanted, &mut names);
+    if own != full {
+        let full_store = build_store_with(manager, full);
+        push_store_entry_names(&manager.lockfile, &full_store, wanted, &mut names);
     }
     sort_names(&mut names);
     names.dedup();
     names
 }
 
-fn direct_aliases(manager: &PackageManager, pkg_id: PackageID) -> Vec<Box<[u8]>> {
+/// The aliases `bun install` links into the `node_modules` of the root or workspace `pkg_id`:
+/// its enabled lockfile dependencies, plus the dependencies of its store entries. The store
+/// entries add the peers an ancestor provides, which `--omit=peer` filters from the lockfile walk.
+fn direct_aliases(manager: &PackageManager, store: &Store, pkg_id: PackageID) -> Vec<Box<[u8]>> {
     let lockfile: &Lockfile = &manager.lockfile;
     let buf = lockfile.buffers.string_bytes.as_slice();
     let deps = lockfile.buffers.dependencies.as_slice();
@@ -1789,6 +1791,16 @@ fn direct_aliases(manager: &PackageManager, pkg_id: PackageID) -> Vec<Box<[u8]>>
         }
         direct.push(deps[dep_id as usize].name.slice(buf).into());
     }
+    let node_pkg_ids = store.nodes.items_pkg_id();
+    let entry_dependencies = store.entries.items_dependencies();
+    for (entry_idx, node_id) in store.entries.items_node_id().iter().enumerate() {
+        if node_pkg_ids[node_id.get() as usize] != pkg_id {
+            continue;
+        }
+        for item in entry_dependencies[entry_idx].slice() {
+            direct.push(deps[item.dep_id as usize].name.slice(buf).into());
+        }
+    }
     sort_names(&mut direct);
     direct.dedup();
     direct
@@ -1809,7 +1821,11 @@ fn plan_isolated(
     plan: &mut Plan,
 ) {
     let wanted = wanted_packages(manager, selection);
-    let names = store_entry_names(manager, &wanted);
+    let own_store = (manager.lockfile.packages.len() != 0)
+        .then(|| build_store_with(manager, install_features(manager)));
+    let names = own_store
+        .as_ref()
+        .map_or_else(Vec::new, |store| store_entry_names(manager, store, &wanted));
     let manager: &PackageManager = manager;
 
     let mut removed_store: Vec<Box<[u8]>> = Vec::new();
@@ -1831,6 +1847,9 @@ fn plan_isolated(
     sort_names(&mut removed_store);
     let store_touched = !removed_store.is_empty();
 
+    let Some(own_store) = own_store else {
+        return;
+    };
     let lockfile: &Lockfile = &manager.lockfile;
     let buf = lockfile.buffers.string_bytes.as_slice();
     let pkg_res = lockfile.packages.items_resolution();
@@ -1856,7 +1875,7 @@ fn plan_isolated(
         let Ok(dir) = Dir::open(&folder_path) else {
             continue;
         };
-        let direct = direct_aliases(manager, pkg_id as PackageID);
+        let direct = direct_aliases(manager, &own_store, pkg_id as PackageID);
         let folder_idx = scan_folder(
             dir,
             &folder_path,

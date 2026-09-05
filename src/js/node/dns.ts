@@ -43,6 +43,7 @@ const errorCodes = {
 const IANA_DNS_PORT = 53;
 const IPv6RE = /^\[([^[\]]*)\]/;
 const addrSplitRE = /(^.+?)(?::(\d+))?$/;
+const UV_EINVAL = process.platform === "win32" ? -4071 : -22;
 
 function translateErrorCode(promise: Promise<any>) {
   return promise.catch(error => {
@@ -98,10 +99,53 @@ function getDefaultResultOrder() {
   return defaultResultOrder();
 }
 
+function reverseInvalidIPError(ip) {
+  const err = new Error(ip ? `getHostByAddr EINVAL ${ip}` : "getHostByAddr EINVAL");
+  err.errno = UV_EINVAL;
+  err.code = "EINVAL";
+  err.syscall = "getHostByAddr";
+  if (ip) err.hostname = ip;
+  return err;
+}
+
+function localAddressError(message) {
+  const err = $makeTypeError(message);
+  err.code = "ERR_INVALID_ARG_VALUE";
+  return err;
+}
+
 // ares_inet_pton rejects IPv6 zone identifiers; Node's uv_inet_pton strips them.
 function stripZoneId(host) {
   const pct = host.indexOf("%");
   return pct === -1 ? host : host.slice(0, pct);
+}
+
+// uv_inet_pton semantics: a zone id is dropped from an IPv6 literal, whatever it contains.
+function normalizeIP(ip) {
+  if (isIP(ip) === 4) return ip;
+  const bare = stripZoneId(ip);
+  return isIP(bare) === 6 ? bare : null;
+}
+
+// Node reports the caller's address argument, zone id included, on a failure.
+function rejectWithHostname(error, hostname) {
+  error = withTranslatedError(error);
+  if (typeof error?.hostname === "string") {
+    error.hostname = hostname;
+    error.message = `${error.syscall} ${error.code} ${hostname}`;
+  }
+  return Promise.$reject(error);
+}
+
+function reverseOn(object, address, ip) {
+  const promise = object.reverse(address);
+  if (address === ip) return promise;
+  return promise.catch(error => rejectWithHostname(error, ip));
+}
+
+// The native error names the "address|port" request key, so always rewrite it.
+function lookupServiceFor(address, port) {
+  return dns.lookupService(stripZoneId(address), port).catch(error => rejectWithHostname(error, address));
 }
 
 function setServersOn(servers, object) {
@@ -228,10 +272,26 @@ function validateResolve(hostname, callback) {
 }
 
 function validateLocalAddresses(first, second) {
-  validateString(first);
+  validateString(first, "ipv4");
   if (typeof second !== "undefined") {
-    validateString(second);
+    validateString(second, "ipv6");
   }
+  const firstAddress = normalizeIP(first);
+  if (firstAddress === null) {
+    throw localAddressError("Invalid IP address.");
+  }
+  if (typeof second === "undefined") {
+    return [firstAddress];
+  }
+  const secondAddress = normalizeIP(second);
+  if (secondAddress === null) {
+    throw localAddressError("Invalid IP address.");
+  }
+  const firstFamily = isIP(firstAddress);
+  if (firstFamily === isIP(secondAddress)) {
+    throw localAddressError(`Cannot specify two IPv${firstFamily} addresses.`);
+  }
+  return [firstAddress, secondAddress];
 }
 
 function invalidHostname(hostname) {
@@ -358,15 +418,16 @@ function lookupService(address, port, callback) {
     throw $ERR_MISSING_ARGS("address", "port", "callback");
   }
 
+  if (isIP(address) === 0) {
+    throw $ERR_INVALID_ARG_VALUE("address", address);
+  }
+  validatePort(port, "port");
   if (typeof callback !== "function") {
     throw $ERR_INVALID_ARG_TYPE("callback", "function", callback);
   }
 
-  validateString(address);
-  validatePort(port, "port");
-
   callback = guardCallback(callback);
-  dns.lookupService(address, +port).then(
+  lookupServiceFor(address, +port).then(
     results => {
       callback(null, ...results);
     },
@@ -664,26 +725,28 @@ var InternalResolver = class Resolver {
     if (arguments.length > 2) {
       callback = arguments[2];
     }
+    validateString(ip, "name");
     if (typeof callback !== "function") {
       throw $ERR_INVALID_ARG_TYPE("callback", "function", callback);
     }
+    const address = normalizeIP(ip);
+    if (address === null) {
+      throw reverseInvalidIPError(ip);
+    }
     callback = guardCallback(callback);
 
-    Resolver.#getResolver(this)
-      .reverse(ip)
-      .then(
-        results => {
-          callback(null, results);
-        },
-        error => {
-          callback(withTranslatedError(error));
-        },
-      );
+    reverseOn(Resolver.#getResolver(this), address, ip).then(
+      results => {
+        callback(null, results);
+      },
+      error => {
+        callback(withTranslatedError(error));
+      },
+    );
   }
 
   setLocalAddress(first, second) {
-    validateLocalAddresses(first, second);
-    Resolver.#getResolver(this).setLocalAddress(first, second);
+    Resolver.#getResolver(this).setLocalAddress(...validateLocalAddresses(first, second));
   }
 
   setServers(servers) {
@@ -812,11 +875,13 @@ const promises = {
       throw $ERR_MISSING_ARGS("address", "port");
     }
 
-    validateString(address);
+    if (isIP(address) === 0) {
+      throw $ERR_INVALID_ARG_VALUE("address", address);
+    }
     validatePort(port, "port");
 
     try {
-      return translateErrorCode(dns.lookupService(address, +port)).then(([hostname, service]) => ({
+      return translateErrorCode(lookupServiceFor(address, +port)).then(([hostname, service]) => ({
         hostname,
         service,
       }));
@@ -887,7 +952,12 @@ const promises = {
     return translateErrorCode(dns.resolveCname(hostname));
   },
   reverse(ip) {
-    return translateErrorCode(dns.reverse(ip));
+    validateString(ip, "name");
+    const address = normalizeIP(ip);
+    if (address === null) {
+      return Promise.$reject(reverseInvalidIPError(ip));
+    }
+    return translateErrorCode(reverseOn(dns, address, ip));
   },
 
   Resolver: class Resolver {
@@ -979,12 +1049,16 @@ const promises = {
     }
 
     reverse(ip) {
-      return translateErrorCode(Resolver.#getResolver(this).reverse(ip));
+      validateString(ip, "name");
+      const address = normalizeIP(ip);
+      if (address === null) {
+        return Promise.$reject(reverseInvalidIPError(ip));
+      }
+      return translateErrorCode(reverseOn(Resolver.#getResolver(this), address, ip));
     }
 
     setLocalAddress(first, second) {
-      validateLocalAddresses(first, second);
-      Resolver.#getResolver(this).setLocalAddress(first, second);
+      Resolver.#getResolver(this).setLocalAddress(...validateLocalAddresses(first, second));
     }
 
     setServers(servers) {

@@ -23,6 +23,7 @@ pub(crate) mod js_bindings {
             ("getFeatureData", __jsc_host_js_get_feature_data),
             ("segfault", __jsc_host_js_segfault),
             ("segfaultInDll", __jsc_host_js_segfault_in_dll),
+            ("stackOverflow", __jsc_host_js_stack_overflow),
             ("panic", __jsc_host_js_panic),
             ("rootError", __jsc_host_js_root_error),
             ("outOfMemory", __jsc_host_js_out_of_memory),
@@ -123,6 +124,47 @@ pub(crate) mod js_bindings {
             return js_segfault(_global, _frame);
         }
         #[allow(unreachable_code)]
+        Ok(JSValue::UNDEFINED)
+    }
+
+    #[bun_jsc::host_fn]
+    fn js_stack_overflow(_global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
+        crash_handler::suppress_core_dumps_if_necessary();
+        #[cfg(unix)]
+        {
+            // ASAN owns SIGSEGV (see `js_segfault`); call the classifier directly.
+            if Environment::ENABLE_ASAN {
+                let probe = 0u8;
+                let sp = core::hint::black_box(&probe) as *const u8 as usize;
+                let addr = sp.saturating_sub(128);
+                crash_handler::crash_handler(
+                    crash_handler::posix_fault_reason(libc::SIGSEGV, addr, sp),
+                    crash_handler::TraceSeed::BeginAddr(crash_handler::debug::return_address()),
+                );
+            }
+            // Re-arm over JSC's wasm-fault handler, which lacks `SA_ONSTACK`.
+            crash_handler::reset_on_posix();
+            // `ulimit -s unlimited` on CI: cap so recursion hits a guard page.
+            // SAFETY: get/setrlimit take valid pointers.
+            unsafe {
+                let mut lim: libc::rlimit = core::mem::zeroed();
+                if libc::getrlimit(libc::RLIMIT_STACK, &raw mut lim) == 0 {
+                    const CAP: libc::rlim_t = 16 << 20;
+                    if lim.rlim_cur == libc::RLIM_INFINITY || lim.rlim_cur > CAP {
+                        lim.rlim_cur = CAP.min(lim.rlim_max);
+                        let _ = libc::setrlimit(libc::RLIMIT_STACK, &raw const lim);
+                    }
+                }
+            }
+        }
+        #[inline(never)]
+        #[allow(unconditional_recursion)]
+        fn recurse(n: usize) -> usize {
+            let frame = [n; 64];
+            core::hint::black_box(&frame);
+            core::hint::black_box(recurse(core::hint::black_box(n).wrapping_add(1)))
+        }
+        core::hint::black_box(recurse(0));
         Ok(JSValue::UNDEFINED)
     }
 

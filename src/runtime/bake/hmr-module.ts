@@ -303,6 +303,12 @@ export function loadModuleSync(id: Id, isUserDynamic: boolean, importer: HMRModu
         require: mod.require.bind(mod),
       };
       mod.exports = null;
+    } else {
+      // Re-evaluating a stale CommonJS module: start from a fresh exports
+      // object so keys removed by the new version do not linger (matches
+      // first evaluation and the error path below, which performs the same
+      // reset after a failed evaluation).
+      mod.cjs.exports = {};
     }
     if (importer) {
       mod.importers.add(importer);
@@ -313,8 +319,20 @@ export function loadModuleSync(id: Id, isUserDynamic: boolean, importer: HMRModu
     } catch (e) {
       mod.state = State.Stale;
       mod.cjs.exports = {};
+      mod.exports = null;
       throw e;
     }
+    // Drop the cached ESM namespace view: `toESM` binds getters to the
+    // specific `cjs.exports` object it was given, so a view created during a
+    // previous evaluation would keep serving the old values forever (e.g. a
+    // hot-reloaded JSON file frozen at its first parse). getEsmExports()
+    // lazily rebuilds the view over the current `cjs.exports`, and
+    // patchImporters() then rebinds live ESM importers. This runs after the
+    // wrapper, not before it, so a re-entrant getEsmExports() during a
+    // circular evaluation cannot cache a view over the transient `{}`; a view
+    // cached mid-evaluation by a circular importer is dropped too, so it
+    // cannot outlive a reassigned `module.exports`.
+    mod.exports = null;
     mod.state = State.Loaded;
   } else {
     // ESM
@@ -403,6 +421,9 @@ export function loadModuleAsync<IsUserDynamic extends boolean>(
         require: mod.require.bind(mod),
       };
       mod.exports = null;
+    } else {
+      // See the matching reset in loadModuleSync.
+      mod.cjs.exports = {};
     }
     if (importer) {
       mod.importers.add(importer);
@@ -413,8 +434,11 @@ export function loadModuleAsync<IsUserDynamic extends boolean>(
     } catch (e) {
       mod.state = State.Stale;
       mod.cjs.exports = {};
+      mod.exports = null;
       throw e;
     }
+    // See the matching reset in loadModuleSync.
+    mod.exports = null;
     mod.state = State.Loaded;
     return mod;
   } else {
@@ -750,18 +774,36 @@ export async function replaceModules(modules: Record<Id, UnloadedModule>, source
     }
   }
 
-  // Reload all modules
+  // Reload all modules. Mark every module stale before reloading any of
+  // them: a reloading module can synchronously evaluate another module in
+  // the set through its imports, and that module must re-evaluate with its
+  // new code rather than serve the previous evaluation. Capture and clear
+  // accept handlers in the same pass so an evaluation triggered by an
+  // importer does not have its freshly registered handlers wiped below.
   const promises: Promise<HMRModule>[] = [];
+  const selfAccepts = new Map<HMRModule, HotAcceptFunction | null>();
   for (const mod of toReload) {
     mod.state = State.Stale;
-    const selfAccept = mod.selfAccept;
+    selfAccepts.set(mod, mod.selfAccept);
     mod.selfAccept = null;
     mod.depAccepts = null;
-
+  }
+  const deferredAccepts: [HMRModule, HotAcceptFunction][] = [];
+  for (const mod of toReload) {
+    const selfAccept = selfAccepts.get(mod)!;
     const modOrPromise = loadModuleAsync(mod.id, false, null);
     if (modOrPromise === mod) {
       if (selfAccept) {
-        selfAccept(getEsmExports(mod));
+        if (mod.state === State.Loaded) {
+          selfAccept(getEsmExports(mod));
+        } else {
+          // An earlier importer in this loop already started loading this
+          // module and it has top-level await: it is still Pending, so its
+          // namespace is not final yet. Its load promise is awaited through
+          // that importer's dependency chain below; invoke the accept
+          // callback after everything settles.
+          deferredAccepts.push([mod, selfAccept]);
+        }
       }
     } else {
       DEBUG.ASSERT(modOrPromise instanceof Promise);
@@ -777,6 +819,13 @@ export async function replaceModules(modules: Record<Id, UnloadedModule>, source
   }
   if (promises.length > 0) {
     await Promise.all(promises);
+  }
+  for (const [mod, selfAccept] of deferredAccepts) {
+    // Skip modules that still did not finish loading (e.g. a failed or
+    // untracked in-flight load); their importers' rejections surface above.
+    if (mod.state === State.Loaded) {
+      selfAccept(getEsmExports(mod));
+    }
   }
   for (const mod of toReload) {
     const { selfAccept } = mod;

@@ -3,7 +3,6 @@
 pub mod error;
 pub use error::{Error, Result};
 
-use core::cell::RefCell;
 use core::mem::MaybeUninit;
 
 use bun_collections::bit_set::{ArrayBitSet, num_masks_for};
@@ -206,9 +205,7 @@ pub struct URL<'a> {
     pub port: &'a [u8],
     pub protocol: &'a [u8],
     pub(crate) search: &'a [u8],
-    pub(crate) search_params: Option<QueryStringMap>,
     pub username: &'a [u8],
-    pub(crate) port_was_automatically_set: bool,
 }
 
 impl<'a> Default for URL<'a> {
@@ -225,9 +222,7 @@ impl<'a> Default for URL<'a> {
             port: b"",
             protocol: b"",
             search: b"",
-            search_params: None,
             username: b"",
-            port_was_automatically_set: false,
         }
     }
 }
@@ -315,9 +310,7 @@ impl<'a> URL<'a> {
             port: d(self.port),
             protocol: d(self.protocol),
             search: d(self.search),
-            search_params: self.search_params,
             username: d(self.username),
-            port_was_automatically_set: self.port_was_automatically_set,
         }
     }
 
@@ -937,58 +930,16 @@ pub(crate) type ParamList = Vec<Param>;
 /// QueryString array-backed hash table that does few allocations and preserves the original order
 pub struct QueryStringMap {
     // Allocator field dropped — global mimalloc per PORTING.md.
-    // `slice` is self-referential (points into `buffer`) when decoding
+    // `slice` is self-referential (points into `_buffer`) when decoding
     // happened, otherwise borrows the caller's query_string. Stored as raw fat ptr.
     slice: *const [u8],
-    pub(crate) buffer: Vec<u8>,
+    _buffer: Vec<u8>,
     pub(crate) list: ParamList,
-    pub(crate) name_count: Option<usize>,
-}
-
-impl Clone for QueryStringMap {
-    fn clone(&self) -> Self {
-        let buffer = self.buffer.clone();
-        // Re-derive `slice` so the clone doesn't dangle into the original buffer.
-        // If the original `slice` did NOT point into our own buffer (the
-        // nothing-needs-decoding fast path borrows the caller's query_string),
-        // keep it as-is — both clones borrow the same external slice.
-        // SAFETY: `self.slice` is valid for the lifetime of `self` — it either points
-        // into `self.buffer` (decoding path) or borrows an external query_string the
-        // caller keeps alive (nothing-needs-decoding fast path).
-        let self_slice = unsafe { &*self.slice };
-        let slice =
-            if !self.buffer.is_empty() && bun_alloc::is_slice_in_buffer(self_slice, &self.buffer) {
-                let len = self_slice.len();
-                &raw const buffer[..len]
-            } else {
-                self.slice
-            };
-        Self {
-            slice,
-            buffer,
-            list: self.list.clone(),
-            name_count: self.name_count,
-        }
-    }
-}
-
-thread_local! {
-    // Unused in current code (commented-out path in get_name_count).
-    static NAME_COUNT_BUF: RefCell<[*const [u8]; 8]> = const { RefCell::new([std::ptr::from_ref::<[u8]>(&[]); 8]) };
 }
 
 impl QueryStringMap {
     pub fn get_name_count(&mut self) -> usize {
         self.list.len()
-        // if (this.name_count == null) {
-        //     var count: usize = 0;
-        //     var iterate = this.iter();
-        //     while (iterate.next(&_name_count) != null) {
-        //         count += 1;
-        //     }
-        //     this.name_count = count;
-        // }
-        // return this.name_count.?;
     }
 
     pub fn iter(&self) -> Iterator<'_> {
@@ -997,7 +948,7 @@ impl QueryStringMap {
 
     pub(crate) fn str(&self, ptr: api::StringPointer) -> &[u8] {
         // SAFETY: `slice` is valid for the lifetime of `self` (either borrows
-        // `self.buffer` or an external query_string the caller keeps alive).
+        // `self._buffer` or an external query_string the caller keeps alive).
         let slice = unsafe { &*self.slice };
         &slice[ptr.offset as usize..ptr.offset as usize + ptr.length as usize]
     }
@@ -1154,9 +1105,8 @@ impl QueryStringMap {
         let slice_ptr: *const [u8] = &raw const buf[0..buf_writer_pos as usize];
         Ok(Some(QueryStringMap {
             list,
-            buffer: buf,
+            _buffer: buf,
             slice: slice_ptr,
-            name_count: None,
         }))
     }
 
@@ -1207,10 +1157,9 @@ impl QueryStringMap {
 
             return Ok(Some(QueryStringMap {
                 list,
-                buffer: Vec::new(),
+                _buffer: Vec::new(),
                 // `slice` borrows the caller's query_string; lifetime not tracked here
                 slice: std::ptr::from_ref::<[u8]>(query_string),
-                name_count: None,
             }));
         }
 
@@ -1282,9 +1231,8 @@ impl QueryStringMap {
         let slice_ptr: *const [u8] = &raw const buf[0..buf_writer_pos as usize];
         Ok(Some(QueryStringMap {
             list,
-            buffer: buf,
+            _buffer: buf,
             slice: slice_ptr,
-            name_count: None,
         }))
     }
 }

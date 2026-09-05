@@ -341,7 +341,16 @@ impl PackageManager {
                     if !any_failed {
                         Output::flush();
                     }
-                    if failed_dep.version.tag == dependency::Tag::Catalog {
+                    // A catalog dependency whose entry exists failed on the
+                    // entry's version, not on the catalog lookup. Report it
+                    // like any other unresolved dependency (the version
+                    // resolution error was already logged).
+                    if failed_dep.version.tag == dependency::Tag::Catalog
+                        && lockfile
+                            .catalogs
+                            .get_ref(string_buf, *failed_dep.version.catalog(), failed_dep.name)
+                            .is_none()
+                    {
                         let name = bstr::BStr::new(failed_dep.name.slice(string_buf));
                         let literal = failed_dep.version.literal.fmt(string_buf);
                         let catalog_name = failed_dep.version.catalog().slice(string_buf);

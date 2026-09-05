@@ -5191,6 +5191,13 @@ pub mod bv2_impl {
             // `memcpy` of `graph.ast`), and `CssChunk::asts` `forget()`s its
             // aliases, so this is the unique drop.
             {
+                // `input_source_map` slots are global-heap `Box`es; the
+                // slab-only `MultiArrayList::drop` would strand them, so
+                // drain explicitly (same pattern as `css` below).
+                for m in self.graph.input_files.items_input_source_map_mut() {
+                    drop(m.take());
+                }
+
                 macro_rules! take_ast_cols {
                     ($ast:expr) => {{
                         let ast = $ast;
@@ -7356,6 +7363,14 @@ pub mod bv2_impl {
 
                     // Record which loader we used for this file
                     this.graph.input_files.items_loader_mut()[result_source_index] = result.loader;
+
+                    // Move the decoded inline sourcemap onto the SoA slot,
+                    // dropping any earlier occupant (incremental reparse).
+                    {
+                        let slot = &mut this.graph.input_files.items_input_source_map_mut()
+                            [result_source_index];
+                        *slot = core::mem::take(&mut result.input_source_map);
+                    }
 
                     bun_core::scoped_log!(
                         Bundle,

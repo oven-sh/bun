@@ -1177,68 +1177,52 @@ impl<'a> LinkerContext<'a> {
 
         let sources = self.parse_graph().input_files.items_source();
         let quoted_source_map_contents = self.graph.files.items_quoted_source_contents();
+        // DevServer's stitcher (`SourceMapStore::join_vlq`) assumes one
+        // `sources[]` slot per input, so chaining is gated to `Bun.build`.
+        let input_source_maps: Option<&[Option<Box<bun_sourcemap::InputSourceMap>>]> =
+            if self.dev_server.is_none() {
+                Some(self.parse_graph().input_files.items_input_source_map())
+            } else {
+                None
+            };
 
-        // Entries in `results` do not 1:1 map to source files, the mapping
-        // is actually many to one, where a source file can have multiple chunks
-        // in the sourcemap.
-        //
-        // This hashmap is going to map:
-        //    `source_index` (per compilation) in a chunk
-        //   -->
-        //    Which source index in the generated sourcemap, referred to
-        //    as the "mapping source index" within this function to be distinct.
+        // Many-to-one: a source file can own several chunks. Maps each
+        // compilation `source_index` to its base index in the generated
+        // `sources[]`; a file with an inline map spans
+        // `base ..= base + external_source_names.len`.
         let mut source_id_map: ArrayHashMap<u32, i32> = ArrayHashMap::new();
 
         let source_indices = results.items_source_index();
 
         j.push_static(b"{\n  \"version\": 3,\n  \"sources\": [");
+        let mut next_mapping_source_index: i32 = 0;
         if !source_indices.is_empty() {
-            {
-                let index = source_indices[0];
-                let path = &sources[index as usize].path;
-                source_id_map.put_no_clobber(index, 0)?;
-
-                // Note: the relative path lives in a local owned buffer
-                // (drops at scope exit).
-                let rel_path_storage;
-                let pretty: &[u8] = if path.is_file() {
-                    rel_path_storage = Self::source_map_relative_path(chunk_abs_dir, path.text)?;
-                    &rel_path_storage
-                } else {
-                    path.pretty
-                };
-
-                let mut quote_buf = MutableString::init(pretty.len() + 2)?;
-                js_printer::quote_for_json(pretty, &mut quote_buf, false)?;
-                // `to_default_owned` moves the buffer into the joiner
-                // (joiner owns it until `done`).
-                j.push_owned(quote_buf.to_default_owned());
-            }
-
-            let mut next_mapping_source_index: i32 = 1;
-            for &index in &source_indices[1..] {
+            for (chunk_i, &index) in source_indices.iter().enumerate() {
                 let gop = source_id_map.get_or_put(index)?;
                 if gop.found_existing {
                     continue;
                 }
 
                 *gop.value_ptr = next_mapping_source_index;
-                next_mapping_source_index += 1;
-
-                let path = &sources[index as usize].path;
-
-                let rel_path_storage;
-                let pretty: &[u8] = if path.is_file() {
-                    rel_path_storage = Self::source_map_relative_path(chunk_abs_dir, path.text)?;
-                    &rel_path_storage
-                } else {
-                    path.pretty
+                // `1` for the intermediate input, plus one slot per inner
+                // source listed in its `sourceMappingURL`.
+                let inner: Option<&bun_sourcemap::InputSourceMap> =
+                    input_source_maps.and_then(|m| m[index as usize].as_deref());
+                let expansion: i32 = 1 + match inner {
+                    Some(ism) => {
+                        i32::try_from(ism.map.external_source_names.len()).expect("int cast")
+                    }
+                    None => 0,
                 };
+                next_mapping_source_index += expansion;
 
-                let mut quote_buf = MutableString::init(pretty.len() + ", ".len() + 2)?;
-                quote_buf.append_assume_capacity(b", ");
-                js_printer::quote_for_json(pretty, &mut quote_buf, false)?;
-                j.push_owned(quote_buf.to_default_owned());
+                write_sources_for(
+                    &mut j,
+                    chunk_abs_dir,
+                    &sources[index as usize].path,
+                    inner,
+                    chunk_i > 0,
+                )?;
             }
         }
 
@@ -1246,20 +1230,55 @@ impl<'a> LinkerContext<'a> {
 
         let source_indices_for_contents = source_id_map.keys();
         if !source_indices_for_contents.is_empty() {
-            j.push_static(b"\n    ");
-            j.push_static(
-                quoted_source_map_contents[source_indices_for_contents[0] as usize]
-                    .as_deref()
-                    .unwrap_or(b""),
-            );
-
-            for &index in &source_indices_for_contents[1..] {
-                j.push_static(b",\n    ");
-                j.push_static(
-                    quoted_source_map_contents[index as usize]
-                        .as_deref()
-                        .unwrap_or(b""),
-                );
+            let mut emitted_contents: usize = 0;
+            for &index in source_indices_for_contents.iter() {
+                // Slot 0: the intermediate input file's contents (already
+                // JSON-quoted by `compute_quoted_source_contents`).
+                {
+                    let sep: &[u8] = if emitted_contents == 0 {
+                        b"\n    "
+                    } else {
+                        b",\n    "
+                    };
+                    j.push_static(sep);
+                    // For a chained file, strip the trailing comment from
+                    // slot 0: the inner map would otherwise ship twice
+                    // (base64 here + decoded in slots 1..N).
+                    let file_contents: &[u8] = &sources[index as usize].contents;
+                    let comment_start = input_source_maps
+                        .and_then(|m| m[index as usize].as_deref())
+                        .and_then(|ism| ism.comment_start)
+                        .filter(|&start| start <= file_contents.len());
+                    match comment_start {
+                        Some(start) => {
+                            let truncated = &file_contents[..start];
+                            let mut quote_buf = MutableString::init(truncated.len() + 2)?;
+                            js_printer::quote_for_json(truncated, &mut quote_buf, false)?;
+                            j.push_owned(quote_buf.to_default_owned());
+                        }
+                        None => {
+                            let content = quoted_source_map_contents[index as usize]
+                                .as_deref()
+                                .unwrap_or(b"null");
+                            j.push_static(if content.is_empty() { b"null" } else { content });
+                        }
+                    }
+                    emitted_contents += 1;
+                }
+                // Slots 1..N: inner sources' contents, if any.
+                if let Some(ism) = input_source_maps.and_then(|m| m[index as usize].as_deref()) {
+                    for content in ism.sources_content.iter() {
+                        j.push_static(b",\n    ");
+                        if !content.is_empty() {
+                            let mut quote_buf = MutableString::init(content.len() + 2)?;
+                            js_printer::quote_for_json(content, &mut quote_buf, false)?;
+                            j.push_owned(quote_buf.to_default_owned());
+                        } else {
+                            j.push_static(b"null");
+                        }
+                        emitted_contents += 1;
+                    }
+                }
             }
         }
         j.push_static(b"\n  ],\n  \"mappings\": \"");
@@ -1299,7 +1318,9 @@ impl<'a> LinkerContext<'a> {
             )?;
 
             prev_end_state = chunk.end_state;
-            prev_end_state.source_index = mapping_source_index;
+            // `chunk.end_state.source_index` is chunk-relative (0 without an
+            // inline map); rebase it onto this file's slot base.
+            prev_end_state.source_index = mapping_source_index + chunk.end_state.source_index;
             prev_column_offset = chunk.final_generated_column;
 
             if prev_end_state.generated_line == 0 {
@@ -1341,6 +1362,85 @@ impl<'a> LinkerContext<'a> {
 
         Ok(pieces)
     }
+}
+
+/// Emit one outer source's quoted path plus its chained inner paths, in
+/// the slot layout `Chunk::Builder` emits against: slot 0 = the outer
+/// file, slots 1..N = inner `sources[i]`.
+fn write_sources_for(
+    joiner: &mut StringJoiner,
+    chunk_abs_dir: &[u8],
+    outer_path: &bun_paths::fs::Path,
+    input_map: Option<&bun_sourcemap::InputSourceMap>,
+    leading_comma: bool,
+) -> Result<(), BunError> {
+    // 1) the intermediate input.
+    let rel_path_storage;
+    let pretty: &[u8] = if outer_path.is_file() {
+        rel_path_storage = LinkerContext::source_map_relative_path(chunk_abs_dir, outer_path.text)?;
+        &rel_path_storage
+    } else {
+        outer_path.pretty
+    };
+    {
+        let mut quote_buf = MutableString::init(pretty.len() + ", ".len() + 2)?;
+        if leading_comma {
+            quote_buf.append_assume_capacity(b", ");
+        }
+        js_printer::quote_for_json(pretty, &mut quote_buf, false)?;
+        joiner.push_owned(quote_buf.to_default_owned());
+    }
+
+    // 2) inner sources: resolve each against the intermediate's dir, then
+    // re-relativize to `chunk_abs_dir` for the emitted JSON.
+    if let Some(ism) = input_map {
+        let emit = |joiner: &mut StringJoiner, p: &[u8]| -> Result<(), BunError> {
+            let mut quote_buf = MutableString::init(p.len() + ", ".len() + 2)?;
+            quote_buf.append_assume_capacity(b", ");
+            js_printer::quote_for_json(p, &mut quote_buf, false)?;
+            joiner.push_owned(quote_buf.to_default_owned());
+            Ok(())
+        };
+        // A non-file intermediate (plugin virtual module) has no directory
+        // to resolve against; emit inner names verbatim.
+        if !outer_path.is_file() {
+            for name in ism.map.external_source_names.iter() {
+                emit(joiner, name.as_ref())?;
+            }
+            return Ok(());
+        }
+        let base_dir = bun_paths::resolve_path::dirname::<bun_paths::resolve_path::platform::Auto>(
+            outer_path.text,
+        );
+        let mut join_buf = bun_paths::path_buffer_pool::get();
+        for name in ism.map.external_source_names.iter() {
+            let name: &[u8] = name.as_ref();
+            // The spec allows URLs in `sources[]` (e.g. `webpack:///src/a.ts`);
+            // path-joining would destroy the scheme, so pass them through.
+            if bun_core::strings::index_of(name, b"://").is_some() {
+                emit(joiner, name)?;
+                continue;
+            }
+            if bun_paths::resolve_path::Platform::AUTO.is_absolute(name) {
+                let rel = LinkerContext::source_map_relative_path(chunk_abs_dir, name)?;
+                emit(joiner, &rel)?;
+                continue;
+            }
+            // The checked join returns `None` on overflow (adversarial
+            // map); emit the raw, spec-valid name instead of panicking.
+            match bun_paths::resolve_path::join_abs_string_buf_checked::<
+                bun_paths::resolve_path::platform::Auto,
+            >(base_dir, join_buf.as_mut_slice(), &[name])
+            {
+                Some(abs_path) => {
+                    let rel = LinkerContext::source_map_relative_path(chunk_abs_dir, abs_path)?;
+                    emit(joiner, &rel)?;
+                }
+                None => emit(joiner, name)?,
+            }
+        }
+    }
+    Ok(())
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -2360,6 +2460,14 @@ impl<'a> LinkerContext<'a> {
             // SAFETY: `self.mangled_props` is not mutated during printing; detached borrow
             // outlives only this call (see above).
             unsafe { bun_ptr::detach_lifetime_ref(&self.mangled_props) };
+        // DevServer's stitcher assumes one `sources[]` slot per file;
+        // chaining is gated to the `Bun.build` path.
+        let input_source_map: Option<&bun_sourcemap::InputSourceMap> = if self.dev_server.is_none()
+        {
+            parse_graph.input_files.items_input_source_map()[source_index.get() as usize].as_deref()
+        } else {
+            None
+        };
 
         let print_options = js_printer::Options {
             bundling: true,
@@ -2419,6 +2527,7 @@ impl<'a> LinkerContext<'a> {
             } else {
                 None
             },
+            input_source_map,
             mangled_props: Some(mangled_props),
             module_info,
             ..Default::default()

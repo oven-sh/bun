@@ -1378,6 +1378,11 @@ pub struct Options<'a> {
     /// builder as `LineOffsetTables::Borrowed`.
     pub line_offset_tables: Option<&'a SourceMap::line_offset_table::List<bun_alloc::AstAlloc>>,
 
+    /// Inline `//# sourceMappingURL=data:...` map carried by the input
+    /// file; the chunk builder remaps emitted mappings through it. `None`
+    /// for the DevServer path (its stitcher assumes one slot per file).
+    pub input_source_map: Option<&'a SourceMap::InputSourceMap>,
+
     pub mangled_props: Option<&'a crate::MangledProps>,
 }
 
@@ -1433,6 +1438,7 @@ impl<'a> Default for Options<'a> {
             import_member_bindings: None,
             has_dynamic_import_items: false,
             line_offset_tables: None,
+            input_source_map: None,
             mangled_props: None,
         }
     }
@@ -7759,6 +7765,7 @@ pub(crate) fn get_source_map_builder<'a, const IS_BUN_PLATFORM: bool>(
         cover_lines_without_mappings: true,
         approximate_input_line_count: tree.approximate_newline_count,
         prepend_count: IS_BUN_PLATFORM && generate_source_map == GenerateSourceMap::Lazy,
+        input_source_map: opts.input_source_map.take(),
         line_offset_tables: match opts.line_offset_tables.take() {
             Some(table) => LineOffsetTables::Borrowed(table),
             None if generate_source_map == GenerateSourceMap::Lazy => LineOffsetTables::Deferred {

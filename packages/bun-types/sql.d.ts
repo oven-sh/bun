@@ -29,6 +29,7 @@ declare module "bun" {
     | "DOUBLE PRECISION"
     | "NUMERIC"
     | "MONEY"
+    | "UUID"
     | "OID"
     | "TID"
     | "XID"

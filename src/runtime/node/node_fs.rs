@@ -154,9 +154,9 @@ use bun_jsc::AbortSignalRef;
 use super::stat::Stats;
 use super::time_like::TimeLike;
 use super::types::{
-    ArgumentsSlice, Dirent, Encoding, FdArgExt as _, FileSystemFlags, FileSystemFlagsKind,
-    NameTooLong, PathLike, PathLikeExt as _, PathOrFdExt as _, StringObjects, StringOrBuffer,
-    ThreadIsolated, ThreadIsolatedArg, VectorArrayBuffer,
+    ArgumentsSlice, Dirent, DirentBuffer, Encoding, FdArgExt as _, FileSystemFlags,
+    FileSystemFlagsKind, NameTooLong, PathLike, PathLikeExt as _, PathOrFdExt as _, StringObjects,
+    StringOrBuffer, ThreadIsolated, ThreadIsolatedArg, VectorArrayBuffer,
 };
 // Re-exported publicly: `crate::node::fs::PathOrFileDescriptor` is the
 // canonical path used by `cli/build_command.rs` et al., and `node_fs::Flavor`
@@ -2214,6 +2214,9 @@ mod _async_tasks {
                     ResultListEntryValue::WithFileTypes(v) => {
                         ret::Readdir::WithFileTypes(v.into_boxed_slice())
                     }
+                    ResultListEntryValue::WithFileTypesBuffer(v) => {
+                        ret::Readdir::WithFileTypesBuffer(v.into_boxed_slice())
+                    }
                     ResultListEntryValue::Buffers(v) => ret::Readdir::Buffers(v.into_boxed_slice()),
                     ResultListEntryValue::Files(v) => ret::Readdir::Files(v.into_boxed_slice()),
                 };
@@ -2238,6 +2241,7 @@ mod _async_tasks {
 
     pub enum ResultListEntryValue {
         WithFileTypes(Vec<Dirent>),
+        WithFileTypesBuffer(Vec<DirentBuffer>),
         Buffers(Vec<Buffer>),
         Files(Vec<BunString>),
     }
@@ -2332,6 +2336,9 @@ mod _async_tasks {
             let result_list = match tag {
                 ret::ReaddirTag::Files => ResultListEntryValue::Files(Vec::new()),
                 ret::ReaddirTag::WithFileTypes => ResultListEntryValue::WithFileTypes(Vec::new()),
+                ret::ReaddirTag::WithFileTypesBuffer => {
+                    ResultListEntryValue::WithFileTypesBuffer(Vec::new())
+                }
                 ret::ReaddirTag::Buffers => ResultListEntryValue::Buffers(Vec::new()),
             };
             // Subtasks read the root path after `run` has returned its borrow of the
@@ -2423,6 +2430,9 @@ mod _async_tasks {
             match self.tag {
                 ret::ReaddirTag::Files => impl_tag!(BunString, Files),
                 ret::ReaddirTag::WithFileTypes => impl_tag!(Dirent, WithFileTypes),
+                ret::ReaddirTag::WithFileTypesBuffer => {
+                    impl_tag!(DirentBuffer, WithFileTypesBuffer)
+                }
                 ret::ReaddirTag::Buffers => impl_tag!(Buffer, Buffers),
             }
         }
@@ -2553,6 +2563,11 @@ mod _async_tasks {
             ResultListEntryValue::WithFileTypes(v)
         }
     }
+    impl IntoResultListEntry for DirentBuffer {
+        fn into_variant(v: Vec<Self>) -> ResultListEntryValue {
+            ResultListEntryValue::WithFileTypesBuffer(v)
+        }
+    }
     impl IntoResultListEntry for Buffer {
         fn into_variant(v: Vec<Self>) -> ResultListEntryValue {
             ResultListEntryValue::Buffers(v)
@@ -2571,6 +2586,7 @@ mod _async_tasks {
         fn clear(&mut self) {
             match self {
                 Self::WithFileTypes(v) => v.clear(),
+                Self::WithFileTypesBuffer(v) => v.clear(),
                 Self::Buffers(v) => v.clear(),
                 Self::Files(v) => v.clear(),
             }
@@ -2578,6 +2594,7 @@ mod _async_tasks {
         fn reserve_exact(&mut self, n: usize) {
             match self {
                 Self::WithFileTypes(v) => v.reserve_exact(n),
+                Self::WithFileTypesBuffer(v) => v.reserve_exact(n),
                 Self::Buffers(v) => v.reserve_exact(n),
                 Self::Files(v) => v.reserve_exact(n),
             }
@@ -2585,6 +2602,7 @@ mod _async_tasks {
         fn append_from(&mut self, other: &mut Self) {
             match (self, other) {
                 (Self::WithFileTypes(a), Self::WithFileTypes(b)) => a.append(b),
+                (Self::WithFileTypesBuffer(a), Self::WithFileTypesBuffer(b)) => a.append(b),
                 (Self::Buffers(a), Self::Buffers(b)) => a.append(b),
                 (Self::Files(a), Self::Files(b)) => a.append(b),
                 _ => debug_assert!(false, "ResultListEntryValue tag mismatch"),
@@ -3368,15 +3386,11 @@ pub mod args {
     }
     impl Readdir<'_> {
         pub(crate) fn tag(&self) -> ret::ReaddirTag {
-            match self.encoding {
-                Encoding::Buffer => ret::ReaddirTag::Buffers,
-                _ => {
-                    if self.with_file_types {
-                        ret::ReaddirTag::WithFileTypes
-                    } else {
-                        ret::ReaddirTag::Files
-                    }
-                }
+            match (self.with_file_types, self.encoding) {
+                (true, Encoding::Buffer) => ret::ReaddirTag::WithFileTypesBuffer,
+                (true, _) => ret::ReaddirTag::WithFileTypes,
+                (false, Encoding::Buffer) => ret::ReaddirTag::Buffers,
+                (false, _) => ret::ReaddirTag::Files,
             }
         }
     }
@@ -4327,12 +4341,14 @@ pub mod ret {
     #[derive(Copy, Clone, PartialEq, Eq)]
     pub enum ReaddirTag {
         WithFileTypes,
+        WithFileTypesBuffer,
         Buffers,
         Files,
     }
 
     pub enum Readdir {
         WithFileTypes(Box<[Dirent]>),
+        WithFileTypesBuffer(Box<[DirentBuffer]>),
         Buffers(Box<[Buffer]>),
         Files(Box<[BunString]>),
     }
@@ -4340,6 +4356,15 @@ pub mod ret {
         pub fn to_js(self, global_object: &JSGlobalObject) -> JsResult<JSValue> {
             match self {
                 Readdir::WithFileTypes(items) => {
+                    let array = JSValue::create_empty_array(global_object, items.len())?;
+                    let mut previous_jsstring: *mut bun_jsc::JSString = core::ptr::null_mut();
+                    for (i, item) in items.into_vec().into_iter().enumerate() {
+                        let res = item.into_js(global_object, Some(&mut previous_jsstring))?;
+                        array.put_index(global_object, i as u32, res)?;
+                    }
+                    Ok(array)
+                }
+                Readdir::WithFileTypesBuffer(items) => {
                     let array = JSValue::create_empty_array(global_object, items.len())?;
                     let mut previous_jsstring: *mut bun_jsc::JSString = core::ptr::null_mut();
                     for (i, item) in items.into_vec().into_iter().enumerate() {
@@ -6092,6 +6117,12 @@ impl NodeFS {
                 flavor,
             ),
             ret::ReaddirTag::WithFileTypes => Self::readdir_inner::<Dirent>(
+                &mut self.sync_error_buf,
+                args,
+                args.recursive,
+                flavor,
+            ),
+            ret::ReaddirTag::WithFileTypesBuffer => Self::readdir_inner::<DirentBuffer>(
                 &mut self.sync_error_buf,
                 args,
                 args.recursive,
@@ -9168,6 +9199,52 @@ impl ReaddirEntry for Dirent {
             } else {
                 BunString::clone_utf8(utf8_name)
             },
+            path: dirent_path.clone(),
+            kind,
+        });
+    }
+}
+impl ReaddirEntry for DirentBuffer {
+    const IS_DIRENT: bool = true;
+    const IS_U16: bool = false;
+    fn into_readdir(v: Vec<Self>) -> ret::Readdir {
+        ret::Readdir::WithFileTypesBuffer(v.into_boxed_slice())
+    }
+    fn append_entry(
+        entries: &mut Vec<Self>,
+        utf8_name: &[u8],
+        dirent_path: &BunString,
+        kind: sys::FileKind,
+        _encoding: Encoding,
+    ) {
+        entries.push(DirentBuffer {
+            name: utf8_name.into(),
+            path: dirent_path.clone(),
+            kind,
+        });
+    }
+    fn append_entry_w(
+        _: &mut Vec<Self>,
+        _: &[u16],
+        _: &BunString,
+        _: sys::FileKind,
+        _: Encoding,
+        _: Option<&mut PathBuffer>,
+    ) {
+        // IS_U16 = false, so the u16 iterator arm is never taken.
+        unreachable!()
+    }
+    fn append_entry_recursive(
+        entries: &mut Vec<Self>,
+        utf8_name: &[u8],
+        _name_to_copy: &[u8],
+        dirent_path: &BunString,
+        kind: sys::FileKind,
+        _encoding: Encoding,
+        _apply_encoding: bool,
+    ) {
+        entries.push(DirentBuffer {
+            name: utf8_name.into(),
             path: dirent_path.clone(),
             kind,
         });

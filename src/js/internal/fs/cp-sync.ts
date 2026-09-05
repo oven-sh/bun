@@ -17,6 +17,7 @@ const {
   utimesSync,
 } = require("node:fs");
 const { dirname, isAbsolute, join, parse, resolve, sep } = require("node:path");
+const { Buffer, isUtf8 } = require("node:buffer");
 
 const { EEXIST, EISDIR, EINVAL, ENOTDIR } = $processBindingConstants.os.errno;
 
@@ -39,10 +40,18 @@ const defaultCpOptions = {
 };
 
 function decorateSystemError(err, prefix, context) {
-  const { syscall, code, message: ctxMessage, path, dest, errno } = context;
+  const { syscall, code, message: ctxMessage, errno } = context;
+  const path = pathToString(context.path);
+  const dest = pathToString(context.dest);
   let message = `${prefix}: ${syscall} returned ${code} (${ctxMessage})`;
-  if (path !== undefined) message += ` ${path}`;
-  if (dest !== undefined) message += ` => ${dest}`;
+  if (path !== undefined) {
+    message += ` ${path}`;
+    context.path = path;
+  }
+  if (dest !== undefined) {
+    message += ` => ${dest}`;
+    context.dest = dest;
+  }
   err.message = message;
   err.name = "SystemError";
   err.info = context;
@@ -146,12 +155,48 @@ function areIdentical(srcStat, destStat) {
   return destStat.ino && destStat.dev && destStat.ino === srcStat.ino && destStat.dev === srcStat.dev;
 }
 
+// POSIX names are bytes; Windows names are UTF-16, which strings already hold losslessly.
+const kReaddirBufferOpts =
+  process.platform === "win32" ? { withFileTypes: true } : { withFileTypes: true, encoding: "buffer" };
+const kReadlinkOpts = process.platform === "win32" ? undefined : { encoding: "buffer" };
+
+// latin1 maps each byte to one code unit and back, so node:path can normalize a Buffer path.
+function latin1View(p) {
+  return (Buffer.isBuffer(p) ? p : Buffer.from(p)).toString("latin1");
+}
+
+function joinDirEntry(dir, name) {
+  if (!Buffer.isBuffer(name)) return join(dir, name);
+  if (!Buffer.isBuffer(dir) && isUtf8(name)) return join(dir, name.toString());
+  return Buffer.from(join(latin1View(dir), latin1View(name)), "latin1");
+}
+
+// What the copy of the link at `linkPath` should point at, given what readlink returned for it.
+function copiedLinkTarget(linkPath, target, verbatim) {
+  if (Buffer.isBuffer(target) && isUtf8(target)) target = target.toString();
+  if (verbatim || isAbsolute(Buffer.isBuffer(target) ? latin1View(target) : target)) return target;
+  if (!Buffer.isBuffer(linkPath) && !Buffer.isBuffer(target)) return resolve(dirname(linkPath), target);
+  // resolve() would otherwise fall back to process.cwd(), which is not a latin1 view.
+  return Buffer.from(resolve(latin1View(process.cwd()), dirname(latin1View(linkPath)), latin1View(target)), "latin1");
+}
+
+// filter() and error objects get strings, as in node; bytes that are not UTF-8 show up as U+FFFD.
+function pathToString(p) {
+  return Buffer.isBuffer(p) ? p.toString() : p;
+}
+
 const normalizePathToArray = path =>
   ArrayPrototypeFilter.$call(StringPrototypeSplit.$call(resolve(path), sep), Boolean);
 
 // Return true if dest is a subdir of src, otherwise false.
 // It only checks the path strings.
 function isSrcSubdir(src, dest) {
+  if (Buffer.isBuffer(src) || Buffer.isBuffer(dest)) {
+    // Compare on the latin1 view so that distinct bytes that are not UTF-8 stay distinct.
+    const cwd = latin1View(process.cwd());
+    src = resolve(cwd, latin1View(src));
+    dest = resolve(cwd, latin1View(dest));
+  }
   const srcArr = normalizePathToArray(src);
   const destArr = normalizePathToArray(dest);
   return ArrayPrototypeEvery.$call(srcArr, (cur, i) => destArr[i] === cur);
@@ -159,7 +204,7 @@ function isSrcSubdir(src, dest) {
 
 function checkPathsSync(src, dest, opts) {
   if (opts.filter) {
-    const shouldCopy = opts.filter(src, dest);
+    const shouldCopy = opts.filter(pathToString(src), pathToString(dest));
     if ($isPromise(shouldCopy)) {
       throw $ERR_INVALID_RETURN_VALUE("boolean", "filter", shouldCopy);
     }
@@ -260,14 +305,14 @@ function treeContainsOnlyFilesAndDirsSync(root) {
     const dir = stack.pop();
     let entries;
     try {
-      entries = readdirSync(dir, { withFileTypes: true });
+      entries = readdirSync(dir, kReaddirBufferOpts);
     } catch {
       return false;
     }
     for (let i = 0; i < entries.length; i++) {
       const entry = entries[i];
       if (entry.isDirectory()) {
-        stack.push(join(dir, entry.name));
+        stack.push(joinDirEntry(dir, entry.name));
       } else if (!entry.isFile()) {
         return false;
       }
@@ -442,26 +487,23 @@ function mkDirAndCopy(srcMode, src, dest, opts) {
 }
 
 function copyDir(src, dest, opts) {
-  for (const dirent of readdirSync(src, { withFileTypes: true })) {
+  for (const dirent of readdirSync(src, kReaddirBufferOpts)) {
     const { name } = dirent;
-    const srcItem = join(src, name);
-    const destItem = join(dest, name);
+    const srcItem = joinDirEntry(src, name);
+    const destItem = joinDirEntry(dest, name);
     const { destStat, skipped } = checkPathsSync(srcItem, destItem, opts);
     if (!skipped) getStats(destStat, srcItem, destItem, opts);
   }
 }
 
 function onLink(destStat, src, dest, opts) {
-  let resolvedSrc = readlinkSync(src);
-  if (!opts.verbatimSymlinks && !isAbsolute(resolvedSrc)) {
-    resolvedSrc = resolve(dirname(src), resolvedSrc);
-  }
+  const resolvedSrc = copiedLinkTarget(src, readlinkSync(src, kReadlinkOpts), opts.verbatimSymlinks);
   if (!destStat) {
     return symlinkSync(resolvedSrc, dest);
   }
   let resolvedDest;
   try {
-    resolvedDest = readlinkSync(dest);
+    resolvedDest = readlinkSync(dest, kReadlinkOpts);
   } catch (err: any) {
     // Dest exists and is a regular file or directory,
     // Windows may throw UNKNOWN error. If dest already exists,
@@ -471,9 +513,7 @@ function onLink(destStat, src, dest, opts) {
     }
     throw err;
   }
-  if (!isAbsolute(resolvedDest)) {
-    resolvedDest = resolve(dirname(dest), resolvedDest);
-  }
+  resolvedDest = copiedLinkTarget(dest, resolvedDest, false);
   let srcIsDir = false;
   try {
     srcIsDir = statSync(src).isDirectory();
@@ -511,6 +551,11 @@ export default {
   cpSyncFn,
   validateCpOptions,
   tryNativeFastPathSync,
+  joinDirEntry,
+  pathToString,
+  kReaddirBufferOpts,
+  kReadlinkOpts,
+  copiedLinkTarget,
   errno: { EEXIST, EISDIR, EINVAL, ENOTDIR },
   fsCpDirToNonDirError,
   fsCpEExistError,

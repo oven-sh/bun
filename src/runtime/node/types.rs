@@ -1699,6 +1699,14 @@ unsafe extern "C" {
         path: bun_core::String,
         cached_previous_path_jsvalue: Option<&mut *mut jsc::JSString>,
     ) -> JSValue;
+    fn Bun__Dirent__toJSWithBufferName(
+        global: &JSGlobalObject,
+        kind: i32,
+        name_bytes: *const u8,
+        name_len: usize,
+        path: bun_core::String,
+        cached_previous_path_jsvalue: Option<&mut *mut jsc::JSString>,
+    ) -> JSValue;
 }
 
 impl Dirent {
@@ -1711,21 +1719,7 @@ impl Dirent {
         global_object: &JSGlobalObject,
         cached_previous_path_jsvalue: Option<&mut *mut jsc::JSString>,
     ) -> JsResult<JSValue> {
-        use bun_libuv_sys::{
-            UV_DIRENT_BLOCK, UV_DIRENT_CHAR, UV_DIRENT_DIR, UV_DIRENT_FIFO, UV_DIRENT_FILE,
-            UV_DIRENT_LINK, UV_DIRENT_SOCKET, UV_DIRENT_UNKNOWN,
-        };
-        let kind_int: i32 = match self.kind {
-            DirentKind::File => UV_DIRENT_FILE,
-            DirentKind::BlockDevice => UV_DIRENT_BLOCK,
-            DirentKind::CharacterDevice => UV_DIRENT_CHAR,
-            DirentKind::Directory => UV_DIRENT_DIR,
-            // event_port is deliberate there.
-            DirentKind::EventPort | DirentKind::NamedPipe => UV_DIRENT_FIFO,
-            DirentKind::UnixDomainSocket => UV_DIRENT_SOCKET,
-            DirentKind::SymLink => UV_DIRENT_LINK,
-            DirentKind::Whiteout | DirentKind::Door | DirentKind::Unknown => UV_DIRENT_UNKNOWN,
-        };
+        let kind_int = dirent_kind_to_uv(self.kind);
         bun_jsc::from_js_host_call(global_object, || {
             Bun__Dirent__toJS(
                 global_object,
@@ -1735,6 +1729,56 @@ impl Dirent {
                 cached_previous_path_jsvalue,
             )
         })
+    }
+}
+
+/// [`Dirent`] with raw-byte `name` for `readdir({ withFileTypes, encoding: 'buffer' })`.
+pub struct DirentBuffer {
+    pub name: Box<[u8]>,
+    pub path: bun_core::String,
+    pub(crate) kind: DirentKind,
+}
+
+impl DirentBuffer {
+    pub fn into_js(
+        self,
+        global_object: &JSGlobalObject,
+        cached_previous_path_jsvalue: Option<&mut *mut jsc::JSString>,
+    ) -> JsResult<JSValue> {
+        let kind_int = dirent_kind_to_uv(self.kind);
+        let name = self.name;
+        bun_jsc::from_js_host_call(global_object, || {
+            // SAFETY: `name` is a live `Box<[u8]>` for the whole call; C++ only
+            // reads the range (it copies the bytes into a fresh Buffer).
+            unsafe {
+                Bun__Dirent__toJSWithBufferName(
+                    global_object,
+                    kind_int,
+                    name.as_ptr(),
+                    name.len(),
+                    self.path,
+                    cached_previous_path_jsvalue,
+                )
+            }
+        })
+    }
+}
+
+fn dirent_kind_to_uv(kind: DirentKind) -> i32 {
+    use bun_libuv_sys::{
+        UV_DIRENT_BLOCK, UV_DIRENT_CHAR, UV_DIRENT_DIR, UV_DIRENT_FIFO, UV_DIRENT_FILE,
+        UV_DIRENT_LINK, UV_DIRENT_SOCKET, UV_DIRENT_UNKNOWN,
+    };
+    match kind {
+        DirentKind::File => UV_DIRENT_FILE,
+        DirentKind::BlockDevice => UV_DIRENT_BLOCK,
+        DirentKind::CharacterDevice => UV_DIRENT_CHAR,
+        DirentKind::Directory => UV_DIRENT_DIR,
+        // event_port is deliberate there.
+        DirentKind::EventPort | DirentKind::NamedPipe => UV_DIRENT_FIFO,
+        DirentKind::UnixDomainSocket => UV_DIRENT_SOCKET,
+        DirentKind::SymLink => UV_DIRENT_LINK,
+        DirentKind::Whiteout | DirentKind::Door | DirentKind::Unknown => UV_DIRENT_UNKNOWN,
     }
 }
 

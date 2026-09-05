@@ -239,7 +239,7 @@ JSC_DEFINE_HOST_FUNCTION(jsURLSearchParamsPrototypeFunction_inspectCustom, (JSGl
     opts->putDirect(vm, Identifier::fromString(vm, "depth"_s), childDepth, 0);
 
     auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
-    JSFunction* utilInspect = globalObject->utilInspectFunction();
+    JSObject* utilInspect = globalObject->utilInspectFunction();
     RETURN_IF_EXCEPTION(scope, {});
     auto inspectCallData = JSC::getCallData(utilInspect);
 

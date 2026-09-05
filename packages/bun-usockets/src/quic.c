@@ -373,18 +373,35 @@ static void us_quic_udp_on_close(struct us_udp_socket_t *u) {
 
 /* ───── SSL ───── */
 
-/* Exact match, then `*.tail` wildcards (matches "a.tail" but not "tail"). */
+/* DNS names are case-insensitive (RFC 4343); fold ASCII only to avoid locale
+ * surprises (strcasecmp is locale-dependent). */
+static int us_quic_sni_eq(const char *a, const char *b, size_t len) {
+    for (size_t i = 0; i < len; i++) {
+        unsigned char ca = (unsigned char) a[i], cb = (unsigned char) b[i];
+        if (ca >= 'A' && ca <= 'Z') ca += 'a' - 'A';
+        if (cb >= 'A' && cb <= 'Z') cb += 'a' - 'A';
+        if (ca != cb) return 0;
+    }
+    return 1;
+}
+
+/* Exact match, then `*.tail` wildcards. Like the TCP listener's SNI tree
+ * (crypto/sni_tree.cpp), the `*` stands for exactly one label: "a.tail"
+ * matches, "tail" and "a.b.tail" do not. */
 static SSL_CTX *us_quic_match_sni(us_quic_socket_context_t *ctx, const char *sni) {
     if (!sni) return ctx->ssl_ctx;
     size_t sl = strlen(sni);
     for (unsigned i = 0; i < ctx->sni_count; i++) {
-        if (strcmp(ctx->sni[i].name, sni) == 0) return ctx->sni[i].ctx;
+        const char *n = ctx->sni[i].name;
+        if (strlen(n) == sl && us_quic_sni_eq(n, sni, sl)) return ctx->sni[i].ctx;
     }
     for (unsigned i = 0; i < ctx->sni_count; i++) {
         const char *n = ctx->sni[i].name;
         if (n[0] == '*' && n[1] == '.') {
             size_t tl = strlen(n + 1);
-            if (sl > tl && memcmp(sni + sl - tl, n + 1, tl) == 0) return ctx->sni[i].ctx;
+            if (sl > tl && !memchr(sni, '.', sl - tl) && us_quic_sni_eq(sni + sl - tl, n + 1, tl)) {
+                return ctx->sni[i].ctx;
+            }
         }
     }
     return ctx->ssl_ctx;

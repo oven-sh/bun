@@ -400,7 +400,9 @@ struct us_listen_socket_t *us_socket_group_listen_fd(us_socket_group_r group,
 void us_listen_socket_close(struct us_listen_socket_t *ls) nonnull_fn_decl;
 
 /* SNI: tree hangs off the listen socket. ssl_ctx is up_ref'd; user is opaque
- * (uWS stores a per-domain HttpRouter*). user may be NULL. */
+ * (uWS stores a per-domain HttpRouter*). user may be NULL. Names are matched
+ * label by label without regard to ASCII case; a `*` label matches any one
+ * label. Adding a name that is already registered (in any case) fails. */
 int us_listen_socket_add_server_name(struct us_listen_socket_t *ls,
     const char *hostname_pattern, struct ssl_ctx_st *ssl_ctx, void *user)
     __attribute__((nonnull(1, 2, 3)));

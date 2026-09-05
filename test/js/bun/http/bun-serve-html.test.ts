@@ -239,7 +239,7 @@ console.log("How...dashing?");
   text-align: center;
   max-width: 800px;
   margin: 2rem auto;
-  font-family: system-ui, -apple-system, BlinkMacSystemFont, Segoe UI, Roboto, Noto Sans, Ubuntu, Cantarell, Helvetica Neue, sans-serif;
+  font-family: system-ui, sans-serif;
 }
 
 button {

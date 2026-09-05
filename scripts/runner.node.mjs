@@ -1567,6 +1567,67 @@ async function runTests() {
  */
 
 /**
+ * A batch that idled out is still alive. Print where every process under it
+ * sits (kernel wait channel, each thread's state, a gdb backtrace when ptrace
+ * is allowed) and ask each worker for a core, before the SIGTERM that ends it.
+ * @param {number} rootPid
+ */
+function dumpStalledProcessTree(rootPid) {
+  if (!isLinux) return;
+  const log = text => process.stdout.write(`${text}\n`);
+  const read = path => {
+    try {
+      return readFileSync(path, "utf-8").trim();
+    } catch (error) {
+      return `(${error?.code ?? error})`;
+    }
+  };
+  try {
+    const procs = [];
+    for (const entry of readdirSync("/proc")) {
+      if (!/^\d+$/.test(entry)) continue;
+      const match = /^(\d+) \((.*)\) (\S) (\d+)/.exec(read(`/proc/${entry}/stat`));
+      if (match) procs.push({ pid: Number(match[1]), comm: match[2], state: match[3], ppid: Number(match[4]) });
+    }
+    const tree = [procs.find(p => p.pid === rootPid) ?? { pid: rootPid, comm: "?", state: "?" }];
+    for (let i = 0; i < tree.length; i++) {
+      for (const p of procs) if (p.ppid === tree[i].pid) tree.push(p);
+    }
+    log(`--- stalled batch: process tree under pid ${rootPid} (${tree.length} processes)`);
+    for (const { pid, comm, state } of tree) {
+      log(`--- pid ${pid} (${comm}) state=${state} cmdline: ${read(`/proc/${pid}/cmdline`).replaceAll("\0", " ")}`);
+      let tasks = [];
+      try {
+        tasks = readdirSync(`/proc/${pid}/task`);
+      } catch {}
+      for (const tid of tasks) {
+        const stat = /^\d+ \((.*)\) (\S)/.exec(read(`/proc/${pid}/task/${tid}/stat`));
+        log(
+          `    tid ${tid} (${stat?.[1] ?? "?"}) state=${stat?.[2] ?? "?"} wchan=${read(`/proc/${pid}/task/${tid}/wchan`)} stack: ${read(`/proc/${pid}/task/${tid}/stack`).replaceAll("\n", " | ")}`,
+        );
+      }
+      const gdb = spawnSync("gdb", ["-p", String(pid), "-batch", "-ex", "thread apply all bt"], {
+        encoding: "utf-8",
+        timeout: 120_000,
+        stdio: ["ignore", "pipe", "pipe"],
+      });
+      const lines = `${gdb.stdout ?? ""}\n${gdb.stderr ?? ""}`
+        .split("\n")
+        .filter(line => /^(#|Thread |ptrace|warning: |Could not attach|Operation not permitted)/.test(line));
+      log(lines.length ? lines.join("\n") : `    gdb: ${gdb.error ?? `exit ${gdb.status} signal ${gdb.signal}`}`);
+    }
+    // A core per worker, so the core handler below prints every thread.
+    for (const { pid } of tree.slice(1)) {
+      try {
+        process.kill(pid, "SIGQUIT");
+      } catch {}
+    }
+  } catch (error) {
+    log(`--- stalled batch: diagnostics failed: ${error}`);
+  }
+}
+
+/**
  * @param {SpawnOptions} options
  * @returns {Promise<SpawnResult>}
  */
@@ -1650,6 +1711,7 @@ async function spawnSafe(options) {
           timedOut = true;
           clearTimeout(idleTimer);
           if (options.gracefulTimeout && !isWindows) {
+            if (idledOut) dumpStalledProcessTree(subprocess.pid);
             subprocess.kill("SIGTERM");
             timer = setTimeout(() => {
               subprocess.kill(9);
@@ -1970,7 +2032,7 @@ async function spawnBun(execPath, { args, cwd, timeout, gracefulTimeout, idleTim
         let out = "";
         const gdb = await spawnSafe({
           command: "gdb",
-          args: ["-batch", `--eval-command=bt`, "--core", corePath, execPath],
+          args: ["-batch", `--eval-command=thread apply all bt`, "--core", corePath, execPath],
           timeout: 240_000,
           stderr: () => {},
           stdout(text) {
@@ -1986,6 +2048,7 @@ async function spawnBun(execPath, { args, cwd, timeout, gracefulTimeout, idleTim
             if (
               line.startsWith("Program terminated") ||
               line.startsWith("#") || // gdb backtrace lines start with #0, #1, etc.
+              line.startsWith("Thread ") ||
               line.startsWith("[Current thread is")
             ) {
               crashes += line + "\n";

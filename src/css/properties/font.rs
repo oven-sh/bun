@@ -998,22 +998,9 @@ impl FontHandler {
 
         if let Some(f) = family.as_mut() {
             if f.len() > 1 {
-                // Dedupe
+                // Dedupe, keeping the first occurrence of each family.
                 let mut seen: FontFamilyHashMap<()> = Default::default();
-
-                let mut i: usize = 0;
-                while i < f.len() {
-                    use bun_collections::array_hash_map::MapEntry;
-                    match seen.entry(f.at(i).clone()) {
-                        MapEntry::Occupied(_) => {
-                            let _ = f.ordered_remove(i);
-                        }
-                        MapEntry::Vacant(v) => {
-                            v.insert(());
-                            i += 1;
-                        }
-                    }
-                }
+                f.retain(|family| seen.insert(family.clone(), ()).is_none());
             }
         }
 

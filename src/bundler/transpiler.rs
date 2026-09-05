@@ -1879,17 +1879,28 @@ fn parse_data_loader<'a>(
     // (`bun_ast::Expr`); lift into the full T4
     // `bun_ast::Expr` via the deep-convert `From` bridge
     // (Expr.rs:1265) so the StoreRef-backed accessors below work.
+    // The runtime module loader prints JSON rows; every other caller edits the classic tree.
     let value_expr: bun_ast::Expr = match loader {
         options::Loader::Jsonc => {
             // We allow importing tsconfig.*.json or jsconfig.*.json with comments
             // These files implicitly become JSONC files, which aligns with the behavior of text editors.
-            match bun_parsers::json::parse_jsonc_into_arena(source, log, arena) {
+            let parsed = if keep_json_and_toml_as_one_statement {
+                bun_parsers::json::parse_jsonc_into_arena(source, log, arena)
+            } else {
+                bun_parsers::json::parse_ts_config(source, log, arena)
+            };
+            match parsed {
                 Ok(e) => e,
                 Err(_) => return None,
             }
         }
         options::Loader::Json => {
-            match bun_parsers::json::parse_json_into_arena(source, log, arena) {
+            let parsed = if keep_json_and_toml_as_one_statement {
+                bun_parsers::json::parse_json_into_arena(source, log, arena)
+            } else {
+                bun_parsers::json::parse_utf8(source, log, arena)
+            };
+            match parsed {
                 Ok(e) => e,
                 Err(_) => return None,
             }
@@ -1929,6 +1940,7 @@ fn parse_data_loader<'a>(
     };
     let mut expr = value_expr;
 
+    // Only the XML parser still hands over rows here.
     if !keep_json_and_toml_as_one_statement
         && matches!(
             expr.data,

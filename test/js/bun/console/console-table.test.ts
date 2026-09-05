@@ -1,6 +1,6 @@
 import { spawnSync } from "bun";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, isDebug } from "harness";
 
 // `console.table` and `Bun.inspect.table` share the same native TablePrinter,
 // so we can render in-process instead of spawning a subprocess per case.
@@ -361,5 +361,142 @@ console.log("calls=" + calls);`,
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect({ stdout, stderr, exitCode }).toEqual({ stdout: box("1") + "calls=1\n", stderr: "", exitCode: 0 });
+  });
+});
+
+// A cell's column is found by name: by scanning the column list while it is
+// short, and through a name index once a row has more properties than that
+// (MAX_SCANNED_COLUMNS in ConsoleObject.rs). Both have to agree on which names
+// are the same column, and neither may hand out the index or Values column.
+describe("console.table column lookup", () => {
+  // Two rows with the same 7-character keys, each cell holding its own key, so
+  // the header and both rows render as the same line of 7-wide cells and the
+  // whole table can be spelled out. The second row lists the keys in the
+  // opposite order: each of its cells has to be found in the column the first
+  // row created, not in the column at the same position.
+  function wideTable(columns: number) {
+    const keys = Array.from({ length: columns }, (_, i) => "c" + (100000 + i));
+    const first: Record<string, string> = {};
+    for (const key of keys) first[key] = key;
+    const second: Record<string, string> = {};
+    for (let i = keys.length - 1; i >= 0; i--) second[keys[i]] = keys[i];
+
+    const rule = (left: string, mid: string, right: string) =>
+      left + "───" + (mid + "─────────").repeat(columns) + right + "\n";
+    const body = "│ " + keys.join(" │ ") + " │\n";
+    const expected =
+      rule("┌", "┬", "┐") + "│   " + body + rule("├", "┼", "┤") + "│ 0 " + body + "│ 1 " + body + rule("└", "┴", "┘");
+    return { rows: [first, second], expected };
+  }
+
+  test("cells land in the column their name was first seen in", () => {
+    const { rows, expected } = wideTable(300);
+    expect(Bun.inspect.table(rows)).toBe(expected);
+  });
+
+  test("rendering is linear in the number of columns", () => {
+    // When every cell scanned the columns created so far, these sizes took
+    // ~25 s in a release build and ~22 s in a debug build. Indexed they take
+    // ~80 ms and ~0.4 s, so the budget has over 10x of headroom either way.
+    const columns = isDebug ? 10_000 : 64_000;
+    const budgetMs = 5_000;
+    const { rows, expected } = wideTable(columns);
+
+    const start = performance.now();
+    const out = Bun.inspect.table(rows);
+    const elapsed = performance.now() - start;
+
+    // toBe(expected) would print megabytes on a mismatch; the 300-column test
+    // above is the one that gives a readable diff.
+    expect({ matches: out === expected, length: out.length }).toEqual({ matches: true, length: expected.length });
+    expect(elapsed).toBeLessThan(budgetMs);
+  });
+
+  // The column names and the cells of each row, trimmed, without the row-index
+  // column.
+  function shape(table: string) {
+    const cellsOf = (line: string) =>
+      line
+        .split("│")
+        .slice(2, -1)
+        .map(cell => cell.trim());
+    const [, header, , ...lines] = table.split("\n");
+    return { columns: cellsOf(header), cells: lines.slice(0, -2).map(cellsOf) };
+  }
+
+  // Enough columns to leave the scan behind; keep it above MAX_SCANNED_COLUMNS.
+  const fillerNames = Array.from({ length: 10 }, (_, i) => "f" + i);
+  const filler = Object.fromEntries(fillerNames.map(name => [name, 0]));
+
+  // `rows` on their own are narrow enough to be scanned; behind a row of
+  // filler columns, every one of their names goes through the index.
+  function expectColumns(rows: unknown[], columns: string[], cells: string[][]) {
+    expect(shape(Bun.inspect.table(rows))).toEqual({ columns, cells });
+
+    const blank = (names: unknown[]) => names.map(() => "");
+    expect(shape(Bun.inspect.table([filler, ...rows]))).toEqual({
+      columns: [...fillerNames, ...columns],
+      cells: [[...fillerNames.map(() => "0"), ...blank(columns)], ...cells.map(row => [...blank(fillerNames), ...row])],
+    });
+  }
+
+  test("a name stored as Latin-1 by one row and as UTF-16 by another is one column", () => {
+    // String keys are atomized, so equal text shares one storage; a symbol's
+    // description keeps the storage of the string it was made from, and a
+    // slice of a 16-bit string keeps sharing its 16-bit storage once it is
+    // longer than the few characters WTF would rather copy.
+    const name = "crème brûlée, à la carte";
+    const wide = Array.from(name + "\u65e5")
+      .join("")
+      .slice(0, name.length);
+    expect(wide).toBe(name);
+    expectColumns([{ [Symbol(name)]: 1 }, { [Symbol(wide)]: 2 }], [name], [["1"], ["2"]]);
+    expectColumns([{ [Symbol(wide)]: 1 }, { [Symbol(name)]: 2 }], [name], [["1"], ["2"]]);
+  });
+
+  test("names with non-ASCII characters are matched across rows", () => {
+    // 日本 is stored as UTF-16, é as Latin-1.
+    expectColumns(
+      [
+        { 日本: 1, é: 2 },
+        { é: 3, 日本: 4 },
+      ],
+      ["日本", "é"],
+      [
+        ["1", "2"],
+        ["4", "3"],
+      ],
+    );
+  });
+
+  test("the empty name is a column like any other", () => {
+    expectColumns(
+      [
+        { "": 1, "a": 2 },
+        { "a": 3, "": 4 },
+      ],
+      ["", "a"],
+      [
+        ["1", "2"],
+        ["4", "3"],
+      ],
+    );
+  });
+
+  test("a property named like the index column gets its own column", () => {
+    // The name " " trims to "" here; the point is the extra column.
+    expectColumns([{ " ": 1 }, { " ": 2 }], [""], [["1"], ["2"]]);
+  });
+
+  test("a property named Values is separate from the Values column", () => {
+    expectColumns(
+      [{ Values: 1 }, 2, { Values: 3 }],
+      ["Values", "Values"],
+      [
+        ["1", ""],
+        ["", "2"],
+        ["3", ""],
+      ],
+    );
   });
 });

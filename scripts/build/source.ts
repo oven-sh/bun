@@ -26,9 +26,9 @@ import { assert } from "./error.ts";
 import { assertManagedSource, fetchCliPath, fetchDep, sourceIsCurrent } from "./fetch-cli.ts";
 import { computeDepFlags, computeTargetLinkFlags } from "./flags.ts";
 import { writeIfChanged } from "./fs.ts";
-import { machoPostlinkImplicitInputs } from "./shims.ts";
 import type { Ninja } from "./ninja.ts";
 import { quote, quoteArgs } from "./shell.ts";
+import { machoPostlinkImplicitInputs } from "./shims.ts";
 import { streamPath } from "./stream.ts";
 
 /**

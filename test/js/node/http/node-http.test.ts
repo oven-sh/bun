@@ -1599,11 +1599,11 @@ describe("a 'request' listener that fails", () => {
     handler: string,
     request = "GET / HTTP/1.1\r\nHost: a\r\nConnection: close\r\n\r\n",
   ) {
-    const { stdout, exitCode } = await bunRun(path.join(import.meta.dir, "fixtures", "request-listener-throws.js"), {
-      HANDLER: handler,
-      RAW_REQUEST: request,
-    });
-    expect(exitCode).toBe(0);
+    const { stdout, stderr, exitCode } = await bunRun(
+      path.join(import.meta.dir, "fixtures", "request-listener-throws.js"),
+      { HANDLER: handler, RAW_REQUEST: request },
+    );
+    expect({ stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
     return JSON.parse(stdout).raw as string;
   }
 

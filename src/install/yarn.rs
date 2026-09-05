@@ -508,15 +508,12 @@ fn process_deps(
     dep_type: DependencyType,
     yarn_lock_: &YarnLock<'_>,
     string_buf_: &mut Semver::string::Buf,
-    deps_buf: &mut [Dependency],
-    res_buf: &mut [PackageID],
+    dependencies: &mut lockfile::DependencyList,
+    resolutions: &mut lockfile::PackageIDList,
     log: &mut bun_ast::Log,
     manager: &mut PackageManager,
     yarn_entry_to_package_id: &[PackageID],
-) -> Result<usize, Error> {
-    // Returns count instead of slice to avoid borrowck conflict with caller's bufs.
-    let mut count: usize = 0;
-
+) -> Result<(), Error> {
     for (dep_name_key, dep_version_ref) in deps.iter() {
         let dep_name: &[u8] = dep_name_key.as_ref();
         let dep_version: &[u8] = *dep_version_ref;
@@ -566,14 +563,12 @@ fn process_deps(
             }
 
             if let Some(pkg_id) = found_package_id {
-                // SAFETY: `deps_buf` is uninitialized spare capacity; `ptr::write` skips Drop.
-                unsafe { core::ptr::write(deps_buf.as_mut_ptr().add(count), dep) };
-                res_buf[count] = pkg_id;
-                count += 1;
+                dependencies.push(dep);
+                resolutions.push(pkg_id);
             }
         }
     }
-    Ok(count)
+    Ok(())
 }
 
 struct RootDep {
@@ -788,19 +783,6 @@ pub(crate) fn migrate_yarn_lockfile<'a>(
             scripts: Default::default(),
         })?;
     }
-
-    // SAFETY: capacity reserved above to num_deps; we write past `len` through
-    // raw pointers into the reserved capacity and set `len` at the end.
-    let dependencies_base_ptr = this.buffers.dependencies.as_mut_ptr();
-    let resolutions_base_ptr = this.buffers.resolutions.as_mut_ptr();
-    let mut dependencies_buf: &mut [Dependency] = unsafe {
-        // SAFETY: capacity >= num_deps reserved above
-        bun_core::ffi::slice_mut(dependencies_base_ptr, num_deps as usize)
-    };
-    let mut resolutions_buf: &mut [PackageID] = unsafe {
-        // SAFETY: capacity >= num_deps reserved above
-        bun_core::ffi::slice_mut(resolutions_base_ptr, num_deps as usize)
-    };
 
     let mut yarn_entry_to_package_id: Vec<PackageID> = vec![0; yarn_lock.entries.len()];
 
@@ -1119,8 +1101,6 @@ pub(crate) fn migrate_yarn_lockfile<'a>(
     // below via `this.packages.items_*_mut()[idx] = …` instead of caching
     // two field slices simultaneously.
 
-    let mut actual_root_dep_count: u32 = 0;
-
     if !root_dependencies.is_empty() {
         for dep in root_dependencies.iter() {
             let mut dep_spec = Vec::new();
@@ -1150,42 +1130,30 @@ pub(crate) fn migrate_yarn_lockfile<'a>(
                 let dep_name_string = sbuf!().append_with_hash(&dep.name, name_hash)?;
                 let version_string = sbuf!().append(&dep.version)?;
 
-                // SAFETY: `dependencies_buf` is uninitialized spare capacity; `ptr::write` skips Drop.
-                unsafe {
-                    core::ptr::write(
-                        dependencies_buf
-                            .as_mut_ptr()
-                            .add(actual_root_dep_count as usize),
-                        Dependency {
-                            name: dep_name_string,
-                            name_hash,
-                            version: Dependency::parse(
-                                dep_name_string,
-                                Some(name_hash),
-                                version_string.slice(this.buffers.string_bytes.as_slice()),
-                                &version_string.sliced(this.buffers.string_bytes.as_slice()),
-                                Some(&mut *log),
-                                Some(&mut *manager),
-                            )
-                            .unwrap_or_default(),
-                            behavior: behavior_for(dep.dep_type, false),
-                        },
-                    );
-                }
-
-                resolutions_buf[actual_root_dep_count as usize] = yarn_entry_to_package_id[idx];
-                actual_root_dep_count += 1;
+                this.buffers.dependencies.push(Dependency {
+                    name: dep_name_string,
+                    name_hash,
+                    version: Dependency::parse(
+                        dep_name_string,
+                        Some(name_hash),
+                        version_string.slice(this.buffers.string_bytes.as_slice()),
+                        &version_string.sliced(this.buffers.string_bytes.as_slice()),
+                        Some(&mut *log),
+                        Some(&mut *manager),
+                    )
+                    .unwrap_or_default(),
+                    behavior: behavior_for(dep.dep_type, false),
+                });
+                this.buffers.resolutions.push(yarn_entry_to_package_id[idx]);
             }
         }
     }
 
+    let actual_root_dep_count = u32::try_from(this.buffers.dependencies.len()).expect("int cast");
     this.packages.items_dependencies_mut()[0] =
         lockfile::DependencySlice::new(0, actual_root_dep_count);
     this.packages.items_resolutions_mut()[0] =
         lockfile::DependencyIDSlice::new(0, actual_root_dep_count);
-
-    dependencies_buf = &mut dependencies_buf[actual_root_dep_count as usize..];
-    resolutions_buf = &mut resolutions_buf[actual_root_dep_count as usize..];
 
     for yarn_idx in 0..yarn_lock.entries.len() {
         let package_id = yarn_entry_to_package_id[yarn_idx];
@@ -1193,101 +1161,84 @@ pub(crate) fn migrate_yarn_lockfile<'a>(
             continue;
         }
 
-        let dependencies_start = dependencies_buf.as_mut_ptr();
-        let resolutions_start = resolutions_buf.as_mut_ptr();
+        let dependencies_start = this.buffers.dependencies.len();
+        let resolutions_start = this.buffers.resolutions.len();
 
         // reshaped for borrowck — iterate by index and re-borrow
         // `yarn_lock.entries[yarn_idx]` for each map so the shared borrow of
         // `yarn_lock` passed into `process_deps` doesn't overlap an iterator.
         if let Some(deps) = yarn_lock.entries[yarn_idx].dependencies.as_ref() {
-            let processed = process_deps(
+            process_deps(
                 deps,
                 DependencyType::Production,
                 &yarn_lock,
                 &mut sbuf!(),
-                dependencies_buf,
-                resolutions_buf,
+                &mut this.buffers.dependencies,
+                &mut this.buffers.resolutions,
                 &mut *log,
                 &mut *manager,
                 &yarn_entry_to_package_id,
             )?;
-            dependencies_buf = &mut dependencies_buf[processed..];
-            resolutions_buf = &mut resolutions_buf[processed..];
         }
 
         if let Some(deps) = yarn_lock.entries[yarn_idx].optional_dependencies.as_ref() {
-            let processed = process_deps(
+            process_deps(
                 deps,
                 DependencyType::Optional,
                 &yarn_lock,
                 &mut sbuf!(),
-                dependencies_buf,
-                resolutions_buf,
+                &mut this.buffers.dependencies,
+                &mut this.buffers.resolutions,
                 &mut *log,
                 &mut *manager,
                 &yarn_entry_to_package_id,
             )?;
-            dependencies_buf = &mut dependencies_buf[processed..];
-            resolutions_buf = &mut resolutions_buf[processed..];
         }
 
         if let Some(deps) = yarn_lock.entries[yarn_idx].peer_dependencies.as_ref() {
-            let processed = process_deps(
+            process_deps(
                 deps,
                 DependencyType::Peer,
                 &yarn_lock,
                 &mut sbuf!(),
-                dependencies_buf,
-                resolutions_buf,
+                &mut this.buffers.dependencies,
+                &mut this.buffers.resolutions,
                 &mut *log,
                 &mut *manager,
                 &yarn_entry_to_package_id,
             )?;
-            dependencies_buf = &mut dependencies_buf[processed..];
-            resolutions_buf = &mut resolutions_buf[processed..];
         }
 
         if let Some(deps) = yarn_lock.entries[yarn_idx].dev_dependencies.as_ref() {
-            let processed = process_deps(
+            process_deps(
                 deps,
                 DependencyType::Development,
                 &yarn_lock,
                 &mut sbuf!(),
-                dependencies_buf,
-                resolutions_buf,
+                &mut this.buffers.dependencies,
+                &mut this.buffers.resolutions,
                 &mut *log,
                 &mut *manager,
                 &yarn_entry_to_package_id,
             )?;
-            dependencies_buf = &mut dependencies_buf[processed..];
-            resolutions_buf = &mut resolutions_buf[processed..];
         }
 
-        // dependencies_start/dependencies_buf.as_ptr() are within the same allocation
-        let deps_len = (dependencies_buf.as_mut_ptr() as usize) - (dependencies_start as usize);
-        let deps_off = (dependencies_start as usize) - (dependencies_base_ptr as usize);
         this.packages.items_dependencies_mut()[package_id as usize] =
             lockfile::DependencySlice::new(
-                u32::try_from(deps_off / core::mem::size_of::<Dependency>()).expect("int cast"),
-                u32::try_from(deps_len / core::mem::size_of::<Dependency>()).expect("int cast"),
+                u32::try_from(dependencies_start).expect("int cast"),
+                u32::try_from(this.buffers.dependencies.len() - dependencies_start)
+                    .expect("int cast"),
             );
-        let res_off = (resolutions_start as usize) - (resolutions_base_ptr as usize);
-        let res_len = (resolutions_buf.as_mut_ptr() as usize) - (resolutions_start as usize);
         this.packages.items_resolutions_mut()[package_id as usize] =
             lockfile::DependencyIDSlice::new(
-                u32::try_from(res_off / core::mem::size_of::<PackageID>()).expect("int cast"),
-                u32::try_from(res_len / core::mem::size_of::<PackageID>()).expect("int cast"),
+                u32::try_from(resolutions_start).expect("int cast"),
+                u32::try_from(this.buffers.resolutions.len() - resolutions_start)
+                    .expect("int cast"),
             );
     }
 
-    let final_deps_len = ((dependencies_buf.as_mut_ptr() as usize)
-        - (dependencies_base_ptr as usize))
-        / core::mem::size_of::<Dependency>();
-    unsafe {
-        // SAFETY: all elements in 0..final_deps_len initialized above; capacity >= num_deps
-        this.buffers.dependencies.set_len(final_deps_len);
-        this.buffers.resolutions.set_len(final_deps_len);
-    }
+    debug_assert!(this.buffers.dependencies.len() == this.buffers.resolutions.len());
+    debug_assert!(this.buffers.dependencies.len() <= num_deps as usize);
 
     this.buffers.hoisted_dependencies.reserve(
         (this.buffers.dependencies.len() * 2)

@@ -252,30 +252,23 @@ impl OutputFile {
     }
 
     pub(crate) fn copy_to(&self, rel_path: &[u8], dir: Fd) -> Result<(), Error> {
-        let mut out_buf = PathBuffer::uninit();
-        let fd_out = bun_sys::openat(
+        let src = bun_sys::File::openat(Fd::cwd(), self.src_path.text, bun_sys::O::RDONLY, 0)?;
+        let dest = bun_sys::File::openat(
             dir,
-            resolve_path::z(rel_path, &mut out_buf),
+            rel_path,
             bun_sys::O::WRONLY | bun_sys::O::CREAT | bun_sys::O::TRUNC,
-            0o644,
-        )?;
-        let mut in_buf = PathBuffer::uninit();
-        let fd_in = bun_sys::openat(
-            Fd::cwd(),
-            resolve_path::z(self.src_path.text, &mut in_buf),
-            bun_sys::O::RDONLY,
-            0,
+            if self.is_executable { 0o777 } else { 0o666 },
         )?;
 
         #[cfg(windows)]
         {
-            let _ = (fd_out, fd_in);
+            let _ = (&src, &dest);
             // use paths instead of bun.getFdPathW()
             panic!("TODO windows");
         }
         #[cfg(not(windows))]
         {
-            bun_sys::copy_file(fd_in, fd_out)?;
+            bun_sys::copy_file(src.handle(), dest.handle())?;
             Ok(())
         }
     }

@@ -3058,7 +3058,7 @@ impl<'a> Transpiler<'a> {
             | options::Loader::Wasm
             | options::Loader::File
             | options::Loader::Napi => {
-                output_file.value = self.build_copied_file_output(file_path_text, file_path_ext)?;
+                self.build_copied_file_output(&mut output_file, file_path_text, file_path_ext)?;
             }
         }
 
@@ -3237,20 +3237,24 @@ impl<'a> Transpiler<'a> {
     #[inline(never)]
     fn build_copied_file_output(
         &mut self,
+        output_file: &mut options::OutputFile,
         file_path_text: &'static [u8],
         file_path_ext: &[u8],
-    ) -> crate::Result<crate::output_file::Value> {
-        let hashed_name = self
-            .linker
-            .get_hashed_filename(&bun_paths::fs::Path::init(file_path_text), None)?;
+    ) -> crate::Result<()> {
+        let file = bun_sys::File::openat(FD::cwd(), file_path_text, bun_sys::O::RDONLY, 0)?;
+        // The copy keeps the source's executable bit, like `cp` does.
+        output_file.is_executable = (file.stat()?.st_mode as u32) & 0o111 != 0;
+        let hashed_name = self.linker.get_hashed_filename(
+            &bun_paths::fs::Path::init(file_path_text),
+            Some(file.handle()),
+        )?;
         let mut pathname = Vec::with_capacity(hashed_name.len() + file_path_ext.len());
         pathname.extend_from_slice(hashed_name);
         pathname.extend_from_slice(file_path_ext);
-        Ok(crate::output_file::Value::Copy(
-            crate::output_file::FileOperation {
-                pathname: pathname.into_boxed_slice(),
-            },
-        ))
+        output_file.value = crate::output_file::Value::Copy(crate::output_file::FileOperation {
+            pathname: pathname.into_boxed_slice(),
+        });
+        Ok(())
     }
 }
 

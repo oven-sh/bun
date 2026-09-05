@@ -18,6 +18,14 @@ use bun_sys as syscall;
 #[bun_jsc::JsClass]
 pub struct Glob {
     pattern: Box<[u8]>,
+    /// `pattern` with its literal (comma-less or unclosed) brace groups
+    /// escaped, precomputed once so `match()` does not rescan the pattern on
+    /// every call. `None` when `pattern` needs no rewriting. The walker keeps
+    /// using the raw `pattern`: `build_pattern_components` treats `\` as a
+    /// path separator on Windows, so the escaped form must never reach it
+    /// (the walker's per-component `bun_glob::r#match` applies the escaping
+    /// itself).
+    match_pattern: Option<Box<[u8]>>,
     has_pending_activity: AtomicUsize,
 }
 
@@ -559,9 +567,11 @@ impl Glob {
             .to_bun_string(global_this)?
             .to_owned_slice()
             .into_boxed_slice();
+        let match_pattern = bun_glob::escape_literal_braces(&pat_str).map(Vec::into_boxed_slice);
 
         Ok(Box::new(Glob {
             pattern: pat_str,
+            match_pattern,
             has_pending_activity: AtomicUsize::new(0),
         }))
     }
@@ -680,8 +690,9 @@ impl Glob {
 
         let str = str_arg.to_utf8(global_this)?;
 
+        let pattern = self.match_pattern.as_deref().unwrap_or(&self.pattern);
         Ok(JSValue::from(
-            bun_glob::r#match(&self.pattern, str.slice()).matches(),
+            bun_glob::match_preprocessed(pattern, str.slice()).matches(),
         ))
     }
 }

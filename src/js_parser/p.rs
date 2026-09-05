@@ -255,6 +255,9 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     pub(crate) has_import_meta: bool,
     pub(crate) has_es_module_syntax: bool,
     pub(crate) top_level_await_keyword: bun_ast::Range,
+    /// Visit-pass flag: a module-scope `await` survives DCE. Unlike
+    /// `top_level_await_keyword`, this excludes awaits in dead branches.
+    pub(crate) has_live_top_level_await: bool,
     pub(crate) fn_or_arrow_data_parse: FnOrArrowDataParse,
     pub(crate) fn_or_arrow_data_visit: FnOrArrowDataVisit,
     pub(crate) fn_only_data_visit: FnOnlyDataVisit,
@@ -1791,6 +1794,26 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         self.deoptimize_common_js_named_exports();
     }
 
+    /// True at module top level: the scope walk reaches the module `Entry` scope
+    /// (blocks/with don't count) without crossing a function, class, or TS
+    /// namespace/enum body (`Entry` with `ts_namespace` set is function-like).
+    pub(crate) fn is_at_module_scope(&self) -> bool {
+        let mut scope: Option<js_ast::StoreRef<js_ast::Scope>> = Some(self.current_scope);
+        while let Some(curr) = scope {
+            match curr.kind {
+                js_ast::scope::Kind::Entry => return curr.ts_namespace.is_none(),
+                js_ast::scope::Kind::FunctionArgs
+                | js_ast::scope::Kind::FunctionBody
+                | js_ast::scope::Kind::ClassBody
+                | js_ast::scope::Kind::ClassName
+                | js_ast::scope::Kind::ClassStaticInit => return false,
+                _ => {}
+            }
+            scope = curr.parent;
+        }
+        false
+    }
+
     fn clear_symbol_usages_from_dead_part(&mut self, part: &js_ast::Part) {
         let symbol_use_refs = part.symbol_uses.keys();
         let symbol_use_values = part.symbol_uses.values();
@@ -3310,7 +3333,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             self.scope_order_to_visit = buf.into_bump_slice();
         }
 
-        self.is_file_considered_to_have_esm_exports = !self.top_level_await_keyword.is_empty()
+        // A parse-time TLA keyword may sit in a branch DCE will drop, so it
+        // only implies ESM when the output format supports top-level await.
+        let tla_implies_esm =
+            !self.top_level_await_keyword.is_empty() && self.options.features.top_level_await;
+
+        self.is_file_considered_to_have_esm_exports = tla_implies_esm
             || !self.esm_export_keyword.is_empty()
             || self.options.module_type == options::ModuleType::Esm;
 
@@ -3320,7 +3348,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         self.has_es_module_syntax = self.has_es_module_syntax
             || self.esm_import_keyword.len > 0
             || self.esm_export_keyword.len > 0
-            || self.top_level_await_keyword.len > 0;
+            || tla_implies_esm;
 
         if let Some(factory) = self.lexer.jsx_pragma.jsx() {
             // `Span.text` is a `StoreStr` into lexer-owned source; valid for 'a.
@@ -3388,7 +3416,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         } else if self.esm_export_keyword.len > 0 {
             self.module_scope_mut()
                 .recursive_set_strict_mode(js_ast::StrictModeKind::ImplicitStrictModeExport);
-        } else if self.top_level_await_keyword.len > 0 {
+        } else if self.top_level_await_keyword.len > 0 && self.options.features.top_level_await {
+            // Skipped when the format forbids TLA: the `await` may be in a
+            // branch DCE eliminates, which must not imply strict mode.
             self.module_scope_mut()
                 .recursive_set_strict_mode(js_ast::StrictModeKind::ImplicitStrictModeTopLevelAwait);
         }
@@ -9724,6 +9754,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             has_import_meta: false,
             has_es_module_syntax: false,
             top_level_await_keyword: bun_ast::Range::NONE,
+            has_live_top_level_await: false,
             fn_or_arrow_data_parse,
             fn_or_arrow_data_visit: FnOrArrowDataVisit::default(),
             fn_only_data_visit: FnOnlyDataVisit::default(),

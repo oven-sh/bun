@@ -317,6 +317,33 @@ test("new File([file], name) does not rename the source", () => {
   expect([d.name, e.name]).toEqual(["d.txt", "e.txt"]);
 });
 
+test("new File(bits, name) converts the name to a USVString", async () => {
+  // `fileName` is a WebIDL USVString: each unpaired surrogate becomes U+FFFD.
+  const cases = [
+    ["a\uD800b.txt", "a\uFFFDb.txt"],
+    ["a\uDC00b.txt", "a\uFFFDb.txt"],
+    ["\uDC00\uD800", "\uFFFD\uFFFD"],
+    // a valid pair next to an unpaired surrogate stays as it is
+    ["\uD800\uD83D\uDE00", "\uFFFD\uD83D\uDE00"],
+    ["\uD800\uD800\uDC00", "\uFFFD\uD800\uDC00"],
+    ["\u{1F600}\uD800", "\u{1F600}\uFFFD"],
+    // a well-formed name does not change
+    ["\u{1F600}é.txt", "\u{1F600}é.txt"],
+  ];
+  const names = cases.map(([input]) => new File(["x"], input).name);
+  // JSON.stringify escapes an unpaired surrogate, so a failure shows which one is left.
+  expect(JSON.stringify(names)).toBe(JSON.stringify(cases.map(([, expected]) => expected)));
+
+  // a file-backed File converts its name too
+  expect(new File([Bun.file(import.meta.path)], "a\uD800b.txt").name).toBe("a\uFFFDb.txt");
+
+  // the entry FormData hands back keeps the converted name
+  const formData = new FormData();
+  formData.append("f", new File(["x"], "a\uD800b.txt"));
+  expect((formData.get("f") as File).name).toBe("a\uFFFDb.txt");
+  expect(await new Response(formData).text()).toContain('filename="a\uFFFDb.txt"');
+});
+
 test("dupeWithContentType does not alias the source's allocated content_type", async () => {
   // Regression: #23015 refactored Blob to be ref-counted and moved
   // `setNotHeapAllocated()` before the `isHeapAllocated()` guard in

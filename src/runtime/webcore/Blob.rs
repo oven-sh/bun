@@ -5464,7 +5464,11 @@ pub(crate) fn jsdom_file_construct(
             "new File(bits, name) expects at least 2 arguments"
         )));
     }
-    let name = BunString::from_js(args[1], global_this)?;
+    // `fileName` is a WebIDL `USVString`: an unpaired surrogate becomes U+FFFD.
+    let name = BunString::from_js(args[1], global_this)?.into_well_formed();
+    if name.is_dead() {
+        return Err(global_this.throw_memory_allocation_failed());
+    }
     let blob = Blob::get::<false, true>(global_this, args[0])?;
     // The store may be shared with the source blob (`dupe()`); never rename it.
     blob.name.set(name);

@@ -1344,6 +1344,12 @@ pub fn is_valid_utf8(slice: &[u8]) -> bool {
     simdutf::validate::utf8(slice)
 }
 
+/// SIMD-validated UTF-16 check: `false` iff `slice` has an unpaired surrogate.
+#[inline]
+pub fn is_valid_utf16(slice: &[u16]) -> bool {
+    simdutf::validate::utf16le(slice)
+}
+
 /// SIMD-validated `&str` view of `bytes`; `None` if not valid UTF-8.
 ///
 /// This is the codebase-wide replacement for `core::str::from_utf8` — every

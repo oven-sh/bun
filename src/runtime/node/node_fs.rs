@@ -4401,27 +4401,16 @@ pub mod ret {
 // https://github.com/DefinitelyTyped/DefinitelyTyped/blob/master/types/node/fs.d.ts
 // ──────────────────────────────────────────────────────────────────────────
 
-// `#[repr(C)]` pins `sync_error_buf` (a `[u8; N]`, nominal align = 1) at
-// offset 0. The struct's overall alignment is ≥ `align_of::<*const ()>()`
-// (from the `vm` field), so the buffer's address inherits that alignment.
-// This is load-bearing on Windows where `sync_error_buf` is reinterpreted as
-// `&mut [u16]` / `&mut WPathBuffer` (see `mkdir_recursive_os_path_impl` and
-// the `os_path_kernel32` callers); a misaligned `&mut [u16]` is instant UB.
-#[repr(C)]
 pub struct NodeFS {
-    /// Buffer to store a temporary file path that might appear in a returned error message.
-    ///
-    /// We want to avoid allocating a new path buffer for every error message so that jsc can clone + GC it.
-    /// That means a stack-allocated buffer won't suffice. Instead, we re-use
-    /// the heap allocated buffer on the NodeFS struct
-    pub(crate) sync_error_buf: PathBuffer, // must be align_of::<u16>()-aligned — enforced via #[repr(C)] + field order, see above
+    /// Scratch for a temporary file path that might appear in a returned error message.
+    pub(crate) sync_error_buf: paths::path_buffer_pool::Guard,
     pub(crate) vm: Option<NonNull<VirtualMachine>>,
 }
 
 impl Default for NodeFS {
     fn default() -> Self {
         Self {
-            sync_error_buf: PathBuffer::uninit(),
+            sync_error_buf: paths::path_buffer_pool::get(),
             vm: None,
         }
     }
@@ -5531,8 +5520,8 @@ impl NodeFS {
             }
         }
 
-        // SAFETY: `NodeFS` is `#[repr(C)]` with `sync_error_buf` at offset 0 and
-        // struct alignment ≥ pointer-align (from `vm`), so this address is
+        // SAFETY: `sync_error_buf` is a pooled heap allocation, and every
+        // supported allocator aligns it to at least 8 bytes, so this address is
         // ≥ `align_of::<OSPathChar>()`-aligned. On Windows
         // `OSPathBuffer = [u16; PATH_MAX_WIDE]` (65 534 B) which fits inside
         // `PathBuffer` (`MAX_PATH_BYTES` = 98 302 B); on POSIX it is the same
@@ -5541,7 +5530,7 @@ impl NodeFS {
         // `&mut PathBuffer` without reborrowing `&mut self` (which would alias
         // `working_mem` under stacked borrows). On every such path `working_mem` is
         // not used afterward, so the re-derive is sound.
-        let sync_error_buf_ptr: *mut PathBuffer = &raw mut self.sync_error_buf;
+        let sync_error_buf_ptr: *mut PathBuffer = &raw mut *self.sync_error_buf;
         assert!(
             sync_error_buf_ptr.cast::<OSPathChar>().is_aligned(),
             "NodeFS.sync_error_buf misaligned for OSPathChar",

@@ -6,7 +6,7 @@
  * generated zlib.h is in place before this compiles.
  *
  * SPNG_STATIC drops the dllexport/visibility decoration; SPNG_SSE controls
- * the x86 filter SIMD level (1=SSE2, baseline on every x64 we ship).
+ * the x86 filter SIMD level (4=SSE4.1, within our nehalem x64 floor).
  */
 
 import type { Dependency } from "../source.ts";

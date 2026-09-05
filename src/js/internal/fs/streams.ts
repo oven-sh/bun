@@ -455,16 +455,24 @@ function WriteStream(this: FSStream, path: string | null, options?: any): void {
   }
 
   // A writer cannot be opened for every fd a caller may hand us -- a read-only
-  // descriptor is the common case, and node's tty.WriteStream accepts one. Fall
-  // back to the general path there, which surfaces the failure at write time the
-  // way node does, rather than throwing from the constructor.
+  // descriptor is the common case, and node's tty.WriteStream accepts one, and
+  // the sink dup()s the fd, which fails with EMFILE at the fd limit. Fall back
+  // to synchronous writes there, like node's SyncWriteStream for stdio: a
+  // failure surfaces at write time rather than from the constructor, and bytes
+  // written right before process.exit() are not left in a thread-pool queue.
   let fastWriter;
   if (fastPath && fd != null) {
     try {
       fastWriter = Bun.file(fd).writer();
     } catch {
       fastPath = false;
+      this._write = underscoreWriteSync;
     }
+    // Already-open fd (stdio): skip the async _construct round-trip so the
+    // stream is born constructed, like node's stdio streams (net.Socket /
+    // tty.WriteStream), which never allocate construct TickObjects. A write
+    // before construction would sit in the buffer until the next tick.
+    this._construct = undefined;
   }
 
   // Enable fast path
@@ -473,12 +481,6 @@ function WriteStream(this: FSStream, path: string | null, options?: any): void {
     this._write = underscoreWriteFast;
     this._writev = undefined;
     this.write = writeFast as any;
-    if (fd != null) {
-      // Already-open fd (stdio): skip the async _construct round-trip so the
-      // stream is born constructed, like node's stdio streams (net.Socket /
-      // tty.WriteStream), which never allocate construct TickObjects.
-      this._construct = undefined;
-    }
   }
 
   Writable.$call(this, options);
@@ -589,6 +591,31 @@ function _write(data, encoding, cb) {
   }
 }
 writeStreamPrototype._write = _write;
+
+function underscoreWriteSync(this: FSStream, data: Buffer, encoding: any, cb: any) {
+  const length = data.length;
+  let offset = 0;
+  while (offset < length) {
+    let written: number;
+    try {
+      written = fs.writeSync(this.fd, data, offset, length - offset);
+    } catch (err) {
+      if (err?.code !== "EAGAIN") {
+        cb(err);
+        return;
+      }
+      written = 0;
+    }
+    if (written === 0) {
+      // A non-blocking fd with no room. Let the thread pool finish the rest.
+      _write.$call(this, offset === 0 ? data : data.subarray(offset), encoding, cb);
+      return;
+    }
+    this.bytesWritten += written;
+    offset += written;
+  }
+  cb(null);
+}
 
 function underscoreWriteFast(this: FSStream, data: any, encoding: any, cb: any) {
   let fileSink = this[kWriteStreamFastPath];

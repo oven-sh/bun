@@ -110,8 +110,9 @@ export function getStdioWriteStream(
   stream._isStdio = true;
   stream.fd = fd;
 
+  // undefined when the FileSink could not be opened (EMFILE at the fd limit);
+  // the stream then writes synchronously through fs.writeSync.
   const underlyingSink = stream[require("internal/fs/streams").kWriteStreamFastPath];
-  $assert(underlyingSink);
   return [stream, underlyingSink];
 }
 

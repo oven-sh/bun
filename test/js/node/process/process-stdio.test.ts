@@ -1,6 +1,6 @@
 import { spawn, spawnSync } from "bun";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import path from "path";
 import { isatty } from "tty";
 describe.concurrent("process-stdio", () => {
@@ -157,5 +157,54 @@ describe.concurrent("process-stdio", () => {
     expect(stdout?.toString()).toBe(
       `hello worldhello again|😋 Get Emoji — All Emojis to ✂️ Copy and 📋 Paste 👌`.repeat(9999),
     );
+  });
+
+  // `ulimit -n` caps the fd table of the child. The script then opens /dev/null
+  // until EMFILE, so the first touch of process.stdout / process.stderr cannot
+  // dup() its fd for the FileSink fast path. The stream must still deliver the
+  // bytes before process.exit(), the way node's synchronous stdio does.
+  describe.skipIf(isWindows)("stdio writes at the fd limit", () => {
+    const script = /* js */ `
+      const fs = require("fs");
+      // A debug build reads internal modules from disk on first use. Load the
+      // stream module while an fd is still free.
+      new fs.WriteStream(null, { fd: 1, autoClose: false });
+      const held = [];
+      try {
+        for (;;) held.push(fs.openSync("/dev/null", "r"));
+      } catch {}
+      const ok = process.stderr.write("E1 diagnostic on stderr\\n");
+      process.stdout.write("O1 line on stdout\\n");
+      process.exit(ok ? 0 : 1);
+    `;
+
+    test("pipe: bytes written before process.exit() reach the reader", async () => {
+      await using proc = spawn({
+        cmd: ["/bin/sh", "-c", `ulimit -n 32 && exec "$1" -e "$2"`, "sh", bunExe(), script],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stdout).toBe("O1 line on stdout\n");
+      expect(stderr).toBe("E1 diagnostic on stderr\n");
+      expect(exitCode).toBe(0);
+    });
+
+    test("file: bytes written before process.exit() reach the file", async () => {
+      using dir = tempDir("stdio-fd-limit", {});
+      const out = path.join(String(dir), "out.txt");
+      const err = path.join(String(dir), "err.txt");
+      await using proc = spawn({
+        cmd: ["/bin/sh", "-c", `ulimit -n 32 && exec "$1" -e "$2" >"$3" 2>"$4"`, "sh", bunExe(), script, out, err],
+        env: bunEnv,
+        stdout: "ignore",
+        stderr: "ignore",
+      });
+      const exitCode = await proc.exited;
+      expect(await Bun.file(out).text()).toBe("O1 line on stdout\n");
+      expect(await Bun.file(err).text()).toBe("E1 diagnostic on stderr\n");
+      expect(exitCode).toBe(0);
+    });
   });
 });

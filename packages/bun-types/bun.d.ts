@@ -8957,6 +8957,8 @@ declare module "bun" {
      * - `ERR_IMAGE_TOO_MANY_PIXELS` — header dimensions or resize output
      *   exceed `maxPixels`, or a path-backed input is over the 256 MiB cap.
      * - `ERR_IMAGE_DECODE_FAILED` / `ERR_IMAGE_ENCODE_FAILED` — codec error.
+     * - `ERR_IMAGE_BAD_EXTRACT_AREA` — an `extract()` region falls outside
+     *   the image bounds.
      * - `ERR_IMAGE_UNKNOWN_FORMAT` — input bytes didn't match any sniffer.
      * - `ERR_INVALID_STATE` — the input ArrayBuffer was transferred between
      *   construction and the terminal call.
@@ -8968,6 +8970,7 @@ declare module "bun" {
       | "ERR_IMAGE_TOO_MANY_PIXELS"
       | "ERR_IMAGE_DECODE_FAILED"
       | "ERR_IMAGE_ENCODE_FAILED"
+      | "ERR_IMAGE_BAD_EXTRACT_AREA"
       | "ERR_IMAGE_UNKNOWN_FORMAT"
       | "ERR_INVALID_STATE";
 
@@ -9003,6 +9006,22 @@ declare module "bun" {
        * @default true
        */
       autoOrient?: boolean;
+    }
+
+    /**
+     * Rectangle for {@link Bun.Image.extract | `extract()`}, in pixels of the
+     * upright (post-rotation) source. `left`/`top` default to `0` and must be
+     * non-negative integers. `width`/`height` are required positive integers.
+     */
+    interface Region {
+      /** Left edge of the region. @default 0 */
+      left?: number;
+      /** Top edge of the region. @default 0 */
+      top?: number;
+      /** Width of the region, ≥ 1. */
+      width: number;
+      /** Height of the region, ≥ 1. */
+      height: number;
     }
 
     interface ResizeOptions {
@@ -9043,7 +9062,7 @@ declare module "bun" {
    *
    * Chainables overwrite (calling `.resize()` twice keeps the second). Order
    * of execution is fixed regardless of call order:
-   * `autoOrient → rotate → flip/flop → resize → modulate`.
+   * `autoOrient → rotate → flip/flop → extract → resize → modulate`.
    *
    * The source ICC colour profile (Display P3, Adobe RGB, Jpegli XYB, etc.)
    * is preserved through re-encode to JPEG, PNG, and WebP so non-sRGB
@@ -9098,6 +9117,15 @@ declare module "bun" {
 
     /** Set target dimensions. Omit `height` to keep the source aspect ratio. */
     resize(width: number, height?: number, options?: Image.ResizeOptions): this;
+    /**
+     * Crop to an exact region of the source, before any `resize()`. The
+     * region addresses upright (post-rotation) source pixels; `left`/`top`
+     * must be non-negative integers and `width`/`height` positive integers.
+     * A region that falls outside the image rejects with
+     * `ERR_IMAGE_BAD_EXTRACT_AREA`. Calling it again replaces the previous
+     * region.
+     */
+    extract(region: Image.Region): this;
     /** Rotate by a multiple of 90°. */
     rotate(degrees: number): this;
     /** Mirror about the x-axis (vertical). */

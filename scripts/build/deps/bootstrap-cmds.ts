@@ -71,9 +71,19 @@ function emitMigcom(n: Ninja, cfg: Config, { srcDir, ready }: CustomBuildContext
     },
   });
   const sources = [
-    ...["error", "global", "header", "mig", "routine", "server", "statement", "string", "type", "user", "utils"].map(
-      f => join(src, `${f}.c`),
-    ),
+    ...[
+      "error.c",
+      "global.c",
+      "header.c",
+      "mig.c",
+      "routine.c",
+      "server.c",
+      "statement.c",
+      "string.c",
+      "type.c",
+      "user.c",
+      "utils.c",
+    ].map(f => join(src, f)),
     lexer,
     parser,
   ];

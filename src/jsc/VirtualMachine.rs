@@ -1329,20 +1329,23 @@ impl VirtualMachine {
         }
     }
 
-    pub fn is_event_loop_alive_excluding_immediates(&self) -> bool {
+    #[inline]
+    fn has_pending_loop_work_excluding_immediates(&self) -> bool {
         let el = self.event_loop_shared();
         let active = self
             .platform_loop_opt()
             .map(|h| h.is_active())
             .unwrap_or(false);
-        self.unhandled_error_counter == 0
-            && ((active as usize)
-                + self.active_tasks
-                + el.tasks.readable_length()
-                + el.yield_tasks.len()
-                + (el.has_concurrent_tasks() as usize)
-                + (el.has_pending_refs() as usize)
-                > 0)
+        active
+            || self.active_tasks > 0
+            || el.tasks.readable_length() > 0
+            || !el.yield_tasks.is_empty()
+            || el.has_concurrent_tasks()
+            || el.has_pending_refs()
+    }
+
+    pub fn is_event_loop_alive_excluding_immediates(&self) -> bool {
+        self.unhandled_error_counter == 0 && self.has_pending_loop_work_excluding_immediates()
     }
 
     pub fn is_event_loop_alive(&self) -> bool {
@@ -1350,6 +1353,32 @@ impl VirtualMachine {
         self.is_event_loop_alive_excluding_immediates()
             || !el.immediate_tasks.is_empty()
             || !el.next_immediate_tasks.is_empty()
+    }
+
+    /// Whether anything, ref'd or not, could still settle a pending module promise (`unhandled_error_counter` is ignored: it persists across `bun test` files).
+    pub fn has_pending_loop_work(&self) -> bool {
+        let el = self.event_loop_shared();
+        self.has_pending_loop_work_excluding_immediates()
+            || !el.immediate_tasks.is_empty()
+            || !el.next_immediate_tasks.is_empty()
+            || self.has_registered_io()
+            || runtime_hooks().is_some_and(|h| (h.has_program_timers)())
+    }
+
+    /// Sockets, pipes, child processes and watchers still registered with the platform loop, ref'd or not.
+    fn has_registered_io(&self) -> bool {
+        let Some(loop_) = self.platform_loop_opt() else {
+            return false;
+        };
+        #[cfg(unix)]
+        {
+            // `hold_forever_poll` registers one poll of its own so watch-mode loops can park.
+            loop_.num_polls > i32::from(self.event_loop_shared().holds_forever_poll)
+        }
+        #[cfg(not(unix))]
+        {
+            loop_.has_active_io_handles()
+        }
     }
 
     pub fn wakeup(&mut self) {
@@ -2213,7 +2242,7 @@ pub struct RuntimeHooks {
     /// (error already logged into `vm.log`).
     pub generate_entry_point: fn(vm: &VirtualMachine, watch: bool, entry_path: &[u8]) -> bool,
     /// `loadPreloads()` — runs `--preload` scripts. Returns the first rejected
-    /// preload promise if any, else null. Errors propagate
+    /// or still-pending (unsettled top-level await) preload promise, else null. Errors propagate
     /// (resolver failures / `ModuleNotFound`).
     pub load_preloads:
         unsafe fn(vm: *mut VirtualMachine) -> crate::CrateResult<*mut JSInternalPromise>,
@@ -2268,6 +2297,8 @@ pub struct RuntimeHooks {
     pub create_node_fs: unsafe fn(vm: *mut VirtualMachine) -> *mut c_void,
     /// `ObjectURLRegistry` lookup. Registry lives in `bun_runtime::webcore`.
     pub has_blob_url: fn(blob_id: &[u8]) -> bool,
+    /// `timer::All::has_program_timers` for this thread's VM; the heap lives in `bun_runtime`.
+    pub has_program_timers: fn() -> bool,
     /// `Response::get_blob_without_call_frame` /
     /// `Request::get_blob_without_call_frame`. If
     /// `value` downcasts to a `Response` or `Request` (both live in
@@ -2810,6 +2841,36 @@ impl VirtualMachine {
         self.event_loop_mut().wait_for_promise(promise)
     }
 
+    /// Thin forwarder; body lives in [`crate::event_loop::EventLoop::wait_for_module_promise`].
+    #[inline]
+    pub fn wait_for_module_promise(
+        &mut self,
+        promise: *mut JSInternalPromise,
+    ) -> Result<(), jsc::Stopped> {
+        self.event_loop_mut().wait_for_module_promise(promise)
+    }
+
+    /// Node's "Detected unsettled top-level await" warning, one line per stalled module.
+    pub fn report_unsettled_top_level_await(&self) {
+        unsafe extern "C" {
+            safe fn Bun__findStalledTopLevelAwait(global: &JSGlobalObject) -> bun_core::String;
+        }
+        let stalled = Bun__findStalledTopLevelAwait(self.global());
+        let stalled_utf8 = stalled.to_utf8();
+        let at: &[u8] = if !stalled_utf8.slice().is_empty() {
+            stalled_utf8.slice()
+        } else {
+            &self.main
+        };
+        for module in bun_core::strings::split(at, b"\n") {
+            bun_core::pretty_errorln!(
+                "<r><yellow>Warning<r><d>:<r> Detected unsettled top-level await at <b>{}<r>",
+                bstr::BStr::new(module),
+            );
+        }
+        bun_core::Output::flush();
+    }
+
     /// `eventLoop().autoTick()` — dispatched through the runtime hook
     /// (needs `Timer::All` for the poll timeout).
     #[inline]
@@ -2986,7 +3047,7 @@ impl VirtualMachine {
     }
 
     /// `loadEntryPoint(entry_path)` — `reload_entry_point` + spin until the
-    /// returned promise settles.
+    /// returned promise settles or nothing is left that could settle it (callers check the status).
     pub fn load_entry_point(
         &mut self,
         entry_path: &[u8],
@@ -3017,7 +3078,7 @@ impl VirtualMachine {
             if crate::JSPromise::status_ptr(promise) == crate::js_promise::Status::Rejected {
                 return Ok(promise);
             }
-            let _ = self.wait_for_promise(jsc::AnyPromise::Internal(promise));
+            let _ = self.wait_for_module_promise(promise);
         }
 
         Ok(self.pending_internal_promise.unwrap_or(promise))
@@ -5009,7 +5070,7 @@ impl VirtualMachine {
         Ok(promise)
     }
 
-    /// Loads a test-file entry point and waits for the load promise to settle.
+    /// Loads a test-file entry point and waits for the load promise; it may still be pending on return.
     pub fn load_entry_point_for_test_runner(
         &mut self,
         entry_path: &[u8],
@@ -5040,7 +5101,7 @@ impl VirtualMachine {
             if crate::JSPromise::status_ptr(promise) == crate::js_promise::Status::Rejected {
                 return Ok(promise);
             }
-            let _ = self.wait_for_promise(jsc::AnyPromise::Internal(promise));
+            let _ = self.wait_for_module_promise(promise);
         }
 
         // Pre-arm the waker so this settled-promise tick cannot park (#36450).

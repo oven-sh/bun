@@ -264,8 +264,9 @@ impl bun_io::heap::HeapContext<EventLoopTimer> for TimerHeapCtx {
     }
 }
 
+/// The second field counts linked nodes whose tag is not [`EventLoopTimerTag::is_housekeeping`].
 #[derive(Default)]
-pub struct TimerHeap(bun_io::heap::Intrusive<EventLoopTimer, TimerHeapCtx>);
+pub struct TimerHeap(bun_io::heap::Intrusive<EventLoopTimer, TimerHeapCtx>, usize);
 
 impl TimerHeap {
     #[inline]
@@ -274,21 +275,33 @@ impl TimerHeap {
         if r.is_null() { None } else { Some(r) }
     }
 
+    /// Whether a timer that could settle a program's promise is still linked.
+    #[inline]
+    pub(crate) fn has_program_timers(&self) -> bool {
+        self.1 > 0
+    }
+
     /// # Safety
     /// `v` is a valid, exclusively-owned node not currently in any heap
     /// (its `IntrusiveField` links are null).
     #[inline]
     unsafe fn insert(&mut self, v: *mut EventLoopTimer) {
-        // SAFETY: forwarded — see fn contract.
-        unsafe { self.0.insert(v) };
+        // SAFETY: forwarded — see fn contract; the tag read is on the same live node.
+        unsafe {
+            self.1 += usize::from(!(*v).tag.is_housekeeping());
+            self.0.insert(v);
+        }
     }
 
     /// # Safety
     /// `v` is a node currently in *this* heap.
     #[inline]
     unsafe fn remove(&mut self, v: *mut EventLoopTimer) {
-        // SAFETY: forwarded — see fn contract.
-        unsafe { self.0.remove(v) };
+        // SAFETY: forwarded — see fn contract; the tag read is on the same live node.
+        unsafe {
+            self.1 -= usize::from(!(*v).tag.is_housekeeping());
+            self.0.remove(v);
+        }
     }
 
     #[inline]
@@ -296,7 +309,12 @@ impl TimerHeap {
         // SAFETY: all reachable nodes were inserted via `insert()` and remain
         // live until popped (intrusive invariant maintained by `All`).
         let r = unsafe { self.0.delete_min() };
-        if r.is_null() { None } else { Some(r) }
+        if r.is_null() {
+            return None;
+        }
+        // SAFETY: `r` was just unlinked and is still a live node.
+        self.1 -= usize::from(!unsafe { (*r).tag }.is_housekeeping());
+        Some(r)
     }
 
     #[inline]
@@ -606,6 +624,11 @@ pub(crate) struct All {
 }
 
 impl All {
+    /// Whether a real-clock timer that could settle a program's promise is pending, ref'd or not.
+    pub(crate) fn has_program_timers(&self) -> bool {
+        self.timers.has_program_timers()
+    }
+
     pub(crate) fn init() -> Self {
         Self {
             last_id: 1,

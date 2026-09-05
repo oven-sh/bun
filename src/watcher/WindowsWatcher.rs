@@ -22,6 +22,8 @@ pub struct WindowsWatcher {
     pub(crate) watcher: DirWatcher,
     pub(crate) buf: PathBuffer,
     pub(crate) base_idx: usize,
+    /// A `ReadDirectoryChangesW` into `watcher` is outstanding.
+    read_pending: bool,
 }
 
 impl Default for WindowsWatcher {
@@ -35,6 +37,7 @@ impl Default for WindowsWatcher {
             },
             buf: PathBuffer::uninit(),
             base_idx: 0,
+            read_pending: false,
         }
     }
 }
@@ -292,9 +295,22 @@ impl WindowsWatcher {
         Ok(())
     }
 
+    /// Issues the read that [`Self::next`] waits on, unless one is outstanding.
+    /// The kernel records changes only once the first read has been issued.
+    /// The read writes into `self`, so `self` must not move or be freed until
+    /// the read completes or [`Self::stop`] has run.
+    pub(crate) fn arm(&mut self) -> bun_sys::Result<()> {
+        if self.read_pending {
+            return Ok(());
+        }
+        self.watcher.prepare()?;
+        self.read_pending = true;
+        Ok(())
+    }
+
     /// wait until new events are available
     fn next(&mut self, timeout: Timeout) -> bun_sys::Result<Option<EventIterator>> {
-        if let Err(err) = self.watcher.prepare() {
+        if let Err(err) = self.arm() {
             bun_core::scoped_log!(watcher, "prepare() returned error");
             return Err(err);
         }
@@ -313,6 +329,10 @@ impl WindowsWatcher {
                     timeout as w::DWORD,
                 )
             };
+            if overlapped == &raw mut self.watcher.overlapped {
+                // Completed, successfully or not.
+                self.read_pending = false;
+            }
             if rc == 0 {
                 let err = w::Win32Error::get();
                 // `WAIT_TIMEOUT` (258) — not yet a named const on `bun_sys::windows::Win32Error`.
@@ -326,7 +346,7 @@ impl WindowsWatcher {
 
             if !overlapped.is_null() {
                 // ignore possible spurious events
-                if overlapped != &mut self.watcher.overlapped as *mut w::OVERLAPPED {
+                if overlapped != &raw mut self.watcher.overlapped {
                     continue;
                 }
                 if nbytes == 0 {
@@ -343,9 +363,7 @@ impl WindowsWatcher {
                         watcher,
                         "ReadDirectoryChangesW buffer overflow (nbytes==0); re-arming"
                     );
-                    if let Err(err) = self.watcher.prepare() {
-                        return Err(err);
-                    }
+                    self.arm()?;
                     continue;
                 }
                 return Ok(Some(EventIterator {
@@ -367,10 +385,46 @@ impl WindowsWatcher {
         }
     }
 
+    /// Closes the directory and the port. Once it returns, `self` can be freed.
     pub(crate) fn stop(&mut self) {
         // SAFETY: handles were opened in init() and are valid until stop() is called once.
         unsafe {
             w::CloseHandle(self.watcher.dir_handle);
+        }
+        if self.read_pending {
+            // Closing the directory fails the read; its packet reaching the port
+            // is what proves the kernel is done with `buf` and `overlapped`.
+            let mut nbytes: w::DWORD = 0;
+            let mut key: w::ULONG_PTR = 0;
+            let mut overlapped: *mut w::OVERLAPPED = ptr::null_mut();
+            loop {
+                // SAFETY: iocp is a valid IOCP handle; out-params are valid stack locals.
+                let rc = unsafe {
+                    w::kernel32::GetQueuedCompletionStatus(
+                        self.iocp,
+                        &raw mut nbytes,
+                        &raw mut key,
+                        &raw mut overlapped,
+                        w::INFINITE,
+                    )
+                };
+                if overlapped == &raw mut self.watcher.overlapped {
+                    self.read_pending = false;
+                    break;
+                }
+                if rc == 0 && overlapped.is_null() {
+                    // The port itself failed, so no packet can arrive.
+                    bun_core::scoped_log!(
+                        watcher,
+                        "stop(): GetQueuedCompletionStatus failed: {}",
+                        w::Win32Error::get().0
+                    );
+                    break;
+                }
+            }
+        }
+        // SAFETY: see above.
+        unsafe {
             w::CloseHandle(self.iocp);
         }
     }

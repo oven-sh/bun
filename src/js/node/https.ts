@@ -6,10 +6,22 @@ const { isIP } = require("internal/net/isIP");
 const { urlToHttpOptions } = require("internal/url");
 const { kEmptyObject, once } = require("internal/shared");
 const { validateObject } = require("internal/validators");
-const { kProxyConfig, checkShouldUseProxy, kWaitForProxyTunnel } = require("internal/http");
+const {
+  kProxyConfig,
+  checkShouldUseProxy,
+  kWaitForProxyTunnel,
+  kSNIContexts,
+  isTlsSymbol,
+  tlsSymbol,
+  serverSymbol,
+} = require("internal/http");
 const { validateHeaderValue } = require("node:_http_common");
 
+const httpServerAddServerName = $newRustFunction("node_http_binding.rs", "httpServerAddServerName", 3);
+
 const ArrayPrototypeShift = Array.prototype.shift;
+const ArrayPrototypePush = Array.prototype.push;
+const ArrayPrototypeSplice = Array.prototype.splice;
 const ObjectAssign = Object.assign;
 const ArrayPrototypeUnshift = Array.prototype.unshift;
 const JSONStringify = JSON.stringify;
@@ -492,14 +504,13 @@ Agent.prototype._evictSession = function _evictSession(key) {
   delete this._sessionCache.map[key];
 };
 
-const { shouldUseEnvProxy } = require("node:_http_agent");
-
 // Like Node's https.Server constructor: default ALPNProtocols to ['http/1.1']
 // when neither ALPNProtocols nor ALPNCallback was given, and store the
 // normalized protocol list / callback on the server instance the way
 // tls.Server does (test-https-argument-of-creating.js).
 // https://github.com/nodejs/node/blob/v26.3.0/lib/https.js#L82-L97
-function createServer(options, requestListener) {
+function Server(options, requestListener): void {
+  if (!(this instanceof Server)) return new Server(options, requestListener);
   if (typeof options === "function") {
     requestListener = options;
     options = {};
@@ -514,14 +525,76 @@ function createServer(options, requestListener) {
     // ALPN requests are always answered with http/1.1.
     options.ALPNProtocols = ["http/1.1"];
   }
-  const server = http.createServer(options, requestListener);
+  // Tells http.Server to build a TLS config even when no key material was given.
+  this[isTlsSymbol] = true;
+  http.Server.$call(this, options, requestListener);
   const optionsALPNProtocols = options.ALPNProtocols;
   if (optionsALPNProtocols) {
-    require("node:tls").convertALPNProtocols(optionsALPNProtocols, server);
+    require("node:tls").convertALPNProtocols(optionsALPNProtocols, this);
   }
-  server.ALPNCallback = options.ALPNCallback;
-  return server;
+  this.ALPNCallback = options.ALPNCallback;
 }
+$toClass(Server, "Server", http.Server);
+
+Server.prototype.addContext = function (hostname, context) {
+  if (typeof hostname !== "string") {
+    throw new TypeError("hostname must be a string");
+  }
+  if (hostname === "") {
+    throw $ERR_TLS_REQUIRED_SERVER_NAME('"servername" is required parameter for Server.addContext');
+  }
+  const entry = require("internal/tls").serverTlsFromOptions(context ?? kEmptyObject);
+  entry.serverName = hostname;
+  const contexts = (this[kSNIContexts] ??= []);
+  const bunServer = this[serverSymbol];
+  if (bunServer) {
+    // Throws on bad key material, before the previous entry below is dropped.
+    httpServerAddServerName(bunServer, hostname, entry);
+  }
+  // Last context added for a hostname wins, as in Node; Bun.serve rejects duplicate serverNames.
+  for (let i = contexts.length - 1; i >= 0; i--) {
+    if (contexts[i].serverName === hostname) {
+      ArrayPrototypeSplice.$call(contexts, i, 1);
+    }
+  }
+  ArrayPrototypePush.$call(contexts, entry);
+};
+
+Server.prototype.setSecureContext = function (options) {
+  if (options == null) return;
+  validateObject(options, "options");
+  // Built in full from `options` (so anything omitted is cleared, as in Node)
+  // and only assigned once every option has been validated.
+  const next = require("internal/tls").serverTlsFromOptions(options);
+  const previous = this[tlsSymbol];
+  if (previous) {
+    // The client certificate policy belongs to the server, not to the
+    // certificate material: Node's setSecureContext() leaves it alone too.
+    next.requestCert = previous.requestCert;
+    next.rejectUnauthorized = previous.rejectUnauthorized;
+  }
+  this[tlsSymbol] = next;
+};
+
+Server.prototype.getTicketKeys = function () {
+  throw Error("Not implemented in Bun yet");
+};
+
+Server.prototype.setTicketKeys = function (keys) {
+  if (!ArrayBuffer.isView(keys)) {
+    throw $ERR_INVALID_ARG_TYPE("buffer", ["Buffer", "TypedArray", "DataView"], keys);
+  }
+  if (keys.byteLength !== 48) {
+    throw $ERR_INVALID_ARG_VALUE("buffer", keys, "Session ticket keys must be a 48-byte buffer");
+  }
+  throw Error("Not implemented in Bun yet");
+};
+
+function createServer(options, requestListener) {
+  return new Server(options, requestListener);
+}
+
+const { shouldUseEnvProxy } = require("node:_http_agent");
 
 var https = {
   Agent,
@@ -531,7 +604,7 @@ var https = {
     timeout: 5000,
     proxyEnv: shouldUseEnvProxy() ? process.env : undefined,
   }),
-  Server: http.Server,
+  Server,
   createServer,
   get,
   request,

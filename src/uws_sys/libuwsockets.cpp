@@ -579,6 +579,20 @@ extern "C"
     }
     return !success;
   }
+  void uws_remove_server_name(int ssl, uws_app_t *app,
+                              const char *hostname_pattern)
+  {
+    if (ssl)
+    {
+      uWS::SSLApp *uwsApp = (uWS::SSLApp *)app;
+      uwsApp->removeServerName(hostname_pattern);
+    }
+    else
+    {
+      uWS::App *uwsApp = (uWS::App *)app;
+      uwsApp->removeServerName(hostname_pattern);
+    }
+  }
 
   void uws_filter(int ssl, uws_app_t *app, uws_filter_handler handler,
                   void *user_data)

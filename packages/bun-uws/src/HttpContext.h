@@ -169,8 +169,11 @@ private:
              * report _secureEstablished = false. Peer-cert authorization is
              * surfaced separately (rejectUnauthorized above / tls.authorized). */
             httpResponseData->isAuthorized = success;
-            httpResponseData->peerCertVerified = success && verify_error.error == 0;
-            httpResponseData->peerCertVerifyErrorCode = verify_error.code;
+            /* Like node, a connection that was not asked for a client certificate
+             * reports authorized = false and no authorizationError. */
+            bool requestCert = httpContextData->flags.requestCert || us_socket_server_name_request_cert(s);
+            httpResponseData->peerCertVerified = requestCert && success && verify_error.error == 0;
+            httpResponseData->peerCertVerifyErrorCode = requestCert ? verify_error.code : nullptr;
 
             /* Any connected socket should timeout until it has a request */
             ((HttpResponse<SSL> *) s)->resetTimeout();
@@ -976,6 +979,7 @@ public:
     static HttpContext *create(Loop *loop, bool requestCert = false, bool rejectUnauthorized = false) {
         HttpContext *httpContext = new HttpContext;
         us_socket_group_init(&httpContext->group, (us_loop_t *) loop, &httpVTable<false>, httpContext);
+        httpContext->data.flags.requestCert = requestCert;
         if (requestCert && rejectUnauthorized) {
             httpContext->data.flags.rejectUnauthorized = true;
         }

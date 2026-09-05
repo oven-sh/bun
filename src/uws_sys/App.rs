@@ -390,6 +390,17 @@ impl<const SSL: bool> App<SSL> {
         }
     }
 
+    pub fn remove_server_name(&mut self, hostname_pattern: &core::ffi::CStr) {
+        // SAFETY: self is a valid app; hostname_pattern is NUL-terminated.
+        unsafe {
+            c::uws_remove_server_name(
+                Self::SSL_FLAG,
+                std::ptr::from_mut::<Self>(self).cast::<uws_app_t>(),
+                hostname_pattern.as_ptr(),
+            )
+        }
+    }
+
     pub fn add_server_name_with_options(
         &mut self,
         hostname_pattern: &core::ffi::CStr,
@@ -664,6 +675,11 @@ pub mod c {
             opcode: Opcode,
             compress: bool,
         ) -> SendStatus;
+        pub(crate) fn uws_remove_server_name(
+            ssl: i32,
+            app: *mut uws_app_t,
+            hostname_pattern: *const c_char,
+        );
         pub(crate) fn uws_add_server_name_with_options(
             ssl: i32,
             app: *mut uws_app_t,

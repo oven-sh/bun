@@ -28,6 +28,7 @@ const {
   kRealListen,
   tlsSymbol,
   optionsSymbol,
+  kSNIContexts,
   headerStateSymbol,
   NodeHTTPHeaderState,
   kPendingCallbacks,
@@ -234,19 +235,6 @@ function emitListenErrorNextTick(self, err) {
   self.emit("error", err);
 }
 
-// Node.js only requests a client certificate when `requestCert: true`.
-// The uSockets SSL context treats `ca` alone as "verify peer", so without
-// these two flags an `https.Server({ ca })` would reject every client that
-// doesn't present a cert. Mirror tls.Server (net.ts): default `requestCert`
-// to false and, when not requesting, force `rejectUnauthorized` to false so
-// the CA is loaded into the trust store without requiring a client cert.
-function normalizeServerTls(tls) {
-  const requestCert = !!tls.requestCert;
-  tls.requestCert = requestCert;
-  tls.rejectUnauthorized = requestCert ? tls.rejectUnauthorized !== false : false;
-  return tls;
-}
-
 // Node registers connectionListener on every http.Server so `server.emit("connection", socket)`
 // works for foreign Duplex sockets. The native listener handles its own sockets end to end;
 // this picks up the rest. https://github.com/nodejs/node/blob/main/lib/_http_server.js
@@ -288,86 +276,12 @@ function Server(options, callback): void {
   } else {
     validateObject(options, "options");
     options = { ...options };
-    const tlsHelpers = options.pfx || options.cert || options.key || options.ca ? require("internal/tls") : undefined;
 
-    // Node's https.Server accepts PKCS#12 bundles (pfx [+ passphrase]); fold
-    // them into plain key/cert/ca so the native TLS config sees PEM material.
-    let tlsOptions = options;
-    if (options.pfx) {
-      tlsOptions = tlsHelpers.processPfxOptions(options);
-      this[isTlsSymbol] = true;
-    }
-
-    let cert = tlsOptions.cert;
-    if (cert) {
-      tlsHelpers.throwOnInvalidTLSArray("options.cert", cert);
-      this[isTlsSymbol] = true;
-    }
-
-    let key = tlsOptions.key;
-    if (key) {
-      tlsHelpers.throwOnInvalidTLSArray("options.key", key);
-      this[isTlsSymbol] = true;
-    }
-
-    let ca = tlsOptions.ca;
-    // PKCS#12-embedded CAs extend the trust set; the server path hands raw
-    // {key, cert, ca} to the native config and has no addCACert hook, so fold
-    // them into `ca` (mirrors tls.Server.setSecureContext).
-    const pfxExtraCAs = tlsOptions._pfxExtraCACerts;
-    if (pfxExtraCAs?.length) {
-      ca = ca == null ? pfxExtraCAs : $isArray(ca) ? [...ca, ...pfxExtraCAs] : [ca, ...pfxExtraCAs];
-    }
-    if (ca) {
-      tlsHelpers.throwOnInvalidTLSArray("options.ca", ca);
-      this[isTlsSymbol] = true;
-    }
-
-    let passphrase = options.passphrase;
-    if (passphrase && typeof passphrase !== "string") {
-      throw $ERR_INVALID_ARG_TYPE("options.passphrase", "string", passphrase);
-    }
-
-    let serverName = options.servername;
-    if (serverName && typeof serverName !== "string") {
-      throw $ERR_INVALID_ARG_TYPE("options.servername", "string", serverName);
-    }
-
-    let secureOptions = options.secureOptions || 0;
-    if (secureOptions && typeof secureOptions !== "number") {
-      throw $ERR_INVALID_ARG_TYPE("options.secureOptions", "number", secureOptions);
-    }
-
-    if (this[isTlsSymbol]) {
-      const { validateSecureProtocol, secureProtocolToVersionRange, tlsStringToProtocolVersion } = tlsHelpers;
-      // Translate minVersion/maxVersion/secureProtocol into the integer
-      // protocol range the native layer applies (secureProtocol wins, like
-      // Node's SecureContext::Init); 0 keeps the native defaults.
-      validateSecureProtocol(options.secureProtocol);
-      let minVersion, maxVersion;
-      const range = secureProtocolToVersionRange(options.secureProtocol);
-      if (range) {
-        minVersion = range[0];
-        maxVersion = range[1];
-      } else {
-        minVersion = tlsStringToProtocolVersion(options.minVersion);
-        maxVersion = tlsStringToProtocolVersion(options.maxVersion);
-      }
-      this[tlsSymbol] = normalizeServerTls({
-        serverName,
-        key,
-        cert,
-        ca,
-        passphrase,
-        secureOptions,
-        minVersion,
-        maxVersion,
-        ciphers: typeof options.ciphers === "string" && options.ciphers ? options.ciphers : undefined,
-        requestCert: options.requestCert,
-        rejectUnauthorized: options.rejectUnauthorized,
-      });
-    } else {
-      this[tlsSymbol] = null;
+    // https.Server sets isTlsSymbol before calling: it is a TLS server even
+    // when constructed without key material (certificates can arrive later via
+    // setSecureContext()/addContext()). An http.Server is one only if given some.
+    if (this[isTlsSymbol] === true || options.pfx || options.cert || options.key || options.ca) {
+      this[tlsSymbol] = require("internal/tls").serverTlsFromOptions(options);
     }
   }
 
@@ -551,7 +465,7 @@ Server.prototype.listen = function () {
 
       const otherTLS = arg0.tls;
       if (otherTLS && $isObject(otherTLS)) {
-        tls = normalizeServerTls({ ...otherTLS });
+        tls = require("internal/tls").normalizeServerTls({ ...otherTLS });
       }
     } else if (typeof arg0 === "string" && !(Number(arg0) >= 0)) {
       // (path[...][, cb])
@@ -629,6 +543,17 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
 
     if (tls) {
       this.serverName = tls.serverName || host || "localhost";
+    }
+    const sniContexts = this[kSNIContexts];
+    const sniContextsLength = sniContexts ? sniContexts.length : 0;
+    if (sniContextsLength > 0) {
+      // tls array: [default context, ...SNI contexts]. The first entry must be
+      // the default so an SNI context is never promoted to it.
+      const tlsArray = [tls ?? { requestCert: false, rejectUnauthorized: false }];
+      for (let i = 0; i < sniContextsLength; i++) {
+        tlsArray.push(sniContexts[i]);
+      }
+      tls = tlsArray;
     }
     this[serverSymbol] = Bun.serve<any>({
       idleTimeout: 0, // nodejs dont have a idleTimeout by default
@@ -1844,18 +1769,14 @@ function getNodeHTTPServerSocket() {
       return typeof name === "string" && name.length > 0 ? name : false;
     }
 
-    // Like Node's server-side TLSSocket: `authorized` is only ever true when the
-    // server requested a client certificate and its verification succeeded;
-    // `authorizationError` carries the X.509 verification error code otherwise.
+    // Like Node: false / null unless the context this connection was accepted under requested a client certificate.
     get authorized() {
       if (!this.encrypted) return undefined;
-      if (!this.server?.[tlsSymbol]?.requestCert) return false;
       return this[kHandle]?.peerCertVerified === true;
     }
 
     get authorizationError() {
       if (!this.encrypted) return undefined;
-      if (!this.server?.[tlsSymbol]?.requestCert) return null;
       return this[kHandle]?.authorizationError ?? null;
     }
 

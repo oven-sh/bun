@@ -4447,6 +4447,18 @@ impl<'a> HTTPClient<'a> {
         }
     }
 
+    /// Nothing is pipelined, so bytes past the framed end of a response desynchronize the socket.
+    fn on_bytes_past_response_end(&mut self, count: usize) {
+        if count > 0 && self.state.flags.allow_keepalive {
+            bun_core::scoped_log!(
+                fetch,
+                "{} bytes past the end of the response, disabling keep-alive",
+                count
+            );
+            self.state.flags.allow_keepalive = false;
+        }
+    }
+
     pub(crate) fn handle_response_body(
         &mut self,
         incoming_data: &[u8],
@@ -4454,10 +4466,9 @@ impl<'a> HTTPClient<'a> {
     ) -> crate::Result<bool> {
         debug_assert!(self.state.transfer_encoding == Encoding::Identity);
         let content_length = self.state.content_length;
-        if let Some(len) = content_length
-            && incoming_data.len() > len.saturating_sub(self.state.total_body_received)
-        {
-            self.state.flags.allow_keepalive = false;
+        if let Some(len) = content_length {
+            let remaining = len.saturating_sub(self.state.total_body_received);
+            self.on_bytes_past_response_end(incoming_data.len().saturating_sub(remaining));
         }
         // is it exactly as much as we need?
         if is_only_buffer
@@ -4576,6 +4587,13 @@ impl<'a> HTTPClient<'a> {
         }
     }
 
+    /// `bytes_after_terminator` is the non-negative return of `phr_decode_chunked`.
+    fn on_last_chunk(&mut self, bytes_after_terminator: isize) {
+        debug_assert!(bytes_after_terminator >= 0);
+        self.state.flags.received_last_chunk = true;
+        self.on_bytes_past_response_end(bytes_after_terminator.unsigned_abs());
+    }
+
     fn handle_response_body_chunked_encoding_from_multiple_packets(
         &mut self,
         incoming_data: &[u8],
@@ -4642,7 +4660,7 @@ impl<'a> HTTPClient<'a> {
             }
             // Done
             _ => {
-                self.state.flags.received_last_chunk = true;
+                self.on_last_chunk(pret);
                 // Move the
                 // bytes out so no `&` into self.state aliases the `&mut self.state` call.
                 let buffer_snap = core::mem::take(&mut self.state.get_body_buffer().list);
@@ -4720,7 +4738,7 @@ impl<'a> HTTPClient<'a> {
             }
             // Done
             _ => {
-                self.state.flags.received_last_chunk = true;
+                self.on_last_chunk(pret);
                 self.handle_response_body_from_single_packet(buffer)?;
                 debug_assert!(self.state.decoded_body.list.as_ptr() != buffer.as_ptr());
                 self.report_progress(buffer.len());

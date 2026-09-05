@@ -3383,6 +3383,88 @@ it("does not reuse a keep-alive connection whose response carried more bytes tha
   }
 });
 
+it("does not reuse a keep-alive connection whose chunked response carried bytes past the terminating chunk", async () => {
+  // The chunked analogue of the Content-Length overshoot above: anything the origin
+  // sends after the zero-length chunk that ends the body belongs to no request of ours,
+  // so the connection's framing can no longer be trusted. The response itself is still
+  // delivered, but the connection must be closed instead of being returned to the
+  // keep-alive pool, where the next request to reuse it would be answered by whatever
+  // followed the terminator.
+  const injected = Buffer.from(
+    "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: 8\r\n\r\ninjected",
+    "latin1",
+  );
+  const chunkedResponse = (payload: Buffer, headers: string = "") =>
+    Buffer.concat([
+      Buffer.from(
+        `HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\n${headers}Transfer-Encoding: chunked\r\nConnection: keep-alive\r\n\r\n` +
+          `${payload.length.toString(16)}\r\n`,
+        "latin1",
+      ),
+      payload,
+      Buffer.from("\r\n0\r\n\r\n", "latin1"),
+    ]);
+  // The chunked decoder runs in one of two modes depending on whether a packet fits the
+  // 16 KiB scratch buffer and on the content encoding; one overshoot per combination.
+  const largeBody = Buffer.alloc(64 * 1024, "x").toString();
+  const responses: Record<string, Buffer> = {
+    "/legit": chunkedResponse(Buffer.from("legit!")),
+    "/overshoot": Buffer.concat([chunkedResponse(Buffer.from("hello")), injected]),
+    "/overshoot-large": Buffer.concat([chunkedResponse(Buffer.from(largeBody)), injected]),
+    "/overshoot-gzip": Buffer.concat([
+      chunkedResponse(gzipSync(Buffer.from("hello")), "Content-Encoding: gzip\r\n"),
+      injected,
+    ]),
+  };
+
+  let connections = 0;
+  const sockets: net.Socket[] = [];
+  const server = net.createServer(socket => {
+    connections++;
+    sockets.push(socket);
+    socket.on("error", () => {});
+    let buffered = "";
+    socket.on("data", data => {
+      buffered += data.toString("latin1");
+      while (true) {
+        const headerEnd = buffered.indexOf("\r\n\r\n");
+        if (headerEnd === -1) break;
+        const head = buffered.slice(0, headerEnd);
+        buffered = buffered.slice(headerEnd + 4);
+        const path = head.split("\r\n")[0].split(" ")[1];
+        socket.write(responses[path]);
+      }
+    });
+  });
+  await once(server.listen(0, "127.0.0.1"), "listening");
+  const { port } = server.address() as AddressInfo;
+
+  try {
+    const results: Array<[path: string, body: string, connections: number]> = [];
+    for (const path of ["/overshoot", "/legit", "/overshoot-large", "/legit", "/overshoot-gzip", "/legit", "/legit"]) {
+      const response = await fetch(`http://127.0.0.1:${port}${path}`);
+      const body = await response.text();
+      results.push([path, body === largeBody ? "<large body>" : body, connections]);
+    }
+    // Every mis-framed response is still delivered in full, the request following each
+    // one has to open a new connection, and a correctly framed chunked response is still
+    // pooled (each overshoot after the first, and the final request, reuse the connection
+    // that carried the preceding /legit response).
+    expect(results).toEqual([
+      ["/overshoot", "hello", 1],
+      ["/legit", "legit!", 2],
+      ["/overshoot-large", "<large body>", 2],
+      ["/legit", "legit!", 3],
+      ["/overshoot-gzip", "hello", 3],
+      ["/legit", "legit!", 4],
+      ["/legit", "legit!", 4],
+    ]);
+  } finally {
+    for (const socket of sockets) socket.destroy();
+    server.close();
+  }
+});
+
 // https://github.com/oven-sh/bun/issues/16682
 it("an explicit numeric `timeout` extends the socket idle deadline past the default", async () => {
   // The child runs with a 1s idle default (BUN_CONFIG_HTTP_IDLE_TIMEOUT=1) and

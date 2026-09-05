@@ -44,6 +44,9 @@ pub struct Options {
     pub enable: Enable,
     pub do_: Do,
     pub positionals: &'static [&'static [u8]],
+    /// `-c/--config <path>` as given on the command line (the bunfig that was loaded
+    /// *instead of* ./bunfig.toml), so the install-state fingerprint can cover it.
+    pub explicit_config_path: Option<&'static [u8]>,
     pub(crate) update: DependencyGroup,
     pub dry_run: bool,
     pub check: bool,
@@ -97,6 +100,9 @@ pub struct Options {
 
     /// `--offline` / `--prefer-offline` (or `install.offline` / `install.prefer = "offline"`).
     pub offline: OfflineMode,
+    /// Record/consult the whole-install fingerprint (`install_state.rs`) so a repeat
+    /// `bun install` with nothing to do returns immediately. `install.stateFile`.
+    pub install_state: bool,
 
     // Security scanner module path
     pub security_scanner: Option<&'static [u8]>,
@@ -131,6 +137,7 @@ impl Default for Options {
             enable: Enable::default(),
             do_: Do::default(),
             positionals: &[],
+            explicit_config_path: None,
             update: DependencyGroup::default(),
             dry_run: false,
             check: false,
@@ -174,6 +181,7 @@ impl Default for Options {
             hoist_pattern: None,
             hoist: true,
             offline: OfflineMode::Online,
+            install_state: true,
             security_scanner: None,
             minimum_release_age_ms: None,
             minimum_release_age_excludes: None,
@@ -493,6 +501,9 @@ impl Options {
                 self.hoist = hoist;
             }
 
+            if let Some(v) = config.install_state {
+                self.install_state = v;
+            }
             if config.offline == Some(true) {
                 self.offline = OfflineMode::Offline;
             }
@@ -722,6 +733,9 @@ impl Options {
             self.enable.set(Enable::MANIFEST_CACHE_CONTROL, false);
         }
 
+        if let Some(cli) = &maybe_cli {
+            self.explicit_config_path = cli.config;
+        }
         if let Some(cli) = maybe_cli {
             self.do_.set(Do::ANALYZE, cli.analyze);
             self.enable

@@ -523,6 +523,15 @@ When `true`, `bun install` never touches the network: package metadata and tarba
 offline = true
 ```
 
+### `install.stateFile`
+
+After a successful install, `bun install` records a fingerprint of everything that determines `node_modules` — the lockfile, every workspace `package.json`, `bunfig.toml` / `.npmrc`, patch files, install-relevant environment variables and flags, and the modification times of `node_modules` entries and of local `file:` sources — under the cache directory (projects with `bun link`-ed dependencies always take the normal path). When nothing changed, the next plain `bun install` verifies the fingerprint and returns immediately instead of re-checking every installed package. `--force`, `bun add`/`remove`/`update`, or any change to those inputs takes the normal path. Default `true`; set to `false` to always do the full check.
+
+```toml title="bunfig.toml" icon="settings"
+[install]
+stateFile = false
+```
+
 ### `install.frozenLockfile`
 
 When `true`, `bun install` does not update `bun.lock`. Default `false`. If `package.json` and the existing `bun.lock` disagree, the install errors.

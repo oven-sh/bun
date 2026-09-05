@@ -1613,24 +1613,33 @@ async function getPipeline(options = {}) {
       : buildPlatforms.filter(({ profile }) => profile !== "asan");
 
     steps.push(
-      ...relevantBuildPlatforms.map(target => {
+      ...relevantBuildPlatforms.flatMap(target => {
         // build-bun always runs on buildHostPlatform regardless of
         // target, so the only build-image dependency is the host's.
         const imageKey = getImageKey(buildHostPlatform);
-        const dependsOn = [];
-        if (imagePlatforms.has(imageKey)) {
-          dependsOn.push(`${imageKey}-build-image`);
-        }
+        const dependsOn = imagePlatforms.has(imageKey) ? [`${imageKey}-build-image`] : [];
 
-        const steps = [getBuildBunStep(target, options)];
+        // verify-baseline and trace-order are siblings of the build group,
+        // not members: Buildkite's canvas draws every edge into a group as
+        // leaving after the whole group, so nesting them made test-bun look
+        // like it waited on them. Scheduling is by step key either way.
+        /** @type {Step[]} */
+        const steps = [
+          getStepWithDependsOn(
+            {
+              key: getTargetKey(target),
+              group: getTargetLabel(target),
+              steps: [getBuildBunStep(target, options)],
+            },
+            ...dependsOn,
+          ),
+        ];
 
         if (needsBaselineVerification(target)) {
           // verify-baseline runs on a per-target-arch native host (see
-          // getVerifyBaselineHost), not buildHostPlatform; its image dep goes
-          // on the step itself so build-bun doesn't wait for it.
+          // getVerifyBaselineHost), not buildHostPlatform.
           const verifyImageKey = getImageKey(getVerifyBaselineHost(target));
-          const verifyDeps =
-            verifyImageKey !== imageKey && imagePlatforms.has(verifyImageKey) ? [`${verifyImageKey}-build-image`] : [];
+          const verifyDeps = imagePlatforms.has(verifyImageKey) ? [`${verifyImageKey}-build-image`] : [];
           steps.push(getStepWithDependsOn(getVerifyBaselineStep(target, options), ...verifyDeps));
         }
 
@@ -1645,22 +1654,13 @@ async function getPipeline(options = {}) {
             t.os === target.os && t.arch === target.arch && !target.abi && (target.profile ?? "release") === "release",
         );
         if (traceOn && (isMainBranch() || /\[generate symbol order\]/i.test(getCommitMessage()))) {
-          // The trace host's image, same as verify-baseline: on the step, so
-          // build-bun doesn't wait for it. Darwin has no cloud image.
+          // Darwin has no cloud image.
           const traceImageKey = getImageKey(traceOn.on);
-          const traceDeps =
-            traceImageKey !== imageKey && imagePlatforms.has(traceImageKey) ? [`${traceImageKey}-build-image`] : [];
+          const traceDeps = imagePlatforms.has(traceImageKey) ? [`${traceImageKey}-build-image`] : [];
           steps.push(getStepWithDependsOn(getTraceOrderStep(target, traceOn.on, options), ...traceDeps));
         }
 
-        return getStepWithDependsOn(
-          {
-            key: getTargetKey(target),
-            group: getTargetLabel(target),
-            steps,
-          },
-          ...dependsOn,
-        );
+        return steps;
       }),
     );
   }
@@ -1745,29 +1745,27 @@ async function getPipeline(options = {}) {
     steps.push(getReleaseStep(buildPlatforms, options, { signed: shouldSignWindows, testStepKeys }));
   }
 
+  // Merge same-label groups into their first occurrence, keeping every
+  // step's position so the sidebar reads in pipeline order.
   /** @type {Map<string, GroupStep>} */
   const stepsByGroup = new Map();
-
-  for (let i = 0; i < steps.length; i++) {
-    const step = steps[i];
+  /** @type {Step[]} */
+  const mergedSteps = [];
+  for (const step of steps) {
     if (!("group" in step)) {
+      mergedSteps.push(step);
       continue;
     }
-
-    const { group, steps: groupSteps } = step;
-    if (stepsByGroup.has(group)) {
-      stepsByGroup.get(group).steps.push(...groupSteps);
+    const existing = stepsByGroup.get(step.group);
+    if (existing) {
+      existing.steps.push(...step.steps);
     } else {
-      stepsByGroup.set(group, step);
+      stepsByGroup.set(step.group, step);
+      mergedSteps.push(step);
     }
-
-    steps[i] = undefined;
   }
 
-  return {
-    priority,
-    steps: [...steps.filter(step => typeof step !== "undefined"), ...Array.from(stepsByGroup.values())],
-  };
+  return { priority, steps: mergedSteps };
 }
 
 async function main() {

@@ -777,17 +777,29 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionLoad, (JSGlobalObject * globalObject, JSC::Ca
 }
 
 extern "C" void Bun__VirtualMachine__setOverrideModuleRunMainPromise(void* bunVM, JSPromise* promise);
-JSC_DEFINE_HOST_FUNCTION(jsFunctionRunMain, (JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+JSC_DEFINE_HOST_FUNCTION(jsFunctionRunMain, (JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
 {
+    auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto arg1 = callFrame->argument(0);
     auto name = arg1.toWTFString(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
 
-    auto* promise = JSC::loadAndEvaluateModule(globalObject, name, nullptr, nullptr);
+    // Resolve first so the load is tracked under the loader's key, as import() is.
+    auto key = Zig::GlobalObject::moduleLoaderResolve(globalObject, globalObject->moduleLoader(), JSC::jsString(vm, name), JSC::jsUndefined(), nullptr, false);
     RETURN_IF_EXCEPTION(scope, {});
-    Bun__VirtualMachine__setOverrideModuleRunMainPromise(defaultGlobalObject(globalObject)->bunVM(), promise);
+
+    auto* promise = JSC::loadAndEvaluateModule(globalObject, key.string(), nullptr, nullptr);
+    RETURN_IF_EXCEPTION(scope, {});
+    // The tracked promise must settle like an import() promise: with the
+    // module namespace, not the evaluation result. The VM reports a rejection
+    // through `promise`, so this one is marked handled.
+    auto* namespacePromise = JSC::JSPromise::create(vm, globalObject->promiseStructure());
+    namespacePromise->markAsHandled();
+    promise->performPromiseThenWithContext(vm, globalObject, globalObject->thenable(Bun__moduleNamespaceForKey), JSC::jsUndefined(), namespacePromise, JSC::jsString(vm, key.string()));
+    globalObject->trackPendingModuleLoad(key, JSC::ScriptFetchParameters::Type::JavaScript, namespacePromise);
+    Bun__VirtualMachine__setOverrideModuleRunMainPromise(globalObject->bunVM(), promise);
 
     return JSC::JSValue::encode(JSC::jsUndefined());
 }

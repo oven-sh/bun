@@ -259,7 +259,7 @@ pub struct Scripts {
 }
 
 impl Scripts {
-    pub(crate) const NAMES: [&'static str; 6] = [
+    pub const NAMES: [&'static str; 6] = [
         "preinstall",
         "install",
         "postinstall",

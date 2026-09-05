@@ -1599,6 +1599,17 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         if let Some(val) = data.value.as_mut() {
             p.visit_expr(val);
 
+            if !p.is_control_flow_dead {
+                if p.options.features.inject_jest_globals {
+                    p.keep_matcher_call_frame(val);
+                } else if !p.jest.returned_matcher_call
+                    && p.options.features.runtime_transpiler_cache_mut().is_some()
+                    && p.returns_matcher_call(val)
+                {
+                    p.jest.returned_matcher_call = true;
+                }
+            }
+
             // "return undefined;" can safely just always be "return;"
             if let Some(v) = data.value {
                 if matches!(v.data, js_ast::ExprData::EUndefined(_)) {
@@ -1610,6 +1621,119 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         stmts.push(*stmt);
         Ok(())
+    }
+
+    /// `bun test` only. A returned matcher call, which is also what `() => expect(x).toBe(1)` is,
+    /// is a proper tail call (test files are modules, so strict mode): JSC replaces the frame that
+    /// contains the call with the matcher's own, so a failure has no location to report and an
+    /// inline snapshot has nowhere to be written. `return [expect(x).toBe(1)][0]` keeps the
+    /// frame. Tail position continues into the branches of `?:` and the right operand of `,`,
+    /// `&&`, `||` and `??`.
+    fn keep_matcher_call_frame(&mut self, value: &mut Expr) {
+        match value.data {
+            js_ast::ExprData::ECall(call) => {
+                if self.is_matcher_call(call.target) {
+                    *value = self.take_out_of_tail_position(*value);
+                }
+            }
+            js_ast::ExprData::EIf(mut e) => {
+                self.keep_matcher_call_frame(&mut e.yes);
+                self.keep_matcher_call_frame(&mut e.no);
+            }
+            js_ast::ExprData::EBinary(mut e)
+                if matches!(
+                    e.op,
+                    js_ast::OpCode::BinComma
+                        | js_ast::OpCode::BinLogicalAnd
+                        | js_ast::OpCode::BinLogicalOr
+                        | js_ast::OpCode::BinNullishCoalescing
+                ) =>
+            {
+                self.keep_matcher_call_frame(&mut e.right);
+            }
+            _ => {}
+        }
+    }
+
+    /// Detection-only mirror of `keep_matcher_call_frame` for when the rewrite is off. The
+    /// transpiler cache entry records the result, so a `bun test` read can reject this file's
+    /// `bun run` output (`Metadata::FLAG_USES_TEST_FRAMEWORK`).
+    fn returns_matcher_call(&self, value: &Expr) -> bool {
+        match value.data {
+            js_ast::ExprData::ECall(call) => self.is_matcher_call(call.target),
+            js_ast::ExprData::EIf(e) => {
+                self.returns_matcher_call(&e.yes) || self.returns_matcher_call(&e.no)
+            }
+            js_ast::ExprData::EBinary(e)
+                if matches!(
+                    e.op,
+                    js_ast::OpCode::BinComma
+                        | js_ast::OpCode::BinLogicalAnd
+                        | js_ast::OpCode::BinLogicalOr
+                        | js_ast::OpCode::BinNullishCoalescing
+                ) =>
+            {
+                self.returns_matcher_call(&e.right)
+            }
+            _ => false,
+        }
+    }
+
+    /// A method call on `expect(...)`, through any chain such as `.not` or `.resolves`, or a call
+    /// to one of the inline snapshot matchers on any receiver.
+    fn is_matcher_call(&self, callee: Expr) -> bool {
+        let Some(dot) = callee.data.e_dot() else {
+            return false;
+        };
+        if dot.name == b"toMatchInlineSnapshot" || dot.name == b"toThrowErrorMatchingInlineSnapshot"
+        {
+            return true;
+        }
+        let mut receiver = dot.target;
+        loop {
+            match receiver.data {
+                js_ast::ExprData::EDot(inner) => receiver = inner.target,
+                js_ast::ExprData::ECall(call) => {
+                    let ref_ = match call.target.data {
+                        js_ast::ExprData::EIdentifier(id) => id.ref_,
+                        js_ast::ExprData::EImportIdentifier(id) => id.ref_,
+                        _ => return false,
+                    };
+                    return self.symbols[ref_.inner_index() as usize]
+                        .original_name
+                        .slice()
+                        == b"expect";
+                }
+                _ => return false,
+            }
+        }
+    }
+
+    /// `[call][0]`. Self-contained on purpose: a generated temporary would turn
+    /// `Function.prototype.toString` output into code with a free identifier, and test code does
+    /// round-trip such text into other modules.
+    fn take_out_of_tail_position(&mut self, call: Expr) -> Expr {
+        self.jest.rewrote_matcher_tail_call = true;
+        let loc = call.loc;
+        let items = js_ast::ExprNodeList::from_arena_slice(self.arena.alloc_slice_copy(&[call]));
+        let array = self.new_expr(
+            E::Array {
+                items,
+                is_single_line: true,
+                ..Default::default()
+            },
+            loc,
+        );
+        let index = self.new_expr(E::Number::new(0.0), loc);
+        self.new_expr(
+            E::Index {
+                target: array,
+                index,
+                optional_chain: None,
+                is_import_property_use: false,
+            },
+            loc,
+        )
     }
 
     fn s_block(

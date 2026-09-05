@@ -506,18 +506,18 @@ test("rejects cached module records containing out-of-range string indices", () 
   // *-default / *-namespace sentinels near u32::MAX) must be rejected.
   //
   // Cache entry layout (src/jsc/RuntimeTranspilerCache.rs, Metadata::encode):
-  //   0: cache_version u32, 4: module_type u8, 5: output_encoding u8,
-  //   then twelve u64 fields; esm_record_byte_offset @ 78,
-  //   esm_record_byte_length @ 86, esm_record_hash @ 94. Payload follows @ 102.
+  //   0: cache_version u32, 4: module_type u8, 5: output_encoding u8, 6: flags u8,
+  //   then twelve u64 fields; esm_record_byte_offset @ 79,
+  //   esm_record_byte_length @ 87, esm_record_hash @ 95. Payload follows @ 103.
   // Serialized module record layout (ModuleInfoStringTable + body, see
   // `ModuleInfoDeserialized::serialize` in src/js_printer/lib.rs):
   //   table: [offset_width u8][0;3][count u32][(count+1) offsets][pad to even][bytes]
   //   body:  [flags u8][id_width u8][0;2][n_requested u32][n_records u32]
   //          [n_records tag bytes][n_requested tag bytes][string ids @ id_width ...]
-  const ESM_RECORD_BYTE_OFFSET_AT = 78;
-  const ESM_RECORD_BYTE_LENGTH_AT = 86;
-  const ESM_RECORD_HASH_AT = 94;
-  const METADATA_SIZE = 102;
+  const ESM_RECORD_BYTE_OFFSET_AT = 79;
+  const ESM_RECORD_BYTE_LENGTH_AT = 87;
+  const ESM_RECORD_HASH_AT = 95;
+  const METADATA_SIZE = 103;
 
   function corruptModuleRecordStringIndices(file: string): boolean {
     const data = readFileSync(file);

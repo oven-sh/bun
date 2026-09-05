@@ -17,6 +17,10 @@ pub struct RuntimeTranspilerCache {
     pub input_hash: Option<u64>,
     pub input_byte_length: Option<u64>,
     pub features_hash: Option<u64>,
+    /// Set by `get()`; stored in the entry metadata by `put()`.
+    pub inject_jest_globals: bool,
+    /// Set by the parser after the visit pass; stored in the entry metadata by `put()`.
+    pub uses_test_framework: bool,
     pub exports_kind: ExportsKind,
     /// Set by `put()` / `get()` when a cache hit returns transpiled output.
     /// Bundler/parser only store/read the bytes; T6 owns the string wrapper
@@ -37,6 +41,8 @@ impl Default for RuntimeTranspilerCache {
             input_hash: None,
             input_byte_length: None,
             features_hash: None,
+            inject_jest_globals: false,
+            uses_test_framework: false,
             exports_kind: ExportsKind::None,
             output_code: None,
             entry: None,

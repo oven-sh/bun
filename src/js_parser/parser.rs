@@ -377,7 +377,9 @@ pub mod Runtime {
                 self.standard_decorators,
                 self.lower_using,
                 self.repl_mode,
-                // note that we do not include .inject_jest_globals, as we bail out of the cache entirely if this is true
+                // `.inject_jest_globals` is not hashed: the modes share entries, and the
+                // one output divergence (`keep_matcher_call_frame`) is rejected at read
+                // time through `Metadata::flags` (RuntimeTranspilerCache.rs).
             ];
 
             // `[bool; N]` is N bytes of 0x00/0x01.
@@ -1585,6 +1587,12 @@ pub struct Jest {
     pub(crate) xit: Ref,
     pub(crate) xtest: Ref,
     pub(crate) xdescribe: Ref,
+    /// `P::keep_matcher_call_frame` rewrote a returned matcher call, so the output is specific
+    /// to `bun test` and must not enter the runtime transpiler cache.
+    pub(crate) rewrote_matcher_tail_call: bool,
+    /// `P::returns_matcher_call` found a returned matcher call with the rewrite off, so a
+    /// `bun test` transpile of this file would produce different output.
+    pub(crate) returned_matcher_call: bool,
 }
 
 impl Jest {
@@ -1627,6 +1635,8 @@ impl Default for Jest {
             xit: Ref::NONE,
             xtest: Ref::NONE,
             xdescribe: Ref::NONE,
+            rewrote_matcher_tail_call: false,
+            returned_matcher_call: false,
         }
     }
 }

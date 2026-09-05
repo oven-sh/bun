@@ -1,8 +1,9 @@
 import { spawn } from "bun";
 import { beforeEach, expect, it } from "bun:test";
-import { copyFileSync, cpSync, readFileSync, renameSync, rmSync, unlinkSync, writeFileSync } from "fs";
-import { bunEnv, bunExe, isDebug, isWindows, tmpdirSync, waitForFileToExist } from "harness";
-import { join } from "path";
+import { copyFileSync, cpSync, existsSync, readFileSync, renameSync, rmSync, unlinkSync, writeFileSync } from "fs";
+import { bunEnv, bunExe, isDebug, isMacOS, isWindows, tmpdirSync, waitForFileToExist } from "harness";
+import { constants as osConstants } from "node:os";
+import { basename, join } from "path";
 
 const timeout = isDebug ? Infinity : 10_000;
 const longTimeout = isDebug ? Infinity : 30_000;
@@ -507,6 +508,185 @@ it(
       runner?.unref?.();
       // @ts-ignore
       runner?.kill?.(9);
+    }
+  },
+  timeout,
+);
+
+// Helpers for the two tests below, which replace the --hot entrypoint in ways that depend on the
+// order in which the watcher thread receives the file system events.
+
+// Spawns `bun --hot run root` with the watcher trace enabled: one JSON line per delivered batch,
+// whose "files" keys are the watched paths in delivery order.
+function spawnHotWithTrace(root: string, traceFile: string) {
+  return spawn({
+    cmd: [bunExe(), "--hot", "run", root],
+    env: { ...bunEnv, BUN_WATCHER_TRACE: traceFile },
+    cwd,
+    stdout: "pipe",
+    stderr: "inherit",
+    stdin: "ignore",
+    killSignal: "SIGKILL",
+  });
+}
+
+function traceLines(traceFile: string) {
+  return existsSync(traceFile) ? readFileSync(traceFile, "utf-8").split("\n").filter(Boolean) : [];
+}
+
+// The paths of one trace line in delivery order. Scanned as text because a path can repeat within
+// a batch (split delivery), which JSON.parse would fold.
+function tracePaths(line: string) {
+  return [...line.matchAll(/"((?:[^"\\]|\\.)*)":\{"events"/g)].map(m => JSON.parse(`"${m[1]}"`) as string);
+}
+
+function namesEntrypoint(root: string) {
+  return (line: string) => tracePaths(line).some(p => p.endsWith("/" + basename(root)));
+}
+
+function deliveredEntrypointLast(root: string) {
+  return (line: string) => {
+    const paths = tracePaths(line);
+    return paths.length > 1 && paths.at(-1)!.endsWith("/" + basename(root));
+  };
+}
+
+// Yields the "[#!root] Reloaded: N" lines. A stalled --hot prints nothing at all, so each wait is
+// bounded and a stall is reported together with the batches the watcher received.
+function reloadReader(runner: ReturnType<typeof spawnHotWithTrace>, traceFile: string) {
+  async function* rootLines() {
+    let pending = "";
+    for await (const chunk of runner.stdout) {
+      pending += new TextDecoder().decode(chunk);
+      const lines = pending.split("\n");
+      pending = lines.pop()!;
+      for (const line of lines) if (line.includes("[#!root]")) yield line;
+    }
+  }
+  const lines = rootLines();
+  const STALLED = Symbol("stalled");
+  let reloadCounter = 0;
+  return async function nextReload(): Promise<void> {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const deadline = new Promise<typeof STALLED>(resolve => {
+      timer = setTimeout(resolve, 5_000, STALLED);
+    });
+    try {
+      const next = await Promise.race([lines.next(), deadline]);
+      if (next === STALLED || next.done) {
+        throw new Error(`no reload after the replace. delivered batches:\n${traceLines(traceFile).join("\n")}`);
+      }
+      reloadCounter++;
+      expect(next.value).toContain(`[#!root] Reloaded: ${reloadCounter}`);
+    } finally {
+      clearTimeout(timer);
+    }
+  };
+}
+
+// Waits until a trace line past `since` satisfies `predicate` and returns the index after it. A batch
+// is traced before it is handled, and the next batch is traced only once the previous one was
+// handled, so a later line is the proof that an earlier batch has been fully processed.
+async function waitForTraceLine(traceFile: string, since: number, predicate: (line: string) => boolean) {
+  const deadline = Date.now() + 5_000;
+  while (Date.now() < deadline) {
+    const i = traceLines(traceFile).slice(since).findIndex(predicate);
+    if (i !== -1) return since + i + 1;
+    await Bun.sleep(5);
+  }
+  throw new Error(`the watcher never reported the batch. delivered batches:\n${traceLines(traceFile).join("\n")}`);
+}
+
+// Same rm + rename as above, but arranged so that the --hot process sees the directory's event
+// before the entry point's own event, with nothing after it. On macOS, unlink(2) of the entry point
+// is reported as NOTE_DELETE | NOTE_LINK, which --hot used to answer by waiting for the next
+// directory event; in this ordering that event was already consumed, so the reload never ran.
+// The process is stopped (no SIGSTOP on Windows) while the files change, so that its watcher
+// thread receives everything in one batch once it resumes. The trace tells whether a cycle produced
+// this ordering, and the test repeats the cycle if not.
+it.skipIf(isWindows)(
+  "should hot reload when the deleted and renamed entrypoint's event arrives after its directory's event",
+  async () => {
+    const root = hotRunnerRoot + ".tmp.js";
+    copyFileSync(hotRunnerRoot, root);
+    const traceFile = join(tmpdirSync(), "watcher-trace.log");
+    await using runner = spawnHotWithTrace(root, traceFile);
+    const nextReload = reloadReader(runner, traceFile);
+
+    // Signal numbers from node:os: a signal name is sent with its Linux number on every platform
+    // (#35296), and 19 is SIGCONT on macOS.
+    const { SIGSTOP, SIGCONT } = osConstants.signals;
+    let wakes = 0;
+    async function replaceEntrypointWhileStopped() {
+      const contents = readFileSync(root, "utf-8");
+      runner.kill(SIGSTOP);
+      try {
+        // A stopped process still completes a kevent() that is already waiting: the kernel hands the
+        // watcher thread this one directory event and parks the thread at the return to user space.
+        // Only a new directory entry posts to the directory, so the file name must be fresh each time.
+        // Nothing observable marks that moment, so give it time. A shorter wait cannot fail the test,
+        // it only lets the events below be split into two batches, which the trace check below sees.
+        writeFileSync(`${root}.wake${wakes++}`, "");
+        await Bun.sleep(100);
+        // From here on every event queues up until SIGCONT: the directory (temp file created), then
+        // the entry point (unlinked). The directory writes of the rm and the rename fold into the
+        // directory's queued event, so the entry point's event is the last one delivered.
+        writeFileSync(root + ".tmpfile", contents);
+        rmSync(root);
+        renameSync(root + ".tmpfile", root);
+      } finally {
+        runner.kill(SIGCONT);
+      }
+    }
+
+    // A cycle counts on macOS only if the trace shows the ordering under test. inotify reports the
+    // replace through the directory alone (the entry point is named in "changed"), so there every
+    // cycle counts.
+    const ordered = deliveredEntrypointLast(root);
+    function cycleCounts(since: number) {
+      return !isMacOS || traceLines(traceFile).slice(since).some(ordered);
+    }
+
+    await nextReload();
+    let countedCycles = 0;
+    for (let cycle = 0; cycle < 5 && countedCycles < 2; cycle++) {
+      const since = traceLines(traceFile).length;
+      await replaceEntrypointWhileStopped();
+      await nextReload();
+      if (cycleCounts(since)) countedCycles++;
+    }
+
+    expect(countedCycles, `delivered batches:\n${traceLines(traceFile).join("\n")}`).toBe(2);
+  },
+  timeout,
+);
+
+// The other half of the same wait: the entry point is removed, and the replacement is renamed into
+// place only after the watcher has handled the removal. The rm's own directory write arrives while
+// the path is still empty and must not end the wait, or the rename afterwards has nothing left to
+// trigger. Needs the kqueue event shape, so macOS only.
+it.skipIf(!isMacOS)(
+  "should hot reload when the entrypoint is renamed into place only after its removal was seen",
+  async () => {
+    const root = hotRunnerRoot + ".tmp.js";
+    copyFileSync(hotRunnerRoot, root);
+    const traceFile = join(tmpdirSync(), "watcher-trace.log");
+    await using runner = spawnHotWithTrace(root, traceFile);
+    const nextReload = reloadReader(runner, traceFile);
+
+    await nextReload();
+    for (let cycle = 0; cycle < 2; cycle++) {
+      const contents = readFileSync(root, "utf-8");
+      writeFileSync(root + ".tmpfile", contents);
+      const since = traceLines(traceFile).length;
+      rmSync(root);
+      const afterRemoval = await waitForTraceLine(traceFile, since, namesEntrypoint(root));
+      // A harmless directory write: once its batch is traced, the removal's batch has been handled
+      // and the wait for the entry point is armed.
+      writeFileSync(`${root}.barrier${cycle}`, "");
+      await waitForTraceLine(traceFile, afterRemoval, () => true);
+      renameSync(root + ".tmpfile", root);
+      await nextReload();
     }
   },
   timeout,

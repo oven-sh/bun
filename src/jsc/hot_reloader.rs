@@ -415,9 +415,12 @@ pub struct MainFile {
     /// 4. New file gets created and written (a.js)
     /// 5. Parent directory gets NOTE_WRITE
     ///
-    /// To fix this: when the entrypoint gets NOTE_RENAME, we set this flag
-    /// and skip the reload. Then when the parent directory gets NOTE_WRITE,
-    /// we check if the file exists and trigger the reload.
+    /// To fix this: when the entrypoint gets NOTE_RENAME (or NOTE_DELETE:
+    /// XNU reports `unlink(2)` as `NOTE_DELETE | NOTE_LINK`) while its path is
+    /// empty, we set this flag and skip the reload. Then when the parent
+    /// directory gets NOTE_WRITE, we check if the file exists and trigger the
+    /// reload. Never armed once the file is back: its directory event may
+    /// already sit earlier in the same batch.
     pub(crate) is_waiting_for_dir_change: bool,
 }
 
@@ -454,6 +457,11 @@ impl MainFile {
         }
 
         main
+    }
+
+    /// Whether something sits at the entrypoint's path right now.
+    pub(crate) fn exists(&self) -> bool {
+        bun_sys::exists(self.file)
     }
 }
 
@@ -919,23 +927,17 @@ where
                         .intersects(WatchOp::WRITE | WatchOp::DELETE | WatchOp::RENAME)
                     {
                         record_changed_path(file_path);
-                        if IS_KQUEUE {
-                            if event.op.contains(WatchOp::RENAME) {
-                                // Special case for entrypoint: defer reload until we get
-                                // a directory write event confirming the file exists.
-                                // This handles vim's save process which renames the old file
-                                // before the new file is re-created with a different inode.
-                                if self.main.hash == current_hash && !RELOAD_IMMEDIATELY {
-                                    self.main.is_waiting_for_dir_change = true;
-                                    continue;
-                                }
-                            }
-
-                            // If we got a write event after rename, the file is back - proceed with reload
-                            if self.main.is_waiting_for_dir_change && self.main.hash == current_hash
+                        if IS_KQUEUE && self.main.hash == current_hash && !self.main.file.is_empty()
+                        {
+                            // See `MainFile::is_waiting_for_dir_change`.
+                            if !RELOAD_IMMEDIATELY
+                                && event.op.intersects(WatchOp::DELETE | WatchOp::RENAME)
+                                && !self.main.exists()
                             {
-                                self.main.is_waiting_for_dir_change = false;
+                                self.main.is_waiting_for_dir_change = true;
+                                continue;
                             }
+                            self.main.is_waiting_for_dir_change = false;
                         }
 
                         current_task.append(current_hash);
@@ -976,38 +978,14 @@ where
                                 }
 
                                 if event.op.contains(WatchOp::WRITE) {
-                                    // Check if the entrypoint now exists after an atomic save.
-                                    // If we previously got a NOTE_RENAME on the entrypoint (vim renamed
-                                    // the file), this directory write event signals that the new
-                                    // file has been re-created. Verify it exists and trigger reload.
+                                    // See `MainFile::is_waiting_for_dir_change`.
                                     if self.main.is_waiting_for_dir_change
                                         && self.main.dir_hash == current_hash
+                                        && self.main.exists()
                                     {
-                                        // `.is_ok()` only checks faccessat didn't
-                                        // error (it errs only on NAMETOOLONG), not
-                                        // that the file exists; harmless in
-                                        // practice (re-watching a missing
-                                        // entrypoint is a no-op downstream).
-                                        let mut name_buf = [0u8; 256];
-                                        let basename = bun_paths::basename(self.main.file);
-                                        let exists = if basename.len() < name_buf.len() {
-                                            name_buf[..basename.len()].copy_from_slice(basename);
-                                            name_buf[basename.len()] = 0;
-                                            // SAFETY: name_buf[..=basename.len()] is NUL-terminated.
-                                            let z = ZStr::from_buf(&name_buf[..], basename.len());
-                                            bun_sys::faccessat(
-                                                file_descriptors[event.index as usize],
-                                                z,
-                                            )
-                                            .is_ok()
-                                        } else {
-                                            false
-                                        };
-                                        if exists {
-                                            self.main.is_waiting_for_dir_change = false;
-                                            record_changed_path(self.main.file);
-                                            current_task.append(self.main.hash);
-                                        }
+                                        self.main.is_waiting_for_dir_change = false;
+                                        record_changed_path(self.main.file);
+                                        current_task.append(self.main.hash);
                                     }
                                 }
 
@@ -1098,20 +1076,7 @@ where
                                 if changed_name != main_basename {
                                     continue;
                                 }
-                                let main_exists = {
-                                    let mut zbuf = PathBuffer::uninit();
-                                    if self.main.file.len() >= zbuf.len() {
-                                        false
-                                    } else {
-                                        zbuf[..self.main.file.len()]
-                                            .copy_from_slice(self.main.file);
-                                        zbuf[self.main.file.len()] = 0;
-                                        // SAFETY: zbuf is NUL-terminated at len.
-                                        let z = ZStr::from_buf(&zbuf[..], self.main.file.len());
-                                        bun_sys::access(z, libc::F_OK).is_ok()
-                                    }
-                                };
-                                if main_exists {
+                                if self.main.exists() {
                                     record_changed_path(self.main.file);
                                     current_task.append(self.main.hash);
                                 }

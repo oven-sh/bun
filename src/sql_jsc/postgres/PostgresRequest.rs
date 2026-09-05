@@ -199,14 +199,15 @@ pub(crate) fn write_bind<Context: WriterContext>(
                 writer.write(bytes)?;
                 l.write_excluding_self()?;
             }
-            types::Tag::int4 => {
+            types::Tag::int4 | types::Tag::int4_array => {
+                // coerce::<i32> saturates and maps NaN to 0; reject instead.
+                if value.get_number().is_some_and(|n| n.is_nan()) {
+                    return Err(AnyPostgresError::Overflow);
+                }
+                let n = value.coerce::<i64>(global).map_err(js_error_to_postgres)?;
+                let n = i32::try_from(n).map_err(|_| AnyPostgresError::Overflow)?;
                 let l = writer.length()?;
-                writer.int4(value.coerce::<i32>(global).map_err(js_error_to_postgres)? as u32)?;
-                l.write_excluding_self()?;
-            }
-            types::Tag::int4_array => {
-                let l = writer.length()?;
-                writer.int4(value.coerce::<i32>(global).map_err(js_error_to_postgres)? as u32)?;
+                writer.int4(n as u32)?;
                 l.write_excluding_self()?;
             }
             types::Tag::float8 => {

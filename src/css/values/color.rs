@@ -100,7 +100,7 @@ impl RGBA {
 
     /// Convert any `CssColor` into `RGBA` by routing through `SRGB`.
     #[inline]
-    pub(crate) fn try_from_css_color(color: &CssColor) -> Option<RGBA> {
+    pub fn try_from_css_color(color: &CssColor) -> Option<RGBA> {
         Some(SRGB::try_from_css_color(color)?.into_rgba())
     }
 }

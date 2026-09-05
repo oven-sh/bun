@@ -1,0 +1,180 @@
+---
+title: QR codes
+description: Generate QR codes as a matrix, SVG, terminal text, data URL, or image, and decode them again
+---
+
+`Bun.QR.generate()` encodes a string or bytes as a QR code. `Bun.QR.parse()` decodes a QR code's module matrix back to the data it holds. Both run in native code and need no npm packages.
+
+```ts
+console.log(Bun.QR.generate("https://bun.com", { format: "text", border: 1 }));
+```
+
+```txt
+ ▄▄▄▄▄▄▄ ▄▄▄ ▄▄  ▄ ▄▄▄▄▄▄▄
+ █ ▄▄▄ █ █▄  ▀▄█▀█ █ ▄▄▄ █
+ █ ███ █ █  ▀▀▀█▀  █ ███ █
+ █▄▄▄▄▄█ ▄ ▄▀█▀▄ ▄ █▄▄▄▄▄█
+  ▄▄ ▄ ▄▄▀ ▀█▄▀█▄█ ▄ ▄▄▄▄▄
+ ▀█▄██▀▄▄█▄███▄▀▀ ▄█   ▄▄█
+  ▀▀▄ ▄▄▀▄▄▀ █  ██▄▄▀ ▄ █▄
+ ▄ █▀▀█▄▄▀██ ▀▀▄ ▀█▀▄ ▀▄▄█
+ ▄▀▄█▄█▄▄▄██▀█▀ ▄███▄█▄ ▀
+ ▄▄▄▄▄▄▄ ██  █▀███ ▄ ██ ██
+ █ ▄▄▄ █ ▄█ █ █  █▄▄▄██ ▄▀
+ █ ███ █ ▄▄██▀█▀ █▀ ▀█▀▀▀▄
+ █▄▄▄▄▄█ ▀▀▀  ▄ ██ ▀▄▀▀ █▄
+```
+
+## `Bun.QR.generate()`
+
+`generate(data, options?)` takes a `string` or a `BufferSource` (`Uint8Array`, `Buffer`, `ArrayBuffer`, `DataView`). The `format` option selects what it returns.
+
+| `format`               | Returns                                                                      |
+| ---------------------- | ---------------------------------------------------------------------------- |
+| `"object"` _(default)_ | The symbol as a module matrix, see [The matrix](#the-matrix)                 |
+| `"svg"`                | An SVG document as a string                                                  |
+| `"data-url"`           | The same SVG as a `data:image/svg+xml;base64,...` URL                        |
+| `"text"`               | Half-block characters for the terminal, two modules per line                 |
+| `"image"`              | A PNG as a [`Bun.Image`](/runtime/image), ready to resize, convert, or write |
+
+### The matrix
+
+With no `format`, `generate()` returns the encoded symbol. A QR code is a square grid of modules. `matrix` holds one byte per module in row-major order: `1` is dark, `0` is light. `size` is the number of modules per side.
+
+```ts
+const qr = Bun.QR.generate("https://bun.com");
+
+qr.version; // 2
+qr.size; // 25
+qr.errorCorrection; // "Q"
+qr.mask; // 0
+qr.matrix; // Uint8Array(625)
+
+for (let y = 0; y < qr.size; y++) {
+  const row = qr.matrix.subarray(y * qr.size, (y + 1) * qr.size);
+  console.log(Array.from(row, module => (module ? "##" : "  ")).join(""));
+}
+```
+
+`version` is the symbol size class, from 1 (21 modules per side) to 40 (177 modules per side). Each version adds 4 modules per side. `generate()` picks the smallest version that holds the data. `errorCorrection` is the level the symbol uses and `mask` is the mask pattern it applied. `parse()` returns the same three values.
+
+### SVG and data URL
+
+The SVG has one `<rect>` for the background and one `<path>` for the dark modules. The `viewBox` is in modules, so the image scales to any size without blur. `border` adds that many modules of quiet zone on each side. `light` and `dark` set the two colors.
+
+```ts
+const svg = Bun.QR.generate("https://bun.com", { format: "svg" });
+// <?xml version="1.0" encoding="UTF-8"?>
+// <svg xmlns="http://www.w3.org/2000/svg" version="1.1" viewBox="0 0 29 29" stroke="none">
+// ...
+
+await Bun.write("qr.svg", Bun.QR.generate("https://bun.com", { format: "svg", border: 4, dark: "rebeccapurple" }));
+
+const url = Bun.QR.generate("https://bun.com", { format: "data-url" });
+// data:image/svg+xml;base64,PD94bWwgdmVyc2lvbj0iMS4wIiBlbmNvZG...
+```
+
+The `data-url` form drops into an `<img src>` attribute or a CSS `url()`.
+
+### Terminal text
+
+`format: "text"` packs two rows of modules into each line with the block characters `█`, `▀`, and `▄`. Dark modules use the terminal's text color and light modules use its background color, so a dark terminal theme shows the code with its colors swapped. `invert: true` swaps them back.
+
+```ts
+console.log(Bun.QR.generate("otpauth://totp/bun?secret=...", { format: "text" }));
+console.log(Bun.QR.generate("otpauth://totp/bun?secret=...", { format: "text", invert: true }));
+```
+
+### Image
+
+`format: "image"` draws the symbol at `scale` pixels per module and returns a [`Bun.Image`](/runtime/image) that holds a PNG. Chain `Bun.Image` methods to resize it, convert it, or write it to disk.
+
+```ts
+const image = Bun.QR.generate("https://bun.com", { format: "image", scale: 10, border: 4 });
+
+await image.metadata(); // { width: 330, height: 330, format: "png" }
+await image.write("qr.png");
+await image.webp().write("qr.webp");
+```
+
+The width in pixels is `(size + 2 * border) * scale`. For the example above that is `(25 + 8) * 10`. `generate()` throws a `RangeError` if the image would exceed the default `maxPixels` of `Bun.Image`.
+
+### Options
+
+| Option                 | Default      | Description                                                                                                                                                                                        |
+| ---------------------- | ------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `format`               | `"object"`   | The output format, see the table above                                                                                                                                                             |
+| `errorCorrection`      | `"M"`        | The lowest error correction level to use: `"L"` (about 7% of the symbol can be damaged), `"M"` (15%), `"Q"` (25%), or `"H"` (30%). A higher level holds less data                                  |
+| `boostErrorCorrection` | `true`       | Raise the level above `errorCorrection` when the data still fits in the chosen version. Set to `false` to get exactly `errorCorrection`                                                            |
+| `minVersion`           | `1`          | The smallest version to use. Set it to give a set of codes the same size                                                                                                                           |
+| `maxVersion`           | `40`         | The largest version to use. `generate()` throws a `RangeError` if the data needs a larger version                                                                                                  |
+| `mask`                 | automatic    | The mask pattern, `0` to `7`. By default `generate()` scores all eight patterns as the QR specification describes and uses the one with the lowest penalty                                         |
+| `border`               | `2`          | Quiet zone in modules around the symbol. Used by `svg`, `data-url`, `text`, and `image`. The QR specification defines a quiet zone of 4 modules                                                    |
+| `scale`                | `8`          | Pixels per module for `image`                                                                                                                                                                      |
+| `light`, `dark`        | white, black | The two colors for `svg`, `data-url`, and `image`, in any form [`Bun.color`](/runtime/color) accepts: `"#663399"`, `"rebeccapurple"`, `0x663399`, `[102, 51, 153]`, or `{ r: 102, g: 51, b: 153 }` |
+| `invert`               | `false`      | Swap light and dark modules in `text` output                                                                                                                                                       |
+
+`generate()` checks every option before it encodes anything. An option of the wrong type throws a `TypeError`. A number outside its range, or data that does not fit, throws a `RangeError`.
+
+```ts
+Bun.QR.generate("hi", { errorCorrection: "L" }).errorCorrection; // "H": the data fit with room to spare
+Bun.QR.generate("hi", { errorCorrection: "L", boostErrorCorrection: false }).errorCorrection; // "L"
+Bun.QR.generate("hi", { minVersion: 5 }).size; // 37
+Bun.QR.generate(Buffer.alloc(100, "x").toString(), { maxVersion: 1 }); // throws RangeError
+```
+
+### What a code can hold
+
+`generate()` encodes a string in the most compact mode its characters allow. A string of digits uses numeric mode. A string of digits, uppercase letters, spaces, and the characters `$%*+-./:` uses alphanumeric mode. Any other string is encoded as UTF-8 bytes. A `BufferSource` is always encoded as bytes.
+
+```ts
+const digits = "77777777777777777777"; // 20 digits
+
+Bun.QR.generate(digits).version; // 1: numeric mode
+Bun.QR.generate(Buffer.from(digits)).version; // 2: byte mode
+Bun.QR.generate("https://bun.com").version; // 2: the lowercase letters force byte mode
+Bun.QR.generate("HTTPS://BUN.COM").version; // 1: alphanumeric mode
+```
+
+The largest symbol (version 40 at level `"L"`) holds 7089 digits, 4296 alphanumeric characters, or 2953 bytes. Longer input throws a `RangeError` before any encoding work starts.
+
+## `Bun.QR.parse()`
+
+`parse(input)` reads a module matrix and returns the data it encodes. It accepts:
+
+- the object `generate()` returns,
+- `{ matrix, size }`, where `matrix` is a `BufferSource` with one byte per module (`0` is light, any other value is dark) and `size` is the number of modules per side,
+- a bare `BufferSource` whose length is a perfect square. `parse()` infers `size` from the length.
+
+```ts
+const qr = Bun.QR.generate("https://bun.com");
+
+Bun.QR.parse(qr);
+// {
+//   text: "https://bun.com",
+//   version: 2,
+//   errorCorrection: "Q",
+//   mask: 0,
+//   bytes: Uint8Array(15),
+// }
+
+Bun.QR.parse(qr.matrix).text; // "https://bun.com"
+
+Bun.QR.parse(Bun.QR.generate(new Uint8Array([1, 2, 3]))).bytes; // Uint8Array(3) [ 1, 2, 3 ]
+```
+
+`bytes` holds the decoded payload. `text` is the same payload decoded as UTF-8. For binary data, read `bytes`.
+
+`parse()` applies the Reed-Solomon error correction stored in the symbol, so it decodes a matrix with some wrong modules. How many wrong modules it tolerates depends on the error correction level of the symbol.
+
+```ts
+const qr = Bun.QR.generate("https://bun.com");
+const damaged = new Uint8Array(qr.matrix);
+for (let y = 10; y < 16; y++) damaged[y * qr.size + 10] ^= 1; // flip six modules
+
+Bun.QR.parse({ matrix: damaged, size: qr.size }).text; // "https://bun.com"
+```
+
+`parse()` throws a `TypeError` when the matrix is not a QR code, or when it has more damage than its error correction level can repair. It throws a `RangeError` when `size` is outside 21 to 177.
+
+`parse()` reads modules, not pixels. To decode a QR code from a photo or a screenshot, you need a library that finds the symbol in the image and samples it into a matrix first. `parse()` then decodes that matrix.

@@ -15,6 +15,7 @@
     macro(MD4) \
     macro(markdown) \
     macro(MD5) \
+    macro(QR) \
     macro(S3Client) \
     macro(SHA1) \
     macro(SHA224) \

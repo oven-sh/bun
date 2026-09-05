@@ -1,7 +1,6 @@
 use std::io::Write as _;
 
 use bun_alloc::Arena;
-use bun_ast::Log;
 use bun_core::String as BunString;
 use bun_core::output::{ColorDepth, Source as OutputSource};
 use bun_jsc::bun_string_jsc;
@@ -210,12 +209,94 @@ fn zero_if_none(component: f32) -> f32 {
     if component.is_nan() { 0.0 } else { component }
 }
 
-pub fn js_function_color(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-    use bun_ast::symbol::Map as SymbolMap;
-    use bun_core::Utf8Bytes;
+/// `{ a: 0..1 }` → byte. CSS clamps out-of-range components rather than
+/// rejecting them.
+fn object_alpha_to_u8(a: f64) -> u8 {
+    ((a * 255.0) as i64).clamp(0, 255) as u8
+}
+
+/// Parses every input shape `Bun.color` accepts: a packed `0xRRGGBB` /
+/// `0xAARRGGBB` number, an `[r, g, b(, a)]` array, an `{ r, g, b(, a) }`
+/// object, or anything else stringified and parsed as a CSS color.
+///
+/// `None` means the value did not parse; malformed arrays/objects throw.
+pub fn js_color_input_to_css_color(
+    global: &JSGlobalObject,
+    input: JSValue,
+) -> JsResult<Option<bun_css::CssColor>> {
     use bun_css as css;
     use bun_css::CssColor;
-    use bun_css::values::color::{HSL, LAB, RGBA, SRGB};
+    use bun_css::values::color::RGBA;
+
+    if input.is_number() {
+        // Low 32 bits, LSB-first: blue, green, red, alpha. A value that fits
+        // in 24 bits has no alpha byte and means an opaque color.
+        let int = input.to_int64() as u32;
+        let alpha = if int > 0x00ff_ffff {
+            (int >> 24) as u8
+        } else {
+            255
+        };
+        return Ok(Some(CssColor::Rgba(RGBA {
+            alpha,
+            red: ((int >> 16) & 0xff) as u8,
+            green: ((int >> 8) & 0xff) as u8,
+            blue: (int & 0xff) as u8,
+        })));
+    }
+    if input.js_type().is_array_like() {
+        let len = input.get_length(global)?;
+        if len != 3 && len != 4 {
+            return Err(global.throw(format_args!("Expected array length 3 or 4")));
+        }
+        let r = color_int_from_js(global, input.get_index(global, 0)?, "[0]")?;
+        let g = color_int_from_js(global, input.get_index(global, 1)?, "[1]")?;
+        let b = color_int_from_js(global, input.get_index(global, 2)?, "[2]")?;
+        let a = if len == 4 {
+            color_int_from_js(global, input.get_index(global, 3)?, "[3]")?
+        } else {
+            255
+        };
+        return Ok(Some(CssColor::Rgba(RGBA {
+            alpha: u8::try_from(a).expect("clamped to 0..=255"),
+            red: u8::try_from(r).expect("clamped to 0..=255"),
+            green: u8::try_from(g).expect("clamped to 0..=255"),
+            blue: u8::try_from(b).expect("clamped to 0..=255"),
+        })));
+    }
+    if input.is_object() {
+        let r = color_int_from_js(global, input.get(global, b"r")?.unwrap_or_default(), "r")?;
+        let g = color_int_from_js(global, input.get(global, b"g")?.unwrap_or_default(), "g")?;
+        let b = color_int_from_js(global, input.get(global, b"b")?.unwrap_or_default(), "b")?;
+        let alpha = match input.get_truthy(global, b"a")? {
+            Some(a) if a.is_number() => object_alpha_to_u8(a.as_number()),
+            _ => 255,
+        };
+        return Ok(Some(CssColor::Rgba(RGBA {
+            alpha,
+            red: u8::try_from(r).expect("clamped to 0..=255"),
+            green: u8::try_from(g).expect("clamped to 0..=255"),
+            blue: u8::try_from(b).expect("clamped to 0..=255"),
+        })));
+    }
+
+    let text = input.to_utf8(global)?;
+    let arena = Arena::new();
+    let mut parser_input = css::ParserInput::new(text.slice(), &arena);
+    let mut parser = css::Parser::new(
+        &mut parser_input,
+        None,
+        css::css_parser::ParserOpts::default(),
+        None,
+    );
+    Ok(CssColor::parse(&mut parser).ok())
+}
+
+pub fn js_function_color(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+    use bun_ast::symbol::Map as SymbolMap;
+    use bun_css as css;
+    use bun_css::CssColor;
+    use bun_css::values::color::{HSL, LAB, SRGB};
     use bun_jsc::StringJsc as _;
 
     let args = frame.arguments_as_array::<2>();
@@ -226,8 +307,6 @@ pub fn js_function_color(global: &JSGlobalObject, frame: &CallFrame) -> JsResult
             "string, number, or object",
         ));
     }
-
-    let log = Log::init();
 
     let unresolved_format: OutputColorFormat = 'brk: {
         if !args[1].is_empty_or_undefined_or_null() {
@@ -240,119 +319,9 @@ pub fn js_function_color(global: &JSGlobalObject, frame: &CallFrame) -> JsResult
 
         break 'brk OutputColorFormat::Css;
     };
-    let input: Utf8Bytes;
-
-    let parsed_color: css::CssColorParseResult = 'brk: {
-        if args[0].is_number() {
-            let number: i64 = args[0].to_int64();
-            // The color is the low 32 bits, LSB-first: blue, green, red,
-            // alpha (one byte each).
-            let int: u32 = number as u32;
-            let blue = (int & 0xff) as u8;
-            let green = ((int >> 8) & 0xff) as u8;
-            let red = ((int >> 16) & 0xff) as u8;
-            // A 24-bit 0xRRGGBB number has no alpha byte and means an opaque
-            // color; only values wider than 24 bits carry alpha in the top byte.
-            let alpha = if int > 0x00ff_ffff {
-                (int >> 24) as u8
-            } else {
-                255
-            };
-
-            break 'brk Ok(CssColor::Rgba(RGBA {
-                alpha,
-                red,
-                green,
-                blue,
-            }));
-        } else if args[0].js_type().is_array_like() {
-            match args[0].get_length(global)? {
-                3 => {
-                    let r = color_int_from_js(global, args[0].get_index(global, 0)?, "[0]")?;
-                    let g = color_int_from_js(global, args[0].get_index(global, 1)?, "[1]")?;
-                    let b = color_int_from_js(global, args[0].get_index(global, 2)?, "[2]")?;
-                    break 'brk Ok(CssColor::Rgba(RGBA {
-                        alpha: 255,
-                        red: u8::try_from(r).expect("int cast"),
-                        green: u8::try_from(g).expect("int cast"),
-                        blue: u8::try_from(b).expect("int cast"),
-                    }));
-                }
-                4 => {
-                    let r = color_int_from_js(global, args[0].get_index(global, 0)?, "[0]")?;
-                    let g = color_int_from_js(global, args[0].get_index(global, 1)?, "[1]")?;
-                    let b = color_int_from_js(global, args[0].get_index(global, 2)?, "[2]")?;
-                    let a = color_int_from_js(global, args[0].get_index(global, 3)?, "[3]")?;
-                    break 'brk Ok(CssColor::Rgba(RGBA {
-                        alpha: u8::try_from(a).expect("int cast"),
-                        red: u8::try_from(r).expect("int cast"),
-                        green: u8::try_from(g).expect("int cast"),
-                        blue: u8::try_from(b).expect("int cast"),
-                    }));
-                }
-                _ => {
-                    return Err(global.throw(format_args!("Expected array length 3 or 4")));
-                }
-            }
-        } else if args[0].is_object() {
-            let r = color_int_from_js(global, args[0].get(global, b"r")?.unwrap_or_default(), "r")?;
-            let g = color_int_from_js(global, args[0].get(global, b"g")?.unwrap_or_default(), "g")?;
-            let b = color_int_from_js(global, args[0].get(global, b"b")?.unwrap_or_default(), "b")?;
-
-            let a: Option<u8> = if let Some(a_value) = args[0].get_truthy(global, b"a")? {
-                'brk2: {
-                    if a_value.is_number() {
-                        // CSS spec says to clamp values to their valid range so we'll respect that here
-                        break 'brk2 Some(
-                            u8::try_from(((a_value.as_number() * 255.0) as i64).clamp(0, 255))
-                                .unwrap(),
-                        );
-                    }
-                    break 'brk2 None;
-                }
-            } else {
-                None
-            };
-
-            break 'brk Ok(CssColor::Rgba(RGBA {
-                alpha: a.unwrap_or(255),
-                red: u8::try_from(r).expect("int cast"),
-                green: u8::try_from(g).expect("int cast"),
-                blue: u8::try_from(b).expect("int cast"),
-            }));
-        }
-
-        input = args[0].to_utf8(global)?;
-
-        // MimallocArena::new() calls mi_heap_new(), so defer creation to the
-        // paths that actually allocate.
-        let arena = Arena::new();
-        let mut parser_input = css::ParserInput::new(input.slice(), &arena);
-        let mut parser = css::Parser::new(
-            &mut parser_input,
-            None,
-            css::css_parser::ParserOpts::default(),
-            None,
-        );
-        break 'brk CssColor::parse(&mut parser);
-    };
-
-    match parsed_color {
-        Err(err) => {
-            if log.msgs.is_empty() {
-                return Ok(JSValue::NULL);
-            }
-
-            let kind_name = match err.basic().kind {
-                css::BasicParseErrorKind::unexpected_token(_) => "unexpected_token",
-                css::BasicParseErrorKind::end_of_input => "end_of_input",
-                css::BasicParseErrorKind::at_rule_invalid(_) => "at_rule_invalid",
-                css::BasicParseErrorKind::at_rule_body_invalid => "at_rule_body_invalid",
-                css::BasicParseErrorKind::qualified_rule_invalid => "qualified_rule_invalid",
-            };
-            return Err(global.throw(format_args!("color() failed to parse {}", kind_name)));
-        }
-        Ok(result) => {
+    match js_color_input_to_css_color(global, args[0])? {
+        None => return Ok(JSValue::NULL),
+        Some(result) => {
             let format: OutputColorFormat = if unresolved_format == OutputColorFormat::Ansi {
                 match OutputSource::color_depth() {
                     // No color terminal, therefore return an empty string

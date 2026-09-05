@@ -785,7 +785,6 @@ pub mod store {
     // ────────────────────────────────────────────────────────────────────
 
     /// A blob store referencing a file on disk.
-    #[derive(Clone)]
     pub struct File {
         pub pathlike: PathOrFileDescriptor<'static>,
         pub mime_type: MimeType,
@@ -793,8 +792,10 @@ pub mod store {
         pub mode: bun_sys::Mode,
         pub seekable: Option<bool>,
         pub max_size: SizeType,
-        /// Milliseconds since ECMAScript epoch.
-        pub last_modified: crate::JSTimeType,
+        /// Milliseconds since ECMAScript epoch. Atomic: worker-thread
+        /// `ReadFile` tasks write it while the JS thread reads it
+        /// (overlapping `file.bytes()` calls share one `Store`).
+        pub last_modified: core::sync::atomic::AtomicU64,
     }
 
     impl Default for File {
@@ -806,7 +807,26 @@ pub mod store {
                 mode: 0,
                 seekable: None,
                 max_size: MAX_SIZE,
-                last_modified: crate::INIT_TIMESTAMP,
+                last_modified: core::sync::atomic::AtomicU64::new(crate::INIT_TIMESTAMP),
+            }
+        }
+    }
+
+    impl Clone for File {
+        fn clone(&self) -> Self {
+            Self {
+                pathlike: self.pathlike.clone(),
+                mime_type: self.mime_type.clone(),
+                is_atty: self.is_atty,
+                mode: self.mode,
+                seekable: self.seekable,
+                max_size: self.max_size,
+                // Snapshot the atomic via `Relaxed`; `Clone` is a per-thread
+                // value copy, not a memory-ordering sync point.
+                last_modified: core::sync::atomic::AtomicU64::new(
+                    self.last_modified
+                        .load(core::sync::atomic::Ordering::Relaxed),
+                ),
             }
         }
     }
@@ -995,23 +1015,41 @@ pub mod store {
             unsafe { Store::deref(this) };
         }
 
-        /// Mutable access to `data` through a shared handle. The caller must
-        /// ensure no other `&mut` to the same `Store` is live (single-threaded
-        /// JS event-loop discipline).
+        /// Mutable access to `data` through a shared handle.
+        ///
+        /// # Safety
+        /// No other reference (`&Store`, `&mut Store`, `&Data`, `&mut Data`)
+        /// to the same pointee may be live for the duration of the returned
+        /// borrow — on this thread or any other (cloned `RefPtr<Store>`
+        /// handles are `Send`, so other threads can hold borrows). The same
+        /// contract governs the sibling `unsafe fn`s that mint `&mut Store`
+        /// access: `blob_store_mut`/`set_blob_content_type` in
+        /// `webcore::body`, and `BlobExt::shared_view_raw`/`set_is_ascii_flag`
+        /// and the free `resolve_file_stat` in `webcore::blob`.
         #[inline]
         #[allow(clippy::mut_from_ref)]
-        pub fn data_mut(this: &RefPtr<Store>) -> &mut Data {
-            // SAFETY: caller guarantees no other `&mut` to this `Store` is
-            // live; `as_ptr` carries the allocation's provenance.
+        pub unsafe fn data_mut(this: &RefPtr<Store>) -> &mut Data {
+            // SAFETY: precondition — no aliasing `&`/`&mut` to the pointee is
+            // live for the returned borrow's duration (see fn doc).
             unsafe { &mut (*this.as_ptr()).data }
         }
     }
 
-    // SAFETY: `Store`'s refcount is atomic and its payload is either
-    // immutable-after-init or guarded by callers.
+    // SAFETY: `Store`'s refcount is atomic; the `Data` payload is mutated
+    // only under `data_mut`'s exclusivity precondition (move, don't share).
+    // CAVEAT — `Data::S3` holds `Rc<S3Credentials>` (non-atomic refcount,
+    // shared with JS-thread state via `Rc::clone(s3.get_credentials())` in
+    // `Blob.rs`), but worker-pool tasks only carry `Data::File`/`Data::Bytes`
+    // stores; S3 I/O stays on the JS thread. If an S3 store ever crosses
+    // threads, make that `Rc` an `Arc`.
     unsafe impl Send for Store {}
-    // SAFETY: `Store::ref_count` is atomic; `&Store` gives no unguarded
-    // interior mutation.
+    // SAFETY: `Store::ref_count` is atomic, and cross-thread `&Store` reads
+    // of `Data` touch only immutable-after-init fields, the `AtomicU64`
+    // `File::last_modified`, and (for fd-backed `WriteFile`) the idempotent
+    // `seekable`/`mode` (see `resolve_file_stat`'s doc); every `&mut` mint
+    // goes through `unsafe fn data_mut` or its documented sibling
+    // `unsafe fn`s, whose precondition is exclusivity, discharged in writing
+    // at each call site.
     unsafe impl Sync for Store {}
 }
 pub use store::Store;

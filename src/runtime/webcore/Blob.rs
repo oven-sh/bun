@@ -291,8 +291,17 @@ pub trait BlobExt {
     where
         Self: Sized;
     fn transfer(&self);
-    fn shared_view_raw(&self) -> *mut [u8];
-    fn set_is_ascii_flag(&self, is_all_ascii: bool);
+    /// # Safety
+    /// Mints a mutable raw view into the backing `Store` via
+    /// `Store::data_mut`; the caller asserts no other `&`/`&mut` to the
+    /// same `Store` is live while the returned pointer is in use (JS-thread
+    /// exclusivity). Same contract as [`blob::Store::data_mut`].
+    unsafe fn shared_view_raw(&self) -> *mut [u8];
+    /// # Safety
+    /// Writes the backing `Store`'s `is_all_ascii` flag through
+    /// `RefPtr::as_ptr`; the caller asserts no other `&`/`&mut` to the same
+    /// `Store` is live for the write (JS-thread exclusivity).
+    unsafe fn set_is_ascii_flag(&self, is_all_ascii: bool);
     /// # Safety
     /// `raw_bytes` must be valid for reads for the duration of the call; when
     /// `LIFETIME == Temporary` it must be a leaked default-allocator `Box<[u8]>`.
@@ -1024,7 +1033,8 @@ impl BlobExt for Blob {
             let content_type = self.content_type_slice();
             let offset = self.offset.get();
             let store = self.store().expect("infallible: store present");
-            match Store::data_mut(store) {
+            // Read-only formatter block; shared borrow suffices.
+            match &store.data {
                 store::Data::S3(s3) => {
                     S3File::write_format::<F, W, ENABLE_ANSI_COLORS>(
                         s3,
@@ -2069,21 +2079,28 @@ impl BlobExt for Blob {
     fn get_last_modified(&self, _: &JSGlobalObject) -> JSValue {
         if let Some(store) = self.store.get() {
             if matches!(store.data, store::Data::File(_)) {
-                // do not hold a pattern-bound `&File` across
-                // `resolve_file_stat` — it materializes `&mut File` on the same
-                // memory (Stacked Borrows UB; the optimizer may legally cache the
-                // pre-call `last_modified` and return the stale `INIT_TIMESTAMP`).
-                // Re-read via `Store::data_mut` (raw-ptr-backed accessor) after
-                // the mutating call.
-                let last_modified = Store::data_mut(store).as_file().last_modified;
-                // last_modified can be already set during read.
+                // Borrow discipline: see `resolve_size`. Snapshot the
+                // `AtomicU64` through a shared borrow, drop it, then let
+                // `resolve_file_stat` materialize `&mut File`.
+                let last_modified = match &store.data {
+                    store::Data::File(f) => {
+                        f.last_modified.load(core::sync::atomic::Ordering::Relaxed)
+                    }
+                    _ => unreachable!("checked via matches! above"),
+                };
                 if last_modified == jsc::INIT_TIMESTAMP && !self.is_s3() {
-                    resolve_file_stat(store);
+                    // SAFETY: the snapshot above dropped its borrow; no
+                    // `Data` borrow is live.
+                    unsafe { resolve_file_stat(store) };
                 }
-                // Fresh borrow after possible mutation by `resolve_file_stat`.
-                return JSValue::js_number(JSValue::purify_nan(
-                    Store::data_mut(store).as_file().last_modified as f64,
-                ));
+                // Fresh shared borrow after the possible mutation.
+                let last_modified = match &store.data {
+                    store::Data::File(f) => {
+                        f.last_modified.load(core::sync::atomic::Ordering::Relaxed)
+                    }
+                    _ => unreachable!("checked via matches! above"),
+                };
+                return JSValue::js_number(JSValue::purify_nan(last_modified as f64));
             }
         }
 
@@ -2190,16 +2207,11 @@ impl BlobExt for Blob {
             self.size.set(0);
             return;
         };
-        // dispatch on the copied `DataTag` rather than
-        // `match &store.data { File(file) => … }`. The latter goes through
-        // `RefPtr<Store>::Deref → &Store → &Data` (no `UnsafeCell`), and that shared
-        // borrow is live across the arm body where `resolve_file_stat`
-        // materializes `&mut File` on the same memory via the raw
-        // `heap::alloc` pointer — Stacked Borrows UB, and under noalias the
-        // optimizer may legally cache the pre-call `seekable: None` and fall
-        // through to `self.size.get() = 0`. `Store::data_mut` centralises
-        // the raw-ptr deref so each read here is a fresh, safe borrow.
-        match Store::data_mut(store).tag() {
+        // Borrow discipline: never hold a `&Data`/`&File` across
+        // `resolve_file_stat` — it materializes `&mut File` on the same
+        // memory (aliasing UB; the optimizer may cache the pre-call field
+        // values). Snapshot via a shared borrow, drop it, call, re-borrow.
+        match store.data.tag() {
             store::DataTag::Bytes => {
                 let offset = self.offset.get();
                 let store_size = store.size();
@@ -2210,11 +2222,20 @@ impl BlobExt for Blob {
                 }
             }
             store::DataTag::File => {
-                if Store::data_mut(store).as_file().seekable.is_none() {
-                    resolve_file_stat(store);
+                let needs_stat = match &store.data {
+                    store::Data::File(f) => f.seekable.is_none(),
+                    _ => unreachable!("tag matched File"),
+                };
+                if needs_stat {
+                    // SAFETY: the `needs_stat` snapshot dropped its borrow;
+                    // no `Data` borrow is live.
+                    unsafe { resolve_file_stat(store) };
                 }
-                // Fresh borrow after possible mutation by `resolve_file_stat`.
-                let file = Store::data_mut(store).as_file();
+                // Fresh shared borrow after the possible mutation.
+                let file = match &store.data {
+                    store::Data::File(f) => f,
+                    _ => unreachable!("tag matched File"),
+                };
 
                 if file.seekable.is_some() && file.max_size != MAX_SIZE {
                     let store_size = file.max_size;
@@ -2245,10 +2266,8 @@ impl BlobExt for Blob {
         let Some(store) = self.store.get() else {
             return (self.offset.get(), 0);
         };
-        // see `resolve_size` — dispatch on the copied tag and re-read
-        // via `Store::data_mut` after `resolve_file_stat` so no
-        // `Deref`-produced `&Data`/`&File` is live across the mutating call.
-        match Store::data_mut(store).tag() {
+        // Borrow discipline: see `resolve_size`.
+        match store.data.tag() {
             store::DataTag::Bytes => {
                 let offset = self.offset.get();
                 let store_size = store.size();
@@ -2260,11 +2279,20 @@ impl BlobExt for Blob {
                 (self.offset.get(), self.size.get())
             }
             store::DataTag::File => {
-                if Store::data_mut(store).as_file().seekable.is_none() {
-                    resolve_file_stat(store);
+                let needs_stat = match &store.data {
+                    store::Data::File(f) => f.seekable.is_none(),
+                    _ => unreachable!("tag matched File"),
+                };
+                if needs_stat {
+                    // SAFETY: the `needs_stat` snapshot dropped its borrow;
+                    // no `Data` borrow is live.
+                    unsafe { resolve_file_stat(store) };
                 }
-                // Fresh borrow after possible mutation by `resolve_file_stat`.
-                let file = Store::data_mut(store).as_file();
+                // Fresh shared borrow after the possible mutation.
+                let file = match &store.data {
+                    store::Data::File(f) => f,
+                    _ => unreachable!("tag matched File"),
+                };
                 if file.seekable.is_some() && file.max_size != MAX_SIZE {
                     let store_size = file.max_size;
                     let offset = store_size.min(self.offset.get());
@@ -2436,7 +2464,7 @@ impl BlobExt for Blob {
     /// The returned pointer aliases the Store's `Vec<u8>` payload. Callers must
     /// not hold a live `&`/`&mut` into the same Store across uses of this
     /// pointer, and must keep a `RefPtr<Store>` alive for the pointer's lifetime.
-    fn shared_view_raw(&self) -> *mut [u8] {
+    unsafe fn shared_view_raw(&self) -> *mut [u8] {
         let empty = || {
             core::ptr::slice_from_raw_parts_mut(core::ptr::NonNull::<u8>::dangling().as_ptr(), 0)
         };
@@ -2446,13 +2474,9 @@ impl BlobExt for Blob {
         let Some(store_ref) = self.store() else {
             return empty();
         };
-        // `Store::data_mut` derefs the original `heap::alloc` `*mut Store`
-        // (mutable provenance over the whole allocation) without materializing
-        // a `Deref`-produced `&Store`, so the brief `&mut` to the payload does
-        // not alias any outstanding borrow (other `RefPtr<Store>`s only hold raw
-        // `NonNull<Store>`, never a long-lived `&Store`; JS execution is
-        // single-threaded).
-        match Store::data_mut(store_ref) {
+        // SAFETY: precondition — no aliasing `Store` borrow is live (see the
+        // trait-level # Safety doc).
+        match unsafe { Store::data_mut(store_ref) } {
             store::Data::Bytes(bytes) => {
                 let v: &mut [u8] = bytes.as_array_list_leak();
                 let len = v.len();
@@ -2471,7 +2495,7 @@ impl BlobExt for Blob {
         }
     }
 
-    fn set_is_ascii_flag(&self, is_all_ascii: bool) {
+    unsafe fn set_is_ascii_flag(&self, is_all_ascii: bool) {
         self.charset
             .set(strings::AsciiStatus::from_bool(Some(is_all_ascii)));
         // if this Blob represents the entire binary data
@@ -2553,7 +2577,9 @@ impl BlobExt for Blob {
             };
             if let Some(external) = converted {
                 if LIFETIME != Lifetime::Temporary {
-                    self.set_is_ascii_flag(false);
+                    // SAFETY: single-threaded JS body-consumer path; no other
+                    // borrow of the backing `Store` is live for this flag write.
+                    unsafe { self.set_is_ascii_flag(false) };
                 }
                 if LIFETIME == Lifetime::Transfer {
                     self.detach();
@@ -2566,7 +2592,9 @@ impl BlobExt for Blob {
             }
 
             if LIFETIME != Lifetime::Temporary {
-                self.set_is_ascii_flag(true);
+                // SAFETY: single-threaded JS body-consumer path; no other
+                // borrow of the backing `Store` is live for this flag write.
+                unsafe { self.set_is_ascii_flag(true) };
             }
         }
 
@@ -2646,7 +2674,9 @@ impl BlobExt for Blob {
         // only ever reads through it (`&*raw_bytes`); the sole write path —
         // `heap::take` in the `Temporary` arm — is statically unreachable
         // below.
-        let view_ptr = self.shared_view_raw();
+        // SAFETY: single-threaded JS body-consumer path; no other borrow of
+        // the backing `Store` is live while `view_ptr` is consumed below.
+        let view_ptr = unsafe { self.shared_view_raw() };
         if view_ptr.len() == 0 {
             return Ok(JSValue::js_empty_string(global));
         }
@@ -2685,7 +2715,9 @@ impl BlobExt for Blob {
         // `shared_view_raw` yields a `*mut [u8]` with mutable provenance (via
         // `RefPtr<Store>::as_ptr`). `to_json_with_bytes` only reads through it for the
         // non-`Temporary` lifetimes below.
-        let view_ptr = self.shared_view_raw();
+        // SAFETY: single-threaded JS body-consumer path; no other borrow of
+        // the backing `Store` is live while `view_ptr` is consumed below.
+        let view_ptr = unsafe { self.shared_view_raw() };
         match lifetime {
             // SAFETY: `view_ptr` is the store-backed view from `shared_view_raw`;
             // valid for reads while the store ref is held.
@@ -2775,7 +2807,9 @@ impl BlobExt for Blob {
                 .map_err(|_| bun_string_jsc::throw_utf16_transcode_failure(global, buf))?
             {
                 if LIFETIME != Lifetime::Temporary {
-                    self.set_is_ascii_flag(false);
+                    // SAFETY: single-threaded JS body-consumer path; no other
+                    // borrow of the backing `Store` is live for this flag write.
+                    unsafe { self.set_is_ascii_flag(false) };
                 }
                 let result = EncodedSlice::utf16(&external).to_json_object(global);
                 drop(external);
@@ -2783,7 +2817,9 @@ impl BlobExt for Blob {
             }
 
             if LIFETIME != Lifetime::Temporary {
-                self.set_is_ascii_flag(true);
+                // SAFETY: single-threaded JS body-consumer path; no other
+                // borrow of the backing `Store` is live for this flag write.
+                unsafe { self.set_is_ascii_flag(true) };
             }
         }
 
@@ -3022,7 +3058,9 @@ impl BlobExt for Blob {
         // backing via FFI and materialize `&mut *buf` to record ptr+len, which
         // is sound now that the provenance is writable. The `Temporary` arm
         // (`heap::take`) is statically unreachable below.
-        let view_ptr = self.shared_view_raw();
+        // SAFETY: single-threaded JS body-consumer path; no other borrow of
+        // the backing `Store` is live while `view_ptr` is consumed below.
+        let view_ptr = unsafe { self.shared_view_raw() };
         if view_ptr.len() == 0 {
             return jsc::ArrayBuffer::create::<TYPED_ARRAY_VIEW>(global, b"");
         }
@@ -3070,7 +3108,9 @@ impl BlobExt for Blob {
         // `to_form_data_with_bytes` (`FormData::to_js` takes `&[u8]`). Note: the
         // Store is intrusively shared (`ref_count: AtomicU32`); `&mut self` does
         // NOT imply exclusive ownership of the underlying bytes.
-        let view_ptr = self.shared_view_raw();
+        // SAFETY: single-threaded JS body-consumer path; no other borrow of
+        // the backing `Store` is live while `view_ptr` is consumed below.
+        let view_ptr = unsafe { self.shared_view_raw() };
         if view_ptr.len() == 0 {
             return Ok(jsc::DOMFormData::create(global));
         }
@@ -3920,7 +3960,10 @@ fn on_structured_clone_deserialize<B: AsRef<[u8]>>(
 
                 // ScopeGuard derefs to its inner Blob.
                 if let Some(store) = (*guard).store() {
-                    if let store::Data::Bytes(bytes_store) = &mut Store::data_mut(store) {
+                    // SAFETY: single-threaded deserialize path; no other
+                    // borrow of this freshly-built `Store` is live.
+                    if let store::Data::Bytes(bytes_store) = &mut unsafe { Store::data_mut(store) }
+                    {
                         // Transfer ownership of the local `name: Vec<u8>` into
                         // `stored_name` (a `Box<[u8]>`); freed by `Bytes::Drop`.
                         bytes_store.stored_name = name.into_boxed_slice();
@@ -4751,8 +4794,11 @@ pub(crate) fn write_file_internal(
         debug_assert!(!matches!(blob_store.data, store::Data::Bytes(_)));
         // TODO only reset last_modified on success paths instead of resetting
         // last_modified at the beginning for better performance.
-        if let store::Data::File(ref mut file) = *Store::data_mut(blob_store) {
-            file.last_modified = jsc::INIT_TIMESTAMP;
+        // Shared borrow: `last_modified` is `AtomicU64`, `store(Relaxed)`
+        // takes `&self` — no `&mut Data` materialized.
+        if let store::Data::File(ref file) = blob_store.data {
+            file.last_modified
+                .store(jsc::INIT_TIMESTAMP, core::sync::atomic::Ordering::Relaxed);
         }
     }
 
@@ -5639,7 +5685,8 @@ impl S3BlobDownloadTask {
                 // Move the downloaded body into a Blob store so its lifetime is
                 // tied to the Blob/JS view and freed via the store's finalizer.
                 let store = Store::init(response.body.list);
-                let bytes: *mut [u8] = match Store::data_mut(&store) {
+                // SAFETY: freshly-minted Store with refcount==1; no other alias.
+                let bytes: *mut [u8] = match unsafe { Store::data_mut(&store) } {
                     store::Data::Bytes(b) => std::ptr::from_mut(b.as_array_list()),
                     _ => unreachable!(),
                 };
@@ -6004,11 +6051,18 @@ fn window_size(current: SizeType, available: SizeType) -> SizeType {
 }
 
 /// resolve file stat like size, last_modified
-fn resolve_file_stat(store: &RefPtr<Store>) {
-    // `Store::data_mut` encapsulates the raw-pointer deref under the
-    // `RefPtr<Store>` liveness invariant; the caller holds the only ref across
-    // this call, so an exclusive borrow is sound.
-    let file = Store::data_mut(store).as_file_mut();
+///
+/// # Safety
+/// Materializes `&mut File` via [`Store::data_mut`]; the caller asserts no
+/// `&`/`&mut Data` to the same `Store` is live across the call. Worker-pool
+/// tasks (`read_file.rs`, `write_file.rs`) can still hold `&File` to this
+/// `Store`: the `AtomicU64` `last_modified` covers the observable race, and
+/// the remaining `seekable`/`mode` overlap is idempotent (every writer stores
+/// the same fstat-derived values); closing it fully means interior-mutable
+/// `File` fields, a follow-up beyond #30800.
+unsafe fn resolve_file_stat(store: &RefPtr<Store>) {
+    // SAFETY: precondition — no aliasing `Data` borrow is live (see fn doc).
+    let file = unsafe { Store::data_mut(store) }.as_file_mut();
     match &file.pathlike {
         PathOrFileDescriptor::Path(path) => {
             let mut buffer = bun_paths::PathBuffer::uninit();
@@ -6021,7 +6075,10 @@ fn resolve_file_stat(store: &RefPtr<Store>) {
                     };
                     file.mode = stat.st_mode as bun_sys::Mode;
                     file.seekable = Some(bun_sys::S::ISREG(stat.st_mode as _));
-                    file.last_modified = stat_to_js_mtime(&stat);
+                    file.last_modified.store(
+                        stat_to_js_mtime(&stat),
+                        core::sync::atomic::Ordering::Relaxed,
+                    );
                 }
                 // the file may not exist yet. That's okay.
                 _ => {}
@@ -6036,7 +6093,10 @@ fn resolve_file_stat(store: &RefPtr<Store>) {
                 };
                 file.mode = stat.st_mode as bun_sys::Mode;
                 file.seekable = Some(bun_sys::S::ISREG(stat.st_mode as _));
-                file.last_modified = stat_to_js_mtime(&stat);
+                file.last_modified.store(
+                    stat_to_js_mtime(&stat),
+                    core::sync::atomic::Ordering::Relaxed,
+                );
             }
             _ => {}
         },
@@ -6249,7 +6309,11 @@ impl Any {
         if let Any::Blob(blob) = self {
             if let Some(s) = blob.store.get() {
                 if matches!(s.data, store::Data::Bytes(_)) && s.has_one_ref() {
-                    let internal = Store::data_mut(s).as_bytes_mut().to_internal_blob();
+                    // SAFETY: `has_one_ref` — this handle is the only owner;
+                    // no other borrow can be live.
+                    let internal = unsafe { Store::data_mut(s) }
+                        .as_bytes_mut()
+                        .to_internal_blob();
                     *self = Any::InternalBlob(internal);
                     return;
                 }

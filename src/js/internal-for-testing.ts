@@ -658,6 +658,13 @@ export const structuredCloneAdvanced: (
 
 export const isASANEnabled: () => boolean = $newCppFunction("InternalForTesting.cpp", "jsFunction_isASANEnabled", 0);
 
+/** Live bytes in the sanitizer allocator, quarantine excluded. `undefined` without ASAN. */
+export const asanAllocatedBytes: () => number | undefined = $newCppFunction(
+  "InternalForTesting.cpp",
+  "jsFunction_asanAllocatedBytes",
+  0,
+);
+
 export const BunString_threadIsolatedCopyRefCountDelta: () => number = $newCppFunction(
   "InternalForTesting.cpp",
   "jsFunction_BunString_threadIsolatedCopyRefCountDelta",

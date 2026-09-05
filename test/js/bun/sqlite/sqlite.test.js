@@ -2772,3 +2772,36 @@ it("exec/run with an embedded NUL byte in the SQL string does not hang", async (
     exitCode: 0,
   });
 });
+
+// On Linux/Windows SQLite is statically linked, so there is no dynamic library to
+// swap out. setCustomSQLite() used to return true here even though it ignored the
+// path entirely, telling the caller a (possibly nonexistent) library had been
+// loaded when in fact nothing happened.
+it.skipIf(isMacOS)(
+  "Database.setCustomSQLite() returns false on platforms where SQLite is statically linked",
+  async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        const { Database } = require("bun:sqlite");
+        const result = Database.setCustomSQLite("/nonexistent/libsqlite3.so");
+        const version = new Database(":memory:").query("select sqlite_version() v").get().v;
+        console.log(JSON.stringify({ result, versionType: typeof version, versionNonEmpty: version.length > 0 }));
+      `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect({ stderr, stdout: JSON.parse(stdout.trim()), exitCode }).toEqual({
+      stderr: "",
+      stdout: { result: false, versionType: "string", versionNonEmpty: true },
+      exitCode: 0,
+    });
+  },
+);

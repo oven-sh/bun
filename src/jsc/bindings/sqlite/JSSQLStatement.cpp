@@ -1216,11 +1216,14 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementSetCustomSQLite, (JSC::JSGlobalObject * l
         throwException(lexicalGlobalObject, scope, createError(lexicalGlobalObject, msg));
         return {};
     }
-#endif
 
     Bun__initializeSQLite();
 
     RELEASE_AND_RETURN(scope, JSValue::encode(JSC::jsBoolean(true)));
+#else
+    // SQLite is statically linked on this platform; there is no dynamic library to swap out.
+    RELEASE_AND_RETURN(scope, JSValue::encode(JSC::jsBoolean(false)));
+#endif
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsSQLStatementDeserialize, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))

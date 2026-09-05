@@ -431,14 +431,6 @@ pub mod fs {
             }
         }
 
-        /// Normalizes `str` in the shared scratch space, returning the input
-        /// unchanged when already normalized.
-        #[inline]
-        pub fn normalize<'a>(&self, str: &'a [u8]) -> &'a [u8] {
-            use bun_paths::resolve_path::{normalize_string, platform};
-            normalize_string::<true, platform::Auto>(str)
-        }
-
         /// The process-global directory-name interning store.
         #[inline]
         pub fn dirname_store(&self) -> &'static DirnameStore {

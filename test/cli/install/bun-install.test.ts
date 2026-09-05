@@ -6,6 +6,7 @@ import {
   bunEnv,
   bunExe,
   bunEnv as env,
+  isLinux,
   isWindows,
   joinP,
   normalizeBunSnapshot,
@@ -10332,6 +10333,64 @@ it("does not install transitive file: dependencies with overlong folder targets"
   expect(err).toContain("unsafe folder path");
   expect(out).not.toContain("2 packages installed");
   expect(exitCode).toBe(1);
+});
+
+// Resolving a folder dependency appends "/package.json" and a NUL to its absolute path in a
+// path buffer (4096 bytes on Linux, 1024 on macOS). The absolute path itself is checked
+// against the buffer when package.json is parsed, but the appended bytes were not, so a
+// folder path within 13 bytes of the buffer size aborted the install. Windows' buffer is
+// larger than any path the OS accepts, so the boundary cannot be reached there.
+describe.skipIf(isWindows)("file: dependency whose package.json path is around the path buffer size", () => {
+  const PATH_BUFFER_BYTES = isLinux ? 4096 : 1024;
+
+  // A relative path of exactly `bytes` bytes made of one letter directory names, so that a
+  // path which fits the buffer is rejected by the OS as missing, not as too long.
+  function pathOfLength(bytes: number) {
+    const tail = bytes % 2 === 0 ? "dd" : "d";
+    return Buffer.alloc(bytes - tail.length, "d/").toString() + tail;
+  }
+
+  // `packageJsonPathBytes` is the length of `<project>/<folder>/package.json`.
+  async function installFolderDependency(projectDir: string, packageJsonPathBytes: number) {
+    const folder = pathOfLength(
+      packageJsonPathBytes - Buffer.byteLength(projectDir) - "/".length - "/package.json".length,
+    );
+    await writeFile(
+      join(projectDir, "package.json"),
+      JSON.stringify({ name: "my-app", dependencies: { dep: `file:./${folder}` } }),
+    );
+    await using proc = spawn({
+      cmd: [bunExe(), "install"],
+      cwd: projectDir,
+      stdout: "pipe",
+      stderr: "pipe",
+      env,
+    });
+    const [, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { folder, err, exitCode };
+  }
+
+  it("is looked up on disk when the path and its NUL terminator fit", async () => {
+    using dir = tempDir("file-dep-path-buffer-fits", {});
+
+    const { folder, err, exitCode } = await installFolderDependency(String(dir), PATH_BUFFER_BYTES - 1);
+
+    expect(err).toContain(`error: Could not find package.json for "file:${folder}"`);
+    expect(exitCode).toBe(1);
+  });
+
+  it.each([
+    ["exactly the buffer size, leaving no room for the NUL terminator", 0],
+    // The folder path alone fits; "/package.json" is what does not.
+    ['longer than the buffer by less than the appended "/package.json"', 8],
+  ])("fails with ENAMETOOLONG when it is %s", async (_, extraBytes) => {
+    using dir = tempDir("file-dep-path-buffer-overflow", {});
+
+    const { err, exitCode } = await installFolderDependency(String(dir), PATH_BUFFER_BYTES + extraBytes);
+
+    expect(err).toContain("error: ENAMETOOLONG");
+    expect(exitCode).toBe(1);
+  });
 });
 
 for (const field of ["resolutions", "overrides"]) {

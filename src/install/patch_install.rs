@@ -394,9 +394,11 @@ impl PatchTask {
         let patchfile_path = &patch.patchfilepath;
 
         let mut absolute_patchfile_path_buf = PathBuffer::uninit();
+        let mut absolute_patchfile_path_spill = Vec::new();
         // 1. Parse the patch file
-        let absolute_patchfile_path = path::resolve_path::join_z_buf::<path::platform::Auto>(
+        let absolute_patchfile_path = path::resolve_path::join_z_buf_spill::<path::platform::Auto>(
             &mut absolute_patchfile_path_buf.0,
+            &mut absolute_patchfile_path_spill,
             &[dir, patchfile_path],
         );
         // TODO: can the patch file be anything other than utf-8?
@@ -609,9 +611,11 @@ impl PatchTask {
         let patchfile_path = &calc_hash.patchfile_path;
 
         let mut absolute_patchfile_path_buf = PathBuffer::uninit();
+        let mut absolute_patchfile_path_spill = Vec::new();
         // parse the patch file
-        let absolute_patchfile_path = path::resolve_path::join_z_buf::<path::platform::Auto>(
+        let absolute_patchfile_path = path::resolve_path::join_z_buf_spill::<path::platform::Auto>(
             &mut absolute_patchfile_path_buf.0,
+            &mut absolute_patchfile_path_spill,
             &[dir, patchfile_path],
         );
 
@@ -639,12 +643,10 @@ impl PatchTask {
                     );
                     return None;
                 }
-                bun_ast::add_warning_pretty!(
-                    log,
+                log.add_error_fmt(
                     None,
                     Loc::EMPTY,
-                    "patchfile <b>{}<r> is empty, please restore or delete it.",
-                    BStr::new(absolute_patchfile_path.as_bytes()),
+                    format_args!("failed to read patch file: {}", e),
                 );
                 return None;
             }

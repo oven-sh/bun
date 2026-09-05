@@ -138,6 +138,9 @@ impl PackageManagerCommand {
   <b><green>bun pm<r> <blue>ls<r>                   list the dependency tree according to the current lockfile
   <d>├<r> <cyan>--all<r>                     list the entire dependency tree according to the current lockfile
   <d>└<r> <cyan>--trusted<r>                 list only trusted dependencies
+  <b><green>bun pm<r> <blue>sbom<r>                 generate a Software Bill of Materials (SBOM)
+  <d>├<r> <cyan>--format<r>                  cyclonedx (default) or spdx
+  <d>└<r> <cyan>-o, --outfile<r>             write the SBOM to a file instead of stdout
   <b><green>bun pm<r> <blue>why<r> <d>\<pkg\><r>            show dependency tree explaining why a package is installed
   <b><green>bun pm<r> <blue>licenses<r>             list installed packages grouped by license
   <d>├<r> <cyan>--json<r>                    output as JSON

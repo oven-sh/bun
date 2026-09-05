@@ -5,10 +5,10 @@
 // `Generated<basename>.h`; the Rust side binds the emitted `bindgen_*` symbols by hand in
 // `src/jsc/bindings/GeneratedBindings.rs` (`bun_jsc::r#gen::<basename>`).
 import assert from "node:assert";
+import { createRequire } from "node:module";
 import * as path from "node:path";
 import {
   CodeWriter,
-  Func,
   NodeValidator,
   Struct,
   TypeImpl,
@@ -29,11 +29,14 @@ import {
   typeHashToReachableType,
   type CAbiType,
   type DictionaryField,
+  type Func,
   type ReturnStrategy,
   type TypeKind,
   type Variant,
-} from "./bindgen-lib-internal";
-import { argParse, readdirRecursiveWithExclusionsAndExtensionsSync, writeIfNotChanged } from "./helpers";
+} from "./bindgen-lib-internal.ts";
+import { argParse, readdirRecursiveWithExclusionsAndExtensionsSync, writeIfNotChanged } from "./helpers.ts";
+
+const require = createRequire(import.meta.url);
 
 // arg parsing. The build passes `--debug=ON|OFF`; the output does not depend on it.
 const { "codegen-root": codegenRoot } = argParse(["codegen-root", "debug"]);
@@ -795,9 +798,7 @@ function returnStrategyCppType(strategy: ReturnStrategy): string {
     case "jsvalue":
       return "JSC::EncodedJSValue";
     default:
-      throw new Error(
-        `TODO: returnStrategyCppType for ${Bun.inspect(strategy satisfies never, { colors: Bun.enableANSIColors })}`,
-      );
+      throw new Error(`TODO: returnStrategyCppType for ${inspect(strategy satisfies never)}`);
   }
 }
 
@@ -1003,7 +1004,7 @@ for (const fileName of [...unsortedFiles].sort()) {
     files.set(sourceFile, file);
   }
 
-  const exports = import.meta.require(fileName);
+  const exports = require(fileName);
 
   // Mark all exported TypeImpl as reachable
   for (let [key, value] of Object.entries(exports)) {

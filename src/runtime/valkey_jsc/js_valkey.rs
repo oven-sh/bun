@@ -311,9 +311,7 @@ pub struct JSValkeyClient {
     /// `RareData.defaultClientSslCtx()` instead; `tls: false` leaves this null.
     pub(crate) _secure: JsCell<Option<boringssl::c::OwnedSslCtx>>,
 
-    /// The url the client was constructed with, as UTF-8: the first
-    /// constructor argument, or the `REDIS_URL` / `VALKEY_URL` / built-in
-    /// default it fell back to. Exposed as `client.url`.
+    /// The constructor's url argument, or the env / built-in default it fell back to, as UTF-8.
     pub(crate) url: Box<[u8]>,
 
     pub(crate) timer: RefCountedTimer,
@@ -483,10 +481,8 @@ impl JSValkeyClient {
 
     /// Create a Valkey client that does not have an associated JS object nor a SubscriptionCtx.
     ///
-    /// Also returns the `tls` option object the caller passed (or `UNDEFINED`),
-    /// so the caller can cache it on the JS wrapper once that exists. The
-    /// lowered `SSLConfig` cannot be turned back into the caller's object, and
-    /// `client.options.tls` has to hand it back.
+    /// Also returns the `tls` option object (or `UNDEFINED`) for the caller to
+    /// cache on the JS wrapper once it exists.
     ///
     /// This whole client needs a refactor.
     pub(crate) fn create_no_js_no_pubsub(
@@ -945,11 +941,8 @@ impl JSValkeyClient {
         jsc::bun_string_jsc::create_utf8_for_js(global, &self.url)
     }
 
-    /// `client.options`: a fresh object with the options the client runs
-    /// with, in the shape the constructor accepts.
-    ///
-    /// `this: true` in valkey.classes.ts: codegen passes the JS wrapper as
-    /// `this_value`, which holds the cached `tls` option object.
+    /// `client.options`. `this_value` is the JS wrapper (`this: true` in
+    /// valkey.classes.ts), which holds the cached `tls` option object.
     pub(crate) fn get_options(
         &self,
         this_value: JSValue,
@@ -958,9 +951,6 @@ impl JSValkeyClient {
         let tls = match self.client.get().tls {
             valkey::TLS::None => JSValue::FALSE,
             valkey::TLS::Enabled => JSValue::TRUE,
-            // Every path that builds a `Custom` client caches the object:
-            // `create()` from the constructor argument, `duplicate()` from the
-            // source wrapper. `Bun.redis` takes no options.
             valkey::TLS::Custom(_) => {
                 let cached = Js::tls_get_cached(this_value);
                 debug_assert!(
@@ -973,10 +963,8 @@ impl JSValkeyClient {
         Ok(self.options_object(global, tls))
     }
 
-    /// The `RedisOptions`-shaped object behind `client.options`, with `tls`
-    /// supplied by the caller. A subscriber reports the `enableOfflineQueue` /
-    /// `enableAutoPipelining` it was constructed with, not the values
-    /// subscribe mode forces while it is active.
+    /// A subscriber reports the `enableOfflineQueue` / `enableAutoPipelining`
+    /// it was constructed with, not the values subscribe mode forces.
     fn options_object(&self, global: &JSGlobalObject, tls: JSValue) -> JSValue {
         let client = self.client.get();
         let sub_ctx = self._subscription_ctx.get();
@@ -1027,9 +1015,8 @@ impl JSValkeyClient {
         object
     }
 
-    /// `console.log(client)` / `Bun.inspect(client)`. Hand-written so the
-    /// password in `url` prints as `[REDACTED]` and a custom `tls` object,
-    /// which can hold key material, prints as `true`.
+    /// `console.log(client)`: the url password prints as `[REDACTED]` and a
+    /// custom `tls` object (which can hold key material) prints as `true`.
     pub(crate) fn write_format<F, W, const ENABLE_ANSI_COLORS: bool>(
         &self,
         formatter: &mut F,
@@ -1114,11 +1101,8 @@ impl JSValkeyClient {
         Ok(())
     }
 
-    /// Splits `self.url` around the password in its userinfo. Returns the
-    /// bytes before the password and, when the url has a password, the bytes
-    /// from the `@` on. The authority is the text after `://` (or the whole
-    /// string when there is no scheme) up to the first `/`, `?` or `#`, and
-    /// its userinfo ends at the last `@`, as in the WHATWG URL parser.
+    /// Returns (bytes before the userinfo password, bytes from its `@` on).
+    /// Authority ends at the first `/`, `?` or `#`, userinfo at its last `@`.
     fn url_split_at_password(&self) -> (&[u8], Option<&[u8]>) {
         let url: &[u8] = &self.url;
         let authority_start = strings::index_of(url, b"://").map_or(0, |i| i + 3);
@@ -2094,8 +2078,7 @@ impl<const SSL: bool> SocketHandler<SSL> {
 struct Options;
 
 impl Options {
-    /// Returns the parsed options and the `tls` option object when one was
-    /// given (`UNDEFINED` otherwise), so `client.options.tls` can return it.
+    /// Also returns the `tls` option object when one was given (`UNDEFINED` otherwise).
     fn from_js(
         global_object: &JSGlobalObject,
         options_obj: JSValue,

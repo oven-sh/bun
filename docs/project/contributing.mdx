@@ -271,10 +271,10 @@ CI runs the test suite with at least one target built with AddressSanitizer.
 
 ## Building WebKit locally + Debug mode of JSC
 
-WebKit is not cloned by default (to save time and disk space); the build downloads a prebuilt JavaScriptCore. To build bun against JSC compiled from source at the pinned `WEBKIT_VERSION`, pass `--webkit=source` — the build fetches just `Source/{bmalloc,WTF,JavaScriptCore}` (seconds, not a 12 GB clone) into `vendor/WebKit` and compiles it in its own ninja graph like every other dependency. This is how CI builds every target. It needs `ruby`, `python3` and `perl` for JSC's code generators, `zstd` for packing the ICU data (targets other than macOS), and, when cross-compiling a macOS target from Linux, `flex` and `bison` for the MIG host tool (on a Mac, Xcode's `mig` is used):
+JavaScriptCore (with WTF, bmalloc and, off macOS, ICU) is compiled from source as part of the normal build, like every other dependency: the build fetches just `Source/{bmalloc,WTF,JavaScriptCore}` of the pinned `WEBKIT_VERSION` (a sparse fetch of ~35 MB, seconds — not a 12 GB clone) into `vendor/WebKit` and compiles it in its own ninja graph. It needs `ruby`, `python3` and `perl` for JSC's code generators, `zstd` for packing the ICU data (targets other than macOS), and, when cross-compiling a macOS target from Linux, `flex` and `bison` for the MIG host tool (on a Mac, Xcode's `mig` is used). `--webkit=prebuilt` opts into downloading oven-sh/WebKit's release tarball for that commit instead of compiling it:
 
 ```bash
-bun run build --webkit=source
+bun run build --webkit=prebuilt
 ```
 
 To work on JSC itself you want a full clone with history instead. Clone it, then build with the `*-local` profiles: the same direct build, compiling whatever is checked out in your clone (`$BUN_WEBKIT_PATH`, default `vendor/WebKit`; they are `--webkit=source --local-deps=WebKit=<path>`):

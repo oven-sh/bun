@@ -10,21 +10,22 @@ export const WEBKIT_VERSION = "2e2aa2290fac856d6f451ceacb58f7f5b44dd057";
  *
  * Two modes via `cfg.webkit`:
  *
- * **source**: Built like every other dep. The build fetches WEBKIT_VERSION
+ * **source** (the default, and what CI ships on every target): built like
+ *   every other dep. The build fetches WEBKIT_VERSION
  *   into `vendor/WebKit/` — a sparse git fetch of just
  *   Source/{bmalloc,WTF,JavaScriptCore} (~35 MB over the wire instead of a
  *   12 GB clone) — and compiles it in our own ninja graph, no cmake ("Source
  *   mode: direct build" below). Generated headers land in the BUILD dir. To
  *   build your own WebKit clone instead of the pinned commit, point at it
  *   like any dep: `--local-deps=WebKit=<path>` (the `*-local` profiles do,
- *   from `$BUN_WEBKIT_PATH` or vendor/WebKit). This is what CI ships on
- *   every target.
+ *   from `$BUN_WEBKIT_PATH` or vendor/WebKit).
  *
- * **prebuilt**: Download tarball from oven-sh/WebKit releases. Tarball name
- *   encodes {os, arch, musl, debug|lto, asan} — each is a separate ABI.
- *   ASAN MUST match bun's setting: WTF::Vector layout changes with ASAN
- *   (see WTF/Vector.h:682), so mixing → silent memory corruption. The local
- *   default (no JSC compile); CI builds every target from source.
+ * **prebuilt** (explicit `--webkit=prebuilt` only): download the tarball
+ *   oven-sh/WebKit's release workflow publishes for WEBKIT_VERSION instead of
+ *   compiling. Tarball name encodes {os, arch, musl, debug|lto, asan} — each
+ *   is a separate ABI. ASAN MUST match bun's setting: WTF::Vector layout
+ *   changes with ASAN (see WTF/Vector.h:682), so mixing → silent memory
+ *   corruption.
  */
 
 import { spawnSync } from "node:child_process";

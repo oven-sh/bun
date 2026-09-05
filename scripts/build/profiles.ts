@@ -9,12 +9,13 @@
  *
  * ## Naming convention
  *
- * `<buildtype>[-<webkit-mode>][-<feature>]`
+ * `<buildtype>[-local][-<feature>]`
  *
- *   debug              → Debug build, prebuilt WebKit (the default)
+ *   debug              → Debug build (the default). JSC is compiled from the
+ *                        pinned WEBKIT_VERSION like every other dep.
  *   debug-local        → Debug build, WebKit compiled from your own clone
  *                        ($BUN_WEBKIT_PATH, default vendor/WebKit/)
- *   release            → Release build, prebuilt WebKit, no LTO
+ *   release            → Release build, no LTO
  *   release-local      → Release build, WebKit compiled from your own clone
  *   release-assertions → Release + runtime assertions enabled
  *   release-asan       → Release + address sanitizer
@@ -32,20 +33,17 @@ export const profiles = {
   /** Default local dev: debug + prebuilt WebKit. ASAN defaults on for supported platforms. */
   debug: {
     buildType: "Debug",
-    webkit: "prebuilt",
   },
 
   /** Debug, WebKit compiled from your clone (vendor/WebKit/, or $BUN_WEBKIT_PATH — see configure()). */
   "debug-local": {
     buildType: "Debug",
-    webkit: "source",
     localDeps: "WebKit=vendor/WebKit",
   },
 
   /** Debug without ASAN — faster builds, less safety. */
   "debug-no-asan": {
     buildType: "Debug",
-    webkit: "prebuilt",
     asan: false,
   },
 
@@ -58,7 +56,6 @@ export const profiles = {
     os: "linux",
     arch: "aarch64",
     abi: "android",
-    webkit: "prebuilt",
   },
 
   "android-release": {
@@ -66,7 +63,6 @@ export const profiles = {
     os: "linux",
     arch: "aarch64",
     abi: "android",
-    webkit: "prebuilt",
   },
 
   /**
@@ -77,21 +73,18 @@ export const profiles = {
     buildType: "Debug",
     os: "freebsd",
     arch: "x64",
-    webkit: "prebuilt",
   },
 
   "freebsd-arm64": {
     buildType: "Debug",
     os: "freebsd",
     arch: "aarch64",
-    webkit: "prebuilt",
   },
 
   "freebsd-release": {
     buildType: "Release",
     os: "freebsd",
     arch: "x64",
-    webkit: "prebuilt",
   },
 
   /**
@@ -104,34 +97,29 @@ export const profiles = {
     buildType: "Debug",
     os: "windows",
     arch: "x64",
-    webkit: "prebuilt",
   },
 
   "windows-arm64": {
     buildType: "Debug",
     os: "windows",
     arch: "aarch64",
-    webkit: "prebuilt",
   },
 
   "windows-x64-release": {
     buildType: "Release",
     os: "windows",
     arch: "x64",
-    webkit: "prebuilt",
   },
 
   "windows-arm64-release": {
     buildType: "Release",
     os: "windows",
     arch: "aarch64",
-    webkit: "prebuilt",
   },
 
   /** Release build for local testing. No LTO (that's CI-only). */
   release: {
     buildType: "Release",
-    webkit: "prebuilt",
     lto: false,
   },
 
@@ -148,7 +136,6 @@ export const profiles = {
    */
   btg: {
     buildType: "Release",
-    webkit: "prebuilt",
     lto: true,
     // Pin the build dir so `--profile=btg` alone lands here and can never
     // be confused with `--profile=release --build-dir=build/btg` (which
@@ -159,7 +146,6 @@ export const profiles = {
   /** Release, WebKit compiled from your clone. */
   "release-local": {
     buildType: "Release",
-    webkit: "source",
     localDeps: "WebKit=vendor/WebKit",
     lto: false,
   },
@@ -171,7 +157,6 @@ export const profiles = {
    */
   "release-assertions": {
     buildType: "RelWithDebInfo",
-    webkit: "prebuilt",
     assertions: true,
     logs: true,
     lto: false,
@@ -185,7 +170,6 @@ export const profiles = {
    */
   "release-asan": {
     buildType: "Release",
-    webkit: "prebuilt",
     asan: true,
     assertions: true,
   },
@@ -196,7 +180,6 @@ export const profiles = {
     mode: "cpp-only",
     ci: true,
     buildkite: true,
-    webkit: "source",
   },
 
   /**
@@ -209,7 +192,6 @@ export const profiles = {
     mode: "rust-only",
     ci: true,
     buildkite: true,
-    webkit: "source",
   },
 
   /** CI: link prebuilt objects downloaded from sibling BuildKite jobs. */
@@ -218,7 +200,6 @@ export const profiles = {
     mode: "link-only",
     ci: true,
     buildkite: true,
-    webkit: "source",
   },
 
   /**
@@ -232,7 +213,6 @@ export const profiles = {
     mode: "rust-and-link",
     ci: true,
     buildkite: true,
-    webkit: "source",
   },
 
   /** CI: deps + C++ + cargo + link on one agent; libbun-*.a, libbun_runtime.a and dep libs are uploaded as artifacts. */
@@ -241,7 +221,6 @@ export const profiles = {
     mode: "archive-link",
     ci: true,
     buildkite: true,
-    webkit: "source",
   },
 
   /** CI full build with LTO. */
@@ -249,7 +228,6 @@ export const profiles = {
     buildType: "Release",
     ci: true,
     buildkite: true,
-    webkit: "source",
     // lto default resolves to ON (ci + release + linux + !asan + !assertions)
   },
 } as const satisfies Record<string, PartialConfig>;

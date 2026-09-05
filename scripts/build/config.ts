@@ -1084,10 +1084,13 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
   const nodejsAbiVersion = partial.nodejsAbiVersion ?? versionDefaults.nodejsAbiVersion;
   const nodejsV8Version = partial.nodejsV8Version ?? versionDefaults.nodejsV8Version;
   const webkitVersion = partial.webkitVersion ?? versionDefaults.webkitVersion;
-  const webkit = partial.webkit ?? "prebuilt";
+  // JSC is compiled in this build like every other dep. `prebuilt` (download
+  // oven-sh/WebKit's release tarball for WEBKIT_VERSION instead) is an
+  // explicit opt-in only; no profile selects it.
+  const webkit = partial.webkit ?? "source";
   if (webkit !== "prebuilt" && webkit !== "source") {
     throw new BuildError(`Unknown --webkit=${webkit}`, {
-      hint: "Use source (compile the pinned JSC in this build; add --local-deps=WebKit=<path> for your own clone) or prebuilt",
+      hint: "Use source (the default; add --local-deps=WebKit=<path> for your own clone) or prebuilt (download the release tarball)",
     });
   }
 

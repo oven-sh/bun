@@ -66,7 +66,7 @@ Start-Process -FilePath "$env:TEMP\LLVM-21.1.8-woa64.exe" -ArgumentList "/S" -Wa
   break the build.
 </Note>
 
-To compile JavaScriptCore from source instead of downloading the prebuilt (`--webkit=source`, or `bun run build:local` for your own WebKit clone), also install the code generators' interpreters:
+JavaScriptCore is compiled from source as part of the build, so also install its code generators' interpreters:
 
 ```ps1 Scoop
 scoop install ruby python perl zstd

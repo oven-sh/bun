@@ -168,7 +168,8 @@ const buildPlatforms = [
   // only runs tests, signing, and baseline verification, against these
   // artifacts (see testPlatforms), and these are the Windows artifacts the
   // release ships. x64 uses ThinLTO + cross-language LTO by default; arm64
-  // stays non-LTO (no windows-arm64-lto WebKit prebuilt, see config.ts).
+  // stays non-LTO (LLVM's CodeView emitter aborts on ARM64 NEON tuple
+  // registers under LTO, see config.ts).
   { os: "windows", arch: "x64", crossCompile: true, distro: "debian", release: "13" },
   { os: "windows", arch: "aarch64", crossCompile: true, distro: "debian", release: "13" },
 ];

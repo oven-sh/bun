@@ -25,7 +25,7 @@ This directory generates `build.ninja`. The scripts **describe** the build; ninj
 - `direct` — list the dep's sources explicitly; each becomes a first-class `cc`/`cxx` edge in our graph and the `.o`s go straight into bun's link. The C/C++ deps (zlib, zstd, boringssl, libarchive, mimalloc, …). No sub-process configure, and LTO sees across the dep boundary.
 - `custom` — same primitives (`cc`/`cxx`/`pch`/`link`), but the dep's own module emits the graph because it is more than a source list: WebKit (`deps/webkit.ts` lists the WTF/bmalloc sources and JSC codegen inputs, takes JSC's own TUs from its `Sources.txt`, emits the ruby/python codegen and the LLInt extractor chain) and ICU (`deps/icu.ts`: host `icupkg`, data filter/repack). Objects go straight into bun's link like `direct`. The tree is fetched at configure time because the graph is described from it.
 - `cargo` — invoke cargo build (lolhtml, rust-argon2). Cargo's incremental build is reliable; `restat = 1` keeps our downstream no-ops fast.
-- `prebuilt` — skip build entirely, download compiled `.a`/`.lib` (WebKit's local-dev default, nodejs-headers).
+- `prebuilt` — skip build entirely, download compiled `.a`/`.lib` (nodejs-headers; WebKit only with an explicit `--webkit=prebuilt`).
 
 The `dep` pool (depth 4) throttles concurrent fetches and cargo sub-builds so they don't oversubscribe cores.
 

@@ -47,6 +47,7 @@ function resolveLinuxRelease(partial: PartialConfig = {}): Config {
       arch: "x64",
       abi: "gnu",
       buildType: "Release",
+      webkit: "prebuilt",
       lto: false,
       baseline: false,
       linuxSysroot: "/fake/linux-sysroot",
@@ -84,7 +85,16 @@ describe("WebKit prebuilt URL", () => {
 
   test("debug picks the -debug artifact from the same release tag", () => {
     const cfg = resolveConfig(
-      { os: "linux", arch: "x64", abi: "gnu", buildType: "Debug", asan: false, baseline: false, linuxSysroot: "/fake" },
+      {
+        os: "linux",
+        arch: "x64",
+        abi: "gnu",
+        buildType: "Debug",
+        webkit: "prebuilt",
+        asan: false,
+        baseline: false,
+        linuxSysroot: "/fake",
+      },
       mockToolchain(),
     );
     expect(prebuiltUrlOf(cfg)).toBe(

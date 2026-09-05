@@ -134,7 +134,8 @@ describe("emitPostLink ninja ordering", () => {
     expect(dsym).toBe(resolve(buildDir, "bun-profile.dSYM"));
     expect(buildEdge(out, "dsymutil")).toBe("build bun-profile.dSYM: dsymutil bun-profile || bun");
     // Cross-compile: smoke_test short-circuits to a `check` phony (the
-    // binary can't run on this host), so the strip race can't happen there.
-    expect(buildEdge(out, "phony")).toBe("build check: phony bun-profile");
+    // binary can't run on this host), so the strip race can't happen there;
+    // the ClassInfo canary (llvm-nm over the binary) runs on any host.
+    expect(buildEdge(out, "phony")).toBe("build check: phony bun-profile bun-profile.classinfo-unique");
   });
 });

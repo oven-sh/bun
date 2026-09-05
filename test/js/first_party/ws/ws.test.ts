@@ -3,7 +3,7 @@ import { spawn } from "bun";
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import crypto from "crypto";
 import { EventEmitter, once } from "events";
-import { bunEnv, bunExe, isDebug } from "harness";
+import { bunEnv, bunExe, isDebug, isWindows } from "harness";
 import { createServer } from "http";
 import { AddressInfo, connect } from "net";
 import path from "node:path";
@@ -1460,5 +1460,346 @@ describe("module loading", () => {
     // HTTPParser structures at load time, this test needs a new marker.
     expect(JSON.parse(stdout)).toEqual({ afterWs: 0, httpMarkerWorks: true });
     expect(exitCode).toBe(0);
+  });
+});
+
+// The server side socket sits on top of the Bun.serve websocket callbacks, and
+// uws runs the close callback from inside ws.close()/ws.terminate(). These
+// tests pin the npm ws lifecycle on top of that: CLOSING right after close(),
+// 'close' emitted later with a Buffer reason, send() after close still calling
+// back, and queued messages going out before the Close frame.
+describe("server socket close lifecycle", () => {
+  // A masked client frame (RFC 6455 5.3); an all-zero key leaves the payload as is.
+  function clientFrame(opcode: number, payload: Buffer | string): Buffer {
+    const data = Buffer.from(payload);
+    return Buffer.concat([Buffer.from([0x80 | opcode, 0x80 | data.length, 0, 0, 0, 0]), data]);
+  }
+
+  const textFrame = clientFrame(0x1, "x");
+  const closeFrame4444 = clientFrame(0x8, Buffer.concat([Buffer.from([0x11, 0x5c]), Buffer.from("other")]));
+
+  // Connects a raw TCP client and completes the handshake, so the server side
+  // sees exactly the bytes each test writes. `rest` holds any frame bytes that
+  // arrived in the same chunk as the handshake response. Disposing it destroys
+  // the connection, which also takes the server side socket down.
+  async function rawClient(
+    wss: WebSocketServer,
+  ): Promise<{ socket: ReturnType<typeof connect>; rest: Buffer } & Disposable> {
+    const { port } = wss.address() as AddressInfo;
+    const socket = connect({ port, host: "127.0.0.1" });
+    socket.on("error", () => {});
+    const { promise, resolve, reject } = Promise.withResolvers<Buffer>();
+    let response = "";
+    const onData = (data: Buffer) => {
+      response += data.toString("latin1");
+      const end = response.indexOf("\r\n\r\n");
+      if (end === -1) return;
+      socket.off("data", onData);
+      if (response.startsWith("HTTP/1.1 101 ")) resolve(Buffer.from(response.slice(end + 4), "latin1"));
+      else reject(new Error(`upgrade failed: ${response}`));
+    };
+    socket.on("data", onData);
+    socket.once("close", () => reject(new Error("socket closed before the upgrade completed")));
+    socket.write(
+      "GET / HTTP/1.1\r\n" +
+        `Host: 127.0.0.1:${port}\r\n` +
+        "Upgrade: websocket\r\n" +
+        "Connection: Upgrade\r\n" +
+        "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n" +
+        "Sec-WebSocket-Version: 13\r\n\r\n",
+    );
+    const rest = await promise;
+    return { socket, rest, [Symbol.dispose]: () => socket.destroy() };
+  }
+
+  // Everything the server writes after the handshake, once it has closed the connection.
+  function wireBytes({ socket, rest }: Awaited<ReturnType<typeof rawClient>>): Promise<Buffer> {
+    const chunks = [rest];
+    socket.on("data", chunk => chunks.push(chunk));
+    return new Promise(resolve => socket.once("end", () => resolve(Buffer.concat(chunks))));
+  }
+
+  function closeEvent(ws: WebSocket): Promise<{ code: number; reason: Buffer; readyState: number }> {
+    return new Promise(resolve =>
+      ws.once("close", (code, reason) => resolve({ code, reason, readyState: ws.readyState })),
+    );
+  }
+
+  function sendResult(ws: WebSocket, data: string | Buffer): Promise<string> {
+    return new Promise(resolve => ws.send(data, err => resolve(err ? err.message : "ok")));
+  }
+
+  it("close() leaves the socket CLOSING, then emits 'close' to a listener added after it", async () => {
+    const wss = new WebSocketServer({ port: 0 });
+    try {
+      const { promise, resolve, reject } = Promise.withResolvers<Record<string, unknown>>();
+      wss.on("connection", ws => {
+        ws.on("message", async () => {
+          try {
+            ws.close(4000, "bye");
+            expect(ws.readyState).toBe(WebSocket.CLOSING);
+            const closed = closeEvent(ws);
+            const lateSend = sendResult(ws, "late");
+            const bufferedAmount = ws.bufferedAmount;
+            resolve({ ...(await closed), lateSend: await lateSend, bufferedAmount, clients: wss.clients.size });
+          } catch (err) {
+            reject(err);
+          }
+        });
+      });
+
+      using client = await rawClient(wss);
+      client.socket.write(textFrame);
+      expect(await promise).toEqual({
+        code: 4000,
+        reason: Buffer.from("bye"),
+        readyState: WebSocket.CLOSED,
+        lateSend: "WebSocket is not open: readyState 2 (CLOSING)",
+        bufferedAmount: 4,
+        clients: 0,
+      });
+    } finally {
+      wss.close();
+    }
+  });
+
+  // 'connection' is emitted from inside the HTTP upgrade handler. Rejecting a
+  // client right there is the common case for a listener added after close().
+  it("close() inside the 'connection' handler emits 'close' to a listener added after it", async () => {
+    const wss = new WebSocketServer({ port: 0 });
+    try {
+      const { promise, resolve, reject } = Promise.withResolvers<Record<string, unknown>>();
+      wss.on("connection", async ws => {
+        try {
+          ws.close(4001, "unauthorized");
+          expect(ws.readyState).toBe(WebSocket.CLOSING);
+          resolve(await closeEvent(ws));
+        } catch (err) {
+          reject(err);
+        }
+      });
+
+      using client = await rawClient(wss);
+      const wire = wireBytes(client);
+      const seen = await promise;
+      const bytes = await wire;
+      expect({ ...seen, closeFrameHeader: [...bytes.subarray(0, 2)] }).toEqual({
+        code: 4001,
+        reason: Buffer.from("unauthorized"),
+        readyState: WebSocket.CLOSED,
+        // a Close frame with the 2 byte code and the 12 byte reason
+        closeFrameHeader: [0x88, 14],
+      });
+    } finally {
+      wss.close();
+    }
+  });
+
+  it("terminate() leaves the socket CLOSING, then emits 'close' with 1006", async () => {
+    const wss = new WebSocketServer({ port: 0 });
+    try {
+      const { promise, resolve, reject } = Promise.withResolvers<Record<string, unknown>>();
+      wss.on("connection", ws => {
+        ws.on("message", async () => {
+          try {
+            ws.terminate();
+            expect(ws.readyState).toBe(WebSocket.CLOSING);
+            resolve(await closeEvent(ws));
+          } catch (err) {
+            reject(err);
+          }
+        });
+      });
+
+      using client = await rawClient(wss);
+      client.socket.write(textFrame);
+      expect(await promise).toEqual({ code: 1006, reason: Buffer.alloc(0), readyState: WebSocket.CLOSED });
+    } finally {
+      wss.close();
+    }
+  });
+
+  it("a Close frame from the peer emits 'close' with its code and a Buffer reason", async () => {
+    const wss = new WebSocketServer({ port: 0 });
+    try {
+      const { promise, resolve, reject } = Promise.withResolvers<Record<string, unknown>>();
+      wss.on("connection", ws => {
+        ws.on("close", async (code, reason) => {
+          try {
+            expect({ code, reason, readyState: ws.readyState }).toEqual({
+              code: 4444,
+              reason: Buffer.from("other"),
+              readyState: WebSocket.CLOSED,
+            });
+            resolve({ lateSend: await sendResult(ws, "late") });
+          } catch (err) {
+            reject(err);
+          }
+        });
+      });
+
+      using client = await rawClient(wss);
+      client.socket.write(closeFrame4444);
+      expect(await promise).toEqual({ lateSend: "WebSocket is not open: readyState 3 (CLOSED)" });
+    } finally {
+      wss.close();
+    }
+  });
+
+  // Bun.serve drops a message once 16 MiB is buffered; the shim queues it for
+  // the drain callback. Skipped on Windows like the backpressure tests in
+  // test/js/bun/websocket: Winsock's loopback takes the whole payload into the
+  // kernel, so nothing ever builds up in user space.
+  it.skipIf(isWindows)("close() sends the queued messages from drain before the Close frame", async () => {
+    const wss = new WebSocketServer({ port: 0 });
+    try {
+      const connected = Promise.withResolvers<WebSocket>();
+      wss.on("connection", ws => connected.resolve(ws));
+
+      using client = await rawClient(wss);
+      client.socket.pause();
+      const ws = await connected.promise;
+
+      const payload = Buffer.alloc(1024 * 1024, "a");
+      const frameLength = payload.length + 10;
+      // 16 MiB limit plus whatever the loopback kernel buffers take (under 8 MiB).
+      const frames = 26;
+      const sends: string[] = [];
+      for (let i = 0; i < frames; i++) ws.send(payload, err => sends.push(err ? err.message : "ok"));
+
+      ws.close(4000, "done");
+      const readyStateAfterClose = ws.readyState;
+      let closed: unknown = "not emitted";
+      ws.on("close", (code, reason) => (closed = { code, reason, readyState: ws.readyState }));
+
+      const wire = wireBytes(client);
+      client.socket.resume();
+      const bytes = await wire;
+
+      const closeFrame = Buffer.concat([Buffer.from([0x88, 6, 0x0f, 0xa0]), Buffer.from("done")]);
+      expect({
+        readyStateAfterClose,
+        sends,
+        closeFrameAt: bytes.indexOf(closeFrame),
+        totalBytes: bytes.length,
+        closed,
+        bufferedAmount: ws.bufferedAmount,
+      }).toEqual({
+        readyStateAfterClose: WebSocket.CLOSING,
+        sends: Array(frames).fill("ok"),
+        closeFrameAt: frames * frameLength,
+        totalBytes: frames * frameLength + closeFrame.length,
+        closed: { code: 4000, reason: Buffer.from("done"), readyState: WebSocket.CLOSED },
+        bufferedAmount: 0,
+      });
+    } finally {
+      wss.close();
+    }
+  });
+
+  it.skipIf(isWindows)("terminate() with messages still queued fails their callbacks", async () => {
+    const wss = new WebSocketServer({ port: 0 });
+    try {
+      const connected = Promise.withResolvers<WebSocket>();
+      wss.on("connection", ws => connected.resolve(ws));
+
+      using client = await rawClient(wss);
+      client.socket.pause();
+      const ws = await connected.promise;
+
+      const payload = Buffer.alloc(1024 * 1024, "a");
+      const frames = 26;
+      const sends: string[] = [];
+      for (let i = 0; i < frames; i++) ws.send(payload, err => sends.push(err ? err.message : "ok"));
+
+      const closed = closeEvent(ws);
+      ws.close(4000, "never sent");
+      // waits for the queue, so the socket is still there to terminate
+      expect(ws.readyState).toBe(WebSocket.CLOSING);
+      const lateSend = sendResult(ws, "late");
+      ws.terminate();
+
+      const notOpen = "WebSocket is not open: readyState 2 (CLOSING)";
+      expect({
+        closed: await closed,
+        lateSend: await lateSend,
+        callbacks: sends.length,
+        failed: sends.filter(result => result === notOpen).length > 0,
+        other: sends.filter(result => result !== "ok" && result !== notOpen),
+        // only the late send() still counts, the queued messages are gone
+        bufferedAmount: ws.bufferedAmount,
+      }).toEqual({
+        closed: { code: 1006, reason: Buffer.alloc(0), readyState: WebSocket.CLOSED },
+        lateSend: notOpen,
+        callbacks: frames,
+        failed: true,
+        other: [],
+        bufferedAmount: 4,
+      });
+    } finally {
+      wss.close();
+    }
+  });
+
+  it.skipIf(isWindows)("bufferedAmount includes what the native socket has buffered", async () => {
+    const wss = new WebSocketServer({ port: 0 });
+    try {
+      const connected = Promise.withResolvers<WebSocket>();
+      wss.on("connection", ws => connected.resolve(ws));
+
+      using client = await rawClient(wss);
+      client.socket.pause();
+      const ws = await connected.promise;
+      expect(ws.bufferedAmount).toBe(0);
+
+      const payload = Buffer.alloc(1024 * 1024, "a");
+      let frames = 0;
+      while (ws.bufferedAmount === 0 && frames < 8) {
+        ws.send(payload);
+        frames++;
+      }
+      const buffered = ws.bufferedAmount;
+      expect(buffered).toBeGreaterThan(0);
+      expect(buffered).toBeLessThanOrEqual(frames * (payload.length + 10));
+
+      const expectedBytes = frames * (payload.length + 10);
+      let received = client.rest.length;
+      const { promise: delivered, resolve } = Promise.withResolvers<void>();
+      client.socket.on("data", chunk => {
+        received += chunk.length;
+        if (received >= expectedBytes) resolve();
+      });
+      client.socket.resume();
+      await delivered;
+
+      expect({ received, bufferedAmount: ws.bufferedAmount }).toEqual({ received: expectedBytes, bufferedAmount: 0 });
+    } finally {
+      wss.close();
+    }
+  });
+
+  // The native send() reports the bytes written, so a delivered empty frame
+  // returns 0 just like a message dropped at the backpressure limit.
+  it("send() of an empty payload calls back without an error and goes out once", async () => {
+    const wss = new WebSocketServer({ port: 0 });
+    try {
+      const sends: string[] = [];
+      wss.on("connection", ws => {
+        ws.send("", err => sends.push(err ? err.message : "text ok"));
+        ws.send(Buffer.alloc(0), err => sends.push(err ? err.message : "binary ok"));
+        ws.close();
+      });
+
+      using client = await rawClient(wss);
+      const bytes = await wireBytes(client);
+      expect({ sends, dataFrames: bytes.subarray(0, 4).toString("hex"), then: bytes[4] }).toEqual({
+        sends: ["text ok", "binary ok"],
+        // an empty text frame, an empty binary frame, then the Close frame
+        dataFrames: "81008200",
+        then: 0x88,
+      });
+    } finally {
+      wss.close();
+    }
   });
 });

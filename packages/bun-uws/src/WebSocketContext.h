@@ -369,8 +369,13 @@ private:
             auto *webSocketContextData = getExtS(s);
             if (webSocketContextData->drainHandler) {
                 webSocketContextData->drainHandler((WebSocket<SSL, isServer, USERDATA> *) s);
+
+                /* Bun runs the handler corked, so an end() in there wrote the close frame on uncork
+                 * and left the FIN to us, the same way onData handles an end() during consume() */
+                if (!us_socket_is_closed(s) && webSocketData->isShuttingDown && asyncSocket->getBufferedAmount() == 0) {
+                    asyncSocket->shutdown();
+                }
             }
-            /* No need to check for closed here as we leave the handler immediately*/
         }
 
         return s;

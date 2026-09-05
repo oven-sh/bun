@@ -143,6 +143,19 @@ function controlPayload(binaryType, data) {
   return binaryType === "arraybuffer" ? Buffer.from(data) : data;
 }
 
+function payloadByteLength(data) {
+  if (typeof data === "string") return Buffer.byteLength(data);
+  if (data == null) return 0;
+  const byteLength = data.byteLength ?? data.size;
+  // anything else goes out as the text frame of its string form
+  return typeof byteLength === "number" ? byteLength : Buffer.byteLength(String(data));
+}
+
+// ServerWebSocket.send() returns the bytes written (-1 once buffered), so 0 is a drop unless the frame was empty.
+function wasDropped(bytesWritten, data) {
+  return bytesWritten === 0 && payloadByteLength(data) !== 0;
+}
+
 // https://github.com/oven-sh/bun/issues/11866
 let WebSocket;
 
@@ -990,6 +1003,8 @@ class BunWebSocketMocked extends EventEmitter {
   #ws;
   #state;
   #enquedMessages = [];
+  // [code, reason] of a close() that waits for the queued messages to go out first.
+  #pendingClose = null;
   #url;
   #protocol;
   #extensions;
@@ -1067,27 +1082,50 @@ class BunWebSocketMocked extends EventEmitter {
     this.#drain(ws);
   }
 
+  // Runs synchronously inside ws.close() and ws.terminate() as well, hence the deferred 'close'.
   #close(ws, code, reason) {
-    this.#state = ReadyState_CLOSED;
+    this.#state = ReadyState_CLOSING;
     this.#ws = null;
+    this.#pendingClose = null;
 
-    this.emit("close", code, reason);
+    const undelivered = this.#enquedMessages;
+    if (undelivered.length) {
+      this.#enquedMessages = [];
+      for (const [, , cb, byteLength] of undelivered) {
+        this.#bufferedAmount -= byteLength;
+        sendAfterClose(ReadyState_CLOSING, cb);
+      }
+    }
+
+    process.nextTick(() => {
+      this.#state = ReadyState_CLOSED;
+      this.emit("close", code, Buffer.from(reason));
+    });
+  }
+
+  #enqueue(data, compress, cb) {
+    const byteLength = payloadByteLength(data);
+    this.#bufferedAmount += byteLength;
+    this.#enquedMessages.push([data, compress, cb, byteLength]);
   }
 
   #drain(ws) {
-    let chunk;
-    while ((chunk = this.#enquedMessages[0]) && this.#state === 1) {
-      const [data, compress, cb] = chunk;
-      const written = ws.send(data, compress);
-      if (written < 1) {
-        // backpressure wait until next drain event
-        return;
-      }
+    const queue = this.#enquedMessages;
+    while (queue.length) {
+      const [data, compress, cb, byteLength] = queue[0];
+      // still over the backpressure limit, wait for the next drain event
+      if (wasDropped(ws.send(data, compress), data)) return;
 
-      this.#bufferedAmount -= chunk.length;
-      this.#enquedMessages.shift();
+      queue.shift();
+      this.#bufferedAmount -= byteLength;
+      if (typeof cb === "function") process.nextTick(cb);
+    }
 
-      if (typeof cb === "function") queueMicrotask(cb);
+    // Over the backpressure limit uws drops the Close frame and cuts the connection: close once all data is out.
+    const pendingClose = this.#pendingClose;
+    if (pendingClose !== null && ws.getBufferedAmount() === 0) {
+      this.#pendingClose = null;
+      ws.close(pendingClose[0], pendingClose[1]);
     }
   }
 
@@ -1145,35 +1183,34 @@ class BunWebSocketMocked extends EventEmitter {
       opts = undefined;
     }
 
-    if (this.#state === ReadyState_OPEN) {
+    const state = this.#state;
+    data = normalizeData(data, opts);
+
+    if (state === ReadyState_OPEN) {
       const compress = opts?.compress;
-      data = normalizeData(data, opts);
-      // send returns:
-      // 1+ - The number of bytes sent is always the byte length of the data never less
-      // 0 - dropped due to backpressure (not sent)
-      // -1 - enqueue the data internaly
-      // we dont need to do anything with the return value here
-      const written = this.#ws.send(data, compress);
-      if (written === 0) {
-        // dropped
-        this.#enquedMessages.push([data, compress, cb]);
-        this.#bufferedAmount += data.length;
+      if (wasDropped(this.#ws.send(data, compress), data)) {
+        // goes out from #drain
+        this.#enqueue(data, compress, cb);
         return;
       }
 
       if (typeof cb === "function") process.nextTick(cb);
-    } else if (this.#state === ReadyState_CONNECTING) {
+    } else if (state === ReadyState_CONNECTING) {
       // not connected yet
-      this.#enquedMessages.push([data, opts?.compress, cb]);
-      this.#bufferedAmount += data.length;
+      this.#enqueue(data, opts?.compress, cb);
+    } else {
+      // npm ws, like the WHATWG API, still counts these bytes in bufferedAmount.
+      this.#bufferedAmount += payloadByteLength(data);
+      sendAfterClose(state, cb);
     }
   }
 
   close(code, reason) {
-    if (this.#state === ReadyState_OPEN) {
-      this.#state = ReadyState_CLOSING;
-      this.#ws.close(code, reason);
-    }
+    if (this.#state !== ReadyState_OPEN) return;
+    this.#state = ReadyState_CLOSING;
+    this.#pendingClose = [code, reason];
+    // Sends the Close frame right away unless messages are still on their way out.
+    this.#drain(this.#ws);
   }
 
   terminate() {
@@ -1230,7 +1267,8 @@ class BunWebSocketMocked extends EventEmitter {
   }
 
   get bufferedAmount() {
-    return this.#bufferedAmount ?? 0;
+    const ws = this.#ws;
+    return (ws ? ws.getBufferedAmount() : 0) + this.#bufferedAmount;
   }
   /**
    * Set up the socket and the internal resources.

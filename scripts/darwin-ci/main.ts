@@ -23,8 +23,9 @@ const usage = `usage:
   main.ts setup-user                                                    create the auto-login ${config.ciUser} user
   main.ts bake [--base <image>] [--ref <bun ref>]                       build ${config.tart.image} (run as ${config.ciUser})
   main.ts install-agent [--release N] [--spawn N]                       write agent config and launchd jobs
+  main.ts install-self                                                  refresh ${config.installDir} from this checkout
 
-provision, setup-user and install-agent need passwordless sudo.`;
+provision, setup-user, install-agent and install-self need passwordless sudo.`;
 
 const { positionals, values } = parseArgs({
   allowPositionals: true,
@@ -52,6 +53,9 @@ switch (subcommand) {
     break;
   case "install-agent":
     await installTartAgent(agentOptions);
+    break;
+  case "install-self":
+    await installSelf();
     break;
   default:
     fail(usage);

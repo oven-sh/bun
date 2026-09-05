@@ -1965,6 +1965,10 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             return self.on_listen_failed();
         };
         self.listener = Some(socket);
+        // `None` for a unix socket, which has no port to fill in.
+        if let Some(port) = bun_opaque::opaque_deref_mut(socket).get_local_port() {
+            self.base_url_string_for_joining = self.config.base_url_string_for_joining(Some(port));
+        }
         // SAFETY: `vm_mut()` is the process-static `*mut VirtualMachine` (non-null
         // for the server's lifetime); single-threaded JS context.
         unsafe { (*self.vm_mut()).event_loop_handle = Some(bun_io::Loop::get()) };
@@ -2076,6 +2080,9 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             self.h3_alt_svc = format!("h3=\":{port}\"; ma=86400")
                 .into_bytes()
                 .into_boxed_slice();
+            // The only listener when `http1: false`; otherwise it shares the
+            // TCP listener's port and this repeats what `on_listen` did.
+            self.base_url_string_for_joining = self.config.base_url_string_for_joining(Some(port));
         }
         // An `http3_server` feature counter is not (yet) declared in
         // `bun_analytics`. No-op until it is.
@@ -2141,10 +2148,8 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
     where
         Self: ServerPools<SSL, DEBUG>,
     {
-        let base_url: Box<[u8]> = bun_core::trim(&config.base_uri, b"/")
-            .to_vec()
-            .into_boxed_slice();
-        // `base_url` drops on Err automatically.
+        // Re-derived in `on_listen` / `on_h3_listen` once the bound port is known.
+        let base_url = config.base_url_string_for_joining(None);
 
         let server = bun_core::heap::into_raw(Box::new(Self {
             global_this: std::ptr::from_ref(global),

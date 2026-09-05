@@ -352,6 +352,102 @@ describe.concurrent("Server", () => {
     }
   });
 
+  describe("server.fetch() with a relative URL uses the port the server bound", () => {
+    // Each server is started with port 0, so the base URL built from the config
+    // says ":0" until the listener reports the port the kernel picked.
+    const echoUrl = (req: Request) => new Response(req.url);
+    const fetchRelative = async (server: Server<undefined>, path: string) => {
+      const response = await server.fetch(path);
+      const url = new URL(await response.text());
+      return { protocol: url.protocol, hostname: url.hostname, port: url.port, pathname: url.pathname };
+    };
+
+    test("default hostname", async () => {
+      using server = Bun.serve({ port: 0, fetch: echoUrl });
+      expect(await fetchRelative(server, "/relative?q=1")).toEqual({
+        protocol: "http:",
+        hostname: "0.0.0.0",
+        port: String(server.port),
+        pathname: "/relative",
+      });
+    });
+
+    test("explicit hostname", async () => {
+      using server = Bun.serve({ port: 0, hostname: "127.0.0.1", fetch: echoUrl });
+      expect(await fetchRelative(server, "/relative")).toEqual({
+        protocol: "http:",
+        hostname: "127.0.0.1",
+        port: String(server.port),
+        pathname: "/relative",
+      });
+    });
+
+    test("tls", async () => {
+      using server = Bun.serve({ port: 0, hostname: "127.0.0.1", tls, fetch: echoUrl });
+      expect(await fetchRelative(server, "/relative")).toEqual({
+        protocol: "https:",
+        hostname: "127.0.0.1",
+        port: String(server.port),
+        pathname: "/relative",
+      });
+    });
+
+    test("http3 without an http1 listener", async () => {
+      using server = Bun.serve({ port: 0, hostname: "127.0.0.1", tls, http3: true, http1: false, fetch: echoUrl });
+      expect(await fetchRelative(server, "/relative")).toEqual({
+        protocol: "https:",
+        hostname: "127.0.0.1",
+        port: String(server.port),
+        pathname: "/relative",
+      });
+    });
+
+    test("baseURI without a scheme takes the scheme and port from the server", async () => {
+      // @ts-expect-error baseURI is undocumented
+      using server = Bun.serve({ port: 0, baseURI: "example.com/api/", fetch: echoUrl });
+      expect(await fetchRelative(server, "/relative")).toEqual({
+        protocol: "http:",
+        hostname: "example.com",
+        port: String(server.port),
+        pathname: "/api/relative",
+      });
+    });
+
+    test("baseURI with a scheme is used as written", async () => {
+      // @ts-expect-error baseURI is undocumented
+      using server = Bun.serve({ port: 0, baseURI: "https://example.com/api/", fetch: echoUrl });
+      expect(await fetchRelative(server, "/relative")).toEqual({
+        protocol: "https:",
+        hostname: "example.com",
+        port: "",
+        pathname: "/api/relative",
+      });
+    });
+
+    test("bun --port 0", async () => {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "--port",
+          "0",
+          "-e",
+          `using server = Bun.serve({ fetch: req => new Response(req.url) });
+           const url = new URL(await (await server.fetch("/relative")).text());
+           console.log(JSON.stringify({ port: server.port, url: { hostname: url.hostname, port: url.port, pathname: url.pathname } }));`,
+        ],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      const { port, url } = JSON.parse(stdout);
+      expect(port).toBeGreaterThan(0);
+      expect(url).toEqual({ hostname: "localhost", port: String(port), pathname: "/relative" });
+      expect(exitCode).toBe(0);
+    });
+  });
+
   test("server should return a body for a OPTIONS Request", async () => {
     using server = Bun.serve({
       port: 0,

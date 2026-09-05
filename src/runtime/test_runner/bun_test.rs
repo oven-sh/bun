@@ -868,6 +868,19 @@ impl BunTest {
             match (*this).phase {
                 Phase::Collection => {}
                 Phase::Execution => {
+                    if let Some(deadline) = (*this).execution.defers_timeout_to_matcher_wait() {
+                        // The wait fails the entry itself at its deadline. Come back for the rest of
+                        // the timeout handling once it has.
+                        (*this).execution.kill_dangling_processes_on_timeout(global);
+                        let now = Timespec::now_force_real_time();
+                        let wake = if deadline.order(&now) == core::cmp::Ordering::Greater {
+                            deadline
+                        } else {
+                            now.add_ms(1)
+                        };
+                        (*this).update_min_timeout(global, &wake);
+                        return;
+                    }
                     if let Err(e) = (*this).execution.handle_timeout(global) {
                         (*this).on_uncaught_exception(global, Some(global.take_exception(e)), false, &RefDataValue::Done);
                     }
@@ -1511,6 +1524,205 @@ impl RefData {
     }
 }
 
+/// What ends a matcher's wait for a promise (`.resolves`, `toThrow()` on an async function, an async
+/// `expect.extend` matcher) short of it settling; polled between the wait's ticks, since a promise
+/// that never settles has to fail the entry with its timeout. Attributed the way `expect()` itself is.
+pub(crate) struct WaitingEntry {
+    buntest: BunTestPtr,
+    ends_when: EndsWhen,
+    /// `Some` when this wait pushed its claim into `Execution::matcher_wait_claim`: the next-outer
+    /// wait's claim, restored on drop.
+    shadowed_claim: Option<Option<RefDataValue>>,
+}
+
+/// Why a [`WaitingEntry`] gave up. The matcher's error names it.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) enum GaveUp {
+    /// The entry's deadline passed. Its sequence is already marked timed out, so the completion the
+    /// matcher's error produces reports it like a synchronous overrun does.
+    TimedOut,
+    /// The runner is past the entry (or the file) for another reason; nothing will settle the promise
+    /// on this entry's behalf any more.
+    TestEnded,
+}
+
+impl GaveUp {
+    pub(crate) fn when(self) -> &'static str {
+        match self {
+            GaveUp::TimedOut => "timed out",
+            GaveUp::TestEnded => "ended",
+        }
+    }
+}
+
+/// Every variant watches the clock rather than the file timer: the timer fires only from a poll that
+/// wakes (and on Windows not from a tick nested inside a timer callback at all), and for the first two
+/// it can do nothing anyway, `BunTest::run` (re-entrancy guarded) being blocked behind the callback
+/// they hold on the stack.
+enum EndsWhen {
+    /// The on-stack callback's own code; once the matcher throws, the runner evaluates its overrun as usual.
+    EntryTimedOut(NonNull<ExecutionEntry>),
+    /// The on-stack callback is itself blocked in a matcher, so this is some continuation of the group,
+    /// which one unknown: done once every entry still executing in it has timed out.
+    GroupTimedOut,
+    /// A continuation of this entry, the runner live. Done at the entry's deadline, which the timer
+    /// callback leaves to this wait (`Execution::matcher_wait_claim`) so that the error lands
+    /// on the entry; if the runner moves past the entry anyway, once the file is done.
+    Continuation(RefDataValue),
+    /// A continuation of some entry of this concurrent group, which one unknown: done once every entry
+    /// still executing in it has timed out (the timer callback leaves the last one's deadline to this
+    /// wait as above), or the group is over.
+    GroupOver(usize),
+}
+
+impl WaitingEntry {
+    /// `None` outside a test file's execution phase (plain scripts, preloads, describe callbacks): no timeouts there.
+    pub(crate) fn current() -> Option<Self> {
+        let buntest = clone_active_strong()?;
+        let execution = &buntest.execution;
+        let ends_when = match execution.on_stack_entry.get() {
+            Some(entry) if execution.blocking_matcher_waits.get() == 0 => EndsWhen::EntryTimedOut(entry),
+            Some(_) => EndsWhen::GroupTimedOut,
+            None => match buntest.get_current_state_data() {
+                RefDataValue::Execution { group_index, entry_data: None } => EndsWhen::GroupOver(group_index),
+                RefDataValue::Collection { .. } => return None,
+                data @ (RefDataValue::Execution { entry_data: Some(_), .. }
+                | RefDataValue::Done
+                | RefDataValue::Start) => EndsWhen::Continuation(data),
+            },
+        };
+        let shadowed_claim = match &ends_when {
+            EndsWhen::EntryTimedOut(_) | EndsWhen::GroupTimedOut => {
+                execution.blocking_matcher_waits.set(execution.blocking_matcher_waits.get() + 1);
+                None
+            }
+            EndsWhen::Continuation(data) => Some(execution.matcher_wait_claim.replace(Some(*data))),
+            EndsWhen::GroupOver(group_index) => Some(execution.matcher_wait_claim.replace(Some(
+                RefDataValue::Execution { group_index: *group_index, entry_data: None },
+            ))),
+        };
+        Some(WaitingEntry { buntest, ends_when, shadowed_claim })
+    }
+
+    pub(crate) fn gave_up(&self, global_this: &JSGlobalObject) -> Option<GaveUp> {
+        let now = Timespec::now_force_real_time();
+        match &self.ends_when {
+            EndsWhen::EntryTimedOut(entry) => {
+                // SAFETY: entries live as long as the BunTest, which `self.buntest` keeps alive.
+                let entry = unsafe { entry.as_ref() };
+                if entry.has_timed_out(&now) {
+                    return Some(GaveUp::TimedOut);
+                }
+                self.wake_at(global_this, &entry.timespec);
+                None
+            }
+            EndsWhen::GroupTimedOut => {
+                let mut soonest = Timespec::EPOCH;
+                if self.every_executing_entry_timed_out(&now, &mut soonest) {
+                    self.mark_executing_entries_timed_out(&now);
+                    return Some(GaveUp::TimedOut);
+                }
+                self.wake_at(global_this, &soonest);
+                None
+            }
+            EndsWhen::Continuation(data) => {
+                let buntest = self.buntest.get();
+                if buntest.phase == Phase::Done {
+                    return Some(GaveUp::TestEnded);
+                }
+                // `None`: the runner is past the entry, which completed without this wait (it was
+                // never awaited). Its promise may still settle while the file runs; the file's end
+                // bounds the wait.
+                let (sequence, _) = buntest.execution.get_current_and_valid_execution_sequence(data)?;
+                // SAFETY: `sequence` points into `execution.sequences` and its `active_entry` is a
+                // live arena node; both outlive this call, which re-enters nothing.
+                let sequence = unsafe { &mut *sequence.as_ptr() };
+                // SAFETY: as above.
+                let entry = unsafe { sequence.active_entry?.as_ref() };
+                if entry.evaluate_timeout(sequence, &now) {
+                    return Some(GaveUp::TimedOut);
+                }
+                self.wake_at(global_this, &entry.timespec);
+                None
+            }
+            EndsWhen::GroupOver(group_index) => {
+                if *group_index != self.buntest.execution.group_index {
+                    return Some(GaveUp::TestEnded);
+                }
+                let mut soonest = Timespec::EPOCH;
+                if self.every_executing_entry_timed_out(&now, &mut soonest) {
+                    self.mark_executing_entries_timed_out(&now);
+                    return Some(GaveUp::TimedOut);
+                }
+                self.wake_at(global_this, &soonest);
+                None
+            }
+        }
+    }
+
+    /// Whether every entry still executing in the active group is past its deadline; `soonest`
+    /// receives the earliest deadline of those that are not.
+    fn every_executing_entry_timed_out(&self, now: &Timespec, soonest: &mut Timespec) -> bool {
+        let execution = &self.buntest.execution;
+        execution.active_group_ref().is_none_or(|group| {
+            group
+                .sequences(execution)
+                .iter()
+                .filter(|sequence| sequence.executing)
+                .all(|sequence| {
+                    sequence.active_entry.is_some_and(|entry| {
+                        // SAFETY: entries live as long as the BunTest, which `self.buntest` keeps alive.
+                        let entry = unsafe { entry.as_ref() };
+                        if entry.has_timed_out(now) {
+                            return true;
+                        }
+                        *soonest = soonest.min_ignore_epoch(entry.timespec);
+                        false
+                    })
+                })
+        })
+    }
+
+    /// What `evaluate_timeout` does when the runner re-steps the group, done ahead of the failure the
+    /// matcher's error is about to produce so that the completion reports the entry as timed out. The
+    /// runner advances the sequence when that completion reaches it.
+    fn mark_executing_entries_timed_out(&self, now: &Timespec) {
+        let execution = &mut self.buntest.get().execution;
+        let Some(group) = execution.active_group_ref() else { return };
+        let (start, end) = (group.sequence_start, group.sequence_end);
+        for sequence in &mut execution.sequences[start..end] {
+            if !sequence.executing {
+                continue;
+            }
+            let Some(entry) = sequence.active_entry else { continue };
+            // SAFETY: as above.
+            let _ = unsafe { entry.as_ref() }.evaluate_timeout(sequence, now);
+        }
+    }
+
+    /// The wait's next poll must wake by `deadline`. The file timer is armed for it when the entry
+    /// starts, but an earlier entry's timer firing underneath this wait disarms it, and `BunTest::run`,
+    /// which re-arms, is blocked behind the callback this wait holds on the stack.
+    fn wake_at(&self, global_this: &JSGlobalObject, deadline: &Timespec) {
+        if deadline.eql(&Timespec::EPOCH) {
+            return;
+        }
+        self.buntest.get().update_min_timeout(global_this, deadline);
+    }
+}
+
+impl Drop for WaitingEntry {
+    fn drop(&mut self) {
+        let execution = &self.buntest.execution;
+        match self.shadowed_claim {
+            Some(previous) => execution.matcher_wait_claim.set(previous),
+            None => execution
+                .blocking_matcher_waits
+                .set(execution.blocking_matcher_waits.get() - 1),
+        }
+    }
+}
+
 pub struct RunTestsTask {
     pub(crate) weak: BunTestPtrWeak,
     // `GlobalRef` (not a borrow): the JSGlobalObject is stored across the task
@@ -1925,12 +2137,17 @@ impl ExecutionEntry {
         entry
     }
 
+    /// Never true for an entry running without a timeout.
+    pub(crate) fn has_timed_out(&self, now: &Timespec) -> bool {
+        !self.timespec.eql(&Timespec::EPOCH) && self.timespec.order(now) == core::cmp::Ordering::Less
+    }
+
     pub(crate) fn evaluate_timeout(
         &self,
         sequence: &mut Execution::ExecutionSequence,
         now: &Timespec,
     ) -> bool {
-        if !self.timespec.eql(&Timespec::EPOCH) && self.timespec.order(now) == core::cmp::Ordering::Less {
+        if self.has_timed_out(now) {
             // timed out
             // SAFETY: pointer-identity comparison only — no deref, no provenance laundering.
             let is_test_entry = sequence

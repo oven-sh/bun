@@ -10074,6 +10074,24 @@ declare module "bun" {
   }
 
   /**
+   * Generate a CUID2 using cryptographically secure randomness.
+   *
+   * CUID2 values are lowercase Base36 strings that begin with a letter. They
+   * are opaque and are not intended to sort by creation time.
+   *
+   * @param length Output length from 2 through 32. Defaults to 24. Shorter
+   * lengths have lower collision resistance.
+   *
+   * @example
+   * ```js
+   * import { randomCUID2 } from "bun";
+   * const id = randomCUID2();
+   * // "tz4a98xxat96iws9zmbrgj3a"
+   * ```
+   */
+  function randomCUID2(length?: number): string;
+
+  /**
    * Generate a UUIDv7, a sequential ID based on the current timestamp with a random component.
    *
    * When the same timestamp is used multiple times, a monotonically increasing

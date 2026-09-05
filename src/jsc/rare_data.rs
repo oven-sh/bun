@@ -155,6 +155,34 @@ impl EntropyCache {
     }
 }
 
+/// Mutable CUID2 generator state scoped to one JavaScript VM.
+///
+/// The fingerprint is opaque random material after CUID2's SHA3/Base36
+/// transform. Keeping it here avoids exposing host or process identifiers and
+/// gives each Worker its own generator state.
+pub struct Cuid2State {
+    fingerprint: [u8; 32],
+    counter: u64,
+}
+
+impl Cuid2State {
+    pub fn new(fingerprint: [u8; 32], counter: u64) -> Self {
+        Self {
+            fingerprint,
+            counter,
+        }
+    }
+
+    /// Return this call's fingerprint/counter pair and advance the counter.
+    /// `None` asks the high-tier implementation to reseed instead of wrapping.
+    pub fn next(&mut self) -> Option<([u8; 32], u64)> {
+        let next_counter = self.counter.checked_add(1)?;
+        let result = (self.fingerprint, self.counter);
+        self.counter = next_counter;
+        Some(result)
+    }
+}
+
 // ──────────────────────────────────────────────────────────────────────────
 // CleanupHook
 // ──────────────────────────────────────────────────────────────────────────
@@ -208,6 +236,7 @@ pub struct RareData {
     pub(crate) stdout_mode: Mode,
 
     pub(crate) entropy_cache: Option<Box<EntropyCache>>,
+    cuid2_state: Option<Cuid2State>,
 
     pub(crate) hot_map: Option<HotMap>,
 
@@ -308,6 +337,7 @@ impl Default for RareData {
             stdout_store: None,
             stdout_mode: 0,
             entropy_cache: None,
+            cuid2_state: None,
             hot_map: None,
             cleanup_hooks: Vec::new(),
             file_polls: None,
@@ -691,6 +721,9 @@ impl RareData {
     }
     pub fn entropy_slice(&mut self, len: usize) -> &mut [u8] {
         self.entropy().slice(len)
+    }
+    pub fn cuid2_state_slot(&mut self) -> &mut Option<Cuid2State> {
+        &mut self.cuid2_state
     }
     pub fn next_uuid(&mut self) -> UUID {
         let bytes = self.entropy().get();

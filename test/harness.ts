@@ -1915,6 +1915,7 @@ export class VerdaccioRegistry {
   configPath: string;
   packagesPath: string;
   users: Record<string, string> = {};
+  #stopped = false;
 
   constructor(opts?: { configPath?: string; packagesPath?: string; verbose?: boolean }) {
     this.port = randomPort();
@@ -1923,6 +1924,7 @@ export class VerdaccioRegistry {
   }
 
   async start(silent: boolean = true) {
+    this.#stopped = false;
     await rm(join(dirname(this.configPath), "htpasswd"), { force: true });
     // Bind the IPv4 loopback explicitly: a bare port makes verdaccio listen on
     // whatever `localhost` resolves to, which is `::1` on hosts that list it first,
@@ -1950,6 +1952,7 @@ export class VerdaccioRegistry {
     });
 
     this.process.on("exit", (code, signal) => {
+      if (this.#stopped) return;
       if (code !== 0) {
         console.error(`Verdaccio exited with code ${code} and signal ${signal}`);
       } else {
@@ -1971,8 +1974,9 @@ export class VerdaccioRegistry {
   }
 
   stop() {
+    this.#stopped = true;
     rmSync(join(dirname(this.configPath), "htpasswd"), { force: true });
-    this.process?.kill(0);
+    this.process?.kill();
   }
 
   /**

@@ -1890,7 +1890,14 @@ where
             return Ok(JSValue::FALSE);
         }
         if !is_valid_sec_websocket_key(sec_websocket_key.slice()) {
-            return Ok(JSValue::FALSE);
+            let allow_any_key = self
+                .config
+                .websocket
+                .as_ref()
+                .is_some_and(|ws| ws.allow_any_sec_websocket_key);
+            if !allow_any_key || sec_websocket_key.slice().is_empty() {
+                return Ok(JSValue::FALSE);
+            }
         }
         // RFC 6455 §4.4: an unsupported |Sec-WebSocket-Version| MUST be
         // answered with an HTTP error and a |Sec-WebSocket-Version| header

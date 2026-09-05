@@ -4328,6 +4328,14 @@ JSC_DEFINE_HOST_FUNCTION(Process_unref, (JSGlobalObject * globalObject, CallFram
     return JSValue::encode(jsUndefined());
 }
 
+extern "C" void Debugger__debugEnd();
+
+JSC_DEFINE_HOST_FUNCTION(Process_functionDebugEnd, (JSGlobalObject*, CallFrame*))
+{
+    Debugger__debugEnd();
+    return JSValue::encode(jsUndefined());
+}
+
 JSC_DEFINE_HOST_FUNCTION(Process_stubEmptyFunction, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
     return JSValue::encode(jsUndefined());
@@ -5070,9 +5078,10 @@ void Process::finishCreation(JSC::VM& vm)
     putDirect(vm, vm.propertyNames->toStringTagSymbol, jsString(vm, String("process"_s)), 0);
     putDirect(vm, Identifier::fromString(vm, "_exiting"_s), jsBoolean(false), 0);
 
-    // No-op stubs Node only has on the main thread; a worker_threads Worker's process lacks them.
+    // Node only has these on the main thread; a worker_threads Worker's process lacks them.
+    // _debugEnd is live (it disarms the inspector exit handshake); the rest are no-op stubs.
     if (!WebCore::clientData(vm)->isNodeWorkerVM()) {
-        putDirectNativeFunction(vm, globalObject(), Identifier::fromString(vm, "_debugEnd"_s), 0, Process_stubEmptyFunction, ImplementationVisibility::Public, NoIntrinsic, 0);
+        putDirectNativeFunction(vm, globalObject(), Identifier::fromString(vm, "_debugEnd"_s), 0, Process_functionDebugEnd, ImplementationVisibility::Public, NoIntrinsic, 0);
         putDirectNativeFunction(vm, globalObject(), Identifier::fromString(vm, "_debugProcess"_s), 0, Process_stubEmptyFunction, ImplementationVisibility::Public, NoIntrinsic, 0);
         putDirectNativeFunction(vm, globalObject(), Identifier::fromString(vm, "_startProfilerIdleNotifier"_s), 0, Process_stubEmptyFunction, ImplementationVisibility::Public, NoIntrinsic, 0);
         putDirectNativeFunction(vm, globalObject(), Identifier::fromString(vm, "_stopProfilerIdleNotifier"_s), 0, Process_stubEmptyFunction, ImplementationVisibility::Public, NoIntrinsic, 0);

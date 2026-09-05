@@ -1819,6 +1819,8 @@ impl VirtualMachine {
 
         ExitHandler::dispatch_on_exit(self);
 
+        crate::debugger::wait_for_debugger_to_disconnect(self);
+
         // process.exit() never reaches drain_microtasks; flush AutoFlusher sinks here.
         if !self.is_inside_deferred_task_queue.get() {
             self.is_inside_deferred_task_queue.set(true);

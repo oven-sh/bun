@@ -257,7 +257,7 @@ impl S3Ext for S3 {
         // private intrusive ref-count and cannot be struct-copied; the impl deep-copies
         // internally.
         use crate::webcore::s3_client::S3CredentialsExt as _;
-        S3Credentials::get_credentials_with_options(
+        let mut result = S3Credentials::get_credentials_with_options(
             self.get_credentials(),
             self.options,
             options,
@@ -265,7 +265,16 @@ impl S3Ext for S3 {
             self.storage_class,
             self.request_payer,
             global_object,
-        )
+        )?;
+        if let Some((bucket, _)) =
+            bun_jsc::webcore_types::store::s3_url_bucket_and_key(self.pathlike.slice())
+        {
+            if result.credentials.bucket.as_ref() != bucket {
+                result.credentials.bucket = Box::<[u8]>::from(bucket);
+                result.changed_credentials = true;
+            }
+        }
+        Ok(result)
     }
 
     fn unlink(

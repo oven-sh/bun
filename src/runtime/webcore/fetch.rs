@@ -1682,6 +1682,10 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
             }
         }
 
+        if let Some((bucket, _)) = bun_jsc::webcore_types::store::s3_url_bucket_and_key(url.href) {
+            credentials_with_options.credentials.bucket = Box::<[u8]>::from(bucket);
+        }
+
         if let HTTPRequestBody::ReadableStream(ref readable_stream) = body {
             // we cannot direct stream to s3 we need to use multi part upload
             // `defer body.ReadableStream.deinit()` → Drop on `body` scope exit.
@@ -1708,7 +1712,8 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
             // re-parsed URL; the slices stay valid for the buffer's lifetime.
             let url_static =
                 ZigURL::parse(unsafe { bun_ptr::detach_lifetime(&owned_buffer[..url_len]) });
-            let s3_path = url_static.s3_path();
+            let s3_path = bun_jsc::webcore_types::store::s3_url_bucket_and_key(url_static.href)
+                .map_or_else(|| url_static.s3_path(), |(_, key)| key);
 
             // Proxy href (if any) lives in the same buffer, immediately after `url`.
             let proxy_url: Option<&[u8]> = if proxy.is_some() {
@@ -1760,7 +1765,8 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
 
         let mut result = match credentials_with_options.credentials.sign_request::<false>(
             &SignOptions {
-                path: url.s3_path(),
+                path: bun_jsc::webcore_types::store::s3_url_bucket_and_key(url.href)
+                    .map_or_else(|| url.s3_path(), |(_, key)| key),
                 method,
                 ..Default::default()
             },

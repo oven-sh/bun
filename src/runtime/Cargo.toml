@@ -114,6 +114,3 @@ bun_zstd.workspace = true
 bun_install_jsc.workspace = true
 bun_patch_jsc.workspace = true
 bun_css_jsc.workspace = true
-
-[features]
-default = []

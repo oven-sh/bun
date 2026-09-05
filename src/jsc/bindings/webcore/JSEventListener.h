@@ -68,7 +68,6 @@ private:
     template<typename Visitor> void visitJSFunctionImpl(Visitor&);
     void visitJSFunction(JSC::AbstractSlotVisitor&) final;
     void visitJSFunction(JSC::SlotVisitor&) final;
-    virtual String code() const { return String(); }
 
 protected:
     enum class CreatedFromMarkup : bool { No,

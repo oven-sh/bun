@@ -1618,7 +1618,6 @@ function generateHeader(typeName, obj) {
 }
 
 function generateImpl(typeName, obj: ClassDefinition) {
-  const proto = obj.proto;
   return [
     (obj.final ?? true) ? generatePrototypeHeader(typeName, true) : null,
     !obj.noConstructor ? generateConstructorHeader(typeName).trim() + "\n" : null,

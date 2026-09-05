@@ -245,11 +245,8 @@ fn stdio_tty_flag(idx: usize) -> bool {
 // Source
 // ──────────────────────────────────────────────────────────────────────────
 
-/// `Source.StreamType` — `File` on native, a fixed-buffer stream on WASM.
-#[cfg(not(target_arch = "wasm32"))]
+/// `Source.StreamType`.
 pub type StreamType = File;
-#[cfg(target_arch = "wasm32")]
-pub type StreamType = io::FixedBufferStream; // wasm32 is not built yet; FixedBufferStream is unported.
 
 pub struct Source {
     pub(crate) stdout_buffer: [u8; 4096],
@@ -275,20 +272,7 @@ pub struct Source {
 impl Source {
     // Field-wise placeholder value for the pre-`init()` thread_local slot.
     // Every field is overwritten by `init()` before use.
-    //
-    // The pre-init stream placeholder is cfg-split because the two
-    // `StreamType` aliases have different const surfaces: native
-    // `File::ZEROED` is `Fd::INVALID`, so a pre-init read fails loudly
-    // instead of aliasing fd 0; `FixedBufferStream` has no `ZEROED` const,
-    // so the wasm32 arm spells out the empty stream field-wise.
-    #[cfg(not(target_arch = "wasm32"))]
     const ZEROED_STREAM: StreamType = StreamType::ZEROED;
-    #[cfg(target_arch = "wasm32")]
-    const ZEROED_STREAM: StreamType = StreamType {
-        buf: core::ptr::null_mut(),
-        len: 0,
-        pos: 0,
-    };
 
     pub(crate) const ZEROED: Self = Self {
         stdout_buffer: [0u8; 4096],
@@ -440,31 +424,28 @@ impl Source {
         SOURCE_SET.set(true);
         if !STDOUT_STREAM_SET.load(Ordering::Relaxed) {
             STDOUT_STREAM_SET.store(true, Ordering::Relaxed);
-            #[cfg(not(target_arch = "wasm32"))]
-            {
-                let is_stdout_tty = stdio_tty_flag(1);
-                if is_stdout_tty {
-                    let _ = STDOUT_DESCRIPTOR_TYPE.set(OutputStreamDescriptor::Terminal);
-                }
-
-                let is_stderr_tty = stdio_tty_flag(2);
-                if is_stderr_tty {
-                    let _ = STDERR_DESCRIPTOR_TYPE.set(OutputStreamDescriptor::Terminal);
-                }
-
-                // FORCE_COLOR and NO_COLOR override both streams; otherwise each stream uses its own isatty result.
-                let mut enable_color: Option<bool> = None;
-                if Self::is_force_color() {
-                    enable_color = Some(true);
-                } else if Self::is_no_color() {
-                    enable_color = Some(false);
-                }
-
-                ENABLE_ANSI_COLORS_STDOUT
-                    .store(enable_color.unwrap_or(is_stdout_tty), Ordering::Relaxed);
-                ENABLE_ANSI_COLORS_STDERR
-                    .store(enable_color.unwrap_or(is_stderr_tty), Ordering::Relaxed);
+            let is_stdout_tty = stdio_tty_flag(1);
+            if is_stdout_tty {
+                let _ = STDOUT_DESCRIPTOR_TYPE.set(OutputStreamDescriptor::Terminal);
             }
+
+            let is_stderr_tty = stdio_tty_flag(2);
+            if is_stderr_tty {
+                let _ = STDERR_DESCRIPTOR_TYPE.set(OutputStreamDescriptor::Terminal);
+            }
+
+            // FORCE_COLOR and NO_COLOR override both streams; otherwise each stream uses its own isatty result.
+            let mut enable_color: Option<bool> = None;
+            if Self::is_force_color() {
+                enable_color = Some(true);
+            } else if Self::is_no_color() {
+                enable_color = Some(false);
+            }
+
+            ENABLE_ANSI_COLORS_STDOUT
+                .store(enable_color.unwrap_or(is_stdout_tty), Ordering::Relaxed);
+            ENABLE_ANSI_COLORS_STDERR
+                .store(enable_color.unwrap_or(is_stderr_tty), Ordering::Relaxed);
 
             // SAFETY: write-once init guarded by STDOUT_STREAM_SET above.
             unsafe {
@@ -1290,12 +1271,6 @@ fn write_bytes(dest: Destination, bytes: &[u8]) {
 
 #[inline]
 pub fn print_to(dest: Destination, args: fmt::Arguments<'_>) {
-    #[cfg(target_arch = "wasm32")]
-    {
-        // wasm32 is not built yet; output is dropped.
-        let _ = (dest, args);
-        return;
-    }
     // PERF: `fmt::Arguments::as_str()` returns Some only when there are no
     // interpolations, giving a single `write_bytes(dest, str)` fast path per
     // such call site.

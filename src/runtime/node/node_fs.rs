@@ -5129,15 +5129,6 @@ impl NodeFS {
             }
             return Ok(());
         }
-
-        #[cfg(not(any(
-            target_os = "macos",
-            target_os = "freebsd",
-            target_os = "linux",
-            target_os = "android",
-            windows
-        )))]
-        unreachable!()
     }
 
     pub(crate) fn exists(&mut self, args: &args::Exists, _: Flavor) -> Maybe<ret::Exists> {
@@ -8796,18 +8787,6 @@ impl NodeFS {
                 }
                 return Ok(());
             }
-        }
-
-        #[cfg(not(any(
-            target_os = "macos",
-            target_os = "linux",
-            target_os = "android",
-            target_os = "freebsd",
-            windows
-        )))]
-        {
-            let _ = (src, dest, mode, reuse_stat);
-            Err(sys::Error::todo())
         }
     }
 

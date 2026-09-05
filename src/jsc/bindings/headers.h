@@ -15,7 +15,6 @@
 
 #define ZIG_DECL AUTO_EXTERN_C_ZIG
 #define CPP_DECL AUTO_EXTERN_C
-#define CPP_SIZE AUTO_EXTERN_C
 
 #include "root.h"
 #include <JavaScriptCore/JSClassRef.h>
@@ -281,7 +280,6 @@ CPP_DECL size_t JSC__VM__runGC(JSC::VM* arg0, bool arg1);
 CPP_DECL void JSC__VM__enableControlFlowProfiler(JSC::VM* arg0);
 CPP_DECL void JSC__VM__shrinkFootprint(JSC::VM* arg0);
 CPP_DECL void JSC__VM__throwError(JSC::VM* arg0, JSC::JSGlobalObject* arg1, JSC::EncodedJSValue JSValue2);
-CPP_DECL void JSC__VM__throwError(JSC::VM* arg0, JSC::JSGlobalObject* arg1, JSC::EncodedJSValue JSValue2);
 
 CPP_DECL void FFI__ptr__put(JSC::JSGlobalObject* arg0, JSC::EncodedJSValue JSValue1);
 
@@ -478,22 +476,6 @@ ZIG_DECL void FileSink__updateRef(void* arg0, bool arg1);
 BUN_DECLARE_HOST_FUNCTION(FileSink__write);
 
 #endif
-
-CPP_DECL JSC::EncodedJSValue FileSink__createObject(JSC::JSGlobalObject* arg0, void* arg1, uintptr_t destructor);
-
-#ifdef __cplusplus
-
-ZIG_DECL JSC::EncodedJSValue FileSink__close(JSC::JSGlobalObject* arg0, void* arg1, JSC::EncodedJSValue arg2);
-BUN_DECLARE_HOST_FUNCTION(FileSink__construct);
-BUN_DECLARE_HOST_FUNCTION(FileSink__end);
-ZIG_DECL JSC::EncodedJSValue SYSV_ABI FileSink__endWithSink(void* arg0, JSC::JSGlobalObject* arg1);
-ZIG_DECL void FileSink__finalize(void* arg0);
-BUN_DECLARE_HOST_FUNCTION(FileSink__flush);
-BUN_DECLARE_HOST_FUNCTION(FileSink__start);
-ZIG_DECL void FileSink__updateRef(void* arg0, bool arg1);
-BUN_DECLARE_HOST_FUNCTION(FileSink__write);
-
-#endif
 CPP_DECL JSC::EncodedJSValue NetworkSink__createObject(JSC::JSGlobalObject* arg0, void* arg1, uintptr_t destructor);
 CPP_DECL void* NetworkSink__fromJS(JSC::EncodedJSValue JSValue1);
 
@@ -627,7 +609,6 @@ ZIG_DECL JSC::EncodedJSValue Bun__Process__setCwd(JSC::JSGlobalObject* arg0, con
 ZIG_DECL JSC::EncodedJSValue Bun__Process__getEval(JSC::JSGlobalObject* arg0);
 
 #endif
-CPP_DECL ZigException ZigException__fromException(JSC::Exception* arg0);
 
 #pragma mark - Bun::ConsoleObject
 

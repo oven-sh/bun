@@ -1406,20 +1406,12 @@ impl<'a> SpawnArgs<'a> {
 
     /// `object_iter` should be a some type with the following fields:
     /// - `next() bool`
-    pub(crate) fn fill_env<const DISABLE_PATH_LOOKUP_FOR_ARV0: bool>(
-        &mut self,
-        env_iter: &mut crate::shell::env_map::Iterator<'_>,
-    ) {
+    pub(crate) fn fill_env(&mut self, env_iter: &mut crate::shell::env_map::Iterator<'_>) {
         self.override_env = true;
         // Note: `bun_collections::array_hash_map::Iter` doesn't impl
         // `ExactSizeIterator`; use `size_hint` for the reservation.
         self.env_array
             .reserve_exact(env_iter.size_hint().0.saturating_sub(self.env_array.len()));
-
-        if DISABLE_PATH_LOOKUP_FOR_ARV0 {
-            // If the env object does not include a $PATH, it must disable path lookup for argv[0]
-            self.path = b"";
-        }
 
         while let Some(entry) = env_iter.next() {
             let key = entry.key_ptr.slice();

@@ -2384,10 +2384,6 @@ void GlobalObject::finishCreation(VM& vm)
         { OBJECT_OFFSETOF(GlobalObject, m_NativePromiseContextStructure), [](const LazyProperty<JSGlobalObject, Structure>::Initializer& init) {
              init.set(Bun::NativePromiseContext::createStructure(init.vm, init.owner));
          } },
-        { OBJECT_OFFSETOF(GlobalObject, m_JSHTTPResponseController), [](const LazyProperty<JSGlobalObject, Structure>::Initializer& init) {
-             auto* structure = createJSSinkControllerStructure(init.vm, init.owner, WebCore::SinkID::HTTPResponseSink);
-             init.set(structure);
-         } },
         { OBJECT_OFFSETOF(GlobalObject, m_importMetaObjectStructure), [](const LazyProperty<JSGlobalObject, Structure>::Initializer& init) {
              init.set(Zig::ImportMetaObject::createStructure(init.vm, init.owner));
          } },
@@ -2474,22 +2470,6 @@ void GlobalObject::finishCreation(VM& vm)
              }
 
              init.set(toJS<IDLInterface<SubtleCrypto>>(*init.owner, global, global.m_subtleCrypto).getObject());
-         } },
-        { OBJECT_OFFSETOF(GlobalObject, m_JSArrayBufferControllerPrototype), [](const LazyProperty<JSGlobalObject, JSObject>::Initializer& init) {
-             auto* prototype = createJSSinkControllerPrototype(init.vm, init.owner, WebCore::SinkID::ArrayBufferSink);
-             init.set(prototype);
-         } },
-        { OBJECT_OFFSETOF(GlobalObject, m_JSFileSinkControllerPrototype), [](const LazyProperty<JSGlobalObject, JSObject>::Initializer& init) {
-             auto* prototype = createJSSinkControllerPrototype(init.vm, init.owner, WebCore::SinkID::FileSink);
-             init.set(prototype);
-         } },
-        { OBJECT_OFFSETOF(GlobalObject, m_JSHTTPSResponseControllerPrototype), [](const LazyProperty<JSGlobalObject, JSObject>::Initializer& init) {
-             auto* prototype = createJSSinkControllerPrototype(init.vm, init.owner, WebCore::SinkID::HTTPSResponseSink);
-             init.set(prototype);
-         } },
-        { OBJECT_OFFSETOF(GlobalObject, m_JSFetchTaskletChunkedRequestControllerPrototype), [](const LazyProperty<JSGlobalObject, JSObject>::Initializer& init) {
-             auto* prototype = createJSSinkControllerPrototype(init.vm, init.owner, WebCore::SinkID::NetworkSink);
-             init.set(prototype);
          } },
         { OBJECT_OFFSETOF(GlobalObject, m_performanceObject), [](const LazyProperty<JSGlobalObject, JSObject>::Initializer& init) {
              auto* globalObject = static_cast<Zig::GlobalObject*>(init.owner);
@@ -3406,7 +3386,6 @@ extern "C" void JSC__JSGlobalObject__queueMicrotaskCallback(Zig::GlobalObject* g
 
 extern "C" const Latin1Character* Bun__standaloneModuleKey(const Latin1Character*, size_t, size_t* outLength);
 extern "C" bool Bun__standaloneModuleHasModuleInfo(const Latin1Character*, size_t);
-extern "C" bool Bun__hasStandaloneModuleGraph();
 extern "C" int ModuleLoader__builtinAliasIndex(const Latin1Character*, size_t);
 extern "C" bool Bun__hasPluginRunner(void*);
 JSC::Identifier GlobalObject::moduleLoaderResolve(JSGlobalObject* jsGlobalObject,

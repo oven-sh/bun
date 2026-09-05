@@ -353,26 +353,15 @@ impl<'a> Parser<'a> {
 // per-method-gated in the impl block below and replaces this stub once that
 // surface lands.
 impl<'a> Parser<'a> {
-    #[cfg_attr(not(target_arch = "wasm32"), allow(unused_mut))]
-    pub fn parse(mut self) -> Result<crate::Result<'a>, Error> {
-        #[cfg(target_arch = "wasm32")]
-        {
-            self.options.ts = true;
-            self.options.jsx.parse = true;
-            return self._parse::<true>();
-        }
-
+    pub fn parse(self) -> Result<crate::Result<'a>, Error> {
         // JSX is no longer part of the parser's monomorphization (it only
         // affects a few expr arms — see `parser.rs`); `P::init` reads the
         // transform mode off `options.jsx.parse` at runtime, so the only
         // remaining compile-time split is TypeScript.
-        #[cfg(not(target_arch = "wasm32"))]
-        {
-            if self.options.ts {
-                self._parse::<true>()
-            } else {
-                self._parse::<false>()
-            }
+        if self.options.ts {
+            self._parse::<true>()
+        } else {
+            self._parse::<false>()
         }
     }
 
@@ -799,7 +788,6 @@ impl<'a> Parser<'a> {
 
         // We must check the cache only after we've consumed the hashbang and leading // @bun pragma
         // We don't want to ever put files with `// @bun` into this cache, as that would be wasteful.
-        #[cfg(not(target_arch = "wasm32"))]
         if bun_core::feature_flags::RUNTIME_TRANSPILER_CACHE {
             if let Some(cache) = p.options.features.runtime_transpiler_cache_mut() {
                 // `Path::is_node_module`/`is_jsx_file` live on the resolver
@@ -2352,7 +2340,6 @@ impl<'a> Parser<'a> {
         // Pop the module scope to apply the "ContainsDirectEval" rules
         // p.popScope();
 
-        #[cfg(not(target_arch = "wasm32"))]
         if bun_core::feature_flags::RUNTIME_TRANSPILER_CACHE {
             if let Some(cache) = p.options.features.runtime_transpiler_cache_mut() {
                 if p.macro_call_count != 0 {
@@ -2534,7 +2521,4 @@ struct PragmaState {
     seen_bytecode: bool,
 }
 
-#[cfg(target_arch = "wasm32")]
-pub type MacroContext = Option<*mut c_void>;
-#[cfg(not(target_arch = "wasm32"))]
 pub type MacroContext = crate::Macro::MacroContext;

@@ -58,13 +58,6 @@ pub(crate) struct BuildResult<Impl: ValidSelectorImpl> {
     pub(crate) components: Vec<GenericComponent<Impl>, ArenaPtr>,
 }
 
-impl<Impl: ValidSelectorImpl> Default for SelectorBuilder<Impl> {
-    #[inline]
-    fn default() -> Self {
-        Self::init_in(ArenaPtr::global())
-    }
-}
-
 impl<Impl: ValidSelectorImpl> SelectorBuilder<Impl> {
     #[inline]
     pub(crate) fn init_in(alloc: ArenaPtr) -> Self {

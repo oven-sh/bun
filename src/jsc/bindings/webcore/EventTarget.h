@@ -162,7 +162,6 @@ private:
     virtual void derefEventTarget() = 0;
 
     void innerInvokeEventListeners(Event&, EventListenerVector, EventInvokePhase);
-    void invalidateEventListenerRegions();
 };
 
 // EventTargetData lives on the WeakPtrImpl; subclasses no longer need their own storage.

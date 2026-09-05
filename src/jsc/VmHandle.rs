@@ -83,15 +83,7 @@ pub enum LoopKind {
 /// `state` (read by every native→JS entry on the JS thread) and `vm`, on
 /// their own cache line: the counters after it are RMW'd by pool / HTTP
 /// threads on every completion.
-#[cfg_attr(
-    any(
-        target_arch = "x86_64",
-        target_arch = "aarch64",
-        target_arch = "powerpc64"
-    ),
-    repr(align(64))
-)]
-#[cfg_attr(target_arch = "s390x", repr(align(128)))]
+#[cfg_attr(any(target_arch = "x86_64", target_arch = "aarch64"), repr(align(64)))]
 struct ReadMostly {
     state: AtomicU8,
     /// The VM. Dereferenced by a ticket holder (the VM outlives every ticket),

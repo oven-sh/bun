@@ -14,49 +14,16 @@
 //! integer it can store in an atomic and compare against a sentinel.
 
 // ── ThreadId width ─────────────────────────────────────────────────────────
-//   linux / *bsd / haiku / wasi / serenity → u32
-//   macOS / iOS / watchOS / tvOS / visionOS → u64
-//   Windows                                → DWORD (u32)
-//   else                                   → usize
 #[cfg(any(
     target_os = "linux",
     target_os = "android",
     target_os = "freebsd",
-    target_os = "netbsd",
-    target_os = "openbsd",
-    target_os = "dragonfly",
-    target_os = "haiku",
-    target_os = "wasi",
     target_os = "windows",
 ))]
 pub type ThreadId = u32;
 
-#[cfg(any(
-    target_os = "macos",
-    target_os = "ios",
-    target_os = "watchos",
-    target_os = "tvos",
-    target_os = "visionos",
-))]
+#[cfg(target_os = "macos")]
 pub type ThreadId = u64;
-
-#[cfg(not(any(
-    target_os = "linux",
-    target_os = "android",
-    target_os = "freebsd",
-    target_os = "netbsd",
-    target_os = "openbsd",
-    target_os = "dragonfly",
-    target_os = "haiku",
-    target_os = "wasi",
-    target_os = "windows",
-    target_os = "macos",
-    target_os = "ios",
-    target_os = "watchos",
-    target_os = "tvos",
-    target_os = "visionos",
-)))]
-pub type ThreadId = usize;
 
 /// Per-thread cache of [`current()`]. Without it, every call paid a syscall
 /// (`gettid`/`pthread_threadid_np`/`GetCurrentThreadId`). The
@@ -75,7 +42,7 @@ static TLS_THREAD_ID: core::cell::Cell<ThreadId> = core::cell::Cell::new(0);
 /// Returns the platform's notion of the calling thread's ID.
 ///
 /// Attempts to use OS-specific primitives so the value matches what
-/// debuggers/tracers report; falls back to `pthread_self()` as a `usize` on unknown targets.
+/// debuggers/tracers report.
 ///
 /// Cached per-thread after the first call (see [`TLS_THREAD_ID`]); subsequent
 /// calls are a single TLS read with no syscall. Lazy rather than set-at-spawn so threads not started
@@ -98,13 +65,7 @@ fn current_uncached() -> ThreadId {
         // SAFETY: `gettid` takes no arguments and cannot fail.
         return unsafe { libc::gettid() } as ThreadId;
     }
-    #[cfg(any(
-        target_os = "macos",
-        target_os = "ios",
-        target_os = "watchos",
-        target_os = "tvos",
-        target_os = "visionos",
-    ))]
+    #[cfg(target_os = "macos")]
     {
         unsafe extern "C" {
             fn pthread_threadid_np(
@@ -133,50 +94,5 @@ fn current_uncached() -> ThreadId {
             safe fn pthread_getthreadid_np() -> core::ffi::c_int;
         }
         return pthread_getthreadid_np() as u32;
-    }
-    #[cfg(target_os = "netbsd")]
-    {
-        unsafe extern "C" {
-            // safe: no args; infallible.
-            safe fn _lwp_self() -> core::ffi::c_int;
-        }
-        return _lwp_self() as u32;
-    }
-    #[cfg(target_os = "openbsd")]
-    {
-        unsafe extern "C" {
-            // safe: no args; infallible.
-            safe fn getthrid() -> core::ffi::c_int;
-        }
-        return getthrid() as u32;
-    }
-    #[cfg(target_os = "dragonfly")]
-    {
-        unsafe extern "C" {
-            // safe: no args; infallible.
-            safe fn lwp_gettid() -> core::ffi::c_int;
-        }
-        return lwp_gettid() as u32;
-    }
-    #[cfg(not(any(
-        target_os = "linux",
-        target_os = "android",
-        target_os = "freebsd",
-        target_os = "netbsd",
-        target_os = "openbsd",
-        target_os = "dragonfly",
-        target_os = "windows",
-        target_os = "macos",
-        target_os = "ios",
-        target_os = "watchos",
-        target_os = "tvos",
-        target_os = "visionos",
-    )))]
-    {
-        unsafe extern "C" {
-            // safe: no args; infallible.
-            safe fn pthread_self() -> usize;
-        }
-        return pthread_self() as ThreadId;
     }
 }

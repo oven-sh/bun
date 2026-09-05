@@ -75,7 +75,6 @@ static JSC_DECLARE_HOST_FUNCTION(jsFetchHeadersPrototypeFunction_forEach);
 
 // Non-standard functions
 static JSC_DECLARE_HOST_FUNCTION(jsFetchHeadersPrototypeFunction_toJSON);
-static JSC_DECLARE_CUSTOM_GETTER(jsFetchHeadersPrototypeFunction_size);
 
 // Attributes
 

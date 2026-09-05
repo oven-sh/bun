@@ -1642,8 +1642,8 @@ impl Log {
         })
     }
 
-    #[inline]
-    fn add_resolve_error_with_level<const DUPE_TEXT: bool, const IS_ERR: bool>(
+    #[cold]
+    pub fn add_resolve_error(
         &mut self,
         source: Option<&Source>,
         r: Range,
@@ -1657,28 +1657,18 @@ impl Log {
         // `alloc_print`. `fmt::Arguments` is opaque, so callers must pass
         // `specifier_arg` explicitly.
         let specifier = BabyString::r#in(&text, specifier_arg);
-        if IS_ERR {
-            self.errors += 1;
-        } else {
-            self.warnings += 1;
+        self.errors += 1;
+
+        // Dupe line_text so the Location outlives the source's arena-backed memory.
+        let mut data = self.tracked_range_data(source, r, text);
+        if let Some(loc) = &mut data.location {
+            if let Some(line) = loc.line_text.as_deref() {
+                loc.line_text = Some(Cow::Owned(line.to_vec()));
+            }
         }
 
-        let data = if DUPE_TEXT {
-            'brk: {
-                let mut _data = self.tracked_range_data(source, r, text);
-                if let Some(loc) = &mut _data.location {
-                    if let Some(_line) = loc.line_text.as_deref() {
-                        loc.line_text = Some(Cow::Owned(_line.to_vec()));
-                    }
-                }
-                break 'brk _data;
-            }
-        } else {
-            self.tracked_range_data(source, r, text)
-        };
-
         let msg = Msg {
-            kind: if IS_ERR { Kind::Err } else { Kind::Warn },
+            kind: Kind::Err,
             data,
             metadata: Metadata::Resolve(MetadataResolve {
                 specifier,
@@ -1692,28 +1682,6 @@ impl Log {
     }
 
     #[cold]
-    pub fn add_resolve_error(
-        &mut self,
-        source: Option<&Source>,
-        r: Range,
-        args: fmt::Arguments<'_>,
-        specifier_arg: &[u8],
-        import_kind: ImportKind,
-        err: crate::Error,
-    ) {
-        // Always dupe the line_text from the source to ensure the Location data
-        // outlives the source's backing memory (which may be arena-allocated).
-        self.add_resolve_error_with_level::<true, true>(
-            source,
-            r,
-            args,
-            specifier_arg,
-            import_kind,
-            err,
-        )
-    }
-
-    #[cold]
     pub fn add_resolve_error_with_text_dupe(
         &mut self,
         source: Option<&Source>,
@@ -1722,7 +1690,7 @@ impl Log {
         specifier_arg: &[u8],
         import_kind: ImportKind,
     ) {
-        self.add_resolve_error_with_level::<true, true>(
+        self.add_resolve_error(
             source,
             r,
             args,

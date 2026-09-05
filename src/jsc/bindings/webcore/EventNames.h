@@ -62,10 +62,6 @@ public:
         return std::unique_ptr<EventNames>(new EventNames(std::forward<Args>(args)...));
     }
 
-    // FIXME: Inelegant to call these both event names and event types.
-    // We should choose one term and stick to it.
-    bool isWheelEventType(const AtomString& eventType) const;
-
 private:
     EventNames(); // Private to prevent accidental call to EventNames() instead of eventNames().
     // friend class ThreadGlobalData; // Allow ThreadGlobalData to create the per-thread EventNames object.
@@ -74,10 +70,5 @@ private:
 };
 
 const EventNames& eventNames();
-
-inline bool EventNames::isWheelEventType(const AtomString& eventType) const
-{
-    return false;
-}
 
 } // namespace WebCore

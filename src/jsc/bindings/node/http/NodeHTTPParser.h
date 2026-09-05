@@ -196,7 +196,6 @@ public:
     size_t m_currentBufferLen;
     const char* m_currentBufferData;
     bool m_headersCompleted = false;
-    bool m_pendingPause = false;
     // Set while execute() is running llhttp over a buffer. Owned exclusively
     // by execute(); finish() must never clear it.
     bool m_inExecute = false;

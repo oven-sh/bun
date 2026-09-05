@@ -48,14 +48,6 @@ pub fn frame_address() -> usize {
         };
         fp
     }
-    #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
-    {
-        // Approximate with a stack local's addr on arches
-        // without an asm! mapping yet. fp-walk will fail its alignment sanity
-        // check and terminate cleanly.
-        let probe = 0u8;
-        core::ptr::from_ref::<u8>(&probe) as usize
-    }
 }
 
 /// Reads memory from any address of the current process, tolerating unmapped
@@ -231,17 +223,9 @@ pub struct StackIterator {
 
 impl StackIterator {
     // Offset of the saved BP wrt the frame pointer.
-    const FP_OFFSET: usize = if cfg!(any(target_arch = "riscv64", target_arch = "riscv32")) {
-        2 * core::mem::size_of::<usize>()
-    } else {
-        0
-    };
+    const FP_OFFSET: usize = 0;
     // Positive offset of the saved PC wrt the frame pointer.
-    const PC_OFFSET: usize = if cfg!(target_arch = "powerpc64") {
-        2 * core::mem::size_of::<usize>()
-    } else {
-        core::mem::size_of::<usize>()
-    };
+    const PC_OFFSET: usize = core::mem::size_of::<usize>();
 
     /// `fp` is required: this function is not `#[inline(always)]`, so a
     /// `frame_address()` call from inside it would read this frame's own rbp —

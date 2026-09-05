@@ -159,14 +159,6 @@ impl Method {
         return Self::linux()[self];
         #[cfg(windows)]
         return Self::windows()[self];
-        #[cfg(not(any(
-            target_os = "macos",
-            target_os = "linux",
-            target_os = "android",
-            target_os = "freebsd",
-            windows
-        )))]
-        return false;
     }
 }
 

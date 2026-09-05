@@ -470,9 +470,9 @@ impl Cmd {
         {
             let env = interp.as_cmd_mut(this).base.shell_mut();
             let mut iter = env.export_env.iterator();
-            spawn_args.fill_env::<false>(&mut iter);
+            spawn_args.fill_env(&mut iter);
             let mut iter = env.cmd_local_env.iterator();
-            spawn_args.fill_env::<false>(&mut iter);
+            spawn_args.fill_env(&mut iter);
         }
 
         // Resolve argv[0] via PATH (`bun_which::which`).

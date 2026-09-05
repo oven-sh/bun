@@ -965,8 +965,5 @@ macro_rules! new_feature_flag {
     ($vis:vis $name:ident, $key:literal, { default: None }) => {
         $crate::env_var::new!($vis $name : boolean, $key, { });
     };
-    ($vis:vis $name:ident, $key:literal, { default: $d:expr }) => {
-        $crate::env_var::new!($vis $name : boolean, $key, { default: $d });
-    };
 }
 pub(crate) use new_feature_flag;

@@ -2,8 +2,6 @@
 pub enum Error {
     #[error("MissingDebugInfo")]
     MissingDebugInfo,
-    #[error("UnsupportedOperatingSystem")]
-    UnsupportedOperatingSystem,
     #[error("Unexpected")]
     Unexpected,
     #[error("EndOfFile")]
@@ -30,7 +28,6 @@ impl Error {
     pub fn name(&self) -> &'static str {
         match self {
             Self::MissingDebugInfo => "MissingDebugInfo",
-            Self::UnsupportedOperatingSystem => "UnsupportedOperatingSystem",
             Self::Unexpected => "Unexpected",
             Self::EndOfFile => "EndOfFile",
             Self::Sys(e) => <&'static str>::from(e),

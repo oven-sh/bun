@@ -125,38 +125,11 @@ pub mod debug {
             if !cfg!(debug_assertions) {
                 return Err(crate::Error::MissingDebugInfo);
             }
-            #[cfg(any(
-                target_os = "linux",
-                target_os = "android",
-                target_os = "freebsd",
-                target_os = "netbsd",
-                target_os = "dragonfly",
-                target_os = "openbsd",
-                target_os = "macos",
-                target_os = "solaris",
-                target_os = "illumos",
-                windows,
-            ))]
-            {
-                // SelfInfo.init — non-Windows path is just an empty address_map.
-                return Ok(SelfInfo {
-                    #[cfg(not(windows))]
-                    address_map: HashMap::new(),
-                });
-            }
-            #[cfg(not(any(
-                target_os = "linux",
-                target_os = "android",
-                target_os = "freebsd",
-                target_os = "netbsd",
-                target_os = "dragonfly",
-                target_os = "openbsd",
-                target_os = "macos",
-                target_os = "solaris",
-                target_os = "illumos",
-                windows,
-            )))]
-            Err(crate::Error::UnsupportedOperatingSystem)
+            // SelfInfo.init — non-Windows path is just an empty address_map.
+            Ok(SelfInfo {
+                #[cfg(not(windows))]
+                address_map: HashMap::new(),
+            })
         }
 
         /// Port of `SelfInfo.getModuleForAddress`.

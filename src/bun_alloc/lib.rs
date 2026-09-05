@@ -83,14 +83,6 @@ unsafe impl Send for StdAllocator {}
 // SAFETY: see the `Send` impl directly above.
 unsafe impl Sync for StdAllocator {}
 
-impl Default for StdAllocator {
-    /// The mimalloc-backed `c_allocator`.
-    #[inline]
-    fn default() -> Self {
-        basic::C_ALLOCATOR
-    }
-}
-
 impl StdAllocator {
     #[inline]
     pub(crate) fn raw_free(&self, buf: &mut [u8], alignment: Alignment, ra: usize) {

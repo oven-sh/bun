@@ -576,12 +576,6 @@ impl<T: ?Sized> ThreadCell<T> {
     }
 }
 
-impl<T: Default> Default for ThreadCell<T> {
-    fn default() -> Self {
-        Self::new(T::default())
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -47,7 +47,6 @@ enum class DOMEventName : uint8_t {
     rename = 0,
     change = 1,
     error = 2,
-    abort = 3,
     close = 4,
 
 };
@@ -62,8 +61,6 @@ extern "C" JSC::EncodedJSValue Bun__domEventNameToJS(JSC::JSGlobalObject* global
             return eventNames().changeEvent;
         case DOMEventName::error:
             return eventNames().errorEvent;
-        case DOMEventName::abort:
-            return eventNames().abortEvent;
         case DOMEventName::close:
             return eventNames().closeEvent;
         default:

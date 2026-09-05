@@ -62,9 +62,6 @@ pub struct StreamingDecoder {
 
 impl StreamingDecoder {
     pub fn new(options: &DecoderOptions) -> crate::Result<Self> {
-        if !BrotliDecoder::initialize_brotli() {
-            return Err(crate::Error::BrotliFailedToLoad);
-        }
         // SAFETY: brotli FFI constructor; alloc/free are valid extern "C"
         // fns and opaque is null (unused by our allocator).
         let brotli = unsafe {

@@ -72,7 +72,7 @@ CallbackResult<typename IDLUndefined::ImplementationType> JSAbortAlgorithm::hand
     ASSERT(!args.hasOverflowed());
 
     NakedPtr<JSC::Exception> returnedException;
-    m_data->invokeCallback(vm, thisValue, args, JSCallbackData::CallbackType::Function, Identifier(), returnedException);
+    m_data->invokeCallback(vm, thisValue, args, returnedException);
     if (returnedException) {
         reportException(&lexicalGlobalObject, returnedException);
         return CallbackResultType::ExceptionThrown;

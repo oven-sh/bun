@@ -839,30 +839,6 @@ fn classify<'a>(data: &'a syn::DataEnum) -> syn::Result<Vec<VariantShape<'a>>> {
     Ok(out)
 }
 
-/// `true` if any `#[css(...)]` attr in `attrs` carries the bare flag `flag`
-/// (e.g. `#[css(generate_to_css)]`). Unknown sibling keys are ignored.
-fn has_css_flag(attrs: &[Attribute], flag: &str) -> bool {
-    for attr in attrs {
-        if !attr.path().is_ident("css") {
-            continue;
-        }
-        let mut hit = false;
-        let _ = attr.parse_nested_meta(|meta| {
-            if meta.path.is_ident(flag) {
-                hit = true;
-            } else if meta.input.peek(syn::Token![=]) {
-                // Consume `key = value` so a later flag in the same list is still seen.
-                let _ = meta.value().and_then(|v| v.parse::<syn::Expr>());
-            }
-            Ok(())
-        });
-        if hit {
-            return true;
-        }
-    }
-    false
-}
-
 /// Emit the `__generateToCss` field-sequence body shared by the struct branch
 /// and named-field enum variants: each field is `to_css`'d in declaration
 /// order, `Option<_>` fields are unwrapped, and a single space is written
@@ -949,7 +925,6 @@ fn expand_derive_to_css(input: &DeriveInput) -> syn::Result<TokenStream2> {
             // `ToCss` on a named-field struct always emits the field-sequence
             // printer. The flag exists so the port can record intent at the
             // declaration site without a doc-comment.
-            let _ = has_css_flag(&input.attrs, "generate_to_css");
             let seq = gen_field_seq_to_css(named.named.iter(), |f| quote! { self.#f });
             quote! { #seq ::core::result::Result::Ok(()) }
         }

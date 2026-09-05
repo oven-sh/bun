@@ -123,7 +123,7 @@ ScriptExecutionContext::~ScriptExecutionContext()
 #endif // ASSERT_ENABLED
 }
 
-void ScriptExecutionContext::forEachActiveDOMObject(NOESCAPE const Function<ShouldContinue(ActiveDOMObject&)>& apply) const
+void ScriptExecutionContext::forEachActiveDOMObject(NOESCAPE const Function<void(ActiveDOMObject&)>& apply) const
 {
     // It is not allowed to run arbitrary script or construct new ActiveDOMObjects while we are iterating over ActiveDOMObjects.
     // A RELEASE_ASSERT will fire if this happens, but it's important to code
@@ -134,8 +134,8 @@ void ScriptExecutionContext::forEachActiveDOMObject(NOESCAPE const Function<Shou
     auto possibleActiveDOMObjects = copyToVectorOf<WeakPtr<ActiveDOMObject>>(m_activeDOMObjects);
     for (auto& weakActiveDOMObject : possibleActiveDOMObjects) {
         RefPtr activeDOMObject = weakActiveDOMObject.get();
-        if (activeDOMObject && apply(*activeDOMObject) == ShouldContinue::No)
-            break;
+        if (activeDOMObject)
+            apply(*activeDOMObject);
     }
 }
 
@@ -149,7 +149,6 @@ void ScriptExecutionContext::stopActiveDOMObjects()
 
     forEachActiveDOMObject([](auto& activeDOMObject) {
         activeDOMObject.stop();
-        return ShouldContinue::Yes;
     });
 }
 

@@ -792,8 +792,6 @@ fn create_pty(cols: u16, rows: u16) -> Result<PtyResult, CreatePtyError> {
     {
         return create_pty_windows(cols, rows);
     }
-    #[cfg(not(any(unix, windows)))]
-    Err(CreatePtyError::NotSupported)
 }
 
 // OpenPtyTermios is required for the openpty() extern signature even though we pass null.
@@ -889,14 +887,6 @@ fn get_open_pty_fn() -> Option<OpenPtyFn> {
     {
         return lib_util::get_open_pty();
     }
-
-    #[cfg(not(any(
-        target_os = "macos",
-        target_os = "linux",
-        target_os = "android",
-        target_os = "freebsd"
-    )))]
-    None
 }
 
 #[cfg(unix)]

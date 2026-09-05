@@ -4225,7 +4225,7 @@ impl VirtualMachine {
                 ..Default::default()
             };
         }
-        let source = self.ref_counted_string::<true>(code, hash_);
+        let source = self.ref_counted_string(code, hash_);
         // SAFETY: `ref_counted_string` returns a live `*mut RefString` held in
         // `self.ref_strings` until JSC calls the external-string finalizer.
         let source_ref = unsafe { &*source };
@@ -4237,7 +4237,7 @@ impl VirtualMachine {
         }
     }
 
-    fn ref_counted_string_with_was_new<const DUPE: bool>(
+    fn ref_counted_string_with_was_new(
         &mut self,
         new: &mut bool,
         input_: &[u8],
@@ -4261,15 +4261,10 @@ impl VirtualMachine {
                 *o.get()
             }
             Entry::Vacant(v) => {
-                // Dupe the input bytes when `DUPE`, otherwise
-                // adopt the caller's allocation (caller transferred ownership).
-                let (ptr, len) = if DUPE {
-                    let buf = Box::<[u8]>::from(input_);
-                    let len = buf.len();
-                    (bun_core::heap::into_raw(buf).cast::<u8>().cast_const(), len)
-                } else {
-                    (input_.as_ptr(), input_.len())
-                };
+                // Dupe the input bytes. `RefString::destroy` frees the copy.
+                let buf = Box::<[u8]>::from(input_);
+                let len = buf.len();
+                let ptr = bun_core::heap::into_raw(buf).cast::<u8>().cast_const();
                 let ref_ = bun_core::heap::into_raw(Box::new(RefString {
                     ptr,
                     len,
@@ -4301,14 +4296,14 @@ impl VirtualMachine {
     }
 
     /// Interns `input_` in the VM's ref-string map and returns the ref-counted entry.
-    pub fn ref_counted_string<const DUPE: bool>(
+    pub fn ref_counted_string(
         &mut self,
         input_: &[u8],
         hash_: Option<u32>,
     ) -> *mut crate::ref_string::RefString {
         debug_assert!(!input_.is_empty());
         let mut was_new = false;
-        self.ref_counted_string_with_was_new::<DUPE>(&mut was_new, input_, hash_)
+        self.ref_counted_string_with_was_new(&mut was_new, input_, hash_)
     }
 
     // Note: `flags` is a runtime arg —

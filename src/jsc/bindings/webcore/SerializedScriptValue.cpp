@@ -123,7 +123,6 @@ static constexpr uint64_t autoLengthMarker = UINT64_MAX;
 enum class SerializationReturnCode {
     SuccessfullyCompleted,
     StackOverflowError,
-    InterruptedExecutionError,
     ValidationError,
     ExistingExceptionError,
     DataCloneError,
@@ -4394,8 +4393,6 @@ static void maybeThrowExceptionIfSerializationFailed(JSGlobalObject& lexicalGlob
     case SerializationReturnCode::ExistingExceptionError:
     case SerializationReturnCode::UnspecifiedError:
         break;
-    case SerializationReturnCode::InterruptedExecutionError:
-        ASSERT_NOT_REACHED();
     }
 }
 
@@ -4415,7 +4412,6 @@ static Exception exceptionForSerializationFailure(SerializationReturnCode code)
     case SerializationReturnCode::UnspecifiedError:
         return Exception { TypeError };
     case SerializationReturnCode::SuccessfullyCompleted:
-    case SerializationReturnCode::InterruptedExecutionError:
         ASSERT_NOT_REACHED();
         return Exception { TypeError };
     }

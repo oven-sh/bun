@@ -54,7 +54,6 @@ public:
         JSC::ThrowScope&,
         ncrypto::EVPKeyPointer::PKFormatType formatType,
         std::optional<ncrypto::EVPKeyPointer::PKEncodingType> encodingType,
-        const EVP_CIPHER* cipher,
         std::optional<ncrypto::DataPointer> passphrase,
         KeyEncodingContext ctx);
 
@@ -71,7 +70,6 @@ public:
         WebCore::CryptoKeyType keyType,
         ncrypto::EVPKeyPointer::PKFormatType formatType,
         std::optional<ncrypto::EVPKeyPointer::PKEncodingType> encodingType,
-        const EVP_CIPHER* cipher,
         std::optional<ncrypto::DataPointer> passphrase);
 
     struct PrepareAsymmetricKeyResult {
@@ -79,7 +77,6 @@ public:
         JSC::GCOwnedDataScope<std::span<const uint8_t>> keyDataView { nullptr, {} };
         ncrypto::EVPKeyPointer::PKFormatType formatType;
         std::optional<ncrypto::EVPKeyPointer::PKEncodingType> encodingType { std::nullopt };
-        const EVP_CIPHER* cipher { nullptr };
         std::optional<ncrypto::DataPointer> passphrase = { std::nullopt };
     };
 

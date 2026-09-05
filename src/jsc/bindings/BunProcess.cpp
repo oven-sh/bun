@@ -950,8 +950,6 @@ JSC_DEFINE_HOST_FUNCTION(Process_hasUncaughtExceptionCaptureCallback, (JSC::JSGl
     return JSValue::encode(jsBoolean(true));
 }
 
-extern "C" uint64_t Bun__readOriginTimer(void*);
-
 JSC_DEFINE_HOST_FUNCTION(Process_functionHRTime, (JSC::JSGlobalObject * globalObject_, JSC::CallFrame* callFrame))
 {
     Zig::GlobalObject* globalObject = static_cast<Zig::GlobalObject*>(globalObject_);
@@ -4344,7 +4342,6 @@ JSC_DEFINE_HOST_FUNCTION(Process_setSourceMapsEnabled, (JSC::JSGlobalObject * le
         return Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, "enabled"_s, "boolean"_s, arg0);
     }
 
-    globalObject->processObject()->m_sourceMapsEnabled = arg0.toBoolean(globalObject);
     return JSValue::encode(jsUndefined());
 }
 

@@ -105,10 +105,6 @@ impl BrotliDecoder {
             )
         }
     }
-
-    pub fn initialize_brotli() -> bool {
-        true
-    }
 }
 
 #[repr(u32)]

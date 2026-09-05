@@ -182,7 +182,6 @@ private:
 private:
     std::unique_ptr<ExtendedDOMIsoSubspaces> m_subspaces;
     JSC::IsoSubspace m_domConstructorSpace;
-    JSC::IsoSubspace m_domNamespaceObjectSpace;
 
     Vector<JSC::IsoSubspace*> m_outputConstraintSpaces;
 };
@@ -311,7 +310,6 @@ private:
 
     RefPtr<WebCore::DOMWrapperWorld> m_normalWorld;
     JSC::GCClient::IsoSubspace m_domConstructorSpace;
-    JSC::GCClient::IsoSubspace m_domNamespaceObjectSpace;
 
     std::unique_ptr<ExtendedDOMClientIsoSubspaces> m_clientSubspaces;
 

@@ -379,11 +379,7 @@ async function processFunctionFile(x: string) {
   }
 }
 
-interface BundleBuiltinFunctionsArgs {
-  requireTransformer: (x: string, filename: string) => string;
-}
-
-export async function bundleBuiltinFunctions({ requireTransformer }: BundleBuiltinFunctionsArgs) {
+export async function bundleBuiltinFunctions() {
   mkdirSync(TMP_DIR, { recursive: true });
   const filesToProcess = readdirSync(SRC_DIR)
     .filter(x => x.endsWith(".ts") && !x.endsWith(".d.ts"))
@@ -449,7 +445,6 @@ export async function bundleBuiltinFunctions({ requireTransformer }: BundleBuilt
 
     const lowerBasename = low(basename);
     for (const fn of functions) {
-      const name = `${basename}${cap(fn.name)}`;
       bundledCPP += `
 JSC::FunctionExecutable* ${lowerBasename}${cap(fn.name)}CodeGenerator(JSC::VM& vm)
 {

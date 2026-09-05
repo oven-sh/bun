@@ -48,22 +48,17 @@ enum class RejectAsHandled : uint8_t { No,
 
 class DeferredPromise : public DOMGuarded<JSC::JSPromise> {
 public:
-    enum class Mode {
-        ClearPromiseOnResolve,
-        RetainPromiseOnResolve
-    };
-
-    static RefPtr<DeferredPromise> create(JSDOMGlobalObject& globalObject, Mode mode = Mode::ClearPromiseOnResolve)
+    static RefPtr<DeferredPromise> create(JSDOMGlobalObject& globalObject)
     {
         auto& vm = JSC::getVM(&globalObject);
         auto* promise = JSC::JSPromise::create(vm, globalObject.promiseStructure());
         ASSERT(promise);
-        return adoptRef(new DeferredPromise(globalObject, *promise, mode));
+        return adoptRef(new DeferredPromise(globalObject, *promise));
     }
 
-    static Ref<DeferredPromise> create(JSDOMGlobalObject& globalObject, JSC::JSPromise& deferred, Mode mode = Mode::ClearPromiseOnResolve)
+    static Ref<DeferredPromise> create(JSDOMGlobalObject& globalObject, JSC::JSPromise& deferred)
     {
-        return adoptRef(*new DeferredPromise(globalObject, deferred, mode));
+        return adoptRef(*new DeferredPromise(globalObject, deferred));
     }
 
     template<class IDLType>
@@ -157,9 +152,8 @@ public:
     JSC::JSValue promise() const;
 
 private:
-    DeferredPromise(JSDOMGlobalObject& globalObject, JSC::JSPromise& deferred, Mode mode)
+    DeferredPromise(JSDOMGlobalObject& globalObject, JSC::JSPromise& deferred)
         : DOMGuarded<JSC::JSPromise>(globalObject, deferred)
-        , m_mode(mode)
     {
     }
 
@@ -180,8 +174,6 @@ private:
 
     bool handleTerminationExceptionIfNeeded(JSC::TopExceptionScope&, JSDOMGlobalObject& lexicalGlobalObject);
     void handleUncaughtException(JSC::TopExceptionScope&, JSDOMGlobalObject& lexicalGlobalObject);
-
-    Mode m_mode;
 };
 
 void fulfillPromiseWithArrayBuffer(Ref<DeferredPromise>&&, ArrayBuffer*);

@@ -367,9 +367,7 @@ function idToPublicSpecifierOrEnumName(id: string) {
   return idToEnumName(id);
 }
 
-const { combinedSourceCode: functionsSource } = await bundleBuiltinFunctions({
-  requireTransformer,
-});
+const { combinedSourceCode: functionsSource } = await bundleBuiltinFunctions();
 
 mark("Bundle Functions");
 

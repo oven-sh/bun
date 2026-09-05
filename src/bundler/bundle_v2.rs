@@ -4789,9 +4789,6 @@ pub mod bv2_impl {
             &mut self,
             importer_source_index: IndexInt,
         ) {
-            if !self.is_barrel_optimization_enabled() {
-                return;
-            }
             let idx = importer_source_index as usize;
             if idx >= self.graph.ast.len() {
                 return;
@@ -6075,13 +6072,6 @@ pub mod bv2_impl {
         // permitted in `impl` blocks; the underlying fns live in `barrel_imports` and
         // take `&mut BundleV2` directly — callers reach them as free functions.
         // (was: pub use barrel_imports::{apply_barrel_optimization, schedule_barrel_deferred_imports})
-
-        /// Returns true when barrel optimization is enabled. Barrel optimization
-        /// can apply to any package with sideEffects: false or listed in
-        /// optimize_imports, so it is always enabled during bundling.
-        fn is_barrel_optimization_enabled(&self) -> bool {
-            true
-        }
 
         // TODO: remove ResolveQueue
         //
@@ -7452,14 +7442,12 @@ pub mod bv2_impl {
 
                     // Barrel optimization: eagerly record import requests and
                     // un-defer barrel records that are now needed.
-                    if this.is_barrel_optimization_enabled() {
-                        diff += barrel_imports::schedule_barrel_deferred_imports(
-                            this,
-                            result_source_index as IndexInt,
-                            result_ast_target,
-                        )
-                        .expect("oom");
-                    }
+                    diff += barrel_imports::schedule_barrel_deferred_imports(
+                        this,
+                        result_source_index as IndexInt,
+                        result_ast_target,
+                    )
+                    .expect("oom");
 
                     if let Some(named_exports) = named_exports_for_scb {
                         if result.use_directive == crate::UseDirective::Server {

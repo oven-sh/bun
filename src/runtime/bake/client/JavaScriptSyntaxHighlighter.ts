@@ -642,7 +642,6 @@ export class DraculaSyntaxHighlighter {
 
   private consumeString(quote: string): string {
     let str = "";
-    let pos = this.pos;
     let isEscaped = false;
 
     // Consume initial quote

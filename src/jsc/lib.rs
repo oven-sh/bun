@@ -1472,7 +1472,7 @@ pub trait JsClass: Sized {
     /// collector sees real memory pressure, not just `size_of::<Self>()`.
     ///
     /// Override with an inherent `fn estimated_size(&self) -> usize` on the
-    /// concrete type — the `#[JsClass(estimated_size)]` hook resolves via
+    /// concrete type — the generated `${T}__estimatedSize` hook resolves via
     /// method syntax, so an inherent impl shadows this default.
     fn estimated_size(&self) -> usize {
         core::mem::size_of::<Self>()

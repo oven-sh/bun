@@ -33,7 +33,7 @@ function convertRustEnum(rust: string, names: string[]) {
   return output;
 }
 
-function css(file: string, is_development: boolean): string {
+function css(file: string): string {
   const { success, stdout, stderr } = Bun.spawnSync({
     cmd: [process.execPath, "build", file, "--minify"],
     cwd: import.meta.dir,
@@ -56,7 +56,7 @@ async function run() {
           side: JSON.stringify(side),
           IS_ERROR_RUNTIME: String(file === "error"),
           IS_BUN_DEVELOPMENT: String(!!debug),
-          OVERLAY_CSS: css("../runtime/bake/client/overlay.css", !!debug),
+          OVERLAY_CSS: css("../runtime/bake/client/overlay.css"),
         },
         minify: {
           syntax: !debug,

@@ -1875,7 +1875,6 @@ pub enum ErrorCode {
     MissingClientProtocol = 11,
     MismatchClientProtocol = 12,
     Timeout = 13,
-    Closed = 14,
     FailedToWrite = 15,
     FailedToConnect = 16,
     Ended = 18,

@@ -1645,7 +1645,6 @@ EVPKeyPointer::PrivateKeyEncodingConfig KeyObject::getPrivateKeyEncoding(
     ThrowScope& scope,
     EVPKeyPointer::PKFormatType formatType,
     std::optional<EVPKeyPointer::PKEncodingType> encodingType,
-    const EVP_CIPHER* cipher,
     std::optional<DataPointer> passphrase,
     KeyEncodingContext ctx)
 {
@@ -1655,10 +1654,6 @@ EVPKeyPointer::PrivateKeyEncodingConfig KeyObject::getPrivateKeyEncoding(
     if (config.output_key_object) {
         // TODO: make sure this case for key generation is handled
     } else {
-        if (ctx != KeyEncodingContext::Input) {
-            config.cipher = cipher;
-        }
-
         if (passphrase) {
             config.passphrase = WTF::move(*passphrase);
         }
@@ -1675,7 +1670,6 @@ KeyObject KeyObject::getPublicOrPrivateKey(
     CryptoKeyType keyType,
     EVPKeyPointer::PKFormatType formatType,
     std::optional<EVPKeyPointer::PKEncodingType> encodingType,
-    const EVP_CIPHER* cipher,
     std::optional<DataPointer> passphrase)
 {
     auto buf = ncrypto::Buffer<const uint8_t> {
@@ -1693,7 +1687,6 @@ KeyObject KeyObject::getPublicOrPrivateKey(
             scope,
             formatType,
             encodingType,
-            cipher,
             WTF::move(passphrase),
             KeyEncodingContext::Input);
         RETURN_IF_EXCEPTION(scope, {});
@@ -1721,7 +1714,6 @@ KeyObject KeyObject::getPublicOrPrivateKey(
         scope,
         formatType,
         encodingType,
-        cipher,
         WTF::move(passphrase),
         KeyEncodingContext::Input);
     RETURN_IF_EXCEPTION(scope, {});
@@ -2017,7 +2009,6 @@ KeyObject::PrepareAsymmetricKeyResult KeyObject::prepareAsymmetricKey(JSC::JSGlo
                     .keyDataView = { decodedView, decodedView->span() },
                     .formatType = config.format,
                     .encodingType = config.type,
-                    .cipher = config.cipher,
                     .passphrase = WTF::move(config.passphrase),
                 };
             }
@@ -2032,7 +2023,6 @@ KeyObject::PrepareAsymmetricKeyResult KeyObject::prepareAsymmetricKey(JSC::JSGlo
                 .keyDataView = { view, view->span() },
                 .formatType = config.format,
                 .encodingType = config.type,
-                .cipher = config.cipher,
                 .passphrase = WTF::move(config.passphrase),
             };
         }
@@ -2047,7 +2037,6 @@ KeyObject::PrepareAsymmetricKeyResult KeyObject::prepareAsymmetricKey(JSC::JSGlo
                 .keyDataView = { arrayBuffer, buffer->span() },
                 .formatType = config.format,
                 .encodingType = config.type,
-                .cipher = config.cipher,
                 .passphrase = WTF::move(config.passphrase),
             };
         }

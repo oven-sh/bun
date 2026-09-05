@@ -370,6 +370,67 @@ describe("bundler", async () => {
     },
   });
 
+  // Each local name of a CSS module and each top-level key of a JSON file that
+  // is imported by name (or through a namespace) becomes a top-level `var` in
+  // the bundle. `await`, `eval` and `arguments` are not keywords, but none of
+  // them can be declared in strict-mode code, so the bundle has to rename them
+  // the same way it already renames `class`.
+  itBundled("bun/loader-css-module-strict-mode-binding-names", {
+    target: "bun",
+    outdir: "/out",
+    files: {
+      "/entry.ts": /* js */ `
+    import styles, { await as a, eval as e, arguments as g, class as c } from './styles.module.css';
+    const out = [
+      Object.keys(styles),
+      a.startsWith("await_"),
+      e.startsWith("eval_"),
+      g.startsWith("arguments_"),
+      c.startsWith("class_"),
+      a === styles.await && e === styles.eval && g === styles.arguments && c === styles.class,
+    ];
+    console.write(JSON.stringify(out));
+  `,
+      "/styles.module.css": `
+    .await { color: red; }
+    .eval { color: green; }
+    .arguments { color: blue; }
+    .class { color: black; }
+  `,
+    },
+    run: { stdout: '[["await","eval","arguments","class"],true,true,true,true,true]' },
+  });
+
+  itBundled("bun/loader-json-strict-mode-binding-names", {
+    target: "bun",
+    files: {
+      "/entry.ts": /* js */ `
+    import * as ns from './data.json';
+    import { await as a, eval as e, arguments as g } from './data.json';
+    console.write(JSON.stringify([Object.keys(ns).sort(), a, e, g, ns.default]));
+  `,
+      "/data.json": `{"await": 1, "eval": 2, "arguments": 3}`,
+    },
+    run: { stdout: '[["arguments","await","default","eval"],1,2,3,{"await":1,"eval":2,"arguments":3}]' },
+  });
+
+  // A "use strict" directive on the entry point is hoisted to the top of cjs
+  // and iife bundles, so these names are invalid bindings there as well.
+  for (const format of ["cjs", "iife"] as const) {
+    itBundled(`bun/loader-json-strict-mode-binding-names-${format}`, {
+      format,
+      files: {
+        "/entry.ts": /* js */ `
+      "use strict";
+      import { await as a, eval as e, arguments as g } from './data.json';
+      console.write(JSON.stringify([a, e, g]));
+    `,
+        "/data.json": `{"await": 1, "eval": 2, "arguments": 3}`,
+      },
+      run: { stdout: "[1,2,3]" },
+    });
+  }
+
   // The CSS-modules lazy export builds its object through `E::Object::put`.
   itBundled("bun/loader-css-module-proto-class-is-own-property", {
     target: "bun",

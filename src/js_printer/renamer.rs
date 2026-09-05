@@ -1428,6 +1428,14 @@ pub fn compute_initial_reserved_names(
 
     const CJS_NAMES: [&[u8]; 2] = [b"exports", b"module"];
 
+    // Not keywords, so `Keywords`/`StrictModeReservedWords` miss them, but none
+    // of them can be a binding name in strict code: `await` is reserved in
+    // modules and `eval`/`arguments` are rejected as binding identifiers. ESM
+    // output is always strict, and cjs/iife output is too whenever the entry
+    // point's "use strict" directive is hoisted into the bundle, so reserve
+    // them for every format like the keywords above.
+    const STRICT_MODE_BINDING_RESTRICTED_NAMES: [&[u8]; 3] = [b"arguments", b"eval", b"await"];
+
     let cjs_names_len: u32 = if output_format == Format::Cjs {
         CJS_NAMES.len() as u32
     } else {
@@ -1436,7 +1444,11 @@ pub fn compute_initial_reserved_names(
 
     names.ensure_total_capacity(
         cjs_names_len as usize
-            + (Keywords.len() + StrictModeReservedWords.len() + 1 + EXTRAS.len()),
+            + (Keywords.len()
+                + StrictModeReservedWords.len()
+                + STRICT_MODE_BINDING_RESTRICTED_NAMES.len()
+                + 1
+                + EXTRAS.len()),
     )?;
 
     for keyword in Keywords.keys() {
@@ -1445,6 +1457,10 @@ pub fn compute_initial_reserved_names(
 
     for keyword in StrictModeReservedWords.iter() {
         names.put_assume_capacity(keyword, 1);
+    }
+
+    for name in STRICT_MODE_BINDING_RESTRICTED_NAMES {
+        names.put_assume_capacity(name, 1);
     }
 
     // Node contains code that scans CommonJS modules in an attempt to statically

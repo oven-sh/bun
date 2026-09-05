@@ -1684,6 +1684,58 @@ describe("HTMLRewriter", () => {
     );
   });
 
+  it("attribute selectors match the attribute name case-insensitively", async () => {
+    // HTML attribute names are ASCII case-insensitive. Before this was fixed,
+    // `[HREF]` was accepted but silently matched nothing, and `[ID="x"]` threw
+    // a bogus "Selectors with explicit namespaces are not supported" error.
+    const countMatches = async (selector, input) => {
+      let count = 0;
+      const res = new HTMLRewriter()
+        .on(selector, {
+          element() {
+            count++;
+          },
+        })
+        .transform(new Response(input));
+      await res.text();
+      return count;
+    };
+
+    const doc = `<div ID="X" data-x="1"><a HREF="#" href="#z">l</a><input type="text"></div>`;
+
+    // Existence: [NAME] must match regardless of the selector's case or the
+    // case used in the source document.
+    expect(await countMatches("[id]", doc)).toBe(1);
+    expect(await countMatches("[ID]", doc)).toBe(1);
+    expect(await countMatches("[Id]", doc)).toBe(1);
+    expect(await countMatches("a[href]", doc)).toBe(1);
+    expect(await countMatches("a[HREF]", doc)).toBe(1);
+    expect(await countMatches("A[HREF]", doc)).toBe(1);
+    expect(await countMatches("[data-x]", doc)).toBe(1);
+    expect(await countMatches("[DATA-X]", doc)).toBe(1);
+    expect(await countMatches("[Data-X]", doc)).toBe(1);
+
+    // With a value: [NAME=value] must not throw and must match.
+    expect(await countMatches("[id=X]", doc)).toBe(1);
+    expect(await countMatches("[ID=X]", doc)).toBe(1);
+    expect(await countMatches('input[TYPE="text"]', doc)).toBe(1);
+    expect(await countMatches('[Data-X="1"]', doc)).toBe(1);
+    expect(await countMatches('[DATA-X^="1"]', doc)).toBe(1);
+    // Attribute *value* comparison stays case-sensitive by default.
+    expect(await countMatches("[ID=x]", doc)).toBe(0);
+    expect(await countMatches('[ID="x" i]', doc)).toBe(1);
+
+    // :not() with an uppercase attribute name.
+    expect(await countMatches("div:not([ID])", doc)).toBe(0);
+    expect(await countMatches('div:not([ID="X"])', doc)).toBe(0);
+    expect(await countMatches("a:not([ID])", doc)).toBe(1);
+
+    // A selector with an actual namespace is still rejected.
+    expect(() => new HTMLRewriter().on("[*|foo]", { element() {} }).transform(new Response("<a>"))).toThrow(
+      /namespaces are not supported/,
+    );
+  });
+
   it("supports deleting innerContent", async () => {
     expect(
       await new HTMLRewriter()

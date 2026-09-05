@@ -3387,8 +3387,11 @@ pub trait OutOfRangeValue {
 }
 
 impl OutOfRangeValue for f64 {
+    // Node renders the received value with `util.inspect`, which keeps `-0`.
     fn write_received(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        write!(f, " Received {}", double(*self))
+        let mut buf = [0u8; 124];
+        f.write_str(" Received ")?;
+        write_bytes(f, FormatDouble::dtoa_with_negative_zero(&mut buf, *self))
     }
     fn type_name() -> &'static str {
         "f64"

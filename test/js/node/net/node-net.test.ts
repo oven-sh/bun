@@ -14,6 +14,7 @@ import {
   isIPv4,
   isIPv6,
   Server,
+  setDefaultAutoSelectFamilyAttemptTimeout,
   Socket,
   Stream,
 } from "node:net";
@@ -48,6 +49,20 @@ it("should support net.isIPv6()", () => {
   expect(isIPv6("127.0.0.1")).toBe(false);
   expect(isIPv6("127.0.0.1/24")).toBe(false);
   expect(isIPv6("127.000.000.001")).toBe(false);
+});
+
+// Node renders the received value of ERR_OUT_OF_RANGE with util.inspect, so
+// -0 stays -0 and 1e21 reads 1e+21.
+it("setDefaultAutoSelectFamilyAttemptTimeout renders an out-of-range value like JS", () => {
+  expect(() => setDefaultAutoSelectFamilyAttemptTimeout(-0)).toThrow(
+    RangeError(`The value of "value" is out of range. It must be >= 1 && <= 2147483647. Received -0`),
+  );
+  expect(() => setDefaultAutoSelectFamilyAttemptTimeout(1e21)).toThrow(
+    RangeError(`The value of "value" is out of range. It must be >= 1 && <= 2147483647. Received 1e+21`),
+  );
+  expect(() => setDefaultAutoSelectFamilyAttemptTimeout(1.5)).toThrow(
+    RangeError(`The value of "value" is out of range. It must be an integer. Received 1.5`),
+  );
 });
 
 describe("net.BlockList subnet rules", () => {

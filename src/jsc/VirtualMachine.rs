@@ -3009,6 +3009,7 @@ impl VirtualMachine {
                 };
                 // SAFETY: see above.
                 if crate::JSPromise::status_ptr(p) == crate::js_promise::Status::Pending {
+                    self.retry_deferred_hot_reload();
                     self.auto_tick();
                 }
             }
@@ -3864,7 +3865,7 @@ impl VirtualMachine {
         (self.on_unhandled_rejection)(self, global_object, reason);
     }
 
-    /// After a hot reload, surfaces the entry-point promise's rejection (if any) and re-arms the watcher.
+    /// Per watch-mode tick: reports the entry promise's rejection, retries a deferred reload, re-arms the watcher.
     pub fn report_exception_in_hot_reloaded_module_if_needed(&mut self) {
         let promise = match self.pending_internal_promise {
             Some(p) => p,
@@ -3875,10 +3876,7 @@ impl VirtualMachine {
         };
         // SAFETY: `promise` is a live JSC heap cell tracked by the VM.
         match crate::JSPromise::status_ptr(promise) {
-            crate::js_promise::Status::Pending => {
-                self.add_main_to_watcher_if_needed();
-                return;
-            }
+            crate::js_promise::Status::Pending => {}
             crate::js_promise::Status::Rejected => {
                 if self.pending_internal_promise_reported_at != self.hot_reload_counter {
                     self.pending_internal_promise_reported_at = self.hot_reload_counter;
@@ -3897,10 +3895,15 @@ impl VirtualMachine {
             crate::js_promise::Status::Fulfilled => {}
         }
 
+        self.retry_deferred_hot_reload();
+        self.add_main_to_watcher_if_needed();
+    }
+
+    /// Runs a reload [`reload`] deferred; it defers itself again while the entry load is still in flight.
+    fn retry_deferred_hot_reload(&mut self) {
         if self.hot_reload_deferred {
             self.reload(None);
         }
-        self.add_main_to_watcher_if_needed();
     }
 
     /// Adds the main entry point to the file watcher when watch mode is enabled.
@@ -3959,7 +3962,7 @@ impl VirtualMachine {
         }
     }
 
-    /// Performs a hot reload: re-evaluates the entry point once any pending entry-point load settles.
+    /// Re-evaluates the entry point, or defers to [`retry_deferred_hot_reload`] while its load is in flight.
     pub(crate) fn reload(&mut self, _: Option<&mut crate::hot_reloader::HotReloadTask>) {
         if self.hot_reload == HotReload::Watch {
             // Watch reload replaces the process: never defer on a pending
@@ -3981,8 +3984,11 @@ impl VirtualMachine {
             // SAFETY: `p` is a live JSC heap cell tracked by the VM.
             match crate::JSPromise::status_ptr(p) {
                 crate::js_promise::Status::Pending => {
-                    self.hot_reload_deferred = true;
-                    return;
+                    // A load still in flight would share the registry with a new one; a pending top-level await would not.
+                    if !crate::cpp::Bun__entryRootIsEvaluating(self.global()) {
+                        self.hot_reload_deferred = true;
+                        return;
+                    }
                 }
                 crate::js_promise::Status::Rejected => {
                     if self.pending_internal_promise_reported_at != self.hot_reload_counter {

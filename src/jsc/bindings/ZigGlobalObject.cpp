@@ -3948,24 +3948,31 @@ extern "C" bool Bun__VM__entryEvaluationStarted(void*);
 extern "C" BunString Bun__VM__entryRootKey(void*);
 extern "C" void Bun__VM__noteEntryEvaluationStarted(void*);
 
-// A module body is about to run. That means "the entry's graph is linked and executing" only if it is
-// part of the entry root's own evaluation — the root's record is Evaluating (or beyond) from the moment
-// linkAndEvaluateModule() enters it, and its dependencies run inside that (post-order). A module that
-// evaluates before then is some other root: a preload's un-awaited import() finishing while the entry is
-// still fetching.
+// Evaluating or beyond: the entry's graph is fetched and linked, and anything still pending is a top-level await.
+static bool entryRootIsEvaluating(Zig::GlobalObject* globalObject, JSModuleLoader* moduleLoader)
+{
+    BunString rootKey = Bun__VM__entryRootKey(globalObject->bunVM());
+    auto* entry = moduleLoader->registryEntry(JSC::Identifier::fromString(globalObject->vm(), rootKey.toWTFString(BunString::ZeroCopy)));
+    if (!entry)
+        return false;
+    auto* cyclic = dynamicDowncast<JSC::CyclicModuleRecord>(entry->record());
+    return cyclic && cyclic->status() >= JSC::CyclicModuleRecord::Status::Evaluating;
+}
+
+// Asked by a --hot reload that finds the entry promise still pending (VirtualMachine::reload).
+extern "C" [[ZIG_EXPORT(nothrow)]] bool Bun__entryRootIsEvaluating(Zig::GlobalObject* globalObject)
+{
+    return entryRootIsEvaluating(globalObject, globalObject->moduleLoader());
+}
+
+// A body running before the root is Evaluating belongs to another root (a preload's un-awaited import()).
 static void noteModuleEvaluation(Zig::GlobalObject* globalObject, JSModuleLoader* moduleLoader)
 {
     void* bunVM = globalObject->bunVM();
     if (Bun__VM__entryEvaluationStarted(bunVM))
         return;
-    BunString rootKey = Bun__VM__entryRootKey(bunVM);
-    auto* entry = moduleLoader->registryEntry(JSC::Identifier::fromString(globalObject->vm(), rootKey.toWTFString(BunString::ZeroCopy)));
-    if (!entry)
-        return;
-    auto* cyclic = dynamicDowncast<JSC::CyclicModuleRecord>(entry->record());
-    if (!cyclic || cyclic->status() < JSC::CyclicModuleRecord::Status::Evaluating)
-        return;
-    Bun__VM__noteEntryEvaluationStarted(bunVM);
+    if (entryRootIsEvaluating(globalObject, moduleLoader))
+        Bun__VM__noteEntryEvaluationStarted(bunVM);
 }
 
 JSC::JSValue GlobalObject::moduleLoaderEvaluate(JSGlobalObject* lexicalGlobalObject,

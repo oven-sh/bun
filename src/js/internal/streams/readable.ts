@@ -527,10 +527,11 @@ Readable.prototype.setEncoding = function (enc) {
 
   // Iterate over current buffer to convert already stored Buffers:
   let content = "";
-  for (const data of state.buffer.slice(state.bufferIndex)) {
-    content += decoder.write(data);
+  const buffer = state.buffer;
+  for (let i = state.bufferIndex, len = buffer.length; i < len; i++) {
+    content += decoder.write(buffer[i]);
   }
-  state.buffer.length = 0;
+  buffer.length = 0;
   state.bufferIndex = 0;
 
   if (content !== "") state.buffer.push(content);

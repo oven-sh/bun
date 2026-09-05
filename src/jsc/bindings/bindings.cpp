@@ -4262,6 +4262,38 @@ bool JSC__JSValue__isIterable(JSC::EncodedJSValue JSValue, JSC::JSGlobalObject* 
     return JSC::hasIteratorMethod(global, JSC::JSValue::decode(JSValue));
 }
 
+// Like hasIteratorMethod, but false for an array (IsArray, so a Proxy around
+// an array too) and for anything that iterates with the intrinsic Array
+// iterator (Array.prototype.values): an `arguments` object, a plain
+// array-like. That iterator trusts the `length` the object reports and never
+// checks that an element exists, so a caller that wants one step per existing
+// element walks the object's own properties instead.
+extern "C" [[ZIG_EXPORT(check_slow)]] bool Bun__JSValue__isNonArrayIterable(JSC::EncodedJSValue encodedValue, JSC::JSGlobalObject* globalObject)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    JSC::JSValue value = JSC::JSValue::decode(encodedValue);
+    if (!value.isObject())
+        return false;
+    bool isArray = JSC::isArray(globalObject, value);
+    RETURN_IF_EXCEPTION(scope, false);
+    if (isArray)
+        return false;
+
+    JSC::CallData callData;
+    JSC::JSValue method = asObject(value)->getMethod(globalObject, callData, vm.propertyNames->iteratorSymbol, "Symbol.iterator property should be callable"_s);
+    RETURN_IF_EXCEPTION(scope, false);
+    if (method.isUndefined())
+        return false;
+
+    auto* function = dynamicDowncast<JSC::JSFunction>(method);
+    if (function && function == function->globalObject()->arrayProtoValuesFunctionConcurrently())
+        return false;
+
+    return true;
+}
+
 void JSC__JSValue__forEach(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* arg1, void* ctx, void (*ArgFn3)(JSC::VM* arg0, JSC::JSGlobalObject* arg1, void* arg2, JSC::EncodedJSValue JSValue3))
 {
     JSC::forEachInIterable(

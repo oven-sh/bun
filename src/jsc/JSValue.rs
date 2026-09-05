@@ -2426,6 +2426,12 @@ impl JSValue {
     pub fn is_iterable(self, global: &JSGlobalObject) -> JsResult<bool> {
         host_fn::from_js_host_call_generic(global, || JSC__JSValue__isIterable(self, global))
     }
+    /// [`is_iterable`](Self::is_iterable), but false for an array (through a
+    /// Proxy too) and for anything that iterates with the intrinsic Array
+    /// iterator, such as an `arguments` object.
+    pub fn is_non_array_iterable(self, global: &JSGlobalObject) -> JsResult<bool> {
+        crate::cpp::Bun__JSValue__isNonArrayIterable(self, global)
+    }
     /// `JSValue.forEach` — invoke `callback` for each iterable element.
     pub fn for_each(
         self,

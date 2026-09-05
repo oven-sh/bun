@@ -1,5 +1,5 @@
 import { describe, expect, jest, test } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, normalizeBunSnapshot, tempDir } from "harness";
 
 test("error.cause", () => {
   const err = new Error("error 1");
@@ -10,7 +10,7 @@ test("error.cause", () => {
       .replaceAll(import.meta.dir.replaceAll("\\", "/"), "[dir]"),
   ).toMatchInlineSnapshot(`
 "1 | import { describe, expect, jest, test } from "bun:test";
-2 | import { bunEnv, bunExe, tempDir } from "harness";
+2 | import { bunEnv, bunExe, normalizeBunSnapshot, tempDir } from "harness";
 3 | 
 4 | test("error.cause", () => {
 5 |   const err = new Error("error 1");
@@ -20,7 +20,7 @@ error: error 2
       at <anonymous> ([dir]/inspect-error.test.js:6:20)
 
 1 | import { describe, expect, jest, test } from "bun:test";
-2 | import { bunEnv, bunExe, tempDir } from "harness";
+2 | import { bunEnv, bunExe, normalizeBunSnapshot, tempDir } from "harness";
 3 | 
 4 | test("error.cause", () => {
 5 |   const err = new Error("error 1");
@@ -181,6 +181,118 @@ test("error.stack throwing an error doesn't lead to a crash", () => {
   expect(() => {
     throw err;
   }).toThrow();
+});
+
+describe.concurrent("error.message getter that throws", () => {
+  // The printer reads `message` through a real [[Get]]. The getter's exception
+  // must not stay pending while the printer goes on to read other properties.
+  // Each sink runs in its own process: the failure mode is an abort.
+  const code = sink =>
+    [
+      `class E extends Error { get message() { throw new RangeError("from the getter"); } }`,
+      sink,
+      `console.log("after");`,
+    ].join("\n");
+
+  async function run(sink) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", code(sink)],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr: normalizeBunSnapshot(stderr), exitCode };
+  }
+
+  test("console.error", async () => {
+    const { stdout, stderr, exitCode } = await run(`console.error(new E());`);
+    expect(stderr).toMatchInlineSnapshot(`
+      "1 | class E extends Error { get message() { throw new RangeError("from the getter"); } }
+      2 | console.error(new E());
+                        ^
+      Error: 
+            at <cwd>/[eval]:2:15"
+    `);
+    expect(stdout).toBe("after\n");
+    expect(exitCode).toBe(0);
+  });
+
+  test("Bun.inspect", async () => {
+    const { stdout, stderr, exitCode } = await run(`console.error(Bun.inspect(new E()));`);
+    expect(stderr).toMatchInlineSnapshot(`
+      "1 | class E extends Error { get message() { throw new RangeError("from the getter"); } }
+      2 | console.error(Bun.inspect(new E()));
+                                    ^
+      Error: 
+            at <cwd>/[eval]:2:27"
+    `);
+    expect(stdout).toBe("after\n");
+    expect(exitCode).toBe(0);
+  });
+
+  test("uncaught exception", async () => {
+    const { stdout, stderr, exitCode } = await run(`throw new E();`);
+    expect(stderr).toMatchInlineSnapshot(`
+      "1 | class E extends Error { get message() { throw new RangeError("from the getter"); } }
+      2 | throw new E();
+                ^
+      Error: 
+            at <cwd>/[eval]:2:7
+
+      Bun v<bun-version>"
+    `);
+    expect(stdout).toBe("");
+    expect(exitCode).toBe(1);
+  });
+
+  test("unhandled rejection", async () => {
+    const { stdout, stderr, exitCode } = await run(`Promise.reject(new E());`);
+    expect(stderr).toMatchInlineSnapshot(`
+      "1 | class E extends Error { get message() { throw new RangeError("from the getter"); } }
+      2 | Promise.reject(new E());
+                         ^
+      Error: 
+            at <cwd>/[eval]:2:16
+
+      Bun v<bun-version>"
+    `);
+    expect(stdout).toBe("after\n");
+    expect(exitCode).toBe(1);
+  });
+});
+
+// The header the printer renders for each kind of `message`. A value that
+// cannot be read as a string prints like an empty message.
+describe.concurrent.each([
+  ["a number", `e.message = 42;`, "error: 42"],
+  ["a Symbol", `e.message = Symbol("sym");`, "Error: "],
+  ["an object with toString", `e.message = { toString() { return "from toString"; } };`, "error: from toString"],
+  ["an object whose toString throws", `e.message = { toString() { throw new RangeError("ts"); } };`, "Error: "],
+  [
+    "found through a Proxy whose has trap throws",
+    `delete e.message; Object.setPrototypeOf(e, new Proxy(Error.prototype, { has() { throw new RangeError("has"); } }));`,
+    "Error: ",
+  ],
+])("error.message that is %s", (_, setup, header) => {
+  test("prints the header and the stack", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        [`const e = new Error("boom");`, setup, `console.error(e);`, `console.log("after");`].join("\n"),
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(normalizeBunSnapshot(stderr)).toBe(
+      [`1 | const e = new Error("boom");`, `                  ^`, header, `      at <cwd>/[eval]:1:15`].join("\n"),
+    );
+    expect(stdout).toBe("after\n");
+    expect(exitCode).toBe(0);
+  });
 });
 
 describe("source map remapping of the printed stack", () => {

@@ -103,11 +103,17 @@ fn get_if_exists_longest_common_path_generic<'a, P: PlatformT>(
     let is_path_separator = P::P.get_separator_func();
 
     let nql_at_index_fn: fn(usize, usize, &[&[u8]]) -> bool = match P::P {
-        Platform::Windows => |n, i, inp| nql_at_index_case_insensitive_dyn(n, i, inp),
-        _ => |n, i, inp| nql_at_index_dyn(n, i, inp),
+        Platform::Windows => nql_at_index_case_insensitive_dyn,
+        _ => nql_at_index_dyn,
     };
     // PERF: uses a runtime `n` (no per-count unrolling). Profile if it shows
     // up on a hot path.
+
+    let string_count = match input.len() {
+        0 => return Some(b""),
+        1 => return Some(input[0]),
+        n => n,
+    };
 
     let mut min_length: usize = usize::MAX;
     for str in input {
@@ -117,47 +123,15 @@ fn get_if_exists_longest_common_path_generic<'a, P: PlatformT>(
     let mut index: usize = 0;
     let mut last_common_separator: Option<usize> = None;
 
-    match input.len() {
-        0 => return Some(b""),
-        1 => return Some(input[0]),
-        n @ 2..=8 => {
-            while index < min_length {
-                if nql_at_index_fn(n, index, input) {
-                    last_common_separator?;
-                    break;
-                }
-                if is_path_separator(input[0][index]) {
-                    last_common_separator = Some(index);
-                }
-                index += 1;
-            }
+    while index < min_length {
+        if nql_at_index_fn(string_count, index, input) {
+            last_common_separator?;
+            break;
         }
-        _ => {
-            let mut string_index: usize = 1;
-            while string_index < input.len() {
-                while index < min_length {
-                    if P::P == Platform::Windows {
-                        if !input[0][index].eq_ignore_ascii_case(&input[string_index][index]) {
-                            last_common_separator?;
-                            break;
-                        }
-                    } else {
-                        if input[0][index] != input[string_index][index] {
-                            last_common_separator?;
-                            break;
-                        }
-                    }
-                    index += 1;
-                }
-                if index == min_length {
-                    index -= 1;
-                }
-                if is_path_separator(input[0][index]) {
-                    last_common_separator = Some(index);
-                }
-                string_index += 1;
-            }
+        if is_path_separator(input[0][index]) {
+            last_common_separator = Some(index);
         }
+        index += 1;
     }
 
     if index == 0 {
@@ -220,6 +194,23 @@ fn longest_common_path_generic<'a, P: PlatformT>(input: &[&'a [u8]]) -> &'a [u8]
     };
     // PERF: no per-count unrolling — profile if hot
 
+    let string_count = match input.len() {
+        0 => return b"",
+        1 => return input[0],
+        n => n,
+    };
+
+    // If volume IDs do not match on windows, we can't have a common path
+    if P::P == Platform::Windows {
+        let first_root = windows_filesystem_root(input[0]);
+        for str in &input[1..] {
+            let root = windows_filesystem_root(str);
+            if !strings::eql_case_insensitive_ascii_check_length(first_root, root) {
+                return b"";
+            }
+        }
+    }
+
     let mut min_length: usize = usize::MAX;
     for str in input {
         min_length = str.len().min(min_length);
@@ -228,70 +219,14 @@ fn longest_common_path_generic<'a, P: PlatformT>(input: &[&'a [u8]]) -> &'a [u8]
     let mut index: usize = 0;
     let mut last_common_separator: usize = 0;
 
-    match input.len() {
-        0 => return b"",
-        1 => return input[0],
-        n @ 2..=8 => {
-            // If volume IDs do not match on windows, we can't have a common path
-            if P::P == Platform::Windows {
-                let first_root = windows_filesystem_root(input[0]);
-                let mut i = 1;
-                while i < n {
-                    let root = windows_filesystem_root(input[i]);
-                    if !strings::eql_case_insensitive_ascii_check_length(first_root, root) {
-                        return b"";
-                    }
-                    i += 1;
-                }
-            }
-
-            while index < min_length {
-                if nql_at_index_fn(n, index, input) {
-                    break;
-                }
-                if is_path_separator(input[0][index]) {
-                    last_common_separator = index;
-                }
-                index += 1;
-            }
+    while index < min_length {
+        if nql_at_index_fn(string_count, index, input) {
+            break;
         }
-        _ => {
-            // If volume IDs do not match on windows, we can't have a common path
-            if P::P == Platform::Windows {
-                let first_root = windows_filesystem_root(input[0]);
-                let mut i: usize = 1;
-                while i < input.len() {
-                    let root = windows_filesystem_root(input[i]);
-                    if !strings::eql_case_insensitive_ascii_check_length(first_root, root) {
-                        return b"";
-                    }
-                    i += 1;
-                }
-            }
-
-            let mut string_index: usize = 1;
-            while string_index < input.len() {
-                while index < min_length {
-                    if P::P == Platform::Windows {
-                        if !input[0][index].eq_ignore_ascii_case(&input[string_index][index]) {
-                            break;
-                        }
-                    } else {
-                        if input[0][index] != input[string_index][index] {
-                            break;
-                        }
-                    }
-                    index += 1;
-                }
-                if index == min_length {
-                    index -= 1;
-                }
-                if is_path_separator(input[0][index]) {
-                    last_common_separator = index;
-                }
-                string_index += 1;
-            }
+        if is_path_separator(input[0][index]) {
+            last_common_separator = index;
         }
+        index += 1;
     }
 
     if index == 0 {
@@ -2527,6 +2462,86 @@ mod tests {
         text.iter()
             .position(|b| chars.contains(b))
             .unwrap_or(text_len)
+    }
+
+    fn entries(count: usize) -> Vec<Vec<u8>> {
+        (0..count)
+            .map(|i| format!("/app/pages/page{i}.ts").into_bytes())
+            .collect()
+    }
+
+    fn borrow(owned: &[Vec<u8>]) -> Vec<&[u8]> {
+        owned.iter().map(Vec::as_slice).collect()
+    }
+
+    #[test]
+    fn longest_common_path_does_not_depend_on_the_input_count() {
+        for count in 2..=20 {
+            let owned = entries(count);
+            let input = borrow(&owned);
+            assert_eq!(
+                get_if_exists_longest_common_path(&input),
+                Some(b"/app/pages/".as_slice()),
+                "{count} inputs"
+            );
+            assert_eq!(
+                longest_common_path(&input),
+                b"/app/pages/",
+                "{count} inputs"
+            );
+        }
+    }
+
+    #[test]
+    fn longest_common_path_of_many_inputs_detects_a_directory_that_is_itself_an_input() {
+        let mut owned = entries(9);
+        owned.push(b"/app/pages".to_vec());
+        let input = borrow(&owned);
+        assert_eq!(
+            get_if_exists_longest_common_path(&input),
+            Some(b"/app/pages/".as_slice())
+        );
+        assert_eq!(longest_common_path(&input), b"/app/pages/");
+    }
+
+    #[test]
+    fn longest_common_path_of_many_unrelated_inputs_matches_the_two_input_answer() {
+        let mut owned = entries(9);
+        owned.push(b"lib/other.ts".to_vec());
+        let input = borrow(&owned);
+        assert_eq!(
+            get_if_exists_longest_common_path(&input),
+            get_if_exists_longest_common_path(&input[8..])
+        );
+        assert_eq!(
+            longest_common_path(&input),
+            longest_common_path(&input[8..])
+        );
+    }
+
+    #[test]
+    fn longest_common_path_tolerates_an_empty_input_among_many() {
+        let mut owned = entries(9);
+        owned.push(Vec::new());
+        let input = borrow(&owned);
+        assert_eq!(
+            get_if_exists_longest_common_path(&input),
+            get_if_exists_longest_common_path(&input[8..])
+        );
+        assert_eq!(
+            longest_common_path(&input),
+            longest_common_path(&input[8..])
+        );
+
+        let empties = [b"".as_slice(); 9];
+        assert_eq!(
+            get_if_exists_longest_common_path(&empties),
+            get_if_exists_longest_common_path(&empties[..2])
+        );
+        assert_eq!(
+            longest_common_path(&empties),
+            longest_common_path(&empties[..2])
+        );
     }
 
     #[test]

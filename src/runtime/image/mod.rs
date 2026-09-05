@@ -17,6 +17,8 @@
 #[path = "codecs.rs"]
 pub mod codecs;
 
+mod color_management;
+
 #[path = "codec_jpeg.rs"]
 pub mod codec_jpeg;
 

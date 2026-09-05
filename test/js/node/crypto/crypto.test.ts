@@ -314,6 +314,44 @@ describe("crypto.createSign()/.verifySign()", () => {
       expect(verify).toBeTrue();
     },
   );
+
+  it("Sign#sign() throws ERR_UNKNOWN_ENCODING for an invalid outputEncoding", () => {
+    const { privateKey } = crypto.generateKeyPairSync("rsa", { modulusLength: 2048 });
+
+    const invalid = ["rot13", "utf-42", 123, {}] as const;
+    for (const encoding of invalid) {
+      expect(() =>
+        crypto
+          .createSign("sha256")
+          .update("m")
+          .sign(privateKey, encoding as any),
+      ).toThrow(
+        expect.objectContaining({
+          code: "ERR_UNKNOWN_ENCODING",
+          message: `Unknown encoding: ${typeof encoding === "object" ? "{}" : encoding}`,
+        }),
+      );
+    }
+
+    const falsy = [undefined, null, "", 0, false] as const;
+    for (const encoding of falsy) {
+      const out = crypto
+        .createSign("sha256")
+        .update("m")
+        .sign(privateKey, encoding as any);
+      expect(Buffer.isBuffer(out)).toBeTrue();
+    }
+
+    const asBuffer = crypto
+      .createSign("sha256")
+      .update("m")
+      .sign(privateKey, "buffer" as any);
+    expect(Buffer.isBuffer(asBuffer)).toBeTrue();
+
+    const asHex = crypto.createSign("sha256").update("m").sign(privateKey, "hex");
+    expect(typeof asHex).toBe("string");
+    expect(asHex.length).toBe(512);
+  });
 });
 
 it("should send cipher events in the right order", async () => {

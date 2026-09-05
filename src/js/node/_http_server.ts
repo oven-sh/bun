@@ -594,6 +594,9 @@ Server.prototype.listen = function () {
 
     if (cluster === undefined) cluster = require("node:cluster");
 
+    // worker.disconnect() only closes servers the cluster child knows about.
+    cluster._trackServer(server);
+
     server.once("listening", () => {
       // No channel (NODE_UNIQUE_ID inherited by a plain child, or already disconnected): nothing to notify.
       if (!process.connected) return;

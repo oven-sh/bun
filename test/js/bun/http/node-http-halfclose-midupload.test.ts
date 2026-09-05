@@ -67,8 +67,6 @@ async function runTeardownStages(bind: string | undefined, url: (port: number) =
   try {
     expect(await withTimeout(writeResult.promise, "write-after-end")).toBeTrue();
     await withTimeout(fetchSettled, "fetch-settled");
-    // Not server.closeAllConnections(): bun's implementation also stops the
-    // server, which makes the disposal/close below reject.
     socket?.destroy();
     await withTimeout(connectionClosed.promise, "connection-closed");
     const serverClosed = new Promise<void>((resolve, reject) => server.close(err => (err ? reject(err) : resolve())));

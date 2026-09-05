@@ -301,6 +301,27 @@ bool JSNodeHTTPServerSocket::isRequestTimedOut(uint64_t headersTimeoutMs, uint64
     return isRequestTimedOutImpl<false>(socket, headersTimeoutMs, requestTimeoutMs);
 }
 
+template<bool SSL>
+static bool hasIncompleteRequestImpl(us_socket_t* socket)
+{
+    auto* httpResponseData = reinterpret_cast<uWS::NodeHttpResponseData<SSL>*>(us_socket_ext(socket));
+    if (httpResponseData->isConnectRequest) {
+        return false;
+    }
+    return httpResponseData->lastMessageStartMs != 0;
+}
+
+bool JSNodeHTTPServerSocket::hasIncompleteRequest() const
+{
+    if (!socket || upgraded || us_socket_is_closed(socket)) {
+        return false;
+    }
+    if (is_ssl) {
+        return hasIncompleteRequestImpl<true>(socket);
+    }
+    return hasIncompleteRequestImpl<false>(socket);
+}
+
 bool JSNodeHTTPServerSocket::isAuthorized() const
 {
     // is secure means that tls was established successfully

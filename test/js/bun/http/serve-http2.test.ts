@@ -91,6 +91,45 @@ for (const secure of [true, false]) {
       expect(res.body.toString()).toBe("hello");
     });
 
+    // https://github.com/oven-sh/bun/issues/30248
+    // RFC 9110 §10.1.1: recognized 100-continue forms dispatch the handler,
+    // anything else answers 417 before the handler runs.
+    test("Expect dispatch: 100-continue casings reach the handler, unknown expectations 417", async () => {
+      // Like `request`, but also records interim responses so the test can
+      // assert the 100 arrives before the final status.
+      function requestRecordingInterims(headers: http2.OutgoingHttpHeaders, body: string) {
+        return new Promise<{ interims: number[]; status: number; body: string }>((resolve, reject) => {
+          const req = session.request(headers, { endStream: false });
+          const interims: number[] = [];
+          const chunks: Buffer[] = [];
+          let responseHeaders: http2.IncomingHttpHeaders = {};
+          req.on("headers", h => interims.push(Number(h[":status"])));
+          req.on("response", h => (responseHeaders = h));
+          req.on("data", c => chunks.push(c));
+          req.on("end", () =>
+            resolve({ interims, status: Number(responseHeaders[":status"]), body: Buffer.concat(chunks).toString() }),
+          );
+          req.on("error", reject);
+          req.end(body);
+        });
+      }
+
+      const results: Record<string, { interims: number[]; status: number; body: string }> = {};
+      for (const value of ["100-continue", "100-Continue", "100-CONTINUE", "muffins", "x100-continue"]) {
+        results[value] = await requestRecordingInterims(
+          { ":path": "/echo", ":method": "POST", expect: value },
+          "hello",
+        );
+      }
+      expect(results).toEqual({
+        "100-continue": { interims: [100], status: 201, body: "hello" },
+        "100-Continue": { interims: [100], status: 201, body: "hello" },
+        "100-CONTINUE": { interims: [100], status: 201, body: "hello" },
+        "muffins": { interims: [], status: 417, body: "" },
+        "x100-continue": { interims: [], status: 417, body: "" },
+      });
+    });
+
     test("POST body is echoed with status and request headers", async () => {
       const res = await request(session, { ":path": "/echo", ":method": "POST", "x-echo": "abc" }, "payload-123");
       expect(res.status).toBe(201);

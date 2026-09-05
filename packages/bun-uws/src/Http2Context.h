@@ -1725,13 +1725,39 @@ inline bool Http2Connection::handleHeaderBlock(uint32_t streamId, uint8_t flags,
 
 inline bool Http2Connection::dispatchRequest(Http2Response *stream, const us_quic_header_t *headers, unsigned count) {
     Http2Request req(headers, count);
-    if (!(ctx->parentFlags && ctx->parentFlags->usingCustomExpectHandler) && req.getHeader("expect") == "100-continue") {
-        stream->writeContinue();
+    bool rejectedExpectation = false;
+    if (!(ctx->parentFlags && ctx->parentFlags->usingCustomExpectHandler)) {
+        /* RFC 9110 §10.1.1: expectation-name is case-insensitive and may
+         * carry params or appear in a list. Unknown expectations are
+         * answered 417 without dispatching, matching Node.js. */
+        std::string_view expect = req.getHeader("expect");
+        if (expect.length()) {
+            bool has100Continue = utils::hasExpect100Continue(expect);
+            if (!has100Continue) {
+                /* Expect is list-typed, so repeated field lines form one
+                 * list (RFC 9110 §5.2); scan the rest before rejecting. */
+                req.forEachHeader([&](std::string_view name, std::string_view value) {
+                    if (name.size() == 6 && asciiIEquals(name, "expect") && utils::hasExpect100Continue(value)) {
+                        has100Continue = true;
+                    }
+                });
+            }
+            if (has100Continue) {
+                stream->writeContinue();
+            } else {
+                rejectedExpectation = true;
+            }
+        }
     }
-    ctx->dispatchDepth++;
-    ctx->router.getUserData() = {stream, &req};
-    bool routed = ctx->router.route(req.getMethod(), req.getUrl());
-    ctx->dispatchDepth--;
+    bool routed = true;
+    if (rejectedExpectation) {
+        stream->writeStatus("417 Expectation Failed")->end();
+    } else {
+        ctx->dispatchDepth++;
+        ctx->router.getUserData() = {stream, &req};
+        routed = ctx->router.route(req.getMethod(), req.getUrl());
+        ctx->dispatchDepth--;
+    }
     if (closed) return false;
     if (!routed && !stream->dead) {
         stream->writeStatus("404 Not Found")->end();

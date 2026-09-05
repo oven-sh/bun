@@ -29,9 +29,14 @@
 namespace uWS {
 
 /* RFC 9113 §8.2.2 / RFC 9114 §4.2: connection-specific fields are not
- * allowed in HTTP/2 or HTTP/3 responses. */
+ * allowed in HTTP/2 or HTTP/3 responses. Folds A-Z only: the 0x20 trick
+ * would also fold '_' and '^', breaking lookups of names that use them. */
 static inline bool asciiIEquals(std::string_view a, const char *lower) {
-    for (size_t i = 0; i < a.size(); i++) if ((a[i] | 0x20) != lower[i]) return false;
+    for (size_t i = 0; i < a.size(); i++) {
+        unsigned char c = (unsigned char) a[i];
+        if (c >= 'A' && c <= 'Z') c = (unsigned char) (c + ('a' - 'A'));
+        if (c != (unsigned char) lower[i]) return false;
+    }
     return true;
 }
 /* RFC 9110 §5.6.2 tchar. */
@@ -80,6 +85,25 @@ namespace utils {
 /* Decimal digits in the largest uint64_t (18446744073709551615). Sizes the
  * buffers u64toa and std::to_chars write into; neither appends a terminator. */
 static constexpr size_t U64_MAX_DIGITS = std::numeric_limits<uint64_t>::digits10 + 1;
+
+/* RFC 9110 §10.1.1: Expect is a list of case-insensitive tokens with optional
+ * parameters. Mirrors Node's continueExpression /(?:^|\W)100-continue(?:$|\W)/i
+ * so "100-Continue", "100-continue; p=1" and list members all match. */
+inline bool hasExpect100Continue(std::string_view expect) {
+    constexpr std::string_view needle = "100-continue";
+    if (expect.length() < needle.length()) return false;
+    auto isWord = [](unsigned char c) {
+        return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_';
+    };
+    for (size_t i = 0; i + needle.length() <= expect.length(); i++) {
+        if (!asciiIEquals(expect.substr(i, needle.length()), "100-continue")) continue;
+        if (i > 0 && isWord((unsigned char) expect[i - 1])) continue;
+        size_t end = i + needle.length();
+        if (end < expect.length() && isWord((unsigned char) expect[end])) continue;
+        return true;
+    }
+    return false;
+}
 
 inline int u32toaHex(uint32_t value, char *dst) {
     char palette[] = "0123456789abcdef";

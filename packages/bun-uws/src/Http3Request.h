@@ -3,6 +3,7 @@
 
 #include "quic.h"
 #include "QueryParser.h"
+#include "Utilities.h"
 
 #include <cctype>
 #include <string_view>
@@ -35,7 +36,7 @@ struct Http3Request {
                 query = q == std::string_view::npos ? std::string_view{} : value.substr(q);
             } else if (name == ":authority") {
                 authority = value;
-            } else if (authority.empty() && name.size() == 4 && equalsIgnoreCase(name, "host")) {
+            } else if (authority.empty() && name.size() == 4 && asciiIEquals(name, "host")) {
                 /* RFC 9114 §4.3.1: a request must contain :authority OR a
                  * Host field. Promote the literal Host so getHeader("host"),
                  * req.url, and the forEachHeader synthesis all agree. QPACK
@@ -72,7 +73,7 @@ struct Http3Request {
         for (unsigned int i = 0; i < headerCount; i++) {
             const us_quic_header_t *h = &headers[i];
             if (h->name_len == lowerCasedHeader.size() &&
-                equalsIgnoreCase({h->name, h->name_len}, lowerCasedHeader)) {
+                asciiIEquals({h->name, h->name_len}, lowerCasedHeader.data())) {
                 return {h->value, h->value_len};
             }
         }
@@ -88,7 +89,7 @@ struct Http3Request {
              * literal Host. :authority is synthesized as host below; drop
              * the literal so req.headers.get('host') matches req.url and
              * isn't comma-joined. */
-            if (!authority.empty() && name.size() == 4 && equalsIgnoreCase(name, "host")) continue;
+            if (!authority.empty() && name.size() == 4 && asciiIEquals(name, "host")) continue;
             fn(name, std::string_view{h->value, h->value_len});
         }
         if (!authority.empty()) fn(std::string_view{"host"}, authority);
@@ -102,14 +103,6 @@ struct Http3Request {
     }
 
 private:
-    static bool equalsIgnoreCase(std::string_view a, std::string_view b) {
-        if (a.size() != b.size()) return false;
-        for (size_t i = 0; i < a.size(); i++) {
-            if ((a[i] | 0x20) != (b[i] | 0x20)) return false;
-        }
-        return true;
-    }
-
     const us_quic_header_t *headers;
     unsigned int headerCount;
     std::string_view method, url, fullUrl, query, authority;

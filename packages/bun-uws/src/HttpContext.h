@@ -31,6 +31,7 @@
 #include <string_view>
 #include "MoveOnlyFunction.h"
 #include "HttpParser.h"
+#include "Utilities.h"
 #include <span>
 #include <array>
 #include <mutex>
@@ -1023,11 +1024,30 @@ public:
             user.httpRequest->setYield(false);
             user.httpRequest->setParameters(r->getParameters());
 
-            if (!httpContextData->flags.usingCustomExpectHandler) {
-                /* Middleware? Automatically respond to expectations */
+            if (!httpContextData->flags.usingCustomExpectHandler && !user.httpRequest->isAncient()) {
+                /* RFC 9110 §10.1.1: expectation-name is case-insensitive and
+                 * may carry params or appear in a list. Unknown expectations
+                 * are answered 417 without dispatching, matching Node.js. */
                 std::string_view expect = user.httpRequest->getHeader("expect");
-                if (expect.length() && expect == "100-continue") {
-                    user.httpResponse->writeContinue();
+                if (expect.length()) {
+                    bool has100Continue = utils::hasExpect100Continue(expect);
+                    if (!has100Continue) {
+                        /* Expect is list-typed, so repeated field lines form one
+                         * list (RFC 9110 §5.2); scan the rest before rejecting. */
+                        for (auto [key, value] : *user.httpRequest) {
+                            if (key.size() == 6 && asciiIEquals(key, "expect") && utils::hasExpect100Continue(value)) {
+                                has100Continue = true;
+                                break;
+                            }
+                        }
+                    }
+                    if (has100Continue) {
+                        user.httpResponse->writeContinue();
+                    } else {
+                        user.httpResponse->writeStatus("417 Expectation Failed");
+                        user.httpResponse->end();
+                        return true;
+                    }
                 }
             }
 

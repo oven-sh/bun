@@ -1899,6 +1899,8 @@ pub fn init(
     };
 
     env.load_process()?;
+    let env_suffix = env.default_suffix();
+    let skip_default_env = cli.no_env_file || ctx.args.disable_default_env_files;
     // Copy the listing's basenames out under `entries_mutex`; `.data` must
     // only be probed while the lock is held.
     let env_probe_keys = {
@@ -1911,12 +1913,7 @@ pub fn init(
                 .collect(),
         )
     };
-    env.load(
-        &env_probe_keys,
-        &[],
-        dot_env::DotEnvFileSuffix::Production,
-        false,
-    )?;
+    env.load(&env_probe_keys, cli.env_files, env_suffix, skip_default_env)?;
 
     initialize_store();
 

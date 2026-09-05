@@ -1755,12 +1755,8 @@ impl<'a> Printer<'a> {
         env_loader.quiet = true;
 
         env_loader.load_process()?;
-        env_loader.load(
-            &entries,
-            &[] as &[&[u8]],
-            DotEnv::DotEnvFileSuffix::Production,
-            false,
-        )?;
+        let env_suffix = env_loader.default_suffix();
+        env_loader.load(&entries, &[] as &[&[u8]], env_suffix, false)?;
         let mut log = bun_ast::Log::init();
         options.load(
             &mut log,

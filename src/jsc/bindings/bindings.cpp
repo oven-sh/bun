@@ -100,6 +100,7 @@
 #include "JavaScriptCore/WasmFaultSignalHandler.h"
 #include "ZigGlobalObject.h"
 #include "helpers.h"
+#include "CollectArrayLike.h"
 #include "JavaScriptCore/JSObjectInlines.h"
 
 #include "wtf/Assertions.h"
@@ -7007,22 +7008,19 @@ extern "C" int32_t Bun__JSArray__collectBufferSpans(
     JSC::JSArray* array = uncheckedDowncast<JSC::JSArray>(value.asCell());
 
     JSC::MarkedArgumentBuffer values;
-    values.ensureCapacity(array->length());
-    if (values.hasOverflowed()) [[unlikely]]
-        return 2;
-
-    JSC::forEachInArrayLike(globalObject, array, [&](JSC::JSValue element) -> bool {
-        values.append(element);
-        return true;
+    bool allViews = true;
+    Bun::collectArrayLike(globalObject, array, values, [&](JSC::JSValue element) -> bool {
+        allViews = !!dynamicDowncast<JSC::JSArrayBufferView>(element);
+        return allViews;
     });
     RETURN_IF_EXCEPTION(scope, -1);
+    if (!allViews)
+        return 1;
     if (values.hasOverflowed()) [[unlikely]]
         return 2;
 
     for (unsigned i = 0; i < unsigned(values.size()); i++) {
-        auto* view = dynamicDowncast<JSC::JSArrayBufferView>(values.at(i));
-        if (!view)
-            return 1;
+        auto* view = uncheckedDowncast<JSC::JSArrayBufferView>(values.at(i));
         if (pinBuffers) {
             // possiblySharedBuffer() converts a FastTypedArray (GC-movable
             // storage, no ArrayBuffer yet) into a malloc-backed one and can

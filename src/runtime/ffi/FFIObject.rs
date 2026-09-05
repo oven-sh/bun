@@ -266,11 +266,22 @@ pub mod reader {
         };
         let mut addr = base;
         if let Some(off_value) = arguments.get(1) {
-            let off = off_value.to_int32();
-            if off < 0 {
-                addr = addr.saturating_sub(off.unsigned_abs() as usize);
-            } else {
-                addr = addr.saturating_add(off as usize);
+            if off_value.is_number() {
+                if !off_value.as_number().is_finite() {
+                    return Err(global_object.throw_invalid_arguments(format_args!(
+                        "byteOffset must be a finite number"
+                    )));
+                }
+                let off = off_value.to_int64();
+                if off < 0 {
+                    addr = addr
+                        .saturating_sub(usize::try_from(off.unsigned_abs()).unwrap_or(usize::MAX));
+                } else {
+                    addr = addr.saturating_add(usize::try_from(off).unwrap_or(usize::MAX));
+                }
+            } else if !off_value.is_empty_or_undefined_or_null() {
+                return Err(global_object
+                    .throw_invalid_arguments(format_args!("Expected number for byteOffset")));
             }
         }
         if addr == 0 {
@@ -520,6 +531,11 @@ fn get_ptr_slice(
 
     if let Some(byte_off) = byte_offset {
         if byte_off.is_number() {
+            if !byte_off.as_number().is_finite() {
+                return Err(global_this
+                    .throw_invalid_arguments(format_args!("byteOffset must be a finite number")));
+            }
+
             let off = byte_off.to_int64();
             if off < 0 {
                 addr =
@@ -532,11 +548,6 @@ fn get_ptr_slice(
                 return Err(global_this.throw_invalid_arguments(format_args!(
                     "ptr cannot be zero, that would segfault Bun :("
                 )));
-            }
-
-            if !byte_off.as_number().is_finite() {
-                return Err(global_this
-                    .throw_invalid_arguments(format_args!("ptr must be a finite number.")));
             }
         } else if !byte_off.is_empty_or_undefined_or_null() {
             return Err(

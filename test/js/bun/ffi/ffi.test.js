@@ -802,6 +802,89 @@ describe("read edge cases", () => {
     expect(() => read.u8(-1n, 0)).toThrow("Expected a pointer");
     expect(() => CFunction({ ptr: -1n, args: [], returns: "void" })).toThrow(/out of range/);
   });
+
+  it("a byteOffset of 2^31 or more is added in full, not truncated to int32", async () => {
+    // read.X(base, off) reads base + off. A base placed `off` bytes away from
+    // the buffer reaches the buffer only when the whole offset is added, so this
+    // checks 4 GiB offsets in both directions without a 4 GiB allocation. Runs
+    // in a subprocess because a truncated offset reads unmapped memory and can
+    // crash.
+    const src = `
+      import { ptr, read } from "bun:ffi";
+      const buf = new Uint8Array(32);
+      for (let i = 0; i < buf.length; i++) buf[i] = 0x80 + i;
+      const view = new DataView(buf.buffer);
+      const p = ptr(buf);
+      const at = 8;
+      if (p <= 2 ** 32 + buf.length) throw new Error("buffer address is below 4 GiB: " + p);
+
+      const readers = {
+        u8: [read.u8, view.getUint8(at)],
+        i8: [read.i8, view.getInt8(at)],
+        u16: [read.u16, view.getUint16(at, true)],
+        i16: [read.i16, view.getInt16(at, true)],
+        u32: [read.u32, view.getUint32(at, true)],
+        i32: [read.i32, view.getInt32(at, true)],
+        f32: [read.f32, view.getFloat32(at, true)],
+        f64: [read.f64, view.getFloat64(at, true)],
+        i64: [read.i64, view.getBigInt64(at, true)],
+        u64: [read.u64, view.getBigUint64(at, true)],
+        ptr: [read.ptr, Number(view.getBigUint64(at, true))],
+        intptr: [read.intptr, Number(view.getBigInt64(at, true))],
+      };
+
+      const wrong = [];
+      // int32 holds -(2 ** 31) to 2 ** 31 - 1. Every offset here is outside it.
+      const large = [2 ** 31, 2 ** 31 + 1, 2 ** 32, 2 ** 32 + 1];
+      for (const off of [...large, ...large.map(o => -o - 1)]) {
+        const base = p + at - off;
+        for (const name in readers) {
+          const [fn, want] = readers[name];
+          const got = fn(base, off);
+          if (!Object.is(got, want)) wrong.push(name + "@" + off + ": got " + got + ", want " + want);
+        }
+      }
+      console.log(JSON.stringify(wrong));
+    `;
+    await using proc = Bun.spawn({ cmd: [bunExe(), "-e", src], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "[]\n", stderr: "", exitCode: 0 });
+  });
+
+  it("an undefined or null byteOffset reads at the pointer, other non-numbers throw", async () => {
+    // Runs in a subprocess: an unfixed build reads the JSValue encoding of
+    // `undefined` as the offset, and a debug build asserts on it.
+    const src = `
+      import { ptr, read } from "bun:ffi";
+      const buf = new Uint8Array([0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88, 0x99, 0xaa, 0xbb, 0xcc]);
+      const p = ptr(buf);
+      const got = { none: read.u8(p), undefined: read.u8(p, undefined), null: read.u8(p, null) };
+      const thrown = {};
+      for (const [label, off] of [["string", "1"], ["bigint", 1n], ["object", {}], ["Infinity", Infinity], ["-Infinity", -Infinity], ["NaN", NaN]]) {
+        try {
+          read.u8(p, off);
+          thrown[label] = "no error";
+        } catch (e) {
+          thrown[label] = e.message;
+        }
+      }
+      console.log(JSON.stringify({ got, thrown }));
+    `;
+    await using proc = Bun.spawn({ cmd: [bunExe(), "-e", src], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
+    expect(JSON.parse(stdout)).toEqual({
+      got: { none: 0x11, undefined: 0x11, null: 0x11 },
+      thrown: {
+        string: "Expected number for byteOffset",
+        bigint: "Expected number for byteOffset",
+        object: "Expected number for byteOffset",
+        Infinity: "byteOffset must be a finite number",
+        "-Infinity": "byteOffset must be a finite number",
+        NaN: "byteOffset must be a finite number",
+      },
+    });
+  });
 });
 
 describe("CString", () => {

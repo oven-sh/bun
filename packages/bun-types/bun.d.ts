@@ -3545,8 +3545,10 @@ declare module "bun" {
      * A map of file paths to their contents for in-memory bundling.
      *
      * Use this to bundle virtual files that don't exist on disk, or override
-     * the contents of files that do exist on disk. The keys are file paths (which should
-     * match how they're imported) and the values are the file contents.
+     * the contents of files that do exist on disk. The keys are file paths and
+     * the values are the file contents. A relative key is resolved against the
+     * current working directory, like a relative entrypoint, and an import
+     * uses the in-memory file when it resolves to that path.
      *
      * File contents can be provided as:
      * - `string` - The source code as a string

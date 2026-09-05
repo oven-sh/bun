@@ -44,7 +44,7 @@ pub mod js_bundler {
 
     /// A map of file paths to their in-memory contents.
     /// LAYERING: the data-only struct (`map: StringHashMap<Box<[u8]>>`) and
-    /// `get`/`contains`/`resolve` live in `bun_bundler::bundle_v2` so the
+    /// `put`/`get`/`contains`/`resolve` live in `bun_bundler::bundle_v2` so the
     /// bundler thread can read it without depending on `bun_runtime`. Only
     /// the JS-aware `from_js` constructor lives here.
     pub use bun_bundler::bundle_v2::api::JSBundler::FileMap;
@@ -89,17 +89,14 @@ pub mod js_bundler {
             let bytes: Box<[u8]> = blob_or_string.slice().into();
             drop(blob_or_string);
 
-            // Clone the key since we need to own it.
-            let mut key = prop.to_owned_slice();
-
-            // Normalize backslashes to forward slashes for cross-platform consistency.
-            // Use dangerouslyConvertPathToPosixInPlace which always converts \ to /
-            // (uses sep_windows constant, not sep which varies by target).
-            bun_paths::resolve_path::dangerously_convert_path_to_posix_in_place::<u8>(
-                key.as_mut_slice(),
-            );
-
-            this.map.put_assume_capacity(&key, bytes);
+            let key = prop.to_utf8();
+            if this.put(key.slice(), bytes).is_err() {
+                return Err(global_this.throw_invalid_arguments(format_args!(
+                    "files: key resolves to a path longer than {} bytes",
+                    bun_paths::MAX_PATH_BYTES
+                )));
+            }
+            drop(key);
         }
 
         Ok(this)

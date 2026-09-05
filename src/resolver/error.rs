@@ -50,8 +50,27 @@ impl Error {
             Self::Sys(bun_errno::SystemErrno::EACCES) => bun_core::Error::AccessDenied,
             Self::Sys(bun_errno::SystemErrno::ENAMETOOLONG) => bun_core::Error::NameTooLong,
             Self::Sys(bun_errno::SystemErrno::ENOSPC) => bun_core::Error::NoSpaceLeft,
+            Self::Sys(bun_errno::SystemErrno::ENFILE) => bun_core::Error::SystemFdQuotaExceeded,
+            Self::Sys(bun_errno::SystemErrno::EMFILE) => bun_core::Error::ProcessFdQuotaExceeded,
             _ => bun_core::Error::Unexpected,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Error;
+
+    #[test]
+    fn preserves_file_descriptor_errors() {
+        assert_eq!(
+            Error::Sys(bun_errno::SystemErrno::ENFILE).into_core(),
+            bun_core::Error::SystemFdQuotaExceeded
+        );
+        assert_eq!(
+            Error::Sys(bun_errno::SystemErrno::EMFILE).into_core(),
+            bun_core::Error::ProcessFdQuotaExceeded
+        );
     }
 }
 

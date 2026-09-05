@@ -28,7 +28,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { readFile } from "node:fs/promises";
-import { availableParallelism, userInfo } from "node:os";
+import { availableParallelism } from "node:os";
 import { basename, dirname, extname, join, relative, sep } from "node:path";
 import { createInterface } from "node:readline";
 import { setTimeout as setTimeoutPromise } from "node:timers/promises";
@@ -54,6 +54,7 @@ import {
   getOs,
   getSecret,
   getShell,
+  getUserInfo,
   getWindowsExitReason,
   isAndroid,
   isBuildkite,
@@ -871,7 +872,28 @@ async function runTests() {
       const absoluteTestPath = join(testsPath, testPath);
       const title = relative(cwd, absoluteTestPath).replaceAll(sep, "/");
       if (isNodeTest(testPath)) {
-        const testContent = readFileSync(absoluteTestPath, "utf-8");
+        let testContent;
+        try {
+          testContent = readFileSync(absoluteTestPath, "utf-8");
+        } catch (error) {
+          // Listed at startup, gone now (a wiped checkout). A failed step keeps
+          // the run going where a throw would end it with no summary.
+          const stdout = error.stack || String(error);
+          return runTest(
+            title,
+            async () => ({
+              testPath: title,
+              ok: false,
+              status: "fail",
+              error: `read error: ${error.code || error.message}`,
+              errors: [],
+              tests: [],
+              stdout,
+              stdoutPreview: stdout,
+            }),
+            concurrent,
+          );
+        }
         const flagsMatch = /^\/\/ Flags:[^\S\r\n]+(--[^\r\n]*)$/m.exec(testContent);
         const testFlags = flagsMatch
           ? flagsMatch[1].split(/\s+/).filter(flag => resolutionGatingFlags.has(flag.split("=")[0]))
@@ -1894,7 +1916,7 @@ function getCombinedPath(execPath) {
 async function spawnBun(execPath, { args, cwd, timeout, gracefulTimeout, idleTimeout, env, stdout, stderr }) {
   const path = getCombinedPath(execPath);
   const tmpdirPath = mkdtempSync(join(tmpdir(), "buntmp-"));
-  const { username, homedir } = userInfo();
+  const { username, homedir } = getUserInfo();
   const shellPath = getShell();
   const bunEnv = {
     ...process.env,

@@ -1609,11 +1609,45 @@ export function getHostname() {
 }
 
 /**
- * @returns {string}
+ * @typedef {object} UserInfo
+ * @property {string | undefined} username
+ * @property {string | undefined} homedir
+ */
+
+/** @type {UserInfo | undefined} */
+let cachedUserInfo;
+
+/**
+ * The name and home directory of the user that runs this process, resolved once.
+ *
+ * `os.userInfo()` looks the user up in the passwd database on every call. On
+ * macOS that lookup goes through opendirectoryd, which can answer ENOENT for
+ * the running user's uid while the host is in a bad state. The values do not
+ * change for the lifetime of the process, and the login session sets the same
+ * values in the environment, so a failed lookup falls back to them.
+ * @returns {UserInfo}
+ */
+export function getUserInfo() {
+  if (!cachedUserInfo) {
+    try {
+      const { username, homedir } = userInfo();
+      cachedUserInfo = { username, homedir };
+    } catch (error) {
+      cachedUserInfo = {
+        username: getEnv("USER", false) || getEnv("LOGNAME", false) || getEnv("USERNAME", false),
+        homedir: getEnv("HOME", false) || getEnv("USERPROFILE", false),
+      };
+      console.warn("os.userInfo() failed, using the environment instead:", cachedUserInfo, error);
+    }
+  }
+  return cachedUserInfo;
+}
+
+/**
+ * @returns {string | undefined}
  */
 export function getUsername() {
-  const { username } = userInfo();
-  return username;
+  return getUserInfo().username;
 }
 
 /**

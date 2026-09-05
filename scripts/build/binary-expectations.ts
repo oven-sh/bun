@@ -203,7 +203,10 @@ export function binaryExpectations(cfg: Config): BinaryExpectations {
       : android
         ? ["libc.so", "libdl.so", "libm.so"]
         : musl
-          ? [`libc.musl-${cfg.x64 ? "x86_64" : "aarch64"}.so.1`, "libstdc++.so.6"]
+          ? // libstdc++/libgcc stay dynamic on musl on purpose: an N-API addon built on
+            // Alpine links libstdc++.so.6, and it and bun must share one C++ runtime
+            // when it loads (node does the same). glibc builds link it statically.
+            [`libc.musl-${cfg.x64 ? "x86_64" : "aarch64"}.so.1`, "libstdc++.so.6"]
           : [loader, "libc.so.6", "libdl.so.2", "libm.so.6", "libpthread.so.0"];
     return {
       format,
@@ -226,8 +229,9 @@ export function binaryExpectations(cfg: Config): BinaryExpectations {
       staticInitializers: runtimeInitializers,
       elf: {
         // Android requires PIE; everywhere else bun is a fixed-address
-        // executable (-fno-pic, see flags.ts). No RELRO / BIND_NOW anywhere
-        // today (flags.ts links -z norelro for startup); recorded, not endorsed.
+        // executable (-fno-pic, see flags.ts). No RELRO / BIND_NOW anywhere:
+        // flags.ts links `-z norelro -z lazy` (a startup-time choice from the
+        // CMake era, kept as is); this records it so a change is deliberate.
         type: android ? "DYN" : "EXEC",
         execStack: false,
         rwxLoad: false,

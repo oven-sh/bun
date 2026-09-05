@@ -47,7 +47,7 @@ impl PosixSignalHandle {
     }
 }
 
-/// This is the signal handler entry point. Calls enqueue on the ring buffer.
+/// This is the signal handler entry point. Counts the signal as pending.
 /// Note: Must be minimal logic here. Only do atomics & signal-safe calls.
 #[unsafe(no_mangle)]
 extern "C" fn Bun__onPosixSignal(number: i32) {

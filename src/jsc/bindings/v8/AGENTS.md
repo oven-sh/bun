@@ -149,21 +149,19 @@ dumpbin .\build\CMakeFiles\bun-debug.dir\src\jsc\bindings\v8\V8NewClass.cpp.obj 
 
 #### b. Add to Symbol Files
 
-Add to `src/symbols.txt` (without leading underscore):
+Add to `src/symbols.txt` (the macOS export list). Mach-O symbol names carry
+one more leading underscore than the Itanium mangled name, so each entry
+starts with `__ZN` or `__ZNK`:
 
 ```
-_ZN2v88NewClass3NewEPNS_7IsolateE...
-_ZNK2v88NewClass10SomeMethodEv
+__ZN2v88NewClass3NewEPNS_7IsolateE...
+__ZNK2v88NewClass10SomeMethodEv
 ```
 
-Add to `src/symbols.dyn` (with leading underscore and semicolons):
-
-```
-{
-    __ZN2v88NewClass3NewEPNS_7IsolateE...;
-    __ZNK2v88NewClass10SomeMethodEv;
-}
-```
+Linux and FreeBSD need no per-symbol entry: the version script
+`src/linker.lds` exports every `v8::*` and `node::*` symbol.
+`test/internal/source-lints/posix-export-lists.test.ts` checks that it covers
+everything in `src/symbols.txt`.
 
 **Note:** `src/symbols.def` is Windows-only and typically doesn't contain V8 symbols.
 

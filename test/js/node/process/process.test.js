@@ -2,7 +2,8 @@ import { spawnSync, which } from "bun";
 import { CString, dlopen, ptr } from "bun:ffi";
 import { describe, expect, it } from "bun:test";
 import { familySync } from "detect-libc";
-import { bunEnv, bunExe, isMacOS, isWindows, tempDir, tmpdirSync } from "harness";
+import { mkdirSync } from "fs";
+import { bunEnv, bunExe, isLinux, isMacOS, isWindows, tempDir, tmpdirSync } from "harness";
 import { basename, join, resolve } from "path";
 
 const process_sleep = resolve(import.meta.dir, "process-sleep.js");
@@ -313,6 +314,82 @@ it("process.chdir() on root dir", () => {
   } finally {
     process.chdir(cwd);
   }
+});
+
+// The cwd bun caches for the resolver is stored as getcwd() returned it, both at
+// startup and after process.chdir(). It is what a failing chdir reports as `path`,
+// where node reports process.cwd().
+it("process.chdir() error path is process.cwd() after an earlier successful chdir", () => {
+  using dir = tempDir("process-chdir-error-path", {});
+  const cwd = process.cwd();
+  try {
+    process.chdir(String(dir));
+    const newCwd = process.cwd();
+    let error;
+    try {
+      process.chdir("does-not-exist");
+    } catch (e) {
+      error = e;
+    }
+    expect({ code: error.code, path: error.path, dest: error.dest, message: error.message }).toEqual({
+      code: "ENOENT",
+      path: newCwd,
+      dest: "does-not-exist",
+      message: `ENOENT: no such file or directory, chdir '${newCwd}' -> 'does-not-exist'`,
+    });
+  } finally {
+    process.chdir(cwd);
+  }
+});
+
+// MAX_PATH_BYTES (src/bun_core/util.rs) is 4096 on Linux and 1024 on macOS and the
+// BSDs; getcwd() can return one byte less than that. Windows' limit (~98 KB of
+// UTF-8) is not reachable with a real directory tree.
+it.skipIf(isWindows)("process.chdir() into a directory whose path is MAX_PATH_BYTES - 1 bytes long", async () => {
+  const target = (isLinux ? 4096 : 1024) - 1;
+  using dir = tempDir("process-chdir-path-max", {});
+
+  const segment = Buffer.alloc(200, "d").toString();
+  let parent = String(dir);
+  while (target - Buffer.byteLength(parent) > 256) {
+    parent = join(parent, segment);
+    mkdirSync(parent);
+  }
+  const deepest = join(parent, Buffer.alloc(target - Buffer.byteLength(parent) - 1, "L").toString());
+  expect(Buffer.byteLength(deepest)).toBe(target);
+  mkdirSync(deepest);
+
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `const target = ${JSON.stringify(deepest)};
+       process.chdir(target);
+       let error;
+       try {
+         process.chdir("does-not-exist");
+       } catch (e) {
+         error = e;
+       }
+       console.log(JSON.stringify({
+         cwdIsTarget: process.cwd() === target,
+         cwdBytes: Buffer.byteLength(process.cwd()),
+         errorCode: error.code,
+         errorPathIsTarget: error.path === target,
+       }));`,
+    ],
+    cwd: String(dir),
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr, exitCode }).toEqual({
+    stdout:
+      JSON.stringify({ cwdIsTarget: true, cwdBytes: target, errorCode: "ENOENT", errorPathIsTarget: true }) + "\n",
+    stderr: "",
+    exitCode: 0,
+  });
 });
 
 it("process.hrtime()", async () => {

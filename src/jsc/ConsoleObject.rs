@@ -886,6 +886,10 @@ impl<'a> TablePrinter<'a> {
         if !self.properties.is_undefined() {
             let mut properties_iter = jsc::JSArrayIterator::init(self.properties, global_object)?;
             while let Some(value) = properties_iter.next()? {
+                // Node drops Symbol columns; ToString on a Symbol would throw.
+                if value.is_symbol() {
+                    continue;
+                }
                 columns.push(Column {
                     name: value.to_bun_string(global_object)?,
                     width: 1,

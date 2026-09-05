@@ -677,6 +677,37 @@ pub use crate::closer::Closer;
 pub use crate::waker::Waker;
 use bun_sys::{self as sys, E, Fd};
 
+#[cfg(any(target_os = "linux", target_os = "android"))]
+#[inline]
+pub(crate) fn emulate_epoll_oneshot() -> bool {
+    bun_core::env_var::feature_flag::BUN_FEATURE_FLAG_EMULATE_EPOLL_ONESHOT::get()
+}
+
+#[cfg(any(target_os = "linux", target_os = "android"))]
+pub(crate) fn disarm_emulated_epoll_oneshot(watcher_fd: Fd, fd: Fd) -> sys::Result<()> {
+    use bun_sys::linux::{self, EPOLL};
+
+    loop {
+        // SAFETY: both descriptors came from a successful epoll registration;
+        // null is valid for EPOLL_CTL_DEL on Linux 2.6.9 and newer.
+        let rc = unsafe {
+            linux::epoll_ctl(
+                watcher_fd.native(),
+                EPOLL::CTL_DEL,
+                fd.native(),
+                core::ptr::null_mut(),
+            )
+        };
+        match sys::get_errno(rc) {
+            E::EINTR => continue,
+            E::SUCCESS | E::ENOENT | E::EBADF => return sys::Result::Ok(()),
+            errno => {
+                return sys::Result::Err(sys::Error::from_code(errno, sys::Tag::epoll_ctl));
+            }
+        }
+    }
+}
+
 // `loop` is a Rust keyword, so the static is
 // named `io_loop` but the runtime tagname is `"loop"` so `BUN_DEBUG_loop=1` works.
 #[allow(non_upper_case_globals)]
@@ -1076,7 +1107,7 @@ impl IoRequestLoop {
                 let Some(poll) = core::ptr::NonNull::new(pollable.poll()) else {
                     continue;
                 };
-                Poll::on_update_epoll(poll, pollable.tag(), *event);
+                Poll::on_update_epoll(self.pollfd(), poll, pollable.tag(), *event);
             }
         }
     }
@@ -1438,6 +1469,8 @@ static GENERATION_NUMBER_MONOTONIC: core::sync::atomic::AtomicU64 =
 
 pub struct Poll {
     pub flags: FlagsSet,
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    registered_fd: Fd,
     #[cfg(all(target_os = "macos", debug_assertions))]
     pub(crate) generation_number: GenerationNumberInt,
 }
@@ -1446,6 +1479,8 @@ impl Default for Poll {
     fn default() -> Self {
         Self {
             flags: FlagsSet::empty(),
+            #[cfg(any(target_os = "linux", target_os = "android"))]
+            registered_fd: Fd::INVALID,
             #[cfg(all(target_os = "macos", debug_assertions))]
             generation_number: 0,
         }
@@ -1486,6 +1521,10 @@ pub enum Flags {
     WasEverRegistered,
 
     Registered,
+
+    // Keep compatibility-only flags at the end so existing flag bit values
+    // remain stable on every platform.
+    EmulatedOneShot,
 }
 
 pub type FlagsSet = enumset::EnumSet<Flags>;
@@ -1606,6 +1645,7 @@ impl Poll {
             );
         }
         self.flags.remove(Flags::Registered);
+        self.registered_fd = Fd::INVALID;
     }
 
     #[cfg(any(target_os = "macos", target_os = "freebsd"))]
@@ -1653,6 +1693,7 @@ impl Poll {
 
     #[cfg(any(target_os = "linux", target_os = "android"))]
     pub(crate) fn on_update_epoll(
+        watcher_fd: Fd,
         poll: core::ptr::NonNull<Poll>,
         tag: PollableTag,
         event: linux::epoll_event,
@@ -1662,6 +1703,24 @@ impl Poll {
             return;
         }
         let poll = poll.as_ptr();
+
+        // EPOLLONESHOT normally removes the fd from the ready set before
+        // userspace can re-enter the loop. Do that explicitly on kernels where
+        // the flag is accepted but its disarm semantics are not implemented.
+        if unsafe { (*poll).flags.contains(Flags::EmulatedOneShot) } {
+            let fd = unsafe { (*poll).registered_fd };
+            if let Err(err) = disarm_emulated_epoll_oneshot(watcher_fd, fd) {
+                // SAFETY: poll is the embedded io_poll of the live owner.
+                unsafe { __bun_io_pollable_on_io_error(tag, poll, &err) };
+                return;
+            }
+            // SAFETY: the io thread owns this Poll until the callback below.
+            unsafe {
+                (*poll).flags.remove(Flags::Registered);
+                (*poll).registered_fd = Fd::INVALID;
+            }
+        }
+
         // CYCLEBREAK: owner (ReadFile/WriteFile) is T6; dispatch via link-time
         // `extern "Rust"` defined in `bun_runtime::dispatch`. The
         // container_of(io_poll) recovery happens there.
@@ -1703,7 +1762,15 @@ impl Poll {
             self.flags.insert(Flags::OneShot);
         }
 
-        let one_shot_flag: u32 = if !self.flags.contains(Flags::OneShot) {
+        if self.flags.contains(Flags::OneShot) && emulate_epoll_oneshot() {
+            self.flags.insert(Flags::EmulatedOneShot);
+        } else {
+            self.flags.remove(Flags::EmulatedOneShot);
+        }
+
+        let one_shot_flag: u32 = if !self.flags.contains(Flags::OneShot)
+            || self.flags.contains(Flags::EmulatedOneShot)
+        {
             0
         } else {
             linux::EPOLL_ONESHOT
@@ -1724,7 +1791,13 @@ impl Poll {
             u64: Pollable::init(tag, std::ptr::from_mut::<Poll>(self)).ptr(),
         };
 
-        let op: i32 = if self.flags.contains(Flags::WasEverRegistered)
+        let op: i32 = if self.flags.contains(Flags::EmulatedOneShot) {
+            if self.flags.contains(Flags::Registered) {
+                linux::EPOLL_CTL_MOD
+            } else {
+                linux::EPOLL_CTL_ADD
+            }
+        } else if self.flags.contains(Flags::WasEverRegistered)
             || self.flags.contains(Flags::NeedsRearm)
         {
             linux::EPOLL_CTL_MOD
@@ -1751,6 +1824,7 @@ impl Poll {
         // it never had done so in the first place.
         self.flags.insert(Flags::Registered);
         self.flags.insert(Flags::WasEverRegistered);
+        self.registered_fd = fd;
 
         self.flags.insert(match flag {
             Flags::PollReadable => Flags::PollReadable,

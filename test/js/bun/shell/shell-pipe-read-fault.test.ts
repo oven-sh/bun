@@ -34,6 +34,9 @@ const cc = Bun.which("cc") || Bun.which("gcc") || Bun.which("clang");
 //                            recv guarantees the streaming inner loop's mid-read
 //                            flush (`head_start` past the half-buffer cutoff)
 //                            fires in a single poll wake.
+//   SHELL_STRIP_EPOLL_ONESHOT=1 removes EPOLLONESHOT before epoll_ctl reaches
+//                            the kernel, emulating a kernel that accepts but
+//                            ignores the flag.
 // FilePoll registers the socketpair through the raw syscall(SYS_epoll_ctl,
 // ...) wrapper, not the libc epoll_ctl symbol, so the epoll modes interpose
 // syscall(2).
@@ -57,6 +60,7 @@ const SHIM_C = /* c */ `
 
 static ssize_t (*real_recv)(int, void *, size_t, int);
 static long (*real_syscall)(long, long, long, long, long, long, long);
+static int (*real_epoll_ctl)(int, int, int, struct epoll_event *);
 static int (*real_close)(int);
 static int fail_recv = -1;
 static int fail_epoll = -1;
@@ -65,6 +69,7 @@ static int recv_one_chunk = -1;
 static int recv_eagain_first = -1;
 static int fail_epoll_from = -1; /* 0 = off, N >= 1 = 1-based index of the first failing call */
 static int recv_bulk = -1;       /* 0 = off, N >= 1 = number of fabricated full-buffer recvs */
+static int strip_epoll_oneshot = -1;
 static unsigned char recv_count[MAX_FD];
 static unsigned char epoll_count[MAX_FD];
 static unsigned char bulk_count[MAX_FD];
@@ -83,6 +88,19 @@ static void init_modes(void) {
     const char *s = getenv("SHELL_RECV_BULK");
     recv_bulk = s ? atoi(s) : 0;
   }
+  if (strip_epoll_oneshot < 0) strip_epoll_oneshot = getenv("SHELL_STRIP_EPOLL_ONESHOT") != NULL;
+}
+
+static struct epoll_event *maybe_strip_epoll_oneshot(
+    int op,
+    struct epoll_event *event,
+    struct epoll_event *copy) {
+  if (strip_epoll_oneshot && event && (op == EPOLL_CTL_ADD || op == EPOLL_CTL_MOD)) {
+    *copy = *event;
+    copy->events &= ~EPOLLONESHOT;
+    return copy;
+  }
+  return event;
 }
 
 static int is_unix_sock(int fd) {
@@ -130,9 +148,19 @@ ssize_t recv(int fd, void *buf, size_t len, int flags) {
   return real_recv(fd, buf, len, flags);
 }
 
+int epoll_ctl(int epfd, int op, int fd, struct epoll_event *event) {
+  if (!real_epoll_ctl) {
+    real_epoll_ctl = (int (*)(int, int, int, struct epoll_event *))dlsym(RTLD_NEXT, "epoll_ctl");
+    init_modes();
+  }
+  struct epoll_event copy;
+  return real_epoll_ctl(epfd, op, fd, maybe_strip_epoll_oneshot(op, event, &copy));
+}
+
 long syscall(long number, ...) {
   va_list ap;
   long a, b, c, d, e, f;
+  struct epoll_event event_copy;
   va_start(ap, number);
   a = va_arg(ap, long);
   b = va_arg(ap, long);
@@ -148,6 +176,7 @@ long syscall(long number, ...) {
   if (number == SYS_epoll_ctl) {
     int op = (int)b;
     int target = (int)c;
+    d = (long)maybe_strip_epoll_oneshot(op, (struct epoll_event *)d, &event_copy);
     if (op == EPOLL_CTL_ADD || op == EPOLL_CTL_MOD) {
       if (fail_epoll && is_pipe_like(target)) {
         errno = ENOMEM;
@@ -228,6 +257,64 @@ const r = await $\`sh -c 'printf AAAA; exec sleep 5' 2> /dev/null\`.quiet().noth
 console.log(JSON.stringify({ exitCode: r.exitCode }));
 `;
 
+const ONESHOT_EMULATION_CHILD = /* js */ `
+process.on("message", message => {
+  if (message !== "drain") return;
+  void (async () => {
+    const input = await Bun.stdin.bytes();
+    await Bun.write(Bun.stdout, input);
+    process.disconnect();
+  })().catch(error => {
+    console.error(error);
+    process.exitCode = 1;
+    process.disconnect();
+  });
+});
+process.send("ready");
+`;
+
+const ONESHOT_EMULATION_FIXTURE = /* js */ `
+const size = 4 * 1024 * 1024;
+let readyDone = false;
+const { promise: ready, resolve, reject } = Promise.withResolvers();
+await using child = Bun.spawn({
+  cmd: [process.execPath, "-e", ${JSON.stringify(ONESHOT_EMULATION_CHILD)}],
+  stdin: "pipe",
+  stdout: "pipe",
+  stderr: "pipe",
+  ipc(message) {
+    if (message === "ready") {
+      readyDone = true;
+      resolve();
+    }
+  },
+});
+const exited = child.exited;
+void exited.then(code => {
+  if (!readyDone) reject(new Error(\`child exited before IPC handshake: \${code}\`));
+});
+await ready;
+
+const stdoutPromise = child.stdout.bytes();
+const stderrPromise = child.stderr.text();
+const writeResult = child.stdin.write(Buffer.alloc(size, 0x61));
+if (!(writeResult instanceof Promise)) {
+  throw new Error("expected the undrained pipe write to apply backpressure");
+}
+child.send("drain");
+await writeResult;
+await child.stdin.end();
+
+const [stdout, stderr, exitCode] = await Promise.all([stdoutPromise, stderrPromise, exited]);
+console.log(JSON.stringify({
+  bytes: stdout.byteLength,
+  first: stdout[0],
+  last: stdout[stdout.byteLength - 1],
+  stderr,
+  exitCode,
+}));
+`;
+
 const TEE_CHUNK_FIXTURE = /* js */ `
 import { $ } from "bun";
 const r = await $\`sh -c 'printf AAAA; exec sleep 5' 2> /dev/null\`.nothrow();
@@ -273,6 +360,7 @@ const MODES = [
   "SHELL_FAIL_EPOLL_AFTER",
   "SHELL_RECV_ONE_CHUNK",
   "SHELL_RECV_EAGAIN_FIRST",
+  "SHELL_STRIP_EPOLL_ONESHOT",
 ] as const;
 // Integer-valued fault knobs; cleared alongside MODES and set through `extraEnv`.
 const VALUE_MODES = ["SHELL_FAIL_EPOLL_FROM", "SHELL_RECV_BULK"] as const;
@@ -294,6 +382,26 @@ function shimEnv(
   Object.assign(env, extraEnv);
   return env;
 }
+
+test.concurrent.skipIf(!isLinux || !cc)("DEL + ADD emulates EPOLLONESHOT for Bun I/O polls", async () => {
+  const env = shimEnv(["SHELL_STRIP_EPOLL_ONESHOT"]);
+  env.BUN_FEATURE_FLAG_EMULATE_EPOLL_ONESHOT = "1";
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", ONESHOT_EMULATION_FIXTURE],
+    env,
+    stdout: "pipe",
+    stderr: "pipe",
+    // A missing disarm spins on permanent readiness; bound that regression.
+    timeout: 30_000,
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect({ stdout, stderr, exitCode }).toEqual({
+    stdout: `${JSON.stringify({ bytes: 4 * 1024 * 1024, first: 0x61, last: 0x61, stderr: "", exitCode: 0 })}\n`,
+    stderr: "",
+    exitCode: 0,
+  });
+});
 
 async function expectShellFault(
   script: string,

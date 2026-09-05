@@ -232,6 +232,10 @@ pub mod feature_flag {
     new_feature_flag!(pub BUN_FEATURE_FLAG_DISABLE_DNS_CACHE, "BUN_FEATURE_FLAG_DISABLE_DNS_CACHE", {});
     new_feature_flag!(pub BUN_FEATURE_FLAG_DISABLE_FETCH_TLS_SESSION_CACHE, "BUN_FEATURE_FLAG_DISABLE_FETCH_TLS_SESSION_CACHE", {});
     new_feature_flag!(pub BUN_FEATURE_FLAG_DISABLE_DNS_CACHE_LIBINFO, "BUN_FEATURE_FLAG_DISABLE_DNS_CACHE_LIBINFO", {});
+    // Emulate EPOLLONESHOT with EPOLL_CTL_DEL + EPOLL_CTL_ADD. This supports
+    // Linux-compatible kernels that accept EPOLLONESHOT but do not implement
+    // its automatic disarm semantics.
+    new_feature_flag!(pub BUN_FEATURE_FLAG_EMULATE_EPOLL_ONESHOT, "BUN_FEATURE_FLAG_EMULATE_EPOLL_ONESHOT", {});
     // Force the event loop to use epoll_pwait(2) instead of epoll_pwait2(2).
     // Escape hatch for seccomp policies that block syscall 441 without
     // returning a checkable errno (Android app sandbox, some container

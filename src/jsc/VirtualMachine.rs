@@ -162,10 +162,6 @@ pub struct VirtualMachine {
     pub overridden_main: crate::strong::Optional,
     pub(crate) entry_point: bun_bundler::entry_points::ServerEntryPoint,
     pub origin: bun_url::URL<'static>,
-    // LAYERING: real type is `Option<Box<bun_runtime::node::fs::NodeFS>>`, but
-    // `bun_runtime` is a forward dep of this crate; stored type-erased and
-    // cast back by the `bun_runtime` consumers.
-    pub node_fs: Option<*mut c_void>,
     /// Opaque per-VM `bun_runtime` state (boxed `timer::All` +
     /// `Body::Value::HiveAllocator` + …). Set by
     /// `RuntimeHooks::init_runtime_state` in [`init`]; reclaimed by
@@ -2262,10 +2258,6 @@ pub struct RuntimeHooks {
         opts: &uws::SocketContext::BunSocketContextOptions,
         err: &mut uws::create_bun_socket_error_t,
     ) -> Option<bun_boringssl::c::OwnedSslCtx>,
-    /// Lazy `NodeFS` creation.
-    /// `NodeFS` lives in `bun_runtime`; the high tier boxes one and returns
-    /// the type-erased pointer. Stored back into `vm.node_fs`.
-    pub create_node_fs: unsafe fn(vm: *mut VirtualMachine) -> *mut c_void,
     /// `ObjectURLRegistry` lookup. Registry lives in `bun_runtime::webcore`.
     pub has_blob_url: fn(blob_id: &[u8]) -> bool,
     /// `Response::get_blob_without_call_frame` /
@@ -4028,24 +4020,6 @@ impl VirtualMachine {
         if self.reload_entry_point(main.slice()).is_err() {
             panic!("Failed to reload");
         }
-    }
-
-    /// `NodeFS` lives in `bun_runtime` (forward-dep on `bun_jsc`), so the
-    /// field is stored type-erased and the lazy boxed allocation goes through
-    /// [`RuntimeHooks::create_node_fs`]. Callers in `bun_runtime` cast the
-    /// returned pointer back to `*mut node::fs::NodeFS`.
-    #[inline]
-    pub fn node_fs(&mut self) -> *mut c_void {
-        if let Some(existing) = self.node_fs {
-            return existing;
-        }
-        let hooks = runtime_hooks().expect("runtime hooks not installed");
-        // SAFETY: hook contract — `self` is the live per-thread VM. The hook
-        // boxes a `NodeFS{ vm: self if standalone else null }` and returns
-        // the leaked pointer.
-        let new = unsafe { (hooks.create_node_fs)(self) };
-        self.node_fs = Some(new);
-        new
     }
 
     /// Returns the next debugger async-task id, or 0 when no debugger is attached.

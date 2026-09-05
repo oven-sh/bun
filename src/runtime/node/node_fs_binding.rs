@@ -122,24 +122,22 @@ impl Binding {
     // `pub const js = jsc.Codegen.JSNodeJSFS;` + `toJS`/`fromJS`/`fromJSDirect`
     // → provided by `#[bun_jsc::JsClass]` derive.
 
-    // `pub const new = bun.TrivialNew(@This());`
-    pub(crate) fn new(init: Self) -> Box<Self> {
-        Box::new(init)
+    fn init(vm: *mut VirtualMachine) -> Box<Self> {
+        let binding = Box::new(Self::default());
+        binding.node_fs.with_mut(|nfs| nfs.vm = NonNull::new(vm));
+        binding
     }
 
+    /// The instance for native callers outside `node:fs` (`Blob.stat()`,
+    /// `File::unlink()`, `Bun__mkdirp`): one path buffer per VM, neither on the
+    /// stack nor allocated per call. `RuntimeState` owns it and frees it on VM
+    /// teardown; it never gets a JS wrapper.
+    pub(crate) fn for_vm(global: &JSGlobalObject) -> &Self {
+        crate::jsc_hooks::vm_node_fs_binding().get_or_init(|| Self::init(global.bun_vm_ptr()))
+    }
+
+    /// Only [`create_binding`]'s boxes get a wrapper, and the wrapper owns them.
     pub fn finalize(self: Box<Self>) {
-        if self.node_fs.get().vm.is_some() {
-            // `node_fs.vm` is always the per-thread VM when set; route the
-            // read through the safe singleton accessor.
-            let vm_node_fs = VirtualMachine::get().node_fs;
-            // `JsCell` is `repr(transparent)` over `UnsafeCell<NodeFS>`, so
-            // `as_ptr()` yields the same address the VM stored at init time.
-            if vm_node_fs == Some(self.node_fs.as_ptr().cast()) {
-                // VM-owned singleton — keep alive.
-                let _ = bun_core::heap::release(self);
-                return;
-            }
-        }
         drop(self);
     }
 
@@ -326,16 +324,7 @@ impl Binding {
 }
 
 pub(crate) fn create_binding(global: &JSGlobalObject) -> JSValue {
-    let module = Binding::new(Binding::default());
-
-    let vm = global.bun_vm_ptr();
-    // R-2: init-time write before the JS wrapper exists; `with_mut` here is
-    // trivially un-aliased (sole owner of the fresh `Box`).
-    module.node_fs.with_mut(|nfs| nfs.vm = NonNull::new(vm));
-
-    // `module` was `Box::new`-allocated; ownership transfers to the GC
-    // wrapper, which calls `Binding::finalize` to reclaim it.
-    Binding::to_js_boxed(module, global)
+    Binding::to_js_boxed(Binding::init(global.bun_vm_ptr()), global)
 }
 
 /// Test-only (`bun:internal-for-testing`): run `(path, options)` through the

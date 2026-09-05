@@ -2128,14 +2128,11 @@ impl BlobExt for Blob {
                     .expect("infallible: store present")
                     .data
                     .as_file();
+                let binding = crate::node::fs::Binding::for_vm(global_this);
                 match &file.pathlike {
                     PathOrFileDescriptor::Path(path_like) => {
                         // SAFETY: bun_vm() returns the live VM for this global.
                         let vm = global_this.bun_vm().as_mut();
-                        // SAFETY: lazily-initialised per-VM NodeFS binding; never null after init.
-                        let binding = unsafe {
-                            &*vm.node_fs().cast::<crate::node::node_fs_binding::Binding>()
-                        };
                         Ok(crate::node::fs::async_::Stat::create(
                             global_this,
                             binding,
@@ -2146,10 +2143,6 @@ impl BlobExt for Blob {
                     PathOrFileDescriptor::Fd(fd) => {
                         // SAFETY: bun_vm() returns the live VM for this global.
                         let vm = global_this.bun_vm().as_mut();
-                        // SAFETY: lazily-initialised per-VM NodeFS binding; never null after init.
-                        let binding = unsafe {
-                            &*vm.node_fs().cast::<crate::node::node_fs_binding::Binding>()
-                        };
                         Ok(crate::node::fs::async_::Fstat::create(
                             global_this,
                             binding,
@@ -4252,10 +4245,6 @@ fn write_file_with_empty_source_to_destination(
     match &destination_store.data {
         store::Data::File(file) => {
             // TODO: make this async
-            // `VirtualMachine::node_fs()` currently returns `*mut c_void`; the
-            // typed `&mut NodeFS` accessor isn't wired yet, so use a fresh
-            // `NodeFS` (it carries no per-call state for
-            // `truncate`/`mkdir_recursive`).
             let mut node_fs = node::fs::NodeFS::default();
             let mut result = node_fs.truncate(
                 &node::fs::args::Truncate {

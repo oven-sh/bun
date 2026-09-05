@@ -9286,15 +9286,15 @@ pub(crate) unsafe extern "C" fn Bun__mkdirp(
 ) -> bool {
     // SAFETY: caller passes a NUL-terminated C string
     let path_bytes = unsafe { bun_core::ffi::cstr(path) }.to_bytes();
-    // SAFETY: `bun_vm()` returns the live VM; `node_fs()` returns its cached
-    // `*NodeFS` (type-erased to `*mut c_void` in `bun_jsc` to break the dep cycle).
-    let node_fs: &mut NodeFS =
-        unsafe { &mut *global_this.bun_vm().as_mut().node_fs().cast::<NodeFS>() };
-    node_fs
-        .mkdir_recursive(&args::Mkdir {
-            path: PathLike::borrowed(path_bytes),
-            recursive: true,
-            ..Default::default()
+    // R-2: blocking syscalls, no JS re-entry; the `&mut NodeFS` is scoped to the call.
+    Binding::for_vm(global_this)
+        .node_fs
+        .with_mut(|node_fs| {
+            node_fs.mkdir_recursive(&args::Mkdir {
+                path: PathLike::borrowed(path_bytes),
+                recursive: true,
+                ..Default::default()
+            })
         })
         .is_ok()
 }

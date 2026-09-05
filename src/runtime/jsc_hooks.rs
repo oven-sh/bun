@@ -76,6 +76,9 @@ pub(crate) struct RuntimeState {
     /// Lazy-init by [`crate::dns_jsc::global_resolver`]; freed when this box
     /// drops in [`deinit_runtime_state`].
     pub(crate) global_dns_data: core::cell::OnceCell<Box<crate::dns_jsc::GlobalData>>,
+    /// Lazy-init by [`crate::node::node_fs_binding::Binding::for_vm`]; freed
+    /// when this box drops in [`deinit_runtime_state`].
+    pub(crate) node_fs_binding: core::cell::OnceCell<Box<crate::node::node_fs_binding::Binding>>,
     /// Synthetic `bun:main` wrapper source.
     pub(crate) entry_point: ServerEntryPoint,
     /// Backing arena for `vm.transpiler` (spec passes `bun.default_allocator`;
@@ -249,6 +252,21 @@ pub(crate) fn global_dns_data() -> &'static core::cell::OnceCell<Box<crate::dns_
     unsafe { &(*state).global_dns_data }
 }
 
+/// Per-VM lazy slot behind [`crate::node::node_fs_binding::Binding::for_vm`].
+#[inline]
+pub(crate) fn vm_node_fs_binding()
+-> &'static core::cell::OnceCell<Box<crate::node::node_fs_binding::Binding>> {
+    let state = runtime_state();
+    debug_assert!(
+        !state.is_null(),
+        "vm_node_fs_binding before init_runtime_state"
+    );
+    // SAFETY: `state` is the live per-thread `RuntimeState` box; the field
+    // address is stable for the VM's lifetime and only read (interior
+    // mutability via `OnceCell`).
+    unsafe { &(*state).node_fs_binding }
+}
+
 /// Recover the [`RuntimeState`] owned by a specific `vm` (not the calling
 /// thread's). `WTFTimer` may be entered off the VM's JS thread (the locked
 /// `All.wtf_timers` heap exists for exactly that), and the
@@ -383,6 +401,7 @@ unsafe fn init_runtime_state(
         },
         ssl_ctx_cache: Default::default(),
         global_dns_data: core::cell::OnceCell::new(),
+        node_fs_binding: core::cell::OnceCell::new(),
         entry_point: ServerEntryPoint::default(),
         // `borrowing_default()` wraps `mi_heap_main()` so `Transpiler`-level
         // allocations use the same heap as the global allocator and skip the
@@ -1315,29 +1334,6 @@ unsafe fn timer_remove(
     unsafe { &mut (*state).timer }.remove(t);
 }
 
-/// `Node.fs.NodeFS{ .vm = … }` lazy creation.
-/// The low tier stores the result in `vm.node_fs: Option<*mut c_void>`.
-///
-/// # Safety
-/// `vm` is the live per-thread VM. The returned box is reclaimed (if at all)
-/// only by VM teardown.
-unsafe fn create_node_fs(vm: *mut VirtualMachine) -> *mut c_void {
-    use crate::node::fs::NodeFS;
-    // `.vm` is set only when standalone-module-graph is active
-    // (it gates the embedded-file `Bun.file()` lookups inside `node:fs`).
-    // SAFETY: per fn contract.
-    let vm_field = if unsafe { &*vm }.standalone_module_graph.is_some() {
-        core::ptr::NonNull::new(vm)
-    } else {
-        None
-    };
-    bun_core::heap::into_raw(Box::new(NodeFS {
-        sync_error_buf: bun_paths::PathBuffer::uninit(),
-        vm: vm_field,
-    }))
-    .cast::<c_void>()
-}
-
 /// `WebCore.ObjectURLRegistry.singleton().has(specifier["blob:".len..])`.
 fn has_blob_url(blob_id: &[u8]) -> bool {
     crate::webcore::object_url_registry::ObjectURLRegistry::singleton().has(blob_id)
@@ -1518,7 +1514,6 @@ static __BUN_RUNTIME_HOOKS: RuntimeHooks = RuntimeHooks {
     timer_remove,
     default_client_ssl_ctx,
     ssl_ctx_cache_get_or_create,
-    create_node_fs,
     has_blob_url,
     body_mixin_get_blob,
     process_exit,

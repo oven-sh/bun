@@ -14,7 +14,6 @@ import {
   readFileSync,
   writeFileSync,
 } from "node:fs";
-import { connect } from "node:net";
 import { hostname, homedir as nodeHomedir, tmpdir as nodeTmpdir, release, userInfo } from "node:os";
 import { basename, dirname, join, relative, resolve } from "node:path";
 import { normalize as normalizeWindows } from "node:path/win32";
@@ -184,7 +183,7 @@ function getPrivilegedCommand() {
     return priviledgedCommand;
   }
 
-  if (isWindows) {
+  if (isWindows || process.getuid?.() === 0) {
     return (priviledgedCommand = []);
   }
 
@@ -192,12 +191,6 @@ function getPrivilegedCommand() {
   const { error: sudoError } = spawnSync([...sudo, "true"]);
   if (!sudoError) {
     return (priviledgedCommand = sudo);
-  }
-
-  const su = ["su", "-s", "sh", "root", "-c"];
-  const { error: suError } = spawnSync([...su, "true"]);
-  if (!suError) {
-    return (priviledgedCommand = su);
   }
 
   const doas = ["doas", "-u", "root"];
@@ -220,6 +213,9 @@ export function isPrivileged() {
     return privileged;
   }
 
+  if (process.getuid?.() === 0) {
+    return (privileged = true);
+  }
   const command = getPrivilegedCommand();
   if (command.length) {
     const { error } = spawnSync(command);
@@ -1617,29 +1613,6 @@ export function getUsername() {
 }
 
 /**
- * @param {string} distro
- * @returns {string}
- */
-export function getUsernameForDistro(distro) {
-  if (/windows/i.test(distro)) {
-    return "administrator";
-  }
-  if (/alpine|centos/i.test(distro)) {
-    return "root";
-  }
-  if (/debian/i.test(distro)) {
-    return "admin";
-  }
-  if (/ubuntu/i.test(distro)) {
-    return "ubuntu";
-  }
-  if (/amazon|amzn|al\d+|rhel/i.test(distro)) {
-    return "ec2-user";
-  }
-  throw new Error(`Unsupported distro: ${distro}`);
-}
-
-/**
  * @returns {string | undefined}
  */
 export function getDistro() {
@@ -2155,43 +2128,6 @@ export async function setBuildMetadata(name, value) {
  * @property {number} [retries]
  */
 
-/**
- * @param {ConnectOptions} options
- * @returns {Promise<Error | undefined>}
- */
-export async function waitForPort(options) {
-  const { hostname, port, retries = 10 } = options;
-  console.log("Connecting...", `${hostname}:${port}`);
-
-  let cause;
-  for (let i = 0; i < retries; i++) {
-    if (cause) {
-      await new Promise(resolve => setTimeout(resolve, Math.pow(2, i) * 1000));
-    }
-
-    const connected = new Promise((resolve, reject) => {
-      const socket = connect({ host: hostname, port });
-      socket.on("connect", () => {
-        socket.destroy();
-        console.log("Connected:", `${hostname}:${port}`);
-        resolve();
-      });
-      socket.on("error", error => {
-        socket.destroy();
-        reject(error);
-      });
-    });
-
-    try {
-      return await connected;
-    } catch (error) {
-      cause = error;
-    }
-  }
-
-  console.error("Connection failed:", `${hostname}:${port}`);
-  return cause;
-}
 /**
  * @returns {Promise<number>}
  */
@@ -3064,109 +3000,4 @@ export function getEmoji(emoji) {
 export function getBuildkiteEmoji(emoji) {
   const [, name] = emojiMap[emoji] || [];
   return name ? `:${name}:` : "";
-}
-
-/**
- * @param {SshOptions} options
- * @param {import("./utils.mjs").SpawnOptions} [spawnOptions]
- * @returns {Promise<import("./utils.mjs").SpawnResult>}
- */
-export async function spawnSshSafe(options, spawnOptions = {}) {
-  return spawnSsh(options, { throwOnError: true, ...spawnOptions });
-}
-
-/**
- * @param {SshOptions} options
- * @param {import("./utils.mjs").SpawnOptions} [spawnOptions]
- * @returns {Promise<import("./utils.mjs").SpawnResult>}
- */
-export async function spawnSsh(options, spawnOptions = {}) {
-  const { hostname, port, username, identityPaths, password, retries = 10, command: spawnCommand } = options;
-
-  if (!hostname.includes("@")) {
-    await waitForPort({
-      hostname,
-      port: port || 22,
-    });
-  }
-
-  const logPath = mkdtemp("ssh-", "ssh.log");
-  const command = ["ssh", hostname, "-v", "-C", "-E", logPath, "-o", "StrictHostKeyChecking=no"];
-  if (!password) {
-    command.push("-o", "BatchMode=yes");
-  }
-  if (port) {
-    command.push("-p", port);
-  }
-  if (username) {
-    command.push("-l", username);
-  }
-  if (password) {
-    const sshPass = which("sshpass", { required: true });
-    command.unshift(sshPass, "-p", password);
-  } else if (identityPaths) {
-    command.push(...identityPaths.flatMap(path => ["-i", path]));
-  }
-  const stdio = spawnCommand ? "pipe" : "inherit";
-  if (spawnCommand) {
-    command.push(...spawnCommand);
-  }
-
-  /** @type {import("./utils.mjs").SpawnResult} */
-  let result;
-  for (let i = 0; i < retries; i++) {
-    result = await spawn(command, { stdio, ...spawnOptions, throwOnError: undefined });
-
-    const { exitCode } = result;
-    if (exitCode !== 255) {
-      break;
-    }
-
-    const sshLogs = readFile(logPath, { encoding: "utf-8" });
-    if (sshLogs.includes("Authenticated")) {
-      break;
-    }
-
-    await new Promise(resolve => setTimeout(resolve, (i + 1) * 15000));
-  }
-
-  if (spawnOptions?.throwOnError) {
-    const { error } = result;
-    if (error) {
-      throw error;
-    }
-  }
-
-  return result;
-}
-
-/**
- * @param {MachineOptions} options
- * @returns {Promise<Machine>}
- */
-export async function setupUserData(machine, options) {
-  const { os, userData } = options;
-  if (!userData) {
-    return;
-  }
-
-  // Write user data to a temporary file
-  const tmpFile = mkdtemp("user-data-", os === "windows" ? "setup.ps1" : "setup.sh");
-  await writeFile(tmpFile, userData);
-
-  try {
-    // Upload the script
-    const remotePath = os === "windows" ? "C:\\Windows\\Temp\\setup.ps1" : "/tmp/setup.sh";
-    await machine.upload(tmpFile, remotePath);
-
-    // Execute the script
-    if (os === "windows") {
-      await machine.spawnSafe(["powershell", remotePath], { stdio: "inherit" });
-    } else {
-      await machine.spawnSafe(["bash", remotePath], { stdio: "inherit" });
-    }
-  } finally {
-    // Clean up the temporary file
-    rm(tmpFile);
-  }
 }

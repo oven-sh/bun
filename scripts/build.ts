@@ -47,6 +47,7 @@ import { formatConfig, formatConfigUnchanged, type PartialConfig } from "./build
 import { configure, type ConfigureInput, type ConfigureResult } from "./build/configure.ts";
 import { BuildError } from "./build/error.ts";
 import { STREAM_FD } from "./build/stream.ts";
+import { ninjaLogMark, printBuildTimings } from "./build/timings.ts";
 import { interactive, nameColor, status } from "./build/tty.ts";
 
 // ───────────────────────────────────────────────────────────────────────────
@@ -139,11 +140,16 @@ async function main(): Promise<void> {
       });
     let inherited = false;
 
-    const runNinja = (targets: string[] = args.ninjaTargets) =>
-      spawnWithAnnotations("ninja", ["-C", result.cfg.buildDir, ...args.ninjaArgs, ...targets], {
+    // Every ninja pass ends with a per-phase breakdown of where its wall time went (C/C++
+    // objects vs cargo vs link), read back from .ninja_log.
+    const runNinja = async (targets: string[] = args.ninjaTargets) => {
+      const mark = ninjaLogMark(result.cfg.buildDir);
+      await spawnWithAnnotations("ninja", ["-C", result.cfg.buildDir, ...args.ninjaArgs, ...targets], {
         label: "ninja",
         env: ninjaEnv(result.cfg, result.env),
       });
+      printBuildTimings(result.cfg, result.output, mark);
+    };
 
     // rust-and-link: build libbun_runtime.a first so cargo overlaps with the
     // sibling build-cpp job, THEN poll for build-cpp's outcome + download

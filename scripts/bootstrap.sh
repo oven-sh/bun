@@ -1,5 +1,5 @@
 #!/bin/sh
-# Version: 41
+# Version: 47
 
 # A script that installs the dependencies needed to build and test Bun.
 # This should work on macOS and Linux with a POSIX shell.
@@ -15,7 +15,7 @@
 #   2. Once green, change the subject to `[publish images]` and push again to
 #      bake the real `-vN` image tag.
 #   3. Merge after the publish run finishes so main never waits on a bake.
-# See "CI image lifecycle" above getBuildImageStep in .buildkite/ci.mjs.
+# See "CI image lifecycle" above getBuildImageSteps in .buildkite/ci.mjs.
 
 pid="$$"
 
@@ -1157,6 +1157,7 @@ install_build_essentials() {
 	# host (buildHostPlatform in .buildkite/ci.mjs); test images never
 	# cross-compile, so skip the ~3GB of NDK/SDK/sysroot downloads there.
 	if is_ci_build_host; then
+		install_bun_toolchain
 		install_cross_compiler_rt
 		install_android_ndk
 		install_freebsd_sysroot
@@ -1167,6 +1168,61 @@ install_build_essentials() {
 	fi
 	install_ccache
 	install_docker
+}
+
+install_bun_toolchain() {
+	# clang/lld + rustc/cargo built by oven-sh/rust's bun-toolchain workflow, one pair per CI build
+	# lane, each PGO/BOLT-trained on that lane's build ("ci-<target key>", matching getTargetKey in
+	# .buildkite/ci.mjs). Unpacked to /opt/bun-toolchain/<variant>; the build steps opt into theirs
+	# with BUN_TOOLCHAIN_LLVM/BUN_TOOLCHAIN_RUST (.buildkite/ci.mjs). The apt LLVM and rustup
+	# installs above stay for everything else. All lanes build on linux-aarch64, so only that
+	# host's toolchains exist.
+	[ "$arch" = "aarch64" ] || error "bun toolchains are built for the linux-aarch64 build host only"
+	toolchain_release="bun-toolchain-nightly-2026-07-20-bun-6464ba2b"
+	toolchain_root="/opt/bun-toolchain"
+	if ! [ -f "$(which zstd)" ]; then install_packages zstd; fi
+	execute_sudo rm -rf "$toolchain_root"
+	while read -r variant half sha256; do
+		dir="$toolchain_root/$variant"
+		tarball="$(download_and_verify_file "https://github.com/oven-sh/rust/releases/download/$toolchain_release/bun-toolchain-linux-$arch-$variant-$half.tar.zst" "$sha256")"
+		create_directory "$dir"
+		execute_sudo tar -I zstd -xf "$tarball" -C "$dir" --strip-components=1
+		execute_sudo rm -f "$tarball"
+		case "$half" in
+		llvm) [ -x "$dir/bin/clang" ] || error "$variant llvm toolchain did not unpack into $dir" ;;
+		rust) [ -x "$dir/bin/rustc" ] || error "$variant rust toolchain did not unpack into $dir" ;;
+		esac
+	done <<-EOF
+		ci-darwin-aarch64 llvm a161a19630b86151895c531328544325eaf5f1f77cd6e412b5fb92b7ce9ad7e3
+		ci-darwin-aarch64 rust 9e7689d552cee567dddeae113a8f22bbe97e6efb07cf44288430525b7d1105b8
+		ci-darwin-x64 llvm da62c48a334f41e1871360b9bda20d43a82a46e879c3af502ca4833fcef9399e
+		ci-darwin-x64 rust 640dc2e9ed5079f49c5c92b1113940b52683236661a5749f81cb916c4f1bff2f
+		ci-freebsd-aarch64 llvm 9c517bdf8fdb83e7320a7ff9f87abf2d41fa43ace420e1c569f6286721c02c0b
+		ci-freebsd-aarch64 rust d1de93f9192feca7722612addd2abb3cb107321aa057d291819a4c478f724895
+		ci-freebsd-x64 llvm 9473690c256f0eba32ca5a58d65d6ecb09d7bef0e5a47886de10eaf05aac7001
+		ci-freebsd-x64 rust ff93d29f93f98d204dde717967e7f32398966b7b26fcc716494393ded12c986f
+		ci-linux-aarch64 llvm d86c8062a836acbc1cdfca0b3753d107c1dfc34e6a38c0f16b38515bb217ec91
+		ci-linux-aarch64 rust 4974dbdd5c1638d4140ac3d79e72dfe9e387a69b1c485bde09fe3fd204b66b31
+		ci-linux-aarch64-android llvm 30fb3ee768068bde0d0fae7c7febdadb4f9da747add2fecf1657c349f7e71629
+		ci-linux-aarch64-android rust 478e7850b963e72cf772a92a69940ff53d84f4ace12b27260e4e750b11cc0e56
+		ci-linux-aarch64-musl llvm fb6b2abcc99c03dac29cabd39edb118eee82846f067e1eadab3a803b1ed467c2
+		ci-linux-aarch64-musl rust c426e94dd95e94bcedba86533fd2d8a4e4dd036e64658c4cc8d83b74bb63f875
+		ci-linux-x64 llvm 53ca4cce940ace206bdf66a2c4b5f8a1893d62a4cd782f868670e318ed4b5baf
+		ci-linux-x64 rust fbfeb080ab632e9d128b2292e60a6f1dc6070ac947ec2b6f4a7c7d20e309e4a1
+		ci-linux-x64-android llvm ec75cace308591bbff7ca4caf7da9e5daaa6aec8a362dda3f8797d27e1e53e46
+		ci-linux-x64-android rust 6d4e6c0f01a427b4f7a40f12788c14248a2a10bafb009c257e0ae8844248a8ec
+		ci-linux-x64-asan llvm 208b5f68447bf644bccefbcd37f9ad4ad15c63eb8ecdc5e3006f799665531a2c
+		ci-linux-x64-asan rust b50503f04b62d55968b10831fbba8044acb9a75b6929d5b13078b7fc39611ef8
+		ci-linux-x64-musl llvm 08aff38c428adf0aea6fdf091caecd9f04e8cf357f328641bfd8afa4213299b1
+		ci-linux-x64-musl rust 4b0400504c5181d9c2fe13f9d2e64cfa6ca735b492f35b38facf13ed3ed4fc6a
+		ci-windows-aarch64 llvm df50549e88a089937e72f735f3a58b17d245ab98d2329e37e91d6c9cf2c53c97
+		ci-windows-aarch64 rust 2bf1397ff01e228e607aaaa1e42d919b918cd7d00225318ac84ae2eb9ef9db66
+		ci-windows-x64 llvm 167572773f4f463a75fd815b54fb58b0fb472fbe7e898857c5445f869f96882c
+		ci-windows-x64 rust 58c0e2f10970d87926b0e1b3ccb579c0ce57f062290d9e1b0ae21a5c07920975
+	EOF
+	execute "$toolchain_root/ci-linux-aarch64/bin/clang" --version
+	execute "$toolchain_root/ci-linux-aarch64/bin/rustc" -vV
+	grant_to_user "$toolchain_root"
 }
 
 is_ci_build_host() {
@@ -1589,8 +1645,8 @@ install_linux_musl_sysroot() {
 		execute_sudo rm -rf "$sysroot"
 		execute_sudo mkdir -p "$sysroot"
 		execute_sudo "$apk" --arch "$ml_arch" --root "$sysroot" \
-			--repository "$cdn/main" --allow-untrusted --no-cache --initdb \
-			add musl-dev libc-dev linux-headers g++ libstdc++-dev
+			--repository "$cdn/main" --allow-untrusted --no-cache \
+			add --initdb musl-dev libc-dev linux-headers g++ libstdc++-dev
 		if ! [ -f "$sysroot/usr/lib/libc.so" ]; then
 			error "$sysroot not populated (required for linux-musl cross-arch builds)"
 		fi
@@ -2150,10 +2206,10 @@ prefetch_build_deps() {
 	bun_path="$(require bun)"
 	git_path="$(require git)"
 
-	# Only bootstrap.sh is uploaded to the bake VM, so the repo (and the
-	# prefetch script + scripts/build/deps/*.ts version pins) has to be cloned.
-	# BUN_BOOTSTRAP_REPO_REF lets the image-build orchestrator pin to the
-	# commit it was triggered from; default to main.
+	# bootstrap.sh is also run by hand outside a repo checkout, so the
+	# prefetch script + scripts/build/deps/*.ts version pins are cloned rather
+	# than assumed to be beside it. BUN_BOOTSTRAP_REPO_REF lets the CI bake
+	# step pin to the branch it was triggered from.
 	repo_ref="${BUN_BOOTSTRAP_REPO_REF:-main}"
 	clone_dir="$(create_tmp_directory)"
 	# Best-effort: a fork-PR branch that doesn't exist on the upstream remote,

@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunRun } from "harness";
+import * as path from "node:path";
 const { HTTPParser, ConnectionsList, methods, allMethods } = process.binding("http_parser");
 const { parsers } = require("node:_http_common");
 
@@ -340,26 +341,8 @@ describe("ConnectionsList", () => {
   });
 
   test("idle() and expired() skip a closed parser still in the list", async () => {
-    await using proc = Bun.spawn({
-      cmd: [
-        bunExe(),
-        "-e",
-        `const { HTTPParser, ConnectionsList } = process.binding("http_parser");
-         const list = new ConnectionsList();
-         const p = new HTTPParser();
-         p.initialize(HTTPParser.REQUEST, {}, 0, 0, list);
-         p.close();
-         if (JSON.stringify(list.idle()) !== "[]") throw new Error("idle");
-         if (JSON.stringify(list.expired(1, 1)) !== "[]") throw new Error("expired");
-         if (list.all().length !== 1) throw new Error("all");
-         console.log("OK");`,
-      ],
-      env: bunEnv,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(stdout).toBe("OK\n");
+    const { stdout, exitCode } = await bunRun(path.join(import.meta.dir, "fixtures", "http-parser-closed-in-list.js"));
+    expect(stdout).toBe("OK");
     expect(exitCode).toBe(0);
   });
 });

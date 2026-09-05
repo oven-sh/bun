@@ -27,7 +27,6 @@ use bun_jsc::{
     self as jsc, CallFrame, JSGlobalObject, JSPromiseStrong, JSValue, JsCell, JsResult,
     SystemError, host_fn,
 };
-use bun_paths::PathBuffer;
 use bun_ptr::RefPtr;
 #[cfg(windows)]
 use bun_sys::windows::libuv;
@@ -258,7 +257,7 @@ pub(crate) mod lib_uv_backend {
         // SAFETY: port_buf[port_len] == 0 written above
         let port_z = ZStr::from_buf(&port_buf[..], port_len);
 
-        let mut hostname = PathBuffer::uninit();
+        let mut hostname = bun_paths::path_buffer_pool::get();
         // Reserve the last byte for the NUL terminator so the index below can never
         // exceed the buffer even if the upstream length guard in `doLookup` is bypassed.
         let cap = hostname.len() - 1;
@@ -1054,7 +1053,7 @@ pub mod get_addr_info_request {
             // SAFETY: NUL written at port_buf[port_len]
             let port_z = ZStr::from_buf(&port_buf[..], port_len);
 
-            let mut hostname = PathBuffer::uninit();
+            let mut hostname = bun_paths::path_buffer_pool::get();
             // Reserve the last byte for the NUL terminator so the index below
             // can never exceed the buffer even if the upstream length guard in
             // `doLookup` is bypassed.

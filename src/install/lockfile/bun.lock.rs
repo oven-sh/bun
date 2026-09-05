@@ -7,7 +7,6 @@ use bun_ast::{Expr, expr::Data as ExprData};
 use bun_collections::{HashContext, HashMap, StringHashMap, index_sort};
 use bun_core::strings;
 use bun_core::{self};
-use bun_paths::PathBuffer;
 use bun_semver::semver_string::{
     Buf as StringBuf, Builder as StringBuilder, JsonFormatterOptions as JsonOpts,
 };
@@ -344,7 +343,7 @@ impl Stringifier {
             buf,
         );
 
-        let mut path_buf = PathBuffer::uninit();
+        let mut path_buf = bun_paths::path_buffer_pool::get();
 
         // if we loaded from a binary lockfile or pnpm-lock.yaml and we're migrating it to a text lockfile, ensure
         // peer dependencies have resolutions, and mark them optional if they don't
@@ -3112,7 +3111,7 @@ pub(crate) fn parse_into_binary_lockfile(
             }
         }
 
-        let mut path_buf = PathBuffer::uninit();
+        let mut path_buf = bun_paths::path_buffer_pool::get();
 
         if lockfile_version != Version::V0 {
             // then workspace dependencies are resolved
@@ -3492,7 +3491,7 @@ fn parse_append_dependencies<const CHECK_FOR_BUNDLED: bool, const IS_ROOT: bool>
     }
 
     let mut path_buf = if CHECK_FOR_BUNDLED {
-        Some(PathBuffer::uninit())
+        Some(bun_paths::path_buffer_pool::get())
     } else {
         None
     };

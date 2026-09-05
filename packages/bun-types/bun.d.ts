@@ -3042,7 +3042,7 @@ declare module "bun" {
      * Enable REPL mode transforms:
      * - Wraps top-level inputs that appear to be object literals (inputs starting with '{' without trailing ';') in parentheses
      * - Hoists all declarations as var for REPL persistence across vm.runInContext calls
-     * - Wraps last expression in { __proto__: null, value: expr } for result capture
+     * - Wraps last expression in `{ __proto__: null, value: expr }` for result capture
      * - Wraps code in sync/async IIFE to avoid parentheses around object literals
      *
      * @default false
@@ -3353,14 +3353,14 @@ declare module "bun" {
         };
 
     /**
-     * Ignore dead code elimination/tree-shaking annotations such as @__PURE__ and package.json
+     * Ignore dead code elimination/tree-shaking annotations such as `@__PURE__` and package.json
      * "sideEffects" fields. This should only be used as a temporary workaround for incorrect
      * annotations in libraries.
      */
     ignoreDCEAnnotations?: boolean;
 
     /**
-     * Force emitting @__PURE__ annotations even if minify.whitespace is true.
+     * Force emitting `@__PURE__` annotations even if minify.whitespace is true.
      */
     emitDCEAnnotations?: boolean;
 

@@ -326,6 +326,32 @@ describe("@types/bun integration test", () => {
     expect((await claude.text()).length).toBeGreaterThan(0);
   });
 
+  // JSDoc text is rendered as markdown (editor hovers, the reference on bun.com), so a bare
+  // `__proto__` in prose shows up as a bold "proto", and TypeScript reads the bare "@"-prefixed
+  // pure annotation as a JSDoc tag, which cuts the hover text off in front of it. A code span
+  // avoids both. (The annotation is not spelled out here: in a comment in front of test() it
+  // makes the transpiler drop the call.) Only bun's own .d.ts files are checked:
+  // vendor/expect-type writes "__Note__:" for bold on purpose.
+  test("JSDoc prose wraps __dunder__ names in code spans", async () => {
+    const offenders: string[] = [];
+
+    for await (const file of new Bun.Glob("*.d.ts").scan({ cwd: BUN_TYPES_PACKAGE_ROOT })) {
+      const source = await Bun.file(join(BUN_TYPES_PACKAGE_ROOT, file)).text();
+
+      for (const comment of source.matchAll(/\/\*\*[\s\S]*?\*\//g)) {
+        // Blank out fenced examples and inline code spans without moving the offsets of the rest.
+        const prose = comment[0].replace(/```[\s\S]*?```|`[^`\n]*`/g, code => code.replace(/\S/g, " "));
+
+        for (const dunder of prose.matchAll(/(?<!\w)__\w+__(?!\w)/g)) {
+          const line = source.slice(0, comment.index + dunder.index).split("\n").length;
+          offenders.push(`${file}:${line}: ${dunder[0]}`);
+        }
+      }
+    }
+
+    expect(offenders.sort()).toEqual([]);
+  });
+
   describe("basic type checks", () => {
     typeTest("checks without lib.dom.d.ts", {
       emptyInterfaces: expectedEmptyInterfacesWhenNoDOM,

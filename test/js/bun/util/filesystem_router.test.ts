@@ -490,6 +490,183 @@ it("dir should be validated", async () => {
   }).toThrow("Expected dir to be a string");
 });
 
+it("resolves . and .. segments in an absolute dir before it trims route names", async () => {
+  // Subdirectory paths are normalized when the loader joins them, but `dir`
+  // used to keep its spelling. With `..` in `dir`, a file in a subdirectory had
+  // a shorter directory path than `dir` itself and slicing it panicked. With
+  // `.`, the names lost characters (`/sub/page` became `/ub/page`). Run in a
+  // subprocess so the panic on an unfixed build is a nonzero exit instead of
+  // taking down the test runner.
+  using dir = tempDir("fsr-dot-segments", {
+    "fixture.ts": /* ts */ `
+      import path from "path";
+      const root = import.meta.dir;
+      const sep = path.sep;
+      const pagesDir = path.join(root, "pages");
+      const spellings = {
+        plain: pagesDir,
+        dot: root + sep + "." + sep + "pages",
+        dotdot: root + sep + "pages" + sep + ".." + sep + "pages",
+        trailingDotdot: pagesDir + sep + "sub" + sep + "..",
+        trailingSep: pagesDir + sep,
+        relative: "." + sep + "pages" + sep + "sub" + sep + "..",
+      };
+      const out = {};
+      for (const [name, dir] of Object.entries(spellings)) {
+        const router = new Bun.FileSystemRouter({ dir, style: "nextjs", fileExtensions: [".tsx"] });
+        out[name] = {
+          routes: router.routes,
+          index: router.match("/")?.filePath,
+          sub: router.match("/sub/page")?.filePath,
+          dynamic: router.match("/sub/123")?.name,
+        };
+      }
+      console.log(JSON.stringify(out));
+    `,
+    "pages/index.tsx": "export default 1;\n",
+    "pages/sub/page.tsx": "export default 2;\n",
+    "pages/sub/[id].tsx": "export default 3;\n",
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "fixture.ts"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const expected = {
+    routes: {
+      "/": "<dir>/pages/index.tsx",
+      "/sub/page": "<dir>/pages/sub/page.tsx",
+      "/sub/[id]": "<dir>/pages/sub/[id].tsx",
+    },
+    index: "<dir>/pages/index.tsx",
+    sub: "<dir>/pages/sub/page.tsx",
+    dynamic: "/sub/[id]",
+  };
+  expect({
+    stdout: stdout === "" ? stdout : JSON.parse(normalizeBunSnapshot(stdout, String(dir))),
+    stderr: normalizeBunSnapshot(stderr, String(dir)),
+    exitCode,
+    signalCode: proc.signalCode,
+  }).toEqual({
+    stdout: {
+      plain: expected,
+      dot: expected,
+      dotdot: expected,
+      trailingDotdot: expected,
+      trailingSep: expected,
+      relative: expected,
+    },
+    stderr: "",
+    exitCode: 0,
+    signalCode: null,
+  });
+});
+
+it("reload() keeps route names when dir is reached through a symlink", async () => {
+  // The constructor stores the resolved real path of `dir`, which has no
+  // trailing separator, and reload() loads routes against it. The loader used
+  // to slice each entry's directory at the length of that path, so after a
+  // reload every name carried the last character of the directory name:
+  // `/b` became `s/b`. With an index route the name collapsed to one character
+  // and route validation looped forever, so this fixture has no index route.
+  using dir = tempDir("fsr-reload-symlink", {
+    "fixture.ts": /* ts */ `
+      import path from "path";
+      const router = new Bun.FileSystemRouter({
+        dir: path.join(import.meta.dir, "link", "pages"),
+        style: "nextjs",
+        fileExtensions: [".tsx"],
+      });
+      const before = Object.keys(router.routes).sort().join(" ");
+      router.reload();
+      console.log(before, "|", Object.keys(router.routes).sort().join(" "), router.match("/sub/c")?.name);
+    `,
+    "real/pages/b.tsx": "export default 1;\n",
+    "real/pages/sub/c.tsx": "export default 2;\n",
+  });
+  fs.symlinkSync(path.join(String(dir), "real"), path.join(String(dir), "link"), "junction");
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "fixture.ts"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({
+    stdout: normalizeBunSnapshot(stdout, String(dir)),
+    stderr: normalizeBunSnapshot(stderr, String(dir)),
+    exitCode,
+    signalCode: proc.signalCode,
+  }).toEqual({ stdout: "/b /sub/c | /b /sub/c /sub/c", stderr: "", exitCode: 0, signalCode: null });
+});
+
+it("throws instead of aborting when dir does not fit in a path buffer", async () => {
+  // `dir` is resolved against the cwd inside a MAX_PATH_BYTES buffer
+  // (src/bun_core/util.rs). The constructor used to write a long relative
+  // `dir` past the end of that buffer and abort the process, so run the cases
+  // in a subprocess.
+  const maxPathBytes = isWindows ? 32767 * 3 + 1 : isMacOS ? 1024 : 4096;
+  const tooLong = `TypeError: Expected dir to resolve to a path of at most ${maxPathBytes} bytes`;
+  using dir = tempDir("fsr-long-dir", {
+    "pages/index.tsx": "export default 1;\n",
+  });
+
+  const code = /* ts */ `
+    import path from "path";
+    function construct(dir: string) {
+      try {
+        const router = new Bun.FileSystemRouter({ dir, style: "nextjs", fileExtensions: [".tsx"] });
+        return Object.keys(router.routes);
+      } catch (e: any) {
+        return e.name + ": " + e.message.replace(dir, "<dir>").replace(process.cwd(), "<cwd>");
+      }
+    }
+    // The resolved path is cwd + separator + dir.
+    const resolvingTo = (bytes: number) => Buffer.alloc(bytes - Buffer.byteLength(process.cwd()) - 1, "a").toString();
+    // Longer than MAX_PATH_BYTES on every platform.
+    const longDir = Buffer.alloc(250_000, "a").toString();
+    console.log(JSON.stringify({
+      relative: construct(longDir),
+      absolute: construct(path.parse(process.cwd()).root + longDir),
+      atLimit: construct(resolvingTo(${maxPathBytes})),
+      oneByteOverLimit: construct(resolvingTo(${maxPathBytes} + 1)),
+      afterwards: construct("pages"),
+    }));
+  `;
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", code],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({
+    stdout: stdout === "" ? stdout : JSON.parse(stdout),
+    stderr: normalizeBunSnapshot(stderr, String(dir)),
+    exitCode,
+    signalCode: proc.signalCode,
+  }).toEqual({
+    stdout: {
+      relative: tooLong,
+      absolute: tooLong,
+      atLimit: `Error: Unable to find directory: <cwd>${path.sep}<dir>`,
+      oneByteOverLimit: tooLong,
+      afterwards: ["/"],
+    },
+    stderr: "",
+    exitCode: 0,
+    signalCode: null,
+  });
+});
+
 it("origin should be validated", async () => {
   const { dir } = make(["posts.tsx"]);
 

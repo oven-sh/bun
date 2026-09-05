@@ -167,10 +167,8 @@ static WTF::String errorMessage(const BunString* str)
 extern "C" JSC::EncodedJSValue BunString__toErrorInstance(const BunString* str, JSC::JSGlobalObject* globalObject, BunErrorKind kind)
 {
     WTF::String message = errorMessage(str);
-    if (message.isNull() && !str->isEmpty()) [[unlikely]] {
-        // Allocation failed or the message exceeds the maximum string length.
-        return {};
-    }
+    if (message.isNull() && (str->tag == BunStringTag::Dead || !str->isEmpty())) [[unlikely]]
+        message = "The error message exceeds the maximum string length"_s;
     JSC::JSObject* result = nullptr;
     switch (kind) {
     case BunErrorKind::Error:

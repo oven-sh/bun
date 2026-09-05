@@ -162,6 +162,7 @@ test/js/node/test/parallel/test-child-process-windows-hide.js
 test/cli/inspect/BunFrontendDevServer.test.ts
 test/cli/inspect/HTTPServerAgent.test.ts
 test/cli/inspect/inspect.test.ts
+test/cli/inspect/inspect-console-replay.test.ts
 test/cli/install/bun-publish.test.ts
 test/cli/install/catalogs.test.ts
 test/cli/run/self-reference.test.ts

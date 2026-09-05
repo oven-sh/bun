@@ -6587,6 +6587,14 @@ impl VirtualMachine {
                 "    <d>from <r>browser tab <magenta>{}<r>\n",
                 exception.browser_url
             )?;
+        } else if let Some(dom_global) = Self::dom_global_from_reference_error(name, message) {
+            pretty_write!(
+                writer,
+                "<blue>note<r><d>:<r> Bun does not include a DOM. \
+                 To use <b>{}<r>, preload a DOM library like happy-dom: \
+                 <magenta>https://bun.com/docs/test/dom<r>\n",
+                dom_global,
+            )?;
         }
 
         let mut exception_list = exception_list;
@@ -6621,6 +6629,41 @@ impl VirtualMachine {
         }
 
         Ok(())
+    }
+
+    fn dom_global_from_reference_error(
+        name: bun_core::String,
+        message: bun_core::String,
+    ) -> Option<&'static str> {
+        if !name.eql_comptime(b"ReferenceError") {
+            return None;
+        }
+        macro_rules! dom_globals {
+            ($($ident:literal),* $(,)?) => {
+                $(
+                    if message.eql_comptime(concat!($ident, " is not defined").as_bytes())
+                        || message.eql_comptime(concat!("Can't find variable: ", $ident).as_bytes())
+                    {
+                        return Some($ident);
+                    }
+                )*
+            };
+        }
+        dom_globals!(
+            "document",
+            "window",
+            "localStorage",
+            "sessionStorage",
+            "HTMLElement",
+            "SVGElement",
+            "Element",
+            "getComputedStyle",
+            "MutationObserver",
+            "requestAnimationFrame",
+            "cancelAnimationFrame",
+            "matchMedia",
+        );
+        None
     }
 
     fn print_error_name_and_message(

@@ -1607,7 +1607,10 @@ function describeStalledProcessTree(rootPid, execPath, budgetMs = 60_000) {
     const argv0 = args.split(" ", 1)[0];
     return argv0 === execPath || basename(argv0) === bunName;
   };
-  for (const { pid, stat, etime, args, depth } of tree) {
+  // A runaway fork storm could list thousands of processes. The first few dozen
+  // are the coordinator, its workers and their children, which is what matters.
+  const maxListed = 64;
+  for (const { pid, stat, etime, args, depth } of tree.slice(0, maxListed)) {
     out += `${"  ".repeat(depth)}${pid} ${stat} ${etime} ${args.length > 200 ? `${args.slice(0, 197)}...` : args}\n`;
     if (!isLinux) continue;
     // State names a zombie (Z), a stopped (T) or an uninterruptible (D) process.
@@ -1627,6 +1630,7 @@ function describeStalledProcessTree(rootPid, execPath, budgetMs = 60_000) {
       out += `${"  ".repeat(depth)}  /proc/${pid}/status: ${error?.message ?? error}\n`;
     }
   }
+  if (tree.length > maxListed) out += `... and ${tree.length - maxListed} more\n`;
   if (!isLinux) return out;
   const maxBacktraces = 8;
   const targets = tree.filter(({ args, stat }) => isBun(args) && !stat.startsWith("Z")).slice(0, maxBacktraces);
@@ -1637,9 +1641,10 @@ function describeStalledProcessTree(rootPid, execPath, budgetMs = 60_000) {
   const denied = lines => lines.some(line => /^(ptrace:|Could not attach)/.test(line));
   const backtrace = pid => {
     const [command, ...argv] = [...prefix, "gdb", "-p", String(pid), "-batch", "-ex", "thread apply all bt 16"];
+    // spawnSync treats timeout 0 as "none", so never let it reach 0.
     const gdb = spawnSync(command, argv, {
       encoding: "utf-8",
-      timeout: Math.min(20_000, remaining()),
+      timeout: Math.max(1, Math.min(20_000, remaining())),
       stdio: ["ignore", "pipe", "pipe"],
     });
     if (gdb.error) return { error: gdb.error.message, lines: [] };
@@ -1658,8 +1663,9 @@ function describeStalledProcessTree(rootPid, execPath, budgetMs = 60_000) {
     if (
       denied(result.lines) &&
       prefix.length === 0 &&
-      remaining() >= 5_000 &&
-      spawnSync("sudo", ["-n", "true"], { stdio: "ignore", timeout: 5_000 }).status === 0
+      remaining() >= 10_000 &&
+      spawnSync("sudo", ["-n", "true"], { stdio: "ignore", timeout: 5_000 }).status === 0 &&
+      remaining() >= 5_000
     ) {
       prefix = ["sudo", "-n"];
       result = backtrace(pid);
@@ -1769,8 +1775,12 @@ async function spawnSafe(options) {
       subprocess.on("spawn", () => {
         timestamp = Date.now();
         const expire = () => {
+          // The idle timer and the total timer both call this. The second
+          // call would write a second report and arm a second kill timer.
+          if (timedOut) return;
           timedOut = true;
           clearTimeout(idleTimer);
+          clearTimeout(timer);
           if (options.gracefulTimeout && !isWindows) {
             // The batch is about to be killed for a stall. Record who was
             // blocked, and where, while the processes are still alive. The

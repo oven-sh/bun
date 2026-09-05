@@ -186,9 +186,9 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
   // no-op rebuild (ar has no restat) would otherwise cascade to a full PCH+cxx
   // rebuild. Link still gets every dep via depLibs/depObjects.
   const depHeaderSignal: string[] = [];
-  // forbidUndefined stamps (source.ts). Whatever the dep objects go into
-  // next, the archive or the link, waits for them, so a dep that regrows a
-  // forbidden reference fails before anything containing it is produced.
+  // forbidUndefined stamps (source.ts): validations of whatever the dep
+  // objects go into next, the archive or the link — a dep that regrows a
+  // forbidden reference fails that build without delaying the link.
   const depChecks: string[] = [];
   for (const d of deps) {
     depLibs.push(...d.libs);
@@ -471,11 +471,13 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
   const exe = link(n, cfg, exeName, linkObjects, {
     libs: depLibs,
     flags: ldflags,
-    implicitInputs: [...linkImplicitInputs(cfg), ...shims.implicitInputs, ...depChecks],
+    implicitInputs: [...linkImplicitInputs(cfg), ...shims.implicitInputs],
     // Declare the maps the release link writes as side-products (`perf`
     // symbolication on linux; the order file tracer's symbol table on windows).
     linkerMapOutputs: linkerMapOutputs(cfg),
-    validations: postLinkChecks(cfg, exeName),
+    // Static scans: the deps' forbidden-symbol checks on the objects going
+    // in, the smoke test / ClassInfo audit on the executable coming out.
+    validations: [...(archive === undefined ? depChecks : []), ...postLinkChecks(cfg, exeName)],
   });
 
   // ─── Step 7: post-link (strip, dsymutil, smoke test) ───

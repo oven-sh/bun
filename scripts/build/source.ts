@@ -556,9 +556,10 @@ export interface ResolvedDep {
    */
   outputs: string[];
   /**
-   * Stamps of this dep's `forbidUndefined` checks. Whatever the objects go
-   * into next waits for them: the per-dep archive here when cfg.archiveDeps,
-   * otherwise bun.ts's archive or link.
+   * Stamps of this dep's `forbidUndefined` checks (static `nm` scans of its
+   * objects). Ninja validations of whatever the objects go into next — the
+   * per-dep archive here when cfg.archiveDeps, otherwise bun.ts's archive or
+   * link — so they run with every build of it and gate nothing.
    */
   checks: string[];
 }
@@ -712,7 +713,7 @@ export function registerDepRules(n: Ninja, cfg: Config): void {
   // alone when it already exists.
   n.rule("dep_check_undefined", {
     command: `${cfg.jsRuntime} ${fetchCli} check-undefined $name $nm $out.rsp $out $symbols`,
-    description: "check undefined symbols in $name",
+    description: "check $name undefined symbols",
     rspfile: "$out.rsp",
     rspfile_content: "$in_newline",
     restat: true,

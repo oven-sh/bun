@@ -165,20 +165,19 @@ server_exports = {
       for (const uid of componentManifestAdd) {
         try {
           const exports = await loadExports<{}>(uid);
+          const exportNames = Object.keys(exports);
 
-          const client = {};
-          for (const exportName of Object.keys(exports)) {
+          for (const exportName of exportNames) {
             serverManifest[uid + "#" + exportName] = {
               id: uid,
               name: exportName,
               chunks: [],
             };
-            client[exportName] = {
-              specifier: "ssr:" + uid,
-              name: exportName,
-            };
           }
-          ssrManifest[uid] = client;
+          // Defines own keys, so an export named "__proto__" does not set the prototype.
+          ssrManifest[uid] = Object.fromEntries(
+            exportNames.map(exportName => [exportName, { specifier: "ssr:" + uid, name: exportName }]),
+          );
         } catch (err) {
           console.log(err);
         }

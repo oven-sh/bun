@@ -412,6 +412,64 @@ devTest("removing 'use client' from a component with a pending resolution failur
     expect(res).toBeInstanceOf(Response);
   },
 });
+// The HMR runtime builds the per-module ssrManifest entry by assigning
+// `entry[exportName]`. An export named "__proto__" must become an own key, not
+// the prototype of the entry, and its serverManifest id must be removed again
+// when the module stops being a client component.
+devTest("client component exported as __proto__ is an own key of the ssr manifest", {
+  framework: minimalFramework,
+  files: {
+    "components/impl.ts": `
+      export function Client() { return "client"; }
+      export function Other() { return "other"; }
+    `,
+    // Re-exported imports are lowered to getters, so the module namespace has
+    // an own "__proto__" key for the runtime to register.
+    "components/Client.ts": `
+      "use client";
+      import { Client, Other } from "./impl";
+      export { Client as __proto__, Other as other };
+    `,
+    "routes/index.ts": `
+      import * as client from '../components/Client';
+      import { ssrManifest, serverManifest } from 'bun:bake/server';
+      export default function(req, meta) {
+        // JSON.stringify only serializes own keys of each manifest entry.
+        return new Response(JSON.stringify({
+          exports: Object.keys(client),
+          ssr: ssrManifest,
+          server: Object.keys(serverManifest).sort(),
+        }));
+      }
+    `,
+  },
+  async test(dev) {
+    expect(await dev.fetch("/").json()).toEqual({
+      exports: ["__proto__", "other"],
+      ssr: {
+        "components/Client.ts": {
+          ["__proto__"]: { specifier: "ssr:components/Client.ts", name: "__proto__" },
+          other: { specifier: "ssr:components/Client.ts", name: "other" },
+        },
+      },
+      server: ["components/Client.ts#__proto__", "components/Client.ts#other"],
+    });
+
+    // Dropping the directive removes the module from both manifests.
+    await dev.write(
+      "components/Client.ts",
+      `
+        import { Client, Other } from "./impl";
+        export { Client as __proto__, Other as other };
+      `,
+    );
+    expect(await dev.fetch("/").json()).toEqual({
+      exports: ["__proto__", "other"],
+      ssr: {},
+      server: [],
+    });
+  },
+});
 devTest("deinit with a free-list slot in DirectoryWatchStore.dependencies", {
   files: {
     "index.html": emptyHtmlFile({ scripts: ["index.ts"] }),

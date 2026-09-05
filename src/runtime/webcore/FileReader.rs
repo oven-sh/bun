@@ -588,6 +588,15 @@ impl FileReader {
         if !self.reader().is_done() {
             self.reader().close();
         }
+        // `done = true` means no more io, so the io-ref is this function's to
+        // release; `close()` is not contract-bound to dispatch `on_reader_done`.
+        if self.waiting_for_on_reader_done.get() {
+            self.waiting_for_on_reader_done.set(false);
+            let parent = self.parent();
+            // SAFETY: see `parent()`. `waiting` implies `increment_count` ran,
+            // so `ref_count >= 2` and this cannot free the box.
+            let _ = unsafe { Source::decrement_count(parent) };
+        }
     }
 
     // NOTE: not `impl Drop` — FileReader is embedded as `Source.context` and this is

@@ -205,6 +205,31 @@ function handleSocketAfterProxy(err, req) {
   }
 }
 
+// https-proxy-agent stores ctor options on `agent.connectOpts`: https://github.com/TooTallNate/proxy-agents/blob/main/packages/https-proxy-agent/src/index.ts
+// Bun-vs-Node: Bun also forwards TLS trust/identity opts (ca/cert/key/pfx/...) to the CONNECT-tunneled
+// connection at lowest priority; proxy-connection opts (host/port/servername/ALPN) are not forwarded.
+const kTunneledTLSOptions = [
+  "ca",
+  "cert",
+  "key",
+  "pfx",
+  "passphrase",
+  "rejectUnauthorized",
+  "ciphers",
+  "secureOptions",
+  "checkServerIdentity",
+];
+function tunneledTLSOptions(connectOpts) {
+  if (connectOpts == null) return undefined;
+  let picked;
+  for (let i = 0; i < kTunneledTLSOptions.length; i++) {
+    const key = kTunneledTLSOptions[i];
+    const value = connectOpts[key];
+    if (value !== undefined) (picked ??= { __proto__: null })[key] = value;
+  }
+  return picked;
+}
+
 Agent.prototype.addRequest = function addRequest(req, options, port /* legacy */, localAddress /* legacy */) {
   // Legacy API: addRequest(req, host, port, localAddress)
   if (typeof options === "string") {
@@ -216,8 +241,9 @@ Agent.prototype.addRequest = function addRequest(req, options, port /* legacy */
     };
   }
 
-  // Here the agent options will override per-request options.
-  options = { __proto__: null, ...options, ...this.options };
+  // Here the agent options will override per-request options,
+  // and `agent.connectOpts` TLS trust options seed the lowest priority.
+  options = { __proto__: null, ...tunneledTLSOptions(this.connectOpts), ...options, ...this.options };
   const socketPath = options.socketPath;
   if (socketPath) options.path = socketPath;
 
@@ -286,10 +312,8 @@ Agent.prototype.createSocket = function createSocket(req, options, cb) {
     // scope so retaining this arrow past its call cannot retain req.
     const done = cb;
     cb = undefined;
-    // Pass the socket along with the error: proxy-tunnel failures with a
-    // statusCode deliberately skip destroy in cleanupAndPropagate so
-    // req.onSocket can destroy the connection - dropping it here would leak
-    // a proxy socket that holds its end open after a non-200 CONNECT.
+    // Pass socket on error: proxy-tunnel failures with a statusCode skip destroy in cleanupAndPropagate
+    // so req.onSocket can close it; dropping it here leaks a proxy socket held open after non-200 CONNECT.
     if (err) return done(err, s);
     this.sockets[name] ||= [];
     this.sockets[name].push(s);
@@ -318,10 +342,7 @@ function calculateServerName(options, req) {
   if (hostHeader) {
     validateString(hostHeader, "options.headers.host");
 
-    // abc => abc
-    // abc:123 => abc
-    // [::1] => ::1
-    // [::1]:123 => ::1
+    // abc => abc, abc:123 => abc, [::1] => ::1, [::1]:123 => ::1
     if (hostHeader[0] === "[") {
       const index = hostHeader.indexOf("]");
       if (index === -1) {

@@ -912,7 +912,7 @@ fn open_in_editor(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResu
     // this function, so every JS-visible coercion must finish before the
     // EDITOR_CONTEXT borrow below is taken (re-entry while borrowed panics).
     if let Some(opts) = arguments.next_eat() {
-        if !opts.is_undefined_or_null() {
+        if opts.is_object() {
             if let Some(editor_val) = opts.get_truthy(global_this, "editor")? {
                 editor_name = Some(editor_val.to_utf8(global_this)?);
             }
@@ -924,6 +924,9 @@ fn open_in_editor(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResu
             if let Some(column_) = opts.get_truthy(global_this, "column")? {
                 column = Some(column_.to_utf8(global_this)?);
             }
+        } else if !opts.is_undefined_or_null() {
+            return Err(global_this
+                .throw_invalid_arguments(format_args!("Expected options to be an object")));
         }
     }
 

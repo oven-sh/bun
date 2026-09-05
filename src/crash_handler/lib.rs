@@ -606,6 +606,126 @@ mod draft {
         /// attach the affected files to crash report. Others, which may have low crash
         /// rate or only crash due to assertion failures, are debug-only. See `Action`.
         static CURRENT_ACTION: Cell<Option<Action>> = const { Cell::new(None) };
+
+        /// The native module (a `.node` addon) whose code this thread is inside of, if any.
+        static NATIVE_MODULE: Cell<NativeModule> = const { Cell::new(NativeModule::NONE) };
+    }
+
+    /// What bun is doing with which native module. `repr(C)` because C++ holds the previous value between enter and leave.
+    #[repr(C)]
+    #[derive(Clone, Copy)]
+    pub struct NativeModule {
+        kind: NativeModuleKind,
+        /// A NUL-terminated path, file URL or module-declared name. Read only by a crash on this thread, so it is stored as is.
+        name: *const c_char,
+    }
+
+    #[repr(u8)]
+    #[derive(Clone, Copy, PartialEq, Eq)]
+    pub enum NativeModuleKind {
+        None = 0,
+        /// `process.dlopen`: from `dlopen` until the module's register function has returned.
+        Loading = 1,
+        /// A callback, finalizer, cleanup hook or async work function of the module.
+        Running = 2,
+    }
+
+    impl NativeModule {
+        pub const NONE: NativeModule = NativeModule {
+            kind: NativeModuleKind::None,
+            name: core::ptr::null(),
+        };
+
+        fn current() -> Option<(NativeModuleKind, &'static [u8])> {
+            let this = NATIVE_MODULE.with(|c| c.get());
+            if this.kind == NativeModuleKind::None || this.name.is_null() {
+                return None;
+            }
+            // SAFETY: whoever entered the module keeps `name` alive until it leaves, and the thread is still inside it.
+            Some((
+                this.kind,
+                unsafe { bun_core::ffi::cstr(this.name) }.to_bytes(),
+            ))
+        }
+
+        /// What goes into the uploaded report: the part after the last `node_modules` directory, else the basename. Never the user's directories.
+        fn report_name(name: &[u8]) -> &[u8] {
+            const NODE_MODULES: &[u8] = b"node_modules";
+            let is_separator = |byte: &u8| matches!(byte, b'/' | b'\\');
+            let mut end = name.len();
+            while let Some(index) = strings::last_index_of(&name[..end], NODE_MODULES) {
+                let rest = &name[index + NODE_MODULES.len()..];
+                let whole_component = (index == 0 || is_separator(&name[index - 1]))
+                    && rest.first().is_some_and(is_separator);
+                if whole_component && rest.len() > 1 {
+                    return &rest[1..];
+                }
+                end = index;
+            }
+            bun_paths::basename(name)
+        }
+    }
+
+    /// Restores what the thread was inside of before, so modules that call into each other nest.
+    pub struct NativeModuleGuard(NativeModule);
+
+    impl Drop for NativeModuleGuard {
+        #[inline]
+        fn drop(&mut self) {
+            NATIVE_MODULE.with(|c| c.set(self.0));
+        }
+    }
+
+    /// `name` must stay valid until the guard is dropped. A null `name` records nothing, so callers need no check.
+    #[inline]
+    #[must_use]
+    pub fn enter_native_module(kind: NativeModuleKind, name: *const c_char) -> NativeModuleGuard {
+        NativeModuleGuard(NATIVE_MODULE.with(|c| c.replace(NativeModule { kind, name })))
+    }
+
+    impl NativeModuleKind {
+        fn verb(self) -> &'static str {
+            match self {
+                NativeModuleKind::Loading => "loading",
+                NativeModuleKind::Running | NativeModuleKind::None => "running",
+            }
+        }
+    }
+
+    /// The line under the panic message, next to the `Crashed while <action>` one; prints nothing outside a native module.
+    fn write_native_module_line(writer: &mut impl Write) -> crate::Result<()> {
+        if let Some((kind, name)) = NativeModule::current() {
+            writeln!(
+                writer,
+                "Crashed while {} native module: {}",
+                kind.verb(),
+                bstr::BStr::new(name)
+            )?;
+        }
+        Ok(())
+    }
+
+    /// `message` with the module being loaded or run appended, when there is one, so that bun.report groups the panic by module.
+    fn attribute_panic_message<'a>(
+        message: &'a [u8],
+        buf: &'a mut BoundedArray<u8, 1280>,
+    ) -> &'a [u8] {
+        let Some((kind, name)) = NativeModule::current() else {
+            return message;
+        };
+        let attributed = buf.append_slice(message).is_ok()
+            && write!(
+                buf.writer(),
+                " ({} native module {})",
+                kind.verb(),
+                bstr::BStr::new(NativeModule::report_name(name))
+            )
+            .is_ok();
+        if attributed {
+            buf.const_slice()
+        } else {
+            message
+        }
     }
 
     /// Prevents crash reports from being uploaded to any server. Reports will still be printed and
@@ -709,7 +829,6 @@ mod draft {
         Visit(&'static [u8]),
         Print(&'static [u8]),
         Resolver,
-        Dlopen(&'static [u8]),
     }
 
     impl fmt::Display for Action {
@@ -719,9 +838,6 @@ mod draft {
                 Action::Visit(path) => write!(writer, "visiting {}", bstr::BStr::new(path)),
                 Action::Print(path) => write!(writer, "printing {}", bstr::BStr::new(path)),
                 Action::Resolver => writer.write_str("resolving a module"),
-                Action::Dlopen(path) => {
-                    write!(writer, "loading native module: {}", bstr::BStr::new(path))
-                }
             }
         }
     }
@@ -1018,6 +1134,9 @@ mod draft {
                         if writeln!(writer, "Crashed while {}", action).is_err() {
                             abort();
                         }
+                    }
+                    if write_native_module_line(writer).is_err() {
+                        abort();
                     }
 
                     let mut addr_buf: [usize; 20] = [0; 20];
@@ -1788,6 +1907,7 @@ mod draft {
             if let Some(action) = CURRENT_ACTION.with(|c| c.get()) {
                 let _ = writeln!(writer, "Crashed while {}", action);
             }
+            let _ = write_native_module_line(writer);
 
             let mut addr_buf: [usize; 20] = [0; 20];
             let idx = debug::capture_stack_trace(debug::return_address(), &mut addr_buf);
@@ -2608,6 +2728,9 @@ mod draft {
         match opts.reason {
             CrashReason::Panic(message) => {
                 writer.write_byte(b'0')?;
+
+                let mut attributed = BoundedArray::<u8, 1280>::default();
+                let message = attribute_panic_message(message, &mut attributed);
 
                 let mut compressed_bytes: [u8; 2048] = [0; 2048];
                 let mut len: bun_zlib::uLong = compressed_bytes.len() as bun_zlib::uLong;
@@ -3647,24 +3770,20 @@ mod draft {
         );
     }
 
-    /// # Safety
-    /// `action` must be null or a valid NUL-terminated C string that outlives the dlopen call.
+    /// C++ side of [`enter_native_module`] (`Bun::NativeModuleCrashScope`); the result goes back to `CrashHandler__leaveNativeModule`.
     #[unsafe(no_mangle)]
-    unsafe extern "C" fn CrashHandler__setDlOpenAction(action: *const c_char) {
-        if !action.is_null() {
-            debug_assert!(CURRENT_ACTION.with(|c| c.get()).is_none());
-            // SAFETY: action is a valid NUL-terminated C string for the duration of the dlopen call
-            let s = unsafe { bun_core::ffi::cstr(action) }.to_bytes();
-            // SAFETY: noreturn-on-crash usage; the C string outlives the action via caller contract
-            let s: &'static [u8] = unsafe { bun_collections::detach_lifetime(s) };
-            CURRENT_ACTION.with(|c| c.set(Some(Action::Dlopen(s))));
-        } else {
-            debug_assert!(matches!(
-                CURRENT_ACTION.with(|c| c.get()),
-                Some(Action::Dlopen(_))
-            ));
-            CURRENT_ACTION.with(|c| c.set(None));
-        }
+    extern "C" fn CrashHandler__enterNativeModule(kind: u8, name: *const c_char) -> NativeModule {
+        let kind = match kind {
+            1 => NativeModuleKind::Loading,
+            2 => NativeModuleKind::Running,
+            _ => NativeModuleKind::None,
+        };
+        NATIVE_MODULE.with(|c| c.replace(NativeModule { kind, name }))
+    }
+
+    #[unsafe(no_mangle)]
+    extern "C" fn CrashHandler__leaveNativeModule(previous: NativeModule) {
+        NATIVE_MODULE.with(|c| c.set(previous));
     }
 
     pub fn fix_dead_code_elimination() {

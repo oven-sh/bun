@@ -330,5 +330,21 @@
                 "NAPI_VERSION=8",
             ],
         },
+        {
+            "target_name": "crash_report_addon",
+            "sources": ["crash_report_addon.c"],
+            "include_dirs": ["<!@(node -p \"require('node-addon-api').include\")"],
+            "libraries": [],
+            "dependencies": ["<!(node -p \"require('node-addon-api').gyp\")"],
+            "defines": ["NAPI_DISABLE_CPP_EXCEPTIONS"],
+        },
+        {
+            "target_name": "crash_report_on_load_addon",
+            "sources": ["crash_report_addon.c"],
+            "include_dirs": ["<!@(node -p \"require('node-addon-api').include\")"],
+            "libraries": [],
+            "dependencies": ["<!(node -p \"require('node-addon-api').gyp\")"],
+            "defines": ["NAPI_DISABLE_CPP_EXCEPTIONS", "CRASH_ON_LOAD=1"],
+        },
     ]
 }

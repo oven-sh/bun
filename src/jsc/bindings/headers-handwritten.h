@@ -190,13 +190,10 @@ typedef struct SystemError {
     BunString dest;
 } SystemError;
 
-typedef void* ArrayBufferSink;
-
 typedef uint8_t BunPluginTarget;
 inline constexpr BunPluginTarget BunPluginTargetBun = 0;
 inline constexpr BunPluginTarget BunPluginTargetBrowser = 1;
 inline constexpr BunPluginTarget BunPluginTargetNode = 2;
-inline constexpr BunPluginTarget BunPluginTargetMax = BunPluginTargetNode;
 
 typedef uint8_t ZigStackFrameCode;
 inline constexpr ZigStackFrameCode ZigStackFrameCodeNone = 0;
@@ -306,15 +303,6 @@ inline constexpr BunLoaderType BunLoaderTypeXML = 22;
 #pragma mark - Stream
 
 typedef uint8_t Encoding;
-inline constexpr Encoding Encoding__utf8 = 0;
-inline constexpr Encoding Encoding__ucs2 = 1;
-inline constexpr Encoding Encoding__utf16le = 2;
-inline constexpr Encoding Encoding__latin1 = 3;
-inline constexpr Encoding Encoding__ascii = 4;
-inline constexpr Encoding Encoding__base64 = 5;
-inline constexpr Encoding Encoding__base64url = 6;
-inline constexpr Encoding Encoding__hex = 7;
-inline constexpr Encoding Encoding__buffer = 8;
 
 #ifndef STRING_POINTER
 #define STRING_POINTER

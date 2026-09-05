@@ -9,15 +9,6 @@ pub struct Echo {
     /// Kept on the state so the async IOWriter path can borrow it across
     /// yields.
     pub(crate) output: Vec<u8>,
-    state: State,
-}
-
-#[derive(Default)]
-enum State {
-    #[default]
-    Idle,
-    WaitingIo,
-    Done,
 }
 
 impl Echo {
@@ -90,7 +81,6 @@ impl Echo {
         Self::state_mut(interp, cmd).output = output;
 
         if let Some(safeguard) = Builtin::of(interp, cmd).stdout.needs_io() {
-            Self::state_mut(interp, cmd).state = State::WaitingIo;
             let buf = Self::state_mut(interp, cmd).output.clone();
             let child = ChildPtr::new(cmd, WriterTag::Builtin);
             return Builtin::of_mut(interp, cmd)
@@ -99,7 +89,6 @@ impl Echo {
         }
         let buf = Self::state_mut(interp, cmd).output.clone();
         let _ = Builtin::write_no_io(interp, cmd, IoKind::Stdout, &buf);
-        Self::state_mut(interp, cmd).state = State::Done;
         Builtin::done(interp, cmd, 0)
     }
 
@@ -109,7 +98,6 @@ impl Echo {
         _: usize,
         err: Option<bun_sys::SystemError>,
     ) -> Yield {
-        Self::state_mut(interp, cmd).state = State::Done;
         Builtin::done(
             interp,
             cmd,

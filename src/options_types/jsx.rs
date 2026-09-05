@@ -305,4 +305,3 @@ pub mod defaults {
     pub const IMPORT_SOURCE_DEV: &[u8] = b"react/jsx-dev-runtime";
     pub const IMPORT_SOURCE: &[u8] = b"react/jsx-runtime";
 }
-pub use defaults as Defaults;

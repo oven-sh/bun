@@ -1,22 +1,12 @@
 use crate::shell::EnvStr;
-use crate::shell::builtin::{Builtin, BuiltinState, IoKind};
+use crate::shell::builtin::{Builtin, IoKind};
 use crate::shell::interpreter::{Interpreter, NodeId};
 use crate::shell::io_writer::{ChildPtr, WriterTag};
 use crate::shell::yield_::Yield;
 use bun_collections::index_sort;
 
 #[derive(Default)]
-pub struct Export {
-    state: State,
-}
-
-#[derive(Default)]
-enum State {
-    #[default]
-    Idle,
-    WaitingIo,
-    Done,
-}
+pub struct Export {}
 
 impl Export {
     pub(crate) fn start(interp: &Interpreter, cmd: NodeId) -> Yield {
@@ -65,7 +55,6 @@ impl Export {
         }
 
         if let Some(safeguard) = Builtin::of(interp, cmd).stdout.needs_io() {
-            Self::state_mut(interp, cmd).state = State::WaitingIo;
             let child = ChildPtr::new(cmd, WriterTag::Builtin);
             return Builtin::of_mut(interp, cmd)
                 .stdout
@@ -81,7 +70,6 @@ impl Export {
         _: usize,
         err: Option<bun_sys::SystemError>,
     ) -> Yield {
-        Self::state_mut(interp, cmd).state = State::Done;
         Builtin::done(interp, cmd, err.map_or(0, |_| 1))
     }
 }

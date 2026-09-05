@@ -366,7 +366,7 @@ pub mod html_import_manifest {
     use crate::Graph::Graph;
     use crate::{LinkerGraph, chunk::Chunk};
 
-    pub use super::{EscapedJson, HTMLImportManifest};
+    pub use super::EscapedJson;
 
     #[inline]
     pub(crate) fn format_escaped_json<'a>(

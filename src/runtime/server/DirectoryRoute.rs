@@ -3,9 +3,11 @@
 use core::cell::Cell;
 use core::mem::size_of;
 
+use bun_core::String as BunString;
 use bun_core::strings;
-use bun_http::Method;
+use bun_http::{Headers, Method};
 use bun_io::FileType;
+use bun_jsc::bun_string_jsc;
 use bun_paths::resolve_path;
 use bun_ptr::{RefPtr, ThisPtr};
 use bun_resolver::fs::StatHash;
@@ -38,6 +40,14 @@ pub struct DirectoryRoute {
     stat_cache: Box<[Cell<StatCacheEntry>]>,
     /// Sum of `StatCacheEntry.path` capacities, for `memory_cost()`.
     stat_cache_path_bytes: Cell<usize>,
+    /// User headers from `{ dir, headers }`, written onto every file response.
+    headers: Headers,
+    /// A user `last-modified` header, parsed once, for precondition checks.
+    user_last_modified_ms: Option<u64>,
+    has_content_type_header: bool,
+    has_last_modified_header: bool,
+    has_etag_header: bool,
+    has_date_header: bool,
 }
 
 impl DirectoryRoute {
@@ -51,6 +61,7 @@ impl DirectoryRoute {
             + self.url_prefix.len()
             + self.stat_cache.len() * size_of::<Cell<StatCacheEntry>>()
             + self.stat_cache_path_bytes.get()
+            + self.headers.memory_cost()
     }
 
     /// Open `root` and construct the route. `url_prefix` must end in `/`.
@@ -59,9 +70,20 @@ impl DirectoryRoute {
         root: &[u8],
         url_prefix: &[u8],
         enable_stat_cache: bool,
+        headers: Headers,
     ) -> JsResult<RefPtr<DirectoryRoute>> {
         debug_assert!(url_prefix.last() == Some(&b'/'));
         debug_assert!(!strings::contains(url_prefix, b"//"));
+
+        // Stays before the open: a `?` after `open_a` would leak `root_fd`.
+        let user_last_modified_ms = match headers.get(b"last-modified") {
+            Some(lm) => {
+                let date = bun_string_jsc::parse_date(&BunString::borrow_utf8(lm), global)?;
+                // Same rule as `FileRoute::last_modified_date`.
+                date.is_finite().then_some(date as u64)
+            }
+            None => None,
+        };
 
         let root_fd = match bun_sys::open_a(
             root,
@@ -92,6 +114,12 @@ impl DirectoryRoute {
             url_prefix: url_prefix.to_vec().into_boxed_slice(),
             stat_cache: stat_cache.into_boxed_slice(),
             stat_cache_path_bytes: Cell::new(0),
+            user_last_modified_ms,
+            has_content_type_header: headers.get(b"content-type").is_some(),
+            has_last_modified_header: headers.get(b"last-modified").is_some(),
+            has_etag_header: headers.get(b"etag").is_some(),
+            has_date_header: headers.get(b"date").is_some(),
+            headers,
         }))
     }
 
@@ -156,7 +184,18 @@ impl DirectoryRoute {
         let last_modified = (lm_len > 0).then(|| &lm_buf[..lm_len]);
 
         let mut etag_buf = [0u8; 40];
-        let etag = format_weak_etag(&mut etag_buf, size, last_modified_ms);
+        let weak_etag = format_weak_etag(&mut etag_buf, size, last_modified_ms);
+        // Preconditions compare against the validators the client saw.
+        let etag: Option<&[u8]> = if this.has_etag_header {
+            this.headers.get(b"etag").filter(|v| !v.is_empty())
+        } else {
+            Some(weak_etag)
+        };
+        let precondition_last_modified_ms = if this.has_last_modified_header {
+            this.user_last_modified_ms
+        } else {
+            (last_modified_ms > 0).then_some(last_modified_ms)
+        };
 
         let range = if method == Method::GET || method == Method::HEAD {
             RangeRequest::from_request(&req, size)
@@ -168,28 +207,38 @@ impl DirectoryRoute {
             &req,
             method,
             200,
-            Some(etag),
-            (last_modified_ms > 0).then_some(last_modified_ms),
+            etag,
+            precondition_last_modified_ms,
             range,
         );
 
         req.set_yield(false);
         write_any_status(resp, status_code);
-        resp.write_mark();
-
-        let ext: &[u8] = if is_index {
-            b"html"
-        } else {
-            extension_for_mime(rel)
-        };
-        resp.write_header(
-            b"content-type",
-            &bun_http_types::MimeType::by_extension(ext).value,
-        );
-        if let Some(lm) = last_modified {
-            resp.write_header(b"last-modified", lm);
+        if this.has_date_header {
+            resp.mark_wrote_date_header();
         }
-        resp.write_header(b"etag", etag);
+        resp.write_mark();
+        this.write_user_headers(resp);
+
+        if !this.has_content_type_header {
+            let ext: &[u8] = if is_index {
+                b"html"
+            } else {
+                extension_for_mime(rel)
+            };
+            resp.write_header(
+                b"content-type",
+                &bun_http_types::MimeType::by_extension(ext).value,
+            );
+        }
+        if !this.has_last_modified_header {
+            if let Some(lm) = last_modified {
+                resp.write_header(b"last-modified", lm);
+            }
+        }
+        if !this.has_etag_header {
+            resp.write_header(b"etag", weak_etag);
+        }
         if !matches!(resp, AnyResponse::H3(_)) {
             if let Some(srv) = this.server.get() {
                 if let Some(alt) = srv.h3_alt_svc() {
@@ -252,6 +301,18 @@ impl DirectoryRoute {
             idle_timeout: server.config().idle_timeout,
             owner: StreamOwner::DirectoryRoute(guard.into_route()),
         });
+    }
+
+    /// Write the user `{ headers }` onto a file response (404/301 skip them).
+    fn write_user_headers(&self, resp: AnyResponse) {
+        use bun_http_types::ETag::HeaderEntryColumns;
+        let entries = self.headers.entries.slice();
+        let names = entries.items_name();
+        let values = entries.items_value();
+        debug_assert_eq!(names.len(), values.len());
+        for (name, value) in names.iter().zip(values) {
+            resp.write_header(self.headers.as_str(*name), self.headers.as_str(*value));
+        }
     }
 
     /// Open `rel` under the root. For directories: serve `index.html` when the

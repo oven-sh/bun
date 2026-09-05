@@ -210,6 +210,34 @@ describe("transpiler cache", () => {
     expect(await bunRun(join(temp_dir, "a.js"), env)).toSpawn("no-tmpdir-cache");
     expect(newCacheCount()).toBe(1);
   });
+  test("disables the cache when the cache directory does not fit in a path buffer", async () => {
+    writeFileSync(join(temp_dir, "a.js"), dummyFile((50 * 1024 * 1.5) | 0, "1", "long-cache-dir"));
+
+    // The cache directory is derived from environment variables, which can be
+    // longer than PATH_MAX (4096 on Linux, 1024 on macOS). Joining such a value
+    // into the fixed-size path buffer used to panic while loading the first
+    // file large enough for the cache. 4095 is the longest value that still
+    // fits on its own; 4200 does not fit at all. (On Windows, where the buffer
+    // is 98 KB, they fit and creating the directory fails instead.) Windows
+    // reads HOME from USERPROFILE, so both are set.
+    const variants: Record<string, string | undefined>[] = [];
+    for (const length of [4095, 4200]) {
+      const dir = "/" + Buffer.alloc(length - 1, "h").toString();
+      variants.push(
+        { BUN_RUNTIME_TRANSPILER_CACHE_PATH: undefined, XDG_CACHE_HOME: undefined, HOME: dir, USERPROFILE: dir },
+        { BUN_RUNTIME_TRANSPILER_CACHE_PATH: undefined, XDG_CACHE_HOME: dir },
+        { BUN_RUNTIME_TRANSPILER_CACHE_PATH: dir },
+      );
+    }
+
+    const results = await Promise.all(variants.map(vars => bunRun(join(temp_dir, "a.js"), { ...env, ...vars })));
+    for (const result of results) {
+      expect(result).toSpawn("long-cache-dir");
+    }
+    // Every variant overrode the cache location from `env`, so none of the runs
+    // exercised that one instead of its over-long value.
+    expect(existsSync(cache_dir)).toBeFalse();
+  });
   test("works if the cache is not user-readable", async () => {
     mkdirSync(cache_dir, { recursive: true });
     writeFileSync(join(temp_dir, "a.js"), dummyFile((50 * 1024 * 1.5) | 0, "1", "b"));

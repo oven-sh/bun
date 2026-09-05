@@ -68,6 +68,16 @@ const EXPECTED_VERSION: u32 = 28;
 /// `is_stale`), so shrinking this does not weaken staleness detection.
 const MINIMUM_CACHE_SIZE: usize = 4 * 1024;
 
+const CACHE_FILE_SUFFIX: &[u8] = if bun_core::env::IS_DEBUG {
+    b".debug.pile"
+} else {
+    b".pile"
+};
+/// Hex `input_hash` + suffix, as written by `write_cache_filename`.
+const CACHE_FILE_NAME_LEN: usize = size_of::<u64>() * 2 + CACHE_FILE_SUFFIX.len();
+/// Separator + file name + NUL, appended to the directory by `get_cache_file_path`.
+const CACHE_FILE_NAME_RESERVE: usize = 1 + CACHE_FILE_NAME_LEN + 1;
+
 // When making parser changes, it gets extremely confusing.
 #[cfg(bun_debug)]
 static BUN_DEBUG_RESTORE_FROM_CACHE: AtomicBool = AtomicBool::new(false);
@@ -567,20 +577,14 @@ impl RuntimeTranspilerCache {
         buf: &mut [u8],
         input_hash: u64,
     ) -> crate::CrateResult<usize> {
-        // Hex-encode the 8 native-endian bytes of `input_hash`.
-        let bytes = input_hash.to_ne_bytes();
-        let suffix: &[u8] = if bun_core::env::IS_DEBUG {
-            b".debug.pile"
-        } else {
-            b".pile"
-        };
-        let needed = bytes.len() * 2 + suffix.len();
-        if buf.len() < needed {
+        if buf.len() < CACHE_FILE_NAME_LEN {
             return Err(crate::CrateError::Sys(bun_errno::SystemErrno::ENOSPC));
         }
+        // Hex-encode the 8 native-endian bytes of `input_hash`.
+        let bytes = input_hash.to_ne_bytes();
         let i = bun_core::fmt::bytes_to_hex_lower(&bytes, &mut buf[..bytes.len() * 2]);
-        buf[i..i + suffix.len()].copy_from_slice(suffix);
-        Ok(needed)
+        buf[i..i + CACHE_FILE_SUFFIX.len()].copy_from_slice(CACHE_FILE_SUFFIX);
+        Ok(CACHE_FILE_NAME_LEN)
     }
 
     pub(crate) fn get_cache_file_path(
@@ -598,8 +602,8 @@ impl RuntimeTranspilerCache {
         Ok(ZStr::from_buf(&buf[..], total))
     }
 
-    /// Writes the resolved cache directory into `buf` (NUL-terminated) and
-    /// returns its byte length. Returns 0 to mean "cache disabled".
+    /// Writes the resolved cache directory into `buf` (NUL-terminated) and returns
+    /// its byte length, or 0 when the cache is disabled or the directory does not fit.
     fn really_get_cache_dir(buf: &mut PathBuffer) -> usize {
         #[cfg(bun_debug)]
         {
@@ -611,59 +615,40 @@ impl RuntimeTranspilerCache {
             );
         }
 
+        let dir_buf = &mut buf[..MAX_PATH_BYTES - CACHE_FILE_NAME_RESERVE];
+
         if let Some(dir) = env_var::BUN_RUNTIME_TRANSPILER_CACHE_PATH.get() {
-            if dir.is_empty() || (dir.len() == 1 && dir[0] == b'0') {
+            if dir.is_empty() || (dir.len() == 1 && dir[0] == b'0') || dir.len() > dir_buf.len() {
                 return 0;
             }
 
-            let len = dir.len().min(MAX_PATH_BYTES - 1);
-            buf[0..len].copy_from_slice(&dir[0..len]);
-            buf[len] = 0;
-            return len;
+            dir_buf[..dir.len()].copy_from_slice(dir);
+            buf[dir.len()] = 0;
+            return dir.len();
         }
 
-        // The inline `bun_resolver::fs::FileSystem` surface only exposes
-        // `abs_buf` (no NUL-terminating `_z` variant), so go straight to the
-        // underlying joiner with the same `top_level_dir` + `Loose` platform
-        // that `absBufZ` used.
-        let top = FileSystem::instance().top_level_dir;
-
-        if let Some(dir) = env_var::XDG_CACHE_HOME.get() {
-            let parts: &[&[u8]] = &[dir, b"bun", b"@t@"];
-            return path_handler::join_abs_string_buf_z::<platform::Loose>(
-                top,
-                &mut buf[..],
-                parts,
-            )
-            .len();
-        }
-
-        #[cfg(target_os = "macos")]
-        {
-            // On a mac, default to ~/Library/Caches/bun/*
-            // This is different than ~/.bun/install/cache, and not configurable by the user.
-            if let Some(home) = env_var::HOME.get() {
-                let parts: &[&[u8]] = &[home, b"Library/", b"Caches/", b"bun", b"@t@"];
-                return path_handler::join_abs_string_buf_z::<platform::Loose>(
-                    top,
-                    &mut buf[..],
-                    parts,
-                )
-                .len();
+        let parts: &[&[u8]] = if let Some(dir) = env_var::XDG_CACHE_HOME.get() {
+            &[dir, b"bun", b"@t@"]
+        } else if let Some(home) = env_var::HOME.get() {
+            if cfg!(target_os = "macos") {
+                &[home, b"Library/", b"Caches/", b"bun", b"@t@"]
+            } else {
+                &[home, b".bun", b"install", b"cache", b"@t@"]
             }
-        }
+        } else {
+            return 0;
+        };
 
-        if let Some(dir) = env_var::HOME.get() {
-            let parts: &[&[u8]] = &[dir, b".bun", b"install", b"cache", b"@t@"];
-            return path_handler::join_abs_string_buf_z::<platform::Loose>(
-                top,
-                &mut buf[..],
-                parts,
-            )
-            .len();
-        }
-
-        0
+        // `FileSystem::abs_buf` has no size-checked variant, so call the joiner it wraps.
+        let top = FileSystem::instance().top_level_dir;
+        let Some(dir) =
+            path_handler::join_abs_string_buf_checked::<platform::Loose>(top, dir_buf, parts)
+        else {
+            return 0;
+        };
+        let len = dir.len();
+        buf[len] = 0;
+        len
     }
 
     // Only do this at most once per-thread.

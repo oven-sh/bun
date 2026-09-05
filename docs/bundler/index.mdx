@@ -1555,6 +1555,64 @@ interface BuildMetafile {
 }
 ```
 
+### check
+
+Check the module graph for circular dependencies. Bun resolves and parses each module that the entry points import, then stops before it links or prints output. It writes no files.
+
+A circular dependency is a chain of imports that leads back to the file where it starts. When a module in a cycle runs, it can read a binding from another module in the cycle before that binding is initialized. For a `let`, `const`, or `class` binding, this throws a `ReferenceError`.
+
+<Tabs>
+  <Tab title="JavaScript">
+    ```ts title="build.ts" icon="/icons/typescript.svg"
+    const result = await Bun.build({
+      entrypoints: ["./src/index.ts"],
+      check: true,
+      throw: false,
+    });
+
+    for (const message of result.logs) {
+      console.error(message.message); // "Circular dependency: src/a.ts -> src/b.ts -> src/a.ts"
+    }
+    ```
+
+  </Tab>
+  <Tab title="CLI">
+    ```bash terminal icon="terminal"
+    bun build ./src/index.ts --check
+    ```
+  </Tab>
+</Tabs>
+
+Each cycle is one error. The error points at the first import in the cycle. A note points at each of the other imports.
+
+```txt
+1 | import { b } from "./b";
+                      ^
+error: Circular dependency: src/a.ts -> src/b.ts -> src/a.ts
+    at /project/src/a.ts:1:19
+
+1 | import { a } from "./a";
+                      ^
+note: src/b.ts imports src/a.ts here:
+   at /project/src/b.ts:1:19
+```
+
+Bun follows the imports that run a module when the importing module runs:
+
+- `import` and `export ... from` statements, including imports for side effects such as `import "./setup"`
+- `require()` calls
+
+Bun skips these imports:
+
+- Imports of types only: `import type`, and an import whose names are only used as types. Bun removes these imports when it transpiles, so they do not run in Bun. Node's type stripping keeps an import that has no `type` keyword.
+- `import()` and `import defer`. These do not run the module when the importing module runs.
+- Imports of files in `node_modules`. Bun still checks a workspace package, because it resolves the link in `node_modules` to the directory of the package.
+- Imports that the build keeps external. See [`external`](#external) and [`packages`](#packages).
+
+The check also reports the errors that Bun finds when it resolves and parses a module, for example an import that does not resolve. It does not report the errors that the link step finds, for example an import of a name that a module does not export. So a build can fail after the check passes.
+
+The CLI exits with code 1 when it finds an error. In the JavaScript API, the errors are in `result.logs`, and the promise rejects unless you set `throw: false`. You cannot use `check` with `outdir`, `metafile`, or `compile`.
+
 ## Outputs
 
 The `Bun.build` function returns a `Promise<BuildOutput>`, defined as:

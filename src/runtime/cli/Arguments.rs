@@ -507,6 +507,9 @@ pub(crate) const BUILD_ONLY_PARAMS: &[ParamType] = concat_params!(
         ),
         parse_param!("--no-bundle                      Transpile file only, do not bundle"),
         parse_param!(
+            "--check                          Resolve and parse every module, report circular dependencies, and write no files"
+        ),
+        parse_param!(
             "--emit-dce-annotations           Re-emit DCE annotations in bundles. Enabled by default unless --minify-whitespace is passed."
         ),
         parse_param!(
@@ -2654,5 +2657,33 @@ fn parse_build_command_options(
         // happens in build_command.rs once it's known whether --compile
         // produces an executable or a standalone HTML file (browsers do read
         // the comment, so standalone HTML keeps the user's choice).
+    }
+
+    ctx.bundler_options.check = args.flag(b"--check");
+    if ctx.bundler_options.check {
+        let conflict: Option<&str> = if ctx.bundler_options.compile {
+            Some("--compile")
+        } else if ctx.bundler_options.transform_only {
+            Some("--no-bundle")
+        } else if ctx.bundler_options.bake {
+            Some("--app")
+        } else if args.option(b"--outdir").is_some() {
+            Some("--outdir")
+        } else if args.option(b"--outfile").is_some() {
+            Some("--outfile")
+        } else if args.option(b"--metafile").is_some() {
+            Some("--metafile")
+        } else if args.option(b"--metafile-md").is_some() {
+            Some("--metafile-md")
+        } else {
+            None
+        };
+        if let Some(flag) = conflict {
+            Output::err_generic(
+                "--check writes no files, so it cannot be used with {}",
+                (flag,),
+            );
+            Global::crash();
+        }
     }
 }

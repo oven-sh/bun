@@ -378,6 +378,7 @@ impl BuildCommand {
 
         if ctx.bundler_options.outdir.is_empty()
             && !ctx.bundler_options.compile
+            && !ctx.bundler_options.check
             && fetcher.is_none()
         {
             if this_transpiler.options.entry_points.len() > 1 {
@@ -446,6 +447,8 @@ impl BuildCommand {
         this_transpiler.options.root_dir = src_root_dir.into();
         this_transpiler.options.code_splitting = ctx.bundler_options.code_splitting;
         this_transpiler.options.transform_only = ctx.bundler_options.transform_only;
+        this_transpiler.options.check = ctx.bundler_options.check;
+        this_transpiler.options.scan_graph_as_written = ctx.bundler_options.check;
 
         this_transpiler.options.env.behavior = ctx.bundler_options.env_behavior;
         this_transpiler
@@ -690,6 +693,21 @@ impl BuildCommand {
                     exit_or_watch(1, ctx.debug.hot_reload == HotReload::Watch);
                 }
             };
+
+            if ctx.bundler_options.check {
+                bun_core::prettyln!(
+                    "<green>Checked {} module{} in {}ms<r>",
+                    reachable_file_count,
+                    if reachable_file_count == 1 { "" } else { "s" },
+                    (bun_core::time::nano_timestamp() - cli_start_time())
+                        / (bun_core::time::NS_PER_MS as i128)
+                );
+                Output::flush();
+                log_ref.print(std::ptr::from_mut::<bun_core::io::Writer>(
+                    Output::error_writer(),
+                ))?;
+                exit_or_watch(0, ctx.debug.hot_reload == HotReload::Watch);
+            }
 
             // Write metafile if requested
             if let Some(metafile_json) = build_result.metafile.as_deref() {

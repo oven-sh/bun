@@ -2500,8 +2500,10 @@ pub mod parse_worker {
         opts.package_version = task.package_version.slice();
 
         opts.features.allow_runtime = !task.source_index.is_runtime();
-        opts.features.unwrap_commonjs_to_esm =
-            output_format == options::Format::Esm && FeatureFlags::UNWRAP_COMMONJS_TO_ESM;
+        // Unwrapping turns `module.exports = require(x)` files into redirects, which drop edges.
+        opts.features.unwrap_commonjs_to_esm = output_format == options::Format::Esm
+            && FeatureFlags::UNWRAP_COMMONJS_TO_ESM
+            && !topts.scan_graph_as_written;
         opts.features.top_level_await = output_format == options::Format::Esm
             || output_format == options::Format::InternalBakeDev;
         opts.features.auto_import_jsx = task.jsx.parse && topts.auto_import_jsx;

@@ -1272,6 +1272,10 @@ pub struct BundleOptions<'a> {
     pub transform_options: std::sync::Arc<api::TransformOptions>,
     pub(crate) polyfill_node_globals: bool,
     pub transform_only: bool,
+    /// `--check`: report circular dependencies after the scan, and write nothing.
+    pub check: bool,
+    /// Turns off the scan-time rewrites that drop edges: barrel deferral and CommonJS redirects.
+    pub scan_graph_as_written: bool,
     pub load_tsconfig_json: bool,
     pub(crate) load_package_json: bool,
 
@@ -1497,6 +1501,8 @@ impl<'a> BundleOptions<'a> {
             transform_options: std::sync::Arc::clone(&self.transform_options),
             polyfill_node_globals: self.polyfill_node_globals,
             transform_only: self.transform_only,
+            check: self.check,
+            scan_graph_as_written: self.scan_graph_as_written,
             load_tsconfig_json: self.load_tsconfig_json,
             load_package_json: self.load_package_json,
             rewrite_jest_for_tests: self.rewrite_jest_for_tests,
@@ -1747,6 +1753,8 @@ impl<'a> BundleOptions<'a> {
             defines_loaded: false,
             polyfill_node_globals: false,
             transform_only: false,
+            check: false,
+            scan_graph_as_written: false,
             load_tsconfig_json: true,
             load_package_json: true,
             rewrite_jest_for_tests: false,

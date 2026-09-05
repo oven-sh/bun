@@ -199,6 +199,8 @@ pub struct BundlerOptions {
     pub code_splitting: bool,
     pub split_require: bool,
     pub transform_only: bool,
+    /// `--check`: scan the module graph, report circular dependencies, write nothing.
+    pub check: bool,
     pub inline_entrypoint_import_meta_main: bool,
     pub minify_syntax: bool,
     pub minify_whitespace: bool,
@@ -259,6 +261,7 @@ impl Default for BundlerOptions {
             code_splitting: false,
             split_require: true,
             transform_only: false,
+            check: false,
             inline_entrypoint_import_meta_main: false,
             minify_syntax: false,
             minify_whitespace: false,

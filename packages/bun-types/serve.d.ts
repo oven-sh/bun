@@ -532,15 +532,17 @@ declare module "bun" {
   }
 
   namespace Serve {
+    /**
+     * A path segment is a parameter only when it starts with `:`; a `:` anywhere
+     * else in a segment is literal text (`/files:batchGet/:id` has one parameter, `id`).
+     */
     type ExtractRouteParams<T> = string extends T
       ? Record<string, string>
-      : T extends `${string}:${infer Param}/${infer Rest}`
-        ? { [K in Param]: string } & ExtractRouteParams<Rest>
-        : T extends `${string}:${infer Param}`
+      : T extends `${string}/:${infer Param}/${infer Rest}`
+        ? { [K in Param]: string } & ExtractRouteParams<`/${Rest}`>
+        : T extends `${string}/:${infer Param}`
           ? { [K in Param]: string }
-          : T extends `${string}*`
-            ? {}
-            : {};
+          : {};
 
     /**
      * Development configuration for {@link Bun.serve}

@@ -197,14 +197,26 @@ export const profiles = {
     buildType: "Release",
     ci: true,
     buildkite: true,
-    // lto default resolves to ON (ci + release + linux + !asan + !assertions)
+    // lto default resolves to ON (release + !asan + !assertions)
   },
 } as const satisfies Record<string, PartialConfig>;
 
 /**
  * Look up a profile by name.
  */
+/** Profiles that were removed, with what replaces them — a build dir configured under one says so on its next regen. */
+const retiredProfiles: Record<string, string> = {
+  "debug-local": "--profile=debug --local-deps=WebKit=<clone> (bun run build:local)",
+  "release-local": "--profile=release --local-deps=WebKit=<clone> (bun run build:release:local)",
+  btg: "--profile=release (LTO is on by default now)",
+};
+
 export function getProfile(name: string): PartialConfig {
+  if (name in retiredProfiles) {
+    throw new BuildError(`Profile "${name}" no longer exists; use ${retiredProfiles[name]}`, {
+      hint: "Re-run the build script with the new flags for this build dir (that rewrites its configure.json), or remove the build dir",
+    });
+  }
   if (name in profiles) {
     // The const assertion means values are readonly; spread into mutable PartialConfig.
     return { ...profiles[name as ProfileName] };

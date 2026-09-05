@@ -36,9 +36,17 @@ import { generateDepVersionsHeader } from "./depVersionsHeader.ts";
 import { allDeps } from "./deps/index.ts";
 import { lolhtml } from "./deps/lolhtml.ts";
 import { rustArgon2 } from "./deps/rust-argon2.ts";
-import { webkitClassInfoCheckScript } from "./deps/webkit.ts";
+import { jscTestFFI, webkitClassInfoCheckScript } from "./deps/webkit.ts";
 import { assert } from "./error.ts";
-import { bunIncludes, computeFlags, extraFlagsFor, linkDepends, linkerMapOutputs, systemLibs } from "./flags.ts";
+import {
+  bunIncludes,
+  computeFlags,
+  computeTargetLinkFlags,
+  extraFlagsFor,
+  linkDepends,
+  linkerMapOutputs,
+  systemLibs,
+} from "./flags.ts";
 import { writeIfChanged } from "./fs.ts";
 import type { BuildNode, Ninja } from "./ninja.ts";
 import { emitRust, rustLibPath } from "./rust.ts";
@@ -90,6 +98,8 @@ export interface BunOutput {
   objects: string[];
   /** Stamps of the buildkite artifact-upload edges; archive-link adds them to the default targets. */
   uploadStamps?: string[];
+  /** JSC's testFFI executable (webkit source mode), built next to bun for the test suite; a default target. */
+  testFFI?: string;
 }
 
 /**
@@ -385,6 +395,10 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
   // every mode.
   const shims = emitShims(n, cfg);
 
+  // JSC's testFFI: linked here from the same dep objects, in every mode that
+  // compiles them (cpp-only uploads it for the test shards).
+  const testFFI = emitTestFFI(n, cfg, depsByName);
+
   // ─── Step 6: cpp-only / archive-link → archive (cpp-only returns here) ───
   // CI's build-cpp step: archive all .o into libbun.a, stop. The sibling
   // build-rust step produces libbun_runtime.a independently; build-bun
@@ -417,7 +431,7 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
     // lolhtml) aren't in depHeaderSignal, so the archive doesn't pull them
     // transitively — but link-only still needs them uploaded.
     if (cfg.mode === "cpp-only") {
-      n.phony("bun", [archive, ...depLibs, ...deps.flatMap(d => d.extras), ...uploadStamps]);
+      n.phony("bun", [archive, ...depLibs, ...(testFFI !== undefined ? [testFFI] : []), ...uploadStamps]);
       n.default(["bun"]);
       return { archive, deps, codegen, rustObjects, objects: allObjects };
     }
@@ -456,7 +470,17 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
   // ─── Step 7: post-link (strip, dsymutil, smoke test) ───
   const { strippedExe, dsym } = emitPostLink(n, cfg, exe, exeName, flags.stripflags);
 
-  return { exe, strippedExe, dsym, deps, codegen, rustObjects, objects: allObjects, uploadStamps };
+  return {
+    exe,
+    strippedExe,
+    dsym,
+    deps,
+    codegen,
+    rustObjects,
+    objects: allObjects,
+    uploadStamps,
+    ...(testFFI !== undefined && { testFFI }),
+  };
 }
 
 function registerBkUploadRules(n: Ninja, cfg: Config): void {
@@ -738,6 +762,41 @@ export function emitPostLink(
   n.phony("check", [...emitSmokeTest(n, cfg, exe, exeName, strippedExe), ...emitClassInfoCheck(n, cfg, exe, exeName)]);
 
   return { strippedExe, dsym };
+}
+
+/**
+ * JSC's bun:ffi C++/ABI test executable, run by
+ * test/js/bun/jsc-stress/testFFI.test.ts: one WebKit source compiled the
+ * way JSC compiles its own TUs (deps/webkit.ts says how), linked with the
+ * WebKit/ICU/mimalloc objects bun links and the toolchain half of bun's
+ * link flags. Linking it also proves those resolve standalone before bun's
+ * own link does.
+ */
+function emitTestFFI(n: Ninja, cfg: Config, deps: ReadonlyMap<string, ResolvedDep>): string | undefined {
+  const webkit = deps.get("WebKit");
+  if (cfg.webkit !== "source" || webkit === undefined) return undefined;
+  const spec = jscTestFFI(cfg);
+  const fromDep = (name: string): string[] => {
+    const d = deps.get(name);
+    return d === undefined ? [] : [...d.objects, ...d.libs];
+  };
+  n.comment("─── testFFI (JSC's FFI test program) ───");
+  const obj = cxx(n, cfg, spec.source, { flags: spec.cxxflags, orderOnlyInputs: webkit.outputs });
+  const exe = link(n, cfg, "testFFI", [obj, ...fromDep("WebKit"), ...fromDep("icu"), ...fromDep("mimalloc")], {
+    libs: [],
+    flags: [
+      ...computeTargetLinkFlags(cfg),
+      ...(cfg.darwin ? ["-Wl,-dead_strip"] : cfg.windows ? [] : ["-Wl,--gc-sections"]),
+      ...spec.ldflags,
+      ...systemLibs(cfg),
+    ],
+    implicitInputs: machoPostlinkImplicitInputs(cfg),
+  });
+  // No phony: the file is `testFFI[.exe]` at the build root, so `ninja
+  // testFFI` already names it (on Windows a `testFFI` alias would not clash,
+  // but one spelling everywhere).
+  if (cfg.windows) n.phony("testFFI", [exe]);
+  return exe;
 }
 
 /**

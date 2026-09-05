@@ -9,10 +9,8 @@ function findTestFFI(): string | null {
   const candidates = [
     process.env.BUN_TESTFFI_PATH,
     path.join(path.dirname(bunExe()), binaryName),
-    path.join(import.meta.dir, "../../../../build/debug-local/deps/WebKit/bin", binaryName),
-    path.join(import.meta.dir, "../../../../build/release-local/deps/WebKit/bin", binaryName),
-    path.join(import.meta.dir, "../../../../build/debug/deps/WebKit/bin", binaryName),
-    path.join(import.meta.dir, "../../../../build/release/deps/WebKit/bin", binaryName),
+    path.join(import.meta.dir, "../../../../build/debug", binaryName),
+    path.join(import.meta.dir, "../../../../build/release", binaryName),
   ].filter(Boolean) as string[];
   return candidates.find(candidate => existsSync(candidate)) ?? null;
 }

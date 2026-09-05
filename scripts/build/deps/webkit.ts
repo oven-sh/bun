@@ -32,12 +32,12 @@ import { mkdirSync, rmSync } from "node:fs";
 import { basename, join, relative, resolve } from "node:path";
 import { modeCompilesCpp, type Config } from "../config.ts";
 import { assert } from "../error.ts";
-import { systemLibs } from "../flags.ts";
 import { writeIfChanged } from "../fs.ts";
 import { quote } from "../shell.ts";
 import {
   depBuildDir,
   depSourceDir,
+  groupCompileFlags,
   type Dependency,
   type DirectBuild,
   type DirectStep,
@@ -132,9 +132,11 @@ export function webkitClassInfoCheckScript(cfg: Config): string | undefined {
   return join(depSourceDir(cfg, "WebKit"), "Tools", "Scripts", "check-classinfo-uniqueness.py");
 }
 
+/** JSC's testFFI executable: built next to bun (bun.ts) in source mode; the prebuilt tarball ships one in bin/. */
 export function webkitTestFFIPath(cfg: Config): string {
-  const root = cfg.webkit === "prebuilt" ? prebuiltDestDir(cfg) : depBuildDir(cfg, "WebKit");
-  return resolve(root, "bin", cfg.windows ? "testFFI.exe" : "testFFI");
+  return cfg.webkit === "prebuilt"
+    ? resolve(prebuiltDestDir(cfg), "bin", `testFFI${cfg.exeSuffix}`)
+    : resolve(cfg.buildDir, `testFFI${cfg.exeSuffix}`);
 }
 
 /** Build a lib path under the WebKit install's lib/ dir. */
@@ -1372,14 +1374,14 @@ function webkitBuildSpec(cfg: Config): DirectBuild {
       wtf.group,
       ...llint.groups,
       jscGroup(wk, jsc, jscSources.sources, codegenReady, llint.assembly),
-      testFFIGroup(wk, jsc, codegenReady),
     ],
-    steps: [...wk.steps, testFFIExe(cfg)],
+    steps: wk.steps,
     // What a consumer's compile waits for: JSC's generated headers (bun
     // includes them through the PrivateHeaders stubs) and WTF's MIG stubs.
     consumerOutputs: [...codegen.headers, ...wtf.migHeaders],
-    // Read by bun.ts's ClassInfo check straight out of the source tree.
-    treeFiles: ["Tools/Scripts/check-classinfo-uniqueness.py"],
+    // Read straight out of the source tree by edges bun.ts emits: the
+    // ClassInfo check script, testFFI's source.
+    treeFiles: ["Tools/Scripts/check-classinfo-uniqueness.py", "Source/JavaScriptCore/ffi/tests/testFFI.cpp"],
   };
 }
 
@@ -2180,34 +2182,22 @@ function jscGroup(
 // ─── testFFI ───
 
 /**
- * JSC's bun:ffi C++/ABI test executable (ffi/tests/testFFI.cpp), run by
- * test/js/bun/jsc-stress/testFFI.test.ts. Linking it also proves JSC + WTF +
- * bmalloc + ICU + mimalloc resolve standalone before bun does.
+ * JSC's bun:ffi C++/ABI test program (ffi/tests/testFFI.cpp), run by
+ * test/js/bun/jsc-stress/testFFI.test.ts. It is one of WebKit's own
+ * executables (built like jsc/testapi against JSC's private headers), but
+ * bun's build links it — next to bun, from the same dep objects — so this
+ * only says how: the source, the flags a JSC-family TU compiles with, and
+ * the link flags a standalone JSC executable needs.
  */
-function testFFIGroup(wk: WebKitBuild, jsc: JSCCompileFlags, codegenReady: string[]): SourceGroup {
-  const { JSC } = wk;
-  return {
-    name: "testFFI-obj",
-    sources: [join(JSC, "ffi", "tests", "testFFI.cpp")],
+export function jscTestFFI(cfg: Config): { source: string; cxxflags: string[]; ldflags: string[] } {
+  const wk = webkitLayout(cfg);
+  const jsc = jscCompileFlags(wk, webkitFlags(wk));
+  const { cxx } = groupCompileFlags(cfg, wk.W, {
     includes: jsc.includes,
     cflags: [...jsc.targetFlags, "-DBUILDING_testFFI", "-DSTATICALLY_LINKED_WITH_JavaScriptCore"],
     cxxflags: jsc.cxx,
-    // JSC's PCH (the JavaScriptCore group builds it).
-    pch: join(JSC, "JavaScriptCorePrefix.h"),
-    orderOnly: codegenReady,
-    link: false,
-  };
-}
-
-function testFFIExe(cfg: Config): DirectStep {
-  return {
-    kind: "exe",
-    output: join(webkitLayout(cfg).binDir, "testFFI"),
-    objectsFrom: ["testFFI-obj", "JavaScriptCore", "WTF", "bmalloc"],
-    linkDeps: ["icu", "mimalloc"],
-    ldflags: [...standaloneExeLinkFlags(cfg), ...systemLibs(cfg)],
-    buildByDefault: true,
-  };
+  });
+  return { source: join(wk.JSC, "ffi", "tests", "testFFI.cpp"), cxxflags: cxx, ldflags: standaloneExeLinkFlags(cfg) };
 }
 
 // ───────────────────────────────────────────────────────────────────────────

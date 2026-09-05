@@ -364,7 +364,7 @@ export async function configure(input: ConfigureInput): Promise<ConfigureResult>
     const targets = [defaultTarget, "check"];
     if (output.dsym !== undefined) targets.push(n.rel(output.dsym));
     for (const stamp of output.uploadStamps ?? []) targets.push(n.rel(stamp));
-    for (const dep of output.deps) targets.push(...dep.extras.map(e => n.rel(e)));
+    if (output.testFFI !== undefined) targets.push(n.rel(output.testFFI));
     n.default(targets);
   }
 

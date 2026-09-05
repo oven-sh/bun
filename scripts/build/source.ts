@@ -259,7 +259,7 @@ export interface GenStep {
 /**
  * An executable this dep builds. `exe`: for the TARGET, from source groups'
  * objects, linked with the toolchain half of bun's link flags (JSC's LLInt
- * extractors, which offlineasm parses, and testFFI). `host-exe`: for the
+ * extractors, which offlineasm parses). `host-exe`: for the
  * BUILD machine, from `sources` compiled with the host compiler and no target
  * flags (icupkg, migcom, tinycc's c2str) — generators run these.
  */
@@ -269,16 +269,12 @@ export interface ExeStep {
   output: string;
   /** exe: source groups whose objects are linked in. */
   objectsFrom?: string[];
-  /** exe: other deps (resolved before this one) whose libs/objects are linked in. */
-  linkDeps?: string[];
   /** host-exe: sources (relative to srcDir, or absolute), each compiled to an object under <build dir>/host-obj/. */
   sources?: Array<string | DirectSource>;
   /** host-exe: compile flags (complete — nothing from the target config is added). */
   flags?: string[];
   ldflags?: string[];
   implicitInputs?: string[];
-  /** Built by a plain `bun run build` even though nothing in bun's graph consumes it (testFFI, run by the test suite). */
-  buildByDefault?: boolean;
 }
 
 export type DirectStep = GenStep | ExeStep;
@@ -565,12 +561,6 @@ export interface ResolvedDep {
    * otherwise bun.ts's archive or link.
    */
   checks: string[];
-  /**
-   * Extra artifacts the dep produces that ship next to bun but that nothing
-   * in bun's graph consumes (WebKit's testFFI executable, run by the test
-   * suite). Added to the default targets so a plain build produces them.
-   */
-  extras: string[];
 }
 
 // ───────────────────────────────────────────────────────────────────────────
@@ -946,18 +936,16 @@ export function resolveDep(
   let objects: string[] = [];
   let outputs: string[];
   let checks: string[] = [];
-  let extras: string[] = [];
 
   if (buildSpec.kind === "cargo") {
     const result = emitCargo(n, cfg, dep.name, buildSpec, { srcDir, sourceStamp: sourceStamp! }); // .ref or Cargo.toml
     libs = result.libs;
     outputs = result.libs;
   } else if (buildSpec.kind === "direct") {
-    const result = emitDirect(n, cfg, dep.name, buildSpec, { srcDir, sourceStamp, fetchDepStamps, resolved });
+    const result = emitDirect(n, cfg, dep.name, buildSpec, { srcDir, sourceStamp, fetchDepStamps });
     libs = result.libs;
     objects = result.objects;
     checks = result.checks;
-    extras = result.extras;
     // outputs is the "downstream needs me built" signal — for direct deps
     // that's the generated headers + source stamp, NOT the .o files (those
     // are link inputs, not include-order dependencies).
@@ -992,7 +980,6 @@ export function resolveDep(
     sources: resolvedSources,
     outputs,
     checks,
-    extras,
   };
 }
 
@@ -1169,7 +1156,6 @@ function emitPrebuilt(
     libs,
     objects: [],
     checks: [],
-    extras: [],
     includes,
     defines: provides.defines ?? [],
     sources: [],
@@ -1314,12 +1300,41 @@ function emitCargo(n: Ninja, cfg: Config, name: string, spec: CargoBuild, input:
 // Direct — compile sources inline into our ninja graph
 // ---------------------------------------------------------------------------
 
+/**
+ * The complete compile flags for a source group's C and C++ TUs: the dep
+ * globals (computeDepFlags), bun's PIC policy, then the group's includes,
+ * defines and flags. Also what an edge outside the dep uses to compile against
+ * a dep the way the dep compiles itself (bun.ts's testFFI).
+ */
+export function groupCompileFlags(
+  cfg: Config,
+  srcDir: string,
+  g: Omit<SourceGroup, "name" | "sources">,
+  depFlags: { cflags: string[]; cxxflags: string[] } = computeDepFlags(cfg),
+): { c: string[]; cxx: string[] } {
+  const q = (p: string) => quote(p, cfg.host.os === "windows");
+  const inSrc = (p: string) => (isAbsolute(p) ? p : resolve(srcDir, p));
+  // PIC: pic → -fPIC (Android needs it regardless: PIE-only platform);
+  // otherwise undo a PIC/PIE toolchain default to match bun's non-PIE link.
+  const pic =
+    g.pic || cfg.abi === "android" ? (cfg.windows ? [] : ["-fPIC"]) : cfg.unix ? ["-fno-pic", "-fno-pie"] : [];
+  const common = [
+    ...pic,
+    ...(g.includes ?? []).map(i => `-I${q(i === "." ? srcDir : inSrc(i))}`),
+    ...Object.entries(g.defines ?? {}).map(([k, v]) => defineFlag(k, v)),
+    ...(g.cflags ?? []),
+  ];
+  return {
+    c: [...depFlags.cflags, ...common, ...(g.conlyflags ?? [])],
+    cxx: [...depFlags.cxxflags, ...common, ...(g.cxxflags ?? [])],
+  };
+}
+
 interface EmitDirectInput {
   srcDir: string;
   /** Fetch `.ref` stamp; undefined for local/in-tree sources (already on disk). */
   sourceStamp: string | undefined;
   fetchDepStamps: string[];
-  resolved: ReadonlyMap<string, ResolvedDep>;
 }
 
 interface EmitDirectResult {
@@ -1327,7 +1342,6 @@ interface EmitDirectResult {
   objects: string[];
   headerOutputs: string[];
   checks: string[];
-  extras: string[];
 }
 
 /**
@@ -1342,10 +1356,9 @@ interface EmitDirectResult {
  * everything by the paths the steps and groups name.
  */
 function emitDirect(n: Ninja, cfg: Config, name: string, spec: DirectBuild, input: EmitDirectInput): EmitDirectResult {
-  const { srcDir, sourceStamp, fetchDepStamps, resolved } = input;
+  const { srcDir, sourceStamp, fetchDepStamps } = input;
   const buildDir = depBuildDir(cfg, name);
   const hostWin = cfg.host.os === "windows";
-  const q = (p: string) => quote(p, hostWin);
   const inSrc = (p: string) => (isAbsolute(p) ? p : resolve(srcDir, p));
   const inBuild = (p: string) => (isAbsolute(p) ? p : resolve(buildDir, p));
 
@@ -1435,18 +1448,7 @@ function emitDirect(n: Ninja, cfg: Config, name: string, spec: DirectBuild, inpu
   for (const g of groups) {
     assert(!objectsByGroup.has(g.name), `${name}: duplicate source group '${g.name}'`);
     const isCxxGroup = g.lang === "cxx";
-    // PIC: pic → -fPIC (Android needs it regardless: PIE-only platform);
-    // otherwise undo a PIC/PIE toolchain default to match bun's non-PIE link.
-    const pic =
-      g.pic || cfg.abi === "android" ? (cfg.windows ? [] : ["-fPIC"]) : cfg.unix ? ["-fno-pic", "-fno-pie"] : [];
-    const common = [
-      ...pic,
-      ...(g.includes ?? []).map(i => `-I${q(i === "." ? srcDir : inSrc(i))}`),
-      ...Object.entries(g.defines ?? {}).map(([k, v]) => defineFlag(k, v)),
-      ...(g.cflags ?? []),
-    ];
-    const cFlags = [...depFlags.cflags, ...common, ...(g.conlyflags ?? [])];
-    const cxxFlags = [...depFlags.cxxflags, ...common, ...(g.cxxflags ?? [])];
+    const { c: cFlags, cxx: cxxFlags } = groupCompileFlags(cfg, srcDir, g, depFlags);
     // Generated files: relative names are this dep's build-dir outputs.
     const orderOnly = [...ready, ...(g.orderOnly ?? []).map(inBuild)];
     const implicit = (g.implicitInputs ?? []).map(inBuild);
@@ -1495,7 +1497,6 @@ function emitDirect(n: Ninja, cfg: Config, name: string, spec: DirectBuild, inpu
   linkObjects.push(...(spec.linkObjects ?? []).map(inBuild));
 
   // ─── Executables ───
-  const extras: string[] = [];
   for (const step of steps) {
     if (!isExe(step)) continue;
     let exe: string;
@@ -1533,18 +1534,13 @@ function emitDirect(n: Ninja, cfg: Config, name: string, spec: DirectBuild, inpu
         assert(o !== undefined, `${name}: exe ${step.output} names unknown source group '${g}'`);
         return o;
       });
-      const depObjects = (step.linkDeps ?? []).flatMap(d => {
-        const r = resolved.get(d);
-        return r === undefined ? [] : [...r.libs, ...r.objects];
-      });
-      // A real executable for the TARGET (offlineasm parses the extractors,
-      // the test suite runs testFFI), so it links with the toolchain half of
-      // bun's link line — triple/sysroot, lld, C++ runtime, PIE policy,
-      // sanitizer runtime — and drops unreferenced sections (an extractor
-      // references a sliver of JSC). The shared `link` rule ends in bun's
-      // Mach-O post-link fixup on darwin cross links; its host tool is an
-      // input.
-      exe = link(n, cfg, inBuild(step.output), [...objects, ...depObjects], {
+      // A real executable for the TARGET (offlineasm parses the extractors),
+      // so it links with the toolchain half of bun's link line — triple/
+      // sysroot, lld, C++ runtime, PIE policy, sanitizer runtime — and drops
+      // unreferenced sections (an extractor references a sliver of JSC). The
+      // shared `link` rule ends in bun's Mach-O post-link fixup on darwin
+      // cross links; its host tool is an input.
+      exe = link(n, cfg, inBuild(step.output), objects, {
         libs: [],
         flags: [
           ...computeTargetLinkFlags(cfg),
@@ -1555,7 +1551,6 @@ function emitDirect(n: Ninja, cfg: Config, name: string, spec: DirectBuild, inpu
       });
     }
     n.phony(basename(inBuild(step.output)), [exe]);
-    if (step.buildByDefault) extras.push(exe);
   }
 
   const checks =
@@ -1576,11 +1571,11 @@ function emitDirect(n: Ninja, cfg: Config, name: string, spec: DirectBuild, inpu
     mkdirSync(buildDir, { recursive: true });
     for (const o of linkObjects) mkdirSync(resolve(o, ".."), { recursive: true });
     const lib = ar(n, cfg, join("deps", name, `${cfg.libPrefix}${name}${cfg.libSuffix}`), linkObjects, checks);
-    n.phony(name, [lib, ...extras]);
-    return { libs: [lib], objects: [], headerOutputs: [...headerOutputs, lib], checks, extras };
+    n.phony(name, [lib]);
+    return { libs: [lib], objects: [], headerOutputs: [...headerOutputs, lib], checks };
   }
-  n.phony(name, [...linkObjects, ...checks, ...extras]);
-  return { libs: [], objects: linkObjects, headerOutputs, checks, extras };
+  n.phony(name, [...linkObjects, ...checks]);
+  return { libs: [], objects: linkObjects, headerOutputs, checks };
 }
 
 /**

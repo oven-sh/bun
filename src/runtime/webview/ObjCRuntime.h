@@ -481,6 +481,7 @@ struct WKWebViewConfiguration : Ref {
     static Class cls_WKProcessPool;
     static SEL s_nonPersistentDataStore;
     static SEL s_initWithDirectory; // macOS 15.2+ (SPI)
+    static bool s_hasInitWithDirectory; // false: sending initWithDirectory: raises, and the host aborts
     static SEL s_initWithConfiguration; // _initWithConfiguration: (SPI)
     static SEL s_setWebsiteDataStore;
     static SEL s_setProcessPool;

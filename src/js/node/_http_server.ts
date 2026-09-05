@@ -2571,9 +2571,9 @@ function advanceResponsePipeline(server, socket) {
           handle.writeInformational(op[1], op[2]);
           if (typeof op[3] === "function") process.nextTick(op[3]);
         } else if (kind === "write") {
-          lastWriteResult = res.write(op[1], op[2], op[3]);
+          lastWriteResult = ServerResponsePrototypeWrite.$call(res, op[1], op[2], op[3]);
         } else {
-          res.end(op[1], op[2], op[3]);
+          ServerResponsePrototypeEnd.$call(res, op[1], op[2], op[3]);
         }
       }
     } finally {
@@ -3362,6 +3362,10 @@ ServerResponse.prototype.write = function (chunk, encoding, callback) {
 
   return true;
 };
+
+// advanceResponsePipeline replays buffered ops through these; patched res.write/res.end (compression middleware) must not see them again.
+const ServerResponsePrototypeWrite = ServerResponse.prototype.write;
+const ServerResponsePrototypeEnd = ServerResponse.prototype.end;
 
 const kBytesBuffered = Symbol("kBytesBuffered");
 const kAccountingFlushScheduled = Symbol("kAccountingFlushScheduled");

@@ -1607,6 +1607,10 @@ pub(crate) mod strings_impl {
                     break;
                 }
                 Some(i) => {
+                    debug_assert!(
+                        rest[i] >= 0x80,
+                        "first_non_ascii_usize pointed at an ASCII byte"
+                    );
                     list.extend_from_slice(&rest[..i]);
                     rest = &rest[i..];
                     while let Some(&c) = rest.first() {

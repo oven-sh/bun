@@ -157,6 +157,10 @@ pub(crate) unsafe extern "C" fn main(argc: c_int, argv: *const *const c_char) ->
     // 1. Crash handler first so anything below gets a usable trace.
     bun_crash_handler::init();
 
+    // Before the first string conversion: simdutf's CPUID dispatch may have
+    // picked a stub that returns 0 for every call.
+    bun_simdutf_sys::simdutf::init();
+
     use_mimalloc_in_dependencies();
 
     // SIGPIPE/SIGXFSZ → SIG_IGN.

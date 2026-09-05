@@ -1890,20 +1890,12 @@ fn substitute_template(
             i += 2;
             continue;
         }
-        // Literal run: copy raw bytes verbatim up to the next brace, no UTF-8
-        // processing. Templates are not required to be valid UTF-8; the bytes
-        // pass through to the sink unchanged.
+        // Literal run up to the next brace; braces are ASCII, so the run never ends inside a multi-byte sequence.
         let mut j = i + 1;
         while j < t.len() && t[j] != b'{' && t[j] != b'}' {
             j += 1;
         }
-        let run = &t[i..j];
-        // SAFETY: not actually guaranteed — templates may contain non-UTF-8
-        // bytes and we deliberately pass them through unvalidated, accepting
-        // the technically-invalid `&str`. Every sink below this Display impl
-        // forwards `write_str` bytes untouched, so the bytes reach the fd
-        // verbatim; do not add a UTF-8-inspecting sink to this path.
-        f.write_str(unsafe { std::str::from_utf8_unchecked(run) })?;
+        crate::fmt::write_bytes(f, &t[i..j])?;
         i = j;
     }
     Ok(())

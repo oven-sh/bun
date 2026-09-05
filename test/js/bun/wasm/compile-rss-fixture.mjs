@@ -53,10 +53,9 @@ if (p !== total) throw new Error(`module size mismatch: wrote ${p}, expected ${t
 
 // On macOS mimalloc returns memory with MADV_FREE_REUSABLE, which leaves RSS
 // untouched until the kernel needs the pages. phys_footprint drops at once.
-const footprint =
-  process.platform === "darwin" && typeof Bun.unsafe.memoryFootprint === "function"
-    ? Bun.unsafe.memoryFootprint
-    : () => process.memoryUsage().rss;
+// memoryFootprint() is undefined when task_info fails, so fall back to RSS.
+const footprint = () =>
+  (process.platform === "darwin" ? Bun.unsafe.memoryFootprint?.() : undefined) ?? process.memoryUsage().rss;
 const rssMiB = () => footprint() / 1048576;
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 

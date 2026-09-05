@@ -1027,17 +1027,17 @@ void textDecodeReadRequestChunkSteps(JSGlobalObject* globalObject, JSReadableStr
     auto scope = DECLARE_THROW_SCOPE(vm);
     if (!readableStreamDefaultControllerCanCloseOrEnqueue(controller))
         return;
-    // WebIDL "get a copy of the bytes held by the buffer source": a detached
-    // buffer is still a BufferSource whose bytes are the empty sequence.
     std::span<const uint8_t> bytes;
-    if (auto* view = dynamicDowncast<JSC::JSArrayBufferView>(chunk)) {
-        if (!view->isDetached())
-            bytes = view->span();
-    } else if (auto* buffer = dynamicDowncast<JSC::JSArrayBuffer>(chunk)) {
-        if (buffer->impl() && !buffer->impl()->isDetached())
-            bytes = buffer->impl()->span();
-    } else {
-        auto* error = createTypeError(globalObject, "Body.textStream() received a chunk that is not a BufferSource"_s);
+    JSObject* error = nullptr;
+    if (isDetachedBufferSource(chunk)) [[unlikely]]
+        error = createDetachedChunkError(globalObject);
+    else if (auto* view = dynamicDowncast<JSC::JSArrayBufferView>(chunk))
+        bytes = view->span();
+    else if (auto* buffer = dynamicDowncast<JSC::JSArrayBuffer>(chunk))
+        bytes = buffer->impl()->span();
+    else
+        error = createTypeError(globalObject, "Body.textStream() received a chunk that is not a BufferSource"_s);
+    if (error) {
         RETURN_IF_EXCEPTION(scope, void());
         // Error the output first so any second pending TextDecode read request's
         // closeSteps (fired by cancelling the source) no-ops on canCloseOrEnqueue.

@@ -232,6 +232,11 @@ static JSValue writeToArraySink(JSGlobalObject* globalObject, JSDirectStreamCont
 
 static JSValue writeToDirectSink(JSGlobalObject* globalObject, JSDirectStreamController* controller, JSValue chunk)
 {
+    if (Bun::WebStreams::isDetachedBufferSource(chunk)) [[unlikely]] {
+        auto scope = DECLARE_THROW_SCOPE(getVM(globalObject));
+        Bun::WebStreams::throwDetachedChunkError(globalObject, scope);
+        return {};
+    }
     switch (controller->m_sinkKind) {
     case DirectSinkKind::ArrayBuffer:
         return writeToArrayBufferSink(globalObject, controller, chunk);
@@ -284,13 +289,14 @@ static String finishTextSink(JSC::VM& vm, JSGlobalObject* globalObject, JSDirect
             String string = asString(value)->value(globalObject);
             RETURN_IF_EXCEPTION(scope, {});
             appended = Bun::WebStreams::appendUTF8WithinStringLimit(string, bytes);
+        } else if (Bun::WebStreams::isDetachedBufferSource(value)) [[unlikely]] {
+            // write() kept a reference, not a copy; the bytes it counted are gone.
+            Bun::WebStreams::throwDetachedChunkError(globalObject, scope);
+            return String();
         } else if (auto* view = dynamicDowncast<JSArrayBufferView>(value)) {
-            if (!view->isDetached())
-                appended = bytes.tryAppend(view->span());
+            appended = bytes.tryAppend(view->span());
         } else if (auto* buffer = dynamicDowncast<JSArrayBuffer>(value)) {
-            auto* impl = buffer->impl();
-            if (impl && !impl->isDetached())
-                appended = bytes.tryAppend(impl->span());
+            appended = bytes.tryAppend(buffer->impl()->span());
         }
         if (!appended) [[unlikely]] {
             throwOutOfMemoryError(globalObject, scope);

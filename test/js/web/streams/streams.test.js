@@ -1323,10 +1323,152 @@ describe("multi-chunk consumers produce exactly the concatenated bytes", () => {
     // The chunk array is available synchronously, so the failure is synchronous too.
     expect(() => Bun.readableStreamToBytes(source([new Uint8Array([9]), chunk]))).toThrow(
       expect.objectContaining({
-        code: "ERR_INVALID_STATE",
-        message: "Invalid state: Cannot validate on a detached buffer",
+        name: "TypeError",
+        message: "Cannot read a ReadableStream chunk whose ArrayBuffer has been detached",
       }),
     );
+  });
+});
+
+describe("a chunk whose ArrayBuffer is detached after it was enqueued", () => {
+  const message = "Cannot read a ReadableStream chunk whose ArrayBuffer has been detached";
+  const detachedError = expect.objectContaining({ name: "TypeError", message });
+
+  // The producer enqueues a view, then transfers its buffer away (a WebAssembly.Memory.grow()
+  // detaches the same way). The chunk the consumer dequeues has no bytes left, so reading it as
+  // empty would report success for a body whose data is gone.
+  const detachedSource = (...before) =>
+    new ReadableStream({
+      pull(controller) {
+        const chunk = new Uint8Array(65536).fill(7);
+        for (const other of before) controller.enqueue(other);
+        controller.enqueue(chunk);
+        structuredClone(chunk.buffer, { transfer: [chunk.buffer] });
+        controller.close();
+      },
+    });
+
+  it("Bun.readableStreamTo* reject", async () => {
+    await expect(Bun.readableStreamToArrayBuffer(detachedSource())).rejects.toThrow(detachedError);
+    await expect(Bun.readableStreamToBytes(detachedSource())).rejects.toThrow(detachedError);
+    await expect(Bun.readableStreamToText(detachedSource())).rejects.toThrow(detachedError);
+    await expect(Bun.readableStreamToBlob(detachedSource())).rejects.toThrow(detachedError);
+    await expect(Bun.readableStreamToJSON(detachedSource())).rejects.toThrow(detachedError);
+  });
+
+  it("Response and Request body consumers reject", async () => {
+    await expect(new Response(detachedSource()).arrayBuffer()).rejects.toThrow(detachedError);
+    await expect(new Response(detachedSource()).bytes()).rejects.toThrow(detachedError);
+    await expect(new Response(detachedSource()).text()).rejects.toThrow(detachedError);
+    await expect(new Response(detachedSource()).blob()).rejects.toThrow(detachedError);
+    await expect(new Response(detachedSource()).json()).rejects.toThrow(detachedError);
+    const request = new Request("http://localhost/", { method: "POST", body: detachedSource(), duplex: "half" });
+    await expect(request.arrayBuffer()).rejects.toThrow(detachedError);
+  });
+
+  it("the detached chunk is found among attached chunks too", async () => {
+    // Two binary chunks and a string before the detached one take the concatenation and the
+    // mixed text paths instead of the single-chunk path.
+    await expect(new Response(detachedSource(new Uint8Array([1, 2]))).arrayBuffer()).rejects.toThrow(detachedError);
+    await expect(new Response(detachedSource("ab")).bytes()).rejects.toThrow(detachedError);
+    await expect(new Response(detachedSource(new Uint8Array([1, 2]))).text()).rejects.toThrow(detachedError);
+    await expect(new Response(detachedSource("ab")).text()).rejects.toThrow(detachedError);
+  });
+
+  it("Response.textStream() errors", async () => {
+    const reader = new Response(detachedSource()).textStream().getReader();
+    await expect(reader.read()).rejects.toThrow(detachedError);
+  });
+
+  it("Bun.write(path, Response) rejects", async () => {
+    using dir = tempDir("detached-chunk", {});
+    await expect(Bun.write(join(String(dir), "out.bin"), new Response(detachedSource()))).rejects.toThrow(
+      detachedError,
+    );
+  });
+
+  it("fetch() with a streaming request body rejects", async () => {
+    using server = Bun.serve({
+      port: 0,
+      async fetch(req) {
+        return new Response(String((await req.arrayBuffer()).byteLength));
+      },
+    });
+    await expect(fetch(server.url, { method: "POST", body: detachedSource(), duplex: "half" })).rejects.toThrow(
+      detachedError,
+    );
+  });
+
+  it("HTMLRewriter.transform() rejects", async () => {
+    const transformed = new HTMLRewriter().transform(new Response(detachedSource()));
+    await expect(transformed.arrayBuffer()).rejects.toThrow(detachedError);
+  });
+
+  it("a direct stream's text consumer rejects when a written chunk is detached before close()", async () => {
+    const chunk = new Uint8Array([104, 105]);
+    const stream = new ReadableStream({
+      type: "direct",
+      pull(controller) {
+        controller.write(chunk);
+        structuredClone(chunk.buffer, { transfer: [chunk.buffer] });
+        controller.close();
+      },
+    });
+    await expect(Bun.readableStreamToText(stream)).rejects.toThrow(detachedError);
+  });
+
+  it("a direct stream's controller.write() rejects a chunk that is already detached", async () => {
+    const directSource = () => {
+      const chunk = new Uint8Array([104, 105]);
+      structuredClone(chunk.buffer, { transfer: [chunk.buffer] });
+      return new ReadableStream({
+        type: "direct",
+        pull(controller) {
+          controller.write(chunk);
+          controller.close();
+        },
+      });
+    };
+    await expect(Bun.readableStreamToText(directSource())).rejects.toThrow(detachedError);
+    await expect(Bun.readableStreamToArrayBuffer(directSource())).rejects.toThrow(detachedError);
+    await expect(Bun.readableStreamToBytes(directSource())).rejects.toThrow(detachedError);
+    await expect(Bun.readableStreamToBlob(directSource())).rejects.toThrow(detachedError);
+    await expect(new Response(directSource()).text()).rejects.toThrow(detachedError);
+  });
+
+  it("Bun.serve reports the error instead of silently sending an empty body", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        using server = Bun.serve({
+          port: 0,
+          fetch() {
+            const chunk = new Uint8Array(65536).fill(7);
+            return new Response(
+              new ReadableStream({
+                pull(controller) {
+                  controller.enqueue(chunk);
+                  structuredClone(chunk.buffer, { transfer: [chunk.buffer] });
+                  controller.close();
+                },
+              }),
+            );
+          },
+        });
+        const response = await fetch(server.url);
+        console.log(JSON.stringify({ bytes: (await response.arrayBuffer()).byteLength }));
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toContain(message);
+    expect(JSON.parse(stdout)).toEqual({ bytes: 0 });
+    expect(exitCode).toBe(0);
   });
 });
 

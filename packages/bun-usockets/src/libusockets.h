@@ -96,7 +96,8 @@
 
 /* Small 16KB shared send buffer for UDP packet metadata */
 #define LIBUS_SEND_BUFFER_LENGTH (1 << 14)
-/* A timeout granularity of 4 seconds means give or take 4 seconds from set timeout */
+/* Timeout sweep period. A timeout of N seconds fires within
+ * (ceil(N/4)*4, ceil(N/4)*4 + 4] seconds of arming, never before N. */
 #define LIBUS_TIMEOUT_GRANULARITY 4
 /* 32 byte padding of receive buffer ends */
 #define LIBUS_RECV_BUFFER_PADDING 32

@@ -7,13 +7,19 @@ use std::rc::Rc;
 /// Line count newtype.
 pub(crate) type LineCount = bun_core::GenericIndex<u32, u8>;
 
-/// `PackedMap.end_state` — only the two fields the bundler needs to thread
-/// between chunks (generated_column is always 0 because minification is off,
-/// generated_line is recomputed per concatenation).
+/// The fields threaded between chunks; generated line/column are recomputed per concatenation.
 #[derive(Copy, Clone, Default)]
 pub struct EndState {
     pub(crate) original_line: i32,
     pub(crate) original_column: i32,
+    /// Chunk-local: 0 is this file, `1 + i` is `inner_sources[i]`.
+    pub(crate) source_index: i32,
+}
+
+/// One entry of the input file's own sourcemap `sources[]`; `escaped_content` is JSON-quoted, empty when absent.
+pub struct InnerSource {
+    pub(crate) path: Box<[u8]>,
+    pub(crate) escaped_content: Box<[u8]>,
 }
 
 /// Packed source mapping data for a single file.
@@ -25,12 +31,14 @@ pub struct PackedMap {
     /// to preserve that effort for concatenation and re-concatenation.
     escaped_source: Box<[u8]>,
     pub(crate) end_state: EndState,
+    pub(crate) inner_sources: Box<[InnerSource]>,
 }
 
 impl PackedMap {
     pub(crate) fn new_non_empty(
         chunk: &mut bun_sourcemap::Chunk,
         escaped_source: Box<[u8]>,
+        inner_sources: Box<[InnerSource]>,
     ) -> Rc<Self> {
         let buffer = &mut chunk.buffer;
         debug_assert!(!buffer.is_empty());
@@ -40,13 +48,28 @@ impl PackedMap {
             end_state: EndState {
                 original_line: chunk.end_state.original_line,
                 original_column: chunk.end_state.original_column,
+                source_index: chunk.end_state.source_index,
             },
+            inner_sources,
         })
+    }
+
+    /// `sources[]` slots this file occupies: itself plus its inner sources.
+    #[inline]
+    pub(crate) fn source_slot_count(&self) -> usize {
+        1 + self.inner_sources.len()
     }
 
     #[inline]
     pub(crate) fn memory_cost(&self) -> usize {
-        self.vlq().len() + self.quoted_contents().len() + core::mem::size_of::<Self>()
+        let mut cost =
+            self.vlq().len() + self.quoted_contents().len() + core::mem::size_of::<Self>();
+        for inner in self.inner_sources.iter() {
+            cost += inner.path.len()
+                + inner.escaped_content.len()
+                + core::mem::size_of::<InnerSource>();
+        }
+        cost
     }
 
     #[inline]

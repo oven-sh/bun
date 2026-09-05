@@ -502,7 +502,7 @@ rm -rf node_modules
 bun install --backend copyfile
 ```
 
-**`symlink`** is typically only used for `file:` dependencies internally (for example `file:../foo` and transitive `file:` dependencies). `link:` dependencies do not use this backend; Bun installs them as a single symlink to the linked directory.
+**`symlink`** symlinks each file instead of copying it. Without the flag, Bun only uses it for a package that depends on itself (`"pkg": "file:."`). Other `file:` folders, inside or outside the project, use the default backend, so their files resolve their dependencies from the project's `node_modules`. `link:` dependencies do not use this backend; Bun installs them as a single symlink to the linked directory.
 
 If you install with `--backend=symlink`, Node.js won't resolve node_modules of dependencies unless each dependency has its own node_modules folder or you pass `--preserve-symlinks` to `node` or `bun`. See [Node.js documentation on `--preserve-symlinks`](https://nodejs.org/api/cli.html#--preserve-symlinks).
 

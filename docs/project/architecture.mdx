@@ -1,0 +1,97 @@
+---
+title: Architecture
+description: Overview of Bun's source code architecture — how the pieces connect and why they exist
+---
+
+<Note>This is a contributor-oriented overview. For day-to-day building, see [Contributing](/project/contributing). For the JavaScript-to-native bridge, see [Bindgen](/project/bindgen).</Note>
+
+Bun looks small from the outside — one binary, one `bun` command — but inside it stitches together JavaScriptCore, Zig/Rust, and C++ into a single runtime. This page maps what connects to what, and why each layer exists.
+
+## Big picture
+
+```
+┌─────────────────────────────────────────────────────┐
+│  CLI + JS runtime (src/js, src/bun.js)              │
+│  Bundler, package manager, test runner, transpiler  │
+├─────────────────────────────────────────────────────┤
+│  Native bindings (src/bun.js/bindgen, *.bind.ts)    │
+│  JSC glue, classes, streams, FFI, Web APIs         │
+├─────────────────────────────────────────────────────┤
+│  JavaScriptCore (vendor/WebKit) + Zig/C++ bindings  │
+│  Garbage collector, JIT, JS execution               │
+├─────────────────────────────────────────────────────┤
+│  Systems layer (libarchive, boringssl, mimalloc,    │
+│  uSockets, zlib, sqlite, tinycc)                   │
+└─────────────────────────────────────────────────────┘
+```
+
+Text alternative: From top to bottom, Bun flows from the JavaScript and CLI layer (bundler, package manager, test runner, and transpiler in `src/js` and `src/bun.js`) through the native bindings layer (JSC glue, `*.bind.ts`, FFI, and Web APIs) into JavaScriptCore with Zig/C++ bindings (garbage collector, JIT, and JS execution) down to the systems layer (libarchive, BoringSSL, mimalloc, uSockets, zlib, SQLite, and TinyCC).
+
+- **Top layer** is TypeScript/JavaScript. Most user-facing APIs (`Bun.file`, `Bun.serve`, `node:fs`, `bun:sqlite`) live in `src/js/{bun,node,thirdparty}` and are bundled at build time via `src/codegen/bundle-modules.ts`. You can often fix a bug there without touching C++.
+- **Middle layer** is the bridge. `.bind.ts` files (see [Bindgen](/project/bindgen)) declare typed function signatures; the generator emits C++ thunks and Rust shims that validate/coerce JS values and call the native implementation. Older `.classes.ts` and `JS2Native` systems are being phased out in favor of this.
+- **Engine layer** is JavaScriptCore (JSC). Bun forks [oven-sh/WebKit](https://github.com/oven-sh/WebKit) pinned at `WEBKIT_VERSION` in `scripts/build/deps/webkit.ts`. JSC owns the heap, parser, and JIT. Bun embeds it and extends it with custom bindings.
+- **Systems layer** is C/C++ dependencies fetched/cached at configure time. You rarely edit these directly, but header/dependency mismatches show up here (e.g. missing `libarchive` headers, mismatched LLVM, or `span` errors on older libstdc++).
+
+## What connects to what
+
+### 1. Entry points and build outputs
+
+- `src/cli/` — CLI parsing (`bun run`, `bun install`, `bun build`, `bun test`). This is where a new flag usually starts.
+- `src/bun.js/` — runtime JS implemented in Zig/Rust/C++ and exposed to JS via bindings.
+- `src/js/` — JS-implemented built-ins (`node:fs`, `node:stream`, `ws`, `bun:ffi`). Pre-bundled into the binary; in debug builds they are re-read from disk after `bun run build`.
+- Build output: `build/debug/bun-debug` (debug, with ASan on Linux/macOS), `build/release/bun` (release). WebKit artifacts are cached under `$BUN_INSTALL/build-cache` unless you use a local checkout at `vendor/WebKit`.
+
+### 2. Code generation (the part that confuses newcomers)
+
+The build runs these generators every time relevant inputs change:
+
+- `src/codegen/generate-jssink.ts` → `build/*/codegen/JSSink.{cpp,h}`. Implements `ReadableStream` sinks (`FileSink`, `ArrayBufferSink`, direct streams).
+- `src/codegen/generate-classes.ts` → legacy class bindings for JSC objects defined via `*.classes.ts`.
+- `src/codegen/cppbind.ts` → scans C++ exports and generates Rust FFI wrappers (`cpp.rs`).
+- `src/codegen/bundle-modules.ts` → bundles `src/js/*` built-ins into the binary.
+- `src/codegen/bundle-functions.ts` → bundles globally-available functions (like `ReadableStream`/`WritableStream` polyfills).
+
+If you edit a `.classes.ts` or `src/js/**` file and don't see your change, re-run `bun run build` — then check whether the generator picked it up. Debug logs (`BUN_DEBUG_QUIET_LOGS=1` vs `BUN_DEBUG_<scope>=1`) help here.
+
+### 3. Bindings and headers — why they exist
+
+New JS functions should use **Bindgen** (`*.bind.ts`). A minimal example lives in [Bindgen](/project/bindgen). At a high level:
+
+- You write the native function in Rust (`src/jsc/bindgen_test.rs`).
+- You describe its JS signature in a co-located `*.bind.ts` (types like `t.i32`, `t.DOMString`, `t.globalObject`, enums, unions, dictionaries).
+- The generator emits a C++ thunk that validates arguments from JSC, coerces them, and dispatches to your Rust function. It also emits the `GeneratedBindings.rs` helper so JS can obtain a `JSFunction` via `crate::r#gen::<module>::create_*_callback`.
+
+Headers matter because:
+
+- JSC headers come from the pinned WebKit checkout (or the prebuilt WebKit fetched at configure time). Mismatched WebKit versions give confusing compile errors — run `bun sync-webkit-source` if you cloned `vendor/WebKit` manually.
+- C++ headers for dependencies (libarchive, boringssl, mimalloc) are downloaded during `bun run build`'s configure phase. If `pkg-config` is missing (macOS `libarchive` error) or Clang can't find `span` (GCC libstdc++ too old), the troubleshooting section in [Contributing](/project/contributing) covers the fix.
+- `src/js/builtins.d.ts` and `.clangd` both point at `build/debug` by default; when building JSC locally (`bun run build:local`) they must point at `build/debug-local`.
+
+### 4. Platform specifics
+
+- **macOS/Linux**: debug builds use AddressSanitizer by default. Use `bun run build:debug:noasan` if link times block iteration.
+- **Windows**: must run from `.\scripts\vs-shell.ps1` (MSVC env). Native Windows builds need LLVM 21.1.8, Rust nightly, NASM, Perl, Ruby, Go. See [Building Windows](/project/building-windows) for Scoop vs WinGet pitfalls (Strawberry Perl on PATH breaks the build).
+- **Cross-compiling Windows from Linux**: host `clang-cl`/`lld-link` + an xwin sysroot at `/opt/winsysroot`. See the cross-compilation section in [Building Windows](/project/building-windows).
+
+## Where to make your first change
+
+Pick by surface area:
+
+- **JS-only fix** (`src/js/node/*`, `src/js/bun/*`): change the TS, run `bun run build`, test with `bun bd ./your-test.ts`. No C++ rebuild needed beyond bundling. Great first PR.
+- **New JS API via Bindgen**: add a `*.bind.ts` next to a new `*.rs` file, add the dispatch in `src/runtime/hw_exports.rs`, wire the JS handle via `$bindgenFn` in `src/js/`.
+- **C++/Zig change**: edit `src/bun.js/*`, ensure `.clangd` picks up `build/debug`, and use `cargo check -p <crate>` / `bun run rust:check` for fast feedback before linking.
+
+## Accessibility and docs hygiene
+
+When you add docs or images:
+
+- Give every `![alt]` a specific, non-generic description (screen readers read it verbatim). Avoid repeating the same alt on multiple images on one page.
+- Keep heading hierarchy sequential (`##` → `###` → `####`, no jumps). This drives the table of contents and screen-reader outline.
+- Use `Frame` with `caption` for complex diagrams, and include a text equivalent for color-coded charts.
+- Prefer semantic tables with header rows and left-aligned text columns. Avoid color-only encodings.
+
+## Next steps
+
+- Read [Contributing](/project/contributing) for the full build matrix (Homebrew/apt/pacman/dnf/zypper), LLVM setup, and troubleshooting.
+- Try `bun run build` once, then iterate with `bun bd` and `cargo check` to keep cycles fast.
+- Browse `src/codegen` and `src/bun.js` to see the layering in code — it matches the diagram at the top of this page.

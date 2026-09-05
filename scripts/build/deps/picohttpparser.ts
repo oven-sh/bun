@@ -22,6 +22,8 @@ export const picohttpparser: Dependency = {
     commit: PICOHTTPPARSER_COMMIT,
   }),
 
+  patches: ["patches/picohttpparser/strict-chunk-size.patch"],
+
   build: () => ({ kind: "none" }),
 
   provides: () => ({

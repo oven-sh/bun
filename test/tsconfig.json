@@ -7,6 +7,7 @@
     "baseUrl": ".",
     "paths": {
       "harness": ["./harness.ts"],
+      "blackhole": ["./blackhole.ts"],
       "mkfifo": ["./mkfifo.ts"],
       "node-harness": ["./js/node/harness.ts"],
       "deno:harness": ["./js/deno/harness.ts"],

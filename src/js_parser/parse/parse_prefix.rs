@@ -19,7 +19,7 @@ type PResult<T> = crate::CrateResult<T>;
 // The 30+ per-token `t_*` helpers are private; only `parse_prefix` is surfaced. Helper
 // names pfx_-prefixed to avoid colliding with parseStmt.rs / parseSuffix.rs mixins on the same `P`.
 
-impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_ONLY> {
+impl<'a, const TYPESCRIPT: bool> P<'a, TYPESCRIPT> {
     fn pfx_t_super(p: &mut Self, level: Level) -> PResult<Expr> {
         let loc = p.lexer.loc();
         let super_range = p.lexer.range();

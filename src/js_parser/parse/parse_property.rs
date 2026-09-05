@@ -22,7 +22,7 @@ use js_ast::{
 };
 use js_lexer::T;
 
-impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_ONLY> {
+impl<'a, const TYPESCRIPT: bool> P<'a, TYPESCRIPT> {
     fn parse_method_expression(
         &mut self,
         kind: PropertyKind,

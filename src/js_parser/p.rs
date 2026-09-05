@@ -42,7 +42,7 @@ type BumpVec<'a, T> = bun_alloc::ArenaVec<'a, T>;
 type List<'a, T> = BumpVec<'a, T>;
 type ListManaged<'a, T> = BumpVec<'a, T>;
 
-/// Erases `P<'a, TS, SCAN>`'s const-generics so helpers like `JSXTag::parse`
+/// Erases `P<'a, TS>`'s const-generic so helpers like `JSXTag::parse`
 /// can take any instantiation. Only the surface those helpers actually
 /// touch is exposed.
 pub(crate) trait ParserLike<'a> {
@@ -55,7 +55,7 @@ pub(crate) trait ParserLike<'a> {
 }
 // Trait + impl defined so Expr methods can bound on it. Method bodies
 // forward to the inherent impls.
-impl<'a, const TS: bool, const SCAN: bool> ParserLike<'a> for P<'a, TS, SCAN> {
+impl<'a, const TS: bool> ParserLike<'a> for P<'a, TS> {
     #[inline]
     fn lexer(&mut self) -> &mut js_lexer::Lexer<'a> {
         &mut self.lexer
@@ -230,13 +230,15 @@ pub enum ReactRefreshExportKind {
 // P — the parser struct.
 // `'a` covers borrowed init() params (log/define/source) AND the arena (`bump`).
 // ─────────────────────────────────────────────────────────────────────────────
-pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
+pub struct P<'a, const TYPESCRIPT: bool> {
     /// Runtime JSX transform mode. Was the `<J: JsxT>` const-generic type
     /// parameter; demoted to a field because JSX only affects a handful of
     /// expression arms (see the `bun .` startup note in `parser.rs`) and the
     /// 4× monomorphization (TYPESCRIPT × JSX) faulted in four copies of every
     /// parser / visitor / lowerer body at startup.
     pub(crate) jsx_transform: JSXTransformType,
+    /// Runtime replacement for the former `SCAN_ONLY` const-generic parameter.
+    pub(crate) scan_only: bool,
     pub(crate) macro_: MacroState<'a>,
     pub(crate) arena: &'a Bump,
     pub(crate) options: ParserOptions<'a>,
@@ -712,12 +714,12 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
 }
 
 // `binding::ToExprWrapper` type-erases `*P` (which is generic over
-// `<'a, TYPESCRIPT, J, SCAN_ONLY>`). Wired in `prepare_for_visit_pass`.
+// `<'a, TYPESCRIPT>`). Wired in `prepare_for_visit_pass`.
 pub(crate) type Binding2ExprWrapperNamespace = bun_ast::binding::ToExprWrapper;
 pub(crate) type Binding2ExprWrapperHoisted = bun_ast::binding::ToExprWrapper;
 
 // ═══════════════════════════════════════════════════════════════════════════
-impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> Drop for P<'a, TYPESCRIPT, SCAN_ONLY> {
+impl<'a, const TYPESCRIPT: bool> Drop for P<'a, TYPESCRIPT> {
     fn drop(&mut self) {
         // Arena-allocated structs never run Drop; free their global-heap maps here.
         for mut scope in self.ts_namespace_scopes.drain(..) {
@@ -729,9 +731,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> Drop for P<'a, TYPESCRIP
     }
 }
 
-impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_ONLY> {
+impl<'a, const TYPESCRIPT: bool> P<'a, TYPESCRIPT> {
     pub(crate) const IS_TYPESCRIPT_ENABLED: bool = TYPESCRIPT;
-    pub(crate) const TRACK_SYMBOL_USAGE_DURING_PARSE_PASS: bool = SCAN_ONLY && TYPESCRIPT;
+
+    #[inline]
+    pub(crate) fn track_symbol_usage_during_parse_pass(&self) -> bool {
+        self.scan_only && TYPESCRIPT
+    }
 
     /// Runtime replacement for the former `IS_JSX_ENABLED` associated const
     /// (JSX is no longer a const-generic type parameter — see `jsx_transform`).
@@ -840,7 +846,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // The import-record side-effect is order-independent of `Expr.init`'s
         // Store allocation.
         let expr = Expr::init(t, loc);
-        if SCAN_ONLY {
+        if self.scan_only {
             if let js_ast::ExprData::ECall(call) = expr.data {
                 if let js_ast::ExprData::EIdentifier(ident) = call.target.data {
                     // is this a require("something")
@@ -887,7 +893,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     }
 }
 
-impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_ONLY> {
+impl<'a, const TYPESCRIPT: bool> P<'a, TYPESCRIPT> {
     pub(crate) const ALLOW_MACROS: bool = !cfg!(target_family = "wasm");
 
     /// use this instead of checking p.source.index
@@ -3286,13 +3292,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     // SAFETY: `ctx` was derived from the caller's live `&mut P`
                     // immediately before `Binding::to_expr`; no other `&mut P`
                     // borrow is active for the duration of this call.
-                    let p = unsafe { &mut *ctx.cast::<P<'a, TYPESCRIPT, SCAN_ONLY>>() };
+                    let p = unsafe { &mut *ctx.cast::<P<'a, TYPESCRIPT>>() };
                     p.wrap_identifier_namespace(loc, ref_)
                 });
             self.to_expr_wrapper_hoisted =
                 bun_ast::binding::ToExprWrapper::new(self.arena, |ctx, loc, ref_| {
                     // SAFETY: same as above.
-                    let p = unsafe { &mut *ctx.cast::<P<'a, TYPESCRIPT, SCAN_ONLY>>() };
+                    let p = unsafe { &mut *ctx.cast::<P<'a, TYPESCRIPT>>() };
                     p.wrap_identifier_hoisting(loc, ref_)
                 });
         }
@@ -4328,7 +4334,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             let name = self.load_name_from_ref(stmt.namespace_ref);
             stmt.namespace_ref = self.declare_symbol(js_ast::symbol::Kind::Import, star, name)?;
 
-            if Self::TRACK_SYMBOL_USAGE_DURING_PARSE_PASS {
+            if self.track_symbol_usage_during_parse_pass() {
                 if let Some(uses) = &mut self.parse_pass_symbol_uses {
                     uses.put(
                         name,
@@ -4407,7 +4413,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         self.import_records.items_mut()[new_import_id as usize]
                             .flags
                             .insert(bun_ast::ImportRecordFlags::IS_UNUSED);
-                        if SCAN_ONLY {
+                        if self.scan_only {
                             self.import_records.items_mut()[new_import_id as usize]
                                 .flags
                                 .insert(bun_ast::ImportRecordFlags::IS_INTERNAL);
@@ -4421,7 +4427,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     }
                 }
 
-                if Self::TRACK_SYMBOL_USAGE_DURING_PARSE_PASS {
+                if self.track_symbol_usage_during_parse_pass() {
                     if let Some(uses) = &mut self.parse_pass_symbol_uses {
                         uses.put(
                             name,
@@ -4488,7 +4494,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     self.import_records.items_mut()[new_import_id as usize]
                         .flags
                         .insert(bun_ast::ImportRecordFlags::IS_UNUSED);
-                    if SCAN_ONLY {
+                    if self.scan_only {
                         self.import_records.items_mut()[new_import_id as usize]
                             .flags
                             .insert(bun_ast::ImportRecordFlags::IS_INTERNAL);
@@ -4501,7 +4507,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 }
             }
 
-            if Self::TRACK_SYMBOL_USAGE_DURING_PARSE_PASS {
+            if self.track_symbol_usage_during_parse_pass() {
                 if let Some(uses) = &mut self.parse_pass_symbol_uses {
                     uses.put(
                         name,
@@ -4532,7 +4538,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 .flags
                 .insert(bun_ast::ImportRecordFlags::IS_UNUSED);
 
-            if SCAN_ONLY {
+            if self.scan_only {
                 self.import_records.items_mut()[stmt.import_record_index as usize]
                     .path
                     .is_disabled = true;
@@ -5278,7 +5284,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     }
 
     pub(crate) fn store_name_in_ref(&mut self, name: &'a [u8]) -> Ref {
-        if Self::TRACK_SYMBOL_USAGE_DURING_PARSE_PASS {
+        if self.track_symbol_usage_during_parse_pass() {
             if let Some(uses) = &mut self.parse_pass_symbol_uses {
                 if let Some(res) = uses.get_mut(name) {
                     res.used = true;
@@ -7282,7 +7288,7 @@ fn path_package_name<'a>(path: &fs::Path<'a>) -> Option<&'a [u8]> {
     Some(pkgname)
 }
 
-impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_ONLY> {
+impl<'a, const TYPESCRIPT: bool> P<'a, TYPESCRIPT> {
     pub(crate) fn lower_class(&mut self, stmtorexpr: js_ast::StmtOrExpr) -> &'a mut [Stmt] {
         use js_ast::g::PropertyKind;
         match stmtorexpr {
@@ -8825,7 +8831,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 // ═══════════════════════════════════════════════════════════════════════════
 // P::to_ast — final assembly P→Ast.
 // ═══════════════════════════════════════════════════════════════════════════
-impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_ONLY> {
+impl<'a, const TYPESCRIPT: bool> P<'a, TYPESCRIPT> {
     pub(crate) fn to_ast(
         &mut self,
         parts: &mut ListManaged<'a, js_ast::Part>,
@@ -8880,7 +8886,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
             for part in head_parts.iter() {
                 // Bake does not care about 'import =', as it handles it on it's own
-                let _ = ImportScanner::scan::<TYPESCRIPT, SCAN_ONLY, true>(
+                let _ = ImportScanner::scan::<TYPESCRIPT, true>(
                     self,
                     part.stmts.slice_mut(),
                     wrap_mode != WrapMode::None,
@@ -8890,7 +8896,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             // Re-run for the last part.
             {
                 let last_stmts = hmr_transform_ctx.last_part.stmts;
-                let _ = ImportScanner::scan::<TYPESCRIPT, SCAN_ONLY, true>(
+                let _ = ImportScanner::scan::<TYPESCRIPT, true>(
                     self,
                     last_stmts.slice_mut(),
                     wrap_mode != WrapMode::None,
@@ -8926,7 +8932,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     self.import_records_for_current_part.clear();
                     self.declared_symbols.clear_retaining_capacity();
 
-                    let result = match ImportScanner::scan::<TYPESCRIPT, SCAN_ONLY, false>(
+                    let result = match ImportScanner::scan::<TYPESCRIPT, false>(
                         self,
                         part.stmts.slice_mut(),
                         wrap_mode != WrapMode::None,
@@ -9560,7 +9566,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 // The Binding2ExprWrapper self-referential helpers are
 // seeded with arena-unit placeholders inside the struct literal; the real `*P`
 // back-pointer is wired lazily by the call sites.
-impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_ONLY> {
+impl<'a, const TYPESCRIPT: bool> P<'a, TYPESCRIPT> {
     /// Construct a `P` in place at `out`.
     ///
     /// PERF: an earlier shape returned `Result<Self, _>` by value. `P`
@@ -9584,6 +9590,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         define: &'a Define,
         mut lexer: js_lexer::Lexer<'a>,
         mut opts: ParserOptions<'a>,
+        scan_only: bool,
     ) -> Result<(), crate::Error> {
         // Pre-size the parser's per-file name/ref-keyed symbol maps so the
         // common case never re-hashes while it grows. Profiling the runtime
@@ -9664,7 +9671,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         };
 
         let mut fn_or_arrow_data_parse = FnOrArrowDataParse::default();
-        if opts.features.top_level_await || SCAN_ONLY {
+        if opts.features.top_level_await || scan_only {
             fn_or_arrow_data_parse.allow_await = crate::AwaitOrYield::AllowExpr;
             fn_or_arrow_data_parse.is_top_level = true;
         }
@@ -9833,6 +9840,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             decorator_class_name: None,
 
             jsx_transform,
+            scan_only,
 
             // Moved-in last so the field expressions above can still read `opts.*`.
             options: opts,
@@ -9861,9 +9869,7 @@ pub(crate) struct LowerUsingDeclarationsContext {
 }
 
 impl LowerUsingDeclarationsContext {
-    pub(crate) fn init<'a, const T: bool, const S_: bool>(
-        p: &mut P<'a, T, S_>,
-    ) -> Result<Self, crate::Error> {
+    pub(crate) fn init<'a, const T: bool>(p: &mut P<'a, T>) -> Result<Self, crate::Error> {
         Ok(Self {
             first_using_loc: bun_ast::Loc::EMPTY,
             stack_ref: p.generate_temp_ref(Some(b"__stack")),
@@ -9871,11 +9877,7 @@ impl LowerUsingDeclarationsContext {
         })
     }
 
-    pub(crate) fn scan_stmts<'a, const T: bool, const S_: bool>(
-        &mut self,
-        p: &mut P<'a, T, S_>,
-        stmts: &mut [Stmt],
-    ) {
+    pub(crate) fn scan_stmts<'a, const T: bool>(&mut self, p: &mut P<'a, T>, stmts: &mut [Stmt]) {
         for stmt in stmts.iter_mut() {
             // Match the `StoreRef` by value (Copy ptr)
             // so DerefMut writes through to the arena slot.
@@ -9936,9 +9938,9 @@ impl LowerUsingDeclarationsContext {
         }
     }
 
-    pub(crate) fn finalize<'a, const T: bool, const S_: bool>(
+    pub(crate) fn finalize<'a, const T: bool>(
         &mut self,
-        p: &mut P<'a, T, S_>,
+        p: &mut P<'a, T>,
         stmts: &'a mut [Stmt],
         should_hoist_fns: bool,
     ) -> ListManaged<'a, Stmt> {

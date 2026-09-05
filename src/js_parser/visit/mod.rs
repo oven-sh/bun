@@ -37,7 +37,7 @@ use core::ptr::NonNull;
 // In the AST crate, ListManaged is arena-backed.
 type ListManaged<'bump, T> = BumpVec<'bump, T>;
 
-impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_ONLY> {
+impl<'a, const TYPESCRIPT: bool> P<'a, TYPESCRIPT> {
     // Thin alias of `current_scope_mut()` kept for local readability.
     #[inline(always)]
     fn vis_scope(&mut self) -> &mut js_ast::Scope {
@@ -50,7 +50,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         opts: &mut PrependTempRefsOpts,
     ) -> Result<(), crate::Error> {
         debug_assert!(
-            !SCAN_ONLY,
+            !self.scan_only,
             "only_scan_imports_and_do_not_visit must not run this."
         );
 
@@ -84,7 +84,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         is_expr: bool,
     ) -> G::Fn {
         debug_assert!(
-            !SCAN_ONLY,
+            !self.scan_only,
             "only_scan_imports_and_do_not_visit must not run this."
         );
 
@@ -322,7 +322,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 }
 
                 debug_assert!(
-                    !SCAN_ONLY,
+                    !self.scan_only,
                     "only_scan_imports_and_do_not_visit must not run this."
                 );
                 // Propagate name from binding to anonymous decorated class expressions
@@ -987,7 +987,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         is_expr: bool,
     ) -> Ref {
         debug_assert!(
-            !SCAN_ONLY,
+            !self.scan_only,
             "only_scan_imports_and_do_not_visit must not run this."
         );
 
@@ -1481,7 +1481,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         kind: StmtsKind,
     ) -> Result<(), crate::Error> {
         debug_assert!(
-            !SCAN_ONLY,
+            !self.scan_only,
             "only_scan_imports_and_do_not_visit must not run this."
         );
 

@@ -31,10 +31,9 @@ impl<'a> ImportScanner<'a> {
     pub(crate) fn scan<
         'p,
         const TYPESCRIPT: bool,
-        const SCAN_ONLY: bool,
         const HOT_MODULE_RELOADING_TRANSFORMATIONS: bool,
     >(
-        p: &mut P<'p, TYPESCRIPT, SCAN_ONLY>,
+        p: &mut P<'p, TYPESCRIPT>,
         stmts: &'a mut [Stmt],
         will_transform_to_common_js: bool,
         // Const generics can't gate a param type on a const, so use Option and

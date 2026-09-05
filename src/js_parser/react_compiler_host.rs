@@ -10,20 +10,18 @@ use bun_collections::VecExt;
 use crate::JSXImport;
 use crate::p::P;
 
-pub struct ReactCompilerHost<'p, 'a, const TS: bool, const SCAN_ONLY: bool> {
-    p: &'p mut P<'a, TS, SCAN_ONLY>,
+pub struct ReactCompilerHost<'p, 'a, const TS: bool> {
+    p: &'p mut P<'a, TS>,
 }
 
-impl<'p, 'a, const TS: bool, const SCAN_ONLY: bool> ReactCompilerHost<'p, 'a, TS, SCAN_ONLY> {
+impl<'p, 'a, const TS: bool> ReactCompilerHost<'p, 'a, TS> {
     #[inline]
-    pub(crate) fn new(p: &'p mut P<'a, TS, SCAN_ONLY>) -> Self {
+    pub(crate) fn new(p: &'p mut P<'a, TS>) -> Self {
         Self { p }
     }
 }
 
-impl<'a, const TS: bool, const SCAN_ONLY: bool> bun_react_compiler::Host
-    for ReactCompilerHost<'_, 'a, TS, SCAN_ONLY>
-{
+impl<'a, const TS: bool> bun_react_compiler::Host for ReactCompilerHost<'_, 'a, TS> {
     fn symbols(&self) -> &[js_ast::Symbol] {
         self.p.symbols.as_slice()
     }
@@ -129,7 +127,7 @@ impl<'a, const TS: bool, const SCAN_ONLY: bool> bun_react_compiler::Host
     }
 }
 
-impl<'a, const TS: bool, const SCAN_ONLY: bool> P<'a, TS, SCAN_ONLY> {
+impl<'a, const TS: bool> P<'a, TS> {
     /// Port of upstream `findFunctionDeclarationOrExpression` for the
     /// expression positions (decl init / `export default` / expression
     /// statement). Returns `Some(in_react_hoc)` only for the shapes the

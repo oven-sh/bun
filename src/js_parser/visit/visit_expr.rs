@@ -25,16 +25,16 @@ use js_ast::OpCode as Op;
 // The 25+ per-variant `e_*` helpers are private; only `visit_expr` /
 // `visit_expr_in_out` are surfaced.
 
-impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_ONLY> {
+impl<'a, const TYPESCRIPT: bool> P<'a, TYPESCRIPT> {
     // PERF(port:noalias): `e: &mut Expr` is lowered to a `noalias` LLVM param, so reads
     // through `e` can be cached in registers across child recursion. The by-value
     // `Expr -> Expr` shape moved 24B in + 24B out per frame; the in-place form moves 8B
     // and only writes back when the visitor produces a *different* node.
     #[inline]
     pub(crate) fn visit_expr(&mut self, e: &mut Expr) {
-        // SCAN_ONLY monomorphizations must never reach the visit pass.
+        // Scan-only parsers must never reach the visit pass.
         debug_assert!(
-            !SCAN_ONLY,
+            !self.scan_only,
             "only_scan_imports_and_do_not_visit must not run visit_expr",
         );
         self.visit_expr_in_out(e, ExprIn::default())

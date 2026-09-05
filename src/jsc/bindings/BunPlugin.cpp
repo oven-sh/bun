@@ -797,13 +797,8 @@ std::optional<String> BunPlugin::OnLoad::resolveVirtualModule(const String& path
     return virtualModules->contains(path) ? std::optional<String> { path } : std::nullopt;
 }
 
-EncodedJSValue BunPlugin::OnResolve::run(JSC::JSGlobalObject* globalObject, const BunString* namespaceString, const BunString* path, const BunString* importer)
+static EncodedJSValue runOnResolveGroup(JSC::JSGlobalObject* globalObject, BunPlugin::Group& group, const WTF::String& pathString, const BunString* importer)
 {
-    Group* groupPtr = this->group(namespaceString ? namespaceString->toWTFString(BunString::ZeroCopy) : String());
-    if (groupPtr == nullptr) {
-        return JSValue::encode(jsUndefined());
-    }
-    Group& group = *groupPtr;
     auto& filters = group.filters;
 
     if (filters.size() == 0) {
@@ -813,7 +808,6 @@ EncodedJSValue BunPlugin::OnResolve::run(JSC::JSGlobalObject* globalObject, cons
     auto& callbacks = group.callbacks;
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    WTF::String pathString = path->toWTFString(BunString::ZeroCopy);
 
     JSC::MarkedArgumentBuffer matchedCallbacks;
     matchedCallbacks.ensureCapacity(filters.size());
@@ -845,11 +839,9 @@ EncodedJSValue BunPlugin::OnResolve::run(JSC::JSGlobalObject* globalObject, cons
 
         JSC::JSObject* paramsObject = JSC::constructEmptyObject(globalObject, globalObject->objectPrototype(), 2);
         const auto& builtinNames = WebCore::builtinNames(vm);
-        auto* pathJS = Bun::toJS(globalObject, *path);
-        RETURN_IF_EXCEPTION(scope, {});
         paramsObject->putDirect(
             vm, builtinNames.pathPublicName(),
-            pathJS);
+            jsString(vm, pathString));
         auto* importerJS = Bun::toJS(globalObject, *importer);
         RETURN_IF_EXCEPTION(scope, {});
         paramsObject->putDirect(
@@ -893,6 +885,31 @@ EncodedJSValue BunPlugin::OnResolve::run(JSC::JSGlobalObject* globalObject, cons
         }
 
         RELEASE_AND_RETURN(scope, JSValue::encode(result));
+    }
+
+    return JSValue::encode(JSC::jsUndefined());
+}
+
+EncodedJSValue BunPlugin::OnResolve::run(JSC::JSGlobalObject* globalObject, const BunString* namespaceString, const BunString* path, const BunString* importer)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    WTF::String nsString = namespaceString ? namespaceString->toWTFString(BunString::ZeroCopy) : String();
+    WTF::String pathString = path->toWTFString(BunString::ZeroCopy);
+
+    if (Group* groupPtr = this->group(nsString)) {
+        EncodedJSValue result = runOnResolveGroup(globalObject, *groupPtr, pathString, importer);
+        RETURN_IF_EXCEPTION(scope, {});
+        if (!JSValue::decode(result).isUndefined()) {
+            RELEASE_AND_RETURN(scope, result);
+        }
+    }
+
+    // Also offer the full "ns:path" to onResolve({ filter: /^ns:/ }) like Bun.build does.
+    if (!nsString.isEmpty() && !this->fileNamespace.filters.isEmpty()) {
+        WTF::String fullSpecifier = makeString(nsString, ":"_s, pathString);
+        RELEASE_AND_RETURN(scope, runOnResolveGroup(globalObject, this->fileNamespace, fullSpecifier, importer));
     }
 
     return JSValue::encode(JSC::jsUndefined());

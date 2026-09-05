@@ -1359,7 +1359,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         }
                     }
 
-                    if let Some(mut cf) = constructor_function {
+                    if injected.is_empty() {
+                        // Only declared-only fields were removed. tsc emits no constructor for them.
+                    } else if let Some(mut cf) = constructor_function {
                         let old_body: &[Stmt] = cf.func.body.stmts.slice();
                         let super_end = if class.extends.is_some() {
                             old_body
@@ -1429,7 +1431,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                         loc,
                                         stmts: bun_ast::StoreSlice::from_bump(ctor_stmts),
                                     },
-                                    flags: flags::FUNCTION_NONE,
+                                    flags: flags::Function::IsSynthesizedConstructor.into(),
                                     ..Default::default()
                                 },
                             },

@@ -873,10 +873,10 @@ pub mod store {
         pub fn init(
             pathlike: PathLike<'static>,
             mime_type: Option<MimeType>,
-            credentials: bun_s3_signing::S3Credentials,
+            credentials: RefPtr<bun_s3_signing::S3Credentials>,
         ) -> S3 {
             S3 {
-                credentials: Some(RefPtr::new(credentials)),
+                credentials: Some(credentials),
                 pathlike,
                 mime_type: mime_type.unwrap_or(bun_http_types::MimeType::OTHER),
                 options: bun_s3_signing::MultiPartUploadOptions::default(),

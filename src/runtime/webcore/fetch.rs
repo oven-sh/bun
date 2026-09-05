@@ -69,6 +69,7 @@ use bun_jsc::AbortSignalRef;
 #[cfg(windows)]
 use bun_paths::resolve_path::PosixToWinNormalizer;
 use bun_picohttp as picohttp;
+use bun_ptr::RefPtr;
 use bun_resolver::data_url::DataURL;
 use bun_s3_signing::{SignOptions, SignResult};
 use bun_url::PercentEncoding;
@@ -1654,13 +1655,8 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                 .env_mut()
                 .get_s3_credentials(),
         );
-        let mut credentials_with_options = s3::S3CredentialsWithOptions {
-            credentials: env_creds,
-            options: Default::default(),
-            acl: None,
-            storage_class: None,
-            ..Default::default()
-        };
+        let mut credentials_with_options =
+            s3::S3CredentialsWithOptions::new(RefPtr::new(env_creds));
         // `defer credentialsWithOptions.deinit()` → Drop.
 
         if let Some(options) = options_object {
@@ -1732,11 +1728,8 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                 // lifetime is managed by the resolve callback itself).
                 let _ = S3StreamWrapper::resolve(result, ctx.cast::<S3StreamWrapper<'static>>());
             }
-            // `dupe()` heap-allocates a fresh intrusive-refcounted copy.
-            // `upload_stream` adopts the ref by value (no extra bump) and the
-            // MultiPartUpload derefs on completion.
             let _ = s3::upload_stream(
-                credentials_with_options.credentials.dupe(),
+                credentials_with_options.credentials.clone(),
                 s3_path,
                 readable_stream.get().unwrap(),
                 global_this,

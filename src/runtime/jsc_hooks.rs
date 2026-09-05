@@ -102,6 +102,11 @@ pub(crate) struct RuntimeState {
     /// stop; one ref per entry, released by `CronJob::remove_from_list` /
     /// `clear_all_for_vm`.
     pub(crate) cron_jobs: Vec<bun_ptr::RefPtr<crate::api::cron::CronJob>>,
+    /// The `fs.watchFile` re-stat scheduler, created by the first
+    /// `fs.watchFile` on this thread. One ref, released by
+    /// `StatWatcherScheduler::shutdown_for_exit`.
+    pub(crate) stat_watcher_scheduler:
+        Option<bun_ptr::RefPtr<crate::node::node_fs_stat_watcher::StatWatcherScheduler>>,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
@@ -214,6 +219,25 @@ pub(crate) fn active_handles() -> Option<&'static mut ActiveHandles> {
     }
     // SAFETY: live boxed per-thread `RuntimeState`.
     Some(unsafe { &mut (*state).active_handles })
+}
+
+/// Runs `f` against this thread's `fs.watchFile` scheduler slot (`None` before
+/// the runtime state exists). A callback rather than a `&'static mut`, which
+/// two callers could hold at once; `f` must not re-enter anything that reaches
+/// the slot.
+#[inline]
+pub(crate) fn with_stat_watcher_scheduler<R>(
+    f: impl FnOnce(
+        &mut Option<bun_ptr::RefPtr<crate::node::node_fs_stat_watcher::StatWatcherScheduler>>,
+    ) -> R,
+) -> Option<R> {
+    let state = runtime_state();
+    if state.is_null() {
+        return None;
+    }
+    // SAFETY: live boxed per-thread `RuntimeState`; single JS thread; the
+    // borrow ends when `f` returns.
+    Some(f(unsafe { &mut (*state).stat_watcher_scheduler }))
 }
 
 impl ActiveHandle {
@@ -409,6 +433,7 @@ unsafe fn init_runtime_state(
         active_handles: ActiveHandles::default(),
         wake_ctx: None,
         cron_jobs: Vec::new(),
+        stat_watcher_scheduler: None,
     }));
     RUNTIME_STATE.with(|c| c.set(state));
 
@@ -1639,10 +1664,7 @@ unsafe fn cancel_all_timers(vm: *mut VirtualMachine) {
     // watcher still queued at exit forms a cycle and leaks. Runs before
     // `cancel_all_timeout_objects` so the scheduler's `EventLoopTimer` is still
     // linked when `set_timer(0)` removes it.
-    // SAFETY: `vm` per fn contract; JS thread, before JSC teardown.
-    unsafe {
-        crate::node::node_fs_stat_watcher::StatWatcherScheduler::shutdown_for_exit(vm);
-    }
+    crate::node::node_fs_stat_watcher::StatWatcherScheduler::shutdown_for_exit();
     // SAFETY: `state` is the live boxed per-thread `RuntimeState`; `vm` per fn
     // contract. `addr_of_mut!` does not materialize a `&mut RuntimeState`.
     unsafe {

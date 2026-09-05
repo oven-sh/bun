@@ -655,6 +655,90 @@ unsafe impl<T: ?Sized + Sync, P> Send for BackRef<T, P> {}
 unsafe impl<T: ?Sized + Sync, P> Sync for BackRef<T, P> {}
 
 // ─────────────────────────────────────────────────────────────────────────────
+// ThreadBound<T> — a back-reference other threads may carry but not follow.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// A [`BackRef`] to a thread-affine `T` that any thread may hold, copy and
+/// pass along, but that only the thread it was created on can dereference:
+/// [`get`](Self::get) panics everywhere else.
+///
+/// This is the typed way to hand a JS-thread object's address to machinery
+/// that runs on another thread (a watcher thread's registration, a task it
+/// queues back) purely so that it can be handed back to the owning thread.
+/// Liveness is the usual `BackRef` holder obligation, stated where the value
+/// is constructed; thread affinity is enforced here, which is what makes the
+/// `Send`/`Sync` impls below hold for every `T`.
+pub struct ThreadBound<T: ?Sized> {
+    ptr: BackRef<T>,
+    /// `std`'s id (a process-unique counter, never reused) rather than the OS
+    /// thread id, so a later thread cannot pass for the owner.
+    owner: std::thread::ThreadId,
+}
+
+impl<T: ?Sized> ThreadBound<T> {
+    /// Bind `r`'s address to the calling thread.
+    #[inline]
+    pub fn new(r: &T) -> Self {
+        ThreadBound {
+            ptr: BackRef::new(r),
+            owner: std::thread::current().id(),
+        }
+    }
+
+    /// Whether the calling thread is the one this reference was created on.
+    #[inline]
+    pub fn is_owner_thread(&self) -> bool {
+        std::thread::current().id() == self.owner
+    }
+
+    /// Borrow the pointee. Panics when called from any thread other than the
+    /// one that created this reference.
+    #[inline]
+    #[track_caller]
+    pub fn get(&self) -> &T {
+        assert!(
+            self.is_owner_thread(),
+            "ThreadBound: dereferenced on a thread other than its owner"
+        );
+        self.ptr.get()
+    }
+
+    /// The pointee's address, for identity comparisons on any thread.
+    #[inline]
+    pub fn addr(&self) -> usize {
+        self.ptr.as_const_ptr().cast::<()>() as usize
+    }
+}
+
+impl<T: ?Sized> Clone for ThreadBound<T> {
+    #[inline]
+    fn clone(&self) -> Self {
+        ThreadBound {
+            ptr: self.ptr,
+            owner: self.owner,
+        }
+    }
+}
+
+impl<T: ?Sized> core::fmt::Debug for ThreadBound<T> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("ThreadBound")
+            .field("ptr", &self.ptr)
+            .field("owner", &self.owner)
+            .finish()
+    }
+}
+
+// SAFETY: the pointee is reachable only through `get`, which refuses every
+// thread but the one the reference was created on (where a `&T` already
+// existed), so moving the handle to another thread exposes no `T` state there.
+unsafe impl<T: ?Sized> Send for ThreadBound<T> {}
+// SAFETY: as above — a shared `&ThreadBound<T>` on a foreign thread yields
+// nothing but the address; on the owner thread it yields aliased `&T`s, which
+// is ordinary same-thread sharing.
+unsafe impl<T: ?Sized> Sync for ThreadBound<T> {}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // DetachablePtr<T> — scoped `&mut T` parked behind `&self` for re-entrant reads.
 //
 // Pattern: a Rust/C library hands a handler closure `&mut X` for the duration

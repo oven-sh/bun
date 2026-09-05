@@ -344,6 +344,28 @@ impl VmHandle {
         })
     }
 
+    /// Queue an owned `T` on the VM's `kind` loop (dispatched under `T::TAG`,
+    /// whose arm reclaims the box), or hand it back if the VM is closed.
+    pub fn post_boxed<T: bun_event_loop::Taskable>(
+        &self,
+        kind: LoopKind,
+        task: Box<T>,
+    ) -> Result<(), Box<T>> {
+        let raw: *mut T = bun_core::heap::into_raw(task);
+        let ct = ConcurrentTaskItem::create(bun_event_loop::Task::init(raw));
+        match self.post(kind, ct) {
+            Posted::Queued => Ok(()),
+            Posted::Refused(ct) => {
+                // SAFETY: refused ⇒ nothing else holds the carrier `create` boxed
+                // or the payload we boxed into it two lines up.
+                unsafe {
+                    drop(bun_core::heap::take(ct.as_ptr()));
+                    Err(bun_core::heap::take(raw))
+                }
+            }
+        }
+    }
+
     /// Queue a C++ `EventLoopTask` on the VM's `kind` loop from another
     /// thread (WebCore's `postTaskTo` / `postTaskConcurrently`), or delete it
     /// unrun if the VM is closed.

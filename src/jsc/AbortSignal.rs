@@ -73,7 +73,55 @@ pub trait AbortListener {
     fn on_abort(&mut self, reason: JSValue);
 }
 
+/// Abort callback for [`AbortSignal::subscribe`]: runs on the JS thread when
+/// the signal aborts, and may re-enter the subscriber (hence `&self`).
+pub trait OnAbort {
+    fn on_abort(&self, reason: JSValue);
+}
+
+/// A native listener registered on a JS `AbortSignal` by
+/// [`AbortSignal::subscribe`]. Holds its own ref on the signal and removes the
+/// listener when dropped, so the subscriber it points back to only has to keep
+/// this value for as long as it lives at that address.
+pub struct AbortSubscription {
+    signal: AbortSignalRef,
+    ctx: *mut c_void,
+}
+
+impl AbortSubscription {
+    /// The signal this listener is registered on.
+    #[inline]
+    pub fn signal(&self) -> &AbortSignal {
+        &self.signal
+    }
+}
+
+impl Drop for AbortSubscription {
+    fn drop(&mut self) {
+        self.signal.clean_native_bindings(self.ctx);
+    }
+}
+
 impl AbortSignal {
+    /// Call `subscriber.on_abort(reason)` when this signal aborts, until the
+    /// returned subscription is dropped. `subscriber` is the holder of the
+    /// subscription (the [`BackRef`](bun_ptr::BackRef) obligation): it must
+    /// drop it before it moves or goes away.
+    pub fn subscribe<C: OnAbort>(&self, subscriber: bun_ptr::BackRef<C>) -> AbortSubscription {
+        extern "C" fn callback<C: OnAbort>(ptr: *mut c_void, reason: JSValue) {
+            // SAFETY: `ptr` is the `BackRef<C>` registered below; the
+            // `AbortSubscription` its pointee holds unregisters this callback
+            // before the pointee goes away, so it is live here (JS thread).
+            C::on_abort(unsafe { &*ptr.cast::<C>() }, reason);
+        }
+        let ctx = subscriber.as_const_ptr().cast_mut().cast::<c_void>();
+        self.add_listener(ctx, callback::<C>);
+        AbortSubscription {
+            signal: self.ref_(),
+            ctx,
+        }
+    }
+
     pub fn listen<C: AbortListener>(&self, ctx: *mut C) -> &AbortSignal {
         extern "C" fn callback<C: AbortListener>(ptr: *mut c_void, reason: JSValue) {
             // SAFETY: ptr was registered below as `*mut C`; C++ calls back on

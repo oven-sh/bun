@@ -5383,6 +5383,14 @@ pub mod linux {
         // valid NUL-terminated C string.
         unsafe { libc::inotify_add_watch(fd, path, mask) }
     }
+    /// [`inotify_add_watch`] for a `&ZStr` path; returns the raw rc (`-1` +
+    /// `errno` on failure, else the watch descriptor).
+    #[inline]
+    pub fn inotify_add_watch_z(fd: c_int, path: &bun_core::ZStr, mask: u32) -> c_int {
+        // SAFETY: `ZStr` is NUL-terminated by construction; a stale/invalid
+        // `fd` is reported as `EBADF`/`EINVAL`, not UB.
+        unsafe { libc::inotify_add_watch(fd, path.as_ptr().cast::<c_char>(), mask) }
+    }
     #[inline]
     pub fn inotify_rm_watch(fd: c_int, wd: c_int) -> c_int {
         // bionic declares `wd` as `uint32_t`, glibc/musl as `int`; the kernel
@@ -5504,6 +5512,10 @@ pub mod linux {
     // Empty on non-Linux; callers gate on `cfg(target_os = "linux")` (or
     // `linux | android` for the Linux-kernel surface).
 }
+
+/// CoreFoundation run loop + FSEvents, dlopen'd (macOS `fs.watch()` backend).
+#[cfg(target_os = "macos")]
+pub mod core_foundation;
 
 // ── `bun.darwin` — Darwin-only platform surface. ──
 #[cfg(target_os = "macos")]

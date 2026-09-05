@@ -166,22 +166,21 @@ describe.each(["FormData", "Blob", "Buffer", "String", "URLSearchParams", "strea
 test("do not leak", async () => {
   await using server = createServer((req, res) => {
     res.end();
-  }).listen(0);
+  }).listen(0, "127.0.0.1");
   await once(server, "listening");
 
-  let url;
+  const url = new URL(`http://127.0.0.1:${server.address().port}`);
   let isDone = false;
-  server.listen(0, "127.0.0.1", function attack() {
+  (function attack() {
     if (isDone) {
       return;
     }
-    url ??= new URL(`http://127.0.0.1:${server.address().port}`);
     const controller = new AbortController();
     fetch(url, { signal: controller.signal })
       .then(res => res.arrayBuffer())
       .catch(() => {})
       .then(attack);
-  });
+  })();
 
   let prev = Infinity;
   let count = 0;

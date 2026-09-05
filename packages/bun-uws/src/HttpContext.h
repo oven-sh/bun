@@ -493,6 +493,17 @@ private:
                     httpResponseData->state |= HttpResponseData<SSL>::HTTP_CONNECTION_CLOSE;
                 }
 
+                /* After a CONNECT request-line the parser no longer parses this
+                 * connection as HTTP (isConnectRequest). node:http hands it to its
+                 * 'connect' listener as a tunnel; Bun.serve has no tunnel handler, so
+                 * the response to a CONNECT is the connection's last one: close after
+                 * it rather than keep a connection whose further input is discarded. */
+                if constexpr (!IsNodeHttp) {
+                    if (httpResponseData->isConnectRequest) [[unlikely]] {
+                        httpResponseData->state |= HttpResponseData<SSL>::HTTP_CONNECTION_CLOSE;
+                    }
+                }
+
                 /* Per-response trailer fields must not leak into the next response
                  * on this keep-alive connection (the flag itself was cleared above). */
                 if constexpr (IsNodeHttp) {

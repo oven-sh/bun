@@ -2625,6 +2625,121 @@ describe.concurrent("HEAD requests #15355", () => {
   });
 });
 
+describe.concurrent("CONNECT requests", () => {
+  // Bun.serve has nothing to hand a CONNECT tunnel to, and once the parser has
+  // seen a CONNECT request-line it stops parsing the connection as HTTP. So the
+  // response to a CONNECT has to be the connection's last one: the server must
+  // close after sending it, rather than keep the connection open and silently
+  // discard everything the client sends next. Every test below waits for the
+  // server to end the connection; idleTimeout is raised so that a close can
+  // only come from the response itself.
+  const CONNECT_HEAD = "CONNECT example.com:443 HTTP/1.1\r\nHost: example.com:443\r\n\r\n";
+  // What a client sends once it believes the tunnel is up (or, pipelining, its
+  // next request). It must neither be answered nor keep the connection alive.
+  const AFTER_HEAD = "GET / HTTP/1.1\r\nHost: example.com\r\n\r\n";
+
+  async function connectExchange(server: Server, chunks: readonly string[]) {
+    let received = "";
+    const ended = Promise.withResolvers<void>();
+    const socket = await Bun.connect({
+      hostname: "127.0.0.1",
+      port: server.port,
+      socket: {
+        data(_socket, data) {
+          received += data.toString("latin1");
+        },
+        end: () => ended.resolve(),
+        close: () => ended.resolve(),
+        error: () => ended.resolve(),
+      },
+    });
+    try {
+      for (const [i, chunk] of chunks.entries()) {
+        if (i > 0) {
+          // Let the server read the previous chunk before the next one is
+          // written, so the head really does arrive in separate reads.
+          await new Promise(resolve => setImmediate(resolve));
+          await new Promise(resolve => setImmediate(resolve));
+        }
+        socket.write(chunk);
+        socket.flush();
+      }
+      // Resolves only once the server ends the connection.
+      await ended.promise;
+    } finally {
+      socket.end();
+    }
+    const headersEnd = received.indexOf("\r\n\r\n");
+    return {
+      statusLine: received.slice(0, received.indexOf("\r\n")),
+      // Everything after the response head. Only the declared body may be
+      // here: a second response would mean the bytes after the CONNECT head
+      // were parsed as a request.
+      body: received.slice(headersEnd + 4),
+    };
+  }
+
+  test.each([
+    ["in one read", [CONNECT_HEAD + AFTER_HEAD]],
+    ["split inside the Host header", [CONNECT_HEAD.slice(0, 40), CONNECT_HEAD.slice(40) + AFTER_HEAD]],
+  ] as const)("the fetch handler's response is sent and the connection is closed (head %s)", async (_name, chunks) => {
+    const methods: string[] = [];
+    await using server = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      idleTimeout: 255,
+      fetch(req) {
+        methods.push(req.method);
+        return new Response("not a proxy", { status: 405 });
+      },
+    });
+
+    expect(await connectExchange(server, chunks)).toEqual({
+      statusLine: "HTTP/1.1 405 Method Not Allowed",
+      body: "not a proxy",
+    });
+    expect(methods).toEqual(["CONNECT"]);
+  });
+
+  test("a response produced after the handler returned still closes the connection", async () => {
+    const methods: string[] = [];
+    await using server = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      idleTimeout: 255,
+      async fetch(req) {
+        methods.push(req.method);
+        // Respond from a later event loop turn, after the read that carried
+        // the CONNECT has been fully processed.
+        await new Promise(resolve => setImmediate(resolve));
+        return new Response("not a proxy", { status: 405 });
+      },
+    });
+
+    expect(await connectExchange(server, [CONNECT_HEAD + AFTER_HEAD])).toEqual({
+      statusLine: "HTTP/1.1 405 Method Not Allowed",
+      body: "not a proxy",
+    });
+    expect(methods).toEqual(["CONNECT"]);
+  });
+
+  test("a server without a fetch handler answers 404 and closes the connection", async () => {
+    await using server = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      idleTimeout: 255,
+      routes: {
+        "/": () => new Response("root"),
+      },
+    });
+
+    expect(await connectExchange(server, [CONNECT_HEAD + AFTER_HEAD])).toEqual({
+      statusLine: "HTTP/1.1 404 Not Found",
+      body: "",
+    });
+  });
+});
+
 describe.concurrent("websocket and routes test", () => {
   const serverConfigurations = [
     {

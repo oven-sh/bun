@@ -4515,8 +4515,28 @@ static JSValue constructMainModuleProperty(VM& vm, JSObject* processObject)
     return mainModule;
 }
 
+JSC_DEFINE_HOST_FUNCTION(jsFunctionNextTickOnDefaultGlobal, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
+{
+    auto& vm = JSC::getVM(lexicalGlobalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    Bun::V::validateFunction(scope, lexicalGlobalObject, callFrame->argument(0), "callback"_s);
+    RETURN_IF_EXCEPTION(scope, {});
+    auto* globalObject = defaultGlobalObject();
+    globalObject->processObject()->queueNextTick(globalObject, ArgList(callFrame));
+    RETURN_IF_EXCEPTION(scope, {});
+    return JSValue::encode(jsUndefined());
+}
+
 JSValue Process::constructNextTickFn(JSC::VM& vm, Zig::GlobalObject* globalObject)
 {
+    // GlobalObject::drainMicrotasks drains the default global's queue only, so a
+    // ShadowRealm's process.nextTick forwards to it.
+    if (globalObject != defaultGlobalObject()) {
+        auto* nextTickFunction = JSC::JSFunction::create(vm, globalObject, 1, "nextTick"_s, jsFunctionNextTickOnDefaultGlobal, ImplementationVisibility::Public);
+        this->m_nextTickFunction.set(vm, this, nextTickFunction);
+        return nextTickFunction;
+    }
+
     JSNextTickQueue* nextTickQueueObject;
     if (!globalObject->m_nextTickQueue) {
         nextTickQueueObject = JSNextTickQueue::create(globalObject);

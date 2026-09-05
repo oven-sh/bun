@@ -5430,6 +5430,97 @@ describe("fs.write", () => {
   });
 });
 
+// Node's fs.read/readv/write/writev call back with (err, 0, buffer) when the
+// syscall fails, so a caller that resumes after a retryable error still has
+// its buffer. fs.WriteStream's writeAll depends on that after EAGAIN.
+describe("fs.read/readv/write/writev pass the buffer to the callback on error", () => {
+  const closedFd = () => {
+    const fd = fs.openSync(`${tmpdir()}/bun-fs-cb-arity-${Date.now()}-${Math.random()}.txt`, "w+");
+    fs.closeSync(fd);
+    return fd;
+  };
+  const settle = () => Promise.withResolvers<any[]>();
+
+  it("fs.read", async () => {
+    const buffer = Buffer.alloc(8);
+    const { promise, resolve } = settle();
+    fs.read(closedFd(), buffer, 0, 8, null, (...args) => resolve(args));
+    const [err, bytesRead, buf] = await promise;
+    expect(err.code).toBe("EBADF");
+    expect([bytesRead, buf]).toEqual([0, buffer]);
+  });
+
+  it("fs.readv", async () => {
+    const buffers = [Buffer.alloc(4), Buffer.alloc(4)];
+    const { promise, resolve } = settle();
+    fs.readv(closedFd(), buffers, (...args) => resolve(args));
+    const [err, bytesRead, bufs] = await promise;
+    expect(err.code).toBe("EBADF");
+    expect([bytesRead, bufs]).toEqual([0, buffers]);
+  });
+
+  it("fs.write with a buffer", async () => {
+    const buffer = Buffer.from("bun");
+    const { promise, resolve } = settle();
+    fs.write(closedFd(), buffer, 0, 3, null, (...args) => resolve(args));
+    const [err, bytesWritten, buf] = await promise;
+    expect(err.code).toBe("EBADF");
+    expect([bytesWritten, buf]).toEqual([0, buffer]);
+  });
+
+  it("fs.write with a string", async () => {
+    const { promise, resolve } = settle();
+    fs.write(closedFd(), "bun", (...args) => resolve(args));
+    const [err, bytesWritten, str] = await promise;
+    expect(err.code).toBe("EBADF");
+    expect([bytesWritten, str]).toEqual([0, "bun"]);
+  });
+
+  it("fs.writev", async () => {
+    const buffers = [Buffer.from("b"), Buffer.from("un")];
+    const { promise, resolve } = settle();
+    fs.writev(closedFd(), buffers, (...args) => resolve(args));
+    const [err, bytesWritten, bufs] = await promise;
+    expect(err.code).toBe("EBADF");
+    expect([bytesWritten, bufs]).toEqual([0, buffers]);
+  });
+
+  // A pipe that bun has already used through process.stdout is in non-blocking
+  // mode, so a write that lands on a full pipe returns EAGAIN. writeAll retries
+  // with the rest of the buffer it got back from the callback. Without it the
+  // retry read `.slice` off `undefined` and the process died with a TypeError.
+  it.skipIf(isWindows)("fs.WriteStream retries an EAGAIN write on a non-blocking pipe", async () => {
+    const size = 4 * 1024 * 1024;
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          const fs = require("node:fs");
+          process.stdout.write("");
+          const ws = fs.createWriteStream(null, { fd: 1, autoClose: false });
+          ws.on("error", err => {
+            console.error("error " + err.code + " " + err.message);
+            process.exit(2);
+          });
+          ws.write(Buffer.alloc(${size}, 0x61), err => {
+            if (err) return;
+            console.error("written " + ws.bytesWritten);
+          });
+          ws.end();
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.bytes(), proc.stderr.text(), proc.exited]);
+    expect(stderr.trim()).toBe(`written ${size}`);
+    expect(stdout.byteLength).toBe(size);
+    expect(exitCode).toBe(0);
+  });
+});
+
 describe("fs.read", () => {
   it("should work with (fd, callback)", done => {
     const path = `${tmpdir()}/bun-fs-read-1-${Date.now()}.txt`;

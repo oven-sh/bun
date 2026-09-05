@@ -5091,24 +5091,21 @@ impl NodeFS {
 
         #[cfg(windows)]
         {
-            // Paths whose UTF-16 form exceeds the wide buffers can't exist on
-            // disk; reject instead of overflowing the conversion below.
-            for path in [&args.src, &args.dest] {
-                if !strings::fits_in_wide_path_buffer(path.slice()) {
-                    return Err(sys::Error {
-                        errno: E::ENAMETOOLONG as _,
-                        syscall: sys::Tag::copyfile,
-                        path: path.slice().into(),
-                        ..Default::default()
-                    });
-                }
-            }
-            let mut dest_buf = paths::os_path_buffer_pool::get();
-            let src = strings::to_kernel32_path(
-                bun_core::cast_slice_mut::<u8, u16>(&mut self.sync_error_buf),
-                args.src.slice(),
-            );
-            let dest = strings::to_kernel32_path(&mut *dest_buf, args.dest.slice());
+            let name_too_long = |path: &PathLike| sys::Error {
+                errno: E::ENAMETOOLONG as _,
+                syscall: sys::Tag::copyfile,
+                path: path.slice().into(),
+                ..Default::default()
+            };
+            let mut dest_buf = paths::path_buffer_pool::get();
+            let src = match args.src.os_path_kernel32(&mut self.sync_error_buf) {
+                Ok(p) => p,
+                Err(NameTooLong) => return Err(name_too_long(&args.src)),
+            };
+            let dest = match args.dest.os_path_kernel32(&mut dest_buf) {
+                Ok(p) => p,
+                Err(NameTooLong) => return Err(name_too_long(&args.dest)),
+            };
             // SAFETY: src/dest are NUL-terminated wide paths; CopyFileW is the Win32 FFI
             if unsafe {
                 windows::CopyFileW(
@@ -6118,7 +6115,6 @@ impl NodeFS {
     fn readdir_with_entries<T: ReaddirEntry>(
         args: &args::Readdir,
         fd: FD,
-        basename: &ZStr,
         entries: &mut Vec<T>,
     ) -> Maybe<()> {
         // On Windows, String/Dirent results read native UTF-16 entry names via the
@@ -6126,7 +6122,7 @@ impl NodeFS {
         // use the u8 iterator.
         #[cfg(windows)]
         if T::IS_U16 {
-            return Self::readdir_with_entries_u16::<T>(args, fd, basename, entries);
+            return Self::readdir_with_entries_u16::<T>(args, fd, entries);
         }
 
         let mut dirent_path = BunString::DEAD;
@@ -6140,8 +6136,10 @@ impl NodeFS {
             };
 
             if T::IS_DIRENT && dirent_path.is_empty() {
+                // `Dirent.parentPath` is the caller's argument, as in Node, not
+                // the cwd-resolved path the syscall saw.
                 dirent_path = webcore::encoding::to_bun_string(
-                    without_nt_prefix::<u8>(basename.as_bytes()),
+                    without_nt_prefix::<u8>(args.path.slice()),
                     encoding_to_node(args.encoding),
                 );
             }
@@ -6169,7 +6167,6 @@ impl NodeFS {
     fn readdir_with_entries_u16<T: ReaddirEntry>(
         args: &args::Readdir,
         fd: FD,
-        basename: &ZStr,
         entries: &mut Vec<T>,
     ) -> Maybe<()> {
         let mut dirent_path = BunString::DEAD;
@@ -6194,7 +6191,7 @@ impl NodeFS {
 
             if T::IS_DIRENT && dirent_path.is_empty() {
                 dirent_path = webcore::encoding::to_bun_string(
-                    without_nt_prefix::<u8>(basename.as_bytes()),
+                    without_nt_prefix::<u8>(args.path.slice()),
                     encoding_to_node(args.encoding),
                 );
             }
@@ -6545,9 +6542,11 @@ impl NodeFS {
                 }
 
                 if T::IS_DIRENT {
+                    // `args.path`, not `root_basename`: the latter may be the
+                    // cwd-resolved `\\?\` form the syscalls saw.
                     let joined = paths::resolve_path::join_spill::<paths::platform::Auto>(
                         &mut dirent_spill,
-                        &[root_basename.as_bytes(), name_to_copy],
+                        &[args.path.slice(), name_to_copy],
                     );
                     let path_u8 = paths::resolve_path::dirname::<paths::platform::Auto>(joined);
                     if dirent_path_prev.is_empty() || dirent_path_prev.byte_slice() != path_u8 {
@@ -6654,8 +6653,7 @@ impl NodeFS {
         let _close = scopeguard::guard(fd, |fd| fd.close());
 
         let mut entries: Vec<T> = Vec::new();
-        Self::readdir_with_entries::<T>(args, fd, path, &mut entries)
-            .map(|()| T::into_readdir(entries))
+        Self::readdir_with_entries::<T>(args, fd, &mut entries).map(|()| T::into_readdir(entries))
     }
 
     /// Caller has already checked `is_bun_standalone_file_path(path)`.

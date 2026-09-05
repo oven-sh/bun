@@ -4145,7 +4145,7 @@ fn getcwd_len(buf: &mut PathBuffer) -> crate::CrateResult<usize> {
         unsafe extern "system" {
             fn GetCurrentDirectoryW(nBufferLength: u32, lpBuffer: *mut u16) -> u32;
         }
-        let mut wbuf = WPathBuffer::ZEROED;
+        let mut wbuf = WPathBuffer::uninit();
         // SAFETY: `wbuf` has `PATH_MAX_WIDE` writable u16 units.
         let n = unsafe { GetCurrentDirectoryW(wbuf.0.len() as u32, wbuf.0.as_mut_ptr()) } as usize;
         if n == 0 {

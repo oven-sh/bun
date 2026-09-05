@@ -437,8 +437,6 @@ impl WriteFile {
             return;
         }
 
-        let fd = self.opened_fd;
-
         let caller_supplied_fd = match self.file_blob.store.get().as_ref() {
             Some(store) => match &store.data {
                 blob::store::Data::File(file) => match file.pathlike {
@@ -460,7 +458,7 @@ impl WriteFile {
         // The IO thread's epoll/kqueue keys interest by fd number, so concurrent WriteFiles on
         // one caller-supplied fd would collide; dup so this instance polls a private fd number.
         if caller_supplied_fd {
-            match bun_sys::dup(fd) {
+            match bun_sys::dup(self.opened_fd) {
                 bun_sys::Result::Ok(duped) => self.opened_fd = duped,
                 bun_sys::Result::Err(err) => {
                     self.errno = Some(bun_errno::from_errno(err.errno as i32).into());
@@ -470,6 +468,7 @@ impl WriteFile {
                 }
             }
         }
+        let fd = self.opened_fd;
 
         // We have never supported offset in Bun.write().
         // and properly adding support means we need to also support it

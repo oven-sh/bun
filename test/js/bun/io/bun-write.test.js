@@ -1168,15 +1168,14 @@ int posix_fadvise(int fd, off_t offset, off_t len, int advice) {
 // stdio and its EAGAIN handler re-matched a cached write() result without re-issuing the
 // syscall. Runs outside describe.concurrent so an unfixed build's spin doesn't starve
 // neighbours into their default timeout.
-it.skipIf(isWindows)(
-  "Bun.write(Bun.stdout, ...) to a full nonblocking pipe completes",
-  async () => {
-    // Below 256 KiB exercises the sync fast path's EAGAIN -> needs_async fallback; at/above
-    // 256 KiB goes straight to the thread-pool WriteFile path.
-    const script = `
+it.skipIf(isWindows)("Bun.write(Bun.stdout, ...) to a full nonblocking pipe completes", async () => {
+  // Below 256 KiB exercises the sync fast path's EAGAIN -> needs_async fallback; at/above
+  // 256 KiB goes straight to the thread-pool WriteFile path.
+  const script = `
+    import { readdirSync } from "node:fs";
     process.stdout.write("x"); // constructs the fd 1 FileSink, which flips the pipe O_NONBLOCK
     const fdDir = process.platform === "darwin" ? "/dev/fd" : "/proc/self/fd";
-    const fdCount = () => require("fs").readdirSync(fdDir).length;
+    const fdCount = () => readdirSync(fdDir).length;
     const small = Buffer.alloc(64 * 1024, 65).toString();
     const large = Buffer.alloc(256 * 1024, 66).toString();
     let wrote = 0, fdsBefore, fdsAfter;
@@ -1190,22 +1189,20 @@ it.skipIf(isWindows)(
     }
     process.stderr.write("wrote=" + wrote + " fdDelta=" + (fdsAfter - fdsBefore));
   `;
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "-e", script],
-      env: bunEnv,
-      stdout: "pipe",
-      stderr: "pipe",
-      timeout: 20_000,
-      killSignal: "SIGKILL",
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.bytes(), proc.stderr.text(), proc.exited]);
-    const expected = 1 + 2 * (16 * 64 * 1024 + 4 * 256 * 1024);
-    expect({ length: stdout.length, stderr, exitCode, signalCode: proc.signalCode }).toEqual({
-      length: expected,
-      stderr: "wrote=" + (expected - 1) + " fdDelta=0",
-      exitCode: 0,
-      signalCode: null,
-    });
-  },
-  30_000,
-);
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", script],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+    timeout: 20_000,
+    killSignal: "SIGKILL",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.bytes(), proc.stderr.text(), proc.exited]);
+  const expected = 1 + 2 * (16 * 64 * 1024 + 4 * 256 * 1024);
+  expect({ length: stdout.length, stderr, exitCode, signalCode: proc.signalCode }).toEqual({
+    length: expected,
+    stderr: "wrote=" + (expected - 1) + " fdDelta=0",
+    exitCode: 0,
+    signalCode: null,
+  });
+});

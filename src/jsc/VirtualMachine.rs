@@ -36,6 +36,8 @@ static has_bun_garbage_collector_flag_enabled: core::sync::atomic::AtomicBool =
     core::sync::atomic::AtomicBool::new(false);
 #[unsafe(no_mangle)]
 pub static isBunTest: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
+pub static IS_NODE_TEST_RUN_CHILD: core::sync::atomic::AtomicBool =
+    core::sync::atomic::AtomicBool::new(false);
 #[unsafe(no_mangle)]
 pub(crate) static Bun__defaultRemainingRunsUntilSkipReleaseAccess: core::sync::atomic::AtomicI32 =
     core::sync::atomic::AtomicI32::new(10);
@@ -1661,7 +1663,8 @@ impl VirtualMachine {
             return true;
         }
 
-        if isBunTest.load(core::sync::atomic::Ordering::Relaxed) {
+        let is_node_test_child = IS_NODE_TEST_RUN_CHILD.load(core::sync::atomic::Ordering::Relaxed);
+        if isBunTest.load(core::sync::atomic::Ordering::Relaxed) && !is_node_test_child {
             self.unhandled_error_counter += 1;
             (self.on_unhandled_rejection)(self, global_object, err);
             return true;
@@ -3776,7 +3779,9 @@ impl VirtualMachine {
             return;
         }
 
-        if isBunTest.load(core::sync::atomic::Ordering::Relaxed) {
+        if isBunTest.load(core::sync::atomic::Ordering::Relaxed)
+            && !IS_NODE_TEST_RUN_CHILD.load(core::sync::atomic::Ordering::Relaxed)
+        {
             self.unhandled_error_counter += 1;
             (self.on_unhandled_rejection)(self, global_object, reason);
             return;

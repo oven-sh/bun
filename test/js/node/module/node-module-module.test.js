@@ -747,6 +747,76 @@ console.log("survived", require("./late.js"));`,
     expect(exitCode).toBe(0);
   });
 
+  test("Overwriting _resolveFilename with a non-callable makes require() throw like Node", async () => {
+    // Node keeps _resolveFilename as a plain data property: any value can be
+    // assigned and reads back, and require() throws when it goes to call it.
+    using dir = tempDir("resolve-filename-non-callable", {
+      "dep.cjs": `module.exports = "dep";`,
+      "main.cjs": `
+        const Module = require("module");
+        const original = Module._resolveFilename;
+        const attempt = fn => {
+          try {
+            return "returned " + String(fn());
+          } catch (e) {
+            return e.constructor.name + ": " + e.message;
+          }
+        };
+        const results = {};
+        for (const [label, value] of [
+          ["object", {}],
+          ["string", "not a function"],
+          ["undefined", undefined],
+          ["null", null],
+          ["number", 42],
+          ["symbol", Symbol("s")],
+        ]) {
+          Module._resolveFilename = value;
+          results[label] = {
+            readsBack: Object.is(Module._resolveFilename, value),
+            require: attempt(() => require("./dep.cjs")),
+            requireResolve: attempt(() => require.resolve("./dep.cjs")),
+            createRequire: attempt(() => Module.createRequire(__filename)("./dep.cjs")),
+          };
+        }
+        // Callable objects other than plain functions are still honored.
+        Module._resolveFilename = new Proxy(original, {});
+        results.callableProxy = attempt(() => require("./dep.cjs"));
+        Module._resolveFilename = original;
+        results.restored = {
+          readsBack: Module._resolveFilename === original,
+          require: attempt(() => require("./dep.cjs")),
+        };
+        console.log(JSON.stringify(results));
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), path.join(String(dir), "main.cjs")],
+      env: bunEnv,
+      cwd: String(dir),
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    const notAFunction = {
+      readsBack: true,
+      require: "TypeError: Module._resolveFilename is not a function",
+      requireResolve: "TypeError: Module._resolveFilename is not a function",
+      createRequire: "TypeError: Module._resolveFilename is not a function",
+    };
+    expect(JSON.parse(stdout)).toEqual({
+      object: notAFunction,
+      string: notAFunction,
+      undefined: notAFunction,
+      null: notAFunction,
+      number: notAFunction,
+      symbol: notAFunction,
+      callableProxy: "returned dep",
+      restored: { readsBack: true, require: "returned dep" },
+    });
+    expect(exitCode).toBe(0);
+  });
+
   test("Overwriting Module.prototype.require", async () => {
     await using proc = Bun.spawn({
       cmd: [bunExe(), "run", path.join(import.meta.dir, "modulePrototypeOverwrite.cjs")],

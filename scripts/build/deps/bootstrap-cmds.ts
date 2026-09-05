@@ -103,6 +103,8 @@ function emitMigcom(n: Ninja, cfg: Config, { srcDir, ready }: CustomBuildContext
           `-I${B}`,
           `-I${machStubs}`,
           "-D__private_extern__=",
+          // GNU-mode compilers predefine `linux`; migcom's type.h would then
+          // include <linux/types.h> instead of the mach type headers.
           "-Ulinux",
           `-DMIG_VERSION="bun"`,
         ],

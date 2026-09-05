@@ -1438,6 +1438,16 @@ export const linkerFlags: Flag[] = [
     desc: "Exported symbol definition (.def format)",
   },
   {
+    // The exe exports symbols (the .def above), so lld-link also writes an
+    // import library — by default `<output basename>.lib`, which is the very
+    // name of the object archive the link reads (and that CI uploads while
+    // the link runs) in cpp-only/archive-link mode. Nothing consumes it;
+    // park it under obj/.
+    flag: c => `/IMPLIB:${slash(join(c.buildDir, "obj", `${bunExeName(c)}.import.lib`))}`,
+    when: c => c.windows,
+    desc: "Keep the exe's import library from overwriting <exe>.lib (the object archive)",
+  },
+  {
     flag: c => ["-exported_symbols_list", `${c.cwd}/src/symbols.txt`],
     when: c => c.darwin,
     desc: "Exported symbol list",

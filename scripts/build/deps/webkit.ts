@@ -31,7 +31,7 @@ import { spawnSync } from "node:child_process";
 import { existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, rmSync } from "node:fs";
 import { basename, isAbsolute, join, resolve } from "node:path";
 import { cc, cxx, link, pch } from "../compile.ts";
-import type { Config } from "../config.ts";
+import { type Config, modeCompilesCpp } from "../config.ts";
 import { BuildError, assert } from "../error.ts";
 import { computeDepFlags, computeTargetLinkFlags, systemLibs } from "../flags.ts";
 import { writeIfChanged } from "../fs.ts";
@@ -118,8 +118,9 @@ function prebuiltDestDir(cfg: Config): string {
  * mode only (the script comes with the fetched tree).
  */
 export function webkitClassInfoCheckScript(cfg: Config): string | undefined {
-  // ELF/Mach-O symbol tables only; a PE keeps its symbols in the PDB.
-  if (cfg.webkit !== "source" || cfg.windows) return undefined;
+  // ELF/Mach-O symbol tables only (a PE keeps its symbols in the PDB), and
+  // only where the WebKit tree is on disk (the modes that compile it).
+  if (cfg.webkit !== "source" || cfg.windows || !modeCompilesCpp(cfg.mode)) return undefined;
   return join(depSourceDir(cfg, "WebKit"), "Tools", "Scripts", "check-classinfo-uniqueness.py");
 }
 

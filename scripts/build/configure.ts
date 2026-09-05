@@ -20,6 +20,7 @@ import {
   detectHost,
   findRepoRoot,
   resolveConfig,
+  modeCompilesCpp,
 } from "./config.ts";
 import { allDeps } from "./deps/index.ts";
 import { BuildError } from "./error.ts";
@@ -362,7 +363,7 @@ export async function configure(input: ConfigureInput): Promise<ConfigureResult>
   // Deps whose graph is described from their own tree (WebKit's file lists)
   // need that tree before emitBun can enumerate edges. No-op once fetched;
   // skipped in the split modes that compile no C++.
-  if (cfg.mode !== "rust-only" && cfg.mode !== "link-only" && cfg.mode !== "rust-and-link") {
+  if (modeCompilesCpp(cfg.mode)) {
     await prefetchConfigureSources(cfg, allDeps);
     mark("prefetchConfigureSources");
   }

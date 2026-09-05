@@ -564,6 +564,9 @@ export const linearFifoOrderedRemoveProbe = $newRustFunction(
   "TestingAPIs.orderedRemoveProbe",
   1,
 ) as (scenario: number) => number[];
+export const fastRandomThreadProbe = $newRustFunction("bun_core/util.rs", "TestingAPIs.fastRandomThreadProbe", 1) as (
+  threads: number,
+) => string[];
 export const hasNonReifiedStatic = $newCppFunction("InternalForTesting.cpp", "jsFunction_hasReifiedStatic", 1);
 
 interface setSocketOptionsFn {

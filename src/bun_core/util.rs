@@ -3519,29 +3519,18 @@ pub mod rand {
 }
 
 /// Port of `bun.fastRandom()`. Thread-local xoshiro256++ seeded once per
-/// process from the OS CSPRNG (or `BUN_DEBUG_HASH_RANDOM_SEED` in debug).
+/// thread from the OS CSPRNG (or `BUN_DEBUG_HASH_RANDOM_SEED` in debug).
 pub fn fast_random() -> u64 {
     use core::cell::Cell;
-    use core::sync::atomic::{AtomicU64, Ordering as O};
-    static SEED: AtomicU64 = AtomicU64::new(0);
     fn random_seed() -> u64 {
-        let mut v = SEED.load(O::Relaxed);
-        while v == 0 {
-            // Should also apply to canary builds, but bun_core has no `canary`
-            // cargo feature yet, so debug-only for now (no
-            // regression vs. either pre-dedup copy — tracked separately).
-            #[cfg(debug_assertions)]
-            if let Some(n) = crate::env_var::BUN_DEBUG_HASH_RANDOM_SEED.get() {
-                SEED.store(n, O::Relaxed);
-                return n;
-            }
-            let mut buf = [0u8; 8];
-            os_entropy(&mut buf);
-            v = u64::from_ne_bytes(buf);
-            SEED.store(v, O::Relaxed);
-            v = SEED.load(O::Relaxed);
+        // Debug-only until bun_core gains a `canary` cargo feature.
+        #[cfg(debug_assertions)]
+        if let Some(n) = crate::env_var::BUN_DEBUG_HASH_RANDOM_SEED.get() {
+            return n;
         }
-        v
+        let mut buf = [0u8; 8];
+        os_entropy(&mut buf);
+        u64::from_ne_bytes(buf)
     }
     thread_local! {
         static PRNG: Cell<Option<rand::DefaultPrng>> = const { Cell::new(None) };

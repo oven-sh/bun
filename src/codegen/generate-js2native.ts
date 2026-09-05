@@ -53,6 +53,7 @@ const rustIdentifierPaths: Record<string, string> = {
   "SecureContext.rs": "runtime/api/bun/SecureContext.rs",
   "Stat.rs": "runtime/node/Stat.rs",
   "bindgen_test.rs": "jsc/bindgen_test.rs",
+  "bun_core/util.rs": "bun_core/util.rs",
   "collections/linear_fifo.rs": "collections/linear_fifo.rs",
   "crash_handler.rs": "crash_handler/crash_handler.rs",
   "css_internals.rs": "css_jsc/css_internals.rs",

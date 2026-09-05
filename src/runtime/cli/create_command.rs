@@ -1,5 +1,4 @@
 use bun_collections::VecExt;
-use core::sync::atomic::{AtomicU32, Ordering};
 use std::cell::Cell;
 use std::io::Write as _;
 
@@ -18,7 +17,6 @@ use bun_resolver::fs;
 use bun_sys::FdDirExt as _;
 #[cfg(not(windows))]
 use bun_sys::copy_file as CopyFile;
-use bun_threading::Futex;
 use bun_url::URL;
 use bun_which::which;
 use bun_zlib as Zlib;
@@ -33,8 +31,7 @@ use crate::cli::which_npm_client::NPMClient;
 pub mod SourceFileProjectGenerator;
 
 // PORTING.md §Global mutable state: single-thread CLI scratch buffer →
-// RacyCell. Touched on the main thread for `--open` *and* the spawned git
-// thread (sequenced — git thread writes after main is done with it).
+// RacyCell. Used by the git lookup and by `--open`.
 static BUN_PATH_BUF: bun_core::RacyCell<PathBuffer> = bun_core::RacyCell::new(PathBuffer::ZEROED);
 
 // bun.OSPathLiteral — `bun_paths` does not (yet) export an
@@ -1077,18 +1074,14 @@ impl CreateCommand {
         let user_skipped_install = create_options.skip_install;
         create_options.skip_install = create_options.skip_install || !has_dependencies;
 
+        // `git add` reads the destination, so git must exit before the tasks and the install.
         if !create_options.skip_git {
-            if !create_options.skip_install {
-                GitHandler::spawn(destination, path_env, create_options.verbose);
+            let created = if create_options.verbose {
+                GitHandler::run::<true>(destination, path_env)
             } else {
-                if create_options.verbose {
-                    create_options.skip_git =
-                        GitHandler::run::<true>(destination, path_env).unwrap_or(false);
-                } else {
-                    create_options.skip_git =
-                        GitHandler::run::<false>(destination, path_env).unwrap_or(false);
-                }
-            }
+                GitHandler::run::<false>(destination, path_env)
+            };
+            create_options.skip_git = !created.unwrap_or(false);
         }
 
         if !create_options.skip_install {
@@ -1161,10 +1154,6 @@ impl CreateCommand {
             for task in &postinstall_tasks {
                 exec_task(task, destination, path_env, npm_client_);
             }
-        }
-
-        if !create_options.skip_install && !create_options.skip_git {
-            create_options.skip_git = !GitHandler::wait();
         }
 
         Output::print_error("\n");
@@ -2354,59 +2343,7 @@ impl CreateListExamplesCommand {
 
 struct GitHandler;
 
-static SUCCESS: AtomicU32 = AtomicU32::new(0);
-// bun_threading has no top-level Thread wrapper yet,
-// so use std::thread::JoinHandle directly (CLI-only, no JSC interaction).
-// PORTING.md §Global mutable state: written in `spawn`, taken in `wait`, both
-// on the main CLI thread → RacyCell.
-static THREAD: bun_core::RacyCell<Option<std::thread::JoinHandle<()>>> =
-    bun_core::RacyCell::new(None);
-
 impl GitHandler {
-    fn spawn(destination: &[u8], path: &[u8], verbose: bool) {
-        SUCCESS.store(0, Ordering::Relaxed);
-
-        // Own copies so the spawned closure is `'static` without any lifetime
-        // extension.
-        let destination: Box<[u8]> = Box::from(destination);
-        let path: Box<[u8]> = Box::from(path);
-        let thread = match std::thread::Builder::new()
-            .spawn(move || Self::spawn_thread(&destination, &path, verbose))
-        {
-            Ok(t) => t,
-            Err(err) => {
-                bun_core::pretty_errorln!("<r><red>{}<r>", err);
-                Global::exit(1);
-            }
-        };
-        // SAFETY: single-threaded CLI; written once before wait()
-        unsafe { *THREAD.get() = Some(thread) };
-    }
-
-    fn spawn_thread(destination: &[u8], path: &[u8], verbose: bool) {
-        Output::Source::configure_named_thread(bun_core::zstr!("git"));
-        let outcome = if verbose {
-            Self::run::<true>(destination, path).unwrap_or(false)
-        } else {
-            Self::run::<false>(destination, path).unwrap_or(false)
-        };
-
-        SUCCESS.store(if outcome { 1 } else { 2 }, Ordering::Release);
-        Futex::wake(&SUCCESS, 1);
-        Output::flush();
-    }
-
-    fn wait() -> bool {
-        while SUCCESS.load(Ordering::Acquire) == 0 {
-            Futex::wait_forever(&SUCCESS, 0);
-        }
-
-        let outcome = SUCCESS.load(Ordering::Acquire) == 1;
-        // SAFETY: THREAD set in spawn() on this same thread before wait() called
-        let _ = unsafe { (*THREAD.get()).take() }.unwrap().join();
-        outcome
-    }
-
     fn run<const VERBOSE: bool>(destination: &[u8], path: &[u8]) -> crate::Result<bool> {
         let git_start = bun_core::time::nano_timestamp();
 
@@ -2429,14 +2366,9 @@ impl GitHandler {
         //   Time (mean ± σ):     306.7 ms ±   6.1 ms    [User: 31.7 ms, System: 269.8 ms]
         //   Range (min … max):   299.5 ms … 318.8 ms    10 runs
 
-        // SAFETY: single-threaded CLI access to module-level static path buffer (note: this fn
-        // may run on the git thread; BUN_PATH_BUF is also touched on main thread for `--open`.
-        // The two uses are sequenced — git runs before `--open` block.)
+        // SAFETY: single-threaded CLI access to module-level static path buffer
         let bun_path_buf = unsafe { &mut *BUN_PATH_BUF.get() };
-        // `bun.spawnSync` on Windows drives `uv_spawn` and needs a uv loop. This fn
-        // runs on the dedicated git thread (see `GitHandler::spawn`), so use the
-        // *thread-local* `MiniEventLoop` singleton — `init_global` is `thread_local!`-backed,
-        // so the main thread's loop is not touched (driving it cross-thread would be libuv UB).
+        // `bun.spawnSync` on Windows drives `uv_spawn` and needs a uv loop.
         #[cfg(windows)]
         let win_loop = bun_event_loop::EventLoopHandle::init_mini(
             bun_event_loop::MiniEventLoop::init_global(None, None),

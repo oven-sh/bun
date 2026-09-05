@@ -444,4 +444,75 @@ describe.concurrent("--cpu-prof", () => {
     const mdContent = readFileSync(join(String(dir), mdFiles[0]), "utf-8");
     expect(mdContent).toContain("# CPU Profile");
   });
+
+  // Smoke test for the raced sampler path fixed in oven-sh/WebKit#395 (the
+  // deterministic regression test lives there, in TestWebKitAPI): a sample
+  // landing inside a VM entry/exit transition used to crash the profiler's
+  // stack walker. A callback with a huge declared parameter count invoked
+  // from native spends most of its runtime in doVMEntry's argument pad loop,
+  // which runs before vm.topEntryFrame is stored, so this workload keeps the
+  // sampler crossing that window. No process.nextTick leg on purpose: a
+  // non-empty tick queue drains the microtask jobs nested inside the
+  // tick-drain VM entry instead of as outermost entries, and only outermost
+  // entries hit the raced state.
+  //
+  // Deadline: the Windows sampler effectively ticks at the ~15.6ms timer
+  // quantum (see the header comment), and only samples taken while
+  // vm.entryScope is set are recorded, a minority of this loop's wall time;
+  // 150ms is ~9 ticks, about one expected recorded sample, so Windows gets
+  // 1.5s to keep the samples assertion reliable.
+  test("sampler survives VM entry churn from callbacks with huge parameter counts", async () => {
+    using dir = tempDir("cpu-prof-entry-churn", {
+      "churn.js": `
+        const params = Array.from({ length: 2000 }, (_, i) => "p" + i).join(",");
+        // One huge-arity callback per native entry point, each counting its own
+        // calls, so the run proves every path was exercised.
+        const counts = { immediate: 0, then: 0, microtask: 0, message: 0 };
+        globalThis.counts = counts;
+        const callback = key => new Function(params, "counts." + key + "++;");
+        const onImmediate = callback("immediate");
+        const onThen = callback("then");
+        const onMicrotask = callback("microtask");
+        const { port1, port2 } = new MessageChannel();
+        port1.onmessage = callback("message");
+        const deadline = performance.now() + ${isWindows ? 1500 : 150};
+        function loop() {
+          if (performance.now() >= deadline) {
+            const missing = Object.keys(counts).filter(key => counts[key] === 0);
+            console.log("calls made:", missing.length === 0 ? "all" : "missing " + missing.join(","));
+            port1.close();
+            port2.close();
+            return;
+          }
+          setImmediate(onImmediate);
+          Promise.resolve().then(onThen);
+          queueMicrotask(onMicrotask);
+          port2.postMessage(1);
+          setImmediate(loop);
+        }
+        loop();
+      `,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "--cpu-prof", "--cpu-prof-interval=50", "churn.js"],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "inherit",
+    });
+
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+
+    expect(stdout).toContain("calls made: all");
+
+    // The profiler must actually have sampled the churn, or the test exercised
+    // nothing.
+    const profileFile = readdirSync(String(dir)).find(file => file.endsWith(".cpuprofile"));
+    expect(profileFile).toBeDefined();
+    const profile = JSON.parse(readFileSync(join(String(dir), profileFile!), "utf-8"));
+    expect(profile.samples.length).toBeGreaterThan(0);
+
+    expect(exitCode).toBe(0);
+  });
 });

@@ -6027,7 +6027,7 @@ impl VirtualMachine {
     fn print_error_instance_js(
         &mut self,
         error_instance: JSValue,
-        exception_list: Option<&mut ExceptionList>,
+        mut exception_list: Option<&mut ExceptionList>,
         formatter: &mut crate::console_object::Formatter,
         writer: &mut bun_core::io::Writer,
         allow_ansi_color: bool,
@@ -6078,11 +6078,14 @@ impl VirtualMachine {
         let exception: *mut ZigException = exception_holder.zig_exception();
         let mut source_code_slice: Option<bun_core::Utf8Bytes<'static>> = None;
 
+        // `remap_zig_exception` appends this error to the list on its way out.
+        // The body then recurses into `cause` / AggregateError children with
+        // the same list, so only reborrow it here.
         self.remap_zig_exception(
             // SAFETY: `exception` points into stack-local `exception_holder`.
             unsafe { &mut *exception },
             error_instance,
-            exception_list,
+            exception_list.as_deref_mut(),
             &mut exception_holder.need_to_clear_parser_arena_on_deinit,
             &mut source_code_slice,
             formatter.error_display_level != crate::console_object::ErrorDisplayLevel::Warn,
@@ -6093,8 +6096,7 @@ impl VirtualMachine {
             // SAFETY: see above.
             unsafe { &mut *exception },
             error_instance,
-            None, // Note: `exception_list` was already
-            // consumed by `remap_zig_exception` above (only writer).
+            exception_list,
             formatter,
             writer,
             allow_ansi_color,

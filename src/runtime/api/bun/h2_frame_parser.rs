@@ -1100,6 +1100,9 @@ pub struct H2FrameParser {
     dispatch_depth: Cell<u32>,
     max_rejected_streams: Cell<u32>,
     max_session_invalid_frames: Cell<u32>,
+    stream_reset_burst: Cell<u32>,
+    stream_reset_rate: Cell<u32>,
+    goaway_sent: Cell<bool>,
     max_outstanding_settings: Cell<u32>,
     outstanding_settings: Cell<u32>,
     rejected_streams: Cell<u32>,
@@ -2200,6 +2203,7 @@ impl H2FrameParser {
             BStr::new(debug_data),
             emit_error
         );
+        self.goaway_sent.set(true);
         let mut buffer = [0u8; FrameHeader::BYTE_SIZE + 8];
         let mut stream = FixedBufferStream::new(&mut buffer);
 
@@ -3555,6 +3559,10 @@ impl H2FrameParser {
             engine.max_header_list_pairs = self.max_header_list_pairs.get();
             engine.max_settings = self.max_settings.get();
             engine.max_invalid_frames = self.max_session_invalid_frames.get();
+            engine.set_stream_reset_limit(
+                self.stream_reset_burst.get(),
+                self.stream_reset_rate.get(),
+            );
             // Outbound-ACK-flood counter: only reset when the transport actually
             // drained (nghttp2 decrements per-send). Resetting per receive() lets
             // a peer that never reads keep it under the limit forever.
@@ -3928,6 +3936,10 @@ impl crate::api::h2::connection::Sink for H2FrameParser {
         // The legacy outbound created an entry in the legacy streams map for every locally
         // initiated stream (request/respond), so membership there means "we sent HEADERS on it".
         self.streams.get().contains_key(&stream_id)
+    }
+
+    fn goaway_sent(&self) -> bool {
+        self.goaway_sent.get()
     }
 
     fn highest_started_stream_id(&self) -> u32 {
@@ -7587,6 +7599,9 @@ impl H2FrameParser {
             pending_settings_window_submissions: JsCell::new(Vec::new()),
             max_rejected_streams: Cell::new(100),
             max_session_invalid_frames: Cell::new(1000),
+            stream_reset_burst: Cell::new(crate::api::h2::connection::DEFAULT_STREAM_RESET_BURST),
+            stream_reset_rate: Cell::new(crate::api::h2::connection::DEFAULT_STREAM_RESET_RATE),
+            goaway_sent: Cell::new(false),
             max_outstanding_settings: Cell::new(10),
             outstanding_settings: Cell::new(0),
             rejected_streams: Cell::new(0),
@@ -7725,6 +7740,15 @@ impl H2FrameParser {
                             .max_session_invalid_frames
                             .set(Self::session_option_u32(max_session_invalid_frames));
                     }
+                }
+                // node: MathMax(1, x) per key (util.js), applied when both are given (node_http2.cc).
+                if let Some(reset_burst) = settings_js.get(global_object, "streamResetBurst")?
+                    && let Some(reset_rate) = settings_js.get(global_object, "streamResetRate")?
+                    && reset_burst.is_number()
+                    && reset_rate.is_number()
+                {
+                    this_ref.stream_reset_burst.set(reset_burst.to_u32().max(1));
+                    this_ref.stream_reset_rate.set(reset_rate.to_u32().max(1));
                 }
                 if let Some(max_outstanding_settings) =
                     settings_js.get(global_object, "maxOutstandingSettings")?

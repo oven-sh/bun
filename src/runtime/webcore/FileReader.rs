@@ -56,9 +56,7 @@ pub struct FileReader {
     pub(crate) event_loop: Cell<EventLoopHandle>,
     pub(crate) lazy: JsCell<Lazy>,
     pub(crate) buffered: JsCell<Vec<u8>>,
-    /// A read error that arrived with no pending pull to settle: the failing
-    /// read ran synchronously inside `on_pull`, or landed between pulls. The
-    /// next `on_pull` returns it once the buffered bytes are delivered.
+    /// A read error that arrived with no pending pull. The next `on_pull` returns it.
     pub(crate) read_error: JsCell<Option<sys::Error>>,
     /// Read-only after construction.
     pub(crate) highwater_mark: usize,
@@ -939,9 +937,8 @@ impl FileReader {
             self.buffered.set(Vec::new());
         }
 
-        // Pin across the dispatch below: `sink.end()` and `p.run()` run user
-        // JS, and anything there that reaches on_reader_done would drop the
-        // across-read ref and let a GC free this box before the
+        // Pin across `sink.end()` / `p.run()`: they run user JS, which can
+        // reach on_reader_done and drop the across-read ref before the
         // `waiting_for_on_reader_done` read below.
         let parent = self.parent();
         // SAFETY: see `parent()`.
@@ -973,9 +970,7 @@ impl FileReader {
         let _ = unsafe { Source::decrement_count(parent) };
     }
 
-    /// A read error is terminal, and a consumer never cancels an errored
-    /// stream. Release the poll and the fd here: a registered poll keeps the
-    /// event loop alive.
+    /// An errored stream is never cancelled, so release the poll and the fd here.
     fn close_after_error(&self) {
         if self.done.get() {
             return;
@@ -985,15 +980,12 @@ impl FileReader {
         self.reader().deinit();
     }
 
-    /// `true` once the reader has nothing more to deliver. A stored read error
-    /// still has to reach the consumer, so it keeps the stream open for one
-    /// more pull.
+    /// Done, with no stored read error left for one more pull to return.
     fn reader_finished(&self) -> bool {
         self.reader().is_done() && self.read_error.get().is_none()
     }
 
-    /// What a pull gets once the reader is done: the stored read error, or a
-    /// clean end.
+    /// The stored read error, or a clean end.
     fn end_of_reader(&self) -> streams::Result {
         match self.read_error.replace(None) {
             Some(err) => streams::Result::Err(streams::StreamError::Error(err)),

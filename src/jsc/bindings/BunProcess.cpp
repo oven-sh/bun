@@ -813,9 +813,13 @@ JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(Process_functionDlopen, __attribute__((
     return JSValue::encode(resultValue);
 }
 
+// A read is umask(0) then umask(old); a worker's read must not interleave with the main thread's set.
+static WTF::Lock umaskLock;
+
 JSC_DEFINE_HOST_FUNCTION(Process_functionUmask, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
     if (callFrame->argumentCount() == 0 || callFrame->argument(0).isUndefined()) {
+        Locker locker { umaskLock };
         mode_t currentMask = umask(0);
         umask(currentMask);
         return JSValue::encode(jsNumber(currentMask));
@@ -823,6 +827,9 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionUmask, (JSGlobalObject * globalObject, 
 
     auto& vm = JSC::getVM(globalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
+    if (WebCore::clientData(vm)->isWorkerVM()) {
+        return throwError(globalObject, throwScope, ErrorCode::ERR_WORKER_UNSUPPORTED_OPERATION, "Setting process.umask() is not supported in workers"_s);
+    }
     auto value = callFrame->argument(0);
 
     mode_t newUmask;
@@ -839,6 +846,7 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionUmask, (JSGlobalObject * globalObject, 
         newUmask = JSC::toUInt32(value.asNumber());
     }
 
+    Locker locker { umaskLock };
     return JSC::JSValue::encode(JSC::jsNumber(umask(newUmask)));
 }
 
@@ -3762,6 +3770,7 @@ void Process::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     visitor.append(thisObject->m_uncaughtExceptionCaptureCallback);
     visitor.append(thisObject->m_nextTickFunction);
     visitor.append(thisObject->m_cachedCwd);
+    visitor.append(thisObject->m_workerTitle);
     visitor.append(thisObject->m_argv);
     visitor.append(thisObject->m_execArgv);
     visitor.append(thisObject->m_onWarning);
@@ -4634,6 +4643,9 @@ JSC_DEFINE_CUSTOM_GETTER(processTitle, (JSC::JSGlobalObject * globalObject, JSC:
 {
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
+    if (auto* process = dynamicDowncast<Process>(JSValue::decode(thisValue)); process && process->workerTitle()) {
+        return JSValue::encode(process->workerTitle());
+    }
 #if !OS(WINDOWS)
     auto* result = jsString(globalObject->vm(), Bun__Process__getTitle(globalObject).transferToWTFString());
     RETURN_IF_EXCEPTION(scope, {});
@@ -4669,6 +4681,14 @@ JSC_DEFINE_CUSTOM_SETTER(setProcessTitle, (JSC::JSGlobalObject * globalObject, J
     JSC::JSString* jsString = dynamicDowncast<JSC::JSString>(JSValue::decode(value));
     if (!thisObject || !jsString) {
         return false;
+    }
+    if (WebCore::clientData(vm)->isWorkerVM()) {
+        auto* process = dynamicDowncast<Process>(thisObject);
+        if (!process) {
+            return false;
+        }
+        process->setWorkerTitle(vm, jsString);
+        return true;
     }
     WTF::String wtfStr = jsString->value(globalObject);
     RETURN_IF_EXCEPTION(scope, false);
@@ -5037,6 +5057,38 @@ const JSC::ClassInfo Process::s_info
     = { "Process"_s, &Base::s_info, &processObjectTable, nullptr,
           CREATE_METHOD_TABLE(Process) };
 
+JSC_DEFINE_HOST_FUNCTION(Process_functionUnsupportedInWorker, (JSGlobalObject * globalObject, CallFrame* callFrame))
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto name = uncheckedDowncast<JSFunction>(callFrame->jsCallee())->name(vm);
+    return throwError(globalObject, scope, ErrorCode::ERR_WORKER_UNSUPPORTED_OPERATION, makeString("process."_s, name, "() is not supported in workers"_s));
+}
+
+// Node's list from lib/internal/process/worker_thread_only.js; each acts on the whole process.
+static void installWorkerProcessStubs(JSC::VM& vm, Process* process)
+{
+    static constexpr ASCIILiteral unsupportedInWorker[] = {
+        "abort"_s,
+        "chdir"_s,
+#if !OS(WINDOWS)
+        "setuid"_s,
+        "seteuid"_s,
+        "setgid"_s,
+        "setegid"_s,
+        "setgroups"_s,
+        "initgroups"_s,
+#endif
+    };
+    auto* globalObject = process->globalObject();
+    auto disabled = Identifier::fromString(vm, "disabled"_s);
+    for (auto name : unsupportedInWorker) {
+        auto* stub = JSFunction::create(vm, globalObject, 0, name, Process_functionUnsupportedInWorker, ImplementationVisibility::Public);
+        stub->putDirect(vm, disabled, jsBoolean(true), 0);
+        process->putDirect(vm, Identifier::fromString(vm, name), stub, 0);
+    }
+}
+
 void Process::finishCreation(JSC::VM& vm)
 {
     Base::finishCreation(vm);
@@ -5070,8 +5122,13 @@ void Process::finishCreation(JSC::VM& vm)
     putDirect(vm, vm.propertyNames->toStringTagSymbol, jsString(vm, String("process"_s)), 0);
     putDirect(vm, Identifier::fromString(vm, "_exiting"_s), jsBoolean(false), 0);
 
+    auto* clientData = WebCore::clientData(vm);
+    if (clientData->isWorkerVM()) {
+        installWorkerProcessStubs(vm, this);
+    }
+
     // No-op stubs Node only has on the main thread; a worker_threads Worker's process lacks them.
-    if (!WebCore::clientData(vm)->isNodeWorkerVM()) {
+    if (!clientData->isNodeWorkerVM()) {
         putDirectNativeFunction(vm, globalObject(), Identifier::fromString(vm, "_debugEnd"_s), 0, Process_stubEmptyFunction, ImplementationVisibility::Public, NoIntrinsic, 0);
         putDirectNativeFunction(vm, globalObject(), Identifier::fromString(vm, "_debugProcess"_s), 0, Process_stubEmptyFunction, ImplementationVisibility::Public, NoIntrinsic, 0);
         putDirectNativeFunction(vm, globalObject(), Identifier::fromString(vm, "_startProfilerIdleNotifier"_s), 0, Process_stubEmptyFunction, ImplementationVisibility::Public, NoIntrinsic, 0);

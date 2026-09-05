@@ -3,6 +3,7 @@ import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isDebug, isLinux, isPosix, isWindows, mergeWindowEnvs, tempDir } from "harness";
 import { rmSync } from "node:fs";
 import { constants as osConstants } from "node:os";
+import { inflateSync } from "node:zlib";
 import path from "path";
 const { getMachOImageZeroOffset } = crash_handler;
 
@@ -15,11 +16,51 @@ const noReportEnv = { ...bunEnv, BUN_CRASH_REPORT_URL: "", BUN_ENABLE_CRASH_REPO
 // without it the fallback printer has no Rust symbol names to assert on.
 const hasSymbolizer = !!(Bun.which("llvm-symbolizer") || Bun.which("llvm-symbolizer-21"));
 
+const fixture = path.join(import.meta.dir, "fixture-crash.js");
+
+// `panic` calls the crash handler's `panic_impl` directly. `rustPanic` and
+// `rustUnwrap` are a real `panic!` and a real `Result::unwrap()` on an `Err`,
+// which is how every `.unwrap()` / `assert!` / `unreachable!()` in Bun crashes:
+// they reach the crash handler through the `std::panic` hook it installs. The
+// literal `panic!` arrives there as a `&'static str` payload; std formats the
+// unwrapped `Err` into a `String` payload. All three must print the same report.
+const panicApproaches = [
+  ["panic", "invoked crashByPanic() handler"],
+  ["rustPanic", "invoked crashByRustPanic() handler"],
+  ["rustUnwrap", 'called `Result::unwrap()` on an `Err` value: "invoked crashByRustUnwrap() handler"'],
+] as const;
+
+// In trace-string mode (release builds, or --debug-crash-handler-use-trace-string)
+// the report ends with the trace string on its own line after "please file a
+// GitHub issue using the link below:". With noReportEnv's empty base URL it is
+// printed as just the path, `/{version}/...`.
+function traceStringFromReport(stderr: string): string {
+  const traceString = (stderr.split("using the link below:")[1] ?? "").trim().split(/\s+/)[0];
+  expect(traceString).toBeTruthy();
+  return traceString;
+}
+
+// A trace string is `{base}/{version}/{header}{frames...}{VLQ 0}{reason}`. For
+// a panic the reason is the tag `0` followed by the zlib-compressed, base64
+// message (see `encode_trace_string` in src/crash_handler/lib.rs). The frames
+// are variable-length, so find the terminator by trying each `A0` (`A` is the
+// VLQ encoding of 0) until the remainder inflates.
+function panicMessageFromTraceString(traceString: string): string | undefined {
+  const pathname = new URL(traceString, "http://trace.invalid").pathname;
+  const payload = pathname.slice(pathname.indexOf("/", 1) + 1);
+  for (let i = payload.indexOf("A0"); i !== -1; i = payload.indexOf("A0", i + 1)) {
+    try {
+      return inflateSync(Buffer.from(payload.slice(i + 2), "base64")).toString();
+    } catch {}
+  }
+  return undefined;
+}
+
 test.if(isDebug && isLinux && hasSymbolizer)(
   "crash trace starts at the crash site, not inside the crash handler",
   async () => {
     await using proc = Bun.spawn({
-      cmd: [bunExe(), path.join(import.meta.dir, "fixture-crash.js"), "panic"],
+      cmd: [bunExe(), fixture, "panic"],
       env: noReportEnv,
       stdio: ["ignore", "pipe", "pipe"],
     });
@@ -43,6 +84,114 @@ test.if(isDebug && isLinux && hasSymbolizer)(
   },
   60_000, // symbolizing the debug binary takes several seconds
 );
+
+// For a real Rust panic the innermost frames are std's panic machinery, so the
+// crash site is not frame 0, but it must be in the trace and the crash
+// handler's own frames must not be.
+describe.if(isDebug && isLinux && hasSymbolizer)("Rust panic trace includes the panic site", () => {
+  test.each([
+    ["rustPanic", "js_rust_panic"],
+    ["rustUnwrap", "js_rust_unwrap"],
+  ] as const)(
+    "%s",
+    async (approach, crashSite) => {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), fixture, approach],
+        env: noReportEnv,
+        stdio: ["ignore", "pipe", "pipe"],
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      expect(stderr).toContain("panic(main thread): ");
+      expect(stdout).toContain(crashSite);
+      expect(stdout).not.toContain("capture_stack_trace");
+      expect(exitCode).not.toBe(0);
+    },
+    60_000, // symbolizing the debug binary takes several seconds
+  );
+});
+
+describe("panics through panic_impl and through the std panic hook print the same report", () => {
+  test.concurrent.each(panicApproaches)("%s", async (approach, message) => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), fixture, approach, "--debug-crash-handler-use-trace-string"],
+      env: noReportEnv,
+      stdio: ["ignore", "ignore", "pipe"],
+    });
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+
+    // Metadata header, e.g. "Bun Debug v1.4.0 (eabb96de7) Linux x64".
+    expect(stderr).toMatch(/^Bun (Debug |Canary )?v\d+\.\d+\.\d+/m);
+    // The message is reported on its own, with no `file:line:col` suffix.
+    expect(stderr).toContain(`panic(main thread): ${message}\n`);
+    expect(stderr).toContain("oh no: Bun has crashed. This indicates a bug in Bun, not your code.");
+    expect(panicMessageFromTraceString(traceStringFromReport(stderr))).toBe(message);
+    expect(exitCode).not.toBe(0);
+  });
+});
+
+// `--watch` sets `auto_reload_on_crash`, and `crash_handler()` restarts the
+// process after it has printed the report. The hook used to end the process
+// without checking the flag, so a Rust panic under `--watch` stayed dead while
+// a segfault or a `panic_impl` crash restarted.
+describe.if(isPosix)("--watch restarts the process after a panic", () => {
+  test.concurrent.each(panicApproaches)("%s", async (approach, message) => {
+    const proc = Bun.spawn({
+      cmd: [bunExe(), "--watch", fixture, approach, "--debug-crash-handler-use-trace-string"],
+      env: noReportEnv,
+      stdio: ["ignore", "ignore", "pipe"],
+    });
+    try {
+      // The restarted process crashes and restarts again, so stop at the first
+      // restart notice instead of waiting for the process to exit.
+      const restartNotice = "Bun is auto-restarting due to crash";
+      const decoder = new TextDecoder();
+      let stderr = "";
+      for await (const chunk of proc.stderr) {
+        stderr += decoder.decode(chunk, { stream: true });
+        if (stderr.includes(restartNotice)) break;
+      }
+
+      expect(stderr).toContain(`panic(main thread): ${message}\n`);
+      expect(stderr).toContain(restartNotice);
+    } finally {
+      proc.kill("SIGKILL");
+      await proc.exited;
+    }
+  });
+});
+
+// The one thing the panic hook does besides calling the crash handler: a panic
+// payload can be arbitrarily long (an `assert_eq!` dump), so it reports at most
+// MAX_MESSAGE_BYTES (1024) of it, cut on a char boundary (see `rust_panic_hook`
+// in src/crash_handler/lib.rs). `rustPanic(message)` panics with the given
+// message, which reaches the hook as a `String` payload.
+describe("the panic hook caps the reported message at 1024 bytes", () => {
+  const a = (n: number) => Buffer.alloc(n, "a").toString();
+  // [name, JS expression the child panics with, what the report must contain]
+  test.concurrent.each([
+    ["a 1024-byte message is reported whole", `Buffer.alloc(1019, "a") + ":tail"`, `${a(1019)}:tail`],
+    ["a longer message is cut after 1024 bytes", `Buffer.alloc(1024, "a") + ":tail"`, a(1024)],
+    // Bytes 1023-1024 are one two-byte char; cutting at byte 1024 would split it.
+    ["the cut does not split a multi-byte char", `Buffer.alloc(1023, "a") + "\\u00e9"`, a(1023)],
+  ])("%s", async (_name, messageExpr, reported) => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `require("bun:internal-for-testing").crash_handler.rustPanic(${messageExpr})`,
+        "--debug-crash-handler-use-trace-string",
+      ],
+      env: noReportEnv,
+      stdio: ["ignore", "ignore", "pipe"],
+    });
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+
+    expect(stderr.match(/^panic\(main thread\): (.*)$/m)?.[1]).toBe(reported);
+    expect(panicMessageFromTraceString(traceStringFromReport(stderr))).toBe(reported);
+    expect(exitCode).not.toBe(0);
+  });
+});
 
 // `crash()` resets fatal-signal dispositions to SIG_DFL before re-raising so
 // that JS-registered listeners (`process.on("SIGABRT")` etc., installed by
@@ -96,37 +245,25 @@ test.if(isPosix)(
 // reported "illegal hardware instruction" for every crash and parent
 // processes could not distinguish a panic from a CPU/codegen fault.
 describe.if(isPosix)("terminal signal reflects the crash cause", () => {
-  test.each([
-    ["panic", "SIGABRT"],
-    ["outOfMemory", "SIGABRT"],
-    ["segfault", "SIGSEGV"],
-    ["abort", "SIGABRT"],
-    ["trap", "SIGTRAP"],
-  ] as const)("%s terminates with %s", async (approach, expectedSignal) => {
+  test.concurrent.each([
+    ["panic", "SIGABRT", "invoked crashByPanic() handler"],
+    ["rustPanic", "SIGABRT", "invoked crashByRustPanic() handler"],
+    ["rustUnwrap", "SIGABRT", "called `Result::unwrap()` on an `Err` value"],
+    ["outOfMemory", "SIGABRT", "Bun has run out of memory"],
+    ["segfault", "SIGSEGV", "Segmentation fault at address"],
+    ["abort", "SIGABRT", "abort() called"],
+    ["trap", "SIGTRAP", "Trap instruction"],
+  ] as const)("%s terminates with %s", async (approach, expectedSignal, expectedMessage) => {
     await using proc = Bun.spawn({
-      cmd: [
-        bunExe(),
-        path.join(import.meta.dir, "fixture-crash.js"),
-        approach,
-        "--debug-crash-handler-use-trace-string",
-      ],
+      cmd: [bunExe(), fixture, approach, "--debug-crash-handler-use-trace-string"],
       env: noReportEnv,
-      stdio: ["ignore", "pipe", "pipe"],
+      stdio: ["ignore", "ignore", "pipe"],
     });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
 
-    if (approach === "segfault") {
-      expect(stderr).toContain("Segmentation fault at address");
-    } else if (approach === "panic") {
-      expect(stderr).toContain("invoked crashByPanic() handler");
-    } else if (approach === "abort") {
-      expect(stderr).toContain("abort() called");
-    } else if (approach === "trap") {
-      expect(stderr).toContain("Trap instruction");
-    }
+    expect(stderr).toContain(expectedMessage);
     expect(proc.signalCode).toBe(expectedSignal);
     expect(exitCode).not.toBe(0);
-    void stdout;
   });
 });
 
@@ -198,7 +335,7 @@ describe.if(isPosix)("cwd deleted before startup", () => {
 // handler's own frames in the trace and none of the bun callers.
 test.if(isWindows && isDebug)("Windows: segfault inside a system DLL captures the bun callers", async () => {
   await using proc = Bun.spawn({
-    cmd: [bunExe(), path.join(import.meta.dir, "fixture-crash.js"), "segfaultInDll"],
+    cmd: [bunExe(), fixture, "segfaultInDll"],
     env: noReportEnv,
     stdio: ["ignore", "pipe", "pipe"],
   });
@@ -388,7 +525,7 @@ test("raise ignoring panic handler does not trigger the panic handler", async ()
   });
 
   const proc = Bun.spawn({
-    cmd: [bunExe(), path.join(import.meta.dir, "fixture-crash.js"), "raiseIgnoringPanicHandler"],
+    cmd: [bunExe(), fixture, "raiseIgnoringPanicHandler"],
     env: mergeWindowEnvs([
       bunEnv,
       {
@@ -437,12 +574,7 @@ describe.if(isPosix)("SIGABRT/SIGTRAP are caught by the crash handler", () => {
     });
 
     await using proc = Bun.spawn({
-      cmd: [
-        bunExe(),
-        path.join(import.meta.dir, "fixture-crash.js"),
-        approach,
-        "--debug-crash-handler-use-trace-string",
-      ],
+      cmd: [bunExe(), fixture, approach, "--debug-crash-handler-use-trace-string"],
       env: mergeWindowEnvs([
         bunEnv,
         {
@@ -583,7 +715,8 @@ describe.if(isPosix)("process.kill() aimed at the process itself is not reported
 });
 
 describe("automatic crash reporter", () => {
-  for (const approach of ["panic", "segfault", "outOfMemory"]) {
+  const panicMessages = new Map<string, string>(panicApproaches);
+  for (const approach of ["panic", "rustPanic", "rustUnwrap", "segfault", "outOfMemory"]) {
     test(`${approach} should report`, async () => {
       let sent = false;
       const resolve_handler = Promise.withResolvers();
@@ -600,7 +733,7 @@ describe("automatic crash reporter", () => {
       });
 
       const proc = Bun.spawn({
-        cmd: [bunExe(), path.join(import.meta.dir, "fixture-crash.js"), approach],
+        cmd: [bunExe(), fixture, approach],
         env: mergeWindowEnvs([
           bunEnv,
           {
@@ -616,16 +749,25 @@ describe("automatic crash reporter", () => {
       const stderr = await proc.stderr.text();
       console.log(stderr);
 
-      await resolve_handler.promise;
-
-      expect(exitCode).not.toBe(0);
-      expect(stderr).toContain(server.url.toString());
+      // Assert on the report before waiting for the upload, so a crash that
+      // never reports fails here instead of timing out on the promise below.
+      const traceString = traceStringFromReport(stderr);
+      expect(traceString).toStartWith(server.url.toString());
       if (approach !== "outOfMemory") {
         expect(stderr).toContain("oh no: Bun has crashed. This indicates a bug in Bun, not your code");
       } else {
         expect(stderr.toLowerCase()).toContain("out of memory");
         expect(stderr.toLowerCase()).not.toContain("panic");
       }
+      // bun.report shows the panic message it decodes from the trace string,
+      // so a real Rust panic must encode its message exactly like panic_impl.
+      const panicMessage = panicMessages.get(approach);
+      if (panicMessage !== undefined) {
+        expect(panicMessageFromTraceString(traceString)).toBe(panicMessage);
+      }
+      expect(exitCode).not.toBe(0);
+
+      await resolve_handler.promise;
       expect(sent).toBe(true);
     });
   }
@@ -654,7 +796,7 @@ test.if(isWindows)(
       await Bun.write(path.join(String(dir), "powershell.exe"), Bun.file(bunExe()));
 
       await using proc = Bun.spawn({
-        cmd: [bunExe(), path.join(import.meta.dir, "fixture-crash.js"), "panic"],
+        cmd: [bunExe(), fixture, "panic"],
         cwd: String(dir),
         env: mergeWindowEnvs([
           bunEnv,

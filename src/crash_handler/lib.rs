@@ -615,9 +615,9 @@ mod draft {
 
     /// This structure and formatter must be kept in sync with `bun.report`'s decoder implementation.
     #[derive(Clone, Copy)]
-    pub enum CrashReason {
+    pub enum CrashReason<'a> {
         /// From @panic()
-        Panic(&'static [u8]),
+        Panic(&'a [u8]),
         /// "reached unreachable code"
         Unreachable,
 
@@ -638,12 +638,12 @@ mod draft {
         StackOverflow,
 
         /// Either `main` returned an error, or somewhere else in the code a trace string is printed.
-        ZigError(&'static [u8]),
+        ZigError(&'a [u8]),
 
         OutOfMemory,
     }
 
-    impl CrashReason {
+    impl CrashReason<'_> {
         /// Signal to terminate the process with after the crash report has
         /// been printed. Signal-originated crashes re-raise the original
         /// fault so the parent process (and core-dump analyzers) see the
@@ -668,7 +668,7 @@ mod draft {
         }
     }
 
-    impl fmt::Display for CrashReason {
+    impl fmt::Display for CrashReason<'_> {
         fn fmt(&self, writer: &mut fmt::Formatter<'_>) -> fmt::Result {
             match self {
                 CrashReason::Panic(message) => write!(writer, "{}", bstr::BStr::new(message)),
@@ -785,7 +785,7 @@ mod draft {
 
     /// This function is invoked when a crash happens. A crash is classified in `CrashReason`.
     #[cold]
-    pub fn crash_handler(reason: CrashReason, seed: TraceSeed) -> ! {
+    pub fn crash_handler(reason: CrashReason<'_>, seed: TraceSeed) -> ! {
         if cfg!(debug_assertions) {
             Output::disable_scoped_debug_writer();
         }
@@ -1449,8 +1449,7 @@ mod draft {
             if msg == b"reached unreachable code" {
                 CrashReason::Unreachable
             } else {
-                // SAFETY: process is about to abort; the borrow is never invalidated.
-                CrashReason::Panic(unsafe { bun_collections::detach_lifetime(msg) })
+                CrashReason::Panic(msg)
             },
             TraceSeed::BeginAddr(begin_addr),
         );
@@ -1709,144 +1708,21 @@ mod draft {
         std::panic::set_hook(Box::new(rust_panic_hook));
     }
 
-    /// `std::panic` hook: emit the same trace-string + auto-report as the fatal
-    /// `crash_handler()` path, then **abort**.
-    /// With `panic = "abort"` no unwind starts after this hook returns, so there
-    /// are no `catch_unwind` boundaries to reach.
+    /// Omits `info.location()`: release builds use `-Zlocation-detail=none`; the trace has the site.
     #[cold]
     #[inline(never)]
     fn rust_panic_hook(info: &std::panic::PanicHookInfo<'_>) {
-        // Re-entry guard: if the hook itself panics (formatter, write, …), the
-        // recursive entry sees stage>0, prints a one-liner, and returns so the
-        // inner unwind tears the process down rather than looping.
-        let stage = PANIC_STAGE.with(|s| s.get());
-        if stage != 0 {
-            PANIC_STAGE.with(|s| s.set(stage + 1));
-            let stderr = &mut stderr_writer();
-            let _ = write!(
-                stderr,
-                "\npanic: {info}\npanicked during a panic. Aborting.\n"
-            );
-            return;
-        }
-        PANIC_STAGE.with(|s| s.set(1));
+        /// The trace string must fit the compressed message in a fixed buffer (`encode_trace_string`).
+        const MAX_MESSAGE_BYTES: usize = 1024;
 
-        // Just the panic message — no `(file:line:col)` suffix. The call site is
-        // captured in the backtrace and symbolized there. With `-Zlocation-detail=none`
-        // in release the location would be `<redacted>:0:0` anyway.
-        let mut msg_buf = BoundedArray::<u8, 1024>::default();
-        {
-            let payload = info.payload();
-            let msg: &str = if let Some(s) = payload.downcast_ref::<&'static str>() {
-                s
-            } else if let Some(s) = payload.downcast_ref::<std::string::String>() {
-                s.as_str()
-            } else {
-                "<non-string panic payload>"
-            };
-            let _ = write!(msg_buf.writer(), "{msg}");
-        }
-        // SAFETY: `CrashReason::Panic` stores `&'static [u8]` (it was designed for
-        // the `-> !` path). `msg_buf` outlives every read of `reason` below — the
-        // borrow is fully consumed by the `Display`/`TraceString` writes inside
-        // this frame and never escapes.
-        let reason =
-            CrashReason::Panic(unsafe { bun_collections::detach_lifetime(msg_buf.const_slice()) });
-
-        let mut trace_str_buf = BoundedArray::<u8, 1024>::default();
-        {
-            let _panic_guard = PANIC_MUTEX.lock();
-            let writer = &mut stderr_writer();
-
-            let debug_trace = Environment::SHOW_CRASH_TRACE
-                && 'check_flag: {
-                    for arg in bun_core::argv() {
-                        if arg == &b"--debug-crash-handler-use-trace-string"[..] {
-                            break 'check_flag false;
-                        }
-                    }
-                    if is_reporting_enabled() {
-                        break 'check_flag false;
-                    }
-                    true
-                };
-
-            Output::flush();
-            let _ =
-                writer.write_all(b"============================================================\n");
-            let _ = print_metadata(writer);
-
-            if enable_ansi_colors_stderr() {
-                let _ = writer.write_all(&Output::pretty_fmt::<true>("<red>"));
-            }
-            let _ = writer.write_all(b"panic");
-            if enable_ansi_colors_stderr() {
-                let _ = writer.write_all(&Output::pretty_fmt::<true>("<r>"));
-            }
-            let _ = writeln!(writer, ": {}", reason);
-
-            if let Some(action) = CURRENT_ACTION.with(|c| c.get()) {
-                let _ = writeln!(writer, "Crashed while {}", action);
-            }
-
-            let mut addr_buf: [usize; 20] = [0; 20];
-            let idx = debug::capture_stack_trace(debug::return_address(), &mut addr_buf);
-            let trace = StackTrace {
-                index: idx,
-                instruction_addresses: &addr_buf,
-            };
-
-            if debug_trace {
-                dump_stack_trace(&trace, WriteStackTraceLimits::default());
-                let _ = write!(
-                    trace_str_buf.writer(),
-                    "{}",
-                    TraceString {
-                        trace: &trace,
-                        reason,
-                        action: TraceStringAction::ViewTrace,
-                    }
-                );
-            } else {
-                let _ = writer.write_all(b"oh no");
-                if enable_ansi_colors_stderr() {
-                    let _ = writer.write_all(&Output::pretty_fmt::<true>("<r><d>:<r> "));
-                } else {
-                    let _ = writer.write_all(b": ");
-                }
-                let _ = writer.write_all(
-                    b"Bun has crashed. This indicates a bug in Bun, not your code.\n\n\
-                  To send a redacted crash report to Bun's team,\n\
-                  please file a GitHub issue using the link below:\n\n ",
-                );
-                if enable_ansi_colors_stderr() {
-                    let _ = writer.write_all(&Output::pretty_fmt::<true>("<cyan>"));
-                }
-                let _ = write!(
-                    trace_str_buf.writer(),
-                    "{}",
-                    TraceString {
-                        trace: &trace,
-                        reason,
-                        action: TraceStringAction::OpenIssue,
-                    }
-                );
-                let _ = writer.write_all(trace_str_buf.const_slice());
-                let _ = writer.write_all(b"\n");
-            }
-            if enable_ansi_colors_stderr() {
-                let _ = writer.write_all(&Output::pretty_fmt::<true>("<r>\n"));
-            } else {
-                let _ = writer.write_all(b"\n");
-            }
-        }
-
-        report(trace_str_buf.const_slice());
-
-        // A Rust `panic!` is a bug. The process must not continue — with
-        // `panic = "abort"` no unwind starts, so `catch_unwind` boundaries are
-        // unreachable for Rust panics.
-        crash(reason);
+        let msg = info
+            .payload_as_str()
+            .unwrap_or("<non-string panic payload>");
+        let msg = &msg[..msg.floor_char_boundary(MAX_MESSAGE_BYTES)];
+        crash_handler(
+            CrashReason::Panic(msg.as_bytes()),
+            TraceSeed::BeginAddr(debug::return_address()),
+        );
     }
 
     /// Adapter for non-fatal `bun_core::dump_current_stack_trace` callers
@@ -1947,7 +1823,7 @@ mod draft {
     #[cfg(windows)]
     fn classify_exception_windows(
         record: &bun_sys::windows::EXCEPTION_RECORD,
-    ) -> Option<CrashReason> {
+    ) -> Option<CrashReason<'static>> {
         Some(match record.ExceptionCode {
             bun_sys::windows::EXCEPTION_DATATYPE_MISALIGNMENT => CrashReason::DatatypeMisalignment,
             bun_sys::windows::EXCEPTION_ACCESS_VIOLATION => {
@@ -2561,7 +2437,7 @@ mod draft {
 
     struct TraceString<'a> {
         trace: &'a StackTrace<'a>,
-        reason: CrashReason,
+        reason: CrashReason<'a>,
         action: TraceStringAction,
     }
 
@@ -2924,7 +2800,7 @@ mod draft {
     /// On POSIX this re-raises the signal that caused the crash (or SIGABRT
     /// for panics) so the parent sees the real fault and core dumps are
     /// attributed correctly.
-    fn crash(reason: CrashReason) -> ! {
+    fn crash(reason: CrashReason<'_>) -> ! {
         #[cfg(not(windows))]
         {
             let sig = reason.terminal_signal();
@@ -3624,7 +3500,7 @@ mod draft {
         // SAFETY: per the caller contract above, `name` is a valid NUL-terminated C string (non-null).
         let name_bytes = unsafe { bun_core::ffi::cstr(name) }.to_bytes();
         // PORTING.md §Forbidden: no Box::leak. We're on the noreturn path, so a stack
-        // buffer suffices — `panic_impl` erases to &'static for the abort path.
+        // buffer suffices.
         let mut msg = BoundedArray::<u8, 256>::default();
         let _ = write!(
             msg.writer(),
@@ -3641,8 +3517,7 @@ mod draft {
         // SAFETY: caller passes a valid (ptr, len) byte slice
         let msg = unsafe { core::slice::from_raw_parts(message_ptr, message_len) };
         crash_handler(
-            // SAFETY: noreturn — see panic_impl note
-            CrashReason::Panic(unsafe { bun_collections::detach_lifetime(msg) }),
+            CrashReason::Panic(msg),
             TraceSeed::BeginAddr(debug::return_address()),
         );
     }

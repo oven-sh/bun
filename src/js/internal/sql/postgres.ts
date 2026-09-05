@@ -32,6 +32,8 @@ const cmds = ["", "INSERT", "DELETE", "UPDATE", "MERGE", "SELECT", "MOVE", "FETC
 
 const escapeBackslash = /\\/g;
 const escapeQuote = /"/g;
+// A TypedArray's own map coerces each serialized element back to a number.
+const ArrayPrototypeMap = Array.prototype.map;
 
 function arrayEscape(value: string) {
   return value.replace(escapeBackslash, "\\\\").replace(escapeQuote, '\\"');
@@ -142,16 +144,18 @@ function getPostgresArrayType(typeId: number) {
   return POSTGRES_ARRAY_TYPES[typeId] || null;
 }
 
-function arrayValueSerializer(type: ArrayType, is_numeric: boolean, is_json: boolean, value: any) {
+function arrayValueSerializer(type: ArrayType | undefined, is_numeric: boolean, is_json: boolean, value: any) {
   // we do minimal to none type validation, we just try to format nicely and let the server handle if is valid SQL
   // postgres will try to convert string -> array type
   // postgres will emit a nice error saying what value dont have the expected format outputing the value in the error
   if ($isArray(value) || isTypedArray(value)) {
     if (!value.length) return "{}";
     const delimiter = type === "BOX" ? ";" : ",";
-    return `{${value.map(arrayValueSerializer.bind(this, type, is_numeric, is_json)).join(delimiter)}}`;
+    return `{${ArrayPrototypeMap.$call(value, arrayValueSerializer.bind(this, type, is_numeric, is_json)).join(delimiter)}}`;
   }
 
+  // SQL NULL, except in a json[] where null stays the JSON value null.
+  if (value === null && !is_json) return "null";
   switch (typeof value) {
     case "undefined":
       return "null";
@@ -192,9 +196,9 @@ function arrayValueSerializer(type: ArrayType, is_numeric: boolean, is_json: boo
       }
       if (Buffer.isBuffer(value)) {
         const hexValue = value.toString("hex");
-        // bytea array
-        if (type === "BYTEA") {
-          return `"\\x${arrayEscape(hexValue)}"`;
+        // bytea array. The array parser unescapes the backslash, so byteain sees \xHEX.
+        if (type === "BYTEA" || type === undefined) {
+          return `"${arrayEscape("\\x" + hexValue)}"`;
         }
         if (is_json) {
           return `"${arrayEscape(JSON.stringify(hexValue))}"`;
@@ -205,10 +209,10 @@ function arrayValueSerializer(type: ArrayType, is_numeric: boolean, is_json: boo
       return `"${arrayEscape(JSON.stringify(value))}"`;
   }
 }
-function getArrayType(typeNameOrID: number | ArrayType | undefined = undefined): ArrayType {
+function getArrayType(typeNameOrID: number | ArrayType | undefined): ArrayType | undefined {
   const typeOfType = typeof typeNameOrID;
   if (typeOfType === "number") {
-    return getPostgresArrayType(typeNameOrID as number) ?? "JSON";
+    return getPostgresArrayType(typeNameOrID as number) ?? undefined;
   }
   if (typeOfType === "string") {
     const type = (typeNameOrID as string).toUpperCase();
@@ -226,10 +230,9 @@ function getArrayType(typeNameOrID: number | ArrayType | undefined = undefined):
     }
     return type;
   }
-  // default to JSON so we accept most of the types
-  return "JSON";
+  return undefined;
 }
-function serializeArray(values: any[], type: ArrayType) {
+function serializeArray(values: any[], type: ArrayType | undefined) {
   if (!$isArray(values) && !isTypedArray(values)) return values;
 
   if (!values.length) return "{}";
@@ -237,7 +240,15 @@ function serializeArray(values: any[], type: ArrayType) {
   // Only _box (1020) has the ';' delimiter for arrays, all other types use the ',' delimiter
   const delimiter = type === "BOX" ? ";" : ",";
 
-  return `{${values.map(arrayValueSerializer.bind(this, type, isPostgresNumericType(type), isPostgresJsonType(type))).join(delimiter)}}`;
+  return `{${ArrayPrototypeMap.$call(
+    values,
+    arrayValueSerializer.bind(
+      this,
+      type,
+      type !== undefined && isPostgresNumericType(type),
+      type !== undefined && isPostgresJsonType(type),
+    ),
+  ).join(delimiter)}}`;
 }
 
 function wrapPostgresError(error: Error | PostgresErrorOptions) {
@@ -519,7 +530,11 @@ class PostgresAdapter
   bindParam(value: unknown, binding_values: unknown[], index: number): string {
     if (value instanceof SQLArrayParameter) {
       binding_values.push(value.serializedValues);
-      return `$${index}::${value.arrayType}[] `;
+      const { arrayType } = value;
+      if (arrayType === undefined) {
+        return `$${index} `;
+      }
+      return `$${index}::${arrayType}[] `;
     }
     return pushBindParam(this, value, binding_values, index);
   }

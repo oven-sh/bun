@@ -69,9 +69,11 @@ declare module "bun" {
      */
     serializedValues: string;
     /**
-     * The element type of the array, for example `"INT"`
+     * The element type of the array, for example `"INT"`. `undefined` when
+     * no type was given: the parameter is bound without a cast and the
+     * server infers the element type from the context.
      */
-    arrayType: ArrayType;
+    arrayType: ArrayType | undefined;
   }
 
   /**
@@ -760,7 +762,12 @@ declare module "bun" {
     /**
      * Creates a SQL array parameter
      * @param values Array values to bind
-     * @param typeNameOrTypeID Element type name or type ID; defaults to JSON when omitted
+     * @param typeNameOrTypeID Element type name or type ID. When omitted, the
+     * parameter is bound without a cast and the server infers the element
+     * type from the target column, the compared value, or a cast in the
+     * query. Pass the type when the query gives the server no context: a bare
+     * `SELECT ${sql.array([1])}` comes back as the text `{"1"}`, and a
+     * function argument such as `unnest(...)` fails to resolve its type.
      * @returns The array parameter, ready to interpolate into a query
      *
      * @example
@@ -768,9 +775,13 @@ declare module "bun" {
      * const array = sql.array([1, 2, 3], "INT");
      * await sql`CREATE TABLE users_posts (user_id INT, posts_id INT[])`;
      * await sql`INSERT INTO users_posts (user_id, posts_id) VALUES (${user.id}, ${array})`;
+     *
+     * // the server infers int[] from the column and uuid[] from the key
+     * await sql`INSERT INTO users_posts (user_id, posts_id) VALUES (${user.id}, ${sql.array([1, 2, 3])})`;
+     * await sql`SELECT * FROM users WHERE id = ANY(${sql.array(uuids)})`;
      * ```
      */
-    array(values: any[], typeNameOrTypeID?: number | ArrayType): SQLArrayParameter;
+    array(values: any[] | NodeJS.TypedArray, typeNameOrTypeID?: number | ArrayType): SQLArrayParameter;
 
     /**
      * Begins a new transaction.

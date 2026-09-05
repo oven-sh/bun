@@ -321,18 +321,19 @@ pub(crate) fn on_create(
                 )));
             }
 
-            let mut idle_timeout: u16 = value.to_int64().max(0) as u16;
-            if idle_timeout > 960 {
+            let seconds = value.to_int64();
+            if !(0..=960).contains(&seconds) {
                 return Err(global_object.throw_invalid_arguments(format_args!(
-                    "websocket expects idleTimeout to be 960 or less"
+                    "websocket expects idleTimeout to be between 0 and 960"
                 )));
-            } else if idle_timeout > 0 {
-                // uws does not allow idleTimeout to be between (0, 8),
-                // since its timer is not that accurate, therefore round up.
-                idle_timeout = idle_timeout.max(8);
             }
 
-            server.idle_timeout = idle_timeout;
+            // uws::App::ws terminates on an idleTimeout in 1..8 or above 960.
+            server.idle_timeout = if seconds > 0 {
+                (seconds as u16).max(8)
+            } else {
+                0
+            };
         }
     }
     if let Some(value) = object.get(global_object, "backpressureLimit")? {

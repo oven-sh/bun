@@ -149,7 +149,9 @@ impl WebSocketProxyTunnel {
             wrapper: OnceCell::new(),
             socket,
             write_buffer: JsCell::new(StreamBuffer::default()),
-            sni_hostname: Some(Box::<[u8]>::from(sni_hostname)),
+            sni_hostname: Some(Box::<[u8]>::from(bun_http::strip_ipv6_brackets(
+                sni_hostname,
+            ))),
             reject_unauthorized,
         })
     }

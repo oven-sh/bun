@@ -1200,7 +1200,7 @@ fn unregister_abort_tracker_for_socket(socket: uws::InternalSocket) {
 pub(crate) fn get_tls_hostname<'c>(client: &'c HTTPClient<'_>, allow_proxy_url: bool) -> &'c [u8] {
     if allow_proxy_url {
         if let Some(proxy) = &client.http_proxy {
-            return proxy.hostname;
+            return strip_ipv6_brackets(proxy.hostname);
         }
     }
     // Prefer the explicit TLS server_name (e.g. from Node.js servername option)
@@ -1213,11 +1213,22 @@ pub(crate) fn get_tls_hostname<'c>(client: &'c HTTPClient<'_>, allow_proxy_url: 
             // `client.tls_props`) without a `(ptr,len)` round-trip.
             let sn_slice = unsafe { bun_core::ffi::cstr(sn) }.to_bytes();
             if !sn_slice.is_empty() {
-                return sn_slice;
+                return strip_ipv6_brackets(sn_slice);
             }
         }
     }
-    client.url.hostname
+    strip_ipv6_brackets(client.url.hostname)
+}
+
+/// "[::1]" -> "::1"; non-IPv6 values like "[example.com]" pass through verbatim, as in Node.
+pub fn strip_ipv6_brackets(host: &[u8]) -> &[u8] {
+    if host.len() >= 2 && host[0] == b'[' && host[host.len() - 1] == b']' {
+        let inner = &host[1..host.len() - 1];
+        if bun_core::ip_address::is_ipv6_address(inner) {
+            return inner;
+        }
+    }
+    host
 }
 
 // ── support types ───────────────────────────────────────────────────────
@@ -2737,7 +2748,7 @@ impl<'a> HTTPClient<'a> {
                     if let Some(ctx) = h3_ctx {
                         if !h3::ClientContext::as_mut(ctx).connect(
                             self,
-                            self.url.hostname,
+                            strip_ipv6_brackets(self.url.hostname),
                             alt_port,
                         ) {
                             self.fail(crate::Error::ConnectionRefused);
@@ -2795,7 +2806,7 @@ impl<'a> HTTPClient<'a> {
             };
             if !h3::ClientContext::as_mut(ctx).connect(
                 self,
-                self.url.hostname,
+                strip_ipv6_brackets(self.url.hostname),
                 self.url.get_port_auto(),
             ) {
                 self.fail(crate::Error::ConnectionRefused);

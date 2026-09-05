@@ -489,6 +489,19 @@ pub(crate) fn load(
         return Err(crate::Error::LockfileIsMalformedExpected0AtTheEnd);
     }
 
+    // `name_hash` is derived from `name`. Recompute it, as loading `bun.lock` does.
+    {
+        let string_bytes = lockfile.buffers.string_bytes.as_slice();
+        let package::PackageColumnsMut {
+            name: names,
+            name_hash: name_hashes,
+            ..
+        } = lockfile.packages.split_mut();
+        for (name, name_hash) in names.iter().zip(name_hashes.iter_mut()) {
+            *name_hash = semver::string::Builder::string_hash(name.slice(string_bytes));
+        }
+    }
+
     let has_workspace_name_hashes = false;
     // < Bun v1.0.4 stopped right here when reading the lockfile
     // So we add an extra 8 byte tag to say "hey, there's more data here"

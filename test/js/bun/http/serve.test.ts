@@ -2531,7 +2531,8 @@ it("#5859 json", async () => {
     body: new Uint8Array([0xfd]),
   });
 
-  expect(await response.text()).toBe("Failed to parse JSON");
+  // The body decodes to U+FFFD, so req.json() rejects with the error of JSON.parse("\uFFFD").
+  expect(await response.text()).toBe("JSON Parse error: Unrecognized token '\uFFFD'");
   expect(response.ok).toBeFalse();
 });
 

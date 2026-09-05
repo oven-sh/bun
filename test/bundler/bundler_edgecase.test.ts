@@ -3142,6 +3142,176 @@ describe("bundler", () => {
     minifyIdentifiers: false,
     run: { stdout: `a a\nb outer\n["b-arg","local,outer","outer","L,F"]` },
   });
+  // A `var` hoisted out of a block still prints its declaration inside that
+  // block, so a block-scoped binding there cannot take the hoisted name
+  // (#41351). The same holds for a function's parameters and its body, and a
+  // catch binding and its block. A sibling block that does not mention the
+  // `var` may still reuse the name.
+  itBundled("identifiers/NestedBindingRenamedAroundHoistedVarDeclaration", {
+    files: {
+      "/entry.js": /* js */ `
+        import * as L from "./lib.js";
+        import { Check } from "./other.js";
+        const { blockFn } = require("./sloppy.cjs");
+        console.log(JSON.stringify([
+          L.make(true)(1), L.loop(), L.deep(), L.sibling(), L.param("p"), L.arrow("a"), L.dflt(),
+          L.caught(), L.caughtVar(), L.paramUnused("p"), L.caughtUnused(), L.paramVar("p"),
+          L.catchParamVar(), L.destructured(), L.forIn(), L.inSwitch(1), L.inTry(), L.klass(),
+          L.nested(), blockFn(), Check(2),
+        ]));
+      `,
+      "/lib.js": /* js */ `
+        import { Check as OuterCheck } from "./other.js";
+        // In every function the top-level "Check" is referenced, so the local
+        // "Check" is renamed to "Check2" and meets a block-scoped "Check2".
+        export function make(cond) {
+          OuterCheck(0);
+          if (cond) {
+            let Check2 = function (value) { return value; };
+            var Check = Check2;
+          }
+          return Check;
+        }
+        export function loop() {
+          OuterCheck(0);
+          for (let Check2 = 0; Check2 < 1; Check2++) { var Check = Check2 + 1; }
+          return Check;
+        }
+        export function deep() {
+          OuterCheck(0);
+          {
+            let Check2 = "mid";
+            { var Check = "var"; }
+            return [Check2, Check];
+          }
+        }
+        export function sibling() {
+          OuterCheck(0);
+          { var Check = "var"; }
+          let seen;
+          { let Check2 = "let"; seen = Check2; }
+          return [seen, Check];
+        }
+        export function param(Check) {
+          OuterCheck(0);
+          let Check2 = "body";
+          return [Check, Check2];
+        }
+        export const arrow = (Check) => {
+          OuterCheck(0);
+          let Check2 = "arrow";
+          return [Check, Check2];
+        };
+        export function dflt(Check = "default") {
+          OuterCheck(0);
+          { let Check2 = "inner"; return [Check, Check2]; }
+        }
+        export function caught() {
+          try { throw "err"; } catch (Check) {
+            OuterCheck(0);
+            let Check2 = "catch";
+            return [Check, Check2];
+          }
+        }
+        export function caughtVar() {
+          OuterCheck(0);
+          try { throw "t"; } catch (Check) { var Check = "v"; let Check2 = Check; return Check2; }
+        }
+        // The body never mentions the parameter or the catch binding, so only
+        // its declaration stops the body's "Check2" from taking that name.
+        export function paramUnused(Check) {
+          OuterCheck(0);
+          let Check2 = "unused-param";
+          return Check2;
+        }
+        export function caughtUnused() {
+          try { throw "err"; } catch (Check) {
+            OuterCheck(0);
+            let Check2 = "unused-catch";
+            return Check2;
+          }
+        }
+        // Here the renamed "var Check" is the one that would take a
+        // parameter's or catch binding's name "Check2". That output loads but
+        // merges the var with the parameter (or assigns the catch binding), so
+        // the values are wrong instead of a SyntaxError.
+        export function paramVar(Check2) {
+          OuterCheck(0);
+          var Check;
+          return Check;
+        }
+        export function catchParamVar() {
+          OuterCheck(0);
+          try { throw 0; } catch (Check2) { var Check = "set"; }
+          return Check;
+        }
+        export function destructured() {
+          OuterCheck(0);
+          { let Check2 = 5; var { a: Check = Check2, ...rest } = { b: 1 }; }
+          return [Check, rest];
+        }
+        export function forIn() {
+          OuterCheck(0);
+          { let Check2 = "k"; for (var Check in { [Check2]: 1 }) {} }
+          return Check;
+        }
+        export function inSwitch(x) {
+          OuterCheck(0);
+          switch (x) { case 1: let Check2 = "sw"; var Check = Check2; }
+          return Check;
+        }
+        export function inTry() {
+          OuterCheck(0);
+          try { let Check2 = "try"; var Check = Check2; } finally {}
+          return Check;
+        }
+        export function klass() {
+          OuterCheck(0);
+          { class Check2 { static tag = "cls"; } var Check = Check2; }
+          return Check.tag;
+        }
+        export function nested() {
+          OuterCheck(0);
+          {
+            let Check2 = "nested";
+            function inner() { var Check = "v"; return Check; }
+            return [Check2, inner()];
+          }
+        }
+      `,
+      // Sloppy mode: a function declaration in a block is also hoisted to the
+      // enclosing function as a var (annex B), assigned where the block
+      // declares it.
+      "/sloppy.cjs": /* js */ `
+        const { g: outerG } = require("./other2.cjs");
+        exports.blockFn = function () {
+          outerG();
+          { let g2 = "let"; function g() { return "g-inner"; } var r = [g2, g()]; }
+          return [r, g()];
+        };
+      `,
+      "/other2.cjs": /* js */ `
+        exports.g = function () { return "g-outer"; };
+      `,
+      "/other.js": /* js */ `
+        export function Check(x) { return "other " + x; }
+      `,
+    },
+    minifyIdentifiers: false,
+    onAfterBundle(api) {
+      const out = api.readFile("/out.js");
+      // The sibling block does not mention the var, so its binding keeps the name.
+      expect(out).toContain('let Check2 = "let"');
+      // No scope declares one name twice.
+      expect(out).not.toMatch(/let Check2 = [^;]+;\s*var Check2\b/);
+      expect(out).not.toMatch(/function param\(Check2\) \{\s*[^}]*let Check2\b/);
+      expect(out).not.toMatch(/function paramUnused\(Check2\) \{\s*[^}]*let Check2\b/);
+      expect(out).not.toMatch(/catch \(Check2\) \{\s*[^}]*let Check2\b/);
+    },
+    run: {
+      stdout: `[1,1,["mid","var"],["let","var"],["p","body"],["a","arrow"],["default","inner"],["err","catch"],"v","unused-param","unused-catch",null,"set",[5,{"b":1}],"k","sw","try","cls",["nested","v"],[["let","g-inner"],"g-inner"],"other 2"]`,
+    },
+  });
   itBundled("edgecase/MacroProtoKeyIsOwnProperty", {
     files: {
       "/entry.ts": /* js */ `

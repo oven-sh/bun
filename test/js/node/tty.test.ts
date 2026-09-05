@@ -265,19 +265,30 @@ describe.skipIf(isWindows)("ReadStream on a non-blocking fd", () => {
     return { lines, exitCode };
   }
 
+  // After each chunk the fixture resizes the pty through the master, as
+  // node-pty's pty.resize() does. That ioctl failed with EBADF when the stream
+  // had closed the fd on the first EAGAIN.
   test.concurrent("delivers data written after the first EAGAIN and destroy() closes the fd", async () => {
     const { lines, exitCode } = await runFixture("destroy");
-    expect(lines).toEqual(['DATA "one"', 'DATA "two"', "CLOSE destroyed=true masterOpen=false"]);
+    expect(lines).toEqual([
+      'DATA "one"',
+      "RESIZE ok",
+      'DATA "two"',
+      "RESIZE ok",
+      "CLOSE destroyed=true masterOpen=false",
+    ]);
     expect(exitCode).toBe(0);
   });
 
   test.concurrent("ends when the slave side hangs up", async () => {
     const { lines, exitCode } = await runFixture("hangup");
     // Linux reports the hangup as EIO, macOS as end of file.
-    expect(["ERROR EIO", "END"]).toContain(lines[2]);
-    expect([...lines.slice(0, 2), ...lines.slice(3)]).toEqual([
+    expect(["ERROR EIO", "END"]).toContain(lines[4]);
+    expect([...lines.slice(0, 4), ...lines.slice(5)]).toEqual([
       'DATA "one"',
+      "RESIZE ok",
       'DATA "two"',
+      "RESIZE ok",
       "CLOSE destroyed=true masterOpen=false",
     ]);
     expect(exitCode).toBe(0);

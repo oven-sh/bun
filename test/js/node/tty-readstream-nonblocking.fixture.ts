@@ -4,7 +4,7 @@
 //   "destroy": the fixture calls stream.destroy()
 //   "hangup":  the fixture closes its slave fd. Once the test has closed its own
 //              slave, the master read fails (EIO) or ends.
-import { CString, dlopen } from "bun:ffi";
+import { CString, dlopen, ptr } from "bun:ffi";
 import { closeSync, constants, fstatSync, openSync } from "node:fs";
 import { ReadStream } from "node:tty";
 
@@ -19,6 +19,7 @@ for (const lib of candidates) {
       grantpt: { args: ["int"], returns: "int" },
       unlockpt: { args: ["int"], returns: "int" },
       ptsname: { args: ["int"], returns: "ptr" },
+      ioctl: { args: ["int", "u64", "ptr"], returns: "int" },
     }).symbols;
     break;
   } catch (err) {
@@ -49,6 +50,18 @@ function masterIsOpen() {
   }
 }
 
+// node-pty's pty.resize() is ioctl(master, TIOCSWINSZ, &winsize). It fails with
+// EBADF once the stream has closed the master behind node-pty's back. ioctl is
+// variadic, and Apple's arm64 ABI passes variadic arguments on the stack, so
+// the fixed-arity FFI call is Linux only. macOS falls back to fstat.
+function resize(cols: number, rows: number) {
+  if (process.platform !== "linux") return masterIsOpen();
+  const TIOCSWINSZ = 0x5414n;
+  // struct winsize { unsigned short ws_row, ws_col, ws_xpixel, ws_ypixel; }
+  const winsize = new Uint16Array([rows, cols, 0, 0]);
+  return libc.ioctl(master, TIOCSWINSZ, ptr(winsize)) === 0;
+}
+
 const stream = new ReadStream(master);
 stream.on("error", err => say("ERROR " + err.code));
 stream.on("end", () => say("END"));
@@ -59,6 +72,7 @@ stream.on("close", () => {
 });
 stream.on("data", chunk => {
   say("DATA " + JSON.stringify(chunk.toString()));
+  say("RESIZE " + (resize(120, 40) ? "ok" : "failed"));
   say("READY");
 });
 

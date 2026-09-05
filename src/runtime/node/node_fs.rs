@@ -6666,13 +6666,13 @@ impl NodeFS {
         recursive: bool,
         flavor: Flavor,
     ) -> Maybe<ret::Readdir> {
-        let Some(list) = graph.readdir(path, recursive) else {
-            let code = if graph.contains_file(path) {
-                E::ENOTDIR
-            } else {
-                E::ENOENT
-            };
-            return Err(sys::Error::from_code(code, sys::Tag::scandir).with_path(args.path.slice()));
+        let list = match graph.readdir(path, recursive) {
+            Ok(list) => list,
+            Err(code) => {
+                return Err(
+                    sys::Error::from_code(code, sys::Tag::scandir).with_path(args.path.slice())
+                );
+            }
         };
 
         let mut entries: Vec<T> = Vec::with_capacity(list.len());

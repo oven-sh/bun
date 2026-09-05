@@ -811,7 +811,7 @@ If you're using `@mapbox/node-pre-gyp` or similar tools, require the `.node` fil
 
 ### Embed directories
 
-Use `--asset` (or `compile.assets` in the JavaScript API) to embed a file or directory tree into the executable under its original relative path. The embedded files live under `import.meta.dir` at runtime and are reachable via `node:fs` (`existsSync`, `statSync`, `readdirSync`, `readFileSync`) and `Bun.file()`.
+Use `--asset` (or `compile.assets` in the JavaScript API) to embed a file or directory tree into the executable under its original relative path. The embedded files live under `import.meta.dir` at runtime and are reachable via `node:fs` (`existsSync`, `statSync`, `readdirSync`, `readFileSync`), `Bun.file()`, and `Bun.serve()` directory routes (`{ dir }`).
 
 <Tabs>
   <Tab title="CLI">

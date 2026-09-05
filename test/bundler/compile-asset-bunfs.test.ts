@@ -36,11 +36,16 @@ async function run(dir: string) {
 describe.concurrent("compile --asset and /$bunfs/ directory semantics", () => {
   // One compiled binary exercises every CLI-side /$bunfs/ path we care about:
   // a file-loader asset's parent directory, an --asset directory tree, an
-  // --asset single file, and the ENOENT/ENOTDIR/EISDIR/EACCES error paths.
+  // --asset single file, the ENOENT/ENOTDIR/EISDIR/EACCES error paths, and a
+  // Bun.serve() { dir } route over the embedded tree (#40778).
   // These used to be four separate `bun build --compile` invocations.
   test(
-    "CLI: file-loader asset, --asset dir + file, and /$bunfs/ fs semantics",
+    "CLI: file-loader asset, --asset dir + file, /$bunfs/ fs semantics, and { dir } route",
     async () => {
+      // Larger than a fresh socket's send buffer, so the route's body needs more
+      // than one write and the onWritable continuation runs. A 251-byte cycle
+      // shows an offset error on resume.
+      const big = Buffer.alloc(4 * 1024 * 1024, Buffer.from(Array.from({ length: 251 }, (_, i) => i)));
       using dir = tempDir("bunfs-cli", {
         "index.ts": /* ts */ `
         import asset from "./data.txt" with { type: "file" };
@@ -115,6 +120,64 @@ describe.concurrent("compile --asset and /$bunfs/ directory semantics", () => {
           readdirCode: errcode(() => fs.readdirSync(cfg)),
         };
 
+        // the --asset directory tree served by a Bun.serve() { dir } route
+        // A server that starts by mistake is stopped so the process still exits.
+        function serveErrcode(dir: string): string {
+          try {
+            Bun.serve({ port: 0, routes: { "/x/*": { dir } } }).stop(true);
+            return "";
+          } catch (e: any) {
+            return e.code;
+          }
+        }
+        using server = Bun.serve({
+          port: 0,
+          routes: { "/static/*": { dir: root }, "/slash/*": { dir: root + "/" } },
+          fetch() { return new Response("fallthrough", { status: 404 }); },
+        });
+        const base = "http://localhost:" + server.port;
+        async function get(url: string, init: RequestInit = {}) {
+          const res = await fetch(base + url, { redirect: "manual", ...init });
+          const body = await res.text();
+          const h = res.headers;
+          return {
+            status: res.status,
+            type: h.get("content-type"),
+            length: h.get("content-length"),
+            etag: h.get("etag"),
+            lastModified: h.get("last-modified"),
+            acceptRanges: h.get("accept-ranges"),
+            contentRange: h.get("content-range"),
+            location: h.get("location"),
+            body,
+          };
+        }
+        const svg = await get("/static/favicon.svg");
+        const bigRes = await fetch(base + "/static/big.bin");
+        const bigBody = Buffer.from(await bigRes.arrayBuffer());
+        const bigExpected = Buffer.from(await Bun.file(path.join(root, "big.bin")).arrayBuffer());
+        const serve = {
+          svg,
+          nested: await get("/static/_app/immutable/app.css"),
+          empty: await get("/static/empty.txt"),
+          index: await get("/static/"),
+          subIndex: await get("/static/sub/"),
+          dirRedirect: await get("/static/_app"),
+          dirWithoutIndex: await get("/static/_app/"),
+          fileTrailingSlash: await get("/static/favicon.svg/"),
+          missing: await get("/static/nope.txt"),
+          head: await get("/static/favicon.svg", { method: "HEAD" }),
+          range: await get("/static/index.html", { headers: { range: "bytes=19-20" } }),
+          unsatisfiable: await get("/static/index.html", { headers: { range: "bytes=100-200" } }),
+          notModified: await get("/static/favicon.svg", { headers: { "if-none-match": svg.etag! } }),
+          staleEtag: (await get("/static/favicon.svg", { headers: { "if-none-match": '"0000000000000000"' } })).status,
+          big: { status: bigRes.status, length: bigBody.length, matches: bigBody.equals(bigExpected) },
+          rootWithSlash: (await get("/slash/favicon.svg")).status,
+          missingDir: serveErrcode(missing),
+          fileAsDir: serveErrcode(cfg),
+          fileAsDirSlash: serveErrcode(cfg + "/"),
+        };
+
         // Bun.Glob over the embedded tree (issue #40932)
         const realDir = fs.mkdtempSync(path.join(os.tmpdir(), "bunfs-glob-real-"));
         fs.writeFileSync(path.join(realDir, "real.txt"), "x");
@@ -143,12 +206,14 @@ describe.concurrent("compile --asset and /$bunfs/ directory semantics", () => {
         };
         fs.rmSync(realDir, { recursive: true, force: true });
 
-        console.log(JSON.stringify({ fileLoader, client, enoent, missing, singleFile, glob, realDirPosix }));
+        console.log(JSON.stringify({ fileLoader, client, enoent, missing, singleFile, serve, glob, realDirPosix }));
       `,
         "data.txt": "hello",
         "client/index.html": "<!doctype html><h1>hi</h1>",
         "client/empty.txt": "",
         "client/favicon.svg": "<svg/>",
+        "client/big.bin": big,
+        "client/sub/index.html": "<h1>sub</h1>",
         "client/_app/immutable/app.css": "body{margin:0}",
         "client/_app/immutable/chunks/entry.js": "export default 1;",
         "config.json": `{"ok":true}`,
@@ -165,10 +230,30 @@ describe.concurrent("compile --asset and /$bunfs/ directory semantics", () => {
         join("_app", "immutable", "app.css"),
         join("_app", "immutable", "chunks"),
         join("_app", "immutable", "chunks", "entry.js"),
+        "big.bin",
         "empty.txt",
         "favicon.svg",
         "index.html",
+        "sub",
+        join("sub", "index.html"),
       ].sort();
+
+      // A 200 from the { dir } route: no mtime for an embedded file, so no
+      // Last-Modified and a strong ETag over the bytes.
+      const served = (body: string, type: string, extra: Record<string, unknown> = {}) => ({
+        status: 200,
+        type,
+        length: String(body.length),
+        etag: expect.stringMatching(/^"[0-9a-f]{16}"$/),
+        lastModified: null,
+        acceptRanges: "bytes",
+        contentRange: null,
+        location: null,
+        body,
+        ...extra,
+      });
+      const html = "text/html;charset=utf-8";
+      const svg = "image/svg+xml";
 
       expect(r).toEqual({
         fileLoader: {
@@ -185,12 +270,14 @@ describe.concurrent("compile --asset and /$bunfs/ directory semantics", () => {
         },
         client: {
           root: expect.stringMatching(/[/\\]root[/\\]client$/),
-          entries: ["_app", "empty.txt", "favicon.svg", "index.html"],
+          entries: ["_app", "big.bin", "empty.txt", "favicon.svg", "index.html", "sub"],
           byName: {
             _app: { isDir: true, isFile: false },
+            "big.bin": { isDir: false, isFile: true },
             "empty.txt": { isDir: false, isFile: true },
             "favicon.svg": { isDir: false, isFile: true },
             "index.html": { isDir: false, isFile: true },
+            sub: { isDir: true, isFile: false },
           },
           indexHtmlExists: true,
           indexHtmlSize: "<!doctype html><h1>hi</h1>".length,
@@ -211,22 +298,45 @@ describe.concurrent("compile --asset and /$bunfs/ directory semantics", () => {
         enoent: { code: "ENOENT", path: r.missing, exists: false },
         missing: expect.stringMatching(/[/\\]root[/\\]does-not-exist$/),
         singleFile: { exists: true, content: `{"ok":true}`, readdirCode: "ENOTDIR" },
+        serve: {
+          svg: served("<svg/>", svg),
+          nested: served("body{margin:0}", "text/css;charset=utf-8"),
+          empty: served("", "text/plain;charset=utf-8"),
+          index: served("<!doctype html><h1>hi</h1>", html),
+          subIndex: served("<h1>sub</h1>", html),
+          dirRedirect: expect.objectContaining({ status: 301, location: "/static/_app/", body: "" }),
+          dirWithoutIndex: expect.objectContaining({ status: 404, body: "" }),
+          fileTrailingSlash: expect.objectContaining({ status: 404, body: "" }),
+          missing: expect.objectContaining({ status: 404, body: "" }),
+          head: served("<svg/>", svg, { body: "" }),
+          range: { ...served("hi", html), contentRange: "bytes 19-20/26", status: 206 },
+          unsatisfiable: expect.objectContaining({ status: 416, contentRange: "bytes */26", body: "" }),
+          notModified: expect.objectContaining({ status: 304, etag: r.serve.svg.etag, body: "" }),
+          staleEtag: 200,
+          big: { status: 200, length: big.length, matches: true },
+          rootWithSlash: 200,
+          missingDir: "ENOENT",
+          fileAsDir: "ENOTDIR",
+          fileAsDirSlash: "ENOTDIR",
+        },
         glob: {
-          scanSync: ["empty.txt", "favicon.svg", "index.html"],
-          scanAsync: ["empty.txt", "favicon.svg", "index.html"],
+          scanSync: ["big.bin", "empty.txt", "favicon.svg", "index.html"],
+          scanAsync: ["big.bin", "empty.txt", "favicon.svg", "index.html"],
           recursive: [
             join("_app", "immutable", "app.css"),
             join("_app", "immutable", "chunks", "entry.js"),
+            "big.bin",
             "empty.txt",
             "favicon.svg",
             "index.html",
+            join("sub", "index.html"),
           ].sort(),
-          onlyFilesFalse: ["_app", "empty.txt", "favicon.svg", "index.html"],
+          onlyFilesFalse: ["_app", "big.bin", "empty.txt", "favicon.svg", "index.html", "sub"],
           nestedWildcard: [join("_app", "immutable", "app.css")],
           literalFile: [join("_app", "immutable", "app.css")],
-          absoluteOpt: ["empty.txt", "favicon.svg", "index.html"].map(n => join(r.client.root, n)).sort(),
+          absoluteOpt: ["big.bin", "empty.txt", "favicon.svg", "index.html"].map(n => join(r.client.root, n)).sort(),
           // An absolute pattern keeps its literal prefix verbatim, including its separator style.
-          absolutePattern: ["empty.txt", "favicon.svg", "index.html"]
+          absolutePattern: ["big.bin", "empty.txt", "favicon.svg", "index.html"]
             .map(n => r.client.root.replaceAll(sep, "/") + "/" + n)
             .sort(),
           mixedRealAbsolute: [r.realDirPosix + "/real.txt"],
@@ -239,8 +349,8 @@ describe.concurrent("compile --asset and /$bunfs/ directory semantics", () => {
       });
       // recursive uses the platform path separator (same as Node's real-fs recursive readdir)
       expect(r.client.recursive.join("\n")).not.toContain(sep === "/" ? "\\" : "/");
-      // data.txt + config.json + 5 under client/
-      expect(r.client.embeddedFileCount).toBeGreaterThanOrEqual(7);
+      // data.txt + config.json + 7 under client/
+      expect(r.client.embeddedFileCount).toBeGreaterThanOrEqual(9);
       expect(code).toBe(0);
     },
     TIMEOUT,

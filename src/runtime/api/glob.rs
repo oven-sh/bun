@@ -284,7 +284,7 @@ pub(crate) mod standalone_accessor {
             // proved the directory.
             let entries = dir
                 .dir
-                .and_then(|key| Graph::get_ref()?.readdir(key, false))
+                .and_then(|key| Graph::get_ref()?.readdir(key, false).ok())
                 .unwrap_or_default();
             StandaloneDirIter {
                 entries: entries.into_iter(),

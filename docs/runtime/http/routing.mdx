@@ -225,6 +225,8 @@ Directory routes share the response path with file routes:
 
 Pass `statCache: false` to disable the per-path `Last-Modified` cache (saves roughly 20 KB per route).
 
+In a [compiled executable](/bundler/executables#embed-directories), `dir` can point at a directory embedded with `--asset` (for example `` `${import.meta.dir}/public` ``). Bun serves those files from memory. They have no modification time, so the response carries a strong `ETag` over the file contents and no `Last-Modified` header.
+
 ---
 
 ## Streaming files

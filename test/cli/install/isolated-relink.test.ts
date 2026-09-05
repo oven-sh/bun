@@ -170,6 +170,42 @@ test.concurrent(
   },
 );
 
+test.concurrent("an empty real directory in a root dependency's slot is replaced with the link", async () => {
+  const { packageDir, packageJson } = await registry.createTestDir({ bunfigOpts: { linker: "isolated" } });
+
+  await write(packageJson, oneRangeDep());
+  await installOk(packageDir);
+  const link = join(packageDir, "node_modules", "one-range-dep");
+  expect((await lstat(link)).isSymbolicLink()).toBeTrue();
+
+  await unlink(link);
+  await mkdir(link);
+  expect(existsSync(join(link, "package.json"))).toBeFalse();
+
+  // Root links are not counted in the summary, so only the tree is checked here.
+  await installOk(packageDir);
+  expect((await lstat(link)).isSymbolicLink()).toBeTrue();
+  expect(await file(join(link, "package.json")).json()).toMatchObject({ name: "one-range-dep", version: "1.0.0" });
+});
+
+test.concurrent("an empty real directory in a store entry's dependency slot is replaced with the link", async () => {
+  const { packageDir, packageJson } = await registry.createTestDir({ bunfigOpts: { linker: "isolated" } });
+
+  await write(packageJson, oneRangeDep());
+  await installOk(packageDir);
+  const link = await nestedNoDeps(packageDir);
+
+  await unlink(link);
+  await mkdir(link);
+
+  const out = await installOk(packageDir);
+  expect(out).not.toContain("(no changes)");
+  expect((await lstat(link)).isSymbolicLink()).toBeTrue();
+  expect(await nestedNoDepsPackageJson(link)).toStrictEqual({ name: "no-deps", version: "1.1.0" });
+
+  expect(await installOk(packageDir)).toContain("(no changes)");
+});
+
 test.concurrent.skipIf(!isWindows)("junction-mode warm install reports no changes", async () => {
   const { packageDir, packageJson } = await registry.createTestDir({ bunfigOpts: { linker: "isolated" } });
   const env = { BUN_FEATURE_FLAG_FORCE_WINDOWS_JUNCTIONS: "1" };

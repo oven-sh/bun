@@ -121,7 +121,7 @@ We update this page regularly. It reflects the latest version of Bun's compatibi
 
 ### [`node:module`](https://nodejs.org/api/module.html)
 
-🟡 Missing `Module#load()`, `registerHooks`, `findPackageJSON`, `stripTypeScriptTypes`, `getSourceMapsSupport`/`setSourceMapsSupport`. Overriding `require.cache`, `require.extensions` and `module._resolveFilename` is supported. `syncBuiltinESMExports`, `module._load`, `module._pathCache` and `module.register` are no-ops (we recommend [`Bun.plugin`](/runtime/plugins) instead). `findSourceMap` always returns `undefined`.
+🟡 Missing `Module#load()`, `registerHooks`, `findPackageJSON`, `stripTypeScriptTypes`, `getSourceMapsSupport`/`setSourceMapsSupport`. Overriding `require.cache`, `require.extensions`, `module._load` and `module._resolveFilename` is supported; an overridden `module._load` intercepts CJS `require()`. Calling `module._load(id, parent, isMain)` directly records `parent` as the loaded module's `module.parent` (a non-module `parent` such as `{ filename }` also anchors resolution), but `isMain` is ignored: `require.main` always refers to the entry point. `syncBuiltinESMExports`, `module._pathCache` and `module.register` are no-ops (we recommend [`Bun.plugin`](/runtime/plugins) instead). `findSourceMap` always returns `undefined`.
 
 ### [`node:net`](https://nodejs.org/api/net.html)
 

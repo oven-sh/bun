@@ -238,7 +238,7 @@ declare function $host(): TODO;
 declare function $hostname(): TODO;
 declare function $ignoreBOM(): TODO;
 declare function $importer(): TODO;
-declare function $internalRequire(id: string, parent: JSCommonJSModule): TODO;
+declare function $internalRequire(id: string, parent: unknown): any;
 declare function $isAbortSignal(signal: unknown): signal is AbortSignal;
 declare function $isAbsolute(): TODO;
 declare function $join(): TODO;
@@ -267,7 +267,8 @@ declare function $resolveSync(
   isESM?: boolean,
   isUserRequireResolve?: boolean,
   paths?: string[],
-  parentModule?: JSCommonJSModule,
+  /** Handed to an overridden `Module._resolveFilename` as `parent`; `Module._load` may pass any value. */
+  parentModule?: unknown,
   resolveFilenameOptions?: unknown,
 ): string;
 declare function $self(): TODO;
@@ -287,7 +288,8 @@ declare function $createCommonJSModule(
   id: string,
   exports: any,
   hasEvaluated: boolean,
-  parent: JSCommonJSModule | undefined,
+  /** Becomes `module.parent` verbatim: normally the requiring module, but `Module._load` may pass any value. */
+  parent: unknown,
 ): JSCommonJSModule;
 declare function $evaluateCommonJSModule(
   moduleToEvaluate: JSCommonJSModule,
@@ -296,6 +298,19 @@ declare function $evaluateCommonJSModule(
 declare function $evictIsolationSourceProviderCache(key?: string): void;
 
 declare function $overridableRequire(this: JSCommonJSModule, id: string): any;
+/** `recordedParent` is passed only by the native `Module._load`; it becomes the new module's `parent` instead of `this`. */
+declare function $requireCommonJSModule(
+  this: JSCommonJSModule,
+  id: string,
+  options?: { paths?: string[] },
+  recordedParent?: unknown,
+): any;
+/** `require("node:module")`, the `this` a user-supplied `Module._load` is invoked with. */
+declare const $nodeModuleConstructor: any;
+/** User-installed `Module._load`, else `undefined`; `options` is Bun's `require(id, options)` extension. */
+declare const $overriddenModuleLoad:
+  | ((request: string, parent: JSCommonJSModule, isMain: boolean, options?: { paths?: string[] }) => any)
+  | undefined;
 
 // The following I cannot find any definitions of, but they are functional.
 declare function $toLength(length: number): number;

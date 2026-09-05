@@ -1166,6 +1166,85 @@ describe("Bun.build", () => {
       expect(await html?.text()).toContain("<meta name='injected-by-plugin' content='true'>");
     },
   );
+
+  // https://github.com/oven-sh/bun/issues/14253
+  // Parsed package.json is cached process-globally. The cache must store every
+  // default main-field name so a later build with a different target finds the
+  // field it needs.
+  describe("target main-field resolution is independent of prior resolutions in the same process", () => {
+    const pkgFiles = {
+      "node_modules/dual-pkg/package.json": JSON.stringify({
+        name: "dual-pkg",
+        version: "1.0.0",
+        main: "./node.js",
+        browser: "./browser.js",
+      }),
+      "node_modules/dual-pkg/node.js": `module.exports = "RESOLVED_NODE";`,
+      "node_modules/dual-pkg/browser.js": `module.exports = "RESOLVED_BROWSER";`,
+      "entry.ts": `import v from "dual-pkg"; console.log(v);`,
+    };
+
+    test.concurrent("runtime import then Bun.build({ target: 'browser' })", async () => {
+      using dir = tempDir("bun-build-main-fields-runtime-first", {
+        ...pkgFiles,
+        "build.ts": `
+          import v from "dual-pkg";
+          if (v !== "RESOLVED_NODE") throw new Error("runtime import resolved to " + v);
+          const result = await Bun.build({ entrypoints: ["./entry.ts"], target: "browser" });
+          if (!result.success) throw new AggregateError(result.logs, "build failed");
+          const text = await result.outputs[0].text();
+          console.log(text.includes("RESOLVED_BROWSER") ? "browser" : text.includes("RESOLVED_NODE") ? "node" : "neither");
+        `,
+      });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "build.ts"],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(stdout.trim()).toBe("browser");
+      expect(exitCode).toBe(0);
+    });
+
+    test.concurrent("Bun.build for each target in the same process", async () => {
+      using dir = tempDir("bun-build-main-fields-sequential", {
+        ...pkgFiles,
+        "build.ts": `
+          async function buildFor(target) {
+            const result = await Bun.build({ entrypoints: ["./entry.ts"], target });
+            if (!result.success) throw new AggregateError(result.logs, "build failed for " + target);
+            const text = await result.outputs[0].text();
+            return text.includes("RESOLVED_BROWSER") ? "browser" : text.includes("RESOLVED_NODE") ? "node" : "neither";
+          }
+          console.log(JSON.stringify({
+            bun: await buildFor("bun"),
+            browser: await buildFor("browser"),
+            node: await buildFor("node"),
+            browser2: await buildFor("browser"),
+          }));
+        `,
+      });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "build.ts"],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(JSON.parse(stdout)).toEqual({
+        bun: "node",
+        browser: "browser",
+        node: "node",
+        browser2: "browser",
+      });
+      expect(exitCode).toBe(0);
+    });
+  });
 });
 
 test.concurrent("macro with nested object", async () => {

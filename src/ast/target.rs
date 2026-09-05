@@ -80,7 +80,7 @@ impl Target {
     // `bake_graph()` stays in bun_bake (would back-edge into tier-6).
     // `out_extensions()` stays in bun_bundler (allocator-heavy, only used there).
 
-    const MAIN_FIELD_NAMES: [&'static str; 4] = [
+    pub const MAIN_FIELD_NAMES: [&'static str; 4] = [
         "browser",
         "module",
         "main",

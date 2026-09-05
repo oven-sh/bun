@@ -562,20 +562,25 @@ impl PackageJSON {
             }
         }
 
-        // Read the "main" fields
-        for main in r.opts.main_fields.iter() {
-            if let Some(main_json) = json.as_property(main) {
+        // Cached across targets, so store every default main-field name, not just this target's (#14253).
+        let mut read_main_field = |name: &[u8]| {
+            if let Some(main_json) = json.as_property(name) {
                 let expr: &js_ast::Expr = &main_json.expr;
-
                 if let Some(str) = expr.as_utf8_string_literal() {
                     if !str.is_empty() {
                         package_json
                             .main_fields
-                            .put(main, Box::from(str))
+                            .put(name, Box::from(str))
                             .expect("unreachable");
                     }
                 }
             }
+        };
+        for name in crate::options::ALL_DEFAULT_MAIN_FIELD_NAMES {
+            read_main_field(name);
+        }
+        for name in r.opts.main_fields.iter() {
+            read_main_field(name);
         }
 
         // Read the "browser" property

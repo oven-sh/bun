@@ -2730,38 +2730,6 @@ impl<'a> Resolver<'a> {
                                         }
                                     }
 
-                                    // if they hid "package.json" from "exports", still allow importing it.
-                                    if esm.subpath == b"./package.json" {
-                                        self.extension_order = prev_extension_order;
-                                        if let Some(d) = self.debug_logs.as_mut() {
-                                            d.decrease_indent();
-                                        }
-                                        *out = MatchResult {
-                                            // NOTE: PackageJSON.source.path is bun_paths::fs::Path<'static>; convert
-                                            // to the resolver's interned crate::fs::Path<'static> via its text.
-                                            path_pair: PathPair {
-                                                primary: Path::init(package_json.source.path.text),
-                                                secondary: None,
-                                            },
-                                            dirname_fd: pkg_dir_info.get_file_descriptor(),
-                                            file_fd: FD::INVALID,
-                                            // `Path.isNodeModule()` checks
-                                            // `lastIndexOf(name.dir, SEP++"node_modules"++SEP)`, i.e. a
-                                            // separator-bounded directory component on `name.dir` (not a
-                                            // bare substring of the full text). `bun_paths::fs::Path<'static>`
-                                            // doesn't carry that method, so re-derive via the resolver's
-                                            // `Path` (already done one line up for `path_pair.primary`).
-                                            is_node_module: Path::init(
-                                                package_json.source.path.text,
-                                            )
-                                            .is_node_module(),
-                                            package_json: Some(std::ptr::from_ref(package_json)),
-                                            dir_info: Some(dir_info),
-                                            ..Default::default()
-                                        };
-                                        return MatchStatus::Success;
-                                    }
-
                                     self.extension_order = prev_extension_order;
                                     if let Some(d) = self.debug_logs.as_mut() {
                                         d.decrease_indent();
@@ -3200,31 +3168,6 @@ impl<'a> Resolver<'a> {
                                             }
                                             return MatchStatus::Success;
                                         }
-                                    }
-
-                                    // if they hid "package.json" from "exports", still allow importing it.
-                                    if esm.subpath == b"./package.json" {
-                                        if let Some(d) = self.debug_logs.as_mut() {
-                                            d.decrease_indent();
-                                        }
-                                        *out = MatchResult {
-                                            path_pair: PathPair {
-                                                primary: Fs::Path::init(
-                                                    package_json.source.path.text,
-                                                ),
-                                                secondary: None,
-                                            },
-                                            dirname_fd: pkg_dir_info.get_file_descriptor(),
-                                            file_fd: FD::INVALID,
-                                            is_node_module: package_json
-                                                .source
-                                                .path
-                                                .is_node_module(),
-                                            package_json: Some(std::ptr::from_ref(package_json)),
-                                            dir_info: Some(dir_info),
-                                            ..Default::default()
-                                        };
-                                        return MatchStatus::Success;
                                     }
 
                                     if let Some(d) = self.debug_logs.as_mut() {

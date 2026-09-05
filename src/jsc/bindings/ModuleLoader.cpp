@@ -635,6 +635,7 @@ void evaluateCommonJSCustomExtension(
     arguments.append(filenameValue);
     JSC::profiledCall(globalObject, ProfilingReason::API, extension, callData, target, arguments);
     RETURN_IF_EXCEPTION(scope, );
+    target->hasEvaluated = true;
 }
 
 JSValue fetchCommonJSModule(

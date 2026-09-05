@@ -1,4 +1,5 @@
 // @ts-nocheck
+import { bunEnv, bunExe } from "harness";
 import { createTest } from "node-harness";
 import { EventEmitter } from "node:events";
 import readline from "node:readline";
@@ -2103,5 +2104,47 @@ describe("readline.createInterface()", () => {
 
     assert.strictEqual(closed, true);
     assert.strictEqual(rl.closed, true);
+  });
+});
+
+describe("module init", () => {
+  it("readline.promises is a data property that loads node:readline/promises on first read", async () => {
+    // A fresh process, so nothing has read `promises` yet.
+    const fixture = `
+      const readline = require("node:readline");
+      const before = Object.getOwnPropertyDescriptor(readline, "promises");
+      const promises = readline.promises;
+      const after = Object.getOwnPropertyDescriptor(readline, "promises");
+      console.log(JSON.stringify({
+        before: { value: typeof before.value, get: typeof before.get, writable: before.writable, enumerable: before.enumerable, configurable: before.configurable },
+        same: promises === require("node:readline/promises") && after.value === promises,
+        createInterface: typeof promises.createInterface,
+        keys: Object.keys(readline),
+      }));
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", fixture],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    assert.strictEqual(stderr, "");
+    assert.deepStrictEqual(JSON.parse(stdout), {
+      before: { value: "object", get: "undefined", writable: true, enumerable: true, configurable: true },
+      same: true,
+      createInterface: "function",
+      keys: [
+        "Interface",
+        "clearLine",
+        "clearScreenDown",
+        "createInterface",
+        "cursorTo",
+        "emitKeypressEvents",
+        "moveCursor",
+        "promises",
+      ],
+    });
+    assert.strictEqual(exitCode, 0);
   });
 });

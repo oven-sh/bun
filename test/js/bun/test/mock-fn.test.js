@@ -1219,6 +1219,78 @@ describe("spyOn", () => {
       expect(Bar.prototype()).toBe(7);
       expect(fn).not.toHaveBeenCalled();
     });
+
+    // console.Console is a native lazy property: a getter computes it on the first read and
+    // stores it as a plain value. To JS it is a data property, so spyOn treats it as one.
+    test("spyOn on a native lazy data property", () => {
+      const fn = spyOn(console, "Console").mockImplementation(() => "mocked");
+      try {
+        expect(console.Console).toBe(fn);
+        expect(console.Console()).toBe("mocked");
+        expect(fn).toHaveBeenCalledTimes(1);
+      } finally {
+        fn.mockRestore();
+      }
+      expect(console.Console.name).toBe("Console");
+      expect(typeof new console.Console(process.stdout).log).toBe("function");
+      expect(Object.getOwnPropertyDescriptor(console, "Console")).toEqual({
+        value: console.Console,
+        writable: true,
+        enumerable: true,
+        configurable: true,
+      });
+    });
+
+    // Error.prepareStackTrace has a native setter that feeds stack formatting. Replacing the
+    // property with a mock would detach that setter, so spyOn refuses it.
+    test("spyOn on a native property with a setter throws and leaves it intact", () => {
+      let spy;
+      try {
+        expect(() => (spy = spyOn(Error, "prepareStackTrace"))).toThrow("does not support accessor properties yet");
+      } finally {
+        spy?.mockRestore();
+      }
+      const previous = Error.prepareStackTrace;
+      Error.prepareStackTrace = (_err, frames) => "custom stack " + frames.length;
+      try {
+        expect(new Error("x").stack).toStartWith("custom stack ");
+      } finally {
+        Error.prepareStackTrace = previous;
+      }
+    });
+
+    // A process.env key that nothing has read is a native lazy property, so this needs a fresh process.
+    // On Windows, process.env is a Proxy, and its keys are not native lazy properties.
+    test.skipIf(process.platform === "win32")("spyOn on a process.env key that nothing has read", async () => {
+      // Jest and Vitest also run this file, and they cannot resolve "harness" at the top of it.
+      const { bunEnv, bunExe } = require("harness");
+      const fixture = `
+        const { spyOn } = require("bun:test");
+        const key = "BUN_SPYON_ENV_TEST";
+        const spy = spyOn(process.env, key);
+        const first = process.env[key];
+        spy.mockReturnValue("mocked");
+        const mocked = process.env[key];
+        const calls = spy.mock.calls.length;
+        spy.mockRestore();
+        console.log(JSON.stringify({ first, mocked, calls, descriptor: Object.getOwnPropertyDescriptor(process.env, key) }));
+      `;
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", fixture],
+        env: { ...bunEnv, BUN_SPYON_ENV_TEST: "from-env" },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(JSON.parse(stdout)).toEqual({
+        first: "from-env",
+        mocked: "mocked",
+        calls: 2,
+        descriptor: { value: "from-env", writable: true, enumerable: true, configurable: true },
+      });
+      expect(exitCode).toBe(0);
+    });
   }
 
   // spyOn does not work with getters/setters yet.

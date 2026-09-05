@@ -155,6 +155,10 @@ ObjectFreeze(kInternalSendOptions);
 // https://github.com/nodejs/node/blob/main/src/api/callback.cc
 const reportUncaughtException = $newCppFunction("BunProcess.cpp", "jsFunctionReportUncaughtException", 1);
 
+// Data properties (not get/set pairs) whose first read stores loader(key), like node's lazy exports.
+const defineLazyProperties: (target: object, keys: string[], loader: (key: string) => unknown) => void =
+  $newCppFunction("DefineLazyProperties.cpp", "jsFunctionDefineLazyProperties", 3);
+
 // Wrap a node-style callback so a throw inside it takes the uncaught path. The
 // callback keeps its place in the event loop; only the throw is rerouted. The
 // arity switch avoids materializing `arguments` for the shapes fs and dns use.
@@ -411,6 +415,7 @@ export default {
   ErrnoException,
   once,
   getLazy,
+  defineLazyProperties,
   guardCallback,
   isInsideNodeModules,
   reportUncaughtException,

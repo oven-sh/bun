@@ -8,7 +8,7 @@ const {
   validateObject,
   validateInteger,
 } = require("internal/validators");
-const { resistStopPropagation, ErrnoException } = require("internal/shared");
+const { resistStopPropagation, ErrnoException, defineLazyProperties } = require("internal/shared");
 const { MIMEType, MIMEParams } = require("internal/util/mime");
 const { deprecate } = require("internal/util/deprecate");
 
@@ -41,6 +41,9 @@ const parseArgs = $newRustFunction("parse_args.rs", "parseArgs", 1);
 let utl;
 function lazyInspectModule() {
   return (utl ??= require("internal/util/inspect"));
+}
+function lazyInspectExport(key) {
+  return lazyInspectModule()[key];
 }
 
 var debugs = {};
@@ -696,49 +699,15 @@ cjs_exports = {
   debug: debuglog,
   debuglog,
   deprecate,
-  get format() {
-    return lazyInspectModule().format;
-  },
-  set format(value) {
-    Object.defineProperty(cjs_exports, "format", { value, writable: true, enumerable: true, configurable: true });
-  },
   styleText,
-  get formatWithOptions() {
-    return lazyInspectModule().formatWithOptions;
-  },
-  set formatWithOptions(value) {
-    Object.defineProperty(cjs_exports, "formatWithOptions", {
-      value,
-      writable: true,
-      enumerable: true,
-      configurable: true,
-    });
-  },
   getCallSites,
   getSystemErrorMap,
   getSystemErrorName,
   getSystemErrorMessage,
   inherits,
-  get inspect() {
-    return lazyInspectModule().inspect;
-  },
-  set inspect(value) {
-    Object.defineProperty(cjs_exports, "inspect", { value, writable: true, enumerable: true, configurable: true });
-  },
   isDeepStrictEqual,
   promisify,
   setTraceSigInt,
-  get stripVTControlCharacters() {
-    return lazyInspectModule().stripVTControlCharacters;
-  },
-  set stripVTControlCharacters(value) {
-    Object.defineProperty(cjs_exports, "stripVTControlCharacters", {
-      value,
-      writable: true,
-      enumerable: true,
-      configurable: true,
-    });
-  },
   toUSVString,
   // transferableAbortSignal,
   // transferableAbortController,
@@ -769,5 +738,12 @@ cjs_exports = {
   isPrimitive,
   log,
 };
+
+// Data properties (node parity), loaded from internal/util/inspect on first read.
+defineLazyProperties(
+  cjs_exports,
+  ["format", "formatWithOptions", "inspect", "stripVTControlCharacters"],
+  lazyInspectExport,
+);
 
 export default cjs_exports;

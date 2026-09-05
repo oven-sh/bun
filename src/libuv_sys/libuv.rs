@@ -463,16 +463,8 @@ impl Loop {
     /// pre/check/async/timer, closed by us_loop_free and freed by their close
     /// callbacks when the loop next turns.
     pub fn close_thread_loop() {
-        /// How long `close_thread_loop` waits for the close completions of
-        /// handles it found still linked. A few thousand cancelled AFD polls
-        /// complete within 100ms; the kernel gets slower the more are
-        /// outstanding at once (a worker torn down with 9000 open sockets
-        /// needed 17s). The parent's `terminate()` and the process exit wait
-        /// on this, so it is a bound on a handle whose I/O never returns, not
-        /// a budget for a healthy teardown. Past it the loop is abandoned:
-        /// its storage is this thread's TLS, and it stays in libuv's loop
-        /// registry, so a later `uv__wake_all_loops` (system resume) reads a
-        /// dead loop.
+        /// Bound on a handle whose close never completes; `terminate()` and
+        /// process exit wait on this. A healthy teardown takes milliseconds.
         const CLOSE_THREAD_LOOP_DEADLINE: Duration = Duration::from_secs(10);
         THREADLOCAL_LOOP.with(|slot| {
             let loop_ = slot.get();
@@ -492,21 +484,12 @@ impl Loop {
                     // (owners are freed only after this returns).
                     unsafe { uv_walk(loop_, Some(log_unclosed_cb), ptr::null_mut()) };
                     unsafe { uv_walk(loop_, Some(close_walk_cb), ptr::null_mut()) };
-                    // Everything is closing now; only close callbacks / endgames
-                    // remain. Turn the loop without blocking until they have run —
-                    // RunMode::Default would also wait on ref'd-but-idle state
-                    // (Bun's virtual keep-alive count lives in active_handles) and
-                    // never return.
-                    //
-                    // A closing uv_poll_t (every uSockets socket) reaches its
-                    // endgame only once the kernel completes the AFD poll that
-                    // uv_close cancelled. That completion is posted to the IOCP
-                    // asynchronously, and one turn dequeues at most 128 of them
-                    // (uv__poll's GetQueuedCompletionStatusEx batch), so a fixed
-                    // number of back-to-back NoWait turns is wrong both ways: they
-                    // finish in microseconds, before the first completion lands,
-                    // and they cap how many sockets can close at all. Keep
-                    // turning, sleep 1ms between turns, bounded by a deadline.
+                    // Everything is closing now. A closing uv_poll_t is unlinked
+                    // only once the kernel posts the completion of its cancelled
+                    // AFD poll to the IOCP, and one NoWait turn dequeues at most
+                    // 128 completions. RunMode::Default would also wait on
+                    // ref'd-but-idle state (Bun's virtual keep-alive count lives
+                    // in active_handles) and never return.
                     let started = Instant::now();
                     let mut rc;
                     loop {

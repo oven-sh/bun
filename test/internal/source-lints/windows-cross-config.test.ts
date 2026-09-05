@@ -203,4 +203,39 @@ describe.skipIf(isWindows)("Windows cross-compile LTO config (non-windows host)"
     // index-only mode (still devirtualizes, just without the hybrid split).
     expect(linuxFlags.cxxflags).toContain("-fno-split-lto-unit");
   });
+
+  test("the linux release LTO link merges identical functions and strips toolchain metadata", () => {
+    const linuxToolchain = () =>
+      mockToolchain({ cc: "/fake/llvm/bin/clang", cxx: "/fake/llvm/bin/clang++", ld: "/fake/llvm/bin/ld.lld" });
+    // The fake sysroot keeps this hermetic: without it resolveConfig probes the
+    // real host and throws on any agent that is not x64-glibc (see the linux
+    // LTO test above, which passes one for the same reason).
+    const release: PartialConfig = {
+      os: "linux",
+      arch: "x64",
+      abi: "gnu",
+      buildType: "Release",
+      ci: true,
+      buildkite: false,
+      linuxSysroot: "/fake/linux-sysroot",
+    };
+    const linux = resolveConfig(release, linuxToolchain());
+    expect(linux.lto).toBe(true);
+    const flags = computeFlags(linux);
+
+    // LLVM's MergeFunctions pass is address-identity-safe: an address-taken
+    // function becomes a tail-call thunk with its own distinct address, never
+    // an alias. That is what section-level --icf=all cannot provide and the
+    // reason 218430c731 had to revert it. It rides on the LTO link (ThinLTO
+    // today), so it is gated on c.lto and must vanish when LTO is off.
+    expect(flags.ldflags).toContain("-Wl,-mllvm,-enable-merge-functions");
+    const nonLto = resolveConfig({ ...release, lto: false }, linuxToolchain());
+    expect(computeFlags(nonLto).ldflags).not.toContain("-Wl,-mllvm,-enable-merge-functions");
+
+    // .comment leaks the linker's own build path into the shipped binary and
+    // .note.stapsdt is libstdc++'s unused SystemTap probe table. Both are
+    // non-allocated metadata sections, stripped from every Linux release.
+    expect(flags.stripflags).toContain(".comment");
+    expect(flags.stripflags).toContain(".note.stapsdt");
+  });
 });

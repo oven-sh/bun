@@ -1163,6 +1163,28 @@ impl<'a> LinkerContext<'a> {
         Ok(rel)
     }
 
+    /// `output_dir` joined with the chunk template's directory: the base that
+    /// source-map `sources` entries are relative to. `final_rel_path` is not
+    /// yet set when the source map is generated, so the template stands in.
+    pub(crate) fn source_map_chunk_abs_dir(
+        output_dir: &[u8],
+        template: &crate::options::PathTemplate,
+        sanitize_parent_dirs: bool,
+    ) -> Box<[u8]> {
+        let rel_dir = template.rel_dir(sanitize_parent_dirs);
+        if rel_dir.is_empty() || &*rel_dir == b"." || output_dir.is_empty() {
+            return Box::from(output_dir);
+        }
+        // `join_abs_string_buf` requires an absolute cwd. `output_dir` may be
+        // relative (Bun.build `outdir: "dist"`), so anchor at `top_level_dir`;
+        // an absolute `output_dir` resets the join base on its own.
+        let top_level_dir = bun_resolver::fs::FileSystem::get().top_level_dir;
+        let mut buf = bun_paths::path_buffer_pool::get();
+        Box::from(bun_paths::resolve_path::join_abs_string_buf::<
+            bun_paths::platform::Auto,
+        >(top_level_dir, &mut buf, &[output_dir, &rel_dir]))
+    }
+
     pub(crate) fn generate_source_map_for_chunk(
         &mut self,
         isolated_hash: u64,

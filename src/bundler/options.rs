@@ -2460,6 +2460,26 @@ impl PathTemplate {
             sanitize_parent_dirs,
         )
     }
+
+    /// `/`-separated directory portion of the expanded template. A missing
+    /// `[hash]` is filled with a dummy: the hash output never contains `/`,
+    /// so the directory is the same regardless of the eventual value.
+    pub(crate) fn rel_dir(&self, sanitize_parent_dirs: bool) -> Box<[u8]> {
+        let mut rel = Vec::<u8>::new();
+        path_template_print(
+            &mut rel,
+            &self.data,
+            &self.placeholder.dir,
+            &self.placeholder.name,
+            &self.placeholder.ext,
+            self.placeholder.hash.or(Some(0)),
+            &self.placeholder.target,
+            sanitize_parent_dirs,
+        )
+        .expect("write to Vec<u8>");
+        bun_paths::resolve_path::platform_to_posix_in_place::<u8>(&mut rel);
+        Box::from(bun_paths::resolve_path::dirname::<bun_paths::platform::Posix>(&rel))
+    }
 }
 
 #[derive(Debug, Clone, Default)]

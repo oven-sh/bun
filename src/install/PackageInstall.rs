@@ -2245,6 +2245,14 @@ impl<'a> PackageInstall<'a> {
         }
     }
 
+    /// A folder is linked from its own directory, so its failure says nothing about the cache.
+    #[cfg(not(windows))]
+    fn remember_copyfile_fallback(is_folder: bool) {
+        if !is_folder {
+            Self::set_supported_method(Method::Copyfile);
+        }
+    }
+
     pub(crate) fn package_missing_from_cache(
         &mut self,
         manager: &mut PackageManager,
@@ -2313,7 +2321,9 @@ impl<'a> PackageInstall<'a> {
 
         let mut supported_method_to_use = method_;
 
-        if resolution_tag == resolution::Tag::Folder
+        let is_folder = resolution_tag == resolution::Tag::Folder;
+
+        if is_folder
             && !self
                 .lockfile
                 .is_workspace_tree_id(self.node_modules.tree_id)
@@ -2331,7 +2341,7 @@ impl<'a> PackageInstall<'a> {
                         Ok(result) => return result,
                         Err(err) => {
                             if err == crate::Error::NotSupported {
-                                Self::set_supported_method(Method::Copyfile);
+                                Self::remember_copyfile_fallback(is_folder);
                                 supported_method_to_use = Method::Copyfile;
                             } else if err == crate::Error::Sys(bun_errno::SystemErrno::ENOENT) {
                                 return InstallResult::fail(
@@ -2353,7 +2363,7 @@ impl<'a> PackageInstall<'a> {
                         Ok(result) => return result,
                         Err(err) => {
                             if err == crate::Error::NotSupported {
-                                Self::set_supported_method(Method::Copyfile);
+                                Self::remember_copyfile_fallback(is_folder);
                                 supported_method_to_use = Method::Copyfile;
                             } else if err == crate::Error::Sys(bun_errno::SystemErrno::ENOENT) {
                                 return InstallResult::fail(
@@ -2376,8 +2386,12 @@ impl<'a> PackageInstall<'a> {
                         #[cfg(not(windows))]
                         {
                             if err == crate::Error::NotSameFileSystem {
-                                Self::set_supported_method(Method::Copyfile);
+                                Self::remember_copyfile_fallback(is_folder);
                                 supported_method_to_use = Method::Copyfile;
+                                // copyfile's O_TRUNC would empty the source through the files already linked.
+                                if self.destination_dir_subpath.as_bytes() != b"." {
+                                    self.uninstall_before_install(destination_dir);
+                                }
                                 break 'outer;
                             }
                         }

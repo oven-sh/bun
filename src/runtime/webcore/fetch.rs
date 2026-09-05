@@ -452,25 +452,18 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
 
     // kept as raw `*mut Request` because the body re-borrows it
     // multiple times across long-lived option/init reads.
-    let request: Option<*mut Request> = 'brk: {
-        if first_arg.is_cell() {
-            if let Some(request_) = first_arg.as_direct::<Request>() {
-                break 'brk Some(request_);
-            }
-        }
-        break 'brk None;
-    };
+    let request: Option<*mut Request> = first_arg.as_::<Request>();
     // Helper macro: short-lived `&mut Request` reborrow of the optional pointer.
     macro_rules! request_mut {
         () => {
             // SAFETY: `request` was obtained from a live JS-owned Request via
-            // `as_direct`; each reborrow is non-overlapping at the call site.
+            // `as_`; each reborrow is non-overlapping at the call site.
             request.map(|p| unsafe { &mut *p })
         };
     }
 
     // If it's NOT a Request or a subclass of Request, treat the first argument as a URL.
-    let url_str_optional = if first_arg.as_::<Request>().is_none() {
+    let url_str_optional = if request.is_none() {
         StringOrURL::from_js(first_arg, global_this)?
     } else {
         None

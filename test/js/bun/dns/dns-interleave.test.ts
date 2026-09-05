@@ -287,6 +287,8 @@ function reachThroughName(name: string, addresses: string[]) {
       } catch {
         continue;
       }
+      // An address the kernel refuses to bind has no listener in any process,
+      // so there is nothing to hold there.
       let helper;
       try {
         helper = Bun.listen({ hostname: other, port: 0, socket: { open() {}, data() {} } });

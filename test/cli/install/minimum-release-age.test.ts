@@ -1,6 +1,8 @@
 import type { Server } from "bun";
 import { afterAll, beforeAll, describe, expect, setDefaultTimeout, test } from "bun:test";
 import { bunEnv, bunExe, normalizeBunSnapshot, tempDir } from "harness";
+import { rmSync } from "node:fs";
+import { join } from "node:path";
 
 // These tests drive real `bun install` runs against a mock registry, which is
 // slow under the debug/ASAN build — give them the same generous timeout the
@@ -1279,6 +1281,230 @@ describe("minimum-release-age", () => {
       // regular-package should be filtered (2.1.0 not 3.0.0)
       expect(lockfile).toContain("regular-package@2.1.0");
       expect(lockfile).not.toContain("regular-package@3.0.0");
+    });
+
+    // https://github.com/oven-sh/bun/issues/28967: "name@version" entries exempt
+    // one version instead of every current and future version of the package.
+    //
+    // Fixture ages: excluded-package 1.0.0 (10d), 1.0.1 (12h, latest);
+    // @scope/scoped-package 1.0.0 (20d), 1.5.0 (8d), 2.0.0 (1d, latest);
+    // bugfix-package 1.0.0 (8d), 1.0.1 (2.5d), 1.0.2 (1.5d), 1.0.3 (12h, latest);
+    // canary-package 2.0.0-canary.3 (5d), canary.4 (2d), canary.5 (12h, dist-tag "canary").
+    describe("name@version entries", () => {
+      function project(
+        name: string,
+        dependencies: Record<string, string>,
+        minimumReleaseAgeDays: number,
+        minimumReleaseAgeExcludes: string[],
+      ) {
+        return tempDir(`exclusions-${name}`, {
+          "package.json": JSON.stringify({ dependencies }),
+          "bunfig.toml": Bun.TOML.stringify({
+            install: {
+              minimumReleaseAge: minimumReleaseAgeDays * SECONDS_PER_DAY,
+              minimumReleaseAgeExcludes,
+              registry: mockRegistryUrl,
+            },
+          }),
+        });
+      }
+
+      // Every project gets its own manifest cache so the resolution path a
+      // test exercises does not depend on which tests ran before it.
+      // --no-verify: the fixture manifests carry placeholder integrity values.
+      async function install(dir: string, { args = [] as string[], env = {} as Record<string, string> } = {}) {
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), "install", "--no-verify", ...args],
+          cwd: dir,
+          env: { ...bunEnv, BUN_INSTALL_CACHE_DIR: join(dir, ".bun-cache"), ...env },
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+        const lockfile = Bun.file(join(dir, "bun.lock"));
+        let resolved: Record<string, string> | null = null;
+        if (await lockfile.exists()) {
+          const { packages } = Bun.JSONC.parse(await lockfile.text()) as { packages: Record<string, [string]> };
+          resolved = Object.fromEntries(Object.entries(packages).map(([name, [resolution]]) => [name, resolution]));
+        }
+        return { stderr, exitCode, resolved };
+      }
+
+      test.concurrent("exempts only the listed version", async () => {
+        using dir = project("pinned", { "excluded-package": "*", "regular-package": "*" }, 5, [
+          "excluded-package@1.0.1",
+        ]);
+        const { stderr, exitCode, resolved } = await install(String(dir), { args: ["--verbose"] });
+        expect(stderr).not.toContain("error:");
+        expect(resolved).toEqual({
+          // Too recent for the gate, but listed.
+          "excluded-package": "excluded-package@1.0.1",
+          // Not listed: still gated (3.0.0 is 1 day old).
+          "regular-package": "regular-package@2.1.0",
+        });
+        // Installing a listed version is not a downgrade, so only
+        // regular-package is reported as filtered.
+        expect(stderr.split(/\r?\n/).filter(line => line.includes("[minimum-release-age]"))).toEqual([
+          `[minimum-release-age] regular-package@>=0.0.0 selected 2.1.0 instead of 3.0.0 due to ${5 * SECONDS_PER_DAY}-second filter`,
+        ]);
+        expect(exitCode).toBe(0);
+      });
+
+      test.concurrent("does not exempt other versions of the package", async () => {
+        using dir = project("other-version", { "excluded-package": "*" }, 5, ["excluded-package@0.9.0"]);
+        const { stderr, exitCode, resolved } = await install(String(dir));
+        expect(stderr).not.toContain("error:");
+        expect(resolved).toEqual({ "excluded-package": "excluded-package@1.0.0" });
+        expect(exitCode).toBe(0);
+      });
+
+      test.concurrent("scoped package", async () => {
+        using dir = project("scoped-pinned", { "@scope/scoped-package": "*" }, 5, ["@scope/scoped-package@2.0.0"]);
+        const { stderr, exitCode, resolved } = await install(String(dir));
+        expect(stderr).not.toContain("error:");
+        expect(resolved).toEqual({ "@scope/scoped-package": "@scope/scoped-package@2.0.0" });
+        expect(exitCode).toBe(0);
+      });
+
+      test.concurrent("bare scoped package name still exempts every version", async () => {
+        using dir = project("scoped-bare", { "@scope/scoped-package": "*" }, 5, ["@scope/scoped-package"]);
+        const { stderr, exitCode, resolved } = await install(String(dir));
+        expect(stderr).not.toContain("error:");
+        expect(resolved).toEqual({ "@scope/scoped-package": "@scope/scoped-package@2.0.0" });
+        expect(exitCode).toBe(0);
+      });
+
+      // With a 1.8 day gate and no exemption, bugfix-package resolves to 1.0.0:
+      // 1.0.3 and 1.0.2 are too recent, 1.0.1 passes the gate but was released
+      // only 1 day after 1.0.2 so the stability check walks on to 1.0.0.
+      test.concurrent("a listed version that is too recent is installed", async () => {
+        using dir = project("too-recent", { "bugfix-package": "*" }, 1.8, ["bugfix-package@1.0.2"]);
+        const { stderr, exitCode, resolved } = await install(String(dir));
+        expect(stderr).not.toContain("error:");
+        expect(resolved).toEqual({ "bugfix-package": "bugfix-package@1.0.2" });
+        expect(exitCode).toBe(0);
+      });
+
+      test.concurrent("a listed version that passes the gate is not skipped by the stability check", async () => {
+        using dir = project("stability", { "bugfix-package": "*" }, 1.8, ["bugfix-package@1.0.1"]);
+        const { stderr, exitCode, resolved } = await install(String(dir));
+        expect(stderr).not.toContain("error:");
+        expect(resolved).toEqual({ "bugfix-package": "bugfix-package@1.0.1" });
+        expect(exitCode).toBe(0);
+      });
+
+      // With a 1.2 day gate, 1.0.3 is blocked and 1.0.2 passes the gate but was
+      // released only 1 day before 1.0.3, so the walk keeps it as a fallback and
+      // continues; without an exemption it ends on 1.0.0. A listed 1.0.1 ends
+      // the walk there, taking precedence over the unstable fallback the same
+      // way a stable version does.
+      test.concurrent.each([
+        ["*", "range"],
+        ["latest", "dist-tag"],
+      ])("a listed version is preferred over a newer unstable fallback (%s dependency)", async (spec, label) => {
+        using dir = project(`fallback-${label}`, { "bugfix-package": spec }, 1.2, ["bugfix-package@1.0.1"]);
+        const { stderr, exitCode, resolved } = await install(String(dir));
+        expect(stderr).not.toContain("error:");
+        expect(resolved).toEqual({ "bugfix-package": "bugfix-package@1.0.1" });
+        expect(exitCode).toBe(0);
+      });
+
+      test.concurrent("dist-tag dependency falls back to a listed version", async () => {
+        using dir = project("dist-tag-walk", { "bugfix-package": "latest" }, 1.8, ["bugfix-package@1.0.2"]);
+        const { stderr, exitCode, resolved } = await install(String(dir));
+        expect(stderr).not.toContain("error:");
+        expect(resolved).toEqual({ "bugfix-package": "bugfix-package@1.0.2" });
+        expect(exitCode).toBe(0);
+      });
+
+      test.concurrent("dist-tag dependency pointing at a listed version", async () => {
+        using dir = project("dist-tag-target", { "excluded-package": "latest" }, 5, ["excluded-package@1.0.1"]);
+        const { stderr, exitCode, resolved } = await install(String(dir));
+        expect(stderr).not.toContain("error:");
+        expect(resolved).toEqual({ "excluded-package": "excluded-package@1.0.1" });
+        expect(exitCode).toBe(0);
+      });
+
+      // Without the exemption the "canary" tag (canary.5) is too recent and the
+      // walk lands on canary.3, see "filters canary versions correctly".
+      test.concurrent("prerelease version", async () => {
+        using dir = project("prerelease", { "canary-package": "canary" }, 3, ["canary-package@2.0.0-canary.4"]);
+        const { stderr, exitCode, resolved } = await install(String(dir));
+        expect(stderr).not.toContain("error:");
+        expect(resolved).toEqual({ "canary-package": "canary-package@2.0.0-canary.4" });
+        expect(exitCode).toBe(0);
+      });
+
+      test.concurrent("exact dependency on a listed version", async () => {
+        using dir = project("exact", { "excluded-package": "1.0.1" }, 5, ["excluded-package@1.0.1"]);
+
+        const first = await install(String(dir));
+        expect(first.stderr).not.toContain("error:");
+        expect(first.resolved).toEqual({ "excluded-package": "excluded-package@1.0.1" });
+        expect(first.exitCode).toBe(0);
+
+        // The first install cached the manifest. With manifest cache-control
+        // disabled (BUN_MANIFEST_CACHE=1) the cached copy counts as expired, and
+        // an exact version found in an expired cached manifest is resolved
+        // before any registry request, through a separate age check.
+        rmSync(join(String(dir), "bun.lock"));
+        rmSync(join(String(dir), "node_modules"), { recursive: true });
+        const second = await install(String(dir), { env: { BUN_MANIFEST_CACHE: "1" } });
+        expect(second.stderr).not.toContain("error:");
+        expect(second.resolved).toEqual({ "excluded-package": "excluded-package@1.0.1" });
+        expect(second.exitCode).toBe(0);
+      });
+
+      test.concurrent("exact dependency on a version that is not listed is still blocked", async () => {
+        using dir = project("exact-blocked", { "excluded-package": "1.0.1" }, 5, ["excluded-package@1.0.0"]);
+        const { stderr, exitCode, resolved } = await install(String(dir));
+        expect(stderr).toContain(`blocked by minimum-release-age: ${5 * SECONDS_PER_DAY} seconds`);
+        expect(resolved).toBeNull();
+        expect(exitCode).toBe(1);
+      });
+
+      test.concurrent("several versions joined with ||", async () => {
+        using dir = project(
+          "union",
+          { "bugfix-package": "*", "@scope/scoped-package": "*" },
+          1.8,
+          // The version that matters is last in one entry and first in the
+          // other, so both halves of each entry have to be honored.
+          ["bugfix-package@1.0.1 || 1.0.2", "@scope/scoped-package@2.0.0||1.0.0"],
+        );
+        const { stderr, exitCode, resolved } = await install(String(dir));
+        expect(stderr).not.toContain("error:");
+        expect(resolved).toEqual({
+          "bugfix-package": "bugfix-package@1.0.2",
+          "@scope/scoped-package": "@scope/scoped-package@2.0.0",
+        });
+        expect(exitCode).toBe(0);
+      });
+
+      test.concurrent("entries that are not exact versions are ignored with a warning", async () => {
+        const entries = [
+          "excluded-package@",
+          "excluded-package@latest",
+          "excluded-package@^1.0.0",
+          "excluded-package@1.x",
+          "excluded-package@1.0.1 || ^1.0.0",
+          "excluded-package@1.0.1 junk",
+        ];
+        using dir = project("malformed", { "excluded-package": "*" }, 5, entries);
+        const { stderr, exitCode, resolved } = await install(String(dir));
+        expect(stderr).not.toContain("error:");
+        expect(stderr.split(/\r?\n/).filter(line => line.includes("minimumReleaseAgeExcludes"))).toEqual(
+          entries.map(
+            entry =>
+              `warn: Ignoring minimumReleaseAgeExcludes entry "${entry}": expected a package name or exact versions, e.g. "excluded-package@1.2.3" or "excluded-package@1.2.3 || 1.2.4"`,
+          ),
+        );
+        // "excluded-package@" must not turn into a whole-package exemption, and
+        // the 1.0.1 in the rejected entries must not be honored either.
+        expect(resolved).toEqual({ "excluded-package": "excluded-package@1.0.0" });
+        expect(exitCode).toBe(0);
+      });
     });
   });
 

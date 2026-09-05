@@ -1504,6 +1504,83 @@ impl FindResult<'_> {
     }
 }
 
+/// `minimumReleaseAgeExcludes` entries (pnpm grammar): `name` exempts a package, `name@1.2.3 || 1.2.4` only those versions.
+#[derive(Clone, Default)]
+pub struct MinimumReleaseAgeExcludes {
+    packages: Vec<&'static [u8]>,
+    /// Matched with `Version::eql`, which compares tags by hash, so no string buffer is kept.
+    versions: Vec<(&'static [u8], Semver::Version)>,
+}
+
+impl MinimumReleaseAgeExcludes {
+    /// A malformed entry (`foo@`, `foo@^1`) is dropped with a warning, never widened to the bare name.
+    pub(crate) fn parse(
+        entries: &[&'static [u8]],
+        log: &mut bun_ast::Log,
+    ) -> MinimumReleaseAgeExcludes {
+        let mut excludes = MinimumReleaseAgeExcludes::default();
+
+        for &entry in entries {
+            // Skip a scope's leading `@` so `@types/node@20.0.0` splits after the name.
+            let name_start = usize::from(strings::starts_with_char(entry, b'@'));
+            let Some(at) = strings::index_of_char_usize(&entry[name_start..], b'@') else {
+                excludes.exclude_package(entry);
+                continue;
+            };
+            let name = &entry[..name_start + at];
+            let specs = &entry[name_start + at + 1..];
+
+            let first_of_entry = excludes.versions.len();
+            for spec in strings::split(specs, b"||") {
+                let Some(version) = parse_exact_version(spec) else {
+                    excludes.versions.truncate(first_of_entry);
+                    log.add_warning_fmt(
+                        None,
+                        bun_ast::Loc::EMPTY,
+                        format_args!(
+                            "Ignoring minimumReleaseAgeExcludes entry {}: expected a package name or exact versions, e.g. \"{name}@1.2.3\" or \"{name}@1.2.3 || 1.2.4\"",
+                            bun_fmt::quote(entry),
+                            name = bstr::BStr::new(name),
+                        ),
+                    );
+                    break;
+                };
+                excludes.versions.push((name, version));
+            }
+        }
+
+        excludes
+    }
+
+    /// Exempts every version of `name`, like a bare bunfig entry.
+    pub(crate) fn exclude_package(&mut self, name: &'static [u8]) {
+        self.packages.push(name);
+    }
+
+    fn excludes_package(&self, name: &[u8]) -> bool {
+        self.packages.contains(&name)
+    }
+
+    fn excludes_version(&self, name: &[u8], version: Semver::Version) -> bool {
+        self.versions
+            .iter()
+            .any(|&(package, excluded)| package == name && excluded.eql(version))
+    }
+}
+
+/// Ranges, dist-tags, empty input, and trailing bytes are all rejected.
+fn parse_exact_version(spec: &[u8]) -> Option<Semver::Version> {
+    let spec = strings::trim(spec, &strings::WHITESPACE_CHARS);
+    let parsed = Semver::Version::parse_utf8(spec);
+    if !parsed.valid
+        || parsed.wildcard != Semver::query::Wildcard::None
+        || parsed.len as usize != spec.len()
+    {
+        return None;
+    }
+    Some(parsed.version.min())
+}
+
 impl PackageManifest {
     pub(crate) fn find_by_version(&self, version: Semver::Version) -> Option<FindResult<'_>> {
         let list = if !version.tag.has_pre() {
@@ -1556,20 +1633,35 @@ impl PackageManifest {
         None
     }
 
-    pub(crate) fn should_exclude_from_age_filter(&self, exclusions: Option<&[&[u8]]>) -> bool {
-        if let Some(excl) = exclusions {
-            let pkg_name = self.name();
-            for excluded in excl {
-                if pkg_name == *excluded {
-                    return true;
-                }
-            }
-        }
-        false
+    /// Whether every version of this package bypasses the minimum release age.
+    pub(crate) fn should_exclude_from_age_filter(
+        &self,
+        exclusions: Option<&MinimumReleaseAgeExcludes>,
+    ) -> bool {
+        exclusions.is_some_and(|excludes| excludes.excludes_package(self.name()))
+    }
+
+    fn is_version_excluded_from_age_filter(
+        &self,
+        version: Semver::Version,
+        exclusions: Option<&MinimumReleaseAgeExcludes>,
+    ) -> bool {
+        exclusions.is_some_and(|excludes| excludes.excludes_version(self.name(), version))
+    }
+
+    /// Too recent for the gate and not listed in `exclusions`.
+    pub(crate) fn is_version_blocked_by_age_filter(
+        &self,
+        result: FindResult<'_>,
+        minimum_release_age_ms: f64,
+        exclusions: Option<&MinimumReleaseAgeExcludes>,
+    ) -> bool {
+        Self::is_package_version_too_recent(result.package, minimum_release_age_ms)
+            && !self.is_version_excluded_from_age_filter(result.version, exclusions)
     }
 
     #[inline]
-    pub(crate) fn is_package_version_too_recent(
+    fn is_package_version_too_recent(
         package_version: &PackageVersion,
         minimum_release_age_ms: f64,
     ) -> bool {
@@ -1585,6 +1677,7 @@ impl PackageManifest {
         group: &Semver::query::Group,
         group_buf: &[u8],
         minimum_release_age_ms: f64,
+        exclusions: Option<&MinimumReleaseAgeExcludes>,
         newest_filtered: &mut Option<Semver::Version>,
     ) -> Option<FindVersionResult<'a>> {
         let mut prev_package_blocked_from_age: Option<&PackageVersion> = None;
@@ -1601,6 +1694,11 @@ impl PackageManifest {
             let version = versions[i];
             if group.satisfies(version, group_buf, &self.string_buf) {
                 let package = &packages[i];
+                // Listed versions count as stable: no age gate, and they replace an unstable fallback in `best_version`.
+                if self.is_version_excluded_from_age_filter(version, exclusions) {
+                    best_version = Some(FindResult { version, package });
+                    break;
+                }
                 if Self::is_package_version_too_recent(package, minimum_release_age_ms) {
                     if newest_filtered.is_none() {
                         *newest_filtered = Some(version);
@@ -1694,7 +1792,7 @@ impl PackageManifest {
         &self,
         tag: &[u8],
         minimum_release_age_ms: Option<f64>,
-        exclusions: Option<&[&[u8]]>,
+        exclusions: Option<&MinimumReleaseAgeExcludes>,
     ) -> FindVersionResult<'_> {
         let Some(dist_result) = self.find_by_dist_tag(tag) else {
             return FindVersionResult::Err(FindVersionError::NotFound);
@@ -1713,8 +1811,7 @@ impl PackageManifest {
         let seven_days_ms: f64 = 7.0 * bun_core::time::MS_PER_DAY as f64;
         let stability_window_ms = min_age_ms.min(seven_days_ms);
 
-        let dist_too_recent = Self::is_package_version_too_recent(dist_result.package, min_age_ms);
-        if !dist_too_recent {
+        if !self.is_version_blocked_by_age_filter(dist_result, min_age_ms, exclusions) {
             return FindVersionResult::Found(dist_result);
         }
 
@@ -1769,6 +1866,12 @@ impl PackageManifest {
                 }
             }
 
+            // See `search_version_list`.
+            if self.is_version_excluded_from_age_filter(version, exclusions) {
+                best_version = Some(FindResult { version, package });
+                break;
+            }
+
             if Self::is_package_version_too_recent(package, min_age_ms) {
                 prev_package_blocked_from_age = Some(package);
                 continue;
@@ -1821,7 +1924,7 @@ impl PackageManifest {
         group: &Semver::query::Group,
         group_buf: &[u8],
         minimum_release_age_ms: Option<f64>,
-        exclusions: Option<&[&[u8]]>,
+        exclusions: Option<&MinimumReleaseAgeExcludes>,
     ) -> FindVersionResult<'_> {
         let min_age_gate_ms = match minimum_release_age_ms {
             Some(min_age_ms) if !self.should_exclude_from_age_filter(exclusions) => {
@@ -1844,7 +1947,7 @@ impl PackageManifest {
         if left.op == Semver::range::Op::Eql {
             let result = self.find_by_version(left.version);
             if let Some(r) = result {
-                if Self::is_package_version_too_recent(r.package, min_age_ms) {
+                if self.is_version_blocked_by_age_filter(r, min_age_ms, exclusions) {
                     return FindVersionResult::Err(FindVersionError::TooRecent);
                 }
                 return FindVersionResult::Found(r);
@@ -1854,7 +1957,7 @@ impl PackageManifest {
 
         if let Some(result) = self.find_by_dist_tag(b"latest") {
             if group.satisfies(result.version, group_buf, &self.string_buf) {
-                if Self::is_package_version_too_recent(result.package, min_age_ms) {
+                if self.is_version_blocked_by_age_filter(result, min_age_ms, exclusions) {
                     newest_filtered = Some(result.version);
                 }
                 if newest_filtered.is_none() {
@@ -1879,6 +1982,7 @@ impl PackageManifest {
             group,
             group_buf,
             min_age_ms,
+            exclusions,
             &mut newest_filtered,
         ) {
             return result;
@@ -1891,6 +1995,7 @@ impl PackageManifest {
                 group,
                 group_buf,
                 min_age_ms,
+                exclusions,
                 &mut newest_filtered,
             ) {
                 return result;

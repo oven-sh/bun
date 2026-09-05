@@ -3036,9 +3036,6 @@ ServerResponse.prototype.writeContinue = function (cb) {
 // But we don't want it for the fetch() response version.
 ServerResponse.prototype.end = function (chunk, encoding, callback) {
   const handle = this[kHandle];
-  if (handle?.aborted) {
-    return this;
-  }
 
   if ($isCallable(chunk)) {
     callback = chunk;
@@ -3065,20 +3062,7 @@ ServerResponse.prototype.end = function (chunk, encoding, callback) {
   }
 
   if (!handle) {
-    // Read the storage directly - the `socket` getter auto-creates a
-    // FakeSocket and would make this condition always true.
-    if (this[fakeSocketSymbol] || this.outputData?.length || !this._header) {
-      // Standalone response writing through an assigned socket (or buffering
-      // until one is assigned): use the OutgoingMessage machinery. The
-      // original chunk passes through (mirroring write()): write_() has its
-      // own !_hasBody handling, including the rejectNonStandardBodyWrites
-      // throw, which the clearing below would bypass.
-      return OutgoingMessagePrototype.end.$call(this, chunk, encoding, callback);
-    }
-    if ($isCallable(callback)) {
-      process.nextTick(callback);
-    }
-    return this;
+    return OutgoingMessagePrototype.end.$call(this, chunk, encoding, callback);
   }
 
   if (this[headerStateSymbol] === NodeHTTPHeaderState.none) {
@@ -3120,9 +3104,16 @@ ServerResponse.prototype.end = function (chunk, encoding, callback) {
 
   const flags = handle.flags;
   if (!!(flags & NodeHTTPResponseFlags.closed_or_completed)) {
-    // node.js will return true if the handle is closed but the internal state is not
-    // and will not throw or emit an error
-    return true;
+    // Socket already gone: like Node, 'prefinish' fires but 'finish' never does.
+    this._header = " ";
+    const req = this.req;
+    if (!req._consuming && !req?._readableState?.resumeScheduled) {
+      req._dump();
+    }
+    this.finished = true;
+    process.nextTick(markResponseEndedNT, this);
+    this.emit("prefinish");
+    return this;
   }
   const sentState = NodeHTTPHeaderState.sent;
   if (headerState !== sentState) {
@@ -3289,9 +3280,8 @@ ServerResponse.prototype.write = function (chunk, encoding, callback) {
 
   const flags = handle.flags;
   if (!!(flags & NodeHTTPResponseFlags.closed_or_completed)) {
-    // node.js will return true if the handle is closed but the internal state is not
-    // and will not throw or emit an error
-    return true;
+    // Socket already gone: like Node's _writeRaw(), report false and drop the callback.
+    return false;
   }
 
   if (this[headerStateSymbol] !== NodeHTTPHeaderState.sent) {

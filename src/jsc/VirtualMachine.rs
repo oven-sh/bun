@@ -1883,6 +1883,20 @@ impl VirtualMachine {
         // self.event_loop().tick();
 
         if self.should_destruct_main_thread_on_exit() {
+            // Stop watcher threads before `teardown` frees the resolver BSSMap
+            // singletons they dispatch through (any in-flight `bust_dir_cache`
+            // completes under the watcher mutex first).
+            bun_watcher::stop_all_for_exit();
+            // Test-only fast path for the hot-reload-exit-race test: free the
+            // BSSMap immediately instead of running the phased teardown.
+            #[cfg(debug_assertions)]
+            if bun_core::env_var::BUN_INTERNAL_GLOBALEXIT_FAST_PATH_TO_TRANSPILER_DEINIT.get()
+                == Some(true)
+            {
+                // SAFETY: main-thread VM; the process exits immediately below.
+                unsafe { self.transpiler.deinit() };
+                bun_core::Global::exit(u32::from(self.exit_handler.exit_code));
+            }
             // SAFETY: main-thread VM on the main thread; exit handlers have run.
             unsafe { Self::teardown(core::ptr::from_mut(self), Teardown::MainThreadExit) };
         } else {
@@ -6894,6 +6908,14 @@ impl VirtualMachine {
 
     /// To satisfy the interface from NewHotReloader().
     pub(crate) fn bust_dir_cache(&mut self, path: &[u8]) -> bool {
+        // Test-only delay (watcher thread, under the watcher mutex) so the
+        // hot-reload-exit-race test can widen the watcher-vs-exit race.
+        #[cfg(debug_assertions)]
+        if let Some(ms) = bun_core::env_var::BUN_INTERNAL_WATCHER_BUSTDIRCACHE_DELAY_MS.get() {
+            if ms != 0 {
+                std::thread::sleep(std::time::Duration::from_millis(ms));
+            }
+        }
         self.transpiler.resolver.bust_dir_cache(path)
     }
 }

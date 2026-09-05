@@ -5091,24 +5091,25 @@ impl NodeFS {
 
         #[cfg(windows)]
         {
-            // Paths whose UTF-16 form exceeds the wide buffers can't exist on
-            // disk; reject instead of overflowing the conversion below.
-            for path in [&args.src, &args.dest] {
-                if !strings::fits_in_wide_path_buffer(path.slice()) {
-                    return Err(sys::Error {
-                        errno: E::ENAMETOOLONG as _,
-                        syscall: sys::Tag::copyfile,
-                        path: path.slice().into(),
-                        ..Default::default()
-                    });
-                }
-            }
-            let mut dest_buf = paths::os_path_buffer_pool::get();
-            let src = strings::to_kernel32_path(
-                bun_core::cast_slice_mut::<u8, u16>(&mut self.sync_error_buf),
-                args.src.slice(),
-            );
-            let dest = strings::to_kernel32_path(&mut *dest_buf, args.dest.slice());
+            // `\\?\`-prefixed paths bypass Win32's own normalization, so both
+            // operands are normalized (`.`, `..`, repeated and trailing
+            // separators) before the prefix is added, like node's
+            // `path.toNamespacedPath`.
+            let name_too_long = |path: &PathLike| sys::Error {
+                errno: E::ENAMETOOLONG as _,
+                syscall: sys::Tag::copyfile,
+                path: path.slice().into(),
+                ..Default::default()
+            };
+            let mut dest_buf = paths::path_buffer_pool::get();
+            let src = args
+                .src
+                .os_path_kernel32(&mut self.sync_error_buf)
+                .map_err(|NameTooLong| name_too_long(&args.src))?;
+            let dest = args
+                .dest
+                .os_path_kernel32(&mut *dest_buf)
+                .map_err(|NameTooLong| name_too_long(&args.dest))?;
             // SAFETY: src/dest are NUL-terminated wide paths; CopyFileW is the Win32 FFI
             if unsafe {
                 windows::CopyFileW(

@@ -973,6 +973,9 @@ pub fn normalize_string_generic_tz<
                 }
                 buf[buf_i + vol_len] = separator;
                 buf_i += vol_len + 1;
+                // Like the drive-letter and rooted cases below: `..` stops at
+                // the share root instead of eating the share and server names.
+                dotdot = buf_i;
                 path_begin = vol_len + 1;
 
                 // it is just a volume name
@@ -2293,7 +2296,7 @@ impl PosixToWinNormalizer {
                     };
                     // The cwd root (arbitrarily long for UNC cwds) plus the
                     // path must fit `buf` with one byte of headroom: the
-                    // joined result feeds `normalize_buf`, whose UNC-root
+                    // joined result feeds `normalize_string_buf`, whose UNC-root
                     // handling writes one past the input when the cwd is a
                     // bare share root with no trailing separator. Such a
                     // combination can't exist on NT anyway, so error out
@@ -2704,5 +2707,60 @@ mod tests {
             join_string_buf_w_same::<platform::Windows>(&mut out, &[&long, &rest]),
             &expected[..]
         );
+    }
+
+    fn normalize_windows<const ALLOW_ABOVE_ROOT: bool>(path: &str) -> String {
+        let mut buf = [0u8; 256];
+        let out = normalize_string_buf::<ALLOW_ABOVE_ROOT, platform::Windows, false>(
+            path.as_bytes(),
+            &mut buf,
+        );
+        String::from_utf8(out.to_vec()).unwrap()
+    }
+
+    #[test]
+    fn dotdot_stops_at_the_unc_share_root() {
+        // Used to walk back through the share and server names (`\\server\x`).
+        assert_eq!(
+            normalize_windows::<false>(r"\\server\share\..\..\x"),
+            r"\\server\share\x"
+        );
+        assert_eq!(
+            normalize_windows::<true>(r"\\server\share\..\x"),
+            r"\\server\share\..\x"
+        );
+        assert_eq!(
+            normalize_windows::<false>(r"\\server\share\a\b\..\..\c"),
+            r"\\server\share\c"
+        );
+        assert_eq!(
+            normalize_windows::<false>(r"\\server\share\a\..\b\"),
+            r"\\server\share\b"
+        );
+        assert_eq!(
+            normalize_windows::<false>(r"\\server\share\.."),
+            r"\\server\share\"
+        );
+        assert_eq!(
+            normalize_windows::<false>(r"\\server\share"),
+            r"\\server\share\"
+        );
+    }
+
+    #[test]
+    fn dotdot_stops_at_the_drive_root() {
+        assert_eq!(normalize_windows::<false>(r"C:\..\..\x\"), r"C:\x");
+        assert_eq!(normalize_windows::<false>(r"C:\a\..\.."), r"C:\");
+        assert_eq!(normalize_windows::<false>(r"\..\x"), r"\x");
+    }
+
+    #[test]
+    fn relative_paths_keep_a_leading_dotdot_and_may_normalize_to_nothing() {
+        assert_eq!(normalize_windows::<true>(r"..\x\"), r"..\x");
+        assert_eq!(normalize_windows::<true>(r"C:..\x"), r"C:..\x");
+        for path in [".", "./", r".\", "./.", "a/..", r"missing\..\"] {
+            assert_eq!(normalize_windows::<true>(path), "", "{path:?}");
+        }
+        assert_eq!(normalize_windows::<true>(""), "");
     }
 }

@@ -537,6 +537,31 @@ impl<'a, const METHOD: BuilderMethod> Builder<'a, METHOD> {
 // is_filtered_dependency_or_workspace
 // ──────────────────────────────────────────────────────────────────────────
 
+/// The `--omit` / `--production` feature set that applies to the dependencies
+/// of the package resolved as `parent_res`.
+pub(crate) fn dependency_features(
+    manager: &PackageManager,
+    parent_res: &Resolution,
+) -> crate::Features {
+    match parent_res.tag {
+        crate::resolution::Tag::Root
+        | crate::resolution::Tag::Workspace
+        | crate::resolution::Tag::Folder => manager.options.local_package_features,
+        _ => manager.options.remote_package_features,
+    }
+}
+
+/// What to do with a peer dependency when `--omit=peer` (`install.peer = false`)
+/// turns peer dependencies off.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum DisabledPeers {
+    /// Drop the edge. The hoisted linker never places the peer.
+    Filter,
+    /// Keep the edge. The isolated store builder still links the peer when an
+    /// ancestor provides it, and only skips the auto-install fallback.
+    Keep,
+}
+
 // `Builder` holds a live `&mut [PackageID]` over the resolutions buffer (see
 // `Builder.lockfile` safety contract), so callers must thread `resolutions`
 // explicitly to avoid an aliasing read through the shared `&Lockfile`.
@@ -548,6 +573,28 @@ pub(crate) fn is_filtered_dependency_or_workspace(
     manager: &PackageManager,
     lockfile: &Lockfile,
     resolutions: &[PackageID],
+) -> bool {
+    is_filtered_dependency_or_workspace_with(
+        dep_id,
+        parent_pkg_id,
+        workspace_filters,
+        install_root_dependencies,
+        manager,
+        lockfile,
+        resolutions,
+        DisabledPeers::Filter,
+    )
+}
+
+pub(crate) fn is_filtered_dependency_or_workspace_with(
+    dep_id: DependencyID,
+    parent_pkg_id: PackageID,
+    workspace_filters: &[WorkspaceFilter],
+    install_root_dependencies: bool,
+    manager: &PackageManager,
+    lockfile: &Lockfile,
+    resolutions: &[PackageID],
+    disabled_peers: DisabledPeers,
 ) -> bool {
     let pkg_id = resolutions[dep_id as usize];
     if (pkg_id as usize) >= lockfile.packages.len() {
@@ -594,14 +641,11 @@ pub(crate) fn is_filtered_dependency_or_workspace(
         return true;
     }
 
-    let dep_features = match parent_res.tag {
-        crate::resolution::Tag::Root
-        | crate::resolution::Tag::Workspace
-        | crate::resolution::Tag::Folder => manager.options.local_package_features,
-        _ => manager.options.remote_package_features,
-    };
+    let dep_features = dependency_features(manager, parent_res);
 
-    if !dep.behavior.is_enabled(dep_features) {
+    if !dep.behavior.is_enabled(dep_features)
+        && !(dep.behavior.is_peer() && disabled_peers == DisabledPeers::Keep)
+    {
         return true;
     }
 

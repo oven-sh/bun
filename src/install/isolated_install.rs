@@ -42,7 +42,10 @@ use bun_wyhash::{Wyhash, Wyhash11};
 use crate::analytics;
 use crate::bun_bunfig::Arguments as Command;
 use crate::bun_progress::{Node as ProgressNode, Progress};
-use crate::lockfile::tree::is_filtered_dependency_or_workspace;
+use crate::lockfile::tree::{
+    DisabledPeers, dependency_features, is_filtered_dependency_or_workspace,
+    is_filtered_dependency_or_workspace_with,
+};
 use crate::lockfile::{self, Lockfile};
 use crate::package_manager::{self, PackageManager, WorkspaceFilter, run_tasks};
 use crate::package_manager_real::ProgressStrings;
@@ -685,8 +688,11 @@ pub(crate) fn build_store(
                 }
             }
 
+            // `--omit=peer` only disables the auto-install fallback below. A peer
+            // that an ancestor provides is still linked into the entry, like
+            // pnpm with `auto-install-peers=false`.
             for &dep_id in &dep_ids_sort_buf {
-                if is_filtered_dependency_or_workspace(
+                if is_filtered_dependency_or_workspace_with(
                     dep_id,
                     entry.pkg_id,
                     workspace_filters,
@@ -694,6 +700,7 @@ pub(crate) fn build_store(
                     manager,
                     lockfile,
                     resolutions,
+                    DisabledPeers::Keep,
                 ) {
                     continue;
                 }
@@ -722,6 +729,9 @@ pub(crate) fn build_store(
             }
         }
 
+        let auto_install_peers =
+            dependency_features(manager, &pkg_resolutions[entry.pkg_id as usize]).peer_dependencies;
+
         for &peer_dep_id in &peer_dep_ids {
             let (resolved_pkg_id, auto_installed) = 'resolved_pkg_id: {
                 // Go through the peers parents looking for a package with the same name.
@@ -730,6 +740,13 @@ pub(crate) fn build_store(
                 // are deduplicated only if their package id and their transitive peer package
                 // ids are equal.
                 let peer_dep = &dependencies[peer_dep_id as usize];
+
+                // The version to auto-install when no parent provides the peer.
+                let best_version = if auto_install_peers {
+                    resolutions[peer_dep_id as usize]
+                } else {
+                    invalid_package_id
+                };
 
                 // TODO: double check this
                 // Start with the current package. A package
@@ -790,8 +807,6 @@ pub(crate) fn build_store(
                         // version. Only mark all parents if resolution is
                         // different from this transitive peer.
 
-                        let best_version = resolutions[peer_dep_id as usize];
-
                         if best_version == invalid_package_id {
                             break 'resolved_pkg_id (invalid_package_id, true);
                         }
@@ -818,12 +833,12 @@ pub(crate) fn build_store(
                 }
 
                 // choose the current best version
-                break 'resolved_pkg_id (resolutions[peer_dep_id as usize], true);
+                break 'resolved_pkg_id (best_version, true);
             };
 
             if resolved_pkg_id == invalid_package_id {
-                // these are optional peers that failed to find any dependency with a matching
-                // name. they are completely excluded
+                // optional peers, and peers disabled with `--omit=peer`, that found no
+                // dependency with a matching name. they are completely excluded
                 continue;
             }
 

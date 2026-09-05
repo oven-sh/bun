@@ -270,7 +270,9 @@ JSValue NodeVMSourceTextModule::createModuleRecord(JSGlobalObject* globalObject)
         if (ImportAttributesListNode* attributesNode = attributesNodes.at(i)) {
             for (auto [key, value] : attributesNode->attributes()) {
                 attributeMap.set(key->string(), value->string());
-                attributesObject->putDirect(vm, *key, JSC::jsString(vm, value->string()));
+                // An attribute key can be any string literal, including an array index.
+                attributesObject->putDirectMayBeIndex(globalObject, *key, JSC::jsString(vm, value->string()));
+                RETURN_IF_EXCEPTION(scope, {});
             }
         }
 

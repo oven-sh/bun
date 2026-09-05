@@ -1974,3 +1974,31 @@ describe("node:vm lineOffset/columnOffset at the edge of int32", () => {
     expect(position).toBeLessThanOrEqual(INT32_MAX);
   });
 });
+
+// An import attribute key is any string literal, so it can be a canonical array
+// index ("0"). The attributes object has to keep it in its indexed storage, or
+// Object.keys() lists a key that `attributes[0]` cannot read.
+describe("import attributes with an array-index key", () => {
+  test("SourceTextModule.moduleRequests[].attributes", () => {
+    const mod = new SourceTextModule('import x from "./y" with { "0": "a", "4294967294": "b", type: "json" };');
+    const { attributes } = mod.moduleRequests[0];
+    expect(attributes).toEqual({ 0: "a", 4294967294: "b", type: "json" });
+    expect(attributes[0]).toBe("a");
+    expect(attributes["4294967294"]).toBe("b");
+    expect(attributes[4294967294]).toBe("b");
+  });
+
+  test("importModuleDynamically receives the attributes argument", async () => {
+    const { promise, resolve } = Promise.withResolvers<Record<string, string>>();
+    const script = new Script('import("x", { with: { "0": "a", custom: "b" } })', {
+      importModuleDynamically(_specifier, _referrer, attributes) {
+        resolve(attributes);
+        return new SourceTextModule("export default 1;");
+      },
+    });
+    await script.runInThisContext().catch(() => {});
+    const attributes = await promise;
+    expect(attributes).toEqual({ 0: "a", custom: "b" });
+    expect(attributes[0]).toBe("a");
+  });
+});

@@ -891,6 +891,7 @@ extern "C" JSC::EncodedJSValue JSC__JSValue__upsertBunStringArray(
     auto existingValue = target->getIfPropertyExists(global, id);
     RETURN_IF_EXCEPTION(scope, {});
 
+    // The key is a route parameter name, so it can be an array index.
     if (!existingValue.isEmpty()) {
         // If existing value is already an array, push to it
         if (existingValue.isObject() && existingValue.getObject()->inherits<JSC::JSArray>()) {
@@ -903,29 +904,16 @@ extern "C" JSC::EncodedJSValue JSC__JSValue__upsertBunStringArray(
             array->putDirectIndex(global, 0, existingValue);
             RETURN_IF_EXCEPTION(scope, {});
             array->putDirectIndex(global, 1, newValue);
-            target->putDirect(vm, id, array, 0);
+            RETURN_IF_EXCEPTION(scope, {});
+            target->putDirectMayBeIndex(global, id, array);
         }
     } else {
         // No existing value, just put the new value directly
-        target->putDirect(vm, id, newValue, 0);
+        target->putDirectMayBeIndex(global, id, newValue);
     }
 
     RETURN_IF_EXCEPTION(scope, {});
     return JSC::JSValue::encode(JSC::jsUndefined());
-}
-
-extern "C" void JSC__JSValue__putBunString(
-    JSC::EncodedJSValue encodedTarget,
-    JSC::JSGlobalObject* global,
-    const BunString* key,
-    JSC::EncodedJSValue encodedValue)
-{
-    JSC::JSObject* target = JSC::JSValue::decode(encodedTarget).getObject();
-    JSC::JSValue value = JSC::JSValue::decode(encodedValue);
-    auto& vm = global->vm();
-    WTF::String str = key->tag == BunStringTag::Empty ? WTF::emptyString() : key->toWTFString();
-    Identifier id = Identifier::fromString(vm, str);
-    target->putDirect(vm, id, value, 0);
 }
 
 bool BunString::isEmpty() const

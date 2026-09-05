@@ -2226,7 +2226,7 @@ impl QuicSession {
         tp: &lsquic::NqTransportParams,
     ) -> JsResult<JSValue> {
         let obj = JSValue::create_empty_object_with_null_prototype(global);
-        let put = |name: &[u8], v: u64| -> JsResult<()> {
+        let put = |name: &'static [u8], v: u64| -> JsResult<()> {
             obj.put(global, name, JSValue::from_uint64_no_truncate(global, v)?);
             Ok(())
         };
@@ -2255,7 +2255,7 @@ impl QuicSession {
             b"disableActiveMigration",
             JSValue::js_boolean(tp.disable_active_migration != 0),
         );
-        let put_cid = |name: &[u8], s: &str| -> JsResult<()> {
+        let put_cid = |name: &'static [u8], s: &str| -> JsResult<()> {
             let v = if s.is_empty() {
                 JSValue::UNDEFINED
             } else {

@@ -77,12 +77,16 @@ static JSPromise* importModuleInner(JSGlobalObject* globalObject, JSString* modu
 static JSValue scriptFetchParametersToImportAttributes(JSGlobalObject* globalObject, JSC::ScriptFetchParameters* params)
 {
     auto& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
     auto* obj = constructEmptyObject(vm, globalObject->nullPrototypeObjectStructure());
     if (!params)
         return obj;
     if (!params->attributes().isEmpty()) {
-        for (auto& [key, value] : params->attributes())
-            obj->putDirect(vm, JSC::Identifier::fromUid(vm, key.get()), jsString(vm, value));
+        // `import(x, { with: { "0": "a" } })` gives an attribute key that is an array index.
+        for (auto& [key, value] : params->attributes()) {
+            obj->putDirectMayBeIndex(globalObject, JSC::Identifier::fromUid(vm, key.get()), jsString(vm, value));
+            RETURN_IF_EXCEPTION(scope, {});
+        }
         return obj;
     }
     switch (params->type()) {
@@ -320,6 +324,7 @@ static JSPromise* importModuleInner(JSGlobalObject* globalObject, JSString* modu
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     JSValue importAttributes = scriptFetchParametersToImportAttributes(globalObject, parameters.get());
+    RETURN_IF_EXCEPTION(scope, nullptr);
 
     MarkedArgumentBuffer args;
     args.append(moduleName);

@@ -3013,28 +3013,30 @@ double JSC__JSValue__getLengthIfPropertyExistsInternal(JSC::EncodedJSValue value
 [[ZIG_EXPORT(check_slow)]]
 void JSC__JSObject__putRecord(JSC::JSObject* object, JSC::JSGlobalObject* global, EncodedSlice* key, EncodedSlice* values, size_t valuesLen)
 {
-    auto scope = DECLARE_THROW_SCOPE(global->vm());
-    auto ident = Identifier::fromString(global->vm(), Zig::toStringCopy(*key));
-    JSC::PropertyDescriptor descriptor;
-
-    descriptor.setEnumerable(1);
-    descriptor.setConfigurable(1);
-    descriptor.setWritable(1);
+    auto& vm = global->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto ident = Identifier::fromString(vm, Zig::toStringCopy(*key));
+    JSC::JSValue value;
 
     if (valuesLen == 1) {
-        descriptor.setValue(JSC::jsString(global->vm(), Zig::toStringCopy(values[0])));
+        value = JSC::jsString(vm, Zig::toStringCopy(values[0]));
     } else {
 
         // Pre-convert all strings to JSValues before entering ObjectInitializationScope,
         // since jsString() allocates GC cells which is not allowed inside the scope.
         MarkedArgumentBuffer strings;
+        strings.ensureCapacity(valuesLen);
         for (size_t i = 0; i < valuesLen; ++i) {
-            strings.append(JSC::jsString(global->vm(), Zig::toStringCopy(values[i])));
+            strings.append(JSC::jsString(vm, Zig::toStringCopy(values[i])));
+        }
+        if (strings.hasOverflowed()) [[unlikely]] {
+            JSC::throwOutOfMemoryError(global, scope);
+            return;
         }
 
         JSC::JSArray* array = nullptr;
         {
-            JSC::ObjectInitializationScope initializationScope(global->vm());
+            JSC::ObjectInitializationScope initializationScope(vm);
             if ((array = JSC::JSArray::tryCreateUninitializedRestricted(initializationScope, nullptr, global->arrayStructureForIndexingTypeDuringAllocation(JSC::ArrayWithContiguous), valuesLen))) {
 
                 for (size_t i = 0; i < valuesLen; ++i) {
@@ -3048,12 +3050,12 @@ void JSC__JSObject__putRecord(JSC::JSObject* object, JSC::JSGlobalObject* global
             return;
         }
 
-        descriptor.setValue(array);
+        value = array;
     }
 
-    object->methodTable()->defineOwnProperty(object, global, ident, descriptor, true);
-    object->putDirect(global->vm(), ident, descriptor.value());
-    scope.release();
+    // The key is a query-string name or a route parameter, so it can be an array index.
+    object->putDirectMayBeIndex(global, ident, value);
+    RETURN_IF_EXCEPTION(scope, );
 }
 
 JSC::JSPromise* JSC__JSValue__asInternalPromise(JSC::EncodedJSValue JSValue0)
@@ -3451,17 +3453,12 @@ JSC::EncodedJSValue JSC__JSValue__fromEntries(JSC::JSGlobalObject* globalObject,
     JSC::JSObject* object = JSC::constructEmptyObject(globalObject, globalObject->objectPrototype(), std::min(static_cast<unsigned int>(initialCapacity), JSFinalObject::maxInlineCapacity));
     RETURN_IF_EXCEPTION(scope, {});
 
-    if (!clone) {
-        for (size_t i = 0; i < initialCapacity; ++i) {
-            object->putDirect(
-                vm, JSC::PropertyName(JSC::Identifier::fromString(vm, Zig::toString(keys[i]))),
-                Zig::toJSStringGC(values[i], globalObject), 0);
-        }
-    } else {
-        for (size_t i = 0; i < initialCapacity; ++i) {
-            object->putDirect(vm, JSC::PropertyName(Zig::toIdentifier(keys[i], globalObject)),
-                Zig::toJSStringGC(values[i], globalObject), 0);
-        }
+    for (size_t i = 0; i < initialCapacity; ++i) {
+        JSC::Identifier key = clone
+            ? Zig::toIdentifier(keys[i], globalObject)
+            : JSC::Identifier::fromString(vm, Zig::toString(keys[i]));
+        object->putDirectMayBeIndex(globalObject, key, Zig::toJSStringGC(values[i], globalObject));
+        RETURN_IF_EXCEPTION(scope, {});
     }
 
     return JSC::JSValue::encode(object);

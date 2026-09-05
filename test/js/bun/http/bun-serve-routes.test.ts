@@ -1107,3 +1107,35 @@ describe.concurrent("false route with no fetch handler", () => {
     await proc.exited;
   });
 });
+
+describe("request.clone() params", () => {
+  // `params` is a plain extensible object, so user code can add a property whose
+  // name is a canonical array index ("0") before clone() copies it. The copy has
+  // to keep such a property in its indexed storage, or `params[0]` misses it.
+  it("copies an own property named like an array index", async () => {
+    using server = Bun.serve({
+      port: 0,
+      routes: {
+        "/users/:id": req => {
+          (req.params as Record<string, string>)[0] = "zero";
+          (req.params as Record<string, string>)[4294967294] = "max";
+          const params = req.clone().params as Record<string, string>;
+          return Response.json({
+            keys: Object.keys(params).sort(),
+            byIndex: [params[0], params[4294967294]],
+            byString: [params["0"], params["4294967294"]],
+            id: params.id,
+          });
+        },
+      },
+    });
+
+    const res = await fetch(`${server.url}users/42`);
+    expect(await res.json()).toEqual({
+      keys: ["0", "4294967294", "id"],
+      byIndex: ["zero", "max"],
+      byString: ["zero", "max"],
+      id: "42",
+    });
+  });
+});

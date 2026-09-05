@@ -2706,7 +2706,7 @@ where
     ) {
         jsc::mark_binding!();
         if !matches!(self.config.address, server_config::Address::Unix(_))
-            && (!bake::is_allowed_host_header(req, Some(&self.config.address))
+            && (!bake::is_allowed_host_header(req, Some(&self.config))
                 || !resp
                     .get_remote_socket_info()
                     .is_some_and(|address| address.is_loopback()))

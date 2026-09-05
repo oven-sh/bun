@@ -1188,10 +1188,19 @@ struct BlobHeader {
 
 #if OS(DARWIN)
 
+#include <mach-o/getsect.h>
+#include <mach-o/ldsyms.h>
+
 extern "C" BlobHeader __attribute__((section("__BUN,__bun"))) BUN_COMPILED = { 0, 0 };
 
 extern "C" uint64_t* Bun__getStandaloneModuleGraphMachoLength()
 {
+    // The embedded length is untrusted (post-build corruption); clamp it to
+    // the section size from the load command.
+    unsigned long sectionSize = 0;
+    uint8_t* sectionData = getsectiondata(&_mh_execute_header, "__BUN", "__bun", &sectionSize);
+    if (!sectionData || sectionSize < sizeof(uint64_t)) return nullptr;
+    if (BUN_COMPILED.size > sectionSize - sizeof(uint64_t)) return nullptr;
     return &BUN_COMPILED.size;
 }
 
@@ -1232,9 +1241,18 @@ static bool initializePESection()
 
     for (int i = 0; i < ntHeaders->FileHeader.NumberOfSections; i++) {
         if (memcmp(sectionHeader->Name, ".bun\0\0\0\0", 8) == 0) {
-            // Found the .bun section
-            // Section format: 8 bytes size (uint64_t) + data
+            // Section format: 8 bytes size (uint64_t) + data.
+            // Only VirtualSize bytes are mapped and the embedded length is
+            // untrusted (post-build corruption), so reject out-of-bounds
+            // lengths instead of crashing on the read.
+            uint64_t sectionSize = sectionHeader->Misc.VirtualSize;
+            if (sectionSize < sizeof(uint64_t)) return false;
+
             BYTE* sectionData = (BYTE*)hModule + sectionHeader->VirtualAddress;
+            uint64_t embeddedLength;
+            memcpy(&embeddedLength, sectionData, sizeof(embeddedLength));
+            if (embeddedLength > sectionSize - sizeof(uint64_t)) return false;
+
             pe_section_size = (uint64_t*)sectionData;
             pe_section_data = sectionData + sizeof(uint64_t); // Skip size (8)
             return true;

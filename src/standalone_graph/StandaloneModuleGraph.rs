@@ -558,25 +558,43 @@ mod elf {
         if vaddr == 0 {
             return None;
         }
-        // BUN_COMPILED.size holds the link-time virtual address of the
-        // appended data. For a PIE executable (mandatory on Android) the
-        // kernel maps every PT_LOAD at that vaddr plus a load bias, which is
-        // `dlpi_addr` of the object containing BUN_COMPILED itself; for
-        // non-PIE it is 0.
-        // Format at target: [u64 payload_len][payload bytes]
-        // Synthesize a `*mut u8` directly so the provenance carries write
-        // permission for the in-place bytecode mutation done by JSC.
-        let load_bias =
-            bun_sys::elf::find_loaded_module(vaddr_ptr as usize).map_or(0, |m| m.base_address);
-        let target = (vaddr as usize).wrapping_add(load_bias) as *mut u8;
-        // SAFETY: target points to 8-byte little-endian length prefix.
+        // BUN_COMPILED.size is the link-time vaddr of the appended data. Under
+        // PIE (mandatory on Android) the runtime address is that vaddr plus the
+        // load bias (`dlpi_addr`); non-PIE bias is 0. Look the module up by the
+        // symbol's runtime address (`vaddr_ptr`), since the link-time `vaddr` is
+        // not a mapped address under PIE. Format at target: [u64 len][payload].
+        let module = bun_sys::elf::find_loaded_module(vaddr_ptr as usize)?;
+        let header_size = size_of::<u64>();
+        // `target` carries write provenance for the in-place bytecode mutation.
+        // vaddr and the length prefix are untrusted (post-build corruption), so
+        // require `[target, target + 8 + len)` inside the PT_LOAD segment that
+        // maps BUN_COMPILED (the writer appends the payload to that same
+        // extended segment); anything outside it is unmapped.
+        let target = usize::try_from(vaddr)
+            .ok()
+            .and_then(|vaddr| vaddr.checked_add(module.base_address))?;
+        let payload_capacity = (target >= module.segment_start)
+            .then_some(module.segment_end)
+            .and_then(|segment_end| segment_end.checked_sub(target))
+            .and_then(|available| available.checked_sub(header_size));
+        let Some(payload_capacity) = payload_capacity else {
+            bun_core::debug_warn!("bun standalone module graph is not mapped by its segment");
+            return None;
+        };
+        let target = target as *mut u8;
+        // SAFETY: `[target, target + header_size)` is inside the segment (checked above).
         let payload_len =
             u64::from_le_bytes(unsafe { core::ptr::read_unaligned(target.cast::<[u8; 8]>()) });
         if payload_len < 8 {
             return None;
         }
-        // SAFETY: payload_len bytes follow the 8-byte header at `target`.
-        Some((unsafe { target.add(8) }, payload_len as usize))
+        if payload_len > payload_capacity as u64 {
+            bun_core::debug_warn!("bun standalone module graph length exceeds its segment");
+            return None;
+        }
+        // SAFETY: payload_len bytes follow the 8-byte header at `target`,
+        // all inside the containing PT_LOAD (checked above).
+        Some((unsafe { target.add(header_size) }, payload_len as usize))
     }
 
     /// `MADV_WILLNEED` over `[lo, hi)`: queues page-cache readahead for the

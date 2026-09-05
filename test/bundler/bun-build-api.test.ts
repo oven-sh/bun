@@ -976,6 +976,105 @@ describe("Bun.build", () => {
     ).toThrow();
   });
 
+  describe("onLoad loader: 'object'", () => {
+    const makePlugin = (exports: Record<string, unknown>) => ({
+      name: "objdiv",
+      setup(b: any) {
+        b.onResolve({ filter: /^objdiv:/ }, (a: any) => ({ path: a.path.slice(7), namespace: "objdiv" }));
+        b.onResolve({ filter: /.*/, namespace: "objdiv" }, (a: any) => ({ path: a.path, namespace: "objdiv" }));
+        b.onLoad({ filter: /.*/, namespace: "objdiv" }, () => ({ exports, loader: "object" }));
+      },
+    });
+
+    const bundleAndRun = async (prefix: string, exports: Record<string, unknown>, entry: string) => {
+      using dir = tempDir(prefix, { "entry.ts": entry });
+      const build = await Bun.build({
+        entrypoints: [join(String(dir), "entry.ts")],
+        plugins: [makePlugin(exports)],
+      });
+      expect(build.success).toBe(true);
+      const out = join(String(dir), "out.js");
+      writeFileSync(out, await build.outputs[0].text());
+      await using proc = Bun.spawn({ cmd: [bunExe(), out], env: bunEnv, stderr: "pipe" });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(exitCode).toBe(0);
+      return JSON.parse(stdout);
+    };
+
+    // The runtime plugin path (ObjectModule.cpp) treats each own key of
+    // `exports` as a namespace binding. The bundler previously routed
+    // `loader: "object"` through the JSON loader, which makes the whole
+    // object the default export. These tests pin the runtime semantics for
+    // the default binding so the same plugin behaves the same under
+    // `bun run` and a `Bun.build` bundle.
+    test.concurrent("default import binds to exports.default", async () => {
+      const result = await bundleAndRun(
+        "object-loader-default",
+        { default: "DEF", named: "NAMED" },
+        `import d, { named } from "objdiv:x";
+         import * as ns from "objdiv:x";
+         console.log(JSON.stringify({ d, named, nsDefault: ns.default, nsNamed: ns.named }));`,
+      );
+      expect(result).toEqual({ d: "DEF", named: "NAMED", nsDefault: "DEF", nsNamed: "NAMED" });
+    });
+
+    test.concurrent("default import binds to exports.default (nested object)", async () => {
+      const result = await bundleAndRun(
+        "object-loader-default-nested",
+        { default: { a: 1, b: 2 }, named: "NAMED" },
+        `import d, { named } from "objdiv:x";
+         console.log(JSON.stringify({ d, named }));`,
+      );
+      expect(result).toEqual({ d: { a: 1, b: 2 }, named: "NAMED" });
+    });
+
+    test.concurrent.each([
+      ["zero", 0],
+      ["null", null],
+      ["empty string", ""],
+    ])("falsy exports.default (%s) is kept as the default binding", async (label, value) => {
+      const result = await bundleAndRun(
+        "object-loader-default-falsy-" + label.replace(" ", "-"),
+        { default: value, named: "NAMED" },
+        `import d, { named } from "objdiv:x";
+         console.log(JSON.stringify({ d, named }));`,
+      );
+      expect(result).toEqual({ d: value, named: "NAMED" });
+    });
+
+    test.concurrent("__esModule alongside default does not alter the default binding", async () => {
+      const result = await bundleAndRun(
+        "object-loader-default-esmodule",
+        { default: "DEF", named: "NAMED", __esModule: true },
+        `import d, { named } from "objdiv:x";
+         import * as ns from "objdiv:x";
+         console.log(JSON.stringify({ d, named, hasEsModule: Object.hasOwn(ns, "__esModule") }));`,
+      );
+      expect(result).toEqual({ d: "DEF", named: "NAMED", hasEsModule: false });
+    });
+
+    test.concurrent("non-identifier export name is preserved", async () => {
+      const result = await bundleAndRun(
+        "object-loader-default-non-identifier",
+        { default: "DEF", "not-an-identifier": "X" },
+        `import d, { "not-an-identifier" as notId } from "objdiv:x";
+         console.log(JSON.stringify({ d, notId }));`,
+      );
+      expect(result).toEqual({ d: "DEF", notId: "X" });
+    });
+
+    test.concurrent("no default key: default import is the whole exports object", async () => {
+      const result = await bundleAndRun(
+        "object-loader-no-default",
+        { named: "NAMED", other: 42 },
+        `import d, { named, other } from "objdiv:x";
+         console.log(JSON.stringify({ d, named, other }));`,
+      );
+      expect(result).toEqual({ d: { named: "NAMED", other: 42 }, named: "NAMED", other: 42 });
+    });
+  });
+
   test.concurrent("non-object plugins throw invalid argument errors", () => {
     for (const plugin of [null, undefined, 1, "hello", true, false, Symbol.for("hello")]) {
       expect(() => {

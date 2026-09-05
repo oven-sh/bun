@@ -145,4 +145,7 @@ JSC_DECLARE_HOST_FUNCTION(Process_functionDlopen);
 // callback shims in src/js.
 JSC_DECLARE_HOST_FUNCTION(jsFunctionReportUncaughtException);
 
+// Runs each reified process.std{in,out,err}'s @resetStdioForHotReload (ProcessObjectInternals.ts).
+void resetStdioForHotReload(Zig::GlobalObject* globalObject);
+
 } // namespace Bun

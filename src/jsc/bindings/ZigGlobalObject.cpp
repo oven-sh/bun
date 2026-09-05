@@ -3372,6 +3372,11 @@ void GlobalObject::reload()
 {
     auto& vm = this->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
+
+    // The process object outlives the reload; drop the previous load's stdio listeners (#15027).
+    Bun::resetStdioForHotReload(this);
+    RETURN_IF_EXCEPTION(scope, );
+
     this->clearModuleRegistry();
     RETURN_IF_EXCEPTION(scope, );
 

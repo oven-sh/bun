@@ -3067,6 +3067,43 @@ static JSValue constructStdin(VM& vm, JSObject* processObject)
     return result;
 }
 
+void resetStdioForHotReload(Zig::GlobalObject* globalObject)
+{
+    if (!globalObject->hasProcessObject()) {
+        return;
+    }
+
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto* process = globalObject->processObject();
+    const auto& resetName = WebCore::builtinNames(vm).resetStdioForHotReloadPrivateName();
+
+    for (auto name : { "stdin"_s, "stdout"_s, "stderr"_s }) {
+        // getDirect() skips streams that were never reified instead of constructing them.
+        JSValue stream = process->getDirect(vm, Identifier::fromString(vm, name));
+        if (!stream || !stream.isObject()) {
+            continue;
+        }
+
+        JSValue resetFn = stream.getObject()->getDirect(vm, resetName);
+        if (!resetFn) {
+            continue;
+        }
+
+        auto callData = JSC::getCallData(resetFn);
+        if (callData.type == JSC::CallData::Type::None) {
+            continue;
+        }
+
+        JSC::MarkedArgumentBuffer args;
+        JSC::profiledCall(globalObject, ProfilingReason::API, resetFn, callData, stream, args);
+        // A failing reset on one stream must not stop the others; a termination must.
+        if (!scope.tryClearException()) [[unlikely]] {
+            return;
+        }
+    }
+}
+
 static JSValue constructProcessSend(VM& vm, JSObject* processObject)
 {
     auto* globalObject = processObject->globalObject();

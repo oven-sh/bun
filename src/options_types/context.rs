@@ -421,7 +421,6 @@ pub struct TestOptions {
     pub bail: u32,
     pub coverage: CodeCoverageOptions,
     pub path_ignore_patterns: Vec<Box<[u8]>>,
-    pub path_ignore_patterns_from_cli: bool,
     pub test_filter_pattern: Option<Box<[u8]>>,
     /// `?*bun.jsc.RegularExpression` — typed as opaque to keep this file free
     /// of `jsc/` references. Read via `test_filter_regex()`.
@@ -505,7 +504,6 @@ impl Default for TestOptions {
             bail: 0,
             coverage: CodeCoverageOptions::default(),
             path_ignore_patterns: Vec::new(),
-            path_ignore_patterns_from_cli: false,
             test_filter_pattern: None,
             test_filter_regex: None,
             // Under ASAN every spawned `bun` child is several-× heavier in

@@ -4333,7 +4333,6 @@ pub unsafe extern "C" fn Bun__transpileFile(
                     global,
                     specifier.clone(),
                     &lr.path,
-                    referrer.clone(),
                     concurrent_loader,
                     lr.package_json,
                 )
@@ -4457,7 +4456,7 @@ pub unsafe extern "C" fn Bun__transpileFile(
             promise.cast::<c_void>()
         }
         Err(err) => {
-            if let Some(value) = transpile_error_value(global, specifier, referrer, &mut log, err) {
+            if let Some(value) = transpile_error_value(global, specifier, &mut log, err) {
                 *ret = ErrorableResolvedSource::err(value);
             }
             ptr::null_mut()
@@ -4470,7 +4469,6 @@ pub unsafe extern "C" fn Bun__transpileFile(
 fn transpile_error_value(
     global: &JSGlobalObject,
     specifier: &bun_core::String,
-    referrer: &bun_core::String,
     log: &mut bun_ast::Log,
     err: crate::Error,
 ) -> Option<JSValue> {
@@ -4488,7 +4486,6 @@ fn transpile_error_value(
         err => Some(bun_jsc::virtual_machine::process_fetch_log(
             global,
             specifier,
-            referrer,
             log,
             to_jsc_fetch_error(&err),
         )),
@@ -4596,9 +4593,7 @@ pub extern "C" fn Bun__transpileVirtualModule(
             true
         }
         Err(err) => {
-            if let Some(value) =
-                transpile_error_value(global, specifier_str, referrer_str, &mut log, err)
-            {
+            if let Some(value) = transpile_error_value(global, specifier_str, &mut log, err) {
                 *ret = ErrorableResolvedSource::err(value);
             }
             true

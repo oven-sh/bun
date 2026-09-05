@@ -157,7 +157,6 @@ impl AsyncModule {
         promise: JSValue,
         result: Result<ResolvedSource, crate::CrateError>,
         specifier: &BunString,
-        referrer: &BunString,
         log: &mut bun_ast::Log,
     ) -> JsResult<()> {
         jsc::mark_binding();
@@ -169,7 +168,6 @@ impl AsyncModule {
             Err(e) => ErrorableResolvedSource::err(crate::virtual_machine::process_fetch_log(
                 global_this,
                 specifier,
-                referrer,
                 log,
                 e,
             )),
@@ -177,7 +175,7 @@ impl AsyncModule {
         bun_core::scoped_log!(AsyncModule, "fulfill: {}", specifier);
 
         jsc::from_js_host_call_generic(global_this, || {
-            Bun__onFulfillAsyncModule(global_this, promise, &mut errorable, specifier, referrer)
+            Bun__onFulfillAsyncModule(global_this, promise, &mut errorable, specifier)
         })
     }
 }
@@ -198,7 +196,6 @@ unsafe extern "C" {
         promise_value: JSValue,
         res: &mut ErrorableResolvedSource,
         specifier: &BunString,
-        referrer: &BunString,
     );
 }
 
@@ -644,13 +641,11 @@ impl AsyncModule {
         ));
         let result = this.resume_loading_module(&mut log);
         let spec = BunString::borrow_utf8(this.specifier());
-        let referrer = BunString::borrow_utf8(this.referrer());
         Self::fulfill(
             global_this,
             this.promise.get().unwrap(),
             result,
             &spec,
-            &referrer,
             &mut log,
         )
     }

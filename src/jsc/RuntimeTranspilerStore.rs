@@ -316,7 +316,6 @@ impl RuntimeTranspilerStore {
         global_object: &JSGlobalObject,
         input_specifier: String,
         path: &Fs::Path<'_>,
-        referrer: String,
         loader: Loader,
         package_json: Option<&PackageJSON>,
     ) -> *mut c_void {
@@ -355,7 +354,6 @@ impl RuntimeTranspilerStore {
                 non_threadsafe_input_specifier: input_specifier,
                 path: owned_path,
                 global_this: BackRef::new(global_object),
-                non_threadsafe_referrer: referrer,
                 vm,
                 ticket: None,
                 log: bun_ast::Log::init(),
@@ -404,7 +402,6 @@ pub struct TranspilerJob {
     // Box'd buffer allocated in `transpile()` and freed in `reset_for_pool()`.
     pub path: bun_paths::fs::Path<'static>,
     pub(crate) non_threadsafe_input_specifier: bun_core::String,
-    pub(crate) non_threadsafe_referrer: bun_core::String,
     pub(crate) loader: Loader,
     pub(crate) promise: StrongOptional,
     // Note: struct is stored in a HiveArray and crosses to a worker thread;
@@ -477,7 +474,7 @@ impl TranspilerJob {
     /// `run_from_js_thread`.
     ///
     /// Note: `HiveArrayFallback::put` runs `drop_in_place` on the slot (see
-    /// hive_array.rs note), so the Drop-carrying fields — `bun_core::String` ×2,
+    /// hive_array.rs note), so the Drop-carrying fields — `bun_core::String`,
     /// `ResolvedSource`, `Log`, `StrongOptional` — are torn down
     /// *there*, not here. This function handles only the teardown that field
     /// drop glue does **not** cover: the leaked `path.text` Box and
@@ -523,7 +520,6 @@ impl TranspilerJob {
         // vtable; resolve it via the `get_vm_ctx` hook (registered by `bun_runtime::init`).
         self.poll_ref.unref(get_vm_ctx(AllocatorType::Js));
 
-        let referrer = core::mem::take(&mut self.non_threadsafe_referrer);
         let mut log = core::mem::replace(&mut self.log, bun_ast::Log::init());
         let (specifier, result) = match self.parse_error {
             Some(e) => (String::clone_utf8(self.path.text), Err(e)),
@@ -547,14 +543,7 @@ impl TranspilerJob {
                 .put(std::ptr::from_mut::<TranspilerJob>(self))
         };
 
-        AsyncModule::fulfill(
-            &global_this,
-            promise,
-            result,
-            &specifier,
-            &referrer,
-            &mut log,
-        )
+        AsyncModule::fulfill(&global_this, promise, result, &specifier, &mut log)
     }
 
     fn schedule(&mut self) {

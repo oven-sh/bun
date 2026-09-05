@@ -170,6 +170,106 @@ describe("ResolveMessage", () => {
   });
 });
 
+// A resolve error logged while a module is being transpiled belongs to the
+// module being transpiled, so that module is the ResolveMessage's referrer. It
+// used to be whatever the module loader passed as the fetch's referrer: the
+// literal string "undefined" for import(), and the requiring file for require().
+//
+// Two things log resolve errors at transpile time: a macro import that does not
+// resolve (always accompanied by a second, build-level message, so the load
+// rejects with an AggregateError), and a static import of an unknown node:
+// builtin in a module transpiled on the JS thread, such as a require()d one
+// (a single message, so the load rejects with the ResolveMessage itself).
+describe.concurrent("ResolveMessage.referrer for resolve errors raised during transpile", () => {
+  const macroSource = `import { nope } from "./does-not-exist" with { type: "macro" };\nexport const x = nope();\n`;
+  const nodeBuiltinSource = `import "node:this_builtin_does_not_exist";\nexport const x = 1;\n`;
+
+  function makeDir() {
+    return tempDir("resolve-error-transpile-referrer", {
+      "import-me.ts": macroSource,
+      "require-me.ts": macroSource,
+      "require-me-node-builtin.ts": nodeBuiltinSource,
+      "fixture.ts": `
+        Bun.plugin({
+          name: "virtual modules with an unresolvable macro import",
+          setup(build) {
+            for (const name of ["virt:import-me", "virt:require-me"]) {
+              build.module(name, () => ({ contents: ${JSON.stringify(macroSource)}, loader: "ts" }));
+            }
+          },
+        });
+
+        function resolveMessages(error) {
+          return (error.errors ?? [error])
+            .filter(e => e.name === "ResolveMessage")
+            .map(e => ({ specifier: e.specifier, referrer: e.referrer, file: e.position?.file }));
+        }
+
+        const out = {
+          importMe: Bun.resolveSync("./import-me.ts", import.meta.dir),
+          requireMe: Bun.resolveSync("./require-me.ts", import.meta.dir),
+          requireMeNodeBuiltin: Bun.resolveSync("./require-me-node-builtin.ts", import.meta.dir),
+        };
+        const loads = {
+          import: () => import("./import-me.ts"),
+          require: () => require("./require-me.ts"),
+          importVirtual: () => import("virt:import-me"),
+          requireVirtual: () => require("virt:require-me"),
+          requireNodeBuiltin: () => require("./require-me-node-builtin.ts"),
+        };
+        for (const [name, load] of Object.entries(loads)) {
+          try {
+            await load();
+            out[name] = "loaded";
+          } catch (error) {
+            out[name] = resolveMessages(error);
+          }
+        }
+        console.log(JSON.stringify(out));
+      `,
+    });
+  }
+
+  async function run(dir: string, env: Record<string, string | undefined>) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "fixture.ts"],
+      env,
+      cwd: dir,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    const { importMe, requireMe, requireMeNodeBuiltin, ...results } = JSON.parse(stdout);
+    expect(results).toEqual({
+      import: [{ specifier: "./does-not-exist", referrer: importMe, file: importMe }],
+      require: [{ specifier: "./does-not-exist", referrer: requireMe, file: requireMe }],
+      importVirtual: [{ specifier: "./does-not-exist", referrer: "virt:import-me", file: "virt:import-me" }],
+      requireVirtual: [{ specifier: "./does-not-exist", referrer: "virt:require-me", file: "virt:require-me" }],
+      requireNodeBuiltin: [
+        {
+          specifier: "node:this_builtin_does_not_exist",
+          referrer: requireMeNodeBuiltin,
+          file: requireMeNodeBuiltin,
+        },
+      ],
+    });
+    expect(exitCode).toBe(0);
+  }
+
+  it("import(), require() and plugin virtual modules", async () => {
+    using dir = makeDir();
+    await run(String(dir), bunEnv);
+  });
+
+  // import() normally transpiles on the concurrent transpiler; this covers the
+  // same-thread transpile path import() takes when that is disabled.
+  it("with the concurrent transpiler disabled", async () => {
+    using dir = makeDir();
+    await run(String(dir), { ...bunEnv, BUN_FEATURE_FLAG_DISABLE_ASYNC_TRANSPILER: "1" });
+  });
+});
+
 // These tests reproduce panics where the module resolver wrote past fixed-size
 // PathBuffers when given very long import specifiers. The bug triggers when
 // `import_path < PATH_MAX` but `baseUrl + import_path > PATH_MAX` (otherwise a

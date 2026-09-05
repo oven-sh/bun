@@ -15,7 +15,7 @@ use bun_bundler::Transpiler;
 use bun_collections::BoundedArray;
 use bun_core::{self, Global, Output};
 use bun_core::{ZStr, strings};
-use bun_install::dependency::VersionTag;
+use bun_install::dependency::{URI, VersionTag};
 use bun_install::update_request::{self, UpdateRequest};
 use bun_parsers::json;
 use bun_paths::{self, DELIMITER, PathBuffer};
@@ -213,6 +213,17 @@ pub(crate) enum GetBinNameError {
     NeedToInstall,
 }
 
+struct ResolvedPackageBin {
+    name: Box<[u8]>,
+    target: Box<[u8]>,
+}
+
+enum PackageBinLookup<'a> {
+    PackageNotFound,
+    BinNotFound,
+    Found(&'a ZStr),
+}
+
 impl BunxCommand {
     /// Adds `create-` to the string, but also handles scoped packages correctly.
     /// Always clones the string in the process.
@@ -282,11 +293,27 @@ impl BunxCommand {
             && strings::index_of_char(name, b'\\').is_none()
     }
 
-    fn get_bin_name_from_subpath(
+    fn exit_package_bin_not_found(package_name: &[u8], bin_name: Option<&[u8]>) -> ! {
+        if let Some(bin_name) = bin_name {
+            Output::err_generic(
+                "Package <b>{}<r> does not provide a binary named <b>{}<r>",
+                (BStr::new(package_name), BStr::new(bin_name)),
+            );
+        } else {
+            Output::err_generic(
+                "could not determine executable to run for package <b>{}<r>",
+                format_args!("{}", BStr::new(package_name)),
+            );
+        }
+        Global::exit(1);
+    }
+
+    fn get_bin_from_subpath(
         transpiler: &mut Transpiler,
         dir_fd: Fd,
         subpath_z: &ZStr,
-    ) -> crate::Result<Box<[u8]>> {
+        wanted_bin: Option<&[u8]>,
+    ) -> crate::Result<ResolvedPackageBin> {
         let target_package_json_fd = bun_sys::openat(dir_fd, subpath_z, O::RDONLY, 0)?;
         let target_package_json = bun_sys::File::from_fd(target_package_json_fd);
 
@@ -301,30 +328,42 @@ impl BunxCommand {
         let parsed = json::ParsedJson::parse_package_json(&source, log)?;
         let expr = parsed.root;
 
-        // choose the first package that fits
         if let Some(bin_expr) = expr.get(b"bin") {
             match &bin_expr.data {
                 ExprData::EObjectJSON(object) => {
                     for prop in object.get().properties() {
                         let bin_name = prop.key.slice();
-                        if !Self::is_safe_bin_name(bin_name) {
+                        if !Self::is_safe_bin_name(bin_name)
+                            || wanted_bin.is_some_and(|wanted| wanted != bin_name)
+                        {
                             continue;
                         }
-                        return Ok(Box::<[u8]>::from(bin_name));
+                        let Some(target) = prop.value.as_str() else {
+                            continue;
+                        };
+                        if target.is_empty() {
+                            continue;
+                        }
+                        return Ok(ResolvedPackageBin {
+                            name: Box::from(bin_name),
+                            target: Box::from(target),
+                        });
                     }
                 }
                 ExprData::EString(_) => {
-                    if let Some(name_expr) = expr.get(b"name") {
+                    if let (Some(target), Some(name_expr)) =
+                        (bin_expr.as_utf8_string_literal(), expr.get(b"name"))
+                    {
                         if let Some(name) = name_expr.as_utf8_string_literal() {
-                            // A scoped `name` (`@scope/pkg`) is legitimate here;
-                            // the command name is its unscoped portion.
-                            let bin_name = if name.is_empty() {
-                                name
-                            } else {
-                                bun_install::dependency::unscoped_package_name(name)
-                            };
-                            if Self::is_safe_bin_name(bin_name) {
-                                return Ok(Box::<[u8]>::from(bin_name));
+                            let bin_name = bun_install::dependency::unscoped_package_name(name);
+                            if !target.is_empty()
+                                && Self::is_safe_bin_name(bin_name)
+                                && wanted_bin.is_none_or(|wanted| wanted == bin_name)
+                            {
+                                return Ok(ResolvedPackageBin {
+                                    name: Box::from(bin_name),
+                                    target: Box::from(target),
+                                });
                             }
                         }
                     }
@@ -336,6 +375,22 @@ impl BunxCommand {
         if let Some(dirs) = expr.as_property(b"directories") {
             if let Some(bin_prop) = dirs.expr.as_property(b"bin") {
                 if let Some(dir_name) = bin_prop.expr.as_utf8_string_literal() {
+                    if let Some(wanted) = wanted_bin {
+                        if Self::is_safe_bin_name(wanted) {
+                            let mut target = Vec::with_capacity(dir_name.len() + 1 + wanted.len());
+                            target.extend_from_slice(dir_name);
+                            if !dir_name.ends_with(b"/") && !dir_name.ends_with(b"\\") {
+                                target.push(bun_paths::SEP);
+                            }
+                            target.extend_from_slice(wanted);
+                            return Ok(ResolvedPackageBin {
+                                name: Box::from(wanted),
+                                target: target.into_boxed_slice(),
+                            });
+                        }
+                        return Err(crate::Error::NoBinFound);
+                    }
+
                     let bin_dir = bun_sys::openat_a(dir_fd, dir_name, O::RDONLY | O::DIRECTORY, 0)?;
                     // Fd is non-owning Copy; guard it.
                     let _close_bin_dir = bun_sys::CloseOnDrop::new(bin_dir);
@@ -355,7 +410,17 @@ impl BunxCommand {
                                 entry = iterator.next();
                                 continue;
                             }
-                            return Ok(Box::<[u8]>::from(current.name.slice_u8()));
+                            let name = current.name.slice_u8();
+                            let mut target = Vec::with_capacity(dir_name.len() + 1 + name.len());
+                            target.extend_from_slice(dir_name);
+                            if !dir_name.ends_with(b"/") && !dir_name.ends_with(b"\\") {
+                                target.push(bun_paths::SEP);
+                            }
+                            target.extend_from_slice(name);
+                            return Ok(ResolvedPackageBin {
+                                name: Box::from(name),
+                                target: target.into_boxed_slice(),
+                            });
                         }
 
                         entry = iterator.next();
@@ -365,6 +430,14 @@ impl BunxCommand {
         }
 
         Err(crate::Error::NoBinFound)
+    }
+
+    fn get_bin_name_from_subpath(
+        transpiler: &mut Transpiler,
+        dir_fd: Fd,
+        subpath_z: &ZStr,
+    ) -> crate::Result<Box<[u8]>> {
+        Self::get_bin_from_subpath(transpiler, dir_fd, subpath_z, None).map(|bin| bin.name)
     }
 
     fn get_bin_name_from_project_directory(
@@ -385,13 +458,113 @@ impl BunxCommand {
                     pkg = BStr::new(package_name),
                 ),
             )
-            .expect("unreachable");
+            .map_err(|_| crate::Error::PathTooLong)?;
             total - cursor.len()
         };
+        if len >= subpath.len() {
+            return Err(crate::Error::PathTooLong);
+        }
         subpath[len] = 0;
         // SAFETY: subpath[len] == 0 written above
         let subpath_z = ZStr::from_buf(&subpath[..], len);
         Self::get_bin_name_from_subpath(transpiler, dir_fd, subpath_z)
+    }
+
+    fn link_bin_from_installed_package<'a>(
+        transpiler: &mut Transpiler,
+        package_name: &[u8],
+        bin_name: Option<&[u8]>,
+        install_root: &[u8],
+        executable_buf: &'a mut PathBuffer,
+    ) -> crate::Result<PackageBinLookup<'a>> {
+        if bin_name.is_some_and(|name| !Self::is_safe_bin_name(name)) {
+            return Ok(PackageBinLookup::BinNotFound);
+        }
+        if !bun_install::package_installer::alias_is_safe_install_target(package_name) {
+            return Ok(PackageBinLookup::PackageNotFound);
+        }
+
+        let mut package_subpath = PathBuffer::uninit();
+        let package_subpath_len = {
+            let total = package_subpath.len();
+            let mut cursor: &mut [u8] = &mut package_subpath[..];
+            write!(
+                cursor,
+                "{root}{sep}node_modules{sep}{pkg}",
+                root = BStr::new(strings::without_trailing_slash(install_root)),
+                sep = bun_paths::SEP as char,
+                pkg = BStr::new(package_name),
+            )
+            .map_err(|_| crate::Error::PathTooLong)?;
+            total - cursor.len()
+        };
+        if package_subpath_len >= package_subpath.len() {
+            return Err(crate::Error::PathTooLong);
+        }
+        package_subpath[package_subpath_len] = 0;
+        let package_subpath_z = ZStr::from_buf(&package_subpath, package_subpath_len);
+        let package_fd =
+            match bun_sys::openat(Fd::cwd(), package_subpath_z, O::RDONLY | O::DIRECTORY, 0) {
+                Ok(fd) => fd,
+                Err(err) if err.get_errno() == bun_sys::Errno::ENOENT => {
+                    return Ok(PackageBinLookup::PackageNotFound);
+                }
+                Err(err) => return Err(err.into()),
+            };
+        let _close_package = bun_sys::CloseOnDrop::new(package_fd);
+
+        let package_json_buf = *b"package.json\0";
+        let package_json_z = ZStr::from_buf(&package_json_buf, b"package.json".len());
+        let resolved =
+            match Self::get_bin_from_subpath(transpiler, package_fd, package_json_z, bin_name) {
+                Ok(resolved) => resolved,
+                Err(crate::Error::NoBinFound) => return Ok(PackageBinLookup::BinNotFound),
+                Err(err) => return Err(err),
+            };
+
+        let mut destination_scope = Vec::with_capacity(b".bunx-".len() + 16);
+        write!(&mut destination_scope, ".bunx-{:x}", hash(package_name))
+            .map_err(|_| crate::Error::Alloc(AllocError))?;
+
+        match bun_install::bin::link_package_bin(
+            install_root,
+            package_name,
+            &resolved.target,
+            &destination_scope,
+            &resolved.name,
+            executable_buf,
+        )? {
+            Some(executable) => Ok(PackageBinLookup::Found(executable)),
+            None => Ok(PackageBinLookup::BinNotFound),
+        }
+    }
+
+    /// A probe failure must not abort bunx; the install fallback repairs or bypasses whatever the probe tripped over.
+    fn probe_bin_from_installed_package<'a>(
+        transpiler: &mut Transpiler,
+        package_name: &[u8],
+        bin_name: Option<&[u8]>,
+        install_root: &[u8],
+        executable_buf: &'a mut PathBuffer,
+    ) -> PackageBinLookup<'a> {
+        match Self::link_bin_from_installed_package(
+            transpiler,
+            package_name,
+            bin_name,
+            install_root,
+            executable_buf,
+        ) {
+            Ok(lookup) => lookup,
+            Err(err) => {
+                bun_output::scoped_log!(
+                    bunx,
+                    "package bin probe failed in {}: {}",
+                    BStr::new(install_root),
+                    err
+                );
+                PackageBinLookup::PackageNotFound
+            }
+        }
     }
 
     fn get_bin_name_from_temp_directory(
@@ -411,9 +584,12 @@ impl BunxCommand {
                     BStr::new(tempdir_name),
                     bun_paths::SEP as char,
                 )
-                .expect("unreachable");
+                .map_err(|_| crate::Error::PathTooLong)?;
                 total - cursor.len()
             };
+            if len >= subpath.len() {
+                return Err(crate::Error::PathTooLong);
+            }
             subpath[len] = 0;
             // SAFETY: subpath[len] == 0 written above
             let subpath_z = ZStr::from_buf(&subpath[..], len);
@@ -480,9 +656,12 @@ impl BunxCommand {
                 sep = bun_paths::SEP as char,
                 pkg = BStr::new(package_name),
             )
-            .expect("unreachable");
+            .map_err(|_| crate::Error::PathTooLong)?;
             total - cursor.len()
         };
+        if len >= subpath.len() {
+            return Err(crate::Error::PathTooLong);
+        }
         subpath[len] = 0;
         // SAFETY: subpath[len] == 0 written above
         let subpath_z = ZStr::from_buf(&subpath[..], len);
@@ -708,6 +887,27 @@ impl BunxCommand {
             }
         }
 
+        let display_version: &[u8] = if update_request.version.literal.is_empty() {
+            b"latest"
+        } else {
+            update_request
+                .version
+                .literal
+                .slice(update_request.version_buf())
+        };
+
+        let anonymous_package_alias = if update_request.name.is_empty()
+            && opts.binary_name.is_none()
+            && update_request.version.tag == VersionTag::Tarball
+            && matches!(update_request.version.tarball().uri, URI::Remote(_))
+        {
+            let mut alias = Vec::new();
+            write!(&mut alias, "bunx-url-{:x}", hash(display_version))
+                .map_err(|_| crate::Error::Alloc(bun_alloc::AllocError))?;
+            Some(alias)
+        } else {
+            None
+        };
         // When the user types a scoped package like `@foo/bar`, the initial bin
         // name ("bar") is only a guess — the package's actual bin may be named
         // something else entirely. In that case we must not search the original
@@ -738,6 +938,9 @@ impl BunxCommand {
         } else {
             update_request.name
         };
+        let fallback_package_name = anonymous_package_alias
+            .as_deref()
+            .unwrap_or(initial_bin_name);
         bun_output::scoped_log!(bunx, "initial_bin_name: {}", BStr::new(initial_bin_name));
 
         // fast path: they're actually using this interchangeably with `bun run`
@@ -813,15 +1016,6 @@ impl BunxCommand {
             };
         // Cloned to avoid borrowck overlap when PATH is reassigned below.
 
-        let display_version: &[u8] = if update_request.version.literal.is_empty() {
-            b"latest"
-        } else {
-            update_request
-                .version
-                .literal
-                .slice(update_request.version_buf())
-        };
-
         // package_fmt is used for the path to install in.
         let package_fmt: Vec<u8> = 'brk: {
             // Includes the delimiters because we use this as a part of $PATH
@@ -844,7 +1038,7 @@ impl BunxCommand {
                 write!(
                     &mut v,
                     "{}@{}@{}",
-                    BStr::new(initial_bin_name),
+                    BStr::new(fallback_package_name),
                     <&'static str>::from(update_request.version.tag),
                     hash(update_request.name).wrapping_add(hash(display_version)),
                 )
@@ -876,19 +1070,22 @@ impl BunxCommand {
                 .map_err(|_| crate::Error::Alloc(bun_alloc::AllocError))?;
                 (v, update_request.name)
             } else {
-                // When there is not a clear package name (URL/GitHub/etc), we force the package name
-                // to be the same as the calculated initial bin name. This allows us to have a predictable
-                // node_modules folder structure.
+                // Unnamed sources need a deterministic alias for their node_modules path.
                 let mut v = Vec::new();
                 write!(
                     &mut v,
                     "{}@{}",
-                    BStr::new(initial_bin_name),
+                    BStr::new(fallback_package_name),
                     BStr::new(display_version),
                 )
                 .map_err(|_| crate::Error::Alloc(bun_alloc::AllocError))?;
-                (v, initial_bin_name)
+                (v, fallback_package_name)
             };
+        let package_name_for_error = if anonymous_package_alias.is_some() {
+            opts.package_name
+        } else {
+            result_package_name
+        };
         bun_output::scoped_log!(bunx, "install_param: {}", BStr::new(&install_param));
         bun_output::scoped_log!(
             bunx,
@@ -984,6 +1181,8 @@ impl BunxCommand {
         let top_level_dir: &[u8] = fs.top_level_dir;
 
         let mut absolute_in_cache_dir_buf = PathBuffer::uninit();
+        let mut package_bin_abs_buf = PathBuffer::uninit();
+        let mut cache_manifest_buf = PathBuffer::uninit();
         let buf_total = absolute_in_cache_dir_buf.len();
         let mut absolute_in_cache_dir: &[u8] = {
             let mut cursor: &mut [u8] = &mut absolute_in_cache_dir_buf[..];
@@ -1000,6 +1199,23 @@ impl BunxCommand {
             // Re-slice from the buffer so the borrow on `cursor` ends here.
             // SAFETY: `written` bytes were just initialized above
             unsafe { core::slice::from_raw_parts(absolute_in_cache_dir_buf.as_ptr(), written) }
+        };
+        let cache_manifest = {
+            let total = cache_manifest_buf.len();
+            let mut cursor: &mut [u8] = &mut cache_manifest_buf;
+            write!(
+                cursor,
+                "{cache}{sep}package.json",
+                cache = BStr::new(bunx_cache_dir),
+                sep = bun_paths::SEP as char,
+            )
+            .map_err(|_| crate::Error::PathTooLong)?;
+            let written = total - cursor.len();
+            if written >= cache_manifest_buf.len() {
+                return Err(crate::Error::PathTooLong);
+            }
+            cache_manifest_buf[written] = 0;
+            ZStr::from_buf(&cache_manifest_buf, written)
         };
 
         if !Self::is_trusted_cache_root(bunx_cache_dir, temp_dir.len(), uid) {
@@ -1024,13 +1240,59 @@ impl BunxCommand {
                 //  1. Try the bin in the current node_modules and then we try the bin in the global cache
                 //
                 // Both probes are folded into one labeled block.
+                let mut is_package_owned_bin = false;
                 let dest_or_cache: Option<&ZStr> = 'find: {
+                    if update_request.version.literal.is_empty() {
+                        match Self::probe_bin_from_installed_package(
+                            this_transpiler,
+                            result_package_name,
+                            opts.binary_name,
+                            top_level_dir,
+                            &mut package_bin_abs_buf,
+                        ) {
+                            PackageBinLookup::Found(d) => {
+                                is_package_owned_bin = true;
+                                break 'find Some(d);
+                            }
+                            PackageBinLookup::BinNotFound => {
+                                Self::exit_package_bin_not_found(
+                                    package_name_for_error,
+                                    opts.binary_name,
+                                );
+                            }
+                            PackageBinLookup::PackageNotFound => {}
+                        }
+                    }
+                    match Self::probe_bin_from_installed_package(
+                        this_transpiler,
+                        result_package_name,
+                        opts.binary_name,
+                        bunx_cache_dir,
+                        &mut package_bin_abs_buf,
+                    ) {
+                        PackageBinLookup::Found(d) => {
+                            is_package_owned_bin = true;
+                            break 'find Some(d);
+                        }
+                        PackageBinLookup::BinNotFound => {
+                            Self::exit_package_bin_not_found(
+                                package_name_for_error,
+                                opts.binary_name,
+                            );
+                        }
+                        PackageBinLookup::PackageNotFound => {}
+                    }
+
+                    if opts.specified_package.is_some() {
+                        break 'find None;
+                    }
+
                     // Only use the system-installed version if there is no version specified
                     if update_request.version.literal.is_empty() {
-                        // If the bin name is a guess derived from a scoped package name,
-                        // exclude the original system $PATH so we don't match unrelated
-                        // system binaries. Only search local node_modules/.bin directories.
                         if let Some(d) = bun_which::which(
+                            // If the bin name is a guess derived from a scoped package name,
+                            // exclude the original system $PATH so we don't match unrelated
+                            // system binaries. Only search local node_modules/.bin directories.
                             &mut path_buf,
                             if initial_bin_name_is_a_guess {
                                 &local_bin_dirs
@@ -1046,6 +1308,9 @@ impl BunxCommand {
                         ) {
                             break 'find Some(d);
                         }
+                    }
+                    if initial_bin_name.is_empty() {
+                        break 'find None;
                     }
                     bun_which::which(
                         &mut path_buf,
@@ -1078,18 +1343,23 @@ impl BunxCommand {
                             break 'try_run_existing;
                         }
                         let is_stale: bool = 'is_stale: {
+                            let stale_marker = if is_package_owned_bin {
+                                cache_manifest
+                            } else {
+                                destination
+                            };
                             #[cfg(windows)]
                             {
                                 use bun_sys::windows as win;
-                                let fd = match bun_sys::openat(Fd::cwd(), destination, O::RDONLY, 0)
-                                {
-                                    Ok(fd) => fd,
-                                    Err(_) => {
-                                        // if we cant open this, we probably will just fail when we run it
-                                        // and that error message is likely going to be better than the one from `bun add`
-                                        break 'is_stale false;
-                                    }
-                                };
+                                let fd =
+                                    match bun_sys::openat(Fd::cwd(), stale_marker, O::RDONLY, 0) {
+                                        Ok(fd) => fd,
+                                        Err(_) => {
+                                            // if we cant open this, we probably will just fail when we run it
+                                            // and that error message is likely going to be better than the one from `bun add`
+                                            break 'is_stale false;
+                                        }
+                                    };
                                 // The fd is closed explicitly below before
                                 // any `break 'is_stale` (no early-return between open & close).
 
@@ -1120,7 +1390,7 @@ impl BunxCommand {
                             }
                             #[cfg(not(windows))]
                             {
-                                let stat = match bun_sys::stat(destination) {
+                                let stat = match bun_sys::stat(stale_marker) {
                                     Ok(s) => s,
                                     Err(_) => break 'is_stale true,
                                 };
@@ -1136,7 +1406,7 @@ impl BunxCommand {
                             if opts.no_install {
                                 bun_core::warn!(
                                     "Using a stale installation of <b>{}<r> because --no-install was passed. Run `bunx` without --no-install to use a fresh binary.",
-                                    BStr::new(&update_request.name),
+                                    BStr::new(package_name_for_error),
                                 );
                             } else {
                                 break 'try_run_existing;
@@ -1289,10 +1559,17 @@ impl BunxCommand {
         // Which is not very helpful.
 
         if opts.no_install {
-            Output::err_generic(
-                "Could not find an existing '{}' binary to run. Stopping because --no-install was passed.",
-                format_args!("{}", BStr::new(initial_bin_name)),
-            );
+            if initial_bin_name.is_empty() {
+                Output::err_generic(
+                    "Could not find an existing installation for package '{}'. Stopping because --no-install was passed.",
+                    format_args!("{}", BStr::new(package_name_for_error)),
+                );
+            } else {
+                Output::err_generic(
+                    "Could not find an existing '{}' binary to run. Stopping because --no-install was passed.",
+                    format_args!("{}", BStr::new(initial_bin_name)),
+                );
+            }
             Global::exit(1);
         }
 
@@ -1473,26 +1750,109 @@ impl BunxCommand {
             unsafe { core::slice::from_raw_parts(absolute_in_cache_dir_buf.as_ptr(), written) }
         };
 
+        if opts.specified_package.is_some() {
+            match Self::link_bin_from_installed_package(
+                this_transpiler,
+                result_package_name,
+                opts.binary_name,
+                bunx_cache_dir,
+                &mut package_bin_abs_buf,
+            )? {
+                PackageBinLookup::Found(destination) => {
+                    let out = destination.as_bytes();
+                    if Self::is_trusted_cached_binary(destination, uid) {
+                        bun_output::scoped_log!(
+                            bunx,
+                            "running installed binary: {}",
+                            BStr::new(out)
+                        );
+                        let stored = fs.dirname_store.append_slice(out)?;
+                        Run::run_binary(
+                            ctx,
+                            stored,
+                            destination,
+                            top_level_dir,
+                            env_loader,
+                            passthrough,
+                            None,
+                        )?;
+                    } else {
+                        bun_output::scoped_log!(
+                            bunx,
+                            "refusing untrusted cached binary: {}",
+                            BStr::new(out)
+                        );
+                    }
+                }
+                PackageBinLookup::PackageNotFound | PackageBinLookup::BinNotFound => {
+                    Self::exit_package_bin_not_found(package_name_for_error, opts.binary_name);
+                }
+            }
+        } else {
+            match Self::link_bin_from_installed_package(
+                this_transpiler,
+                result_package_name,
+                None,
+                bunx_cache_dir,
+                &mut package_bin_abs_buf,
+            )? {
+                PackageBinLookup::Found(destination) => {
+                    let out = destination.as_bytes();
+                    if Self::is_trusted_cached_binary(destination, uid) {
+                        bun_output::scoped_log!(
+                            bunx,
+                            "running installed binary: {}",
+                            BStr::new(out)
+                        );
+                        let stored = fs.dirname_store.append_slice(out)?;
+                        Run::run_binary(
+                            ctx,
+                            stored,
+                            destination,
+                            top_level_dir,
+                            env_loader,
+                            passthrough,
+                            None,
+                        )?;
+                    } else {
+                        bun_output::scoped_log!(
+                            bunx,
+                            "refusing untrusted cached binary: {}",
+                            BStr::new(out)
+                        );
+                    }
+                }
+                PackageBinLookup::BinNotFound => {
+                    Self::exit_package_bin_not_found(package_name_for_error, None);
+                }
+                PackageBinLookup::PackageNotFound => {}
+            }
+        }
+
         // Similar to "npx":
         //
         //  1. Try the bin in the global cache
         //     Do not try $PATH because we already checked it above if we should
-        if let Some(destination) = bun_which::which(
-            &mut path_buf,
-            bunx_cache_dir,
-            if !ignore_cwd.is_empty() {
-                b"".as_slice()
-            } else {
-                top_level_dir
-            },
-            absolute_in_cache_dir,
-        ) {
+        if opts.specified_package.is_none()
+            && !initial_bin_name.is_empty()
+            && let Some(destination) = bun_which::which(
+                &mut path_buf,
+                bunx_cache_dir,
+                if !ignore_cwd.is_empty() {
+                    b"".as_slice()
+                } else {
+                    top_level_dir
+                },
+                absolute_in_cache_dir,
+            )
+        {
             let out: &[u8] = destination.as_bytes();
             // The install we just ran should have created this symlink as the
             // current user, but the cache lives in a world-writable temp dir; an
             // attacker can race the install and plant a uid-mismatched entry.
             // Bail out to the generic error rather than execute it.
             if Self::is_trusted_cached_binary(destination, uid) {
+                bun_output::scoped_log!(bunx, "running installed binary: {}", BStr::new(out));
                 let stored = fs.dirname_store.append_slice(out)?;
                 Run::run_binary(
                     ctx,
@@ -1553,6 +1913,11 @@ impl BunxCommand {
                         let out: &[u8] = destination.as_bytes();
                         // Same TOCTOU hardening as the post-install probe above.
                         if Self::is_trusted_cached_binary(destination, uid) {
+                            bun_output::scoped_log!(
+                                bunx,
+                                "running installed binary: {}",
+                                BStr::new(out)
+                            );
                             let stored = fs.dirname_store.append_slice(out)?;
                             Run::run_binary(
                                 ctx,
@@ -1577,18 +1942,11 @@ impl BunxCommand {
         }
 
         if let (Some(_), Some(binary_name)) = (opts.specified_package, opts.binary_name) {
-            Output::err_generic(
-                "Package <b>{}<r> does not provide a binary named <b>{}<r>",
-                (BStr::new(&update_request.name), BStr::new(binary_name)),
-            );
-            bun_core::prettyln!(
-                "  <d>hint: try running without --package to install and run {} directly<r>",
-                BStr::new(binary_name),
-            );
+            Self::exit_package_bin_not_found(&update_request.name, Some(binary_name));
         } else {
             Output::err_generic(
                 "could not determine executable to run for package <b>{}<r>",
-                format_args!("{}", BStr::new(&update_request.name)),
+                format_args!("{}", BStr::new(package_name_for_error)),
             );
         }
         Global::exit(1);

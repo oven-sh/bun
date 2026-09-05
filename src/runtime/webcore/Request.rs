@@ -1060,6 +1060,20 @@ impl Request {
             ))));
         }
 
+        // `init` is a Web IDL dictionary: a non-nullish primitive throws
+        // TypeError (https://fetch.spec.whatwg.org/#dom-request).
+        if arguments.len() > 1 && !arguments[1].is_undefined_or_null() && !arguments[1].is_object()
+        {
+            bail!(Err(global_this
+                .err(
+                    jsc::ErrorCode::INVALID_ARG_TYPE,
+                    format_args!(
+                        "Failed to construct 'Request': The \"init\" argument must be of type object, undefined, or null."
+                    ),
+                )
+                .throw()));
+        }
+
         let values_to_try_: [JSValue; 2] = [
             if arguments.len() > 1 && arguments[1].is_object() {
                 arguments[1]

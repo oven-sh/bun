@@ -440,15 +440,9 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
     // signal/unix_socket_path/url_proxy_buffer/headers/body/range/
     // ssl_config are all owning types whose Drop runs on early return.
 
-    let options_object: Option<JSValue> = 'brk: {
-        if let Some(options) = args.next_eat() {
-            let options: JSValue = options;
-            if options.is_object() || options.js_type() == jsc::JSType::DOMWrapper {
-                break 'brk Some(options);
-            }
-        }
-        break 'brk None;
-    };
+    // Validated below, after the first argument converts (WebIDL
+    // left-to-right argument conversion).
+    let init_arg: Option<JSValue> = args.next_eat();
 
     // kept as raw `*mut Request` because the body re-borrows it
     // multiple times across long-lived option/init reads.
@@ -470,10 +464,36 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
     }
 
     // If it's NOT a Request or a subclass of Request, treat the first argument as a URL.
-    let url_str_optional = if first_arg.as_::<Request>().is_none() {
-        StringOrURL::from_js(first_arg, global_this)?
+    // `OwnedString` releases the +1 from `StringOrURL::from_js` on any early return.
+    let url_str_optional: Option<bun_core::OwnedString> = if first_arg.as_::<Request>().is_none() {
+        StringOrURL::from_js(first_arg, global_this)?.map(bun_core::OwnedString::new)
     } else {
         None
+    };
+
+    // `init` is a Web IDL dictionary: a non-nullish primitive must reject
+    // with TypeError (https://fetch.spec.whatwg.org/#dom-request).
+    let options_object: Option<JSValue> = 'brk: {
+        let Some(options) = init_arg else {
+            break 'brk None;
+        };
+        if options.is_undefined_or_null() {
+            break 'brk None;
+        }
+        if options.is_object() || options.js_type() == jsc::JSType::DOMWrapper {
+            break 'brk Some(options);
+        }
+        // WebIDL §3.7.10: fetch() rejects rather than throws here.
+        let err = ctx.to_type_error(
+            jsc::ErrorCode::INVALID_ARG_TYPE,
+            format_args!("The \"init\" argument must be of type object, undefined, or null."),
+        );
+        return Ok(
+            JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
+                global_this,
+                err,
+            ),
+        );
     };
 
     let request_init_object: Option<JSValue> = 'brk: {
@@ -491,7 +511,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
 
     let url_str: BunString = 'extract_url: {
         if let Some(str) = url_str_optional {
-            break 'extract_url str;
+            break 'extract_url str.into_inner();
         }
 
         if let Some(req) = request_mut!() {

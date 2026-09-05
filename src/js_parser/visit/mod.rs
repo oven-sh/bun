@@ -90,6 +90,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         let old_fn_or_arrow_data = self.fn_or_arrow_data_visit;
         let old_fn_only_data = core::mem::take(&mut self.fn_only_data_visit);
+        // Force-fold applies to the immediate initializer only, not to a
+        // nested function body that runs at call time.
+        let old_fold_numeric_constants_unconditionally =
+            self.fold_numeric_constants_unconditionally;
+        self.fold_numeric_constants_unconditionally = false;
         self.fn_or_arrow_data_visit = FnOrArrowDataVisit {
             ..Default::default()
         };
@@ -206,6 +211,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         self.fn_or_arrow_data_visit = old_fn_or_arrow_data;
         self.fn_only_data_visit = old_fn_only_data;
+        self.fold_numeric_constants_unconditionally = old_fold_numeric_constants_unconditionally;
 
         func
     }
@@ -345,6 +351,18 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     self.react_compiler_candidate_name = Some(id.r#ref);
                     self.react_compiler_in_react_hoc = in_hoc;
                 }
+                // An unfolded `E::Binary` initializer fails
+                // `can_be_const_value`, which would silently disable
+                // const-value inlining and the DCE that depends on it.
+                let want_unconditional_numeric_fold = was_const
+                    && !self.vis_scope().is_after_const_local_prefix
+                    && self.options.features.inlining
+                    && matches!(decl.binding.data, BData::BIdentifier(_));
+                let prev_fold_numeric_constants_unconditionally =
+                    self.fold_numeric_constants_unconditionally;
+                if want_unconditional_numeric_fold {
+                    self.fold_numeric_constants_unconditionally = true;
+                }
                 self.visit_expr_in_out(
                     &mut val,
                     ExprIn {
@@ -354,6 +372,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 );
                 self.react_compiler_candidate_name = None;
                 self.react_compiler_in_react_hoc = false;
+                self.fold_numeric_constants_unconditionally =
+                    prev_fold_numeric_constants_unconditionally;
                 decl.value = Some(val);
                 self.decorator_class_name = prev_decorator_class_name;
 
@@ -991,6 +1011,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             "only_scan_imports_and_do_not_visit must not run this."
         );
 
+        // Decorators, `extends`, and the class body visit without routing
+        // through `visit_func`, so reset the force-fold here too.
+        let old_fold_numeric_constants_unconditionally =
+            self.fold_numeric_constants_unconditionally;
+        self.fold_numeric_constants_unconditionally = false;
+
         self.visit_ts_decorators(&mut class.ts_decorators);
 
         if let Some(name) = class.class_name {
@@ -1471,6 +1497,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // class name scope
         self.pop_scope();
 
+        self.fold_numeric_constants_unconditionally = old_fold_numeric_constants_unconditionally;
         shadow_ref
     }
 

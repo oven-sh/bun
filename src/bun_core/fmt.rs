@@ -2536,6 +2536,38 @@ macro_rules! impl_digit_count_signed {
 impl_digit_count_unsigned!(u8, u16, u32, u64, usize);
 impl_digit_count_signed!(i8, i16, i32, i64, isize);
 
+/// Byte length of `print_non_negative_float`'s output for `value` (plus a
+/// leading `-` byte when negative), mirroring that printer's special cases.
+/// Lives here because `bun_js_parser` can't depend on the printer crate.
+pub fn len_of_js_number(value: f64) -> u32 {
+    if value.is_nan() {
+        return 3; // "NaN"
+    }
+    if value.is_infinite() {
+        return if value.is_sign_negative() { 4 } else { 3 }; // "-1/0" or "1/0"
+    }
+
+    let neg_prefix: u32 = if value.is_sign_negative() { 1 } else { 0 };
+    let abs_value = value.abs();
+
+    let floored = abs_value.floor();
+    let is_integer = (abs_value - floored) == 0.0;
+    if abs_value < (u64::MAX >> 12) as f64 /* maxInt(u52) */ && is_integer {
+        let val = abs_value as u64;
+        // The printer emits `1eN` (3 bytes) for these powers of ten.
+        let int_len: u32 = if pow10_exp_1e4_to_1e9(val).is_some() {
+            3
+        } else {
+            digit_count_u64(val) as u32
+        };
+        return neg_prefix + int_len;
+    }
+
+    // `{}` on f64 is the shortest round-trip form, same as the printer's
+    // float fallback.
+    neg_prefix + count_float(abs_value) as u32
+}
+
 // ───────────────────────────────────────────────────────────────────────────
 // SizeFormatter
 // ───────────────────────────────────────────────────────────────────────────

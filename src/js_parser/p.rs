@@ -429,6 +429,11 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     /// we always fold constant expressions.
     pub(crate) should_fold_typescript_constant_expressions: bool,
 
+    /// Fold numeric arithmetic even when the folded literal prints larger
+    /// than the source. Set where a later consumer needs a concrete number:
+    /// enum bodies, macro/require args, const initializers under inlining.
+    pub(crate) fold_numeric_constants_unconditionally: bool,
+
     pub(crate) emitted_namespace_vars: RefMap,
     pub(crate) is_exported_inside_namespace: RefRefMap,
     pub(crate) local_type_names: StringBoolMap,
@@ -6454,6 +6459,21 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         _ => {}
                     }
                 }
+                // Size-aware folding can leave literal arithmetic as
+                // `.e_binary`; it is side-effect-free, so keep it removable.
+                // `extract_numeric_values` is non-recursive on purpose:
+                // `known_primitive` recursion overflows on a deep `a+a+a+…`.
+                js_ast::op::Code::BinAdd
+                | js_ast::op::Code::BinSub
+                | js_ast::op::Code::BinMul
+                | js_ast::op::Code::BinDiv
+                | js_ast::op::Code::BinRem
+                | js_ast::op::Code::BinPow => {
+                    if js_ast::Expr::extract_numeric_values(&ex.left.data, &ex.right.data).is_some()
+                    {
+                        return true;
+                    }
+                }
                 _ => {}
             },
             js_ast::ExprData::ETemplate(templ) => {
@@ -9777,6 +9797,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             parse_pass_symbol_uses: None,
             has_commonjs_export_names: false,
             should_fold_typescript_constant_expressions: false,
+            fold_numeric_constants_unconditionally: false,
             emitted_namespace_vars: RefMap::default(),
             is_exported_inside_namespace: Default::default(),
             local_type_names: StringBoolMap::default(),

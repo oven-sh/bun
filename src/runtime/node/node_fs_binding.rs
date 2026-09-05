@@ -331,7 +331,10 @@ pub(crate) fn create_binding(global: &JSGlobalObject) -> JSValue {
     let vm = global.bun_vm_ptr();
     // R-2: init-time write before the JS wrapper exists; `with_mut` here is
     // trivially un-aliased (sole owner of the fresh `Box`).
-    module.node_fs.with_mut(|nfs| nfs.vm = NonNull::new(vm));
+    module.node_fs.with_mut(|nfs| {
+        nfs.vm = NonNull::new(vm);
+        nfs.vm_handle = Some(global.bun_vm().handle());
+    });
 
     // `module` was `Box::new`-allocated; ownership transfers to the GC
     // wrapper, which calls `Binding::finalize` to reclaim it.

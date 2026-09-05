@@ -1,4 +1,5 @@
-import { tempDir, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, isWindows, tempDir, tempDirWithFiles } from "harness";
+import { mkfifo } from "mkfifo";
 import { join } from "path";
 const assert = require("assert");
 const os = require("os");
@@ -483,6 +484,86 @@ describe("AbortSignal rejections use node's AbortError shape", () => {
     } catch (err) {
       expectNodeAbortError(err, ac.signal.reason);
     }
+  });
+
+  // A FIFO has no size and no EOF while a writer holds it, so readFile reads it
+  // chunk by chunk. The first 256 KiB went through a loop that never looked at
+  // the signal: an abort there was only seen once 256 KiB had arrived. Node
+  // checks the signal before every chunk.
+  test.skipIf(isWindows)("readFile of a FIFO aborted between chunks rejects at the next chunk", async () => {
+    using dir = tempDir("fs-abort-readfile-fifo", {});
+    const fifo = join(String(dir), "fifo");
+    mkfifo(fifo, 0o666);
+    // Both ends are held here, so the pool thread's open() does not block and its read() never sees
+    // EOF. The writes go through a non-blocking end, so this thread is never stuck on a full pipe.
+    const hold = fs.openSync(fifo, "r+");
+    const out = fs.openSync(fifo, fs.constants.O_WRONLY | fs.constants.O_NONBLOCK);
+    const write = (buf, off) => {
+      try {
+        return fs.writeSync(out, buf, off);
+      } catch (e) {
+        if (e.code !== "EAGAIN") throw e;
+        return 0;
+      }
+    };
+    try {
+      const ac = new AbortController();
+      const reason = new Error("stop");
+      const promise = fsPromises.readFile(fifo, { signal: ac.signal });
+      // More bytes than the pipe holds only go through once the read loop has drained the rest, so
+      // from here on the read is in flight, blocked on the next chunk.
+      const chunk = Buffer.alloc(192 * 1024, 0x78);
+      const deadline = Date.now() + 4000;
+      for (let off = 0; off < chunk.length; ) {
+        const n = write(chunk, off);
+        if (n === 0) {
+          if (Date.now() > deadline) throw new Error(`the read loop took only ${off} of ${chunk.length} bytes`);
+          await Bun.sleep(1);
+        }
+        off += n;
+      }
+      ac.abort(reason);
+      write(Buffer.from("x"), 0);
+      // A deadline, not a wait: a loop that ignores the abort keeps the pool thread in read()
+      // until the FIFO is closed below, and the test has to get there to close it.
+      const outcome = await Promise.race([
+        promise.then(
+          () => "resolved",
+          err => err,
+        ),
+        Bun.sleep(4000),
+      ]);
+      expect(outcome).toBeInstanceOf(Error);
+      expectNodeAbortError(outcome, reason);
+    } finally {
+      fs.closeSync(out);
+      fs.closeSync(hold);
+    }
+  });
+
+  // The same loop holds up the exit of the main thread when the VM is torn down on exit
+  // (BUN_DESTRUCT_VM_ON_EXIT=1, the CI runner's setting): teardown waits for the pool job, and a
+  // device never reaches EOF. Teardown closes the gate the loop now checks.
+  test.skipIf(isWindows)("process.exit() with a readFile of /dev/urandom in flight exits", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        const fs = require("node:fs");
+        fs.promises.readFile("/dev/urandom").then(() => console.log("resolved"), () => console.log("rejected"));
+        // The pool thread is into the read by the time the next loop turn runs.
+        setImmediate(() => { console.log("exiting"); process.exit(0); });
+      `,
+      ],
+      env: { ...bunEnv, BUN_DESTRUCT_VM_ON_EXIT: "1" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toBe("exiting\n");
+    expect(exitCode).toBe(0);
   });
 
   test("appendFile with a pre-aborted signal", async () => {

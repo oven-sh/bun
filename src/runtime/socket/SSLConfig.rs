@@ -85,7 +85,10 @@ fn read_from_blob(
         StoreData::File(f) => f,
         _ => return Err(ReadFromBlobError::NotAFile),
     };
-    let mut fs = node_fs::NodeFS::default();
+    let mut fs = node_fs::NodeFS {
+        vm_handle: Some(global.bun_vm().handle()),
+        ..node_fs::NodeFS::default()
+    };
     // `ReadFile` has a `Drop` impl (releases its `signal` ref), so functional
     // record update from `..Default::default()` would partially move out of a
     // `Drop` type. Mutate-after-default instead.

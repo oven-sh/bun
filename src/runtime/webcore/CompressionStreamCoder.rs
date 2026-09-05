@@ -555,6 +555,14 @@ impl CompressionStreamCoder {
                             return Ok(Progress::Done);
                         }
                         brotli::BrotliDecoderResult::needs_more_input => {
+                            // The output buffer filled before the ring buffer
+                            // drained. Brotli reports `needs_more_input` anyway.
+                            // SAFETY: `p` is a live decoder.
+                            if written > 0
+                                && brotli::BrotliDecoder::has_more_output(unsafe { &*p.as_ptr() })
+                            {
+                                continue;
+                            }
                             if finish {
                                 return Err(CodecError::Message("unexpected end of file"));
                             }

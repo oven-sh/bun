@@ -149,6 +149,15 @@ pub enum ExternalKind {
     ExternalRewritePath,
 }
 
+/// Why a successful resolve has no path to load: every path is `is_disabled`.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum DisabledReason {
+    /// A Node.js builtin stubbed out under the browser target.
+    NodeBuiltin,
+    /// The package.json `"browser"` field maps the module to `false`.
+    BrowserField,
+}
+
 impl ResultFlags {
     #[inline]
     pub fn is_external(self) -> bool {
@@ -269,6 +278,19 @@ impl Result {
         }
 
         None
+    }
+
+    /// The path to load, or why there is none.
+    pub fn path_or_disabled(&self) -> core::result::Result<&Path, DisabledReason> {
+        if let Some(path) = self.path_const() {
+            return Ok(path);
+        }
+        // Stubbed builtins carry the "node" namespace; anything else came from a "browser" map.
+        Err(if self.path_pair.primary.namespace == b"node" {
+            DisabledReason::NodeBuiltin
+        } else {
+            DisabledReason::BrowserField
+        })
     }
 }
 

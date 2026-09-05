@@ -339,6 +339,9 @@ test/napi/node-napi-tests/test/js-native-api/6_object_wrap/do.test.ts
 test/napi/uv_stub.test.ts
 
 test/bake/dev/production.test.ts
+# `bun build --app` leaks the Box<[u8]> fields of the arena-allocated bake_types::Framework
+# view (Framework::init_transpiler_with_options, bake_body.rs); reported at exit.
+test/bake/build-app-options.test.ts
 test/js/third_party/pg-gateway/pglite.test.ts
 test/js/bun/test/parallel/test-integration-rspack.ts
 

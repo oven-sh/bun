@@ -663,26 +663,9 @@ impl Framework {
             return;
         }
 
-        let top_level_dir = bun_resolver::fs::FileSystem::get().top_level_dir;
-        let mut result = match r.resolve(top_level_dir, *path, bun_ast::ImportKind::Stmt) {
-            Ok(res) => res,
-            Err(err) => {
-                Output::err(
-                    err,
-                    "Failed to resolve '{}' for framework ({})",
-                    (bstr::BStr::new(path), bstr::BStr::new(desc)),
-                );
-                *had_errors = true;
-                return;
-            }
-        };
-        // `resolver::Result::path().text` is `&'static [u8]` already (resolver's
-        // `Path` alias is `bun_paths::fs::Path<'static>`, populated from the
-        // `FilenameStore` singleton). No widen needed; the previous
-        // `arena_erase` here laundered an already-`'static` slice and falsely
-        // implied arena ownership. See `bun_ptr::Interned` for the type that
-        // `Path::text` should eventually become.
-        *path = result.path().unwrap().text;
+        if let Some(resolved) = super::Framework::resolve_specifier(r, path, had_errors, desc) {
+            *path = resolved;
+        }
     }
 
     fn from_js(

@@ -577,7 +577,7 @@ pub(crate) const TEST_ONLY_PARAMS: &[ParamType] = &[
         "--todo                           Include tests that are marked with \"test.todo()\""
     ),
     parse_param!(
-        "--only                           Run only tests that are marked with \"test.only()\" or \"describe.only()\""
+        "--only/--test-only               Run only tests that are marked with \"test.only()\" or \"describe.only()\""
     ),
     parse_param!("--pass-with-no-tests             Exit with code 0 when no tests are found"),
     parse_param!("--concurrent                     Treat all tests as `test.concurrent()` tests"),

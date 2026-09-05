@@ -355,10 +355,11 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
     {
         Unwrapped::Pending => unreachable!(),
         Unwrapped::Fulfilled(_) => {
-            let default = BakeGetDefaultExportFromModule(
+            let default = c::bake_get_default_export_from_module(
                 global,
                 config_entry_point_string.to_js(global).map_err(js_err)?,
-            );
+            )
+            .map_err(js_err)?;
 
             if !default.is_object() {
                 return Err(js_err(global.throw_invalid_arguments(format_args!(
@@ -846,17 +847,10 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
 
         let server_file = router_type.server_file;
         let server_entry_point = pt.load_bundled_module(server_file)?;
-        let server_render_func = 'brk: {
-            let Some(raw) = bake_get_on_module_namespace(global, server_entry_point, b"prerender")
-            else {
-                break 'brk None;
-            };
-            if !raw.is_callable() {
-                break 'brk None;
-            }
-            break 'brk Some(raw);
-        };
-        let Some(server_render_func) = server_render_func else {
+        let server_render_func =
+            c::bake_get_on_module_namespace(global, server_entry_point, b"prerender")
+                .map_err(js_err)?;
+        if !server_render_func.is_callable() {
             bun_core::err_generic!("Framework does not support static site generation");
             bun_core::note!(
                 "The file {} is missing the \"prerender\" export, which defines how to generate static files.",
@@ -866,34 +860,23 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
                 ))
             );
             Global::crash();
-        };
+        }
 
         let server_param_func = if router.dynamic_routes.count() > 0 {
-            let f = 'brk: {
-                let Some(raw) =
-                    bake_get_on_module_namespace(global, server_entry_point, b"getParams")
-                else {
-                    break 'brk None;
-                };
-                if !raw.is_callable() {
-                    break 'brk None;
-                }
-                break 'brk Some(raw);
-            };
-            match f {
-                Some(f) => f,
-                None => {
-                    bun_core::err_generic!("Framework does not support static site generation");
-                    bun_core::note!(
-                        "The file {} is missing the \"getParams\" export, which defines how to generate static files.",
-                        bun_core::fmt::quote(resolve_path::relative(
-                            cwd,
-                            pt.input_file(server_file).abs_path()
-                        ))
-                    );
-                    Global::crash();
-                }
+            let f = c::bake_get_on_module_namespace(global, server_entry_point, b"getParams")
+                .map_err(js_err)?;
+            if !f.is_callable() {
+                bun_core::err_generic!("Framework does not support static site generation");
+                bun_core::note!(
+                    "The file {} is missing the \"getParams\" export, which defines how to generate static files.",
+                    bun_core::fmt::quote(resolve_path::relative(
+                        cwd,
+                        pt.input_file(server_file).abs_path()
+                    ))
+                );
+                Global::crash();
             }
+            f
         } else {
             JSValue::NULL
         };
@@ -1200,13 +1183,13 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
 }
 
 /// unsafe function, must be run outside of the event loop
-/// quits the process on exception
+/// fails with `JSError` on exception
 fn load_module(
     vm: *mut VirtualMachine,
     global: &JSGlobalObject,
     key: JSValue,
 ) -> crate::Result<JSValue> {
-    let promise_value = BakeLoadModuleByKey(global, key);
+    let promise_value = c::bake_load_module_by_key(global, key).map_err(js_err)?;
     let promise: *mut jsc::JSInternalPromise = match promise_value.as_any_promise().unwrap() {
         AnyPromise::Internal(p) => p,
         AnyPromise::Normal(_) => unreachable!(),
@@ -1233,38 +1216,60 @@ fn load_module(
     let jsc_vm = vm_ref.as_mut().jsc_vm_mut();
     match jsc::JSInternalPromise::opaque_mut(promise).unwrap(jsc_vm, UnwrapMode::MarkHandled) {
         Unwrapped::Pending => unreachable!(),
-        Unwrapped::Fulfilled(_) => Ok(BakeGetModuleNamespace(global, key)),
+        Unwrapped::Fulfilled(_) => c::bake_get_module_namespace(global, key).map_err(js_err),
         Unwrapped::Rejected(err) => Err(js_err(vm_ref.global().throw_value(err))),
     }
 }
 
-// extern apis:
+/// BakeSourceProvider.cpp entry points: each returns empty iff it threw (`from_js_host_call`).
+mod c {
+    use super::*;
 
-unsafe extern "C" {
-    safe fn BakeGetDefaultExportFromModule(global: &JSGlobalObject, key: JSValue) -> JSValue;
-    safe fn BakeGetModuleNamespace(global: &JSGlobalObject, key: JSValue) -> JSValue;
-    safe fn BakeLoadModuleByKey(global: &JSGlobalObject, key: JSValue) -> JSValue;
-}
-
-fn bake_get_on_module_namespace(
-    global: &JSGlobalObject,
-    module: JSValue,
-    property: &[u8],
-) -> Option<JSValue> {
     unsafe extern "C" {
-        // PRECONDITION: `ptr` must be readable for `len` bytes (C++ builds an
-        // `Identifier` from the slice). Cannot be `safe fn` — raw ptr+len pair
-        // carries a caller-side validity precondition.
-        #[link_name = "BakeGetOnModuleNamespace"]
-        fn f(global: *const JSGlobalObject, module: JSValue, ptr: *const u8, len: usize)
-        -> JSValue;
+        safe fn BakeLoadModuleByKey(global: &JSGlobalObject, key: JSValue) -> JSValue;
+        safe fn BakeGetModuleNamespace(global: &JSGlobalObject, key: JSValue) -> JSValue;
+        safe fn BakeGetDefaultExportFromModule(global: &JSGlobalObject, key: JSValue) -> JSValue;
+        safe fn BakeGetOnModuleNamespace(
+            global: &JSGlobalObject,
+            module_namespace: JSValue,
+            key: bun_core::ffi::FfiSlice<'_, u8>,
+        ) -> JSValue;
     }
-    // SAFETY: `global` is a live `&JSGlobalObject`, `module` is a stack-held
-    // `JSValue`, and `property.as_ptr()`/`len()` describe a valid borrowed
-    // `&[u8]` for the call duration — discharges the ptr+len precondition above.
-    let result: JSValue = unsafe { f(global, module, property.as_ptr(), property.len()) };
-    debug_assert!(!result.is_empty());
-    Some(result)
+
+    /// Returns the `JSInternalPromise` that evaluates the module `key` (a JSString) names.
+    pub(super) fn bake_load_module_by_key(
+        global: &JSGlobalObject,
+        key: JSValue,
+    ) -> JsResult<JSValue> {
+        jsc::from_js_host_call(global, || BakeLoadModuleByKey(global, key))
+    }
+
+    /// The promise from [`bake_load_module_by_key`] for `key` must have settled.
+    pub(super) fn bake_get_module_namespace(
+        global: &JSGlobalObject,
+        key: JSValue,
+    ) -> JsResult<JSValue> {
+        jsc::from_js_host_call(global, || BakeGetModuleNamespace(global, key))
+    }
+
+    /// The module `key` names must already be evaluated.
+    pub(super) fn bake_get_default_export_from_module(
+        global: &JSGlobalObject,
+        key: JSValue,
+    ) -> JsResult<JSValue> {
+        jsc::from_js_host_call(global, || BakeGetDefaultExportFromModule(global, key))
+    }
+
+    /// Reads `property` off a namespace object from [`bake_get_module_namespace`].
+    pub(super) fn bake_get_on_module_namespace(
+        global: &JSGlobalObject,
+        module_namespace: JSValue,
+        property: &[u8],
+    ) -> JsResult<JSValue> {
+        jsc::from_js_host_call(global, || {
+            BakeGetOnModuleNamespace(global, module_namespace, property.into())
+        })
+    }
 }
 
 // Renders all routes for static site generation by calling the JavaScript implementation.

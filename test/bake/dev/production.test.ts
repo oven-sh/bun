@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { existsSync } from "fs";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, isWindows, normalizeBunSnapshot, tempDir } from "harness";
 import path from "path";
 import { tempDirWithBakeDeps } from "../bake-harness";
 
@@ -658,5 +658,121 @@ export default function IndexPage() {
 
     // Verify NO JavaScript imports are included in the HTML
     expect(htmlContent).not.toContain('<script type="module"');
+  });
+
+  // BUN_JSC_validateExceptionChecks=1 makes a debug build abort on the first
+  // JSC call whose exception nobody checked. Release builds ignore the option.
+  describe.concurrent("exception checks", () => {
+    async function buildApp(cwd: string, ...args: string[]) {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "build", "--app", ...args],
+        cwd,
+        // BUN_DEV_SERVER_TEST_RUNNER silences the "highly experimental" banner, so stderr is only the build's progress and errors.
+        env: { ...bunEnv, BUN_JSC_validateExceptionChecks: "1", BUN_DEV_SERVER_TEST_RUNNER: "1" },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      // The two report lines that name the throwing scope and the scope that failed to check it.
+      const uncheckedScopes = stderr
+        .split("\n")
+        .map(line => line.trim())
+        .filter(line => line.startsWith("This scope can throw") || line.startsWith("But the exception was unchecked"));
+      return {
+        stdout: normalizeBunSnapshot(stdout, cwd),
+        stderr: normalizeBunSnapshot(stderr, cwd),
+        exitCode,
+        signalCode: proc.signalCode,
+        uncheckedScopes,
+      };
+    }
+
+    const rendered = {
+      stdout: "done",
+      stderr: "Loading configuration\nBundling routes\nRendering routes",
+      exitCode: 0,
+      signalCode: null,
+      uncheckedScopes: [],
+    };
+
+    test("a config import that fails to resolve", async () => {
+      // The bake resolve hook hands a specifier it does not own to the regular resolver, which throws.
+      using dir = tempDir("bake-production-validate-unresolved", {
+        "bun.app.ts": `import "./does-not-exist";
+          export default { app: { framework: "react" } };`,
+      });
+
+      expect(await buildApp(String(dir))).toStrictEqual({
+        stdout: "",
+        stderr: "Loading configuration\nerror: Cannot find module './does-not-exist' from '<dir>/bun.app.ts'",
+        exitCode: 1,
+        signalCode: null,
+        uncheckedScopes: [],
+      });
+    });
+
+    test("loading the server entry point and prerendering routes", async () => {
+      // Loads the framework's server entry point, reads its prerender and getParams exports,
+      // and (through the client component) has a "bake:/" module call import().
+      const dir = await tempDirWithBakeDeps("bake-production-validate-prerender", {
+        "src/index.tsx": `export default { app: { framework: "react" } };`,
+        "pages/index.tsx": `import Greeting from "../components/Greeting";
+
+export default function IndexPage() {
+  return (
+    <main>
+      <h1>Static Home</h1>
+      <Greeting />
+    </main>
+  );
+}`,
+        "components/Greeting.tsx": `"use client";
+
+export default function Greeting() {
+  return <p>Hello from the client</p>;
+}`,
+        "pages/posts/[slug].tsx": `export default function Post({ params }) {
+  return <h1>{"Post " + params.slug}</h1>;
+}
+
+export function getStaticPaths() {
+  return { paths: [{ params: { slug: "first" } }, { params: { slug: "second" } }], fallback: false };
+}`,
+      });
+
+      expect(await buildApp(dir, "./src/index.tsx")).toStrictEqual(rendered);
+
+      const pages = await Promise.all(
+        ["index.html", "posts/first/index.html", "posts/second/index.html"].map(file =>
+          Bun.file(path.join(dir, "dist", file)).text(),
+        ),
+      );
+      expect(pages[0]).toContain("<h1>Static Home</h1>");
+      expect(pages[0]).toContain("<p>Hello from the client</p>");
+      expect(pages[1]).toContain("<h1>Post first</h1>");
+      expect(pages[2]).toContain("<h1>Post second</h1>");
+    });
+
+    // todo on Windows: BakeProdResolve joins the absolute drive path as if it were relative,
+    // so this import fails with EINVAL before it reaches the fetch hook (see #39092).
+    test.todoIf(isWindows)("a route importing a file outside the bundle while rendering", async () => {
+      // A "bake:/" key that is not in the output map is handed to the regular loader, which reads it from disk.
+      const dir = await tempDirWithBakeDeps("bake-production-validate-disk-import", {
+        "src/index.tsx": `export default { app: { framework: "react" } };`,
+        "extra/banner.mjs": `export const banner = "read from disk while rendering";`,
+        "pages/index.tsx": `import { join } from "node:path";
+
+export default async function IndexPage() {
+  // A computed specifier, so the bundler leaves this import() for the runtime.
+  const { banner } = await import(join(import.meta.dir, "../extra/banner.mjs"));
+  return <p>{banner}</p>;
+}`,
+      });
+
+      expect(await buildApp(dir, "./src/index.tsx")).toStrictEqual(rendered);
+      expect(await Bun.file(path.join(dir, "dist", "index.html")).text()).toContain(
+        "<p>read from disk while rendering</p>",
+      );
+    });
   });
 });

@@ -2860,6 +2860,182 @@ config:
       expect(YAML.stringify({ "true": "keyword" }, null, 2)).toBe('"true": keyword');
     });
 
+    // https://github.com/oven-sh/bun/issues/41115
+    describe("literal block scalars in indented mode", () => {
+      test("emits |- for multiline strings without a trailing newline", () => {
+        expect(YAML.stringify({ a: "line1\nline2" }, null, 2)).toBe("a: |-\n  line1\n  line2");
+        expect(YAML.stringify({ a: "x\ny\nz" }, null, 2)).toBe("a: |-\n  x\n  y\n  z");
+      });
+
+      test("emits | for strings with exactly one trailing newline", () => {
+        expect(YAML.stringify({ a: "line1\nline2\n" }, null, 2)).toBe("a: |\n  line1\n  line2");
+        expect(YAML.stringify({ a: "x\n" }, null, 2)).toBe("a: |\n  x");
+      });
+
+      test("chomping variants", () => {
+        expect(YAML.stringify({ a: "" }, null, 2)).toBe('a: ""');
+        expect(YAML.stringify({ a: "a\n" }, null, 2)).toBe("a: |\n  a");
+        // two trailing newlines would need |+ keep chomping; stays quoted
+        expect(YAML.stringify({ a: "a\n\n" }, null, 2)).toBe('a: "a\\n\\n"');
+        expect(YAML.stringify({ a: "\n" }, null, 2)).toBe('a: "\\n"');
+        expect(YAML.stringify({ a: "\n\n" }, null, 2)).toBe('a: "\\n\\n"');
+      });
+
+      test("interior blank lines are emitted with no indentation", () => {
+        const yml = YAML.stringify({ a: "x\n\ny" }, null, 2);
+        expect(yml).toBe("a: |-\n  x\n\n  y");
+        expect(YAML.parse(yml)).toEqual({ a: "x\n\ny" });
+      });
+
+      test("leading empty line", () => {
+        const yml = YAML.stringify({ a: "\nx" }, null, 2);
+        expect(yml).toBe("a: |-\n\n  x");
+        expect(YAML.parse(yml)).toEqual({ a: "\nx" });
+      });
+
+      test("more-indented later lines are preserved", () => {
+        const yml = YAML.stringify({ a: "x\n  y" }, null, 2);
+        expect(yml).toBe("a: |-\n  x\n    y");
+        expect(YAML.parse(yml)).toEqual({ a: "x\n  y" });
+      });
+
+      test("array items and nested objects", () => {
+        expect(YAML.stringify(["x\ny"], null, 2)).toBe("- |-\n  x\n  y");
+        expect(YAML.stringify({ a: { b: "x\ny" } }, null, 2)).toBe("a: \n  b: |-\n    x\n    y");
+        expect(YAML.stringify({ list: ["x\ny", "p\nq\n"] }, null, 2)).toBe(
+          "list: \n  - |-\n    x\n    y\n  - |\n    p\n    q",
+        );
+      });
+
+      test("root multiline string", () => {
+        expect(YAML.stringify("x\ny", null, 2)).toBe("|-\n  x\n  y");
+        expect(YAML.parse(YAML.stringify("x\ny", null, 2))).toBe("x\ny");
+        expect(YAML.stringify("x\ny\n", null, 2)).toBe("|\n  x\n  y");
+      });
+
+      test("indent width follows the space argument", () => {
+        expect(YAML.stringify({ a: "x\ny" }, null, 4)).toBe("a: |-\n    x\n    y");
+        expect(YAML.stringify({ a: "x\ny" }, null, "  ")).toBe("a: |-\n  x\n  y");
+        expect(YAML.stringify({ a: "x\ny" }, null, 3)).toBe("a: |-\n   x\n   y");
+      });
+
+      test("a one-column indent unit keeps quoted output", () => {
+        // a compact nested sequence advances two columns per level, so with a
+        // one-column indent the block content would not be more indented than
+        // its parent
+        expect(YAML.stringify({ a: "x\ny" }, null, 1)).toBe('a: "x\\ny"');
+        expect(YAML.stringify(["x\ny"], null, 1)).toBe('- "x\\ny"');
+        expect(YAML.stringify({ a: "x\ny" }, null, " ")).toBe('a: "x\\ny"');
+        expect(YAML.parse(YAML.stringify([["x\ny"]], null, 1))).toEqual([["x\ny"]]);
+        expect(YAML.parse(YAML.stringify([{ a: "x\ny" }], null, 1))).toEqual([{ a: "x\ny" }]);
+      });
+
+      test("compact nesting stays more indented than its parent", () => {
+        const cases = [[["x\ny"]], [{ a: "x\ny" }], [[["x\ny"]]], [[{ a: "x\ny" }]]];
+        for (const v of cases) {
+          for (const indent of [2, 3, 4]) {
+            expect(YAML.parse(YAML.stringify(v, null, indent))).toEqual(v);
+          }
+        }
+        // A compact nested sequence with more than one item only roundtrips at
+        // indent 2 on the current emitter: the between-item newline indent
+        // does not line up with the compact first item at other widths, for
+        // scalars of every kind. So the multi-item case stays at indent 2.
+        expect(YAML.parse(YAML.stringify([["a", "x\ny"]], null, 2))).toEqual([["a", "x\ny"]]);
+        expect(YAML.stringify([["x\ny"]], null, 2)).toBe("- - |-\n    x\n    y");
+        expect(YAML.stringify([{ a: "x\ny" }], null, 2)).toBe("- a: |-\n    x\n    y");
+      });
+
+      test("a tab space argument keeps quoted output", () => {
+        // block scalar content cannot be indented with tabs
+        expect(YAML.stringify({ a: "x\ny" }, null, "\t")).toBe('a: "x\\ny"');
+      });
+
+      test("minified mode is unchanged", () => {
+        expect(YAML.stringify({ a: "x\ny" })).toBe('{a: "x\\ny"}');
+        expect(YAML.stringify("x\ny")).toBe('"x\\ny"');
+      });
+
+      test("keys with newlines stay quoted", () => {
+        expect(YAML.stringify({ "a\nb": 1 }, null, 2)).toBe('"a\\nb": 1');
+      });
+
+      test("falls back to quoting for strings block form cannot represent", () => {
+        // a line ending with a space or tab
+        expect(YAML.stringify({ a: "x \ny" }, null, 2)).toBe('a: "x \\ny"');
+        expect(YAML.stringify({ a: "x\t\ny" }, null, 2)).toBe('a: "x\\t\\ny"');
+        expect(YAML.stringify({ a: "x\ny " }, null, 2)).toBe('a: "x\\ny "');
+        expect(YAML.stringify({ a: "x\ny\t" }, null, 2)).toBe('a: "x\\ny\\t"');
+        // a first non-empty line starting with a space (indentation
+        // auto-detection would consume it)
+        expect(YAML.stringify({ a: " x\ny" }, null, 2)).toBe('a: " x\\ny"');
+        expect(YAML.stringify({ a: "\n x" }, null, 2)).toBe('a: "\\n x"');
+        // carriage returns and other control characters
+        expect(YAML.stringify({ a: "x\r\ny" }, null, 2)).toBe('a: "x\\r\\ny"');
+        expect(YAML.stringify({ a: "x\x07\ny" }, null, 2)).toBe('a: "x\\a\\ny"');
+        // YAML 1.1 line breaks
+        expect(YAML.stringify({ a: "x\u0085y\nz" }, null, 2)).toBe('a: "x\\Ny\\nz"');
+        expect(YAML.stringify({ a: "x\u2028y\nz" }, null, 2)).toBe('a: "x\\Ly\\nz"');
+        // lone surrogates
+        expect(YAML.stringify({ a: "x\uD800\ny" }, null, 2)).toContain('"');
+        expect(YAML.stringify({ a: "x\uDC00\ny" }, null, 2)).toContain('"');
+      });
+
+      test("mid-line tabs and non-ASCII content stay in block form", () => {
+        const tabbed = { a: "x\ty\nz" };
+        const tabbedYml = YAML.stringify(tabbed, null, 2);
+        expect(tabbedYml).toBe("a: |-\n  x\ty\n  z");
+        expect(YAML.parse(tabbedYml)).toEqual(tabbed);
+
+        const unicode = { a: "héllo\nwörld 🌍" };
+        const unicodeYml = YAML.stringify(unicode, null, 2);
+        expect(unicodeYml).toBe("a: |-\n  héllo\n  wörld 🌍");
+        expect(YAML.parse(unicodeYml)).toEqual(unicode);
+      });
+
+      describe("roundtrip sweep over edge-case strings", () => {
+        const cases = [
+          "line1\nline2",
+          "line1\nline2\n",
+          "a\n\n",
+          "\n",
+          "\n\n",
+          "\na",
+          "a\n",
+          "x\n\ny",
+          "x\n\n\ny",
+          "x\n  y",
+          "x\n\ty",
+          " x\ny",
+          "\n x",
+          "x \ny",
+          "x\ny ",
+          "x\t\ny",
+          "x\r\ny",
+          "x\u0085y\nz",
+          "x\u2028y\nz",
+          "x\u2029y\nz",
+          "x\u00a0y\nz",
+          "héllo\nwörld",
+          "🌍\n🌎",
+          "a: b\nc",
+          "- item\nnext",
+          "|\nliteral",
+          "#comment\nx",
+          "x\n---\ny",
+          "x\n...\ny",
+          "key:\nvalue",
+        ];
+        test.each(cases)("roundtrips %j", s => {
+          expect(YAML.parse(YAML.stringify({ v: s }, null, 2))).toEqual({ v: s });
+          expect(YAML.parse(YAML.stringify([s], null, 2))).toEqual([s]);
+          expect(YAML.parse(YAML.stringify(s, null, 2))).toBe(s);
+          expect(YAML.parse(YAML.stringify({ v: s }, null, 1))).toEqual({ v: s });
+          expect(YAML.parse(YAML.stringify({ nested: { v: [s] } }, null, 3))).toEqual({ nested: { v: [s] } });
+        });
+      });
+    });
+
     // Error case tests
     test("throws on BigInt", () => {
       expect(() => YAML.stringify(BigInt(123))).toThrow("YAML.stringify cannot serialize BigInt");

@@ -55,6 +55,45 @@ test.concurrent("which searches $PATH for bare names and the shell cwd for ./ na
   expect(exitCode).toBe(0);
 });
 
+// `which` resolves through the same PATH as running the command does: a
+// `PATH=... cmd` prefix, then the exported environment, then the process
+// environment when the shell environment has no PATH at all.
+test.concurrent("which honors a PATH= prefix assignment", async () => {
+  using dir = tempDir("which-prefix", searchTree);
+  const { pathDir } = searchDirs(String(dir));
+
+  const { stdout, exitCode } = await $`PATH=${pathDir} which tool`
+    .env({ ...bunEnv, PATH: "" })
+    .quiet()
+    .nothrow();
+  expect(stdout.toString()).toBe(`${join(pathDir, exe)}\n`);
+  expect(exitCode).toBe(0);
+});
+
+test.concurrent("which falls back to the process PATH when the shell environment has no PATH", async () => {
+  using dir = tempDir("which-process-path", searchTree);
+  const { pathDir } = searchDirs(String(dir));
+
+  // Windows spells the variable `Path`, so drop every spelling before setting it.
+  const fixture = /* ts */ `
+    import { $ } from "bun";
+    const env = Object.fromEntries(Object.entries(process.env).filter(([key]) => key.toLowerCase() !== "path"));
+    const { stdout, exitCode } = await $\`which tool\`.env(env).quiet().nothrow();
+    console.log(JSON.stringify({ stdout: stdout.toString(), exitCode }));
+  `;
+  const env = Object.fromEntries(Object.entries(bunEnv).filter(([key]) => key.toLowerCase() !== "path"));
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", fixture],
+    env: { ...env, PATH: pathDir },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(JSON.parse(stdout.trim())).toEqual({ stdout: `${join(pathDir, exe)}\n`, exitCode: 0 });
+  expect(exitCode).toBe(0);
+});
+
 test.skipIf(isWindows)("which with an absolute path at the platform path length limit reports not found", async () => {
   const fixture = /* ts */ `
     import { $ } from "bun";

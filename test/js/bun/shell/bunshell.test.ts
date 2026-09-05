@@ -3470,3 +3470,105 @@ test.skipIf(isWindows)("external command resolution uses the PATH from the shell
     expect(exitCode).toBe(0);
   }
 });
+
+// Windows stores the variable as `Path`. The shell env map is case-insensitive
+// there and keeps the key casing of the first insert, so a `PATH` written by
+// `.env()`, `export`, or `process.env` lands under the `Path` key.
+describe.concurrent.skipIf(!isWindows)("external command resolution on Windows uses PATH under any key casing", () => {
+  const envWithoutPath: Record<string, string> = {};
+  for (const [key, value] of Object.entries(bunEnv)) {
+    if (key.toLowerCase() !== "path" && value !== undefined) envWithoutPath[key] = value;
+  }
+  const processPath = process.env.PATH!;
+  const toolDir = (name: string, message: string, dirPrefix = name) =>
+    tempDir(`shell-argv0-${dirPrefix}`, { [`${name}.cmd`]: `@echo ${message}\r\n` });
+
+  test(".env() with a Path key", async () => {
+    using dir = toolDir("onlyintool-pathkey", "from-Path-key");
+    const { stdout, stderr, exitCode } = await $`onlyintool-pathkey`
+      .env({ ...envWithoutPath, Path: `${String(dir)};${processPath}` })
+      .quiet()
+      .nothrow();
+    expect(stderr.toString()).toBe("");
+    expect(stdout.toString().trim()).toBe("from-Path-key");
+    expect(exitCode).toBe(0);
+  });
+
+  test(".env() with PATH added to an env that already has Path", async () => {
+    using dir = toolDir("onlyintool-bothkeys", "from-PATH-over-Path");
+    const { stdout, stderr, exitCode } = await $`onlyintool-bothkeys`
+      .env({ ...envWithoutPath, Path: processPath, PATH: `${String(dir)};${processPath}` })
+      .quiet()
+      .nothrow();
+    expect(stderr.toString()).toBe("");
+    expect(stdout.toString().trim()).toBe("from-PATH-over-Path");
+    expect(exitCode).toBe(0);
+  });
+
+  test("export PATH over an env that has Path", async () => {
+    using dir = toolDir("onlyintool-export", "from-export");
+    const { stdout, stderr, exitCode } = await $`export PATH=${`${String(dir)};${processPath}`}; onlyintool-export`
+      .env({ ...envWithoutPath, Path: processPath })
+      .quiet()
+      .nothrow();
+    expect(stderr.toString()).toBe("");
+    expect(stdout.toString().trim()).toBe("from-export");
+    expect(exitCode).toBe(0);
+  });
+
+  test("a PATH= prefix still beats export", async () => {
+    using prefixDir = toolDir("onlyintool-priority", "from-prefix", "priority-prefix");
+    using exportDir = toolDir("onlyintool-priority", "from-export", "priority-export");
+    const exportPath = `${String(exportDir)};${processPath}`;
+    const prefixPath = `${String(prefixDir)};${processPath}`;
+    const { stdout, stderr, exitCode } = await $`export PATH=${exportPath}; PATH=${prefixPath} onlyintool-priority`
+      .env({ ...envWithoutPath, Path: processPath })
+      .quiet()
+      .nothrow();
+    expect(stderr.toString()).toBe("");
+    expect(stdout.toString().trim()).toBe("from-prefix");
+    expect(exitCode).toBe(0);
+  });
+
+  test("process.env.PATH set at runtime", async () => {
+    using dir = toolDir("onlyintool-runtime", "from-runtime");
+    const code = `
+      import { $ } from "bun";
+      process.env.PATH = ${JSON.stringify(String(dir))} + ";" + process.env.PATH;
+      const { stdout, stderr, exitCode } = await $\`onlyintool-runtime\`.quiet().nothrow();
+      console.log(JSON.stringify({ stdout: stdout.toString().trim(), stderr: stderr.toString(), exitCode }));
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", code],
+      env: { ...envWithoutPath, Path: processPath },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual({ stdout: "from-runtime", stderr: "", exitCode: 0 });
+    expect(exitCode).toBe(0);
+  });
+
+  // `bun run <script>` runs package.json scripts through the Bun shell on
+  // Windows, with the shell environment seeded from the process environment.
+  test("export PATH in a package.json script", async () => {
+    using dir = toolDir("onlyintool-script", "from-script");
+    using project = tempDir("shell-argv0-project", {
+      "package.json": JSON.stringify({
+        scripts: { tool: `export PATH='${String(dir)};${processPath}'; onlyintool-script` },
+      }),
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "--silent", "run", "tool"],
+      env: { ...envWithoutPath, Path: processPath },
+      cwd: String(project),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout.trim()).toBe("from-script");
+    expect(exitCode).toBe(0);
+  });
+});

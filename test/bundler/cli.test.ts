@@ -797,6 +797,47 @@ describe.concurrent("--no-bundle with --outdir", () => {
     expect(await Bun.file(path.join(String(dir), "a.js")).text()).toContain('console.log("hello world!")');
     expect(await Bun.file(path.join(String(dir), "b.js")).text()).toContain('console.log("foo bar baz")');
   });
+
+  // A copied asset is named `<path>-<hash><ext>`. The hash is wyhash over the
+  // file size and mtime, formatted as 16 lowercase hex digits, leading zeros
+  // included. Skipped on Windows: `OutputFile::copy_to` is not implemented there.
+  test.skipIf(isWindows)("names a copied asset with a fixed-width 16 digit hex hash", async () => {
+    const contents = "abc";
+    using dir = tempDir("no-bundle-copied-asset-hash", {
+      "foo.wasm": contents,
+    });
+
+    function expectedHash(size: number, mtimeSeconds: number): string {
+      const key = Buffer.alloc(32);
+      key.writeBigUInt64LE(BigInt(size), 0);
+      key.writeBigInt64LE(BigInt(mtimeSeconds) * 1_000_000_000n, 8);
+      return Bun.hash.wyhash(key, 0n).toString(16).padStart(16, "0");
+    }
+
+    // Pick an mtime whose hash starts with a zero nibble, so that dropped
+    // leading zeros are observable in the output name.
+    let mtimeSeconds = 1_600_000_000;
+    while (!expectedHash(contents.length, mtimeSeconds).startsWith("0")) {
+      mtimeSeconds++;
+    }
+    fs.utimesSync(path.join(String(dir), "foo.wasm"), mtimeSeconds, mtimeSeconds);
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build", "--no-bundle", "./foo.wasm", "--outdir=dist"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toContain("Transpiled file in");
+    expect(exitCode).toBe(0);
+
+    const copied = fs.readdirSync(String(dir)).filter(name => name.startsWith("foo.wasm-"));
+    expect(copied).toEqual([`foo.wasm-${expectedHash(contents.length, mtimeSeconds)}.wasm`]);
+    expect(await Bun.file(path.join(String(dir), copied[0])).text()).toBe(contents);
+  });
 });
 
 test.concurrent("bun build names every input that maps to a shared output path", async () => {

@@ -644,14 +644,14 @@ pub struct ModKey {
 }
 
 impl ModKey {
-    /// Writes `basename` + `-` + the hex hash into `out` and returns the
-    /// written prefix.
+    /// Writes `basename` + `-` + the 16-digit zero-padded lowercase hex hash
+    /// into `out` and returns the written prefix.
     pub fn hash_name<'out>(
         &self,
         basename: &[u8],
         out: &'out mut [u8],
     ) -> crate::CrateResult<&'out [u8]> {
-        let hex_int = self.hash();
+        let hex = bun_core::fmt::u64_hex_fixed::<true, 16>(self.hash());
 
         let len = out.len();
         let mut cursor = &mut out[..];
@@ -664,7 +664,8 @@ impl ModKey {
         cursor
             .write_all(b"-")
             .map_err(|_| crate::Error::Sys(bun_errno::SystemErrno::ENOSPC))?;
-        write!(&mut cursor, "{:x}", hex_int)
+        cursor
+            .write_all(&hex)
             .map_err(|_| crate::Error::Sys(bun_errno::SystemErrno::ENOSPC))?;
         let written = len - cursor.len();
         Ok(&out[..written])

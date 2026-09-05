@@ -1674,7 +1674,7 @@ pub struct BaseScope {
     pub(crate) has_callback: bool,
     /// this value is 0 unless the debugger is active and the scope has a debugger id
     pub(crate) test_id_for_debugger: i32,
-    /// only available if using junit reporter, otherwise 0
+    /// only captured when the junit reporter or the inspector is enabled, otherwise 0
     pub(crate) line_no: u32,
 }
 impl BaseScope {

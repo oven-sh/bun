@@ -186,6 +186,7 @@ const kOnreadPendingEnd = Symbol("kOnreadPendingEnd");
 const kOnreadReadRequested = Symbol("kOnreadReadRequested");
 const kOnreadEmptyTail = Buffer.alloc(0);
 const kwriteCallback = Symbol("writeCallback");
+const kLastWriteQueueSize = Symbol("lastWriteQueueSize");
 const kSocketClass = Symbol("kSocketClass");
 
 // A completed write whose status is a negative errno: Node hands it to the write
@@ -1603,6 +1604,7 @@ function Socket(options?) {
   // node initializes the timer slot to null so it is observable before setTimeout() is called.
   // https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L401
   this[kTimeout] = null;
+  this[kLastWriteQueueSize] = 0;
   this[kwriteCallback] = undefined;
   this._pendingData = undefined;
   this._pendingEncoding = undefined; // for compatibility
@@ -1801,17 +1803,14 @@ Socket.prototype.address = function address() {
 };
 
 Socket.prototype._onTimeout = function () {
-  // if there is pending data, write is in progress
-  // so we suppress the timeout
-  if (this._pendingData) {
-    return;
-  }
-
   const handle = this._handle;
-  // if there is a handle, and it has pending data,
-  // we suppress the timeout because a write is in progress
-  if (handle && getBufferedAmount(handle) > 0) {
-    return;
+  if (this[kwriteCallback] && handle) {
+    const writeQueueSize = getBufferedAmount(handle);
+    if (this[kLastWriteQueueSize] !== writeQueueSize) {
+      this[kLastWriteQueueSize] = writeQueueSize;
+      this._unrefTimer();
+      return;
+    }
   }
   this.emit("timeout");
 };
@@ -2824,6 +2823,7 @@ Socket.prototype._write = function _write(chunk, encoding, callback) {
     callback(new Error("overlapping _write()"));
   } else {
     this[kwriteCallback] = callback;
+    this[kLastWriteQueueSize] = getBufferedAmount(socket);
     // A pending write holds the loop even on a handle whose FIN/pause dropped
     // its hold (libuv: the uv_write_t is active); unrefAfterDrain lets go again.
     if ((this[kended] || this[kPausedUnref]) && !this[kUserUnrefed]) socket.ref?.();

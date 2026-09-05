@@ -7,6 +7,7 @@ import {
   exampleSite,
   gcTick,
   isASAN,
+  isGlibc,
   isWindows,
   tempDir,
   withoutAggressiveGC,
@@ -720,6 +721,99 @@ int posix_fadvise(int fd, off_t offset, off_t len, int advice) {
           stdout: "",
         });
         expect(fs.readFileSync(join(String(dir), "dst.bin"))).toEqual(Buffer.alloc(128 * 1024, 0x41));
+        expect(exitCode).toBe(0);
+      },
+    );
+
+    // The string and TypedArray fast paths open without O_TRUNC and cut the
+    // previous contents off with ftruncate(2) after writing. On XFS, truncating
+    // a file whose size just grew (every new file) synchronously writes the
+    // data back, about 1ms per file, so the ftruncate must only be issued when
+    // there is an old tail to cut. The LD_PRELOAD shim logs every ftruncate(2)
+    // with the file's name (glibc-only: relies on ELF symbol interposition).
+    it.skipIf(!isGlibc || !(Bun.which("cc") || Bun.which("gcc") || Bun.which("clang")))(
+      "only calls ftruncate when the file shrinks",
+      async () => {
+        const cc = Bun.which("cc") || Bun.which("gcc") || Bun.which("clang");
+        using dir = tempDir("bun-write-ftruncate", {
+          "shim.c": `
+#define _GNU_SOURCE
+#include <dlfcn.h>
+#include <stdio.h>
+#include <string.h>
+#include <unistd.h>
+
+static void log_ftruncate(int fd, long long len) {
+  char link[64], target[4096], line[4200];
+  snprintf(link, sizeof link, "/proc/self/fd/%d", fd);
+  ssize_t n = readlink(link, target, sizeof target - 1);
+  target[n < 0 ? 0 : n] = 0;
+  const char *name = strrchr(target, '/');
+  int m = snprintf(line, sizeof line, "ftruncate %s %lld\\n", name ? name + 1 : target, len);
+  write(2, line, m);
+}
+
+int ftruncate(int fd, off_t len) {
+  static int (*real)(int, off_t);
+  if (!real) real = dlsym(RTLD_NEXT, "ftruncate");
+  log_ftruncate(fd, len);
+  return real(fd, len);
+}
+
+int ftruncate64(int fd, off_t len) {
+  static int (*real)(int, off_t);
+  if (!real) real = dlsym(RTLD_NEXT, "ftruncate64");
+  log_ftruncate(fd, len);
+  return real(fd, len);
+}
+`,
+          "string-grow.txt": "x",
+          "string-shrink.txt": "xyz",
+          "bytes-grow.txt": "x",
+          "bytes-shrink.txt": "xyz",
+          "fixture.mjs": `
+            import fs from "node:fs";
+            await Bun.write("string-new.txt", "x");
+            await Bun.write("string-grow.txt", "yy");
+            await Bun.write("string-shrink.txt", "y");
+            await Bun.write("bytes-new.txt", new TextEncoder().encode("x"));
+            await Bun.write("bytes-grow.txt", new TextEncoder().encode("yy"));
+            await Bun.write("bytes-shrink.txt", new Uint8Array(0));
+            const names = fs.readdirSync(".").filter(name => name.endsWith(".txt")).sort();
+            console.log(JSON.stringify(Object.fromEntries(names.map(name => [name, fs.readFileSync(name, "utf8")]))));
+          `,
+        });
+
+        const shim = join(String(dir), "shim.so");
+        await using ccProc = Bun.spawn({
+          cmd: [cc, "-shared", "-fPIC", "-o", shim, join(String(dir), "shim.c"), "-ldl"],
+          env: bunEnv,
+          stderr: "pipe",
+        });
+        const [ccErr, ccExit] = await Promise.all([ccProc.stderr.text(), ccProc.exited]);
+        if (ccExit !== 0) throw new Error(`shim compile failed: ${ccErr}`);
+
+        const existing = bunEnv.LD_PRELOAD;
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), "fixture.mjs"],
+          env: { ...bunEnv, LD_PRELOAD: existing ? `${shim}:${existing}` : shim },
+          cwd: String(dir),
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+        expect({ contents: JSON.parse(stdout), ftruncates: stderr.trim().split("\n") }).toEqual({
+          contents: {
+            "string-new.txt": "x",
+            "string-grow.txt": "yy",
+            "string-shrink.txt": "y",
+            "bytes-new.txt": "x",
+            "bytes-grow.txt": "yy",
+            "bytes-shrink.txt": "",
+          },
+          ftruncates: ["ftruncate string-shrink.txt 1", "ftruncate bytes-shrink.txt 0"],
+        });
         expect(exitCode).toBe(0);
       },
     );

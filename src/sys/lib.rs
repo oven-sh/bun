@@ -2629,6 +2629,15 @@ mod posix_impl {
         check!(safe_libc::ftruncate(fd.native(), len), Tag::ftruncate);
         Ok(())
     }
+    /// On XFS, resizing a file that just grew flushes it synchronously, so skip the no-op case.
+    pub fn ftruncate_if_longer(fd: Fd, len: i64) -> Maybe<()> {
+        if let Ok(st) = fstat(fd) {
+            if st.st_size <= len {
+                return Ok(());
+            }
+        }
+        ftruncate(fd, len)
+    }
     pub fn getcwd(buf: &mut [u8]) -> Maybe<usize> {
         // SAFETY: `buf` is a valid exclusive slice; `getcwd` writes at most
         // `buf.len()` bytes (including the NUL).

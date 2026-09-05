@@ -7255,7 +7255,8 @@ impl NodeFS {
             }
             #[cfg(not(windows))]
             {
-                let _ = Syscall::ftruncate(fd, (written as u64 & ((1u64 << 63) - 1)) as i64);
+                let _ =
+                    Syscall::ftruncate_if_longer(fd, (written as u64 & ((1u64 << 63) - 1)) as i64);
             }
         }
 

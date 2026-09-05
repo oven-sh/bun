@@ -1,5 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import { bunEnv, bunExe, isASAN, isDebug, withoutAggressiveGC } from "harness";
+import os from "node:os";
 
 const RealStringDecoder = require("string_decoder").StringDecoder;
 
@@ -465,3 +466,47 @@ it(
   // Allocating a 2 GiB buffer under debug/ASAN is slow even when lazily committed.
   isDebug || isASAN ? 60_000 : undefined,
 );
+
+// Output lengths above WTF::StringImpl::MaxLength (2^31 - 1) used to trip a
+// RELEASE_ASSERT and abort the process instead of throwing. Runs in a
+// subprocess because of the multi-GiB peak; skips on small machines (same
+// gate as blob-oom.test.ts).
+describe.skipIf(os.totalmem() < 10 * 1024 ** 3)("write() at the 2 GiB string limit", () => {
+  it(
+    "throws ERR_STRING_TOO_LONG for base64 and hex instead of aborting",
+    async () => {
+      const src = `
+        const { StringDecoder } = require("string_decoder");
+        const report = e => ({ name: e.name, code: e.code, message: e.message });
+        const results = [];
+        // 1610612736 = 3 * 2^29: base64 output is (len / 3) * 4 = 2147483648 = 2^31,
+        // hex output is len * 2 = 3221225472; both exceed 2^31 - 1.
+        const buf = Buffer.alloc(1610612736);
+        for (const encoding of ["base64", "hex"]) {
+          try {
+            results.push({ unexpectedLength: new StringDecoder(encoding).write(buf).length });
+          } catch (e) {
+            results.push(report(e));
+          }
+        }
+        console.log(JSON.stringify(results));
+      `;
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", src],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      const tooLong = {
+        name: "Error",
+        code: "ERR_STRING_TOO_LONG",
+        message: "Cannot create a string longer than 2147483647 characters",
+      };
+      expect(JSON.parse(stdout.trim() || JSON.stringify({ stdout, stderr, exitCode }))).toEqual([tooLong, tooLong]);
+      expect(exitCode).toBe(0);
+    },
+    // Allocating multi-GiB buffers under debug/ASAN is slow.
+    isDebug || isASAN ? 60_000 : undefined,
+  );
+});

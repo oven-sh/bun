@@ -170,7 +170,10 @@ test(
     queue.once("error", e => {
       reject(e);
     });
-    queue.onEmpty().then(resolve);
+    // onIdle, not onEmpty: onEmpty resolves while the last `concurrency`
+    // tasks are still running, so the `using devServer` dispose would race
+    // their fetches and they reject with ConnectionRefused after the test.
+    queue.onIdle().then(resolve);
     await promise;
   },
   timeout,

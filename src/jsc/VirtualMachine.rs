@@ -4920,8 +4920,14 @@ impl VirtualMachine {
     ) {
         let mut formatter = crate::console_object::Formatter::new(self.global());
         let colors = bun_core::Output::enable_ansi_colors_stderr();
+        let exception_cell = exception.to_js();
+        // Print the thrown Error itself; non-Error values only have the cell's throw-site stack.
+        let value = match exception_cell.to_error() {
+            Some(error) if error.is_error() => error,
+            _ => exception_cell,
+        };
         self.print_errorlike_object(
-            exception.value(),
+            value,
             Some(exception),
             exception_list,
             &mut formatter,
@@ -5512,7 +5518,7 @@ impl VirtualMachine {
         exception: &Exception,
     ) -> JSValue {
         let jsc_vm = global_object.bun_vm().as_mut();
-        let _ = jsc_vm.uncaught_exception(global_object, exception.value(), false);
+        let _ = jsc_vm.uncaught_exception(global_object, exception.to_js(), false);
         JSValue::UNDEFINED
     }
 

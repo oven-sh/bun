@@ -1693,6 +1693,39 @@ describe.concurrent(() => {
     expect(await proc.stderr.text()).toContain("bar");
   });
 
+  describe.each([
+    ["rethrows", "throw err;"],
+    ["reads err.stack and then rethrows", "void err.stack; throw err;"],
+  ])("when the uncaughtException handler %s", (_, handlerBody) => {
+    it("prints the Error's own stack", async () => {
+      using dir = tempDir("rethrow-uncaught", {
+        "index.cjs": `
+          'use strict';
+          function rethrowHandler(err) {
+            ${handlerBody}
+          }
+          process.on('uncaughtException', rethrowHandler);
+          function throwUncaughtError() {
+            throw new Error('Boom');
+          }
+          throwUncaughtError();
+        `,
+      });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), join(String(dir), "index.cjs")],
+        env: bunEnv,
+        stderr: "pipe",
+        stdout: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stdout).toBe("");
+      expect(stderr).toContain("Boom");
+      expect(stderr).toContain("at throwUncaughtError (");
+      expect(stderr).not.toContain("at rethrowHandler (");
+      expect(exitCode).toBe(7);
+    });
+  });
+
   it("aborts when the uncaughtExceptionCaptureCallback throws", async () => {
     const proc = Bun.spawn([bunExe(), join(import.meta.dir, "process-uncaughtExceptionCaptureCallbackAbort.js")], {
       stderr: "pipe",

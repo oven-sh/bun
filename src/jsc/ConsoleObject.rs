@@ -425,7 +425,10 @@ fn message_with_type_and_level_(
         // SAFETY: no other borrow of the console is live in this
         // early-return arm (the deferred `_indent_guard` only holds the raw
         // pointer, not a reference).
-        let ew = unsafe { vm_console_mut(global) }.error_writer();
+        let this = unsafe { vm_console_mut(global) };
+        let default_indent = this.default_indent;
+        let ew = this.error_writer();
+        let _ = formatter::write_indent_n(u32::from(default_indent), ew);
         let _ = ew.write_all(text.as_bytes());
         let _ = ew.flush();
         return Ok(());
@@ -445,10 +448,7 @@ fn message_with_type_and_level_(
     let default_indent = unsafe { vm_console_mut(global) }.default_indent;
 
     // SAFETY: see [`vm_console`] — `console` points at the live boxed
-    // `ConsoleObject` for this VM; JS-thread-only. Kept as a raw deref (not
-    // `vm_console_mut`) so the resulting `writer` borrow does not pin a
-    // long-lived `&mut ConsoleObject` across the re-derive in the empty-`Log`
-    // arm below.
+    // `ConsoleObject` for this VM; JS-thread-only.
     let raw_writer: &mut bun_core::io::Writer = unsafe {
         if matches!(level, MessageLevel::Warning | MessageLevel::Error) {
             (*console).error_writer()
@@ -541,13 +541,11 @@ fn message_with_type_and_level_(
             print_options,
         )?;
     } else if message_type == MessageType::Log {
-        // SAFETY: see [`vm_console`]. `writer` (above) is dead in this arm —
-        // the only later uses are in the mutually-exclusive `Trace` block, and
-        // `message_type == Log` here.
-        let w = unsafe { (*console).writer() };
-        let _ = w.write_all(b"\n");
-        let _ = w.flush();
+        let _ = formatter::write_indent_n(u32::from(default_indent), writer);
+        let _ = writer.write_all(b"\n");
+        let _ = writer.flush();
     } else if message_type != MessageType::Trace {
+        let _ = formatter::write_indent_n(u32::from(default_indent), writer);
         let _ = writer.write_all(b"undefined\n");
     }
 
@@ -2722,7 +2720,10 @@ pub mod formatter {
     /// conflict with the `&self` borrow `Formatter::write_indent` takes.
     /// `self.indent` is a disjoint field read, so passing it by value here
     /// keeps the borrow checker happy.
-    fn write_indent_n(indent: u32, writer: &mut dyn bun_io::Write) -> bun_io::Result<()> {
+    pub(super) fn write_indent_n(
+        indent: u32,
+        writer: &mut dyn bun_io::Write,
+    ) -> bun_io::Result<()> {
         let mut total_remain: u32 = indent;
         while total_remain > 0 {
             let written: u8 = total_remain.min(32) as u8;
@@ -5711,7 +5712,9 @@ pub(crate) extern "C" fn Bun__ConsoleObject__count(
     } + 1;
     *counter.value_ptr = current;
 
+    let default_indent = this.default_indent;
     let writer = this.writer();
+    let _ = formatter::write_indent_n(u32::from(default_indent), writer);
     if Output::enable_ansi_colors_stdout() {
         let _ = writeln!(
             writer,
@@ -5782,7 +5785,7 @@ pub(crate) extern "C" fn Bun__ConsoleObject__time(
 #[crate::host_call]
 pub(crate) extern "C" fn Bun__ConsoleObject__timeEnd(
     _console: *mut ConsoleObject,
-    _global: &JSGlobalObject,
+    global_this: &JSGlobalObject,
     chars: *const u8,
     len: usize,
 ) {
@@ -5799,6 +5802,10 @@ pub(crate) extern "C" fn Bun__ConsoleObject__timeEnd(
         return;
     };
     let Some(value) = prev else { return };
+    // SAFETY: top-level JS-thread host call ⇒ exclusive access to the
+    // set-once `VirtualMachine.console` box.
+    let default_indent = unsafe { vm_console_mut(global_this) }.default_indent;
+    let _ = formatter::write_indent_n(u32::from(default_indent), Output::error_writer());
     // get the duration in microseconds, then display it in milliseconds
     Output::print_elapsed(
         (value.read() / bun_core::time::NS_PER_US) as f64 / bun_core::time::US_PER_MS as f64,
@@ -5831,6 +5838,10 @@ pub(crate) extern "C" fn Bun__ConsoleObject__timeLog(
     let Some(Some(value)) = PENDING_TIME_LOGS.with_borrow(|m| m.get(&id).copied()) else {
         return;
     };
+    // SAFETY: top-level JS-thread host call ⇒ exclusive access to the
+    // set-once `VirtualMachine.console` box.
+    let default_indent = unsafe { vm_console_mut(global) }.default_indent;
+    let _ = formatter::write_indent_n(u32::from(default_indent), Output::error_writer());
     // get the duration in microseconds, then display it in milliseconds
     Output::print_elapsed(
         (value.read() / bun_core::time::NS_PER_US) as f64 / bun_core::time::US_PER_MS as f64,

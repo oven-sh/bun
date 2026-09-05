@@ -3247,13 +3247,21 @@ declare module "bun" {
        * **Experimental**
        */
       | "iife";
+    /**
+     * Output file name templates. Tokens: `[dir]`, `[name]`, `[ext]`,
+     * `[target]`, and `[hash]` (8 characters of the content hash, more when
+     * two outputs would otherwise share a name) or `[hash9]`…`[hash13]` for a
+     * wider minimum.
+     *
+     * @default { entry: "[dir]/[name].[ext]", chunk: "./chunk-[hash].[ext]", asset: "./[name]-[hash].[ext]" }
+     */
     naming?:
       | string
       | {
           chunk?: string;
           entry?: string;
           asset?: string;
-        }; // | string;
+        };
     root?: string; // project root
     plugins?: BunPlugin[];
     // manifest?: boolean; // whether to return manifest

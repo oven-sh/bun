@@ -42,13 +42,14 @@ for (const item of JSON.parse(readFileSync(fixture, "utf8")) as (Entry | string)
 }
 
 // url.origin for these does not match the spec yet (parsing does); tracked separately from the parser.
-// The test asserts that each one still deviates, so a fix shows up here and the input gets removed from the list.
-const knownOriginDeviations = new Set([
-  "ftps:/example.com/",
-  "ftps:example.com/",
-  "blob:ftp://host/path",
-  "blob:ws://example.org/",
-  "blob:wss://example.org/",
+// The value is the origin bun returns today. The test asserts it, so a fix (or a different wrong value) shows up
+// here and the input gets removed from the list.
+const knownOriginDeviations = new Map([
+  ["ftps:/example.com/", "ftps:"],
+  ["ftps:example.com/", "ftps:"],
+  ["blob:ftp://host/path", "ftp://host"],
+  ["blob:ws://example.org/", "ws://example.org"],
+  ["blob:wss://example.org/", "wss://example.org"],
 ]);
 
 const componentKeys = [
@@ -115,13 +116,8 @@ function check(entry: Entry): Mismatch | null {
     actual.searchParams = url.searchParams.toString();
   }
   if (entry.origin !== undefined) {
-    if (knownOriginDeviations.has(entry.input)) {
-      expected.originStillDeviates = true;
-      actual.originStillDeviates = url.origin !== entry.origin;
-    } else {
-      expected.origin = entry.origin;
-      actual.origin = url.origin;
-    }
+    expected.origin = knownOriginDeviations.get(entry.input) ?? entry.origin;
+    actual.origin = url.origin;
   }
 
   return Bun.deepEquals(actual, expected) ? null : mismatch(expected, actual);

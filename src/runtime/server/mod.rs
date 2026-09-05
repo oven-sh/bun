@@ -2246,6 +2246,20 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         // S008: `NewApp<SSL>` is a ZST opaque — safe `*mut → &mut` deref.
         // set_routes is only called after `self.app = Some(..)` in listen().
         let app = bun_opaque::opaque_deref_mut(self.app.unwrap());
+        // Apply before routes register so registered patterns are normalized too.
+        app.set_slash_normalization(
+            self.config.ignore_trailing_slash,
+            self.config.ignore_duplicate_slashes,
+        );
+        if Self::HAS_H3 {
+            if let Some(h3_app) = self.h3_app {
+                // S008: `h3::App` is an `opaque_ffi!` ZST — safe deref.
+                bun_opaque::opaque_deref_mut(h3_app).set_slash_normalization(
+                    self.config.ignore_trailing_slash,
+                    self.config.ignore_duplicate_slashes,
+                );
+            }
+        }
         let self_ptr: *mut Self = self;
         let any_server = AnyServer::from(self_ptr.cast_const());
         // reshaped for borrowck — `dev_server` is `Option<Box<..>>`;

@@ -42,7 +42,7 @@
         "bun.runtime": {
           "type": "string",
           "description": "A path to the `bun` executable. By default, the extension looks for `bun` in the `PATH`, but if set, it will use the specified path instead.",
-          "scope": "window",
+          "scope": "resource",
           "default": null
         },
         "bun.diagnosticsSocket.enabled": {
@@ -72,22 +72,25 @@
         "bun.test.filePattern": {
           "type": "string",
           "default": "**/*{.test.,.spec.,_test_,_spec_}{js,ts,tsx,jsx,mts,cts,cjs,mjs}",
-          "description": "Glob pattern to find test files"
+          "description": "Glob pattern to find test files",
+          "scope": "resource"
         },
         "bun.test.customFlag": {
           "type": "string",
           "default": "",
-          "description": "Custom flag added to the end of test command"
+          "description": "Custom flag added to the end of test command",
+          "scope": "resource"
         },
         "bun.test.customScript": {
           "type": "string",
           "default": "bun test",
-          "description": "Custom script to use instead of `bun test`, for example script from `package.json`"
+          "description": "Custom script to use instead of `bun test`, for example script from `package.json`",
+          "scope": "resource"
         },
         "bun.test.enable": {
           "type": "boolean",
           "description": "If the test explorer should be enabled and integrated with your editor",
-          "scope": "window",
+          "scope": "resource",
           "default": true
         }
       }

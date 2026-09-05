@@ -296,7 +296,7 @@ describe.skipIf(isWindows)("ReadStream on a non-blocking fd", () => {
       const reader = openSync(fifo, constants.O_RDONLY | constants.O_NONBLOCK);
       // With a writer attached and no data, a read fails with EAGAIN instead of
       // reporting end of file.
-      const holdWriter = openSync(fifo, constants.O_WRONLY);
+      let holdWriter: number | null = openSync(fifo, constants.O_WRONLY);
       const stream = new ReadStream(reader);
       try {
         const events: string[] = [];
@@ -315,6 +315,7 @@ describe.skipIf(isWindows)("ReadStream on a non-blocking fd", () => {
         await writeFromAnotherProcess(fifo, "hello");
         // The last writer is gone: the reader sees end of file.
         closeSync(holdWriter);
+        holdWriter = null;
         await closed.promise;
 
         expect(events).toEqual(["data hello", "open yes", "end"]);
@@ -323,9 +324,8 @@ describe.skipIf(isWindows)("ReadStream on a non-blocking fd", () => {
         expect(stream.fd).toBeNull();
       } finally {
         stream.destroy();
-        try {
-          closeSync(holdWriter);
-        } catch {}
+        // Close once only: the fd number may already belong to another test.
+        if (holdWriter !== null) closeSync(holdWriter);
       }
     },
   );

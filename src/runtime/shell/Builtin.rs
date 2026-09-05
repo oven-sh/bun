@@ -9,7 +9,7 @@ use std::sync::Arc;
 use crate::shell::ExitCode;
 use crate::shell::ast;
 use crate::shell::interpreter::{
-    Interpreter, NodeId, OutputNeedsIOSafeGuard, ParseError, is_pollable_from_mode, shell_openat,
+    Interpreter, NodeId, OutputNeedsIOSafeGuard, ParseError, is_pollable_from_mode,
 };
 use crate::shell::io::{InKind, OutFd, OutKind};
 use crate::shell::io_reader::IOReader;
@@ -559,8 +559,11 @@ impl Builtin {
                 let mut is_socket = false;
                 let mut is_nonblocking = false;
 
+                let open = |dir, path: &bun_core::ZStr, flags, perm| {
+                    Cmd::open_redirect_target(interp, cmd, dir, path, flags, perm)
+                };
                 let redirfd: bun_sys::Fd = if redirect.stdin() {
-                    match shell_openat(cwd_fd, path, redirect.to_flags(), perm) {
+                    match open(cwd_fd, path, redirect.to_flags(), perm) {
                         Err(e) => {
                             let sys = e.to_shell_system_error();
                             return Some(Self::cmd_write_failing_error(
@@ -588,7 +591,7 @@ impl Builtin {
                         (),
                         |_| {},
                         is_pollable_from_mode,
-                        shell_openat,
+                        open,
                     );
                     match result {
                         Err(e) => {

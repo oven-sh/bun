@@ -1867,6 +1867,35 @@ impl Log {
         )
     }
 
+    /// A warning placed at `loc` that never prints the source line: for a line whose
+    /// text may hold a secret the redactor cannot recognise.
+    #[cold]
+    pub fn add_warning_fmt_no_excerpt(
+        &mut self,
+        source: &Source,
+        loc: Loc,
+        args: fmt::Arguments<'_>,
+    ) {
+        if !Kind::Warn.should_print(self.level) {
+            return;
+        }
+        self.warnings += 1;
+        let mut location = Location::init_or_null(Some(source), Range { loc, len: 1 });
+        if let Some(location) = location.as_mut() {
+            location.line_text = None;
+        }
+        let data = Data {
+            text: alloc_print(args),
+            location,
+        }
+        .clone_line_text(self.clone_line_text);
+        self.add_msg(Msg {
+            kind: Kind::Warn,
+            data,
+            ..Default::default()
+        })
+    }
+
     #[cold]
     pub fn add_warning_fmt_line_col(
         &mut self,

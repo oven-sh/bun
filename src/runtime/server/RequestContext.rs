@@ -4439,16 +4439,7 @@ where
     }
 
     pub(crate) fn get_remote_socket_info(&self) -> Option<uws::SocketAddress> {
-        let resp = self.live_resp()?;
-        // `AnyResponse::get_remote_socket_info` returns the uws_sys
-        // variant; convert to the owned `bun_uws::SocketAddress`.
-        // SAFETY: FFI handle
-        let info = resp.get_remote_socket_info()?;
-        Some(uws::SocketAddress {
-            ip: info.ip().to_vec().into_boxed_slice(),
-            port: info.port,
-            is_ipv6: info.is_ipv6,
-        })
+        remote_socket_info(self.live_resp()?)
     }
 
     pub(crate) fn set_timeout(&self, seconds: c_uint) -> bool {
@@ -4463,6 +4454,16 @@ where
         }
         false
     }
+}
+
+/// `AnyResponse::get_remote_socket_info` returns the uws_sys variant; convert to the owned `bun_uws::SocketAddress`.
+fn remote_socket_info(resp: uws::AnyResponse) -> Option<uws::SocketAddress> {
+    let info = resp.get_remote_socket_info()?;
+    Some(uws::SocketAddress {
+        ip: info.ip().to_vec().into_boxed_slice(),
+        port: info.port,
+        is_ipv6: info.is_ipv6,
+    })
 }
 
 const MAX_REQUEST_BODY_PREALLOCATE_LENGTH: usize = 1024 * 256;

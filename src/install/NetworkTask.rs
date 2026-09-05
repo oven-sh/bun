@@ -390,26 +390,19 @@ fn append_auth(header_builder: &mut HeaderBuilder, scope: &npm::registry::Scope)
     // Routing through `format_args!`/`BStr` Display would be
     // lossy for non-UTF-8 tokens (U+FFFD expands 1→3 bytes) and overrun the
     // exact byte count reserved by `count_auth`. Use raw-byte append.
-    if !scope.token.is_empty() {
-        header_builder.append_bytes_value("Authorization", b"Bearer ", &scope.token);
-    } else if !scope.auth.is_empty() {
-        header_builder.append_bytes_value("Authorization", b"Basic ", &scope.auth);
-    } else {
+    let Some((scheme, value)) = scope.authorization_parts() else {
         return;
-    }
+    };
+    header_builder.append_bytes_value("Authorization", scheme, value);
     header_builder.append("npm-auth-type", "legacy");
 }
 
 fn count_auth(header_builder: &mut HeaderBuilder, scope: &npm::registry::Scope) {
-    if !scope.token.is_empty() {
-        header_builder.count("Authorization", "");
-        header_builder.content.cap += "Bearer ".len() + scope.token.len();
-    } else if !scope.auth.is_empty() {
-        header_builder.count("Authorization", "");
-        header_builder.content.cap += "Basic ".len() + scope.auth.len();
-    } else {
+    let Some((scheme, value)) = scope.authorization_parts() else {
         return;
-    }
+    };
+    header_builder.count("Authorization", "");
+    header_builder.content.cap += scheme.len() + value.len();
     header_builder.count("npm-auth-type", "legacy");
 }
 
@@ -719,6 +712,13 @@ impl NetworkTask {
         Ok(())
     }
 
+    /// Moves the fully written header block into `self.header_buf` and returns a view of it.
+    fn store_header_buf<'a>(&'a mut self, header_builder: &mut HeaderBuilder) -> &'a [u8] {
+        debug_assert_eq!(header_builder.content.len, header_builder.content.cap);
+        self.header_buf = header_builder.content.move_to_slice();
+        &self.header_buf
+    }
+
     pub(crate) fn get_completion_callback(&mut self) -> HTTPClientResultCallback {
         // `HTTPClientResultCallback::new`
         // performs type erasure over a `fn(*mut T, *mut AsyncHTTP, _)`.
@@ -826,60 +826,52 @@ impl NetworkTask {
             None => None,
         };
 
-        // Only attach the registry `Authorization` header when the tarball URL
-        // origin matches the configured registry scope origin. The npm manifest
-        // is registry-controlled, so a malicious registry could otherwise point
-        // the tarball at an attacker-controlled host and receive the scope
-        // credentials. The empty-`tarball_url` branch builds the URL from
-        // `scope.url.href()`, so its origin matches and authorized downloads
-        // keep working.
-        // Compare (protocol, hostname, effective port) rather than the raw
-        // `URL.origin` slice — `origin` is a borrowed prefix of the input
-        // string and is not normalized for default ports, so a tarball URL of
-        // `https://host:443/...` would not byte-match a `.npmrc` registry of
-        // `https://host/...` even though they are the same origin. Some
-        // registries emit `dist.tarball` URLs with the default port spelled
-        // out; without normalization those installs lose the `Authorization`
-        // header and fail with 401.
-        let send_auth = matches!(authorization, Authorization::AllowAuthorization) && {
-            let tarball = URL::parse(&self.url_buf);
-            let registry = scope.url.url();
-            tarball.protocol == registry.protocol
-                && tarball.hostname == registry.hostname
-                && tarball.get_port_auto() == registry.get_port_auto()
+        // One parse decides the authority, the wire path and the `.npmrc` key; a URL it cannot settle is requested as written with no line.
+        let normalized = match npm::registry::normalize_tarball_url(&self.url_buf) {
+            Some(normalized) => {
+                self.url_buf = normalized;
+                true
+            }
+            None => false,
+        };
+
+        let credentials = match authorization {
+            Authorization::NoAuthorization => None,
+            Authorization::AllowAuthorization => {
+                pm.options
+                    .tarball_credentials(scope, &URL::parse(&self.url_buf), normalized)
+            }
         };
 
         self.response_buffer = MutableString::init_empty();
 
         let mut header_builder = HeaderBuilder::default();
 
-        if send_auth {
-            count_auth(&mut header_builder, scope);
-        }
-
-        // Registry credentials win over URL userinfo, as in npm.
-        let url_authorization = match url_authorization {
-            Some(value) if header_builder.header_count == 0 => {
+        // Configured credentials win over the URL's userinfo, as in npm.
+        let header_buf: &[u8] = match (credentials, url_authorization) {
+            (Some(credentials), _) => {
+                count_auth(&mut header_builder, credentials);
+                header_builder.allocate()?;
+                append_auth(&mut header_builder, credentials);
+                self.store_header_buf(&mut header_builder)
+            }
+            (None, Some(value)) => {
                 header_builder.count("Authorization", &value);
-                Some(value)
+                header_builder.allocate()?;
+                header_builder.append("Authorization", &value);
+                self.store_header_buf(&mut header_builder)
             }
-            _ => None,
-        };
-
-        let header_buf: &'static [u8] = if header_builder.header_count > 0 {
-            header_builder.allocate()?;
-            match &url_authorization {
-                Some(value) => header_builder.append("Authorization", value),
-                None => append_auth(&mut header_builder, scope),
+            (None, None) => {
+                self.header_buf = Box::default();
+                b""
             }
-            debug_assert_eq!(header_builder.content.len, header_builder.content.cap);
-            self.header_buf = header_builder.content.move_to_slice();
-            // SAFETY: `self.header_buf` outlives the request; it is freed when the slot returns to the pool.
-            unsafe { bun_ptr::detach_lifetime(&*self.header_buf) }
-        } else {
-            self.header_buf = Box::default();
-            b""
         };
+        // SAFETY: lifetime extension. `header_buf` is `b""` or a view of the heap
+        // allocation `self.header_buf` owns, which is freed only when the slot returns
+        // to the pool, after the request completes. `AsyncHTTP::init` demands a
+        // `'static` borrow because the HTTP thread reads it concurrently, as for
+        // `url_buf` below.
+        let header_buf: &'static [u8] = unsafe { bun_ptr::detach_lifetime(header_buf) };
 
         // SAFETY: lifetime extension — `url_buf` is a heap allocation owned by
         // `*self`, which outlives the HTTP request. `AsyncHTTP::init` demands a

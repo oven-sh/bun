@@ -722,6 +722,7 @@ fn fetch_registry_tree(
         pm,
         scope,
         URL::parse(manifest_url),
+        true,
         // The abbreviated packument has versions + dist, all this needs; full ones run to tens of MB.
         b"application/vnd.npm.install-v1+json; q=1.0, application/json; q=0.8, */*",
         Some((name, version)),
@@ -821,10 +822,17 @@ fn fetch_registry_tree(
             },
         )?;
     }
+    // The same serialisation `bun install` requests and keys `.npmrc` lines by.
+    let (tarball_url, normalized) =
+        match bun_install::npm::registry::normalize_tarball_url(&tarball_url) {
+            Some(normalized) => (normalized, true),
+            None => (tarball_url.into_boxed_slice(), false),
+        };
     let tarball = registry_get(
         pm,
         scope,
         URL::parse(&tarball_url),
+        normalized,
         b"application/octet-stream",
         None,
     )?;
@@ -854,40 +862,27 @@ fn registry_get(
     pm: &PackageManager,
     scope: &npm::registry::Scope,
     url: URL<'_>,
+    normalized: bool,
     accept: &[u8],
     for_error: Option<(&[u8], &[u8])>,
 ) -> Result<MutableString, crate::Error> {
     let mut headers = http::HeaderBuilder::default();
     headers.count(b"Accept", accept);
-    // `dist.tarball` is registry-controlled; credentials only go back to the registry's own origin.
-    let same_origin = {
-        let registry = scope.url.url();
-        url.protocol == registry.protocol
-            && url.hostname == registry.hostname
-            && url.get_port_auto() == registry.get_port_auto()
+    // The same rule as `bun install` decides which credentials, if any, follow the URL.
+    let authorization = match pm.options.tarball_credentials(scope, &url, normalized) {
+        Some(credentials) => credentials.authorization_parts(),
+        None => None,
     };
-    let (token, auth): (&[u8], &[u8]) = if same_origin {
-        (&scope.token, &scope.auth)
-    } else {
-        (b"", b"")
-    };
-    if !token.is_empty() {
+    if let Some((scheme, value)) = authorization {
         headers.count(b"Authorization", b"");
-        headers.content.cap += b"Bearer ".len() + token.len();
-        headers.count(b"npm-auth-type", b"legacy");
-    } else if !auth.is_empty() {
-        headers.count(b"Authorization", b"");
-        headers.content.cap += b"Basic ".len() + auth.len();
+        headers.content.cap += scheme.len() + value.len();
         headers.count(b"npm-auth-type", b"legacy");
     }
     headers.allocate()?;
     headers.append(b"Accept", accept);
     // Raw-byte append: a non-UTF-8 token through Display would grow past the reserved count.
-    if !token.is_empty() {
-        headers.append_bytes_value(b"Authorization", b"Bearer ", token);
-        headers.append(b"npm-auth-type", b"legacy");
-    } else if !auth.is_empty() {
-        headers.append_bytes_value(b"Authorization", b"Basic ", auth);
+    if let Some((scheme, value)) = authorization {
+        headers.append_bytes_value(b"Authorization", scheme, value);
         headers.append(b"npm-auth-type", b"legacy");
     }
 

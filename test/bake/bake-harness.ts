@@ -140,6 +140,12 @@ export interface DevServerTest {
    */
   only?: boolean;
   /**
+   * Register with `test.concurrent`, so this test overlaps with the other
+   * concurrent tests in its file. Every test has its own directory, dev server
+   * (`port: 0`) and clients, so a test that shares nothing else can opt in.
+   */
+  concurrent?: boolean;
+  /**
    * Extra environment variables for the spawned dev-server process.
    */
   env?: Record<string, string>;
@@ -209,6 +215,12 @@ export class Dev extends EventEmitter {
   nodeEnv: "development" | "production";
   batchingChanges: { write?: () => void } | null = null;
   stressTestEndurance = false;
+  /**
+   * The dev server and every client this test spawned. The test kills the ones
+   * that still run when it ends. Tests in one file can run concurrently, so
+   * this is per test, not module-global.
+   */
+  processes: Set<Subprocess> = new Set();
 
   socket?: WebSocket;
 
@@ -229,6 +241,7 @@ export class Dev extends EventEmitter {
     this.port = port;
     this.baseUrl = `http://localhost:${port}`;
     this.devProcess = process;
+    this.processes.add(process);
     this.output = stream;
     this.options = options as any;
     this.output.on("panic", () => {
@@ -549,7 +562,9 @@ export class Dev extends EventEmitter {
         hmr: this.nodeEnv === "development",
         expectErrors: !!options.errors,
         allowUnlimitedReloads: options.allowUnlimitedReloads,
+        logName: `web ${path.basename(this.rootDir)}`,
       });
+      this.processes.add(client.process);
       const onPanic = () => client.output.emit("panic");
       this.output.on("panic", onPanic);
       if (this.nodeEnv === "development") {
@@ -851,7 +866,14 @@ export class Client extends EventEmitter {
 
   constructor(
     url: string,
-    options: { storeHotChunks?: boolean; hmr: boolean; expectErrors?: boolean; allowUnlimitedReloads?: boolean },
+    options: {
+      storeHotChunks?: boolean;
+      hmr: boolean;
+      expectErrors?: boolean;
+      allowUnlimitedReloads?: boolean;
+      /** Prefix of this client's output lines in the test log. */
+      logName?: string;
+    },
   ) {
     super();
     activeClient = this;
@@ -899,8 +921,13 @@ export class Client extends EventEmitter {
     });
     this.#proc = proc;
     this.hmr = options.hmr;
-    this.output = new OutputLineStream("web", proc.stdout, proc.stderr);
+    this.output = new OutputLineStream(options.logName ?? "web", proc.stdout, proc.stderr);
     proc.exited.then(exitCode => (this.output.exitCode = exitCode));
+  }
+
+  /** The node subprocess that runs the page. */
+  get process(): Subprocess {
+    return this.#proc;
   }
 
   hardReload(options: { errors?: ErrorSpec[] } = {}) {
@@ -1532,8 +1559,10 @@ function stackTraceFileName(line: string): string {
   // Handle drive letters (e.g. C:) and line numbers
   let colon = result.indexOf(":");
 
-  // Check for drive letter (e.g. C:) by looking for single letter before colon
-  if (colon > 0 && /[a-zA-Z]/.test(result[colon - 1])) {
+  // Check for drive letter (e.g. C:): a single letter before the first colon.
+  // On posix the first colon ends the path (`.../x.test.ts:9:1`), so the
+  // letter before it is no drive letter.
+  if (colon === 1 && /[a-zA-Z]/.test(result[colon - 1])) {
     // On Windows, skip past drive letter colon to find line number colon
     colon = result.indexOf(":", colon + 1);
   }
@@ -1905,6 +1934,26 @@ class OutputLineStream extends EventEmitter {
   }
 }
 
+/** After `ms`, every `race()` rejects with `message`. Disposing it disarms the timer. */
+class Deadline {
+  #passed = Promise.withResolvers<never>();
+  #timer: ReturnType<typeof setTimeout>;
+
+  constructor(ms: number, message: string) {
+    // The rejection is only observed through `race()`.
+    this.#passed.promise.catch(() => {});
+    this.#timer = setTimeout(() => this.#passed.reject(new Error(message)), Math.max(0, ms));
+  }
+
+  race<T>(promise: Promise<T>): Promise<T> {
+    return Promise.race([promise, this.#passed.promise]);
+  }
+
+  [Symbol.dispose]() {
+    clearTimeout(this.#timer);
+  }
+}
+
 export function indexHtmlScript(htmlFiles: string[]) {
   return [
     ...htmlFiles.map((file, i) => `import html${i} from ${JSON.stringify("./" + file.replaceAll(path.sep, "/"))};`),
@@ -1932,6 +1981,9 @@ export function indexHtmlScript(htmlFiles: string[]) {
 
 const skipTargets = [process.platform, isCI ? "ci" : null].filter(Boolean);
 
+/** Test files that have an `afterAll` hook to kill what their tests left behind. */
+const filesWithReaper = new Set<string>();
+
 function testImpl<T extends DevServerTest>(
   description: string,
   options: T,
@@ -1957,7 +2009,16 @@ function testImpl<T extends DevServerTest>(
 
   const isStressTest = stressTestSelect === "ALL" || (stressTestSelect && name.includes(stressTestSelect));
 
+  // A function: `interactive` is only known once the test runs.
+  const testTimeout = () =>
+    isStressTest
+      ? 11 * 60 * 1000
+      : interactive
+        ? interactive_timeout
+        : (options.timeoutMultiplier ?? 1) * (isWindows ? 45_000 : 30_000) * WAIT_MULTIPLIER;
+
   async function run() {
+    const started = performance.now();
     const root = path.join(tempDir, basename + count);
 
     // Clean the test directory if it exists
@@ -2077,14 +2138,6 @@ function testImpl<T extends DevServerTest>(
       `,
     );
 
-    using _ = {
-      [Symbol.dispose]: () => {
-        for (const proc of danglingProcesses) {
-          proc.kill("SIGKILL");
-        }
-      },
-    };
-
     await using devProcess = Bun.spawn({
       cwd: path.join(root, options.cwd ?? "."),
       cmd: [process.execPath, path.join(root, "harness_start.ts")],
@@ -2114,12 +2167,31 @@ function testImpl<T extends DevServerTest>(
     if (interactive) {
       console.log("\x1b[35mDev Server PID: " + devProcess.pid + "\x1b[0m");
     }
-    using stream = new OutputLineStream("dev", devProcess.stdout, devProcess.stderr);
+    // The test's directory name tags its lines, so concurrent tests stay apart in the log.
+    using stream = new OutputLineStream(`dev ${basename}${count}`, devProcess.stdout, devProcess.stderr);
     devProcess.exited.then(exitCode => (stream.exitCode = exitCode));
     const port = parseInt((await stream.waitForLine(/localhost:(\d+)/))[1], 10);
     const dev = new Dev(root, port, devProcess, stream, NODE_ENV, options);
+    using _ = {
+      [Symbol.dispose]: () => {
+        // Only this test's processes. Another test in the file may still be
+        // running its own dev server and clients.
+        for (const proc of dev.processes) {
+          proc.kill("SIGKILL");
+        }
+      },
+    };
+    // When a test times out, the runner kills its processes only if the test
+    // is not concurrent. So the harness gives up before the runner's timeout:
+    // a rejection here returns through the disposers above, which kill this
+    // test's dev server and clients.
+    const timeout = testTimeout();
+    using deadline = new Deadline(
+      timeout - Math.min(5_000, timeout / 10) - (performance.now() - started),
+      `The test did not finish before the harness deadline (runner timeout: ${timeout}ms). Its dev server and clients are killed.`,
+    );
     if (dev.nodeEnv === "development") {
-      await dev.connectSocket();
+      await deadline.race(dev.connectSocket());
     }
     if (isStressTest) {
       dev.stressTestEndurance = true;
@@ -2128,7 +2200,7 @@ function testImpl<T extends DevServerTest>(
     await maybeWaitInteractive("start");
 
     try {
-      await options.test(dev);
+      await deadline.race(options.test(dev));
     } catch (err: any) {
       while (err instanceof SuppressedError) {
         logErr(err.suppressed);
@@ -2151,24 +2223,24 @@ function testImpl<T extends DevServerTest>(
       process.exit(0);
     }
 
-    await dev.gracefulExit();
+    await deadline.race(dev.gracefulExit());
   }
 
   try {
+    // `bun test` does not run exit listeners, and this module is evaluated once
+    // for every file in the run. So each file gets its own hook.
+    if (!filesWithReaper.has(caller)) {
+      jest.afterAll(killDanglingProcesses);
+      filesWithReaper.add(caller);
+    }
+
     if (options.skip && options.skip.some(x => skipTargets.includes(x))) {
       jest.test.todo(name, run);
       return options;
     }
 
-    (options.only ? jest.test.only : jest.test)(
-      name,
-      run,
-      isStressTest
-        ? 11 * 60 * 1000
-        : interactive
-          ? interactive_timeout
-          : (options.timeoutMultiplier ?? 1) * (isWindows ? 45_000 : 30_000) * WAIT_MULTIPLIER,
-    );
+    const test = options.only ? jest.test.only : jest.test;
+    (options.concurrent ? test.concurrent : test)(name, run, testTimeout());
     return options;
   } catch {
     // not in bun test. allow interactive use
@@ -2258,11 +2330,14 @@ class TrailingLog {
   }
 }
 
-process.on("exit", () => {
+/** Kills every process the tests in this process spawned and did not see exit. */
+function killDanglingProcesses() {
   for (const proc of danglingProcesses) {
     proc.kill("SIGKILL");
   }
-});
+}
+// For interactive use. `bun test` skips exit listeners: see the `afterAll` in `testImpl`.
+process.on("exit", killDanglingProcesses);
 
 export function devTest<T extends DevServerTest>(description: string, options: T): T {
   // Capture the caller name as part of the test tempdir

@@ -133,3 +133,17 @@ test("discovers from filesystem paths", () => {
     ],
   });
 });
+
+test("match only accepts origin-form paths", () => {
+  const dir = tempDirWithFiles("fsr-match", {
+    "index.tsx": "1",
+    "blog/[slug].tsx": "1",
+  });
+  const router = new FrameworkRouter({ root: dir, style: "nextjs-pages" });
+  expect(router.match("/blog/abc")).toMatchObject({ params: { slug: "abc" } });
+  // Paths that are not origin-form never match; they must not be treated as
+  // route patterns (which all start with "/").
+  expect(router.match("")).toBeNull();
+  expect(router.match("blog/abc")).toBeNull();
+  expect(router.match("https://example.com/blog/abc")).toBeNull();
+});

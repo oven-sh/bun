@@ -88,6 +88,10 @@ const spawnTimeout = 5_000;
 const spawnBunTimeout = 20_000; // when running with ASAN/LSAN bun can take a bit longer to exit, not a bug.
 const testTimeout = 3 * 60_000;
 const integrationTimeout = 5 * 60_000;
+// Frames gdb prints per thread of a core file. A bun process has 10 to 20
+// threads; idle ones unwind in about 10 frames, so this bounds the annotation
+// without cutting the crashing thread or the JS thread short.
+const gdbFramesPerThread = 64;
 
 const resolutionGatingFlags = new Set([
   "--expose-internals",
@@ -1968,29 +1972,74 @@ async function spawnBun(execPath, { args, cwd, timeout, gracefulTimeout, idleTim
       for (const coreName of newCores) {
         const corePath = join(coresDir, coreName);
         let out = "";
+        let gdbStderr = "";
+        // Every thread, not only the one that crashed: a crash in a GC helper
+        // thread (HeapHelper-*.core) only shows the marker visiting a dead
+        // cell, while the JS thread's stack shows what the process had in
+        // flight. gdb numbers the crashing thread 1 and the main thread next,
+        // so `-ascending` puts the two that matter first. Without `-c` an
+        // error in one thread's backtrace abandons the threads after it.
+        // gdb -batch truncates a deep or corrupt stack silently, hence the
+        // frame limit in the header below.
         const gdb = await spawnSafe({
           command: "gdb",
-          args: ["-batch", `--eval-command=bt`, "--core", corePath, execPath],
+          args: [
+            "-batch",
+            `--eval-command=thread apply all -ascending -c bt ${gdbFramesPerThread}`,
+            "--core",
+            corePath,
+            execPath,
+          ],
           timeout: 240_000,
-          stderr: () => {},
+          stderr(text) {
+            gdbStderr += text;
+          },
           stdout(text) {
             out += text;
           },
         });
-        if (!gdb.ok) {
-          crashes += `failed to get backtrace from GDB: ${gdb.error}\n`;
-        } else {
-          crashes += `======== Stack trace from GDB for ${coreName}: ========\n`;
-          for (const line of out.split("\n")) {
-            // filter GDB output since it is pretty verbose
-            if (
-              line.startsWith("Program terminated") ||
-              line.startsWith("#") || // gdb backtrace lines start with #0, #1, etc.
-              line.startsWith("[Current thread is")
-            ) {
-              crashes += line + "\n";
-            }
+        crashes += `======== Stack trace from GDB for ${coreName} (all threads, crashing thread first, up to ${gdbFramesPerThread} frames each): ========\n`;
+        let frameCount = 0;
+        let afterThreadHeader = false;
+        for (const line of out.split("\n")) {
+          // filter GDB output since it is pretty verbose
+          if (
+            line.startsWith("Program terminated") ||
+            line.startsWith("Thread ") || // "Thread 2 (Thread 0x... (LWP 123)):" starts each thread's backtrace
+            line.startsWith("#") || // gdb backtrace lines start with #0, #1, etc.
+            line.startsWith("Backtrace stopped") || // why a backtrace is short, e.g. a truncated core
+            line.startsWith("[Current thread is") ||
+            // With `-c`, the error for a thread whose backtrace failed is printed
+            // on stdout right under its header, e.g. "Cannot access memory at
+            // address 0x...". Keep it, or the thread shows up with no frames
+            // and no explanation.
+            (afterThreadHeader && line.trim() !== "")
+          ) {
+            crashes += line + "\n";
+            if (line.startsWith("#")) frameCount++;
+            afterThreadHeader = line.startsWith("Thread ");
           }
+        }
+        // gdb's own stderr is mostly "warning:" lines about missing sources
+        // and debug info. Anything else there explains a bad result: a file
+        // that is not a core dump (gdb still exits 0 in that case), or a
+        // truncated core ("BFD: warning: ..."), so it is kept, bounded.
+        const notes = gdbStderr
+          .split("\n")
+          .filter(line => line.trim() !== "" && !line.startsWith("warning:"))
+          .slice(-3)
+          .join(" | ");
+        if (!gdb.ok || frameCount === 0) {
+          const how = gdb.spawnError
+            ? `could not be started (${gdb.spawnError.code || gdb.spawnError.message})`
+            : gdb.signalCode
+              ? `was killed by ${gdb.signalCode}`
+              : gdb.exitCode === undefined
+                ? "timed out"
+                : `exited with code ${gdb.exitCode}`;
+          crashes += `gdb ${how} and printed ${frameCount} frames${notes ? `: ${notes}` : ""}\n`;
+        } else if (notes) {
+          crashes += `gdb also reported: ${notes}\n`;
         }
       }
     }

@@ -156,6 +156,18 @@ test("mocking a package", async () => {
   expect(require("ha-ha-ha").wow()).toBe(43);
 });
 
+// The plugin "object" loader adds an implicit default export (#9987). A module
+// mock does not: its export set is exactly what the factory returned.
+test("a factory without a default key does not add a default export", async () => {
+  const exports = { wow: () => 42 };
+  mock.module("mock-module-no-default", () => exports);
+  const ns = await import("mock-module-no-default");
+  expect(Object.keys(ns)).toEqual(["wow"]);
+  expect("default" in ns).toBe(false);
+  expect(ns.wow).toBe(exports.wow);
+  expect(Object.keys(require("mock-module-no-default"))).toEqual(["wow"]);
+});
+
 test("mocking a builtin", async () => {
   mock.module("fs/promises", () => {
     return {

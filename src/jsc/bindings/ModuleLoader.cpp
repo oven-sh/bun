@@ -424,9 +424,12 @@ static JSValue handleVirtualModuleResult(
         }
 
         JSC::ensureStillAliveHere(object);
+        // A mock.module() factory names the export set exactly. Only the plugin
+        // "object" loader gets the implicit default.
         auto function = generateObjectModuleSourceCode(
             globalObject,
-            object);
+            object,
+            /* synthesizeDefault */ !wasModuleMock);
         auto source = JSC::SourceCode(
             JSC::SyntheticSourceProvider::create(WTF::move(function),
                 JSC::SourceOrigin(), specifier->toWTFString(BunString::ZeroCopy)));

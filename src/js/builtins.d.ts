@@ -544,6 +544,10 @@ declare function $ERR_HTTP2_PING_CANCEL(): Error;
 declare function $toClass(fn: Function, name: string, base?: Function | undefined | null);
 
 declare function $min(a: number, b: number): number;
+/** The engine's own `String.prototype.substring`; user changes to the prototype do not reach it. */
+declare var $stringSubstring: typeof String.prototype.substring;
+/** The engine's own `String.prototype.indexOf`; user changes to the prototype do not reach it. */
+declare var $stringIndexOfInternal: typeof String.prototype.indexOf;
 
 interface Map<K, V> {
   $get: typeof Map.prototype.get;

@@ -222,9 +222,8 @@ test("mark/measure toJSON and inspection include detail without perf_hooks being
          json,
          inspected: [inspect(mark), inspect(measure, { depth: 0 }), inspect(mark, { depth: -1 })],
          nativeInspected: Bun.inspect(mark),
-         // util.inspect never calls the hook on a prototype object. Bun.inspect / console.log do,
-         // and the hook has to fall back to the default formatting there instead of throwing
-         // from the brand-checked toJSON.
+         // util.inspect, Bun.inspect and console.log never call the hook on a prototype object,
+         // so a prototype gets the default formatting and not a throw from the brand-checked toJSON.
          protos: [
            inspect(PerformanceMark.prototype),
            Bun.inspect(PerformanceEntry.prototype).split("\\n")[0],

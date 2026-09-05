@@ -2772,3 +2772,21 @@ it("exec/run with an embedded NUL byte in the SQL string does not hang", async (
     exitCode: 0,
   });
 });
+
+it("exec() stops and throws at a step-time error regardless of what follows it", () => {
+  // This ALTER prepares fine but fails at sqlite3_step on a populated table.
+  const alter = "ALTER TABLE t ADD COLUMN c TEXT NOT NULL DEFAULT (datetime('now'))";
+  const cases = [
+    `INSERT INTO t VALUES (1); ${alter}; INSERT INTO t VALUES (2);`, // failing statement in the middle
+    `INSERT INTO t VALUES (1); ${alter};\n`, // trailing newline after the failing statement
+    `INSERT INTO t VALUES (1); ${alter}; -- end\n`, // trailing line comment
+  ];
+  for (const sql of cases) {
+    const db = new Database(":memory:");
+    db.exec("CREATE TABLE t (x INTEGER)");
+    expect(() => db.exec(sql)).toThrow("Cannot add a column with non-constant default");
+    // Statements after the failing one must not have run.
+    expect(db.query("SELECT x FROM t ORDER BY x").all()).toEqual([{ x: 1 }]);
+    db.close();
+  }
+});

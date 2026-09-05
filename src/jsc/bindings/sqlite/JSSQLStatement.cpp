@@ -1567,6 +1567,11 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementExecuteFunction, (JSC::JSGlobalObject * l
             rc = sqlite3_step(sql.stmt);
         } while (rc == SQLITE_ROW);
 
+        // Stop at the first failing statement so the error isn't
+        // overwritten by preparing whatever follows it (sqlite3_exec semantics).
+        if (rc != SQLITE_DONE && rc != SQLITE_OK) [[unlikely]]
+            break;
+
         didExecuteAny = true;
         sqlStringHead = tail;
     }

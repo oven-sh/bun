@@ -799,3 +799,60 @@ pub(crate) fn flip(src: &[u8], w: u32, h: u32, horizontal: bool) -> Result<Vec<u
     unsafe { bun_core::vec::commit_spare(&mut out, out_len) };
     Ok(out)
 }
+
+pub(crate) fn crop(
+    src: &[u8],
+    sw: u32,
+    sh: u32,
+    x: u32,
+    y: u32,
+    cw: u32,
+    ch: u32,
+) -> Result<Vec<u8>, Error> {
+    debug_assert!((x as u64) + (cw as u64) <= (sw as u64));
+    debug_assert!((y as u64) + (ch as u64) <= (sh as u64));
+    let _ = sh;
+    let mut out: Vec<u8> = vec![0u8; (cw as usize) * (ch as usize) * 4];
+    let src_stride: usize = (sw as usize) * 4;
+    let dst_stride: usize = (cw as usize) * 4;
+    let row_bytes: usize = dst_stride;
+    let x_bytes: usize = (x as usize) * 4;
+    for row in 0..(ch as usize) {
+        let s_off = ((y as usize) + row) * src_stride + x_bytes;
+        let d_off = row * dst_stride;
+        out[d_off..d_off + row_bytes].copy_from_slice(&src[s_off..s_off + row_bytes]);
+    }
+    Ok(out)
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn pad(
+    src: &[u8],
+    sw: u32,
+    sh: u32,
+    dw: u32,
+    dh: u32,
+    ox: u32,
+    oy: u32,
+    bg: [u8; 4],
+) -> Result<Vec<u8>, Error> {
+    debug_assert!((ox as u64) + (sw as u64) <= (dw as u64));
+    debug_assert!((oy as u64) + (sh as u64) <= (dh as u64));
+    let mut out: Vec<u8> = vec![0u8; (dw as usize) * (dh as usize) * 4];
+    // The zero-initialized allocation already is transparent black.
+    if bg != [0u8; 4] {
+        for px in out.chunks_exact_mut(4) {
+            px.copy_from_slice(&bg);
+        }
+    }
+    let src_stride: usize = (sw as usize) * 4;
+    let dst_stride: usize = (dw as usize) * 4;
+    let row_bytes: usize = src_stride;
+    let x_bytes: usize = (ox as usize) * 4;
+    for row in 0..(sh as usize) {
+        let s_off = row * src_stride;
+        let d_off = ((oy as usize) + row) * dst_stride + x_bytes;
+        out[d_off..d_off + row_bytes].copy_from_slice(&src[s_off..s_off + row_bytes]);
+    }
+    Ok(out)
+}

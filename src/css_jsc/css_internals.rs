@@ -284,6 +284,127 @@ fn targets_from_js(global: &JSGlobalObject, jsobj: JSValue) -> JsResult<Browsers
     Ok(targets)
 }
 
+pub fn css_modules_test(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+    use bun_ast::ImportRecord;
+    use bun_css::css_modules::{Config as CssModulesConfig, CssModuleReference};
+    use bun_css::{
+        DefaultAtRule, ImportRecordHandler, LocalsResultsMap, ParserOptions, PrinterOptions,
+        StyleSheet,
+    };
+    use bun_jsc::{LogJsc as _, StringJsc as _};
+
+    let arena = Arena::new();
+    // SAFETY: same `'bump`-erasure as `testing_impl` above.
+    let alloc: &'static Arena = unsafe { bun_ptr::detach_lifetime_ref(&arena) };
+
+    let mut arguments = bun_jsc::ArgumentsSlice::init(global.bun_vm(), frame.arguments());
+    let source_bunstr = eat_string_arg(&mut arguments, global, "cssModulesTest", 1, 0, "source")?;
+    let source = source_bunstr.to_utf8();
+
+    let mut log = Log::init();
+    let log_ptr: *mut Log = &raw mut log;
+    // SAFETY: `log` outlives the parsed stylesheet.
+    let log_ref = unsafe { &mut *log_ptr };
+
+    let mut opts = ParserOptions::default(Some(log_ref));
+    opts.filename = b"test.module.css";
+    opts.css_modules = Some(CssModulesConfig::default());
+
+    let mut import_records = Vec::<ImportRecord>::default();
+    let (stylesheet, extra) = match StyleSheet::<DefaultAtRule>::parse(
+        alloc,
+        source.slice(),
+        opts,
+        Some(&mut import_records),
+        bun_ast::Index::init(0),
+    ) {
+        Ok(ret) => ret,
+        Err(err) => {
+            if log.has_errors() {
+                return log.to_js(global, "parsing failed:");
+            }
+            return Err(global.throw(format_args!("parsing failed: {}", err.kind)));
+        }
+    };
+
+    let symbols = bun_ast::symbol::Map::init_with_one_list(extra.symbols);
+    let local_names = LocalsResultsMap::default();
+    let result = match stylesheet.to_css(
+        alloc,
+        &PrinterOptions::default(),
+        Some(ImportRecordHandler::init_outside_of_bundler(
+            &import_records,
+        )),
+        Some(&local_names),
+        &symbols,
+    ) {
+        Ok(result) => result,
+        Err(err) => {
+            return Err(global.throw_value(crate::error_jsc::to_error_instance(&err, global)?));
+        }
+    };
+
+    let ret = JSValue::create_empty_object(global, 2);
+    ret.put(
+        global,
+        b"code",
+        BunString::from_bytes(&result.code).to_js(global)?,
+    );
+
+    let exports_obj = JSValue::create_empty_object(global, 0);
+    if let Some(exports) = &result.exports {
+        for (key, export) in exports.iter() {
+            let entry = JSValue::create_empty_object(global, 2);
+            entry.put(
+                global,
+                b"name",
+                BunString::from_bytes(export.name).to_js(global)?,
+            );
+            let composes_arr =
+                JSValue::create_array_from_iter(global, export.composes.iter(), |reference| {
+                    let obj = JSValue::create_empty_object(global, 3);
+                    match reference {
+                        CssModuleReference::Local { name } => {
+                            obj.put(
+                                global,
+                                b"type",
+                                BunString::from_bytes(b"local").to_js(global)?,
+                            );
+                            obj.put(global, b"name", BunString::from_bytes(name).to_js(global)?);
+                        }
+                        CssModuleReference::Global { name } => {
+                            obj.put(
+                                global,
+                                b"type",
+                                BunString::from_bytes(b"global").to_js(global)?,
+                            );
+                            obj.put(global, b"name", BunString::from_bytes(name).to_js(global)?);
+                        }
+                        CssModuleReference::Dependency { name, specifier } => {
+                            obj.put(
+                                global,
+                                b"type",
+                                BunString::from_bytes(b"dependency").to_js(global)?,
+                            );
+                            obj.put(global, b"name", BunString::from_bytes(name).to_js(global)?);
+                            obj.put(
+                                global,
+                                b"specifier",
+                                BunString::from_bytes(specifier).to_js(global)?,
+                            );
+                        }
+                    }
+                    Ok(obj)
+                })?;
+            entry.put(global, b"composes", composes_arr);
+            exports_obj.put(global, *key, entry);
+        }
+    }
+    ret.put(global, b"exports", exports_obj);
+
+    Ok(ret)
+}
+
 pub fn attr_test(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     use bun_ast::ImportRecord;
     use bun_css::{

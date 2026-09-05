@@ -73,12 +73,13 @@ pub(crate) fn bun_get_use_system_ca(
 
 mod css {
     pub use bun_css_jsc::css_internals::{
-        _test, attr_test, minify_error_test_with_options, minify_test, minify_test_with_options,
-        prefix_test, prefix_test_with_options, test_with_options,
+        _test, attr_test, css_modules_test, minify_error_test_with_options, minify_test,
+        minify_test_with_options, prefix_test, prefix_test_with_options, test_with_options,
     };
 }
 pub use css::_test as css_jsc_css_internals__test;
 pub use css::attr_test as css_jsc_css_internals_attr_test;
+pub use css::css_modules_test as css_jsc_css_internals_css_modules_test;
 pub use css::minify_error_test_with_options as css_jsc_css_internals_minify_error_test_with_options;
 pub use css::minify_test as css_jsc_css_internals_minify_test;
 pub use css::minify_test_with_options as css_jsc_css_internals_minify_test_with_options;

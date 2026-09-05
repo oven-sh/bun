@@ -399,6 +399,65 @@ pub static PRETEND_TO_BE_NODE: core::sync::atomic::AtomicBool =
 #[cfg(not(windows))]
 use bun_core::ZStr;
 
+#[cfg(not(windows))]
+pub struct BunNodePaths {
+    pub dir: bun_core::ZBox,
+    pub node_link: bun_core::ZBox,
+    pub bun_link: bun_core::ZBox,
+}
+
+#[cfg(not(windows))]
+impl BunNodePaths {
+    pub fn get() -> &'static Self {
+        static ONCE: std::sync::OnceLock<BunNodePaths> = std::sync::OnceLock::new();
+        ONCE.get_or_init(|| {
+            let base: &[u8] = if let Some(dir) = bun_core::env_var::BUN_TMPDIR
+                .get_not_empty()
+                .or_else(|| bun_core::env_var::TMPDIR.get_not_empty())
+                .filter(|d| d.starts_with(b"/"))
+            {
+                let b: &[u8] = dir;
+                if b.len() > 1 && b[b.len() - 1] == b'/' {
+                    &b[..b.len() - 1]
+                } else {
+                    b
+                }
+            } else if cfg!(target_os = "macos") {
+                b"/private/tmp"
+            } else if cfg!(target_os = "android") {
+                b"/data/local/tmp"
+            } else {
+                b"/tmp"
+            };
+
+            let mut dir = Vec::with_capacity(base.len() + 32);
+            dir.extend_from_slice(base);
+            if bun_core::env::IS_DEBUG {
+                dir.extend_from_slice(b"/bun-node-debug");
+            } else if bun_core::env::GIT_SHA_SHORT.is_empty() {
+                dir.extend_from_slice(b"/bun-node");
+            } else {
+                dir.extend_from_slice(b"/bun-node-");
+                dir.extend_from_slice(bun_core::env::GIT_SHA_SHORT.as_bytes());
+            }
+
+            let mut node_link = Vec::with_capacity(dir.len() + 6);
+            node_link.extend_from_slice(&dir);
+            node_link.extend_from_slice(b"/node");
+
+            let mut bun_link = Vec::with_capacity(dir.len() + 5);
+            bun_link.extend_from_slice(&dir);
+            bun_link.extend_from_slice(b"/bun");
+
+            BunNodePaths {
+                dir: bun_core::ZBox::from_vec(dir),
+                node_link: bun_core::ZBox::from_vec(node_link),
+                bun_link: bun_core::ZBox::from_vec(bun_link),
+            }
+        })
+    }
+}
+
 impl RunCommand {
     #[cfg(not(windows))]
     const SHELLS_TO_SEARCH: &'static [&'static [u8]] = &[b"bash", b"sh", b"zsh"];
@@ -410,26 +469,16 @@ impl RunCommand {
     /// builds at the same commit share this dir. `create_fake_temporary_node_executable`
     /// therefore re-points a stale link on EEXIST instead of trusting it.
     #[cfg(not(windows))]
-    pub const BUN_NODE_DIR: &'static str = {
-        // `const_format::concatcp!` cannot host
-        // `if` expressions inline, so split into helper consts.
-        use const_format::concatcp;
-        const TMP: &str = if cfg!(target_os = "macos") {
-            "/private/tmp"
-        } else if cfg!(target_os = "android") {
-            "/data/local/tmp"
-        } else {
-            "/tmp"
-        };
-        const SUFFIX: &str = if bun_core::env::IS_DEBUG {
-            "/bun-node-debug"
-        } else if bun_core::env::GIT_SHA_SHORT.is_empty() {
-            "/bun-node"
-        } else {
-            concatcp!("/bun-node-", bun_core::env::GIT_SHA_SHORT)
-        };
-        concatcp!(TMP, SUFFIX)
-    };
+    #[inline]
+    pub fn bun_node_dir() -> &'static ZStr {
+        &BunNodePaths::get().dir
+    }
+
+    #[cfg(not(windows))]
+    #[inline]
+    pub fn bun_node_file() -> &'static ZStr {
+        &BunNodePaths::get().node_link
+    }
 
     #[cfg(not(windows))]
     fn find_shell_impl<'a>(
@@ -506,7 +555,6 @@ impl RunCommand {
 
         #[cfg(not(windows))]
         {
-            use const_format::concatcp;
 
             let argv0: &ZStr = bun_core::argv().get(0).unwrap_or(bun_core::zstr!("bun"));
 
@@ -539,7 +587,7 @@ impl RunCommand {
                     }
                     result => {
                         let argv0_bytes = argv0.as_bytes();
-                        if argv0_bytes.starts_with(Self::BUN_NODE_DIR.as_bytes()) {
+                        if argv0_bytes.starts_with(Self::bun_node_dir().as_bytes()) {
                             // `self_exe_path()` failed and `argv[0]` is the shim
                             // under `BUN_NODE_DIR` (nested `--bun`). Using it as
                             // the target would recreate the #30711 self-loop; the
@@ -566,32 +614,21 @@ impl RunCommand {
             {
                 // Debug-only cleanup; failures are ignored. The EEXIST branch
                 // below already handles a stale dir.
-                let _ = bun_sys::delete_tree_absolute(Self::BUN_NODE_DIR.as_bytes());
+                let _ = bun_sys::delete_tree_absolute(Self::bun_node_dir().as_bytes());
             }
 
-            const NODE_LINK: &ZStr = {
-                const B: &[u8] = concatcp!(RunCommand::BUN_NODE_DIR, "/node\0").as_bytes();
-                // SAFETY: literal ends in NUL; len excludes it.
-                ZStr::from_static(B)
-            };
-            const BUN_LINK: &ZStr = {
-                const B: &[u8] = concatcp!(RunCommand::BUN_NODE_DIR, "/bun\0").as_bytes();
-                // SAFETY: literal ends in NUL; len excludes it.
-                ZStr::from_static(B)
-            };
-            const DIR_Z: &ZStr = {
-                const B: &[u8] = concatcp!(RunCommand::BUN_NODE_DIR, "\0").as_bytes();
-                // SAFETY: literal ends in NUL; len excludes it.
-                ZStr::from_static(B)
-            };
+            let paths = BunNodePaths::get();
+            let node_link: &ZStr = &paths.node_link;
+            let bun_link: &ZStr = &paths.bun_link;
+            let dir_z: &ZStr = &paths.dir;
 
             // Don't trust attacker-created entries in a shared temp dir
             // (`BUN_NODE_DIR` lives under e.g. `/tmp`). Create it `0700`; if it
             // already exists, refuse to use it unless it's a directory we own
             // with no group/other write bits.
-            match bun_sys::mkdir(DIR_Z, 0o700) {
+            match bun_sys::mkdir(dir_z, 0o700) {
                 Ok(()) => {}
-                Err(e) if e.get_errno() == bun_sys::E::EEXIST => match bun_sys::lstat(DIR_Z) {
+                Err(e) if e.get_errno() == bun_sys::E::EEXIST => match bun_sys::lstat(dir_z) {
                     Ok(st)
                         if bun_sys::kind_from_mode(st.st_mode as bun_sys::Mode)
                             == bun_sys::FileKind::Directory
@@ -602,7 +639,7 @@ impl RunCommand {
                 Err(_) => return Ok(()),
             }
 
-            for dest in [NODE_LINK, BUN_LINK] {
+            for dest in [node_link, bun_link] {
                 let mut replaced = false;
                 loop {
                     match bun_sys::symlink(argv0_z, dest) {
@@ -637,7 +674,7 @@ impl RunCommand {
             // The reason for the extra delim is because we are going to append the system PATH
             // later on. this is done by the caller, and explains why we are adding bun_node_dir
             // to the end of the path slice rather than the start.
-            path.extend_from_slice(Self::BUN_NODE_DIR.as_bytes());
+            path.extend_from_slice(Self::bun_node_dir().as_bytes());
             path.push(bun_paths::DELIMITER);
             Ok(())
         }

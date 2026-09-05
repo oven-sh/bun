@@ -7027,6 +7027,10 @@ impl NodeFS {
         // to the kernel which only stores into it.
         unsafe { buf.expand_to_capacity() };
 
+        let has_signal = args.signal.is_some();
+        // Doubling cap on each read() so aborted() runs between chunks at O(log n) syscalls.
+        let mut signal_chunk: usize = 512 * 1024;
+
         // Two-phase read: first up to `size`, then keep going until EOF.
         // `phase == 0` is the size-bounded loop, `phase == 1` is the unbounded tail.
         let mut phase: u8 = if (total as u64) < size { 0 } else { 1 };
@@ -7038,7 +7042,11 @@ impl NodeFS {
             // the next read receives an empty slice → returns 0 → `did_succeed = true; break`.
             // Do NOT pre-grow here; growth happens only in the `total > size && amt != 0 &&
             // !has_max_size` arm below.
-            let upper = (buf.capacity() as u64).min(max_size) as usize;
+            let mut upper = (buf.capacity() as u64).min(max_size) as usize;
+            if has_signal {
+                upper = upper.min(total.saturating_add(signal_chunk));
+                signal_chunk = signal_chunk.saturating_mul(2);
+            }
             let amt = Syscall::read(fd, &mut buf[total..upper])?;
             total += amt;
 

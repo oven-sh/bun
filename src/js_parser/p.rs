@@ -6132,8 +6132,82 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 
-    pub(crate) fn keep_expr_symbol_name(&mut self, _value: Expr, _name: &[u8]) -> Expr {
-        _value
+    pub(crate) fn keep_expr_symbol_name(&mut self, value: Expr, name: &'a [u8]) -> Expr {
+        if !self.options.features.minify_keep_names {
+            return value;
+        }
+        if let Some(mut class) = value.data.e_class() {
+            self.keep_class_symbol_name(&mut class, name, value.loc);
+            return value;
+        }
+        let loc = value.loc;
+        let target = self.runtime_identifier(loc, b"__name");
+        let name_expr = self.new_expr(E::String::init(name), loc);
+        let args = self.arena.alloc_slice_copy(&[value, name_expr]);
+        self.new_expr(
+            E::Call {
+                target,
+                args: ExprNodeList::from_arena_slice(args),
+                can_be_unwrapped_if_unused: E::CallUnwrap::IfUnused,
+                ..Default::default()
+            },
+            loc,
+        )
+    }
+
+    /// `__name(foo, "foo");` emitted after a function declaration.
+    pub(crate) fn keep_stmt_symbol_name(
+        &mut self,
+        loc: bun_ast::Loc,
+        ref_: Ref,
+        name: &'a [u8],
+    ) -> Stmt {
+        let name_expr = self.new_expr(E::String::init(name), loc);
+        let args = self
+            .arena
+            .alloc_slice_copy(&[Expr::init_identifier(ref_, loc), name_expr]);
+        let value = self.call_runtime(loc, b"__name", ExprNodeList::from_arena_slice(args));
+        self.s(
+            S::SExpr {
+                value,
+                does_not_affect_tree_shaking: true,
+            },
+            loc,
+        )
+    }
+
+    /// Prepends `static { __name(this, "Foo"); }` so `.name` survives identifier renaming.
+    pub(crate) fn keep_class_symbol_name(
+        &mut self,
+        class: &mut G::Class,
+        name: &'a [u8],
+        loc: bun_ast::Loc,
+    ) {
+        let this = self.new_expr(E::This, loc);
+        let name_expr = self.new_expr(E::String::init(name), loc);
+        let args = self.arena.alloc_slice_copy(&[this, name_expr]);
+        let call = self.call_runtime(loc, b"__name", ExprNodeList::from_arena_slice(args));
+        let stmt = self.s(
+            S::SExpr {
+                value: call,
+                does_not_affect_tree_shaking: true,
+            },
+            loc,
+        );
+        let stmts =
+            bun_alloc::AstVec::<Stmt>::from_arena_slice(self.arena.alloc_slice_copy(&[stmt]));
+        let block = self.arena.alloc(G::ClassStaticBlock { loc, stmts });
+        let mut properties = BumpVec::with_capacity_in(class.properties.len() + 1, self.arena);
+        properties.push(G::Property {
+            kind: js_ast::g::PropertyKind::ClassStaticBlock,
+            class_static_block: Some(js_ast::StoreRef::from_bump(block)),
+            ..Default::default()
+        });
+        for prop in class.properties.slice() {
+            // SAFETY: arena-resident AST nodes never run `Drop`, so the shallow copy cannot double free.
+            properties.push(unsafe { core::ptr::read(prop) });
+        }
+        class.properties = bun_ast::StoreSlice::new_mut(properties.into_bump_slice_mut());
     }
 
     pub(crate) fn is_simple_parameter_list(args: &[G::Arg], has_rest_arg: bool) -> bool {

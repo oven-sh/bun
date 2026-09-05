@@ -996,6 +996,19 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         if let Some(name) = class.class_name {
             self.record_declared_symbol_in(name.ref_, is_expr);
         }
+        let name_to_keep: Option<&'a [u8]> = if !self.options.features.minify_keep_names {
+            None
+        } else if let Some(name) = class.class_name {
+            Some(
+                self.symbols[name.ref_.inner_index() as usize]
+                    .original_name
+                    .slice(),
+            )
+        } else if !default_name_ref.is_empty() {
+            Some(js_ast::ClauseItem::DEFAULT_ALIAS)
+        } else {
+            None
+        };
 
         self.push_scope_for_visit_pass(ScopeKind::ClassName, name_scope_loc)
             .expect("unreachable");
@@ -1470,6 +1483,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         // class name scope
         self.pop_scope();
+
+        if let Some(name) = name_to_keep {
+            self.keep_class_symbol_name(class, name, class.body_loc);
+        }
 
         shadow_ref
     }

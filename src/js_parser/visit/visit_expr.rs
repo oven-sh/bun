@@ -1742,6 +1742,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
 
             if let Some(value) = &mut property.value {
+                let was_anonymous_named_expr = value.is_anonymous_named();
                 // Propagate name from property key for decorated anonymous class expressions
                 // e.g., { Foo: @dec class {} } should give the class .name = "Foo"
                 if in_.assign_target == js_ast::AssignTarget::None
@@ -1777,6 +1778,18 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     },
                 );
                 p.decorator_class_name = None;
+
+                if was_anonymous_named_expr
+                    && p.options.features.minify_keep_names
+                    && property.kind == bun_ast::g::PropertyKind::Normal
+                    && !property.flags.contains(Flags::Property::IsMethod)
+                    && !property.flags.contains(Flags::Property::IsComputed)
+                    && let Some(key) = property.key
+                    && let Some(key_str) = key.data.e_string()
+                    && !key_str.is_utf16
+                {
+                    *value = p.keep_expr_symbol_name(*value, key_str.data.slice());
+                }
             }
 
             if property.initializer.is_some() {
@@ -2728,11 +2741,18 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // Restore now so the stack-local pointer never escapes this frame.
         p.react_refresh.hook_ctx_storage = prev_hook_ctx;
 
+        let name_to_keep: Option<&'a [u8]> = match e_.func.name {
+            Some(name) if p.options.features.minify_keep_names && !name.ref_.is_empty() => Some(
+                p.symbols[name.ref_.inner_index() as usize]
+                    .original_name
+                    .slice(),
+            ),
+            _ => None,
+        };
+
         // Remove unused function names when minifying (only when bundling is enabled)
-        // unless --keep-names is specified
         if p.options.features.minify_syntax
             && p.options.bundle
-            && !p.options.features.minify_keep_names
             // SAFETY: current_scope is a live arena ptr while the parser exists.
             && !p.current_scope().contains_direct_eval
             && e_.func.name.is_some()
@@ -2759,14 +2779,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
         }
 
-        if let Some(name) = e_.func.name {
-            final_expr = p.keep_expr_symbol_name(
-                final_expr,
-                // SAFETY: original_name is arena-owned, valid for 'a.
-                p.symbols[name.ref_.inner_index() as usize]
-                    .original_name
-                    .slice(),
-            );
+        if let Some(name) = name_to_keep {
+            final_expr = p.keep_expr_symbol_name(final_expr, name);
             replaced = true;
         }
 
@@ -2798,10 +2812,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
 
         // Remove unused class names when minifying (only when bundling is enabled)
-        // unless --keep-names is specified
         if p.options.features.minify_syntax
             && p.options.bundle
-            && !p.options.features.minify_keep_names
             // SAFETY: current_scope is a live arena ptr while the parser exists.
             && !p.current_scope().contains_direct_eval
             && e_.class_name.is_some()

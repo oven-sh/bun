@@ -2518,7 +2518,7 @@ pub mod parse_worker {
         };
         opts.features.minify_syntax = topts.minify_syntax;
         opts.features.minify_identifiers = topts.minify_identifiers;
-        opts.features.minify_keep_names = topts.keep_names;
+        opts.features.minify_keep_names = topts.keep_names && !task.source_index.is_runtime();
         opts.features.minify_whitespace = topts.minify_whitespace;
         opts.use_define_for_class_fields = task.use_define_for_class_fields;
         opts.features.emit_decorator_metadata = task.emit_decorator_metadata;

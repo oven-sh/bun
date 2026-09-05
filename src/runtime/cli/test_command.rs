@@ -25,7 +25,7 @@ bun_output::declare_scope!(bun_test, hidden);
 
 mod coverage {
     pub(super) use bun_sourcemap_jsc::code_coverage::{
-        ByteRangeMapping, Fraction, Report as CodeCoverageReport, lcov, text,
+        ByteRangeMapping, Fraction, Report as CodeCoverageReport, cobertura, lcov, text,
     };
 
     /// Less-than predicate adapted to the `Ordering` shape `sort_by` wants.
@@ -82,43 +82,7 @@ mod bun_test {
 }
 
 pub(crate) fn escape_xml(str_: &[u8], writer: &mut impl bun_io::Write) -> crate::Result<()> {
-    let mut last: usize = 0;
-    let mut i: usize = 0;
-    let len = str_.len();
-    while i < len {
-        let c = str_[i];
-        match c {
-            b'&' | b'<' | b'>' | b'"' | b'\'' => {
-                if i > last {
-                    writer.write_all(&str_[last..i])?;
-                }
-                writer.write_all(bun_core::strings::xml_escape_entity(c).unwrap())?;
-                last = i + 1;
-            }
-            b'\t' | b'\n' | b'\r' => {
-                // Valid XML 1.0 Char. Emit as a numeric reference so the literal
-                // byte survives attribute-value normalisation (XML 1.0 §3.3.3).
-                if i > last {
-                    writer.write_all(&str_[last..i])?;
-                }
-                write!(writer, "&#{};", c)?;
-                last = i + 1;
-            }
-            0..=0x1f => {
-                // Any other C0 control character is not a valid XML 1.0 Char and
-                // cannot be represented even as a numeric reference, so drop it.
-                if i > last {
-                    writer.write_all(&str_[last..i])?;
-                }
-                last = i + 1;
-            }
-            _ => {}
-        }
-        i += 1;
-    }
-    if len > last {
-        writer.write_all(&str_[last..])?;
-    }
+    bun_core::strings::write_xml_escaped(str_, writer)?;
     Ok(())
 }
 
@@ -1502,7 +1466,7 @@ impl CommandLineReporter {
         let mut reports: Vec<CodeCoverageReport<'static>> = Vec::new();
         Self::for_each_coverage_report(vm, opts, |report| reports.push(report.into_owned()));
         if let Err(err) = print_coverage_reports(opts, &reports) {
-            Output::err(err, "Failed to write lcov.info", ());
+            Output::err(err, "Failed to write coverage report", ());
             Global::exit(1);
         }
     }
@@ -1511,7 +1475,8 @@ impl CommandLineReporter {
 /// Write the `--coverage` text table to stderr and/or `lcov.info` for
 /// `reports` (sorted by path), and set `opts.fractions.failing`. The serial
 /// runner passes this process's reports; the `--parallel` coordinator passes
-/// reports merged from every worker. Errors only from writing `lcov.info`.
+/// reports merged from every worker. Errors only from writing the report
+/// files (`lcov.info` / `cobertura.xml`).
 pub(crate) fn print_coverage_reports(
     opts: &mut CodeCoverageOptions,
     reports: &[CodeCoverageReport<'_>],
@@ -1539,6 +1504,9 @@ fn print_coverage_reports_<const COLORS: bool>(
     }
     if opts.reporters.lcov {
         write_lcov_report(opts, relative_dir, reports)?;
+    }
+    if opts.reporters.cobertura {
+        write_cobertura_report(opts, relative_dir, reports)?;
     }
     Ok(())
 }
@@ -1624,8 +1592,6 @@ fn print_coverage_table<const COLORS: bool>(
     Output::flush();
 }
 
-/// Render to `<reports_directory>/.lcov.info.<hex>.tmp` and rename it over
-/// `lcov.info`, so an interrupted run never leaves a truncated report.
 fn write_lcov_report(
     opts: &CodeCoverageOptions,
     relative_dir: &[u8],
@@ -1636,7 +1602,33 @@ fn write_lcov_report(
         // Writing into a Vec cannot fail.
         let _ = coverage::lcov::write_format(report, relative_dir, &mut contents);
     }
+    write_report_file(opts, relative_dir, b"lcov.info", &contents)
+}
 
+fn write_cobertura_report(
+    opts: &CodeCoverageOptions,
+    relative_dir: &[u8],
+    reports: &[CodeCoverageReport<'_>],
+) -> bun_sys::Result<()> {
+    let mut contents: Vec<u8> = Vec::with_capacity(64 * 1024);
+    // Writing into a Vec cannot fail.
+    let _ = coverage::cobertura::write_format(
+        reports,
+        relative_dir,
+        bun_core::time::milli_timestamp() as u64,
+        &mut contents,
+    );
+    write_report_file(opts, relative_dir, b"cobertura.xml", &contents)
+}
+
+/// Render to `<reports_directory>/.<final_name>.<hex>.tmp` and rename it over
+/// `final_name`, so an interrupted run never leaves a truncated report.
+fn write_report_file(
+    opts: &CodeCoverageOptions,
+    relative_dir: &[u8],
+    final_name: &[u8],
+    contents: &[u8],
+) -> bun_sys::Result<()> {
     let mut fs = crate::node::fs::NodeFS::default();
     let _ = fs.mkdir_recursive(&crate::node::fs::args::Mkdir {
         path: crate::node::PathLike::borrowed(&opts.reports_directory),
@@ -1650,7 +1642,8 @@ fn write_lcov_report(
     let mut tmpname: Vec<u8> = Vec::new();
     let _ = write!(
         &mut tmpname,
-        ".lcov.info.{}.tmp",
+        ".{}.{}.tmp",
+        bstr::BStr::new(final_name),
         bun_core::fmt::hex_lower(&rand)
     );
     let mut buf = PathBuffer::uninit();
@@ -1665,7 +1658,7 @@ fn write_lcov_report(
         bun_sys::O::CREAT | bun_sys::O::WRONLY | bun_sys::O::TRUNC | bun_sys::O::CLOEXEC,
         0o644,
     )?;
-    let written = file.write_all(&contents);
+    let written = file.write_all(contents);
     drop(file);
     let moved = match written {
         Ok(()) => bun_sys::move_file_z(
@@ -1674,7 +1667,7 @@ fn write_lcov_report(
             Fd::cwd(),
             resolve_path::join_abs_string_z::<bun_path::platform::Auto>(
                 relative_dir,
-                &[&opts.reports_directory, b"lcov.info"],
+                &[&opts.reports_directory, final_name],
             ),
         ),
         err => err,

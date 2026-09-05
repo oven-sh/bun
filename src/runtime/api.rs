@@ -55,6 +55,8 @@ pub mod js_bundle_completion_task;
 pub mod js_bundler;
 #[path = "api/JSTranspiler.rs"]
 pub mod js_transpiler;
+#[path = "api/js_transpiler_ast.rs"]
+pub mod js_transpiler_ast;
 #[path = "api/JSON5Object.rs"]
 pub mod json5_object;
 #[path = "api/JSONCObject.rs"]

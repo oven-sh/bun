@@ -21,26 +21,6 @@ use bun_threading::Condition as Condvar;
 use bun_threading::Mutex;
 use bun_threading::work_pool::{IntrusiveWorkTask as _, Task as WorkPoolTask, WorkPool};
 
-// ─── local shims for upstream-crate gaps (see PORTING.md §extension traits) ───
-
-/// Local extension shims for `JSValue` methods not yet surfaced on the
-/// `bun_jsc::JSValue` type.
-trait JSValueNapiExt {
-    fn is_async_context_frame(self) -> bool;
-}
-
-unsafe extern "C" {
-    fn Bun__JSValue__isAsyncContextFrame(value: JSValue) -> bool;
-}
-
-impl JSValueNapiExt for JSValue {
-    #[inline]
-    fn is_async_context_frame(self) -> bool {
-        // SAFETY: trivial FFI.
-        unsafe { Bun__JSValue__isAsyncContextFrame(self) }
-    }
-}
-
 // `Taskable` impls for the napi heap tasks dispatched through the JS event loop.
 impl Taskable for napi_async_work {
     const TAG: TaskTag = task_tag::NapiAsyncWork;

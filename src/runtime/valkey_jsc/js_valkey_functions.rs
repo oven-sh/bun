@@ -1853,6 +1853,7 @@ impl JSValkeyClient {
             let error = valkey::ValkeyClient::send_rejection_error(global, message);
             return Ok(JSPromise::rejected_promise(global, error).to_js());
         }
+        let handler_callback = handler_callback.with_async_context_if_needed(global);
 
         // The first argument given is the channel or may be an array of channels.
         if channel_or_many.is_array() {

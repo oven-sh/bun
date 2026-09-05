@@ -97,6 +97,14 @@ extern "C" JSC::EncodedJSValue AsyncContextFrame__withAsyncContextIfNeeded(JSGlo
     return JSValue::encode(AsyncContextFrame::withAsyncContextIfNeeded(globalObject, JSValue::decode(callback)));
 }
 
+extern "C" JSC::EncodedJSValue AsyncContextFrame__unwrap(JSC::EncodedJSValue encodedValue)
+{
+    JSValue value = JSValue::decode(encodedValue);
+    if (auto* wrapper = dynamicDowncast<AsyncContextFrame>(value))
+        return JSValue::encode(wrapper->callback.get());
+    return encodedValue;
+}
+
 #define ASYNCCONTEXTFRAME_CALL_IMPL(...)                                            \
     if (!functionObject.isCell())                                                   \
         return jsUndefined();                                                       \

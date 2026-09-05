@@ -729,7 +729,7 @@ impl SocketConfig {
 //
 // `js_class_module!` / `generate-classes.ts` already emit
 // `${prop}_get_cached`/`${prop}_set_cached` (and a `Gc` enum) per cached prop.
-// Several JS classes (MySQLConnection, PostgresSQLConnection, RedisClient)
+// Several JS classes (MySQLConnection, PostgresSQLConnection)
 // then hand-write the *other* half — the `get_*`/`set_*` host-fns that the
 // `.classes.ts` getter/setter thunks dispatch to — as pure forwarding shims.
 // This macro stamps those out so the per-class `impl` block is one line per

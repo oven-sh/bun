@@ -1632,6 +1632,27 @@ impl JSValue {
         AsyncContextFrame__withAsyncContextIfNeeded(global, self)
     }
 
+    /// True iff this is the non-callable wrapper returned by [`Self::with_async_context_if_needed`].
+    #[inline]
+    pub fn is_async_context_frame(self) -> bool {
+        unsafe extern "C" {
+            safe fn Bun__JSValue__isAsyncContextFrame(value: JSValue) -> bool;
+        }
+        self.is_cell() && Bun__JSValue__isAsyncContextFrame(self)
+    }
+
+    /// The callback inside an `AsyncContextFrame`; any other value is returned unchanged.
+    #[inline]
+    pub fn unwrap_async_context_frame(self) -> JSValue {
+        unsafe extern "C" {
+            safe fn AsyncContextFrame__unwrap(value: JSValue) -> JSValue;
+        }
+        if !self.is_cell() {
+            return self;
+        }
+        AsyncContextFrame__unwrap(self)
+    }
+
     /// Protects a JSValue from garbage collection (refcounted). The is_cell
     /// check happens on the C++ side (bindings.cpp).
     #[inline]

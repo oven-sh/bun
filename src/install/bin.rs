@@ -12,7 +12,7 @@ use bun_paths::MAX_PATH_BYTES;
 use bun_paths::platform::Auto as PlatformAuto;
 use bun_paths::resolve_path;
 use bun_paths::strings;
-use bun_paths::{self as path, AbsPath, PathBuffer, SEP};
+use bun_paths::{self as path, AbsPath, SEP};
 use bun_semver::{ExternalString, String};
 #[cfg(not(windows))]
 use bun_sys::Mode;
@@ -597,7 +597,7 @@ pub(crate) struct NamesIterator<'a> {
     /// caller owns the underlying `Dir`. Default is `Fd::INVALID`, which
     /// `next_in_dir()` never reaches.
     pub(crate) destination_node_modules: Fd,
-    pub(crate) buf: PathBuffer,
+    pub(crate) buf: bun_paths::path_buffer_pool::Guard,
     pub(crate) string_buffer: &'a [u8],
     pub(crate) extern_string_buf: &'a [ExternalString],
 }

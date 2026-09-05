@@ -124,6 +124,15 @@ impl<T: PoolStorage> DerefMut for PoolGuard<T> {
     }
 }
 
+/// `Default` takes a buffer from the pool, so a struct that embeds a `Guard`
+/// can `#[derive(Default)]`.
+impl<T: PoolStorage> Default for PoolGuard<T> {
+    #[inline]
+    fn default() -> Self {
+        PathBufferPoolT::<T>::get()
+    }
+}
+
 impl<T: PoolStorage> Drop for PoolGuard<T> {
     fn drop(&mut self) {
         if let Some(buf) = self.buf.take() {

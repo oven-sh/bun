@@ -325,8 +325,7 @@ pub type OSPathBuffer = WPathBuffer;
 #[cfg(not(windows))]
 pub type OSPathBuffer = PathBuffer;
 
-// The pool lives in `bun_core` so `bun_core` itself and every crate that only
-// depends on `bun_core` can use it. Re-exported here as the canonical path.
+// Defined in `bun_core` so `bun_core` can use it too.
 pub use bun_core::path_buffer_pool;
 
 // resolve_path: enum const-generics lowered to sealed `PlatformT` trait + ZSTs

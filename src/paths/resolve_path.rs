@@ -2156,8 +2156,7 @@ fn last_index_of_sep_t<T: PathChar>(path: &[T]) -> Option<usize> {
 /// ```
 ///
 /// This API does nothing on Linux (it has a size of zero). On Windows it
-/// holds a pooled path buffer, so construction is a pool pop, not a 98 KB
-/// zero-fill.
+/// holds a pooled path buffer.
 #[derive(Default)]
 pub struct PosixToWinNormalizer {
     #[cfg(windows)]

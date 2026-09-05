@@ -3000,9 +3000,7 @@ fn resolve_windows_t<'a, T: PathCharCwd>(
                     }
                     // T == u8 when !IS_U16; bytemuck statically checks the layout.
                     let key8: &[u8] = bytemuck::cast_slice::<T, u8>(&buf2[..buf_size]);
-                    // Write the NUL after widening so the LPCWSTR is properly
-                    // terminated; a pooled buffer carries a previous caller's
-                    // bytes.
+                    // Write the NUL after widening; a pooled buffer is not zeroed.
                     let n = strings::convert_utf8_to_utf16_in_buffer(&mut u16_buf[..], key8).len();
                     u16_buf[n] = 0;
                     &u16_buf[..=n]

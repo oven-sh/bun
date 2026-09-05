@@ -701,13 +701,8 @@ pub use bun_alloc::SEP;
 /// crates share ONE nominal type and callers can pass a `bun_paths` buffer to
 /// `bun_core::getcwd`/`which` without a pointer cast.
 ///
-/// Scratch instances come from [`crate::path_buffer_pool::get`], which zeroes
-/// a buffer once on allocation and then reuses it. On Windows `MAX_PATH_BYTES`
-/// is 98 302 (vs 4 096 Linux / 1 024 macOS), so a by-value `ZEROED` at every
-/// call site would be a ~100 KB `memset` per call, and a by-value buffer whose
-/// bytes are never written is UB (a `u8` must be initialized; "every bit
-/// pattern is valid" does not cover uninitialized memory). `ZEROED` / `Default`
-/// are for long-lived struct fields.
+/// Scratch instances come from [`crate::path_buffer_pool::get`]. `ZEROED` /
+/// `Default` are for long-lived struct fields: on Windows this is 98 KB.
 ///
 /// NOTE on alignment: `os_path_kernel32` (Windows) reinterprets a
 /// `&mut PathBuffer` as `&mut [u16]` via [`bytes_as_slice_mut`]. The language
@@ -752,9 +747,7 @@ impl core::ops::DerefMut for PathBuffer {
 }
 
 /// `[u16; PATH_MAX_WIDE]` wide path buffer. Same newtype shape as [`PathBuffer`].
-/// Scratch instances come from `bun_paths::w_path_buffer_pool::get()`: 32 767
-/// `u16`s (~64 KB) per Windows syscall for UTF-8→UTF-16 path conversion, so a
-/// by-value zero-fill would dominate the hot path.
+/// Scratch instances come from `bun_paths::w_path_buffer_pool::get()`.
 #[repr(transparent)]
 pub struct WPathBuffer(pub [u16; PATH_MAX_WIDE]);
 impl WPathBuffer {

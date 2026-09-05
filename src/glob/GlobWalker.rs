@@ -48,8 +48,7 @@ pub(crate) fn statat_windows(fd: Fd, path: &ZStr) -> Maybe<Stat> {
     // so we need two buffers — but on Windows `PathBuffer` is ~96 KB,
     // and this is called from deep inside `Iterator::next()` (via `lstatat`
     // for `FileKind::Unknown`), so two stack `PathBuffer`s (~192 KB) risk
-    // overflowing the smaller worker-thread stacks. Draw both from the
-    // per-thread heap pool instead (RAII-returned) — zero stack footprint.
+    // overflowing the smaller worker-thread stacks.
     let mut dir_buf = bun_paths::path_buffer_pool::get();
     let dir = Syscall::get_fd_path(fd, &mut dir_buf)?;
     let parts: &[&[u8]] = &[&dir[..], path.as_bytes()];

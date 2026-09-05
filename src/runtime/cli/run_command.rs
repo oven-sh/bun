@@ -3342,11 +3342,8 @@ impl RunCommand {
     }
 
     fn render_markdown_file_and_exit(path: &[u8]) -> ! {
-        // The render body returns so that its locals (pooled path buffers,
-        // the file contents, the rendered output) are dropped before
-        // `exit`. A heap allocation that is still owned by a live local at
-        // `exit` is a leak to LeakSanitizer once the optimizer has reused
-        // the local's stack slot.
+        // Render in a function that returns so its pooled buffers are dropped
+        // before `exit`; LeakSanitizer reports them otherwise.
         let code = Self::render_markdown_file(path);
         Global::exit(code);
     }

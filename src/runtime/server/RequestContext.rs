@@ -157,7 +157,8 @@ pub struct RequestContext<
 
     pub(crate) request_body_readable_stream_ref: JsCell<readable_stream::Strong>,
     /// Owning `+1` handle into the per-VM `Body::Value` hive pool. Shared with
-    /// `Request.body` (each holds its own `+1`). `Drop` releases the count.
+    /// `Request.body` (each holds its own `+1`). Released by the last chunk in
+    /// `on_buffered_body_chunk`, or in `deinit` if the body never completes.
     pub(crate) request_body: JsCell<Option<body::BodyHiveHandle>>,
     pub(crate) request_body_buf: JsCell<Vec<u8>>,
     pub(crate) request_body_content_len: Cell<usize>,
@@ -4250,6 +4251,12 @@ where
 
                     let _ = Body::Value::resolve(&mut old, body, global_this, None); // TODO: properly propagate exception upwards
                 }
+                // The slot is the JS `Request`'s alone now, as in the streaming
+                // arm: a context parked on a promise must not pin the bytes, and
+                // `end_request_streaming` must not reject a `Locked` value that
+                // `request.body` creates over them. This may free the slot, so
+                // `body` is dead past this point.
+                this.request_body_take_unref();
                 return;
             }
 

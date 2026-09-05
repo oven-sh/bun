@@ -591,7 +591,7 @@ Options:
                                   canary, valgrind, webkit (prebuilt|source),
                                   local-deps (name=path[,name=path] — build a
                                   vendored dep from your own checkout;
-                                  `WebKit` alone means $BUN_WEBKIT_PATH),
+                                  WebKit alone means \$BUN_WEBKIT_PATH),
                                   package-manager (bun|npm, installs the
                                   package.json files the build needs),
                                   buildDir, mode (full|cpp-only|link-only),

@@ -1,5 +1,5 @@
 import { describe, expect, it, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, isDebug } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, tempDir } from "harness";
 import { join } from "path";
 
 describe("FormData", () => {
@@ -599,6 +599,64 @@ describe("FormData", () => {
       const formData = new FormData();
       formData.append("foo", Bun.file("missing"));
       expect(() => new Response(formData)).toThrow();
+    });
+
+    it("serializes only the basename, not the full path, as the multipart filename", async () => {
+      using dir = tempDir("formdata-bunfile-path", {
+        "nested/secret-dir/report.pdf": "%PDF",
+      });
+      const fullPath = join(String(dir), "nested", "secret-dir", "report.pdf");
+      const file = Bun.file(fullPath);
+      expect(file.name).toBe(fullPath);
+
+      const contentDisposition = async (fd: FormData) => {
+        const wire = await new Request("http://x/", { method: "POST", body: fd }).text();
+        expect(wire).not.toContain("secret-dir");
+        expect(wire).not.toContain(String(dir));
+        return wire.split("\r\n").find(l => l.startsWith("Content-Disposition"))!;
+      };
+
+      for (const method of ["append", "set"] as const) {
+        const fd = new FormData();
+        fd[method]("upload", file);
+        expect(await contentDisposition(fd)).toBe(
+          `Content-Disposition: form-data; name="upload"; filename="report.pdf"`,
+        );
+      }
+
+      // Bun.file's own .name stays the full path.
+      expect(file.name).toBe(fullPath);
+
+      // A File read back out of a FormData is still sent as the basename.
+      const roundTrip = new FormData();
+      roundTrip.append("upload", file);
+      const reappended = new FormData();
+      reappended.append("upload", roundTrip.get("upload") as File);
+      expect(await contentDisposition(reappended)).toBe(
+        `Content-Disposition: form-data; name="upload"; filename="report.pdf"`,
+      );
+
+      // An explicit filename argument is used verbatim.
+      const explicitArg = new FormData();
+      explicitArg.append("upload", file, "override.bin");
+      expect(await contentDisposition(explicitArg)).toBe(
+        `Content-Disposition: form-data; name="upload"; filename="override.bin"`,
+      );
+
+      // A user-assigned name is used verbatim, even over a Bun.file-backed store.
+      const wrapped = new FormData();
+      wrapped.append("upload", new File([file], "reports/q3.pdf"));
+      expect(await contentDisposition(wrapped)).toBe(
+        `Content-Disposition: form-data; name="upload"; filename="reports/q3.pdf"`,
+      );
+
+      const renamed = Bun.file(fullPath);
+      renamed.name = "renamed.pdf";
+      const renamedFd = new FormData();
+      renamedFd.append("upload", renamed);
+      expect(await contentDisposition(renamedFd)).toBe(
+        `Content-Disposition: form-data; name="upload"; filename="renamed.pdf"`,
+      );
     });
   });
 

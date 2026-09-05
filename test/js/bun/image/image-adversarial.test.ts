@@ -787,3 +787,44 @@ describe("random-byte fuzz", () => {
     });
   }
 });
+
+// ─── 11. corrupt JPEG entropy stream (#40118) ────────────────────────────────
+
+// 256×256 gradient encoded by jpeg-js at quality 90, then byte 701 (in the
+// entropy stream, ~100 bytes past SOS with ~25 KB of scan after it) XORed
+// with 0x7f. The flip forms a Huffman code longer than 16 bits, which no
+// JPEG table can contain; strict decoders reject it (jpeg-js with
+// tolerantDecoding: false throws "invalid huffman sequence"). Because the
+// corruption sits mid-stream with plenty of input left, libjpeg-turbo
+// decodes it on its fast entropy path (HUFF_DECODE_FAST), which used to
+// swallow the bad-code condition the slow path reports as
+// JWRN_HUFF_BAD_CODE — so the decode "succeeded" silently (#40118).
+const badHuffmanJpeg = new Uint8Array(
+  await Bun.file(join(import.meta.dir, "fixtures", "huffman-bad-code.jpg")).arrayBuffer(),
+);
+const BAD_HUFFMAN_FLIP_OFFSET = 701;
+const BAD_HUFFMAN_FLIP_MASK = 0x7f;
+
+describe("JPEG with an invalid Huffman sequence", () => {
+  test("header-only metadata still parses (corruption is mid-scan)", async () => {
+    Bun.Image.backend = "bun";
+    expect(await new Bun.Image(badHuffmanJpeg).metadata()).toEqual({ width: 256, height: 256, format: "jpeg" });
+  });
+
+  test("full decode rejects the corrupt scan", async () => {
+    Bun.Image.backend = "bun";
+    await expect(new Bun.Image(badHuffmanJpeg).png().bytes()).rejects.toThrow(/decode failed/);
+    // The issue's shape: resize + re-encode must also surface the error.
+    await expect(new Bun.Image(badHuffmanJpeg).resize(1, 1, { fit: "inside" }).jpeg().bytes()).rejects.toThrow(
+      /decode failed/,
+    );
+  });
+
+  test("restoring the flipped byte decodes cleanly", async () => {
+    Bun.Image.backend = "bun";
+    const clean = badHuffmanJpeg.slice();
+    clean[BAD_HUFFMAN_FLIP_OFFSET] ^= BAD_HUFFMAN_FLIP_MASK;
+    const out = await new Bun.Image(clean).png().bytes();
+    expect(out.byteLength).toBeGreaterThan(0);
+  });
+});

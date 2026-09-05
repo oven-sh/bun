@@ -3470,3 +3470,59 @@ test.skipIf(isWindows)("external command resolution uses the PATH from the shell
     expect(exitCode).toBe(0);
   }
 });
+
+// On Windows the shell rewrites every file operand against the cwd it tracks
+// before opening or stat-ing it (a relative name is joined onto the cwd, a
+// `/name` is put on the cwd's drive). The rewrite goes through one path
+// buffer, and an operand that did not fit it took the process down
+// (`panic: range end index 100064 out of range for slice of length 98301`).
+// POSIX hands operands to the *at() syscalls as-is, so there is nothing to
+// rewrite there. Runs in a child process so that a regression fails the test
+// instead of the test runner.
+test.if(isWindows)("operands longer than the path buffer fail with ENAMETOOLONG", async () => {
+  using dir = tempDir("shell-long-operand", {
+    "in.txt": "content\n",
+    "fixture.ts": `
+      import { $ } from "bun";
+      $.nothrow().cwd(process.cwd());
+      const long = Buffer.alloc(100_000, "a").toString();
+      // Longer than the buffer as written, but normalizes to a name inside the cwd.
+      const collapsing = Buffer.alloc(100_000, "a/../").toString() + "in.txt";
+      const run = async (promise) => {
+        const { exitCode, stdout, stderr } = await promise.quiet();
+        const show = (buf) => buf.toString().replaceAll(long, "<long>");
+        return { exitCode, stdout: show(stdout), stderr: show(stderr) };
+      };
+      console.log(
+        JSON.stringify({
+          relative: await run($\`cat \${long}\`),
+          rooted: await run($\`cat \${"/" + long}\`),
+          stat: await run($\`[[ -f \${long} ]]\`),
+          lstat: await run($\`ls \${long}\`),
+          redirect: await run($\`echo hi > \${long}\`),
+          collapsing: await run($\`cat \${collapsing}\`),
+        }),
+      );
+    `,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [BUN, "fixture.ts"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stderr).toBe("");
+  expect(JSON.parse(stdout)).toEqual({
+    relative: { exitCode: 1, stdout: "", stderr: "cat: <long>: File name too long\n" },
+    rooted: { exitCode: 1, stdout: "", stderr: "cat: /<long>: File name too long\n" },
+    stat: { exitCode: 1, stdout: "", stderr: "" },
+    lstat: { exitCode: 1, stdout: "", stderr: "ls: <long>: File name too long\n" },
+    redirect: { exitCode: 1, stdout: "", stderr: "bun: File name too long: <long>" },
+    collapsing: { exitCode: 0, stdout: "content\n", stderr: "" },
+  });
+  expect(exitCode).toBe(0);
+});

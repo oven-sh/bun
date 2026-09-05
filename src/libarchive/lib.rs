@@ -1029,12 +1029,14 @@ pub fn is_symlink_target_safe(
     written += link_target_bytes.len();
 
     let mut norm_buf = bun_paths::path_buffer_pool::get();
-    let resolved = bun_paths::resolve_path::normalize_string_generic_t::<u8, true, false>(
+    let Some(resolved) = bun_paths::resolve_path::normalize_string_generic_t::<u8, true, false>(
         &join_buf[..written],
         &mut norm_buf[..],
         b'/',
         |c| c == b'/',
-    );
+    ) else {
+        return false;
+    };
 
     !(strings::eql(resolved, b"..") || strings::has_prefix_comptime(resolved, b"../"))
 }
@@ -1317,14 +1319,19 @@ impl Archiver {
 
                     // pathname = sliceTo(remaining[..len :0], 0)
                     let pathname = slice_to_nul(remaining);
-                    if pathname.is_empty() || pathname.len() >= normalized_buf.len() {
+                    if pathname.is_empty() {
                         continue 'loop_;
                     }
-                    let normalized = bun_paths::resolve_path::normalize_buf_t::<
-                        u8,
-                        bun_paths::platform::Auto,
-                    >(pathname, &mut normalized_buf[..]);
-                    let normalized_len = normalized.len();
+                    // An entry too long to be a path cannot overwrite anything.
+                    let Some(normalized_len) =
+                        bun_paths::resolve_path::normalize_buf_t::<u8, bun_paths::platform::Auto>(
+                            pathname,
+                            &mut normalized_buf[..],
+                        )
+                        .map(|normalized| normalized.len())
+                    else {
+                        continue 'loop_;
+                    };
                     let pathname: &[u8] = &normalized_buf[..normalized_len];
                     if pathname.is_empty() || pathname == b"." {
                         continue 'loop_;
@@ -1511,7 +1518,15 @@ impl Archiver {
                     // at its original `.len()`; therefore `remaining[remaining.len()] == 0`.
                     let pathname: &[OSPathChar] = remaining;
 
-                    if pathname.len() >= normalized_buf.len() {
+                    // The last unit of `normalized_buf` is reserved for the NUL.
+                    let capacity = normalized_buf.len() - 1;
+                    let Some(normalized_len) =
+                        bun_paths::resolve_path::normalize_buf_t::<
+                            OSPathChar,
+                            bun_paths::platform::Auto,
+                        >(pathname, &mut normalized_buf[..capacity])
+                        .map(|normalized| normalized.len())
+                    else {
                         if options.log {
                             bun_core::warn!(
                                 "Skipping entry with a path longer than the maximum path length: {}\n",
@@ -1519,13 +1534,7 @@ impl Archiver {
                             );
                         }
                         continue;
-                    }
-
-                    let normalized = bun_paths::resolve_path::normalize_buf_t::<
-                        OSPathChar,
-                        bun_paths::platform::Auto,
-                    >(pathname, &mut normalized_buf[..]);
-                    let normalized_len = normalized.len();
+                    };
                     normalized_buf[normalized_len] = 0;
                     // SAFETY: we just wrote a NUL at normalized_buf[normalized_len]
                     let path: &mut [OSPathChar] = &mut normalized_buf[..normalized_len];

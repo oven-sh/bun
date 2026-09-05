@@ -6399,47 +6399,36 @@ pub fn normalize_path_windows_opts<'a>(
         }
         if opts.add_nt_prefix {
             // Absolute → add `\??\` (idempotent if already present), normalize
-            // separators/`.`/`..` and NUL-terminate.
-            // `nt_prefix_headroom = 8`: reject when `path.len >
-            // buf.len - nt_prefix_headroom`.
-            // `normalizeStringGenericTZ` performs no bounds checking of its
-            // own, so reserve room for `\??\` + trailing-`\` growth + NUL
-            // before calling it. NOTE: `to_nt_path16` is NOT a substitute here
-            // — it only normalizes slashes and leaves `.`/`..` segments in
-            // place, which `NtCreateFile` rejects (e.g. `\??\C:\dir\.` →
-            // OBJECT_NAME_NOT_FOUND).
-            if path.len() > buf.len().saturating_sub(8) {
-                return Err(too_long());
-            }
-            let norm = bun_paths::resolve_path::normalize_string_generic_tz::<
+            // separators/`.`/`..` and NUL-terminate. NOTE: `to_nt_path16` is
+            // NOT a substitute here — it only normalizes slashes and leaves
+            // `.`/`..` segments in place, which `NtCreateFile` rejects (e.g.
+            // `\??\C:\dir\.` → OBJECT_NAME_NOT_FOUND).
+            let len = bun_paths::resolve_path::normalize_string_generic_tz::<
                 u16,
                 /*ALLOW_ABOVE_ROOT*/ false,
                 /*PRESERVE_TRAILING_SLASH*/ false,
                 /*ZERO_TERMINATE*/ true,
                 /*ADD_NT_PREFIX*/ true,
-            >(path, buf, b'\\' as u16, bun_paths::is_sep_any_t::<u16>);
-            let len = norm.len();
-            // SAFETY: ZERO_TERMINATE wrote NUL at buf[len].
-            return Ok(unsafe { WStr::from_raw(norm.as_ptr(), len) });
+            >(path, buf, b'\\' as u16, bun_paths::is_sep_any_t::<u16>)
+            .ok_or_else(too_long)?
+            .len();
+            // ZERO_TERMINATE wrote the NUL at buf[len].
+            return Ok(WStr::from_buf(&buf[..], len));
         }
         // `add_nt_prefix = false` — produce a Win32 path
         // (no `\??\` object prefix) for callers that feed kernel32 APIs
-        // (CreateDirectoryW / CopyFileW). With .add_nt_prefix = false the
-        // normalizer can still grow the input by one u16 (trailing `\` after a
-        // bare UNC volume name) plus the NUL terminator.
-        if path.len() > buf.len().saturating_sub(2) {
-            return Err(too_long());
-        }
-        let norm = bun_paths::resolve_path::normalize_string_generic_tz::<
+        // (CreateDirectoryW / CopyFileW).
+        let len = bun_paths::resolve_path::normalize_string_generic_tz::<
             u16,
             /*ALLOW_ABOVE_ROOT*/ false,
             /*PRESERVE_TRAILING_SLASH*/ false,
             /*ZERO_TERMINATE*/ true,
             /*ADD_NT_PREFIX*/ false,
-        >(path, buf, b'\\' as u16, bun_paths::is_sep_any_t::<u16>);
-        let len = norm.len();
-        // SAFETY: ZERO_TERMINATE wrote NUL at buf[len].
-        return Ok(unsafe { WStr::from_raw(norm.as_ptr(), len) });
+        >(path, buf, b'\\' as u16, bun_paths::is_sep_any_t::<u16>)
+        .ok_or_else(too_long)?
+        .len();
+        // ZERO_TERMINATE wrote the NUL at buf[len].
+        return Ok(WStr::from_buf(&buf[..], len));
     }
 
     // Strip a leading drive letter (`C:`) on the relative part; the bypass
@@ -6598,6 +6587,7 @@ pub fn normalize_path_windows_opts<'a>(
         b'\\' as u16,
         bun_paths::is_sep_any_t::<u16>,
     )
+    .ok_or_else(too_long)?
     .len();
     // A lone-separator suffix means `rel` collapsed to nothing: drop it for a
     // directory-path prefix, keep it for a bare device name where it selects

@@ -213,6 +213,14 @@ let joined = resolve_path::join_string_buf::<platform::Auto>(&mut buf, &[a, b]);
 let rel    = resolve_path::relative(from, to);
 ```
 
+The threadlocal-buffer functions (`join`, `join_abs_string`, `normalize_string`,
+`relative`, ...) accept input of any length. The `join*_buf`, `normalize*_buf`
+and `relative*_buf` functions panic when the result does not fit the buffer;
+when the input comes from the user (a package.json field, a command operand, an
+archive entry), use the `*_checked` variant (`join_string_buf_checked`,
+`join_z_buf_checked`, `join_abs_string_buf_checked`, `normalize_buf_checked`,
+`relative_buf_z_checked`, ...) and report its `None` as `ENAMETOOLONG`.
+
 Use the path-buffer pool to avoid 64 KB stack allocations on Windows
 (`PathBuffer` is `[u8; PATH_MAX_BYTES]`, ~64 KB on Windows):
 

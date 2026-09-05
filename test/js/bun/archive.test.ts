@@ -796,6 +796,57 @@ describe("Bun.Archive", () => {
       expect(exitCode).toBe(0);
     });
 
+    test("applies the path limit to the normalized path of an entry", async () => {
+      // The limit is on the path an entry is extracted to, not on the name as
+      // written in the archive: `d/../` repeated 10000 times collapses to
+      // `payload.txt`. The second name is the other way around. On Windows it
+      // is one code unit short of the path buffer and normalizes to one unit
+      // more (`C:\..\..\` keeps its `..` segments and its trailing separator),
+      // which used to fill the buffer exactly and put the NUL terminator past
+      // its end (`panic: index out of bounds: the len is 32767 but the index is
+      // 32767`); it has to be skipped like any other name that does not fit.
+      // Elsewhere it is a single 32766-byte component and is skipped as well.
+      // The extraction with a glob is a separate implementation (it also
+      // rejects the drive letter outright) and has to apply the same limit.
+      const collapsing = Buffer.alloc(50_000, "d/../").toString() + "payload.txt";
+      const growing = "C:\\" + Buffer.alloc(32763, "..\\").toString();
+      expect(growing).toHaveLength(32766);
+
+      using dir = tempDir("archive-normalized-path-limit", {
+        "input.tar": buildPaxTarball([
+          { name: collapsing, data: "collapsed" },
+          { name: growing, data: "grown" },
+          { name: "ok.txt", data: "ok" },
+        ]),
+        "extract.ts": `
+          import fs from "node:fs";
+          const archive = new Bun.Archive(new Uint8Array(fs.readFileSync("input.tar")));
+          const results = {};
+          for (const [out, options] of [["out", undefined], ["out-glob", { glob: "**" }]]) {
+            fs.mkdirSync(out);
+            const count = await archive.extract(out, options);
+            results[out] = { count, files: fs.readdirSync(out).sort() };
+          }
+          console.log(JSON.stringify(results));
+        `,
+      });
+
+      // In a child process: the failure mode on Windows was a process abort.
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "extract.ts"],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      expect(stderr).toBe("");
+      const extracted = { count: 2, files: ["ok.txt", "payload.txt"] };
+      expect(JSON.parse(stdout)).toEqual({ "out": extracted, "out-glob": extracted });
+      expect(exitCode).toBe(0);
+    });
+
     test("normalizes paths with redundant separators", async () => {
       const archive = new Bun.Archive({
         "dir//subdir///file.txt": "content",

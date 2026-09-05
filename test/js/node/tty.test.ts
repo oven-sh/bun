@@ -1,6 +1,8 @@
 import { describe, expect, it, test } from "bun:test";
-import { bunEnv, bunExe, isWindows } from "harness";
-import { WriteStream } from "node:tty";
+import { bunEnv, bunExe, isWindows, tempDir } from "harness";
+import { closeSync, constants, fstatSync, openSync } from "node:fs";
+import { join } from "node:path";
+import { ReadStream, WriteStream } from "node:tty";
 
 describe("ReadStream.prototype.setRawMode", () => {
   // Regression: on Windows, the `fd === 0` branch returned early on success
@@ -189,6 +191,129 @@ describe("ReadStream.prototype.setRawMode", () => {
       afterStdinCooked: false,
     });
     expect(await proc.exited).toBe(0);
+  });
+});
+
+// node-pty sets O_NONBLOCK on the pty master and wraps it in tty.ReadStream. A
+// read with no data then fails with EAGAIN. The stream must wait for data, as
+// Node's net.Socket based tty.ReadStream does, instead of destroying itself
+// and closing a fd it does not own.
+describe.skipIf(isWindows)("ReadStream on a non-blocking fd", () => {
+  // A separate process opens the path and writes one chunk. The fixture issues
+  // its next read as soon as it says READY, and that read completes long
+  // before a new process can start. So every chunk lands after a read that
+  // found no data, which is the read the bug turned into EAGAIN.
+  async function writeFromAnotherProcess(path: string, chunk: string) {
+    await using writer = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const fs = require("fs");
+         const fd = fs.openSync(process.argv[1], fs.constants.O_WRONLY | fs.constants.O_NOCTTY | fs.constants.O_NONBLOCK);
+         fs.writeSync(fd, process.argv[2]);
+         fs.closeSync(fd);`,
+        path,
+        chunk,
+      ],
+      env: bunEnv,
+    });
+    expect(await writer.exited).toBe(0);
+  }
+
+  // Runs the fixture, writes "one" and "two" to the slave after each READY,
+  // then ends the stream the requested way. Returns the fixture's event log.
+  async function runFixture(end: "destroy" | "hangup") {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), join(import.meta.dir, "tty-readstream-nonblocking.fixture.ts")],
+      env: bunEnv,
+      stdin: "pipe",
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const chunks = ["one", "two"];
+    const lines: string[] = [];
+    let slavePath = "";
+    let buffered = "";
+    for await (const chunk of proc.stdout) {
+      buffered += Buffer.from(chunk).toString();
+      let newline: number;
+      while ((newline = buffered.indexOf("\n")) !== -1) {
+        const line = buffered.slice(0, newline);
+        buffered = buffered.slice(newline + 1);
+        if (line.startsWith("SLAVE ")) {
+          slavePath = line.slice("SLAVE ".length);
+          continue;
+        }
+        if (line !== "READY") {
+          lines.push(line);
+          continue;
+        }
+        const next = chunks.shift();
+        if (next !== undefined) {
+          await writeFromAnotherProcess(slavePath, next);
+          continue;
+        }
+        proc.stdin.write(end + "\n");
+        proc.stdin.end();
+      }
+    }
+
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    return { lines, stderr, exitCode };
+  }
+
+  test.concurrent("delivers data written after the first EAGAIN and destroy() closes the fd", async () => {
+    const { lines, stderr, exitCode } = await runFixture("destroy");
+    expect(stderr).toBe("");
+    expect(lines).toEqual(['DATA "one"', 'DATA "two"', "CLOSE destroyed=true masterOpen=false"]);
+    expect(exitCode).toBe(0);
+  });
+
+  test.concurrent("ends when the slave side hangs up", async () => {
+    const { lines, stderr, exitCode } = await runFixture("hangup");
+    expect(stderr).toBe("");
+    // Linux reports the hangup as EIO, macOS as end of file.
+    expect(["ERROR EIO", "END"]).toContain(lines[2]);
+    expect([...lines.slice(0, 2), ...lines.slice(3)]).toEqual([
+      'DATA "one"',
+      'DATA "two"',
+      "CLOSE destroyed=true masterOpen=false",
+    ]);
+    expect(exitCode).toBe(0);
+  });
+
+  test.concurrent("a FIFO opened with O_NONBLOCK delivers data and ends when the writer closes", async () => {
+    using dir = tempDir("tty-fifo", {});
+    const fifo = join(String(dir), "pipe.fifo");
+    const mkfifo = Bun.spawnSync({ cmd: ["mkfifo", fifo] });
+    expect(mkfifo.exitCode).toBe(0);
+
+    const reader = openSync(fifo, constants.O_RDONLY | constants.O_NONBLOCK);
+    // With a writer attached and no data, a read fails with EAGAIN instead of
+    // reporting end of file.
+    const holdWriter = openSync(fifo, constants.O_WRONLY);
+    const stream = new ReadStream(reader);
+    const events: string[] = [];
+    const closed = Promise.withResolvers<void>();
+    stream.on("error", err => events.push("error " + err.code));
+    stream.on("data", chunk => {
+      events.push("data " + chunk.toString());
+      // The fd is still open: the stream did not close it on EAGAIN.
+      events.push("open " + (fstatSync(reader).isFIFO() ? "yes" : "no"));
+    });
+    stream.on("end", () => events.push("end"));
+    stream.on("close", () => closed.resolve());
+
+    // If the stream closed the read side, the writer's open fails with ENXIO
+    // instead of a hang.
+    await writeFromAnotherProcess(fifo, "hello");
+    // The last writer is gone: the reader sees end of file.
+    closeSync(holdWriter);
+    await closed.promise;
+
+    expect(events).toEqual(["data hello", "open yes", "end"]);
+    expect(() => fstatSync(reader)).toThrow(expect.objectContaining({ code: "EBADF" }));
   });
 });
 

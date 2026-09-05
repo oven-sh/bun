@@ -564,7 +564,7 @@ pub struct Resolver<'a> {
     pub(crate) dir_cache: *mut DirInfo::HashMap,
 
     /// This is set to false for the runtime. The runtime should choose "main"
-    /// over "module" in package.json
+    /// over "module" in package.json unless "module" is .mjs/.mts (#8238 vs #3434).
     pub prefer_module_field: bool,
 
     /// This is an array of paths to resolve against. Used for passing an
@@ -5682,7 +5682,15 @@ impl<'a> Resolver<'a> {
                             //
                             // Additionally, if this is for the runtime, use the "main" field.
                             // If it doesn't exist, the "module" field will be used.
-                            if self.prefer_module_field && kind != ast::ImportKind::Require {
+                            let module_is_explicit_esm = matches!(
+                                module_type_from_ext(bun_paths::extension(
+                                    out.path_pair.primary.text(),
+                                )),
+                                Some(options::ModuleType::Esm)
+                            );
+                            if (self.prefer_module_field || module_is_explicit_esm)
+                                && kind != ast::ImportKind::Require
+                            {
                                 if let Some(debug) = self.debug_logs.as_mut() {
                                     debug.add_note_fmt(format_args!(
                                         "Resolved to \"{}\" using the \"{}\" field in \"{}\"",

@@ -444,36 +444,34 @@ describe("web worker", () => {
       expect(got).toEqual(["early", 0, 1, 2]);
     });
 
-    // The worker joins a BroadcastChannel first thing and says "ready"; once the worker is also
-    // 'open' (its port is live, so a post becomes a task at once instead of startup buffering that
-    // runs other tasks first), the parent posts 0..2, then answers "go". Those reach the worker as
-    // tasks in that order, so 0..2 are dispatched — to no handler — strictly before `await gate`
-    // resumes and installs one. 3 and 4 come after it.
+    // The worker joins a BroadcastChannel first thing and installs a one-shot "probe" listener; the
+    // parent posts "probe" at construction. Its arrival proves the worker's port is live (a post
+    // that lands while the worker is still starting is buffered, and startup runs other queued
+    // tasks before it drains them), so the worker says "ready" from that handler, after removing
+    // it. The parent then posts 0..2 and answers "go". Those reach the worker as tasks in that
+    // order, so 0..2 are dispatched — to no handler — strictly before `await gate` resumes and
+    // installs one. 3 and 4 come after it.
     test("a handler installed after a top-level await misses what was dispatched before it", async () => {
       const gateName = "worker-gate-" + crypto.randomUUID();
       const gate = new BroadcastChannel(gateName);
       try {
         const got = await withWorker(
-          `const gate = new Promise(go => { const c = new BroadcastChannel(${JSON.stringify(gateName)}); c.onmessage = () => { c.close(); go(); }; c.postMessage("ready"); });
+          `const c = new BroadcastChannel(${JSON.stringify(gateName)});
+           const gate = new Promise(go => { c.onmessage = () => { c.close(); go(); }; });
+           self.addEventListener("message", function probe(e) {
+             if (e.data !== "probe") return;
+             self.removeEventListener("message", probe);
+             c.postMessage("ready");
+           });
            await gate;
            self.onmessage = e => postMessage(e.data);
            postMessage("installed");`,
           (w, got, done) => {
-            let ready = false;
-            let opened = false;
-            const release = () => {
-              if (!ready || !opened) return;
+            w.postMessage("probe");
+            gate.onmessage = () => {
               [0, 1, 2].forEach(m => w.postMessage(m));
               gate.postMessage("go");
             };
-            gate.onmessage = () => {
-              ready = true;
-              release();
-            };
-            w.addEventListener("open", () => {
-              opened = true;
-              release();
-            });
             w.onmessage = e => {
               if (e.data === "installed") return [3, 4].forEach(m => w.postMessage(m));
               got.push(e.data);

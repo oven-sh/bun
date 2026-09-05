@@ -1425,14 +1425,13 @@ mod _async_tasks {
 
         #[inline]
         fn src(&self) -> &OSPathSliceZ {
-            // `create()` invariant — `path_buf[src_len] == 0` (debug-asserted there
-            // and again by `from_buf`).
+            // `create()` wrote the NUL at `path_buf[src_len]`; `from_buf` asserts it.
             OSPathSliceZ::from_buf(&self.path_buf, self.src_len)
         }
         #[inline]
         fn dest(&self) -> &OSPathSliceZ {
             // `create()` invariant — `path_buf[src_len + 1 + dest_len] == 0`
-            // (debug-asserted there and again by `from_buf`).
+            // (`from_buf` asserts it).
             OSPathSliceZ::from_buf(&self.path_buf[self.src_len + 1..], self.dest_len)
         }
 
@@ -6448,7 +6447,7 @@ impl NodeFS {
             };
             // root_basename is already NUL-terminated; queued items are pushed
             // below with the join_z_buf NUL kept intact (`from_slice_with_nul`
-            // debug-asserts the trailing NUL).
+            // asserts the trailing NUL).
             let basename_z: &ZStr = if is_root {
                 root_basename
             } else {
@@ -8120,7 +8119,7 @@ impl NodeFS {
                     r?;
                 }
                 _ => {
-                    // NUL written at [len] above; `from_buf` debug-asserts it.
+                    // NUL written at [len] above; `from_buf` asserts it.
                     let src_z = OSPathSliceZ::from_buf(&src_buf[..], sd + 1 + name_slice.len());
                     let dest_z = OSPathSliceZ::from_buf(&dest_buf[..], dd + 1 + name_slice.len());
                     let r = self.copy_single_file_sync(

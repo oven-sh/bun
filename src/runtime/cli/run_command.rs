@@ -3154,7 +3154,10 @@ impl RunCommand {
         let mut remote_urls: Vec<Box<[u8]>> = Vec::new();
         for u in collector.urls.iter() {
             let u: &[u8] = u.as_ref();
-            if !u.starts_with(b"http://") && !u.starts_with(b"https://") {
+            // Scheme is case-insensitive per RFC 3986 §3.1.
+            if !strings::starts_with_case_insensitive_ascii(u, b"http://")
+                && !strings::starts_with_case_insensitive_ascii(u, b"https://")
+            {
                 continue;
             }
             let Ok(gop) = seen.get_or_put(u) else {

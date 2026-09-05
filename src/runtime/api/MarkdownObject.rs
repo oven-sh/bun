@@ -6,6 +6,7 @@ use bun_jsc::{
     CallFrame, JSGlobalObject, JSValue, JsResult, MarkedArgumentBuffer, PinnedArrayBuffer,
     RangeErrorOptions, StringJsc as _,
 };
+use bun_paths::{self as paths};
 // Note: the `bun_md` crate's lib.rs is a
 // thin mod-decl shim, so alias the `root` module (which re-exports BlockType,
 // SpanType, TextType, SpanDetail, Renderer, helpers, types, ansi, …) as `md`.
@@ -109,8 +110,8 @@ pub(crate) fn set_max_markdown_block_bytes_for_testing(
 
 /// `Bun.markdown.ansi(text, theme?)` — render markdown to an ANSI-colored
 /// terminal string. `theme` is an optional object: `{ colors?, hyperlinks?,
-/// light?, columns? }`. By default colors are enabled, hyperlinks are
-/// disabled (the caller doesn't know if stdout is a TTY), and columns is 80.
+/// kittyGraphics?, light?, columns?, cwd? }`. Defaults: colors on,
+/// hyperlinks off, columns 80, `cwd` = process cwd.
 #[bun_jsc::host_fn]
 pub(crate) fn render_to_ansi(
     global_this: &JSGlobalObject,
@@ -143,6 +144,12 @@ pub(crate) fn render_to_ansi(
         remote_image_paths: None,
         image_base_dir: None,
     };
+    // cwd storage outlives the `&[u8]` slice stored in
+    // `theme.image_base_dir`, which is read until render returns.
+    let mut cwd_abs_buf = paths::path_buffer_pool::get();
+    let mut cwd_owned: Vec<u8> = Vec::new();
+    let mut cwd_abs_len: usize = 0;
+    let mut cwd_is_owned = false;
     if theme_value.is_object() {
         if let Some(v) = theme_value.get_boolean_loose(global_this, "colors")? {
             theme.colors = v;
@@ -166,6 +173,42 @@ pub(crate) fn render_to_ansi(
                 };
             }
         }
+        // `image_base_dir` must be absolute (the downstream join asserts
+        // that on Windows), so a relative `cwd` is resolved against the
+        // process cwd here. Length checks guard the fixed-size PathBuffer
+        // joins — over-long input drops to the process-cwd fallback
+        // rather than panicking.
+        if let Some(cwd_val) = theme_value.get(global_this, "cwd")? {
+            if cwd_val.is_string() {
+                let cwd_str = cwd_val.to_slice(global_this)?;
+                let cwd_bytes = cwd_str.slice();
+                if !cwd_bytes.is_empty() && cwd_bytes.len() < paths::MAX_PATH_BYTES {
+                    if paths::is_absolute(cwd_bytes) {
+                        cwd_owned = cwd_bytes.to_vec();
+                        cwd_is_owned = true;
+                    } else {
+                        let mut proc_cwd_buf = paths::path_buffer_pool::get();
+                        // _checked: even a short relative cwd can overflow
+                        // once joined with a long process cwd.
+                        if let Ok(proc_cwd) = bun_core::getcwd(&mut proc_cwd_buf) {
+                            if let Some(joined) = paths::resolve_path::join_abs_string_buf_checked::<
+                                paths::resolve_path::platform::Auto,
+                            >(
+                                proc_cwd, &mut cwd_abs_buf, &[cwd_bytes]
+                            ) {
+                                cwd_abs_len = joined.len();
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    // Wired outside the block above so the borrows live long enough.
+    if cwd_is_owned {
+        theme.image_base_dir = Some(cwd_owned.as_slice());
+    } else if cwd_abs_len > 0 {
+        theme.image_base_dir = Some(&cwd_abs_buf[..cwd_abs_len]);
     }
 
     let result = match md::render_to_ansi(input, md::Options::TERMINAL, theme) {

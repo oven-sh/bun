@@ -210,9 +210,9 @@ pub mod lexer_step {
     #[cold]
     #[inline(never)]
     pub fn next_codepoint_multibyte(contents: &[u8], current: &mut usize, first: u8) -> CodePoint {
-        let len = contents.len();
+        let tail = &contents[*current..];
+        debug_assert_eq!(tail.first(), Some(&first));
         let cp_len = wtf8_byte_sequence_length_with_invalid(first) as usize;
-        let avail = len - *current;
 
         // The ASCII fast path above handled `first < 0x80`; here `first >= 0x80` but `cp_len`
         // may still be 1 for invalid lead bytes (0x80-0xBF, 0xF8-0xFF) — those must yield the
@@ -220,23 +220,13 @@ pub mod lexer_step {
         // arm instead of silently emitting TEndOfFile mid-stream.
         let code_point: CodePoint = if cp_len == 1 {
             first as CodePoint
-        } else if avail < cp_len {
+        } else if let Some(sequence) = tail.get(..cp_len) {
+            let mut quad = [0u8; 4];
+            quad[..cp_len].copy_from_slice(sequence);
+            decode_wtf8_rune_t_multibyte(quad, cp_len as u8, UNICODE_REPLACEMENT as CodePoint)
+        } else {
             // truncated multibyte at EOF
             -1
-        } else {
-            let mut quad = [0u8; 4];
-            // SAFETY: `*current < len` (checked by caller), `cp_len ∈ 2..=4`, and
-            // `avail >= cp_len`, so `contents[current..current + cp_len]` is in-bounds.
-            // `decode_wtf8_rune_t_multibyte` only dereferences `p[0..len]`; pad bytes are
-            // never read.
-            unsafe {
-                core::ptr::copy_nonoverlapping(
-                    contents.as_ptr().add(*current),
-                    quad.as_mut_ptr(),
-                    cp_len,
-                );
-            }
-            decode_wtf8_rune_t_multibyte(quad, cp_len as u8, UNICODE_REPLACEMENT as CodePoint)
         };
 
         *current += if code_point != UNICODE_REPLACEMENT as CodePoint {
@@ -2773,5 +2763,61 @@ mod tests {
         assert_eq!(out, &[0xD800][..]);
         let out = super::convert_utf8_to_utf16_in_buffer(&mut buf, b"\xC3\xA9\xF0\x9F\x98\x80");
         assert_eq!(out, &[0x00E9, 0xD83D, 0xDE00][..]);
+    }
+
+    // `lexer_step` is pure Rust, so unlike the simdutf-backed test above these run under
+    // `cargo miri test -p bun_core -- lexer_step` (the native test target does not link).
+
+    /// Steps once from `at`, as the lexer does after reading the non-ASCII byte there.
+    /// Returns the code point and where the cursor was left.
+    fn lexer_step(contents: &[u8], at: usize) -> (super::CodePoint, usize) {
+        let mut current = at;
+        let code_point =
+            super::lexer_step::next_codepoint_multibyte(contents, &mut current, contents[at]);
+        (code_point, current)
+    }
+
+    #[test]
+    fn lexer_step_decodes_a_well_formed_sequence_and_steps_over_it() {
+        assert_eq!(lexer_step(b"\xC3\xA9", 0), (0xE9, 2));
+        assert_eq!(lexer_step(b"\xE2\x82\xAC;", 0), (0x20AC, 3));
+        assert_eq!(lexer_step(b"a=\xF0\x9F\x98\x80", 2), (0x1F600, 6));
+        // WTF-8: an encoded surrogate is a code point of its own.
+        assert_eq!(lexer_step(b"\xED\xA0\x80", 0), (0xD800, 3));
+    }
+
+    #[test]
+    fn lexer_step_yields_a_byte_that_cannot_lead_a_sequence_as_itself() {
+        assert_eq!(lexer_step(b"\x80", 0), (0x80, 1));
+        assert_eq!(lexer_step(b"a\xFF", 1), (0xFF, 2));
+    }
+
+    #[test]
+    fn lexer_step_replaces_an_ill_formed_sequence_and_steps_over_its_lead_byte_only() {
+        assert_eq!(lexer_step(b"\xC3A", 0), (0xFFFD, 1));
+        assert_eq!(lexer_step(b"\xE2\x82A", 0), (0xFFFD, 1));
+        assert_eq!(lexer_step(b"\xC0\x80", 0), (0xFFFD, 1));
+        assert_eq!(lexer_step(b"a\xF4\x90\x80\x80", 1), (0xFFFD, 2));
+    }
+
+    #[test]
+    fn lexer_step_reports_eof_for_a_sequence_cut_off_by_the_end_of_input() {
+        for (contents, at) in [(&b"\xC3"[..], 0), (b"\xE2\x82", 0), (b"a\xF0\x9F\x98", 1)] {
+            let (code_point, current) = lexer_step(contents, at);
+            assert_eq!(code_point, -1, "{contents:?}");
+            // The lexer's next step must then see EOF rather than step again.
+            assert!(current >= contents.len(), "{contents:?}");
+        }
+    }
+
+    // The slice bounds check is what keeps this safe fn memory-safe for any caller, so it
+    // has to be the thing that fires (it survives release builds; arithmetic overflow
+    // checks do not).
+    #[test]
+    #[should_panic(expected = "out of range for slice")]
+    fn lexer_step_rejects_a_cursor_past_the_end_of_input() {
+        let contents = b"\xF0\x9F\x98\x80";
+        let mut current = contents.len() + 1;
+        super::lexer_step::next_codepoint_multibyte(contents, &mut current, contents[0]);
     }
 }

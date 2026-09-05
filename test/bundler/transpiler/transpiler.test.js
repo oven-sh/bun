@@ -1665,6 +1665,285 @@ function foo() {}
       exp("let x: abstract new <T>() => Foo<T>", "let x");
     });
 
+    // Every member the "declare" modifier is not valid on is rejected instead of being
+    // silently deleted from the class. Matches esbuild's ts_parser_test.go.
+    describe.each(["declare ", "declare static ", "static declare "])(
+      "%sis only valid on a plain class field",
+      modifiers => {
+        const err = ts.expectParseError;
+
+        it("rejects a method", () => {
+          err(`class Foo { ${modifiers}foo() }`, '"declare" cannot be used with a method');
+          err(`class Foo { ${modifiers}foo() { console.log("ran") } }`, '"declare" cannot be used with a method');
+          err(`class Foo { ${modifiers}foo?(): void }`, '"declare" cannot be used with a method');
+          err(`class Foo { ${modifiers}async foo() {} }`, '"declare" cannot be used with a method');
+          err(`class Foo { ${modifiers}*foo() {} }`, '"declare" cannot be used with a method');
+          err(`class Foo { ${modifiers}['foo']() {} }`, '"declare" cannot be used with a method');
+        });
+
+        it("rejects a getter and a setter", () => {
+          err(`class Foo { ${modifiers}get foo() { return 1 } }`, '"declare" cannot be used with a getter');
+          err(`class Foo { ${modifiers}set foo(v) {} }`, '"declare" cannot be used with a setter');
+        });
+
+        it("rejects a private identifier", () => {
+          err(`class Foo { ${modifiers}#foo }`, '"declare" cannot be used with a private identifier');
+          err(`class Foo { ${modifiers}#foo = 1 }`, '"declare" cannot be used with a private identifier');
+        });
+
+        it("rejects an index signature", () => {
+          err(`class Foo { ${modifiers}[foo: string]: number }`, '"declare" cannot be used with an index signature');
+        });
+      },
+    );
+
+    it("declare is not valid on a static block", () => {
+      const err = ts.expectParseError;
+      err('class Foo { declare static { console.log("ran") } }', '"declare" cannot be used with a static block');
+      err('class Foo { static declare { console.log("ran") } }', 'Expected ";" but found "{"');
+    });
+
+    it("declare on a plain class field is erased", () => {
+      const exp = ts.expectPrinted_;
+      const err = ts.expectParseError;
+
+      // The second "declare" is a field name, not a modifier.
+      err("class Foo { declare declare foo }", 'Expected ";" but found "foo"');
+
+      // Plain fields are still erased, with or without an initializer.
+      exp("class Foo { declare foo }", "class Foo {\n}");
+      exp("class Foo { declare foo: number }", "class Foo {\n}");
+      exp("class Foo { declare foo = 1 }", "class Foo {\n}");
+      exp("class Foo { declare foo?: number }", "class Foo {\n}");
+      exp("class Foo { declare foo!: number }", "class Foo {\n}");
+      exp("class Foo { declare [foo]: number }", "class Foo {\n}");
+      exp("class Foo { declare 'foo': number }", "class Foo {\n}");
+      exp("class Foo { declare static foo: number }", "class Foo {\n}");
+      exp("class Foo { static declare foo = 1 }", "class Foo {\n}");
+      // A newline after "declare" makes it a field named "declare".
+      exp("class Foo { declare\n foo() { return 1 } }", "class Foo {\n  declare;\n  foo() {\n    return 1;\n  }\n}");
+      // A quoted key, or a key in an object literal, is a plain property name.
+      exp("class Foo { 'declare'() { return 1 } }", "class Foo {\n  declare() {\n    return 1;\n  }\n}");
+      exp("x = { declare() { return 1 } }", "x = { declare() {\n  return 1;\n} }");
+      exp("x = { declare: 1, get declare2() { return 1 } }", "x = { declare: 1, get declare2() {\n  return 1;\n} }");
+    });
+
+    it("definite assignment assertion forces a class field", () => {
+      const exp = ts.expectPrinted_;
+      const err = ts.expectParseError;
+
+      exp("class Foo { a?; b!; x?() {} }", "class Foo {\n  a;\n  b;\n  x() {}\n}");
+      exp("class Foo { foo!: number }", "class Foo {\n  foo;\n}");
+      exp("class Foo { foo!: number = 0 }", "class Foo {\n  foo = 0;\n}");
+      exp("class Foo { static foo!: number }", "class Foo {\n  static foo;\n}");
+      exp("class Foo { foo?(): void {} }", "class Foo {\n  foo() {}\n}");
+      exp("class Foo { foo?<T>() {} }", "class Foo {\n  foo() {}\n}");
+      exp("class Foo { [foo]?<T>() {} }", "class Foo {\n  [foo]() {}\n}");
+
+      // "foo!" can only be a field, so a method body after it is an error.
+      err("class Foo { foo!() {} }", 'Expected ";" but found "("');
+      err("class Foo { a?; b!; x?() {}  y!() {} }", 'Expected ";" but found "("');
+      err("class Foo { static foo!() {} }", 'Expected ";" but found "("');
+      err("class Foo { foo!<T>() {} }", 'Expected ";" but found "<"');
+      err("class Foo { [foo]!<T>() {} }", 'Expected ";" but found "<"');
+      err("class Foo { accessor foo!() {} }", 'Expected ";" but found "("');
+      err("class Foo { *foo!() {} }", 'Expected "(" but found "!"');
+      err("class Foo { get foo!() {} }", 'Expected "(" but found "!"');
+      err("class Foo { set foo!(x) {} }", 'Expected "(" but found "!"');
+      err("class Foo { async foo!() {} }", 'Expected "(" but found "!"');
+    });
+
+    it("type argument lists need an argument and reject a trailing comma", () => {
+      const exp = ts.expectPrinted_;
+      const err = ts.expectParseError;
+
+      exp("const t = Array<number>;", "const t = Array;\n");
+      exp("const t = Array<number, string>;", "const t = Array;\n");
+      exp("const t = Array<number>();", "const t = Array();\n");
+      exp("const t = Array<Array<number>>();", "const t = Array();\n");
+      exp("let x: Array<number> = [];", "let x = [];\n");
+      // Type parameter lists still allow the trailing comma.
+      exp("let f = <T,>() => {};", "let f = () => {};\n");
+
+      err("const t1 = Array<number,>;", 'Expected identifier but found ">"');
+      err("const t2 = Array< >;", "Unexpected >");
+      err("const t3 = Array< , >;", "Unexpected ,");
+      err("const t4 = Array<number,>();", 'Expected identifier but found ">"');
+      err("const t5 = Array< >();", "Unexpected >");
+      err("const t6 = f<T,>;", 'Expected identifier but found ">"');
+      err("let x: Array<number,> = [];", "Unexpected >");
+      err("let x: Array<> = [];", "Unexpected >");
+    });
+
+    it("function type parameters reject a reserved word as a binding", () => {
+      const exp = ts.expectPrinted_;
+      const err = ts.expectParseError;
+
+      exp("type T = ({ ...rest }) => {};", "");
+      exp("type T = ({ if: x }) => {};", "");
+      exp("type T = ({ if: x, 'else': y, 1: z }) => {};", "");
+      exp("type T = ([a, ...b]) => {};", "");
+
+      err("type T = ({ ...if }) => {};", "Unexpected ...");
+      err("type T = ({ if }) => {};", 'Expected ";" but found "=>"');
+      err("type T = ([...if]) => {};", "Unexpected if");
+      err("type T = { foo(1): void };", "Unexpected 1");
+    });
+
+    it("standard decorators are not valid on a class member TypeScript erases", () => {
+      const err = ts.expectParseError;
+
+      err("class Foo { @dec declare foo: any; @dec bar: any }", "Decorators are not valid here");
+      err("class Foo { @dec declare static foo: any }", "Decorators are not valid here");
+      err("class Foo { @dec static declare foo: any }", "Decorators are not valid here");
+      err("abstract class Foo { @dec abstract foo: any }", "Decorators are not valid here");
+      err("abstract class Foo { @dec abstract foo(): void }", "Decorators are not valid here");
+      err("class Foo { @dec foo(): void; @dec foo(): void {} }", "Decorators are not valid here");
+      err("class Foo { @dec [key: string]: any }", "Decorators are not valid here");
+      // A "declare class" body is erased as a whole.
+      ts.expectPrinted_("declare class Foo { @dec declare foo: any; @dec bar(): void }", "");
+    });
+
+    describe("TypeScript experimental decorators on a declare or abstract field", () => {
+      // The decorator call is kept and the field is still erased.
+      const legacy = new Bun.Transpiler({
+        loader: "ts",
+        tsconfig: { compilerOptions: { experimentalDecorators: true } },
+      });
+
+      it.each([
+        "class Foo { @dec declare foo: any; @dec bar: any }",
+        "abstract class Foo { @dec abstract foo: any; @dec bar: any }",
+      ])("keep the decorator call for %s", code => {
+        const out = legacy.transformSync(code);
+        expect(out).toContain("class Foo {\n}");
+        expect(out).toContain('Foo.prototype, "foo", undefined);');
+        expect(out).toContain('Foo.prototype, "bar", undefined);');
+      });
+
+      it.each([
+        "class Foo { @dec foo(): void; @dec foo(): void {} }",
+        "abstract class Foo { @dec abstract foo(): void }",
+      ])("are still rejected on %s", code => {
+        expect(() => legacy.transformSync(code)).toThrow("Decorators are not valid here");
+      });
+    });
+
+    describe("the .mts and .cts extensions", () => {
+      // TypeScript 4.5 rejects the expressions that start with "<" and that a
+      // ".tsx" file would read as a JSX element: the "<T>x" cast and the
+      // "<T>() => {}" arrow function. "<T,>" and "<T extends X>" stay allowed.
+      const message = 'This syntax is not allowed in files with the ".mts" or ".cts" extension';
+      const allowedSource = `
+        const f1 = <T,>(x: T) => x;
+        const f2 = <T extends string>(x: T) => x;
+        const f3 = <T, U>(x: T, y: U) => [x, y];
+        const f4 = <const T,>(x: T) => x;
+        const f5 = async <T,>(x: T) => x;
+        const f6 = async <T extends string>(x: T) => x;
+        const a = 1, b = 2, c = 3;
+        const g = a < b;
+        const h = (a < b) > c;
+        const arr = new Array<number>(1);
+        console.log(JSON.stringify([f1(1), f2("s"), f3(1, 2), f4(3), g, h, arr.length, (1 as any) + 1, typeof f5, typeof f6]));
+      `;
+      // [file, source, stdout when run (null when the file is rejected)]
+      const cases = [
+        ["cast.mts", "let y = 1; let a = <any>y;", null],
+        ["cast.cts", "let y = 1; let a = <any>y;", null],
+        ["arrow.mts", "let f = <T>() => {};", null],
+        ["arrow.cts", "let f = <T>() => {};", null],
+        ["arrow-args.mts", "let f = <T>(x: T) => x;", null],
+        ["arrow-args.cts", "let f = <T>(x: T) => x;", null],
+        ["async-arrow.mts", "let f = async <T>() => {};", null],
+        ["async-arrow.cts", "let f = async <T>() => {};", null],
+        ["async-arrow-args.mts", "let f = async <T>(x: T) => x;", null],
+        ["async-arrow-args.cts", "let f = async <T>(x: T) => x;", null],
+        // A call of a function named "async" with type arguments is not an arrow function.
+        [
+          "async-call.mts",
+          "const async = <T,>(x: T) => x; console.log(async<number>(42), async<string>('s'));",
+          "42 s",
+        ],
+        [
+          "async-call.cts",
+          "const async = <T,>(x: T) => x; console.log(async<number>(42), async<string>('s'));",
+          "42 s",
+        ],
+        ["allowed.mts", allowedSource, '[1,"s",[1,2],3,true,false,1,2,"function","function"]'],
+        ["allowed.cts", allowedSource, '[1,"s",[1,2],3,true,false,1,2,"function","function"]'],
+        [
+          "allowed.ts",
+          "let y = 1; let a = <any>y; let f = <T>() => a; console.log(JSON.stringify([a, f()]));",
+          "[1,1]",
+        ],
+      ];
+
+      async function run(cmd, cwd) {
+        await using proc = Bun.spawn({ cmd, env: bunEnv, cwd, stdout: "pipe", stderr: "pipe" });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        return { stdout, stderr, exitCode };
+      }
+
+      describe.each(cases)("%s", (file, source, expected) => {
+        it.concurrent("bun build", async () => {
+          using dir = tempDir("ts-no-ambiguous-less-than-build", { [file]: source });
+          const { stderr, exitCode } = await run([bunExe(), "build", "--no-bundle", file], String(dir));
+          if (expected === null) {
+            expect({ hasError: stderr.includes(message), exitCode }).toEqual({ hasError: true, exitCode: 1 });
+          } else {
+            expect({ stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
+          }
+        });
+
+        it.concurrent("bun run", async () => {
+          using dir = tempDir("ts-no-ambiguous-less-than-run", { [file]: source });
+          const { stdout, stderr, exitCode } = await run([bunExe(), file], String(dir));
+          if (expected === null) {
+            expect({ hasError: stderr.includes(message), exitCode }).toEqual({ hasError: true, exitCode: 1 });
+          } else {
+            expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({ stdout: expected, stderr: "", exitCode: 0 });
+          }
+        });
+      });
+    });
+
+    describe.each([
+      [
+        "a declare method",
+        `class B { declare foo() { console.log("ran") } }
+         new B().foo();`,
+        '"declare" cannot be used with a method',
+      ],
+      [
+        "a standard decorator on a declare field",
+        `function d(v: any, ctx: any) { console.log("dec", ctx.kind, ctx.name) }
+         class F { @d declare foo: any; @d bar: any }
+         console.log(Object.keys(new F()));`,
+        "Decorators are not valid here",
+      ],
+    ])("%s is an error at runtime too", (_name, source, expected) => {
+      it.concurrent("bun run", async () => {
+        using dir = tempDir("ts-declare-class-member", {
+          "index.ts": source,
+          "tsconfig.json": `{ "compilerOptions": { "experimentalDecorators": false } }`,
+        });
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), "index.ts"],
+          env: bunEnv,
+          cwd: String(dir),
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect({ stdout, hasError: stderr.includes(expected), exitCode }).toEqual({
+          stdout: "",
+          hasError: true,
+          exitCode: 1,
+        });
+      });
+    });
+
     it("as", () => {
       const exp = ts.expectPrinted_;
       exp("x as 1 < 1", "x < 1");

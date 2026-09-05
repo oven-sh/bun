@@ -5,7 +5,6 @@
 
 namespace v8 {
 
-class HandleScope;
 class Context;
 class Value;
 class String;
@@ -15,6 +14,7 @@ class Isolate;
 
 namespace shim {
 class GlobalInternals;
+class HandleScopeBuffer;
 }
 
 // v8-callbacks.h
@@ -90,7 +90,8 @@ public:
     Zig::GlobalObject* globalObject() { return m_globalObject; }
     JSC::VM& vm() { return globalObject()->vm(); }
     shim::GlobalInternals* globalInternals() { return m_globalInternals; }
-    HandleScope* currentHandleScope();
+    // The innermost open handle scope, where new handles go (see GlobalInternals::currentHandleScope).
+    shim::HandleScopeBuffer* currentHandleScope();
 
     TaggedPointer* undefinedSlot() { return &m_roots[Isolate::kUndefinedValueRootIndex]; }
 

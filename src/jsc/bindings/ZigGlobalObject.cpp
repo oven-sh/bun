@@ -2375,8 +2375,8 @@ void GlobalObject::finishCreation(VM& vm)
         { OBJECT_OFFSETOF(GlobalObject, m_JSBunRequestStructure), [](const LazyProperty<JSGlobalObject, Structure>::Initializer& init) {
              init.set(Bun::createJSBunRequestStructure(init.vm, static_cast<Zig::GlobalObject*>(init.owner)));
          } },
-        { OBJECT_OFFSETOF(GlobalObject, m_NapiHandleScopeImplStructure), [](const LazyProperty<JSGlobalObject, Structure>::Initializer& init) {
-             init.set(Bun::NapiHandleScopeImpl::createStructure(init.vm, init.owner));
+        { OBJECT_OFFSETOF(GlobalObject, m_HandleScopeImplStructure), [](const LazyProperty<JSGlobalObject, Structure>::Initializer& init) {
+             init.set(Bun::HandleScopeImpl::createStructure(init.vm, init.owner));
          } },
         { OBJECT_OFFSETOF(GlobalObject, m_NapiTypeTagStructure), [](const LazyProperty<JSGlobalObject, Structure>::Initializer& init) {
              init.set(Bun::NapiTypeTag::createStructure(init.vm, init.owner));
@@ -4237,7 +4237,7 @@ napi_env GlobalObject::makeNapiEnvForFFI()
 // collected, but its NapiEnvs may outlive it — GC-enqueued NapiFinalizerTasks
 // hold Ref<NapiEnv> and run on the event loop while loading the *next* file.
 // NapiEnv::m_globalObject is a raw pointer; Finalizer.run opens a
-// NapiHandleScope through it, which writes m_currentNapiHandleScopeImpl on the
+// NapiHandleScope through it, which writes m_currentHandleScopeImpl on the
 // dead old global and trips `ASSERT(isMarked(cell))` in
 // Heap::addToRememberedSet (release: the concurrent marker later visits it and
 // segfaults at offset 0x68/0xD0). Retarget every env to the new global and

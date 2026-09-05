@@ -36,7 +36,7 @@ uintptr_t* GlobalizeReference(internal::Isolate* i_isolate, uintptr_t address)
 {
     auto* isolate = reinterpret_cast<Isolate*>(i_isolate);
     auto* globalHandles = isolate->globalInternals()->globalHandles();
-    TaggedPointer* newSlot = globalHandles->createHandleFromExistingObject(TaggedPointer::fromRaw(address), isolate);
+    TaggedPointer* newSlot = globalHandles->createHandleFromExistingObject(TaggedPointer::fromRaw(address));
     return newSlot->asRawPtrLocation();
 }
 

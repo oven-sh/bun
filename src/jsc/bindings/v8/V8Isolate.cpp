@@ -172,7 +172,7 @@ Isolate::Isolate(shim::GlobalInternals* globalInternals)
     m_roots[kFalseValueRootIndex] = TaggedPointer(&globalInternals->m_falseValue);
 }
 
-HandleScope* Isolate::currentHandleScope()
+shim::HandleScopeBuffer* Isolate::currentHandleScope()
 {
     return m_globalInternals->currentHandleScope();
 }

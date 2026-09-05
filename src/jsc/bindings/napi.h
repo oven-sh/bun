@@ -464,7 +464,7 @@ public:
     // gcUnprotect()s the previous one. NapiEnv outlives its owning global —
     // GC-enqueued NapiFinalizerTasks hold a Ref<NapiEnv> and run on the event
     // loop *after* the swap. Finalizer.run opens a NapiHandleScope via
-    // env->globalObject(), which would write m_currentNapiHandleScopeImpl on
+    // env->globalObject(), which would write m_currentHandleScopeImpl on
     // the now-dead old global and trip a write barrier on an unmarked cell
     // (debug: `ASSERT(isMarked(cell))` in Heap::addToRememberedSet; release:
     // segfault when the marker later walks it). The isolation swap calls this
@@ -696,7 +696,7 @@ static inline Zig::GlobalObject* toJS(napi_env val)
 static inline napi_value toNapi(JSC::JSValue val, Zig::GlobalObject* globalObject)
 {
     if (val.isCell()) {
-        if (auto* scope = globalObject->m_currentNapiHandleScopeImpl.get()) {
+        if (auto* scope = globalObject->m_currentHandleScopeImpl.get()) {
             scope->append(val);
         }
     }

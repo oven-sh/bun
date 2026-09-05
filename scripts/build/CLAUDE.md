@@ -193,6 +193,7 @@ Split CI modes: `rust-only` (path deps+codegen+cargo → libbun_runtime.a), `cpp
 | `cargo-config.ts`              | Generates the git-ignored `.cargo/config.toml` (per-target `linker` from `cfg.hostCxx`)                                 |
 | `bun.ts`                       | `emitBun()` — assembles deps+codegen+rust+compile+link                                                                  |
 | `shims.ts`                     | Platform/toolchain workaround dylibs, `emitShims()`                                                                     |
+| `exception-lint.ts`            | jsc-exception-lint clang plugin: its build edge and the flags bun's cxx edges load it with, `emitExceptionLint()`       |
 | `workarounds.ts`               | Self-obsoleting workaround registry, `checkWorkarounds()`                                                               |
 | `macos-sdk.ts`                 | macOS SDK resolution/download for darwin cross-compiles — `resolveMacosSdkPath()`, `ensureMacosSdk()`                   |
 | `features-json.ts`             | Host-side `features.json` for cross lanes — `parsePackedFeaturesList()`, `crossFeaturesJson()`                          |

@@ -1,0 +1,63 @@
+# jsc-exception-lint findings that are known and tolerated while they are being fixed.
+# One per line: <file relative to the repo root>\t<function>\t<kind>\t<callee>.
+# The build warns about an entry that no longer fires: remove it then. Do not add
+# to this file to silence a new finding; fix it, or add the callee to nothrow.txt
+# if it cannot throw.
+src/jsc/bindings/Algo/Tuple.h	Bun::Algo::Tuple::detail::forEachIndexedImpl(Tuple &&, Func &&, index_sequence)	pending-call	<lambda at Undici.cpp>
+src/jsc/bindings/ErrorCode.cpp	Bun::determineSpecificType(JSC::VM &, JSC::JSGlobalObject *, WTF::StringBuilder &, JSC::JSValue)	unchecked-exit	Bun::JSValueToStringSafe
+src/jsc/bindings/ErrorCode.cpp	Bun::jsFunctionMakeErrorWithCode(JSC::JSGlobalObject *, JSC::CallFrame *)	pending-call	Bun::JSValueToStringSafe
+src/jsc/bindings/ErrorCode.cpp	Bun::jsFunctionMakeErrorWithCode(JSC::JSGlobalObject *, JSC::CallFrame *)	pending-call	JSC::JSObject::getIndex
+src/jsc/bindings/ErrorCode.cpp	Bun::jsFunctionMakeErrorWithCode(JSC::JSGlobalObject *, JSC::CallFrame *)	pending-call	JSC::JSValue::toString
+src/jsc/bindings/ErrorCode.cpp	Bun::jsFunctionMakeErrorWithCode(JSC::JSGlobalObject *, JSC::CallFrame *)	pending-call	JSC::JSValue::toWTFString
+src/jsc/bindings/ErrorCode.cpp	Bun::jsFunctionMakeErrorWithCode(JSC::JSGlobalObject *, JSC::CallFrame *)	pending-call	JSC::throwTypeError
+src/jsc/bindings/ErrorCode.cpp	Bun::jsFunctionMakeErrorWithCode(JSC::JSGlobalObject *, JSC::CallFrame *)	unchecked-exit	JSC::JSValue::toInt32
+src/jsc/bindings/JSBufferEncodingType.cpp	WebCore::parseEnumerationAllowBufferInternal(JSC::JSGlobalObject &, JSC::JSValue)	pending-call	JSC::JSString::view
+src/jsc/bindings/JSMockFunction.cpp	Bun::jsMockFunctionCall(JSC::JSGlobalObject *, JSC::CallFrame *)	unchecked-exit	JSC::JSObject::putDirectIndex
+src/jsc/bindings/JSMockFunction.cpp	Bun::jsMockFunctionGetter_mockGetLastCall(JSC::JSGlobalObject *, JSC::CallFrame *)	unchecked-exit	JSC::JSObject::getIndex
+src/jsc/bindings/JSMockFunction.cpp	Bun::jsMockFunctionWithImplementation(JSC::JSGlobalObject *, JSC::CallFrame *)	pending-call	JSC::call
+src/jsc/bindings/NodeVM.cpp	Bun::NodeVM::constructAnonymousFunction(JSC::JSGlobalObject *, const JSC::ArgList &, const JSC::SourceOrigin &, Bun::CompileFunctionOptions &&, JSC::SourceTaintedOrigin, JSC::JSScope *)	pending-call	JSC::ProgramCodeBlock::create
+src/jsc/bindings/NodeVM.cpp	Bun::NodeVM::constructAnonymousFunction(JSC::JSGlobalObject *, const JSC::ArgList &, const JSC::SourceOrigin &, Bun::CompileFunctionOptions &&, JSC::SourceTaintedOrigin, JSC::JSScope *)	unchecked-exit	JSC::CodeCache::getUnlinkedProgramCodeBlock
+src/jsc/bindings/NodeVMScript.cpp	Bun::constructScript(JSC::JSGlobalObject *, JSC::CallFrame *, JSC::JSValue)	pending-call	JSC::ProgramCodeBlock::create
+src/jsc/bindings/NodeVMScript.cpp	Bun::constructScript(JSC::JSGlobalObject *, JSC::CallFrame *, JSC::JSValue)	unchecked-exit	JSC::decodeCodeBlock
+src/jsc/bindings/NodeVMSourceTextModule.cpp	Bun::NodeVMSourceTextModule::create(JSC::VM &, JSC::JSGlobalObject *, JSC::ArgList)	pending-call	Bun::throwError
+src/jsc/bindings/NodeVMSourceTextModule.cpp	Bun::NodeVMSourceTextModule::create(JSC::VM &, JSC::JSGlobalObject *, JSC::ArgList)	unchecked-exit	JSC::decodeCodeBlock
+src/jsc/bindings/ZigGlobalObject.cpp	Zig::jsFunctionToClass(JSC::JSGlobalObject *, JSC::CallFrame *)	unchecked-exit	JSC::JSObject::setPrototypeDirect
+src/jsc/bindings/ZigGlobalObject.cpp	Zig__GlobalObject__create(void *, int32_t, bool, bool, void *)	pending-call	Bun__setDefaultGlobalObject
+src/jsc/bindings/ZigGlobalObject.cpp	Zig__GlobalObject__createForTestIsolation(Zig::GlobalObject *, void *)	pending-call	Bun__setDefaultGlobalObject
+src/jsc/bindings/bindings.cpp	specialObjectsDequal(JSC::JSGlobalObject *, JSC::MarkedArgumentBuffer &, Vector &, JSC::ThrowScope &, JSC::JSCell * _Nonnull, JSC::JSCell * _Nonnull)	pending-call	JSC::JSOrderedHashTable::has
+src/jsc/bindings/bindings.cpp	specialObjectsDequal(JSC::JSGlobalObject *, JSC::MarkedArgumentBuffer &, Vector &, JSC::ThrowScope &, JSC::JSCell * _Nonnull, JSC::JSCell * _Nonnull)	pending-call	JSC::JSSetIterator::next
+src/jsc/bindings/bindings.cpp	specialObjectsDequal(JSC::JSGlobalObject *, JSC::MarkedArgumentBuffer &, Vector &, JSC::ThrowScope &, JSC::JSCell * _Nonnull, JSC::JSCell * _Nonnull)	pending-call	JSC::sameValue
+src/jsc/bindings/napi.cpp	napi_call_function(napi_env, napi_value, napi_value, size_t, const napi_value *, napi_value *)	scope-while-pending	NapiEnv::throwPendingException
+src/jsc/bindings/napi.cpp	napi_get_all_property_names(napi_env, napi_value, napi_key_collection_mode, napi_key_filter, napi_key_conversion, napi_value *)	pending-call	JSC::JSArray::push
+src/jsc/bindings/napi.cpp	napi_get_all_property_names(napi_env, napi_value, napi_key_collection_mode, napi_key_filter, napi_key_conversion, napi_value *)	pending-call	JSC::JSObject::get
+src/jsc/bindings/napi.cpp	napi_get_all_property_names(napi_env, napi_value, napi_key_collection_mode, napi_key_filter, napi_key_conversion, napi_value *)	pending-call	JSC::JSObject::getDirectIndex
+src/jsc/bindings/napi.cpp	napi_get_all_property_names(napi_env, napi_value, napi_key_collection_mode, napi_key_filter, napi_key_conversion, napi_value *)	pending-call	JSC::JSObject::getOwnPropertyDescriptor
+src/jsc/bindings/napi.cpp	napi_get_all_property_names(napi_env, napi_value, napi_key_collection_mode, napi_key_filter, napi_key_conversion, napi_value *)	pending-call	JSC::JSString::value
+src/jsc/bindings/napi.cpp	napi_get_all_property_names(napi_env, napi_value, napi_key_collection_mode, napi_key_filter, napi_key_conversion, napi_value *)	pending-call	JSC::JSValue::toPropertyKey
+src/jsc/bindings/napi.cpp	napi_new_instance(napi_env, napi_value, size_t, const napi_value *, napi_value *)	unchecked-exit	nested ThrowScope
+src/jsc/bindings/sqlite/JSSQLStatement.cpp	WebCore::rebindStatement(JSC::JSGlobalObject *, JSC::JSValue, JSC::ThrowScope &, sqlite3 *, VersionSqlite3 *, sqlite3_stmt *, WebCore::SQLiteBindingsMap &, bool, WebCore::JSSQLStatement *)	pending-call	WebCore::rebindValue
+src/jsc/bindings/sqlite/NodeSqlite.cpp	Bun::jsNodeSqliteBackup(JSC::JSGlobalObject *, JSC::CallFrame *)	thrown-call	<lambda at NodeSqlite.cpp>
+src/jsc/bindings/sqlite/NodeSqlite.cpp	Bun::nodeSqliteAuthorizerCallback(void *, int, const char *, const char *, const char *, const char *)	unchecked-exit	<lambda at NodeSqlite.cpp>
+src/jsc/bindings/v8/V8CpuProfiler.cpp	v8::CpuProfiler::StopProfiling(Local)	pending-call	v8::CpuProfiler::Stop
+src/jsc/bindings/v8/V8Isolate.cpp	v8::Isolate::ThrowError(Local)	pending-call	JSC::throwException
+src/jsc/bindings/webcore/JSMIMEParams.cpp	WebCore::jsMIMEParamsProtoFuncToString(JSC::JSGlobalObject *, JSC::CallFrame *)	pending-call	JSC::JSMapIterator::next
+src/jsc/bindings/webcore/JSMIMEParams.cpp	WebCore::jsMIMEParamsProtoFuncToString(JSC::JSGlobalObject *, JSC::CallFrame *)	pending-call	JSC::JSObject::getIndex
+src/jsc/bindings/webcore/JSMIMEParams.cpp	WebCore::jsMIMEParamsProtoFuncToString(JSC::JSGlobalObject *, JSC::CallFrame *)	pending-call	JSC::JSValue::toWTFString
+src/jsc/bindings/webcore/JSMIMEParams.cpp	WebCore::jsMIMEParamsProtoFuncToString(JSC::JSGlobalObject *, JSC::CallFrame *)	unchecked-exit	JSC::JSMapIterator::next
+src/jsc/modules/NodeUtilTypesModule.cpp	PartialDeepEqual::setSubset(JSC::JSGlobalObject *, JSC::MarkedArgumentBuffer &, PartialDeepEqual::CycleState &, JSC::ThrowScope &, JSC::JSValue, JSC::JSValue)	pending-call	JSC::JSSetIterator::next
+src/jsc/modules/NodeUtilTypesModule.cpp	PartialDeepEqual::setSubset(JSC::JSGlobalObject *, JSC::MarkedArgumentBuffer &, PartialDeepEqual::CycleState &, JSC::ThrowScope &, JSC::JSValue, JSC::JSValue)	pending-call	PartialDeepEqual::compareBranch
+src/jsc/modules/NodeUtilTypesModule.cpp	jsFunctionIsError(JSC::JSGlobalObject *, JSC::CallFrame *)	pending-call	JSC::JSObject::getPropertySlot
+src/jsc/modules/NodeUtilTypesModule.cpp	jsFunctionIsError(JSC::JSGlobalObject *, JSC::CallFrame *)	pending-call	JSC::JSObject::getPrototype
+src/jsc/modules/NodeUtilTypesModule.cpp	jsFunctionIsError(JSC::JSGlobalObject *, JSC::CallFrame *)	pending-call	JSC::JSString::value
+src/runtime/bake/BakeGlobalObject.cpp	Bake::bakeModuleLoaderFetch(JSC::JSGlobalObject *, JSC::JSModuleLoader *, JSC::JSValue, const WTF::String &, RefPtr, RefPtr)	unchecked-exit	Zig::GlobalObject::moduleLoaderFetch
+src/runtime/bake/BakeGlobalObject.cpp	Bake::bakeModuleLoaderImportModule(JSC::JSGlobalObject *, JSC::JSModuleLoader *, JSC::JSString *, RefPtr, const JSC::SourceOrigin &, bool)	pending-call	BakeProdResolve
+src/runtime/bake/BakeGlobalObject.cpp	Bake::bakeModuleLoaderImportModule(JSC::JSGlobalObject *, JSC::JSModuleLoader *, JSC::JSString *, RefPtr, const JSC::SourceOrigin &, bool)	pending-call	JSC::importModule
+src/runtime/bake/BakeGlobalObject.cpp	Bake::bakeModuleLoaderImportModule(JSC::JSGlobalObject *, JSC::JSModuleLoader *, JSC::JSString *, RefPtr, const JSC::SourceOrigin &, bool)	pending-call	Zig::GlobalObject::moduleLoaderImportModule
+src/runtime/bake/BakeGlobalObject.cpp	Bake::bakeModuleLoaderImportModule(JSC::JSGlobalObject *, JSC::JSModuleLoader *, JSC::JSString *, RefPtr, const JSC::SourceOrigin &, bool)	scope-while-pending	JSC::JSCell::getString
+src/runtime/bake/BakeGlobalObject.cpp	Bake::bakeModuleLoaderImportModule(JSC::JSGlobalObject *, JSC::JSModuleLoader *, JSC::JSString *, RefPtr, const JSC::SourceOrigin &, bool)	unchecked-exit	JSC::JSCell::getString
+src/runtime/bake/BakeGlobalObject.cpp	Bake::bakeModuleLoaderImportModule(JSC::JSGlobalObject *, JSC::JSModuleLoader *, JSC::JSString *, RefPtr, const JSC::SourceOrigin &, bool)	unchecked-exit	JSC::importModule
+src/runtime/bake/BakeGlobalObject.cpp	Bake::bakeModuleLoaderResolve(JSC::JSGlobalObject *, JSC::JSModuleLoader *, JSC::JSValue, JSC::JSValue, RefPtr, bool)	unchecked-exit	Zig::GlobalObject::moduleLoaderResolve
+src/runtime/bake/BakeSourceProvider.cpp	Bake::BakeGetDefaultExportFromModule(JSC::JSGlobalObject *, JSC::JSValue)	pending-call	JSC::JSObject::get
+src/runtime/bake/BakeSourceProvider.cpp	Bake::BakeGetModuleNamespace(JSC::JSGlobalObject *, JSC::JSValue)	pending-call	JSC::JSModuleLoader::getModuleNamespaceObject
+src/runtime/bake/BakeSourceProvider.cpp	Bake::BakeLoadModuleByKey(Bake::GlobalObject *, JSC::JSString *)	pending-call	JSC::loadAndEvaluateModule
+src/runtime/webview/JSWebViewConstructor.cpp	Bun::constructWebView(JSC::JSGlobalObject *, JSC::CallFrame *)	pending-call	<lambda at JSWebViewConstructor.cpp>

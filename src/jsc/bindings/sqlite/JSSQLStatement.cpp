@@ -987,6 +987,7 @@ static JSC::JSValue rebindObject(JSC::JSGlobalObject* globalObject, SQLiteBindin
                 return target->getDirectIndex(globalObject, i);
             }
 
+            const bool isPositional = name[0] == '?';
             if (trimLeadingPrefix) {
                 name += 1;
             }
@@ -994,9 +995,14 @@ static JSC::JSValue rebindObject(JSC::JSGlobalObject* globalObject, SQLiteBindin
             const WTF::String str = WTF::String::fromUTF8ReplacingInvalidSequences({ reinterpret_cast<const unsigned char*>(name), strlen(name) });
 
             if (trimLeadingPrefix && name[0] >= '0' && name[0] <= '9') {
-                auto integer = WTF::parseInteger<int32_t>(str, 10);
-                if (integer.has_value()) {
-                    return target->getDirectIndex(globalObject, integer.value() - 1);
+                if (isPositional) {
+                    auto integer = WTF::parseInteger<int32_t>(str, 10);
+                    if (integer.has_value()) {
+                        return target->getDirectIndex(globalObject, integer.value() - 1);
+                    }
+                } else if (auto index = JSC::parseIndex(*str.impl())) {
+                    // A canonical numeric key is an index property; getOwnNonIndexPropertySlot below cannot see it.
+                    return target->getDirectIndex(globalObject, *index);
                 }
             }
 

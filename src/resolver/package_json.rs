@@ -680,10 +680,11 @@ impl PackageJSON {
                 let mut has_globs = false;
                 let mut has_exact = false;
 
-                // First pass: check if we have glob patterns and exact patterns
+                // Webpack matches slashless patterns as "**/<pattern>", so they are always globs.
                 for item in items {
                     if let Some(name) = item.as_str() {
-                        if strings::contains_char(name, b'*')
+                        if !strings::contains_char(name, b'/')
+                            || strings::contains_char(name, b'*')
                             || strings::contains_char(name, b'?')
                             || strings::contains_char(name, b'[')
                             || strings::contains_char(name, b'{')
@@ -705,18 +706,19 @@ impl PackageJSON {
 
                     for item in items {
                         if let Some(name) = item.as_str() {
-                            // Skip CSS files as they're not relevant for tree-shaking
-                            if bun_paths::extension(name) == b".css" {
-                                continue;
-                            }
+                            let slashless = !strings::contains_char(name, b'/');
 
                             // Store the pattern relative to the package directory
-                            let joined: [&[u8]; 2] =
-                                [json_source.path.name().dir_with_trailing_slash(), name];
+                            let joined: [&[u8]; 3] = [
+                                json_source.path.name().dir_with_trailing_slash(),
+                                if slashless { b"**/" } else { b"" },
+                                name,
+                            ];
 
                             let pattern = r_fs.join(&joined);
 
-                            if strings::contains_char(name, b'*')
+                            if slashless
+                                || strings::contains_char(name, b'*')
                                 || strings::contains_char(name, b'?')
                                 || strings::contains_char(name, b'[')
                                 || strings::contains_char(name, b'{')
@@ -739,14 +741,16 @@ impl PackageJSON {
                     glob_list.reserve(items.len());
                     for item in items {
                         if let Some(name) = item.as_str() {
-                            // Skip CSS files as they're not relevant for tree-shaking
-                            if bun_paths::extension(name) == b".css" {
-                                continue;
-                            }
-
                             // Store the pattern relative to the package directory
-                            let joined: [&[u8]; 2] =
-                                [json_source.path.name().dir_with_trailing_slash(), name];
+                            let joined: [&[u8]; 3] = [
+                                json_source.path.name().dir_with_trailing_slash(),
+                                if strings::contains_char(name, b'/') {
+                                    b""
+                                } else {
+                                    b"**/"
+                                },
+                                name,
+                            ];
 
                             let pattern = r_fs.join(&joined);
                             // Normalize pattern to use forward slashes for cross-platform compatibility

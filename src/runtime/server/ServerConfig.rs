@@ -1162,12 +1162,12 @@ impl ServerConfig {
             }
         }
 
-        if let Some(dev) = arg.get(global, "reusePort")? {
-            args.reuse_port = dev.to_boolean();
+        if let Some(reuse_port) = arg.get_boolean_strict(global, "reusePort")? {
+            args.reuse_port = reuse_port;
         }
 
-        if let Some(dev) = arg.get(global, "ipv6Only")? {
-            args.ipv6_only = dev.to_boolean();
+        if let Some(ipv6_only) = arg.get_boolean_strict(global, "ipv6Only")? {
+            args.ipv6_only = ipv6_only;
         }
 
         if let Some(v) = arg.get(global, "http3")? {

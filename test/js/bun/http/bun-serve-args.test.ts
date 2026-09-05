@@ -461,6 +461,107 @@ describe("Bun.serve hostname and port validation", () => {
   });
 });
 
+describe("Bun.serve reusePort and ipv6Only must be booleans", () => {
+  // Every one of these is truthy or falsy under ToBoolean. Coercing them
+  // silently turned `reusePort: "false"` (an env var) into SO_REUSEPORT.
+  const nonBooleans: { value: unknown; name: string }[] = [
+    { value: "false", name: '"false"' },
+    { value: "0", name: '"0"' },
+    { value: "true", name: '"true"' },
+    { value: "", name: '""' },
+    { value: 0, name: "0" },
+    { value: 1, name: "1" },
+    { value: -1, name: "-1" },
+    { value: NaN, name: "NaN" },
+    { value: null, name: "null" },
+    { value: {}, name: "{}" },
+    { value: [], name: "[]" },
+    { value: new Boolean(false), name: "new Boolean(false)" },
+    { value: () => false, name: "() => false" },
+    { value: Symbol("reuse"), name: "Symbol()" },
+  ];
+
+  function serveWith(option: "reusePort" | "ipv6Only", value: unknown) {
+    return serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      [option]: value as boolean,
+      fetch() {
+        return new Response("ok");
+      },
+    });
+  }
+
+  for (const option of ["reusePort", "ipv6Only"] as const) {
+    describe(option, () => {
+      for (const { value, name } of nonBooleans) {
+        test(`${name} throws ERR_INVALID_ARG_TYPE`, () => {
+          expect(() => {
+            using server = serveWith(option, value);
+          }).toThrow(
+            expect.objectContaining({
+              code: "ERR_INVALID_ARG_TYPE",
+              message: expect.stringContaining(`"${option}"`),
+            }),
+          );
+        });
+      }
+
+      for (const value of [true, false, undefined]) {
+        test(`${value} is accepted`, () => {
+          using server = serveWith(option, value);
+          expect(server.port).toBeGreaterThan(0);
+          server.stop(true);
+        });
+      }
+
+      test(`server.reload() rejects a non-boolean ${option}`, () => {
+        using server = serveWith(option, false);
+        expect(() =>
+          server.reload({
+            [option]: "false" as unknown as boolean,
+            fetch() {
+              return new Response("reloaded");
+            },
+          }),
+        ).toThrow(expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE" }));
+        server.stop(true);
+      });
+    });
+  }
+
+  test("reusePort: false keeps a second server off the port", () => {
+    using first = serveWith("reusePort", false);
+    expect(() => {
+      using second = serve({
+        port: first.port,
+        hostname: "127.0.0.1",
+        reusePort: false,
+        fetch() {
+          return new Response("second");
+        },
+      });
+    }).toThrow(expect.objectContaining({ code: "EADDRINUSE" }));
+    first.stop(true);
+  });
+
+  // reusePort is a no-op on Windows: SO_REUSEPORT does not exist there.
+  test.skipIf(isWindows)("reusePort: true lets a second server share the port", () => {
+    using first = serveWith("reusePort", true);
+    using second = serve({
+      port: first.port,
+      hostname: "127.0.0.1",
+      reusePort: true,
+      fetch() {
+        return new Response("second");
+      },
+    });
+    expect(second.port).toBe(first.port);
+    second.stop(true);
+    first.stop(true);
+  });
+});
+
 describe("Bun.serve hostname coercion", () => {
   // Windows can't bind to hostname "0" (POSIX resolves it to 0.0.0.0).
   test.skipIf(isWindows)("number hostnames coerce to string", () => {

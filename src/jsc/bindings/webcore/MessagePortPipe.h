@@ -70,13 +70,14 @@ public:
     void registerCloseContext(uint8_t side, ScriptExecutionContext&, ThreadSafeWeakPtr<MessagePort>);
     void detach(uint8_t side);
     // Explicit == a real, permanent close: close(), context teardown, or an orphaned
-    // transferred endpoint. Collected == the owning MessagePort's wrapper was garbage
-    // collected while still entangled. Only Explicit sets ClosedByRequest, so jsRef()
-    // can tell a real close from a collection (node never collects an entangled port,
-    // so reading Closed alone made .ref() GC-dependent). Both notify the peer.
+    // transferred endpoint; sets ClosedByRequest and always notifies the peer.
+    // Collected == the wrapper was GC'd while entangled (node never collects an
+    // entangled port); notifies only a peer on a different context than closingCtx,
+    // matching node: a collection never closes a channel, and a worker-side close
+    // node fires at worker exit has no later trigger here once the port is gone.
     enum class CloseKind : uint8_t { Explicit,
         Collected };
-    void close(uint8_t side, CloseKind = CloseKind::Collected);
+    void close(uint8_t side, CloseKind = CloseKind::Collected, ScriptExecutionContextIdentifier closingCtx = 0);
 
     // Lockless snapshot for the GC visitor / hasPendingActivity.
     uint64_t state(uint8_t side) const { return m_sides[side].state.load(std::memory_order_acquire); }
@@ -90,6 +91,9 @@ private:
     MessagePortPipe() = default;
 
     void scheduleDrain(uint8_t side, ScriptExecutionContextIdentifier, BunLoopKind);
+    // True if `side` (attaching/registering on ctxId) must be told its peer is gone:
+    // explicitly closed, or collected on a different context (see CloseKind above).
+    bool peerRequiresCloseNotification(uint8_t side, ScriptExecutionContextIdentifier ctxId);
     void notifyPeerClosed(uint8_t peerSide);
     void drainAndDispatch(uint8_t side, ScriptExecutionContextIdentifier expectedCtx);
 

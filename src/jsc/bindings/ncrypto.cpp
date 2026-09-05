@@ -3739,6 +3739,90 @@ const Digest Digest::FromName(WTF::StringView name)
     return ncrypto::getDigestByName(name);
 }
 
+// ============================================================================
+// KEM
+
+std::optional<KEM::EncapsulateResult> KEM::Encapsulate(
+    const EVPKeyPointer& public_key)
+{
+    ClearErrorOnReturn clearErrorOnReturn;
+
+    auto ctx = public_key.newCtx();
+    if (!ctx) return std::nullopt;
+
+    if (EVP_PKEY_encapsulate_init(ctx.get(), nullptr) <= 0) {
+        return std::nullopt;
+    }
+
+    // First pass: determine the output buffer sizes.
+    size_t ciphertext_len = 0;
+    size_t shared_key_len = 0;
+    if (EVP_PKEY_encapsulate(
+            ctx.get(), nullptr, &ciphertext_len, nullptr, &shared_key_len)
+        <= 0) {
+        return std::nullopt;
+    }
+
+    auto ciphertext = DataPointer::Alloc(ciphertext_len);
+    auto shared_key = DataPointer::Alloc(shared_key_len);
+    if (!ciphertext || !shared_key) return std::nullopt;
+
+    if (EVP_PKEY_encapsulate(ctx.get(),
+            static_cast<unsigned char*>(ciphertext.get()),
+            &ciphertext_len,
+            static_cast<unsigned char*>(shared_key.get()),
+            &shared_key_len)
+        <= 0) {
+        return std::nullopt;
+    }
+
+    // The size query reports maximums; the second call updates the lengths to
+    // the bytes actually written.
+    ciphertext = ciphertext.resize(ciphertext_len);
+    shared_key = shared_key.resize(shared_key_len);
+    if (!ciphertext || !shared_key) return std::nullopt;
+
+    return EncapsulateResult(std::move(ciphertext), std::move(shared_key));
+}
+
+DataPointer KEM::Decapsulate(const EVPKeyPointer& private_key,
+    const Buffer<const void>& ciphertext)
+{
+    ClearErrorOnReturn clearErrorOnReturn;
+
+    auto ctx = private_key.newCtx();
+    if (!ctx) return {};
+
+    if (EVP_PKEY_decapsulate_init(ctx.get(), nullptr) <= 0) {
+        return {};
+    }
+
+    // First pass: determine the shared secret size.
+    size_t shared_key_len = 0;
+    if (EVP_PKEY_decapsulate(ctx.get(),
+            nullptr,
+            &shared_key_len,
+            static_cast<const unsigned char*>(ciphertext.data),
+            ciphertext.len)
+        <= 0) {
+        return {};
+    }
+
+    auto shared_key = DataPointer::Alloc(shared_key_len);
+    if (!shared_key) return {};
+
+    if (EVP_PKEY_decapsulate(ctx.get(),
+            static_cast<unsigned char*>(shared_key.get()),
+            &shared_key_len,
+            static_cast<const unsigned char*>(ciphertext.data),
+            ciphertext.len)
+        <= 0) {
+        return {};
+    }
+
+    return shared_key.resize(shared_key_len);
+}
+
 } // namespace ncrypto
 
 // `X509_V_ERR_*` -> the code name node reports for a peer-certificate

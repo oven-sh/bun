@@ -109,7 +109,7 @@ We update this page regularly. It reflects the latest version of Bun's compatibi
 
 ### [`node:crypto`](https://nodejs.org/api/crypto.html)
 
-🟡 Missing `encapsulate`/`decapsulate` (you can use ML-KEM keys through `crypto.subtle`). `argon2()` and custom engines (`setEngine()`) throw, `setFips()` is a no-op and `secureHeapUsed()` returns `undefined`. Bun's crypto is backed by BoringSSL, which lacks the `ed448`, `x448`, `rsa-pss`, `dsa` and `dh` key types, EC curves other than P-224/256/384/521 (no `secp256k1`), and the CCM, OCB, XTS and `chacha20-poly1305` ciphers.
+🟡 `encapsulate()`/`decapsulate()` work with ML-KEM-768 and ML-KEM-1024 keys only (BoringSSL has no RSA, EC or X25519 KEM, and no ML-KEM-512). `argon2()` and custom engines (`setEngine()`) throw, `setFips()` is a no-op and `secureHeapUsed()` returns `undefined`. Bun's crypto is backed by BoringSSL, which lacks the `ed448`, `x448`, `rsa-pss`, `dsa` and `dh` key types, EC curves other than P-224/256/384/521 (no `secp256k1`), and the CCM, OCB, XTS and `chacha20-poly1305` ciphers.
 
 ### [`node:domain`](https://nodejs.org/api/domain.html)
 

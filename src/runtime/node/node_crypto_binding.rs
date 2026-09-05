@@ -192,6 +192,7 @@ extern_crypto_job!(EcKeyPairJob, "EcKeyPairJob");
 extern_crypto_job!(NidKeyPairJob, "NidKeyPairJob");
 extern_crypto_job!(DhKeyPairJob, "DhKeyPairJob");
 extern_crypto_job!(DhJob, "DhJob");
+extern_crypto_job!(KemJob, "KemJob");
 extern_crypto_job!(SignJob, "SignJob");
 
 // ───────────────────────────────────────────────────────────────────────────

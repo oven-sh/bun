@@ -278,12 +278,20 @@ macro_rules! define_bun_plugin {
 unsafe impl Sync for BunPluginName {}
 
 use std::{
+    any::TypeId,
     borrow::Cow,
+    cell::UnsafeCell,
     ffi::{c_char, c_void},
     marker::PhantomData,
     str::Utf8Error,
     sync::PoisonError,
 };
+
+#[repr(C)]
+pub struct TaggedObject<T> {
+    type_id: TypeId,
+    pub(crate) object: Option<T>,
+}
 
 struct SourceCodeContext {
     source_ptr: *mut u8,

@@ -54,7 +54,6 @@ static JSC::JSPromise* performWriteAlgorithm(JSC::VM& vm, JSC::JSGlobalObject* g
         return nullptr;
     case SinkKind::Transform:
         RELEASE_AND_RETURN(scope, transformStreamDefaultSinkWriteAlgorithm(globalObject, uncheckedDowncast<JSTransformStream>(controller->m_algorithms.algorithmContext.get()), chunk));
-        break;
     }
     RELEASE_ASSERT_NOT_REACHED();
     return nullptr;
@@ -78,7 +77,6 @@ static JSC::JSPromise* performCloseAlgorithm(JSC::VM& vm, JSC::JSGlobalObject* g
         return nullptr;
     case SinkKind::Transform:
         RELEASE_AND_RETURN(scope, transformStreamDefaultSinkCloseAlgorithm(globalObject, uncheckedDowncast<JSTransformStream>(controller->m_algorithms.algorithmContext.get())));
-        break;
     }
     RELEASE_ASSERT_NOT_REACHED();
     return nullptr;
@@ -105,7 +103,6 @@ static JSC::JSPromise* performAbortAlgorithm(JSC::VM& vm, JSC::JSGlobalObject* g
         RELEASE_AND_RETURN(scope, promiseFulfilledWith(globalObject, JSC::jsUndefined()));
     case SinkKind::Transform:
         RELEASE_AND_RETURN(scope, transformStreamDefaultSinkAbortAlgorithm(globalObject, uncheckedDowncast<JSTransformStream>(controller->m_algorithms.algorithmContext.get()), reason));
-        break;
     }
     RELEASE_ASSERT_NOT_REACHED();
     return nullptr;

@@ -18,7 +18,7 @@ import { globAllSources } from "../../../scripts/glob-sources.ts";
 // `[MaybeUninit<T>; N]` instead, written with `write_copy_of_slice` / `write`
 // and read back through `assume_init_ref` on the written prefix. See
 // `bun_url::URL::join_normalize` and `bun_paths::resolve_path::join_string_buf_t`.
-// Scratch path storage comes from `bun_core::path_buffer_pool`, which zeroes
+// Scratch path storage comes from `bun_paths::path_buffer_pool`, which zeroes
 // a buffer once on allocation and reuses it (issue #41437 covers the old
 // `PathBuffer::uninit` / `WPathBuffer::uninit` constructors).
 const KNOWN_SITES: string[] = [];

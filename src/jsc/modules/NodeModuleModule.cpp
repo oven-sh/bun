@@ -31,6 +31,7 @@ using namespace JSC;
 BUN_DECLARE_HOST_FUNCTION(Bun__JSSourceMap__find);
 
 BUN_DECLARE_HOST_FUNCTION(Resolver__nodeModulePathsForJS);
+BUN_DECLARE_HOST_FUNCTION(NodeModuleModule__findPackageJSON);
 JSC_DECLARE_HOST_FUNCTION(jsFunctionFindPath);
 JSC_DECLARE_HOST_FUNCTION(jsFunctionIsBuiltinModule);
 JSC_DECLARE_HOST_FUNCTION(jsFunctionNodeModuleCreateRequire);
@@ -959,6 +960,7 @@ builtinModules          getBuiltinModulesObject           PropertyCallback
 constants               getConstantsObject                PropertyCallback
 createRequire           jsFunctionNodeModuleCreateRequire Function 1
 enableCompileCache      jsFunctionEnableCompileCache      Function 1
+findPackageJSON         NodeModuleModule__findPackageJSON Function 1
 findSourceMap           Bun__JSSourceMap__find           Function 1
 flushCompileCache       jsFunctionFlushCompileCache       Function 0
 getCompileCacheDir      jsFunctionGetCompileCacheDir      Function 0

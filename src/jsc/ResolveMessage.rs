@@ -63,7 +63,7 @@ fn is_bare_esm_specifier(s: &[u8]) -> bool {
 
 /// First path segment of a bare specifier ("@scope/name" keeps two),
 /// matching Node's ERR_MODULE_NOT_FOUND "Cannot find package '<name>'".
-fn esm_package_name(specifier: &[u8]) -> &[u8] {
+pub(crate) fn esm_package_name(specifier: &[u8]) -> &[u8] {
     let slash_after = |from: usize| {
         bun_core::strings::index_of_char_usize(&specifier[from..], b'/')
             .map_or(specifier.len(), |i| from + i)

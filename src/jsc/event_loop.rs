@@ -1502,6 +1502,20 @@ pub(crate) fn __bun_js_event_loop_current() -> *mut () {
     VirtualMachine::get().as_mut().event_loop().cast()
 }
 
+/// Null-returning variant of [`__bun_js_event_loop_current`]: the live
+/// per-thread `*mut jsc::EventLoop`, or null when no VM is bound.
+#[unsafe(no_mangle)]
+pub(crate) fn __bun_js_event_loop_current_or_null() -> *mut () {
+    match VirtualMachine::get_or_null() {
+        Some(vm) => {
+            // SAFETY: `get_or_null` returned `Some`, so the pointer names a
+            // live per-thread VM; `event_loop()` reads the self-pointer.
+            unsafe { (*vm).event_loop().cast() }
+        }
+        None => core::ptr::null_mut(),
+    }
+}
+
 // ──────────────────────────────────────────────────────────────────────────
 // `bun_event_loop::SpawnSyncEventLoop` extern impls
 //

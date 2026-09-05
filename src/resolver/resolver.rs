@@ -824,22 +824,39 @@ impl<'a> Resolver<'a> {
     /// directory was deleted or is unreadable — callers surface that as a
     /// resolve failure rather than panicking.
     pub fn get_package_manager(&mut self) -> crate::CrateResult<*mut dyn AutoInstaller> {
-        if let Some(pm) = self.package_manager {
-            return Ok(pm.as_ptr());
+        let pm = match self.package_manager {
+            Some(pm) => pm,
+            None => {
+                let env: NonNull<DotEnv::Loader> = self
+                    .env_loader
+                    .expect("Resolver.env_loader must be set before auto-install");
+                // SAFETY: `__bun_resolver_init_package_manager` is defined
+                // `#[no_mangle]` in `bun_install::auto_installer` and linked
+                // into the final binary; `self.log` / `self.opts.install` /
+                // `env` point at process-lifetime storage (Transpiler-owned).
+                // The returned pointer names the `PackageManager` singleton.
+                let pm: NonNull<dyn AutoInstaller> = unsafe {
+                    __bun_resolver_init_package_manager(self.log, self.opts.install, env)
+                }?;
+                self.package_manager = Some(pm);
+                pm
+            }
+        };
+        // Re-point the singleton's log at this resolver's live one before
+        // each wave; an earlier caller's log may have been freed.
+        // SAFETY: `pm` names the process-static singleton; sole `&mut` here.
+        unsafe { (*pm.as_ptr()).set_log(self.log.as_ptr()) };
+        // `wake_raw` reads `on_wake` lock-free from HTTP/task threads, so
+        // leave it untouched unless this resolver has a handler and it is
+        // not the installed one.
+        // SAFETY: as above.
+        let installed = unsafe { (*pm.as_ptr()).on_wake_context() };
+        if self.on_wake_package_manager.context.is_some()
+            && installed != self.on_wake_package_manager.context
+        {
+            // SAFETY: as above.
+            unsafe { (*pm.as_ptr()).set_on_wake(self.on_wake_package_manager) };
         }
-        let env: NonNull<DotEnv::Loader> = self
-            .env_loader
-            .expect("Resolver.env_loader must be set before auto-install");
-        // SAFETY: `__bun_resolver_init_package_manager` is defined
-        // `#[no_mangle]` in `bun_install::auto_installer` and linked into the
-        // final binary; `self.log` / `self.opts.install` / `env` point at
-        // process-lifetime storage (Transpiler-owned). The returned pointer
-        // names the `PackageManager` singleton (`'static`).
-        let pm: NonNull<dyn AutoInstaller> =
-            unsafe { __bun_resolver_init_package_manager(self.log, self.opts.install, env) }?;
-        // SAFETY: `pm` is the just-initialized singleton; sole `&mut` here.
-        unsafe { (*pm.as_ptr()).set_on_wake(self.on_wake_package_manager) };
-        self.package_manager = Some(pm);
         Ok(pm.as_ptr())
     }
 
@@ -1458,11 +1475,45 @@ impl<'a> Resolver<'a> {
         import_path: &[u8],
         kind: ast::ImportKind,
     ) -> crate::CrateResult<Result> {
-        match self.resolve_and_auto_install(source_dir, import_path, kind, GlobalCache::disable) {
+        self.resolve_inner(source_dir, import_path, kind, GlobalCache::disable)
+    }
+
+    /// Like `resolve`, but uses the configured `global_cache` setting to
+    /// allow auto-installing packages from the global cache or npm.
+    pub fn resolve_with_global_cache(
+        &mut self,
+        source_dir: &[u8],
+        import_path: &[u8],
+        kind: ast::ImportKind,
+    ) -> crate::CrateResult<Result> {
+        let global_cache = self.opts.global_cache;
+        self.resolve_inner(source_dir, import_path, kind, global_cache)
+    }
+
+    fn resolve_inner(
+        &mut self,
+        source_dir: &[u8],
+        import_path: &[u8],
+        kind: ast::ImportKind,
+        global_cache: GlobalCache,
+    ) -> crate::CrateResult<Result> {
+        match self.resolve_and_auto_install(source_dir, import_path, kind, global_cache) {
             ResultUnion::Success(result) => Ok(result),
             ResultUnion::Pending(_) | ResultUnion::NotFound => Err(crate::Error::ModuleNotFound),
             ResultUnion::Failure(e) => Err(e),
         }
+    }
+
+    /// Like `resolve_with_framework`, but uses the configured `global_cache`
+    /// setting to allow auto-installing packages from the global cache or npm.
+    pub fn resolve_with_framework_and_global_cache(
+        &mut self,
+        source_dir: &[u8],
+        import_path: &[u8],
+        kind: ast::ImportKind,
+    ) -> crate::CrateResult<Result> {
+        let global_cache = self.opts.global_cache;
+        self.resolve_with_framework_inner(source_dir, import_path, kind, global_cache)
     }
 
     /// Runs a resolution but also checking if a Bun Bake framework has an
@@ -1472,6 +1523,16 @@ impl<'a> Resolver<'a> {
         source_dir: &[u8],
         import_path: &[u8],
         kind: ast::ImportKind,
+    ) -> crate::CrateResult<Result> {
+        self.resolve_with_framework_inner(source_dir, import_path, kind, GlobalCache::disable)
+    }
+
+    fn resolve_with_framework_inner(
+        &mut self,
+        source_dir: &[u8],
+        import_path: &[u8],
+        kind: ast::ImportKind,
+        global_cache: GlobalCache,
     ) -> crate::CrateResult<Result> {
         // SAFETY: `import_path` is caller-interned (source text / DirnameStore)
         // and outlives the returned Result. TODO: thread an explicit lifetime.
@@ -1495,18 +1556,23 @@ impl<'a> Resolver<'a> {
                     }
                     bun_options_types::BuiltInModule::Import(path) => {
                         // NOTE: copy out `path` so the `&self.opts.framework` borrow
-                        // ends before `self.resolve(&mut self, ...)`.
+                        // ends before `self.resolve_inner(&mut self, ...)`.
                         // SAFETY: `path` borrows `self.opts.framework`, which lives for the
                         // resolver's lifetime; the `'static` erase only releases the `&self` borrow.
                         let path: &'static [u8] =
                             unsafe { &*std::ptr::from_ref::<[u8]>(path.as_ref()) };
                         let top = self.fs_ref().top_level_dir;
-                        return self.resolve(top, path, ast::ImportKind::EntryPointBuild);
+                        return self.resolve_inner(
+                            top,
+                            path,
+                            ast::ImportKind::EntryPointBuild,
+                            global_cache,
+                        );
                     }
                 }
             }
         }
-        self.resolve(source_dir, import_path, kind)
+        self.resolve_inner(source_dir, import_path, kind, global_cache)
     }
 
     pub(crate) fn finalize_result(

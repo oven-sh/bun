@@ -255,6 +255,14 @@ impl BuildCommand {
 
         this_transpiler.options.bytecode = ctx.bundler_options.bytecode;
         this_transpiler.options.bytecode_depth = ctx.bundler_options.bytecode_depth;
+
+        this_transpiler.options.install = ctx.install.as_deref().map(core::ptr::NonNull::from);
+        this_transpiler.options.global_cache = ctx.debug.global_cache;
+        this_transpiler.options.install_preference = ctx
+            .debug
+            .offline_mode_setting
+            .unwrap_or(bun_options_types::offline_mode::OfflineMode::Online);
+
         let mut was_renamed_from_index = false;
 
         if ctx.bundler_options.compile {

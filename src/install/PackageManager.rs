@@ -907,17 +907,33 @@ impl PackageManager {
         dependency_id: DependencyID,
         err: Error,
     ) {
-        if let Some(ctx) = self.on_wake.context {
-            // SAFETY: `ctx` is the `WakeHandler::context` registered alongside
-            // this callback (a live `*mut Queue`); see `runtime::jsc_hooks`.
+        let handled = if let Some(ctx) = self.on_wake.context {
+            // SAFETY: the callback (`runtime::jsc_hooks`) validates `ctx` by
+            // address against its own thread's context before any deref.
             unsafe {
                 (self.on_wake.get_on_dependency_error())(
                     ctx.as_ptr(),
                     dependency,
                     dependency_id,
                     err.name(),
-                );
+                )
             }
+        } else {
+            false
+        };
+        if !handled {
+            // No JS-side queue took the error (bun build CLI, or a bundle
+            // thread): log the failure detail.
+            self.log_mut().add_error_fmt(
+                None,
+                bun_ast::Loc::EMPTY,
+                format_args!(
+                    "{} resolving \"{}@{}\"",
+                    err.name(),
+                    bstr::BStr::new(self.lockfile.str(&dependency.name)),
+                    bstr::BStr::new(self.lockfile.str(&dependency.version.literal)),
+                ),
+            );
         }
     }
 
@@ -2401,6 +2417,7 @@ pub(crate) fn init_with_runtime(
     cli: CommandLineArguments,
     env: &mut dot_env::Loader,
 ) -> crate::Result<*mut PackageManager> {
+    let log_ptr: *mut bun_ast::Log = log;
     // NB: not `bun_core::run_once!` — the body is fallible (reading the root
     // directory hits ENOENT/EACCES at runtime when the cwd was deleted or is
     // unreadable), and the failure must be sticky: `holder::RAW_PTR` stays
@@ -2414,7 +2431,15 @@ pub(crate) fn init_with_runtime(
         }
     });
     match *INIT_ERROR.lock() {
-        None => Ok(get()),
+        None => {
+            let pm = get();
+            // Refresh the log on every call; the first caller's log may
+            // since have been freed.
+            // SAFETY: `pm` is the process-lifetime singleton; `log_ptr`
+            // outlives this call.
+            unsafe { (*pm).log = log_ptr };
+            Ok(pm)
+        }
         Some(code) => Err(code),
     }
 }
@@ -2533,9 +2558,9 @@ fn init_with_runtime_once(
             root_package_json_file,
             bun_sys::File::from_fd(Fd::invalid())
         );
-        // erased *mut () set by tier-6; `js_current()` resolves the per-thread JS
-        // event loop via `bun_io::__bun_get_vm_ctx` (link-time, definer in bun_runtime).
-        wr!(event_loop, AnyEventLoop::js_current());
+        // Falls back to a MiniEventLoop on VM-less threads (bun build CLI,
+        // bundler worker).
+        wr!(event_loop, AnyEventLoop::js_current_or_mini());
         wr!(
             original_package_json_path,
             ZBox::from_vec_with_nul(original_package_json_path)
@@ -2624,6 +2649,21 @@ fn init_with_runtime_once(
     let manager = unsafe { &mut *manager_ptr };
     // The lockfile allocation is folded into the struct literal above
     // (`Box::new(Lockfile::default())`).
+
+    // Mini fallback: wire the parent loop and thread-local global, mirroring
+    // `init()` above.
+    if matches!(manager.event_loop, AnyEventLoop::Mini(_)) {
+        let uws_loop = manager.event_loop.r#loop();
+        // SAFETY: `uws_loop` is the live process-global `uws::Loop` just
+        // returned by `r#loop()`; backref is `manager.event_loop` owned by the
+        // singleton.
+        let uws_loop = unsafe { &mut *uws_loop };
+        EventLoopHandle::from_any(&mut manager.event_loop).set_as_parent_of(uws_loop);
+        if let AnyEventLoop::Mini(mini) = &mut manager.event_loop {
+            let mini_ptr: *mut MiniEventLoop = &raw mut **mini;
+            mini_event_loop::GLOBAL.with(|g| g.set(mini_ptr));
+        }
+    }
 
     if Output::enable_ansi_colors_stderr() {
         manager.progress = Progress::default();

@@ -10431,6 +10431,14 @@ declare module "bun" {
     get(name: string): string | null;
 
     /**
+     * Gets every value of the cookies with the specified name.
+     *
+     * @param name - The name of the cookies to retrieve
+     * @returns The cookie values in order, or an empty array if none match
+     */
+    getAll(name: string): string[];
+
+    /**
      * Returns the `Set-Cookie` header values that apply the changes made to this map.
      *
      * @returns An array of `Set-Cookie` header values

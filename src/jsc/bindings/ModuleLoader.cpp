@@ -637,6 +637,34 @@ void evaluateCommonJSCustomExtension(
     RETURN_IF_EXCEPTION(scope, );
 }
 
+static void provideFetchForSyncLoad(Zig::GlobalObject* globalObject, const WTF::String& specifier, JSC::JSSourceCode* jsSourceCode)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto key = JSC::Identifier::fromString(vm, specifier);
+    // The JavaScript-typed entry is the one loadModuleSync() reads; a typed import has its own entry.
+    auto* entry = globalObject->moduleLoader()->ensureRegistered(globalObject, key, JSC::ScriptFetchParameters::Type::JavaScript);
+    switch (entry->status()) {
+    case JSC::ModuleRegistryEntry::Status::New:
+        scope.release();
+        entry->provideFetch(globalObject, jsSourceCode);
+        return;
+    case JSC::ModuleRegistryEntry::Status::Fetching: {
+        entry->ensureModulePromise(globalObject);
+        RETURN_IF_EXCEPTION(scope, void());
+        JSC::JSPromise* fetchPromise = entry->ensureFetchPromise(globalObject);
+        RETURN_IF_EXCEPTION(scope, void());
+        // fulfillPromise, not fulfill(): pipeFrom() already claimed this promise's resolving functions.
+        if (fetchPromise->status() == JSC::JSPromise::Status::Pending)
+            fetchPromise->fulfillPromise(vm, jsSourceCode);
+        return;
+    }
+    default:
+        // Fetched, or failed earlier: loadModuleSync() reports whatever the entry already holds.
+        return;
+    }
+}
+
 JSValue fetchCommonJSModule(
     Zig::GlobalObject* globalObject,
     JSCommonJSModule* target,
@@ -689,7 +717,7 @@ JSValue fetchCommonJSModule(
                     JSC::VM::SynchronousModuleQueue queue;
                     queue.prev = vm.m_synchronousModuleQueue;
                     vm.m_synchronousModuleQueue = &queue;
-                    globalObject->moduleLoader()->provideFetch(globalObject, JSC::Identifier::fromString(vm, specifierWtfString), JSC::ScriptFetchParameters::Type::JavaScript, jsSourceCode);
+                    provideFetchForSyncLoad(globalObject, specifierWtfString, jsSourceCode);
                     if (!scope.exception()) JSC::JSModuleLoader::drainSynchronousModuleQueue(globalObject);
                     vm.m_synchronousModuleQueue = queue.prev;
                     RETURN_IF_EXCEPTION(scope, {});
@@ -758,7 +786,7 @@ JSValue fetchCommonJSModule(
                     JSC::VM::SynchronousModuleQueue queue;
                     queue.prev = vm.m_synchronousModuleQueue;
                     vm.m_synchronousModuleQueue = &queue;
-                    globalObject->moduleLoader()->provideFetch(globalObject, JSC::Identifier::fromString(vm, specifierWtfString), JSC::ScriptFetchParameters::Type::JavaScript, jsSourceCode);
+                    provideFetchForSyncLoad(globalObject, specifierWtfString, jsSourceCode);
                     if (!scope.exception()) JSC::JSModuleLoader::drainSynchronousModuleQueue(globalObject);
                     vm.m_synchronousModuleQueue = queue.prev;
                     RETURN_IF_EXCEPTION(scope, {});
@@ -792,7 +820,7 @@ JSValue fetchCommonJSModule(
                 JSC::VM::SynchronousModuleQueue queue;
                 queue.prev = vm.m_synchronousModuleQueue;
                 vm.m_synchronousModuleQueue = &queue;
-                globalObject->moduleLoader()->provideFetch(globalObject, JSC::Identifier::fromString(vm, specifierWtfString), JSC::ScriptFetchParameters::Type::JavaScript, JSC::SourceCode(Ref(*cached)));
+                provideFetchForSyncLoad(globalObject, specifierWtfString, JSC::JSSourceCode::create(vm, JSC::SourceCode(Ref(*cached))));
                 if (!scope.exception()) JSC::JSModuleLoader::drainSynchronousModuleQueue(globalObject);
                 vm.m_synchronousModuleQueue = queue.prev;
                 RETURN_IF_EXCEPTION(scope, {});
@@ -890,7 +918,7 @@ JSValue fetchCommonJSModuleNonBuiltin(
         JSC::VM::SynchronousModuleQueue queue;
         queue.prev = vm.m_synchronousModuleQueue;
         vm.m_synchronousModuleQueue = &queue;
-        globalObject->moduleLoader()->provideFetch(globalObject, JSC::Identifier::fromString(vm, specifierWtfString), JSC::ScriptFetchParameters::Type::JavaScript, JSC::SourceCode(provider));
+        provideFetchForSyncLoad(globalObject, specifierWtfString, JSC::JSSourceCode::create(vm, JSC::SourceCode(provider)));
         if (!scope.exception()) JSC::JSModuleLoader::drainSynchronousModuleQueue(globalObject);
         vm.m_synchronousModuleQueue = queue.prev;
     }

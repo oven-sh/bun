@@ -21,6 +21,8 @@
 #include <JavaScriptCore/DateInstance.h>
 #include <JavaScriptCore/JSONObject.h>
 #include "wtf/SIMDUTF.h"
+#include <unicode/utf8.h>
+#include <unicode/utf16.h>
 #include <JavaScriptCore/ObjectConstructor.h>
 #include <JavaScriptCore/JSObjectInlines.h>
 #include "headers.h"
@@ -577,12 +579,15 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionJSONLParseChunk, (JSGlobalObject * globalObje
                 return {};
             }
             result = JSC::streamingJSONParse(globalObject, str, values);
-            // Convert character offset back to UTF-8 byte offset
-            if (str.is8Bit()) {
-                readBytes = start + bomOffset + simdutf::utf8_length_from_latin1(reinterpret_cast<const char*>(str.span8().data()), result.charactersConsumed);
-            } else {
-                readBytes = start + bomOffset + simdutf::utf8_length_from_utf16le(reinterpret_cast<const char16_t*>(str.span16().data()), result.charactersConsumed);
+            // Same decoder as fromUTF8ReplacingInvalidSequences: invalid sequences contribute their real source width.
+            size_t byteOffset = 0;
+            size_t u16Units = 0;
+            while (u16Units < result.charactersConsumed && byteOffset < sliceLen) {
+                char32_t c;
+                U8_NEXT_OR_FFFD(sliceData, byteOffset, sliceLen, c);
+                u16Units += U16_LENGTH(c);
             }
+            readBytes = start + bomOffset + byteOffset;
         }
     } else {
         auto* inputString = arg.toString(globalObject);

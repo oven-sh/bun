@@ -901,15 +901,20 @@ function wtfSourcesFor(cfg: Config): string[] {
   }
   if (cfg.darwin) {
     // + the two MIG-generated mach_exc stubs, added by the emitter.
-    // Not cocoa/TimeZoneCocoa.cpp: with USE(BUN_JSC_ADDITIONS) TimeZone.cpp
-    // already defines listenForTimeZoneChangeNotifications() (bun bumps the
-    // time-zone ID itself), so the Cocoa notifier is a duplicate definition
-    // that also drags in CoreFoundation, which bun deliberately does not link.
-    // The prebuilt only got away with listing it because nothing ever pulled
-    // that member out of libWTF.a.
+    // Two WTF_SOURCES entries are left out. A prebuilt libWTF.a got away with
+    // listing them because nothing ever pulled those members out of the
+    // archive; here every object is on the link line.
+    // - cocoa/TimeZoneCocoa.cpp: with USE(BUN_JSC_ADDITIONS) TimeZone.cpp
+    //   already defines listenForTimeZoneChangeNotifications() (bun bumps
+    //   the time-zone ID itself), so the Cocoa notifier is a duplicate
+    //   definition that also drags in CoreFoundation, which bun deliberately
+    //   does not link.
+    // - darwin/OSLogPrintStream.mm: only referenced under PLATFORM(COCOA)
+    //   (JSC's useOSLog option, Integrity logging), never by the JSCOnly
+    //   port; it is ARC, so linking it would pull in the Objective-C runtime
+    //   for nothing.
     return [
       ...wtfSourcesPosix,
-      "darwin/OSLogPrintStream.mm",
       "unix/LoggingUnix.cpp",
       "cocoa/MemoryFootprintCocoa.cpp",
       "generic/MemoryPressureHandlerGeneric.cpp",
@@ -1653,13 +1658,7 @@ function wtfGroup(wk: WebKitBuild, flags: WebKitFlags): { group: SourceGroup; mi
   return {
     group: {
       name: "WTF",
-      sources: [
-        ...inTree(join(WTF, "wtf"), [...wtfSourcesCommon, ...wtfSourcesFor(cfg)]).map(path =>
-          // Per-file COMPILE_OPTIONS from WTF's CMakeLists: the os_log stream is ARC.
-          basename(path) === "OSLogPrintStream.mm" ? { path, cflags: ["-fobjc-arc"] } : path,
-        ),
-        ...migSources,
-      ],
+      sources: [...inTree(join(WTF, "wtf"), [...wtfSourcesCommon, ...wtfSourcesFor(cfg)]), ...migSources],
       includes: [
         B,
         ...(cfg.darwin ? [WTF_DS] : []),

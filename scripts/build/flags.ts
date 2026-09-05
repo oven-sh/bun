@@ -1870,9 +1870,7 @@ export function systemLibs(cfg: Config): string[] {
   if (cfg.darwin) {
     // icucore: system ICU framework.
     // resolv: DNS resolution (getaddrinfo et al).
-    // objc: the Objective-C runtime — WTF's OSLogPrintStream.mm is ARC
-    //   (objc_retain / objc_storeStrong on its os_log_t).
-    libs.push("-licucore", "-lresolv", "-lobjc");
+    libs.push("-licucore", "-lresolv");
   }
 
   if (cfg.freebsd) {

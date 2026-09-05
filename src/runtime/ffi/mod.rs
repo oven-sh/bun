@@ -58,6 +58,7 @@ mod dom_call_slowpath {
     }
 
     dom_call_slowpath! {
+        FFI__ptr__slowpath       => ffi_object::ptr,
         Reader__u8__slowpath     => ffi_object::reader::u8,
         Reader__u16__slowpath    => ffi_object::reader::u16,
         Reader__u32__slowpath    => ffi_object::reader::u32,
@@ -70,26 +71,6 @@ mod dom_call_slowpath {
         Reader__intptr__slowpath => ffi_object::reader::intptr,
         Reader__f32__slowpath    => ffi_object::reader::f32,
         Reader__f64__slowpath    => ffi_object::reader::f64,
-    }
-
-    // `FFI.ptr` slowpath — body returns bare `JSValue` (errors are values, not
-    // exceptions), so no `to_js_host_call` mapping.
-    #[unsafe(no_mangle)]
-    #[bun_jsc::host_call]
-    fn FFI__ptr__slowpath(
-        global: *mut JSGlobalObject,
-        this_value: JSValue,
-        arguments_ptr: *const JSValue,
-        arguments_len: usize,
-    ) -> JSValue {
-        // SAFETY: see `dom_call_slowpath!` above.
-        let (global, arguments) = unsafe {
-            (
-                &*global,
-                core::slice::from_raw_parts(arguments_ptr, arguments_len),
-            )
-        };
-        ffi_object::ptr(global, this_value, arguments)
     }
 }
 

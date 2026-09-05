@@ -257,11 +257,21 @@ Bun.serve({
 });
 ```
 
-To compress an individual message, pass a `boolean` as the second argument to `.send()`.
+With `perMessageDeflate` set, Bun negotiates the extension with clients that support it. Each send or publish call then decides whether to compress its message. `ws.send()` and `ws.publish()` send the message uncompressed unless you pass `true` as the last argument.
 
 ```ts
 ws.send("Hello world", true);
+ws.publish("the-group-chat", "Hello world", true);
 ```
+
+`server.publish()` is the exception. It compresses the message unless you pass `false` as the third argument. Bun deflates the message once per subscriber. Short messages grow when deflated, so pass `false` for those.
+
+```ts
+server.publish("the-group-chat", "Hello world"); // compressed
+server.publish("the-group-chat", "Hello world", false); // uncompressed
+```
+
+Bun sends the message uncompressed to any client that did not negotiate the extension, whatever the argument says.
 
 For fine-grained control over compression characteristics, refer to the [Reference](#reference).
 
@@ -422,7 +432,7 @@ interface ServerWebSocket {
   close(code?: number, reason?: string): void;
   subscribe(topic: string): boolean;
   unsubscribe(topic: string): boolean;
-  publish(topic: string, message: string | ArrayBuffer | Uint8Array | Blob): void;
+  publish(topic: string, message: string | ArrayBuffer | Uint8Array | Blob, compress?: boolean): number;
   isSubscribed(topic: string): boolean;
   cork(cb: (ws: ServerWebSocket) => void): void;
 }

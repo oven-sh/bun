@@ -840,7 +840,7 @@ impl PackageManager {
         unsafe {
             let lf: *mut Lockfile = &raw mut *(*pm).lockfile;
             let log: *mut bun_ast::Log = (*pm).log;
-            (*lf).load_from_cwd::<ATTEMPT_OTHER>(Some(&mut *pm), &mut *log)
+            (*lf).load_from_cwd(Some(&mut *pm), &mut *log, ATTEMPT_OTHER)
         }
     }
 
@@ -2691,7 +2691,7 @@ fn init_with_runtime_once(
     };
     if has_lockb {
         let mut lockfile = core::mem::replace(&mut manager.lockfile, Box::new(Lockfile::default()));
-        match lockfile.load_from_cwd::<true>(Some(&mut *manager), log) {
+        match lockfile.load_from_cwd(Some(&mut *manager), log, true) {
             lockfile::LoadResult::Ok(_) => {}
             _ => lockfile.init_empty(),
         }

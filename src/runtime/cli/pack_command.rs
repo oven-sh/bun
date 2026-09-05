@@ -221,8 +221,11 @@ impl PackCommand {
         // SAFETY: `manager_ptr`/`log_ptr` came from live `&mut`; reborrowed
         // disjointly (`log` is a separate allocation from the manager fields
         // `load_from_cwd` touches).
-        let load_from_disk_result = lockfile
-            .load_from_cwd::<false>(Some(unsafe { &mut *manager_ptr }), unsafe { &mut *log_ptr });
+        let load_from_disk_result = lockfile.load_from_cwd(
+            Some(unsafe { &mut *manager_ptr }),
+            unsafe { &mut *log_ptr },
+            false,
+        );
 
         let lockfile_ref: Option<&Lockfile> = match load_from_disk_result {
             LoadResult::Ok(ok) => Some(&*ok.lockfile),
@@ -278,7 +281,7 @@ impl PackCommand {
         };
 
         // just pack the current workspace
-        if let Err(err) = pack::<false>(&mut pack_ctx, &abs_pkg_json) {
+        if let Err(err) = pack(&mut pack_ctx, &abs_pkg_json, false) {
             match err {
                 PackError::OutOfMemory => bun_core::out_of_memory(),
                 PackError::MissingPackageName | PackError::MissingPackageVersion => {
@@ -295,7 +298,7 @@ impl PackCommand {
                     );
                     Global::crash();
                 }
-                // for_publish-only variants — unreachable when FOR_PUBLISH=false.
+                // publish-only variants.
                 PackError::RestrictedUnscopedPackage | PackError::PrivatePackage => unreachable!(),
             }
         }
@@ -308,7 +311,7 @@ impl PackCommand {
 // ───────────────────────────────────────────────────────────────────────────
 
 #[derive(thiserror::Error, strum::IntoStaticStr, Debug, Clone, Copy, PartialEq, Eq)]
-pub enum PackError<const FOR_PUBLISH: bool> {
+pub enum PackError {
     #[error("OutOfMemory")]
     OutOfMemory,
     #[error("MissingPackageName")]
@@ -319,16 +322,14 @@ pub enum PackError<const FOR_PUBLISH: bool> {
     MissingPackageVersion,
     #[error("InvalidPackageVersion")]
     InvalidPackageVersion,
-    // The following two are only valid when FOR_PUBLISH == true (const-generic
-    // enums cannot conditionally include variants, so both instantiations
-    // share one enum).
+    // The following two are only returned when packing for publish.
     #[error("RestrictedUnscopedPackage")]
     RestrictedUnscopedPackage,
     #[error("PrivatePackage")]
     PrivatePackage,
 }
 
-impl<const FOR_PUBLISH: bool> From<AllocError> for PackError<FOR_PUBLISH> {
+impl From<AllocError> for PackError {
     fn from(_: AllocError) -> Self {
         PackError::OutOfMemory
     }
@@ -1884,11 +1885,6 @@ fn opt_pack_gzip_level(m: &PackageManager) -> Option<&[u8]> {
 // pack()
 // ───────────────────────────────────────────────────────────────────────────
 
-// Const generics cannot vary the
-// return type directly, so both instantiations return an Option that is
-// `Some` only when FOR_PUBLISH == true.
-pub(crate) type PackReturn<'a, const FOR_PUBLISH: bool> = Option<Publish::Context<'a, true>>;
-
 /// Everything `bun pm pack` would put in the tarball besides package.json: bins, then either the `files` list or
 /// the whole tree minus ignores. Shared with `bun pm diff`, whose local side is "what would be published".
 pub(crate) fn published_files(
@@ -2000,10 +1996,12 @@ pub(crate) fn published_files(
     Ok((pack_queue, bins))
 }
 
-pub(crate) fn pack<const FOR_PUBLISH: bool>(
+/// Returns `Some` only when `for_publish` is set.
+pub(crate) fn pack(
     ctx: &mut Context<'_>,
     abs_package_json_path: &ZStr,
-) -> Result<PackReturn<'static, FOR_PUBLISH>, PackError<FOR_PUBLISH>> {
+    for_publish: bool,
+) -> Result<Option<Publish::Context<'static, true>>, PackError> {
     // Raw pointer for the `pm_workspace_cache`/`pm_log` disjoint-field
     // projections and the `'static` lifetime extension when returning
     // `Publish::Context`.
@@ -2041,7 +2039,7 @@ pub(crate) fn pack<const FOR_PUBLISH: bool>(
         WorkspacePackageJSONCache::GetResult::Entry(entry) => entry,
     };
 
-    if FOR_PUBLISH {
+    if for_publish {
         if let Some(config) = json.root.get(b"publishConfig") {
             if ctx.manager.options.publish_config.tag.is_empty() {
                 if let Some(tag) = config.get_string_cloned(bump, b"tag")? {
@@ -2075,7 +2073,7 @@ pub(crate) fn pack<const FOR_PUBLISH: bool>(
     let mut package_name = package_name_expr
         .as_string_cloned(bump)?
         .ok_or(PackError::InvalidPackageName)?;
-    if FOR_PUBLISH {
+    if for_publish {
         let is_scoped = bun_install::dependency::is_scoped_package_name(package_name)
             .map_err(|_| PackError::InvalidPackageName)?;
         if let Some(access) = ctx.manager.options.publish_config.access {
@@ -2099,7 +2097,7 @@ pub(crate) fn pack<const FOR_PUBLISH: bool>(
         return Err(PackError::InvalidPackageVersion);
     }
 
-    if FOR_PUBLISH {
+    if for_publish {
         if let Some(private) = json.root.get(b"private") {
             if let Some(is_private) = private.as_bool() {
                 if is_private {
@@ -2177,7 +2175,7 @@ pub(crate) fn pack<const FOR_PUBLISH: bool>(
         // Track whether any scripts ran that could modify package.json
         let mut did_run_scripts = false;
 
-        if FOR_PUBLISH {
+        if for_publish {
             if let Some(prepublish_only_script_str) = scripts.expr.get(b"prepublishOnly") {
                 if let Some(prepublish_only) = prepublish_only_script_str.as_string(bump) {
                     did_run_scripts = true;
@@ -2226,7 +2224,7 @@ pub(crate) fn pack<const FOR_PUBLISH: bool>(
             postpack_script = postpack.as_string(bump).map(Box::from);
         }
 
-        if FOR_PUBLISH {
+        if for_publish {
             let mut publish_script: Option<Box<[u8]>> = None;
             let mut postpublish_script: Option<Box<[u8]>> = None;
             if let Some(publish) = scripts.expr.get(b"publish") {
@@ -2296,7 +2294,7 @@ pub(crate) fn pack<const FOR_PUBLISH: bool>(
         };
 
         // Re-validate private flag after scripts may have modified it.
-        if FOR_PUBLISH {
+        if for_publish {
             if let Some(private) = json.root.get(b"private") {
                 if let Some(is_private) = private.as_bool() {
                     if is_private {
@@ -2365,7 +2363,7 @@ pub(crate) fn pack<const FOR_PUBLISH: bool>(
     // `find_workspace_readme` opens its own directory handle because
     // `root_dir` is iterated below and its kernel readdir offset gets
     // exhausted.
-    let workspace_readme: Option<Publish::ReadmeInfo> = if FOR_PUBLISH {
+    let workspace_readme: Option<Publish::ReadmeInfo> = if for_publish {
         Publish::PublishCommand::find_workspace_readme(abs_workspace_path)
     } else {
         None
@@ -2399,7 +2397,7 @@ pub(crate) fn pack<const FOR_PUBLISH: bool>(
             0,
         );
 
-        if !FOR_PUBLISH {
+        if !for_publish {
             if opt_pack_destination(ctx.manager).is_empty()
                 && opt_pack_filename(ctx.manager).is_empty()
             {
@@ -2441,7 +2439,7 @@ pub(crate) fn pack<const FOR_PUBLISH: bool>(
             )?;
         }
 
-        if FOR_PUBLISH {
+        if for_publish {
             let mut dest_buf = PathBuffer::uninit();
             let (abs_tarball_dest, _) = tarball_destination(
                 opt_pack_destination(ctx.manager),
@@ -2805,7 +2803,7 @@ pub(crate) fn pack<const FOR_PUBLISH: bool>(
         let mut sha1 = sha::SHA1::init();
         let mut sha512 = sha::SHA512::init();
 
-        if FOR_PUBLISH {
+        if for_publish {
             let bytes = match tarball_file.read_to_end() {
                 Ok(b) => b,
                 Err(err) => {
@@ -2871,7 +2869,7 @@ pub(crate) fn pack<const FOR_PUBLISH: bool>(
         File::from_fd(Fd::invalid()),
     );
 
-    let normalized_pkg_info: Option<Box<[u8]>> = if FOR_PUBLISH {
+    let normalized_pkg_info: Option<Box<[u8]>> = if for_publish {
         // The mutated tree is consumed inside `normalized_package` (it prints
         // the JSON itself), so the copy doesn't need to flow back into `json.root`.
         let mut root_full = json.root;
@@ -2896,7 +2894,7 @@ pub(crate) fn pack<const FOR_PUBLISH: bool>(
         edited_package_json.len(),
     );
 
-    if !FOR_PUBLISH {
+    if !for_publish {
         if opt_pack_destination(ctx.manager).is_empty() && opt_pack_filename(ctx.manager).is_empty()
         {
             Context::print_tarball_path(
@@ -2910,7 +2908,7 @@ pub(crate) fn pack<const FOR_PUBLISH: bool>(
 
     Context::print_summary(ctx.stats, Some(&shasum), Some(&integrity), log_level);
 
-    if FOR_PUBLISH {
+    if for_publish {
         Output::flush();
     }
 
@@ -2926,7 +2924,7 @@ pub(crate) fn pack<const FOR_PUBLISH: bool>(
         )?;
     }
 
-    if FOR_PUBLISH {
+    if for_publish {
         return Ok(Some(Publish::Context {
             // SAFETY: `manager_ptr` was derived from `&mut *ctx.manager`; the
             // process-lifetime singleton outlives the returned `Publish::Context`.
@@ -2953,14 +2951,14 @@ pub(crate) fn pack<const FOR_PUBLISH: bool>(
 // Helper extracted from repeated `RunCommand.runPackageScriptForeground` blocks.
 // Note: hoisted from repeated inline blocks to avoid 5x duplication of the
 // same `match err { MissingShell, OutOfMemory }` arms. Behavior identical.
-fn run_lifecycle_script<const FOR_PUBLISH: bool>(
+fn run_lifecycle_script(
     command_ctx: &mut Command::ContextData,
     script: &[u8],
     name: &[u8],
     abs_workspace_path: &[u8],
     env: &mut bun_dotenv::Loader,
     silent: bool,
-) -> Result<(), PackError<FOR_PUBLISH>> {
+) -> Result<(), PackError> {
     let use_system_shell = command_ctx.debug.use_system_shell;
     match RunCommand::run_package_script_foreground(
         command_ctx,

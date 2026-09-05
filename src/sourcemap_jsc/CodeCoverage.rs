@@ -352,26 +352,35 @@ impl MergedReport {
 
 pub mod text {
     use super::*;
-    // The `pretty_fmt!` macro only accepts literal `true`/`false` today,
-    // so call the runtime rewriter for the `ENABLE_COLORS` const-generic sites.
-    // PERF: runtime `pretty_fmt` allocates a small Vec per call — if hot,
-    // hoist into `const` once the proc-macro lands.
-    use bun_core::output::pretty_fmt;
 
-    pub fn write_format_with_values<const ENABLE_COLORS: bool>(
+    // Local front for `bun_core::pretty_fmt!` that accepts a runtime bool. The
+    // proc-macro only matches `true`/`false` literals, so branch here. Both
+    // arms yield `&'static str`.
+    macro_rules! pfmt {
+        ($fmt:expr, $colors:expr) => {
+            if $colors {
+                ::bun_core::pretty_fmt!($fmt, true)
+            } else {
+                ::bun_core::pretty_fmt!($fmt, false)
+            }
+        };
+    }
+
+    pub fn write_format_with_values(
         filename: &[u8],
         max_filename_length: usize,
         vals: Fraction,
         failing: Fraction,
         failed: bool,
-        writer: &mut impl bun_io::Write,
+        writer: &mut dyn bun_io::Write,
         indent_name: bool,
+        enable_colors: bool,
     ) -> bun_io::Result<()> {
-        if ENABLE_COLORS {
+        if enable_colors {
             if failed {
-                writer.write_all(&pretty_fmt::<true>("<r><b><red>"))?;
+                writer.write_all(bun_core::pretty_fmt!("<r><b><red>", true).as_bytes())?;
             } else {
-                writer.write_all(&pretty_fmt::<true>("<r><b><green>"))?;
+                writer.write_all(bun_core::pretty_fmt!("<r><b><green>", true).as_bytes())?;
             }
         }
 
@@ -384,13 +393,13 @@ pub mod text {
             b' ',
             max_filename_length - filename.len() + usize::from(!indent_name),
         )?;
-        writer.write_all(&pretty_fmt::<ENABLE_COLORS>("<r><d> | <r>"))?;
+        writer.write_all(pfmt!("<r><d> | <r>", enable_colors).as_bytes())?;
 
-        if ENABLE_COLORS {
+        if enable_colors {
             if vals.functions < failing.functions {
-                writer.write_all(&pretty_fmt::<true>("<b><red>"))?;
+                writer.write_all(bun_core::pretty_fmt!("<b><red>", true).as_bytes())?;
             } else {
-                writer.write_all(&pretty_fmt::<true>("<b><green>"))?;
+                writer.write_all(bun_core::pretty_fmt!("<b><green>", true).as_bytes())?;
             }
         }
 
@@ -404,13 +413,13 @@ pub mod text {
         //     // }
         // }
         // write!(writer, "{:>8.2}", vals.stmts * 100.0)?;
-        writer.write_all(&pretty_fmt::<ENABLE_COLORS>("<r><d> | <r>"))?;
+        writer.write_all(pfmt!("<r><d> | <r>", enable_colors).as_bytes())?;
 
-        if ENABLE_COLORS {
+        if enable_colors {
             if vals.lines < failing.lines {
-                writer.write_all(&pretty_fmt::<true>("<b><red>"))?;
+                writer.write_all(bun_core::pretty_fmt!("<b><red>", true).as_bytes())?;
             } else {
-                writer.write_all(&pretty_fmt::<true>("<b><green>"))?;
+                writer.write_all(bun_core::pretty_fmt!("<b><green>", true).as_bytes())?;
             }
         }
 
@@ -420,20 +429,21 @@ pub mod text {
 
     /// One table row: name, the two percentages from `fraction` (coloured
     /// against `thresholds`), and the uncovered line ranges.
-    pub fn write_format<const ENABLE_COLORS: bool>(
+    pub fn write_format(
         report: &Report,
         max_filename_length: usize,
         fraction: &Fraction,
         thresholds: &Fraction,
         base_path: &[u8],
-        writer: &mut impl bun_io::Write,
+        writer: &mut dyn bun_io::Write,
+        enable_colors: bool,
     ) -> bun_io::Result<()> {
         let mut filename: &[u8] = &report.source_url;
         if !base_path.is_empty() {
             filename = bun_paths::resolve_path::relative(base_path, filename);
         }
 
-        write_format_with_values::<ENABLE_COLORS>(
+        write_format_with_values(
             filename,
             max_filename_length,
             *fraction,
@@ -441,9 +451,10 @@ pub mod text {
             fraction.failing,
             writer,
             true,
+            enable_colors,
         )?;
 
-        writer.write_all(&pretty_fmt::<ENABLE_COLORS>("<r><d> | <r>"))?;
+        writer.write_all(pfmt!("<r><d> | <r>", enable_colors).as_bytes())?;
 
         let mut executable_lines_that_havent_been_executed = report
             .lines_which_have_executed
@@ -456,19 +467,16 @@ pub mod text {
 
         let mut iter = executable_lines_that_havent_been_executed.iterator::<true, true>();
 
-        // `concat!(pretty_fmt!(..), "{}")` requires a literal; split into a
-        // prefix `write_all` + plain `write!` so the const-generic `ENABLE_COLORS` can
-        // route through the runtime rewriter.
-        let red = pretty_fmt::<ENABLE_COLORS>("<red>");
-        let comma = pretty_fmt::<ENABLE_COLORS>("<r><d>,<r>");
+        let red = pfmt!("<red>", enable_colors).as_bytes();
+        let comma = pfmt!("<r><d>,<r>", enable_colors).as_bytes();
 
         let mut is_first = true;
         let mut emit =
             |writer: &mut dyn bun_io::Write, start: usize, end: usize| -> bun_io::Result<()> {
                 if !core::mem::take(&mut is_first) {
-                    writer.write_all(&comma)?;
+                    writer.write_all(comma)?;
                 }
-                writer.write_all(&red)?;
+                writer.write_all(red)?;
                 if start == end {
                     write!(writer, "{}", start + 1)
                 } else {
@@ -1089,13 +1097,14 @@ extern "C" fn ByteRangeMapping__findExecutedLines(
     // std.Io.Writer.Allocating → Vec<u8> byte buffer (bun_io::Write target).
     let mut buf: Vec<u8> = Vec::new();
 
-    if text::write_format::<false>(
+    if text::write_format(
         &report,
         source_url.utf8_byte_length(),
         &report.fraction(&thresholds),
         &thresholds,
         b"",
         &mut buf,
+        false,
     )
     .is_err()
     {

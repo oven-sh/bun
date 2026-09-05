@@ -131,7 +131,7 @@ pub enum FromTarballError {
 }
 bun_core::oom_from_alloc!(FromTarballError);
 
-pub(crate) type FromWorkspaceError = pack::PackError<true>;
+pub(crate) type FromWorkspaceError = pack::PackError;
 
 impl<'a, const DIRECTORY_PUBLISH: bool> Context<'a, DIRECTORY_PUBLISH> {
     /// Retrieve information for publishing from a tarball path, `bun publish path/to/tarball.tgz`
@@ -465,7 +465,7 @@ impl<'a, const DIRECTORY_PUBLISH: bool> Context<'a, DIRECTORY_PUBLISH> {
         // `log` borrows the disjoint `.log` field, so the re-derived `&mut`
         // never touches memory the live `log` borrow covers.
         let load_from_disk_result =
-            lockfile.load_from_cwd::<false>(Some(unsafe { &mut *manager_ptr }), log);
+            lockfile.load_from_cwd(Some(unsafe { &mut *manager_ptr }), log, false);
 
         let lockfile_ref: Option<&Lockfile> = match load_from_disk_result {
             LoadResult::Ok(ok) => Some(&*ok.lockfile),
@@ -520,9 +520,8 @@ impl<'a, const DIRECTORY_PUBLISH: bool> Context<'a, DIRECTORY_PUBLISH> {
             stats: pack::Stats::default(),
         };
 
-        // `pack::<true>` returns `Some(Context<true>)` on success.
-        Ok(pack::pack::<true>(&mut pack_ctx, &abs_pkg_json)?
-            .expect("pack::<true> always yields a publish context"))
+        Ok(pack::pack(&mut pack_ctx, &abs_pkg_json, true)?
+            .expect("packing for publish always yields a publish context"))
     }
 }
 

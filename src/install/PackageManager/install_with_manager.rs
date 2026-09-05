@@ -83,7 +83,7 @@ pub fn install_with_manager(
             let log = (*mgr).log;
             (*mgr)
                 .lockfile
-                .load_from_cwd::<true>(Some(&mut *mgr), &mut *log)
+                .load_from_cwd(Some(&mut *mgr), &mut *log, true)
         }
     } else {
         lockfile::LoadResult::NotFound
@@ -1258,26 +1258,15 @@ fn print_summary_tree(
     // We deliberately do not disable it after this.
     Output::enable_buffering();
     let writer = Output::writer_buffered();
-    // Runtime bool → const-generic dispatch.
-    if Output::enable_ansi_colors_stdout() {
-        LockfilePrinter::Tree::print::<_, true>(
-            &printer,
-            // SAFETY: `mgr` is the sole provenance root; `Tree::print` writes only fields
-            // disjoint from `printer`'s shared `lockfile`/`options`/`update_requests` borrows.
-            unsafe { &mut *mgr },
-            writer,
-            log_level,
-        )?;
-    } else {
-        LockfilePrinter::Tree::print::<_, false>(
-            &printer,
-            // SAFETY: `mgr` is the sole provenance root; `Tree::print` writes only fields
-            // disjoint from `printer`'s shared `lockfile`/`options`/`update_requests` borrows.
-            unsafe { &mut *mgr },
-            writer,
-            log_level,
-        )?;
-    }
+    LockfilePrinter::Tree::print(
+        &printer,
+        // SAFETY: `mgr` is the sole provenance root; `Tree::print` writes only fields
+        // disjoint from `printer`'s shared `lockfile`/`options`/`update_requests` borrows.
+        unsafe { &mut *mgr },
+        writer,
+        log_level,
+        Output::enable_ansi_colors_stdout(),
+    )?;
     Ok(())
 }
 

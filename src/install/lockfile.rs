@@ -491,19 +491,21 @@ impl Lockfile {
             || (self.packages.len() == 1 && self.packages.get(0).resolutions.len == 0)
     }
 
-    pub fn load_from_cwd<'a, const ATTEMPT_LOADING_FROM_OTHER_LOCKFILE: bool>(
+    pub fn load_from_cwd<'a>(
         &'a mut self,
         manager: Option<&mut PackageManager>,
         log: &mut bun_ast::Log,
+        attempt_loading_from_other_lockfile: bool,
     ) -> LoadResult<'a> {
-        self.load_from_dir::<ATTEMPT_LOADING_FROM_OTHER_LOCKFILE>(Fd::cwd(), manager, log)
+        self.load_from_dir(Fd::cwd(), manager, log, attempt_loading_from_other_lockfile)
     }
 
-    pub fn load_from_dir<'a, const ATTEMPT_LOADING_FROM_OTHER_LOCKFILE: bool>(
+    pub fn load_from_dir<'a>(
         &'a mut self,
         dir: Fd,
         mut manager: Option<&mut PackageManager>,
         log: &mut bun_ast::Log,
+        attempt_loading_from_other_lockfile: bool,
     ) -> LoadResult<'a> {
         debug_assert!(Fs::INSTANCE_LOADED.load(core::sync::atomic::Ordering::Relaxed));
 
@@ -535,7 +537,7 @@ impl Lockfile {
                                 });
                             }
 
-                            if ATTEMPT_LOADING_FROM_OTHER_LOCKFILE {
+                            if attempt_loading_from_other_lockfile {
                                 if let Some(pm) = manager {
                                     // The format is carried inside the `LoadResult` itself.
                                     return migration::detect_and_load_other_lockfile(
@@ -1665,7 +1667,7 @@ impl<'a> Printer<'a> {
 
         let mut lockfile = Box::<Lockfile>::default();
 
-        let load_from_disk = lockfile.load_from_cwd::<false>(None, log);
+        let load_from_disk = lockfile.load_from_cwd(None, log, false);
         match load_from_disk {
             crate::lockfile::LoadResult::Err(cause) => {
                 match cause.step {

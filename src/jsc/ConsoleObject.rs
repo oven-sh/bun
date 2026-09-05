@@ -2634,10 +2634,10 @@ pub mod formatter {
 
         /// Mirror of `Formatter::print_comma` routed through the wrapped
         /// `ctx` writer + borrowed `estimated_line_length`.
-        pub(crate) fn print_comma<const ENABLE_ANSI_COLORS: bool>(&mut self) {
+        pub(crate) fn print_comma(&mut self, enable_ansi_colors: bool) {
             if self
                 .ctx
-                .write_all(pfmt!("<r><d>,<r>", ENABLE_ANSI_COLORS).as_bytes())
+                .write_all(pfmt!("<r><d>,<r>", enable_ansi_colors).as_bytes())
                 .is_err()
             {
                 self.failed = true;
@@ -3091,7 +3091,7 @@ pub mod formatter {
                 estimated_line_length: &mut ctx.formatter.estimated_line_length,
             };
             if ctx.i > 0 {
-                writer.print_comma::<C>();
+                writer.print_comma(C);
             }
 
             let i_before = ctx.i;
@@ -3343,7 +3343,7 @@ pub mod formatter {
                 Tag::JSX => self.print_jsx::<ENABLE_ANSI_COLORS>(writer_, value),
                 Tag::Object => self.print_object::<ENABLE_ANSI_COLORS>(writer_, value, js_type),
                 Tag::TypedArray => {
-                    self.print_typed_array::<ENABLE_ANSI_COLORS>(writer_, value, js_type)
+                    self.print_typed_array(writer_, value, js_type, ENABLE_ANSI_COLORS)
                 }
                 Tag::RevokedProxy => self.print_revoked_proxy::<ENABLE_ANSI_COLORS>(writer_),
                 Tag::Proxy => self.print_proxy::<ENABLE_ANSI_COLORS>(writer_, value),
@@ -4327,7 +4327,7 @@ pub mod formatter {
                         continue;
                     }
                     if nonempty_count >= 100 {
-                        writer.print_comma::<C>();
+                        writer.print_comma(C);
                         writer.write_all(b"\n"); // we want the line break to be unconditional here
                         *writer.estimated_line_length = 0;
                         writer.write_indent(self.indent);
@@ -4346,7 +4346,7 @@ pub mod formatter {
 
                     if let Some(empty) = empty_start {
                         if empty > 0 {
-                            writer.print_comma::<C>();
+                            writer.print_comma(C);
                             if !self.single_line
                                 && (self.ordered_properties
                                     || writer.good_time_for_a_new_line(self.indent))
@@ -4379,7 +4379,7 @@ pub mod formatter {
                         empty_start = None;
                     }
 
-                    writer.print_comma::<C>();
+                    writer.print_comma(C);
                     if !self.single_line
                         && (self.ordered_properties || writer.good_time_for_a_new_line(self.indent))
                     {
@@ -4407,7 +4407,7 @@ pub mod formatter {
 
                 if let Some(empty) = empty_start.take() {
                     if empty > 0 {
-                        writer.print_comma::<C>();
+                        writer.print_comma(C);
                         if !self.single_line
                             && (self.ordered_properties
                                 || writer.good_time_for_a_new_line(self.indent))
@@ -5451,11 +5451,12 @@ pub mod formatter {
         }
 
         #[inline(never)]
-        fn print_typed_array<const C: bool>(
+        fn print_typed_array(
             &mut self,
             writer_: &mut dyn bun_io::Write,
             value: JSValue,
             js_type: jsc::JSType,
+            colors: bool,
         ) -> JsResult<()> {
             let mut writer = WrappedWriter {
                 ctx: writer_,
@@ -5469,7 +5470,7 @@ pub mod formatter {
                 && js_type == jsc::JSType::Uint8Array
                 && bun_core::strings::is_valid_utf8(slice)
             {
-                if C {
+                if colors {
                     writer.write_all(pfmt!("<r><green>", true).as_bytes());
                 }
                 let _ = JSPrinter::write_json_string(
@@ -5477,7 +5478,7 @@ pub mod formatter {
                     &mut *writer.ctx,
                     JSPrinter::Encoding::Utf8,
                 );
-                if C {
+                if colors {
                     writer.write_all(pfmt!("<r>", true).as_bytes());
                 }
                 return Ok(());
@@ -5512,28 +5513,38 @@ pub mod formatter {
             // `bytemuck::cast_slice` alignment/size checks always pass.
             use bytemuck::cast_slice;
             match js_type {
-                T::Int8Array => Self::write_typed_array::<i8, C>(&mut writer, cast_slice(slice)),
-                T::Int16Array => Self::write_typed_array::<i16, C>(&mut writer, cast_slice(slice)),
-                T::Uint16Array => Self::write_typed_array::<u16, C>(&mut writer, cast_slice(slice)),
-                T::Int32Array => Self::write_typed_array::<i32, C>(&mut writer, cast_slice(slice)),
-                T::Uint32Array => Self::write_typed_array::<u32, C>(&mut writer, cast_slice(slice)),
+                T::Int8Array => {
+                    Self::write_typed_array::<i8>(&mut writer, cast_slice(slice), colors)
+                }
+                T::Int16Array => {
+                    Self::write_typed_array::<i16>(&mut writer, cast_slice(slice), colors)
+                }
+                T::Uint16Array => {
+                    Self::write_typed_array::<u16>(&mut writer, cast_slice(slice), colors)
+                }
+                T::Int32Array => {
+                    Self::write_typed_array::<i32>(&mut writer, cast_slice(slice), colors)
+                }
+                T::Uint32Array => {
+                    Self::write_typed_array::<u32>(&mut writer, cast_slice(slice), colors)
+                }
                 T::Float16Array => {
-                    Self::write_typed_array::<bun_core::f16, C>(&mut writer, cast_slice(slice))
+                    Self::write_typed_array::<bun_core::f16>(&mut writer, cast_slice(slice), colors)
                 }
                 T::Float32Array => {
-                    Self::write_typed_array::<f32, C>(&mut writer, cast_slice(slice))
+                    Self::write_typed_array::<f32>(&mut writer, cast_slice(slice), colors)
                 }
                 T::Float64Array => {
-                    Self::write_typed_array::<f64, C>(&mut writer, cast_slice(slice))
+                    Self::write_typed_array::<f64>(&mut writer, cast_slice(slice), colors)
                 }
                 T::BigInt64Array => {
-                    Self::write_typed_array::<i64, C>(&mut writer, cast_slice(slice))
+                    Self::write_typed_array::<i64>(&mut writer, cast_slice(slice), colors)
                 }
                 T::BigUint64Array => {
-                    Self::write_typed_array::<u64, C>(&mut writer, cast_slice(slice))
+                    Self::write_typed_array::<u64>(&mut writer, cast_slice(slice), colors)
                 }
                 // Uint8Array, Uint8ClampedArray, DataView, ArrayBuffer
-                _ => Self::write_typed_array::<u8, C>(&mut writer, slice),
+                _ => Self::write_typed_array::<u8>(&mut writer, slice, colors),
             }
 
             writer.write_all(b" ]");
@@ -5547,50 +5558,53 @@ pub mod formatter {
         // `WrappedWriter` that already borrows `&mut self.estimated_line_length`
         // without tripping E0499. The only `self` use was `print_comma`, which
         // `WrappedWriter` mirrors.
-        fn write_typed_array<N: TypedArrayElement, const C: bool>(
+        fn write_typed_array<N: TypedArrayElement>(
             writer: &mut WrappedWriter<'_>,
             slice: &[N],
+            colors: bool,
         ) {
             // Only the per-element `Display` differs by `N`; the loop is shared.
-            Self::write_typed_array_elements::<C>(
+            Self::write_typed_array_elements(
                 writer,
                 slice.len(),
                 N::IS_BIGINT,
                 &mut |w, i| w.print(format_args!("{}", N::display(slice[i]))),
+                colors,
             );
         }
 
-        fn write_typed_array_elements<const C: bool>(
+        fn write_typed_array_elements(
             writer: &mut WrappedWriter<'_>,
             len: usize,
             is_bigint: bool,
             print_element: &mut dyn FnMut(&mut WrappedWriter<'_>, usize),
+            colors: bool,
         ) {
             let suffix = if is_bigint { "n" } else { "" };
-            writer.write_all(pfmt!("<r><yellow>", C).as_bytes());
+            writer.write_all(pfmt!("<r><yellow>", colors).as_bytes());
             print_element(writer, 0);
-            writer.print(format_args!("{}{}", suffix, pfmt!("<r>", C)));
+            writer.print(format_args!("{}{}", suffix, pfmt!("<r>", colors)));
             const MAX: usize = 512;
             let shown = len.min(MAX + 1);
             for i in 1..shown {
-                writer.print_comma::<C>();
+                writer.print_comma(colors);
                 if writer.failed {
                     return;
                 }
                 writer.space();
 
-                writer.write_all(pfmt!("<r><yellow>", C).as_bytes());
+                writer.write_all(pfmt!("<r><yellow>", colors).as_bytes());
                 print_element(writer, i);
-                writer.print(format_args!("{}{}", suffix, pfmt!("<r>", C)));
+                writer.print(format_args!("{}{}", suffix, pfmt!("<r>", colors)));
             }
 
             if len > MAX + 1 {
                 writer.print(format_args!(
                     "{}{}, ... {} more{}",
-                    pfmt!("<r><d>", C),
+                    pfmt!("<r><d>", colors),
                     suffix,
                     len - MAX - 1,
-                    pfmt!("<r>", C),
+                    pfmt!("<r>", colors),
                 ));
             }
         }

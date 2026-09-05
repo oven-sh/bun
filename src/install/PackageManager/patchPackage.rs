@@ -66,7 +66,7 @@ pub fn do_patch_commit(
     let mut folder_path_buf = PathBuffer::uninit();
     let mut lockfile: Box<Lockfile> = Box::default();
     let log = manager.log_mut();
-    match lockfile.load_from_cwd::<true>(Some(manager), log) {
+    match lockfile.load_from_cwd(Some(manager), log, true) {
         lockfile::LoadResult::NotFound => {
             Output::err_generic(
                 "Cannot find lockfile. Install packages with `<cyan>bun install<r>` before patching them.",

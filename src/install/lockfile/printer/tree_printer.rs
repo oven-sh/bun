@@ -14,11 +14,7 @@ use bun_sys::Fd;
 
 type Bitset = DynamicBitSet;
 
-fn print_installed_workspace_section<
-    W,
-    const ENABLE_ANSI_COLORS: bool,
-    const PRINT_SECTION_HEADER: bool,
->(
+fn print_installed_workspace_section<W>(
     this: &Printer,
     manager: &mut PackageManager,
     writer: &mut W,
@@ -27,6 +23,8 @@ fn print_installed_workspace_section<
     printed_new_install: &mut bool,
     id_map: Option<&mut [DependencyID]>,
     update_owners: &[PackageID],
+    enable_ansi_colors: bool,
+    print_section_header: bool,
 ) -> Result<(), crate::Error>
 where
     W: Write,
@@ -88,38 +86,34 @@ where
                     *printed_new_install = true;
                     printed_update = true;
 
-                    if PRINT_SECTION_HEADER {
+                    if print_section_header {
                         if !printed_section_header {
                             printed_section_header = true;
                             let workspace_name =
                                 names[workspace_package_id as usize].slice(string_buf);
                             bun_core::write_pretty!(
                                 writer,
-                                ENABLE_ANSI_COLORS,
+                                enable_ansi_colors,
                                 "<r>\n<cyan>{s}<r><d>:<r>\n",
                                 bstr::BStr::new(workspace_name),
                             )?;
                         }
                     }
 
-                    print_updated_package::<W, ENABLE_ANSI_COLORS>(
-                        this,
-                        manager,
-                        &update_info,
-                        writer,
-                    )?;
+                    print_updated_package(this, manager, &update_info, writer, enable_ansi_colors)?;
                 }
             }
         }
     }
 
-    if !PRINT_SECTION_HEADER {
-        if print_transitive_updates::<W, ENABLE_ANSI_COLORS>(
+    if !print_section_header {
+        if print_transitive_updates(
             this,
             manager,
             update_owners,
             installed,
             writer,
+            enable_ansi_colors,
         )? {
             *printed_new_install = true;
             printed_update = true;
@@ -161,13 +155,13 @@ where
 
         *printed_new_install = true;
 
-        if PRINT_SECTION_HEADER {
+        if print_section_header {
             if !printed_section_header {
                 printed_section_header = true;
                 let workspace_name = names[workspace_package_id as usize].slice(string_buf);
                 bun_core::write_pretty!(
                     writer,
-                    ENABLE_ANSI_COLORS,
+                    enable_ansi_colors,
                     "<r>\n<cyan>{s}<r><d>:<r>\n",
                     bstr::BStr::new(workspace_name),
                 )?;
@@ -178,7 +172,7 @@ where
             printed_update = false;
             writer.write_str("\n")?;
         }
-        print_installed_package::<W, ENABLE_ANSI_COLORS>(this, manager, dep, package_id, writer)?;
+        print_installed_package(this, manager, dep, package_id, writer, enable_ansi_colors)?;
     }
 
     Ok(())
@@ -282,11 +276,12 @@ fn should_print_package_install(
     ShouldPrintPackageInstallResult::Yes
 }
 
-fn print_updated_package<W, const ENABLE_ANSI_COLORS: bool>(
+fn print_updated_package<W>(
     this: &Printer,
     manager: &mut PackageManager,
     update_info: &PackageUpdatePrintInfo,
     writer: &mut W,
+    enable_ansi_colors: bool,
 ) -> Result<(), crate::Error>
 where
     W: Write,
@@ -306,7 +301,7 @@ where
     let Some(entry) = manager.updating_packages.get(dep_name) else {
         return Ok(());
     };
-    write_updated_row::<W, ENABLE_ANSI_COLORS>(
+    write_updated_row(
         writer,
         dep_name,
         update_info.version,
@@ -314,6 +309,7 @@ where
         update_info.resolution.npm().version,
         string_buf,
         later.as_deref(),
+        enable_ansi_colors,
     )
 }
 
@@ -332,7 +328,7 @@ fn later_version_text(
     Ok(Some(text))
 }
 
-fn write_updated_row<W, const ENABLE_ANSI_COLORS: bool>(
+fn write_updated_row<W>(
     writer: &mut W,
     name: &[u8],
     from: semver::Version,
@@ -340,11 +336,12 @@ fn write_updated_row<W, const ENABLE_ANSI_COLORS: bool>(
     to: semver::Version,
     to_buf: &[u8],
     later: Option<&[u8]>,
+    enable_ansi_colors: bool,
 ) -> Result<(), crate::Error>
 where
     W: Write,
 {
-    if ENABLE_ANSI_COLORS {
+    if enable_ansi_colors {
         write!(
             writer,
             bun_core::pretty_fmt!("<r><cyan>↑<r> <b>{s}<r> <d>{f} →<r> <b><cyan>{f}<r>", true),
@@ -365,7 +362,7 @@ where
     if let Some(later) = later {
         bun_core::write_pretty!(
             writer,
-            ENABLE_ANSI_COLORS,
+            enable_ansi_colors,
             " <d>(<blue>v{s} available<r><d>)<r>",
             bstr::BStr::new(later),
         )?;
@@ -376,12 +373,13 @@ where
 }
 
 /// Packages registered by the transitive half of `bun update` are not rows of the walked workspaces, so the walk above never reaches them; the walked workspaces' own targets stay with them.
-fn print_transitive_updates<W, const ENABLE_ANSI_COLORS: bool>(
+fn print_transitive_updates<W>(
     this: &Printer,
     manager: &mut PackageManager,
     update_owners: &[PackageID],
     installed: &Bitset,
     writer: &mut W,
+    enable_ansi_colors: bool,
 ) -> Result<bool, crate::Error>
 where
     W: Write,
@@ -439,7 +437,7 @@ where
         let Some(info) = manager.updating_packages.get(name) else {
             continue;
         };
-        write_updated_row::<W, ENABLE_ANSI_COLORS>(
+        write_updated_row(
             writer,
             name,
             original,
@@ -447,18 +445,20 @@ where
             version,
             string_buf,
             later.as_deref(),
+            enable_ansi_colors,
         )?;
         printed = true;
     }
     Ok(printed)
 }
 
-fn print_installed_package<W, const ENABLE_ANSI_COLORS: bool>(
+fn print_installed_package<W>(
     this: &Printer,
     manager: &mut PackageManager,
     dependency: &Dependency,
     package_id: PackageID,
     writer: &mut W,
+    enable_ansi_colors: bool,
 ) -> Result<(), crate::Error>
 where
     W: Write,
@@ -472,7 +472,7 @@ where
     if let Some(later_version_fmt) =
         manager.format_later_version_in_cache(package_name, dependency.name_hash, &resolution)
     {
-        if ENABLE_ANSI_COLORS {
+        if enable_ansi_colors {
             write!(
                 writer,
                 bun_core::pretty_fmt!(
@@ -496,7 +496,7 @@ where
         return Ok(());
     }
 
-    if ENABLE_ANSI_COLORS {
+    if enable_ansi_colors {
         write!(
             writer,
             bun_core::pretty_fmt!("<r><green>+<r> <b>{s}<r><d>@{f}<r>\n", true),
@@ -515,19 +515,20 @@ where
     Ok(())
 }
 
-fn print_installed_update_request<W, const ENABLE_ANSI_COLORS: bool>(
+fn print_installed_update_request<W>(
     writer: &mut W,
     dependency: &Dependency,
     resolution: &Resolution,
     string_buf: &[u8],
     has_binaries: bool,
+    enable_ansi_colors: bool,
 ) -> Result<(), crate::Error>
 where
     W: Write,
 {
     bun_core::write_pretty!(
         writer,
-        ENABLE_ANSI_COLORS,
+        enable_ansi_colors,
         "<r><green>installed<r> <b>{s}<r>",
         bstr::BStr::new(dependency.name.slice(string_buf)),
     )?;
@@ -535,7 +536,7 @@ where
     if let Some(npm) = dependency.version.try_npm().filter(|npm| npm.is_alias) {
         bun_core::write_pretty!(
             writer,
-            ENABLE_ANSI_COLORS,
+            enable_ansi_colors,
             "<d>@npm:<r><b>{s}<r>",
             bstr::BStr::new(npm.name.slice(string_buf)),
         )?;
@@ -543,7 +544,7 @@ where
 
     bun_core::write_pretty!(
         writer,
-        ENABLE_ANSI_COLORS,
+        enable_ansi_colors,
         "<d>@{f}<r>",
         resolution.fmt(string_buf, PathSep::Posix),
     )?;
@@ -558,11 +559,13 @@ where
 
 /// - Prints an empty newline with no diffs
 /// - Prints a leading and trailing blank newline with diffs
-pub(crate) fn print<W, const ENABLE_ANSI_COLORS: bool>(
+#[inline(never)]
+pub(crate) fn print<W>(
     this: &Printer,
     manager: &mut PackageManager,
     writer: &mut W,
     log_level: install::package_manager::Options::LogLevel,
+    enable_ansi_colors: bool,
 ) -> Result<(), crate::Error>
 where
     W: Write,
@@ -620,7 +623,7 @@ where
             }
             let _ = found_workspace_to_print;
 
-            print_installed_workspace_section::<W, ENABLE_ANSI_COLORS, false>(
+            print_installed_workspace_section(
                 this,
                 manager,
                 writer,
@@ -629,11 +632,13 @@ where
                 &mut had_printed_new_install,
                 None,
                 &[0],
+                enable_ansi_colors,
+                false,
             )?;
 
             for &workspace_dep_id in &workspaces_to_print {
                 let workspace_package_id = resolutions_buffer[workspace_dep_id as usize];
-                print_installed_workspace_section::<W, ENABLE_ANSI_COLORS, true>(
+                print_installed_workspace_section(
                     this,
                     manager,
                     writer,
@@ -642,6 +647,8 @@ where
                     &mut had_printed_new_install,
                     None,
                     &[workspace_package_id],
+                    enable_ansi_colors,
+                    true,
                 )?;
             }
         } else {
@@ -684,7 +691,7 @@ where
                 }
             }
 
-            print_installed_workspace_section::<W, ENABLE_ANSI_COLORS, false>(
+            print_installed_workspace_section(
                 this,
                 manager,
                 writer,
@@ -693,6 +700,8 @@ where
                 &mut had_printed_new_install,
                 Some(&mut id_map),
                 &update_owners,
+                enable_ansi_colors,
+                false,
             )?;
         }
     } else {
@@ -729,7 +738,7 @@ where
 
             bun_core::write_pretty!(
                 writer,
-                ENABLE_ANSI_COLORS,
+                enable_ansi_colors,
                 " <r><b>{s}<r><d>@<b>{f}<r>\n",
                 bstr::BStr::new(package_name),
                 resolved[package_id as usize].fmt(string_buf, PathSep::Auto),
@@ -763,8 +772,13 @@ where
             bin::Tag::None | bin::Tag::Dir => {
                 printed_installed_update_request = true;
 
-                print_installed_update_request::<W, ENABLE_ANSI_COLORS>(
-                    writer, dependency, resolution, string_buf, false,
+                print_installed_update_request(
+                    writer,
+                    dependency,
+                    resolution,
+                    string_buf,
+                    false,
+                    enable_ansi_colors,
                 )?;
             }
             bin::Tag::Map | bin::Tag::File | bin::Tag::NamedFile => {
@@ -783,8 +797,13 @@ where
                     extern_string_buf: this.lockfile.buffers.extern_strings.as_slice(),
                 };
 
-                print_installed_update_request::<W, ENABLE_ANSI_COLORS>(
-                    writer, dependency, resolution, string_buf, true,
+                print_installed_update_request(
+                    writer,
+                    dependency,
+                    resolution,
+                    string_buf,
+                    true,
+                    enable_ansi_colors,
                 )?;
 
                 {
@@ -796,7 +815,7 @@ where
 
                             bun_core::write_pretty!(
                                 writer,
-                                ENABLE_ANSI_COLORS,
+                                enable_ansi_colors,
                                 "<r> <d>- <r><b>{s}<r>\n",
                                 bstr::BStr::new(&owned[..]),
                             )?;
@@ -808,7 +827,7 @@ where
                     while let Some(bin_name) = iterator.next().unwrap_or(None) {
                         bun_core::write_pretty!(
                             writer,
-                            ENABLE_ANSI_COLORS,
+                            enable_ansi_colors,
                             "<r> <d>- <r><b>{s}<r>\n",
                             bstr::BStr::new(bin_name),
                         )?;

@@ -308,6 +308,7 @@ pub(crate) fn spawn_sync(
     result
 }
 
+#[inline(never)]
 fn spawn_maybe_sync(
     is_sync: bool,
     global_this: &JSGlobalObject,
@@ -1041,7 +1042,7 @@ fn spawn_maybe_sync(
     // also pass `jsc_vm` into `spawn_sync_event_loop`/`prepare`/`cleanup` while
     // holding it. Route through a raw `*mut VirtualMachineRef` for the duration.
     let jsc_vm_ptr: *mut jsc::VirtualMachineRef = jsc_vm;
-    // For is_sync, use the isolated loop's `event_loop` (created by
+    // For spawnSync, use the isolated loop's `event_loop` (created by
     // `SpawnSyncEventLoop::init`) so stdio readers/writers register on it
     // instead of the main loop.
     let event_loop: *mut jsc::event_loop::EventLoop = if is_sync {

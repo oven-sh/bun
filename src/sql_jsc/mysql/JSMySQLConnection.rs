@@ -459,6 +459,7 @@ impl JSMySQLConnection {
         // MySQL doesn't support unnamed prepared statements
         let _ = use_unnamed_prepared_statements;
         let allow_public_key_retrieval = callframe.argument(15).to_boolean();
+        let found_rows = callframe.argument(16).to_boolean();
 
         let ptr: *mut JSMySQLConnection = bun_core::heap::into_raw(Box::new(JSMySQLConnection {
             ref_count: Cell::new(1),
@@ -476,6 +477,7 @@ impl JSMySQLConnection {
                 secure,
                 args.ssl_mode,
                 allow_public_key_retrieval,
+                found_rows,
             )),
             auto_flusher: JsCell::new(AutoFlusher::default()),
             idle_timeout_interval_ms: u32::try_from(idle_timeout).expect("int cast"),

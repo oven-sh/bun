@@ -309,6 +309,7 @@ export async function pgMockServer(
 
 // Capability flags — page_protocol_basic_capability_flags.html (subset used by the mocks).
 export const MYSQL_CLIENT_LONG_PASSWORD = 1 << 0; // CLIENT_MYSQL in MariaDB's dialect
+export const MYSQL_CLIENT_FOUND_ROWS = 1 << 1;
 export const MYSQL_CLIENT_PROTOCOL_41 = 1 << 9;
 export const MYSQL_CLIENT_SSL = 1 << 11;
 export const MYSQL_CLIENT_SECURE_CONNECTION = 1 << 15;
@@ -383,8 +384,11 @@ export function mysqlHandshakeV10(
 
 // MySQL Protocol::OK_Packet — page_protocol_basic_ok_packet.html: Int<1>(header) lenenc(affected_rows) lenenc(last_insert_id) Int<2>(status) Int<2>(warnings)
 // The header is 0x00, except for the CLIENT_DEPRECATE_EOF result-set terminator, which is an OK packet with a 0xFE header.
-export function mysqlOkPacket(seq: number, header: 0x00 | 0xfe = 0x00): Buffer {
-  return mysqlRawPacket(seq, Buffer.from([header, 0x00, 0x00, 0x02, 0x00, 0x00, 0x00]));
+export function mysqlOkPacket(seq: number, header: 0x00 | 0xfe = 0x00, affectedRows = 0): Buffer {
+  return mysqlRawPacket(
+    seq,
+    Buffer.concat([Buffer.from([header]), mysqlLenencInt(affectedRows), Buffer.from([0x00, 0x02, 0x00, 0x00, 0x00])]),
+  );
 }
 
 // MySQL ERR_Packet — page_protocol_basic_err_packet.html:
@@ -461,6 +465,11 @@ export function mysqlReadLenencInt(buf: Buffer, offset: number): { value: number
 // 23 filler bytes (a MySQL client leaves them zero): https://mariadb.com/kb/en/connection/
 export function mysqlParseHandshakeResponseExtendedCaps(payload: Buffer): number {
   return payload.readUInt32LE(4 + 4 + 1 + 19);
+}
+
+// HandshakeResponse41 starts with Int<4>(client_flag): the capabilities the client negotiated.
+export function mysqlParseHandshakeResponse41ClientFlags(payload: Buffer): number {
+  return payload.readUInt32LE(0);
 }
 
 // MySQL Protocol::HandshakeResponse41 — page_protocol_connection_phase_packets_protocol_handshake_response.html:

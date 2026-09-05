@@ -112,9 +112,14 @@ const kDefaultSettings = {
 // the SETTINGS frame buffer, so only customSettings is visible pre-ACK.
 function initialLocalSettings(submitted: any) {
   const settings: any = { ...kDefaultSettings };
-  const custom = submitted?.customSettings;
-  if (custom != null && typeof custom === "object") {
-    settings.customSettings = { ...custom };
+  // `submitted` is built with toNativeSettings(), so customSettings holds [id, value] pairs.
+  const pairs = submitted?.customSettings;
+  if ($isArray(pairs) && pairs.length > 0) {
+    const byId: Record<number, number> = {};
+    for (let i = 0; i < pairs.length; i += 2) {
+      byId[pairs[i]] = pairs[i + 1];
+    }
+    settings.customSettings = byId;
   }
   return settings;
 }
@@ -198,23 +203,64 @@ function validateSettings(settings: any) {
     if (typeof cs !== "object" || cs === null) {
       throwSettingRangeError("customSettings", cs);
     }
+    // node's first pass over customSettings: a range check on Number() of each own key and
+    // value. NaN passes this check. customSettingsPairs() is the second pass.
+    // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/http2/core.js#L1012-L1021
     const keys = ObjectKeys(cs);
     if (keys.length > MAX_ADDITIONAL_SETTINGS) {
-      const err = new Error("Number of custom settings exceeds MAX_ADDITIONAL_SETTINGS");
-      (err as any).code = "ERR_HTTP2_TOO_MANY_CUSTOM_SETTINGS";
-      throw err;
+      throw $ERR_HTTP2_TOO_MANY_CUSTOM_SETTINGS();
     }
     for (const key of keys) {
       const id = Number(key);
-      if (!Number.isInteger(id) || id < 0 || id > 0xffff) {
-        throwSettingRangeError(key, cs[key]);
+      if (id < 0 || id > 0xffff) {
+        throwSettingRangeError("customSettings:id", id);
       }
-      const val = cs[key];
-      if (typeof val !== "number" || val < 0 || val > kMaxInt || !Number.isFinite(val)) {
-        throwSettingRangeError(key, val);
+      const value = Number(cs[key]);
+      if (value < 0 || value > kMaxInt) {
+        throwSettingRangeError("customSettings:value", value);
       }
     }
   }
+}
+
+// node's second pass over customSettings. It reads each enumerable key that has a number value,
+// and the setting id is Number(key). This is the only place that turns a key into an id.
+// It returns the [id, value] pairs for the wire, as one flat array.
+// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/http2/util.js#L402-L478
+function customSettingsPairs(customSettings: any): number[] | undefined {
+  if (typeof customSettings !== "object" || customSettings === null) return undefined;
+  const pairs: number[] = [];
+  for (const key in customSettings) {
+    const value = customSettings[key];
+    if (typeof value !== "number") continue;
+    const id = Number(key);
+    // node also rejects id 0 and value 0 here. Bun accepts both.
+    if (!(id >= 0 && id <= 0xffff)) {
+      throwSettingRangeError("Range Error", id);
+    }
+    if (!(value >= 0 && value <= kMaxInt)) {
+      throwSettingRangeError("Range Error", value);
+    }
+    // node stores each pair in a Uint32Array, which truncates it. node looks for an earlier
+    // entry with the id before truncation, so "10" and "10.5" stay two entries.
+    let i = 0;
+    while (i < pairs.length && pairs[i] !== id) i += 2;
+    if (i < pairs.length) {
+      pairs[i + 1] = value >>> 0;
+    } else {
+      if (pairs.length === MAX_ADDITIONAL_SETTINGS * 2) {
+        throw $ERR_HTTP2_TOO_MANY_CUSTOM_SETTINGS();
+      }
+      pairs.push(id >>> 0, value >>> 0);
+    }
+  }
+  return pairs;
+}
+
+// The object that H2FrameParser reads: the caller's settings, with customSettings replaced by
+// the pairs from customSettingsPairs(). The native side never reads the caller's object.
+function toNativeSettings(settings: any) {
+  return { ...settings, customSettings: customSettingsPairs(settings?.customSettings) };
 }
 
 function assertSettings(settings: any) {
@@ -250,13 +296,11 @@ function getPackedSettings(settings?: any): Buffer {
   if (settings.enableConnectProtocol !== undefined) {
     entries.push([0x8, settings.enableConnectProtocol ? 1 : 0]);
   }
-  if (settings.customSettings) {
-    const cs = settings.customSettings;
-    const keys = ObjectKeys(cs);
-    // Sort custom settings by ID for consistent output
-    keys.sort((a, b) => Number(a) - Number(b));
-    for (const key of keys) {
-      entries.push([Number(key), cs[key]]);
+  // The same pairs, in the same order, that a session sends.
+  const pairs = customSettingsPairs(settings.customSettings);
+  if (pairs !== undefined) {
+    for (let i = 0; i < pairs.length; i += 2) {
+      entries.push([pairs[i], pairs[i + 1]]);
     }
   }
 
@@ -1963,8 +2007,9 @@ function createPendingStreamCancelError(cause?: any) {
 // The native settings object for a server session: session options + the user's settings, with
 // enablePush forced off only when the caller explicitly provided it (see the RFC 9113 §6.5.2 note
 // at the construction site). Only explicitly-present settings are serialized by the native layer.
+// customSettings comes from options.settings only, as in node.
 function serverNativeSettings(options) {
-  const merged = { ...options, ...options?.settings };
+  const merged = { ...options, ...toNativeSettings(options?.settings) };
   if (merged.enablePush !== undefined) merged.enablePush = false;
   return merged;
 }
@@ -4646,7 +4691,7 @@ class ServerHttp2Session extends Http2Session {
     // frame stays compliant (the initial SETTINGS frame already clamps this
     // in ServerHttp2Session's constructor). Clients still accept `enablePush`
     // via their own `settings()` method.
-    settings = { ...settings, enablePush: false };
+    settings = { ...toNativeSettings(settings), enablePush: false };
     if (typeof settings.maxConcurrentStreams === "number") {
       this.#advertisedMaxConcurrentStreams = settings.maxConcurrentStreams;
     }
@@ -5571,6 +5616,7 @@ class ClientHttp2Session extends Http2Session {
     // node treats an omitted/undefined settings object as an empty update.
     if (settings === undefined) settings = {} as Settings;
     validateSettings(settings);
+    const nativeSettings = toNativeSettings(settings);
     // node: when more SETTINGS are submitted than maxOutstandingSettings allows un-ACKed, the
     // session is destroyed with ERR_HTTP2_MAX_PENDING_SETTINGS_ACK (surfaced via 'error').
     this.#pendingSettingsAckCount++;
@@ -5579,7 +5625,7 @@ class ClientHttp2Session extends Http2Session {
       return;
     }
     this.#pendingSettingsAck = true;
-    this.#parser?.settings(settings);
+    this.#parser?.settings(nativeSettings);
     // The frame is queued on the native session; flush it now (as close() does for its
     // GOAWAY) instead of waiting for the next unrelated write. Node schedules a session
     // write for every settings() call, so its SETTINGS goes out with the current batch -
@@ -5710,7 +5756,7 @@ class ClientHttp2Session extends Http2Session {
     if (options?.settings !== undefined) {
       validateSettings(options.settings);
     }
-    const nativeSettings = { ...options, ...options?.settings };
+    const nativeSettings = { ...options, ...toNativeSettings(options?.settings) };
     this.#localSettings = initialLocalSettings(nativeSettings);
     this.#parser = new H2FrameParser({
       native: nativeSocket,

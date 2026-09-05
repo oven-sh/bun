@@ -4373,75 +4373,43 @@ impl H2FrameParser {
         // Stage customSettings before committing anything — a later validation throw must not
         // leave partial state installed for the next submission.
         let mut staged_custom: Vec<(u16, u32)> = Vec::new();
-        // Validate customSettings and remember them so they go on the wire with our SETTINGS.
+        // customSettings is the flat [id, value, ...] array from customSettingsPairs() in
+        // src/js/node/http2.ts. That function reads the user's object and turns each key into an
+        // id, so this side reads numbers only.
         if let Some(custom_settings) = options.get(global_object, "customSettings")? {
             if !custom_settings.is_undefined() {
-                let Some(custom_settings_obj) = custom_settings.get_object() else {
+                if !custom_settings.is_array() {
                     return global_object
-                        .err_http2_invalid_setting_value("Expected customSettings to be an object")
+                        .err_http2_invalid_setting_value("Expected customSettings to be an array")
                         .throw();
-                };
-
-                let mut count: usize = 0;
-                let iter = bun_jsc::JSPropertyIterator::init(
-                    global_object,
-                    custom_settings_obj,
-                    bun_jsc::JSPropertyIteratorOptions {
-                        skip_empty_name: false,
-                        include_value: true,
-                        ..Default::default()
-                    },
-                )?;
-
-                while let Some((prop_name, setting_value)) = iter.next()? {
-                    count += 1;
-                    if count > MAX_CUSTOM_SETTINGS {
-                        return global_object
-                            .err_http2_too_many_custom_settings(
-                                "Number of custom settings exceeds MAX_ADDITIONAL_SETTINGS",
-                            )
-                            .throw();
-                    }
-
-                    // Validate setting ID (key) is in range [0, 0xFFFF]
-                    let setting_id_str = prop_name.to_utf8();
-                    // Parse bytes directly (ASCII decimal); do not insert
-                    // UTF-8 validation on external data.
-                    let Some(setting_id) =
-                        bun_core::parse_int::<u32>(setting_id_str.slice(), 10).ok()
-                    else {
-                        return global_object
-                            .err_http2_invalid_setting_value_range_error(
-                                "Invalid custom setting identifier",
-                            )
-                            .throw();
-                    };
-                    if setting_id > 0xFFFF {
+                }
+                let mut pairs = custom_settings.array_iterator(global_object)?;
+                if pairs.len as usize > MAX_CUSTOM_SETTINGS * 2 {
+                    return global_object
+                        .err_http2_too_many_custom_settings(
+                            "Number of custom settings exceeds MAX_ADDITIONAL_SETTINGS",
+                        )
+                        .throw();
+                }
+                while let Some(id) = pairs.next()? {
+                    let value = pairs.next()?.unwrap_or(JSValue::UNDEFINED);
+                    if !id.is_number() || !(0.0..=65535.0).contains(&id.as_number()) {
                         return global_object
                             .err_http2_invalid_setting_value_range_error(
                                 "Invalid custom setting identifier",
                             )
                             .throw();
                     }
-
-                    // Validate setting value is in range [0, 2^32-1]
-                    if setting_value.is_number() {
-                        let value = setting_value.as_number();
-                        if value < 0.0 || value > MAX_HEADER_TABLE_SIZE_F64 {
-                            return global_object
-                                .err_http2_invalid_setting_value_range_error(
-                                    "Invalid custom setting value",
-                                )
-                                .throw();
-                        }
-                        staged_custom.push((setting_id as u16, value as u32));
-                    } else {
+                    if !value.is_number()
+                        || !(0.0..=MAX_HEADER_TABLE_SIZE_F64).contains(&value.as_number())
+                    {
                         return global_object
                             .err_http2_invalid_setting_value_range_error(
-                                "Expected custom setting value to be a number",
+                                "Invalid custom setting value",
                             )
                             .throw();
                     }
+                    staged_custom.push((id.as_number() as u16, value.as_number() as u32));
                 }
             }
         }

@@ -48,6 +48,47 @@ pub(crate) fn get_truthy_string_utf8(
     Ok(Some(str.into_utf8()))
 }
 
+/// `opts.{name}` via ToNumber, truncated, checked against `min..=max` before narrowing.
+fn get_optional_int_in_range(
+    opts: JSValue,
+    global: &JSGlobalObject,
+    name: &'static [u8],
+    min: i64,
+    max: Option<i64>,
+) -> JsResult<Option<i64>> {
+    let Some(value) = opts.get(global, name)? else {
+        return Ok(None);
+    };
+    if value.is_undefined_or_null() {
+        return Ok(None);
+    }
+    let number = value.to_number(global)?;
+    if number.is_nan() {
+        return Err(global.throw_range_error(
+            number,
+            RangeErrorOptions {
+                field_name: name,
+                msg: b"an integer",
+                ..Default::default()
+            },
+        ));
+    }
+    let truncated = number.trunc();
+    if truncated < min as f64 || max.is_some_and(|max| truncated > max as f64) {
+        return Err(global.throw_range_error(
+            number,
+            RangeErrorOptions {
+                min,
+                max: max.unwrap_or(i64::MAX),
+                field_name: name,
+                ..Default::default()
+            },
+        ));
+    }
+    // `as` saturates, so an unbounded `Infinity` becomes `i64::MAX`.
+    Ok(Some(truncated as i64))
+}
+
 const ACL_ONE_OF: &str = "\"private\", \"public-read\", \"public-read-write\", \"aws-exec-read\", \
 \"authenticated-read\", \"bucket-owner-read\", \"bucket-owner-full-control\", \"log-delivery-write\"";
 
@@ -145,70 +186,30 @@ pub(crate) fn get_credentials_with_options(
                 new_credentials.changed_credentials = true;
             }
 
-            if let Some(page_size) = opts.get_optional::<i64>(global_object, "pageSize")? {
-                if page_size < MultiPartUploadOptions::MIN_SINGLE_UPLOAD_SIZE as i64
-                    || page_size > MultiPartUploadOptions::MAX_SINGLE_UPLOAD_SIZE as i64
-                {
-                    return Err(global_object.throw_range_error(
-                        page_size,
-                        RangeErrorOptions {
-                            min: MultiPartUploadOptions::MIN_SINGLE_UPLOAD_SIZE as i64,
-                            max: MultiPartUploadOptions::MAX_SINGLE_UPLOAD_SIZE as i64,
-                            field_name: b"pageSize",
-                            ..Default::default()
-                        },
-                    ));
-                } else {
-                    new_credentials.options.part_size = page_size as u64;
-                }
-            }
-            if let Some(part_size) = opts.get_optional::<i64>(global_object, "partSize")? {
-                if part_size < MultiPartUploadOptions::MIN_SINGLE_UPLOAD_SIZE as i64
-                    || part_size > MultiPartUploadOptions::MAX_SINGLE_UPLOAD_SIZE as i64
-                {
-                    return Err(global_object.throw_range_error(
-                        part_size,
-                        RangeErrorOptions {
-                            min: MultiPartUploadOptions::MIN_SINGLE_UPLOAD_SIZE as i64,
-                            max: MultiPartUploadOptions::MAX_SINGLE_UPLOAD_SIZE as i64,
-                            field_name: b"partSize",
-                            ..Default::default()
-                        },
-                    ));
-                } else {
+            // `pageSize` is the deprecated alias. `partSize` is applied last and wins.
+            for name in [b"pageSize".as_slice(), b"partSize".as_slice()] {
+                if let Some(part_size) = get_optional_int_in_range(
+                    opts,
+                    global_object,
+                    name,
+                    MultiPartUploadOptions::MIN_SINGLE_UPLOAD_SIZE as i64,
+                    Some(MultiPartUploadOptions::MAX_SINGLE_UPLOAD_SIZE as i64),
+                )? {
                     new_credentials.options.part_size = part_size as u64;
                 }
             }
 
-            if let Some(queue_size) = opts.get_optional::<i32>(global_object, "queueSize")? {
-                if queue_size < 1 {
-                    return Err(global_object.throw_range_error(
-                        queue_size as i64,
-                        RangeErrorOptions {
-                            min: 1,
-                            field_name: b"queueSize",
-                            ..Default::default()
-                        },
-                    ));
-                } else {
-                    new_credentials.options.queue_size = queue_size.min(i32::from(u8::MAX)) as u8;
-                }
+            // Values above 255 clamp to the u8 field instead of throwing.
+            if let Some(queue_size) =
+                get_optional_int_in_range(opts, global_object, b"queueSize", 1, None)?
+            {
+                new_credentials.options.queue_size = queue_size.min(i64::from(u8::MAX)) as u8;
             }
 
-            if let Some(retry) = opts.get_optional::<i32>(global_object, "retry")? {
-                if !(0..=255).contains(&retry) {
-                    return Err(global_object.throw_range_error(
-                        retry as i64,
-                        RangeErrorOptions {
-                            min: 0,
-                            max: 255,
-                            field_name: b"retry",
-                            ..Default::default()
-                        },
-                    ));
-                } else {
-                    new_credentials.options.retry = retry as u8;
-                }
+            if let Some(retry) =
+                get_optional_int_in_range(opts, global_object, b"retry", 0, Some(255))?
+            {
+                new_credentials.options.retry = retry as u8;
             }
             if let Some(acl) =
                 opts.get_optional_enum_from_map(global_object, "acl", &ACL::MAP, ACL_ONE_OF)?

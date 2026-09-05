@@ -2012,10 +2012,18 @@ impl TestCommand {
         vm.ensure_debugger(false)?;
 
         let mut scanner = Scanner::init(&vm.transpiler, ctx.positionals.len()).expect("oom");
-        // SAFETY: lifetime-erase; `path_ignore_patterns_view` lives in this never-returning
-        // frame, underlying bytes live in `ctx` (process-lifetime).
-        scanner.path_ignore_patterns =
-            unsafe { bun_ptr::detach_lifetime(&path_ignore_patterns_view[..]) };
+        // Unconfigured pathIgnorePatterns falls back to the built-in defaults
+        // so `dist/`/`build/` copies don't run tests twice.
+        if ctx.test_options.path_ignore_patterns_configured {
+            // SAFETY: lifetime-erase; `path_ignore_patterns_view` lives in this never-returning
+            // frame, underlying bytes live in `ctx` (process-lifetime).
+            scanner.path_ignore_patterns =
+                unsafe { bun_ptr::detach_lifetime(&path_ignore_patterns_view[..]) };
+            scanner.path_ignore_patterns_are_defaults = false;
+        } else {
+            scanner.path_ignore_patterns = &scanner::DEFAULT_PATH_IGNORE_PATTERNS;
+            scanner.path_ignore_patterns_are_defaults = true;
+        }
         let has_relative_path = 'hr: {
             for arg in &ctx.positionals {
                 if bun_paths::is_absolute(arg)
@@ -2032,10 +2040,10 @@ impl TestCommand {
         };
         if has_relative_path {
             // One of the files is a filepath. Instead of treating the
-            // arguments as filters, treat them as filepaths
+            // arguments as filters, treat them as filepaths.
             let file_or_dirnames = &ctx.positionals[1..];
             for arg in file_or_dirnames {
-                match scanner.scan(arg) {
+                match scanner.scan_explicit(arg) {
                     Ok(()) => {}
                     Err(scanner::ScanError::OutOfMemory) => bun::out_of_memory(),
                     // don't error if multiple are passed; one might fail

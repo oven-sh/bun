@@ -140,13 +140,11 @@ export const mydep: Dependency = {
 ## Build types
 
 - **`direct`**: Sources compiled as first-class `cc` edges in our ninja
-  graph — no sub-process. Best for deps with a stable, small file list and
-  no configure-time codegen we can't replicate. See `DirectBuild` in
-  `../source.ts`. No sub-process configure, and LTO sees across the dep
-  boundary into bun's call sites.
-- **`custom`**: The dep's module emits its own edges (`CustomBuild` in
-  `../source.ts`) and returns objects + include dirs. For deps with host
-  tools / codegen chains: ICU, WebKit.
+  graph — no sub-process; `groups` for further source sets with their own
+  flags, `steps` for generators / host tools / target executables, `headers`
+  for configure-time config headers. See `DirectBuild` in `../source.ts`.
+  Every C/C++ dep, ICU and WebKit included. No sub-process configure, and
+  LTO sees across the dep boundary into bun's call sites.
 - **`cargo`**: Rust deps (currently lolhtml and rust-argon2). See `CargoBuild` in `../source.ts`.
 - **`none`**: Header-only or prebuilt. No build step; `.ref` stamp is the output.
 

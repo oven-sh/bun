@@ -36,7 +36,7 @@ Configure time is Phase 1 below — resolve tools, compute flags, glob sources, 
 
 **The smell:** if configure code calls `spawnSync` to compile something, or compares mtimes with `statSync`, it's doing ninja's job. Make it a build edge — `n.rule()` + `n.build()`. Size doesn't matter; a 1-file compile is still a build edge.
 
-**Legitimate `spawnSync` at configure time:** tool detection (`clang --version`), git revision, `xcrun --show-sdk-path` — these probe the environment; and, for `custom` deps whose graph is read from their tree, the source fetch (`prefetchConfigureSources`) plus WebKit's unified-source bundler (a python script that only writes `#include` lists). None of these compile anything.
+**Legitimate `spawnSync` at configure time:** tool detection (`clang --version`), git revision, `xcrun --show-sdk-path` — these probe the environment; and, for `configureReadsSource` deps whose graph is read from their tree, the source fetch (`prefetchConfigureSources`) plus WebKit's unified-source bundler (a python script that only writes `#include` lists). None of these compile anything.
 
 ## Ninja primer
 

@@ -17,7 +17,7 @@
  * re-extraction after a failed patch doesn't re-download.
  */
 
-import { existsSync, mkdirSync, rmSync } from "node:fs";
+import { existsSync, lstatSync, mkdirSync, rmSync } from "node:fs";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { ar, cc, cxx, link, nasm, pch } from "./compile.ts";
 import type { Config } from "./config.ts";
@@ -815,8 +815,8 @@ function fetchSpec(source: Extract<Source, { kind: "github" | "tarball" }>): {
 
 /**
  * Fetch, at configure time, the source of every dep whose graph can only be
- * described with the tree on disk (every CustomBuild — WebKit's file lists
- * live in its own Sources.txt, ICU's in sources.txt). Same fetch,
+ * described with the tree on disk (`configureReadsSource` — WebKit's file
+ * lists live in its own Sources.txt, ICU's in sources.txt). Same fetch,
  * same identity stamp as the ninja `dep_fetch` edge, which is still emitted
  * and is then a no-op; this just runs it early. A no-op itself when the stamp
  * already matches, so the always-configure cost stays a stat.
@@ -1042,16 +1042,19 @@ export function computeDepLibs(cfg: Config, dep: Dependency): string[] {
   }
 
   const source = dep.source(cfg);
-  const buildSpec = dep.build(cfg);
-  const provides = dep.provides(cfg);
 
   // Prebuilt: provides.libs are paths relative to destDir.
   if (source.kind === "prebuilt") {
     const destDir = source.destDir ?? depSourceDir(cfg, dep.name);
-    return provides.libs.map(lib => resolve(destDir, lib));
+    return dep.provides(cfg).libs.map(lib => resolve(destDir, lib));
   }
 
-  if (buildSpec.kind === "cargo") {
+  // A dep whose spec is read off its source tree is a direct build; the tree
+  // is not on a link-only agent, so don't evaluate the spec here.
+  const kind = dep.configureReadsSource ? "direct" : dep.build(cfg).kind;
+
+  if (kind === "cargo") {
+    const buildSpec = dep.build(cfg) as CargoBuild;
     const targetDir = depBuildDir(cfg, dep.name);
     const profile = cfg.release ? "release" : "debug";
     const outSubdir = buildSpec.rustTarget ? join(buildSpec.rustTarget, profile) : profile;
@@ -1061,13 +1064,11 @@ export function computeDepLibs(cfg: Config, dep: Dependency): string[] {
   // direct: single lib<name>.a when archiveDeps; otherwise the dep's .o
   // files are folded into libbun.a in cpp-only and there's no separate
   // artifact for link-only to fetch.
-  if (buildSpec.kind === "direct") {
+  if (kind === "direct") {
     if (!cfg.archiveDeps) return [];
     const buildDir = depBuildDir(cfg, dep.name);
     return [resolve(buildDir, `${cfg.libPrefix}${dep.name}${cfg.libSuffix}`)];
   }
-
-  // custom: objects only, folded into cpp-only's archive like direct deps'.
 
   // none: no libs (header-only or directly-compiled sources).
   return [];
@@ -1398,6 +1399,11 @@ function emitDirect(n: Ninja, cfg: Config, name: string, spec: DirectBuild, inpu
     const out = resolve(buildDir, h);
     mkdirSync(dirname(out), { recursive: true });
     if (typeof body === "string") {
+      // Whatever else sits at that path (an older build layout left symlinks
+      // into the source tree where WebKit's forwarding stubs now go) is
+      // replaced, never written through.
+      const existing = lstatSync(out, { throwIfNoEntry: false });
+      if (existing !== undefined && !existing.isFile()) rmSync(out, { recursive: true, force: true });
       writeIfChanged(out, body === "" ? "/* stub — generated at configure */\n" : body);
     } else {
       n.build({
@@ -1414,7 +1420,6 @@ function emitDirect(n: Ninja, cfg: Config, name: string, spec: DirectBuild, inpu
 
   // ─── Steps: generators and executables ───
   const steps = spec.steps ?? [];
-  const genOutputs: string[] = [];
   const isExe = (st: DirectStep): st is ExeStep => st.kind === "exe" || st.kind === "host-exe";
   for (const step of steps) {
     if (isExe(step)) continue;
@@ -1439,7 +1444,6 @@ function emitDirect(n: Ninja, cfg: Config, name: string, spec: DirectBuild, inpu
         cmd: quoteArgs(step.cmd, hostWin),
       },
     });
-    genOutputs.push(...outputs);
   }
 
   // ─── Source groups ───

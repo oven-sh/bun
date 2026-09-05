@@ -1349,7 +1349,7 @@ function webkitLayout(cfg: Config): WebKitBuild {
 
 function webkitBuildSpec(cfg: Config): DirectBuild {
   const wk = webkitLayout(cfg);
-  const { JSC, B } = wk;
+  const { JSC } = wk;
   assert(existsSync(join(JSC, "Sources.txt")), `WebKit source tree not present at ${wk.W}`, {
     hint: "configure fetches it before describing the graph — this is a bug in prefetchConfigureSources",
   });
@@ -1397,7 +1397,6 @@ function webkitBuildSpec(cfg: Config): DirectBuild {
       join(JSC, "offlineasm"),
     ],
   };
-  void B;
 }
 
 /** Include dirs bun compiles against — the same set the prebuilt's include/ flattens together. */

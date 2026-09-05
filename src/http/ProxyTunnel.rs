@@ -357,7 +357,7 @@ fn on_handshake(
         if this.flags.reject_unauthorized {
             // only reject the connection if reject_unauthorized == true
             if this.flags.did_have_handshaking_error {
-                let err = this.handshake_failure_error(&ssl_error);
+                let err = crate::get_cert_error_from_no(handshake_error.error_no);
                 // SAFETY: `this` dead (NLL); reenter via raw ptr so on_close's
                 // fresh `&mut *ctx` does not alias us.
                 ProxyTunnel::close_from_callback(proxy_nn, err);
@@ -422,7 +422,7 @@ fn on_handshake(
         // if we are here is because server rejected us, and the error_no is the cause of this
         // if we set reject_unauthorized == false this means the server requires custom CA aka NODE_EXTRA_CA_CERTS
         if this.flags.did_have_handshaking_error && handshake_error.error_no != 0 {
-            let err = this.handshake_failure_error(&ssl_error);
+            let err = crate::get_cert_error_from_no(handshake_error.error_no);
             // SAFETY: `this` dead (NLL); reenter via raw ptr.
             ProxyTunnel::close_from_callback(proxy_nn, err);
             return;

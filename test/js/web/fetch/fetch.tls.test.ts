@@ -460,7 +460,7 @@ describe.concurrent("fetch-tls", () => {
       expect(err.code).toBe("ECONNRESET");
     });
 
-    it(`a peer that does not speak TLS rejects with EPROTO and the OpenSSL reason (rejectUnauthorized: ${rejectUnauthorized})`, async () => {
+    it(`a peer that does not speak TLS rejects with ERR_SSL_WRONG_VERSION_NUMBER (rejectUnauthorized: ${rejectUnauthorized})`, async () => {
       using server = await plainTcpServer(socket => socket.end("HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n"));
       const err = await fetch(`https://127.0.0.1:${server.port}/`, {
         keepalive: false,
@@ -470,8 +470,9 @@ describe.concurrent("fetch-tls", () => {
         e => e,
       );
       expect(err).toBeInstanceOf(Error);
-      expect(err.code).toBe("EPROTO");
-      expect(err.message).toContain("WRONG_VERSION_NUMBER");
+      // The same code and message node:tls gives for this handshake failure.
+      expect(err.code).toBe("ERR_SSL_WRONG_VERSION_NUMBER");
+      expect(err.message).toMatch(/^error:[0-9a-f]+:SSL routines:[^:]*:WRONG_VERSION_NUMBER$/);
     });
   }
 

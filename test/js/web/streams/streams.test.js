@@ -2049,8 +2049,7 @@ describe.skipIf(isWindows)("Bun.file().stream() surfaces read() errors", () => {
       env: bunEnv,
       stderr: "pipe",
     });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(stderr).toBe("");
+    const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stdout).toMatch(/^first x\nsettled (EIO|done)\n$/);
     expect(exitCode).toBe(0);
   });

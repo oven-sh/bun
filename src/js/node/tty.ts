@@ -51,7 +51,7 @@ function ttyRead(stream, fd, buf, offset, length, position, cb) {
 }
 
 function readFromNative(stream, reader, buf, cb) {
-  reader.read().then(
+  reader.read().$then(
     ({ value, done }) => {
       if (done || stream[kNativeReader] !== reader) {
         cb(null, 0, buf);
@@ -116,7 +116,7 @@ Object.defineProperty(ReadStream, "prototype", {
       if (reader !== undefined) {
         // Settles the pending read so fs.ReadStream's _destroy gets its kIoDone.
         this[kNativeReader] = undefined;
-        reader.cancel().catch(() => {});
+        reader.cancel().$then(undefined, () => {});
       }
       fs.ReadStream.prototype._destroy.$call(this, err, cb);
     };

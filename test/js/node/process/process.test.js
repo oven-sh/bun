@@ -2,7 +2,7 @@ import { spawnSync, which } from "bun";
 import { CString, dlopen, ptr } from "bun:ffi";
 import { describe, expect, it } from "bun:test";
 import { familySync } from "detect-libc";
-import { bunEnv, bunExe, isMacOS, isWindows, tempDir, tmpdirSync } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, isMacOS, isWindows, tempDir, tmpdirSync } from "harness";
 import { basename, join, resolve } from "path";
 
 const process_sleep = resolve(import.meta.dir, "process-sleep.js");
@@ -2714,4 +2714,273 @@ it("no socket close handler runs after the 'exit' event", async () => {
   const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
   expect(stdout).toBe("exit\n");
   expect(exitCode).toBe(0);
+});
+
+// process.stdout/stderr/stdin/nextTick/finalization/allowedNodeEnvironmentFlags (and a few
+// more) are lazy: the first read runs a native builder that calls into JS. When that JS throws,
+// the read must throw and the property must stay unbuilt so that the next read builds it. The
+// builders used to swallow the error, report it as an uncaught exception (exit code 1 with no
+// handler) and store undefined in the property for the rest of the process.
+describe.concurrent("lazy process properties whose builder throws", () => {
+  async function run(code) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", code],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  }
+
+  it("a builder that runs out of stack throws, and the next read builds the property", async () => {
+    // Only the deepest frame reaches the catch block. There is less than one JS frame of stack
+    // left at that point, so every builder that has to call into JS fails with the RangeError.
+    const { stdout, stderr, exitCode } = await run(`
+      const names = ["stdout", "stderr", "stdin", "nextTick", "finalization", "allowedNodeEnvironmentFlags"];
+      const atLimit = {};
+      function recurse() {
+        try {
+          recurse();
+        } catch {
+          for (const name of names) {
+            try {
+              atLimit[name] = typeof process[name];
+            } catch (e) {
+              atLimit[name] = "threw " + e.constructor.name;
+            }
+          }
+          for (const name of ["_stdout", "_stderr"]) {
+            try {
+              atLimit["console" + name] = typeof console[name];
+            } catch (e) {
+              atLimit["console" + name] = "threw " + e.constructor.name;
+            }
+          }
+        }
+      }
+      recurse();
+      const afterwards = {};
+      for (const name of names) afterwards[name] = typeof process[name];
+      afterwards.console_stdout = console._stdout === process.stdout;
+      afterwards.console_stderr = console._stderr === process.stderr;
+      process.nextTick(() => process.stdout.write(JSON.stringify({ atLimit, afterwards }) + "\\n"));
+    `);
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual({
+      atLimit: {
+        stdout: "threw RangeError",
+        stderr: "threw RangeError",
+        stdin: "threw RangeError",
+        nextTick: "threw RangeError",
+        finalization: "threw RangeError",
+        allowedNodeEnvironmentFlags: "threw RangeError",
+        console_stdout: "threw RangeError",
+        console_stderr: "threw RangeError",
+      },
+      afterwards: {
+        stdout: "object",
+        stderr: "object",
+        stdin: "object",
+        nextTick: "function",
+        finalization: "object",
+        allowedNodeEnvironmentFlags: "object",
+        console_stdout: true,
+        console_stderr: true,
+      },
+    });
+    expect(exitCode).toBe(0);
+  });
+
+  // Windows: process.env is built by a JS builtin and has a JS custom inspect function. Building
+  // it or inspecting it at the stack limit still aborts the process (initializers of JSC
+  // LazyPropertys, which cannot fail), so Bun.inspect(process) cannot be run there.
+  it.skipIf(isWindows)("inspecting process while out of stack leaves every property buildable", async () => {
+    // Bun.inspect(process) reads every property, so it runs all of the builders in one go, and at
+    // the stack limit every one of them that calls into JS fails. They must only be missing from
+    // that one inspection.
+    const listUndefinedProperties = `
+      const undefinedProperties = Object.getOwnPropertyNames(process).filter(name => process[name] === undefined);
+      process.nextTick(() => process.stdout.write(JSON.stringify(undefinedProperties) + "\\n"));
+    `;
+    const [outOfStack, baseline] = await Promise.all([
+      run(`
+        function recurse() {
+          try {
+            recurse();
+          } catch {
+            try {
+              Bun.inspect(process, { depth: 0 });
+            } catch {}
+          }
+        }
+        recurse();
+        ${listUndefinedProperties}
+      `),
+      run(listUndefinedProperties),
+    ]);
+    expect(baseline.stderr).toBe("");
+    // e.g. ["channel", "disconnect", "exitCode", "mainModule", "send"]
+    expect(JSON.parse(baseline.stdout)).not.toContain("stdout");
+    expect(baseline.exitCode).toBe(0);
+    expect(outOfStack).toEqual(baseline);
+  });
+
+  it("a builder that throws is retried once the cause is gone, without reporting an uncaught exception", async () => {
+    // buildAllowedNodeEnvironmentFlags constructs a Set.
+    const { stdout, stderr, exitCode } = await run(`
+      process.on("uncaughtException", e => console.log("uncaughtException: " + e.constructor.name));
+      const RealSet = Set;
+      globalThis.Set = undefined;
+      let brokenRead;
+      try {
+        brokenRead = typeof process.allowedNodeEnvironmentFlags;
+      } catch (e) {
+        brokenRead = "threw " + e.constructor.name;
+      }
+      globalThis.Set = RealSet;
+      const flags = process.allowedNodeEnvironmentFlags;
+      console.log(JSON.stringify({
+        brokenRead,
+        sameObjectOnEveryRead: flags === process.allowedNodeEnvironmentFlags,
+        has: [flags.has("--no-warnings"), flags.has("--not-a-flag")],
+      }));
+    `);
+    expect(stderr).toBe("");
+    expect(stdout).toBe(
+      JSON.stringify({ brokenRead: "threw TypeError", sameObjectOnEveryRead: true, has: [true, false] }) + "\n",
+    );
+    expect(exitCode).toBe(0);
+  });
+
+  it("a builder failure during bulk reification throws from the operation that triggered it", async () => {
+    // Spreading process (like deleting one of its properties) makes JSC build all of its remaining
+    // lazy properties first. The ones after the failing builder stay lazy and are built by the
+    // next such operation. The stdio builders load modules, which may need Set themselves, so
+    // they are built up front to make allowedNodeEnvironmentFlags the one builder that fails.
+    const { stdout, stderr, exitCode } = await run(`
+      process.stdout; process.stderr; process.stdin; process.nextTick;
+      const RealSet = Set;
+      globalThis.Set = undefined;
+      let brokenSpread;
+      try {
+        brokenSpread = "copied " + typeof { ...process }.allowedNodeEnvironmentFlags;
+      } catch (e) {
+        brokenSpread = "threw " + e.constructor.name;
+      }
+      globalThis.Set = RealSet;
+      console.log(JSON.stringify({
+        brokenSpread,
+        spreadAfterwards: typeof { ...process }.allowedNodeEnvironmentFlags,
+        flags: process.allowedNodeEnvironmentFlags.has("--no-warnings"),
+        finalization: typeof process.finalization.register,
+      }));
+    `);
+    expect(stderr).toBe("");
+    expect(stdout).toBe(
+      JSON.stringify({
+        brokenSpread: "threw TypeError",
+        spreadAfterwards: "object",
+        flags: true,
+        finalization: "function",
+      }) + "\n",
+    );
+    expect(exitCode).toBe(0);
+  });
+
+  it("a failed builder only hides its own property from Bun.inspect", async () => {
+    // A failed lookup leaves its exception pending. Bun.inspect's property walk has to clear it
+    // before looking up the next property, or the lazy properties declared after the failed one
+    // (loadEnvFile, finalization, arch, ... up to the first non-lazy one) are reported as missing
+    // too. As above, allowedNodeEnvironmentFlags is made the one builder that fails. process.env
+    // is replaced because on Windows it has a custom inspect function, whose machinery needs
+    // modules that do not load without Set either.
+    const { stdout, stderr, exitCode } = await run(`
+      process.stdout; process.stderr; process.stdin; process.nextTick;
+      Object.defineProperty(process, "env", { value: {}, writable: true, configurable: true, enumerable: true });
+      const keysOf = inspected => [...inspected.matchAll(/^  ([A-Za-z_$][\\w$]*):/gm)].map(match => match[1]);
+      const RealSet = Set;
+      globalThis.Set = undefined;
+      const whileBroken = keysOf(Bun.inspect(process, { depth: 0 }));
+      globalThis.Set = RealSet;
+      const intact = keysOf(Bun.inspect(process, { depth: 0 }));
+      console.log(JSON.stringify({
+        hiddenWhileBroken: intact.filter(key => !whileBroken.includes(key)),
+        extraWhileBroken: whileBroken.filter(key => !intact.includes(key)),
+      }));
+    `);
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual({ hiddenWhileBroken: ["allowedNodeEnvironmentFlags"], extraWhileBroken: [] });
+    expect(exitCode).toBe(0);
+  });
+
+  it("internal nextTick users see the builder failure and work once it can be built", async () => {
+    // process.emitWarning queues through the native Process::queueNextTick, which reads
+    // process.nextTick and so runs its builder on the first use. It used to fail for good after
+    // one failed build ("Failed to call nextTick" from every later warning, Worker, ...).
+    const { stdout, stderr, exitCode } = await run(`
+      process.removeAllListeners("warning");
+      let atLimit;
+      process.on("warning", warning => {
+        console.log(JSON.stringify({ atLimit, warning: warning.message, nextTick: typeof process.nextTick }));
+      });
+      function recurse() {
+        try {
+          recurse();
+        } catch {
+          try {
+            process.emitWarning("at the stack limit");
+            atLimit = "returned";
+          } catch (e) {
+            atLimit = "threw " + e.constructor.name;
+          }
+        }
+      }
+      recurse();
+      process.emitWarning("after unwinding");
+    `);
+    expect(stderr).toBe("");
+    expect(stdout).toBe(
+      JSON.stringify({ atLimit: "threw RangeError", warning: "after unwinding", nextTick: "function" }) + "\n",
+    );
+    expect(exitCode).toBe(0);
+  });
+
+  // Reading the property again every few frames while unwinding: the first reads fail, and the
+  // one that has enough stack builds it. The stdio builders load the stream modules, which read
+  // process.nextTick and so add a property to process before the build can still run out of stack;
+  // JSC's getPropertySlot then continues with the structure it read before the build, which is an
+  // assertion failure on builds with assertions (harmless otherwise: the prototype is the same).
+  // Until the engine reloads the structure there, those three only run on release builds.
+  const rebuiltWhileUnwinding = [
+    ["nextTick", "function"],
+    ["allowedNodeEnvironmentFlags", "object"],
+  ];
+  if (!isDebug && !isASAN) rebuiltWhileUnwinding.push(["stdout", "object"], ["stderr", "object"], ["stdin", "object"]);
+  it.each(rebuiltWhileUnwinding)("process.%s is built by a later read while unwinding", async (name, type) => {
+    // process.env is built first: on Windows its builder calls into JS as well.
+    const { stdout, stderr, exitCode } = await run(`
+      process.env;
+      let unwound = 0;
+      let failed = 0;
+      let built;
+      function recurse() {
+        try {
+          recurse();
+        } catch {}
+        if (built !== undefined || unwound++ % 64 !== 0) return;
+        try {
+          built = typeof process[${JSON.stringify(name)}];
+        } catch (e) {
+          if (!(e instanceof RangeError)) throw e;
+          failed++;
+        }
+      }
+      recurse();
+      console.log(JSON.stringify({ built, failedFirst: failed > 0, stillBuilt: typeof process[${JSON.stringify(name)}] }));
+    `);
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual({ built: type, failedFirst: true, stillBuilt: type });
+    expect(exitCode).toBe(0);
+  });
 });

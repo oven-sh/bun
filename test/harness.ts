@@ -13,7 +13,7 @@ import { ChildProcess, execSync, fork } from "child_process";
 import { readdir, rm, writeFile } from "fs/promises";
 import fs, { closeSync, openSync, rmSync } from "node:fs";
 import os from "node:os";
-import { dirname, isAbsolute, join } from "path";
+import { dirname, isAbsolute, join, sep } from "path";
 
 export const BREAKING_CHANGES_BUN_1_2 = false;
 
@@ -491,12 +491,49 @@ export function tempDirWithFiles(
   return base;
 }
 
+/**
+ * On Windows, EBUSY/EPERM from removing a test directory almost always means a
+ * process holds the directory as its cwd or has an open handle inside it:
+ * either the test process itself after a process.chdir(), or a process spawned
+ * by the test that is still alive (or still terminating; handles are released
+ * asynchronously after TerminateProcess). Several tests have independently
+ * re-discovered this the hard way, so say it in the error instead of making the
+ * next author bisect it again. The error is still thrown: a held directory is a
+ * real leak that the test must fix.
+ */
+function rethrowWithRmDiagnostic(error: unknown, path: string): never {
+  const code = (error as NodeJS.ErrnoException)?.code;
+  if (process.platform === "win32" && (code === "EBUSY" || code === "EPERM") && error instanceof Error) {
+    let cwdInside = false;
+    try {
+      const cwd = process.cwd().toLowerCase();
+      const held = path.toLowerCase();
+      cwdInside = cwd === held || cwd.startsWith(held.endsWith(sep) ? held : held + sep);
+    } catch {}
+    error.message += cwdInside
+      ? `\nThis test process's own working directory is inside '${path}', which keeps the directory from being ` +
+        `removed. Restore the original cwd before cleanup runs: chdir back in a finally, or declare the cwd ` +
+        `change after the directory (e.g. \`using cwd = cwdScope(dir)\` after \`using dir = tempDir(...)\`) so ` +
+        `it is undone first.`
+      : `\nA process is likely still holding '${path}' as its working directory or has an open handle inside it. ` +
+        `Kill that process and await its exit before the directory is cleaned up, or spawn processes that can ` +
+        `outlive the test with a cwd outside the temp dir (e.g. cwd: os.tmpdir()).`;
+  }
+  throw error;
+}
+
 class DisposableString extends String {
   [Symbol.dispose]() {
-    fs.rmSync(this + "", { recursive: true, force: true });
+    try {
+      fs.rmSync(this + "", { recursive: true, force: true });
+    } catch (error) {
+      rethrowWithRmDiagnostic(error, this + "");
+    }
   }
   [Symbol.asyncDispose]() {
-    return fs.promises.rm(this + "", { recursive: true, force: true });
+    return fs.promises.rm(this + "", { recursive: true, force: true }).catch(error => {
+      rethrowWithRmDiagnostic(error, this + "");
+    });
   }
 }
 
@@ -1896,7 +1933,11 @@ export function cwdScope(cwd: string) {
 export function rmScope(path: string) {
   return {
     [Symbol.dispose]() {
-      fs.rmSync(path, { recursive: true, force: true });
+      try {
+        fs.rmSync(path, { recursive: true, force: true });
+      } catch (error) {
+        rethrowWithRmDiagnostic(error, path);
+      }
     },
   };
 }

@@ -2470,6 +2470,15 @@ fn transpile_source_code_inner(
                 _ => ModuleType::Unknown,
             };
 
+            let tsconfig = match loader {
+                // SAFETY: per fn contract — `jsc_vm` is the live per-thread VM;
+                // no borrow of `vm.transpiler` is held across this call.
+                L::Js | L::Jsx | L::Ts | L::Tsx => unsafe {
+                    (*jsc_vm).transpiler.tsconfig_for_file(path.text)
+                },
+                _ => None,
+            };
+
             let mut input_file_fd = bun_sys::Fd::INVALID;
             // The deferred fd close is independent of `give_back_arena`
             // and must fire on every exit path: parse failure, JSON early
@@ -2544,6 +2553,10 @@ fn transpile_source_code_inner(
                 use bun_ast::RuntimeTranspilerCache;
                 use bun_bundler::transpiler::{AlreadyBundled, ParseOptions, ParseResult};
                 use bun_jsc::resolved_source::Tag as ResolvedSourceTag;
+
+                // SAFETY: per fn contract — `jsc_vm` is the live per-thread VM.
+                let tsconfig_options =
+                    unsafe { &(*jsc_vm).transpiler }.tsconfig_parse_options(tsconfig);
 
                 // Keep the one-shot
                 // `set_break_point_on_first_line()` last so it is only
@@ -2628,20 +2641,10 @@ fn transpile_source_code_inner(
                     // fresh `&mut` (see Note on `_fd_guard`).
                     file_fd_ptr: Some(unsafe { &mut *input_file_fd_ptr }),
                     macro_remappings,
-                    // SAFETY: per fn contract — `jsc_vm` is the live per-thread VM.
-                    jsx: unsafe { &*jsc_vm }.transpiler.options.jsx.clone(),
-                    // SAFETY: per fn contract — `jsc_vm` is the live per-thread VM.
-                    emit_decorator_metadata: unsafe {
-                        (*jsc_vm).transpiler.options.emit_decorator_metadata
-                    },
-                    // SAFETY: per fn contract — `jsc_vm` is the live per-thread VM.
-                    experimental_decorators: unsafe {
-                        (*jsc_vm).transpiler.options.experimental_decorators
-                    },
-                    // SAFETY: per fn contract — `jsc_vm` is the live per-thread VM.
-                    use_define_for_class_fields: unsafe {
-                        (*jsc_vm).transpiler.options.use_define_for_class_fields
-                    },
+                    jsx: tsconfig_options.jsx,
+                    emit_decorator_metadata: tsconfig_options.emit_decorator_metadata,
+                    experimental_decorators: tsconfig_options.experimental_decorators,
+                    use_define_for_class_fields: tsconfig_options.use_define_for_class_fields,
                     virtual_source,
                     dont_bundle_twice: true,
                     allow_commonjs: true,
@@ -4324,6 +4327,10 @@ pub unsafe extern "C" fn Bun__transpileFile(
                 }
             }
 
+            // SAFETY: per fn contract — `jsc_vm` is the live per-thread VM and
+            // nothing borrows `vm.transpiler` across this call.
+            let tsconfig = unsafe { (*jsc_vm).transpiler.tsconfig_for_file(lr.path.text) };
+
             // SAFETY: per fn contract — `jsc_vm` is the live per-thread VM.
             // `lr.path` borrows `_specifier`, which the store immediately
             // heap-duplicates inside `transpile()`.
@@ -4336,6 +4343,7 @@ pub unsafe extern "C" fn Bun__transpileFile(
                     referrer.clone(),
                     concurrent_loader,
                     lr.package_json,
+                    tsconfig,
                 )
             };
         }

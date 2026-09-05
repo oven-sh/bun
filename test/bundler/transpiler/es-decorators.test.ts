@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
+import path from "node:path";
 
 // ES standard decorators are used for .js files (always) and for .ts files
 // when experimentalDecorators is NOT set in tsconfig.
@@ -677,6 +678,81 @@ describe("ES Decorators", () => {
       expect(filterStderr(rawStderr)).toBe("");
       expect(stdout).toBe("class Foo\n");
       expect(exitCode).toBe(0);
+    });
+
+    // The mode of each file is decided by the tsconfig.json nearest to that
+    // file, not by the one in the directory bun was launched from. This is what
+    // tsc and `bun build` do; in a monorepo the packages commonly disagree.
+    describe("per-file tsconfig", () => {
+      // Reports how many arguments the method decorator received (legacy: 3,
+      // standard: 2) and which design:* metadata keys were emitted.
+      const probe = `
+        let arity = 0;
+        const metadata: string[] = [];
+        (Reflect as any).metadata = (key: string) => (metadata.push(key), () => {});
+        function dec(...args: unknown[]) {
+          arity = args.length;
+        }
+        class Foo {
+          @dec
+          method(a: string) {}
+        }
+        export const result = { arity, metadata };
+      `;
+      const designKeys = ["design:type", "design:paramtypes", "design:returntype"];
+      const expected = {
+        legacy: { arity: 3, metadata: [] },
+        standard: { arity: 2, metadata: [] },
+        inherited: { arity: 3, metadata: designKeys },
+      };
+      const files = {
+        "tsconfig.json": JSON.stringify({
+          compilerOptions: { experimentalDecorators: true, emitDecoratorMetadata: true },
+        }),
+        "packages/legacy/tsconfig.json": JSON.stringify({ compilerOptions: { experimentalDecorators: true } }),
+        "packages/legacy/index.ts": probe,
+        "packages/standard/tsconfig.json": JSON.stringify({ compilerOptions: {} }),
+        "packages/standard/index.ts": probe,
+        // No tsconfig of its own: governed by the root one.
+        "packages/inherited/index.ts": probe,
+        "static.ts": `
+          import { result as legacy } from "./packages/legacy/index.ts";
+          import { result as standard } from "./packages/standard/index.ts";
+          import { result as inherited } from "./packages/inherited/index.ts";
+          console.log(JSON.stringify({ legacy, standard, inherited }));
+        `,
+        // Modules imported after startup are transpiled on the thread pool,
+        // which is a separate code path from the entry point's static imports.
+        "dynamic.ts": `
+          await Promise.resolve();
+          const [legacy, standard, inherited] = await Promise.all(
+            ["legacy", "standard", "inherited"].map(async name => (await import("./packages/" + name + "/index.ts")).result),
+          );
+          console.log(JSON.stringify({ legacy, standard, inherited }));
+        `,
+      };
+
+      for (const entry of ["static.ts", "dynamic.ts"]) {
+        for (const cwd of [".", "packages/legacy", "packages/standard", "packages/inherited"]) {
+          test.concurrent(`${entry} run from ${cwd}`, async () => {
+            using dir = tempDir("es-dec-per-file-tsconfig", files);
+            await using proc = Bun.spawn({
+              cmd: [bunExe(), path.join(String(dir), entry)],
+              env: bunEnv,
+              cwd: path.join(String(dir), cwd),
+              stderr: "pipe",
+            });
+            const [stdout, rawStderr, exitCode] = await Promise.all([
+              proc.stdout.text(),
+              proc.stderr.text(),
+              proc.exited,
+            ]);
+            expect(filterStderr(rawStderr)).toBe("");
+            expect(JSON.parse(stdout)).toEqual(expected);
+            expect(exitCode).toBe(0);
+          });
+        }
+      }
     });
   });
 

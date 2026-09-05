@@ -845,6 +845,54 @@ impl<'a> Transpiler<'a> {
         }
         Ok(())
     }
+
+    /// Nearest tsconfig.json to `path` (as in `bun build`). Resolver lookup, so JS thread only.
+    pub fn tsconfig_for_file(&mut self, path: &[u8]) -> Option<&'static TSConfigJSON> {
+        let dir = Fs::PathName::init(path).dir;
+        if !bun_paths::is_absolute(dir) {
+            return None;
+        }
+        self.resolver
+            .read_dir_info_ignore_error(dir)?
+            .enclosing_tsconfig_json
+    }
+
+    /// Without a `tsconfig`, the cwd tsconfig values `configure_linker` put in `options` apply.
+    pub fn tsconfig_parse_options(&self, tsconfig: Option<&TSConfigJSON>) -> TSConfigParseOptions {
+        match tsconfig {
+            Some(tsconfig) => {
+                let mut jsx = tsconfig.merge_jsx(self.options.jsx.clone());
+                // Explicit NODE_ENV (already in `options.jsx`) outranks tsconfig's dev/prod jsx.
+                if self.options.production
+                    || self.options.force_node_env != options::ForceNodeEnv::Unspecified
+                {
+                    jsx.development = self.options.jsx.development;
+                }
+                TSConfigParseOptions {
+                    jsx,
+                    emit_decorator_metadata: tsconfig.emit_decorator_metadata,
+                    experimental_decorators: tsconfig.experimental_decorators,
+                    use_define_for_class_fields: tsconfig
+                        .use_define_for_class_fields
+                        .unwrap_or(true),
+                }
+            }
+            None => TSConfigParseOptions {
+                jsx: self.options.jsx.clone(),
+                emit_decorator_metadata: self.options.emit_decorator_metadata,
+                experimental_decorators: self.options.experimental_decorators,
+                use_define_for_class_fields: self.options.use_define_for_class_fields,
+            },
+        }
+    }
+}
+
+/// The [`ParseOptions`] fields a tsconfig.json controls.
+pub struct TSConfigParseOptions {
+    pub jsx: crate::options_impl::jsx::Pragma,
+    pub emit_decorator_metadata: bool,
+    pub experimental_decorators: bool,
+    pub use_define_for_class_fields: bool,
 }
 
 // ══════════════════════════════════════════════════════════════════════════
@@ -989,8 +1037,7 @@ pub struct ParseOptions<'a, 'b> {
 
     pub path: bun_paths::fs::Path<'static>,
     pub loader: options::Loader,
-    /// `BundleOptions.jsx` — the file-backed `options_impl::jsx::Pragma`, NOT
-    /// the lib.rs shim. Callers pass `transpiler.options.jsx.clone()`.
+    /// File-backed `options_impl::jsx::Pragma` (NOT the lib.rs shim), tsconfig already merged in.
     pub jsx: crate::options_impl::jsx::Pragma,
     pub macro_remappings: MacroRemap,
     pub macro_js_ctx: MacroJSCtx,

@@ -699,8 +699,17 @@ describe.concurrent("bun add --catalog", () => {
       const plainPkg1 = await plain.pkg1();
       const catalogPkg1 = await catalog.pkg1();
       expect(Object.keys(catalogPkg1)).toStrictEqual(Object.keys(plainPkg1));
-      expect(plainPkg1).toStrictEqual({ name: "pkg1", peerDependencies: { "no-deps": "^2.0.0" } });
-      expect(catalogPkg1).toStrictEqual({ name: "pkg1", peerDependencies: { "no-deps": "catalog:" } });
+      // The peer entry is left alone; --dev adds a devDependencies entry next to it.
+      expect(plainPkg1).toStrictEqual({
+        name: "pkg1",
+        peerDependencies: { "no-deps": ">=1" },
+        devDependencies: { "no-deps": "^2.0.0" },
+      });
+      expect(catalogPkg1).toStrictEqual({
+        name: "pkg1",
+        peerDependencies: { "no-deps": ">=1" },
+        devDependencies: { "no-deps": "catalog:" },
+      });
     });
 
     test("--peer", async () => {

@@ -11,10 +11,15 @@ libraries/headers it provides.
 3. Add `import { <name> } from "./<name>.ts"` + entry in `allDeps` array in `index.ts`
 4. `bun run scripts/build/phase3-test.ts` to verify it builds
 
-That's it. For most deps you're done. If the dep needs more than a source
-list (host tools, code generators, intermediate executables), use
-`kind: "custom"` and emit the edges from the dep's own module with the same
-`cc`/`cxx`/`link` primitives — see `deps/icu.ts` and `deps/webkit.ts`.
+That's it. For most deps you're done. A dep that needs more than one source
+list says so in the same spec: `groups` (further source sets with their own
+flags/includes/PCH — cmake's "targets"), `steps` (generators run at build
+time, host tools built with the host compiler, target executables linked
+from groups), `headers` (config headers written at configure, `.h.in`
+substitution). `deps/tinycc.ts` (one host tool + one generated header),
+`deps/icu.ts` (two groups, host `icupkg`, data steps) and `deps/webkit.ts`
+(bmalloc/WTF/JSC groups, ~120 generators, the LLInt extractor executables,
+testFFI) are the examples, small to large.
 
 **`name` must match the directory on disk** (`vendor/<name>/`). If your repo
 is `oven-sh/WebKit`, name it `"WebKit"` — that's what `git clone` creates.
@@ -68,7 +73,7 @@ applied (they target the pinned tarball), so start the clone from the pinned
 commit if you want an identical baseline. Switching a dep between pinned and
 local moves its `-I` path, so the first build after the switch recompiles
 every TU that sees the dep's headers; after that, edits are picked up
-incrementally: `direct`/`custom` deps through the compiler depfiles,
+incrementally: `direct` deps through the compiler depfiles,
 `cargo` deps by re-invoking cargo every run. The build banner shows
 `local:<name>` while this is on. Don't edit `vendor/<name>/` in place
 instead — it is wiped whenever the pin or patches change. For WebKit this is
@@ -155,8 +160,8 @@ export const mydep: Dependency = {
 - **sqlite.ts** — direct build, in-tree source (lives in `src/`, not `vendor/`)
 - **libuv.ts** — `enabled: cfg => cfg.windows` for a platform-only dep
 - **lolhtml.ts** — cargo build with rustflags
-- **icu.ts** — `custom`: tarball source, host tool, generated data object
-- **webkit.ts** — `custom` (sparse github source, ~120 codegen edges, PCH, intermediate executables) and `prebuilt`
+- **icu.ts** — direct build with two source groups, a host tool (`icupkg`) and generator steps for the data object; tarball source
+- **webkit.ts** — direct build at full stretch: sparse github source read at configure time, three groups (bmalloc/WTF/JSC) with a PCH, ~120 generator steps, target executables (LLInt extractors, testFFI); also the `prebuilt` opt-in
 
 ## How the fetch works
 
@@ -171,8 +176,8 @@ The dep's sources are declared as implicit outputs of that edge, so the
 compile edges that follow wait for it; from there they are ordinary
 `cc`/`cxx` edges with depfiles.
 
-`custom` deps (ICU, WebKit, bootstrap*cmds) are the
-exception to "fetch is a ninja edge": configure describes their graph \_from*
+Deps marked `configureReadsSource` (ICU, WebKit) are the
+exception to "fetch is a ninja edge": configure describes their graph _from_
 the tree (ICU's `sources.txt`, JSC's `Sources.txt`, header directories), so
 `configure.ts` fetches them itself (`prefetchConfigureSources`) whenever the
 tree is missing or its `.ref` is stale, before `emitBun` runs. The

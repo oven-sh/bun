@@ -53,6 +53,7 @@ const mockToolchain: Toolchain = {
   dsymutil: "/fake/llvm/bin/dsymutil",
   bun: "/fake/bin/bun",
   jsRuntime: "/fake/bin/bun",
+  jsRuntimeArgv: ["/fake/bin/bun"],
   esbuild: "/fake/bin/esbuild",
   ccache: undefined,
   cmake: "/fake/bin/cmake",

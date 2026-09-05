@@ -29,24 +29,21 @@ export const WEBKIT_VERSION = "2e2aa2290fac856d6f451ceacb58f7f5b44dd057";
  */
 
 import { spawnSync } from "node:child_process";
-import { existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, rmSync } from "node:fs";
-import { basename, isAbsolute, join, resolve } from "node:path";
-import { cc, cxx, link, pch } from "../compile.ts";
+import { existsSync, mkdirSync, readdirSync, rmSync } from "node:fs";
+import { basename, isAbsolute, join, relative, resolve } from "node:path";
 import { modeCompilesCpp, type Config } from "../config.ts";
 import { BuildError, assert } from "../error.ts";
-import { computeDepFlags, computeTargetLinkFlags, systemLibs } from "../flags.ts";
+import { systemLibs } from "../flags.ts";
 import { writeIfChanged } from "../fs.ts";
-import type { Ninja } from "../ninja.ts";
-import { quote, quoteArgs } from "../shell.ts";
-import { machoPostlinkImplicitInputs } from "../shims.ts";
+import { quote } from "../shell.ts";
 import {
   depBuildDir,
   depSourceDir,
-  type CustomBuildContext,
-  type CustomBuildResult,
   type Dependency,
-  type ResolvedDep,
+  type DirectBuild,
+  type DirectStep,
   type Source,
+  type SourceGroup,
 } from "../source.ts";
 import { migcomPath } from "./bootstrap-cmds.ts";
 import { buildsIcu, icuIncludes } from "./icu.ts";
@@ -1249,54 +1246,19 @@ function offlineAsmBackend(cfg: Config): string {
 }
 
 // ───────────────────────────────────────────────────────────────────────────
-// Forwarding headers
+// The build: one DirectBuild spec — configure-time headers, the generator
+// chain, the three libraries as source groups, WebKit's own executables.
 // ───────────────────────────────────────────────────────────────────────────
 
 /**
- * cmake copies (bmalloc, WTF) or symlinks (JSC) each framework header into a
- * flat `<Framework>/Headers/<framework>/` dir so `<JavaScriptCore/X.h>` works
- * from any subdirectory. A one-line `#include` stub does the same job on every
- * host OS, and the compiler's depfile then names the real header too.
+ * Paths and settings every part of the spec is written against. Everything
+ * generated lives under `<buildDir>/deps/WebKit/` with cmake's layout, so
+ * `<JavaScriptCore/X.h>` and DerivedSources paths read as in a WebKit build.
  */
-function writeForwardingHeaders(dir: string, headers: string[]): void {
-  mkdirSync(dir, { recursive: true });
-  const wanted = new Set<string>();
-  for (const h of headers) {
-    wanted.add(basename(h));
-    writeStub(join(dir, basename(h)), h);
-  }
-  // Drop stubs for headers WebKit deleted, or a stale include would still
-  // resolve. Only one-line stubs are ours to remove.
-  for (const entry of readdirSync(dir)) {
-    if (wanted.has(entry) || !lstatSync(join(dir, entry)).isFile()) continue;
-    const text = readFileSync(join(dir, entry), "utf8");
-    if (text.startsWith('#include "') && text.split("\n").length <= 2) rmSync(join(dir, entry));
-  }
-}
-
-/**
- * One stub. If something other than a regular file sits at `path` (an
- * earlier cmake-driven WebKit build in this build dir left symlinks INTO the
- * source tree there), remove it first — writing through it would overwrite
- * the real header with a stub that includes itself.
- */
-function writeStub(path: string, target: string): void {
-  const st = lstatSync(path, { throwIfNoEntry: false });
-  if (st !== undefined && !st.isFile()) rmSync(path, { recursive: true, force: true });
-  writeIfChanged(path, `#include "${target.replaceAll("\\", "/")}"\n`);
-}
-
-// ───────────────────────────────────────────────────────────────────────────
-// The emitter
-// ───────────────────────────────────────────────────────────────────────────
-
-/** Paths and per-build constants the WebKit emitters below share. */
 interface WebKitBuild {
-  n: Ninja;
   cfg: Config;
-  hostWin: boolean;
   q: (p: string) => string;
-  /** The WebKit checkout (fetched sparse tree or a --local-deps clone). */
+  /** The WebKit tree (vendor/WebKit or a --local-deps clone) and its Source/{JavaScriptCore,WTF,bmalloc}. */
   W: string;
   JSC: string;
   WTF: string;
@@ -1309,17 +1271,17 @@ interface WebKitBuild {
   jscHeaders: string;
   jscPrivateHeaders: string;
   bmallocHeaders: string;
-  /** Order-only inputs of every edge: the source tree and the fetchDeps' stamps (depfiles track real header edits). */
-  treeReady: string[];
   python: string;
+  /** The spec's generator and executable steps, accumulated by the functions below. */
+  steps: DirectStep[];
 }
 
-/** WebKit-wide compile flags, derived once (WebKitCompilerFlags / Options*.cmake equivalents). */
+/** WebKit-wide compile flags, derived once (WebKitCompilerFlags / Options*.cmake equivalents), on top of the dep globals the emitter puts underneath every group. */
 interface WebKitFlags {
-  /** dep-global C++ flags + WebKit's additions + PIC policy + -std. */
-  webkitCxx: string[];
-  /** Same for C (libpas .c, MIG stubs). */
-  webkitC: string[];
+  /** WebKit's additions for C and C++ TUs alike. */
+  common: string[];
+  /** C++-only additions (-std, the <iostream> ban). */
+  cxx: string[];
   /** -D set every WebKit TU carries. */
   commonDefines: string[];
   /** ICU: ours (static, -I into deps/icu) or, on macOS, the SDK's libicucore with WebKit's bundled headers. */
@@ -1341,11 +1303,7 @@ const filesIn = (dir: string, ...exts: string[]): string[] =>
     .filter(f => exts.length === 0 || exts.some(e => f.endsWith(e)))
     .map(f => join(dir, f));
 
-/**
- * One generator edge (dep_codegen through stream.ts): `cmd` run in `cwd`
- * (default DerivedSources) with `env`; `stdout` captures a generator that
- * prints its output (written only if changed).
- */
+/** One generator step; cwd defaults to DerivedSources (several generators write there implicitly). */
 function gen(
   wk: WebKitBuild,
   opts: {
@@ -1356,40 +1314,22 @@ function gen(
     cwd?: string;
     env?: Record<string, string>;
     implicitOutputs?: string[];
-    stdout?: string;
+    stdout?: boolean;
   },
 ): void {
-  const streamOpts = [
-    `--cwd=${opts.cwd ?? wk.DS}`,
-    ...Object.entries(opts.env ?? {}).map(([k, v]) => `--env=${k}=${v}`),
-    ...(opts.stdout !== undefined ? [`--stdout=${opts.stdout}`] : []),
-  ];
-  wk.n.build({
-    outputs: opts.outputs,
-    ...(opts.implicitOutputs !== undefined && { implicitOutputs: opts.implicitOutputs }),
-    rule: "dep_codegen",
-    inputs: opts.inputs,
-    orderOnlyInputs: wk.treeReady,
-    vars: {
-      name: "jsc",
-      desc: `gen ${opts.desc}`,
-      opts: quoteArgs(streamOpts, wk.hostWin),
-      cmd: quoteArgs(opts.cmd, wk.hostWin),
-    },
-  });
+  wk.steps.push({ cwd: wk.DS, ...opts });
 }
+/** A generator that prints its output. */
 const genStdout = (wk: WebKitBuild, out: string, cmd: string[], inputs: string[], desc: string): void =>
-  gen(wk, { outputs: [out], cmd, inputs, desc, stdout: out });
+  gen(wk, { outputs: [out], cmd, inputs, desc, stdout: true });
 
-function emitWebKit(n: Ninja, cfg: Config, ctx: CustomBuildContext): CustomBuildResult {
-  const { srcDir: W, ready, resolved } = ctx;
+function webkitLayout(cfg: Config): WebKitBuild {
   const hostWin = cfg.host.os === "windows";
+  const W = depSourceDir(cfg, "WebKit");
   const B = depBuildDir(cfg, "WebKit");
   const SRC = join(W, "Source");
-  const wk: WebKitBuild = {
-    n,
+  return {
     cfg,
-    hostWin,
     q: p => quote(p, hostWin),
     W,
     JSC: join(SRC, "JavaScriptCore"),
@@ -1402,53 +1342,49 @@ function emitWebKit(n: Ninja, cfg: Config, ctx: CustomBuildContext): CustomBuild
     jscHeaders: join(B, "JavaScriptCore", "Headers"),
     jscPrivateHeaders: join(B, "JavaScriptCore", "PrivateHeaders"),
     bmallocHeaders: join(B, "bmalloc", "Headers"),
-    treeReady: ready,
     python: hostWin ? "python" : "python3",
+    steps: [],
   };
-  const { JSC, WTF, DS } = wk;
+}
 
-  assert(existsSync(join(JSC, "Sources.txt")), `WebKit source tree not present at ${W}`, {
-    hint: "configure fetches it before emitting the graph — this is a bug in prefetchConfigureSources",
+function webkitBuildSpec(cfg: Config): DirectBuild {
+  const wk = webkitLayout(cfg);
+  const { JSC, B } = wk;
+  assert(existsSync(join(JSC, "Sources.txt")), `WebKit source tree not present at ${wk.W}`, {
+    hint: "configure fetches it before describing the graph — this is a bug in prefetchConfigureSources",
   });
-  for (const d of [DS, join(DS, "yarr"), join(DS, "inspector"), join(DS, "runtime"), wk.WTF_DS, wk.binDir]) {
-    mkdirSync(d, { recursive: true });
-  }
 
-  n.comment("─── WebKit (direct: bmalloc + WTF + JavaScriptCore) ───");
-
-  writeIfChanged(join(B, "cmakeconfig.h"), cmakeConfigHeader(cfg));
   const flags = webkitFlags(wk);
-  writeFrameworkHeaders(wk, flags);
-
-  const bmObjects = emitBmalloc(wk, flags);
-  const wtf = emitWTF(wk, flags);
-  const codegen = emitJSCCodegen(wk);
-
-  const jsc = jscCompileFlags(wk, flags);
+  const codegen = jscCodegenSteps(wk);
   // All codegen must exist before any JSC TU compiles; after that the
   // depfiles know exactly which TU reads which header.
-  const codegenReady = [...wk.treeReady, ...codegen.headers, ...codegen.sources];
-  const llintAssembly = emitLLInt(wk, jsc, codegenReady);
-  const { sources: jscSources, unifiedListFiles } = jscSourceList(wk);
-  const { objects: jscObjects, jscPch } = emitJSCObjects(wk, jsc, jscSources, codegenReady, llintAssembly);
-
-  // No archives: like every direct dep, the objects go straight onto bun's
-  // link line (and into cpp-only's archive on CI).
-  const objects = [...jscObjects, ...wtf.objects, ...bmObjects];
-  const testFFI = emitTestFFI(wk, jsc, jscPch, codegenReady, objects, resolved);
-  n.phony("jsc-codegen", [...codegen.headers, ...codegen.sources]);
-  n.phony("WebKit", [...objects, testFFI]);
+  const codegenReady = [...codegen.headers, ...codegen.sources];
+  const jsc = jscCompileFlags(wk, flags);
+  const wtf = wtfGroup(wk, flags);
+  const llint = llintSteps(wk, jsc, codegenReady);
+  const jscSources = jscSourceList(wk);
 
   return {
-    objects,
-    extras: [testFFI],
-    outputs: [...wk.treeReady, ...codegen.headers, ...wtf.migHeaders],
+    kind: "direct",
+    sources: [],
+    headers: { "cmakeconfig.h": cmakeConfigHeader(cfg), ...frameworkHeaders(wk, flags) },
+    groups: [
+      bmallocGroup(wk, flags),
+      wtf.group,
+      ...llint.groups,
+      jscGroup(wk, jsc, jscSources.sources, codegenReady, llint.assembly),
+      testFFIGroup(wk, jsc, codegenReady),
+    ],
+    steps: [...wk.steps, testFFIExe(cfg)],
+    // What a consumer's compile waits for: JSC's generated headers (bun
+    // includes them through the PrivateHeaders stubs) and WTF's MIG stubs.
+    consumerOutputs: [...codegen.headers, ...wtf.migHeaders],
     // What configure read from the tree to lay out this graph: the unified
-    // source lists (run through the bundler above) and the directories it
-    // globbed (forwarding headers, generator script deps, offlineasm). A
-    // directory's mtime moves when a file is added or removed in it.
+    // source lists (run through the bundler) and the directories it globbed
+    // (forwarding headers, generator script deps, offlineasm). A directory's
+    // mtime moves when a file is added or removed in it.
     configureInputs: [
-      ...unifiedListFiles,
+      ...jscSources.unifiedListFiles,
       ...jscHeaderDirs.map(d => join(JSC, d)),
       join(wk.BM, "bmalloc"),
       join(wk.BM, "libpas", "src", "libpas"),
@@ -1460,30 +1396,37 @@ function emitWebKit(n: Ninja, cfg: Config, ctx: CustomBuildContext): CustomBuild
       join(JSC, "inspector", "scripts", "codegen"),
       join(JSC, "offlineasm"),
     ],
-    includes: [
-      B,
-      wk.jscHeaders,
-      join(wk.jscHeaders, "JavaScriptCore"),
-      wk.jscPrivateHeaders,
-      join(wk.jscPrivateHeaders, "JavaScriptCore"),
-      ...flags.bmallocConsumerIncludes,
-      WTF,
-      ...(cfg.darwin ? [flags.appleIcuHeaders] : []),
-    ],
   };
+  void B;
+}
+
+/** Include dirs bun compiles against — the same set the prebuilt's include/ flattens together. */
+function webkitSourceIncludes(cfg: Config): string[] {
+  const wk = webkitLayout(cfg);
+  return [
+    wk.B,
+    wk.jscHeaders,
+    join(wk.jscHeaders, "JavaScriptCore"),
+    wk.jscPrivateHeaders,
+    join(wk.jscPrivateHeaders, "JavaScriptCore"),
+    wk.bmallocHeaders,
+    join(wk.bmallocHeaders, "bmalloc"),
+    wk.WTF,
+    // macOS: WebKit's copy of the ICU headers Apple does not ship (see webkitFlags).
+    ...(cfg.darwin ? [join(wk.WTF, "icu")] : []),
+  ];
 }
 
 // ─── Flags ───
 
 function webkitFlags(wk: WebKitBuild): WebKitFlags {
   const { cfg, q, WTF } = wk;
-  const depFlags = computeDepFlags(cfg);
   // WebKit's own additions on top of the dep-global flags
   // (WebKitCompilerFlags.cmake). The global -fno-[asynchronous-]unwind-tables
   // stand: the prebuilt is compiled that way too (its CMAKE_CXX_FLAGS come
   // last and carry them). The DWARF flags are WebKit's debug-info size
   // reductions; JSC's templates make them matter.
-  const webkitCommon = cfg.windows
+  const common = cfg.windows
     ? // clang-cl (OptionsMSVC.cmake): AT&T inline asm for the LLInt, no
       // buffer-security cookie opt-out, all EH off, no FP exceptions, no RTTI,
       // big object tables (unified sources), UTF-8 source, COMDAT folding
@@ -1521,17 +1464,7 @@ function webkitFlags(wk: WebKitBuild): WebKitFlags {
   // Release: WebKit's <iostream> ban (an #error stub found before the real
   // header — OptionsJSCOnly.cmake), so no TU drags std::ios_base::Init in.
   const bannedIncludes = cfg.debug ? [] : [`-I${q(join(WTF, "wtf", "bun", "BannedIncludes"))}`];
-  // Same PIC policy as bun's own objects (bunOnlyFlags): non-PIE executable
-  // everywhere but Android, whose loader requires PIE.
-  const pic = cfg.abi === "android" ? ["-fPIC"] : cfg.unix ? ["-fno-pic", "-fno-pie"] : [];
-  const webkitCxx = [
-    ...depFlags.cxxflags,
-    ...webkitCommon,
-    ...bannedIncludes,
-    cfg.windows ? "/clang:-std=c++23" : "-std=c++23",
-    ...pic,
-  ];
-  const webkitC = [...depFlags.cflags, ...webkitCommon, ...pic];
+  const cxx = [...bannedIncludes, cfg.windows ? "/clang:-std=c++23" : "-std=c++23"];
   // ICU: ours (deps/icu.ts) everywhere but macOS; static, so consumers
   // define U_STATIC_IMPLEMENTATION like the prebuilt build does. macOS links
   // the SDK's libicucore, whose headers Apple does not ship: WebKit carries a
@@ -1539,7 +1472,7 @@ function webkitFlags(wk: WebKitBuild): WebKitFlags {
   // (OptionsJSCOnly.cmake / FindICU.cmake).
   const appleIcuHeaders = join(WTF, "icu");
   const icuFlags = buildsIcu(cfg)
-    ? ["-DU_STATIC_IMPLEMENTATION=1", ...icuIncludes(cfg, depSourceDir(cfg, "icu")).map(i => `-I${q(i)}`)]
+    ? ["-DU_STATIC_IMPLEMENTATION=1", ...icuIncludes(cfg).map(i => `-I${q(i)}`)]
     : cfg.darwin
       ? ["-DU_DISABLE_RENAMING=1", `-I${q(appleIcuHeaders)}`]
       : [];
@@ -1587,8 +1520,8 @@ function webkitFlags(wk: WebKitBuild): WebKitFlags {
   // from physically flattening copies into one dir.
   const bmallocConsumerIncludes = [wk.bmallocHeaders, join(wk.bmallocHeaders, "bmalloc")];
   return {
-    webkitCxx,
-    webkitC,
+    common,
+    cxx,
     commonDefines,
     icuFlags,
     appleIcuHeaders,
@@ -1602,20 +1535,28 @@ function webkitFlags(wk: WebKitBuild): WebKitFlags {
 
 /**
  * The flattened <bmalloc/X.h> / <JavaScriptCore/X.h> directories cmake fills
- * by copying; here one-line forwarding stubs into the source tree (and, for
- * the generated headers cmake lists in JavaScriptCore_PRIVATE_FRAMEWORK_HEADERS,
- * into DerivedSources), so <JavaScriptCore/X.h> resolves the same set of names
- * as against the prebuilt's include/JavaScriptCore.
+ * by copying or symlinking each framework header, so `<JavaScriptCore/X.h>`
+ * works from any subdirectory; here one-line `#include` forwarding stubs into
+ * the source tree (and, for the generated headers cmake lists in
+ * JavaScriptCore_PRIVATE_FRAMEWORK_HEADERS, into DerivedSources), so
+ * <JavaScriptCore/X.h> resolves the same set of names as against the
+ * prebuilt's include/JavaScriptCore. Returned as `headers` entries (paths
+ * relative to the dep build dir); the compiler's depfile then names the real
+ * header too.
  */
-function writeFrameworkHeaders(wk: WebKitBuild, flags: WebKitFlags): void {
-  const { JSC, BM, DS } = wk;
-  writeForwardingHeaders(join(wk.bmallocHeaders, "bmalloc"), [
+function frameworkHeaders(wk: WebKitBuild, flags: WebKitFlags): Record<string, string> {
+  const { JSC, BM, DS, B } = wk;
+  const entries: Record<string, string> = {};
+  const forward = (dir: string, headers: string[]): void => {
+    for (const h of headers) entries[relative(B, join(dir, basename(h)))] = `#include "${h.replaceAll("\\", "/")}"\n`;
+  };
+  forward(join(wk.bmallocHeaders, "bmalloc"), [
     ...filesIn(join(BM, "bmalloc"), ".h", ".def"),
     ...filesIn(join(BM, "libpas", "src", "libpas"), ".h", ".def"),
     ...(flags.useMimalloc ? [join(flags.mimallocInclude, "mimalloc.h")] : []),
   ]);
-  writeForwardingHeaders(join(wk.jscHeaders, "JavaScriptCore"), inTree(JSC, jscPublicHeaders));
-  writeForwardingHeaders(join(wk.jscPrivateHeaders, "JavaScriptCore"), [
+  forward(join(wk.jscHeaders, "JavaScriptCore"), inTree(JSC, jscPublicHeaders));
+  forward(join(wk.jscPrivateHeaders, "JavaScriptCore"), [
     ...jscHeaderDirs.flatMap(d => filesIn(join(JSC, d), ".h", ".def")),
     join(DS, "Bytecodes.h"),
     join(DS, "JSCBuiltins.h"),
@@ -1626,53 +1567,49 @@ function writeFrameworkHeaders(wk: WebKitBuild, flags: WebKitFlags): void {
     join(DS, "inspector", "InspectorFrontendDispatchers.h"),
     join(DS, "inspector", "InspectorProtocolObjects.h"),
   ]);
+  return entries;
 }
 
 // ─── bmalloc ───
 
-function emitBmalloc(wk: WebKitBuild, flags: WebKitFlags): string[] {
-  const { n, cfg, q, B, BM, treeReady } = wk;
-  const bmIncludes = [
-    B,
-    BM,
-    join(BM, "bmalloc"),
-    join(BM, "libpas", "src", "libpas"),
-    ...(flags.useMimalloc ? [flags.mimallocInclude] : []),
-  ];
-  const bmFlagsCommon = [
-    ...flags.commonDefines,
-    "-DBUILDING_bmalloc",
-    "-D_GNU_SOURCE",
-    ...(flags.useMimalloc ? ["-DUSE_MIMALLOC=1"] : []),
-    ...(usesMallocHeapBreakdown(cfg) ? ["-DBENABLE_MALLOC_HEAP_BREAKDOWN=1"] : []),
-    ...bmIncludes.map(i => `-I${q(i)}`),
-    "-Wno-cast-align",
-    "-Wno-missing-field-initializers",
-    // libpas' 16-byte CAS on x64 (bmalloc/CMakeLists.txt, MSVC branch; the
-    // unix -march levels already imply it).
-    ...(cfg.windows && cfg.x64 ? ["-mcx16"] : []),
-  ];
-  // bmalloc_SOURCES lists a few libpas .c files that cmake compiles as C++.
-  const asCxx = cfg.windows ? ["/TP"] : ["-x", "c++"];
-  const objects: string[] = [];
-  for (const src of inTree(BM, bmallocSources)) {
-    objects.push(
-      src.endsWith(".c")
-        ? cc(n, cfg, src, { flags: [...asCxx, ...flags.webkitCxx, ...bmFlagsCommon], orderOnlyInputs: treeReady })
-        : cxx(n, cfg, src, { flags: [...flags.webkitCxx, ...bmFlagsCommon], orderOnlyInputs: treeReady }),
-    );
-  }
-  for (const src of inTree(BM, bmallocCSources)) {
-    objects.push(cc(n, cfg, src, { flags: [...flags.webkitC, ...bmFlagsCommon], orderOnlyInputs: treeReady }));
-  }
-  n.phony("bmalloc", objects);
-  return objects;
+function bmallocGroup(wk: WebKitBuild, flags: WebKitFlags): SourceGroup {
+  const { cfg, B, BM } = wk;
+  return {
+    name: "bmalloc",
+    // bmalloc_SOURCES lists a few libpas .c files that cmake compiles as C++;
+    // the rest of libpas is C.
+    sources: [
+      ...inTree(BM, bmallocSources).map(path => (path.endsWith(".c") ? { path, lang: "cxx" as const } : path)),
+      ...inTree(BM, bmallocCSources),
+    ],
+    includes: [
+      B,
+      BM,
+      join(BM, "bmalloc"),
+      join(BM, "libpas", "src", "libpas"),
+      ...(flags.useMimalloc ? [flags.mimallocInclude] : []),
+    ],
+    cflags: [
+      ...flags.common,
+      ...flags.commonDefines,
+      "-DBUILDING_bmalloc",
+      "-D_GNU_SOURCE",
+      ...(flags.useMimalloc ? ["-DUSE_MIMALLOC=1"] : []),
+      ...(usesMallocHeapBreakdown(cfg) ? ["-DBENABLE_MALLOC_HEAP_BREAKDOWN=1"] : []),
+      "-Wno-cast-align",
+      "-Wno-missing-field-initializers",
+      // libpas' 16-byte CAS on x64 (bmalloc/CMakeLists.txt, MSVC branch; the
+      // unix -march levels already imply it).
+      ...(cfg.windows && cfg.x64 ? ["-mcx16"] : []),
+    ],
+    cxxflags: flags.cxx,
+  };
 }
 
 // ─── WTF ───
 
-function emitWTF(wk: WebKitBuild, flags: WebKitFlags): { objects: string[]; migHeaders: string[] } {
-  const { n, cfg, q, W, B, WTF, WTF_DS, treeReady } = wk;
+function wtfGroup(wk: WebKitBuild, flags: WebKitFlags): { group: SourceGroup; migHeaders: string[] } {
+  const { cfg, W, B, WTF, WTF_DS } = wk;
   // macOS: WTF's signal handling (wasm fault trapping, VM traps) speaks Mach
   // exceptions through MIG-generated RPC stubs (PlatformJSCOnly.cmake's APPLE
   // branch). On a Mac that is Xcode's `mig`; cross-compiling from Linux it is
@@ -1729,33 +1666,34 @@ function emitWTF(wk: WebKitBuild, flags: WebKitFlags): { objects: string[]; migH
       });
     }
   }
-  const wtfIncludes = [
-    B,
-    ...(cfg.darwin ? [WTF_DS] : []),
-    ...inTree(join(WTF, "wtf"), wtfIncludeDirs),
-    ...flags.bmallocConsumerIncludes,
-  ];
-  const wtfTargetFlags = [
-    ...flags.commonDefines,
-    "-DBUILDING_WTF",
-    "-DSTATICALLY_LINKED_WITH_bmalloc",
-    ...wtfIncludes.map(i => `-I${q(i)}`),
-    ...flags.icuFlags,
-  ];
-  const wtfFlags = [...flags.webkitCxx, ...wtfTargetFlags];
-  const wtfReady = [...treeReady, ...migOutputs];
-  // Per-file COMPILE_OPTIONS from WTF's CMakeLists: the os_log stream is ARC.
-  const wtfFileFlags = (src: string): string[] => (basename(src) === "OSLogPrintStream.mm" ? ["-fobjc-arc"] : []);
-  const objects = [
-    ...inTree(join(WTF, "wtf"), [...wtfSourcesCommon, ...wtfSourcesFor(cfg)]).map(src =>
-      cxx(n, cfg, src, { flags: [...wtfFlags, ...wtfFileFlags(src)], orderOnlyInputs: wtfReady }),
-    ),
-    ...migSources.map(src =>
-      cc(n, cfg, src, { flags: [...flags.webkitC, ...wtfTargetFlags], orderOnlyInputs: wtfReady }),
-    ),
-  ];
-  n.phony("WTF", objects);
-  return { objects, migHeaders: migOutputs.filter(f => f.endsWith(".h")) };
+  return {
+    group: {
+      name: "WTF",
+      sources: [
+        ...inTree(join(WTF, "wtf"), [...wtfSourcesCommon, ...wtfSourcesFor(cfg)]).map(path =>
+          // Per-file COMPILE_OPTIONS from WTF's CMakeLists: the os_log stream is ARC.
+          basename(path) === "OSLogPrintStream.mm" ? { path, cflags: ["-fobjc-arc"] } : path,
+        ),
+        ...migSources,
+      ],
+      includes: [
+        B,
+        ...(cfg.darwin ? [WTF_DS] : []),
+        ...inTree(join(WTF, "wtf"), wtfIncludeDirs),
+        ...flags.bmallocConsumerIncludes,
+      ],
+      cflags: [
+        ...flags.common,
+        ...flags.commonDefines,
+        "-DBUILDING_WTF",
+        "-DSTATICALLY_LINKED_WITH_bmalloc",
+        ...flags.icuFlags,
+      ],
+      cxxflags: flags.cxx,
+      orderOnly: migOutputs,
+    },
+    migHeaders: migOutputs.filter(f => f.endsWith(".h")),
+  };
 }
 
 // ─── JavaScriptCore: codegen ───
@@ -1766,7 +1704,7 @@ function emitWTF(wk: WebKitBuild, flags: WebKitFlags): { objects: string[]; migH
  * include — generated .cpp files are #included from unified bundles too —
  * so both gate the JSC compiles.
  */
-function emitJSCCodegen(wk: WebKitBuild): { headers: string[]; sources: string[] } {
+function jscCodegenSteps(wk: WebKitBuild): { headers: string[]; sources: string[] } {
   const { cfg, JSC, WTF, DS, python } = wk;
   const headers: string[] = [];
   const sources: string[] = [];
@@ -1989,87 +1927,91 @@ function emitJSCCodegen(wk: WebKitBuild): { headers: string[]; sources: string[]
 // ─── JavaScriptCore: compile flags ───
 
 interface JSCCompileFlags {
-  /** C++ flags for JSC TUs proper (-DBUILDING_JavaScriptCore). */
-  jscFlags: string[];
-  /** Same without the BUILDING_ define — the extractors and testFFI name their own target. */
-  jscFlagsNoTarget: string[];
-  jscCFlags: string[];
-  /** Link flags for WebKit's own target executables (extractors, testFFI). */
-  exeLinkFlags: string[];
-  exeLinkInputs: string[];
+  includes: string[];
+  /** C-and-C++ flags for JSC TUs, without the BUILDING_ define — the extractors and testFFI name their own target. */
+  targetFlags: string[];
+  cxx: string[];
 }
 
 function jscCompileFlags(wk: WebKitBuild, flags: WebKitFlags): JSCCompileFlags {
-  const { cfg, q, B, JSC, WTF, DS } = wk;
-  const jscIncludes = [
-    wk.jscHeaders,
-    wk.jscPrivateHeaders,
-    B,
-    join(wk.jscPrivateHeaders, "JavaScriptCore"),
-    ...inTree(JSC, jscIncludeDirs),
-    DS,
-    join(DS, "inspector"),
-    join(DS, "runtime"),
-    join(DS, "yarr"),
-    WTF, // <wtf/X.h> straight from the source tree (cmake copies to WTF/Headers)
-    ...flags.bmallocConsumerIncludes,
-  ];
-  // What JSC's CMakeLists adds for every TU of the JavaScriptCore target,
-  // C and C++ alike: no FP contraction (results must not depend on whether
-  // the compiler fused a multiply-add), no SLP vectorizer (clang workaround
-  // WebKit carries), the static-link export-macro switches, includes.
-  const jscTargetFlags = [
-    "-ffp-contract=off",
-    "-fno-slp-vectorize",
-    ...flags.commonDefines,
-    "-DSTATICALLY_LINKED_WITH_WTF",
-    "-DSTATICALLY_LINKED_WITH_bmalloc",
-    ...[...new Set(jscIncludes)].map(i => `-I${q(i)}`),
-    ...flags.icuFlags,
-  ];
-  const jscFlagsNoTarget = [...flags.webkitCxx, ...jscTargetFlags];
+  const { B, JSC, WTF, DS } = wk;
   return {
-    jscFlagsNoTarget,
-    jscFlags: [...jscFlagsNoTarget, "-DBUILDING_JavaScriptCore"],
-    jscCFlags: [...flags.webkitC, ...jscTargetFlags, "-DBUILDING_JavaScriptCore"],
-    // The extractors are real executables for the TARGET (offlineasm parses
-    // them, nothing runs them), so they link with the same toolchain flags bun
-    // does: triple/sysroot, lld, C++ runtime, PIE policy, sanitizer runtime.
-    exeLinkFlags: [
-      ...computeTargetLinkFlags(cfg),
-      // Drop unreferenced sections: the extractors reference a sliver of JSC.
-      ...(cfg.darwin ? ["-Wl,-dead_strip"] : cfg.windows ? [] : ["-Wl,--gc-sections"]),
+    includes: [
+      ...new Set([
+        wk.jscHeaders,
+        wk.jscPrivateHeaders,
+        B,
+        join(wk.jscPrivateHeaders, "JavaScriptCore"),
+        ...inTree(JSC, jscIncludeDirs),
+        DS,
+        join(DS, "inspector"),
+        join(DS, "runtime"),
+        join(DS, "yarr"),
+        WTF, // <wtf/X.h> straight from the source tree (cmake copies to WTF/Headers)
+        ...flags.bmallocConsumerIncludes,
+      ]),
     ],
-    // The shared `link` rule ends in bun's Mach-O post-link fixup on darwin
-    // cross links (shims.ts); its host tool must exist before these links run.
-    exeLinkInputs: machoPostlinkImplicitInputs(cfg),
+    // What JSC's CMakeLists adds for every TU of the JavaScriptCore target,
+    // C and C++ alike: no FP contraction (results must not depend on whether
+    // the compiler fused a multiply-add), no SLP vectorizer (clang workaround
+    // WebKit carries), the static-link export-macro switches.
+    targetFlags: [
+      ...flags.common,
+      "-ffp-contract=off",
+      "-fno-slp-vectorize",
+      ...flags.commonDefines,
+      "-DSTATICALLY_LINKED_WITH_WTF",
+      "-DSTATICALLY_LINKED_WITH_bmalloc",
+      ...flags.icuFlags,
+    ],
+    cxx: flags.cxx,
   };
 }
 
-/** One of WebKit's own target executables (nothing from bun's link policy, no dep libs). */
-function linkTargetExe(
-  wk: WebKitBuild,
-  jsc: JSCCompileFlags,
-  name: string,
-  objects: string[],
-  extraFlags: string[] = [],
-): string {
-  return link(wk.n, wk.cfg, join(wk.binDir, name), objects, {
-    implicitInputs: jsc.exeLinkInputs,
-    libs: [],
-    flags: [...jsc.exeLinkFlags, ...extraFlags],
-  });
+/** ld flags for WebKit's own executables that reference bun-provided hooks. */
+function standaloneExeLinkFlags(cfg: Config): string[] {
+  // Hooks bun's runtime provides to WTF/JSC (RunLoopBun.cpp, ErrorInstance,
+  // JSMicrotask). WebKit's own executables leave them undefined: ld64 needs
+  // that spelled out per symbol (WebKitCompilerFlags.cmake, USE_BUN_EVENT_LOOP).
+  const bunHooks = [
+    "WTFTimer__create",
+    "WTFTimer__update",
+    "WTFTimer__deinit",
+    "WTFTimer__isActive",
+    "WTFTimer__secondsUntilTimer",
+    "WTFTimer__cancel",
+    "Bun__errorInstance__finalize",
+    "Bun__reportUnhandledError",
+  ];
+  // Windows: WTF's registry/shell/token calls (LanguageWin, FileSystemWin,
+  // OSAllocatorWin) — bun's own link gets these through its delay-load set.
+  // COFF has no weak undefined symbols: each TU referencing a hook carries a
+  // weak external plus an absolute-0 default, and once ThinLTO imports the
+  // referencing function into a second module lld-link sees two defaults
+  // ("duplicate symbol"). /force:multiple picks one — the hook-absent value a
+  // standalone test binary wants (the fork's Dockerfile.windows does the
+  // same for jsc.exe). bun.exe defines every hook, so its link is unaffected.
+  return cfg.darwin
+    ? bunHooks.map(sym => `-Wl,-U,_${sym}`)
+    : cfg.windows
+      ? ["advapi32.lib", "shell32.lib", "user32.lib", ...(cfg.lto ? ["/force:multiple"] : [])]
+      : [];
 }
 
 // ─── JavaScriptCore: LLInt ───
 
 /**
  * settings extractor exe → LLIntDesiredOffsets.h → offsets extractor exe →
- * LLIntAssembly.h, each step parsed by offlineasm (ruby). Returns
- * LLIntAssembly.h, the implicit input of LowLevelInterpreter.cpp.
+ * LLIntAssembly.h, each step parsed by offlineasm (ruby): three generator
+ * steps, two single-file source groups and two target executables. Returns
+ * the groups and LLIntAssembly.h, the implicit input of LowLevelInterpreter.cpp.
  */
-function emitLLInt(wk: WebKitBuild, jsc: JSCCompileFlags, codegenReady: string[]): string {
-  const { n, cfg, JSC, DS } = wk;
+function llintSteps(
+  wk: WebKitBuild,
+  jsc: JSCCompileFlags,
+  codegenReady: string[],
+): { groups: SourceGroup[]; assembly: string } {
+  const { cfg, JSC, DS, binDir } = wk;
   const offlineasm = join(JSC, "offlineasm");
   const llintAsmFiles = inTree(JSC, llintAsm);
   const offlineAsmRb = filesIn(offlineasm, ".rb");
@@ -2082,6 +2024,15 @@ function emitLLInt(wk: WebKitBuild, jsc: JSCCompileFlags, codegenReady: string[]
   // Android only — as in JSC's CMakeLists (CMAKE_SYSTEM_NAME MATCHES Linux).
   const offlineAsmFormatArgs = cfg.linux ? ["--binary-format=ELF"] : cfg.windows ? ["--platform=Windows"] : [];
   const buildVariants = "normal";
+  const extractorGroup = (name: string, src: string, header: string): SourceGroup => ({
+    name: `${name}-obj`,
+    sources: [{ path: src, implicitInputs: [header] }],
+    includes: jsc.includes,
+    cflags: [...jsc.targetFlags, `-DBUILDING_${name}`],
+    cxxflags: jsc.cxx,
+    orderOnly: codegenReady,
+    link: false,
+  });
 
   const llintDesiredSettings = join(DS, "LLIntDesiredSettings.h");
   gen(wk, {
@@ -2097,14 +2048,13 @@ function emitLLInt(wk: WebKitBuild, jsc: JSCCompileFlags, codegenReady: string[]
     inputs: [...llintAsmFiles, ...offlineAsmRb, join(DS, "InitBytecodes.asm")],
     desc: "LLIntDesiredSettings.h",
   });
-
   // LLIntSettingsExtractor: target executable, parsed (not run) by offlineasm.
-  const settingsObj = cxx(n, cfg, join(JSC, "llint", "LLIntSettingsExtractor.cpp"), {
-    flags: [...jsc.jscFlagsNoTarget, "-DBUILDING_LLIntSettingsExtractor"],
-    implicitInputs: [llintDesiredSettings],
-    orderOnlyInputs: codegenReady,
+  const settingsExe = join(binDir, `LLIntSettingsExtractor${cfg.exeSuffix}`);
+  wk.steps.push({
+    kind: "exe",
+    output: join(binDir, "LLIntSettingsExtractor"),
+    objectsFrom: ["LLIntSettingsExtractor-obj"],
   });
-  const settingsExe = linkTargetExe(wk, jsc, "LLIntSettingsExtractor", [settingsObj]);
 
   const llintDesiredOffsets = join(DS, "LLIntDesiredOffsets.h");
   gen(wk, {
@@ -2129,13 +2079,12 @@ function emitLLInt(wk: WebKitBuild, jsc: JSCCompileFlags, codegenReady: string[]
     ],
     desc: "LLIntDesiredOffsets.h",
   });
-
-  const offsetsObj = cxx(n, cfg, join(JSC, "llint", "LLIntOffsetsExtractor.cpp"), {
-    flags: [...jsc.jscFlagsNoTarget, "-DBUILDING_LLIntOffsetsExtractor"],
-    implicitInputs: [llintDesiredOffsets],
-    orderOnlyInputs: codegenReady,
+  const offsetsExe = join(binDir, `LLIntOffsetsExtractor${cfg.exeSuffix}`);
+  wk.steps.push({
+    kind: "exe",
+    output: join(binDir, "LLIntOffsetsExtractor"),
+    objectsFrom: ["LLIntOffsetsExtractor-obj"],
   });
-  const offsetsExe = linkTargetExe(wk, jsc, "LLIntOffsetsExtractor", [offsetsObj]);
 
   const llintAssembly = join(DS, "LLIntAssembly.h");
   // asm.rb leaves an existing output untouched when the "input hash" trailer
@@ -2153,6 +2102,7 @@ function emitLLInt(wk: WebKitBuild, jsc: JSCCompileFlags, codegenReady: string[]
     buildVariants,
     ...offlineAsmFormatArgs,
   ];
+  mkdirSync(DS, { recursive: true });
   if (writeIfChanged(join(DS, "LLIntAssembly.h.cmd"), llintAssemblyCmd.join("\n") + "\n")) {
     rmSync(llintAssembly, { force: true });
   }
@@ -2163,7 +2113,13 @@ function emitLLInt(wk: WebKitBuild, jsc: JSCCompileFlags, codegenReady: string[]
     env: { CMAKE_CXX_COMPILER_ID: "Clang", GCC_OFFLINEASM_SOURCE_MAP: "OFF" },
     desc: "LLIntAssembly.h",
   });
-  return llintAssembly;
+  return {
+    groups: [
+      extractorGroup("LLIntSettingsExtractor", join(JSC, "llint", "LLIntSettingsExtractor.cpp"), llintDesiredSettings),
+      extractorGroup("LLIntOffsetsExtractor", join(JSC, "llint", "LLIntOffsetsExtractor.cpp"), llintDesiredOffsets),
+    ],
+    assembly: llintAssembly,
+  };
 }
 
 // ─── JavaScriptCore: sources ───
@@ -2214,20 +2170,14 @@ function jscSourceList(wk: WebKitBuild): { sources: string[]; unifiedListFiles: 
   return { sources, unifiedListFiles };
 }
 
-function emitJSCObjects(
+function jscGroup(
   wk: WebKitBuild,
   jsc: JSCCompileFlags,
   sources: string[],
   codegenReady: string[],
   llintAssembly: string,
-): { objects: string[]; jscPch: { pch: string; wrapperHeader: string } } {
-  const { n, cfg, B, JSC } = wk;
-  const jscPch = pch(n, cfg, join(JSC, "JavaScriptCorePrefix.h"), {
-    flags: jsc.jscFlags,
-    orderOnlyInputs: codegenReady,
-    implicitInputs: [join(B, "cmakeconfig.h")],
-  });
-
+): SourceGroup {
+  const { cfg, JSC } = wk;
   // Windows ARM64: the alignment directives in these files' inline asm break
   // LLVM's SEH unwind-info emission (llvm.org/pr47432), so JSC's CMakeLists
   // builds them without unwind tables. (ThunkGenerators.cpp is listed there
@@ -2237,38 +2187,33 @@ function emitJSCObjects(
     cfg.windows && cfg.arm64 && ["MacroAssemblerARM64.cpp", "LowLevelInterpreter.cpp"].includes(basename(src))
       ? ["/clang:-fno-unwind-tables"]
       : [];
-  const objects: string[] = [];
-  for (const src of sources) {
-    objects.push(
-      src.endsWith(".c")
-        ? cc(n, cfg, src, { flags: jsc.jscCFlags, orderOnlyInputs: codegenReady })
-        : cxx(n, cfg, src, {
-            flags: [...jsc.jscFlags, ...noUnwindTables(src)],
-            pch: jscPch.pch,
-            pchHeader: jscPch.wrapperHeader,
-            orderOnlyInputs: codegenReady,
-          }),
-    );
-  }
-  // LowLevelInterpreter.cpp: the inline-asm interpreter (includes
-  // LLIntAssembly.h). Its own edge, like cmake's LowLevelInterpreterLib: no
-  // PCH, and an implicit dep on the generated assembly.
-  // Debug: -O1 (after the global -O0) keeps the IPInt instruction handlers
-  // within their aligned slots, as JSC's CMakeLists does for this file under
-  // COMPILER_IS_GCC_OR_CLANG (so not for clang-cl).
-  objects.push(
-    cxx(n, cfg, join(JSC, "llint", "LowLevelInterpreter.cpp"), {
-      flags: [
-        ...jsc.jscFlags,
-        ...(cfg.debug && !cfg.windows ? ["-O1"] : []),
-        ...noUnwindTables("LowLevelInterpreter.cpp"),
-      ],
-      implicitInputs: [llintAssembly],
-      orderOnlyInputs: codegenReady,
-    }),
-  );
-  n.phony("JavaScriptCore", objects);
-  return { objects, jscPch };
+  return {
+    name: "JavaScriptCore",
+    sources: [
+      ...sources.map(path => {
+        const extra = noUnwindTables(path);
+        return extra.length > 0 ? { path, cflags: extra } : path;
+      }),
+      // LowLevelInterpreter.cpp: the inline-asm interpreter (includes
+      // LLIntAssembly.h). Its own settings, like cmake's LowLevelInterpreterLib:
+      // no PCH, and an implicit dep on the generated assembly. Debug: -O1
+      // (after the global -O0) keeps the IPInt instruction handlers within
+      // their aligned slots, as JSC's CMakeLists does for this file under
+      // COMPILER_IS_GCC_OR_CLANG (so not for clang-cl).
+      {
+        path: join(JSC, "llint", "LowLevelInterpreter.cpp"),
+        cflags: [...(cfg.debug && !cfg.windows ? ["-O1"] : []), ...noUnwindTables("LowLevelInterpreter.cpp")],
+        implicitInputs: [llintAssembly],
+        noPch: true,
+      },
+    ],
+    includes: jsc.includes,
+    cflags: [...jsc.targetFlags, "-DBUILDING_JavaScriptCore"],
+    cxxflags: jsc.cxx,
+    pch: join(JSC, "JavaScriptCorePrefix.h"),
+    orderOnly: codegenReady,
+    implicitInputs: [join(wk.B, "cmakeconfig.h")],
+  };
 }
 
 // ─── testFFI ───
@@ -2278,60 +2223,30 @@ function emitJSCObjects(
  * test/js/bun/jsc-stress/testFFI.test.ts. Linking it also proves JSC + WTF +
  * bmalloc + ICU + mimalloc resolve standalone before bun does.
  */
-function emitTestFFI(
-  wk: WebKitBuild,
-  jsc: JSCCompileFlags,
-  jscPch: { pch: string; wrapperHeader: string },
-  codegenReady: string[],
-  objects: string[],
-  resolved: ReadonlyMap<string, ResolvedDep>,
-): string {
-  const { n, cfg, JSC } = wk;
-  // Hooks bun's runtime provides to WTF/JSC (RunLoopBun.cpp, ErrorInstance,
-  // JSMicrotask). WebKit's own executables leave them undefined: ld64 needs
-  // that spelled out per symbol (WebKitCompilerFlags.cmake, USE_BUN_EVENT_LOOP).
-  const bunHooks = [
-    "WTFTimer__create",
-    "WTFTimer__update",
-    "WTFTimer__deinit",
-    "WTFTimer__isActive",
-    "WTFTimer__secondsUntilTimer",
-    "WTFTimer__cancel",
-    "Bun__errorInstance__finalize",
-    "Bun__reportUnhandledError",
-  ];
-  // Windows: WTF's registry/shell/token calls (LanguageWin, FileSystemWin,
-  // OSAllocatorWin) — bun's own link gets these through its delay-load set.
-  // COFF has no weak undefined symbols: each TU referencing a hook carries a
-  // weak external plus an absolute-0 default, and once ThinLTO imports the
-  // referencing function into a second module lld-link sees two defaults
-  // ("duplicate symbol"). /force:multiple picks one — the hook-absent value a
-  // standalone test binary wants (the fork's Dockerfile.windows does the
-  // same for jsc.exe). bun.exe defines every hook, so its link is unaffected.
-  const testExeLinkFlags = cfg.darwin
-    ? bunHooks.map(sym => `-Wl,-U,_${sym}`)
-    : cfg.windows
-      ? ["advapi32.lib", "shell32.lib", "user32.lib", ...(cfg.lto ? ["/force:multiple"] : [])]
-      : [];
-  const testFFIObj = cxx(n, cfg, join(JSC, "ffi", "tests", "testFFI.cpp"), {
-    flags: [...jsc.jscFlagsNoTarget, "-DBUILDING_testFFI", "-DSTATICALLY_LINKED_WITH_JavaScriptCore"],
-    pch: jscPch.pch,
-    pchHeader: jscPch.wrapperHeader,
-    orderOnlyInputs: codegenReady,
-  });
-  const depLink = (name: string): string[] => {
-    const r = resolved.get(name);
-    return r === undefined ? [] : [...r.libs, ...r.objects];
+function testFFIGroup(wk: WebKitBuild, jsc: JSCCompileFlags, codegenReady: string[]): SourceGroup {
+  const { JSC } = wk;
+  return {
+    name: "testFFI-obj",
+    sources: [join(JSC, "ffi", "tests", "testFFI.cpp")],
+    includes: jsc.includes,
+    cflags: [...jsc.targetFlags, "-DBUILDING_testFFI", "-DSTATICALLY_LINKED_WITH_JavaScriptCore"],
+    cxxflags: jsc.cxx,
+    // JSC's PCH (the JavaScriptCore group builds it).
+    pch: join(JSC, "JavaScriptCorePrefix.h"),
+    orderOnly: codegenReady,
+    link: false,
   };
-  const testFFI = linkTargetExe(
-    wk,
-    jsc,
-    "testFFI",
-    [testFFIObj, ...objects, ...depLink("icu"), ...depLink("mimalloc")],
-    [...testExeLinkFlags, ...systemLibs(cfg)],
-  );
-  n.phony("testFFI", [testFFI]);
-  return testFFI;
+}
+
+function testFFIExe(cfg: Config): DirectStep {
+  return {
+    kind: "exe",
+    output: join(webkitLayout(cfg).binDir, "testFFI"),
+    objectsFrom: ["testFFI-obj", "JavaScriptCore", "WTF", "bmalloc"],
+    linkDeps: ["icu", "mimalloc"],
+    ldflags: [...standaloneExeLinkFlags(cfg), ...systemLibs(cfg)],
+    buildByDefault: true,
+  };
 }
 
 // ───────────────────────────────────────────────────────────────────────────
@@ -2341,6 +2256,7 @@ function emitTestFFI(
 export const webkit: Dependency = {
   name: "WebKit",
   versionMacro: "WEBKIT",
+  configureReadsSource: true,
   // The direct build compiles against the mimalloc bun links
   // (USE_EXTERNAL_MIMALLOC) and, off macOS, the ICU built by deps/icu.ts.
   fetchDeps: cfg =>
@@ -2373,12 +2289,7 @@ export const webkit: Dependency = {
     return { kind: "github", repo: "oven-sh/WebKit", commit: cfg.webkitVersion, sparse: sourceSparse };
   },
 
-  build: cfg => {
-    if (cfg.webkit === "prebuilt") {
-      return { kind: "none" };
-    }
-    return { kind: "custom", emit: emitWebKit };
-  },
+  build: cfg => (cfg.webkit === "prebuilt" ? { kind: "none" } : webkitBuildSpec(cfg)),
 
   provides: cfg => {
     if (cfg.webkit === "prebuilt") {
@@ -2400,8 +2311,8 @@ export const webkit: Dependency = {
       return { libs, includes };
     }
 
-    // emitWebKit reports include dirs itself (CustomBuild) and its
-    // objects go straight on the link line.
-    return { libs: [], includes: [] };
+    // The objects go straight on the link line; consumers see the framework
+    // header dirs and generated headers under the dep build dir.
+    return { libs: [], includes: webkitSourceIncludes(cfg) };
   },
 };

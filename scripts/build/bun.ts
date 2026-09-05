@@ -187,7 +187,7 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
     depIncludes.push(...d.includes);
     depDefines.push(...d.defines);
     // d.outputs is the "headers are ready" signal: for prebuilt that's the
-    // stamp (headers are undeclared side-effects), for direct/custom deps
+    // stamp (headers are undeclared side-effects), for direct deps
     // it's the generated-header set + source stamp.
     if (d.includes.length > 0) depHeaderSignal.push(...d.outputs);
   }

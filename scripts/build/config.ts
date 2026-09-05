@@ -203,7 +203,7 @@ export interface Config {
   cc: string;
   cxx: string;
   /**
-   * Compiler for build-time host tools (dep_host_cc codegen helpers, ICU's
+   * Compiler for build-time host tools (`host-exe` steps: tinycc's c2str, ICU's
    * icupkg, the ICU data .S). Same as `cc` except for windows targets, where
    * `cc` is clang-cl and host tools need the plain clang driver.
    */
@@ -254,6 +254,8 @@ export interface Config {
    * into rule commands.
    */
   jsRuntime: string;
+  /** The same as an argv, for edges whose command is assembled from an argument list. */
+  jsRuntimeArgv: string[];
   esbuild: string;
   /** Optional — compiler launcher prefix. */
   ccache: string | undefined;
@@ -452,6 +454,7 @@ export interface Toolchain {
   /** Found only when the build installs with npm. */
   npm?: string | undefined;
   jsRuntime: string;
+  jsRuntimeArgv: string[];
   esbuild: string;
   ccache: string | undefined;
   cmake: string;
@@ -1238,6 +1241,7 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
     bun: toolchain.bun,
     npm: packageManager === "npm" ? toolchain.npm : undefined,
     jsRuntime: toolchain.jsRuntime,
+    jsRuntimeArgv: toolchain.jsRuntimeArgv,
     esbuild: toolchain.esbuild,
     ccache: toolchain.ccache,
     cmake: toolchain.cmake,

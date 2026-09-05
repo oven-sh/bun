@@ -51,6 +51,7 @@ function mockToolchain(): Toolchain {
     bun: bunExe(),
     // A shell command prefix, quoted like the one configure makes.
     jsRuntime: quote(bunExe(), process.platform === "win32"),
+    jsRuntimeArgv: [bunExe()],
     esbuild: "/fake/bin/esbuild",
     ccache: undefined,
     cmake: "/fake/bin/cmake",

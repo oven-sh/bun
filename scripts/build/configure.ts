@@ -30,7 +30,7 @@ import { ensureMacosSdk } from "./macos-sdk.ts";
 import { Ninja } from "./ninja.ts";
 import { getProfile } from "./profiles.ts";
 import { registerAllRules } from "./rules.ts";
-import { quote } from "./shell.ts";
+import { quote, quoteArgs } from "./shell.ts";
 import { prefetchConfigureSources } from "./source.ts";
 import { findBun, findCargo, findMsvcLinker, findNpm, findSystemTool, resolveLlvmToolchain } from "./tools.ts";
 import { ensureWindowsSysroot } from "./winsysroot.ts";
@@ -99,11 +99,11 @@ export function resolveToolchain(targetOs?: OS, packageManager: PackageManager =
       });
     }
   }
-  const q = (p: string) => quote(p, host.os === "windows");
-  const jsRuntime =
+  const jsRuntimeArgv =
     process.versions.bun !== undefined
-      ? q(process.execPath)
-      : `${q(process.execPath)} --experimental-strip-types --disable-warning=MODULE_TYPELESS_PACKAGE_JSON`;
+      ? [process.execPath]
+      : [process.execPath, "--experimental-strip-types", "--disable-warning=MODULE_TYPELESS_PACKAGE_JSON"];
+  const jsRuntime = quoteArgs(jsRuntimeArgv, host.os === "windows");
 
   return {
     ...llvm,
@@ -111,6 +111,7 @@ export function resolveToolchain(targetOs?: OS, packageManager: PackageManager =
     bun,
     npm,
     jsRuntime,
+    jsRuntimeArgv,
     esbuild,
     cargo: rust?.cargo,
     cargoHome: rust?.cargoHome,
@@ -142,7 +143,7 @@ export interface ConfigureResult {
  *
  * Excludes scripts that only run as ninja subprocesses (ci.ts, stream.ts,
  * npm-ci.ts) — changes to those don't affect the build graph. fetch-cli.ts
- * and download.ts count: configure fetches `custom` deps' sources itself.
+ * and download.ts count: configure fetches `configureReadsSource` deps' sources itself.
  */
 function configureInputs(cwd: string): string[] {
   const buildDir = resolve(cwd, "scripts", "build");

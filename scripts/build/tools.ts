@@ -476,7 +476,7 @@ export function resolveLlvmToolchain(
     }
   }
 
-  // Host compiler for build-time codegen tools (dep_host_cc) and host-side
+  // Host compiler for build-time host tools (`host-exe` steps) and host-side
   // cargo artifacts (.cargo/config.toml linker for the host triple). Normally
   // the same as cc/cxx, but for a windows target cc/cxx are clang-cl, whose
   // command line the host-tool rules (GNU-style -o/-MMD/-c, .S input) don't

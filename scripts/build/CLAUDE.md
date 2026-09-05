@@ -22,8 +22,7 @@ This directory generates `build.ninja`. The scripts **describe** the build; ninj
 
 **Deps compile in our graph.** `BuildSpec` variants:
 
-- `direct` — list the dep's sources explicitly; each becomes a first-class `cc`/`cxx` edge in our graph and the `.o`s go straight into bun's link. The C/C++ deps (zlib, zstd, boringssl, libarchive, mimalloc, …). No sub-process configure, and LTO sees across the dep boundary.
-- `custom` — same primitives (`cc`/`cxx`/`pch`/`link`), but the dep's own module emits the graph because it is more than a source list: WebKit (`deps/webkit.ts` lists the WTF/bmalloc sources and JSC codegen inputs, takes JSC's own TUs from its `Sources.txt`, emits the ruby/python codegen and the LLInt extractor chain) and ICU (`deps/icu.ts`: host `icupkg`, data filter/repack). Objects go straight into bun's link like `direct`. The tree is fetched at configure time because the graph is described from it.
+- `direct` — the dep's sources, in one or more groups (each its own flags/includes/PCH), become first-class `cc`/`cxx` edges in our graph and the `.o`s go straight into bun's link; `steps` add generators (ruby/python/perl scripts, a host tool the dep built), host tools and target executables; `headers` writes config headers at configure. Every C/C++ dep, from zlib (one list) to WebKit (`deps/webkit.ts`: bmalloc/WTF/JSC groups, JSC's TUs from its `Sources.txt`, the DerivedSources generators, the LLInt extractor chain, testFFI) and ICU (`deps/icu.ts`: host `icupkg`, data filter/repack). No sub-process configure, and LTO sees across the dep boundary. A dep whose spec is read off its tree (`configureReadsSource`: WebKit, ICU) is fetched at configure time.
 - `cargo` — invoke cargo build (lolhtml, rust-argon2). Cargo's incremental build is reliable; `restat = 1` keeps our downstream no-ops fast.
 - `prebuilt` — skip build entirely, download compiled `.a`/`.lib` (nodejs-headers; WebKit only with an explicit `--webkit=prebuilt`).
 
@@ -147,7 +146,7 @@ Tables: `cpuTargetFlags` (`-march`/`-mcpu`/`-mtune` — also translated for rust
    - `generateCargoConfig(cfg)` — write the repo-root `.cargo/config.toml` (git-ignored) with the per-target `linker = ` from the discovered `cfg.hostCxx`. Advisory only for `bun bd` (the ninja cargo edge sets the linker via env); it's there for `cargo build`/`cargo check`/rust-analyzer run directly.
 4. `globAllSources()` — one filesystem snapshot of all `.cpp`/`.c`/`.rs`/codegen-input globs.
 5. `new Ninja({buildDir})` + `registerAllRules(n, cfg)` — register every rule template.
-6. `prefetchConfigureSources(cfg, allDeps)` — fetch the trees of `custom` deps (WebKit, ICU) if missing or stale; their emitters read file lists out of them.
+6. `prefetchConfigureSources(cfg, allDeps)` — fetch the trees of `configureReadsSource` deps (WebKit, ICU) if missing or stale; their specs read file lists out of them.
 7. `emitBun(n, cfg, sources)` — assemble the build graph (see Phase 2).
 8. `emitGeneratorRule(n, cfg, partial, depInputs)` — persist `configure.json`, emit `regen` rule so editing any build script (or a dep-tree file configure read, e.g. WebKit's Sources.txt) triggers reconfigure.
 9. `n.default([...])` + `n.write()` — set default targets, write `build.ninja` + `compile_commands.json`.
@@ -159,7 +158,7 @@ For `mode: "full"` (the normal case):
 
 1. **Codegen** — `emitCodegen(n, cfg, sources)` emits ~20 generation steps (bindgen, `.classes.ts` → C++, bundled modules, LUTs). Returns grouped outputs.
 2. **Rust** — `emitRust(n, cfg, {...})` emits `cargo build -p bun_runtime` → `libbun_runtime.a` (after resolving its path deps, lolhtml and rust-argon2). Codegen and cargo are emitted before the deps on purpose. Scheduling: with no `.ninja_log` (every CI build) ninja weighs each edge as 1 and runs the longest remaining chain first, ties in emission order — so cargo ties with `cc → link` in full mode and wins on emission order, but in `archive-link` mode `cc → ar → link` outranks it and cargo would start only after every compile had been dispatched (~50s into a CI build). The `compile` pool in `compile.ts` (depth = core count, below ninja's default `-j` of cores+2) is what actually guarantees cargo a slot the moment it is ready.
-3. **Deps** — loop `allDeps`, call `resolveDep(n, cfg, dep)`. Each emits fetch → direct/custom compile edges, or fetch → cargo, or prebuilt download. Collects objects, lib paths, include dirs, outputs.
+3. **Deps** — loop `allDeps`, call `resolveDep(n, cfg, dep)`. Each emits fetch → direct compile/step edges, or fetch → cargo, or prebuilt download. Collects objects, lib paths, include dirs, outputs.
 4. **Flags** — `computeFlags(cfg)` evaluates flag tables → cflags/cxxflags/defines/ldflags/stripflags.
 5. **PCH** — compile `root-pch.h` → PCH (skipped in CI full mode).
 6. **Compile** — loop sources, `cxx()`/`cc()` per file.

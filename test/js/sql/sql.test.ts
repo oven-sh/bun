@@ -270,6 +270,15 @@ if (isDockerEnabled()) {
         }
       });
 
+      test("sql.array should support BYTEA arrays with Uint8Array and Buffer elements", async () => {
+        await using sql = postgres(options);
+
+        const a = new Uint8Array([1, 2, 44]);
+        const b = Buffer.from([0xca, 0xfe]);
+        const [{ x }] = await sql`select ${sql.array([a, b], "BYTEA")} as x`;
+        expect(x).toEqual([Buffer.from(a), b]);
+      });
+
       test("sql.array should support BIGINT arrays", async () => {
         await using sql = postgres(options);
 

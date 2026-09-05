@@ -1623,6 +1623,17 @@ impl VirtualMachine {
         !self.bun_watcher.is_null()
     }
 
+    /// Whether an error nothing in script handled ends the run. Under
+    /// `--hot`/`--watch` it does not: the error is printed and the process keeps
+    /// running what it has (servers, timers) until the watcher reloads it.
+    /// Counting it in `unhandled_error_counter` there would keep
+    /// `is_event_loop_alive()` false for the rest of the process, leaving the
+    /// watcher run loop in `tick_possibly_forever()`, which polls I/O but never
+    /// drains the timer heap.
+    fn unhandled_errors_are_fatal(&self) -> bool {
+        !self.is_watcher_enabled()
+    }
+
     /// Thin setter so callers don't need `.with` plumbing on the thread-local.
     #[inline]
     pub fn set_is_main_thread_vm(value: bool) {
@@ -1697,7 +1708,12 @@ impl VirtualMachine {
             // and exit, like node's fatal-exception path. Main thread only:
             // process_exit() RETURNS on a worker, so the panic would fire; a
             // worker falls through and exits 1 below (e.g. a beforeExit throw).
-            if self.exit_on_uncaught_exception && self.is_main_thread() {
+            // A watcher's run loop dispatches `beforeExit` whenever it drains
+            // and keeps turning afterwards, so there the error is only printed.
+            if self.exit_on_uncaught_exception
+                && self.is_main_thread()
+                && self.unhandled_errors_are_fatal()
+            {
                 self.run_error_handler(err, None);
                 // `process_exit` emits `exit`, re-entering here if a listener
                 // throws. No handler is running, so drop the recursion guard or
@@ -1708,7 +1724,9 @@ impl VirtualMachine {
                 panic!("made it past process.exit()");
             }
             // TODO maybe we want a separate code path for uncaught exceptions
-            self.unhandled_error_counter += 1;
+            if self.unhandled_errors_are_fatal() {
+                self.unhandled_error_counter += 1;
+            }
             self.exit_handler.exit_code = 1;
             (self.on_unhandled_rejection)(self, global_object, err);
         }
@@ -3762,7 +3780,8 @@ impl VirtualMachine {
         }
     }
 
-    /// Routes an unhandled promise rejection to the configured handler, bumping the unhandled-error counter.
+    /// Routes an unhandled promise rejection to the configured handler and, where
+    /// [`Self::unhandled_errors_are_fatal`], bumps the unhandled-error counter.
     pub fn unhandled_rejection(
         &mut self,
         global_object: &JSGlobalObject,
@@ -3860,7 +3879,9 @@ impl VirtualMachine {
                 }
             }
         }
-        self.unhandled_error_counter += 1;
+        if self.unhandled_errors_are_fatal() {
+            self.unhandled_error_counter += 1;
+        }
         (self.on_unhandled_rejection)(self, global_object, reason);
     }
 

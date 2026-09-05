@@ -358,6 +358,8 @@ impl JSMySQLConnection {
     pub(crate) fn enqueue_request(&self, item: RefPtr<JSMySQLQuery>) {
         bun_core::scoped_log!(MySQLConnection, "enqueueRequest");
         self.connection_mut().enqueue_request(item);
+        // Re-refs the event loop if the connection was idle (unref'd by `on_data`).
+        self.update_reference_type();
         self.reset_connection_timeout();
         self.register_auto_flusher();
     }

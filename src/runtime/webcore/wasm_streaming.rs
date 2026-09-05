@@ -118,7 +118,7 @@ fn get_body_stream_or_bytes_for_wasm_streaming(
             Some(b) => b,
             None => return body.to_readable_stream(this),
         },
-        _ => body.use_as_any_blob(),
+        _ => body.use_as_any_blob_or_throw(this)?,
     };
 
     // `Any::store()` only yields `Some` for the `Blob` variant; non-`Bytes` data means

@@ -1183,6 +1183,12 @@ impl Request {
                     if !fields.contains(Fields::Body) {
                         match response.get_body_value() {
                             BodyValue::Null | BodyValue::Empty | BodyValue::Used => {}
+                            BodyValue::HTMLBundle(_) => {
+                                bail!(Err(global_this.throw_type_error(format_args!(
+                                    "{}",
+                                    crate::webcore::body::HTML_BUNDLE_BODY_UNREADABLE
+                                ))))
+                            }
                             _ => {
                                 match response.clone_body_value_via_cached_stream(global_this) {
                                     Ok(v) => {

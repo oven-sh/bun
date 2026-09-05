@@ -750,12 +750,38 @@ impl AnyRoute {
         )))
     }
 
+    /// `index` or `new Response(index)` from an HTML import, as a route value.
+    fn html_bundle_route_value(
+        argument: JSValue,
+        global: &JSGlobalObject,
+    ) -> JsResult<Option<bun_ptr::ThisPtr<HTMLBundle>>> {
+        if let Some(html_bundle) = argument.as_class_this_ptr::<HTMLBundle>() {
+            return Ok(Some(html_bundle));
+        }
+        let Some(response) = argument.as_class_ref::<Response>() else {
+            return Ok(None);
+        };
+        let BodyValue::HTMLBundle(html_bundle) = response.get_body_value() else {
+            return Ok(None);
+        };
+        let has_headers = response
+            .get_init_headers_mut()
+            .is_some_and(|headers| !headers.is_empty());
+        if response.status_code() != 200 || has_headers {
+            return Err(global.throw_invalid_arguments(format_args!(
+                "A Response with an HTML import body does not support a status or headers as a route value yet. Use the HTML import itself as the route value, or return new Response(index, init) from a route handler.",
+            )));
+        }
+        Ok(Some(html_bundle.this_ptr()))
+    }
+
     pub(crate) fn html_route_from_js(
         argument: JSValue,
         init_ctx: &mut ServerInitContext,
     ) -> JsResult<Option<AnyRoute>> {
         use bun_collections::zig_hash_map::MapEntry as StdEntry;
-        if let Some(html_bundle) = argument.as_class_this_ptr::<HTMLBundle>() {
+        let html_bundle = Self::html_bundle_route_value(argument, init_ctx.global)?;
+        if let Some(html_bundle) = html_bundle {
             let entry = init_ctx
                 .dedupe_html_bundle_map
                 .entry(html_bundle.as_ptr().cast_const());
@@ -2154,6 +2180,7 @@ where
         // a move-assign frees the old `static_routes`.
         self.config.static_routes = core::mem::take(&mut new_config.static_routes);
         self.config.negative_routes = core::mem::take(&mut new_config.negative_routes);
+        self.handler_html_routes.with_mut(Vec::clear);
 
         if new_config.had_routes_object {
             self.config.user_routes_to_build =

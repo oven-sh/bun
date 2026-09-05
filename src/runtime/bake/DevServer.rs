@@ -34,6 +34,7 @@ use crate::api::server::StaticRoute;
 use crate::api::{AnyServer, SavedRequest};
 use crate::bake;
 use crate::bake::framework_router::{self as framework_router, FrameworkRouter, OpaqueFileId};
+use crate::server::AnyRequestContext;
 use crate::server::html_bundle::HTMLBundleRoute;
 use crate::timer::{EventLoopTimer, EventLoopTimerState, EventLoopTimerTag};
 use crate::webcore::{Request as WebRequest, Response};
@@ -1802,10 +1803,25 @@ struct RequestEnsureRouteBundledCtx {
     // Note: erased to raw pointer — a `&mut DevServer` field would alias the
     // caller's borrow.
     dev: *mut DevServer,
-    req: ReqOrSaved,
+    request: EnsureRequest,
     resp: AnyResponse,
-    kind: deferred_request::HandlerKind,
     route_bundle_index: route_bundle::Index,
+}
+
+/// What answers the request once its route bundle is ready.
+#[derive(Clone, Copy)]
+enum EnsureRequest {
+    /// A framework route: the server handler runs with the uWS request.
+    ServerHandler(*mut Request), // FFI: uws C request ptr from handler callback
+    /// An HTML route: the bundled page.
+    BundledHtmlPage(*mut Request),
+    /// `new Response(htmlBundle)` from a handler: the context renders the page.
+    HtmlBundleBody(AnyRequestContext),
+}
+
+fn request_method(req: *mut Request) -> Method {
+    // SAFETY: `req` is a uWS `Request*` valid for the handler callback's duration.
+    Method::which(unsafe { &*req }.method()).unwrap_or(Method::GET)
 }
 
 impl RequestEnsureRouteBundledCtx {
@@ -1823,8 +1839,7 @@ impl RequestEnsureRouteBundledCtx {
     fn on_defer(&mut self, bundle_field: BundleQueueType) -> JsResult<()> {
         // Note: reshaped for borrowck — captured args before re-borrowing dev
         let route_bundle_index = self.route_bundle_index;
-        let kind = self.kind;
-        let req = ::core::mem::replace(&mut self.req, ReqOrSaved::Aborted);
+        let request = self.request;
         let resp = self.resp;
         let dev = self.dev_mut();
         let requests_array: *mut deferred_request::List = match bundle_field {
@@ -1841,48 +1856,55 @@ impl RequestEnsureRouteBundledCtx {
             // SAFETY: `requests_array` points into `*self.dev`, which outlives this call.
             unsafe { &mut *requests_array },
             route_bundle_index,
-            kind,
-            req,
+            request,
             resp,
         )?;
         Ok(())
     }
 
     fn on_loaded(&mut self) -> JsResult<()> {
-        match self.kind {
-            deferred_request::HandlerKind::ServerHandler => {
-                let route_bundle_index = self.route_bundle_index;
-                let resp = self.resp;
-                // The `Strong` field is move-only. Take ownership out of `self.req`
-                // (it is consumed by `on_framework_request_with_bundle`).
-                let req = match ::core::mem::replace(&mut self.req, ReqOrSaved::Aborted) {
-                    ReqOrSaved::Req(r) => {
-                        // SAFETY: `r` is a uWS `Request*` valid for the handler callback's duration.
-                        SavedRequestUnion::Stack(unsafe { &mut *r })
-                    }
-                    ReqOrSaved::Aborted => unreachable!(),
-                };
+        let route_bundle_index = self.route_bundle_index;
+        let resp = self.resp;
+        match self.request {
+            EnsureRequest::ServerHandler(r) => {
+                // SAFETY: `r` is a uWS `Request*` valid for the handler callback's duration.
+                let req = SavedRequestUnion::Stack(unsafe { &mut *r });
                 self.dev_mut()
                     .on_framework_request_with_bundle(route_bundle_index, req, resp)
             }
-            deferred_request::HandlerKind::BundledHtmlPage => {
-                let route_bundle_index = self.route_bundle_index;
-                let resp = self.resp;
-                let method = self.req.method();
+            EnsureRequest::BundledHtmlPage(r) => {
+                let method = request_method(r);
                 self.dev_mut()
                     .on_html_request_with_bundle(route_bundle_index, resp, method);
+                Ok(())
+            }
+            EnsureRequest::HtmlBundleBody(ctx) => {
+                self.dev_mut()
+                    .on_html_bundle_body_with_bundle(route_bundle_index, ctx);
                 Ok(())
             }
         }
     }
 
     fn on_plugin_error(&mut self) -> JsResult<()> {
-        self.resp.end(b"Plugin Error", false);
+        match self.request {
+            EnsureRequest::HtmlBundleBody(ctx) => {
+                answer_html_bundle_body(ctx, |resp| resp.end(b"Plugin Error", false));
+            }
+            EnsureRequest::ServerHandler(_) | EnsureRequest::BundledHtmlPage(_) => {
+                self.resp.end(b"Plugin Error", false)
+            }
+        }
         Ok(())
     }
 
     fn to_dev_response(&mut self) -> DevResponse<'_> {
-        DevResponse::Http(self.resp)
+        match self.request {
+            EnsureRequest::HtmlBundleBody(ctx) => DevResponse::RequestContext(ctx),
+            EnsureRequest::ServerHandler(_) | EnsureRequest::BundledHtmlPage(_) => {
+                DevResponse::Http(self.resp)
+            }
+        }
     }
 }
 
@@ -2074,22 +2096,13 @@ fn ensure_route_is_bundled<Ctx: EnsureRouteCtx>(
     }
 }
 
-#[derive(Clone, Copy)]
-enum ReqOrSaved {
-    Req(*mut Request), // FFI: uws C request ptr from handler callback
-    Aborted,
-}
-
-impl ReqOrSaved {
-    fn method(&self) -> Method {
-        match self {
-            ReqOrSaved::Req(req) => {
-                // SAFETY: `req` is a uWS `Request*` valid for the handler callback's duration.
-                Method::which(unsafe { &**req }.method()).unwrap_or(Method::POST)
-            }
-            ReqOrSaved::Aborted => unreachable!(),
-        }
+/// `write` answers the request, then the context and the dev server's +1 go.
+fn answer_html_bundle_body(ctx: AnyRequestContext, write: impl FnOnce(AnyResponse)) {
+    if let Some(resp) = ctx.take_response() {
+        write(resp);
+        ctx.release_taken_response();
     }
+    ctx.deref();
 }
 
 impl DevServer {
@@ -2097,8 +2110,7 @@ impl DevServer {
         &mut self,
         requests_array: &mut deferred_request::List,
         route_bundle_index: route_bundle::Index,
-        kind: deferred_request::HandlerKind,
-        req: ReqOrSaved,
+        request: EnsureRequest,
         resp: AnyResponse,
     ) -> crate::Result<()> {
         let deferred_slot = self.deferred_request_pool.claim();
@@ -2113,19 +2125,15 @@ impl DevServer {
             unsafe { ::core::ptr::addr_of_mut!((*deferred_node_ptr).data) }.cast::<c_void>();
         debug_log!("DeferredRequest(0x{:x}).init", deferred_data_ptr as usize);
 
-        let method = match &req {
-            // SAFETY: r is a uws Request ptr valid for the duration of the handler callback
-            ReqOrSaved::Req(r) => Method::which(unsafe { &**r }.method()).unwrap_or(Method::GET),
-            _ => unreachable!(),
-        };
-
         let mut deferred_data = DeferredRequest {
             route_bundle_index,
             dev: std::ptr::from_ref(self),
             referenced_by_devserver: true,
             weakly_referenced_by_requestcontext: false,
-            handler: match kind {
-                deferred_request::HandlerKind::BundledHtmlPage => 'brk: {
+            handler: match request {
+                // The context tracks its own abort; `on_html_bundle_built` checks it.
+                EnsureRequest::HtmlBundleBody(ctx) => Handler::HtmlBundleBody(ctx),
+                EnsureRequest::BundledHtmlPage(r) => 'brk: {
                     // Note: `on_aborted<U: 'static>` rejects `DeferredRequest`;
                     // erase to `c_void` and cast back inside the trampoline.
                     resp.on_aborted(
@@ -2137,32 +2145,25 @@ impl DevServer {
                     );
                     break 'brk Handler::BundledHtmlPage(ResponseAndMethod {
                         response: resp,
-                        method,
+                        method: request_method(r),
                     });
                 }
-                deferred_request::HandlerKind::ServerHandler => 'brk: {
-                    let server_handler: SavedRequest = match req {
-                        ReqOrSaved::Req(r) => {
-                            let global = self.vm().global();
-                            match self
-                                .server
-                                .as_ref()
-                                .unwrap()
-                                .prepare_and_save_js_request_context(
-                                    // SAFETY: r is the live µWS request for this handler frame.
-                                    unsafe { &mut *r },
-                                    resp,
-                                    global,
-                                    Some(method),
-                                )? {
-                                Some(saved) => saved,
-                                // Abort the deferral on failure.
-                                // `deferred_slot` drops here, releasing the
-                                // still-uninitialized slot without `drop_in_place`.
-                                None => return Ok(()),
-                            }
-                        }
-                        _ => unreachable!(),
+                EnsureRequest::ServerHandler(r) => 'brk: {
+                    let global = self.vm().global();
+                    let server_handler: SavedRequest = match self
+                        .server
+                        .as_ref()
+                        .unwrap()
+                        .prepare_and_save_js_request_context(
+                            // SAFETY: r is the live µWS request for this handler frame.
+                            unsafe { &mut *r },
+                            resp,
+                            global,
+                            Some(request_method(r)),
+                        )? {
+                        Some(saved) => saved,
+                        // `deferred_slot` drops here and releases the uninitialized slot.
+                        None => return Ok(()),
                     };
                     server_handler.ctx.ref_();
                     server_handler.ctx.set_additional_on_abort_callback(Some(
@@ -2649,6 +2650,25 @@ impl DevServer {
         resp: AnyResponse,
         method: Method,
     ) {
+        let blob = self.bundled_html_page(route_bundle_index);
+        StaticRoute::on_with_method(blob, method, resp);
+    }
+
+    /// Consumes the +1 on `ctx` that `respond_for_html_bundle_body` took.
+    fn on_html_bundle_body_with_bundle(
+        &mut self,
+        route_bundle_index: route_bundle::Index,
+        ctx: AnyRequestContext,
+    ) {
+        let blob = self.bundled_html_page(route_bundle_index);
+        ctx.on_html_bundle_built(blob);
+    }
+
+    /// Cached on the route bundle until the next rebuild.
+    fn bundled_html_page(
+        &mut self,
+        route_bundle_index: route_bundle::Index,
+    ) -> bun_ptr::ThisPtr<StaticRoute> {
         // Note: erase `self` to a raw pointer so the `route_bundle` borrow
         // doesn't conflict with the `&mut self` calls below. Per docs/PORTING.md §Global mutable state: hold
         // `*mut T` and deref per-access; do not bind a long-lived `&mut`.
@@ -2694,7 +2714,7 @@ impl DevServer {
                 break 'generate blob;
             }
         };
-        StaticRoute::on_with_method(blob, method, resp);
+        blob
     }
 }
 
@@ -2912,6 +2932,8 @@ impl DevServer {
 
 enum DevResponse<'a> {
     Http(AnyResponse),
+    /// Answered with `answer_html_bundle_body`.
+    RequestContext(AnyRequestContext),
     Promise(PromiseResponse<'a>),
 }
 
@@ -2953,18 +2975,12 @@ pub mod deferred_request {
         ServerHandler(SavedRequest),
         /// For a .html route. Serve the bundled HTML page.
         BundledHtmlPage(ResponseAndMethod),
+        /// For `new Response(htmlBundle)` from a handler. Holds a +1 on the context.
+        HtmlBundleBody(AnyRequestContext),
         /// Do nothing and free this node. To simplify lifetimes,
         /// the `DeferredRequest` is not freed upon abortion. Which
         /// is okay since most requests do not abort.
         Aborted,
-    }
-
-    /// Does not include `aborted` because branching on that value
-    /// has no meaningful purpose, so it is excluded.
-    #[derive(Copy, Clone)]
-    pub enum HandlerKind {
-        ServerHandler,
-        BundledHtmlPage,
     }
 }
 use deferred_request::{DlogeferredRequest, Handler, PromiseResponse};
@@ -3057,6 +3073,7 @@ impl DeferredRequest {
                 saved.deinit();
                 // `saved` (incl. `js_request: jsc::Strong`) drops at scope exit.
             }
+            Handler::HtmlBundleBody(ctx) => ctx.deref(),
             Handler::BundledHtmlPage(_) | Handler::Aborted => {}
         }
     }
@@ -3090,6 +3107,11 @@ impl DeferredRequest {
                 r.response.write_header_int(b"Content-Length", 0);
                 r.response.end_without_body(true);
             }
+            Handler::HtmlBundleBody(ctx) => answer_html_bundle_body(ctx, |resp| {
+                resp.write_status(b"500 Internal Server Error");
+                resp.write_header_int(b"Content-Length", 0);
+                resp.end_without_body(true);
+            }),
             Handler::Aborted => {}
         }
     }
@@ -4656,6 +4678,13 @@ pub(super) fn finalize_bundle(
                     break 'brk DevResponse::Http(resp);
                 }
                 Handler::BundledHtmlPage(ram) => DevResponse::Http(ram.response),
+                // `send_serialized_failures` releases the context; `deref_` must not.
+                Handler::HtmlBundleBody(_) => {
+                    match ::core::mem::replace(&mut req.handler, Handler::Aborted) {
+                        Handler::HtmlBundleBody(ctx) => DevResponse::RequestContext(ctx),
+                        _ => unreachable!(),
+                    }
+                }
             };
 
             // SAFETY: see Note on `failures` above; `dev_ptr` is live and
@@ -4866,6 +4895,9 @@ pub(super) fn finalize_bundle(
             }
             Handler::BundledHtmlPage(ram) => {
                 dev.on_html_request_with_bundle(req.route_bundle_index, ram.response, ram.method)
+            }
+            Handler::HtmlBundleBody(ctx) => {
+                dev.on_html_bundle_body_with_bundle(req.route_bundle_index, ctx)
             }
         }
     }
@@ -5157,9 +5189,8 @@ fn on_request(dev: &mut DevServer, req: &mut Request, mut resp: AnyResponse) -> 
             .expect("oom");
         let mut ctx = RequestEnsureRouteBundledCtx {
             dev: std::ptr::from_mut::<DevServer>(dev),
-            req: ReqOrSaved::Req(req),
+            request: EnsureRequest::ServerHandler(req),
             resp,
-            kind: deferred_request::HandlerKind::ServerHandler,
             route_bundle_index,
         };
         let rbi = ctx.route_bundle_index;
@@ -5204,9 +5235,8 @@ impl DevServer {
             .map_err(|_| AllocError)?;
         let mut ctx = RequestEnsureRouteBundledCtx {
             dev: std::ptr::from_mut::<DevServer>(self),
-            req: ReqOrSaved::Req(req),
+            request: EnsureRequest::BundledHtmlPage(req),
             resp,
-            kind: deferred_request::HandlerKind::BundledHtmlPage,
             route_bundle_index,
         };
         let rbi = ctx.route_bundle_index;
@@ -5221,6 +5251,32 @@ impl DevServer {
             Err(jsc::JsError::OutOfMemory) => return Err(AllocError),
         }
         Ok(())
+    }
+
+    /// `ctx` carries a +1 on the context.
+    pub(crate) fn respond_for_html_bundle_body(
+        &mut self,
+        html: bun_ptr::ThisPtr<HTMLBundleRoute>,
+        ctx: AnyRequestContext,
+        resp: AnyResponse,
+    ) -> Result<(), AllocError> {
+        let route_bundle_index = self
+            .get_or_put_route_bundle(route_bundle::UnresolvedIndex::Html(html))
+            .map_err(|_| AllocError)?;
+        let mut ensure_ctx = RequestEnsureRouteBundledCtx {
+            dev: std::ptr::from_mut::<DevServer>(self),
+            request: EnsureRequest::HtmlBundleBody(ctx),
+            resp,
+            route_bundle_index,
+        };
+        match ensure_route_is_bundled(self, route_bundle_index, &mut ensure_ctx) {
+            Err(jsc::JsError::OutOfMemory) => Err(AllocError),
+            // A thrown error has no frame to return to here; report it as uncaught.
+            result => {
+                crate::dispatch::fold(result);
+                Ok(())
+            }
+        }
     }
 
     fn get_or_put_route_bundle(
@@ -5385,16 +5441,24 @@ impl DevServer {
         buf.extend_from_slice(bun_zstd::embed_compressed!(codegen "bake.error.js"));
         buf.extend_from_slice(post.as_bytes());
 
+        let http_options = crate::server::static_route::InitFromBytesOptions {
+            mime_type: Some(&MimeType::HTML),
+            server: self.server,
+            status_code: 500,
+            ..Default::default()
+        };
         match resp {
+            DevResponse::RequestContext(ctx) => answer_html_bundle_body(ctx, |r| {
+                StaticRoute::send_blob_then_deinit(
+                    r,
+                    crate::webcore::blob::Any::from_array_list(buf),
+                    http_options,
+                )
+            }),
             DevResponse::Http(r) => StaticRoute::send_blob_then_deinit(
                 r,
                 crate::webcore::blob::Any::from_array_list(buf),
-                crate::server::static_route::InitFromBytesOptions {
-                    mime_type: Some(&MimeType::HTML),
-                    server: self.server,
-                    status_code: 500,
-                    ..Default::default()
-                },
+                http_options,
             ),
             DevResponse::Promise(mut r) => {
                 let global = r.global;

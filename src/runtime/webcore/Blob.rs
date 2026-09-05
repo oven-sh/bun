@@ -4919,6 +4919,18 @@ pub(crate) fn write_file_internal(
                     destination_blob.detach();
                     return Ok(ControlFlow::Break(body_used_rejection(global_this)));
                 }
+                BodyValue::HTMLBundle(_) => {
+                    destination_blob.detach();
+                    return Ok(ControlFlow::Break(
+                        JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
+                            global_this,
+                            global_this.create_type_error_instance(format_args!(
+                                "{}",
+                                crate::webcore::body::HTML_BUNDLE_BODY_UNREADABLE
+                            )),
+                        ),
+                    ));
+                }
                 _ => BodyTag::Use,
             };
             match tag {

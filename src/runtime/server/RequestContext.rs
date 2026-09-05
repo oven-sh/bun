@@ -9,8 +9,10 @@ use bun_http_types::Method::Method;
 use bun_jsc::JsCell;
 use bun_uws::{self as uws, WebSocketUpgradeContext};
 
+use bun_ptr::ThisPtr;
+
 use crate::server::jsc::{self, JSGlobalObject, JSValue, JsResult};
-use crate::server::{RangeRequest, ServerLike};
+use crate::server::{RangeRequest, ServerLike, StaticRoute, html_bundle};
 use crate::webcore::{
     self as WebCore, AbortSignal, AnyBlob, ByteStream, CookieMap, CookieMapRef, FetchHeaders,
     Request, Response, blob::SizeType as BlobSizeType, body, readable_stream, request, response,
@@ -352,6 +354,29 @@ where
 #[inline]
 fn as_response(value: JSValue) -> Option<*mut Response> {
     response::from_js(value).map(|p| p.cast::<Response>())
+}
+
+/// The page's headers fill in behind the handler's. Non-generic, like `release_body_stream`.
+#[inline(never)]
+fn add_html_page_headers(
+    response: &mut Response,
+    html: &StaticRoute,
+    global_this: &JSGlobalObject,
+) -> JsResult<()> {
+    use bun_http_types::ETag::HeaderEntryColumns;
+    let mut headers =
+        bun_http_jsc::headers_jsc::from_fetch_headers(response.get_init_headers(), None);
+    let entries = html.headers.entries.slice();
+    for (name, value) in entries.items_name().iter().zip(entries.items_value()) {
+        let name = html.headers.as_str(*name);
+        if headers.get(name).is_none() {
+            headers.append(name, html.headers.as_str(*value));
+        }
+    }
+    let fetch_headers = bun_http_jsc::headers_jsc::to_fetch_headers(&headers, global_this)?;
+    // SAFETY: `to_fetch_headers` returns a fresh +1 `FetchHeaders*`.
+    response.set_init_headers(Some(unsafe { response::HeadersRef::adopt(fetch_headers) }));
+    Ok(())
 }
 
 /// Release the body's hold on a stream the sink is done with, and mark a
@@ -2027,6 +2052,123 @@ where
             .do_render_with_body(std::ptr::from_mut(value), None);
     }
 
+    fn render_html_bundle(&self, route: &bun_ptr::RefPtr<html_bundle::Route>) {
+        if !self.flags.response_protected() {
+            self.response_jsvalue.get().protect();
+            self.flags.set_response_protected(true);
+        }
+        let any_ctx = AnyRequestContext::init(self.as_ctx_ptr());
+        if self.server().config().is_development() {
+            if let Some(dev) = any_ctx.dev_server_mut() {
+                let resp = self.resp.get().expect("infallible: not aborted or ended");
+                // `on_html_bundle_built` consumes this +1.
+                self.ref_();
+                self.flags.set_has_marked_pending(true);
+                // SAFETY: the server boxes the dev server and outlives this
+                // context; no other `&mut` to it is live here.
+                bun_core::handle_oom(unsafe { &mut *dev }.respond_for_html_bundle_body(
+                    route.this_ptr(),
+                    any_ctx,
+                    resp,
+                ));
+                return;
+            }
+        }
+        match html_bundle::Route::built_html_or_schedule(route.this_ptr()) {
+            Some(built) => self.render_built_html_bundle(built.map_err(|()| &*route.bundle.path)),
+            None => {
+                // `on_html_route_built` consumes this +1.
+                self.ref_();
+                self.flags.set_has_marked_pending(true);
+                html_bundle::Route::add_build_waiter(
+                    route.this_ptr(),
+                    Self::on_html_route_built,
+                    NonNull::new(self.as_ctx_ptr().cast::<c_void>()).unwrap(),
+                );
+            }
+        }
+    }
+
+    /// `html_bundle::BuildWaiter` callback.
+    fn on_html_route_built(ctx: NonNull<c_void>, route: ThisPtr<html_bundle::Route>) {
+        let Some(built) = route.built_html() else {
+            // An earlier waiter started a new build; wait for that one.
+            html_bundle::Route::add_build_waiter(route, Self::on_html_route_built, ctx);
+            return;
+        };
+        let pinned = RequestContextRef::adopt(ctx.cast::<Self>().as_ptr());
+        pinned
+            .ctx()
+            .render_built_html_bundle(built.map_err(|()| &*route.bundle.path));
+    }
+
+    /// The dev server's callback. Consumes the +1 `render_html_bundle` took.
+    pub(crate) fn on_html_bundle_built(this: *mut Self, html: ThisPtr<StaticRoute>) {
+        let pinned = RequestContextRef::adopt(this);
+        pinned.ctx().render_built_html_bundle(Ok(html));
+    }
+
+    /// `Err` carries the path of the bundle that failed to build.
+    fn render_built_html_bundle(&self, built: Result<ThisPtr<StaticRoute>, &[u8]>) {
+        if self.is_aborted_or_ended() {
+            return;
+        }
+        let global_this = self.server().global_this();
+        let html = match built {
+            Ok(html) => html,
+            Err(path) => {
+                let err = global_this.create_error_instance(format_args!(
+                    "Failed to bundle {}",
+                    bun_core::fmt::quote(path)
+                ));
+                self.run_error_handler(err);
+                return;
+            }
+        };
+
+        let response: &mut Response = self.response_mut().expect("the Response is protected");
+        if let Err(err) = add_html_page_headers(response, &html, global_this) {
+            self.run_error_handler(global_this.take_exception(err));
+            return;
+        }
+
+        self.blob.set(html.dupe_blob());
+        if self.method == Method::HEAD {
+            let resp = self.resp.get().expect("infallible: not aborted or ended");
+            resp.run_corked_with_type(Self::render_html_bundle_head_corked, self.as_ctx_ptr());
+            return;
+        }
+        self.render_with_blob_from_body_value();
+    }
+
+    fn render_html_bundle_head_corked(this: *mut Self) {
+        // SAFETY: `this` is live for the synchronous cork call; only a shared
+        // view is formed.
+        let this = unsafe { &*this };
+        let size = this.blob.get().size();
+        this.flags.set_needs_content_length(false);
+        this.render_metadata();
+        if let Some(resp) = this.resp.get() {
+            resp.write_header_int(b"content-length", size as u64);
+        }
+        this.end_without_body(this.should_close_connection());
+    }
+
+    /// Another owner answers `resp`, then calls `release_taken_response`.
+    pub(crate) fn take_response(&self) -> Option<uws::AnyResponse> {
+        let resp = self.resp.get()?;
+        self.detach_response();
+        self.reclaim_promise_cell();
+        Some(resp)
+    }
+
+    /// After the last write to the response: the microtask drain can free an H3 stream.
+    pub(crate) fn release_taken_response(&self) {
+        debug_assert!(self.resp.get().is_none());
+        self.end_request_streaming_and_drain();
+        self.deref();
+    }
+
     fn render_with_blob_from_body_value(&self) {
         if self.is_aborted_or_ended() {
             return;
@@ -2686,6 +2828,11 @@ where
                 }
                 this.end_without_body(this.should_close_connection());
             }
+            Body::Value::HTMLBundle(bundle) => {
+                let route = this.server().html_bundle_route(bundle.this_ptr());
+                *body_value = Body::Value::Used;
+                this.render_html_bundle(&route);
+            }
             Body::Value::Used | Body::Value::Null | Body::Value::Empty | Body::Value::Error(_) => {
                 this.render_metadata();
                 // SAFETY: FFI handle
@@ -3146,6 +3293,15 @@ where
                 // toBlobIfPossible checks for WTFString needing a conversion.
                 this.blob.set(value.use_as_any_blob_allow_non_utf8_string());
                 this.render_with_blob_from_body_value();
+                return;
+            }
+            Body::Value::HTMLBundle(bundle) => {
+                if this.is_aborted_or_ended() {
+                    return;
+                }
+                let route = this.server().html_bundle_route(bundle.this_ptr());
+                *value = Body::Value::Used;
+                this.render_html_bundle(&route);
                 return;
             }
             Body::Value::Locked(lock) => {

@@ -297,6 +297,9 @@ pub struct NewServer<const SSL: bool, const DEBUG: bool> {
     /// times due to SNI, so we have to store them.
     pub(crate) user_routes: Vec<UserRoute<SSL, DEBUG>>,
 
+    /// Routes for bundles that handlers return. `reload()` clears it.
+    pub(crate) handler_html_routes: bun_jsc::JsCell<Vec<bun_ptr::RefPtr<html_bundle::Route>>>,
+
     /// Raw shadow of the wrapper's `m_onClientError` WriteBarrier slot.
     /// `JSValue::ZERO` when unset; written by `server_set_on_client_error`.
     pub(crate) on_clienterror: JSValue,
@@ -1543,6 +1546,39 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         self.deinit_if_we_can();
     }
 
+    pub(crate) fn html_bundle_route(
+        &self,
+        bundle: bun_ptr::ThisPtr<HTMLBundle>,
+    ) -> bun_ptr::RefPtr<html_bundle::Route> {
+        let is_bundle =
+            |route: &html_bundle::Route| core::ptr::eq(route.bundle.as_ptr(), bundle.as_ptr());
+        if let Some(route) = self
+            .handler_html_routes
+            .get()
+            .iter()
+            .find(|route| is_bundle(route))
+        {
+            return route.clone();
+        }
+        let route = self
+            .config
+            .static_routes
+            .iter()
+            .find_map(|entry| match &entry.route {
+                AnyRoute::Html(route) if is_bundle(route) => Some(route.clone()),
+                _ => None,
+            })
+            .unwrap_or_else(|| {
+                let route = html_bundle::Route::init(bundle);
+                route
+                    .server
+                    .set(Some(AnyServer::from(core::ptr::from_ref(self))));
+                route
+            });
+        self.handler_html_routes.with_mut(|v| v.push(route.clone()));
+        route
+    }
+
     pub(crate) fn active_sockets_count(&self) -> u32 {
         self.active_websocket_count.get()
     }
@@ -2175,6 +2211,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             flags: ServerFlags::default(),
             plugins: None,
             user_routes: Vec::new(),
+            handler_html_routes: bun_jsc::JsCell::new(Vec::new()),
             on_clienterror: JSValue::ZERO,
             on_connection: JSValue::ZERO,
             inspector_server_id: jsc::DebuggerId::init(0),
@@ -3616,6 +3653,10 @@ pub trait ServerLike {
     fn js_value(&self) -> &jsc::JsRef;
     fn h3_alt_svc(&self) -> Option<&[u8]>;
     fn terminated(&self) -> bool;
+    fn html_bundle_route(
+        &self,
+        bundle: bun_ptr::ThisPtr<HTMLBundle>,
+    ) -> bun_ptr::RefPtr<html_bundle::Route>;
     /// Return `ctx` to the per-server HiveArray pool for the matching transport.
     /// Erased to `*mut c_void` so the trait stays object-safe and doesn't need
     /// to name `RequestContext<Self, ..>` (which would re-introduce the
@@ -3660,6 +3701,12 @@ impl<const SSL: bool, const DEBUG: bool> ServerLike for NewServer<SSL, DEBUG> {
     #[inline(always)]
     fn terminated(&self) -> bool {
         self.flags.contains(ServerFlags::TERMINATED)
+    }
+    fn html_bundle_route(
+        &self,
+        bundle: bun_ptr::ThisPtr<HTMLBundle>,
+    ) -> bun_ptr::RefPtr<html_bundle::Route> {
+        Self::html_bundle_route(self, bundle)
     }
     fn release_request_context(&self, ctx: *mut c_void, is_mux: bool) {
         // SAFETY: ctx was allocated from this exact pool by `prepare_js_request_context`;

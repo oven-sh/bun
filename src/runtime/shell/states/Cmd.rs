@@ -775,15 +775,15 @@ impl Cmd {
                     let req = unsafe { &*req };
                     req.get_body_value().to_blob_if_possible();
                     if flags.stdin() {
-                        let b = req.get_body_value().use_as_any_blob();
+                        let b = req.get_body_value().use_as_any_blob_or_throw(global)?;
                         stdio[STDIN_NO].extract_blob(global, b, STDIN_NO as i32)?;
                     }
                     if flags.stdout() {
-                        let b = req.get_body_value().use_as_any_blob();
+                        let b = req.get_body_value().use_as_any_blob_or_throw(global)?;
                         stdio[STDOUT_NO].extract_blob(global, b, STDOUT_NO as i32)?;
                     }
                     if flags.stderr() {
-                        let b = req.get_body_value().use_as_any_blob();
+                        let b = req.get_body_value().use_as_any_blob_or_throw(global)?;
                         stdio[STDERR_NO].extract_blob(global, b, STDERR_NO as i32)?;
                     }
                 } else {

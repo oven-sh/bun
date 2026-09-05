@@ -1135,7 +1135,13 @@ impl RewriterPipe {
         let Some(stream) = stream else {
             // lol-html consumes UTF-8; `use_as_any_blob()` encodes a non-ASCII
             // WTFStringImpl into an InternalBlob so `.slice()` is always UTF-8.
-            let mut any_blob = value.use_as_any_blob();
+            let mut any_blob = match value.use_as_any_blob_or_throw(global) {
+                Ok(blob) => blob,
+                Err(e) => {
+                    this.set_handler_error(global.take_exception(e));
+                    return;
+                }
+            };
             let bytes = any_blob.slice();
             // Mark EOF first so a handler that suspends mid-feed resumes into
             // `end_rewrite` once its promise settles.

@@ -452,6 +452,9 @@ pub struct HTTPClientResult<'a> {
     /// JS side never dereferences the client's borrowed URL buffers, which
     /// the HTTP thread frees after the result callback returns.
     pub dns_hostname: Option<Box<[u8]>>,
+    /// OpenSSL error string when `fail` is `EPROTO` (a fatal TLS protocol
+    /// error in the handshake), for the error message.
+    pub tls_handshake_reason: Option<Box<[u8]>>,
 
     /// Owns the response metadata aka headers, url and status code
     pub metadata: Option<HTTPResponseMetadata>,
@@ -536,6 +539,7 @@ impl<'a> HTTPClientResult<'a> {
             fail: self.fail,
             dns_error: self.dns_error,
             dns_hostname: self.dns_hostname,
+            tls_handshake_reason: self.tls_handshake_reason,
             metadata: self.metadata,
             body_size: self.body_size,
             certificate_info: self.certificate_info,
@@ -1542,6 +1546,32 @@ pub(crate) fn get_cert_error_from_no(error_no: i32) -> crate::Error {
         67 => CertError::NAME_CONSTRAINTS_WITHOUT_SANS,
         _ => CertError::UNKNOWN_CERTIFICATE_VERIFICATION_ERROR,
     })
+}
+
+impl HTTPClient<'_> {
+    /// The error for an `on_handshake` verdict with a non-zero `error_no`.
+    ///
+    /// A non-negative `error_no` is the `X509_V_ERR_*` verdict of the chain
+    /// check. A negative one is a uSockets transport code for a handshake
+    /// that ended before any verdict existed: `ECONNRESET` (the peer closed
+    /// mid-handshake) or `EPROTO` (a fatal TLS protocol error, `reason` is
+    /// the OpenSSL error string). Those are not certificate errors.
+    pub(crate) fn handshake_failure_error(
+        &mut self,
+        ssl_error: &uws::us_bun_verify_error_t,
+    ) -> crate::Error {
+        if ssl_error.error_no >= 0 {
+            return get_cert_error_from_no(ssl_error.error_no);
+        }
+        if ssl_error.code_bytes() == b"ECONNRESET" {
+            return crate::Error::ConnectionClosed;
+        }
+        let reason = ssl_error.reason_bytes();
+        if !reason.is_empty() {
+            self.state.tls_handshake_reason = Some(Box::<[u8]>::from(reason));
+        }
+        crate::Error::EPROTO
+    }
 }
 
 // ── HTTPClient field accessors ──────────────────────────────────────────
@@ -4416,6 +4446,7 @@ impl<'a> HTTPClient<'a> {
                     fail: self.state.fail,
                     dns_error: self.state.dns_error,
                     dns_hostname: self.state.dns_hostname.take(),
+                    tls_handshake_reason: self.state.tls_handshake_reason.take(),
                     has_more: self.state.fail.is_none() && !self.state.is_done(),
                     body_size,
                     certificate_info: None,
@@ -4434,6 +4465,7 @@ impl<'a> HTTPClient<'a> {
             fail: self.state.fail,
             dns_error: self.state.dns_error,
             dns_hostname: self.state.dns_hostname.take(),
+            tls_handshake_reason: self.state.tls_handshake_reason.take(),
             // check if we are reporting cert errors, do not have a fail state and we are not done
             has_more: certificate_info.is_some()
                 || (self.state.fail.is_none() && !self.state.is_done()),

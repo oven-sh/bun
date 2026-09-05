@@ -4,7 +4,7 @@ use core::sync::atomic::{AtomicBool, Ordering};
 
 use bun_boringssl as boringssl;
 use bun_cares_sys::c_ares_draft as c_ares;
-use bun_core::{MutableString, String as BunString};
+use bun_core::{BStr, MutableString, String as BunString};
 use bun_event_loop::{
     ConcurrentTask::{AutoDeinit, ConcurrentTask},
     Task, Taskable,
@@ -1343,6 +1343,13 @@ impl FetchTasklet {
             http::Error::RedirectURLInvalid => {
                 BunString::static_("Redirect URL in Location header is invalid.")
             }
+            http::Error::EPROTO => match self.result.tls_handshake_reason.as_deref() {
+                Some(reason) => BunString::create_format(format_args!(
+                    "TLS handshake failed: {}",
+                    BStr::new(reason)
+                )),
+                None => BunString::static_("TLS handshake failed"),
+            },
 
             http::Error::Cert(http::CertError::UNABLE_TO_GET_ISSUER_CERT) => {
                 BunString::static_("unable to get issuer certificate")

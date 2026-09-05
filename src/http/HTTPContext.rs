@@ -5,10 +5,7 @@ use core::ptr::NonNull;
 use crate::Error;
 use crate::http_thread::InitOpts as HTTPThreadInitOpts;
 use crate::ssl_config::{self, SSLConfig};
-use crate::{
-    self as http, AlpnOffer, HTTPCertError, HTTPClient, InitError, ProxyTunnel,
-    get_cert_error_from_no, h2,
-};
+use crate::{self as http, AlpnOffer, HTTPCertError, HTTPClient, InitError, ProxyTunnel, h2};
 use bun_boringssl::ssl_ctx_setup;
 use bun_boringssl_sys::{OwnedSslCtx, SSL_CTX};
 use bun_collections::{HiveArray, TaggedPtrUnion};
@@ -1243,10 +1240,8 @@ impl<const SSL: bool> Handler<SSL> {
                 if client.flags.reject_unauthorized {
                     // only reject the connection if reject_unauthorized == true
                     if client.flags.did_have_handshaking_error {
-                        client.close_and_fail::<SSL>(
-                            get_cert_error_from_no(handshake_error.error_no),
-                            socket,
-                        );
+                        let err = client.handshake_failure_error(&ssl_error);
+                        client.close_and_fail::<SSL>(err, socket);
                         return;
                     }
 
@@ -1278,13 +1273,12 @@ impl<const SSL: bool> Handler<SSL> {
 
                 return client.first_call::<SSL>(socket);
             } else {
-                // if we are here is because server rejected us, and the error_no is the cause of this
-                // if we set reject_unauthorized == false this means the server requires custom CA aka NODE_EXTRA_CA_CERTS
+                // The handshake failed: `error_no` is an X509 verdict the
+                // server acted on, or a uSockets transport code (the peer
+                // closed mid-handshake, a fatal TLS protocol error).
                 if client.flags.did_have_handshaking_error {
-                    client.close_and_fail::<SSL>(
-                        get_cert_error_from_no(handshake_error.error_no),
-                        socket,
-                    );
+                    let err = client.handshake_failure_error(&ssl_error);
+                    client.close_and_fail::<SSL>(err, socket);
                     return;
                 }
                 // if handshake_success it self is false, this means that the connection was rejected

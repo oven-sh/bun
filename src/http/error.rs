@@ -97,6 +97,12 @@ pub enum Error {
     InvalidCRL,
     #[error("UnsupportedProxyProtocol")]
     UnsupportedProxyProtocol,
+    /// The TLS handshake ended with a fatal protocol error (the peer speaks
+    /// plain HTTP, sent a bad record, or is the client itself after a TCP
+    /// self-connect). Node's code for the same failure. The OpenSSL reason
+    /// travels in `HTTPClientResult::tls_handshake_reason`.
+    #[error("EPROTO")]
+    EPROTO,
     #[error(transparent)]
     Cert(#[from] CertError),
     #[error(transparent)]
@@ -308,6 +314,7 @@ impl Error {
             Self::FailedToOpenSocket => "FailedToOpenSocket",
             Self::InvalidCRL => "InvalidCRL",
             Self::UnsupportedProxyProtocol => "UnsupportedProxyProtocol",
+            Self::EPROTO => "EPROTO",
             Self::Cert(e) => <&'static str>::from(e),
             Self::Alloc(_) => "OutOfMemory",
             Self::Hpack(e) => <&'static str>::from(e),

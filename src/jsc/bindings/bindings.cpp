@@ -4418,11 +4418,15 @@ JSC::EncodedJSValue JSC__JSValue__fromUInt64NoTruncate(JSC::JSGlobalObject* glob
     return JSC::JSValue::encode(JSC::JSBigInt::createFrom(globalObject, val));
 }
 
-// Decimal integer literal (Latin-1) -> BigInt. Returns the empty value when
-// the text is not a valid StringToBigInt input.
-JSC::EncodedJSValue JSC__JSValue__bigIntFromLatin1(JSC::JSGlobalObject* globalObject, const uint8_t* ptr, size_t len)
+// One or more decimal digits (no sign) -> BigInt. Returns the empty value,
+// without throwing, when the value does not fit in a JSBigInt.
+[[ZIG_EXPORT(nothrow)]] JSC::EncodedJSValue JSC__JSValue__bigIntFromDecimalDigits(JSC::JSGlobalObject* globalObject, const uint8_t* digits, size_t len, bool negative)
 {
-    return JSC::JSValue::encode(JSC::JSBigInt::stringToBigInt(globalObject, WTF::StringView(std::span { reinterpret_cast<const char*>(ptr), len })));
+    ASSERT(len > 0);
+    auto sign = negative ? JSC::JSBigInt::ParseIntSign::Signed : JSC::JSBigInt::ParseIntSign::Unsigned;
+    // With no global object to throw into, parseInt reports a too-large value
+    // as the empty value.
+    return JSC::JSValue::encode(JSC::JSBigInt::parseInt(nullptr, JSC::getVM(globalObject), WTF::StringView(std::span { reinterpret_cast<const char*>(digits), len }), 10, JSC::JSBigInt::ErrorParseMode::IgnoreExceptions, sign));
 }
 
 uint64_t JSC__JSValue__toUInt64NoTruncate(JSC::EncodedJSValue val)

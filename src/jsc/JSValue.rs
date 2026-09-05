@@ -653,23 +653,23 @@ impl JSValue {
     pub fn from_uint64_no_truncate(global: &JSGlobalObject, i: u64) -> JsResult<JSValue> {
         host_fn::from_js_host_call(global, || JSC__JSValue__fromUInt64NoTruncate(global, i))
     }
-    /// A BigInt from a decimal integer literal (optional `-`, then digits).
-    /// Returns `Ok(None)` when `digits` is not such a literal.
-    #[track_caller]
-    pub fn big_int_from_decimal(
-        global: &JSGlobalObject,
-        digits: &[u8],
-    ) -> JsResult<Option<JSValue>> {
-        let unsigned = digits.strip_prefix(b"-").unwrap_or(digits);
-        if unsigned.is_empty() || !unsigned.iter().all(u8::is_ascii_digit) {
-            return Ok(None);
+    /// A BigInt from a decimal integer literal (optional `+` or `-`, then
+    /// digits). Returns `None` when `literal` is not such a literal, or when
+    /// the value does not fit in a BigInt. Never throws.
+    pub fn big_int_from_decimal(global: &JSGlobalObject, literal: &[u8]) -> Option<JSValue> {
+        let (negative, digits) = match literal.split_first() {
+            Some((b'-', digits)) => (true, digits),
+            Some((b'+', digits)) => (false, digits),
+            _ => (false, literal),
+        };
+        if digits.is_empty() || !digits.iter().all(u8::is_ascii_digit) {
+            return None;
         }
-        // Only text StringToBigInt accepts gets here, so empty means it threw (too large).
-        let value = host_fn::from_js_host_call(global, || {
-            // SAFETY: `digits` is a live slice for the duration of the call.
-            unsafe { JSC__JSValue__bigIntFromLatin1(global, digits.as_ptr(), digits.len()) }
-        })?;
-        Ok(Some(value))
+        // SAFETY: `digits` is a live, non-empty slice for the duration of the call.
+        let value = unsafe {
+            JSC__JSValue__bigIntFromDecimalDigits(global, digits.as_ptr(), digits.len(), negative)
+        };
+        (!value.is_empty()).then_some(value)
     }
     /// `JSValue.fromTimevalNoTruncate` — encode a `struct timeval`
     /// as a BigInt (`sec * 1_000_000 + nsec`) without precision loss. May allocate
@@ -1976,10 +1976,11 @@ unsafe extern "C" {
     safe fn JSC__JSValue__dateInstanceFromNumber(global: &JSGlobalObject, n: f64) -> JSValue;
     safe fn JSC__JSValue__fromInt64NoTruncate(global: &JSGlobalObject, i: i64) -> JSValue;
     safe fn JSC__JSValue__fromUInt64NoTruncate(global: &JSGlobalObject, i: u64) -> JSValue;
-    fn JSC__JSValue__bigIntFromLatin1(
+    fn JSC__JSValue__bigIntFromDecimalDigits(
         global: &JSGlobalObject,
-        ptr: *const u8,
+        digits: *const u8,
         len: usize,
+        negative: bool,
     ) -> JSValue;
     safe fn JSC__JSValue__fromTimevalNoTruncate(
         global: &JSGlobalObject,

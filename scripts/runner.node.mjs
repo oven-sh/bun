@@ -66,6 +66,7 @@ import {
   markBuildkiteStepReported,
   parseJunitFileSuites,
   printEnvironment,
+  printHostHealth,
   reportAnnotationToBuildKite,
   startGroup,
   tmpdir,
@@ -2881,6 +2882,11 @@ async function getExecPathFromBuildKite(target, buildId) {
       timeout: 120000,
     });
     if (error === "timeout") {
+      // The agent had just listed the artifacts over the Buildkite API, and
+      // nothing of the job has run yet, so a zip that does not arrive in two
+      // minutes points at the host. Record what it looks like before failing;
+      // on the bare-metal darwin agents this is the only view of the host.
+      printHostHealth();
       throw new Error(
         `buildkite-agent artifact download timed out after 120s for step '${target}'. ` +
           `Refusing to continue with a partial download (would silently fall back to the wrong binary).`,

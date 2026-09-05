@@ -4,21 +4,26 @@ import { bunEnv, bunExe } from "harness";
 
 // `console.table` and `Bun.inspect.table` share the same native TablePrinter,
 // so we can render in-process instead of spawning a subprocess per case.
-// Two differences to mirror so the existing snapshots stay valid:
-//   1. When the first argument is not an object, `console.table` falls back to
-//      `console.log`-style formatting, whereas `Bun.inspect.table` returns "".
-//   2. `console.table` formats cell values starting at depth 0, whereas
-//      `Bun.inspect.table` starts at `max_depth` (5). Pass `{ depth: 0 }`
-//      explicitly so nested objects in cells render the same way.
+// One difference to mirror so the existing snapshots stay valid: when the
+// first argument is not an object, `console.table` falls back to
+// `console.log`-style formatting, whereas `Bun.inspect.table` returns "".
 function renderTable(...args: any[]): string {
   const [data, properties] = args;
   if (typeof data !== "object" || data === null) {
     // console.log(x): bare strings print raw, everything else is inspected.
     return (typeof data === "string" ? data : Bun.inspect(data)) + "\n";
   }
-  return properties === undefined
-    ? Bun.inspect.table(data, { depth: 0 })
-    : Bun.inspect.table(data, properties, { depth: 0 });
+  return properties === undefined ? Bun.inspect.table(data) : Bun.inspect.table(data, properties);
+}
+
+// Strip cell contents, keeping only the header row's column names, so column
+// model assertions don't depend on per-cell formatter output.
+function columnNames(out: string): string[] {
+  const header = out.split("\n")[1] ?? "";
+  return header
+    .split("│")
+    .slice(2, -1)
+    .map(s => s.trim());
 }
 
 describe("console.table", () => {
@@ -164,6 +169,123 @@ describe("console.table", () => {
   test.each(cases)("expected output for: %s", (label, { args }) => {
     const actualOutput = renderTable(...args());
     expect(actualOutput).toMatchSnapshot();
+  });
+
+  // https://nodejs.org/api/console.html#consoletabletabulardata-properties
+  // Node builds the column union by assigning into a null-proto object keyed by
+  // the ObjectKeys of each row, then reading it back with ObjectKeys. That
+  // means: symbol keys are excluded, duplicate keys dedupe, and the final
+  // column order is array-index names (sorted numerically) before string names
+  // (first-seen). Set entries always render in a single Values column.
+  describe("column model (node compat)", () => {
+    test("symbol keys on a row are not columns", () => {
+      const out = Bun.inspect.table([{ a: 1, [Symbol("s")]: 2, [Symbol("s")]: 3 }]);
+      expect(columnNames(out)).toEqual(["a"]);
+      expect(out).toBe(`┌───┬───┐\n│   │ a │\n├───┼───┤\n│ 0 │ 1 │\n└───┴───┘\n`);
+    });
+
+    test("symbol-keyed rows on a plain-object table are skipped", () => {
+      const out = Bun.inspect.table({ x: { a: 1 }, [Symbol("y")]: { b: 2 } });
+      expect(columnNames(out)).toEqual(["a"]);
+      expect(out).toBe(`┌───┬───┐\n│   │ a │\n├───┼───┤\n│ x │ 1 │\n└───┴───┘\n`);
+    });
+
+    test("properties filter is deduplicated", () => {
+      const out = Bun.inspect.table([{ a: 1, b: 2 }], ["b", "b", "a"]);
+      expect(columnNames(out)).toEqual(["b", "a"]);
+      expect(out).toBe(`┌───┬───┬───┐\n│   │ b │ a │\n├───┼───┼───┤\n│ 0 │ 2 │ 1 │\n└───┴───┴───┘\n`);
+    });
+
+    test("Set of objects renders a single Values column", () => {
+      const out = Bun.inspect.table(new Set([1, { a: 2 }]));
+      expect(columnNames(out)).toEqual(["Values"]);
+      expect(out).toBe(
+        `┌───┬──────────┐\n│   │ Values   │\n├───┼──────────┤\n│ 0 │ 1        │\n│ 1 │ { a: 2 } │\n└───┴──────────┘\n`,
+      );
+    });
+
+    test("SetIterator of objects renders a single Values column", () => {
+      const out = Bun.inspect.table(new Set([1, { a: 2 }]).values());
+      expect(columnNames(out)).toEqual(["Values"]);
+      expect(out).toBe(
+        `┌───┬──────────┐\n│   │ Values   │\n├───┼──────────┤\n│ 0 │ 1        │\n│ 1 │ { a: 2 } │\n└───┴──────────┘\n`,
+      );
+    });
+
+    test("properties filter is ignored for Set and Map inputs", () => {
+      expect(columnNames(Bun.inspect.table(new Set([{ a: 1 }]), ["a"]))).toEqual(["Values"]);
+      expect(columnNames(Bun.inspect.table(new Set([{ a: 1 }]).values(), ["a"]))).toEqual(["Values"]);
+      expect(columnNames(Bun.inspect.table(new Map([["k", { a: 1 }]]), ["a"]))).toEqual(["Key", "Values"]);
+    });
+
+    test("multi-row column union puts integer-like keys first", () => {
+      expect(columnNames(Bun.inspect.table([{ b: 1 }, { a: 2, "7": 3 }]))).toEqual(["7", "b", "a"]);
+      expect(
+        columnNames(
+          Bun.inspect.table([
+            { b: 1, "1": 2 },
+            { "0": 3, a: 4 },
+          ]),
+        ),
+      ).toEqual(["0", "1", "b", "a"]);
+      expect(columnNames(Bun.inspect.table([{ "10": 1 }, { "2": 2 }, { "1": 3 }]))).toEqual(["1", "2", "10"]);
+      // 4294967295 is not an array index; "01" and "-1" are string keys
+      expect(columnNames(Bun.inspect.table([{ "4294967295": 1 }, { "4294967294": 2 }]))).toEqual([
+        "4294967294",
+        "4294967295",
+      ]);
+      expect(columnNames(Bun.inspect.table([{ "01": 1 }, { "0": 2 }]))).toEqual(["0", "01"]);
+      expect(columnNames(Bun.inspect.table([{ "-1": 1 }, { "0": 2 }]))).toEqual(["0", "-1"]);
+    });
+
+    test("multi-row column union places cells in the right columns", () => {
+      expect(Bun.inspect.table([{ b: 1 }, { a: 2, "7": 3 }])).toBe(
+        `┌───┬───┬───┬───┐\n│   │ 7 │ b │ a │\n├───┼───┼───┼───┤\n│ 0 │   │ 1 │   │\n│ 1 │ 3 │   │ 2 │\n└───┴───┴───┴───┘\n`,
+      );
+    });
+
+    test("properties filter is reordered and deduplicated together", () => {
+      const out = Bun.inspect.table([{ a: 1, "7": 2 }], ["a", "7", "a", "7"]);
+      expect(columnNames(out)).toEqual(["7", "a"]);
+      expect(out).toBe(`┌───┬───┬───┐\n│   │ 7 │ a │\n├───┼───┼───┤\n│ 0 │ 2 │ 1 │\n└───┴───┴───┘\n`);
+    });
+
+    test("single-row integer-key order is unchanged", () => {
+      expect(columnNames(Bun.inspect.table([{ a: 1, "0": 2, "42": 3, b: 4 }]))).toEqual(["0", "42", "a", "b"]);
+    });
+
+    // Checked via a spawned process so the assertion exercises console.table
+    // itself, and so cell depth is the console.table default rather than
+    // whatever Bun.inspect.table's option processing chose.
+    test("console.table clamps cell depth and applies the column model", async () => {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `console.table([{ a: { x: { y: { z: 9 } } } }]);
+console.table([{ a: 1, [Symbol("s")]: 2 }]);
+console.table([{ a: 1, b: 2 }], ["b", "b", "a"]);
+console.table(new Set([1, { a: 2 }]));
+console.table([{ b: 1 }, { a: 2, "7": 3 }]);`,
+        ],
+        env: bunEnv,
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      const tables = stdout.split(/\n(?=┌)/);
+      expect({ stderr, tableCount: tables.length }).toEqual({ stderr: "", tableCount: 5 });
+
+      // (d) depth clamp: nested object under `x` must be truncated, not expanded
+      expect(tables[0]).toContain("[Object");
+      expect(tables[0]).not.toContain("z: 9");
+
+      expect(columnNames(tables[1])).toEqual(["a"]);
+      expect(columnNames(tables[2])).toEqual(["b", "a"]);
+      expect(columnNames(tables[3])).toEqual(["Values"]);
+      expect(columnNames(tables[4])).toEqual(["7", "b", "a"]);
+
+      expect(exitCode).toBe(0);
+    });
   });
 });
 

@@ -569,7 +569,7 @@ fn inspect_table(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResul
         enable_colors: false,
         add_newline: false,
         flush: false,
-        max_depth: 5,
+        max_depth: 0,
         quote_strings: true,
         ordered_properties: false,
         single_line: true,
@@ -593,7 +593,7 @@ fn inspect_table(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResul
         value,
         properties,
     )?;
-    table_printer.value_formatter.depth = format_options.max_depth;
+    table_printer.value_formatter.max_depth = format_options.max_depth;
     table_printer.value_formatter.ordered_properties = format_options.ordered_properties;
     table_printer.value_formatter.single_line = format_options.single_line;
 

@@ -391,9 +391,8 @@ impl Order {
         (a.distance < b.distance) || (a.distance == b.distance && a.tie_breaker < b.tie_breaker)
     }
 
-    /// Sort so files closest to an entry point come first. If two files are
-    /// equidistant to an entry point, then break the tie by sorting on the
-    /// stable source index derived from the DFS over all entry points.
+    /// Sort so files closest to an entry point come first. The caller supplies
+    /// a stable tie-breaker for files equidistant from an entry point.
     pub(crate) fn sort(a: &mut [Order]) {
         index_sort::sort_slice_unstable_by(a, |a, b| {
             if Order::less_than(Order::default(), *a, *b) {

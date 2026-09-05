@@ -1,5 +1,6 @@
 // Bundle tests are tests concerning bundling bugs that only occur in DevServer.
 import { expect } from "bun:test";
+import fs from "node:fs";
 import { devTest, emptyHtmlFile, minimalFramework } from "../bake-harness";
 
 devTest("import identifier doesnt get renamed", {
@@ -917,5 +918,34 @@ devTest("barrel optimization: namespace re-export cycle through a star-exported 
   async test(dev) {
     await using c = await dev.client("/");
     await c.expectMessage("result: object Y KEEP DEEP OTHER");
+  },
+});
+// After a failed import, DevServer opens the directory the file would be in,
+// to watch for its creation. "loop" is a symlink to itself, so that open fails
+// with ELOOP. The open happens only where the watcher needs a file descriptor
+// (kqueue on macOS).
+devTest("importing a file in a directory that cannot be opened", {
+  skip: ["win32"],
+  files: {
+    "index.html": emptyHtmlFile({
+      styles: [],
+      scripts: ["index.ts"],
+    }),
+    "index.ts": `
+      import { abc } from './loop/second';
+      console.log('value: ' + abc);
+    `,
+  },
+  async test(dev) {
+    fs.symlinkSync("loop", dev.join("loop"));
+    await using c = await dev.client("/", {
+      errors: [`index.ts:1:21: error: Could not resolve: "./loop/second"`],
+    });
+
+    await c.expectReload(async () => {
+      await dev.write("index.ts", `console.log('value: ' + 456);`);
+    });
+
+    await c.expectMessage("value: 456");
   },
 });

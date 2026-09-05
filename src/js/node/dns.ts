@@ -410,26 +410,35 @@ var InternalResolver = class Resolver {
       throw $ERR_INVALID_ARG_TYPE("rrtype", "string", rrtype);
     }
 
-    callback = validateResolve(hostname, callback);
-
-    Resolver.#getResolver(this)
-      .resolve(hostname, rrtype)
-      .then(
-        results => {
-          switch (rrtype?.toLowerCase()) {
-            case "a":
-            case "aaaa":
-              callback(null, results.map(mapResolveX));
-              break;
-            default:
-              callback(null, results);
-              break;
-          }
-        },
-        error => {
-          callback(withTranslatedError(error));
-        },
-      );
+    // $call: the module-level function runs with `this` undefined when destructured.
+    switch (rrtype) {
+      case "A":
+        return Resolver.prototype.resolve4.$call(this, hostname, callback);
+      case "AAAA":
+        return Resolver.prototype.resolve6.$call(this, hostname, callback);
+      case "ANY":
+        return Resolver.prototype.resolveAny.$call(this, hostname, callback);
+      case "CAA":
+        return Resolver.prototype.resolveCaa.$call(this, hostname, callback);
+      case "CNAME":
+        return Resolver.prototype.resolveCname.$call(this, hostname, callback);
+      case "MX":
+        return Resolver.prototype.resolveMx.$call(this, hostname, callback);
+      case "NAPTR":
+        return Resolver.prototype.resolveNaptr.$call(this, hostname, callback);
+      case "NS":
+        return Resolver.prototype.resolveNs.$call(this, hostname, callback);
+      case "PTR":
+        return Resolver.prototype.resolvePtr.$call(this, hostname, callback);
+      case "SOA":
+        return Resolver.prototype.resolveSoa.$call(this, hostname, callback);
+      case "SRV":
+        return Resolver.prototype.resolveSrv.$call(this, hostname, callback);
+      case "TXT":
+        return Resolver.prototype.resolveTxt.$call(this, hostname, callback);
+      default:
+        throw $ERR_INVALID_ARG_VALUE("rrtype", rrtype, "is invalid");
+    }
   }
 
   resolve4(hostname, options, callback) {
@@ -602,10 +611,7 @@ var InternalResolver = class Resolver {
     if (arguments.length > 2) {
       callback = arguments[2];
     }
-    if (typeof callback !== "function") {
-      throw $ERR_INVALID_ARG_TYPE("callback", "function", callback);
-    }
-    callback = guardCallback(callback);
+    callback = validateResolve(hostname, callback);
 
     Resolver.#getResolver(this)
       .resolveCaa(hostname)
@@ -623,10 +629,7 @@ var InternalResolver = class Resolver {
     if (arguments.length > 2) {
       callback = arguments[2];
     }
-    if (typeof callback !== "function") {
-      throw $ERR_INVALID_ARG_TYPE("callback", "function", callback);
-    }
-    callback = guardCallback(callback);
+    callback = validateResolve(hostname, callback);
 
     Resolver.#getResolver(this)
       .resolveTxt(hostname)
@@ -643,10 +646,7 @@ var InternalResolver = class Resolver {
     if (arguments.length > 2) {
       callback = arguments[2];
     }
-    if (typeof callback !== "function") {
-      throw $ERR_INVALID_ARG_TYPE("callback", "function", callback);
-    }
-    callback = guardCallback(callback);
+    callback = validateResolve(hostname, callback);
 
     Resolver.#getResolver(this)
       .resolveSoa(hostname)
@@ -829,61 +829,90 @@ const promises = {
   },
 
   resolve(hostname, rrtype) {
-    if (typeof hostname !== "string") {
-      throw $ERR_INVALID_ARG_TYPE("hostname", "string", hostname);
-    }
-
     if (typeof rrtype === "undefined") {
       rrtype = "A";
     } else if (typeof rrtype !== "string") {
       throw $ERR_INVALID_ARG_TYPE("rrtype", "string", rrtype);
     }
 
-    switch (rrtype?.toLowerCase()) {
-      case "a":
-      case "aaaa":
-        return translateErrorCode(dns.resolve(hostname, rrtype).then(promisifyResolveX(false)));
+    switch (rrtype) {
+      case "A":
+        return promises.resolve4(hostname);
+      case "AAAA":
+        return promises.resolve6(hostname);
+      case "ANY":
+        return promises.resolveAny(hostname);
+      case "CAA":
+        return promises.resolveCaa(hostname);
+      case "CNAME":
+        return promises.resolveCname(hostname);
+      case "MX":
+        return promises.resolveMx(hostname);
+      case "NAPTR":
+        return promises.resolveNaptr(hostname);
+      case "NS":
+        return promises.resolveNs(hostname);
+      case "PTR":
+        return promises.resolvePtr(hostname);
+      case "SOA":
+        return promises.resolveSoa(hostname);
+      case "SRV":
+        return promises.resolveSrv(hostname);
+      case "TXT":
+        return promises.resolveTxt(hostname);
       default:
-        return translateErrorCode(dns.resolve(hostname, rrtype));
+        throw $ERR_INVALID_ARG_VALUE("rrtype", rrtype, "is invalid");
     }
   },
 
   resolve4(hostname, options) {
+    validateString(hostname, "hostname");
     return translateErrorCode(dns.resolve(hostname, "A").then(promisifyResolveX(options?.ttl)));
   },
 
   resolve6(hostname, options) {
+    validateString(hostname, "hostname");
     return translateErrorCode(dns.resolve(hostname, "AAAA").then(promisifyResolveX(options?.ttl)));
   },
 
   resolveAny(hostname) {
+    validateString(hostname, "hostname");
     return translateErrorCode(dns.resolveAny(hostname));
   },
   resolveSrv(hostname) {
+    validateString(hostname, "hostname");
     return translateErrorCode(dns.resolveSrv(hostname));
   },
   resolveTxt(hostname) {
+    validateString(hostname, "hostname");
     return translateErrorCode(dns.resolveTxt(hostname));
   },
   resolveSoa(hostname) {
+    validateString(hostname, "hostname");
     return translateErrorCode(dns.resolveSoa(hostname));
   },
   resolveNaptr(hostname) {
+    validateString(hostname, "hostname");
     return translateErrorCode(dns.resolveNaptr(hostname));
   },
   resolveMx(hostname) {
+    validateString(hostname, "hostname");
     return translateErrorCode(dns.resolveMx(hostname));
   },
   resolveCaa(hostname) {
+    validateString(hostname, "hostname");
     return translateErrorCode(dns.resolveCaa(hostname));
   },
   resolveNs(hostname) {
+    validateString(hostname, "hostname");
     return translateErrorCode(dns.resolveNs(hostname));
   },
   resolvePtr(hostname) {
+    validateString(hostname, "hostname");
     return translateErrorCode(dns.resolvePtr(hostname));
   },
   resolveCname(hostname) {
+    validateString(hostname, "hostname");
     return translateErrorCode(dns.resolveCname(hostname));
   },
   reverse(ip) {
@@ -913,68 +942,100 @@ const promises = {
       if (typeof rrtype === "undefined") {
         rrtype = "A";
       } else if (typeof rrtype !== "string") {
-        rrtype = null;
+        throw $ERR_INVALID_ARG_TYPE("rrtype", "string", rrtype);
       }
-      switch (rrtype?.toLowerCase()) {
-        case "a":
-        case "aaaa":
-          return translateErrorCode(
-            Resolver.#getResolver(this).resolve(hostname, rrtype).then(promisifyResolveX(false)),
-          );
+
+      switch (rrtype) {
+        case "A":
+          return Resolver.prototype.resolve4.$call(this, hostname);
+        case "AAAA":
+          return Resolver.prototype.resolve6.$call(this, hostname);
+        case "ANY":
+          return Resolver.prototype.resolveAny.$call(this, hostname);
+        case "CAA":
+          return Resolver.prototype.resolveCaa.$call(this, hostname);
+        case "CNAME":
+          return Resolver.prototype.resolveCname.$call(this, hostname);
+        case "MX":
+          return Resolver.prototype.resolveMx.$call(this, hostname);
+        case "NAPTR":
+          return Resolver.prototype.resolveNaptr.$call(this, hostname);
+        case "NS":
+          return Resolver.prototype.resolveNs.$call(this, hostname);
+        case "PTR":
+          return Resolver.prototype.resolvePtr.$call(this, hostname);
+        case "SOA":
+          return Resolver.prototype.resolveSoa.$call(this, hostname);
+        case "SRV":
+          return Resolver.prototype.resolveSrv.$call(this, hostname);
+        case "TXT":
+          return Resolver.prototype.resolveTxt.$call(this, hostname);
         default:
-          return translateErrorCode(Resolver.#getResolver(this).resolve(hostname, rrtype));
+          throw $ERR_INVALID_ARG_VALUE("rrtype", rrtype, "is invalid");
       }
     }
 
     resolve4(hostname, options) {
+      validateString(hostname, "hostname");
       return translateErrorCode(
         Resolver.#getResolver(this).resolve(hostname, "A").then(promisifyResolveX(options?.ttl)),
       );
     }
 
     resolve6(hostname, options) {
+      validateString(hostname, "hostname");
       return translateErrorCode(
         Resolver.#getResolver(this).resolve(hostname, "AAAA").then(promisifyResolveX(options?.ttl)),
       );
     }
 
     resolveAny(hostname) {
+      validateString(hostname, "hostname");
       return translateErrorCode(Resolver.#getResolver(this).resolveAny(hostname));
     }
 
     resolveCname(hostname) {
+      validateString(hostname, "hostname");
       return translateErrorCode(Resolver.#getResolver(this).resolveCname(hostname));
     }
 
     resolveMx(hostname) {
+      validateString(hostname, "hostname");
       return translateErrorCode(Resolver.#getResolver(this).resolveMx(hostname));
     }
 
     resolveNaptr(hostname) {
+      validateString(hostname, "hostname");
       return translateErrorCode(Resolver.#getResolver(this).resolveNaptr(hostname));
     }
 
     resolveNs(hostname) {
+      validateString(hostname, "hostname");
       return translateErrorCode(Resolver.#getResolver(this).resolveNs(hostname));
     }
 
     resolvePtr(hostname) {
+      validateString(hostname, "hostname");
       return translateErrorCode(Resolver.#getResolver(this).resolvePtr(hostname));
     }
 
     resolveSoa(hostname) {
+      validateString(hostname, "hostname");
       return translateErrorCode(Resolver.#getResolver(this).resolveSoa(hostname));
     }
 
     resolveSrv(hostname) {
+      validateString(hostname, "hostname");
       return translateErrorCode(Resolver.#getResolver(this).resolveSrv(hostname));
     }
 
     resolveCaa(hostname) {
+      validateString(hostname, "hostname");
       return translateErrorCode(Resolver.#getResolver(this).resolveCaa(hostname));
     }
 
     resolveTxt(hostname) {
+      validateString(hostname, "hostname");
       return translateErrorCode(Resolver.#getResolver(this).resolveTxt(hostname));
     }
 

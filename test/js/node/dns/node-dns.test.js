@@ -1033,7 +1033,8 @@ describe("pending cache", () => {
 // The socket never answers. The QTYPE that reaches it and the syscall the
 // cancelled query reports pin resolve()'s rrtype dispatch to the query that
 // resolveNaptr() issues; decoding is covered by the resolveNaptr() tests.
-test.concurrent.each(["NAPTR", "naptr"])("resolve(hostname, %p) issues a NAPTR query", async rrtype => {
+// Only the uppercase name is valid: "naptr" throws, like in Node.
+test.concurrent('resolve(hostname, "NAPTR") issues a NAPTR query', async () => {
   const socket = dgram.createSocket("udp4");
   try {
     socket.bind(0, "127.0.0.1");
@@ -1041,7 +1042,7 @@ test.concurrent.each(["NAPTR", "naptr"])("resolve(hostname, %p) issues a NAPTR q
     const resolver = new dns_promises.Resolver();
     resolver.setServers(["127.0.0.1:" + socket.address().port]);
     const received = once(socket, "message");
-    const promise = resolver.resolve("naptr.example.test", rrtype);
+    const promise = resolver.resolve("naptr.example.test", "NAPTR");
     const [query] = await received;
     // QNAME ends at the first zero byte after the 12-byte header; QTYPE follows it.
     expect(query.readUInt16BE(query.indexOf(0, 12) + 1)).toBe(35);

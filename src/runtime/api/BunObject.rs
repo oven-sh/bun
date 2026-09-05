@@ -515,8 +515,10 @@ fn which(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValu
         return Ok(JSValue::NULL);
     }
 
-    // SAFETY: `transpiler.env` / `.fs` are process-lifetime singletons set during VM init.
-    let mut path_str = Utf8Bytes::Borrowed(vm.env_loader().get(b"PATH").unwrap_or(b""));
+    let mut path_str = match global_this.process_env_object()?.get(global_this, "PATH")? {
+        Some(v) if !v.is_undefined_or_null() => v.to_utf8(global_this)?,
+        _ => Utf8Bytes::Borrowed(b""),
+    };
     let mut cwd_str = Utf8Bytes::Borrowed(vm.top_level_dir());
 
     if let Some(arg) = arguments.next_eat() {

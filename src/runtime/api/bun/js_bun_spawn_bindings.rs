@@ -332,7 +332,6 @@ fn spawn_maybe_sync(
     // drops after `spawn_process` returns, freeing all argv/env allocations.
     let mut cstr_storage: Vec<ZBox> = Vec::new();
 
-    let mut override_env = false;
     let mut env_array: Vec<CStrPtr> = Vec::new();
     // SAFETY: `bun_vm()` returns the live VirtualMachine for this thread; it
     // outlives this call frame.
@@ -350,9 +349,7 @@ fn spawn_maybe_sync(
     let mut lazy = false;
     let mut on_exit_callback = JSValue::ZERO;
     let mut on_disconnect_callback = JSValue::ZERO;
-    // `env_loader()` is the audited safe accessor for the per-VM DotEnv loader
-    // (process-lifetime; centralised non-null deref in `VirtualMachine`).
-    let mut path: &[u8] = jsc_vm.env_loader().get(b"PATH").unwrap_or(b"");
+    let mut path: &[u8] = b"";
     let mut argv: Vec<CStrPtr> = Vec::new();
     let cmd_value: JSValue;
     let mut detached = false;
@@ -562,7 +559,6 @@ fn spawn_maybe_sync(
                     );
                 };
 
-                override_env = true;
                 // If the env object does not include a $PATH, it must disable path lookup for argv[0]
                 let mut new_path: &[u8] = b"";
                 // `JSObject` is an `opaque_ffi!` ZST handle; `opaque_ref` is the
@@ -575,6 +571,8 @@ fn spawn_maybe_sync(
                     &mut cstr_storage,
                 )?;
                 path = new_path;
+            } else {
+                inherit_process_env(global_this, &mut env_array, &mut path, &mut cstr_storage)?;
             }
 
             get_argv(
@@ -872,6 +870,7 @@ fn spawn_maybe_sync(
                 }
             }
         } else {
+            inherit_process_env(global_this, &mut env_array, &mut path, &mut cstr_storage)?;
             get_argv(
                 global_this,
                 cmd_value,
@@ -885,31 +884,6 @@ fn spawn_maybe_sync(
     }
 
     bun_output::scoped_log!(Subprocess, "spawn maxBuffer: {:?}", max_buffer);
-
-    // Owns the `K=V\0` storage when inheriting the parent env; the struct
-    // lives until spawn returns.
-    let mut inherited_env_storage: Option<bun_dotenv::NullDelimitedEnvMap> = None;
-    if !override_env && env_array.is_empty() {
-        // `Transpiler::env_mut()` is the audited safe `&mut Loader` accessor
-        // (per-VM DotEnv loader, valid for VM lifetime; centralised
-        // single-unsafe deref). `.map` is its `&'a mut Map` slot.
-        let envmap = match jsc_vm
-            .transpiler
-            .env_mut()
-            .map
-            .create_null_delimited_env_map()
-        {
-            Ok(m) => m,
-            Err(_) => return Err(global_this.throw_out_of_memory()),
-        };
-        // Note: `as_slice()` *includes* the trailing null, so strip it; the
-        // common tail below re-appends one after the optional NODE_CHANNEL_*
-        // entries.
-        let entries = envmap.as_slice();
-        env_array.extend_from_slice(&entries[..entries.len().saturating_sub(1)]);
-        inherited_env_storage = Some(envmap);
-    }
-    let _ = &inherited_env_storage;
 
     for fd_index in 0..stdio.len() {
         if stdio[fd_index].can_use_memfd() {
@@ -2057,6 +2031,27 @@ fn throw_command_not_found(global_this: &JSGlobalObject, command: &[u8]) -> JsEr
         ..Default::default()
     };
     global_this.throw_value(err.to_error_instance(global_this))
+}
+
+/// Default env for a child: the live `process.env` object, not the startup snapshot.
+fn inherit_process_env(
+    global_this: &JSGlobalObject,
+    envp: &mut Vec<CStrPtr>,
+    path: &mut &[u8],
+    storage: &mut Vec<ZBox>,
+) -> JsResult<()> {
+    let process_env = global_this.process_env_object()?;
+    process_env.ensure_still_alive();
+    if let Some(object) = process_env.get_object() {
+        append_envp_from_js(
+            global_this,
+            JSObject::opaque_ref(object),
+            envp,
+            path,
+            storage,
+        )?;
+    }
+    Ok(())
 }
 
 /// `storage` receives ownership of every `K=V\0` line whose pointer is pushed

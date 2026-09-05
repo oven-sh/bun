@@ -712,17 +712,9 @@ private:
             /* This path is only for upgraded websockets */
             AsyncSocket<SSL> *asyncSocket = (AsyncSocket<SSL> *) httpContextData->upgradedWebSocket;
 
-            /* Uncork here as well (note: what if we failed to uncork and we then pub/sub before we even upgraded?) */
-            auto [written, failed] = asyncSocket->uncork();
-
-            /* If we succeeded in uncorking, check if we have sent WebSocket FIN */
-            if (!failed) {
-                WebSocketData *webSocketData = (WebSocketData *) asyncSocket->getAsyncSocketData();
-                if (webSocketData->isShuttingDown) {
-                    /* In that case, also send TCP FIN (this is similar to what we have in ws drain handler) */
-                    asyncSocket->shutdown();
-                }
-            }
+            /* Uncork here as well (note: what if we failed to uncork and we then pub/sub before we even upgraded?).
+             * An end() in the open handler has already uncorked and dealt with the FIN itself. */
+            asyncSocket->uncork();
 
             /* Reset upgradedWebSocket before we return */
             httpContextData->upgradedWebSocket = nullptr;

@@ -1,6 +1,7 @@
 import { spawn } from "bun";
 import { describe, expect, it } from "bun:test";
 import { bunEnv, bunExe, gcTick, isWindows } from "harness";
+import { totalmem } from "node:os";
 import path from "path";
 
 describe.each(["advanced", "json"])("ipc mode %s", mode => {
@@ -294,4 +295,51 @@ it.skipIf(isWindows)("advanced serialization advertises wire format version 2", 
   const [stdout, exitCode] = await Promise.all([child.stdout.text(), child.exited]);
   expect(JSON.parse(stdout.trim())).toEqual([1, 2, 0, 0, 0]);
   expect(exitCode).toBe(0);
+});
+
+// The send queue coalesces every message queued behind a partial write into one
+// buffer. When the peer has not read yet, that buffer can pass 2 GiB. The write
+// completion compared the socket's i32 write count against that length as an i32
+// and panicked with "int cast: TryFromIntError(PosOverflow)". The child peaks at
+// 4 to 6 GB of RSS (the 2.2 GB buffer, its last capacity doubling, freed payloads).
+// Inside a container os.totalmem() reports the host's RAM;
+// process.constrainedMemory() reports the cgroup limit there.
+const memory = Math.min(totalmem(), process.constrainedMemory() || Infinity);
+describe.skipIf(isWindows || memory < 16 * 1024 ** 3)("send queue past 2 GiB", () => {
+  // Debug and ASAN builds copy the 2.2 GB about four times before the first message.
+  const timeout = 60_000;
+  it(
+    "keeps sending after more than 2 GiB is queued before the first writable event",
+    async () => {
+      const chunkLength = 100 * 1024 * 1024;
+      // 22 chunks = 2200 MiB, all queued in one synchronous tick, so the head item
+      // passes i32::MAX bytes before the event loop sees the socket writable.
+      const childSource = `
+        const chunk = Buffer.alloc(${chunkLength}, "x").toString();
+        for (let i = 0; i < 22; i++) process.send(chunk);
+        process.on("message", () => process.exit(0));
+      `;
+      const { promise, resolve, reject } = Promise.withResolvers<number>();
+      let received = 0;
+      await using child = spawn([bunExe(), "-e", childSource], {
+        env: bunEnv,
+        stdio: ["ignore", "inherit", "inherit"],
+        serialization: "advanced",
+        ipc(message, subprocess) {
+          // The first complete message proves the child kept writing past the cap.
+          // Stop the child there instead of draining the whole queue.
+          if (received++ === 0) {
+            resolve(message.length);
+            subprocess.send("stop");
+          }
+        },
+        onExit(_subprocess, exitCode, signalCode) {
+          reject(new Error(`child exited (${exitCode}, ${signalCode}) before the first message`));
+        },
+      });
+      expect(await promise).toBe(chunkLength);
+      expect(await child.exited).toBe(0);
+    },
+    timeout,
+  );
 });

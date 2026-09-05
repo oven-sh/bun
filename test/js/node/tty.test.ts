@@ -231,6 +231,8 @@ describe.skipIf(isWindows)("ReadStream on a non-blocking fd", () => {
       stderr: "pipe",
     });
 
+    // Drain stderr from the start so a chatty fixture cannot block on it.
+    const stderr = proc.stderr.text();
     const chunks = ["one", "two"];
     const lines: string[] = [];
     let slavePath = "";
@@ -259,7 +261,7 @@ describe.skipIf(isWindows)("ReadStream on a non-blocking fd", () => {
       }
     }
 
-    const [, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    const [, exitCode] = await Promise.all([stderr, proc.exited]);
     return { lines, exitCode };
   }
 
@@ -296,28 +298,35 @@ describe.skipIf(isWindows)("ReadStream on a non-blocking fd", () => {
       // reporting end of file.
       const holdWriter = openSync(fifo, constants.O_WRONLY);
       const stream = new ReadStream(reader);
-      const events: string[] = [];
-      const closed = Promise.withResolvers<void>();
-      stream.on("error", err => events.push("error " + err.code));
-      stream.on("data", chunk => {
-        events.push("data " + chunk.toString());
-        // The fd is still open: the stream did not close it on EAGAIN.
-        events.push("open " + (fstatSync(reader).isFIFO() ? "yes" : "no"));
-      });
-      stream.on("end", () => events.push("end"));
-      stream.on("close", () => closed.resolve());
+      try {
+        const events: string[] = [];
+        const closed = Promise.withResolvers<void>();
+        stream.on("error", err => events.push("error " + err.code));
+        stream.on("data", chunk => {
+          events.push("data " + chunk.toString());
+          // The fd is still open: the stream did not close it on EAGAIN.
+          events.push("open " + (fstatSync(reader).isFIFO() ? "yes" : "no"));
+        });
+        stream.on("end", () => events.push("end"));
+        stream.on("close", () => closed.resolve());
 
-      // If the stream closed the read side, the writer's open fails with ENXIO
-      // instead of a hang.
-      await writeFromAnotherProcess(fifo, "hello");
-      // The last writer is gone: the reader sees end of file.
-      closeSync(holdWriter);
-      await closed.promise;
+        // If the stream closed the read side, the writer's open fails with ENXIO
+        // instead of a hang.
+        await writeFromAnotherProcess(fifo, "hello");
+        // The last writer is gone: the reader sees end of file.
+        closeSync(holdWriter);
+        await closed.promise;
 
-      expect(events).toEqual(["data hello", "open yes", "end"]);
-      // The stream closed the fd on end. The fd number can already be in use
-      // again by a concurrent test, so do not probe it.
-      expect(stream.fd).toBeNull();
+        expect(events).toEqual(["data hello", "open yes", "end"]);
+        // The stream closed the fd on end. The fd number can already be in use
+        // again by a concurrent test, so do not probe it.
+        expect(stream.fd).toBeNull();
+      } finally {
+        stream.destroy();
+        try {
+          closeSync(holdWriter);
+        } catch {}
+      }
     },
   );
 });

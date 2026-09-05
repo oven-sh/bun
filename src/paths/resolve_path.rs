@@ -662,7 +662,67 @@ pub fn relative_platform_buf<'a, P: PlatformT, const ALWAYS_COPY: bool>(
     // two `&mut` borrows below are disjoint.
     let relative_from_buf = RELATIVE_FROM_BUF.with(lazy_path_buf);
     let relative_to_buf = RELATIVE_TO_BUF.with(lazy_path_buf);
+    relative_platform_in::<P, ALWAYS_COPY>(
+        &mut relative_from_buf[..],
+        &mut relative_to_buf[..],
+        buf,
+        from,
+        to,
+    )
+}
 
+/// Scratch [`relative_platform_in`] needs for one input: a leading separator
+/// plus the input normalized (which can grow by a byte, see
+/// [`normalize_string_spill`]), or that joined onto the cwd when it is relative.
+fn relative_scratch_needed<P: PlatformT>(path: &[u8]) -> usize {
+    if P::P.is_absolute(path) {
+        path.len() + 2
+    } else {
+        join_abs_needed(Fs::FileSystem::instance().top_level_dir().len(), &[path]) + 1
+    }
+}
+
+/// Result bound of [`relative_to_common_path`]: each component of `from` (two
+/// bytes or more) becomes at most a three-byte `/..`, then a separator and `to`.
+fn relative_out_needed(scratch: usize) -> usize {
+    (scratch + scratch / 2) + 1 + scratch
+}
+
+/// [`relative`] for inputs of any length: the thread-local `PathBuffer`s bound
+/// `from`, `to` and the `../` chain alike, so when any of the three might not
+/// fit, the same code runs in heap buffers sized to the inputs.
+pub fn relative_alloc(from: &[u8], to: &[u8]) -> Result<Box<[u8]>, bun_alloc::AllocError> {
+    // Either input may be normalized into either scratch buffer.
+    let scratch = relative_scratch_needed::<platform::Auto>(from)
+        .max(relative_scratch_needed::<platform::Auto>(to));
+    let out_needed = relative_out_needed(scratch);
+    if scratch <= MAX_PATH_BYTES && out_needed <= MAX_PATH_BYTES {
+        return Ok(Box::from(relative_platform::<platform::Auto, false>(
+            from, to,
+        )));
+    }
+
+    let mut from_buf = vec![0u8; scratch];
+    let mut to_buf = vec![0u8; scratch];
+    let mut out = vec![0u8; out_needed];
+    Ok(Box::from(relative_platform_in::<platform::Auto, false>(
+        &mut from_buf,
+        &mut to_buf,
+        &mut out,
+        from,
+        to,
+    )))
+}
+
+/// The result borrows whichever of the three buffers it was left in: `out`, or
+/// `relative_to_buf` when `!ALWAYS_COPY` and the answer is a suffix of `to`.
+fn relative_platform_in<'a, P: PlatformT, const ALWAYS_COPY: bool>(
+    relative_from_buf: &'a mut [u8],
+    relative_to_buf: &'a mut [u8],
+    buf: &'a mut [u8],
+    from: &[u8],
+    to: &[u8],
+) -> &'a [u8] {
     let normalized_from: &[u8] = if P::P.is_absolute(from) {
         'brk: {
             if P::P == Platform::Loose && cfg!(windows) {
@@ -720,7 +780,7 @@ pub fn relative_platform_buf<'a, P: PlatformT, const ALWAYS_COPY: bool>(
         // Avoid aliasing relative_to_buf as both input (normalize result)
         // and output (join target): normalize into `buf` scratch (caller
         // output buffer, untouched until the final relative_normalized_buf call
-        // and disjoint from both threadlocals), then join into relative_to_buf.
+        // and disjoint from both scratch buffers), then join into relative_to_buf.
         let norm_len = normalize_string_buf::<true, P, true>(to, buf).len();
         join_abs_string_buf::<P>(
             Fs::FileSystem::instance().top_level_dir(),
@@ -742,11 +802,6 @@ pub fn relative_platform<P: PlatformT, const ALWAYS_COPY: bool>(
         from,
         to,
     )
-}
-
-pub fn relative_alloc(from: &[u8], to: &[u8]) -> Result<Box<[u8]>, bun_alloc::AllocError> {
-    let result = relative_platform::<platform::Auto, false>(from, to);
-    Ok(Box::<[u8]>::from(result))
 }
 
 // This function is based on Go's volumeNameLen function
@@ -1703,6 +1758,27 @@ pub fn join_abs_string_buf_checked<'a, P: PlatformT>(
     Some(&buf[..len])
 }
 
+/// Caller-buffer form of [`join_abs_string_spill`] (cf. [`join_z_buf_spill`]):
+/// into `buf` when the result fits, otherwise into `spill`, grown as needed.
+pub fn join_abs_string_buf_spill<'a, P: PlatformT>(
+    cwd: &'a [u8],
+    buf: &'a mut [u8],
+    spill: &'a mut Vec<u8>,
+    parts: &[&[u8]],
+) -> &'a [u8] {
+    debug_assert!(!matches!(P::P, Platform::Nt));
+    let needed = join_abs_needed(cwd.len(), parts);
+    let out: &'a mut [u8] = if needed <= buf.len() {
+        buf
+    } else {
+        if spill.len() < needed {
+            spill.resize(needed, 0);
+        }
+        &mut spill[..]
+    };
+    join_abs_string_buf::<P>(cwd, out, parts)
+}
+
 pub fn join_abs_string_buf_z<'a, P: PlatformT>(
     cwd: &'a [u8],
     buf: &'a mut [u8],
@@ -2529,6 +2605,45 @@ mod tests {
             .unwrap_or(text_len)
     }
 
+    /// Returns `haystack_len` when `needle` does not occur, like the kernel.
+    #[unsafe(no_mangle)]
+    unsafe extern "C" fn highway_last_index_of_char(
+        haystack: *const u8,
+        haystack_len: usize,
+        needle: u8,
+    ) -> usize {
+        // SAFETY: test stub; callers pass a valid (ptr, len) pair.
+        let haystack = unsafe { core::slice::from_raw_parts(haystack, haystack_len) };
+        haystack
+            .iter()
+            .rposition(|&b| b == needle)
+            .unwrap_or(haystack_len)
+    }
+
+    /// Returns `usize::MAX` when `needle` does not occur, like the kernel.
+    #[unsafe(no_mangle)]
+    unsafe extern "C" fn highway_memrmem16(
+        haystack: *const u16,
+        haystack_len: usize,
+        needle: *const u16,
+        needle_len: usize,
+    ) -> usize {
+        // SAFETY: test stub; callers pass valid (ptr, len) pairs.
+        let (haystack, needle) = unsafe {
+            (
+                core::slice::from_raw_parts(haystack, haystack_len),
+                core::slice::from_raw_parts(needle, needle_len),
+            )
+        };
+        if needle_len > haystack_len {
+            return usize::MAX;
+        }
+        (0..=haystack_len - needle_len)
+            .rev()
+            .find(|&i| haystack[i..].starts_with(needle))
+            .unwrap_or(usize::MAX)
+    }
+
     #[test]
     fn normalize_string_spill_leaves_spill_untouched_when_the_input_fits() {
         let mut spill = Vec::new();
@@ -2704,5 +2819,112 @@ mod tests {
             join_string_buf_w_same::<platform::Windows>(&mut out, &[&long, &rest]),
             &expected[..]
         );
+    }
+
+    #[test]
+    fn join_abs_string_buf_spill_leaves_spill_untouched_when_the_result_fits() {
+        let mut buf = [0u8; 64];
+        let mut spill = Vec::new();
+        let out = join_abs_string_buf_spill::<platform::Posix>(
+            b"/cwd",
+            &mut buf,
+            &mut spill,
+            &[b"./lib/../x.js"],
+        );
+        assert_eq!(out, b"/cwd/x.js");
+        assert!(spill.is_empty());
+    }
+
+    #[test]
+    fn join_abs_string_buf_spill_spills_a_result_longer_than_the_buffer() {
+        let part = vec![b'p'; MAX_PATH_BYTES * 2];
+        let mut expected = b"/cwd/".to_vec();
+        expected.extend_from_slice(&part);
+
+        let mut buf = [0u8; MAX_PATH_BYTES];
+        let mut spill = Vec::new();
+        let out =
+            join_abs_string_buf_spill::<platform::Posix>(b"/cwd", &mut buf, &mut spill, &[&part]);
+        assert_eq!(out, &expected[..]);
+        assert!(!spill.is_empty());
+    }
+
+    #[test]
+    fn join_abs_string_buf_spill_uses_the_buffer_up_to_its_bound() {
+        let mut buf = [0u8; 64];
+        let cwd = b"/c";
+        let part = vec![b'q'; buf.len() - join_abs_needed(cwd.len(), &[b""])];
+        let mut spill = Vec::new();
+        let out = join_abs_string_buf_spill::<platform::Posix>(cwd, &mut buf, &mut spill, &[&part]);
+        assert_eq!(out.len(), cwd.len() + 1 + part.len());
+        assert!(spill.is_empty());
+
+        let mut longer = part;
+        longer.push(b'q');
+        let mut spill = Vec::new();
+        let out =
+            join_abs_string_buf_spill::<platform::Posix>(cwd, &mut buf, &mut spill, &[&longer]);
+        assert_eq!(out.len(), cwd.len() + 1 + longer.len());
+        assert!(!spill.is_empty());
+    }
+
+    #[test]
+    fn join_abs_string_buf_spill_accounts_for_windows_results_that_grow() {
+        // A bare share root gains a separator; `buf` is sized exactly to the bound.
+        let cwd = b"\\\\server\\share";
+        let parts: [&[u8]; 1] = [b"x"];
+        let mut buf = vec![0u8; join_abs_needed(cwd.len(), &parts)];
+        let mut spill = Vec::new();
+        let out = join_abs_string_buf_spill::<platform::Windows>(cwd, &mut buf, &mut spill, &parts);
+        assert_eq!(out, b"\\\\server\\share\\x");
+        assert!(spill.is_empty());
+    }
+
+    #[test]
+    fn relative_alloc_matches_relative_for_paths_that_fit() {
+        let rel = relative_alloc(b"/a/b/c", b"/a/d/e.js").unwrap();
+        assert_eq!(
+            &rel[..],
+            relative_platform::<platform::Auto, false>(b"/a/b/c", b"/a/d/e.js")
+        );
+        #[cfg(not(windows))]
+        assert_eq!(&rel[..], b"../../d/e.js");
+    }
+
+    #[test]
+    fn relative_alloc_handles_a_target_longer_than_a_path_buffer() {
+        let mut to = b"/a/".to_vec();
+        to.resize(MAX_PATH_BYTES * 2, b't');
+        let rel = relative_alloc(b"/a/b", &to).unwrap();
+        let mut expected = b"../".to_vec();
+        expected.extend_from_slice(&to[b"/a/".len()..]);
+        #[cfg(not(windows))]
+        assert_eq!(&rel[..], &expected[..]);
+        #[cfg(windows)]
+        assert_eq!(rel.len(), expected.len());
+    }
+
+    #[test]
+    fn relative_alloc_handles_a_result_longer_than_a_path_buffer() {
+        // Both inputs fit in a PathBuffer; the `../` chain for `from` does not.
+        let mut from = Vec::new();
+        while from.len() + 2 < MAX_PATH_BYTES {
+            from.extend_from_slice(b"/d");
+        }
+        // Two bytes: the Windows arm drops one-byte root-level targets (pre-existing).
+        let rel = relative_alloc(&from, b"/tt").unwrap();
+
+        let components = from.len() / 2;
+        let mut expected = Vec::new();
+        for i in 0..components {
+            if i > 0 {
+                expected.push(SEP);
+            }
+            expected.extend_from_slice(b"..");
+        }
+        expected.push(SEP);
+        expected.extend_from_slice(b"tt");
+        assert_eq!(&rel[..], &expected[..]);
+        assert!(rel.len() > MAX_PATH_BYTES);
     }
 }

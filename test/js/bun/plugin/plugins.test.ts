@@ -1064,3 +1064,60 @@ it("object loader: an error thrown by a getter on the exports object rejects the
   });
   expect(() => require("object-loader-throwing-esmodule")).toThrow(boom);
 });
+
+it.concurrent("an onResolve result longer than a path buffer is a resolve error, not a crash", async () => {
+  // The path a plugin returns for an import inside a module used to be run
+  // through the fixed-size relative-path buffers while that module was
+  // linked, which crashed the process. Long enough to exceed the buffers and
+  // the resolver's own specifier limit on every platform, Windows included.
+  const longPath = "/" + Buffer.alloc(150_000, "a").toString();
+  using dir = tempDir("plugin-onresolve-long-path", {
+    "preload.js": `
+      Bun.plugin({
+        name: "redirect-to-long-path",
+        setup(build) {
+          build.onResolve({ filter: /^\\.\\/child\\.js$/ }, () => ({ path: "/" + Buffer.alloc(150_000, "a").toString() }));
+        },
+      });
+    `,
+    "parent-require.js": `module.exports = require("./child.js");`,
+    "parent-import.mjs": `export * from "./child.js";`,
+    "entry.js": `
+      const attempt = async fn => {
+        try {
+          await fn();
+          return "loaded";
+        } catch ({ name, level, referrer, message }) {
+          return { name, level, referrer, message };
+        }
+      };
+      console.log(
+        JSON.stringify({
+          requireParent: require.resolve("./parent-require.js"),
+          importParent: require.resolve("./parent-import.mjs"),
+          viaRequire: await attempt(() => require("./parent-require.js")),
+          viaImport: await attempt(() => import("./parent-import.mjs")),
+        }),
+      );
+    `,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "--preload", "./preload.js", "entry.js"],
+    env: bunEnv,
+    cwd: String(dir),
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  // The fixture catches its own failures, so empty stdout means it crashed.
+  const { requireParent, importParent, ...results } = stdout.trim() ? JSON.parse(stdout) : { crashed: stderr };
+  const tooLong = (parent: string) => ({
+    name: "ResolveMessage",
+    level: "error",
+    referrer: parent,
+    message: `ENAMETOOLONG while resolving '${longPath}' from '${parent}'`,
+  });
+  expect(results).toEqual({ viaRequire: tooLong(requireParent), viaImport: tooLong(importParent) });
+  expect(exitCode).toBe(0);
+});

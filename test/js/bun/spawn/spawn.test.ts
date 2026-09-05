@@ -1053,6 +1053,64 @@ describe("close handling", () => {
       expect({ stdout, stderr, exitCode }).toEqual({ stdout: "ok", stderr: "", exitCode: 0 });
     });
 
+    it.skipIf(isWindows)("empty ArrayBufferView at index >= 3 is treated as ignore", async () => {
+      await using proc = spawn({
+        cmd: [bunExe(), "-e", "process.stdout.write('ok')"],
+        env: bunEnv,
+        stdio: ["ignore", "pipe", "pipe", new Uint8Array(0)],
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout, stderr, exitCode }).toEqual({ stdout: "ok", stderr: "", exitCode: 0 });
+    });
+
+    // Only stdin has a writer that delivers buffer contents to the child. An
+    // extra slot used to be accepted anyway and became a bare socketpair whose
+    // bytes were never written, so a child reading it blocked forever (and
+    // spawnSync blocked along with it).
+    const payload = () => new TextEncoder().encode("fd3-payload\n");
+    for (const [label, makeStdio, msg] of [
+      [
+        "Uint8Array at index 3",
+        () => ["ignore", "pipe", "pipe", payload()],
+        "ArrayBufferView cannot be used for stdio[3] yet",
+      ],
+      [
+        "ArrayBuffer at index 3",
+        () => ["ignore", "pipe", "pipe", payload().buffer],
+        "ArrayBufferView cannot be used for stdio[3] yet",
+      ],
+      [
+        "DataView at index 3",
+        () => ["ignore", "pipe", "pipe", new DataView(payload().buffer)],
+        "ArrayBufferView cannot be used for stdio[3] yet",
+      ],
+      [
+        "Uint8Array at index 4",
+        () => ["ignore", "pipe", "pipe", "ignore", payload()],
+        "ArrayBufferView cannot be used for stdio[4] yet",
+      ],
+    ] as const) {
+      it(`${label} throws`, () => {
+        expect(() =>
+          spawn({
+            cmd: [bunExe(), "-e", ""],
+            env: bunEnv,
+            stdio: makeStdio() as any,
+          }),
+        ).toThrow(msg);
+      });
+
+      it(`spawnSync ${label} throws`, () => {
+        expect(() =>
+          spawnSync({
+            cmd: [bunExe(), "-e", ""],
+            env: bunEnv,
+            stdio: makeStdio() as any,
+          }),
+        ).toThrow(msg);
+      });
+    }
+
     const pullStream = () =>
       new ReadableStream({
         pull(c) {

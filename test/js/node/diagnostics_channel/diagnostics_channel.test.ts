@@ -1,5 +1,6 @@
 import { gc } from "bun";
 import { beforeEach, describe, expect, mock, test } from "bun:test";
+import { bunEnv, bunExe } from "harness";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { channel, Channel, hasSubscribers, subscribe, unsubscribe } from "node:diagnostics_channel";
 
@@ -319,6 +320,72 @@ describe("Channel", () => {
     calledRunStores = true;
 
     checkCalls();
+  });
+
+  // https://github.com/oven-sh/bun/issues/26536
+  // A channel with a live subscriber must not be garbage-collected. Node keeps the
+  // registry entry strong while the ref count is positive; previously Bun only bumped
+  // a counter on a WeakRef, so the first full GC dropped every subscriber.
+  test("subscribe() keeps the channel alive across GC", async () => {
+    const script = `
+      const dc = require("node:diagnostics_channel");
+      const hits = [];
+      dc.subscribe("gc.subscribe.evt", m => hits.push(m));
+      dc.channel("gc.subscribe.evt").publish(1);
+      for (let i = 0; i < 10; i++) { Bun.gc(true); await Bun.sleep(0); }
+      const before = dc.channel("gc.subscribe.evt");
+      dc.channel("gc.subscribe.evt").publish(2);
+      const sameInstance = dc.channel("gc.subscribe.evt") === before;
+      console.log(JSON.stringify({
+        hasSubscribers: dc.hasSubscribers("gc.subscribe.evt"),
+        hits,
+        sameInstance,
+      }));
+    `;
+    await using proc = Bun.spawn({ cmd: [bunExe(), "-e", script], env: bunEnv, stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(JSON.parse(stdout)).toEqual({ hasSubscribers: true, hits: [1, 2], sameInstance: true });
+    expect({ stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
+  });
+
+  test("bindStore() keeps the channel alive across GC", async () => {
+    const script = `
+      const dc = require("node:diagnostics_channel");
+      const { AsyncLocalStorage } = require("node:async_hooks");
+      const als = new AsyncLocalStorage();
+      dc.channel("gc.bindstore.evt").bindStore(als);
+      for (let i = 0; i < 10; i++) { Bun.gc(true); await Bun.sleep(0); }
+      let seen = "not-run";
+      dc.channel("gc.bindstore.evt").runStores({ v: 42 }, () => { seen = als.getStore(); });
+      console.log(JSON.stringify({
+        hasSubscribers: dc.hasSubscribers("gc.bindstore.evt"),
+        seen,
+      }));
+    `;
+    await using proc = Bun.spawn({ cmd: [bunExe(), "-e", script], env: bunEnv, stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(JSON.parse(stdout)).toEqual({ hasSubscribers: true, seen: { v: 42 } });
+    expect({ stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
+  });
+
+  test("channel is collectable again after the last unsubscribe()", async () => {
+    const script = `
+      const dc = require("node:diagnostics_channel");
+      const noop = () => {};
+      dc.subscribe("gc.unsubscribe.evt", noop);
+      for (let i = 0; i < 10; i++) { Bun.gc(true); await Bun.sleep(0); }
+      const hadBefore = dc.hasSubscribers("gc.unsubscribe.evt");
+      dc.unsubscribe("gc.unsubscribe.evt", noop);
+      const ref = new WeakRef(dc.channel("gc.unsubscribe.evt"));
+      // The deref in the loop condition keeps the target alive for the rest of that job,
+      // so let the pin expire before each collection instead of after.
+      for (let i = 0; i < 20 && ref.deref() !== undefined; i++) { await Bun.sleep(0); Bun.gc(true); }
+      console.log(JSON.stringify({ hadBefore, collected: ref.deref() === undefined }));
+    `;
+    await using proc = Bun.spawn({ cmd: [bunExe(), "-e", script], env: bunEnv, stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(JSON.parse(stdout)).toEqual({ hadBefore: true, collected: true });
+    expect({ stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
   });
 
   // test-diagnostics-channel-memory-leak.js

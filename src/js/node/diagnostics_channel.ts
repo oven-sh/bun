@@ -4,6 +4,7 @@
 const { validateFunction } = require("internal/validators");
 
 const SafeMap = Map;
+const SafeWeakRef = WeakRef;
 const SafeFinalizationRegistry = FinalizationRegistry;
 
 const ArrayPrototypeAt = Array.prototype.at;
@@ -16,20 +17,38 @@ const PromiseResolve = Promise.$resolve.bind(Promise);
 const PromiseReject = Promise.$reject.bind(Promise);
 const PromisePrototypeThen = (promise, onFulfilled, onRejected) => promise.then(onFulfilled, onRejected);
 
-// TODO: https://github.com/nodejs/node/blob/fb47afc335ef78a8cef7eac52b8ee7f045300696/src/node_util.h#L13
-class WeakReference<T extends WeakKey> extends WeakRef<T> {
-  #refs = 0;
+// Mirrors Node's internal/util.js WeakReference: the referent is pinned strongly
+// while the ref count is positive so a subscribed channel is not collectable.
+class WeakReference<T extends WeakKey> {
+  #weak: WeakRef<T>;
+  #strong: T | undefined = undefined;
+  #refCount = 0;
+
+  constructor(object: T) {
+    this.#weak = new SafeWeakRef(object);
+  }
 
   get() {
-    return this.deref();
+    return this.#strong ?? this.#weak.deref();
   }
 
   incRef() {
-    return ++this.#refs;
+    this.#refCount++;
+    if (this.#refCount === 1) {
+      const derefed = this.#weak.deref();
+      if (derefed !== undefined) {
+        this.#strong = derefed;
+      }
+    }
+    return this.#refCount;
   }
 
   decRef() {
-    return --this.#refs;
+    this.#refCount--;
+    if (this.#refCount === 0) {
+      this.#strong = undefined;
+    }
+    return this.#refCount;
   }
 }
 

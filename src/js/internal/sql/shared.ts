@@ -1,6 +1,6 @@
 import type { Query as QueryType } from "./query";
 
-const PublicArray = globalThis.Array;
+const PublicArray = Array;
 const {
   Query,
   SQLQueryFlags,

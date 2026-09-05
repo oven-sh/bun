@@ -574,7 +574,7 @@ impl Route {
                     let is_html = output_files[i].loader == Loader::Html;
                     // Source maps don't carry a precomputed chunk hash; hash
                     // their bytes so every served file gets a unique ETag.
-                    let hash = match output_files[i].hash {
+                    let hash = match output_files[i].hash.value {
                         0 => bun_core::hash::xxhash64(0, blob.slice()),
                         h => h,
                     };

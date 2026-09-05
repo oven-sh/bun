@@ -2111,10 +2111,43 @@ fn path_template_needs(data: &[u8], field: PlaceholderField) -> bool {
         PlaceholderField::Dir => b"[dir]",
         PlaceholderField::Name => b"[name]",
         PlaceholderField::Ext => b"[ext]",
-        PlaceholderField::Hash => b"[hash]",
+        PlaceholderField::Hash => return path_template_hash_len(data).is_some(),
         PlaceholderField::Target => b"[target]",
     };
     strings::contains(data, needle)
+}
+
+/// `[hash]` or `[hashN]`: the field and how many characters it prints.
+fn placeholder_field(name: &[u8]) -> Option<(PlaceholderField, usize)> {
+    if let Some(field) = PLACEHOLDER_MAP.get(name).copied() {
+        return Some((field, bun_core::fmt::ContentHash::DEFAULT_LEN));
+    }
+    let digits = name.strip_prefix(b"hash")?;
+    if digits.is_empty() || digits.len() > 2 || !digits.iter().all(u8::is_ascii_digit) {
+        return None;
+    }
+    let len = digits
+        .iter()
+        .fold(0usize, |n, &d| n * 10 + (d - b'0') as usize);
+    if len == 0 {
+        return None;
+    }
+    Some((PlaceholderField::Hash, len))
+}
+
+/// The width of the first `[hash]`/`[hashN]` placeholder in `data`, if any.
+pub(crate) fn path_template_hash_len(data: &[u8]) -> Option<usize> {
+    let mut remain = data;
+    while let Some(open) = strings::index_of(remain, b"[hash") {
+        remain = &remain[open + 1..];
+        let Some(close) = strings::index_of_char(remain, b']') else {
+            break;
+        };
+        if let Some((PlaceholderField::Hash, len)) = placeholder_field(&remain[..close as usize]) {
+            return Some(bun_core::fmt::ContentHash::new(0, len).len());
+        }
+    }
+    None
 }
 
 /// `Some((index_of_open_bracket, &template[index..]))` when a `[` has no matching `]`.
@@ -2153,7 +2186,7 @@ fn path_template_print<W: bun_io::Write>(
     dir: &[u8],
     name: &[u8],
     ext: &[u8],
-    hash: Option<u64>,
+    hash: Option<bun_core::fmt::ContentHash>,
     target: &[u8],
     sanitize_parent_dirs: bool,
 ) -> bun_io::Result<()> {
@@ -2187,7 +2220,7 @@ fn path_template_print<W: bun_io::Write>(
 
         let placeholder = &remain[0..end_len];
 
-        let Some(field) = PLACEHOLDER_MAP.get(placeholder).copied() else {
+        let Some((field, hash_len)) = placeholder_field(placeholder) else {
             // Unknown placeholder: keep `[placeholder]` verbatim in the output.
             writer.write_all(b"[")?;
             PathTemplate::write_replacing_slashes_on_windows(writer, placeholder)?;
@@ -2215,7 +2248,10 @@ fn path_template_print<W: bun_io::Write>(
             PlaceholderField::Ext => PathTemplate::write_replacing_slashes_on_windows(writer, ext)?,
             PlaceholderField::Hash => {
                 if let Some(hash) = hash {
-                    writer.write_fmt(format_args!("{}", bun_core::fmt::truncated_hash32(hash)))?;
+                    writer.write_fmt(format_args!(
+                        "{}",
+                        bun_core::fmt::ContentHash::new(hash.value, hash_len.max(hash.len()))
+                    ))?;
                 }
             }
             PlaceholderField::Target => {
@@ -2328,6 +2364,22 @@ impl PathTemplate {
         path_template_needs(&self.data, field)
     }
 
+    /// The width this template's `[hash]`/`[hashN]` asks for.
+    pub(crate) fn hash_len(&self) -> usize {
+        path_template_hash_len(&self.data).unwrap_or(bun_core::fmt::ContentHash::DEFAULT_LEN)
+    }
+
+    /// `hash` at the width this template prints its own hash: what `[hashN]`
+    /// asks for, or wider if the linker widened it to keep names distinct.
+    pub(crate) fn content_hash(&self, hash: u64) -> bun_core::fmt::ContentHash {
+        bun_core::fmt::ContentHash::new(
+            hash,
+            self.placeholder
+                .hash
+                .map_or_else(|| self.hash_len(), |h| h.len()),
+        )
+    }
+
     #[inline]
     fn write_replacing_slashes_on_windows<W: bun_io::Write>(
         w: &mut W,
@@ -2415,7 +2467,7 @@ pub struct Placeholder {
     pub(crate) dir: Box<[u8]>,
     pub(crate) name: Box<[u8]>,
     pub(crate) ext: Box<[u8]>,
-    pub(crate) hash: Option<u64>,
+    pub(crate) hash: Option<bun_core::fmt::ContentHash>,
     pub(crate) target: Box<[u8]>,
 }
 
@@ -2442,7 +2494,7 @@ pub struct PlaceholderConst {
     pub(crate) dir: &'static [u8],
     pub(crate) name: &'static [u8],
     pub(crate) ext: &'static [u8],
-    pub(crate) hash: Option<u64>,
+    pub(crate) hash: Option<bun_core::fmt::ContentHash>,
     pub(crate) target: &'static [u8],
 }
 

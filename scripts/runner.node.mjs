@@ -275,6 +275,78 @@ if (isBuildkite) {
 
 let coresDir;
 
+/**
+ * The soft and hard RLIMIT_CORE of this process, as `ulimit` prints them
+ * ("0", "unlimited", or a byte count).
+ * @returns {{ soft: string, hard: string } | undefined}
+ */
+function getCoreFileSizeLimit() {
+  try {
+    const line = readFileSync("/proc/self/limits", "utf-8")
+      .split("\n")
+      .find(line => line.startsWith("Max core file size"));
+    const [, soft, hard] = /^Max core file size\s+(\S+)\s+(\S+)/.exec(line ?? "") ?? [];
+    if (soft && hard) {
+      return { soft, hard };
+    }
+  } catch {}
+  return undefined;
+}
+
+/**
+ * Sets this process's soft RLIMIT_CORE to `soft` ("0", "unlimited", or a byte
+ * count) and leaves the hard limit alone; every test process inherits it.
+ * @param {string} soft
+ * @returns {Promise<boolean>}
+ */
+async function setSoftCoreFileSizeLimit(soft) {
+  const prlimit = await spawnSafe({
+    command: "prlimit",
+    args: ["--pid", `${process.pid}`, `--core=${soft}:`],
+    stdout: () => {},
+    stderr: () => {},
+  });
+  if (!prlimit.ok) {
+    console.warn(`Could not set the core file size limit to ${soft}: ${prlimit.error}`);
+  }
+  return prlimit.ok;
+}
+
+/**
+ * On the Debian and Ubuntu images the agent runs as a systemd service with a
+ * soft RLIMIT_CORE of 0 and a hard limit of infinity: the distro's
+ * /usr/lib/systemd/system.conf.d/10-coredump-debian.conf sets
+ * `DefaultLimitCORE=0:infinity`, and that drop-in overrides the
+ * `DefaultLimitCORE=infinity` bootstrap.sh writes into /etc/systemd/system.conf.
+ * So a crashed test process writes no core even though kernel.core_pattern
+ * points at coresDir. Raise the soft limit to the hard limit here. Returns the
+ * limit that is in effect afterwards.
+ *
+ * An ASAN build gets a soft limit of 0 instead: it prints its own report on a
+ * crash, and with abort_on_error=1 it also aborts on a leak report at exit, so
+ * a core from it turns a passing test file into "core dumped".
+ * @param {string} execPath
+ * @returns {Promise<string | undefined>}
+ */
+async function raiseCoreFileSizeLimit(execPath) {
+  const before = getCoreFileSizeLimit();
+  if (!before) {
+    return undefined;
+  }
+  const isAsan = basename(execPath).includes("asan");
+  const wanted = isAsan ? "0" : before.hard;
+  if (before.soft !== wanted) {
+    await setSoftCoreFileSizeLimit(wanted);
+  }
+  const after = getCoreFileSizeLimit()?.soft;
+  if (!isAsan && (after === "0" || after !== wanted)) {
+    console.warn(
+      `Crashed test processes will not dump core: the core file size limit is ${after} (hard limit ${before.hard})`,
+    );
+  }
+  return after;
+}
+
 if (options["coredump-upload"]) {
   // this sysctl is set in bootstrap.sh to /var/bun-cores-$distro-$release-$arch
   const sysctl = await spawnSafe({ command: "sysctl", args: ["-n", "kernel.core_pattern"] });
@@ -554,6 +626,10 @@ async function runTests() {
     execPath = getExecPath(options["exec-path"]);
   }
   !isQuiet && console.log("Bun:", execPath);
+
+  if (options["coredump-upload"]) {
+    console.log(`core file size limit: ${await raiseCoreFileSizeLimit(execPath)}`);
+  }
 
   const expectations = getTestExpectations();
   const modifiers = getTestModifiers(execPath);

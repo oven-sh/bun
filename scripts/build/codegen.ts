@@ -55,9 +55,12 @@ interface Ctx {
 }
 
 /**
- * Read a package.json and return the list of dependency package.json paths
- * under node_modules/. Used as outputs of `bun install` — if any are missing,
- * install re-runs.
+ * Read a package.json and return the node_modules/<dep> entries it installs.
+ * Used as outputs of `bun install` — if any are missing, install re-runs.
+ * The entry itself, not a file inside it: ninja creates the parent directory
+ * of every declared output before running the edge, and a pre-created
+ * node_modules/<dep>/ directory is exactly what makes bun's isolated linker
+ * skip the symlink it would have put there.
  */
 function readPackageDeps(pkgDir: string): string[] {
   const pkgPath = resolve(pkgDir, "package.json");
@@ -69,7 +72,7 @@ function readPackageDeps(pkgDir: string): string[] {
   }
   const deps = { ...(pkg.dependencies ?? {}), ...(pkg.devDependencies ?? {}) };
   const nodeModules = resolve(pkgDir, "node_modules");
-  return Object.keys(deps).map(name => resolve(nodeModules, name, "package.json"));
+  return Object.keys(deps).map(name => resolve(nodeModules, name));
 }
 
 // ───────────────────────────────────────────────────────────────────────────
@@ -144,8 +147,8 @@ export function registerCodegenRules(n: Ninja, cfg: Config): void {
   });
 
   // bun install. Inputs: package.json + bun.lock. Outputs: a stamp file we
-  // touch on success, plus each node_modules/<dep>/package.json as IMPLICIT
-  // outputs (so deleting node_modules/ correctly retriggers install).
+  // touch on success, plus each node_modules/<dep> entry as IMPLICIT outputs
+  // (so deleting node_modules/ correctly retriggers install).
   //
   // Why stamp + restat instead of just the node_modules paths as outputs:
   // `bun install --frozen-lockfile` with no changes doesn't touch anything.
@@ -351,8 +354,8 @@ export function emitCodegen(n: Ninja, cfg: Config, sources: Sources): CodegenOut
  * Emit the install step for a package directory, with `cfg.packageManager`. Returns the stamp file
  * path — use it as an implicit input on anything that needs node_modules/.
  *
- * The stamp is the explicit output; each node_modules/<dep>/package.json is
- * an implicit output (so deleting node_modules/ correctly retriggers install,
+ * The stamp is the explicit output; each node_modules/<dep> entry is an
+ * implicit output (so deleting node_modules/ correctly retriggers install,
  * and restat prunes downstream when install was a no-op).
  */
 function emitPackageInstall(n: Ninja, cfg: Config, pkgDir: string): string {

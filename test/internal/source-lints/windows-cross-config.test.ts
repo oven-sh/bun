@@ -12,12 +12,15 @@
  */
 import { describe, expect, test } from "bun:test";
 import { isWindows, tempDir } from "harness";
+import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
 import { resolveConfig, type Config, type PartialConfig, type Toolchain } from "../../../scripts/build/config.ts";
 import { webkit } from "../../../scripts/build/deps/webkit.ts";
 import { computeFlags } from "../../../scripts/build/flags.ts";
 import { rustTarget } from "../../../scripts/build/rust.ts";
+
+const repoRoot = join(import.meta.dir, "..", "..", "..");
 
 /** A fully-populated fake toolchain — resolveConfig never spawns any of these. */
 function mockToolchain(overrides: Partial<Toolchain> = {}): Toolchain {
@@ -202,5 +205,92 @@ describe.skipIf(isWindows)("Windows cross-compile LTO config (non-windows host)"
     // reject with "inconsistent LTO Unit splitting". WPD falls back to
     // index-only mode (still devirtualizes, just without the hybrid split).
     expect(linuxFlags.cxxflags).toContain("-fno-split-lto-unit");
+  });
+});
+
+/**
+ * A release config for a unix target, resolved the way the CI lane does.
+ *
+ * Both targets pass an explicit fake sysroot, for the same reason
+ * resolveWindowsCross passes a fake winsysroot: without one, resolveConfig
+ * probes the real host and filesystem (detectLinuxGlibcSysroot /
+ * detectFreebsdSysroot) and throws whenever the host is not the target. An
+ * x64-glibc build image happens to satisfy the linux target natively and
+ * provisions /opt/freebsd-sysroot, so these tests pass there either way; the
+ * darwin, Windows, musl and aarch64 test agents throw. An explicit path is
+ * used verbatim, so it never has to exist.
+ */
+function resolveUnixRelease(os: "linux" | "freebsd"): Config {
+  return resolveConfig(
+    {
+      os,
+      arch: "x64",
+      ...(os === "linux"
+        ? { abi: "gnu" as const, linuxSysroot: "/fake/linux-sysroot" }
+        : { freebsdSysroot: "/fake/freebsd-sysroot" }),
+      buildType: "Release",
+      ci: true,
+      buildkite: false,
+    },
+    mockToolchain({ cc: "/fake/llvm/bin/clang", cxx: "/fake/llvm/bin/clang++", ld: "/fake/llvm/bin/ld.lld" }),
+  );
+}
+
+describe("release binary-size flags", () => {
+  test("the always-on strip step passes --strip-all alone", () => {
+    // GNU strip's strip level is a last-flag-wins enum: binutils' objcopy.c
+    // assigns `strip_symbols` for each of --strip-all / --strip-debug /
+    // --strip-unneeded, so a trailing --strip-debug silently DOWNGRADES
+    // --strip-all to debug-only and leaves the symbol table behind.
+    // --discard-all (locals) is subsumed by --strip-all. Neither may come back.
+    const strip = computeFlags(resolveUnixRelease("linux")).stripflags;
+    expect(strip).toContain("--strip-all");
+    expect(strip).not.toContain("--strip-debug");
+    expect(strip).not.toContain("--discard-all");
+  });
+
+  test("linux links the GNU hash table only; FreeBSD keeps the SysV one too", () => {
+    const linux = computeFlags(resolveUnixRelease("linux")).ldflags;
+    expect(linux).toContain("-Wl,--hash-style=gnu");
+    expect(linux).not.toContain("-Wl,--hash-style=both");
+
+    // FreeBSD deliberately keeps both: freebsdVersion is overridable below
+    // the 14.3 default, nothing here is validated on FreeBSD hardware, and
+    // `both` is a strict superset of `gnu`, so it can only cost size.
+    expect(computeFlags(resolveUnixRelease("freebsd")).ldflags).toContain("-Wl,--hash-style=both");
+  });
+});
+
+describe("src/bun.ico", () => {
+  test("is a PNG-in-ICO, not an uncompressed DIB", () => {
+    // llvm-rc embeds the .ico bytes into the Windows resource section
+    // verbatim (see emitWindowsResources in scripts/build/bun.ts), so the
+    // file's own encoding is what ships. PNG-in-ICO has been the standard
+    // container for 256px icons since Vista; storing the 256x256 frame as a
+    // raw BITMAPINFOHEADER DIB instead costs ~258 KB in every bun.exe.
+    const ico = readFileSync(join(repoRoot, "src", "bun.ico"));
+
+    // ICONDIR: reserved must be 0, type 1 = icon.
+    expect({ reserved: ico.readUInt16LE(0), type: ico.readUInt16LE(2) }).toEqual({ reserved: 0, type: 1 });
+    const count = ico.readUInt16LE(4);
+    expect(count).toBeGreaterThan(0);
+
+    // Every frame's payload must be a PNG. A DIB frame would start with its
+    // 40-byte BITMAPINFOHEADER (biSize = 0x28), which is what the old asset
+    // carried and exactly what must not come back.
+    const PNG_MAGIC = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+    let payloadBytes = 0;
+    for (let i = 0; i < count; i++) {
+      const entry = 6 + i * 16;
+      const bytesInRes = ico.readUInt32LE(entry + 8);
+      const imageOffset = ico.readUInt32LE(entry + 12);
+      expect(ico.subarray(imageOffset, imageOffset + PNG_MAGIC.length)).toEqual(PNG_MAGIC);
+      payloadBytes += bytesInRes;
+    }
+
+    // Container integrity: header + directory + payloads account for the file.
+    expect(6 + count * 16 + payloadBytes).toBe(ico.length);
+    // A PNG-encoded 256px icon is tens of KB; the uncompressed DIB was 264 KB.
+    expect(ico.length).toBeLessThan(64 * 1024);
   });
 });

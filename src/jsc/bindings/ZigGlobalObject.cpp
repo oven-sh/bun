@@ -1759,9 +1759,11 @@ JSC_DEFINE_HOST_FUNCTION(functionNavigatorGetPlatform, (JSC::JSGlobalObject * gl
 #endif
 }
 
+extern "C" int32_t Bun__availableParallelism();
+
 JSC_DEFINE_HOST_FUNCTION(functionNavigatorGetHardwareConcurrency, (JSC::JSGlobalObject*, JSC::CallFrame*))
 {
-    return JSValue::encode(JSC::jsNumber(WTF::numberOfProcessorCores()));
+    return JSValue::encode(JSC::jsNumber(Bun__availableParallelism()));
 }
 
 JSC_DECLARE_HOST_FUNCTION(makeGetterTypeErrorForBuiltins);

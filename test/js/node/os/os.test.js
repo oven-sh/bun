@@ -1,6 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import { realpathSync } from "fs";
-import { isWindows } from "harness";
+import { bunEnv, bunExe, isLinux, isWindows, tempDir } from "harness";
 import { isIPv4, isIPv6 } from "node:net";
 import * as os from "node:os";
 
@@ -231,6 +231,53 @@ it("devNull", () => {
 
 it("availableParallelism", () => {
   expect(os.availableParallelism()).toBeGreaterThan(0);
+});
+
+// A fractional cgroup CPU quota (k8s `limits.cpu: 2500m`, `docker --cpus=2.5`)
+// must be floored to match Node.js / libuv's uv_available_parallelism(), so
+// worker pools sized from os.availableParallelism() don't overshoot the quota.
+describe.skipIf(!isLinux)("availableParallelism: cgroup cpu quota rounding", () => {
+  const cases = [
+    { name: "cgroup v2", files: { proc_self_cgroup: "0::/\n", "cpu.max": "{q} 100000\n" } },
+    {
+      name: "cgroup v1",
+      files: {
+        proc_self_cgroup: "2:cpu,cpuacct:/\n1:memory:/\n",
+        "cpu/cpu.cfs_quota_us": "{q}\n",
+        "cpu/cpu.cfs_period_us": "100000\n",
+      },
+    },
+  ];
+  const script = 'process.stdout.write(require("os").availableParallelism() + " " + navigator.hardwareConcurrency)';
+  const run = async root => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script],
+      env: { ...bunEnv, BUN_INTERNAL_CGROUP_ROOT: String(root) },
+      stderr: "pipe",
+    });
+    const [stdout, stderr] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(proc.exitCode).toBe(0);
+    return stdout;
+  };
+
+  for (const { name, files } of cases) {
+    it.concurrent(name, async () => {
+      const fill = q => Object.fromEntries(Object.entries(files).map(([k, v]) => [k, v.replace("{q}", q)]));
+
+      // 2.5 CPUs: Node.js reports 2; Bun previously reported 3.
+      using dirFrac = tempDir("cgroup-frac", fill("250000"));
+      expect(await run(dirFrac)).toBe("2 2");
+
+      // 0.5 CPUs: still floored, but clamped to at least 1.
+      using dirSub = tempDir("cgroup-sub", fill("50000"));
+      expect(await run(dirSub)).toBe("1 1");
+
+      // Integer quota is unchanged.
+      using dirInt = tempDir("cgroup-int", fill("200000"));
+      expect(await run(dirInt)).toBe("2 2");
+    });
+  }
 });
 
 it("loadavg", () => {

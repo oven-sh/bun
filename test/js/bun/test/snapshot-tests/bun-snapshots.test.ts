@@ -1,4 +1,5 @@
 import { describe, expect, it, test } from "bun:test";
+import { bunEnv, bunExe, tempDir } from "harness";
 
 test("it will create a snapshot file if it doesn't exist", () => {
   expect({ a: { b: { c: false } }, c: 2, jkfje: 99238 }).toMatchSnapshot({ a: { b: { c: expect.any(Boolean) } } });
@@ -79,5 +80,86 @@ describe("toMatchSnapshot errors", () => {
       // @ts-expect-error
       expect({ a: 4 }).toMatchSnapshot({ a: expect.any("not a constructor") });
     }).toThrow();
+  });
+});
+
+// https://github.com/oven-sh/bun/issues/40656
+describe.concurrent("multiline strings serialize inline like jest", () => {
+  const testFile = [
+    "import { expect, test } from 'bun:test';",
+    "test('multiline', () => {",
+    "  expect({ x: 'A\\nB' }).toMatchSnapshot();",
+    "});",
+  ].join("\n");
+  const jestSnap = [
+    "// Jest Snapshot v1, https://goo.gl/fbAQLP",
+    "",
+    "exports[`multiline 1`] = `",
+    "{",
+    '  "x": "A',
+    'B",',
+    "}",
+    "`;",
+    "",
+  ].join("\n");
+
+  test("a snapshot file written by jest passes as-is", async () => {
+    using dir = tempDir("snap-multiline-read", {
+      "multiline.test.ts": testFile,
+      "__snapshots__/multiline.test.ts.snap": jestSnap,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", "multiline.test.ts"],
+      cwd: String(dir),
+      env: { ...bunEnv, CI: "false" },
+      stderr: "pipe",
+    });
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    expect(stderr).toContain("1 pass");
+    expect(exitCode).toBe(0);
+  });
+
+  test("a snapshot file written by bun matches jest's format", async () => {
+    using dir = tempDir("snap-multiline-write", {
+      "multiline.test.ts": testFile,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", "multiline.test.ts"],
+      cwd: String(dir),
+      env: { ...bunEnv, CI: "false" },
+      stderr: "pipe",
+    });
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    expect(stderr).toContain("1 pass");
+    expect(exitCode).toBe(0);
+    const written = await Bun.file(`${dir}/__snapshots__/multiline.test.ts.snap`).text();
+    // Byte-for-byte what jest writes, except the header comment line.
+    expect(written).toBe(
+      [
+        "// Bun Snapshot v1, https://bun.sh/docs/test/snapshots",
+        "",
+        "exports[`multiline 1`] = `",
+        "{",
+        '  "x": "A',
+        'B",',
+        "}",
+        "`;",
+        "",
+      ].join("\n"),
+    );
+  });
+
+  // A multiline JSX key prints inline inside the tag, never with the
+  // top-level newline wrap, even when the element is the root value.
+  test("a multiline JSX key stays inline", () => {
+    const element = {
+      $$typeof: Symbol.for("react.element"),
+      type: "div",
+      key: "a\nb",
+      props: {},
+      ref: null,
+    };
+    expect(element).toMatchInlineSnapshot(`<div key="a
+b" />`);
   });
 });

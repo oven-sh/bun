@@ -1112,7 +1112,7 @@ fn resolve_with_args<const IS_FILE_PATH: bool>(
 
     let decoded_specifier;
     let specifier_for_resolve = if specifier.starts_with_ascii(b"file://") {
-        decoded_specifier = bun_url::path_from_file_url(specifier);
+        decoded_specifier = bun_url::path_and_query_from_file_url(specifier);
         &decoded_specifier
     } else {
         specifier

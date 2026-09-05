@@ -74,6 +74,7 @@ pub mod whatwg {
         safe fn URL__getHref(input: &String) -> String;
         safe fn URL__getFileURLString(input: &String) -> String;
         safe fn URL__pathFromFileURL(input: &String) -> String;
+        safe fn URL__pathAndQueryFromFileURL(input: &String) -> String;
         safe fn URL__getHrefJoin(base: &String, relative: &String) -> String;
         fn URL__originLength(latin1_slice: *const u8, len: usize) -> usize;
     }
@@ -91,6 +92,11 @@ pub mod whatwg {
     }
     pub fn path_from_file_url(str: &String) -> String {
         URL__pathFromFileURL(str)
+    }
+    /// Like [`path_from_file_url`], but keeps the URL's `?query` suffix on the
+    /// returned path so module keys can stay query-sensitive.
+    pub fn path_and_query_from_file_url(str: &String) -> String {
+        URL__pathAndQueryFromFileURL(str)
     }
     /// Returns the origin (`scheme://host[:port]`) prefix of `slice` as a borrowed
     /// subslice, or `None` if `slice` does not parse as a valid WHATWG URL.
@@ -186,7 +192,8 @@ pub mod whatwg {
 // Re-export the free helpers at crate root so lower-tier callers can write
 // `bun_url::join(...)` / `bun_url::href_from_string(...)` (install, http, bake, js_parser).
 pub use whatwg::{
-    file_url_from_string, href_from_string, join, origin_from_slice, path_from_file_url,
+    file_url_from_string, href_from_string, join, origin_from_slice, path_and_query_from_file_url,
+    path_from_file_url,
 };
 
 // URL is a pure view struct — every field is a slice into `href` (or a

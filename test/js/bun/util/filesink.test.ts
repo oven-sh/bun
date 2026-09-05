@@ -165,9 +165,65 @@ describe("FileSink", () => {
       });
     });
   }
+
+  it("writev writes each chunk in order", async () => {
+    const path = join(tmpdirSync(), "writev.txt");
+    const sink = Bun.file(path).writer();
+    const rc = sink.writev([
+      Buffer.from("one "),
+      new Uint8Array([0x74, 0x77, 0x6f, 0x20]),
+      new TextEncoder().encode("three"),
+    ]);
+    expect(typeof rc === "number" || rc instanceof Promise).toBe(true);
+    await sink.end();
+    expect(await Bun.file(path).text()).toBe("one two three");
+  });
+
+  it("writev rejects non-ArrayBufferView entries", async () => {
+    const path = join(tmpdirSync(), "writev-bad.txt");
+    const sink = Bun.file(path).writer();
+    try {
+      expect(() => sink.writev(["string" as any])).toThrow(expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE" }));
+      expect(() => (sink as any).writev("not an array")).toThrow(
+        expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE" }),
+      );
+    } finally {
+      await sink.end();
+    }
+  });
+
+  it("writev does not dereference a buffer detached by an accessor getter", async () => {
+    const path = join(tmpdirSync(), "writev-detach.txt");
+    const sink = Bun.file(path).writer();
+    const ab = new ArrayBuffer(64);
+    const u8 = new Uint8Array(ab);
+    const arr: any[] = [u8, null];
+    Object.defineProperty(arr, 1, {
+      get() {
+        (ab as any).transfer();
+        return new Uint8Array([0x6f, 0x6b]);
+      },
+    });
+    // The first element is validated after all getters have run, so it is
+    // seen as detached (byteLength 0) and contributes no bytes; the second
+    // element's two bytes are written.
+    sink.writev(arr);
+    await sink.end();
+    expect(await Bun.file(path).text()).toBe("ok");
+  });
+
+  it("writev on ArrayBufferSink falls through to write()", () => {
+    const s = new Bun.ArrayBufferSink();
+    s.start();
+    s.writev([Buffer.from("hello"), Buffer.from(" "), Buffer.from("world")]);
+    const out = s.end();
+    expect(new TextDecoder().decode(out)).toBe("hello world");
+  });
 });
 
+import { once } from "node:events";
 import fs from "node:fs";
+import net from "node:net";
 import path from "node:path";
 import util from "node:util";
 
@@ -399,6 +455,36 @@ it.skipIf(!isLinux)(
   },
 );
 
+// write(2) accepts the bytes up to RLIMIT_FSIZE and fails the rest with
+// EFBIG. The short write is credited before the error is reported, so end()
+// accounts for every byte that reached the fd.
+it.skipIf(!isLinux)("a write that fails after a short write still credits the bytes written", async () => {
+  const out = join(tmpdirSync(), "efbig.bin");
+  const script = `
+    const fd = require("node:fs").openSync(${JSON.stringify(out)}, "w");
+    const sink = Bun.file(fd).writer();
+    const rc = sink.write(Buffer.alloc(4 << 20, 0x61));
+    const code = await Promise.resolve(rc).then(() => "ok", e => e.code);
+    const ended = await sink.end();
+    console.log(JSON.stringify({ code, ended, size: require("node:fs").fstatSync(fd).size }));
+  `;
+  await using proc = Bun.spawn({
+    cmd: ["sh", "-c", `ulimit -f 2048; exec "${bunExe()}" -e '${script.replace(/'/g, "'\\''")}'`],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  const result = JSON.parse(stdout.trim());
+  expect(result.size).toBeWithin(1, 4 << 20);
+  expect({ code: result.code, ended: result.ended, exitCode }).toEqual({
+    code: "EFBIG",
+    ended: result.size,
+    exitCode: 0,
+  });
+});
+
 // The deferred auto-flush microtask runs at the first microtask checkpoint
 // after write() backpressures. If its flush() hit EPIPE, it discarded the
 // error and then let `run_pending_later()` resolve the pending write() promise
@@ -460,6 +546,61 @@ if (isWindows) {
         syscall: "open",
       }),
     );
+  });
+
+  // A regular-file write on Windows is an async uv_fs_write; write() reports
+  // it accepted, flush(true) hands back the promise for its completion.
+  it("flush(true) waits for the in-flight uv_fs_write", async () => {
+    const path = join(tmpdirSync(), "flush-wait.bin");
+    const fd = fs.openSync(path, "w");
+    try {
+      const sink = Bun.file(fd).writer();
+      const data = Buffer.alloc(64 * 1024, 0x62);
+      sink.write(data);
+      const flushed = sink.flush(true);
+      expect(flushed).toBeInstanceOf(Promise);
+      await flushed;
+      expect(fs.fstatSync(fd).size).toBe(data.length);
+      await sink.end();
+    } finally {
+      fs.closeSync(fd);
+    }
+  });
+
+  it("Bun.file(fd).writer() on a named pipe dups so end() releases the sink", async () => {
+    const pipePath = `\\\\.\\pipe\\bun-filesink-${process.pid}-${Date.now()}`;
+    const { promise: gotData, resolve: onData, reject: onErr } = Promise.withResolvers<string>();
+    const server = net.createServer(c => {
+      c.once("data", d => onData(String(d)));
+      c.once("error", onErr);
+    });
+    server.once("error", onErr);
+    server.listen(pipePath);
+    await once(server, "listening");
+
+    let fd = -1;
+    try {
+      fd = fs.openSync(pipePath, "w");
+      const baseline = fileSinkInternals.liveCount();
+      const sink = Bun.file(fd).writer();
+      const rc = sink.write(Buffer.from("hello"));
+      if (rc instanceof Promise) await rc;
+      await sink.end();
+
+      // end() must not close the caller's fd: fstat still works.
+      expect(() => fs.fstatSync(fd)).not.toThrow();
+      expect(await gotData).toBe("hello");
+
+      for (let i = 0; i < 50; i++) {
+        Bun.gc(true);
+        if (fileSinkInternals.liveCount() <= baseline) break;
+        await Bun.sleep(10);
+      }
+      expect(fileSinkInternals.liveCount()).toBeLessThanOrEqual(baseline);
+    } finally {
+      if (fd !== -1) fs.closeSync(fd);
+      await new Promise<void>(r => server.close(() => r()));
+    }
   });
 }
 

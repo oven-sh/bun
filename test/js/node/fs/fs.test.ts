@@ -15,6 +15,7 @@ import {
   tempDirWithFiles,
   tmpdirSync,
 } from "harness";
+import { once } from "node:events";
 import fs, {
   closeSync,
   constants,
@@ -4496,6 +4497,196 @@ describe("createWriteStream", () => {
         done();
       }
     });
+  });
+
+  async function writeLines(ws: fs.WriteStream, n: number, line: string | Buffer) {
+    for (let i = 0; i < n; i++) {
+      if (!ws.write(line)) await once(ws, "drain");
+    }
+    await new Promise<void>((resolve, reject) => ws.end(err => (err ? reject(err) : resolve())));
+    await once(ws, "close");
+  }
+
+  it.skipIf(!isLinux)("coalesces many small writes instead of dispatching one syscall per chunk", async () => {
+    const syscw = () => +readFileSync("/proc/self/io", "utf8").match(/syscw: (\d+)/)![1];
+    const N = 5000;
+    const line = Buffer.alloc(81, "x");
+    using dir = tempDir("ws-coalesce", {});
+    const streamPath = join(String(dir), "out.txt");
+
+    const ws = createWriteStream(streamPath);
+    await once(ws, "ready");
+    const fd = ws.fd as number;
+    expect(fd).toBeGreaterThan(0);
+
+    const before = syscw();
+    await writeLines(ws, N, line);
+    const writeSyscalls = syscw() - before;
+
+    expect({
+      size: statSync(streamPath).size,
+      bytesWritten: ws.bytesWritten,
+      fdClosed: (() => {
+        try {
+          fstatSync(fd);
+          return false;
+        } catch {
+          return true;
+        }
+      })(),
+    }).toEqual({ size: N * line.length, bytesWritten: N * line.length, fdClosed: true });
+
+    // Without coalescing each chunk is a separate thread-pool dispatch (one
+    // write(2) to the file plus one 8-byte eventfd wake), so 5000 chunks is
+    // ~10000 write syscalls. Coalescing brings it well under N/4.
+    expect(writeSyscalls).toBeLessThan(N / 4);
+  });
+
+  it.skipIf(!isLinux)("holds a single fd for the stream's lifetime", async () => {
+    using dir = tempDir("ws-fd-count", {});
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const fs = require("node:fs");
+         const { once } = require("node:events");
+         const countFds = () => fs.readdirSync("/proc/self/fd").length;
+         const before = countFds();
+         const ws = fs.createWriteStream(process.argv[1]);
+         await once(ws, "ready");
+         const open = countFds() - before;
+         ws.write("x");
+         await new Promise((res, rej) => ws.end(e => (e ? rej(e) : res())));
+         await once(ws, "close");
+         console.log(JSON.stringify({ open, closed: countFds() - before }));`,
+        join(String(dir), "out.txt"),
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual({ open: 1, closed: 0 });
+    expect(exitCode).toBe(0);
+  });
+
+  it("many small writes produce byte-exact output and bytesWritten", async () => {
+    const N = isDebug ? 2000 : 10000;
+    const chunk = "\u00e9#"; // 2-byte UTF-8 char + 1 ASCII byte => 3 bytes/chunk
+    const byteLen = Buffer.byteLength(chunk);
+    using dir = tempDir("ws-bytes", {});
+    const streamPath = join(String(dir), "out.txt");
+
+    const ws = createWriteStream(streamPath);
+    await writeLines(ws, N, chunk);
+
+    expect({
+      size: statSync(streamPath).size,
+      bytesWritten: ws.bytesWritten,
+      head: readFileSync(streamPath, "utf8").slice(0, chunk.length * 3),
+    }).toEqual({ size: N * byteLen, bytesWritten: N * byteLen, head: chunk + chunk + chunk });
+  });
+
+  it.skipIf(!isLinux)("surfaces a synchronous write(2) failure via the stream's 'error' event", async () => {
+    const ws = createWriteStream("/dev/full");
+    await once(ws, "ready");
+    let unhandled = 0;
+    const onUnhandled = () => unhandled++;
+    process.on("unhandledRejection", onUnhandled);
+    try {
+      const errorPromise = once(ws, "error");
+      ws.write(Buffer.alloc(8192));
+      const [err] = (await errorPromise) as [NodeJS.ErrnoException];
+      await new Promise(r => setImmediate(r));
+      expect({ code: err.code, bytesWritten: ws.bytesWritten, unhandled }).toEqual({
+        code: "ENOSPC",
+        bytesWritten: 0,
+        unhandled: 0,
+      });
+    } finally {
+      process.off("unhandledRejection", onUnhandled);
+    }
+  });
+
+  it("write callback fires only after the bytes are on disk", async () => {
+    using dir = tempDir("ws-cb-on-disk", {});
+    const streamPath = join(String(dir), "out.bin");
+    const ws = createWriteStream(streamPath);
+    await once(ws, "ready");
+    const data = Buffer.alloc(256 * 1024, 0x63);
+    const { promise, resolve, reject } = Promise.withResolvers<number>();
+    ws.write(data, err => (err ? reject(err) : resolve(fstatSync(ws.fd as number).size)));
+    expect(await promise).toBe(data.length);
+    await new Promise<void>((res, rej) => ws.end(e => (e ? rej(e) : res())));
+  });
+
+  // A chunk under the sink's 4 KB threshold is buffered first and only hits
+  // the fd on flush. When that flush fails, nothing landed.
+  it.skipIf(!isLinux)("bytesWritten stays 0 when a small buffered write fails", async () => {
+    const ws = createWriteStream("/dev/full");
+    await once(ws, "ready");
+    const errorPromise = once(ws, "error");
+    ws.write(Buffer.alloc(100));
+    const [err] = (await errorPromise) as [NodeJS.ErrnoException];
+    expect({ code: err.code, bytesWritten: ws.bytesWritten }).toEqual({ code: "ENOSPC", bytesWritten: 0 });
+  });
+
+  it.skipIf(!isLinux)("bytesWritten matches the file size when a write fails after many small writes", async () => {
+    using dir = tempDir("cws-efbig-small", {});
+    const out = join(String(dir), "out.bin");
+    const script = `
+      const fs = require("node:fs");
+      const { once } = require("node:events");
+      const s = fs.createWriteStream(${JSON.stringify(out)});
+      const ev = [];
+      s.on("error", e => ev.push("error:" + e.code));
+      s.on("close", () => {
+        console.log(JSON.stringify({ ev, bytesWritten: s.bytesWritten, size: fs.statSync(${JSON.stringify(out)}).size }));
+      });
+      const chunk = Buffer.alloc(512, 0x41);
+      for (let i = 0; i < 8192 && !s.destroyed; i++) {
+        if (!s.write(chunk)) await once(s, "drain").catch(() => {});
+      }
+      s.end();
+    `;
+    await using proc = Bun.spawn({
+      cmd: ["sh", "-c", `ulimit -f 2048; exec "${bunExe()}" -e '${script.replace(/'/g, "'\\''")}'`],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    const result = JSON.parse(stdout.trim());
+    expect(result.size).toBeWithin(1, 8192 * 512);
+    expect({ ev: result.ev, bytesWritten: result.bytesWritten, exitCode }).toEqual({
+      ev: ["error:EFBIG"],
+      bytesWritten: result.size,
+      exitCode: 0,
+    });
+  });
+
+  it("routes writes through fs.write so a monkey-patch is honoured", async () => {
+    using dir = tempDir("ws-patch", {});
+    const streamPath = join(String(dir), "out.txt");
+    const ws = createWriteStream(streamPath);
+    const original = fs.write;
+    let calls = 0;
+    // @ts-ignore
+    fs.write = function () {
+      calls++;
+      return original.apply(fs, arguments);
+    };
+    try {
+      ws.write("hello");
+      ws.write(" world");
+      await new Promise<void>((resolve, reject) => ws.end(err => (err ? reject(err) : resolve())));
+      await once(ws, "close");
+    } finally {
+      fs.write = original;
+    }
+    expect({ calls, contents: readFileSync(streamPath, "utf8") }).toEqual({ calls: 2, contents: "hello world" });
   });
 });
 

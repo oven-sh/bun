@@ -1125,7 +1125,7 @@ pub use ${rustPath} as ${name};
 
 `;
 
-    const hostFns = ["construct", "write", "end", "flush", "start"] as const;
+    const hostFns = ["construct", "write", "writev", "end", "flush", "start"] as const;
     for (const fn of hostFns) {
       const sym = `${name}__${fn}`;
       symbols.push(sym);
@@ -1246,6 +1246,7 @@ function lutInput() {
     end        ${`${name}__end`.padEnd(padding + 8)} ReadOnly|DontDelete|Function 0
     start      ${`${name}__start`.padEnd(padding + 8)} ReadOnly|DontDelete|Function 1
     write      ${`${name}__write`.padEnd(padding + 8)} ReadOnly|DontDelete|Function 1
+    writev     ${`${name}__writev`.padEnd(padding + 8)} ReadOnly|DontDelete|Function 1
     ref        ${`${name}__ref`.padEnd(padding + 8)} ReadOnly|DontDelete|Function 0
     unref      ${`${name}__unref`.padEnd(padding + 8)} ReadOnly|DontDelete|Function 0
     _getFd      ${`${name}__getFd`.padEnd(padding + 8)} ReadOnly|DontDelete|Function 0
@@ -1260,6 +1261,7 @@ function lutInput() {
     end          ${`${controller}__end`.padEnd(protopad + 4)}  ReadOnly|DontDelete|Function 0
     start        ${`${name}__start`.padEnd(protopad + 4)}  ReadOnly|DontDelete|Function 1
     write        ${`${name}__write`.padEnd(protopad + 4)}  ReadOnly|DontDelete|Function 1
+    writev       ${`${name}__writev`.padEnd(protopad + 4)}  ReadOnly|DontDelete|Function 1
 @end
 */
 `;

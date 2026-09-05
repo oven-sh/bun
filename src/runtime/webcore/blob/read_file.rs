@@ -1089,6 +1089,8 @@ impl<'a> ReadFileUV<'a> {
 
     pub fn finalize(this: *mut Self) {
         log!("ReadFileUV.finalize");
+        // No read is in flight any more, so the fd may take its next reader.
+        libuv::stdio_readers::release(this.cast());
         // SAFETY: `this` was heap-allocated in start(); we reclaim ownership here.
         let mut this_box = unsafe { bun_core::heap::take(this) };
         let event_loop = this_box.event_loop;
@@ -1149,6 +1151,22 @@ impl<'a> ReadFileUV<'a> {
     pub(crate) fn on_file_open(&mut self, opened_fd: Fd) {
         log!("ReadFileUV.onFileOpen");
         if self.errno.is_some() {
+            self.on_finish();
+            return;
+        }
+
+        // A stdio pipe takes one reader at a time (`libuv::stdio_readers`);
+        // `finalize` releases the claim.
+        if opened_fd.stdio_tag().is_some()
+            && libuv::uv_guess_handle(opened_fd.uv()) == libuv::HandleType::NamedPipe
+            && !libuv::stdio_readers::claim(opened_fd.uv(), core::ptr::from_mut(self).cast())
+        {
+            self.errno = Some(bun_errno::from_errno(bun_sys::E::BUSY as i32).into());
+            self.system_error = Some(
+                bun_sys::Error::from_code(bun_sys::E::BUSY, bun_sys::Tag::read)
+                    .to_system_error()
+                    .into(),
+            );
             self.on_finish();
             return;
         }

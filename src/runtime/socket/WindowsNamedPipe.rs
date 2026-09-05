@@ -739,7 +739,7 @@ impl WindowsNamedPipe {
         );
 
         // SAFETY: as above.
-        if let Err(e) = unsafe { (*pipe).open(fd.uv()) }.to_result(bun_sys::Tag::open) {
+        if let Err(e) = unsafe { (*pipe).open_for_reading(fd.uv()) }.to_result(bun_sys::Tag::open) {
             self.discard_unadopted_pipe();
             return Err(e);
         }

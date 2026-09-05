@@ -1309,7 +1309,7 @@ impl WindowsBufferedReader {
         // Use the event loop from the parent, not the global one
         // This is critical for spawnSync to use its isolated loop
         let loop_ = self.vtable.loop_();
-        let source = match Source::open(loop_.cast(), fd) {
+        let source = match Source::open_for_reading(loop_.cast(), fd) {
             sys::Result::Err(err) => return sys::Result::Err(err),
             sys::Result::Ok(source) => source,
         };

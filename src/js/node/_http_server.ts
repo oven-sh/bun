@@ -536,6 +536,7 @@ Server.prototype.listen = function () {
   const server = this;
   let port, host;
   let socketPath;
+  let fd;
   let tls = this[tlsSymbol];
 
   // This logic must align with:
@@ -548,6 +549,7 @@ Server.prototype.listen = function () {
       port = arg0.port;
       host = arg0.host;
       socketPath = arg0.path;
+      fd = arg0.fd;
 
       const otherTLS = arg0.tls;
       if (otherTLS && $isObject(otherTLS)) {
@@ -586,6 +588,17 @@ Server.prototype.listen = function () {
 
   try {
     // listenInCluster
+
+    // Bun.serve cannot adopt an inherited listening fd, so surface the same
+    // EINVAL net.Server.listen({ fd }) reports rather than silently binding a
+    // fresh random port (which leaves the intended socket unreachable).
+    if (typeof fd === "number" && fd >= 0) {
+      const error: any = new Error("listen EINVAL: Bun does not support listening on a file descriptor");
+      error.code = "EINVAL";
+      error.errno = process.platform === "win32" ? -4071 : -22;
+      error.syscall = "listen";
+      throw error;
+    }
 
     if (isPrimary) {
       server[kRealListen](tls, port, host, socketPath, false);

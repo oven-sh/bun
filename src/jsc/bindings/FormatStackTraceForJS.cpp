@@ -437,7 +437,7 @@ static JSValue computeErrorInfoWithPrepareStackTrace(JSC::VM& vm, Zig::GlobalObj
     MarkedArgumentBuffer callSites;
 
     // Create the call sites (one per frame)
-    Zig::createCallSitesFromFrames(globalObject, lexicalGlobalObject, stackTrace, callSites);
+    Zig::createCallSitesFromFrames(lexicalGlobalObject, stackTrace, callSites);
     RETURN_IF_EXCEPTION(scope, {});
 
     // We need to sourcemap it if it's a GlobalObject.
@@ -509,7 +509,7 @@ static JSValue computeErrorInfoWithPrepareStackTrace(JSC::VM& vm, Zig::GlobalObj
         }
     }
 
-    JSArray* callSitesArray = JSC::constructArray(globalObject, globalObject->arrayStructureForIndexingTypeDuringAllocation(JSC::ArrayWithContiguous), callSites);
+    JSArray* callSitesArray = JSC::constructArray(lexicalGlobalObject, lexicalGlobalObject->arrayStructureForIndexingTypeDuringAllocation(JSC::ArrayWithContiguous), callSites);
     RETURN_IF_EXCEPTION(scope, {});
 
     RELEASE_AND_RETURN(scope, formatStackTraceToJSValue(vm, globalObject, lexicalGlobalObject, errorObject, callSitesArray, prepareStackTrace));
@@ -822,19 +822,19 @@ JSC_DEFINE_HOST_FUNCTION(errorConstructorFuncCaptureStackTrace, (JSC::JSGlobalOb
 
 namespace Zig {
 
-void createCallSitesFromFrames(Zig::GlobalObject* globalObject, JSC::JSGlobalObject* lexicalGlobalObject, JSCStackTrace& stackTrace, MarkedArgumentBuffer& callSites)
+void createCallSitesFromFrames(JSC::JSGlobalObject* lexicalGlobalObject, JSCStackTrace& stackTrace, MarkedArgumentBuffer& callSites)
 {
     /* From v8's "Stack Trace API" (https://github.com/v8/v8/wiki/Stack-Trace-API):
      * "To maintain restrictions imposed on strict mode functions, frames that have a
      * strict mode function and all frames below (its caller etc.) are not allow to access
      * their receiver and function objects. For those frames, getFunction() and getThis()
      * will return undefined."." */
-    auto& vm = JSC::getVM(globalObject);
+    auto& vm = JSC::getVM(lexicalGlobalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     bool encounteredStrictFrame = false;
 
-    // TODO: is it safe to use CallSite structure from a different JSGlobalObject? This case would happen within a node:vm
-    JSC::Structure* callSiteStructure = globalObject->callSiteStructure();
+    // Per-realm structure: inside node:vm the CallSite prototype chain must end at the vm's Object.prototype.
+    JSC::Structure* callSiteStructure = uncheckedDowncast<Bun::GlobalScope>(lexicalGlobalObject)->callSiteStructure();
     size_t framesCount = stackTrace.size();
 
     for (size_t i = 0; i < framesCount; i++) {

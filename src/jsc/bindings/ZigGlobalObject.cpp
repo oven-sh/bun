@@ -73,8 +73,6 @@
 #include "NodeV8.h"
 #include "ProcessIdentifier.h"
 #include "GlobalEventScope.h"
-#include "CallSite.h"
-#include "CallSitePrototype.h"
 #include "FormatStackTraceForJS.h"
 #include "JSCommonJSModule.h"
 #include "JSCommonJSExtensions.h"
@@ -2176,12 +2174,6 @@ void GlobalObject::finishCreation(VM& vm)
              init.setPrototype(prototype);
              init.setStructure(structure);
              init.setConstructor(constructor);
-         } },
-        { OBJECT_OFFSETOF(GlobalObject, m_callSiteStructure), [](LazyClassStructure::Initializer& init) {
-             auto* prototype = CallSitePrototype::create(init.vm, CallSitePrototype::createStructure(init.vm, init.global, init.global->objectPrototype()), init.global);
-             auto* structure = CallSite::createStructure(init.vm, init.global, prototype);
-             init.setPrototype(prototype);
-             init.setStructure(structure);
          } },
         { OBJECT_OFFSETOF(GlobalObject, m_JSStringDecoderClassStructure), [](LazyClassStructure::Initializer& init) {
              auto* prototype = JSStringDecoderPrototype::create(

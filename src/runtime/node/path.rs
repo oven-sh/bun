@@ -3575,14 +3575,14 @@ macro_rules! export_path_host_fn {
                 global: &JSGlobalObject,
                 is_windows: bool,
                 args_ptr: *const JSValue,
-                args_len: u16,
+                args_len: usize,
             ) -> JSValue {
                 // SAFETY: `args_ptr` points to `args_len` JSValues from the C++
                 // CallFrame (NodePath.cpp). Borrowed for the synchronous call.
                 // (Body kept in sync with the non-Windows arm below — bughunt
                 // changed the target signature to take a slice but only updated
                 // one cfg arm.)
-                let args = unsafe { bun_core::ffi::slice(args_ptr, args_len as usize) };
+                let args = unsafe { bun_core::ffi::slice(args_ptr, args_len) };
                 crate::jsc::host_fn::to_js_host_call(
                     global,
                     || $target(global, is_windows, args),
@@ -3594,12 +3594,12 @@ macro_rules! export_path_host_fn {
                 global: &JSGlobalObject,
                 is_windows: bool,
                 args_ptr: *const JSValue,
-                args_len: u16,
+                args_len: usize,
             ) -> JSValue {
                 // SAFETY: `args_ptr` points to `args_len` JSValues from the C++
                 // CallFrame (the caller is `Bun__Path__*` in NodePath.cpp). The
                 // slice is borrowed for the synchronous host-call only.
-                let args = unsafe { bun_core::ffi::slice(args_ptr, args_len as usize) };
+                let args = unsafe { bun_core::ffi::slice(args_ptr, args_len) };
                 crate::jsc::host_fn::to_js_host_call(
                     global,
                     || $target(global, is_windows, args),

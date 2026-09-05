@@ -53,6 +53,39 @@ fn signal_code_from_js(val: JSValue, global: &JSGlobalObject) -> JsResult<Signal
     bun_sys_jsc::signal_code_jsc::from_js(val, global)
 }
 
+/// Like node, `uid` / `gid` are int32s that the OS casts to uid_t / gid_t.
+fn user_or_group_id_from_js(
+    global: &JSGlobalObject,
+    value: JSValue,
+    field_name: &'static [u8],
+) -> JsResult<Option<u32>> {
+    if value == JSValue::NULL {
+        return Ok(None);
+    }
+    // `validate_integer_range` maps NaN to the default, and the default id 0 is root.
+    if value.is_number() && value.as_number().is_nan() {
+        return Err(global.throw_range_error(
+            value.as_number(),
+            bun_fmt::OutOfRangeOptions {
+                field_name,
+                msg: b"an integer",
+                ..Default::default()
+            },
+        ));
+    }
+    let id = global.validate_integer_range::<i32>(
+        value,
+        0,
+        bun_sql_jsc::jsc::IntegerRange {
+            min: i128::from(i32::MIN),
+            max: i128::from(i32::MAX),
+            field_name,
+            ..Default::default()
+        },
+    )?;
+    Ok(Some(id as u32))
+}
+
 #[inline]
 fn subprocess_ipc_owner(ptr: *mut SubprocessT<'_>) -> Option<IPC::SendQueueOwner> {
     core::ptr::NonNull::new(ptr.cast::<SubprocessT<'static>>()).map(IPC::SendQueueOwner::Subprocess)
@@ -656,38 +689,12 @@ fn spawn_maybe_sync(
                 }
             }
 
-            // Node semantics: uid/gid are int32s passed through to the OS
-            // (negative values are cast to uid_t/gid_t, matching libuv).
             if let Some(uid_value) = args.get(global_this, "uid")? {
-                if uid_value != JSValue::NULL {
-                    let uid_int = global_this.validate_integer_range::<i32>(
-                        uid_value,
-                        0,
-                        bun_sql_jsc::jsc::IntegerRange {
-                            min: i128::from(i32::MIN),
-                            max: i128::from(i32::MAX),
-                            field_name: b"uid",
-                            ..Default::default()
-                        },
-                    )?;
-                    uid = Some(uid_int as u32);
-                }
+                uid = user_or_group_id_from_js(global_this, uid_value, b"uid")?;
             }
 
             if let Some(gid_value) = args.get(global_this, "gid")? {
-                if gid_value != JSValue::NULL {
-                    let gid_int = global_this.validate_integer_range::<i32>(
-                        gid_value,
-                        0,
-                        bun_sql_jsc::jsc::IntegerRange {
-                            min: i128::from(i32::MIN),
-                            max: i128::from(i32::MAX),
-                            field_name: b"gid",
-                            ..Default::default()
-                        },
-                    )?;
-                    gid = Some(gid_int as u32);
-                }
+                gid = user_or_group_id_from_js(global_this, gid_value, b"gid")?;
             }
 
             // Ignored where cgroups don't exist, like `windowsHide` on POSIX.

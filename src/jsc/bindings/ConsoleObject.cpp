@@ -60,12 +60,22 @@ void ConsoleObject::messageWithTypeAndLevel(MessageType type, MessageLevel level
 }
 void ConsoleObject::count(JSGlobalObject* globalObject, const String& label)
 {
+    if (globalObject->inspectable()) {
+        if (auto client = globalObject->inspectorController().consoleClient()) {
+            client->count(globalObject, label);
+        }
+    }
     auto input = label.tryGetUTF8().value();
     Bun__ConsoleObject__count(this->m_client, globalObject, reinterpret_cast<const unsigned char*>(input.data()), input.length());
 }
 
 void ConsoleObject::countReset(JSGlobalObject* globalObject, const String& label)
 {
+    if (globalObject->inspectable()) {
+        if (auto client = globalObject->inspectorController().consoleClient()) {
+            client->countReset(globalObject, label);
+        }
+    }
     auto input = label.tryGetUTF8().value();
     Bun__ConsoleObject__countReset(this->m_client, globalObject, reinterpret_cast<const unsigned char*>(input.data()), input.length());
 }
@@ -77,12 +87,22 @@ void ConsoleObject::takeHeapSnapshot(JSC::JSGlobalObject* globalObject, const St
 }
 void ConsoleObject::time(JSGlobalObject* globalObject, const String& label)
 {
+    if (globalObject->inspectable()) {
+        if (auto client = globalObject->inspectorController().consoleClient()) {
+            client->time(globalObject, label);
+        }
+    }
     auto input = label.tryGetUTF8().value();
     Bun__ConsoleObject__time(this->m_client, globalObject, reinterpret_cast<const unsigned char*>(input.data()), input.length());
 }
 void ConsoleObject::timeLog(JSGlobalObject* globalObject, const String& label,
     Ref<ScriptArguments>&& arguments)
 {
+    if (globalObject->inspectable()) {
+        if (auto client = globalObject->inspectorController().consoleClient()) {
+            client->timeLog(globalObject, label, arguments.copyRef());
+        }
+    }
     auto input = label.tryGetUTF8().value();
 
     auto args = arguments.ptr();
@@ -97,6 +117,11 @@ void ConsoleObject::timeLog(JSGlobalObject* globalObject, const String& label,
 }
 void ConsoleObject::timeEnd(JSGlobalObject* globalObject, const String& label)
 {
+    if (globalObject->inspectable()) {
+        if (auto client = globalObject->inspectorController().consoleClient()) {
+            client->timeEnd(globalObject, label);
+        }
+    }
     auto input = label.tryGetUTF8().value();
     Bun__ConsoleObject__timeEnd(this->m_client, globalObject, reinterpret_cast<const unsigned char*>(input.data()), input.length());
 }

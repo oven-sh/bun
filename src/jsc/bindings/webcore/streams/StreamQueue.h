@@ -80,9 +80,7 @@ struct SourceAlgorithmSlots {
     // JavaScript kind only: the converted `cancel` method ([[cancelAlgorithm]]);
     // null ⇒ the trivial algorithm.
     JSC::WriteBarrier<JSC::JSObject> method2;
-    // NON-JavaScript kinds only: Transform → JSTransformStream; TeeBranch/ByteTeeBranch →
-    // JSStreamTeeState; FromIterable → JSStreamFromIterableContext; Native →
-    // JSNativeStreamSourceAdapter.
+    // NON-JavaScript kinds only: the context cell named for each SourceKind in StreamsForward.h.
     JSC::WriteBarrier<JSC::JSCell> algorithmContext;
 };
 

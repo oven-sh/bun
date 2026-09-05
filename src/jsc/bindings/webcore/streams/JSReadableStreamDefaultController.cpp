@@ -30,8 +30,7 @@ namespace WebStreams {
 
 using namespace JSC;
 
-// The [[pullAlgorithm]] dispatch. ByteTeeBranch is byte-controller-only; the switch is total
-// over SourceKind.
+// The [[pullAlgorithm]] dispatch.
 // Returns nullptr with no exception pending when the pull completed synchronously with a
 // non-thenable result: the caller queues the upon-fulfillment handler without a wrapper promise.
 static JSC::JSPromise* performDefaultControllerPullAlgorithm(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSReadableStreamDefaultController* controller)

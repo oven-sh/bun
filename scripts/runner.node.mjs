@@ -1603,14 +1603,16 @@ function describeStalledProcessTree(rootPid, execPath, budgetMs = 60_000) {
   // overflow the stack while we are trying to report a stall.
   const pending = [{ ...root, depth: 0 }];
   while (pending.length) {
-    if (tree.length === maxListed) {
-      truncated = true;
-      break;
-    }
     const proc = pending.pop();
     tree.push(proc);
+    // Queue only the children that can still be listed, so the queue itself
+    // never grows past the cap.
     const kids = children.get(String(proc.pid)) ?? [];
-    for (let k = kids.length - 1; k >= 0; k--) pending.push({ ...kids[k], depth: proc.depth + 1 });
+    const room = Math.max(0, maxListed - tree.length - pending.length);
+    if (kids.length > room) truncated = true;
+    for (let k = Math.min(kids.length, room) - 1; k >= 0; k--) {
+      pending.push({ ...kids[k], depth: proc.depth + 1 });
+    }
   }
   const bunName = basename(execPath);
   const isBun = args => {

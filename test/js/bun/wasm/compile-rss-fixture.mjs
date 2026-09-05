@@ -93,35 +93,50 @@ function makeModule({ functionCount = 35, opsPerFunction = 1400, giantOps = 3000
 
 const targetMiB = Number(process.argv[2]);
 if (!Number.isFinite(targetMiB)) throw new Error(`expected the target in MiB as argv[2], got ${process.argv[2]}`);
+// On Darwin mimalloc returns memory with MADV_FREE_REUSABLE, which the kernel keeps counted in RSS
+// until it reuses the pages. phys_footprint drops at once, so measure that there.
+const rss =
+  process.platform === "darwin" && typeof Bun.unsafe.memoryFootprint === "function"
+    ? Bun.unsafe.memoryFootprint
+    : process.memoryUsage.rss;
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 const bytes = makeModule();
-Bun.gc(true);
-await sleep(50);
-Bun.gc(true);
 
-const base = process.memoryUsage().rss;
+// Building the module leaves garbage behind. Wait until RSS stops falling before taking the
+// baseline: mimalloc hands freed memory back on its own schedule, and there is no signal for it.
+let base = Infinity;
+for (const deadline = performance.now() + 2000; performance.now() < deadline; ) {
+  Bun.gc(true);
+  await sleep(50);
+  const now = rss();
+  if (now >= base - 1048576) break;
+  base = now;
+}
 for (let i = 0; i < 3; i++) {
   let mod = await WebAssembly.compile(bytes);
   mod = null;
 }
+// Read before anything is freed: the test checks that the compiles grew RSS at all.
+const peak = rss() - base;
 // Free the modules. The main thread frees their metadata into the compiler threads' pages, and only
 // those threads can hand that memory back. They do so once they have worked and gone idle again, so
 // give each of them one trivial function to compile after the modules are gone.
 Bun.gc(true);
 await WebAssembly.compile(makeModule({ functionCount: 16, opsPerFunction: 1, giantOps: 1 }));
 Bun.gc(true);
-const afterCompiles = process.memoryUsage().rss - base;
+const afterCompiles = rss() - base;
 
 const deadline = performance.now() + 3000;
 let min = Infinity;
 while (performance.now() < deadline && min / 1048576 >= targetMiB) {
   await sleep(100);
   Bun.gc(true);
-  min = Math.min(min, process.memoryUsage().rss - base);
+  min = Math.min(min, rss() - base);
 }
 console.log(
   JSON.stringify({
     moduleMiB: bytes.length / 1048576,
+    peakDeltaMiB: peak / 1048576,
     afterCompilesDeltaMiB: afterCompiles / 1048576,
     idleDeltaMiB: min / 1048576,
   }),

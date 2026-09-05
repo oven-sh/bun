@@ -26,6 +26,8 @@ test.skipIf(isDebug || isASAN)(
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stderr).toBe("");
     const result = JSON.parse(stdout.trim().split("\n").at(-1)!);
+    // The compiles have to grow RSS well past the target first, or the check below means nothing.
+    expect(result.peakDeltaMiB).toBeGreaterThan(idleTargetMiB * 2);
     expect(result.idleDeltaMiB).toBeLessThan(idleTargetMiB);
     expect(exitCode).toBe(0);
   },

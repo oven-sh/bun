@@ -56,6 +56,10 @@ pub struct FileReader {
     pub(crate) event_loop: Cell<EventLoopHandle>,
     pub(crate) lazy: JsCell<Lazy>,
     pub(crate) buffered: JsCell<Vec<u8>>,
+    /// A read error that arrived with no pending pull to settle: the failing
+    /// read ran synchronously inside `on_pull`, or landed between pulls. The
+    /// next `on_pull` returns it once the buffered bytes are delivered.
+    pub(crate) read_error: JsCell<Option<sys::Error>>,
     /// Read-only after construction.
     pub(crate) highwater_mark: usize,
     pub(crate) flowing: Cell<bool>,
@@ -83,6 +87,7 @@ impl Default for FileReader {
             event_loop: Cell::new(EventLoopHandle::init(core::ptr::null_mut())),
             lazy: JsCell::new(Lazy::None),
             buffered: JsCell::new(Vec::new()),
+            read_error: JsCell::new(None),
             highwater_mark: 16384,
             flowing: Cell::new(true),
             sink: JsCell::new(SinkHandle::None),
@@ -779,7 +784,7 @@ impl FileReader {
                 // `drained` here — freeing `self.buffered` would be a no-op.
                 drop(drained);
 
-                if self.reader().is_done() {
+                if self.reader_finished() {
                     return streams::Result::IntoArrayAndDone(streams::IntoArray {
                         value: array,
                         len: drained_len as u64,
@@ -792,7 +797,7 @@ impl FileReader {
                 }
             }
 
-            if self.reader().is_done() {
+            if self.reader_finished() {
                 return streams::Result::OwnedAndDone(drained);
             } else {
                 return streams::Result::Owned(drained);
@@ -800,14 +805,14 @@ impl FileReader {
         }
 
         if self.reader().is_done() {
-            return streams::Result::Done;
+            return self.end_of_reader();
         }
 
         if !self.reader().has_pending_read() && self.flowing.get() {
             // SAFETY: the reader cell is live for `self`'s lifetime; `read_into` is the raw re-entrancy-safe entry (EOF/error dispatch runs user JS).
             let (amount_read, state) = unsafe { IOReader::read_into(self.reader.get(), buffer) };
             bun_core::scoped_log!(FileReader, "onPull({}) = {}", buffer.len(), amount_read);
-            let done = state == ReadState::Eof || self.reader().is_done();
+            let done = state == ReadState::Eof || self.reader_finished();
             if amount_read > 0 {
                 let into = streams::IntoArray {
                     value: array,
@@ -828,8 +833,8 @@ impl FileReader {
                     streams::Result::Owned(drained)
                 };
             }
-            if done {
-                return streams::Result::Done;
+            if done || self.reader().is_done() {
+                return self.end_of_reader();
             }
         }
 
@@ -934,39 +939,66 @@ impl FileReader {
             self.buffered.set(Vec::new());
         }
 
+        // Pin across the dispatch below: `sink.end()` and `p.run()` run user
+        // JS, and anything there that reaches on_reader_done would drop the
+        // across-read ref and let a GC free this box before the
+        // `waiting_for_on_reader_done` read below.
+        let parent = self.parent();
+        // SAFETY: see `parent()`.
+        unsafe { (*parent).increment_count() };
+
         let sink = *self.sink.get();
         if sink.is_some() {
             self.sink.set(SinkHandle::None);
             self.sink_paused.set(false);
             sink.end(Some(streams::StreamError::Error(err)));
-            let parent = self.parent();
-            if self.waiting_for_on_reader_done.get() && !self.done.get() {
-                self.waiting_for_on_reader_done.set(false);
-                // SAFETY: see `parent()`.
-                let _ = unsafe { Source::decrement_count(parent) };
-            }
-            return;
+        } else if self.pending.get().state == streams::PendingState::Pending {
+            self.pending.with_mut(|p| {
+                p.result = streams::Result::Err(streams::StreamError::Error(err));
+            });
+            self.pending.with_mut(|p| p.run());
+        } else {
+            // `p.run()` would no-op and the pull promise would never settle.
+            self.read_error.set(Some(err));
         }
-
-        self.pending.with_mut(|p| {
-            p.result = streams::Result::Err(streams::StreamError::Error(err));
-        });
-        // Pin across `p.run()`: it runs user JS, and anything there that
-        // reaches on_reader_done would drop the across-read ref and let a GC
-        // free this box before the `waiting_for_on_reader_done` read below.
-        let parent = self.parent();
-        // SAFETY: see `parent()`.
-        unsafe { (*parent).increment_count() };
-        self.pending.with_mut(|p| p.run());
 
         if self.waiting_for_on_reader_done.get() && !self.done.get() {
             self.waiting_for_on_reader_done.set(false);
             // SAFETY: see `parent()`; the pin above keeps the count > 0.
             let _ = unsafe { Source::decrement_count(parent) };
         }
+        self.close_after_error();
         // SAFETY: see `parent()`; the pin keeps the count >= 1, so this never
         // frees. Tail call, `self` is not accessed after.
         let _ = unsafe { Source::decrement_count(parent) };
+    }
+
+    /// A read error is terminal, and a consumer never cancels an errored
+    /// stream. Release the poll and the fd here: a registered poll keeps the
+    /// event loop alive.
+    fn close_after_error(&self) {
+        if self.done.get() {
+            return;
+        }
+        self.done.set(true);
+        self.reader().update_ref(false);
+        self.reader().deinit();
+    }
+
+    /// `true` once the reader has nothing more to deliver. A stored read error
+    /// still has to reach the consumer, so it keeps the stream open for one
+    /// more pull.
+    fn reader_finished(&self) -> bool {
+        self.reader().is_done() && self.read_error.get().is_none()
+    }
+
+    /// What a pull gets once the reader is done: the stored read error, or a
+    /// clean end.
+    fn end_of_reader(&self) -> streams::Result {
+        match self.read_error.replace(None) {
+            Some(err) => streams::Result::Err(streams::StreamError::Error(err)),
+            None => streams::Result::Done,
+        }
     }
 
     pub(crate) fn set_raw_mode(&self, _flag: bool) -> sys::Result<()> {

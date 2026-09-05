@@ -12,6 +12,9 @@ const cc = Bun.which("cc") || Bun.which("gcc") || Bun.which("clang");
 //   SHELL_FAIL_RECV=1        every recv() fails with ENOMEM.
 //   SHELL_FAIL_EPOLL=1       every epoll_ctl ADD/MOD on a pipe-like fd fails
 //                            with ENOMEM.
+//   SHELL_FAIL_EPOLL_IN=1    every epoll_ctl ADD/MOD on an AF_UNIX socket that
+//                            waits for EPOLLIN (a reader) and not EPOLLOUT
+//                            fails with ENOMEM. A stdin writer still registers.
 //   SHELL_FAIL_EPOLL_AFTER=1 the first epoll_ctl ADD on each AF_UNIX socket
 //                            succeeds (so the PipeReader starts and the eager
 //                            read runs); every later ADD/MOD on that fd fails
@@ -60,6 +63,7 @@ static long (*real_syscall)(long, long, long, long, long, long, long);
 static int (*real_close)(int);
 static int fail_recv = -1;
 static int fail_epoll = -1;
+static int fail_epoll_in = -1;
 static int fail_epoll_after = -1;
 static int recv_one_chunk = -1;
 static int recv_eagain_first = -1;
@@ -72,6 +76,7 @@ static unsigned char bulk_count[MAX_FD];
 static void init_modes(void) {
   if (fail_recv < 0) fail_recv = getenv("SHELL_FAIL_RECV") != NULL;
   if (fail_epoll < 0) fail_epoll = getenv("SHELL_FAIL_EPOLL") != NULL;
+  if (fail_epoll_in < 0) fail_epoll_in = getenv("SHELL_FAIL_EPOLL_IN") != NULL;
   if (fail_epoll_after < 0) fail_epoll_after = getenv("SHELL_FAIL_EPOLL_AFTER") != NULL;
   if (recv_one_chunk < 0) recv_one_chunk = getenv("SHELL_RECV_ONE_CHUNK") != NULL;
   if (recv_eagain_first < 0) recv_eagain_first = getenv("SHELL_RECV_EAGAIN_FIRST") != NULL;
@@ -148,8 +153,13 @@ long syscall(long number, ...) {
   if (number == SYS_epoll_ctl) {
     int op = (int)b;
     int target = (int)c;
+    struct epoll_event *ev = (struct epoll_event *)d;
     if (op == EPOLL_CTL_ADD || op == EPOLL_CTL_MOD) {
       if (fail_epoll && is_pipe_like(target)) {
+        errno = ENOMEM;
+        return -1;
+      }
+      if (fail_epoll_in && ev && (ev->events & EPOLLIN) && !(ev->events & EPOLLOUT) && is_unix_sock(target)) {
         errno = ENOMEM;
         return -1;
       }
@@ -234,6 +244,26 @@ const r = await $\`sh -c 'printf AAAA; exec sleep 5' 2> /dev/null\`.nothrow();
 console.log(JSON.stringify({ exitCode: r.exitCode }));
 `;
 
+// A 4 MB blob on stdin is larger than the socket buffer, so the stdin writer
+// has to register its poll (the stdout/stderr readers register theirs right
+// after). Runs the command several times and reports the parent's open fd
+// count before and after: a spawn that fails part way through setup must not
+// leave a stdio end open. A command that never finishes shows up as a test
+// timeout. `argv[2]` selects the single-command or the pipeline form.
+const STDIN_BLOB_FIXTURE = /* js */ `
+import { $ } from "bun";
+import { readdirSync } from "node:fs";
+const fds = () => readdirSync("/proc/self/fd").length;
+const blob = new Blob([Buffer.alloc(4 << 20, "a")]);
+const pipeline = process.argv[2] === "pipeline";
+const run = () => (pipeline ? $\`cat < \${blob} | cat\` : $\`cat < \${blob}\`).quiet().nothrow();
+await run();
+const before = fds();
+let last;
+for (let i = 0; i < 5; i++) last = await run();
+console.log(JSON.stringify({ exitCode: last.exitCode, stderr: last.stderr.toString().trim(), fds: fds() - before }));
+`;
+
 let shimPath: string;
 let dir: ReturnType<typeof tempDir> | undefined;
 
@@ -246,6 +276,7 @@ beforeAll(async () => {
     "quiet-chunk.js": QUIET_CHUNK_FIXTURE,
     "poll-chunk.js": POLL_CHUNK_FIXTURE,
     "tee-chunk.js": TEE_CHUNK_FIXTURE,
+    "stdin-blob.js": STDIN_BLOB_FIXTURE,
   });
   shimPath = join(String(dir), "shim.so");
   await using ccProc = Bun.spawn({
@@ -270,6 +301,7 @@ const ENOMEM = 12;
 const MODES = [
   "SHELL_FAIL_RECV",
   "SHELL_FAIL_EPOLL",
+  "SHELL_FAIL_EPOLL_IN",
   "SHELL_FAIL_EPOLL_AFTER",
   "SHELL_RECV_ONE_CHUNK",
   "SHELL_RECV_EAGAIN_FIRST",
@@ -467,6 +499,70 @@ test.concurrent.skipIf(!isLinux || !cc || !mkfifo || !cat)(
       readerStderr: "",
       exitCode: 0,
       readerExitCode: 0,
+    });
+  },
+);
+
+async function runStdinBlobFixture(modes: (typeof MODES)[number][], form: "single" | "pipeline") {
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "stdin-blob.js", form, "--debug-crash-handler-use-trace-string"],
+    cwd: String(dir),
+    env: shimEnv(modes),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const line = stdout.trim().split("\n").pop() ?? "";
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(line);
+  } catch {
+    parsed = line;
+  }
+  return { parsed, stderr, exitCode };
+}
+
+// The stdin writer's registration fails, so the spawn is aborted before the
+// stdout and stderr readers start. Each un-started reader still owned the
+// parent end of its socketpair and dropped it without a close: two fds leaked
+// per failed spawn.
+test.concurrent.skipIf(!isLinux || !cc)(
+  "shell closes the un-started stdout/stderr pipes when the stdin writer fails to start",
+  async () => {
+    expect(await runStdinBlobFixture(["SHELL_FAIL_EPOLL"], "single")).toEqual({
+      parsed: { exitCode: 1, stderr: expect.stringContaining("Cannot allocate memory"), fds: 0 },
+      stderr: expect.any(String),
+      exitCode: 0,
+    });
+  },
+);
+
+// Only the readers fail to register; the stdin writer is still busy when the
+// reader error records ENOMEM as the exit code. The child then exits (EPIPE on
+// its closed stdout), but the exit handler skipped the command because an exit
+// code was already set, and the stdin close never re-checked either. The
+// command never finished and kept the shell's promise pending forever.
+test.concurrent.skipIf(!isLinux || !cc)(
+  "shell finishes a command whose reader failed to register while stdin was still being written",
+  async () => {
+    expect(await runStdinBlobFixture(["SHELL_FAIL_EPOLL_IN"], "single")).toEqual({
+      parsed: { exitCode: ENOMEM, stderr: "", fds: 0 },
+      stderr: expect.any(String),
+      exitCode: 0,
+    });
+  },
+);
+
+// Same fault inside a pipeline: the first stage's stderr reader fails while
+// its stdin is still being written. A stage that never finishes keeps its end
+// of the inter-stage socketpair open, so the second `cat` waits on stdin forever.
+test.concurrent.skipIf(!isLinux || !cc)(
+  "shell finishes a pipeline whose first stage's reader failed to register while stdin was still being written",
+  async () => {
+    expect(await runStdinBlobFixture(["SHELL_FAIL_EPOLL_IN"], "pipeline")).toEqual({
+      parsed: { exitCode: ENOMEM, stderr: "", fds: 0 },
+      stderr: expect.any(String),
+      exitCode: 0,
     });
   },
 );

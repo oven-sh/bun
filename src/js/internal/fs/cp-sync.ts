@@ -22,6 +22,7 @@ const { EEXIST, EISDIR, EINVAL, ENOTDIR } = $processBindingConstants.os.errno;
 
 const ArrayPrototypeEvery = Array.prototype.every;
 const ArrayPrototypeFilter = Array.prototype.filter;
+const BufferPrototypeLatin1Slice = Buffer.prototype.latin1Slice;
 const StringPrototypeSplit = String.prototype.split;
 
 // COPYFILE_EXCL | COPYFILE_FICLONE | COPYFILE_FICLONE_FORCE
@@ -146,12 +147,77 @@ function areIdentical(srcStat, destStat) {
   return destStat.ino && destStat.dev && destStat.ino === srcStat.ino && destStat.dev === srcStat.dev;
 }
 
+// node:path inspects only ASCII, so a Buffer path is viewed as latin1 (one byte per code unit) for its arithmetic.
+const isBufferPath = p => typeof p !== "string";
+
+function latin1View(p) {
+  // A string meets a Buffer path through its UTF-8 bytes.
+  return BufferPrototypeLatin1Slice.$call(typeof p === "string" ? Buffer.from(p) : p);
+}
+
+function fromLatin1View(view) {
+  return Buffer.from(view, "latin1");
+}
+
+// resolve() would fall back to process.cwd() as UTF-16; pass its view instead.
+function cwdView() {
+  return latin1View(process.cwd());
+}
+
+const kBufferEncoding = { encoding: "buffer" };
+
+// readdir/readlink options that return bytes for a Buffer path.
+function encodingFor(p) {
+  return isBufferPath(p) ? kBufferEncoding : undefined;
+}
+
+// dirname(p), in the form of p.
+function parentPath(p) {
+  return isBufferPath(p) ? fromLatin1View(dirname(latin1View(p))) : dirname(p);
+}
+
+// join(dir, name), as bytes when either is bytes.
+function joinDirEntry(dir, name) {
+  if (!isBufferPath(dir) && !isBufferPath(name)) return join(dir, name);
+  return fromLatin1View(join(latin1View(dir), latin1View(name)));
+}
+
+// The target for the copy of the link at linkPath, from what readlink returned.
+function copiedLinkTarget(linkPath, target, verbatim) {
+  if (!isBufferPath(linkPath) && !isBufferPath(target)) {
+    return verbatim || isAbsolute(target) ? target : resolve(dirname(linkPath), target);
+  }
+  const targetView = latin1View(target);
+  if (verbatim || isAbsolute(targetView)) return target;
+  return fromLatin1View(resolve(cwdView(), dirname(latin1View(linkPath)), targetView));
+}
+
+// resolve(dirname()) of src and dest for checkParentPaths; destParentPath is the form that goes to stat.
+function resolvedParents(src, dest) {
+  if (!isBufferPath(src) && !isBufferPath(dest)) {
+    const destParent = resolve(dirname(dest));
+    return { srcParent: resolve(dirname(src)), destParent, destParentPath: destParent };
+  }
+  const cwd = cwdView();
+  const destParent = resolve(cwd, dirname(latin1View(dest)));
+  return {
+    srcParent: resolve(cwd, dirname(latin1View(src))),
+    destParent,
+    destParentPath: fromLatin1View(destParent),
+  };
+}
+
 const normalizePathToArray = path =>
   ArrayPrototypeFilter.$call(StringPrototypeSplit.$call(resolve(path), sep), Boolean);
 
 // Return true if dest is a subdir of src, otherwise false.
 // It only checks the path strings.
 function isSrcSubdir(src, dest) {
+  if (isBufferPath(src) || isBufferPath(dest)) {
+    const cwd = cwdView();
+    src = resolve(cwd, latin1View(src));
+    dest = resolve(cwd, latin1View(dest));
+  }
   const srcArr = normalizePathToArray(src);
   const destArr = normalizePathToArray(dest);
   return ArrayPrototypeEvery.$call(srcArr, (cur, i) => destArr[i] === cur);
@@ -225,12 +291,11 @@ function getStatsSync(src, dest, opts) {
 }
 
 function checkParentPathsSync(src, srcStat, dest) {
-  const srcParent = resolve(dirname(src));
-  const destParent = resolve(dirname(dest));
+  const { srcParent, destParent, destParentPath } = resolvedParents(src, dest);
   if (destParent === srcParent || destParent === parse(destParent).root) return;
   let destStat;
   try {
-    destStat = statSync(destParent, { bigint: true });
+    destStat = statSync(destParentPath, { bigint: true });
   } catch (err: any) {
     if (err.code === "ENOENT") return;
     throw err;
@@ -244,7 +309,7 @@ function checkParentPathsSync(src, srcStat, dest) {
       code: "EINVAL",
     });
   }
-  return checkParentPathsSync(src, srcStat, destParent);
+  return checkParentPathsSync(src, srcStat, destParentPath);
 }
 
 // The native recursive copy (a single clonefile() on macOS) copies symlinks
@@ -267,7 +332,7 @@ function treeContainsOnlyFilesAndDirsSync(root) {
     for (let i = 0; i < entries.length; i++) {
       const entry = entries[i];
       if (entry.isDirectory()) {
-        stack.push(join(dir, entry.name));
+        stack.push(joinDirEntry(dir, entry.name));
       } else if (!entry.isFile()) {
         return false;
       }
@@ -318,7 +383,7 @@ function cpSyncFn(src, dest, opts, checked?) {
 }
 
 function checkParentDir(destStat, src, dest, opts) {
-  const destParent = dirname(dest);
+  const destParent = parentPath(dest);
   if (!existsSync(destParent)) mkdirSync(destParent, { recursive: true });
   return getStats(destStat, src, dest, opts);
 }
@@ -442,26 +507,23 @@ function mkDirAndCopy(srcMode, src, dest, opts) {
 }
 
 function copyDir(src, dest, opts) {
-  for (const dirent of readdirSync(src, { withFileTypes: true })) {
-    const { name } = dirent;
-    const srcItem = join(src, name);
-    const destItem = join(dest, name);
+  // Entry names under a Buffer directory are bytes too.
+  for (const name of readdirSync(src, encodingFor(src))) {
+    const srcItem = joinDirEntry(src, name);
+    const destItem = joinDirEntry(dest, name);
     const { destStat, skipped } = checkPathsSync(srcItem, destItem, opts);
     if (!skipped) getStats(destStat, srcItem, destItem, opts);
   }
 }
 
 function onLink(destStat, src, dest, opts) {
-  let resolvedSrc = readlinkSync(src);
-  if (!opts.verbatimSymlinks && !isAbsolute(resolvedSrc)) {
-    resolvedSrc = resolve(dirname(src), resolvedSrc);
-  }
+  const resolvedSrc = copiedLinkTarget(src, readlinkSync(src, encodingFor(src)), opts.verbatimSymlinks);
   if (!destStat) {
     return symlinkSync(resolvedSrc, dest);
   }
   let resolvedDest;
   try {
-    resolvedDest = readlinkSync(dest);
+    resolvedDest = readlinkSync(dest, encodingFor(dest));
   } catch (err: any) {
     // Dest exists and is a regular file or directory,
     // Windows may throw UNKNOWN error. If dest already exists,
@@ -471,9 +533,7 @@ function onLink(destStat, src, dest, opts) {
     }
     throw err;
   }
-  if (!isAbsolute(resolvedDest)) {
-    resolvedDest = resolve(dirname(dest), resolvedDest);
-  }
+  resolvedDest = copiedLinkTarget(dest, resolvedDest, false);
   let srcIsDir = false;
   try {
     srcIsDir = statSync(src).isDirectory();
@@ -511,6 +571,13 @@ export default {
   cpSyncFn,
   validateCpOptions,
   tryNativeFastPathSync,
+  isBufferPath,
+  kBufferEncoding,
+  encodingFor,
+  parentPath,
+  joinDirEntry,
+  copiedLinkTarget,
+  resolvedParents,
   errno: { EEXIST, EISDIR, EINVAL, ENOTDIR },
   fsCpDirToNonDirError,
   fsCpEExistError,

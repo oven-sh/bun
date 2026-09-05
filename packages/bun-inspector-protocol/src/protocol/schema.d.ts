@@ -11,6 +11,7 @@ export type Protocol = {
 
 export type Domain = {
   readonly domain: string;
+  readonly description?: string;
   readonly debuggableTypes?: readonly string[];
   readonly dependencies?: readonly string[];
   readonly types?: readonly Property[];
@@ -54,6 +55,10 @@ export type Property = {
     }
   | {
       readonly type: undefined;
+      /**
+       * A type of the same domain (`RemoteObject`), of another domain (`Network.RequestId`), or one of
+       * the primitives in `primitiveTypes` of scripts/generate-protocol.ts (`boolean`).
+       */
       readonly $ref: string;
     }
 );

@@ -834,9 +834,13 @@ function nodeProcessAborted(exitCode, signal) {
   return expectedExitCodes.includes(exitCode);
 }
 
+// Node probes with SIGCONT. Signal 0 checks the pid and sends nothing.
+// LeakSanitizer stops every thread at exit with PTRACE_ATTACH, which queues
+// a SIGSTOP. A SIGCONT that arrives before a thread takes that SIGSTOP
+// discards it, and the exiting process then never finishes.
 function isAlive(pid) {
   try {
-    process.kill(pid, 'SIGCONT');
+    process.kill(pid, 0);
     return true;
   } catch {
     return false;

@@ -815,7 +815,41 @@ JSC_DEFINE_HOST_FUNCTION(functionEsmLoadSync, (JSC::JSGlobalObject * lexicalGlob
             return throwVMTypeError(globalObject, scope, makeString("require() async module \""_s, keyString, "\" is unsupported. use \"await import()\" instead."_s));
     }
 
-    JSPromise* promise = loader->loadModuleSync(globalObject, key, nullptr, nullptr);
+    // Inlined JSModuleLoader::loadModuleSync plus one extra step. A mid-fetch
+    // entry's settle reactions live on the *outer* drain's synchronous module
+    // queue, which this nested load cannot reach, so reusing its pending fetch
+    // promise would misreport the module as async. Re-fetch and settle the
+    // entry while our queue is current, mirroring hostLoadImportedModule's
+    // synchronous-replay path for dependency edges.
+    JSC::VM::SynchronousModuleQueue syncQueue;
+    syncQueue.prev = vm.m_synchronousModuleQueue;
+    vm.m_synchronousModuleQueue = &syncQueue;
+
+    if (auto* entry = loader->registryEntry(key)) {
+        if (entry->status() == JSC::ModuleRegistryEntry::Status::Fetching) {
+            // Attaches the fetch-settled reaction if nothing has yet.
+            entry->ensureModulePromise(globalObject);
+            JSPromise* fetchPromise = entry->ensureFetchPromise(globalObject);
+            if (!scope.exception() && fetchPromise->status() == JSPromise::Status::Pending) {
+                JSPromise* fetched = loader->fetch(globalObject, JSC::jsString(vm, keyString), nullptr, nullptr);
+                if (!scope.exception()) {
+                    // pipeFrom() already claimed the resolving-function flag, so
+                    // the guarded fulfill()/reject() would no-op; settle directly.
+                    if (fetched->status() == JSPromise::Status::Fulfilled)
+                        fetchPromise->fulfillPromise(vm, fetched->result());
+                    else if (fetched->status() == JSPromise::Status::Rejected)
+                        fetchPromise->rejectPromise(vm, fetched->result());
+                }
+            }
+        }
+    }
+
+    JSPromise* promise = nullptr;
+    if (!scope.exception())
+        promise = loader->loadModule(globalObject, key, nullptr, nullptr, { JSC::ModuleLoadFlag::Evaluate });
+    if (!scope.exception())
+        JSC::JSModuleLoader::drainSynchronousModuleQueue(globalObject);
+    vm.m_synchronousModuleQueue = syncQueue.prev;
     RETURN_IF_EXCEPTION(scope, {});
 
     switch (promise->status()) {

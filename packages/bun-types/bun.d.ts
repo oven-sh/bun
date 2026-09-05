@@ -8601,6 +8601,12 @@ declare module "bun" {
     readonly closed: boolean;
 
     /**
+     * Whether reads are currently paused via `pause()`. Always `false` once
+     * the terminal is closed.
+     */
+    readonly paused: boolean;
+
+    /**
      * Write data to the terminal.
      *
      * All bytes are accepted; any portion that cannot be flushed to the PTY
@@ -8636,6 +8642,23 @@ declare module "bun" {
      * Unreference the terminal to allow the event loop to exit.
      */
     unref(): void;
+
+    /**
+     * Stop reading the PTY master until `resume()` is called.
+     *
+     * While paused, a child that keeps writing blocks in `write(2)` on a
+     * full PTY buffer instead of spinning the `data` callback, which bounds
+     * host CPU when the consumer has fallen behind. Safe to call from inside
+     * the `data` callback. Idempotent; a no-op on a closed terminal.
+     */
+    pause(): void;
+
+    /**
+     * Restart reading the PTY master after `pause()`.
+     *
+     * A no-op unless paused, on a closed terminal, or after the reader hit EOF.
+     */
+    resume(): void;
 
     /**
      * Close the terminal.

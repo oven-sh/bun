@@ -403,9 +403,17 @@ proc.terminal.setRawMode(true);
 proc.terminal.ref();
 proc.terminal.unref();
 
+// Pause reading the PTY master until resume() is called
+proc.terminal.pause();
+proc.terminal.resume();
+
 // Close the terminal
 proc.terminal.close();
 ```
+
+### Backpressure
+
+A child that writes faster than the consumer can process keeps the `data` callback spinning. Call `pause()` when the consumer falls behind. Bun stops reading the PTY master, and the child blocks in `write(2)` on a full PTY buffer. Call `resume()` to start reading again. `terminal.paused` reports whether reads are paused. Both methods are safe to call from inside the `data` callback.
 
 ### Reusable Terminal
 
@@ -615,6 +623,7 @@ interface TerminalOptions {
 
 interface Terminal extends AsyncDisposable {
   readonly closed: boolean;
+  readonly paused: boolean;
   inputFlags: number; // termios c_iflag
   outputFlags: number; // termios c_oflag
   localFlags: number; // termios c_lflag
@@ -624,6 +633,8 @@ interface Terminal extends AsyncDisposable {
   setRawMode(enabled: boolean): void;
   ref(): void;
   unref(): void;
+  pause(): void;
+  resume(): void;
   close(): void;
 }
 

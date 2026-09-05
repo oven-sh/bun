@@ -164,7 +164,7 @@ pub struct Terminal {
 
 bitflags::bitflags! {
     #[derive(Clone, Copy, Default)]
-    pub struct Flags: u8 {
+    pub struct Flags: u16 {
         const CLOSED         = 1 << 0;
         const FINALIZED      = 1 << 1;
         const RAW_MODE       = 1 << 2;
@@ -176,6 +176,10 @@ bitflags::bitflags! {
         /// reuse. Windows: the ConDrv `\Reference` handle is released at spawn.
         /// POSIX: slave_fd is held until first exit (`drain_and_close_slave_fd`).
         const INLINE_SPAWNED = 1 << 7;
+        /// Reads paused via `pause()`; cleared by `resume()`. While set the
+        /// reader poll stays unregistered (POSIX) or the libuv read stays
+        /// stopped (Windows), applying backpressure to the child.
+        const PAUSED         = 1 << 8;
     }
 }
 
@@ -1641,6 +1645,63 @@ impl Terminal {
     pub(crate) fn do_unref(&self, _g: &JSGlobalObject, _f: &CallFrame) -> JsResult<JSValue> {
         self.update_ref(false);
         Ok(JSValue::UNDEFINED)
+    }
+
+    /// Stop reading the PTY master until `resume()` is called.
+    ///
+    /// While paused the read poll stays unregistered (POSIX) or the libuv
+    /// read stays stopped (Windows), so a child that keeps writing blocks in
+    /// `write(2)` on a full PTY buffer instead of spinning the `data`
+    /// callback. Safe to call from inside the `data` callback. Idempotent;
+    /// a no-op on a closed terminal.
+    #[bun_jsc::host_fn(method)]
+    pub(crate) fn pause(&self, _g: &JSGlobalObject, _f: &CallFrame) -> JsResult<JSValue> {
+        let flags = self.flags.get();
+        if flags.contains(Flags::CLOSED) || flags.contains(Flags::PAUSED) {
+            return Ok(JSValue::UNDEFINED);
+        }
+        self.update_flags(|f| f.insert(Flags::PAUSED));
+        self.reader.with_mut(|r| r.pause());
+        Ok(JSValue::UNDEFINED)
+    }
+
+    /// Restart reading the PTY master after `pause()`.
+    ///
+    /// Clears the paused state and kicks the reader so already-buffered
+    /// output is delivered without waiting for the next poll event. A no-op
+    /// unless paused, on a closed terminal, or after the reader hit EOF.
+    #[bun_jsc::host_fn(method)]
+    pub(crate) fn resume(&self, _g: &JSGlobalObject, _f: &CallFrame) -> JsResult<JSValue> {
+        if !self.flags.get().contains(Flags::PAUSED) {
+            return Ok(JSValue::UNDEFINED);
+        }
+        self.update_flags(|f| f.remove(Flags::PAUSED));
+        let flags = self.flags.get();
+        if flags.contains(Flags::CLOSED)
+            || !flags.contains(Flags::READER_STARTED)
+            || flags.contains(Flags::READER_DONE)
+        {
+            return Ok(JSValue::UNDEFINED);
+        }
+        // The kick below dispatches `data` callbacks that may re-enter user
+        // JS and drop the last ref; hold one across it (cf.
+        // `drain_and_close_slave_fd`). Windows completes reads through libuv,
+        // never synchronously, so no guard is needed there.
+        #[cfg(unix)]
+        let _guard = self.ref_guard();
+        self.reader.with_mut(|r| r.unpause());
+        // SAFETY: the reader cell is live for the terminal's lifetime; `read`
+        // is the raw re-entrancy-safe entry (its dispatch runs user JS).
+        unsafe { IOReader::read(self.reader.as_ptr()) };
+        Ok(JSValue::UNDEFINED)
+    }
+
+    /// Whether reads are currently paused via `pause()`. Always false once
+    /// the terminal is closed.
+    #[bun_jsc::host_fn(getter)]
+    pub(crate) fn get_paused(&self, _global: &JSGlobalObject) -> JSValue {
+        let flags = self.flags.get();
+        JSValue::from(flags.contains(Flags::PAUSED) && !flags.contains(Flags::CLOSED))
     }
 
     fn update_ref(&self, add: bool) {

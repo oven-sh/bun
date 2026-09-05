@@ -1875,6 +1875,57 @@ describe.concurrent(".gitignore/.npmignore", () => {
 
     expect(tarballEntries(join(dir, "pack-ignore-2-1.2.1.tgz"))).toEqual(["package/package.json"]);
   });
+
+  // https://github.com/oven-sh/bun/issues/15602
+  describe("negation re-includes files inside an excluded directory", () => {
+    async function setup(ignore: string) {
+      await Promise.all([
+        write(join(packageDir, "package.json"), JSON.stringify({ name: "pack-ignore-3", version: "0.0.7" })),
+        write(join(packageDir, ".npmignore"), ignore),
+        write(join(packageDir, "dist", "cli.js"), "a"),
+        write(join(packageDir, "dist", "sub", "deep.js"), "b"),
+        write(join(packageDir, "dist", "lib", "foo.js"), "c"),
+        write(join(packageDir, "src", "index.ts"), "d"),
+        write(join(packageDir, "src", "keep.js"), "e"),
+        write(join(packageDir, "keep.js"), "f"),
+      ]);
+    }
+
+    async function packedPaths() {
+      await pack(packageDir, bunEnv);
+      const tarball = readTarball(join(packageDir, "pack-ignore-3-0.0.7.tgz"));
+      return tarball.entries.map((e: { pathname: string }) => e.pathname).sort();
+    }
+
+    // each expected list below matches `npm pack` output for the same .npmignore
+    for (const [ignore, expected] of [
+      [
+        "*\n!dist/**\n",
+        ["package/dist/cli.js", "package/dist/lib/foo.js", "package/dist/sub/deep.js", "package/package.json"],
+      ],
+      ["*\n!dist/*\n", ["package/dist/cli.js", "package/package.json"]],
+      [
+        "*\n!dist/**/*\n",
+        ["package/dist/cli.js", "package/dist/lib/foo.js", "package/dist/sub/deep.js", "package/package.json"],
+      ],
+      ["*\n!dist/lib/foo.js\n", ["package/dist/lib/foo.js", "package/package.json"]],
+      ["*\n!*/keep.js\n", ["package/package.json", "package/src/keep.js"]],
+      ["*\n!**/keep.js\n", ["package/keep.js", "package/package.json", "package/src/keep.js"]],
+      ["*\n!dist/**\ndist/sub\n", ["package/dist/cli.js", "package/dist/lib/foo.js", "package/package.json"]],
+      // patterns that already matched npm before the fix:
+      ["*\n!dist\n", ["package/package.json"]],
+      ["*\n!keep.js\n", ["package/keep.js", "package/package.json"]],
+      [
+        "*\n!dist\n!dist/**/*\n",
+        ["package/dist/cli.js", "package/dist/lib/foo.js", "package/dist/sub/deep.js", "package/package.json"],
+      ],
+    ] as const) {
+      test(JSON.stringify(ignore), async () => {
+        await setup(ignore);
+        expect(await packedPaths()).toEqual([...expected]);
+      });
+    }
+  });
 });
 
 describe.concurrent("bins", () => {

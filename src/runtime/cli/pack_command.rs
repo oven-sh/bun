@@ -1589,6 +1589,7 @@ fn is_excluded<'a>(
     ignores: &'a [IgnorePatterns],
 ) -> Option<(&'a [u8], IgnorePatternsKind)> {
     let entry_name = entry.name.slice_u8();
+    let is_dir = entry.kind == bun_sys::FileKind::Directory;
 
     if dir_depth == 1 {
         // first, check files that can never be ignored. project root
@@ -1655,6 +1656,8 @@ fn is_excluded<'a>(
             if result.is_negated() {
                 if !result.matches() {
                     ignored = false;
+                } else if is_dir && ignored && negated_pattern_matches_under_dir(pattern, rel) {
+                    ignored = false;
                 }
             } else if result.matches() {
                 ignored = true;
@@ -1668,6 +1671,53 @@ fn is_excluded<'a>(
         None
     } else {
         Some((ignore_pattern, ignore_kind))
+    }
+}
+
+/// Mirrors npm ignore-walk's minimatch `partial` test so `*` + `!dist/**` still descends into `dist/`.
+fn negated_pattern_matches_under_dir(pattern: &Pattern, dir_rel: &[u8]) -> bool {
+    debug_assert!(pattern.flags.contains(PatternFlags::NEGATED));
+    if pattern
+        .flags
+        .contains(PatternFlags::LEADING_DOUBLESTAR_SLASH)
+    {
+        return true;
+    }
+    if !pattern.flags.contains(PatternFlags::REL_PATH) {
+        return false;
+    }
+    let glob = pattern.glob.slice();
+    debug_assert!(!glob.is_empty() && glob[0] == b'!');
+    partial_path_match(&glob[1..], dir_rel)
+}
+
+/// True if some path starting with `dir_path/` could match `glob`.
+fn partial_path_match(glob: &[u8], dir_path: &[u8]) -> bool {
+    let mut glob_rest = glob;
+    let mut path_rest = dir_path;
+    loop {
+        let (glob_seg, glob_tail) = match strings::index_of_char(glob_rest, b'/') {
+            Some(i) => (&glob_rest[..i as usize], &glob_rest[(i as usize) + 1..]),
+            None => (glob_rest, &b""[..]),
+        };
+        if glob_seg == b"**" {
+            return true;
+        }
+        if path_rest.is_empty() {
+            return true;
+        }
+        let (path_seg, path_tail) = match strings::index_of_char(path_rest, b'/') {
+            Some(i) => (&path_rest[..i as usize], &path_rest[(i as usize) + 1..]),
+            None => (path_rest, &b""[..]),
+        };
+        if !glob::r#match(glob_seg, path_seg).matches() {
+            return false;
+        }
+        if glob_tail.is_empty() {
+            return false;
+        }
+        glob_rest = glob_tail;
+        path_rest = path_tail;
     }
 }
 

@@ -907,7 +907,9 @@ pub mod command {
         };
 
         if is_bun_x(argv0) {
-            if let Some(next) = argv.get(1) {
+            // The internal "add"/"exec" keyword sits after the
+            // NODE_OPTIONS-injected window.
+            if let Some(next) = argv.get(1 + bun::node_options_argc()) {
                 let next_bytes = next.as_bytes();
                 if next_bytes == b"add"
                     && bun_core::env_var::feature_flag::BUN_INTERNAL_BUNX_INSTALL.get()
@@ -1348,8 +1350,8 @@ pub mod command {
             // now — otherwise `bun_options_argc()` reads 0 here and the
             // standalone executable silently drops `BUN_OPTIONS` flags.
             let original_argv_len = bun::argv().len();
-            let bun_options_argc = bun::bun_options_argc();
-            if !graph.compile_exec_argv.is_empty() || bun_options_argc > 0 {
+            let injected_argc = bun::injected_argv_argc();
+            if !graph.compile_exec_argv.is_empty() || injected_argc > 0 {
                 let mut argv_list: Vec<&'static bun_core::ZStr> = bun::argv().to_vec();
                 if !graph.compile_exec_argv.is_empty() {
                     bun::append_options_env(graph.compile_exec_argv, &mut argv_list);
@@ -1359,8 +1361,9 @@ pub mod command {
                 let full_argv: &'static [&'static bun_core::ZStr] = bun::intern_argv(argv_list);
                 let num_exec_argv_options = full_argv.len().saturating_sub(original_argv_len);
 
-                // Calculate offset: skip executable name + all exec argv options + BUN_OPTIONS args
-                let num_parsed_options = num_exec_argv_options + bun_options_argc;
+                // Calculate offset: skip executable name + all exec argv
+                // options + env-injected args
+                let num_parsed_options = num_exec_argv_options + injected_argc;
                 offset_for_passthrough = if full_argv.len() > 1 {
                     1 + num_parsed_options
                 } else {
@@ -1496,9 +1499,11 @@ pub mod command {
     #[cold]
     #[inline(never)]
     fn exec_init() -> CmdResult {
-        // InitCommand parses its own argv (no Context).
+        // InitCommand parses its own argv (no Context). Skip past argv[0],
+        // the NODE_OPTIONS-injected window, and the "init" keyword.
         let argv = argv_zslice();
-        super::init_command::InitCommand::exec(&argv[2.min(argv.len())..])
+        let start = 2 + bun::node_options_argc();
+        super::init_command::InitCommand::exec(&argv[start.min(argv.len())..])
     }
 
     #[cold]
@@ -1937,10 +1942,11 @@ To create a project with the official Next.js scaffolding tool, run\n\
         let mut package_name: &[u8] = b"";
         let mut property_path: Option<&[u8]> = None;
 
-        // Find non-flag arguments starting from argv[2] (after "bun info").
+        // Find non-flag arguments starting after "bun info" plus the
+        // NODE_OPTIONS-injected window.
         let mut found_package = false;
         let argv = bun::argv();
-        for arg in argv.iter().skip(2) {
+        for arg in argv.iter().skip(2 + bun::node_options_argc()) {
             // Skip flags
             if !arg.is_empty() && arg[0] == b'-' {
                 continue;

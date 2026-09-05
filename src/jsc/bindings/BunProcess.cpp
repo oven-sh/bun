@@ -2840,9 +2840,10 @@ __attribute__((minsize)) static JSValue constructProcessConfigObject(VM& vm, JSO
     putDirectNamed(vm, variables, "napi_build_version"_s, JSC::jsNumber(Napi::DEFAULT_NAPI_VERSION));
     putDirectNamed(vm, variables, "node_builtin_shareable_builtins"_s, shareableBuiltins);
     putDirectNamed(vm, variables, "node_byteorder"_s, JSC::jsString(vm, String("little"_s)));
-    // Bun does not parse the NODE_OPTIONS environment variable, so report the
-    // same value as a Node build compiled --without-node-options; upstream
-    // tests gate NODE_OPTIONS-dependent cases on this key.
+    // Bun applies only the subset of NODE_OPTIONS flags it implements (see
+    // bun_core::node_options), so keep reporting the --without-node-options
+    // value; upstream tests gate NODE_OPTIONS-dependent cases on this key and
+    // assume full support when it is false.
     putDirectNamed(vm, variables, "node_without_node_options"_s, JSC::jsBoolean(true));
     putDirectNamed(vm, variables, "clang"_s, JSC::jsNumber(0));
 

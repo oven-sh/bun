@@ -778,6 +778,24 @@ pub const NODE_SHORT_ALIASES: &[(&[u8], &[u8])] = &[(b"-pe", b"-p")];
 /// param table, and the per-`cmd` blocks below are guarded by
 /// `if matches!(cmd, …)`.
 pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::TransformOptions> {
+    #[cfg(debug_assertions)]
+    {
+        // Every flag node_options::filter can splice into argv must stay
+        // declared in AUTO_PARAMS, or that NODE_OPTIONS flag silently becomes
+        // a no-op for runtime commands.
+        static CHECKED: std::sync::Once = std::sync::Once::new();
+        CHECKED.call_once(|| {
+            for flag in bun_core::node_options::spliced_long_flags() {
+                let name = &flag[2..];
+                assert!(
+                    AUTO_PARAMS.iter().any(|p| p.names.long == Some(name)),
+                    "NODE_OPTIONS splices {} but AUTO_PARAMS does not declare it",
+                    BStr::new(flag),
+                );
+            }
+        });
+    }
+
     let mut diag = clap::Diagnostic::default();
     let table = tag_table(cmd);
 

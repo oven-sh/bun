@@ -3808,6 +3808,19 @@ fn argv_view_init() {
         append_options_env::<&'static ZStr>(opts, &mut view);
         set_bun_options_argc(view.len() - original_len);
     }
+    // Splice allowlisted NODE_OPTIONS tokens between argv[0] and the
+    // BUN_OPTIONS tokens: env options come before real CLI args (Node parity,
+    // so the command line wins on last-wins flags), and BUN_OPTIONS is the
+    // more specific env var, so it wins over NODE_OPTIONS the same way.
+    if !view.is_empty() {
+        if let Some(opts) = crate::env_var::NODE_OPTIONS.get() {
+            let tokens = crate::node_options::filter(opts);
+            set_node_options_argc(tokens.len());
+            for (k, tok) in tokens.into_iter().enumerate() {
+                view.insert(1 + k, <&'static ZStr as OptionsEnvArg>::from_buf(tok));
+            }
+        }
+    }
     let view: &'static [&'static ZStr] = ARGV_VIEW.get_or_init(move || view);
     // SAFETY: single-threaded lazy init guarded by Once.
     unsafe { ARGV.write(view) };
@@ -3899,6 +3912,33 @@ pub fn bun_options_argc() -> usize {
 #[inline]
 pub(crate) fn set_bun_options_argc(n: usize) {
     BUN_OPTIONS_ARGC.store(n, core::sync::atomic::Ordering::Relaxed);
+}
+
+/// Number of arguments injected into `argv` by the `NODE_OPTIONS` environment
+/// variable. They occupy `argv[1 .. 1 + node_options_argc]` (before the
+/// BUN_OPTIONS tokens). Set once during single-threaded startup.
+static NODE_OPTIONS_ARGC: core::sync::atomic::AtomicUsize = core::sync::atomic::AtomicUsize::new(0);
+
+/// Read accessor for the NODE_OPTIONS-injected arg count. Forces the lazy
+/// `argv_view()` init first, same as [`bun_options_argc`].
+#[inline]
+pub fn node_options_argc() -> usize {
+    let _ = argv_view();
+    NODE_OPTIONS_ARGC.load(core::sync::atomic::Ordering::Relaxed)
+}
+/// Write accessor (single-threaded startup).
+#[inline]
+pub(crate) fn set_node_options_argc(n: usize) {
+    NODE_OPTIONS_ARGC.store(n, core::sync::atomic::Ordering::Relaxed);
+}
+
+/// Total env-injected argv tokens. They occupy the contiguous window
+/// `argv[1 .. 1 + injected_argv_argc()]` (NODE_OPTIONS first, then
+/// BUN_OPTIONS). A consumer that locates real CLI arguments by position must
+/// offset by this sum, not by one of the two counters alone.
+#[inline]
+pub fn injected_argv_argc() -> usize {
+    node_options_argc() + bun_options_argc()
 }
 
 /// Trait for arg types accepted by [`append_options_env`].

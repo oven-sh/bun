@@ -662,18 +662,13 @@ JSC::JSArrayBufferView* getArrayBufferOrView(JSGlobalObject* globalObject, Throw
 }
 
 // maybe replace other getArrayBufferOrView
-GCOwnedDataScope<std::span<const uint8_t>> getArrayBufferOrView2(JSGlobalObject* globalObject, ThrowScope& scope, JSValue dataValue, ASCIILiteral argName, JSValue encodingValue, bool arrayBufferViewOnly)
+GCOwnedDataScope<std::span<const uint8_t>> getArrayBufferOrView2(JSGlobalObject* globalObject, ThrowScope& scope, JSValue dataValue, ASCIILiteral argName, JSValue encodingValue)
 {
     using Return = GCOwnedDataScope<std::span<const uint8_t>>;
 
     if (auto* view = dynamicDowncast<JSArrayBufferView>(dataValue)) {
         return { view, view->span() };
     }
-
-    if (arrayBufferViewOnly) {
-        ERR::INVALID_ARG_INSTANCE(scope, globalObject, argName, "Buffer, TypedArray, or DataView"_s, dataValue);
-        return { nullptr, {} };
-    };
 
     if (auto* arrayBuffer = dynamicDowncast<JSArrayBuffer>(dataValue)) {
         return { arrayBuffer, arrayBuffer->impl()->span() };
@@ -751,18 +746,29 @@ JSC::JSArrayBufferView* getArrayBufferOrView(JSGlobalObject* globalObject, Throw
         return view;
     }
 
-    auto* view = dynamicDowncast<JSC::JSArrayBufferView>(value);
-    if (!view) {
-        ERR::INVALID_ARG_TYPE_INSTANCE(scope, globalObject, argName, "string"_s, "Buffer, TypedArray, or DataView"_s, value);
-        return {};
+    if (auto* view = dynamicDowncast<JSC::JSArrayBufferView>(value)) {
+        if (view->isDetached()) {
+            throwTypeError(globalObject, scope, "Buffer is detached"_s);
+            return {};
+        }
+        return view;
     }
 
-    if (view->isDetached()) {
-        throwTypeError(globalObject, scope, "Buffer is detached"_s);
-        return {};
+    if (auto* arrayBuffer = dynamicDowncast<JSC::JSArrayBuffer>(value)) {
+        auto* impl = arrayBuffer->impl();
+        if (!impl || impl->isDetached()) {
+            throwTypeError(globalObject, scope, "Buffer is detached"_s);
+            return {};
+        }
+        RefPtr<JSC::ArrayBuffer> buffer(impl);
+        auto* structure = globalObject->typedArrayStructure(JSC::TypeUint8, impl->isResizableOrGrowableShared());
+        auto* view = JSC::JSUint8Array::create(globalObject, structure, WTF::move(buffer), 0, impl->byteLength());
+        RETURN_IF_EXCEPTION(scope, {});
+        return view;
     }
 
-    return view;
+    ERR::INVALID_ARG_TYPE_INSTANCE(scope, globalObject, argName, "string"_s, "ArrayBuffer, Buffer, TypedArray, or DataView"_s, value);
+    return {};
 }
 
 std::optional<std::span<const uint8_t>> getBuffer(JSC::JSValue maybeBuffer)

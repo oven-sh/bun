@@ -865,13 +865,102 @@ it("Cipheriv.update throws expected error for invalid data", () => {
   );
 });
 
-it("verifyOneShot should not accept strings for signatures", () => {
+it("verifyOneShot rejects non-string non-BufferSource signature with the Node error message", () => {
   const data = Buffer.alloc(1);
-  expect(() => {
-    crypto.verify(null, data, "test", "oops");
-  }).toThrow(
-    "The \"signature\" argument must be an instance of Buffer, TypedArray, or DataView. Received type string ('oops')",
+  expect(() => crypto.verify(null, data, "test", 1)).toThrow(
+    expect.objectContaining({
+      code: "ERR_INVALID_ARG_TYPE",
+      message:
+        'The "signature" argument must be of type string or an instance of ArrayBuffer, Buffer, TypedArray, or DataView. Received type number (1)',
+    }),
   );
+});
+
+describe("ArrayBuffer accepted where Node accepts it", () => {
+  const toAB = b => b.buffer.slice(b.byteOffset, b.byteOffset + b.length);
+
+  it("crypto.verify / Verify#verify accept an ArrayBuffer signature", () => {
+    const { publicKey, privateKey } = crypto.generateKeyPairSync("ec", { namedCurve: "P-256" });
+    const msg = Buffer.from("hello");
+    const sig = crypto.sign("sha256", msg, privateKey);
+    const sigAB = toAB(sig);
+    expect(sigAB).toBeInstanceOf(ArrayBuffer);
+
+    expect(crypto.verify("sha256", msg, publicKey, sigAB)).toBe(true);
+    expect(crypto.createVerify("sha256").update(msg).verify(publicKey, sigAB)).toBe(true);
+
+    const sab = new SharedArrayBuffer(sig.length);
+    new Uint8Array(sab).set(sig);
+    expect(crypto.verify("sha256", msg, publicKey, sab)).toBe(true);
+  });
+
+  it("cipher.setAAD / decipher.setAuthTag accept an ArrayBuffer", () => {
+    const key = Buffer.alloc(32, 1);
+    const iv = Buffer.alloc(12, 2);
+    const aad = Buffer.from("additional data");
+
+    const enc = crypto.createCipheriv("aes-256-gcm", key, iv);
+    enc.setAAD(toAB(aad));
+    const ct = Buffer.concat([enc.update("hello"), enc.final()]);
+    const tag = enc.getAuthTag();
+
+    const dec = crypto.createDecipheriv("aes-256-gcm", key, iv);
+    dec.setAAD(toAB(aad));
+    dec.setAuthTag(toAB(tag));
+    expect(Buffer.concat([dec.update(ct), dec.final()]).toString()).toBe("hello");
+  });
+
+  it("ECDH computeSecret / setPrivateKey / convertKey accept an ArrayBuffer", () => {
+    const a = crypto.createECDH("prime256v1");
+    const b = crypto.createECDH("prime256v1");
+    a.generateKeys();
+    b.generateKeys();
+
+    const secretFromAB = a.computeSecret(toAB(b.getPublicKey()));
+    expect(secretFromAB.equals(a.computeSecret(b.getPublicKey()))).toBe(true);
+
+    const c = crypto.createECDH("prime256v1");
+    c.setPrivateKey(toAB(a.getPrivateKey()));
+    expect(c.getPublicKey().equals(a.getPublicKey())).toBe(true);
+
+    const compressed = crypto.ECDH.convertKey(toAB(a.getPublicKey()), "prime256v1", null, null, "compressed");
+    expect(compressed.length).toBe(33);
+  });
+
+  it("DiffieHellman computeSecret accepts an ArrayBuffer", () => {
+    const a = crypto.createDiffieHellmanGroup("modp14");
+    const b = crypto.createDiffieHellmanGroup("modp14");
+    a.generateKeys();
+    b.generateKeys();
+    const ref = a.computeSecret(b.getPublicKey());
+    expect(a.computeSecret(toAB(b.getPublicKey())).equals(ref)).toBe(true);
+  });
+
+  it("createCipheriv iv and key.passphrase accept an ArrayBuffer", () => {
+    const key = Buffer.alloc(32, 1);
+    const iv = Buffer.alloc(12, 2);
+    const enc = crypto.createCipheriv("aes-256-gcm", key, toAB(iv));
+    Buffer.concat([enc.update("x"), enc.final()]);
+    expect(enc.getAuthTag().length).toBe(16);
+
+    const { privateKey } = crypto.generateKeyPairSync("ec", {
+      namedCurve: "P-256",
+      privateKeyEncoding: { type: "pkcs8", format: "pem", cipher: "aes-128-cbc", passphrase: "secret" },
+    });
+    const keyObj = crypto.createPrivateKey({ key: privateKey, passphrase: toAB(Buffer.from("secret")) });
+    expect(keyObj.asymmetricKeyType).toBe("ec");
+  });
+
+  it("cipher.update still rejects an ArrayBuffer like Node does", () => {
+    const cipher = crypto.createCipheriv("aes-256-gcm", Buffer.alloc(32, 1), Buffer.alloc(12, 2));
+    expect(() => cipher.update(new ArrayBuffer(4))).toThrow(
+      expect.objectContaining({
+        code: "ERR_INVALID_ARG_TYPE",
+        message:
+          'The "data" argument must be of type string or an instance of Buffer, TypedArray, or DataView. Received an instance of ArrayBuffer',
+      }),
+    );
+  });
 });
 
 it("x25519", () => {

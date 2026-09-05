@@ -1,0 +1,238 @@
+// Smoke coverage for the async `node:fs` dispatch paths behind
+// `src/runtime/dispatch.rs::run_task`. Most async fs ops are `bun_jsc::Job`s;
+// on Windows seven of them (Open/Close/Read/Write/Readv/Writev/StatFS) are
+// libuv requests that re-enter the task queue and dispatch through the
+// `for_each_fs_uv_op!` x-macro table in dispatch.rs.
+//
+// Each test exercises one async fs op through its user-facing API so a
+// future dispatch regression (missing arm, wrong `fs_async::*` alias)
+// surfaces as an observable test failure rather than silent UB.
+
+import { describe, expect, test } from "bun:test";
+import { tempDir } from "harness";
+import * as fscb from "node:fs";
+import * as fs from "node:fs/promises";
+import { join } from "node:path";
+
+describe.concurrent("node:fs async dispatch smoke", () => {
+  test("stat / lstat / fstat", async () => {
+    using dir = tempDir("fs-disp-stat", { "f.txt": "hi" });
+    const p = join(String(dir), "f.txt");
+    expect((await fs.stat(p)).size).toBe(2);
+    expect((await fs.lstat(p)).isFile()).toBe(true);
+    const fh = await fs.open(p, "r");
+    try {
+      expect((await fh.stat()).size).toBe(2); // fstat
+    } finally {
+      await fh.close();
+    }
+  });
+
+  test("open / read / write / close", async () => {
+    using dir = tempDir("fs-disp-open", {});
+    const p = join(String(dir), "f.txt");
+    const fh = await fs.open(p, "w+");
+    try {
+      await fh.write("abc"); // write
+      const buf = Buffer.alloc(3);
+      await fh.read(buf, 0, 3, 0); // read
+      expect(buf.toString()).toBe("abc");
+    } finally {
+      await fh.close(); // close
+    }
+  });
+
+  test("readFile / writeFile / appendFile", async () => {
+    using dir = tempDir("fs-disp-rw", {});
+    const p = join(String(dir), "f.txt");
+    await fs.writeFile(p, "x");
+    await fs.appendFile(p, "y");
+    expect(await fs.readFile(p, "utf8")).toBe("xy");
+  });
+
+  test("copyFile", async () => {
+    using dir = tempDir("fs-disp-cp", { "a.txt": "src" });
+    const src = join(String(dir), "a.txt");
+    const dst = join(String(dir), "b.txt");
+    await fs.copyFile(src, dst);
+    expect(await fs.readFile(dst, "utf8")).toBe("src");
+  });
+
+  test("truncate / ftruncate", async () => {
+    using dir = tempDir("fs-disp-tr", { "f.txt": "helloworld" });
+    const p = join(String(dir), "f.txt");
+    await fs.truncate(p, 5);
+    expect(await fs.readFile(p, "utf8")).toBe("hello");
+    const fh = await fs.open(p, "r+");
+    try {
+      await fh.truncate(3); // ftruncate
+    } finally {
+      await fh.close();
+    }
+    expect(await fs.readFile(p, "utf8")).toBe("hel");
+  });
+
+  test("writev / readv", async () => {
+    using dir = tempDir("fs-disp-wv", {});
+    const p = join(String(dir), "f.txt");
+    const fh = await fs.open(p, "w+");
+    try {
+      await fh.writev([Buffer.from("ab"), Buffer.from("cd")]); // writev
+      const bufs = [Buffer.alloc(2), Buffer.alloc(2)];
+      await fh.readv(bufs, 0); // readv
+      expect(Buffer.concat(bufs).toString()).toBe("abcd");
+    } finally {
+      await fh.close();
+    }
+  });
+
+  test("rename", async () => {
+    using dir = tempDir("fs-disp-rn", { "a.txt": "1" });
+    const src = join(String(dir), "a.txt");
+    const dst = join(String(dir), "b.txt");
+    await fs.rename(src, dst);
+    expect(await fs.readFile(dst, "utf8")).toBe("1");
+  });
+
+  test("readdir", async () => {
+    using dir = tempDir("fs-disp-rd", { "a.txt": "", "b.txt": "" });
+    const entries = (await fs.readdir(String(dir))).sort();
+    expect(entries).toEqual(["a.txt", "b.txt"]);
+  });
+
+  test("readdir recursive", async () => {
+    using dir = tempDir("fs-disp-rdr", { "a.txt": "", "sub/b.txt": "" });
+    const entries = (await fs.readdir(String(dir), { recursive: true })).sort();
+    expect(entries).toContain("a.txt");
+    expect(entries.some(e => e.endsWith("b.txt"))).toBe(true);
+  });
+
+  test("rm / rmdir", async () => {
+    using dir = tempDir("fs-disp-rm", { "a.txt": "", sub: {} });
+    await fs.rm(join(String(dir), "a.txt"));
+    await fs.rmdir(join(String(dir), "sub"));
+    expect((await fs.readdir(String(dir))).length).toBe(0);
+  });
+
+  test("chown / fchown", async () => {
+    using dir = tempDir("fs-disp-ch", { "f.txt": "" });
+    const p = join(String(dir), "f.txt");
+    const s = await fs.stat(p);
+    await fs.chown(p, s.uid, s.gid);
+    const fh = await fs.open(p, "r");
+    try {
+      await fh.chown(s.uid, s.gid); // fchown
+    } finally {
+      await fh.close();
+    }
+  });
+
+  // On Windows `Syscall::lchown` routes through `uv_fs_lchown`, which is a
+  // no-op success matching Node (`node_fs.rs::lchown`), so this runs everywhere.
+  test("lchown", async () => {
+    using dir = tempDir("fs-disp-lch", { "f.txt": "" });
+    const p = join(String(dir), "f.txt");
+    const s = await fs.stat(p);
+    await fs.lchown(p, s.uid, s.gid);
+  });
+
+  test("utimes / lutimes / futimes", async () => {
+    using dir = tempDir("fs-disp-ut", { "f.txt": "" });
+    const p = join(String(dir), "f.txt");
+    const t = new Date();
+    await fs.utimes(p, t, t);
+    await fs.lutimes(p, t, t);
+    const fh = await fs.open(p, "r+");
+    try {
+      await fh.utimes(t, t); // futimes
+    } finally {
+      await fh.close();
+    }
+  });
+
+  test("chmod / fchmod", async () => {
+    using dir = tempDir("fs-disp-cm", { "f.txt": "" });
+    const p = join(String(dir), "f.txt");
+    await fs.chmod(p, 0o644);
+    const fh = await fs.open(p, "r+");
+    try {
+      await fh.chmod(0o644); // fchmod
+    } finally {
+      await fh.close();
+    }
+  });
+
+  // `fs.lchmod` is only defined when `constants.O_SYMLINK` exists (macOS-only,
+  // see the `O_SYMLINK` gates in `src/js/node/fs.ts`), so the lchmod path is
+  // platform-gated; skip with a visible marker on Linux/Windows instead of
+  // silently no-oping.
+  test.skipIf(typeof fscb.lchmod !== "function")("lchmod", async () => {
+    using dir = tempDir("fs-disp-lcm", { "f.txt": "" });
+    const p = join(String(dir), "f.txt");
+    await new Promise<void>((resolve, reject) => fscb.lchmod(p, 0o644, err => (err ? reject(err) : resolve())));
+  });
+
+  test("link / symlink / readlink / unlink", async () => {
+    using dir = tempDir("fs-disp-ln", { "src.txt": "s" });
+    const src = join(String(dir), "src.txt");
+    const hard = join(String(dir), "hard.txt");
+    const sym = join(String(dir), "sym.txt");
+    await fs.link(src, hard);
+    await fs.symlink(src, sym);
+    expect(await fs.readlink(sym)).toBe(src);
+    await fs.unlink(hard);
+    await fs.unlink(sym);
+  });
+
+  test("realpath / realpath.native", async () => {
+    using dir = tempDir("fs-disp-rp", { "f.txt": "" });
+    const p = join(String(dir), "f.txt");
+    // `fs.promises.realpath` routes through `node_fs_binding::realpath`
+    // (`RealpathNonNative` in node_fs_binding.rs).
+    expect(await fs.realpath(p)).toBeTruthy();
+    // `fs.realpath.native` routes through `realpath_native` (`Realpath`),
+    // the distinct native-realpath implementation.
+    const r = await new Promise<string | Buffer>((resolve, reject) =>
+      fscb.realpath.native(p, (err, res) => (err ? reject(err) : resolve(res))),
+    );
+    expect(r).toBeTruthy();
+  });
+
+  test("mkdir / mkdtemp", async () => {
+    using dir = tempDir("fs-disp-mk", {});
+    await fs.mkdir(join(String(dir), "sub"));
+    const tmp = await fs.mkdtemp(join(String(dir), "pfx-"));
+    expect(tmp.startsWith(join(String(dir), "pfx-"))).toBe(true);
+  });
+
+  test("fsync / fdatasync", async () => {
+    using dir = tempDir("fs-disp-fs", { "f.txt": "" });
+    const fh = await fs.open(join(String(dir), "f.txt"), "w");
+    try {
+      await fh.sync(); // fsync
+      await fh.datasync(); // fdatasync
+    } finally {
+      await fh.close();
+    }
+  });
+
+  test("access", async () => {
+    using dir = tempDir("fs-disp-ac", { "f.txt": "" });
+    await fs.access(join(String(dir), "f.txt"));
+  });
+
+  test("exists", async () => {
+    using dir = tempDir("fs-disp-ex", { "f.txt": "" });
+    // `fs.exists` (callback, deprecated) hits the dedicated exists path.
+    const exists = await new Promise<boolean>(resolve => fscb.exists(join(String(dir), "f.txt"), resolve));
+    expect(exists).toBe(true);
+  });
+
+  // On Windows `fs.statfs` is a `UVFSRequest` dispatched through the `StatFS`
+  // row of `for_each_fs_uv_op!`; keep unguarded so that arm is covered there.
+  test("statfs", async () => {
+    using dir = tempDir("fs-disp-sfs", {});
+    const s = await fs.statfs(String(dir));
+    expect(typeof s.type).toBe("number");
+  });
+});

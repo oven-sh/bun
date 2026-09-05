@@ -47,7 +47,6 @@ use bun_jsc::{JSGlobalObject, JsResult};
 /// (`UVFSRequest`); they complete on the JS thread and re-enter through the
 /// task queue under a per-op tag. Every other async fs op is a `bun_jsc::Job`.
 /// Row shape: `$tag $ty;` (`task_tag::*` const, `fs_async::*` alias).
-#[cfg(windows)]
 macro_rules! for_each_fs_uv_op {
     ($m:ident) => {
         $m! {
@@ -57,7 +56,6 @@ macro_rules! for_each_fs_uv_op {
     };
 }
 /// Expand the fs-op table to an or-pattern over `task_tag::*` (pattern position).
-#[cfg(windows)]
 macro_rules! __fs_pat {
     ($($tag:ident $ty:ident;)*) => { $(task_tag::$tag)|* };
 }
@@ -416,8 +414,15 @@ pub(crate) fn run_task(
             macro_rules! __fs_run {
                 ($($tag:ident $ty:ident;)*) => { match task.tag {
                     $(task_tag::$tag => cast!(fs_async::$ty).run_from_js_thread()?,)*
-                    // SAFETY: outer arm guard proves one of the table tags matched.
-                    _ => unsafe { core::hint::unreachable_unchecked() },
+                    // SAFETY: outer guard and these arms expand from the same
+                    // table; debug builds panic instead of invoking UB.
+                    _ => {
+                        if cfg!(debug_assertions) {
+                            unreachable!("fs-uv dispatch: unmatched tag {}", task.tag.0);
+                        }
+                        // SAFETY: see above.
+                        unsafe { core::hint::unreachable_unchecked() }
+                    }
                 }};
             }
             for_each_fs_uv_op!(__fs_run);
@@ -1306,20 +1311,21 @@ fn __bun_release_task_unrun(task: bun_event_loop::Task) {
             #[cfg(not(windows))]
             unreachable!("windows-only tag");
         }
-        task_tag::Open
-        | task_tag::Close
-        | task_tag::Read
-        | task_tag::Readv
-        | task_tag::Write
-        | task_tag::Writev
-        | task_tag::StatFS => {
+        for_each_fs_uv_op!(__fs_pat) => {
             #[cfg(windows)]
             {
                 macro_rules! __fs_release {
                     ($($tag:ident $ty:ident;)*) => { match task.tag {
                         $(task_tag::$tag => release!(fs_async::$ty),)*
-                        // SAFETY: the outer arm proves one of the table tags matched.
-                        _ => unsafe { core::hint::unreachable_unchecked() },
+                        // SAFETY: outer guard and these arms expand from the same
+                        // table; debug builds panic instead of invoking UB.
+                        _ => {
+                            if cfg!(debug_assertions) {
+                                unreachable!("fs-uv shutdown release: unmatched tag {}", task.tag.0);
+                            }
+                            // SAFETY: see above.
+                            unsafe { core::hint::unreachable_unchecked() }
+                        }
                     }};
                 }
                 for_each_fs_uv_op!(__fs_release);

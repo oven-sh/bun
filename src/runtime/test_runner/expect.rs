@@ -18,10 +18,14 @@ use super::bun_test::{self};
 use super::diff_format::DiffFormatter;
 use super::execution::ExpectAssertions;
 use super::jest::Jest;
-use super::expect::{JSValueTestExt, FormatterTestExt, make_formatter};
+use super::expect::{
+    dom_element_outer_html_prefix, make_formatter, FormatterTestExt, JSValueTestExt,
+};
 use crate::expect_throw as throw;
 
 use bun_jsc::js_error_to_write_error;
+
+const DOM_ELEMENT_HTML_MAX_LEN: usize = 10_000;
 
 // Matcher submodules are declared in `super::expect` (mod.rs); this file
 // provides only the `Expect` payload + helpers they extend.
@@ -1995,6 +1999,35 @@ impl Expect {
             "\n\nReceived: <red>{}<r>\n",
             value.to_fmt(&mut formatter),
         )
+    }
+
+    #[inline]
+    pub fn run_boolean_matcher_predicate(
+        &self,
+        global: &JSGlobalObject,
+        frame: &CallFrame,
+        matcher_name: &'static str,
+        pred: impl FnOnce(JSValue) -> bool,
+    ) -> JsResult<JSValue> {
+        let (this, value, not) = self.matcher_prelude(global, frame.this(), matcher_name, "")?;
+        if pred(value) != not {
+            return Ok(JSValue::UNDEFINED);
+        }
+        let signature = Self::get_signature(matcher_name, "", not);
+        if let Some(received) = dom_element_outer_html_prefix(value, global, DOM_ELEMENT_HTML_MAX_LEN)? {
+            throw!(
+                this, global, signature,
+                "\n\nReceived: <red>{}<r>\n",
+                bstr::BStr::new(&received),
+            )
+        } else {
+            let mut formatter = make_formatter(global);
+            throw!(
+                this, global, signature,
+                "\n\nReceived: <red>{}<r>\n",
+                value.to_fmt(&mut formatter),
+            )
+        }
     }
 
     /// Shared scaffold for one-arg `expect(v).toStartWith/toEndWith/toInclude(expected)`

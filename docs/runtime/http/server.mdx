@@ -704,6 +704,9 @@ interface WebSocketHandler<T = undefined> {
   /** Seconds before idle timeout */
   idleTimeout?: number;
 
+  /** Whether messages sent by the server restart the idle timeout (default true) */
+  resetIdleTimeoutOnSend?: boolean;
+
   /** Enable per-message deflate compression */
   perMessageDeflate?:
     | boolean

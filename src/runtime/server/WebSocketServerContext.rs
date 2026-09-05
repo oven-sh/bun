@@ -371,6 +371,18 @@ pub(crate) fn on_create(
         }
     }
 
+    if let Some(value) = object.get(global_object, "resetIdleTimeoutOnSend")? {
+        if !value.is_undefined_or_null() {
+            if !value.is_boolean() {
+                return Err(global_object.throw_invalid_arguments(format_args!(
+                    "websocket expects resetIdleTimeoutOnSend to be a boolean"
+                )));
+            }
+
+            server.reset_idle_timeout_on_send = value.to_boolean();
+        }
+    }
+
     if let Some(value) = object.get(global_object, "publishToSelf")? {
         if !value.is_undefined_or_null() {
             if !value.is_boolean() {

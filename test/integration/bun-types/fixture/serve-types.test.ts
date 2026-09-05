@@ -203,6 +203,8 @@ test("basic + websocket + upgrade + all handlers", {
     },
 
     perMessageDeflate: true,
+    idleTimeout: 30,
+    resetIdleTimeoutOnSend: false,
   },
 });
 

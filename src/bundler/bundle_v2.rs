@@ -2612,9 +2612,7 @@ pub mod bv2_impl {
             if let Some(existing) = self.path_to_source_index_map(target).get(path.text) {
                 out_source_index = Some(Index::init(existing));
             } else {
-                path = self
-                    .path_with_pretty_initialized(&path, target)
-                    .expect("oom");
+                path = self.path_with_pretty_initialized(&path, target);
                 // The borrowck-reshape above cloned
                 // `path` out, so write the prettified path back so
                 // `ParseTask::init(&resolve_result, ..)` (via `enqueue_parse_task`)
@@ -2636,7 +2634,7 @@ pub mod bv2_impl {
                     // HTML is only allowed at the entry point.
                 };
                 let mut tmp_source = bun_ast::Source {
-                    path: path_as_static(&path.dupe_alloc(self.arena()).expect("oom")),
+                    path: path_as_static(&path.dupe_alloc(self.arena())),
                     contents: std::borrow::Cow::Borrowed(&b""[..]),
                     ..Default::default()
                 };
@@ -2732,7 +2730,7 @@ pub mod bv2_impl {
             let source_index = Index::source(self.graph.input_files.len() as u32);
             let loader = self.requested_file_loader(&path, loader);
 
-            path = self.path_with_pretty_initialized(&path, target)?;
+            path = self.path_with_pretty_initialized(&path, target);
             path.assert_pretty_is_valid();
             // see `enqueue_entry_item` — write the prettified path back
             // into `result` so `ParseTask::init(&result, ..)` reads the relativized
@@ -2825,21 +2823,21 @@ pub mod bv2_impl {
             // outlives the bundle pass; erase the arena lifetime back to the resolver's
             // `Path<'static>` alias so `path` doesn't keep `self` borrowed.
             path = unsafe {
-                self.path_with_pretty_initialized(&path, target)?
+                self.path_with_pretty_initialized(&path, target)
                     .into_static()
             };
             path.assert_pretty_is_valid();
-            // intern via `dupe_alloc` BEFORE writing back into `result` /
+            // copy via `dupe_alloc` BEFORE writing back into `result` /
             // the path-to-source-index map. The dev-server path builds a fresh
             // `bake_types::EntryPointList` with `Box<[u8]>` keys (DevServer.rs:3027)
             // that drops as soon as `enqueue_entry_points_dev_server` returns;
             // `resolve_with_framework` then lifetime-erases that key into the
-            // returned `Path`, so without interning here `ParseTask.path.text` (and
+            // returned `Path`, so without the copy here `ParseTask.path.text` (and
             // the map key) would dangle once the entry-point list is freed —
             // surfacing as "Failed to load bundled module
             // 'bun-framework-react/server.tsx'" when the worker can no longer match
             // `built_in_modules`.
-            path = path.dupe_alloc(self.arena()).expect("oom");
+            path = path.dupe_alloc(self.arena());
             // The borrowck-reshape
             // above cloned `path` out, which left `result.path_pair` with the
             // unrelativized `pretty` — and `ParseTask::init(&result, ..)` reads
@@ -4962,12 +4960,10 @@ pub mod bv2_impl {
                             // when the Box itself is moved into the Vec.
                             this.free_list.push(result.namespace);
                             this.free_list.push(result.path);
-                            path = this
-                                .path_with_pretty_initialized(
-                                    &path,
-                                    resolve.import_record.original_target,
-                                )
-                                .expect("oom");
+                            path = this.path_with_pretty_initialized(
+                                &path,
+                                resolve.import_record.original_target,
+                            );
                             // `GetOrPutResult` has no `key_ptr` — `get_or_put` already
                             // duped the key into the map (see PathToSourceIndexMap.rs).
 
@@ -5994,18 +5990,17 @@ pub mod bv2_impl {
             &self,
             path: &Fs::Path<'static>,
             target: options::Target,
-        ) -> Result<Fs::Path<'static>, Error> {
+        ) -> Fs::Path<'static> {
             // SAFETY: arena outlives the bundle pass; erase the `&self` lifetime so the
             // returned `Path<'static>` doesn't keep `self` borrowed (borrowck).
             let bump: &'static bun_alloc::Arena =
                 unsafe { bun_ptr::detach_lifetime_ref::<bun_alloc::Arena>(self.arena()) };
-            let out = generic_path_with_pretty_initialized(
+            generic_path_with_pretty_initialized(
                 path,
                 target,
                 self.transpiler.fs().top_level_dir,
                 bump,
-            )?;
-            Ok(out)
+            )
         }
 
         fn reserve_source_indexes_for_bake(&mut self) -> Result<(), Error> {
@@ -6751,9 +6746,7 @@ pub mod bv2_impl {
                                 import_record.path.text = path.text;
                                 import_record.path.pretty = rel;
                                 import_record.path = path_as_static(
-                                    &self
-                                        .path_with_pretty_initialized(path, target)
-                                        .expect("oom"),
+                                    &self.path_with_pretty_initialized(path, target),
                                 );
                                 if loader == Loader::Html
                                     || entry.kind == bake_types::CacheKind::Css
@@ -6815,9 +6808,7 @@ pub mod bv2_impl {
                     continue;
                 }
 
-                *path = self
-                    .path_with_pretty_initialized(path, target)
-                    .expect("oom");
+                *path = self.path_with_pretty_initialized(path, target);
 
                 import_record.path = path_as_static(path);
                 // key already interned by get_or_put — no key_ptr on StringHashMapGetOrPut
@@ -7508,14 +7499,10 @@ pub mod bv2_impl {
                             // `fs_path_from_logger`/`fs_path_to_logger` until the
                             // three `Path` mirrors unify.
                             ssr_source.path.pretty = ssr_source.path.text;
-                            ssr_source.path = path_as_static(
-                                &this
-                                    .path_with_pretty_initialized(
-                                        &ssr_source.path,
-                                        Target::ServerComponentsSsr,
-                                    )
-                                    .expect("oom"),
-                            );
+                            ssr_source.path = path_as_static(&this.path_with_pretty_initialized(
+                                &ssr_source.path,
+                                Target::ServerComponentsSsr,
+                            ));
                             let ssr_index = this
                                 .enqueue_parse_task2(
                                     &mut ssr_source,
@@ -7532,14 +7519,11 @@ pub mod bv2_impl {
                                 this.graph.input_files.items_source()[result_source_index].clone();
                             server_source.path.pretty = server_source.path.text;
                             let server_target = this.transpiler.options.target;
-                            server_source.path = path_as_static(
-                                &this
-                                    .path_with_pretty_initialized(
-                                        &server_source.path,
-                                        server_target,
-                                    )
-                                    .expect("oom"),
-                            );
+                            server_source.path =
+                                path_as_static(&this.path_with_pretty_initialized(
+                                    &server_source.path,
+                                    server_target,
+                                ));
                             let server_index = this
                                 .enqueue_parse_task2(
                                     &mut server_source,
@@ -7844,7 +7828,7 @@ pub mod bv2_impl {
         target: options::Target,
         top_level_dir: &[u8],
         bump: &bun_alloc::Arena,
-    ) -> crate::Result<bun_paths::fs::Path<'static>> {
+    ) -> bun_paths::fs::Path<'static> {
         use crate::bun_fs::PathResolverExt as _;
         use crate::bun_node_fallbacks;
         use bun_io::Write as _;
@@ -7856,7 +7840,7 @@ pub mod bv2_impl {
             && (strings::has_prefix(path.text, bun_node_fallbacks::IMPORT_PATH)
                 || !bun_paths::is_absolute(path.text))
         {
-            return Ok(*path);
+            return *path;
         }
 
         if path.is_file() || is_node {
@@ -7875,7 +7859,7 @@ pub mod bv2_impl {
             } else {
                 path_clone.pretty = rel;
             }
-            path_clone.dupe_alloc_fix_pretty(bump).map_err(Into::into)
+            path_clone.dupe_alloc_fix_pretty(bump)
         } else {
             let mut path_clone: crate::bun_fs::Path<'_> = *path;
             let mut fbs = bun_io::FixedBufferStream::new_mut(&mut buf.0[..]);
@@ -7887,7 +7871,7 @@ pub mod bv2_impl {
             let _ = fbs.write_all(path_clone.text);
             let written = fbs.pos;
             path_clone.pretty = &buf.0[..written];
-            path_clone.dupe_alloc_fix_pretty(bump).map_err(Into::into)
+            path_clone.dupe_alloc_fix_pretty(bump)
         }
     }
 

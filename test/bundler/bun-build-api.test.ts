@@ -2039,6 +2039,102 @@ test("Bun.build does not corrupt folded string ropes shared across chunks", asyn
   expect(exitCode).toBe(0);
 }, 180_000);
 
+// The resolver's FilenameStore/DirnameStore are append-only and live for the
+// whole process. `Path::dupe_alloc`, which runs for every file a bundle
+// discovers, used to append paths that were not already interned (a path a
+// plugin resolved, a plugin's namespace) to the FilenameStore on every call, so
+// a process that bundles the same files repeatedly (the dev server on each
+// rebuild, a `Bun.build()` loop) retained one more copy per bundle. The counts
+// must stop changing once the files have been bundled once.
+describe.concurrent("Bun.build of the same files again does not re-intern their paths", () => {
+  const MODULES = 20;
+  const BUILDS = 10;
+
+  async function pathStoreGrowth(files: Record<string, string>, buildScript: string) {
+    files["run.ts"] = `
+      import { bundlerInternals } from "bun:internal-for-testing";
+      ${buildScript}
+      // The first build interns every path it is going to intern; nothing
+      // after it may add more.
+      await build();
+      const before = bundlerInternals.pathStoreCounts();
+      for (let i = 0; i < ${BUILDS}; i++) await build();
+      const after = bundlerInternals.pathStoreCounts();
+      console.log(JSON.stringify({
+        filenames: after.filenames - before.filenames,
+        dirnames: after.dirnames - before.dirnames,
+      }));
+    `;
+    const dir = tempDirWithFiles("bun-build-path-store-growth", files);
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "run.ts"],
+      cwd: dir,
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+    return JSON.parse(stdout.trim());
+  }
+
+  test("files found by the resolver", async () => {
+    const files: Record<string, string> = {};
+    for (let i = 0; i < MODULES; i++) files[`lib/m${i}.ts`] = `export const v${i} = ${i};\n`;
+    files["entry.ts"] = Array.from({ length: MODULES }, (_, i) => `export { v${i} } from "./lib/m${i}.ts";`).join("\n");
+    const growth = await pathStoreGrowth(
+      files,
+      `
+      async function build() {
+        const result = await Bun.build({ entrypoints: ["./entry.ts"] });
+        if (!result.success) throw new AggregateError(result.logs, "build failed");
+      }
+    `,
+    );
+    expect(growth).toEqual({ filenames: 0, dirnames: 0 });
+  });
+
+  test("files and namespaces supplied by plugins", async () => {
+    const files: Record<string, string> = {};
+    for (let i = 0; i < MODULES; i++) files[`lib/m${i}.ts`] = `export const v${i} = ${i};\n`;
+    files["entry.ts"] = Array.from(
+      { length: MODULES },
+      (_, i) => `export { v${i} } from "real:m${i}"; export { w${i} } from "virtual:m${i}";`,
+    ).join("\n");
+    const growth = await pathStoreGrowth(
+      files,
+      `
+      import { join } from "node:path";
+      const plugin: import("bun").BunPlugin = {
+        name: "path-store-growth",
+        setup(builder) {
+          // Resolves to a file on disk, so the bundler reads it like any
+          // other file, but the path string comes from the plugin.
+          builder.onResolve({ filter: /^real:/ }, args => ({
+            path: join(import.meta.dir, "lib", args.path.slice("real:".length) + ".ts"),
+          }));
+          builder.onResolve({ filter: /^virtual:/ }, args => ({
+            path: args.path.slice("virtual:".length),
+            namespace: "virtual",
+          }));
+          builder.onLoad({ filter: /.*/, namespace: "virtual" }, args => ({
+            contents: "export const w" + args.path.slice(1) + " = " + args.path.slice(1) + ";",
+            loader: "ts",
+          }));
+        },
+      };
+      async function build() {
+        const result = await Bun.build({ entrypoints: ["./entry.ts"], plugins: [plugin] });
+        if (!result.success) throw new AggregateError(result.logs, "build failed");
+      }
+    `,
+    );
+    // Unfixed: 20 more filenames per build, the path of every plugin-resolved file.
+    expect(growth).toEqual({ filenames: 0, dirnames: 0 });
+  });
+});
+
 // A plugin module's namespace lives in the bundle's arena. The `BuildMessage`
 // objects in `result.logs` outlive the arena, so they must own a copy.
 // MIMALLOC_PURGE_DELAY=0 makes mimalloc return the arena's pages to the OS as

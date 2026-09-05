@@ -48,6 +48,7 @@ const rustIdentifierPaths: Record<string, string> = {
   "ipc.rs": "runtime/ipc_host.rs",
   "Counters.rs": "jsc/Counters.rs",
   "FrameworkRouter.rs": "runtime/bake/FrameworkRouter.rs",
+  "JSBundler.rs": "runtime/api/JSBundler.rs",
   "Listener.rs": "runtime/socket/Listener.rs",
   "MarkdownObject.rs": "runtime/api/MarkdownObject.rs",
   "SecureContext.rs": "runtime/api/bun/SecureContext.rs",

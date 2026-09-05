@@ -1901,6 +1901,31 @@ pub use js_bundler as JSBundler;
 pub use js_bundler::Plugin;
 pub(crate) use js_bundler::PluginJscExt;
 
+pub mod testing_apis {
+    use super::*;
+
+    /// `bundlerInternals.pathStoreCounts()` in `bun:internal-for-testing`.
+    pub(crate) fn path_store_counts(
+        global: &JSGlobalObject,
+        _frame: &CallFrame,
+    ) -> JsResult<JSValue> {
+        let counts = JSValue::create_empty_object(global, 2);
+        counts.put(
+            global,
+            b"filenames",
+            JSValue::js_number(bun_resolver::fs::FilenameStore::instance().count() as f64),
+        );
+        counts.put(
+            global,
+            b"dirnames",
+            JSValue::js_number(bun_resolver::fs::DirnameStore::instance().count() as f64),
+        );
+        Ok(counts)
+    }
+}
+// `generated_js2native.rs` snake-cases `TestingAPIs` as `testing_ap_is`.
+pub use testing_apis as testing_ap_is;
+
 /// Full `.classes.ts` payload — wraps a `webcore::Blob` plus
 /// `loader/path/hash/output_kind`. `.sourcemap` lives on the JS wrapper
 /// (`m_sourcemap` WriteBarrier from `cache: true`), not here.

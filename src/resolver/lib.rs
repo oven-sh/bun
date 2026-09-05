@@ -133,6 +133,11 @@ pub mod fs {
                     // SAFETY: see `append_slice`; the singleton is `'static`.
                     unsafe { &*$backing() }.as_interned(value)
                 }
+                /// Number of strings interned so far (the store never shrinks).
+                pub fn count(&self) -> usize {
+                    // SAFETY: see `append_slice`.
+                    unsafe { bun_alloc::BSSStringList::count($backing()) }
+                }
             }
         };
     }
@@ -492,15 +497,13 @@ pub mod fs {
             .or_else(|| FilenameStore::instance().as_interned(value))
     }
 
-    /// Intern a `Path.namespace` for `dupe_alloc`. The common `file`/empty
-    /// namespace is a static literal (no allocation); anything else is interned
-    /// into the process-lifetime `FilenameStore`.
-    #[inline]
-    fn dupe_namespace(namespace: &[u8]) -> crate::CrateResult<&'static [u8]> {
-        match namespace {
-            b"" | b"file" => Ok(b"file"),
-            ns => FilenameStore::instance().append_slice(ns),
-        }
+    /// `slice` when it is interned, else a NUL-terminated copy in the bundle's arena.
+    fn interned_or_arena<'b>(slice: &[u8], alloc: &'b bun_alloc::MimallocArena) -> &'b [u8] {
+        as_interned_path(slice).unwrap_or_else(|| {
+            let copy: &mut [u8] = alloc.alloc_slice_fill_copy(slice.len() + 1, 0u8);
+            copy[..slice.len()].copy_from_slice(slice);
+            &copy[..slice.len()]
+        })
     }
 
     /// Resolver-tier `Path` methods that pull deps `bun_paths` can't
@@ -508,168 +511,67 @@ pub mod fs {
     /// `bun_string`). Import this trait to call `.loader()` / `.dupe_alloc()`
     /// on a `Path`.
     pub trait PathResolverExt<'a> {
-        /// Intern `text`/`pretty` into the process-lifetime `FilenameStore`
-        /// (reusing an already-interned `text`); when `pretty` is not a
-        /// sub-string of `text`, `pretty` and any not-yet-interned
-        /// `text`/`namespace` go in `alloc` (the per-build bundle arena)
-        /// instead. See the impl for why.
-        fn dupe_alloc(&self, alloc: &bun_alloc::MimallocArena)
-        -> crate::CrateResult<Path<'static>>;
-        fn dupe_alloc_fix_pretty(
-            &self,
-            alloc: &bun_alloc::MimallocArena,
-        ) -> crate::CrateResult<Path<'static>>;
+        /// The graph's `Path` for `self`: every slice is interned or lives in `alloc`.
+        fn dupe_alloc(&self, alloc: &bun_alloc::MimallocArena) -> Path<'static>;
+        fn dupe_alloc_fix_pretty(&self, alloc: &bun_alloc::MimallocArena) -> Path<'static>;
         fn loader(&self, loaders: &bun_ast::LoaderHashTable) -> Option<bun_ast::Loader>;
     }
 
     impl<'a> PathResolverExt<'a> for Path<'a> {
-        /// Interns `text`/`pretty` into the
-        /// process-static `FilenameStore` so the returned `Path` borrows `'static`
-        /// data.
-        ///
-        /// Short-circuit: if `text` (and, where relevant,
-        /// `pretty`) already points into a process-lifetime store
-        /// (`FilenameStore` or `DirnameStore`), the slices are already `'static`
-        /// and we return the path unchanged instead of appending a duplicate.
-        /// Skipping this check makes the append-only `FilenameStore` grow without
-        /// bound across repeated in-process `Bun.build()` calls, eventually
-        /// tripping the overflow-block cap (index-out-of-bounds panic).
-        fn dupe_alloc(
-            &self,
-            alloc: &bun_alloc::MimallocArena,
-        ) -> crate::CrateResult<Path<'static>> {
-            let is_interned = |slice: &[u8]| as_interned_path(slice).is_some();
-            // Returning `self` unchanged widens `text`/`pretty`/`namespace` to
-            // `'static`; the caller has already proven `text`/`pretty` are
-            // interned, so assert `namespace` is too (static literal or store-
-            // interned) — a transient namespace here would dangle.
-            let return_self_static = || {
-                debug_assert!(
-                    matches!(self.namespace, b"" | b"file") || is_interned(self.namespace),
-                    "dupe_alloc: returning interned path with transient namespace",
-                );
-                // SAFETY: `text`/`pretty` point into a process-lifetime store
-                // (checked by the caller), and `namespace` is static/interned
-                // (asserted above). All three outlive the program.
-                Ok(unsafe { (*self).into_static() })
-            };
-
-            if core::ptr::eq(self.text.as_ptr(), self.pretty.as_ptr())
-                && self.text.len() == self.pretty.len()
-            {
-                if is_interned(self.text) {
-                    return return_self_static();
-                }
-                // `Path::init` sets `pretty == text`, matching the aliased input.
-                let text = FilenameStore::instance().append_slice(self.text)?;
-                let mut new_path = Path::<'static>::init(text);
-                new_path.namespace = dupe_namespace(self.namespace)?;
-                new_path.is_symlink = self.is_symlink;
-                new_path.is_disabled = self.is_disabled;
-                Ok(new_path)
-            } else if self.pretty.is_empty() {
-                if is_interned(self.text) {
-                    return return_self_static();
-                }
-                let text = FilenameStore::instance().append_slice(self.text)?;
-                let mut new_path = Path::<'static>::init(text);
-                new_path.pretty = b"";
-                new_path.namespace = dupe_namespace(self.namespace)?;
-                new_path.is_symlink = self.is_symlink;
-                new_path.is_disabled = self.is_disabled;
-                Ok(new_path)
+        /// Valid for the bundle pass; whatever outlives it copies (`Location::clone`,
+        /// `Watcher::add_file::<true>`, the dev server's graph keys).
+        fn dupe_alloc(&self, alloc: &bun_alloc::MimallocArena) -> Path<'static> {
+            let text = interned_or_arena(self.text, alloc);
+            let pretty: &[u8] = if self.pretty.is_empty() {
+                b""
             } else if let Some([offset, len]) =
                 bun_alloc::range_of_slice_in_buffer(self.pretty, self.text)
             {
-                // `pretty` is a sub-slice of `text`.
-                if is_interned(self.text) {
-                    return return_self_static();
-                }
-                let text = FilenameStore::instance().append_slice(self.text)?;
-                let mut new_path = Path::<'static>::init(text);
-                new_path.pretty = &text[offset as usize..][..len as usize];
-                new_path.namespace = dupe_namespace(self.namespace)?;
-                new_path.is_symlink = self.is_symlink;
-                new_path.is_disabled = self.is_disabled;
-                Ok(new_path)
+                &text[offset as usize..][..len as usize]
+            } else if let Some(offset) = bun_core::strings::index_of(self.text, self.pretty) {
+                &text[offset..][..self.pretty.len()]
             } else {
-                if is_interned(self.text) && is_interned(self.pretty) {
-                    return return_self_static();
+                interned_or_arena(self.pretty, alloc)
+            };
+            let namespace: &[u8] = match self.namespace {
+                b"" | b"file" => b"file",
+                namespace => interned_or_arena(namespace, alloc),
+            };
+            // SAFETY: every slice is interned or arena-backed (see the trait doc).
+            unsafe {
+                Path {
+                    text,
+                    pretty,
+                    namespace,
+                    is_symlink: self.is_symlink,
+                    is_disabled: self.is_disabled,
                 }
-                let mut new_path =
-                    if let Some(offset) = bun_core::strings::index_of(self.text, self.pretty) {
-                        // `text` contains `pretty`; re-slice the interned copy.
-                        let text = match as_interned_path(self.text) {
-                            Some(text) => text,
-                            None => FilenameStore::instance().append_slice(self.text)?,
-                        };
-                        let mut p = Path::<'static>::init(text);
-                        p.pretty = &text[offset..][..self.pretty.len()];
-                        p
-                    } else {
-                        // Disjoint `text`/`pretty`: a file outside `top_level_dir`
-                        // (`pretty` starts with `../`) or a plugin module in a
-                        // non-`file` namespace (`pretty` is `<ns>:<text>`). `pretty` is
-                        // recomputed every build, and so are `text`/`namespace` unless
-                        // the resolver already interned them, so they go in the
-                        // per-build arena rather than growing the append-only stores
-                        // on every `Bun.build()`. Holders that outlive the bundle (the
-                        // file watcher) copy.
-                        let arena_z = |s: &[u8]| -> &'static [u8] {
-                            let buf: &mut [u8] = alloc.alloc_slice_fill_copy(s.len() + 1, 0u8);
-                            buf[..s.len()].copy_from_slice(s);
-                            // SAFETY: arena memory lives for the whole bundle pass; the
-                            // consuming `Path` (graph/import-record) never outlives it.
-                            unsafe { core::slice::from_raw_parts(buf.as_ptr(), s.len()) }
-                        };
-                        let mut p = Path::<'static>::init(
-                            as_interned_path(self.text).unwrap_or_else(|| arena_z(self.text)),
-                        );
-                        p.pretty = arena_z(self.pretty);
-                        p.namespace = match self.namespace {
-                            b"" | b"file" => b"file",
-                            ns => as_interned_path(ns).unwrap_or_else(|| arena_z(ns)),
-                        };
-                        p.is_symlink = self.is_symlink;
-                        p.is_disabled = self.is_disabled;
-                        return Ok(p);
-                    };
-                new_path.namespace = dupe_namespace(self.namespace)?;
-                new_path.is_symlink = self.is_symlink;
-                new_path.is_disabled = self.is_disabled;
-                Ok(new_path)
+                .into_static()
             }
         }
 
-        fn dupe_alloc_fix_pretty(
-            &self,
-            alloc: &bun_alloc::MimallocArena,
-        ) -> crate::CrateResult<Path<'static>> {
+        fn dupe_alloc_fix_pretty(&self, alloc: &bun_alloc::MimallocArena) -> Path<'static> {
             #[cfg(not(windows))]
             {
                 self.dupe_alloc(alloc)
             }
             #[cfg(windows)]
             {
-                // If `pretty` contains no backslashes it is already POSIX-style.
-                // Short-circuiting preserves the `pretty.ptr == text.ptr` aliasing
-                // optimisation inside `dupe_alloc` and avoids a fresh FilenameStore alloc.
+                // A `pretty` without backslashes is already POSIX-style, and
+                // `dupe_alloc` re-slices it out of `text` instead of the copy below.
                 if !bun_core::strings::contains_char(self.pretty, b'\\') {
                     return self.dupe_alloc(alloc);
                 }
                 let mut new = self.clone();
                 new.pretty = b"";
-                let mut new = new.dupe_alloc(alloc)?;
-                // The posix-normalized
-                // display path goes into the per-build arena, not the
-                // process-lifetime `FilenameStore` (it is recomputed each build).
+                let mut new = new.dupe_alloc(alloc);
                 let pretty: &mut [u8] = alloc.alloc_slice_copy(self.pretty);
                 bun_paths::resolve_path::platform_to_posix_in_place::<u8>(pretty);
                 // SAFETY: arena memory lives for the whole bundle pass; the
                 // consuming `Path` never outlives it.
                 new.pretty = unsafe { core::slice::from_raw_parts(pretty.as_ptr(), pretty.len()) };
                 new.assert_pretty_is_valid();
-                Ok(new)
+                new
             }
         }
 

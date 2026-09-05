@@ -451,7 +451,7 @@ impl<'a> LinkerContext<'a> {
         &mut self,
         path: &bun_paths::fs::Path<'static>,
         arena: &Bump,
-    ) -> Result<bun_paths::fs::Path<'static>, BunError> {
+    ) -> bun_paths::fs::Path<'static> {
         let top_level_dir = bun_resolver::fs::FileSystem::get().top_level_dir;
         generic_path_with_pretty_initialized(path, self.options.target, top_level_dir, arena)
     }
@@ -1887,9 +1887,7 @@ impl<'a> LinkerContext<'a> {
                         // Use the pretty path as the file name since it should be platform-
                         // independent (relative paths and the "/" path separator)
                         if source.path.text.as_ptr() == source.path.pretty.as_ptr() {
-                            source.path = self
-                                .path_with_pretty_initialized(&source.path, arena)
-                                .expect("OOM");
+                            source.path = self.path_with_pretty_initialized(&source.path, arena);
                         }
                         // Note: `Path::assert_pretty_is_valid` lives on the
                         // resolver-side `Path<'a>`; the logger `Path` has no

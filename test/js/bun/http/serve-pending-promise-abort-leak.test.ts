@@ -506,23 +506,10 @@ test.each(["sync", "async"])(
 // (a bun_jsc::Strong slot or a protect()), every object that points at it,
 // and the shortest path from a GC root, read from a debugging heap snapshot.
 function describeRetainers(streams: WeakRef<ReadableStream>[], stash: WeakMap<ReadableStream, Response>): string {
-  const out: string[] = [];
-  const protectedObjects: unknown[] = jsc.getProtectedObjects();
-  const tagged: number[] = [];
-  for (let i = 0; i < streams.length; i++) {
-    const stream = streams[i].deref();
-    if (!stream) continue;
-    const response = stash.get(stream);
-    // Tag each survivor with a unique property so its node can be found in the snapshot.
-    (stream as any)[`__leak_stream_${i}`] = {};
-    if (response) (response as any)[`__leak_response_${i}`] = {};
-    tagged.push(i);
-    out.push(
-      `index ${i}: stream ${protectedObjects.includes(stream) ? "IS" : "is not"} a native root; ` +
-        `response ${response ? (protectedObjects.includes(response) ? "IS" : "is not") : "(not in stash)"} a native root`,
-    );
-  }
+  const { out, tagged } = tagSurvivors(streams, stash);
 
+  // The survivors and the protected-object list are out of scope here, so the
+  // snapshot does not see this function's own references.
   jsc.releaseWeakRefs();
   // GCDebugging snapshot: nodes are 7-tuples [id, size, classIndex, flags, labelIndex, cell, wrapped],
   // edges are 4-tuples [from, to, typeIndex, data], roots are 3-tuples [id, reasonLabel, reachabilityLabel].
@@ -549,9 +536,9 @@ function describeRetainers(streams: WeakRef<ReadableStream>[], stash: WeakMap<Re
   for (let p = 0; p < snap.edges.length; p += 4) {
     const [from, to] = [snap.edges[p], snap.edges[p + 1]];
     const type = snap.edgeTypes[snap.edges[p + 2]];
-    const name =
+    const name: string =
       type === "Property" || type === "Variable"
-        ? snap.edgeNames[snap.edges[p + 3]]
+        ? (snap.edgeNames[snap.edges[p + 3]] ?? "")
         : type === "Index"
           ? String(snap.edges[p + 3])
           : "";
@@ -608,6 +595,30 @@ function describeRetainers(streams: WeakRef<ReadableStream>[], stash: WeakMap<Re
     }
   }
   return out.join("\n");
+}
+
+// Tag each survivor with a unique property so its node can be found in the
+// snapshot, and record whether it and its Response are native roots.
+function tagSurvivors(
+  streams: WeakRef<ReadableStream>[],
+  stash: WeakMap<ReadableStream, Response>,
+): { out: string[]; tagged: number[] } {
+  const out: string[] = [];
+  const tagged: number[] = [];
+  const protectedObjects: unknown[] = jsc.getProtectedObjects();
+  for (let i = 0; i < streams.length; i++) {
+    const stream = streams[i].deref();
+    if (!stream) continue;
+    const response = stash.get(stream);
+    (stream as any)[`__leak_stream_${i}`] = {};
+    if (response) (response as any)[`__leak_response_${i}`] = {};
+    tagged.push(i);
+    out.push(
+      `index ${i}: stream ${protectedObjects.includes(stream) ? "IS" : "is not"} a native root; ` +
+        `response ${response ? (protectedObjects.includes(response) ? "IS" : "is not") : "(not in stash)"} a native root`,
+    );
+  }
+  return { out, tagged };
 }
 
 // Between the abort and the late settle, the server itself goes away: stop()

@@ -3368,7 +3368,7 @@
         },
         "ls": {
           "name": "ls",
-          "description": "list the dependency tree according to the current lockfile",
+          "description": "list the tree of installed dependencies",
           "flags": [],
           "positionalArgs": []
         },

@@ -659,26 +659,29 @@ describe.each(["hoisted", "isolated"] as Linker[])("linker: %s", linker => {
     expect(await exists(installedPath(packageDir, linker, "left-pad", "1.0.0"))).toBeFalse();
   });
 
-  // docs/pm/cli/install.mdx: the skipped workspaces stay in bun.lock, so lockfile-driven commands still see them.
-  test.concurrent("bun pm ls --all still lists the skipped workspace and its exclusive dependency", async () => {
-    const { packageDir, full } = await verbatimTree(linker);
-    await frozen(packageDir, linker, 0);
+  // The skipped workspace stays in bun.lock and is still listed, but its
+  // exclusive dependency was never installed so `bun pm ls` omits it.
+  test.concurrent(
+    "bun pm ls --all lists the skipped workspace but not its uninstalled exclusive dependency",
+    async () => {
+      const { packageDir, full } = await verbatimTree(linker);
+      await frozen(packageDir, linker, 0);
 
-    const { stdout, stderr, exitCode } = await spawnBun(packageDir, ["pm", "ls", "--all"]);
+      const { stdout, stderr, exitCode } = await spawnBun(packageDir, ["pm", "ls", "--all"]);
 
-    expect(stderr).toBe("");
-    expect(normalizeBunSnapshot(stdout, packageDir)).toMatchInlineSnapshot(`
-      "<dir> node_modules
-      ├── a-dep@1.0.1
-      ├── app@workspace:packages/app
-      ├── left-pad@1.0.0
-      ├── no-deps@1.0.0
-      ├── other@workspace:packages/other
-      └── shared@workspace:packages/shared"
-    `);
-    expect(await lockText(packageDir)).toBe(full);
-    expect(exitCode).toBe(0);
-  });
+      expect(stderr).toBe("");
+      expect(normalizeBunSnapshot(stdout, packageDir)).toMatchInlineSnapshot(`
+        "<dir> node_modules
+        ├── a-dep@1.0.1
+        ├── app@workspace:packages/app
+        ├── no-deps@1.0.0
+        ├── other@workspace:packages/other
+        └── shared@workspace:packages/shared"
+      `);
+      expect(await lockText(packageDir)).toBe(full);
+      expect(exitCode).toBe(0);
+    },
+  );
 
   test.concurrent("bun audit still submits the skipped workspace's exclusive dependency", async () => {
     const { packageDir, full } = await verbatimTree(linker);

@@ -44,7 +44,7 @@ struct Entry {
 }
 
 /// Lazily-scanned, sorted entry names of `node_modules/.bun/`; `None` until first needed.
-struct BunStore {
+pub(crate) struct BunStore {
     entries: Option<Vec<Box<[u8]>>>,
 }
 
@@ -206,7 +206,7 @@ impl PmLicensesCommand {
         let buf = lockfile.buffers.string_bytes.as_slice();
 
         let mut log = Log::init();
-        let mut store = BunStore { entries: None };
+        let mut store = BunStore::init();
         let mut disk = DiskIndex { entries: None };
         let mut entries: Vec<Entry> = Vec::new();
         let mut missing: usize = 0;
@@ -537,6 +537,10 @@ fn author_of(json: &Expr) -> Option<Box<[u8]>> {
 }
 
 impl BunStore {
+    pub(crate) fn init() -> Self {
+        Self { entries: None }
+    }
+
     fn read_info(
         &mut self,
         path: &mut AutoAbsPath,
@@ -557,7 +561,7 @@ impl BunStore {
         read_package_info_at(path, top_len, &segments, log)
     }
 
-    fn lookup(
+    pub(crate) fn lookup(
         &mut self,
         path: &mut AutoAbsPath,
         top_len: usize,

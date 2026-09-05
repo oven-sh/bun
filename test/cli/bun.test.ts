@@ -418,7 +418,7 @@ describe("bun", () => {
         "bun pm --help",
         ["pm"],
         [
-          /^ {2}bun pm ls +list the dependency tree according to the current lockfile$/m,
+          /^ {2}bun pm ls +list the tree of installed dependencies$/m,
           /^ {2}bun pm licenses +list installed packages grouped by license$/m,
         ],
       ],

@@ -1,6 +1,6 @@
 import { spawn } from "bun";
 import { afterAll, afterEach, beforeAll, beforeEach, expect, it, test } from "bun:test";
-import { exists, mkdir, writeFile } from "fs/promises";
+import { exists, mkdir, rm, writeFile } from "fs/promises";
 import { bunEnv, bunExe, bunEnv as env, normalizeBunSnapshot, readdirSorted, tempDir, tmpdirSync } from "harness";
 import { cpSync } from "node:fs";
 import { join } from "path";
@@ -138,6 +138,134 @@ it("should list all dependencies", async () => {
   expect(await exited).toBe(0);
   expect(urls.sort()).toEqual([]);
   expect(requested).toBe(2);
+});
+
+it("should not list packages missing from node_modules", async () => {
+  const urls: string[] = [];
+  setHandler(dummyRegistry(urls));
+  await writeFile(
+    join(package_dir, "package.json"),
+    JSON.stringify({
+      name: "foo",
+      version: "0.0.1",
+      dependencies: {
+        bar: "latest",
+        moo: "./moo",
+      },
+    }),
+  );
+  await mkdir(join(package_dir, "moo"));
+  await writeFile(
+    join(package_dir, "moo", "package.json"),
+    JSON.stringify({
+      name: "moo",
+      version: "0.1.0",
+    }),
+  );
+  {
+    const { stderr, exited } = spawn({
+      cmd: [bunExe(), "install"],
+      cwd: package_dir,
+      stdout: "pipe",
+      stdin: "pipe",
+      stderr: "pipe",
+      env,
+    });
+    const err = await stderr.text();
+    expect(err).not.toContain("error:");
+    expect(err).toContain("Saved lockfile");
+    expect(await exited).toBe(0);
+  }
+  {
+    const { stdout, stderr, exited } = spawn({
+      cmd: [bunExe(), "pm", "ls"],
+      cwd: package_dir,
+      stdout: "pipe",
+      stdin: "pipe",
+      stderr: "pipe",
+      env,
+    });
+    expect(await stderr.text()).toBe("");
+    expect(await stdout.text()).toBe(`${package_dir} node_modules (2)
+├── bar@0.0.2
+└── moo@moo
+`);
+    expect(await exited).toBe(0);
+  }
+  // simulates `bun prune --production` or a platform-mismatched optional
+  // dependency: the package is in the lockfile but not on disk
+  await rm(join(package_dir, "node_modules", "bar"), { recursive: true });
+  {
+    const { stdout, stderr, exited } = spawn({
+      cmd: [bunExe(), "pm", "ls"],
+      cwd: package_dir,
+      stdout: "pipe",
+      stdin: "pipe",
+      stderr: "pipe",
+      env,
+    });
+    expect(await stderr.text()).toBe("");
+    expect(await stdout.text()).toBe(`${package_dir} node_modules (1)
+└── moo@moo
+`);
+    expect(await exited).toBe(0);
+  }
+  {
+    const { stdout, stderr, exited } = spawn({
+      cmd: [bunExe(), "pm", "ls", "--all"],
+      cwd: package_dir,
+      stdout: "pipe",
+      stdin: "pipe",
+      stderr: "pipe",
+      env,
+    });
+    expect(await stderr.text()).toBe("");
+    expect(await stdout.text()).toBe(`${package_dir} node_modules
+└── moo@moo
+`);
+    expect(await exited).toBe(0);
+  }
+});
+
+it("should error when node_modules does not exist", async () => {
+  const urls: string[] = [];
+  setHandler(dummyRegistry(urls));
+  await writeFile(
+    join(package_dir, "package.json"),
+    JSON.stringify({
+      name: "foo",
+      version: "0.0.1",
+      dependencies: {
+        bar: "latest",
+      },
+    }),
+  );
+  {
+    const { stderr, exited } = spawn({
+      cmd: [bunExe(), "install"],
+      cwd: package_dir,
+      stdout: "pipe",
+      stdin: "pipe",
+      stderr: "pipe",
+      env,
+    });
+    const err = await stderr.text();
+    expect(err).not.toContain("error:");
+    expect(err).toContain("Saved lockfile");
+    expect(await exited).toBe(0);
+  }
+  await rm(join(package_dir, "node_modules"), { recursive: true });
+  const { stdout, stderr, exited } = spawn({
+    cmd: [bunExe(), "pm", "ls"],
+    cwd: package_dir,
+    stdout: "pipe",
+    stdin: "pipe",
+    stderr: "pipe",
+    env,
+  });
+  expect(await stderr.text()).toContain("node_modules not found");
+  expect(await stdout.text()).toBe("");
+  expect(await exited).toBe(1);
 });
 
 it("should list top-level aliased dependency", async () => {

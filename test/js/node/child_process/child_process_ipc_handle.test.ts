@@ -632,6 +632,87 @@ server.listen(0, '127.0.0.1', () => {
     },
   );
 
+  // A NODE_HANDLE frame tagged net.Server whose descriptor cannot listen (here: a connected TCP
+  // socket, which only a corrupted or foreign peer would send). node closes the descriptor and the
+  // listen error is uncaught; the message is never delivered.
+  test.concurrent("a net.Server handle whose descriptor is refused by listen() is closed", async () => {
+    // One frame to settle the child, then N whose descriptors are counted.
+    const N = 4;
+    using dir = tempDir("ipc-handle-server-refused", {
+      "parent.js": `
+const { fork } = require('node:child_process');
+const net = require('node:net');
+const N = ${N};
+const child = fork('child.js');
+const clients = [];
+const server = net.createServer();
+
+function finish(out) {
+  console.log(JSON.stringify(out));
+  for (const c of clients) c.destroy();
+  server.close();
+  if (child.connected) child.disconnect();
+}
+child.on('exit', code => { if (code !== 0) finish({ childExit: code }); });
+
+// serialize() tags the frame after the object's class, but the descriptor it sends is taken
+// from _handle: this produces a net.Server frame carrying a connected socket.
+function sendAsServer(i) {
+  const notAServer = Object.create(net.Server.prototype);
+  notAServer._handle = clients[i]._handle;
+  child.send({ i }, notAServer, { keepOpen: true });
+}
+
+child.on('message', m => {
+  if (m !== 'settled') return finish(m);
+  for (let i = 1; i <= N; i++) sendAsServer(i);
+});
+
+server.listen(0, '127.0.0.1', () => {
+  let connecting = N + 1;
+  for (let i = 0; i <= N; i++) {
+    const client = net.connect(server.address().port, '127.0.0.1', () => {
+      if (--connecting === 0) sendAsServer(0);
+    });
+    client.on('error', () => {});
+    clients.push(client);
+  }
+});
+`,
+      "child.js": `
+const fs = require('node:fs');
+const N = ${N};
+const openFds = () => fs.readdirSync('/dev/fd').length;
+const codes = [];
+let delivered = 0;
+let fdsAfterFirst;
+process.on('message', () => delivered++);
+process.on('uncaughtException', err => {
+  codes.push(err.code);
+  if (codes.length === 1) {
+    fdsAfterFirst = openFds();
+    process.send('settled');
+  } else if (codes.length === N + 1) {
+    process.send({ codes, delivered, leakedFds: openFds() - fdsAfterFirst });
+  }
+});
+`,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "parent.js"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ out: JSON.parse(stdout.trim()), stderr }).toEqual({
+      out: { codes: Array(N + 1).fill("EINVAL"), delivered: 0, leakedFds: 0 },
+      stderr: "",
+    });
+    expect(exitCode).toBe(0);
+  });
+
   test.concurrent("a received handle that lands on fd 0 is adopted", async () => {
     using dir = tempDir("ipc-handle-fd0", {
       "parent.js": `

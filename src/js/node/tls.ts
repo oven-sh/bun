@@ -1815,8 +1815,10 @@ function setDefaultCACertificates(certs: ReadonlyArray<CACertInput>): void {
   if (normalized.length === 0 && snapshot.length > 0) {
     throw $ERR_CRYPTO_OPERATION_FAILED("No valid certificates found in the provided array");
   }
-  _defaultCACertificatesOverride = normalized;
+  // The native call throws for a certificate BoringSSL rejects; keep the JS
+  // override and the fetch() override in step by storing only after it returns.
   setDefaultCACertificatesNative(normalized);
+  _defaultCACertificatesOverride = normalized;
 }
 
 function getCACertificates(type = "default") {

@@ -4266,6 +4266,24 @@ void GlobalObject::setNodeWorkerEntryEvaluatedHook(JSObject* hook)
         m_nodeWorkerEntryEvaluatedHook.clear();
 }
 
+void GlobalObject::setPendingInternalPromise(JSC::JSPromise* promise)
+{
+    if (promise)
+        m_pendingInternalPromise.set(vm(), this, promise);
+    else
+        m_pendingInternalPromise.clear();
+}
+
+extern "C" JSC::JSPromise* Bun__GlobalObject__pendingInternalPromise(Zig::GlobalObject* globalObject)
+{
+    return globalObject->pendingInternalPromise();
+}
+
+extern "C" void Bun__GlobalObject__setPendingInternalPromise(Zig::GlobalObject* globalObject, JSC::JSPromise* promise)
+{
+    globalObject->setPendingInternalPromise(promise);
+}
+
 extern "C" void Bun__InspectorConnection__disconnectAllOnExit(Zig::GlobalObject*);
 
 void GlobalObject::setNodeParentPort(WebCore::MessagePort* port)

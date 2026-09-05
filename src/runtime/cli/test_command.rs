@@ -1868,6 +1868,8 @@ impl TestCommand {
                 unhandled_errors_between_tests: 0,
                 summary: Summary::default(),
                 node_test_used: false,
+                stubbed_envs: Vec::new(),
+                stubbed_globals: Vec::new(),
             },
             repeat_count: 1,
             last_printed_dot: core::cell::Cell::new(false),

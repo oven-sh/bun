@@ -77,6 +77,11 @@ impl ScopeFunctions {
     pub(crate) fn get_failing(this: &Self, global: &JSGlobalObject) -> JsResult<JSValue> {
         this.generic_extend(global, BaseScopeCfg { self_mode: SelfMode::Failing, ..Default::default() }, b"get .failing", "failing")
     }
+    /// vitest spells `.failing` as `.fails`.
+    #[bun_jsc::host_fn(getter)]
+    pub(crate) fn get_fails(this: &Self, global: &JSGlobalObject) -> JsResult<JSValue> {
+        this.generic_extend(global, BaseScopeCfg { self_mode: SelfMode::Failing, ..Default::default() }, b"get .fails", "fails")
+    }
     #[bun_jsc::host_fn(getter)]
     pub(crate) fn get_concurrent(this: &Self, global: &JSGlobalObject) -> JsResult<JSValue> {
         this.generic_extend(global, BaseScopeCfg { self_concurrent: SelfConcurrent::Yes, ..Default::default() }, b"get .concurrent", "concurrent")
@@ -85,6 +90,11 @@ impl ScopeFunctions {
     pub(crate) fn get_serial(this: &Self, global: &JSGlobalObject) -> JsResult<JSValue> {
         this.generic_extend(global, BaseScopeCfg { self_concurrent: SelfConcurrent::No, ..Default::default() }, b"get .serial", "serial")
     }
+    /// vitest spells `.serial` as `.sequential`.
+    #[bun_jsc::host_fn(getter)]
+    pub(crate) fn get_sequential(this: &Self, global: &JSGlobalObject) -> JsResult<JSValue> {
+        this.generic_extend(global, BaseScopeCfg { self_concurrent: SelfConcurrent::No, ..Default::default() }, b"get .sequential", "sequential")
+    }
     #[bun_jsc::host_fn(getter)]
     pub(crate) fn get_only(this: &Self, global: &JSGlobalObject) -> JsResult<JSValue> {
         this.generic_extend(global, BaseScopeCfg { self_only: true, ..Default::default() }, b"get .only", "only")
@@ -92,6 +102,11 @@ impl ScopeFunctions {
     #[bun_jsc::host_fn(method)]
     pub(crate) fn fn_if(this: &Self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
         this.generic_if(global, frame, BaseScopeCfg { self_mode: SelfMode::Skip, ..Default::default() }, b"call .if()", true, "if")
+    }
+    /// vitest spells `.if` as `.runIf`.
+    #[bun_jsc::host_fn(method)]
+    pub(crate) fn fn_run_if(this: &Self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+        this.generic_if(global, frame, BaseScopeCfg { self_mode: SelfMode::Skip, ..Default::default() }, b"call .runIf()", true, "runIf")
     }
     #[bun_jsc::host_fn(method)]
     pub(crate) fn fn_skip_if(this: &Self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
@@ -426,6 +441,7 @@ impl ScopeFunctions {
                         timeout: options.timeout,
                         retry_count: options.retry.unwrap_or(0),
                         repeat_count: options.repeats,
+                        ..Default::default()
                     },
                     base,
                     bun_test::AddedInPhase::Collection,

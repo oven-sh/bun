@@ -1492,6 +1492,46 @@ impl JSValue {
             JSC__JSValue__putMayBeIndex(self, global, key, value)
         })
     }
+    /// Own-property read with an explicit key encoding: the prototype chain
+    /// is not consulted, non-ASCII UTF-8 key bytes are read as UTF-8 (the
+    /// byte-slice [`Self::get`] reads Latin-1), and an own property that
+    /// exists with the value `undefined` returns `Some(undefined)`, not
+    /// `None`.
+    pub fn get_own_encoded(
+        self,
+        global: &JSGlobalObject,
+        key: &bun_core::EncodedSlice,
+    ) -> JsResult<Option<JSValue>> {
+        // SAFETY: `key` is valid for the duration of the call.
+        let v = unsafe { crate::cpp::JSC__JSValue__getOwnEncoded(self, global, key) }?;
+        if v.0 == JSValue::PROPERTY_DOES_NOT_EXIST.0 {
+            Ok(None)
+        } else {
+            Ok(Some(v))
+        }
+    }
+    /// [`Self::delete_property`] with an explicit key encoding.
+    pub fn delete_property_encoded(
+        self,
+        global: &JSGlobalObject,
+        key: &bun_core::EncodedSlice,
+    ) -> JsResult<bool> {
+        crate::call_check_slow(global, || JSC__JSValue__deleteProperty(self, global, key))
+    }
+    /// Method-table put: runs custom `put` overrides (for example
+    /// `process.env`'s setter). [`Self::put`] is a `putDirect` and bypasses
+    /// them.
+    pub fn put_generic(
+        self,
+        global: &JSGlobalObject,
+        key: impl AsRef<[u8]>,
+        value: JSValue,
+    ) -> JsResult<()> {
+        let key = bun_core::EncodedSlice::from_bytes(key.as_ref());
+        host_fn::from_js_host_call_generic(global, || {
+            JSC__JSValue__putGeneric(self, global, &key, value)
+        })
+    }
     pub fn put_to_property_key(
         target: JSValue,
         global: &JSGlobalObject,
@@ -2075,6 +2115,12 @@ unsafe extern "C" {
         this: JSValue,
         global: &JSGlobalObject,
         key: &bun_core::String,
+        value: JSValue,
+    );
+    safe fn JSC__JSValue__putGeneric(
+        this: JSValue,
+        global: &JSGlobalObject,
+        key: &bun_core::EncodedSlice,
         value: JSValue,
     );
     safe fn JSC__JSValue__putIndex(this: JSValue, global: &JSGlobalObject, i: u32, value: JSValue);

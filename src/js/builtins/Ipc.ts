@@ -115,6 +115,10 @@ export function parseHandle(target, serialized, fd) {
       const wrap = new UDP();
       const err = wrap.open(fd);
       if (err) {
+        // The wrap only owns the descriptor on success; don't leak it.
+        try {
+          require("node:fs").closeSync(fd);
+        } catch {}
         throw new Error(`failed to open received dgram handle: ${err}`);
       }
       emit(target, serialized.msg, wrap);

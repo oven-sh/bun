@@ -1392,6 +1392,7 @@ impl<'a> PackageInstaller<'a> {
             // field outlives `installer`. `destination_dir_subpath` above derives from the
             // same raw pointer, so this `&mut` does not invalidate it under stacked-borrows.
             destination_dir_subpath_buf: unsafe { (*subpath_buf_ptr).as_mut_slice() },
+            package_id,
             package_name: pkg_name,
             patch: patch_contents_hash
                 .map(|contents_hash| package_install::Patch { contents_hash }),

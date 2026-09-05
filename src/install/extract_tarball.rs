@@ -62,28 +62,59 @@ impl ExtractTarball {
                 return Err(crate::Error::IntegrityCheckFailed);
             }
         }
-        let mut result = self.extract(log, bytes)?;
-
         // Compute and store SHA-512 integrity hash for GitHub / URL / local tarballs
         // so the lockfile can pin the exact tarball content. On subsequent installs
         // the hash stored in the lockfile is forwarded via this.integrity and verified
         // above, preventing a compromised server from silently swapping the tarball.
-        match self.resolution.tag {
+        let integrity = match self.resolution.tag {
             ResolutionTag::Github | ResolutionTag::RemoteTarball | ResolutionTag::LocalTarball => {
                 if self.integrity.tag.is_supported() {
                     // Re-installing with an existing lockfile: integrity was already
                     // verified above, propagate the known value to ExtractData so that
                     // the lockfile keeps it on re-serialisation.
-                    result.integrity = self.integrity;
+                    self.integrity
                 } else {
                     // First install (no integrity in the lockfile yet): compute it.
-                    result.integrity = Integrity::for_bytes(bytes);
+                    Integrity::for_bytes(bytes)
                 }
             }
-            _ => {}
-        }
+            _ => Integrity::default(),
+        };
 
-        Ok(result)
+        self.extract(log, bytes, &integrity)
+    }
+
+    /// Like the GitHub commit tag, but holding the integrity; read back by `PackageInstall::verify`.
+    pub(crate) fn write_tarball_bun_tag(&self, dir: Fd, integrity: &Integrity) {
+        if !matches!(
+            self.resolution.tag,
+            ResolutionTag::LocalTarball | ResolutionTag::RemoteTarball
+        ) || !integrity.tag.is_supported()
+        {
+            return;
+        }
+        let mut buf = [0u8; 128];
+        write_bun_tag(
+            dir,
+            bun_fmt::buf_print_infallible(&mut buf, format_args!("{}", integrity)),
+        );
+    }
+}
+
+pub(crate) fn write_bun_tag(dir: Fd, contents: &[u8]) {
+    if sys::File::openat(
+        dir,
+        ZStr::from_static(b".bun-tag\0"),
+        sys::O::WRONLY
+            | sys::O::CREAT
+            | sys::O::TRUNC
+            | if cfg!(windows) { 0 } else { sys::O::NOFOLLOW },
+        0o664,
+    )
+    .and_then(|f| f.write_all(contents))
+    .is_err()
+    {
+        let _ = sys::unlinkat(dir, ZStr::from_static(b".bun-tag\0"));
     }
 }
 
@@ -230,7 +261,12 @@ impl ExtractTarball {
         (name, basename)
     }
 
-    fn extract(&self, log: &mut bun_ast::Log, tgz_bytes: &[u8]) -> Result<ExtractData, Error> {
+    fn extract(
+        &self,
+        log: &mut bun_ast::Log,
+        tgz_bytes: &[u8],
+        integrity: &Integrity,
+    ) -> Result<ExtractData, Error> {
         let _tracer = bun_core::perf::trace("ExtractTarball.extract");
 
         let tmpdir = Dir::borrow(&self.temp_dir);
@@ -395,24 +431,7 @@ impl ExtractTarball {
                     // installed from GitHub. package.json version becomes sort of
                     // meaningless in cases like this.
                     if !resolved.is_empty() {
-                        // Create/truncate `.bun-tag`, then write the resolved tag.
-                        if sys::File::openat(
-                            extract_destination.fd(),
-                            ZStr::from_static(b".bun-tag\0"),
-                            sys::O::WRONLY
-                                | sys::O::CREAT
-                                | sys::O::TRUNC
-                                | if cfg!(windows) { 0 } else { sys::O::NOFOLLOW },
-                            0o664,
-                        )
-                        .and_then(|f| f.write_all(resolved))
-                        .is_err()
-                        {
-                            let _ = sys::unlinkat(
-                                extract_destination.fd(),
-                                ZStr::from_static(b".bun-tag\0"),
-                            );
-                        }
+                        write_bun_tag(extract_destination.fd(), resolved);
                     }
                 }
                 _ => {
@@ -430,6 +449,8 @@ impl ExtractTarball {
                             ..Default::default()
                         },
                     )?;
+
+                    self.write_tarball_bun_tag(extract_destination.fd(), integrity);
                 }
             }
 
@@ -452,7 +473,7 @@ impl ExtractTarball {
             }
         }
 
-        self.move_to_cache_directory(log, tmpname, name, basename, resolved)
+        self.move_to_cache_directory(log, tmpname, name, basename, resolved, integrity)
     }
 
     /// Rename the freshly-extracted temp directory into the cache, read
@@ -465,6 +486,7 @@ impl ExtractTarball {
         name: &[u8],
         basename: &[u8],
         resolved: &[u8],
+        integrity: &Integrity,
     ) -> Result<ExtractData, Error> {
         let package_manager = self.package_manager.get();
 
@@ -769,6 +791,7 @@ impl ExtractTarball {
                             return Ok(ExtractData {
                                 url: url.into(),
                                 resolved: resolved.into(),
+                                integrity: *integrity,
                                 ..Default::default()
                             });
                         }
@@ -880,7 +903,7 @@ impl ExtractTarball {
                     path: ret_json_path.into(),
                     buf: json_buf,
                 }),
-                ..Default::default()
+                integrity: *integrity,
             })
         })
     }

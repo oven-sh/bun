@@ -1,7 +1,7 @@
 import { file, listen, Socket, spawn, write } from "bun";
 import { afterAll, beforeAll, describe, expect, it, jest, setDefaultTimeout, test } from "bun:test";
 import { readFileSync, readlinkSync, realpathSync, statSync } from "fs";
-import { access, cp, exists, mkdir, readlink, rm, stat, writeFile } from "fs/promises";
+import { access, cp, exists, lstat, mkdir, readlink, rename, rm, stat, writeFile } from "fs/promises";
 import {
   bunEnv,
   bunExe,
@@ -4646,6 +4646,7 @@ describe.concurrent("bun-install", () => {
       expect(ctx.requested).toBe(0);
       expect(await readdirSorted(join(ctx.package_dir, "node_modules"))).toEqual([".cache", "when"]);
       expect(await readdirSorted(join(ctx.package_dir, "node_modules", "when"))).toEqual([
+        ".bun-tag",
         ".gitignore",
         ".gitmodules",
         "LICENSE.txt",
@@ -4707,6 +4708,7 @@ describe.concurrent("bun-install", () => {
       expect(ctx.requested).toBe(0);
       expect(await readdirSorted(join(ctx.package_dir, "node_modules"))).toEqual([".cache", "when"]);
       expect(await readdirSorted(join(ctx.package_dir, "node_modules", "when"))).toEqual([
+        ".bun-tag",
         ".gitignore",
         ".gitmodules",
         "LICENSE.txt",
@@ -4776,6 +4778,7 @@ describe.concurrent("bun-install", () => {
       ]);
       expect(await readdirSorted(join(ctx.package_dir, "node_modules", "@vercel"))).toEqual(["turbopack-node"]);
       expect(await readdirSorted(join(ctx.package_dir, "node_modules", "@vercel", "turbopack-node"))).toEqual([
+        ".bun-tag",
         "package.json",
         "src",
         "tsconfig.json",
@@ -6384,7 +6387,11 @@ describe.concurrent("bun-install", () => {
       expect(await readdirSorted(join(ctx.package_dir, "node_modules"))).toEqual([".bin", ".cache", "baz"]);
       expect(await readdirSorted(join(ctx.package_dir, "node_modules", ".bin"))).toHaveBins(["baz-run"]);
       expect(join(ctx.package_dir, "node_modules", ".bin", "baz-run")).toBeValidBin(join("..", "baz", "index.js"));
-      expect(await readdirSorted(join(ctx.package_dir, "node_modules", "baz"))).toEqual(["index.js", "package.json"]);
+      expect(await readdirSorted(join(ctx.package_dir, "node_modules", "baz"))).toEqual([
+        ".bun-tag",
+        "index.js",
+        "package.json",
+      ]);
       expect(await file(join(ctx.package_dir, "node_modules", "baz", "package.json")).json()).toEqual({
         name: "baz",
         version: "0.0.3",
@@ -6434,6 +6441,7 @@ describe.concurrent("bun-install", () => {
         expect(await readdirSorted(join(ctx.package_dir, "node_modules"))).toStrictEqual([".bin", ".cache", "baz"]);
         expect(await readdirSorted(join(ctx.package_dir, "node_modules", ".bin"))).toHaveBins(["baz-run"]);
         expect(await readdirSorted(join(ctx.package_dir, "node_modules", "baz"))).toStrictEqual([
+          ".bun-tag",
           "index.js",
           "package.json",
         ]);
@@ -6486,7 +6494,11 @@ describe.concurrent("bun-install", () => {
       expect(await readdirSorted(join(ctx.package_dir, "node_modules"))).toEqual([".bin", ".cache", "baz"]);
       expect(await readdirSorted(join(ctx.package_dir, "node_modules", ".bin"))).toHaveBins(["baz-run"]);
       expect(join(ctx.package_dir, "node_modules", ".bin", "baz-run")).toBeValidBin(join("..", "baz", "index.js"));
-      expect(await readdirSorted(join(ctx.package_dir, "node_modules", "baz"))).toEqual(["index.js", "package.json"]);
+      expect(await readdirSorted(join(ctx.package_dir, "node_modules", "baz"))).toEqual([
+        ".bun-tag",
+        "index.js",
+        "package.json",
+      ]);
       expect(await file(join(ctx.package_dir, "node_modules", "baz", "package.json")).json()).toEqual({
         name: "baz",
         version: "0.0.3",
@@ -6536,7 +6548,11 @@ describe.concurrent("bun-install", () => {
       expect(await readdirSorted(join(ctx.package_dir, "node_modules"))).toEqual([".bin", ".cache", "bar"]);
       expect(await readdirSorted(join(ctx.package_dir, "node_modules", ".bin"))).toHaveBins(["baz-run"]);
       expect(join(ctx.package_dir, "node_modules", ".bin", "baz-run")).toBeValidBin(join("..", "bar", "index.js"));
-      expect(await readdirSorted(join(ctx.package_dir, "node_modules", "bar"))).toEqual(["index.js", "package.json"]);
+      expect(await readdirSorted(join(ctx.package_dir, "node_modules", "bar"))).toEqual([
+        ".bun-tag",
+        "index.js",
+        "package.json",
+      ]);
       expect(await file(join(ctx.package_dir, "node_modules", "bar", "package.json")).json()).toEqual({
         name: "baz",
         version: "0.0.3",
@@ -6585,7 +6601,11 @@ describe.concurrent("bun-install", () => {
       expect(await readdirSorted(join(ctx.package_dir, "node_modules"))).toEqual([".bin", ".cache", "bar"]);
       expect(await readdirSorted(join(ctx.package_dir, "node_modules", ".bin"))).toHaveBins(["baz-run"]);
       expect(join(ctx.package_dir, "node_modules", ".bin", "baz-run")).toBeValidBin(join("..", "bar", "index.js"));
-      expect(await readdirSorted(join(ctx.package_dir, "node_modules", "bar"))).toEqual(["index.js", "package.json"]);
+      expect(await readdirSorted(join(ctx.package_dir, "node_modules", "bar"))).toEqual([
+        ".bun-tag",
+        "index.js",
+        "package.json",
+      ]);
       expect(await file(join(ctx.package_dir, "node_modules", "bar", "package.json")).json()).toEqual({
         name: "baz",
         version: "0.0.3",
@@ -6594,6 +6614,231 @@ describe.concurrent("bun-install", () => {
         },
       });
       await access(join(ctx.package_dir, "bun.lockb"));
+    });
+  });
+
+  // https://github.com/oven-sh/bun/issues/8260
+  describe.each(["tarball path", "tarball URL"] as const)("%s dependency is not reinstalled", kind => {
+    // The dependency always points at the same path/URL; `useFixture` swaps the
+    // bytes behind it, simulating a vendored tarball being rebuilt in place.
+    function setup(ctx: TestContext) {
+      const state = { served: "", requests: 0 };
+      setContextHandler(ctx, () => {
+        state.requests++;
+        return new Response(file(state.served));
+      });
+      return {
+        state,
+        async useFixture(name: string) {
+          state.served = join(import.meta.dir, name);
+          await cp(state.served, join(ctx.package_dir, "baz.tgz"));
+        },
+        async writePackageJson() {
+          const dep = kind === "tarball URL" ? `${ctx.registry_url}baz.tgz` : "file:./baz.tgz";
+          await writeFile(
+            join(ctx.package_dir, "package.json"),
+            JSON.stringify({ name: "foo", version: "0.0.1", dependencies: { baz: dep } }),
+          );
+        },
+        lockfile: join(ctx.package_dir, "bun.lock"),
+        // The context's bunfig disables the global cache, so the cache lives here.
+        cache: join(ctx.package_dir, "node_modules", ".cache"),
+        async installedVersion() {
+          const pkg = await file(join(ctx.package_dir, "node_modules", "baz", "package.json")).json();
+          return pkg.version;
+        },
+      };
+    }
+
+    async function install(ctx: TestContext, ...args: string[]) {
+      const { stdout, stderr, exited } = spawn({
+        cmd: [bunExe(), "install", "--save-text-lockfile", ...args],
+        cwd: ctx.package_dir,
+        stdout: "pipe",
+        stdin: "ignore",
+        stderr: "pipe",
+        env,
+      });
+      const [err, out, exitCode] = await Promise.all([stderr.text(), stdout.text(), exited]);
+      expect(err).not.toContain("error:");
+      expect(exitCode).toBe(0);
+      return { out, err };
+    }
+
+    it("when nothing changed", async () => {
+      await withContext(defaultOpts, async ctx => {
+        const t = setup(ctx);
+        await t.useFixture("baz-0.0.3.tgz");
+        await t.writePackageJson();
+
+        expect((await install(ctx)).out).toContain("1 package installed");
+        expect(await readdirSorted(join(ctx.package_dir, "node_modules", "baz"))).toEqual([
+          ".bun-tag",
+          "index.js",
+          "package.json",
+        ]);
+        const requestsAfterFirstInstall = t.state.requests;
+
+        const second = await install(ctx);
+        expect(second.err).not.toContain("Saved lockfile");
+        expect(second.out.replace(/\s*\[[0-9.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+          expect.stringContaining("bun install v1."),
+          "",
+          "Checked 1 install across 2 packages (no changes)",
+        ]);
+        expect(t.state.requests).toBe(requestsAfterFirstInstall);
+
+        expect((await install(ctx, "--force")).out).toContain("1 package installed");
+      });
+    });
+
+    it("unless the tarball was rebuilt at the same path", async () => {
+      await withContext(defaultOpts, async ctx => {
+        const t = setup(ctx);
+        await t.useFixture("baz-0.0.3.tgz");
+        await t.writePackageJson();
+        await install(ctx);
+        expect(await t.installedVersion()).toBe("0.0.3");
+        const lockfileBefore = await file(t.lockfile).text();
+
+        await t.useFixture("baz-0.0.5.tgz");
+        await rm(t.lockfile);
+        expect((await install(ctx)).out).toContain("1 package installed");
+        expect(await t.installedVersion()).toBe("0.0.5");
+        expect(await file(t.lockfile).text()).not.toBe(lockfileBefore);
+
+        expect((await install(ctx)).out).toContain("(no changes)");
+      });
+    });
+
+    it("unless the lockfile pins a different integrity", async () => {
+      await withContext(defaultOpts, async ctx => {
+        const t = setup(ctx);
+        await t.writePackageJson();
+
+        await t.useFixture("baz-0.0.5.tgz");
+        await install(ctx);
+        const rebuiltLockfile = await file(t.lockfile).text();
+        await rm(join(ctx.package_dir, "node_modules"), { recursive: true });
+        await rm(t.lockfile);
+
+        await t.useFixture("baz-0.0.3.tgz");
+        await install(ctx);
+        expect(await t.installedVersion()).toBe("0.0.3");
+
+        // A collaborator rebuilt the tarball and committed the new lockfile; pull
+        // both onto a machine whose node_modules (and cache) still hold the old build.
+        await t.useFixture("baz-0.0.5.tgz");
+        await writeFile(t.lockfile, rebuiltLockfile);
+        const stale = await install(ctx);
+        expect(stale.err).not.toContain("Saved lockfile");
+        expect(stale.out).not.toContain("(no changes)");
+
+        // With the old extraction out of the cache the pinned build gets installed.
+        await rm(t.cache, { recursive: true });
+        const { out, err } = await install(ctx);
+        expect(err).not.toContain("Saved lockfile");
+        expect(out).toContain("1 package installed");
+        expect(await t.installedVersion()).toBe("0.0.5");
+
+        expect((await install(ctx)).out).toContain("(no changes)");
+      });
+    });
+
+    it("and cache entries extracted before tags existed are not reused", async () => {
+      await withContext(defaultOpts, async ctx => {
+        const t = setup(ctx);
+        await t.useFixture("baz-0.0.3.tgz");
+        await t.writePackageJson();
+        await install(ctx);
+        const tarballEntries = async () => (await readdirSorted(t.cache)).filter(name => name.startsWith("@T@"));
+        const [entry] = await tarballEntries();
+        expect(entry).toEndWith("@@@2");
+
+        // What an older bun leaves behind: the extraction under the previous
+        // cache folder name and an installed copy, neither of them tagged.
+        const oldEntry = entry.replace(/@@@2$/, "@@@1");
+        await rename(join(t.cache, entry), join(t.cache, oldEntry));
+        await rm(join(t.cache, oldEntry, ".bun-tag"));
+        await rm(join(ctx.package_dir, "node_modules", "baz", ".bun-tag"));
+
+        expect((await install(ctx)).out).toContain("1 package installed");
+        expect(await tarballEntries()).toEqual([oldEntry, entry]);
+        expect(await readdirSorted(join(ctx.package_dir, "node_modules", "baz"))).toEqual([
+          ".bun-tag",
+          "index.js",
+          "package.json",
+        ]);
+        expect((await install(ctx)).out).toContain("(no changes)");
+      });
+    });
+
+    // Symlinks into the cache need extra privileges on Windows.
+    it.skipIf(isWindows)("with --backend=symlink, until the cache it points into is removed", async () => {
+      await withContext(defaultOpts, async ctx => {
+        const t = setup(ctx);
+        await t.useFixture("baz-0.0.3.tgz");
+        await t.writePackageJson();
+        const tag = join(ctx.package_dir, "node_modules", "baz", ".bun-tag");
+
+        expect((await install(ctx, "--backend=symlink")).out).toContain("1 package installed");
+        expect((await lstat(tag)).isSymbolicLink()).toBe(true);
+        expect((await install(ctx, "--backend=symlink")).out).toContain("(no changes)");
+
+        await rm(t.cache, { recursive: true });
+        expect((await install(ctx, "--backend=symlink")).out).toContain("1 package installed");
+        expect(await file(tag).text()).toStartWith("sha512-");
+        expect((await install(ctx, "--backend=symlink")).out).toContain("(no changes)");
+      });
+    });
+
+    describe("when the lockfile predates tarball integrity", () => {
+      async function installThenStripIntegrity(ctx: TestContext, t: ReturnType<typeof setup>) {
+        await t.useFixture("baz-0.0.3.tgz");
+        await t.writePackageJson();
+        await install(ctx);
+        const withIntegrity = await file(t.lockfile).text();
+        const withoutIntegrity = withIntegrity.replace(/, "sha512-[^"]+"\]/, "]");
+        expect(withoutIntegrity).not.toBe(withIntegrity);
+        await writeFile(t.lockfile, withoutIntegrity);
+        return { withIntegrity, withoutIntegrity };
+      }
+
+      it("is upgraded by the first install that extracts the tarball", async () => {
+        await withContext(defaultOpts, async ctx => {
+          const t = setup(ctx);
+          const { withIntegrity } = await installThenStripIntegrity(ctx, t);
+          // Entries extracted by older versions live under another cache folder
+          // name, so after upgrading bun the cache is effectively empty.
+          await rm(t.cache, { recursive: true });
+
+          const upgrade = await install(ctx);
+          expect(upgrade.out).toContain("1 package installed");
+          expect(upgrade.err).toContain("Saved lockfile");
+          expect(await file(t.lockfile).text()).toBe(withIntegrity);
+
+          expect((await install(ctx)).out).toContain("(no changes)");
+        });
+      });
+
+      it("is compared against the cache entry when the tarball is already cached", async () => {
+        await withContext(defaultOpts, async ctx => {
+          const t = setup(ctx);
+          const { withoutIntegrity } = await installThenStripIntegrity(ctx, t);
+
+          // e.g. --frozen-lockfile, which cannot add the integrity to the lockfile.
+          for (let i = 0; i < 2; i++) {
+            const { out, err } = await install(ctx, "--frozen-lockfile");
+            expect(err).not.toContain("Saved lockfile");
+            expect(out).toContain("(no changes)");
+          }
+          expect(await file(t.lockfile).text()).toBe(withoutIntegrity);
+
+          await rm(join(ctx.package_dir, "node_modules", "baz", ".bun-tag"));
+          expect((await install(ctx, "--frozen-lockfile")).out).toContain("1 package installed");
+          expect((await install(ctx, "--frozen-lockfile")).out).toContain("(no changes)");
+        });
+      });
     });
   });
 
@@ -6660,7 +6905,10 @@ describe.concurrent("bun-install", () => {
       expect(await readdirSorted(join(ctx.package_dir, "node_modules", ".bin"))).toHaveBins(["baz-run"]);
       expect(join(ctx.package_dir, "node_modules", ".bin", "baz-run")).toBeValidBin(join("..", "baz", "index.js"));
       expect(await readdirSorted(join(ctx.package_dir, "node_modules", "@barn"))).toEqual(["moo"]);
-      expect(await readdirSorted(join(ctx.package_dir, "node_modules", "@barn", "moo"))).toEqual(["package.json"]);
+      expect(await readdirSorted(join(ctx.package_dir, "node_modules", "@barn", "moo"))).toEqual([
+        ".bun-tag",
+        "package.json",
+      ]);
       expect(await file(join(ctx.package_dir, "node_modules", "@barn", "moo", "package.json")).json()).toEqual({
         name: "@barn/moo",
         version: "0.1.0",
@@ -6751,7 +6999,10 @@ describe.concurrent("bun-install", () => {
       expect(await readdirSorted(join(ctx.package_dir, "node_modules", ".bin"))).toHaveBins(["baz-run"]);
       expect(join(ctx.package_dir, "node_modules", ".bin", "baz-run")).toBeValidBin(join("..", "baz", "index.js"));
       expect(await readdirSorted(join(ctx.package_dir, "node_modules", "@barn"))).toEqual(["moo"]);
-      expect(await readdirSorted(join(ctx.package_dir, "node_modules", "@barn", "moo"))).toEqual(["package.json"]);
+      expect(await readdirSorted(join(ctx.package_dir, "node_modules", "@barn", "moo"))).toEqual([
+        ".bun-tag",
+        "package.json",
+      ]);
       expect(await file(join(ctx.package_dir, "node_modules", "@barn", "moo", "package.json")).json()).toEqual({
         name: "@barn/moo",
         version: "0.1.0",
@@ -6816,7 +7067,10 @@ describe.concurrent("bun-install", () => {
       expect(await readdirSorted(join(ctx.package_dir, "node_modules", ".bin"))).toHaveBins(["baz-run"]);
       expect(join(ctx.package_dir, "node_modules", ".bin", "baz-run")).toBeValidBin(join("..", "baz", "index.js"));
       expect(await readdirSorted(join(ctx.package_dir, "node_modules", "@barn"))).toEqual(["moo"]);
-      expect(await readdirSorted(join(ctx.package_dir, "node_modules", "@barn", "moo"))).toEqual(["package.json"]);
+      expect(await readdirSorted(join(ctx.package_dir, "node_modules", "@barn", "moo"))).toEqual([
+        ".bun-tag",
+        "package.json",
+      ]);
       expect(await file(join(ctx.package_dir, "node_modules", "@barn", "moo", "package.json")).json()).toEqual({
         name: "@barn/moo",
         version: "0.1.0",
@@ -6906,7 +7160,10 @@ describe.concurrent("bun-install", () => {
       expect(await readdirSorted(join(ctx.package_dir, "node_modules", ".bin"))).toHaveBins(["baz-run"]);
       expect(join(ctx.package_dir, "node_modules", ".bin", "baz-run")).toBeValidBin(join("..", "baz", "index.js"));
       expect(await readdirSorted(join(ctx.package_dir, "node_modules", "@barn"))).toEqual(["moo"]);
-      expect(await readdirSorted(join(ctx.package_dir, "node_modules", "@barn", "moo"))).toEqual(["package.json"]);
+      expect(await readdirSorted(join(ctx.package_dir, "node_modules", "@barn", "moo"))).toEqual([
+        ".bun-tag",
+        "package.json",
+      ]);
       expect(await file(join(ctx.package_dir, "node_modules", "@barn", "moo", "package.json")).json()).toEqual({
         name: "@barn/moo",
         version: "0.1.0",
@@ -6967,7 +7224,10 @@ describe.concurrent("bun-install", () => {
       expect(await readdirSorted(join(ctx.package_dir, "node_modules", ".bin"))).toHaveBins(["baz-run"]);
       expect(join(ctx.package_dir, "node_modules", ".bin", "baz-run")).toBeValidBin(join("..", "baz", "index.js"));
       expect(await readdirSorted(join(ctx.package_dir, "node_modules", "@barn"))).toEqual(["moo"]);
-      expect(await readdirSorted(join(ctx.package_dir, "node_modules", "@barn", "moo"))).toEqual(["package.json"]);
+      expect(await readdirSorted(join(ctx.package_dir, "node_modules", "@barn", "moo"))).toEqual([
+        ".bun-tag",
+        "package.json",
+      ]);
       expect(await file(join(ctx.package_dir, "node_modules", "@barn", "moo", "package.json")).json()).toEqual({
         name: "@barn/moo",
         version: "0.1.0",

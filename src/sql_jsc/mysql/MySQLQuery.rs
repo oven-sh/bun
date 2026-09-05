@@ -528,4 +528,9 @@ impl MySQLQuery {
             .as_ref()
             .map(|stmt| unsafe { &mut *stmt.as_ptr() })
     }
+
+    #[inline]
+    pub(crate) fn get_query_string(&self) -> &BunString {
+        &self.query
+    }
 }

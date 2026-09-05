@@ -2505,6 +2505,20 @@ impl PostgresSQLConnection {
                     self.js_value.get().try_get().unwrap_or_default(),
                     false,
                 );
+
+                // Simple mode: a following command without a RowDescription must not inherit these.
+                if request.flags.get().simple {
+                    if let Some(statement) = request.statement_mut() {
+                        if !statement.fields.is_empty() {
+                            statement.fields = Vec::new();
+                            statement.cached_structure = Default::default();
+                            statement.cached_statement_js.deinit();
+                            statement.needs_duplicate_check = true;
+                            statement.fields_flags = Default::default();
+                        }
+                    }
+                }
+
                 self.update_ref();
                 // cmd dropped at scope end
             }
@@ -2577,6 +2591,7 @@ impl PostgresSQLConnection {
                 statement.cached_structure = Default::default();
                 statement.needs_duplicate_check = true;
                 statement.fields_flags = Default::default();
+                statement.cached_statement_js.deinit();
             }
             MessageType::Authentication => {
                 let auth = protocol::Authentication::decode_internal(&mut reader)?;

@@ -12,17 +12,73 @@ const {
 
 const { validateInteger } = require("internal/validators");
 const fs = require("internal/fs/streams");
+const { read: fsRead, open: fsOpen, close: fsClose } = require("node:fs");
 
 // libuv stores the mode and the saved termios on each uv_tty_t, so a stream
 // going back to cooked never disturbs another one on the same terminal. Keep
 // that state per ReadStream rather than per process.
 const kRawModeState = Symbol("rawModeState");
+const kNativeReader = Symbol("nativeReader");
+const kNativeSource = Symbol("nativeSource");
+const kKeepAlive = Symbol("keepAlive");
+
+// A thread pool read of a non-blocking fd (node-pty's pty master) fails with
+// EAGAIN. The first EAGAIN switches the stream to the pollable native reader,
+// which reads on readiness like Node's net.Socket based tty.ReadStream. A
+// blocking fd stays on the thread pool: Bun.file(fd) would read it on the JS thread.
+function ttyRead(stream, fd, buf, offset, length, position, cb) {
+  const reader = stream[kNativeReader];
+  if (reader !== undefined) {
+    readFromNative(stream, reader, buf, cb);
+    return;
+  }
+  fsRead(fd, buf, offset, length, position, (err, bytesRead, buffer) => {
+    if (err && (err.code === "EAGAIN" || err.code === "EWOULDBLOCK")) {
+      if (stream.destroyed) {
+        cb(null, 0, buf);
+        return;
+      }
+      const native = Bun.file(fd).stream();
+      const source = native.$bunNativePtr;
+      stream[kNativeSource] = source;
+      if (stream[kKeepAlive] === false) source?.updateRef?.(false);
+      const reader = (stream[kNativeReader] = native.getReader());
+      readFromNative(stream, reader, buf, cb);
+      return;
+    }
+    cb(err, bytesRead, buffer);
+  });
+}
+
+function readFromNative(stream, reader, buf, cb) {
+  reader.read().$then(
+    ({ value, done }) => {
+      if (done || stream[kNativeReader] !== reader) {
+        cb(null, 0, buf);
+        return;
+      }
+      cb(null, value.byteLength, Buffer.from(value.buffer, value.byteOffset, value.byteLength));
+    },
+    err => cb(err, 0, buf),
+  );
+}
 
 function ReadStream(fd): void {
   if (!(this instanceof ReadStream)) {
     return new ReadStream(fd);
   }
-  fs.ReadStream.$apply(this, ["", { fd }]);
+  const stream = this;
+  fs.ReadStream.$apply(this, [
+    "",
+    {
+      fd,
+      fs: {
+        open: fsOpen,
+        close: fsClose,
+        read: (fd, buf, offset, length, position, cb) => ttyRead(stream, fd, buf, offset, length, position, cb),
+      },
+    },
+  ]);
   this.isRaw = false;
   // Only set isTTY to true if the fd is actually a TTY
   this.isTTY = isatty(fd);
@@ -36,8 +92,9 @@ Object.defineProperty(ReadStream, "prototype", {
     // Add ref/unref methods to make tty.ReadStream behave like Node.js
     // where TTY streams have socket-like behavior
     Prototype.ref = function () {
+      this[kKeepAlive] = true;
       // Get the underlying native stream source if available
-      const source = this.$bunNativePtr;
+      const source = this[kNativeSource] ?? this.$bunNativePtr;
       if (source?.updateRef) {
         source.updateRef(true);
       }
@@ -45,12 +102,23 @@ Object.defineProperty(ReadStream, "prototype", {
     };
 
     Prototype.unref = function () {
+      this[kKeepAlive] = false;
       // Get the underlying native stream source if available
-      const source = this.$bunNativePtr;
+      const source = this[kNativeSource] ?? this.$bunNativePtr;
       if (source?.updateRef) {
         source.updateRef(false);
       }
       return this;
+    };
+
+    Prototype._destroy = function (err, cb) {
+      const reader = this[kNativeReader];
+      if (reader !== undefined) {
+        // Settles the pending read so fs.ReadStream's _destroy gets its kIoDone.
+        this[kNativeReader] = undefined;
+        reader.cancel().$then(undefined, () => {});
+      }
+      fs.ReadStream.prototype._destroy.$call(this, err, cb);
     };
 
     Prototype.setRawMode = function (flag) {

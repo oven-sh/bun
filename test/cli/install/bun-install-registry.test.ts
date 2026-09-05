@@ -44,8 +44,8 @@ let users: Record<string, string> = {};
 
 setDefaultTimeout(1000 * 60 * 5);
 registry = new VerdaccioRegistry();
-port = registry.port;
 await registry.start();
+port = registry.port;
 
 afterAll(async () => {
   await Bun.$`rm -f ${import.meta.dir}/htpasswd`.throws(false);

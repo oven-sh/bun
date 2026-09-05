@@ -9,8 +9,8 @@ let registryUrl: string;
 
 beforeAll(async () => {
   registry = new VerdaccioRegistry();
-  registryUrl = registry.registryUrl();
   await registry.start();
+  registryUrl = registry.registryUrl();
 });
 
 afterAll(() => {

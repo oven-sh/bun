@@ -541,7 +541,7 @@ impl FileReader {
         if sink.is_none() {
             return;
         }
-        let reader_done = self.reader().is_done();
+        let reader_done = self.reader_finished();
         let buffered = self.drain();
         if !buffered.is_empty() {
             let chunk = if reader_done {
@@ -570,7 +570,12 @@ impl FileReader {
         }
         if reader_done || self.done.get() {
             self.sink.set(SinkHandle::None);
-            sink.end(None);
+            // A read error from before the sink was attached ends it here.
+            sink.end(
+                self.read_error
+                    .replace(None)
+                    .map(streams::StreamError::Error),
+            );
             return;
         }
         if !self.reader().has_pending_read() {

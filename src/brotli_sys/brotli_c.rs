@@ -108,8 +108,6 @@ impl BrotliDecoder {
     }
 
     /// True when decoded bytes are still held in the decoder's ring buffer.
-    /// `decompress_stream` can return `needs_more_input` with output pending
-    /// when the caller's output buffer filled up.
     pub fn has_more_output(state: &BrotliDecoder) -> bool {
         BrotliDecoderHasMoreOutput(state) != 0
     }

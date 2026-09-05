@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "fs";
+import { tempDir, tls as tlsCert } from "harness";
 import tls from "node:tls";
 import { join } from "path";
 import privateKey from "../../third_party/jsonwebtoken/priv.pem" with { type: "text" };
@@ -252,5 +253,80 @@ describe("Bun.serve per-serverName client certificate policy", () => {
       defaultResumed: "HTTP/1.1 200 OK",
       gatedResumed: "connection closed without a response",
     });
+  });
+});
+
+// A path with an embedded NUL byte used to be truncated at the NUL by the
+// C-string layer, so the file named by the prefix was loaded silently.
+describe("TLS file path options with embedded NUL bytes", () => {
+  const nulSuffix = "\0-does-not-exist";
+  const thrown = expect.objectContaining({
+    code: "ERR_INVALID_ARG_VALUE",
+    message: expect.stringContaining("null bytes"),
+  });
+  function certDir() {
+    return tempDir("bun-serve-ssl-nul", {
+      "key.pem": tlsCert.key,
+      "cert.pem": tlsCert.cert,
+    });
+  }
+
+  test("Bun.serve rejects keyFile/certFile/caFile/dhParamsFile paths containing NUL", () => {
+    using dir = certDir();
+    const keyFile = join(String(dir), "key.pem");
+    const certFile = join(String(dir), "cert.pem");
+    const cases = [
+      { keyFile: keyFile + nulSuffix, certFile },
+      { keyFile, certFile: certFile + nulSuffix },
+      { keyFile, certFile, caFile: certFile + nulSuffix },
+      { keyFile, certFile, dhParamsFile: certFile + nulSuffix },
+    ];
+    for (const tlsOptions of cases) {
+      expect(() => {
+        Bun.serve({
+          port: 0,
+          tls: tlsOptions,
+          fetch: () => new Response("unreachable"),
+        });
+      }).toThrow(thrown);
+    }
+  });
+
+  test("Bun.listen rejects keyFile paths containing NUL", () => {
+    using dir = certDir();
+    const keyFile = join(String(dir), "key.pem");
+    const certFile = join(String(dir), "cert.pem");
+    expect(() => {
+      Bun.listen({
+        hostname: "127.0.0.1",
+        port: 0,
+        tls: { keyFile: keyFile + nulSuffix, certFile },
+        socket: { data() {} },
+      });
+    }).toThrow(thrown);
+  });
+
+  test("tls.createSecureContext rejects keyFile paths containing NUL", () => {
+    using dir = certDir();
+    const keyFile = join(String(dir), "key.pem");
+    const certFile = join(String(dir), "cert.pem");
+    expect(() => {
+      tls.createSecureContext({ keyFile: keyFile + nulSuffix, certFile } as tls.SecureContextOptions);
+    }).toThrow(thrown);
+  });
+
+  test("valid keyFile/certFile paths still serve TLS", async () => {
+    using dir = certDir();
+    using server = Bun.serve({
+      port: 0,
+      tls: {
+        keyFile: join(String(dir), "key.pem"),
+        certFile: join(String(dir), "cert.pem"),
+      },
+      fetch: () => new Response("TLS-OK"),
+    });
+    const res = await fetch(server.url, { tls: { rejectUnauthorized: false } });
+    expect(await res.text()).toBe("TLS-OK");
+    expect(res.status).toBe(200);
   });
 });

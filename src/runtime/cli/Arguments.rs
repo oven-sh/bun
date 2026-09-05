@@ -616,6 +616,9 @@ pub(crate) const TEST_ONLY_PARAMS: &[ParamType] = &[
         "--changed <STR>?                 Only run test files affected by changed files according to git. Optionally pass a commit or branch to compare against."
     ),
     parse_param!(
+        "--changed-first <STR>?           Run test files affected by changed files first, then the rest. Same detection as --changed. Optionally pass a commit or branch to compare against."
+    ),
+    parse_param!(
         "--isolate                        Run each test file in a fresh global object. Leaked handles from one file cannot affect another."
     ),
     parse_param!(
@@ -1894,6 +1897,15 @@ fn parse_test_command_options(args: &clap::Args<clap::Help>, ctx: Context<'_>) {
     }
     if let Some(since) = args.option(b"--changed") {
         ctx.test_options.changed = Some(since.into());
+    }
+    if let Some(since) = args.option(b"--changed-first") {
+        if ctx.test_options.changed.is_some() {
+            bun_core::pretty_errorln!(
+                "<r><red>error<r>: --changed and --changed-first cannot be used together"
+            );
+            Global::exit(1);
+        }
+        ctx.test_options.changed_first = Some(since.into());
     }
     if let Some(shard) = args.option(b"--shard") {
         let Some(sep) = strings::index_of_char(shard, b'/') else {

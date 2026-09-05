@@ -423,7 +423,9 @@ jobs:
 
 Every shard must read the _same set_ of timings files for the shards to add up to the whole suite. That is why a run reads the previous run's files (restored from the cache), and why it writes its own where sibling shards still in flight won't pick them up (`next/` above). Add `--no-isolate` to the `bun test` line if step 2 applies to you.
 
-**6. Within a file: [`test.concurrent`](#concurrent-test-execution)** for I/O-bound tests that spend their time awaiting.
+**6. Fail PRs fast: [`--changed-first`](/test/parallel#running-affected-files-first-with---changed-first).** Same detection as `--changed`, but the affected files run first and the rest still run. Add `--bail` and a PR that breaks what it touched fails without waiting on the rest of the suite.
+
+**7. Within a file: [`test.concurrent`](#concurrent-test-execution)** for I/O-bound tests that spend their time awaiting.
 
 ## Performance
 

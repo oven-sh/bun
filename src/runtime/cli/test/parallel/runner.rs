@@ -35,10 +35,15 @@ const DEFAULT_SCALE_UP_AFTER_MS: i64 = 5;
 /// Returns true if files were actually run via the worker pool, false if it
 /// fell back to the sequential path (≤1 effective worker). The caller uses
 /// this to decide whether to run the serial coverage/JUnit reporters.
+///
+/// `priority_count`: the first N entries of `files` are the `--changed-first`
+/// priority set and are dispatched from a shared range before any worker
+/// starts on its own chunk. The remaining entries are scheduled as before.
 pub(crate) fn run_as_coordinator(
     reporter: &mut CommandLineReporter,
     vm: *mut VirtualMachine,
     files: &[Interned],
+    priority_count: u32,
     ctx: Command::Context,
     coverage_opts: &mut CodeCoverageOptions,
 ) -> crate::Result<bool> {
@@ -83,10 +88,14 @@ pub(crate) fn run_as_coordinator(
     // Sort lexicographically so adjacent indices share parent directories.
     // Each worker owns a contiguous chunk; co-located files share imports, so
     // this keeps each worker's isolation SourceProvider cache hot. --randomize
-    // explicitly opts out of locality (the caller already shuffled).
+    // explicitly opts out of locality (the caller already shuffled). The
+    // [0..priority_count) prefix is the --changed-first set, already ordered.
     let mut sorted: Vec<Interned> = files.to_vec();
+    let prio = priority_count as usize;
+    debug_assert!(prio <= sorted.len());
+    let rest_n = n - priority_count;
     if !ctx.test_options.randomize {
-        index_sort::sort_slice_by(&mut sorted, |a, b| {
+        index_sort::sort_slice_by(&mut sorted[prio..], |a, b| {
             bun_core::order(a.as_bytes(), b.as_bytes())
         });
     }
@@ -96,7 +105,14 @@ pub(crate) fn run_as_coordinator(
     let mut costs: Option<Vec<u64>> = None;
     let ranges: Vec<FileRange> = match reporter.timings.as_ref() {
         Some(t) if !t.is_empty() && !ctx.test_options.randomize => {
-            let ranges = t.partition(&sorted, k);
+            let ranges: Vec<FileRange> = t
+                .partition(&sorted[prio..], k)
+                .into_iter()
+                .map(|r| FileRange {
+                    lo: r.lo + priority_count,
+                    hi: r.hi + priority_count,
+                })
+                .collect();
             for r in &ranges {
                 t.sort_slowest_first(&mut sorted[r.lo as usize..r.hi as usize]);
             }
@@ -105,8 +121,8 @@ pub(crate) fn run_as_coordinator(
         }
         _ => (0..k)
             .map(|idx| FileRange {
-                lo: idx * n / k,
-                hi: (idx + 1) * n / k,
+                lo: priority_count + idx * rest_n / k,
+                hi: priority_count + (idx + 1) * rest_n / k,
             })
             .collect(),
     };
@@ -152,6 +168,10 @@ pub(crate) fn run_as_coordinator(
         },
         reporter,
         files: sorted,
+        priority: FileRange {
+            lo: 0,
+            hi: priority_count,
+        },
         costs,
         // SAFETY: FileSystem singleton is initialized before any test runner code runs.
         cwd: FileSystem::get().top_level_dir,

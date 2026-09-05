@@ -43,6 +43,14 @@ use crate::api::bun_process::sync as spawn_sync;
 
 // `core::result::Result` is fully qualified throughout this file to avoid the
 // shadow.
+pub(crate) struct AffectedSet {
+    /// Absolute paths of test entry points whose module graph reaches a
+    /// changed file.
+    pub(crate) paths: StringSet,
+    /// Number of files git reported as changed.
+    pub(crate) changed_count: usize,
+}
+
 pub(crate) struct Result<'a> {
     /// The filtered list of test files. Slice of the original `test_files`
     /// allocation, owned by the caller.
@@ -81,7 +89,7 @@ pub(crate) fn filter<'a>(
     let changed_files = if let Some(trigger_set) = consume_watch_trigger() {
         trigger_set
     } else {
-        match get_changed_files(top_level_dir, changed_since) {
+        match get_changed_files(top_level_dir, changed_since, "--changed") {
             Ok(set) => set,
             Err(GitError::GitNotFound) => {
                 Output::err_generic(
@@ -118,6 +126,112 @@ pub(crate) fn filter<'a>(
         });
     }
 
+    let changed_count = changed_files.count();
+    let total = test_files.len();
+    let Some((affected, graph_files)) = scan_affected(
+        ctx,
+        vm,
+        test_files,
+        &changed_files,
+        "--changed",
+        "running all tests",
+    ) else {
+        return Ok(Result {
+            test_files,
+            changed_count,
+            total_tests: total,
+            module_graph_files: Vec::new(),
+        });
+    };
+
+    let mut write: usize = 0;
+    for i in 0..total {
+        if affected[i] {
+            test_files[write] = test_files[i];
+            write += 1;
+        }
+    }
+
+    Ok(Result {
+        test_files: &mut test_files[0..write],
+        changed_count,
+        total_tests: total,
+        module_graph_files: graph_files,
+    })
+}
+
+/// Same module-graph walk as [`filter`] but returns the set of affected test
+/// file paths instead of compacting in place. For `--changed-first`, which
+/// needs to look up affectedness by path after `--shard`/`--randomize` have
+/// reordered or sliced the test-file list.
+pub(crate) fn detect_affected(
+    ctx: &Command::Context,
+    vm: &mut VirtualMachine,
+    test_files: &[Interned],
+    changed_since: &[u8],
+) -> core::result::Result<AffectedSet, crate::Error> {
+    let top_level_dir: &[u8] = bun_resolver::fs::FileSystem::get().top_level_dir;
+
+    let changed_files = match get_changed_files(top_level_dir, changed_since, "--changed-first") {
+        Ok(set) => set,
+        Err(GitError::GitNotFound) => {
+            Output::err_generic(
+                "<b>--changed-first<r> requires <b>git<r> to be installed and in PATH",
+                (),
+            );
+            Global::exit(1);
+        }
+        Err(GitError::GitFailed) => {
+            Global::exit(1);
+        }
+    };
+
+    let changed_count = changed_files.count();
+    if test_files.is_empty() || changed_count == 0 {
+        return Ok(AffectedSet {
+            paths: StringSet::new(),
+            changed_count,
+        });
+    }
+
+    let Some((affected, _)) = scan_affected(
+        ctx,
+        vm,
+        test_files,
+        &changed_files,
+        "--changed-first",
+        "running tests in the usual order",
+    ) else {
+        return Ok(AffectedSet {
+            paths: StringSet::new(),
+            changed_count,
+        });
+    };
+
+    let mut paths = StringSet::new();
+    for (i, &is) in affected.iter().enumerate() {
+        if is {
+            let _ = paths.insert(test_files[i].as_bytes());
+        }
+    }
+    Ok(AffectedSet {
+        paths,
+        changed_count,
+    })
+}
+
+/// Run the bundler scan and reverse-import BFS. Returns, per `test_files`
+/// index, whether that entry point transitively imports a changed file, plus
+/// every on-disk source path encountered (for `--changed --watch` to seed the
+/// watcher). `None` on bundler-scan failure (already warned).
+fn scan_affected(
+    ctx: &Command::Context,
+    vm: &mut VirtualMachine,
+    test_files: &[Interned],
+    changed_files: &StringSet,
+    flag: &str,
+    on_scan_fail: &str,
+) -> Option<(Vec<bool>, Vec<Box<[u8]>>)> {
     // Convert the interned-path list to []const []const u8 for the bundler.
     let entry_points: Vec<&[u8]> = test_files.iter().map(|p| p.as_bytes()).collect();
 
@@ -137,8 +251,8 @@ pub(crate) fn filter<'a>(
             Ok(t) => t,
             Err(err) => {
                 Output::err_generic(
-                    "Failed to initialize module graph scanner for --changed: {s}",
-                    (err.name(),),
+                    "Failed to initialize module graph scanner for {s}: {s}",
+                    (flag, err.name()),
                 );
                 Global::exit(1);
             }
@@ -174,19 +288,14 @@ pub(crate) fn filter<'a>(
     ) {
         Ok(b) => b,
         Err(err) => {
-            // Fall back to running every test rather than aborting the run.
             bun_core::warn!(
-                "--changed: failed to build module graph ({}); running all tests",
-                err.name()
+                "{}: failed to build module graph ({}); {}",
+                flag,
+                err.name(),
+                on_scan_fail
             );
             Output::flush();
-            let total = test_files.len();
-            return Ok(Result {
-                test_files,
-                changed_count: changed_files.count(),
-                total_tests: total,
-                module_graph_files: Vec::new(),
-            });
+            return None;
         }
     };
 
@@ -280,20 +389,14 @@ pub(crate) fn filter<'a>(
     // A test file is selected if (a) its entry point source index is marked
     // affected, or (b) the test file itself is in the changed set (covers
     // test files that failed to enter the graph for any reason).
-    let mut write: usize = 0;
-    // reshaped for borrowck — capture len before re-borrowing test_files
     let total = test_files.len();
-    debug_assert_eq!(test_files.len(), slot_to_source.len());
+    let mut result: Vec<bool> = vec![false; total];
+    debug_assert_eq!(total, slot_to_source.len());
     for i in 0..total {
         let tf = test_files[i];
         let maybe_source = slot_to_source[i];
-        let keep = changed_files.contains(tf.as_bytes())
+        result[i] = changed_files.contains(tf.as_bytes())
             || maybe_source.is_some_and(|src| affected.is_set(src as usize));
-
-        if keep {
-            test_files[write] = tf;
-            write += 1;
-        }
     }
 
     // `to_ast()` materializes `Vec<Symbol>` / `Vec<Part>` / `Vec<ImportRecord>` on the
@@ -308,12 +411,7 @@ pub(crate) fn filter<'a>(
     // above — its `Drop` never runs, so `deinit` cannot lead to a double-drop.
     unsafe { bundle.transpiler.deinit() };
 
-    Ok(Result {
-        test_files: &mut test_files[0..write],
-        changed_count: changed_files.count(),
-        total_tests: total,
-        module_graph_files: graph_files,
-    })
+    Some((result, graph_files))
 }
 
 #[cfg(not(windows))]
@@ -452,6 +550,7 @@ pub(crate) enum GitError {
 fn get_changed_files(
     top_level_dir: &[u8],
     since: &[u8],
+    flag: &str,
 ) -> core::result::Result<StringSet, GitError> {
     let mut which_buf = CorePathBuffer([0u8; bun_core::MAX_PATH_BYTES]);
     let Some(git_path) = which(
@@ -466,22 +565,26 @@ fn get_changed_files(
     // Find the git repository root so we can make the paths git prints
     // absolute (git prints paths relative to the repo toplevel with these
     // commands).
-    let git_root: Box<[u8]> =
-        match run_git(git_path, top_level_dir, &[b"rev-parse", b"--show-toplevel"]) {
-            GitResult::SpawnFailed => return Err(GitError::GitFailed),
-            GitResult::ExitError { stderr } => {
-                if !stderr.is_empty() {
-                    Output::err_generic(
-                        "--changed: {s}",
-                        (BStr::new(strings::trim(&stderr, b" \r\n\t")),),
-                    );
-                } else {
-                    Output::err_generic("--changed requires running inside a git repository", ());
-                }
-                return Err(GitError::GitFailed);
+    let git_root: Box<[u8]> = match run_git(
+        git_path,
+        top_level_dir,
+        &[b"rev-parse", b"--show-toplevel"],
+        flag,
+    ) {
+        GitResult::SpawnFailed => return Err(GitError::GitFailed),
+        GitResult::ExitError { stderr } => {
+            if !stderr.is_empty() {
+                Output::err_generic(
+                    "{s}: {s}",
+                    (flag, BStr::new(strings::trim(&stderr, b" \r\n\t"))),
+                );
+            } else {
+                Output::err_generic("{s} requires running inside a git repository", (flag,));
             }
-            GitResult::Ok { stdout } => Box::<[u8]>::from(strings::trim(&stdout, b" \r\n\t")),
-        };
+            return Err(GitError::GitFailed);
+        }
+        GitResult::Ok { stdout } => Box::<[u8]>::from(strings::trim(&stdout, b" \r\n\t")),
+    };
 
     let mut set = StringSet::new();
 
@@ -493,11 +596,17 @@ fn get_changed_files(
             git_path,
             top_level_dir,
             &[b"diff", b"--name-only", b"HEAD", b"--"],
+            flag,
         ) {
             GitResult::SpawnFailed => return Err(GitError::GitFailed),
             GitResult::Ok { stdout } => append_paths(&mut set, &git_root, &stdout),
             GitResult::ExitError { .. } => {
-                match run_git(git_path, top_level_dir, &[b"diff", b"--name-only", b"--"]) {
+                match run_git(
+                    git_path,
+                    top_level_dir,
+                    &[b"diff", b"--name-only", b"--"],
+                    flag,
+                ) {
                     GitResult::SpawnFailed => return Err(GitError::GitFailed),
                     GitResult::Ok { stdout } => append_paths(&mut set, &git_root, &stdout),
                     GitResult::ExitError { .. } => {}
@@ -507,6 +616,7 @@ fn get_changed_files(
                     git_path,
                     top_level_dir,
                     &[b"diff", b"--name-only", b"--cached", b"--"],
+                    flag,
                 ) {
                     GitResult::SpawnFailed => return Err(GitError::GitFailed),
                     GitResult::Ok { stdout } => append_paths(&mut set, &git_root, &stdout),
@@ -519,18 +629,19 @@ fn get_changed_files(
             git_path,
             top_level_dir,
             &[b"diff", b"--name-only", since, b"--"],
+            flag,
         ) {
             GitResult::SpawnFailed => return Err(GitError::GitFailed),
             GitResult::ExitError { stderr } => {
                 if !stderr.is_empty() {
                     Output::err_generic(
-                        "--changed: {s}",
-                        (BStr::new(strings::trim(&stderr, b" \r\n\t")),),
+                        "{s}: {s}",
+                        (flag, BStr::new(strings::trim(&stderr, b" \r\n\t"))),
                     );
                 } else {
                     Output::err_generic(
-                        "--changed: git diff against {f} failed",
-                        (bun_fmt::quote(since),),
+                        "{s}: git diff against {f} failed",
+                        (flag, bun_fmt::quote(since)),
                     );
                 }
                 return Err(GitError::GitFailed);
@@ -554,6 +665,7 @@ fn get_changed_files(
             b"--exclude-standard",
             b"--full-name",
         ],
+        flag,
     ) {
         GitResult::SpawnFailed => return Err(GitError::GitFailed),
         GitResult::Ok { stdout } => append_paths(&mut set, &git_root, &stdout),
@@ -574,7 +686,7 @@ pub(crate) enum GitResult {
     },
 }
 
-fn run_git(git_path: &[u8], cwd: &[u8], args: &[&[u8]]) -> GitResult {
+fn run_git(git_path: &[u8], cwd: &[u8], args: &[&[u8]], flag: &str) -> GitResult {
     let mut argv: Vec<&[u8]> = Vec::with_capacity(args.len() + 3);
     argv.push(git_path);
     // `core.quotePath` (on by default) wraps non-ASCII filenames in quotes
@@ -604,7 +716,7 @@ fn run_git(git_path: &[u8], cwd: &[u8], args: &[&[u8]]) -> GitResult {
     }) {
         Ok(p) => p,
         Err(err) => {
-            Output::err_generic("--changed: failed to spawn git: {s}", (err.name(),));
+            Output::err_generic("{s}: failed to spawn git: {s}", (flag, err.name()));
             return GitResult::SpawnFailed;
         }
     };
@@ -612,8 +724,8 @@ fn run_git(git_path: &[u8], cwd: &[u8], args: &[&[u8]]) -> GitResult {
     match proc {
         sys::Result::Err(err) => {
             Output::err_generic(
-                "--changed: failed to spawn git: {f}",
-                format_args!("{}", err),
+                "{s}: failed to spawn git: {f}",
+                (flag, format_args!("{}", err)),
             );
             GitResult::SpawnFailed
         }

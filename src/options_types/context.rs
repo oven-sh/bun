@@ -555,6 +555,8 @@ pub struct RuntimeOptions {
     pub redis_preconnect: bool,
     pub sql_preconnect: bool,
     pub eval: Eval,
+    /// `--check`: parse the entry point and exit without executing.
+    pub syntax_check: bool,
     pub preconnect: Vec<Box<[u8]>>,
     pub experimental_http2_fetch: bool,
     pub experimental_http3_fetch: bool,
@@ -626,6 +628,7 @@ impl Default for RuntimeOptions {
             redis_preconnect: false,
             sql_preconnect: false,
             eval: Eval::default(),
+            syntax_check: false,
             preconnect: Vec::new(),
             experimental_http2_fetch: false,
             experimental_http3_fetch: false,

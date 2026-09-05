@@ -1262,9 +1262,7 @@ fn print_exception(
         let exception = unsafe { &*exception };
         vm_ref.print_exception(exception, exception_list, writer, true);
     } else {
-        let mut formatter = bun_jsc::console_object::Formatter::new(global);
-        // `Formatter::new` already
-        // defaults `error_display_level` to `Full` (ConsoleObject.rs:1176).
+        let mut formatter = bun_jsc::console_object::Formatter::for_error_handler(global);
         let colors = bun_core::Output::enable_ansi_colors_stderr();
         vm_ref.print_errorlike_object(
             value,

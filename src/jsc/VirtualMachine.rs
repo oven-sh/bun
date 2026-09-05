@@ -4918,7 +4918,7 @@ impl VirtualMachine {
         writer: &mut bun_core::io::Writer,
         allow_side_effects: bool,
     ) {
-        let mut formatter = crate::console_object::Formatter::new(self.global());
+        let mut formatter = crate::console_object::Formatter::for_error_handler(self.global());
         let colors = bun_core::Output::enable_ansi_colors_stderr();
         self.print_errorlike_object(
             exception.value(),
@@ -6570,11 +6570,12 @@ impl VirtualMachine {
                 TagOptions::DISABLE_INSPECT_CUSTOM | TagOptions::HIDE_GLOBAL,
             )?;
             if !matches!(tag.tag, TagPayload::NativeCode) {
-                let _ = if allow_ansi_color {
-                    formatter.format::<true>(tag, writer, error_instance, global_ref)
+                // The caller clears the exception a getter or the stack guard left pending.
+                if allow_ansi_color {
+                    formatter.format::<true>(tag, writer, error_instance, global_ref)?;
                 } else {
-                    formatter.format::<false>(tag, writer, error_instance, global_ref)
-                };
+                    formatter.format::<false>(tag, writer, error_instance, global_ref)?;
+                }
                 writer.write_all(b"\n")?;
             }
         }

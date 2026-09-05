@@ -108,6 +108,8 @@ struct HeaderBlockInFlight {
     /// The stream id the next frame MUST be a CONTINUATION for (the parent stream id while
     /// assembling a PUSH_PROMISE block).
     continuation_stream: u32,
+    /// CONTINUATION frames received for this block so far (capped at `MAX_CONTINUATIONS`).
+    continuations: u32,
     meta: HeaderBlockMeta,
 }
 
@@ -149,6 +151,9 @@ pub struct Feed {
 /// nghttp2's NGHTTP2_DEFAULT_MAX_OBQ_FLOOD_ITEM: outbound PING/SETTINGS ACKs that may pile up
 /// behind a non-reading peer before the session is treated as flooded (NGHTTP2_ERR_FLOODED).
 const MAX_OUTBOUND_ACK_QUEUE: u32 = 1000;
+
+/// nghttp2's NGHTTP2_DEFAULT_MAX_CONTINUATIONS (CVE-2024-28182): CONTINUATION frames per header block.
+const MAX_CONTINUATIONS: u32 = 8;
 
 /// What the connection engine calls back into the embedder (the JSC binding) for. Methods take
 /// `&self`: the JSC binding (H2FrameParser) is fully interior-mutable (Cell/JsCell) and its host
@@ -1041,6 +1046,7 @@ impl Connection {
         if !wire::flags::has(hdr.flags, wire::flags::END_HEADERS) {
             self.header_block_in_flight = Some(HeaderBlockInFlight {
                 continuation_stream: hdr.stream_id,
+                continuations: 0,
                 meta,
             });
             return false;
@@ -1050,7 +1056,7 @@ impl Connection {
 
     /// RFC 9113 §6.10 CONTINUATION: append the fragment; complete the block on END_HEADERS.
     fn handle_continuation(&mut self, sink: &impl Sink, hdr: &FrameHeader, payload: &[u8]) -> bool {
-        let Some(inflight) = self.header_block_in_flight.take() else {
+        let Some(mut inflight) = self.header_block_in_flight.take() else {
             // §6.10: a CONTINUATION with no header block in progress is a connection PROTOCOL_ERROR.
             self.send_go_away(
                 sink,
@@ -1060,6 +1066,17 @@ impl Connection {
             return true;
         };
         // dispatch() already enforced that we are assembling this exact stream.
+        inflight.continuations += 1;
+        if inflight.continuations > MAX_CONTINUATIONS {
+            // INTERNAL_ERROR is the GOAWAY code nghttp2 uses for this.
+            self.local_connection_error(
+                sink,
+                ErrorCode::InternalError,
+                wire::lib_error::TOO_MANY_CONTINUATIONS,
+                b"too many CONTINUATION frames",
+            );
+            return true;
+        }
         // Cap the reassembled block at the header-list limit (floored so tiny custom settings
         // don't reject normal blocks): HPACK output is never smaller than its input, so a
         // compressed block already past max_header_list_size can only decode past it too —
@@ -2328,6 +2345,107 @@ mod tests {
         let fed = c.receive(&sink, &f);
         assert!(fed.fatal);
         assert_eq!(sink.local_error.get(), Some(wire::lib_error::PROTO));
+    }
+
+    /// Error code carried by the last GOAWAY frame the engine wrote, if any.
+    fn last_goaway_error_code(out: &[u8]) -> Option<u32> {
+        let mut off = 0usize;
+        let mut code = None;
+        while out.len() - off >= wire::FRAME_HEADER_SIZE {
+            let hdr = FrameHeader::parse(&out[off..]);
+            let payload = &out[off + wire::FRAME_HEADER_SIZE
+                ..off + wire::FRAME_HEADER_SIZE + hdr.length as usize];
+            if hdr.frame_type == FrameType::GoAway as u8 {
+                code = Some(u32::from_be_bytes([
+                    payload[4], payload[5], payload[6], payload[7],
+                ]));
+            }
+            off += wire::FRAME_HEADER_SIZE + hdr.length as usize;
+        }
+        code
+    }
+
+    fn empty_continuation(stream_id: u32, flags: u8) -> Vec<u8> {
+        frame(FrameType::Continuation, flags, stream_id, &[])
+    }
+
+    fn request_block() -> Vec<u8> {
+        encode_block(&[
+            (b":method", b"GET"),
+            (b":scheme", b"http"),
+            (b":path", b"/"),
+            (b":authority", b"localhost"),
+        ])
+    }
+
+    #[test]
+    fn continuation_budget_is_per_header_block() {
+        let sink = CaptureSink::default();
+        let mut c = Connection::new(true, Settings::default());
+        c.preface_received = wire::CONNECTION_PREFACE.len();
+        // Two blocks, each using the whole budget: a session-wide counter would trip on the second.
+        let mut bytes = Vec::new();
+        for stream_id in [1u32, 3] {
+            bytes.extend(frame(FrameType::Headers, 0, stream_id, &request_block()));
+            for _ in 1..MAX_CONTINUATIONS {
+                bytes.extend(empty_continuation(stream_id, 0));
+            }
+            bytes.extend(empty_continuation(stream_id, wire::flags::END_HEADERS));
+        }
+        let fed = c.receive(&sink, &bytes);
+        assert!(!fed.fatal);
+        assert_eq!(fed.consumed, bytes.len());
+        assert_eq!(sink.local_error.get(), None);
+        assert_eq!(*sink.headers_done.borrow(), vec![(1, false), (3, false)]);
+
+        // One past the budget is fatal even when the overflowing frame carries END_HEADERS.
+        let mut bytes = frame(FrameType::Headers, 0, 5, &request_block());
+        for _ in 0..MAX_CONTINUATIONS {
+            bytes.extend(empty_continuation(5, 0));
+        }
+        bytes.extend(empty_continuation(5, wire::flags::END_HEADERS));
+        let fed = c.receive(&sink, &bytes);
+        assert!(fed.fatal);
+        assert_eq!(
+            sink.local_error.get(),
+            Some(wire::lib_error::TOO_MANY_CONTINUATIONS)
+        );
+        assert_eq!(
+            last_goaway_error_code(&sink.out.borrow()),
+            Some(ErrorCode::InternalError.as_u32())
+        );
+        assert_eq!(sink.headers_done.borrow().len(), 2);
+    }
+
+    #[test]
+    fn push_promise_block_has_the_same_continuation_budget() {
+        let sink = CaptureSink::default();
+        let mut c = Connection::new(false, Settings::default());
+        // PUSH_PROMISE on parent stream 1 promising stream 2, block parked for CONTINUATION.
+        let mut promise = vec![0u8, 0, 0, 2];
+        promise.extend(request_block());
+        let mut bytes = frame(FrameType::PushPromise, 0, 1, &promise);
+        for _ in 0..MAX_CONTINUATIONS {
+            bytes.extend(empty_continuation(1, 0));
+        }
+        let fed = c.receive(&sink, &bytes);
+        assert!(!fed.fatal);
+        assert_eq!(fed.consumed, bytes.len());
+        assert_eq!(sink.local_error.get(), None);
+        assert!(sink.pushes.borrow().is_empty());
+
+        let ninth = empty_continuation(1, 0);
+        let fed = c.receive(&sink, &ninth);
+        assert!(fed.fatal);
+        assert_eq!(
+            sink.local_error.get(),
+            Some(wire::lib_error::TOO_MANY_CONTINUATIONS)
+        );
+        assert_eq!(
+            last_goaway_error_code(&sink.out.borrow()),
+            Some(ErrorCode::InternalError.as_u32())
+        );
+        assert!(sink.pushes.borrow().is_empty());
     }
 
     #[test]

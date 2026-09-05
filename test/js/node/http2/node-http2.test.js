@@ -1583,6 +1583,159 @@ for (const nodeExecutable of [nodeExe(), bunExe()]) {
           }
         });
 
+        // nghttp2's NGHTTP2_DEFAULT_MAX_CONTINUATIONS (CVE-2024-28182): at most 8 CONTINUATION
+        // frames may follow a HEADERS frame. Zero-length frames are what the byte cap above cannot
+        // bound, so these blocks are split into empty CONTINUATIONs on purpose.
+        const MAX_CONTINUATIONS = 8;
+        const STATUS_200 = Buffer.from([0x88]); // HPACK indexed :status 200
+        // HPACK literal without indexing, new name: x-trailer: 1
+        const TRAILER_BLOCK = Buffer.concat([
+          Buffer.from([0x00, 0x09]),
+          Buffer.from("x-trailer"),
+          Buffer.from([0x01, 0x31]),
+        ]);
+        // PUSH_PROMISE on stream 1 promising stream 2; the promised request is
+        // GET http://localhost/ (HPACK indexed :method/:scheme/:path, literal :authority).
+        const PUSH_PROMISE_NO_END_HEADERS = (() => {
+          const block = Buffer.concat([Buffer.from([0x82, 0x86, 0x84, 0x01, 0x09]), Buffer.from("localhost")]);
+          const payload = Buffer.concat([Buffer.from([0, 0, 0, 2]), block]);
+          return Buffer.concat([new http2utils.Frame(payload.length, 5, 0, 1).data, payload]);
+        })();
+        const emptyContinuation = flags => new http2utils.Frame(0, 9, flags, 1).data;
+        /** `opener` (a HEADERS/PUSH_PROMISE frame without END_HEADERS), then `continuations` empty CONTINUATIONs, the last one with END_HEADERS. */
+        function splitAfter(opener, continuations) {
+          const frames = [opener];
+          for (let i = 1; i < continuations; i++) frames.push(emptyContinuation(0));
+          frames.push(emptyContinuation(0x4));
+          return Buffer.concat(frames);
+        }
+        function splitHeaderBlock(block, continuations, { endStream = false } = {}) {
+          return splitAfter(new http2utils.HeadersFrame(1, block, 0, /* EOH */ false, endStream).data, continuations);
+        }
+        async function rawResponseServer(respond) {
+          const { promise: waitToWrite, resolve: allowWrite } = Promise.withResolvers();
+          const server = net.createServer(async socket => {
+            socket.on("error", () => {});
+            socket.write(new http2utils.SettingsFrame(true).data);
+            await waitToWrite;
+            socket.write(respond());
+          });
+          await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
+          return { server, allowWrite, url: `http://127.0.0.1:${server.address().port}` };
+        }
+
+        it("accepts a response and its trailers each split across the full CONTINUATION budget", async () => {
+          // The budget is per header block: two blocks on one stream may use 8 CONTINUATIONs
+          // each (16 on the session), which a counter that was never reset would reject.
+          const { server, allowWrite, url } = await rawResponseServer(() =>
+            Buffer.concat([
+              splitHeaderBlock(STATUS_200, MAX_CONTINUATIONS),
+              splitHeaderBlock(TRAILER_BLOCK, MAX_CONTINUATIONS, { endStream: true }),
+            ]),
+          );
+          const client = http2.connect(url);
+          try {
+            const { promise, resolve } = Promise.withResolvers();
+            const received = { response: undefined, trailers: undefined };
+            client.on("error", err => resolve({ error: err }));
+            client.on("connect", () => {
+              const req = client.request({ ":path": "/" });
+              req.on("error", err => resolve({ error: err }));
+              req.on("response", headers => (received.response = headers[":status"]));
+              req.on("trailers", headers => (received.trailers = headers["x-trailer"]));
+              req.on("end", () => resolve(received));
+              req.resume();
+              req.end();
+              allowWrite();
+            });
+            expect(await promise).toEqual({ response: 200, trailers: "1" });
+          } finally {
+            client.destroy();
+            server.close();
+          }
+        });
+
+        it("rejects the 9th CONTINUATION of a header block (CVE-2024-28182)", async () => {
+          // One past the budget is a connection error even though that frame carries END_HEADERS.
+          const { server, allowWrite, url } = await rawResponseServer(() =>
+            splitHeaderBlock(STATUS_200, MAX_CONTINUATIONS + 1),
+          );
+          const client = http2.connect(url);
+          try {
+            const { promise, resolve } = Promise.withResolvers();
+            client.on("error", resolve);
+            client.on("connect", () => {
+              const req = client.request({ ":path": "/" });
+              req.on("error", () => {});
+              req.on("response", headers => resolve({ response: headers }));
+              req.end();
+              allowWrite();
+            });
+            const err = await promise;
+            // node: NghttpError built from NGHTTP2_ERR_TOO_MANY_CONTINUATIONS.
+            expect(err).toMatchObject({
+              code: "ERR_HTTP2_ERROR",
+              errno: -905,
+              message: "Too many CONTINUATION frames following a HEADER frame",
+            });
+          } finally {
+            client.destroy();
+            server.close();
+          }
+        });
+
+        it("accepts a PUSH_PROMISE block followed by exactly 8 CONTINUATION frames", async () => {
+          const { server, allowWrite, url } = await rawResponseServer(() =>
+            splitAfter(PUSH_PROMISE_NO_END_HEADERS, MAX_CONTINUATIONS),
+          );
+          const client = http2.connect(url);
+          try {
+            const { promise, resolve } = Promise.withResolvers();
+            client.on("error", err => resolve({ error: err }));
+            client.on("stream", (pushed, headers) => {
+              pushed.on("error", () => {});
+              resolve({ pushedPath: headers[":path"] });
+            });
+            client.on("connect", () => {
+              const req = client.request({ ":path": "/" });
+              req.on("error", () => {});
+              allowWrite();
+            });
+            expect(await promise).toEqual({ pushedPath: "/" });
+          } finally {
+            client.destroy();
+            server.close();
+          }
+        });
+
+        it("rejects the 9th CONTINUATION of a PUSH_PROMISE block (CVE-2024-28182)", async () => {
+          const { server, allowWrite, url } = await rawResponseServer(() =>
+            splitAfter(PUSH_PROMISE_NO_END_HEADERS, MAX_CONTINUATIONS + 1),
+          );
+          const client = http2.connect(url);
+          try {
+            const { promise, resolve } = Promise.withResolvers();
+            client.on("error", resolve);
+            client.on("stream", (pushed, headers) => {
+              pushed.on("error", () => {});
+              resolve({ pushedPath: headers[":path"] });
+            });
+            client.on("connect", () => {
+              const req = client.request({ ":path": "/" });
+              req.on("error", () => {});
+              allowWrite();
+            });
+            expect(await promise).toMatchObject({
+              code: "ERR_HTTP2_ERROR",
+              errno: -905,
+              message: "Too many CONTINUATION frames following a HEADER frame",
+            });
+          } finally {
+            client.destroy();
+            server.close();
+          }
+        });
+
         it("rejects a header block whose compressed size exceeds maxHeaderListSize", async () => {
           const { promise: waitToWrite, resolve: allowWrite } = Promise.withResolvers();
           const { promise: serverListening, resolve: serverResolve } = Promise.withResolvers();

@@ -147,6 +147,7 @@ impl JSMySQLQuery {
         }
         this.set_target(target);
         if let Err(err) = this.run(connection) {
+            this.mark_as_failed();
             if !global_object.has_exception() {
                 return Err(global_object.throw_value(mysql_error_to_js(
                     global_object,
@@ -379,7 +380,6 @@ impl JSMySQLQuery {
         // success path below.
         let errguard = scopeguard::guard(self, |s| {
             s.this_value.with_mut(|v| v.downgrade());
-            let _ = s.query.with_mut(|q| q.fail());
         });
 
         let columns_value = self.get_columns().unwrap_or(JSValue::UNDEFINED);

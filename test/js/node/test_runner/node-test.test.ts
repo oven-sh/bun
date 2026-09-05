@@ -1,35 +1,32 @@
 import { spawn } from "bun";
-import { describe, expect, test } from "bun:test";
+import { describe, expect, setDefaultTimeout, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 import { join } from "node:path";
+import { run } from "node:test";
+
+// Nearly every test here spawns a bun child, and a debug+ASAN child takes
+// several seconds just to start (more on a loaded machine), so the 5s default
+// is marginal for all of them. CI passes a much larger --timeout regardless.
+setDefaultTimeout(30_000);
 
 describe("node:test", () => {
-  // These three drive the largest fixtures (01-harness has 32 node:test cases);
-  // a debug+ASAN `bun test` child takes several seconds to start, so give them
-  // headroom and let them spawn in parallel instead of serially.
-  test.concurrent(
-    "should run basic tests",
-    async () => {
-      const { exitCode, stderr } = await runTests(["01-harness.js"]);
-      expect({ exitCode, stderr }).toMatchObject({
-        exitCode: 0,
-        stderr: expect.stringContaining("0 fail"),
-      });
-    },
-    30_000,
-  );
+  // These three drive the largest fixtures (01-harness has 32 node:test cases),
+  // so let them spawn in parallel instead of serially.
+  test.concurrent("should run basic tests", async () => {
+    const { exitCode, stderr } = await runTests(["01-harness.js"]);
+    expect({ exitCode, stderr }).toMatchObject({
+      exitCode: 0,
+      stderr: expect.stringContaining("0 fail"),
+    });
+  });
 
-  test.concurrent(
-    "should run hooks in the right order",
-    async () => {
-      const { exitCode, stderr } = await runTests(["02-hooks.js"]);
-      expect({ exitCode, stderr }).toMatchObject({
-        exitCode: 0,
-        stderr: expect.stringContaining("0 fail"),
-      });
-    },
-    30_000,
-  );
+  test.concurrent("should run hooks in the right order", async () => {
+    const { exitCode, stderr } = await runTests(["02-hooks.js"]);
+    expect({ exitCode, stderr }).toMatchObject({
+      exitCode: 0,
+      stderr: expect.stringContaining("0 fail"),
+    });
+  });
 
   test("should run tests with different variations", async () => {
     const { exitCode, stderr } = await runTests(["03-test-variations.js"]);
@@ -47,18 +44,14 @@ describe("node:test", () => {
     });
   });
 
-  test.concurrent(
-    "should run all tests from multiple files",
-    async () => {
-      const { exitCode, stderr } = await runTests(["01-harness.js", "02-hooks.js"]);
-      expect({ exitCode, stderr }).toMatchObject({
-        exitCode: 0,
-        // 32 from 01-harness + 3 from 02-hooks
-        stderr: expect.stringContaining("35 pass"),
-      });
-    },
-    30_000,
-  );
+  test.concurrent("should run all tests from multiple files", async () => {
+    const { exitCode, stderr } = await runTests(["01-harness.js", "02-hooks.js"]);
+    expect({ exitCode, stderr }).toMatchObject({
+      exitCode: 0,
+      // 32 from 01-harness + 3 from 02-hooks
+      stderr: expect.stringContaining("35 pass"),
+    });
+  });
 
   test("should run test() and describe() called inside another test() as subtests", async () => {
     const { exitCode, stderr } = await runTests(["05-test-in-test.js"]);
@@ -322,6 +315,49 @@ describe("node:test", () => {
       exitCode: 0,
       stderr: expect.stringContaining("0 fail"),
     });
+  });
+
+  test("should abort t.signal on timeout and enforce the test-level signal option", async () => {
+    const { exitCode, stdout, stderr } = await runTests(["30-signal-abort.js"]);
+    expect(stdout).toContain("OBS top-level timeout aborted t.signal");
+    expect(stdout).not.toContain("OBS pre-aborted top-level body ran");
+    // The three deliberate failures: the timeout plus each signal's reason.
+    expect(stderr).toContain("test timed out after 10ms");
+    expect(stderr).toContain("top-level abort reason");
+    expect(stderr).toContain("aborted before start");
+    expect(stderr).toContain("6 pass");
+    expect({ exitCode, stderr }).toMatchObject({
+      exitCode: 1,
+      stderr: expect.stringContaining("3 fail"),
+    });
+  });
+
+  test("should cancel the subtests a timed-out test stopped waiting for", async () => {
+    const { exitCode, stderr } = await runTests(["31-cancelled-by-parent.js"]);
+    expect(stderr).toContain("test timed out after 20ms");
+    expect(stderr).toContain("1 pass");
+    expect({ exitCode, stderr }).toMatchObject({
+      exitCode: 1,
+      stderr: expect.stringContaining("1 fail"),
+    });
+  });
+
+  test("should report every cancelled subtest and suite as a failure through run()", async () => {
+    const events = await run({ files: [join(import.meta.dirname, "fixtures", "31-cancelled-by-parent.js")] }).toArray();
+    const outcomes = events
+      .filter(({ type }) => type === "test:pass" || type === "test:fail")
+      .map(({ type, data }) => [data.name, type === "test:pass" ? "pass" : data.details.error.message])
+      .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
+    const cancelled = "test did not finish before its parent and was cancelled";
+    expect(outcomes).toEqual([
+      ["parent times out while a subtest is still running", "test timed out after 20ms"],
+      ["queued", cancelled],
+      ["queued empty suite", cancelled],
+      ["queued suite", cancelled],
+      ["running", cancelled],
+      ["suite child", cancelled],
+      ["the subtests the parent stopped waiting for were cancelled", "pass"],
+    ]);
   });
 });
 

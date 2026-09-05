@@ -1,7 +1,7 @@
 const assert = require("node:assert");
 const { test } = require("node:test");
 
-// Hook-level `signal` is enforced (test-level `signal` is validated only).
+// Hook-level `signal` (test-level `signal` is covered by 30-signal-abort.js).
 // Node reports the child's error as its own 'failed running beforeEach hook'
 // wrapper while bun surfaces the thrown error, so assert on the outcome.
 test("a hook-level signal aborts the hook and fails the owning subtest", async t => {

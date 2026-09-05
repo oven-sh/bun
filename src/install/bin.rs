@@ -23,6 +23,7 @@ use bun_sys::{self as sys, Fd, FdExt as _};
 use crate::bun_json::{Expr, ExprData};
 use crate::dependency::{Dependency, DependencyExt as _};
 use crate::install::{DependencyID, ExternalStringList};
+use crate::postinstall_optimizer::{self, PostinstallOptimizer};
 #[cfg(windows)]
 use crate::windows_shim::BinLinkingShim as WinBinLinkingShim;
 #[cfg(windows)]
@@ -888,7 +889,7 @@ impl<'a> Linker<'a> {
         abs_dest: &ZStr,
         global: bool,
         target_needs_resolved_containment_check: bool,
-    ) {
+    ) -> bool {
         debug_assert!(path::is_absolute(abs_target.as_bytes()));
         debug_assert!(path::is_absolute(abs_dest.as_bytes()));
         debug_assert!(abs_target.as_bytes()[abs_target.as_bytes().len() - 1] != SEP);
@@ -898,7 +899,7 @@ impl<'a> Linker<'a> {
             // Skip seen destinations for this tree
             // https://github.com/npm/cli/blob/22731831e22011e32fa0ca12178e242c2ee2b33d/node_modules/bin-links/lib/link-gently.js#L30
             if seen.contains_key(abs_dest.as_bytes()) {
-                return;
+                return true;
             }
         }
 
@@ -906,13 +907,13 @@ impl<'a> Linker<'a> {
         // shim in path might break a postinstall
         if !sys::exists(abs_target) {
             self.skipped_due_to_missing_bin = true;
-            return;
+            return false;
         }
 
         if target_needs_resolved_containment_check {
             #[cfg(not(windows))]
             if self.resolved_target_parent_escapes_package_dir(abs_target) {
-                return;
+                return false;
             }
         }
 
@@ -937,7 +938,7 @@ impl<'a> Linker<'a> {
                         // ignore directories, creating a shim for one won't do anything
                         self.err = Some(err);
                     }
-                    return;
+                    return false;
                 }
             };
             self.create_windows_shim(&target, abs_target, abs_dest, global);
@@ -946,13 +947,60 @@ impl<'a> Linker<'a> {
         if self.err.is_some() {
             // cleanup on error just in case
             Self::unlink_bin_or_shim(abs_dest);
-            return;
+            return false;
         }
 
         #[cfg(not(windows))]
         {
             Self::try_normalize_shebang(abs_target);
         }
+
+        true
+    }
+
+    pub fn link_package_bin(&mut self, target: &[u8], destination_name: &[u8]) -> bool {
+        if target.is_empty()
+            || bin_target_escapes_package_dir(target)
+            || normalized_bin_name(destination_name) != destination_name
+        {
+            return false;
+        }
+
+        let package_dir_len = self.build_target_package_dir().len();
+        let mut dest_off = self.build_destination_dir(false);
+        if destination_name.len() >= self.abs_dest_buf.len().saturating_sub(dest_off) {
+            self.err = Some(crate::Error::Sys(bun_errno::SystemErrno::ENAMETOOLONG));
+            return false;
+        }
+        let abs_dest_buf_ptr: *mut u8 = self.abs_dest_buf.as_mut_ptr();
+
+        let abs_target = {
+            let package_dir = &self.abs_target_buf[..package_dir_len];
+            let resolved = Self::resolve_bin_target(
+                self.is_native_binlink_redirect(),
+                package_dir,
+                target,
+                destination_name,
+            );
+            // SAFETY: `resolve_bin_target` stores its result in a thread-local buffer,
+            // so it does not borrow `self.abs_target_buf`.
+            unsafe { ZStr::from_raw(resolved.as_bytes().as_ptr(), resolved.len()) }
+        };
+
+        self.abs_dest_buf[dest_off..dest_off + destination_name.len()]
+            .copy_from_slice(destination_name);
+        dest_off += destination_name.len();
+        self.abs_dest_buf[dest_off] = 0;
+        // SAFETY: abs_dest_buf[dest_off] == 0 written above; `link_bin_or_create_shim`
+        // does not read or write `abs_dest_buf`.
+        let abs_dest = unsafe { ZStr::from_raw(abs_dest_buf_ptr, dest_off) };
+
+        self.link_bin_or_create_shim(
+            abs_target,
+            abs_dest,
+            false,
+            bin_target_needs_resolved_containment_check(target),
+        )
     }
 
     #[cfg(not(windows))]
@@ -1433,6 +1481,10 @@ impl<'a> Linker<'a> {
     /// `bin` field (e.g. `@anthropic-ai/claude-code` -> `@anthropic-ai/claude-code-linux-x64`).
     fn is_native_binlink_redirect(&self) -> bool {
         !strings::eql(self.target_package_name.slice(), self.package_name.slice())
+    }
+
+    pub(crate) fn should_retry_without_native_binlink(&self) -> bool {
+        self.is_native_binlink_redirect() && (self.skipped_due_to_missing_bin || self.err.is_some())
     }
 
     /// Resolve the absolute target for a bin entry inside `package_dir`.
@@ -1992,4 +2044,322 @@ impl<'a> Linker<'a> {
             }
         }
     }
+}
+
+struct InstalledNativeBinlinkTarget {
+    node_modules_path: AbsPath,
+    package_name: Box<[u8]>,
+}
+
+struct InstalledNativeBinlinkDependency {
+    install_name: Box<[u8]>,
+    package_name: Box<[u8]>,
+    version_literal: Box<[u8]>,
+    version_range: bun_semver::query::Group,
+}
+
+fn with_package_json<T>(
+    package_dir: &[u8],
+    callback: impl FnOnce(&Expr) -> Option<T>,
+) -> Option<T> {
+    let package_json_path =
+        resolve_path::join_abs_string_z::<PlatformAuto>(package_dir, &[b"package.json"]);
+    let package_json = sys::File::openat(Fd::cwd(), package_json_path, sys::O::RDONLY, 0).ok()?;
+    let contents = package_json.read_to_end().ok()?;
+    let source = bun_ast::Source::init_path_string(package_json_path.as_bytes(), &*contents);
+    bun_ast::initialize_store();
+    let mut log = bun_ast::Log::init();
+    let parsed = crate::bun_json::ParsedJson::parse_package_json(&source, &mut log).ok()?;
+    callback(&parsed.root)
+}
+
+fn parse_installed_native_binlink_dependency(
+    install_name: &[u8],
+    version_literal: &[u8],
+) -> Option<InstalledNativeBinlinkDependency> {
+    let sliced = bun_semver::SlicedString::init(version_literal, version_literal);
+    let parsed = crate::dependency::parse(
+        String::init(install_name, install_name),
+        bun_semver::string::Builder::string_hash(install_name),
+        version_literal,
+        &sliced,
+        None,
+        None,
+    )?;
+    if parsed.tag != crate::dependency::Tag::Npm {
+        return None;
+    }
+
+    let npm = parsed.npm();
+    let package_name = if npm.is_alias {
+        npm.name.slice(version_literal)
+    } else {
+        install_name
+    };
+
+    Some(InstalledNativeBinlinkDependency {
+        install_name: Box::from(install_name),
+        package_name: Box::from(package_name),
+        version_literal: Box::from(version_literal),
+        version_range: npm.version.clone(),
+    })
+}
+
+fn native_binlink_package_info(
+    package_dir: &[u8],
+) -> Option<(Box<[u8]>, Vec<InstalledNativeBinlinkDependency>)> {
+    with_package_json(package_dir, |expr| {
+        let package_name_expr = expr.get(b"name")?;
+        let package_name = package_name_expr.as_utf8_string_literal()?;
+        let mut optional_dependencies = Vec::new();
+        if let Some(optional) = expr.get(b"optionalDependencies")
+            && let ExprData::EObjectJSON(object) = &optional.data
+        {
+            optional_dependencies.reserve(object.get().properties().len());
+            for prop in object.get().properties() {
+                let dependency_name = prop.key.slice();
+                if crate::package_installer::alias_is_safe_install_target(dependency_name)
+                    && let Some(version) = prop.value.as_str()
+                    && let Some(dependency) =
+                        parse_installed_native_binlink_dependency(dependency_name, version)
+                {
+                    optional_dependencies.push(dependency);
+                }
+            }
+        }
+        Some((Box::from(package_name), optional_dependencies))
+    })
+}
+
+fn native_binlink_is_enabled(install_root: &[u8], package_name: &[u8]) -> bool {
+    let optimizers = with_package_json(install_root, |expr| {
+        let mut list = postinstall_optimizer::List::default();
+        PostinstallOptimizer::from_package_json(&mut list, expr).ok()?;
+        Some(list)
+    })
+    .unwrap_or_default();
+
+    optimizers.is_native_binlink_enabled()
+        && matches!(
+            optimizers.get(&postinstall_optimizer::PkgInfo {
+                name_hash: bun_semver::string::Builder::string_hash(package_name),
+                ..Default::default()
+            }),
+            Some(PostinstallOptimizer::NativeBinlink)
+        )
+}
+
+fn platform_package_matches(
+    package_dir: &[u8],
+    dependency: &InstalledNativeBinlinkDependency,
+) -> bool {
+    with_package_json(package_dir, |expr| {
+        if expr.get(b"name")?.as_utf8_string_literal()? != dependency.package_name.as_ref() {
+            return Some(false);
+        }
+        let version_expr = expr.get(b"version")?;
+        let version_bytes = version_expr.as_utf8_string_literal()?;
+        let parsed_version = bun_semver::Version::parse_utf8(version_bytes);
+        if !parsed_version.valid {
+            return Some(false);
+        }
+        let cpu = expr
+            .get(b"cpu")
+            .map(|value| crate::npm::negatable_from_json::<crate::npm::Architecture>(&value))
+            .transpose()
+            .ok()?
+            .unwrap_or(crate::npm::Architecture::ALL);
+        let os = expr
+            .get(b"os")
+            .map(|value| crate::npm::negatable_from_json::<crate::npm::OperatingSystem>(&value))
+            .transpose()
+            .ok()?
+            .unwrap_or(crate::npm::OperatingSystem::ALL);
+
+        Some(
+            dependency.version_range.satisfies(
+                parsed_version.version.min(),
+                &dependency.version_literal,
+                version_bytes,
+            ) && PostinstallOptimizer::is_native_binlink_replacement(
+                cpu,
+                os,
+                crate::npm::Architecture::CURRENT,
+                crate::npm::OperatingSystem::CURRENT,
+            ),
+        )
+    })
+    .unwrap_or(false)
+}
+
+fn resolve_installed_native_binlink_target(
+    install_root: &[u8],
+    package_name: &[u8],
+) -> Option<InstalledNativeBinlinkTarget> {
+    let mut root_node_modules: AbsPath =
+        AbsPath::from(strings::without_trailing_slash(install_root)).ok()?;
+    root_node_modules.append(b"node_modules").ok()?;
+
+    let mut package_dir: AbsPath = AbsPath::from(root_node_modules.slice()).ok()?;
+    package_dir.append(package_name).ok()?;
+    let (actual_package_name, optional_dependencies) =
+        native_binlink_package_info(package_dir.slice())?;
+    if !native_binlink_is_enabled(install_root, &actual_package_name) {
+        return None;
+    }
+
+    let mut nested_node_modules: AbsPath = AbsPath::from(package_dir.slice()).ok()?;
+    nested_node_modules.append(b"node_modules").ok()?;
+
+    let real_node_modules: AbsPath = {
+        let mut package_dir_z_buf = path::path_buffer_pool::get();
+        let package_dir_z = resolve_path::z(package_dir.slice(), &mut *package_dir_z_buf);
+        let mut real_package_dir_buf = path::path_buffer_pool::get();
+        let real_package_dir = sys::realpath(package_dir_z, &mut *real_package_dir_buf).ok()?;
+        let mut parent = resolve_path::dirname::<PlatformAuto>(real_package_dir);
+        // `node_modules/@scope/name` nests one level deeper than `node_modules/name`.
+        if strings::contains_char(package_name, b'/') {
+            parent = resolve_path::dirname::<PlatformAuto>(parent);
+        }
+        AbsPath::from(parent).ok()?
+    };
+
+    let node_modules_paths = [nested_node_modules, real_node_modules, root_node_modules];
+    for dependency in optional_dependencies {
+        for node_modules_path in &node_modules_paths {
+            let mut target_package_dir: AbsPath = match AbsPath::from(node_modules_path.slice()) {
+                Ok(path) => path,
+                Err(_) => continue,
+            };
+            if target_package_dir.append(&dependency.install_name).is_err() {
+                continue;
+            }
+            if platform_package_matches(target_package_dir.slice(), &dependency) {
+                return Some(InstalledNativeBinlinkTarget {
+                    node_modules_path: AbsPath::from(node_modules_path.slice()).ok()?,
+                    package_name: dependency.install_name,
+                });
+            }
+        }
+    }
+
+    None
+}
+
+pub fn link_package_bin<'a>(
+    install_root: &[u8],
+    package_name: &[u8],
+    target: &[u8],
+    destination_scope: &[u8],
+    destination_name: &[u8],
+    executable_buf: &'a mut PathBuffer,
+) -> Result<Option<&'a ZStr>, crate::Error> {
+    if normalized_bin_name(destination_scope) != destination_scope
+        || !crate::package_installer::alias_is_safe_install_target(package_name)
+    {
+        return Ok(None);
+    }
+
+    let mut node_modules_path = AbsPath::from(strings::without_trailing_slash(install_root))
+        .map_err(|_| crate::Error::PathTooLong)?;
+    node_modules_path
+        .append(b"node_modules")
+        .map_err(|_| crate::Error::PathTooLong)?;
+    // Keep the real bin name as the executable basename because CLI frameworks
+    // commonly derive their usage name from the entry script path.
+    let mut destination_node_modules_path =
+        AbsPath::from(strings::without_trailing_slash(install_root))
+            .map_err(|_| crate::Error::PathTooLong)?;
+    destination_node_modules_path
+        .append(b"node_modules")
+        .map_err(|_| crate::Error::PathTooLong)?;
+    destination_node_modules_path
+        .append(destination_scope)
+        .map_err(|_| crate::Error::PathTooLong)?;
+
+    let mut abs_target_buf = PathBuffer::uninit();
+    let mut abs_dest_buf = PathBuffer::uninit();
+    let mut rel_buf = PathBuffer::uninit();
+    let empty_z_buf = [0u8; 1];
+    let empty_z = ZStr::from_buf(&empty_z_buf, 0);
+    let node_modules_ptr = &raw const node_modules_path;
+    let native_target = resolve_installed_native_binlink_target(install_root, package_name);
+    let target_node_modules_path = native_target
+        .as_ref()
+        .map(|target| &raw const target.node_modules_path)
+        .unwrap_or(node_modules_ptr);
+    let target_package_name = native_target
+        .as_ref()
+        .map(|target| target.package_name.as_ref())
+        .unwrap_or(package_name);
+
+    Linker::ensure_umask();
+    let mut linker = Linker {
+        bin: Bin::default(),
+        target_node_modules_path,
+        target_package_name: strings::StringOrTinyString::init(target_package_name),
+        seen: None,
+        node_modules_path: &mut destination_node_modules_path,
+        package_name: strings::StringOrTinyString::init(package_name),
+        global_bin_path: empty_z,
+        string_buf: b"",
+        extern_string_buf: &[],
+        abs_target_buf: &mut abs_target_buf,
+        abs_dest_buf: &mut abs_dest_buf,
+        rel_buf: &mut rel_buf,
+        err: None,
+        skipped_due_to_missing_bin: false,
+    };
+
+    let mut linked = linker.link_package_bin(target, destination_name);
+    if linker.should_retry_without_native_binlink() {
+        linker.target_node_modules_path = node_modules_ptr;
+        linker.target_package_name = strings::StringOrTinyString::init(package_name);
+        linker.err = None;
+        linker.skipped_due_to_missing_bin = false;
+        linked = linker.link_package_bin(target, destination_name);
+    }
+    if let Some(err) = linker.err {
+        return Err(err);
+    }
+    if !linked {
+        return Ok(None);
+    }
+
+    let root = strings::without_trailing_slash(install_root);
+    let suffix = std::env::consts::EXE_SUFFIX.as_bytes();
+    let required = root.len()
+        + b"/node_modules/".len()
+        + destination_scope.len()
+        + b"/.bin/".len()
+        + destination_name.len()
+        + suffix.len();
+    if required >= executable_buf.len() {
+        return Err(crate::Error::PathTooLong);
+    }
+
+    let mut off = 0;
+    executable_buf[..root.len()].copy_from_slice(root);
+    off += root.len();
+    executable_buf[off] = SEP;
+    off += 1;
+    executable_buf[off..off + b"node_modules".len()].copy_from_slice(b"node_modules");
+    off += b"node_modules".len();
+    executable_buf[off] = SEP;
+    off += 1;
+    executable_buf[off..off + destination_scope.len()].copy_from_slice(destination_scope);
+    off += destination_scope.len();
+    executable_buf[off] = SEP;
+    off += 1;
+    executable_buf[off..off + b".bin".len()].copy_from_slice(b".bin");
+    off += b".bin".len();
+    executable_buf[off] = SEP;
+    off += 1;
+    executable_buf[off..off + destination_name.len()].copy_from_slice(destination_name);
+    off += destination_name.len();
+    executable_buf[off..off + suffix.len()].copy_from_slice(suffix);
+    off += suffix.len();
+    executable_buf[off] = 0;
+
+    Ok(Some(ZStr::from_buf(executable_buf, off)))
 }

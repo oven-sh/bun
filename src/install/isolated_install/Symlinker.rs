@@ -75,16 +75,10 @@ impl Symlinker {
                                         _ => Err(symlink_err),
                                     },
                                 },
-                                // readlink failed for a reason other than NOENT —
-                                // dest exists but isn't a symlink. If it's a real
-                                // directory with a package.json, leave it: this is
-                                // the `bun patch <pkg>` workspace (a detached copy
-                                // the user is editing before `--commit`), and
-                                // `deleteTree` here would silently destroy their
-                                // in-progress edits. A directory without a
-                                // package.json is not a package (an empty leftover
-                                // from a failed install or a manual `rm`), and a
-                                // regular file is never one: replace both.
+                                // dest exists but isn't a symlink. A real directory
+                                // with a package.json is the `bun patch <pkg>`
+                                // workspace the user is editing before `--commit`:
+                                // keep it. Anything else is replaced.
                                 _ => {
                                     #[cfg(windows)]
                                     let is_dir = if let Some(a) =

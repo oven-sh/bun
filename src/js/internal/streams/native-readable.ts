@@ -53,12 +53,12 @@ interface NativePtr {
 
 let debugId = 0;
 
-function constructNativeReadable(readableStream: ReadableStream, options): NativeReadable {
+function constructNativeReadable(readableStream: ReadableStream, options, Base?): NativeReadable {
   $assert(typeof readableStream === "object" && readableStream instanceof ReadableStream, "Invalid readable stream");
   const bunNativePtr = (readableStream as any).$bunNativePtr;
   $assert(typeof bunNativePtr === "object", "Invalid native ptr");
 
-  const stream = new Readable(options);
+  const stream = Base !== undefined ? new Base(options) : new Readable(options);
   stream._read = read;
   stream._destroy = destroy;
 
@@ -262,18 +262,18 @@ function destroy(this: NativeReadable, error: any, cb: () => void) {
 
 function ref(this: NativeReadable) {
   const ptr = this.$bunNativePtr;
-  if (ptr === undefined) return;
-  if (this[kRefCount]++ === 0) {
+  if (ptr !== undefined && this[kRefCount]++ === 0) {
     ptr.updateRef(true);
   }
+  return this;
 }
 
 function unref(this: NativeReadable) {
   const ptr = this.$bunNativePtr;
-  if (ptr === undefined) return;
-  if (this[kRefCount]-- === 1) {
+  if (ptr !== undefined && this[kRefCount] > 0 && --this[kRefCount] === 0) {
     ptr.updateRef(false);
   }
+  return this;
 }
 
 export default { constructNativeReadable };

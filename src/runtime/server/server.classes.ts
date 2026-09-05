@@ -146,10 +146,6 @@ export default [
         fn: "flushHeaders",
         length: 0,
       },
-      cork: {
-        fn: "cork",
-        length: 1,
-      },
       ref: {
         fn: "jsRef",
       },

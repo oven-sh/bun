@@ -119,6 +119,13 @@ impl PosixLoop {
         unsafe { c::uws_loop_date_header_timer_update(self) };
     }
 
+    /// Flush response bytes still held in the loop's cork buffers. The loop
+    /// does this itself before every poll; call it where no poll follows.
+    pub fn drain_corks(&mut self) {
+        // SAFETY: self is a valid loop pointer
+        unsafe { c::uws_loop_drain_corks(self) };
+    }
+
     pub fn iteration_number(&self) -> u64 {
         self.internal_loop_data.iteration_nr
     }
@@ -462,6 +469,13 @@ impl WindowsLoop {
         unsafe { c::uws_loop_date_header_timer_update(self) };
     }
 
+    /// Flush response bytes still held in the loop's cork buffers. The loop
+    /// does this itself before every poll; call it where no poll follows.
+    pub fn drain_corks(&mut self) {
+        // SAFETY: self is a valid loop pointer
+        unsafe { c::uws_loop_drain_corks(self) };
+    }
+
     /// # Safety
     /// `this` must have been returned by `us_create_loop`/`uws_get_loop_with_native`
     /// and not yet freed.
@@ -520,6 +534,7 @@ mod c {
         #[cfg(windows)]
         pub(super) fn uws_get_loop_with_native(native: *mut c_void) -> *mut WindowsLoop;
         pub(super) fn uws_loop_date_header_timer_update(loop_: *mut Loop);
+        pub(super) fn uws_loop_drain_corks(loop_: *mut Loop);
     }
 }
 // Re-exported raw externs for cross-thread callers (e.g. bun_http's

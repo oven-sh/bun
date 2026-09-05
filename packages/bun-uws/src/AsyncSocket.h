@@ -116,6 +116,13 @@ public:
             return;
         }
 
+        /* A cork slot must not point at a socket that is about to be freed, and
+         * write() discards data for a closed socket, so there is nothing to
+         * batch. */
+        if (us_socket_is_closed((us_socket_t *) this)) {
+            return;
+        }
+
         /* Grab a free slot. */
         if (loopData->acquireCorkSlot(this, SSL) != LoopData::INVALID_CORK_SLOT) {
             return;

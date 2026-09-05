@@ -766,9 +766,9 @@ describe.concurrent("server.stop() drain promise counts open connections", () =>
 
   test("a handler rejection on a HEAD request still closes its drained connection", async () => {
     // The production 500 for a rejected handler renders from the rejection
-    // microtask, uncorked, and a HEAD response ends without a body: no cork
-    // or parser gate runs, so RequestContext::end_without_body has to run the
-    // close gate itself for the stop() mark to take effect.
+    // microtask, outside any cork wrapper or request parse, and a HEAD response
+    // ends without a body: no later gate runs, so RequestContext::end_without_body
+    // has to flush and run the close gate itself for the stop() mark to take effect.
     await using proc = Bun.spawn({
       cmd: [
         bunExe(),

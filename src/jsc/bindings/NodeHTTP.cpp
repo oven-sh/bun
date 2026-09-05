@@ -519,6 +519,7 @@ static std::string_view keepAliveHeaderBlob(uint32_t timeoutSecs)
 template<bool isSSL>
 static void writeAutoHeaders(uWS::HttpResponse<isSSL>* response, uint32_t autoHeaderBits, uint32_t keepAliveTimeoutSecs)
 {
+    response->uWS::template AsyncSocket<isSSL>::cork();
     if (autoHeaderBits & kAutoHeaderDate) {
         auto line = cachedDateHeaderLine();
         response->uWS::template AsyncSocket<isSSL>::write(line.data(), (int)line.length());
@@ -558,9 +559,6 @@ static void NodeHTTPServer__writeHead(
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     JSObject* headersObject = headersObjectValue.getObject();
-    if (!response->uWS::template AsyncSocket<isSSL>::isCorked() && response->getBufferedAmount() == 0) {
-        response->uWS::template AsyncSocket<isSSL>::cork();
-    }
     response->writeStatus(std::string_view(statusMessage, statusMessageLength));
 
     // node:http's ServerResponse owns the Date header entirely (it honors

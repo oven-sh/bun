@@ -53,7 +53,13 @@ private:
             p.second((Loop *) loop);
         }
 
-        /* Drain any leftover corks. Two slots max. */
+        drainCorks(loopData);
+    }
+
+public:
+    /* Uncork whatever is still corked. Two slots max. Runs before every poll,
+     * and at process exit where no further poll will. */
+    static void drainCorks(LoopData *loopData) {
         for (int i = 0; i < 2; i++) {
             bool ssl;
             void *corkedSocket = loopData->getAnyCorkedSocket(&ssl);
@@ -65,6 +71,8 @@ private:
             }
         }
     }
+
+private:
 
     static void postCb(us_loop_t *loop) {
         LoopData *loopData = (LoopData *) us_loop_ext(loop);

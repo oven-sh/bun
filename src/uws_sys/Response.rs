@@ -260,9 +260,10 @@ impl<const SSL: bool> Response<SSL> {
         )
     }
 
-    /// Completion gate for end paths that bypass `internalEnd` (the sendfile
-    /// path): closes the socket when the connection is marked to close, the
-    /// response is complete, and every outgoing byte has been flushed.
+    /// Completion gate for end paths that bypass `internalEnd` (sendfile,
+    /// `end_without_body`): flushes what the response has corked, then closes
+    /// the socket when the connection is marked to close, the response is
+    /// complete, and every outgoing byte has been flushed.
     pub(crate) fn close_if_done_and_marked(&mut self) {
         c::uws_res_close_if_done_and_marked(Self::ssl_flag(), self.as_raw())
     }

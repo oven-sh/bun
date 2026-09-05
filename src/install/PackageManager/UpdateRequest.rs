@@ -241,7 +241,10 @@ impl UpdateRequest {
 
                 return Err(crate::Error::UnrecognizedDependencyFormat);
             };
-            if alias.is_some() && version.tag == dependency::version::Tag::Git {
+            // Catch scp-style `user@host:path/repo` where `user` was split off as the alias.
+            if alias.is_some_and(|a| !a.contains(&b'/'))
+                && version.tag == dependency::version::Tag::Git
+            {
                 if let Some(ver) = Dependency::parse_with_optional_tag(
                     placeholder,
                     None,
@@ -251,8 +254,13 @@ impl UpdateRequest {
                     Some(&mut *log),
                     pm.as_deref_mut(),
                 ) {
-                    alias = None;
-                    version = ver;
+                    if matches!(
+                        ver.tag,
+                        dependency::version::Tag::Git | dependency::version::Tag::Github
+                    ) {
+                        alias = None;
+                        version = ver;
+                    }
                 }
             }
             if match version.tag {

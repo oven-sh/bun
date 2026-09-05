@@ -672,7 +672,75 @@ pub(crate) fn modulate(rgba: &mut [u8], brightness: f32, saturation: f32) {
     unsafe { bun_image_modulate_rgba8(rgba.as_mut_ptr(), rgba.len(), brightness, saturation) }
 }
 
+/// `round(c * a / 255)` without a divide.
+#[inline]
+fn mul_div_255(c: u32, a: u32) -> u8 {
+    let x = c * a + 128;
+    ((x + (x >> 8)) >> 8) as u8
+}
+
+/// Premultiplied copy of `src`, or `None` when every pixel is opaque.
+fn premultiplied(src: &[u8]) -> Option<Vec<u8>> {
+    if !src.as_chunks::<4>().0.iter().any(|p| p[3] != 255) {
+        return None;
+    }
+    let mut out = src.to_vec();
+    for p in out.as_chunks_mut::<4>().0 {
+        let a = u32::from(p[3]);
+        if a == 255 {
+            continue;
+        }
+        p[0] = mul_div_255(u32::from(p[0]), a);
+        p[1] = mul_div_255(u32::from(p[1]), a);
+        p[2] = mul_div_255(u32::from(p[2]), a);
+    }
+    Some(out)
+}
+
+fn unpremultiply(rgba: &mut [u8]) {
+    for p in rgba.as_chunks_mut::<4>().0 {
+        let a = u32::from(p[3]);
+        if a == 255 {
+            continue;
+        }
+        if a == 0 {
+            p[0] = 0;
+            p[1] = 0;
+            p[2] = 0;
+            continue;
+        }
+        for c in &mut p[..3] {
+            // Ringing filters can push premultiplied RGB past alpha; clamp.
+            *c = ((u32::from(*c) * 255 + a / 2) / a).min(255) as u8;
+        }
+    }
+}
+
+/// Resample through premultiplied alpha so transparent pixels don't bleed
+/// RGB into neighbours.
 pub(crate) fn resize(
+    src: &[u8],
+    sw: u32,
+    sh: u32,
+    dw: u32,
+    dh: u32,
+    f: Filter,
+) -> Result<Vec<u8>, Error> {
+    // `nearest` copies single samples; skip the lossy u8 round trip.
+    let premul = if f == Filter::Nearest {
+        None
+    } else {
+        premultiplied(src)
+    };
+    let Some(premul) = premul else {
+        return resize_straight(src, sw, sh, dw, dh, f);
+    };
+    let mut out = resize_straight(&premul, sw, sh, dw, dh, f)?;
+    unpremultiply(&mut out);
+    Ok(out)
+}
+
+fn resize_straight(
     src: &[u8],
     sw: u32,
     sh: u32,

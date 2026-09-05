@@ -1249,3 +1249,19 @@ test("default Error.prepareStackTrace formats a non-Error object", () => {
     Error.prepareStackTrace = original;
   }
 });
+
+test("captureStackTrace with a delegating prepareStackTrace and a caller not on the stack", () => {
+  // Repro from https://github.com/oven-sh/bun/issues/41151: `this.constructor` is Error, which is
+  // not on the stack, so every frame is elided and the stack is just the header, as in Node.
+  const original = Error.prepareStackTrace;
+  Error.prepareStackTrace = (err, callSites) => original(err, callSites);
+  try {
+    function CustomError() {
+      Error.captureStackTrace(this, this.constructor);
+    }
+    CustomError.prototype = new Error();
+    expect(new CustomError().stack).toBe("Error");
+  } finally {
+    Error.prepareStackTrace = original;
+  }
+});

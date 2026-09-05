@@ -1005,6 +1005,67 @@ it("keeps socket.authorized false when a client without a certificate resumes a 
   ]);
 });
 
+it("completes a write that fails inside the TLS layer after the handshake instead of leaving the socket open", async () => {
+  // After a TLSv1.3 requestCert handshake the server's first write also
+  // carries its NewSessionTickets, each embedding the client's whole chain.
+  // With a ~48 KiB chain that flight overflows the record layer's write
+  // buffer and SSL_write fails with an internal error (a separate record-layer
+  // fix makes it go through). Either way the socket layer's contract is the
+  // same: the write completes, with an error that destroys the socket or with
+  // the reply reaching the client. It used to do neither: write() returned
+  // true and the connection stayed open and silent.
+  const fixtures = join(import.meta.dir, "fixtures");
+  const agent1Key = readFileSync(join(fixtures, "agent1-key.pem"), "utf8");
+  const agent1Cert = readFileSync(join(fixtures, "agent1-cert.pem"), "utf8");
+  const ca1 = readFileSync(join(fixtures, "ca1-cert.pem"), "utf8");
+  // agent1 still verifies against ca1; the 52 extra copies of ca1 only pad
+  // the chain the client sends.
+  const paddedChain = agent1Cert + Buffer.alloc(ca1.length * 52, ca1).toString();
+
+  const serverEvents: string[] = [];
+  const serverSocketDone = Promise.withResolvers<{ writeError: NodeJS.ErrnoException | null | undefined }>();
+  await using server = createServer(
+    { key: agent1Key, cert: agent1Cert, ca: [ca1], requestCert: true, minVersion: "TLSv1.3", maxVersion: "TLSv1.3" },
+    socket => {
+      socket.on("error", err => serverEvents.push(`error:${(err as NodeJS.ErrnoException).code}`));
+      socket.on("close", hadError => serverEvents.push(`close:${hadError}`));
+      socket.on("data", () => {
+        socket.write("pong", writeError => {
+          if (writeError) {
+            socket.once("close", () => serverSocketDone.resolve({ writeError }));
+          } else {
+            serverSocketDone.resolve({ writeError });
+          }
+        });
+      });
+    },
+  );
+  server.on("tlsClientError", serverSocketDone.reject);
+  await once(server.listen(0, "127.0.0.1"), "listening");
+  const { port } = server.address() as AddressInfo;
+
+  const client = connect({ port, host: "127.0.0.1", key: agent1Key, cert: paddedChain, rejectUnauthorized: false });
+  client.on("error", () => {});
+  const clientClosed = new Promise<void>(resolve => client.on("close", () => resolve()));
+  const clientReply = new Promise<string>(resolve => client.once("data", chunk => resolve(String(chunk))));
+  await once(client, "secureConnect");
+  client.write("ping");
+
+  const { writeError } = await serverSocketDone.promise;
+  if (writeError) {
+    expect({ code: writeError.code, syscall: writeError.syscall, serverEvents }).toEqual({
+      code: "EPROTO",
+      syscall: "write",
+      serverEvents: ["error:EPROTO", "close:true"],
+    });
+  } else {
+    expect(await clientReply).toBe("pong");
+    client.end();
+  }
+  // In both outcomes the connection itself is gone afterwards.
+  await clientClosed;
+});
+
 it("keeps req.socket.authorized false for an unverified client after the server socket shuts down", async () => {
   type Verdict = [boolean | undefined, string | null | undefined];
   const { promise, resolve, reject } = Promise.withResolvers<{ before: Verdict; after: Verdict }>();

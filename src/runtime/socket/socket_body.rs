@@ -2547,8 +2547,7 @@ impl<const SSL: bool> NewSocket<SSL> {
 
         // The raw [raw, tls] upgrade twin shares the TLS half's us_socket_t
         // (`s->ssl` is set) but must write raw bytes: write_check_error would
-        // route it through the SSL-encrypting us_socket_write, and its fatal
-        // signal is never set for TLS sockets anyway.
+        // route it through the SSL-encrypting us_socket_write.
         if flags.contains(Flags::BYPASS_TLS) {
             let res = self.do_socket_write(buffer);
             let uwrote: usize = usize::try_from(res.max(0)).expect("int cast");
@@ -5062,11 +5061,13 @@ pub mod testing_apis {
                 fi::POLL_START
             } else if syscall_str.eq_ascii(b"session_buffer") {
                 fi::SESSION_BUFFER
+            } else if syscall_str.eql_comptime(b"ssl_write") {
+                fi::SSL_WRITE
             } else {
                 // socket/close/shutdown have enum slots but no bsd.c hooks;
                 // accepting them would arm rules that can never fire.
                 return Err(global.throw(format_args!(
-                    "rule.syscall must be one of: recv, send, writev, sendmsg, recvmsg, connect, accept, ssl_loop_buffer, poll_start, session_buffer"
+                    "rule.syscall must be one of: recv, send, writev, sendmsg, recvmsg, connect, accept, ssl_loop_buffer, poll_start, session_buffer, ssl_write"
                 )));
             };
 

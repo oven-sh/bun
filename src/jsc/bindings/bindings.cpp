@@ -495,9 +495,11 @@ AsymmetricMatcherResult matchAsymmetricMatcherAndGetFlags(JSGlobalObject* global
                     return AsymmetricMatcherResult::PASS;
                 }
             } else if (auto* regex = dynamicDowncast<RegExpObject>(expectedTestValue)) {
-                JSString* otherString = otherProp.toString(globalObject);
+                String otherString = otherProp.toWTFString(globalObject);
                 RETURN_IF_EXCEPTION(throwScope, AsymmetricMatcherResult::FAIL);
-                bool matched = !!regex->match(globalObject, otherString);
+                // Jest tests the pattern alone; a global or sticky RegExp's lastIndex
+                // is neither read nor advanced.
+                bool matched = !!regex->regExp()->match(globalObject, otherString, 0);
                 RETURN_IF_EXCEPTION(throwScope, AsymmetricMatcherResult::FAIL);
                 if (matched) {
                     return AsymmetricMatcherResult::PASS;
@@ -4801,7 +4803,13 @@ JSC::JSString* JSC__JSValue__toJSStringView(JSC::EncodedJSValue JSValue0, JSC::J
     }
     JSC::RegExpObject* regexObject = dynamicDowncast<JSC::RegExpObject>(regex);
 
-    return !!regexObject->match(global, JSC::asString(str));
+    auto& vm = JSC::getVM(global);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    WTF::String haystack = str.toWTFString(global);
+    RETURN_IF_EXCEPTION(scope, false);
+    // Jest's toMatch tests the pattern alone; a global or sticky RegExp's
+    // lastIndex is neither read nor advanced.
+    return !!regexObject->regExp()->match(global, haystack, 0);
 }
 
 bool JSC__JSValue__stringIncludes(JSC::EncodedJSValue value, JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue other)

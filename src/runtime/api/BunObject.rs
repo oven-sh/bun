@@ -1111,7 +1111,7 @@ fn resolve_with_args<const IS_FILE_PATH: bool>(
     let mut query_string = BunString::EMPTY;
 
     let decoded_specifier;
-    let specifier_for_resolve = if specifier.starts_with_ascii(b"file://") {
+    let specifier_for_resolve = if specifier.starts_with_ascii(b"file:") {
         decoded_specifier = bun_url::path_from_file_url(specifier);
         &decoded_specifier
     } else {

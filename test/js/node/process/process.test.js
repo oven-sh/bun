@@ -1504,6 +1504,14 @@ describe.concurrent(() => {
       expect(e.message).not.toContain("file:");
     }
 
+    // Single-slash form (#39780): the URL is decoded to a path before dlopen.
+    try {
+      process.dlopen(mod, import.meta.url.replace("file://", "file:"));
+      throw "Expected error";
+    } catch (e) {
+      expect(e.message).not.toContain("file:");
+    }
+
     expect(() => process.dlopen(mod, "file://asd[kasd[po@[p1o23]1po!-10923-095-@$@8123=-9123=-0==][pc;!")).toThrow(
       "invalid file: URL passed to dlopen",
     );

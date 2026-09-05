@@ -3511,13 +3511,6 @@ pub fn collect_macro_vm_garbage() {
     vm_ref.jsc_vm().run_gc(true);
 }
 
-fn normalize_source(source: &[u8]) -> &[u8] {
-    if let Some(rest) = source.strip_prefix(b"file://") {
-        return rest;
-    }
-    source
-}
-
 // Additional FFI used by the formerly-gated impl.
 // C++ side defines `extern "C" SYSV_ABI` (BakeAdditionsToGlobalObject.cpp).
 //
@@ -4792,7 +4785,7 @@ impl VirtualMachine {
         let resolve_result = jsc_vm._resolve(
             &mut result,
             specifier_utf8.slice(),
-            normalize_source(source_utf8.slice()),
+            bun_core::strings::strip_file_url_prefix(source_utf8.slice()),
             mode.is_esm(),
             IS_A_FILE_PATH,
         );

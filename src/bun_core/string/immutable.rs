@@ -934,6 +934,25 @@ pub fn starts_with(self_: &[u8], str: &[u8]) -> bool {
     eql_long(&self_[0..str.len()], str, false)
 }
 
+/// Strips the `file:` scheme from an absolute file URL: `file:///p` and
+/// `file:/p` both give `/p` (WHATWG). No percent-decoding.
+pub fn strip_file_url_prefix(self_: &[u8]) -> &[u8] {
+    let rest = if let Some(rest) = self_.strip_prefix(b"file://".as_slice()) {
+        rest
+    } else if self_.starts_with(b"file:/") {
+        &self_[b"file:".len()..]
+    } else {
+        return self_;
+    };
+    // A drive-letter URL serializes as `file:///C:/x`. Drop the slash before
+    // the drive letter so the result is a native absolute path.
+    #[cfg(windows)]
+    if rest.len() >= 3 && rest[0] == b'/' && rest[1].is_ascii_alphabetic() && rest[2] == b':' {
+        return &rest[1..];
+    }
+    rest
+}
+
 /// Transliterated from:
 /// https://github.com/rust-lang/rust/blob/91376f416222a238227c84a848d168835ede2cc3/library/core/src/str/mod.rs#L188
 pub fn is_on_char_boundary(self_: &[u8], idx: usize) -> bool {

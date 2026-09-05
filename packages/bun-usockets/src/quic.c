@@ -120,6 +120,8 @@ struct us_quic_stream_s {
     struct us_quic_hset *hset;
     int headers_delivered;
     int fin_delivered;
+    int peer_reset;
+    uint64_t peer_reset_code;
     /* ext follows */
 };
 
@@ -671,7 +673,12 @@ static void us_quic_on_reset(lsquic_stream_t *stream, lsquic_stream_ctx_t *h, in
      *         read half stays open so the response/request that arrived
      *         alongside STOP_SENDING is still delivered. Closing here
      *         would drop it. */
-    if (h && stream && how == 0) lsquic_stream_close(stream);
+    if (h && stream && how == 0) {
+        us_quic_stream_t *s = (us_quic_stream_t *) h;
+        s->peer_reset = 1;
+        s->peer_reset_code = lsquic_stream_get_error_code(stream);
+        lsquic_stream_close(stream);
+    }
 }
 
 /* ───── public API ───── */
@@ -1081,15 +1088,19 @@ void us_quic_stream_close(us_quic_stream_t *s) {
 /* From lsquic_stream.h (not in the public header). */
 void lsquic_stream_maybe_reset(struct lsquic_stream *, uint64_t error_code, int);
 
-/* Abort the send half with RESET_STREAM(H3_REQUEST_CANCELLED) instead of
- * FIN. lsquic_stream_close/shutdown queue FIN after the buffered tail,
- * which is a protocol error if a content-length was advertised and the
- * client is abandoning the upload short — the server's lsquic will
- * CONNECTION_CLOSE on the mismatch (RFC 9114 §4.1.2). RESET_STREAM is
- * the wire-level "I'm cancelling this send" and lets the server treat it
- * as a stream-level cancellation rather than a malformed message. */
-void us_quic_stream_reset(us_quic_stream_t *s) {
-    if (s->stream) lsquic_stream_maybe_reset(s->stream, 0x10C, 1);
+/* lsquic_stream_close/shutdown queue FIN after the buffered tail. For a
+ * client abandoning an upload short of its advertised content-length that
+ * is a protocol error the server answers with CONNECTION_CLOSE (RFC 9114
+ * §4.1.2); for a server whose response body failed it is a complete-looking
+ * truncated message. RESET_STREAM is the wire-level "this send is aborted"
+ * and lets the peer treat it as a stream-level failure. */
+void us_quic_stream_reset(us_quic_stream_t *s, uint64_t error_code) {
+    if (s->stream) lsquic_stream_maybe_reset(s->stream, error_code, 1);
+}
+
+int us_quic_stream_peer_reset(us_quic_stream_t *s, uint64_t *code) {
+    *code = s->peer_reset_code;
+    return s->peer_reset;
 }
 
 int us_quic_stream_has_unacked(us_quic_stream_t *s) {

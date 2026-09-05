@@ -306,13 +306,15 @@ extern "C" fn on_stream_writable(s: *mut quic::Stream) {
 extern "C" fn on_stream_close(s: *mut quic::Stream) {
     let s = qstream_arg(s);
     let Some(stream) = stream_of(s) else { return };
+    let peer_reset = s.peer_reset();
     *s.ext::<Stream>() = None;
     stream.qstream = None;
     bun_core::scoped_log!(
         h3_client,
-        "stream_close status={} delivered={}",
+        "stream_close status={} delivered={} peer_reset={:?}",
         stream.status_code,
         stream.headers_delivered,
+        peer_reset,
     );
-    stream.session_mut().deliver(stream, true);
+    stream.session_mut().on_stream_closed(stream, peer_reset);
 }

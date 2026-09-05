@@ -220,6 +220,12 @@ To perform a dry run, without installing anything:
 bun install --dry-run
 ```
 
+Bun resolves the dependency tree and prints the summary. During a dry run, Bun does not:
+
+- install packages into `node_modules`
+- write `bun.lock` (or `yarn.lock` with `--yarn`)
+- run your project's lifecycle scripts
+
 ---
 
 ## Non-npm dependencies

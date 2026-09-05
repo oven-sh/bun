@@ -24,6 +24,6 @@ describe.todoIf(isBroken && isMacOS)("static (stress, don't access .body)", () =
   });
 
   describe.each(stressPaths)("%s", path => {
-    test.each(stressMethods)("%s", method => runStress(server, path, false, method), 40 * 1000);
+    test.each(stressMethods)("%s", method => runStress(server, path, false, method));
   });
 });

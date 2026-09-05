@@ -21,9 +21,9 @@ use bun_core::strings;
 use bun_http::lshpack;
 use bun_jsc::AbortSignal;
 use bun_jsc::ErrorCode as JscErrorCode;
+use bun_jsc::StringJsc as _;
 use bun_jsc::abort_signal::AbortListener;
 use bun_jsc::array_buffer::BinaryType;
-use bun_jsc::bun_string_jsc;
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{
     CallFrame, GlobalRef, JSGlobalObject, JSValue, JsCell, JsClass, JsRef, JsResult, StrongOptional,
@@ -551,7 +551,7 @@ fn is_valid_header_value(value: &[u8]) -> bool {
 /// reads the bytes back as latin-1. A value with a wider code unit is written as
 /// UTF-8. Bun has no single rule above 0xFF: Node truncates such a code unit to
 /// its low byte, and object-form `respond()` drops the value in JS
-/// (`headerValueIsUnsendable`).
+/// (`headerValueIsUnsendable`). ALTSVC and ORIGIN strings use the same rule.
 fn header_value_bytes<'a>(value: &'a bun_jsc::JSStringView<'_>) -> Cow<'a, [u8]> {
     if !value.is_utf16() {
         return Cow::Borrowed(value.latin1());
@@ -3341,9 +3341,10 @@ impl H2FrameParser {
         }
     }
 
-    fn string_or_empty_to_js(&self, payload: &[u8]) -> JsResult<JSValue> {
+    /// https://github.com/nodejs/node/blob/v26.3.0/src/node_http2.cc#L1665-L1689
+    fn latin1_to_js(&self, payload: &[u8]) -> JsResult<JSValue> {
         let global = self.handlers.get().global();
-        bun_string_jsc::create_utf8_for_js(&global, payload)
+        bun_core::String::clone_latin1(payload).into_js(&global)
     }
 
     /// Returned *Stream is heap-allocated and stable for the lifetime of this H2FrameParser.
@@ -3736,8 +3737,7 @@ impl crate::api::h2::connection::Sink for H2FrameParser {
     fn on_too_many_invalid_frames(&self) {
         // The peer exceeded maxSessionInvalidFrames: surface a session error. The JS error handler
         // recognizes the string code and destroys the session with ERR_HTTP2_TOO_MANY_INVALID_FRAMES.
-        let Some(code_js) =
-            self.or_stop(self.string_or_empty_to_js(b"ERR_HTTP2_TOO_MANY_INVALID_FRAMES"))
+        let Some(code_js) = self.or_stop(self.latin1_to_js(b"ERR_HTTP2_TOO_MANY_INVALID_FRAMES"))
         else {
             return;
         };
@@ -3904,10 +3904,10 @@ impl crate::api::h2::connection::Sink for H2FrameParser {
     }
 
     fn on_altsvc(&self, stream_id: u32, origin: &[u8], value: &[u8]) {
-        let Some(origin_js) = self.or_stop(self.string_or_empty_to_js(origin)) else {
+        let Some(origin_js) = self.or_stop(self.latin1_to_js(origin)) else {
             return;
         };
-        let Some(value_js) = self.or_stop(self.string_or_empty_to_js(value)) else {
+        let Some(value_js) = self.or_stop(self.latin1_to_js(value)) else {
             return;
         };
         self.dispatch_with_2_extra(
@@ -3963,7 +3963,7 @@ impl crate::api::h2::connection::Sink for H2FrameParser {
                 break;
             }
             let origin = &rest[2..2 + len];
-            let Some(origin_js) = self.or_stop(self.string_or_empty_to_js(origin)) else {
+            let Some(origin_js) = self.or_stop(self.latin1_to_js(origin)) else {
                 return;
             };
             if count == 0 {
@@ -4766,9 +4766,11 @@ impl H2FrameParser {
             return Ok(JSValue::UNDEFINED);
         }
 
+        // https://github.com/nodejs/node/blob/v26.3.0/src/node_http2.cc#L486-L489
         if origin_arg.is_string() {
-            let origin_string = origin_arg.to_utf8(global_object)?;
-            let slice = origin_string.slice();
+            let origin_view = origin_arg.to_js_string_view(global_object)?;
+            let origin_bytes = header_value_bytes(&origin_view);
+            let slice: &[u8] = &origin_bytes;
             if slice.len() + 2 > 16384 {
                 let exception = global_object.to_type_error(
                     bun_jsc::ErrorCode::HTTP2_ORIGIN_LENGTH,
@@ -4805,8 +4807,9 @@ impl H2FrameParser {
                         "Expected origin to be a string or an array of strings"
                     )));
                 }
-                let origin_string = item.to_utf8(global_object)?;
-                let slice = origin_string.slice();
+                let origin_view = item.to_js_string_view(global_object)?;
+                let origin_bytes = header_value_bytes(&origin_view);
+                let slice = origin_bytes.as_ref();
                 let fits = u16::try_from(slice.len()).is_ok_and(|len| {
                     stream.write_all(&len.to_be_bytes()).is_ok() && stream.write_all(slice).is_ok()
                 });
@@ -4839,11 +4842,8 @@ impl H2FrameParser {
         global_object: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
-        let mut origin_slice: Option<bun_core::Utf8Bytes> = None;
-        let mut value_slice: Option<bun_core::Utf8Bytes> = None;
-
-        let mut origin_str: &[u8] = b"";
-        let mut value_str: &[u8] = b"";
+        let mut origin_view = None;
+        let mut value_view = None;
         let mut stream_id: u32 = 0;
         let origin_string = callframe.argument(0);
         if !origin_string.is_empty_or_undefined_or_null() {
@@ -4854,8 +4854,7 @@ impl H2FrameParser {
                     origin_string,
                 ));
             }
-            origin_slice = Some(origin_string.to_utf8(global_object)?);
-            origin_str = origin_slice.as_ref().unwrap().slice();
+            origin_view = Some(origin_string.to_js_string_view(global_object)?);
         }
 
         let value_string = callframe.argument(1);
@@ -4867,8 +4866,7 @@ impl H2FrameParser {
                     value_string,
                 ));
             }
-            value_slice = Some(value_string.to_utf8(global_object)?);
-            value_str = value_slice.as_ref().unwrap().slice();
+            value_view = Some(value_string.to_js_string_view(global_object)?);
         }
 
         let stream_id_js = callframe.argument(2);
@@ -4884,9 +4882,14 @@ impl H2FrameParser {
                 return Ok(JSValue::UNDEFINED);
             }
         }
-        this.send_alt_svc(stream_id, origin_str, value_str);
-        // origin_slice/value_slice dropped here
-        let _ = (origin_slice, value_slice);
+        // https://github.com/nodejs/node/blob/v26.3.0/src/node_http2.cc#L3233-L3239
+        let origin_bytes = origin_view.as_ref().map(header_value_bytes);
+        let value_bytes = value_view.as_ref().map(header_value_bytes);
+        this.send_alt_svc(
+            stream_id,
+            origin_bytes.as_deref().unwrap_or_default(),
+            value_bytes.as_deref().unwrap_or_default(),
+        );
         Ok(JSValue::UNDEFINED)
     }
 

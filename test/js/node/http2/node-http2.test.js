@@ -3508,6 +3508,229 @@ describe("http2 header values are latin-1 byte strings", () => {
   });
 });
 
+// node:http2 writes the strings of an ALTSVC frame (RFC 7838) and of an ORIGIN
+// frame (RFC 8336) with one byte per code unit, and reads them back with one
+// code unit per byte (node_http2.cc). The quoted-string value of an ALTSVC
+// parameter can carry obs-text (0x80-0xFF). The tests decode wire bytes as
+// latin-1, so a string survives only if each code unit was one byte.
+describe("http2 ALTSVC and ORIGIN frame strings are latin-1", () => {
+  const ALTSVC = 0x0a;
+  const ORIGIN = 0x0c;
+  const origin = "https://caf\xe9.example";
+  const value = 'h2=":443"; x="caf\xe9"';
+  const asUtf8 = str => Buffer.from(str, "utf8").toString("latin1"); // "\xe9" -> "\xc3\xa9"
+
+  const lengthPrefixed = str => {
+    const bytes = Buffer.from(str, "latin1");
+    const prefix = Buffer.alloc(2);
+    prefix.writeUInt16BE(bytes.length);
+    return Buffer.concat([prefix, bytes]);
+  };
+  const frame = (type, payload) => Buffer.concat([new http2utils.Frame(payload.length, type, 0, 0).data, payload]);
+  const altsvcFields = ({ streamId, payload }) => {
+    const originLength = payload.readUInt16BE(0);
+    return {
+      streamId,
+      origin: payload.subarray(2, 2 + originLength).toString("latin1"),
+      value: payload.subarray(2 + originLength).toString("latin1"),
+    };
+  };
+  const originEntries = ({ payload }) => {
+    const entries = [];
+    for (let offset = 0; offset + 2 <= payload.length; ) {
+      const length = payload.readUInt16BE(offset);
+      entries.push(payload.subarray(offset + 2, offset + 2 + length).toString("latin1"));
+      offset += 2 + length;
+    }
+    return entries;
+  };
+
+  // Connects to a node:http2 server as a raw client. Returns the frames of
+  // `type` that arrive before the PING ACK. The server writes its frames in
+  // order, so the ACK follows every frame that its 'session' listener wrote.
+  async function framesBeforePingAck(port, type) {
+    const { promise, resolve, reject } = Promise.withResolvers();
+    const frames = [];
+    const socket = net.connect(port, "127.0.0.1", () => {
+      socket.write(
+        Buffer.concat([
+          http2utils.kClientMagic,
+          new http2utils.SettingsFrame(false).data,
+          new http2utils.PingFrame(false).data,
+        ]),
+      );
+    });
+    socket.on("error", reject);
+    socket.on("close", () => resolve(frames));
+    let buf = Buffer.alloc(0);
+    socket.on("data", chunk => {
+      buf = Buffer.concat([buf, chunk]);
+      while (buf.length >= 9) {
+        const length = buf.readUIntBE(0, 3);
+        if (buf.length < 9 + length) break;
+        const frameType = buf[3];
+        const flags = buf[4];
+        if (frameType === type) {
+          frames.push({
+            streamId: buf.readUInt32BE(5) & 0x7fffffff,
+            payload: Buffer.from(buf.subarray(9, 9 + length)),
+          });
+        }
+        buf = buf.subarray(9 + length);
+        if (frameType === 6 && (flags & 1) !== 0) resolve(frames);
+      }
+    });
+    try {
+      return await promise;
+    } finally {
+      socket.destroy();
+    }
+  }
+
+  // The connection listener of a raw h2 server. After the client preface it
+  // sends SETTINGS and then `frames`. It acks the SETTINGS of the client.
+  const rawServerConnection = frames => socket => {
+    let buf = Buffer.alloc(0);
+    let sawPreface = false;
+    socket.on("error", () => {});
+    socket.on("data", chunk => {
+      buf = Buffer.concat([buf, chunk]);
+      if (!sawPreface) {
+        if (buf.length < http2utils.kClientMagic.length) return;
+        buf = buf.subarray(http2utils.kClientMagic.length);
+        sawPreface = true;
+        socket.write(Buffer.concat([new http2utils.SettingsFrame(false).data, ...frames]));
+      }
+      while (buf.length >= 9) {
+        const length = buf.readUIntBE(0, 3);
+        if (buf.length < 9 + length) break;
+        if (buf[3] === 4 && (buf[4] & 1) === 0) socket.write(new http2utils.SettingsFrame(true).data);
+        buf = buf.subarray(9 + length);
+      }
+    });
+  };
+
+  it("server writes the ALTSVC value with one byte per code unit", async () => {
+    // The same value as a 16-bit string. A utf-16le decode always gives one.
+    const value16 = new TextDecoder("utf-16le").decode(new Uint16Array([...value].map(c => c.charCodeAt(0))));
+    const server = http2.createServer();
+    server.on("session", session => {
+      session.altsvc(value, "https://example.org");
+      session.altsvc(value16, "https://example.org");
+    });
+    await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
+    try {
+      const frames = await framesBeforePingAck(server.address().port, ALTSVC);
+      expect(frames.map(altsvcFields)).toEqual([
+        { streamId: 0, origin: "https://example.org", value },
+        { streamId: 0, origin: "https://example.org", value },
+      ]);
+    } finally {
+      server.close();
+    }
+  });
+
+  it("server limits the ALTSVC origin and value to 16382 code units", async () => {
+    const altOrigin = "https://example.org";
+    // A value of `length` code units. Each U+00E9 is one byte on the wire and
+    // two bytes in UTF-8.
+    const alt = length => 'h2="' + Buffer.alloc(length - 5, 0xe9).toString("latin1") + '"';
+    const results = [];
+    const server = http2.createServer();
+    server.on("session", session => {
+      for (const length of [16382 - altOrigin.length, 16383 - altOrigin.length]) {
+        try {
+          session.altsvc(alt(length), altOrigin);
+          results.push("sent");
+        } catch (err) {
+          results.push(err.code);
+        }
+      }
+    });
+    await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
+    try {
+      const frames = await framesBeforePingAck(server.address().port, ALTSVC);
+      expect(results).toEqual(["sent", "ERR_HTTP2_ALTSVC_LENGTH"]);
+      expect(frames.map(({ payload }) => payload.length)).toEqual([2 + 16382]);
+    } finally {
+      server.close();
+    }
+  });
+
+  it("server writes ORIGIN entries with one byte per code unit", async () => {
+    const server = http2.createServer();
+    server.on("session", session => {
+      // An object's origin is sent as is. A string is serialized as a URL first.
+      session.origin({ origin });
+      session.origin({ origin }, "https://b.example");
+    });
+    await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
+    try {
+      const frames = await framesBeforePingAck(server.address().port, ORIGIN);
+      expect(frames.map(originEntries)).toEqual([[origin], [origin, "https://b.example"]]);
+    } finally {
+      server.close();
+    }
+  });
+
+  it("client reads the ALTSVC origin and value as latin-1", async () => {
+    const server = net.createServer(
+      rawServerConnection([
+        frame(ALTSVC, Buffer.concat([lengthPrefixed(origin), Buffer.from(value, "latin1")])),
+        frame(ALTSVC, Buffer.concat([lengthPrefixed(origin), Buffer.from(value, "utf8")])),
+      ]),
+    );
+    await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
+    const client = http2.connect(`http://127.0.0.1:${server.address().port}`);
+    try {
+      const { promise, resolve, reject } = Promise.withResolvers();
+      const received = [];
+      client.on("error", reject);
+      client.on("close", () => reject(new Error(`session closed after ${received.length} ALTSVC frames`)));
+      client.on("altsvc", (alt, altOrigin, streamId) => {
+        received.push({ streamId, origin: altOrigin, value: alt });
+        if (received.length === 2) resolve();
+      });
+      await promise;
+      expect(received).toEqual([
+        { streamId: 0, origin, value },
+        { streamId: 0, origin, value: asUtf8(value) },
+      ]);
+    } finally {
+      client.close();
+      server.close();
+    }
+  });
+
+  it("client reads ORIGIN entries as latin-1", async () => {
+    // A client emits 'origin' only on a TLS session.
+    const server = tls.createServer(
+      { ...TLS_CERT, ALPNProtocols: ["h2"] },
+      rawServerConnection([
+        frame(ORIGIN, lengthPrefixed(origin)),
+        frame(ORIGIN, Buffer.concat([lengthPrefixed(origin), lengthPrefixed(asUtf8(origin))])),
+      ]),
+    );
+    await new Promise(resolve => server.listen(0, resolve));
+    const client = http2.connect(`https://localhost:${server.address().port}`, TLS_OPTIONS);
+    try {
+      const { promise, resolve, reject } = Promise.withResolvers();
+      const received = [];
+      client.on("error", reject);
+      client.on("close", () => reject(new Error(`session closed after ${received.length} ORIGIN frames`)));
+      client.on("origin", origins => {
+        received.push(origins);
+        if (received.length === 2) resolve();
+      });
+      await promise;
+      expect(received).toEqual([[origin], [origin, asUtf8(origin)]]);
+    } finally {
+      client.close();
+      server.close();
+    }
+  });
+});
+
 it("http2 server rejects requests carrying connection-specific or repeated pseudo-headers", async () => {
   // RFC 9113 Section 8.2.2: connection-specific fields (transfer-encoding,
   // connection, keep-alive, ...) make an HTTP/2 request malformed, and

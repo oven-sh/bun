@@ -4402,7 +4402,8 @@ class ServerHttp2Session extends Http2Session {
       throw $ERR_INVALID_CHAR("alt");
     }
     origin = origin || "";
-    if (Buffer.byteLength(origin) + Buffer.byteLength(alt) > MAX_LENGTH) {
+    // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/http2/core.js#L1760
+    if (origin.length + alt.length > MAX_LENGTH) {
       throw $ERR_HTTP2_ALTSVC_LENGTH();
     }
     parser.altsvc(origin, alt, stream);

@@ -86,7 +86,8 @@ declare module "bun" {
      * URL, this is the value it fell back to: `process.env.REDIS_URL`,
      * `process.env.VALKEY_URL`, or `"valkey://localhost:6379"`.
      *
-     * Includes the credentials from the URL. `duplicate()` copies it.
+     * Includes the credentials from the URL. `console.log(client)` prints the
+     * password as `[REDACTED]`. `duplicate()` copies it.
      *
      * @example
      * ```ts
@@ -98,8 +99,9 @@ declare module "bun" {
 
     /**
      * The options the client runs with, in the shape the constructor accepts.
-     * Each access returns a new object. `tls` is the object passed to the
-     * constructor when one was given, otherwise a boolean.
+     * Each access returns a new object. Fields the constructor did not get
+     * hold their defaults. `tls` is the object passed to the constructor when
+     * one was given, otherwise a boolean (`true` for a `rediss://` URL).
      */
     readonly options: Required<RedisOptions>;
 

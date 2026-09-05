@@ -2040,6 +2040,11 @@ fn console_print_runtime_object_inner<const C: bool>(
         let _ = archive.write_format::<_, _, C>(formatter, &mut w);
         return Ok(true);
     }
+    if let Some(redis) = value.as_class_ref::<crate::valkey_jsc::JSValkeyClient>() {
+        let mut w = AsFmt::new(writer_);
+        let _ = redis.write_format::<_, _, C>(formatter, &mut w);
+        return Ok(true);
+    }
     if bun_jsc::FetchHeaders::cast_(value, formatter.global_this.vm()).is_some() {
         if let Some(to_json_function) = value.get(formatter.global_this, "toJSON")? {
             formatter.add_for_new_line("Headers ".len());

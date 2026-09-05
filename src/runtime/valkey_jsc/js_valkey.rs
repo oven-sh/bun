@@ -946,9 +946,7 @@ impl JSValkeyClient {
     }
 
     /// `client.options`: a fresh object with the options the client runs
-    /// with, in the shape the constructor accepts. A subscriber reports the
-    /// `enableOfflineQueue` / `enableAutoPipelining` it was constructed with,
-    /// not the values subscribe mode forces while it is active.
+    /// with, in the shape the constructor accepts.
     ///
     /// `this: true` in valkey.classes.ts: codegen passes the JS wrapper as
     /// `this_value`, which holds the cached `tls` option object.
@@ -957,6 +955,29 @@ impl JSValkeyClient {
         this_value: JSValue,
         global: &JSGlobalObject,
     ) -> JsResult<JSValue> {
+        let tls = match self.client.get().tls {
+            valkey::TLS::None => JSValue::FALSE,
+            valkey::TLS::Enabled => JSValue::TRUE,
+            // Every path that builds a `Custom` client caches the object:
+            // `create()` from the constructor argument, `duplicate()` from the
+            // source wrapper. `Bun.redis` takes no options.
+            valkey::TLS::Custom(_) => {
+                let cached = Js::tls_get_cached(this_value);
+                debug_assert!(
+                    cached.is_some(),
+                    "custom tls client without a cached tls object"
+                );
+                cached.unwrap_or(JSValue::TRUE)
+            }
+        };
+        Ok(self.options_object(global, tls))
+    }
+
+    /// The `RedisOptions`-shaped object behind `client.options`, with `tls`
+    /// supplied by the caller. A subscriber reports the `enableOfflineQueue` /
+    /// `enableAutoPipelining` it was constructed with, not the values
+    /// subscribe mode forces while it is active.
+    fn options_object(&self, global: &JSGlobalObject, tls: JSValue) -> JSValue {
         let client = self.client.get();
         let sub_ctx = self._subscription_ctx.get();
         let (enable_offline_queue, enable_auto_pipelining) = if sub_ctx.is_subscriber {
@@ -969,11 +990,6 @@ impl JSValkeyClient {
                 client.flags.enable_offline_queue,
                 client.flags.enable_auto_pipelining,
             )
-        };
-        let tls = match client.tls {
-            valkey::TLS::None => JSValue::FALSE,
-            valkey::TLS::Enabled => JSValue::TRUE,
-            valkey::TLS::Custom(_) => Js::tls_get_cached(this_value).unwrap_or(JSValue::TRUE),
         };
 
         let object = JSValue::create_empty_object(global, 7);
@@ -1008,7 +1024,119 @@ impl JSValkeyClient {
             JSValue::from(enable_auto_pipelining),
         );
         object.put(global, b"tls", tls);
-        Ok(object)
+        object
+    }
+
+    /// `console.log(client)` / `Bun.inspect(client)`. Hand-written so the
+    /// password in `url` prints as `[REDACTED]` and a custom `tls` object,
+    /// which can hold key material, prints as `true`.
+    pub(crate) fn write_format<F, W, const ENABLE_ANSI_COLORS: bool>(
+        &self,
+        formatter: &mut F,
+        writer: &mut W,
+    ) -> core::fmt::Result
+    where
+        F: jsc::ConsoleFormatter,
+        W: core::fmt::Write,
+    {
+        macro_rules! pfmt {
+            ($fmt:expr) => {
+                if ENABLE_ANSI_COLORS {
+                    ::bun_core::pretty_fmt!($fmt, true)
+                } else {
+                    ::bun_core::pretty_fmt!($fmt, false)
+                }
+            };
+        }
+        let fmt_err = |_| core::fmt::Error;
+        let client = self.client.get();
+
+        writer.write_str(pfmt!("<r>RedisClient<r> {\n"))?;
+        {
+            let mut formatter = formatter.indented();
+
+            formatter.write_indent(writer)?;
+            writer.write_str(pfmt!("<r>url<d>:<r> \"<r><b>"))?;
+            let (before, after) = self.url_split_at_password();
+            write!(writer, "{}", bstr::BStr::new(before))?;
+            if let Some(after) = after {
+                write!(writer, "[REDACTED]{}", bstr::BStr::new(after))?;
+            }
+            writer.write_str(pfmt!("<r>\""))?;
+            formatter.print_comma::<W, ENABLE_ANSI_COLORS>(writer)?;
+            writer.write_str("\n")?;
+
+            formatter.write_indent(writer)?;
+            writer.write_str(pfmt!("<r>connected<d>:<r> "))?;
+            formatter
+                .print_as::<W, ENABLE_ANSI_COLORS>(
+                    jsc::FormatTag::Boolean,
+                    writer,
+                    JSValue::from(client.status == valkey::Status::Connected),
+                    jsc::JSType::BooleanObject,
+                )
+                .map_err(fmt_err)?;
+            formatter.print_comma::<W, ENABLE_ANSI_COLORS>(writer)?;
+            writer.write_str("\n")?;
+
+            formatter.write_indent(writer)?;
+            writer.write_str(pfmt!("<r>bufferedAmount<d>:<r> "))?;
+            let buffered = client.write_buffer.len() + client.read_buffer.len();
+            formatter
+                .print_as::<W, ENABLE_ANSI_COLORS>(
+                    jsc::FormatTag::Double,
+                    writer,
+                    JSValue::js_number(f64::from(buffered)),
+                    jsc::JSType::NumberObject,
+                )
+                .map_err(fmt_err)?;
+            formatter.print_comma::<W, ENABLE_ANSI_COLORS>(writer)?;
+            writer.write_str("\n")?;
+
+            formatter.write_indent(writer)?;
+            writer.write_str(pfmt!("<r>options<d>:<r> "))?;
+            let tls = JSValue::from(client.tls != valkey::TLS::None);
+            let options = self.options_object(formatter.global_this(), tls);
+            formatter
+                .print_as::<W, ENABLE_ANSI_COLORS>(
+                    jsc::FormatTag::Object,
+                    writer,
+                    options,
+                    jsc::JSType::Object,
+                )
+                .map_err(fmt_err)?;
+            formatter.print_comma::<W, ENABLE_ANSI_COLORS>(writer)?;
+            writer.write_str("\n")?;
+        }
+        formatter.write_indent(writer)?;
+        writer.write_str("}")?;
+        formatter.reset_line();
+        Ok(())
+    }
+
+    /// Splits `self.url` around the password in its userinfo. Returns the
+    /// bytes before the password and, when the url has a password, the bytes
+    /// from the `@` on. The authority is the text after `://` (or the whole
+    /// string when there is no scheme) up to the first `/`, `?` or `#`, and
+    /// its userinfo ends at the last `@`, as in the WHATWG URL parser.
+    fn url_split_at_password(&self) -> (&[u8], Option<&[u8]>) {
+        let url: &[u8] = &self.url;
+        let authority_start = strings::index_of(url, b"://").map_or(0, |i| i + 3);
+        let authority = &url[authority_start..];
+        let authority_end = strings::index_of_any(authority, b"/?#").unwrap_or(authority.len());
+        let authority = &authority[..authority_end];
+        let Some(at) = strings::last_index_of_char(authority, b'@') else {
+            return (url, None);
+        };
+        let Some(colon) = strings::index_of_char_usize(&authority[..at], b':') else {
+            return (url, None);
+        };
+        if colon + 1 == at {
+            return (url, None);
+        }
+        let password_start = authority_start + colon + 1;
+        let password_end = authority_start + at;
+        (&url[..password_start], Some(&url[password_end..]))
     }
 
     pub(crate) fn do_connect(

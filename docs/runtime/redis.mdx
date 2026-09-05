@@ -346,7 +346,7 @@ console.log(client.options.maxRetries); // 5
 const rebuilt = new RedisClient(client.url, client.options);
 ```
 
-`url` is the string the constructor got, credentials included. When the constructor got no URL, `url` is the value it fell back to (`REDIS_URL`, `VALKEY_URL`, or `valkey://localhost:6379`). `options.tls` is the object passed to the constructor when one was given, otherwise a boolean. `duplicate()` copies both.
+`url` is the string the constructor got, credentials included (`console.log(client)` prints the password as `[REDACTED]`). When the constructor got no URL, `url` is the value it fell back to (`REDIS_URL`, `VALKEY_URL`, or `valkey://localhost:6379`). `options.tls` is the object passed to the constructor when one was given, otherwise a boolean. `duplicate()` copies both.
 
 ### Type Conversion
 

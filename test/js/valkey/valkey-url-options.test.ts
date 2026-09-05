@@ -76,6 +76,47 @@ describe("RedisClient url and options", () => {
     expect(copy.options.tls).toBe(tls);
   });
 
+  test("inspect redacts the password in url and does not print the tls object", () => {
+    const tls = { ca: localhostTls.cert, key: "private key material" };
+    const client = new RedisClient("rediss://user:secret@127.0.0.1:6380/2", {
+      tls,
+      autoReconnect: false,
+    });
+    const text = Bun.inspect(client);
+    expect(text).not.toContain("secret");
+    expect(text).not.toContain("private key material");
+    expect(text).toMatchInlineSnapshot(`
+      "RedisClient {
+        url: "rediss://user:[REDACTED]@127.0.0.1:6380/2",
+        connected: false,
+        bufferedAmount: 0,
+        options: {
+          connectionTimeout: 10000,
+          idleTimeout: 0,
+          autoReconnect: false,
+          maxRetries: 20,
+          enableOfflineQueue: true,
+          enableAutoPipelining: true,
+          tls: true,
+        },
+      }"
+    `);
+    // The getter itself is not redacted: a rebuild needs the password.
+    expect(client.url).toBe("rediss://user:secret@127.0.0.1:6380/2");
+  });
+
+  test("inspect leaves a url without a password as is", () => {
+    expect(Bun.inspect(new RedisClient("redis://user@127.0.0.1:6380", { autoReconnect: false }))).toContain(
+      'url: "redis://user@127.0.0.1:6380"',
+    );
+    expect(Bun.inspect(new RedisClient("redis://127.0.0.1:6380/1?x=a@b", { autoReconnect: false }))).toContain(
+      'url: "redis://127.0.0.1:6380/1?x=a@b"',
+    );
+    expect(Bun.inspect(new RedisClient("u:p@127.0.0.1:6380", { autoReconnect: false }))).toContain(
+      'url: "u:[REDACTED]@127.0.0.1:6380"',
+    );
+  });
+
   test("url falls back to REDIS_URL, then VALKEY_URL, then the built-in default", async () => {
     const script = `
       console.log(JSON.stringify([

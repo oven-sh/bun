@@ -2174,3 +2174,122 @@ test.skipIf(isWindows)(
   },
   30_000,
 );
+
+// https://github.com/oven-sh/bun/issues/40472
+// `production: true` must behave like the CLI's `--production`: inline
+// process.env.NODE_ENV as "production" and enable minification. Each test
+// spawns a subprocess because `bun test` sets NODE_ENV=test, which would win
+// over the production default in-process.
+describe("Bun.build production option", () => {
+  const files = {
+    "index.js": `console.log(process.env.NODE_ENV);\nfunction longFunctionName() {\n  return 1 + 2;\n}\nlongFunctionName();\n`,
+    "index.html": `<!doctype html><html><head><script type="module" src="./index.js"></script></head><body>hi</body></html>`,
+  };
+
+  async function buildAndReadOutput(dir: string, configJson: string, entry: string) {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const result = await Bun.build({ entrypoints: [${JSON.stringify(entry)}], outdir: "./dist", ...${configJson} });
+         if (!result.success) throw new AggregateError(result.logs);
+         const js = result.outputs.find(o => o.path.endsWith(".js"));
+         console.write(await js.text());`,
+      ],
+      env: bunEnv,
+      cwd: dir,
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    return { stdout, exitCode };
+  }
+
+  test.concurrent("production: true inlines NODE_ENV and minifies", async () => {
+    using dir = tempDir("build-production", files);
+    const { stdout, exitCode } = await buildAndReadOutput(String(dir), `{ production: true }`, "./index.js");
+    expect(stdout).toContain('console.log("production")');
+    expect(stdout).not.toContain("longFunctionName");
+    expect(exitCode).toBe(0);
+  });
+
+  test.concurrent("production: true works with an HTML entrypoint", async () => {
+    using dir = tempDir("build-production-html", files);
+    const { stdout, exitCode } = await buildAndReadOutput(String(dir), `{ production: true }`, "./index.html");
+    expect(stdout).toContain('console.log("production")');
+    expect(stdout).not.toContain("longFunctionName");
+    expect(exitCode).toBe(0);
+  });
+
+  test.concurrent("an explicit minify overrides the production default", async () => {
+    using dir = tempDir("build-production-minify", files);
+    const { stdout, exitCode } = await buildAndReadOutput(
+      String(dir),
+      `{ production: true, minify: false }`,
+      "./index.js",
+    );
+    expect(stdout).toContain('console.log("production")');
+    expect(stdout).toContain("longFunctionName");
+    expect(exitCode).toBe(0);
+  });
+
+  test.concurrent("production: false keeps the development defaults", async () => {
+    using dir = tempDir("build-no-production", files);
+    const { stdout, exitCode } = await buildAndReadOutput(String(dir), `{ production: false }`, "./index.js");
+    expect(stdout).toContain('console.log("development")');
+    expect(stdout).toContain("longFunctionName");
+    expect(exitCode).toBe(0);
+  });
+
+  // The esbuild-compat plugin shim derives its minify flags from the raw
+  // config, so it must apply the same production defaults as the native
+  // parser.
+  test.concurrent("production: true is reflected in plugin initialOptions", async () => {
+    using dir = tempDir("build-production-plugin", files);
+    const captured: any[] = [];
+    const capture = (build: any) => {
+      const { minify, minifyIdentifiers, minifyWhitespace, minifySyntax } = build.initialOptions;
+      captured.push({ minify, minifyIdentifiers, minifyWhitespace, minifySyntax });
+    };
+    const configs = [
+      { production: true },
+      { production: true, minify: false },
+      // Object-form minify never drives the aggregate flag. The per-field
+      // flags carry the effective configuration.
+      { production: true, minify: { whitespace: false, syntax: false, identifiers: false } },
+      { production: true, minify: { whitespace: false } },
+    ] as const;
+    for (const extra of configs) {
+      const result = await Bun.build({
+        entrypoints: [join(String(dir), "index.js")],
+        ...extra,
+        plugins: [{ name: "capture", setup: capture }],
+      });
+      expect(result.success).toBe(true);
+    }
+    expect(captured).toEqual([
+      { minify: true, minifyIdentifiers: true, minifyWhitespace: true, minifySyntax: true },
+      { minify: false, minifyIdentifiers: false, minifyWhitespace: false, minifySyntax: false },
+      { minify: false, minifyIdentifiers: false, minifyWhitespace: false, minifySyntax: false },
+      { minify: false, minifyIdentifiers: true, minifyWhitespace: false, minifySyntax: true },
+    ]);
+  });
+
+  // Like the CLI, production wins over a tsconfig that re-enables the JSX
+  // dev transform. `env: "inline"` makes configure_defines merge the
+  // tsconfig jsx settings into the build options.
+  test.concurrent("production: true forces the JSX production runtime over tsconfig", async () => {
+    using dir = tempDir("build-production-jsx", {
+      "app.jsx": `export function App() { return <div>hi</div>; }`,
+      "tsconfig.json": `{ "compilerOptions": { "jsx": "react-jsxdev" } }`,
+    });
+    const { stdout, exitCode } = await buildAndReadOutput(
+      String(dir),
+      `{ production: true, env: "inline", external: ["react*"] }`,
+      "./app.jsx",
+    );
+    expect(stdout).toContain("react/jsx-runtime");
+    expect(stdout).not.toContain("react/jsx-dev-runtime");
+    expect(exitCode).toBe(0);
+  });
+});

@@ -3336,6 +3336,19 @@ declare module "bun" {
     env?: "inline" | "disable" | `${string}*`;
 
     /**
+     * Build for production. Equivalent to the `--production` CLI flag.
+     *
+     * Inlines `process.env.NODE_ENV` as `"production"` (unless the process
+     * environment or `define` sets `NODE_ENV` explicitly), enables all
+     * minification options (an explicit `minify` still wins), disables the
+     * JSX development transform, and skips the `"development"` export
+     * condition.
+     *
+     * @default false
+     */
+    production?: boolean;
+
+    /**
      * Whether to enable minification.
      *
      * Use `true`/`false` to enable/disable all minification options. Alternatively,

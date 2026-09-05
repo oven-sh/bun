@@ -809,6 +809,29 @@ To granularly enable certain minifications:
   </Tab>
 </Tabs>
 
+### production
+
+Build for production. Equivalent to the `--production` CLI flag. Default `false`.
+
+<Tabs>
+  <Tab title="JavaScript">
+    ```ts title="build.ts" icon="/icons/typescript.svg"
+    await Bun.build({
+      entrypoints: ['./index.tsx'],
+      outdir: './out',
+      production: true, // default false
+    })
+    ```
+  </Tab>
+  <Tab title="CLI">
+    ```bash terminal icon="terminal"
+    bun build ./index.tsx --outdir ./out --production
+    ```
+  </Tab>
+</Tabs>
+
+When `true`, Bun inlines `process.env.NODE_ENV` as `"production"`, enables all minification options, disables the JSX development transform, and skips the `"development"` export condition. An explicit `minify` option wins over the minification defaults. A `NODE_ENV` value from the process environment or from `define` wins over the inlined `"production"`.
+
 ### external
 
 A list of import paths to consider external. Defaults to `[]`.
@@ -1847,6 +1870,18 @@ interface BuildConfig {
         syntax?: boolean;
         identifiers?: boolean;
       };
+  /**
+   * Build for production. Equivalent to the `--production` CLI flag.
+   *
+   * Inlines `process.env.NODE_ENV` as `"production"` (unless the process
+   * environment or `define` sets `NODE_ENV` explicitly), enables all
+   * minification options (an explicit `minify` still wins), disables the
+   * JSX development transform, and skips the `"development"` export
+   * condition.
+   *
+   * @default false
+   */
+  production?: boolean;
   /**
    * Ignore dead code elimination/tree-shaking annotations such as @__PURE__ and package.json
    * "sideEffects" fields. This should only be used as a temporary workaround for incorrect

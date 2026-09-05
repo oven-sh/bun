@@ -122,6 +122,7 @@ pub mod js_bundler {
         pub(crate) code_splitting: bool,
         pub(crate) split_require: bool,
         pub(crate) minify: Minify,
+        pub(crate) production: bool,
         pub(crate) no_macros: bool,
         pub(crate) ignore_dce_annotations: bool,
         pub(crate) emit_dce_annotations: Option<bool>,
@@ -190,6 +191,7 @@ pub mod js_bundler {
                 code_splitting: false,
                 split_require: true,
                 minify: Minify::default(),
+                production: false,
                 no_macros: false,
                 ignore_dce_annotations: false,
                 emit_dce_annotations: None,
@@ -822,6 +824,17 @@ pub mod js_bundler {
                 this.min_chunk_size = Some(min_chunk_size);
             }
 
+            // Parsed before `minify` so an explicit `minify` overrides the
+            // defaults that `production` turns on.
+            if let Some(production) = config.get_boolean_loose(global_this, "production")? {
+                this.production = production;
+                if production {
+                    this.minify.whitespace = true;
+                    this.minify.syntax = true;
+                    this.minify.identifiers = true;
+                }
+            }
+
             if let Some(minify) = config.get_truthy(global_this, "minify")? {
                 if minify.is_boolean() {
                     let value = minify.to_boolean();
@@ -863,6 +876,17 @@ pub mod js_bundler {
                 return Err(global_this.throw_invalid_arguments(format_args!(
                     "Expected entrypoints to be an array of strings"
                 )));
+            }
+
+            // Matches the CLI: `--production` with an HTML entry point turns
+            // on CSS chunking.
+            if this.production {
+                for entry_point in this.entry_points.keys() {
+                    if bun_core::strings::has_suffix_comptime(entry_point, b".html") {
+                        this.css_chunking = true;
+                        break;
+                    }
+                }
             }
 
             // Parse the files option for in-memory files

@@ -1078,6 +1078,12 @@ impl CompletionStruct for JSBundleCompletionTask {
             transpiler.options.emit_dce_annotations = false;
         }
 
+        // `configure_defines` turns this into the inlined
+        // NODE_ENV="production"; an explicit NODE_ENV still wins there.
+        if config.production {
+            transpiler.options.set_production(true);
+        }
+
         transpiler.configure_linker();
         transpiler.configure_defines()?;
 
@@ -1108,6 +1114,12 @@ impl CompletionStruct for JSBundleCompletionTask {
             }
             _ => options::CompileTargetBuiltins::Host,
         };
+
+        // Matches the CLI: tsconfig.json can re-enable jsx.development inside
+        // configure_defines; production always forces it back off.
+        if config.production {
+            transpiler.options.jsx.development = false;
+        }
 
         if !transpiler.options.production {
             transpiler

@@ -14,10 +14,11 @@ import { join } from "node:path";
 // release path does not exist there, and ASAN's own per-thread caches hold
 // hundreds of MB per compile on their own.
 test.skipIf(isASAN)("idle wasm compiler threads release the memory they freed (oven-sh/bun#41438)", async () => {
-  // Eight compiler threads keep the number stable across hosts. On a
-  // 16-core Linux box the unfixed build sits 25 to 45 MiB above the
-  // baseline for the full 10 s, the fixed one 1 to 4 MiB above within 1 s.
-  const settledMiB = 10;
+  // A fixed thread count keeps the number stable across hosts. With 16
+  // threads the unfixed build sits 100 to 115 MiB above the baseline for
+  // the full 10 s on a 16-core Linux x64 box. The fixed build settles at
+  // 4 to 6 MiB there and about 15 MiB on Linux aarch64 CI, within 1 s.
+  const settledMiB = 30;
   // Far under the 10 s AutomaticThread timeout, so an unfixed build cannot
   // pass by outliving its compiler threads.
   const deadlineMs = 3000;
@@ -26,7 +27,7 @@ test.skipIf(isASAN)("idle wasm compiler threads release the memory they freed (o
     cmd: [bunExe(), join(import.meta.dir, "compile-rss-fixture.mjs")],
     env: {
       ...bunEnv,
-      BUN_JSC_numberOfWasmCompilerThreads: "8",
+      BUN_JSC_numberOfWasmCompilerThreads: "16",
       SETTLED_MIB: String(settledMiB),
       DEADLINE_MS: String(deadlineMs),
     },

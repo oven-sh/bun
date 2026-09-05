@@ -51,7 +51,13 @@ for (let f = 0; f < F; f++) {
 }
 if (p !== total) throw new Error(`module size mismatch: wrote ${p}, expected ${total}`);
 
-const rssMiB = () => process.memoryUsage().rss / 1048576;
+// On macOS mimalloc returns memory with MADV_FREE_REUSABLE, which leaves RSS
+// untouched until the kernel needs the pages. phys_footprint drops at once.
+const footprint =
+  process.platform === "darwin" && typeof Bun.unsafe.memoryFootprint === "function"
+    ? Bun.unsafe.memoryFootprint
+    : () => process.memoryUsage().rss;
+const rssMiB = () => footprint() / 1048576;
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 
 Bun.gc(true);

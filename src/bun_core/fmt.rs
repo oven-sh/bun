@@ -3374,6 +3374,63 @@ fn escape_powershell_impl(str: &[u8], writer: &mut impl fmt::Write) -> fmt::Resu
     write_bytes(writer, remain)
 }
 
+// ───────────────────────────────────────────────────────────────────────────
+// escapeControlChars
+// ───────────────────────────────────────────────────────────────────────────
+
+/// `Display` adapter that spells out C0 controls, DEL and C1 controls
+/// (`\n`, `\x1b`, `\x7f`, `\u009b`, ...) so text authored by a dependency
+/// cannot erase, repaint or forge lines of terminal output when printed.
+pub struct EscapeControlChars<T>(pub T);
+
+/// [`EscapeControlChars`] over raw bytes; invalid UTF-8 renders as U+FFFD.
+pub fn escape_control_chars(text: &[u8]) -> EscapeControlChars<&bstr::BStr> {
+    EscapeControlChars(bstr::BStr::new(text))
+}
+
+impl<T: Display> Display for EscapeControlChars<T> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        let mut writer = EscapeControlCharsWriter(f);
+        write!(writer, "{}", self.0)
+    }
+}
+
+struct EscapeControlCharsWriter<'a, 'f>(&'a mut Formatter<'f>);
+
+impl fmt::Write for EscapeControlCharsWriter<'_, '_> {
+    fn write_str(&mut self, s: &str) -> fmt::Result {
+        let bytes = s.as_bytes();
+        let mut start = 0;
+        let mut cursor = 0;
+        // `\` doubles as the quote char so the scan stops at nothing else extra.
+        while let Some(offset) =
+            strings::index_of_needs_escape_for_java_script_string(&bytes[cursor..], b'\\')
+        {
+            let i = cursor + offset as usize;
+            let (code_point, len) = match bytes[i] {
+                byte @ (0x00..=0x1F | 0x7F) => (byte as u32, 1),
+                0xC2 if matches!(bytes.get(i + 1), Some(0x80..=0x9F)) => (bytes[i + 1] as u32, 2),
+                byte => {
+                    let char_len = strings::wtf8_byte_sequence_length(byte) as usize;
+                    cursor = (i + char_len).min(bytes.len());
+                    continue;
+                }
+            };
+            self.0.write_str(&s[start..i])?;
+            match code_point {
+                0x0A => self.0.write_str("\\n")?,
+                0x0D => self.0.write_str("\\r")?,
+                0x09 => self.0.write_str("\\t")?,
+                0x00..=0x7F => write!(self.0, "\\x{:02x}", code_point)?,
+                _ => write!(self.0, "\\u{:04x}", code_point)?,
+            }
+            start = i + len;
+            cursor = start;
+        }
+        self.0.write_str(&s[start..])
+    }
+}
+
 // js_bindings (fmtString for highlighter.test.ts) lives in src/jsc/fmt_jsc.rs
 // alongside fmt_jsc.bind.ts; bun_core/ stays JSC-free.
 

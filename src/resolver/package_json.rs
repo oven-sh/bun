@@ -411,7 +411,7 @@ impl PackageJSON {
                         bun_ast::Loc::EMPTY,
                         format_args!(
                             "Cannot read file \"{}\": {}",
-                            bstr::BStr::new(input_path),
+                            bstr::BStr::new(package_json_path),
                             bstr::BStr::new(err.name())
                         ),
                     );

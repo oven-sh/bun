@@ -1488,6 +1488,28 @@ export function tmpdirSync(pattern: string = "bun.test."): string {
   return fs.mkdtempSync(join(fs.realpathSync.native(os.tmpdir()), pattern));
 }
 
+let caseSensitiveFileSystem: boolean | undefined;
+
+/**
+ * Whether the filesystem holding the temporary directories (`tempDir`,
+ * `tempDirWithFiles`, the bundler test fixtures) treats names that differ only
+ * in case as different files. Usually true on Linux and false on macOS and
+ * Windows, but it depends on the mounted filesystem, so it is probed once on
+ * first use.
+ */
+export function isCaseSensitiveFileSystem(): boolean {
+  if (caseSensitiveFileSystem === undefined) {
+    const dir = tmpdirSync("bun.case-probe.");
+    try {
+      fs.writeFileSync(join(dir, "probe"), "");
+      caseSensitiveFileSystem = !fs.existsSync(join(dir, "PROBE"));
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  }
+  return caseSensitiveFileSystem;
+}
+
 export async function runBunInstall(
   env: NodeJS.Dict<string>,
   cwd: string,

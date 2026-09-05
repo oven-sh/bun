@@ -481,8 +481,7 @@ impl JSValkeyClient {
 
     /// Create a Valkey client that does not have an associated JS object nor a SubscriptionCtx.
     ///
-    /// Also returns the `tls` option object (or `UNDEFINED`) for the caller to
-    /// cache on the JS wrapper once it exists.
+    /// The second return is the `tls` option object (or `UNDEFINED`) to cache on the JS wrapper.
     ///
     /// This whole client needs a refactor.
     pub(crate) fn create_no_js_no_pubsub(
@@ -941,8 +940,7 @@ impl JSValkeyClient {
         jsc::bun_string_jsc::create_utf8_for_js(global, &self.url)
     }
 
-    /// `client.options`. `this_value` is the JS wrapper (`this: true` in
-    /// valkey.classes.ts), which holds the cached `tls` option object.
+    /// `this_value` is the JS wrapper; it holds the cached `tls` option object.
     pub(crate) fn get_options(
         &self,
         this_value: JSValue,
@@ -963,8 +961,7 @@ impl JSValkeyClient {
         Ok(self.options_object(global, tls))
     }
 
-    /// A subscriber reports the `enableOfflineQueue` / `enableAutoPipelining`
-    /// it was constructed with, not the values subscribe mode forces.
+    /// A subscriber reports the queue and pipelining flags it was constructed with.
     fn options_object(&self, global: &JSGlobalObject, tls: JSValue) -> JSValue {
         let client = self.client.get();
         let sub_ctx = self._subscription_ctx.get();
@@ -1015,8 +1012,7 @@ impl JSValkeyClient {
         object
     }
 
-    /// `console.log(client)`: the url password prints as `[REDACTED]` and a
-    /// custom `tls` object (which can hold key material) prints as `true`.
+    /// Redacts the url password and prints a custom `tls` object as `true`.
     pub(crate) fn write_format<F, W, const ENABLE_ANSI_COLORS: bool>(
         &self,
         formatter: &mut F,
@@ -1101,8 +1097,7 @@ impl JSValkeyClient {
         Ok(())
     }
 
-    /// Returns (bytes before the userinfo password, bytes from its `@` on).
-    /// Authority ends at the first `/`, `?` or `#`, userinfo at its last `@`.
+    /// Returns (bytes before the userinfo password, bytes from its `@` on), or (url, None).
     fn url_split_at_password(&self) -> (&[u8], Option<&[u8]>) {
         let url: &[u8] = &self.url;
         let authority_start = strings::index_of(url, b"://").map_or(0, |i| i + 3);

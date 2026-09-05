@@ -58,8 +58,8 @@ declare module "bun" {
     /**
      * Creates a new Redis client
      *
-     * @param url URL to connect to, defaults to `process.env.VALKEY_URL`,
-     * `process.env.REDIS_URL`, or `"valkey://localhost:6379"`
+     * @param url URL to connect to, defaults to `process.env.REDIS_URL`,
+     * `process.env.VALKEY_URL`, or `"valkey://localhost:6379"`
      * @param options Additional options
      *
      * @example

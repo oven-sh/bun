@@ -391,6 +391,45 @@ describe("url", () => {
     }
   });
 
+  // https://url.spec.whatwg.org/#host-state: with state override = hostname state, a ':'
+  // outside an IPv6 '[' ... ']' returns without setting anything. The hostname setter must
+  // never touch the port. Every expected href below matches Node.
+  it.each([
+    // bracketed IPv6 followed by ":port" is a no-op, not a port write
+    ["http://a/p", "[::1]:81", "http://a/p"],
+    ["https://a/p", "[2001:db8::7]:8443", "https://a/p"],
+    ["ws://u:pw@a/p", "[::1]:6666", "ws://u:pw@a/p"],
+    ["http://a/p", "[::ffff:127.0.0.1]:22", "http://a/p"],
+    ["http://a/p", "[::1]:", "http://a/p"],
+    ["http://a:1/p", "[::1]:81", "http://a:1/p"],
+    ["sc://a/p", "[::1]:81", "sc://a/p"],
+    ["file://a/p", "[::1]:81", "file://a/p"],
+    // tab/newline are stripped first, so the ':' is still outside the brackets
+    ["http://a/p", "[::1]\t:81", "http://a/p"],
+    ["http://a/p", "[::1]\n:81", "http://a/p"],
+    ["http://a/p", "[::1]\r:81", "http://a/p"],
+    ["http://a/p", "[::1]\r\n:81", "http://a/p"],
+    ["http://a/p", "\t[::1]:81", "http://a/p"],
+    // '/', '?', '#' (and '\\' on special schemes) end the host before the ':' is reached
+    ["http://a/p", "[::1]/x:81", "http://[::1]/p"],
+    ["http://a/p", "[::1]?x:81", "http://[::1]/p"],
+    ["http://a/p", "[::1]#x:81", "http://[::1]/p"],
+    ["http://a/p", "[::1]\\x:81", "http://[::1]/p"],
+    // '\\' is not a terminator on a non-special scheme, so the ':' after it is still rejected
+    ["sc://a/p", "[::1]\\x:81", "sc://a/p"],
+    // ':' before any terminator is a no-op regardless of what follows
+    ["http://a/p", "[::1]:81/x", "http://a/p"],
+    // the existing non-bracketed rejection still holds
+    ["http://a/p", "h:81", "http://a/p"],
+    // a plain bracketed IPv6 is still accepted
+    ["http://a/p", "[::1]", "http://[::1]/p"],
+    ["http://a:1/p", "[::1]", "http://[::1]:1/p"],
+  ])("hostname setter never writes the port: new URL(%j).hostname = %j", (base, value, expected) => {
+    const url = new URL(base);
+    url.hostname = value;
+    expect({ href: url.href, port: url.port }).toEqual({ href: expected, port: new URL(expected).port });
+  });
+
   describe("URL.canParse", () => {
     (
       [

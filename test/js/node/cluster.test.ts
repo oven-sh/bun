@@ -204,7 +204,7 @@ if (cluster.isPrimary) {
   const { stdout } = await bunRun(joinP(dir, "main.ts"), bunEnv);
   expect(stdout).toContain("tls listen error code: EINVAL");
   expect(stdout).toContain("TLS and non-TLS cluster workers cannot share");
-});
+}, 30_000);
 
 test("cluster pipe listen error carries no port suffix", async () => {
   const dir = tempDirWithFiles("bun-test", {
@@ -412,6 +412,8 @@ if (cluster.isPrimary) {
   expect(stdout).toContain("ipv6 connect ok");
 });
 
+// A SharedHandle binds its socket natively; only a RoundRobinHandle makes the primary itself
+// listen() with a net.Server. Windows serves SCHED_NONE TCP listens round-robin, see primary.ts.
 test("SCHED_NONE: a second worker listens on the same shared handle", async () => {
   const dir = tempDirWithFiles("bun-test", {
     "main.ts": `
@@ -421,6 +423,12 @@ const net = require("node:net");
 cluster.schedulingPolicy = cluster.SCHED_NONE;
 
 if (cluster.isPrimary) {
+  let primaryListenCalls = 0;
+  const listen = net.Server.prototype.listen;
+  net.Server.prototype.listen = function () {
+    primaryListenCalls++;
+    return listen.apply(this, arguments);
+  };
   const workers = [cluster.fork(), cluster.fork()];
   let listening = 0;
   const ports = new Set();
@@ -429,6 +437,7 @@ if (cluster.isPrimary) {
     ports.add(address.port);
     if (++listening !== 2) return;
     console.log("listening workers:", listening, "distinct ports:", ports.size);
+    console.log("primary listen() calls:", primaryListenCalls);
     for (const w of workers) w.kill();
     process.exit(0);
   });
@@ -449,7 +458,113 @@ if (cluster.isPrimary) {
   const { stdout } = await bunRun(joinP(dir, "main.ts"), bunEnv);
   expect(stdout).toContain("policy is SCHED_NONE: true");
   expect(stdout).toContain("listening workers: 2 distinct ports: 1");
+  expect(stdout).toContain(`primary listen() calls: ${isWindows ? 1 : 0}`);
 });
+
+// Every connection below is one chance for a worker to stop answering IPC; the primary pings both
+// workers after each one and the workers must still disconnect cleanly at the end.
+//
+// SCHED_NONE: two workers accepting on copies of one Windows listening socket race each other for
+// every connection, and the loser blocked inside accept(), so its event loop never ran again. TCP
+// listens under SCHED_NONE are served by the primary on Windows now.
+//
+// SCHED_RR: the primary sends each connection as a handle message. On Windows the worker's ack for
+// it could be read before libuv reported the write itself complete; the primary then dropped the ack
+// and waited for it forever, and every later message to that worker (pings, disconnect) sat behind
+// it. This ordering needs a busy machine, so before the fix this variant only failed under load.
+for (const policy of ["SCHED_NONE", "SCHED_RR"]) {
+  test.skipIf(!isWindows)(
+    `${policy}: two workers on one port keep answering IPC while connections arrive, then exit`,
+    async () => {
+      using dir = tempDir("cluster-worker-responsiveness", {
+        "main.ts": `
+const cluster = require("node:cluster");
+const net = require("node:net");
+cluster.schedulingPolicy = cluster.${policy};
+
+if (cluster.isPrimary) {
+  const CONNECTIONS = 100;
+  const workers = [cluster.fork(), cluster.fork()];
+  const ports = new Set();
+  const exits = [];
+  let listening = 0;
+
+  function fail(message) {
+    console.log(message);
+    for (const worker of workers) worker.process.kill();
+    process.exit(1);
+  }
+
+  cluster.on("listening", (worker, address) => {
+    ports.add(address.port);
+    if (++listening !== workers.length) return;
+    run(address.port).catch(err => fail("error: " + err.message));
+  });
+
+  cluster.on("exit", (worker, code, signal) => {
+    exits.push(code ?? signal);
+    if (exits.length === workers.length) console.log("exits:", exits.join(","));
+  });
+
+  function connectOnce(port) {
+    return new Promise((resolve, reject) => {
+      const c = net.connect(port, "127.0.0.1");
+      let data = "";
+      c.setEncoding("utf8");
+      c.on("data", chunk => (data += chunk));
+      c.on("error", reject);
+      c.on("close", () => (data === "hi" ? resolve() : reject(new Error("got " + JSON.stringify(data)))));
+    });
+  }
+
+  function pingWorkers(connection) {
+    return Promise.all(
+      workers.map(worker => {
+        return new Promise(resolve => {
+          const stuck = setTimeout(() => fail("worker " + worker.id + " stopped answering after connection " + connection), 10_000);
+          worker.once("message", () => {
+            clearTimeout(stuck);
+            resolve();
+          });
+          worker.send("ping");
+        });
+      }),
+    );
+  }
+
+  async function run(port) {
+    for (let connection = 1; connection <= CONNECTIONS; connection++) {
+      await connectOnce(port);
+      await pingWorkers(connection);
+    }
+    console.log("served:", CONNECTIONS, "ports:", ports.size);
+    for (const worker of workers) worker.disconnect();
+  }
+} else {
+  net.createServer(socket => socket.end("hi")).listen(0, "127.0.0.1");
+  process.on("message", message => {
+    if (message === "ping") process.send("pong");
+  });
+}
+`,
+      });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "main.ts"],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout, stderr, exitCode }).toEqual({
+        stdout: "served: 100 ports: 1\nexits: 0,0\n",
+        stderr: expect.any(String),
+        exitCode: 0,
+      });
+    },
+    30_000,
+  );
+}
 
 test("SCHED_NONE: close() releases the shared handle so the worker can re-listen on the same port", async () => {
   using dir = tempDir("cluster-shared-relisten", {
@@ -853,11 +968,10 @@ if (cluster.isPrimary) {
   expect(stdout).toContain("reply: echo:hi");
 }, 30_000);
 
-test("plain worker listening on a key already owned by a TLS shared-only handle fails with EINVAL", async () => {
-  const dir = tempDirWithFiles("bun-test", {
-    "cert.pem": tlsCerts.cert,
-    "key.pem": tlsCerts.key,
-    "main.ts": `
+const netWorkerAfterTlsWorkerFixture = {
+  "cert.pem": tlsCerts.cert,
+  "key.pem": tlsCerts.key,
+  "main.ts": `
 const cluster = require("node:cluster");
 const net = require("node:net");
 const tls = require("node:tls");
@@ -870,11 +984,18 @@ if (cluster.isPrimary) {
   const tlsWorker = cluster.fork({ ROLE: "tls" });
   cluster.once("listening", () => {
     const netWorker = cluster.fork({ ROLE: "net" });
-    netWorker.on("message", msg => {
-      console.log("net listen error code:", msg.code, msg.msg);
+    const done = () => {
       tlsWorker.kill();
       netWorker.kill();
       process.exit(0);
+    };
+    netWorker.on("message", msg => {
+      console.log("net listen error code:", msg.code, msg.msg);
+      done();
+    });
+    netWorker.on("listening", () => {
+      console.log("net worker is listening on the TLS worker's socket");
+      done();
     });
   });
 } else if (process.env.ROLE === "tls") {
@@ -885,10 +1006,29 @@ if (cluster.isPrimary) {
   server.listen(0);
 }
 `,
-  });
+};
+
+test("plain worker listening on a key already owned by a TLS shared-only handle fails with EINVAL", async () => {
+  const dir = tempDirWithFiles("bun-test", netWorkerAfterTlsWorkerFixture);
   const { stdout } = await bunRun(joinP(dir, "main.ts"), bunEnv);
   expect(stdout).toContain("net listen error code: EINVAL");
   expect(stdout).toContain("TLS and non-TLS cluster workers cannot share");
+}, 30_000);
+
+// Under SCHED_NONE the plain worker shares the TLS worker's socket, as in node. On Windows the primary
+// serves TCP listens under SCHED_NONE too (two workers accepting on copies of one socket is what hangs
+// a worker there), so it is refused there under either policy.
+test("SCHED_NONE: plain worker listening on a key owned by a TLS shared-only handle", async () => {
+  const dir = tempDirWithFiles("bun-test", netWorkerAfterTlsWorkerFixture);
+  const { stdout } = await bunRun(joinP(dir, "main.ts"), { NODE_CLUSTER_SCHED_POLICY: "none" });
+  if (isWindows) {
+    expect(stdout).toContain("net listen error code: EINVAL");
+    expect(stdout).toContain(
+      "TLS and non-TLS cluster workers cannot share the same address:port while the primary distributes its connections",
+    );
+  } else {
+    expect(stdout).toBe("net worker is listening on the TLS worker's socket");
+  }
 }, 30_000);
 
 test.skipIf(isWindows)(

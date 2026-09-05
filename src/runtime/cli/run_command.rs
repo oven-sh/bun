@@ -2933,18 +2933,8 @@ impl RunCommand {
         }
 
         if !ctx.runtime_options.eval.script.is_empty() {
-            // synthetic `[eval]` path under cwd
-            let mut entry_point_buf = [0u8; MAX_PATH_BYTES + EVAL_TRIGGER.len()];
-            let mut cwd_buf = PathBuffer::uninit();
-            let cwd = bun_core::getcwd_or_exe_dir(&mut cwd_buf);
-            let cwd_bytes = cwd.as_bytes();
-            let cwd_len = cwd_bytes.len();
-            entry_point_buf[..cwd_len].copy_from_slice(cwd_bytes);
-            entry_point_buf[cwd_len..cwd_len + EVAL_TRIGGER.len()].copy_from_slice(EVAL_TRIGGER);
-            let entry: Box<[u8]> = entry_point_buf[..cwd_len + EVAL_TRIGGER.len()]
-                .to_vec()
-                .into_boxed_slice();
-            return Self::boot(ctx, entry, None);
+            // exec_eval's positionals merge keeps `foo` in `node -e code foo`. #40482
+            return Self::exec_eval(ctx);
         }
 
         if ctx.positionals.is_empty() {

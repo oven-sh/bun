@@ -87,6 +87,22 @@ describe("fake node cli", () => {
     expect(fakeNodeRun(temp, ["-e", "console.log('pass')"]).stdout).toBe("pass");
   });
 
+  // #40482: like node, `-e`/`-p` take no script positional, so everything
+  // after the code is process.argv. The first of them used to be dropped.
+  const argvExpr = "JSON.stringify(process.argv.slice(1))";
+  const logArgv = `console.log(${argvExpr})`;
+  test.each([
+    { args: ["-e", logArgv, "foo", "bar"], argv: ["foo", "bar"] },
+    { args: ["-e", logArgv, "foo"], argv: ["foo"] },
+    { args: ["-e", logArgv, "foo", "--flag", "bar"], argv: ["foo", "--flag", "bar"] },
+    { args: ["-e", logArgv], argv: [] },
+    { args: ["-p", argvExpr, "foo", "bar"], argv: ["foo", "bar"] },
+    { args: ["-pe", argvExpr, "foo", "bar"], argv: ["foo", "bar"] },
+  ])("node $args keeps every positional in process.argv", ({ args, argv }) => {
+    using temp = tempDir("fake-node", {});
+    expect(JSON.parse(fakeNodeRun(temp, args).stdout)).toEqual(argv);
+  });
+
   test("process args work", () => {
     using temp = tempDir("fake-node", {
       "index.js": "console.log(JSON.stringify(process.argv.slice(1)))",

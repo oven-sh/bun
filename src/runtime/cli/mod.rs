@@ -840,6 +840,578 @@ pub mod command {
         }
     }
 
+    pub(crate) fn is_npm(argv0: &[u8]) -> bool {
+        let base = bun_paths::basename(argv0);
+        base == b"npm" || (cfg!(windows) && base == b"npm.exe")
+    }
+
+    pub(crate) fn is_npx(argv0: &[u8]) -> bool {
+        let base = bun_paths::basename(argv0);
+        base == b"npx" || (cfg!(windows) && base == b"npx.exe")
+    }
+
+    const NPM_VALUE_FLAGS_IGNORED: &[&[u8]] = &[
+        b"access",
+        b"before",
+        b"ca",
+        b"cache",
+        b"cafile",
+        b"depth",
+        b"editor",
+        b"fetch-retries",
+        b"fetch-retry-factor",
+        b"fetch-retry-maxtimeout",
+        b"fetch-retry-mintimeout",
+        b"fetch-timeout",
+        b"globalconfig",
+        b"https-proxy",
+        b"include",
+        b"init-author-email",
+        b"init-author-name",
+        b"init-author-url",
+        b"init-license",
+        b"init-module",
+        b"init-version",
+        b"location",
+        b"loglevel",
+        b"logs-dir",
+        b"logs-max",
+        b"maxsockets",
+        b"message",
+        b"node-options",
+        b"noproxy",
+        b"omit",
+        b"otp",
+        b"pack-destination",
+        b"proxy",
+        b"registry",
+        b"scope",
+        b"script-shell",
+        b"searchexclude",
+        b"searchlimit",
+        b"searchopts",
+        b"searchstaleness",
+        b"tag",
+        b"userconfig",
+        b"viewer",
+        b"workspace",
+    ];
+
+    #[derive(Clone, Copy)]
+    enum NpmFlag {
+        Drop,
+        Keep,
+        Rename(&'static bun_core::ZStr),
+    }
+
+    #[cold]
+    fn translate_npm_value_flag(
+        arg: &[u8],
+        keep: &[&[u8]],
+        renames: &[(&[u8], &'static bun_core::ZStr)],
+    ) -> Option<NpmFlag> {
+        use bun_core::zstr;
+        let name: &[u8] = if let Some(long) = arg.strip_prefix(b"--") {
+            match strings::index_of_char(long, b'=') {
+                Some(eq) => &long[..eq as usize],
+                None => long,
+            }
+        } else if arg == b"-w" || arg.starts_with(b"-w=") {
+            b"workspace"
+        } else if arg == b"-C" || arg.starts_with(b"-C=") {
+            b"prefix"
+        } else if arg == b"-m" || arg.starts_with(b"-m=") {
+            b"message"
+        } else {
+            return None;
+        };
+        if keep.contains(&name) {
+            return Some(NpmFlag::Keep);
+        }
+        if let Some(&(_, to)) = renames.iter().find(|(n, _)| *n == name) {
+            return Some(NpmFlag::Rename(to));
+        }
+        match name {
+            b"prefix" => Some(NpmFlag::Rename(zstr!("--cwd"))),
+            _ if NPM_VALUE_FLAGS_IGNORED.binary_search(&name).is_ok() => Some(NpmFlag::Drop),
+            _ => None,
+        }
+    }
+
+    #[cold]
+    fn rename_npm_bool_flag(arg: &'static bun_core::ZStr) -> &'static bun_core::ZStr {
+        use bun_core::zstr;
+        match arg.as_bytes() {
+            b"--save-dev" => zstr!("--dev"),
+            b"--save-exact" => zstr!("--exact"),
+            b"--save-optional" | b"-O" => zstr!("--optional"),
+            b"--save-peer" => zstr!("--peer"),
+            b"-P" | b"--save-prod" => zstr!("--save"),
+            _ => arg,
+        }
+    }
+
+    #[cold]
+    fn is_npm_bool_flag(arg: &[u8]) -> bool {
+        strings::has_prefix_comptime(arg, b"--no-")
+            || matches!(
+                arg,
+                b"-y"
+                    | b"--yes"
+                    | b"-s"
+                    | b"-q"
+                    | b"-d"
+                    | b"-dd"
+                    | b"-ddd"
+                    | b"-p"
+                    | b"-g"
+                    | b"--global"
+                    | b"--json"
+                    | b"-l"
+                    | b"--long"
+                    | b"--parseable"
+                    | b"--ignore-scripts"
+                    | b"--foreground-scripts"
+                    | b"--include-workspace-root"
+                    | b"--workspaces"
+                    | b"--if-present"
+                    | b"--silent"
+                    | b"-f"
+                    | b"--force"
+                    | b"--dry-run"
+                    | b"--offline"
+                    | b"--prefer-offline"
+                    | b"--prefer-online"
+                    | b"--legacy-peer-deps"
+                    | b"--strict-peer-deps"
+                    | b"--save"
+                    | b"--audit"
+                    | b"--fund"
+                    | b"--package-lock-only"
+                    | b"--production"
+            )
+    }
+
+    #[cold]
+    #[inline(never)]
+    unsafe fn translate_npm_argv() {
+        use bun_core::{ZStr, zstr};
+        debug_assert!(
+            NPM_VALUE_FLAGS_IGNORED.is_sorted(),
+            "NPM_VALUE_FLAGS_IGNORED must be sorted for binary_search"
+        );
+
+        let argv = bun::argv().as_slice();
+        let Some(&argv0) = argv.first() else { return };
+
+        fn copy_translating_npm_flags(
+            argv: &[&'static ZStr],
+            tail: &mut Vec<&'static ZStr>,
+            hoisted: &mut Vec<&'static ZStr>,
+            from: usize,
+            stop_at_positional: bool,
+            keep: &[&[u8]],
+            renames: &[(&[u8], &'static ZStr)],
+        ) -> usize {
+            let mut i = from;
+            while i < argv.len() {
+                let a = argv[i];
+                let ab = a.as_bytes();
+                if ab == b"--" {
+                    if !stop_at_positional {
+                        tail.extend_from_slice(&argv[i..]);
+                    }
+                    return i;
+                }
+                if ab.first() != Some(&b'-') {
+                    if stop_at_positional {
+                        return i;
+                    }
+                    tail.push(a);
+                    i += 1;
+                    continue;
+                }
+                if let Some(tr) = translate_npm_value_flag(ab, keep, renames) {
+                    let eq = strings::index_of_char(ab, b'=');
+                    let consumes_next = eq.is_none()
+                        && argv
+                            .get(i + 1)
+                            .is_some_and(|n| n.as_bytes().first() != Some(&b'-'));
+                    match tr {
+                        NpmFlag::Drop => {}
+                        NpmFlag::Keep => {
+                            hoisted.push(a);
+                            if consumes_next {
+                                hoisted.push(argv[i + 1]);
+                            }
+                        }
+                        NpmFlag::Rename(new_name) => {
+                            hoisted.push(new_name);
+                            if let Some(eq) = eq {
+                                let with_nul = a.as_bytes_with_nul();
+                                hoisted.push(ZStr::from_static(&with_nul[eq as usize + 1..]));
+                            } else if consumes_next {
+                                hoisted.push(argv[i + 1]);
+                            }
+                        }
+                    }
+                    i += if consumes_next { 2 } else { 1 };
+                    continue;
+                }
+                tail.push(rename_npm_bool_flag(a));
+                i += 1;
+            }
+            argv.len()
+        }
+
+        let scan_end = {
+            let mut i = 1;
+            while i < argv.len() {
+                let ab = argv[i].as_bytes();
+                if ab == b"--" || ab.first() != Some(&b'-') {
+                    break;
+                }
+                let consumes_next = translate_npm_value_flag(ab, &[], &[]).is_some()
+                    && !strings::contains_char(ab, b'=')
+                    && argv
+                        .get(i + 1)
+                        .is_some_and(|n| n.as_bytes().first() != Some(&b'-'));
+                i += if consumes_next { 2 } else { 1 };
+            }
+            i
+        };
+        let sub_idx =
+            scan_end + usize::from(argv.get(scan_end).is_some_and(|a| a.as_bytes() == b"--"));
+        let subcommand = argv.get(sub_idx).filter(|a| a.as_bytes() != b"--");
+        let sub_bytes = subcommand.map(|z| z.as_bytes());
+        let rest_start = sub_idx + usize::from(sub_idx < argv.len());
+
+        let (keep, renames): (&[&[u8]], &[(&[u8], &ZStr)]) = match sub_bytes {
+            Some(b"publish") => (
+                &[b"access", b"ca", b"cafile", b"otp", b"registry", b"tag"],
+                &[],
+            ),
+            Some(b"version" | b"verison") => (&[b"message"], &[]),
+            Some(b"pack") => (&[], &[(b"pack-destination", zstr!("--destination"))]),
+            Some(
+                b"test" | b"t" | b"tst" | b"start" | b"stop" | b"restart" | b"run-script" | b"rum"
+                | b"urn" | b"run",
+            ) => (&[], &[(b"workspace", zstr!("--filter"))]),
+            Some(
+                b"i" | b"isntall" | b"in" | b"ins" | b"inst" | b"insta" | b"instal" | b"install"
+                | b"ci" | b"clean-install" | b"ic" | b"install-clean" | b"isntall-clean"
+                | b"update" | b"upgrade" | b"up" | b"udpate" | b"outdated",
+            ) => (
+                &[b"ca", b"cafile", b"omit", b"registry"],
+                &[(b"workspace", zstr!("--filter"))],
+            ),
+            _ => (&[], &[]),
+        };
+
+        let mut hoisted: Vec<&'static ZStr> = Vec::new();
+        let mut pre_subcommand_flags: Vec<&'static ZStr> = Vec::new();
+        let first_pass_end = copy_translating_npm_flags(
+            argv,
+            &mut pre_subcommand_flags,
+            &mut hoisted,
+            1,
+            true,
+            keep,
+            renames,
+        );
+        debug_assert_eq!(
+            first_pass_end, scan_end,
+            "subcommand prescan must advance exactly like the copy pass"
+        );
+
+        let mut tail: Vec<&'static ZStr> =
+            Vec::with_capacity(argv.len().saturating_sub(rest_start));
+        copy_translating_npm_flags(
+            argv,
+            &mut tail,
+            &mut hoisted,
+            rest_start,
+            false,
+            keep,
+            renames,
+        );
+
+        let mut mapped: Vec<&'static ZStr> = Vec::with_capacity(2);
+        match sub_bytes {
+            Some(b"test" | b"t" | b"tst") => {
+                mapped.push(zstr!("run"));
+                mapped.push(zstr!("test"));
+            }
+            Some(b"start") => {
+                mapped.push(zstr!("run"));
+                mapped.push(zstr!("start"));
+            }
+            Some(b"stop") => {
+                mapped.push(zstr!("run"));
+                mapped.push(zstr!("stop"));
+            }
+            Some(b"restart") => {
+                mapped.push(zstr!("run"));
+                mapped.push(zstr!("restart"));
+            }
+            Some(b"run-script" | b"rum" | b"urn") => mapped.push(zstr!("run")),
+            Some(b"exec") => mapped.push(zstr!("x")),
+            Some(b"init" | b"create" | b"innit") => {
+                let has_initializer = tail.iter().any(|a| {
+                    let b = a.as_bytes();
+                    b != b"--" && b.first() != Some(&b'-')
+                });
+                mapped.push(if has_initializer {
+                    zstr!("create")
+                } else {
+                    zstr!("init")
+                });
+            }
+            Some(b"clean-install" | b"ic" | b"install-clean" | b"isntall-clean") => {
+                mapped.push(zstr!("ci"));
+            }
+            Some(b"i" | b"isntall" | b"in" | b"ins" | b"inst" | b"insta" | b"instal") => {
+                mapped.push(zstr!("install"));
+            }
+            Some(b"ls" | b"la" | b"ll") => mapped.push(zstr!("list")),
+            Some(b"view" | b"show" | b"v") => mapped.push(zstr!("info")),
+            Some(b"upgrade" | b"up" | b"udpate") => mapped.push(zstr!("update")),
+            Some(b"c") => mapped.push(zstr!("config")),
+            Some(b"version" | b"verison") => {
+                mapped.push(zstr!("pm"));
+                mapped.push(zstr!("version"));
+            }
+            Some(b"pack") => {
+                mapped.push(zstr!("pm"));
+                mapped.push(zstr!("pack"));
+            }
+            Some(b"cache") => {
+                mapped.push(zstr!("pm"));
+                mapped.push(zstr!("cache"));
+            }
+            Some(_) => mapped.push(*subcommand.unwrap()),
+            None => {}
+        }
+
+        if matches!(mapped.first().map(|z| z.as_bytes()), Some(b"x" | b"create")) {
+            hoisted.clear();
+        }
+        if matches!(
+            sub_bytes,
+            Some(
+                b"i" | b"isntall"
+                    | b"in"
+                    | b"ins"
+                    | b"inst"
+                    | b"insta"
+                    | b"instal"
+                    | b"install"
+                    | b"ci"
+                    | b"clean-install"
+                    | b"ic"
+                    | b"install-clean"
+                    | b"isntall-clean"
+                    | b"update"
+                    | b"upgrade"
+                    | b"up"
+                    | b"udpate"
+                    | b"outdated"
+                    | b"add"
+                    | b"a"
+                    | b"remove"
+                    | b"r"
+                    | b"rm"
+                    | b"uninstall"
+                    | b"link"
+                    | b"unlink"
+                    | b"ls"
+                    | b"la"
+                    | b"ll"
+                    | b"list"
+            )
+        ) {
+            let drop_colliding_shorts = |v: &mut Vec<&'static ZStr>| {
+                let mut past_separator = false;
+                v.retain(|a| {
+                    let b = a.as_bytes();
+                    if b == b"--" {
+                        past_separator = true;
+                    }
+                    past_separator || !matches!(b, b"-p" | b"-y" | b"-d" | b"-dd" | b"-ddd")
+                });
+            };
+            drop_colliding_shorts(&mut pre_subcommand_flags);
+            drop_colliding_shorts(&mut tail);
+        }
+        if matches!(
+            mapped.first().map(|z| z.as_bytes()),
+            Some(b"run" | b"init" | b"x" | b"pm")
+        ) {
+            for a in pre_subcommand_flags.drain(..) {
+                if matches!(a.as_bytes(), b"--if-present" | b"--silent") {
+                    hoisted.push(a);
+                }
+            }
+        }
+        if matches!(mapped.first().map(|z| z.as_bytes()), Some(b"x")) {
+            let mut new_tail: Vec<&'static ZStr> = Vec::with_capacity(tail.len());
+            let mut i = 0;
+            while i < tail.len() {
+                let a = tail[i];
+                let b = a.as_bytes();
+                if b == b"--" {
+                    new_tail.extend_from_slice(&tail[i..]);
+                    break;
+                }
+                if b == b"-c" || b == b"--call" || b.starts_with(b"--call=") {
+                    let consumes_next = !strings::contains_char(b, b'=')
+                        && tail.get(i + 1).is_some_and(|n| {
+                            let nb = n.as_bytes();
+                            nb != b"--" && nb.first() != Some(&b'-')
+                        });
+                    i += if consumes_next { 2 } else { 1 };
+                    continue;
+                }
+                if b != b"--silent" && is_npm_bool_flag(b) {
+                    i += 1;
+                    continue;
+                }
+                new_tail.push(a);
+                i += 1;
+            }
+            tail = new_tail;
+        }
+        if matches!(mapped.first().map(|z| z.as_bytes()), Some(b"run")) {
+            let mut new_tail: Vec<&'static ZStr> = Vec::with_capacity(tail.len());
+            let mut i = 0;
+            while i < tail.len() {
+                let a = tail[i];
+                let b = a.as_bytes();
+                if b == b"--" {
+                    new_tail.extend_from_slice(&tail[i..]);
+                    break;
+                }
+                if b.first() == Some(&b'-') {
+                    if matches!(b, b"--if-present" | b"--silent") {
+                        hoisted.push(a);
+                        i += 1;
+                    } else if is_npm_bool_flag(b) {
+                        i += 1;
+                    } else {
+                        let consumes_next = !strings::contains_char(b, b'=')
+                            && tail.get(i + 1).is_some_and(|n| {
+                                let nb = n.as_bytes();
+                                nb != b"--" && nb.first() != Some(&b'-')
+                            });
+                        i += if consumes_next { 2 } else { 1 };
+                    }
+                    continue;
+                }
+                new_tail.push(a);
+                i += 1;
+            }
+            tail = new_tail;
+        }
+        if matches!(mapped.first().map(|z| z.as_bytes()), Some(b"create")) {
+            pre_subcommand_flags.clear();
+            let mut new_tail: Vec<&'static ZStr> = Vec::with_capacity(tail.len());
+            let mut i = 0;
+            while i < tail.len() {
+                let a = tail[i];
+                let b = a.as_bytes();
+                if b == b"--" {
+                    new_tail.extend_from_slice(&tail[i..]);
+                    break;
+                }
+                if b.first() == Some(&b'-') {
+                    let consumes_next = !is_npm_bool_flag(b)
+                        && !strings::contains_char(b, b'=')
+                        && tail.get(i + 1).is_some_and(|n| {
+                            let nb = n.as_bytes();
+                            nb != b"--" && nb.first() != Some(&b'-')
+                        });
+                    i += if consumes_next { 2 } else { 1 };
+                    continue;
+                }
+                new_tail.push(a);
+                i += 1;
+            }
+            tail = new_tail;
+        }
+
+        let mut out: Vec<&'static ZStr> = Vec::with_capacity(
+            1 + pre_subcommand_flags.len() + mapped.len() + hoisted.len() + tail.len(),
+        );
+        out.push(argv0);
+        out.extend_from_slice(&pre_subcommand_flags);
+        if let Some((first, rest_mapped)) = mapped.split_first() {
+            out.push(*first);
+            out.extend_from_slice(&hoisted);
+            out.extend_from_slice(rest_mapped);
+        } else {
+            out.extend_from_slice(&hoisted);
+        }
+        out.extend_from_slice(&tail);
+
+        static SLOT: std::sync::OnceLock<Box<[&'static ZStr]>> = std::sync::OnceLock::new();
+        let stored = SLOT.get_or_init(move || out.into_boxed_slice());
+        // SAFETY: per fn contract — single-threaded startup.
+        unsafe { bun::set_argv(stored) };
+    }
+
+    #[cold]
+    #[inline(never)]
+    unsafe fn translate_npx_argv() {
+        use bun_core::ZStr;
+        let argv = bun::argv().as_slice();
+        let Some(&argv0) = argv.first() else { return };
+        let mut out: Vec<&'static ZStr> = Vec::with_capacity(argv.len());
+        out.push(argv0);
+        let mut i = 1;
+        while i < argv.len() {
+            let a = argv[i];
+            let ab = a.as_bytes();
+            if ab.first() != Some(&b'-') || ab == b"--" {
+                break;
+            }
+            let consumes_next = !strings::contains_char(ab, b'=')
+                && argv
+                    .get(i + 1)
+                    .is_some_and(|n| n.as_bytes().first() != Some(&b'-'));
+            if ab == b"-p" || ab == b"--package" || ab.starts_with(b"--package=") {
+                out.push(a);
+                if consumes_next {
+                    out.push(argv[i + 1]);
+                }
+                i += if consumes_next { 2 } else { 1 };
+                continue;
+            }
+            if ab == b"-c"
+                || ab == b"--call"
+                || ab.starts_with(b"--call=")
+                || translate_npm_value_flag(ab, &[], &[]).is_some()
+            {
+                i += if consumes_next { 2 } else { 1 };
+                continue;
+            }
+            if ab != b"--silent" && is_npm_bool_flag(ab) {
+                i += 1;
+                continue;
+            }
+            out.push(a);
+            i += 1;
+        }
+        if out.len() == i {
+            return;
+        }
+        out.extend_from_slice(&argv[i..]);
+
+        static SLOT: std::sync::OnceLock<Box<[&'static ZStr]>> = std::sync::OnceLock::new();
+        let stored = SLOT.get_or_init(move || out.into_boxed_slice());
+        // SAFETY: per fn contract — single-threaded startup.
+        unsafe { bun::set_argv(stored) };
+    }
+
     /// Cheap argv prescan for the dominant `bun <path>` / `bun .` shape.
     ///
     /// `which()` classifies any first positional that isn't one of the ~40
@@ -936,8 +1508,38 @@ pub mod command {
             return Tag::RunAsNodeCommand;
         }
 
+        if is_npx(argv0) {
+            // SAFETY: single-threaded startup; rewrites the process-global
+            // argv view.
+            unsafe { translate_npx_argv() };
+            // SAFETY: single-threaded startup
+            IS_BUNX_EXE.store(true, core::sync::atomic::Ordering::Relaxed);
+            return Tag::BunxCommand;
+        }
+
+        let as_npm = is_npm(argv0);
+        let (argv, mut iter) = if as_npm {
+            bun_clap::streaming::WARN_ON_UNRECOGNIZED_FLAG
+                .store(false, core::sync::atomic::Ordering::Relaxed);
+            // SAFETY: single-threaded startup; rewrites the process-global argv
+            // view. Fall through to the normal subcommand matcher on the
+            // rewritten argv so `npm install` / `npm run` / etc. dispatch to
+            // the same Tag a direct `bun` invocation would.
+            unsafe { translate_npm_argv() };
+            let argv = bun::argv();
+            let mut iter = argv.iter();
+            let _ = iter.next();
+            (argv, iter)
+        } else {
+            (argv, iter)
+        };
+
         let Some(mut first_arg_name) = iter.next() else {
-            return Tag::AutoCommand;
+            return if as_npm {
+                Tag::HelpCommand
+            } else {
+                Tag::AutoCommand
+            };
         };
         while !first_arg_name.is_empty()
             && first_arg_name[0] == b'-'
@@ -1227,7 +1829,7 @@ pub mod command {
         {
             let argv = bun::argv();
             let argv0 = argv.get(0).map(bun_core::ZStr::as_bytes).unwrap_or(b"");
-            if !is_node(argv0) && !is_bun_x(argv0) {
+            if !is_node(argv0) && !is_bun_x(argv0) && !is_npx(argv0) {
                 if argv.len() == 2 {
                     match argv.get(1).map(bun_core::ZStr::as_bytes) {
                         Some(b"-v" | b"--version") => print_version_and_exit(),
@@ -1236,40 +1838,42 @@ pub mod command {
                     }
                 }
 
-                let empty_eval = match argv.len() {
-                    2 => matches!(
-                        argv.get(1).map(bun_core::ZStr::as_bytes),
-                        Some(b"-e=" | b"-p=" | b"--eval=" | b"--print=")
-                    ),
-                    3 => {
-                        argv.get(2).is_some_and(|a| a.as_bytes().is_empty())
-                            && matches!(
-                                argv.get(1).map(bun_core::ZStr::as_bytes),
-                                Some(b"-e" | b"-p" | b"--eval" | b"--print")
-                            )
+                if !is_npm(argv0) {
+                    let empty_eval = match argv.len() {
+                        2 => matches!(
+                            argv.get(1).map(bun_core::ZStr::as_bytes),
+                            Some(b"-e=" | b"-p=" | b"--eval=" | b"--print=")
+                        ),
+                        3 => {
+                            argv.get(2).is_some_and(|a| a.as_bytes().is_empty())
+                                && matches!(
+                                    argv.get(1).map(bun_core::ZStr::as_bytes),
+                                    Some(b"-e" | b"-p" | b"--eval" | b"--print")
+                                )
+                        }
+                        _ => false,
+                    };
+                    if empty_eval {
+                        Output::flush();
+                        return HelpCommand::exec();
                     }
-                    _ => false,
-                };
-                if empty_eval {
-                    Output::flush();
-                    return HelpCommand::exec();
-                }
 
-                // `bun <path>` / `bun .` — the dominant run shape. argv[1] is
-                // path-shaped (`looks_like_run_entrypoint`), which no
-                // subcommand keyword can be, so `which()` would unambiguously
-                // return `Tag::AutoCommand`; short-circuit straight to that
-                // arm so a plain `bun <file>` never decodes the subcommand
-                // classifier (`which()` + its `RootCommandMatcher` keyword
-                // table / rodata) or walks the per-tag dispatch `match` below.
-                // Dispatches to exactly the arm `which()` would have selected,
-                // so config loading / arg parsing / passthrough are unchanged.
-                if argv
-                    .get(1)
-                    .map(bun_core::ZStr::as_bytes)
-                    .is_some_and(looks_like_run_entrypoint)
-                {
-                    return exec_auto_or_run(Tag::AutoCommand, log);
+                    // `bun <path>` / `bun .` — the dominant run shape. argv[1] is
+                    // path-shaped (`looks_like_run_entrypoint`), which no
+                    // subcommand keyword can be, so `which()` would unambiguously
+                    // return `Tag::AutoCommand`; short-circuit straight to that
+                    // arm so a plain `bun <file>` never decodes the subcommand
+                    // classifier (`which()` + its `RootCommandMatcher` keyword
+                    // table / rodata) or walks the per-tag dispatch `match` below.
+                    // Dispatches to exactly the arm `which()` would have selected,
+                    // so config loading / arg parsing / passthrough are unchanged.
+                    if argv
+                        .get(1)
+                        .map(bun_core::ZStr::as_bytes)
+                        .is_some_and(looks_like_run_entrypoint)
+                    {
+                        return exec_auto_or_run(Tag::AutoCommand, log);
+                    }
                 }
             }
         }
@@ -1800,7 +2404,7 @@ pub mod command {
             while remainder_i < remainder.len() && positional_i < positionals.len() {
                 let slice = strings::trim(remainder[remainder_i].as_bytes(), b" \t\n");
                 if !slice.is_empty() {
-                    if !strings::has_prefix(slice, b"--") {
+                    if slice[0] != b'-' {
                         if positional_i == 1 {
                             template_name_start = remainder_i + 2;
                         }

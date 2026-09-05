@@ -111,7 +111,7 @@ pub struct Handlers {
     pub(crate) on_keylog: fn(*mut (), &[u8]),
 }
 
-use crate::jsc_hooks::timer_all_mut as timer_all;
+use crate::jsc_hooks::timer_all;
 
 /// Lazily create-and-cache a JS host-function callback in `shadow`, mirrored
 /// into the owning `JSTLSSocket` wrapper's visited `values:` slot (the GC
@@ -371,10 +371,8 @@ impl UpgradedDuplex {
                 vm.script_execution_status() != bun_jsc::ScriptExecutionStatus::Running
             });
 
-        self.event_loop_timer.with_mut(|t| {
-            t.state = EventLoopTimerState::FIRED;
-            t.heap = Default::default();
-        });
+        self.event_loop_timer
+            .with_mut(|t| t.state = EventLoopTimerState::FIRED);
 
         if has_been_cleared {
             return;
@@ -602,7 +600,7 @@ impl UpgradedDuplex {
 
     fn set_timeout_in_milliseconds(&self, ms: c_uint) {
         if self.event_loop_timer.get().state == EventLoopTimerState::ACTIVE {
-            timer_all().remove(self.event_loop_timer.as_ptr());
+            timer_all().remove(crate::timer::TimerRef::new(self, |d| &d.event_loop_timer));
         }
         self.current_timeout.set(ms);
 
@@ -622,11 +620,7 @@ impl UpgradedDuplex {
                 nsec: next.nsec,
             };
         });
-        timer_all().insert(
-            core::ptr::addr_of!(self.event_loop_timer)
-                .cast::<bun_event_loop::EventLoopTimer::EventLoopTimer>()
-                .cast_mut(),
-        );
+        timer_all().insert(crate::timer::TimerRef::new(self, |d| &d.event_loop_timer));
     }
 
     #[uws_callback(export = "UpgradedDuplex__set_timeout")]

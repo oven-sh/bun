@@ -201,20 +201,26 @@ mod sql_hooks {
         unsafe { core::ptr::addr_of_mut!((*state).sql_rare) }
     }
     unsafe fn timer_heap(_vm: *mut VirtualMachine) -> *mut c_void {
-        crate::jsc_hooks::timer_all().cast()
+        core::ptr::from_ref(crate::jsc_hooks::timer_all())
+            .cast_mut()
+            .cast()
     }
     unsafe fn timer_insert(heap: *mut c_void, timer: *mut EventLoopTimer) {
         // SAFETY: `heap` is `&runtime_state().timer` (live for the VM); `timer`
-        // is a live intrusive heap node owned by the caller. Route through
-        // `All::insert` (NOT the raw `.timers` field) so the fake-timers
-        // routing and the `(*timer).state` / `in_heap` bookkeeping happen.
-        unsafe { (*heap.cast::<crate::timer::All>()).insert(timer) };
+        // is the slot of a live `TimerOwner` (the SQL connection). Route
+        // through `All::insert` (NOT the raw `.timers` field) so the
+        // fake-timers routing and the `state` / `in_heap` bookkeeping happen.
+        unsafe {
+            (*heap.cast::<crate::timer::All>()).insert(crate::timer::TimerRef::from_raw(timer))
+        };
     }
     unsafe fn timer_remove(heap: *mut c_void, timer: *mut EventLoopTimer) {
         // SAFETY: `heap` is `&runtime_state().timer`; `timer` was previously
         // inserted via `timer_insert`. Route through `All::remove` so
         // `in_heap` is consulted and reset.
-        unsafe { (*heap.cast::<crate::timer::All>()).remove(timer) };
+        unsafe {
+            (*heap.cast::<crate::timer::All>()).remove(crate::timer::TimerRef::from_raw(timer))
+        };
     }
     unsafe fn ssl_ctx_cache(_vm: *mut VirtualMachine) -> *mut c_void {
         let state = crate::jsc_hooks::runtime_state();

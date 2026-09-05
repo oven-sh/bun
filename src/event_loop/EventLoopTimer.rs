@@ -5,6 +5,10 @@
 use Timespec as timespec;
 pub use bun_core::Timespec;
 
+use core::ptr::NonNull;
+
+use bun_ptr::JsCell;
+
 // Re-export so higher tiers see the *same* type they pass to
 // `bun_io::heap::Intrusive<EventLoopTimer, _>` (a zero-sized local stub
 // would make the real pairing-heap unusable — orphan rule blocks
@@ -18,26 +22,10 @@ const NS_PER_MS: i64 = bun_core::time::NS_PER_MS as i64;
 // intrusive heap node; the `match tag { … container_of … }` dispatch lives in
 // `bun_runtime::dispatch` because it names ~20 high-tier container types.
 //
-// LAYERING: rather than a runtime-registered fn-ptr (init-order
-// hazard), the bodies are declared `extern "Rust"` and defined `#[no_mangle]`
-// in `bun_runtime`; the linker resolves them. No `AtomicPtr`, no registration.
-//
 // PERF: `__bun_js_timer_epoch` sits on the
 // heap-compare path. Consider denormalizing `epoch` into `EventLoopTimer`
 // to drop the cross-crate call if profiling shows it matters.
 unsafe extern "Rust" {
-    /// Runtime owns the tag→variant `match`; `vm` is an erased
-    /// `*mut VirtualMachine`. Defined in `bun_runtime::dispatch`.
-    ///
-    /// SAFETY (genuine FFI precondition — NOT a `safe fn` candidate): impl
-    /// derefs `t`/`now`, recovers the tier-6 container via `container_of`
-    /// keyed on `(*t).tag`, and may free that container. Caller must pass a
-    /// live timer just popped from `All.timers` and must not touch `t` after.
-    fn __bun_fire_timer(
-        t: *mut EventLoopTimer,
-        now: *const timespec,
-        vm: *mut (),
-    ) -> crate::JsResult<()>;
     /// Returns the JS-timer epoch (TimerObjectInternals.flags.epoch) for
     /// TimeoutObject/ImmediateObject/AbortSignalTimeout, else `None`.
     /// Defined in `bun_runtime::dispatch`.
@@ -53,39 +41,53 @@ pub struct EventLoopTimer {
     /// The absolute time to fire this timer next.
     pub next: timespec,
     pub state: State,
-    pub tag: Tag,
-    /// Internal heap fields.
-    pub heap: IntrusiveField<EventLoopTimer>,
-    pub in_heap: InHeap,
+    /// Fixed at construction: the dispatch `container_of` is keyed on it.
+    tag: Tag,
+    /// Internal heap links; written only by [`TimerHeap`].
+    heap: IntrusiveField<EventLoopTimer>,
+    /// Which [`TimerHeap`] this slot is linked into; written only by [`TimerHeap`].
+    in_heap: InHeap,
 }
 
-// Duck-typed `.heap` field access for `bun_io::heap::Intrusive`. Implemented
-// here (the defining crate) so higher tiers can instantiate
-// `Intrusive<EventLoopTimer, _>` without hitting the orphan rule.
 impl bun_io::heap::HeapNode for EventLoopTimer {
     #[inline]
-    fn heap(&mut self) -> &mut IntrusiveField<Self> {
-        &mut self.heap
+    fn heap(&self) -> &IntrusiveField<Self> {
+        &self.heap
     }
 }
 
-#[derive(Copy, Clone, Eq, PartialEq, Default)]
+#[derive(Copy, Clone, Eq, PartialEq, Default, Debug)]
 pub enum InHeap {
     #[default]
     None,
     Regular,
     Fake,
+    Wtf,
 }
 
 impl EventLoopTimer {
     pub fn init_paused(tag: Tag) -> Self {
+        Self::new(tag, State::PENDING, timespec::EPOCH)
+    }
+
+    pub fn new(tag: Tag, state: State, next: timespec) -> Self {
         Self {
-            next: timespec::EPOCH,
-            state: State::PENDING,
+            next,
+            state,
             tag,
             heap: IntrusiveField::default(),
             in_heap: InHeap::None,
         }
+    }
+
+    #[inline]
+    pub fn tag(&self) -> Tag {
+        self.tag
+    }
+
+    #[inline]
+    pub fn in_heap(&self) -> InHeap {
+        self.in_heap
     }
 
     pub fn less(_: (), a: &Self, b: &Self) -> bool {
@@ -144,41 +146,235 @@ impl EventLoopTimer {
     #[inline]
     pub(crate) fn js_timer_epoch(&self) -> Option<u32> {
         // SAFETY: `self` is a live timer; the extern impl reads `tag` and
-        // recovers the container via `offset_of`.
+        // recovers the container via `offset_of` (`TimerOwner` tag contract).
         unsafe { __bun_js_timer_epoch(self.tag, self) }
     }
+}
 
-    /// Fire the timer's callback.
-    ///
-    /// The `match self.tag { … container_of … }` body is
-    /// hot-dispatch over ~20 tier-6 variant types (Subprocess, DevServer,
-    /// PostgresSQLConnection, …). That match lives in
-    /// `bun_runtime::dispatch::__bun_fire_timer` (link-time extern). `vm` is
-    /// the erased `*mut VirtualMachine`.
-    ///
-    /// Deliberately takes `this: *mut Self`, NOT
-    /// `&mut self`. `__bun_fire_timer` dispatches via container_of into a
-    /// tier-6 timer object whose JS callback can re-enter and re-derive a
-    /// `&mut EventLoopTimer` to *this same node* (e.g. `clearTimeout()` →
-    /// `vm.timer.remove()` mutates `(*this).state`/`heap`). A live `&mut self`
-    /// across that FFI call lets LLVM `noalias` dead-store the re-entrant
-    /// write. Both callers (`drain_timers`, `get_timeout`) already hold a raw
-    /// `*mut EventLoopTimer` popped from the heap — pass it directly.
-    ///
-    /// The owner returns the exception its handler left pending as `Err` and
-    /// never reports it itself; the drain loop that called `fire` folds it.
-    ///
+// ─── TimerOwner / TimerRef / TimerHeap ──────────────────────────────────────
+
+/// A type that embeds one or more [`EventLoopTimer`] slots and lends them to a
+/// [`TimerHeap`]. Emitted by [`impl_timer_owner!`]; invoking that macro is the
+/// owner's assertion of this contract.
+///
+/// # Safety
+/// The implementor guarantees, for every slot of `Self` it constructs:
+/// - the slot is created with the [`Tag`] whose `bun_runtime::dispatch` arm
+///   names `Self` and that field, so the tag→container recovery is an
+///   identity (the tag cannot change after construction);
+/// - every teardown path of a `Self` unlinks its slots before the value is
+///   dropped, freed, or moved.
+///
+/// The remaining obligation is the holder's, as for [`bun_ptr::BackRef`]: a
+/// `Self` whose slot is linked must be kept alive and in place by whoever owns
+/// it (a JS wrapper's ref, a `Box` owned by C++, a field of the per-thread
+/// timer state, …) until it is unlinked.
+pub unsafe trait TimerOwner {}
+
+/// Handle to an [`EventLoopTimer`] slot embedded in a live [`TimerOwner`]; the
+/// currency of [`TimerHeap`] and `bun_runtime::timer::All`.
+///
+/// Like [`bun_ptr::BackRef`], validity is an obligation rather than a borrow:
+/// a `TimerRef` is usable while its slot is linked, for the duration of the
+/// owner's own call that passed it (arm/disarm), or of the dispatch that
+/// popped it (fire, until the owner's handler returns). Do not retain one past
+/// those points. It exposes the slot's deadline and state but neither its tag
+/// nor its heap links, which only construction and [`TimerHeap`] write.
+#[repr(transparent)]
+#[derive(Copy, Clone, PartialEq, Eq)]
+pub struct TimerRef(NonNull<JsCell<EventLoopTimer>>);
+
+impl TimerRef {
+    /// Re-derive `slot` (a field of `*owner`) from `owner`'s address so the
+    /// handle carries whole-owner provenance for the dispatch `container_of`.
+    #[inline]
+    fn project<O: ?Sized>(owner: *const O, owner_size: usize, slot: *const EventLoopTimer) -> Self {
+        let offset = (slot as usize).wrapping_sub(owner.cast::<u8>() as usize);
+        assert!(
+            offset.saturating_add(core::mem::size_of::<EventLoopTimer>()) <= owner_size,
+            "TimerRef: slot is not a field of its owner"
+        );
+        // `slot`'s own address (so already aligned), re-derived from `owner`.
+        #[allow(clippy::cast_ptr_alignment)]
+        let p = owner
+            .cast::<u8>()
+            .wrapping_add(offset)
+            .cast::<JsCell<EventLoopTimer>>()
+            .cast_mut();
+        // SAFETY: `p` addresses a field of `*owner` (checked above), so it is non-null.
+        TimerRef(unsafe { NonNull::new_unchecked(p) })
+    }
+
+    /// `owner`'s `slot` (which must be a field of `*owner`).
+    #[inline]
+    pub fn new<O: TimerOwner + ?Sized>(owner: &O, slot: fn(&O) -> &JsCell<EventLoopTimer>) -> Self {
+        let cell: *const JsCell<EventLoopTimer> = slot(owner);
+        Self::project(owner, core::mem::size_of_val(owner), cell.cast())
+    }
+
+    /// [`new`](Self::new) for owners that hold the slot as a bare field.
+    #[inline]
+    pub fn from_mut<O: TimerOwner + ?Sized>(
+        owner: &mut O,
+        slot: fn(&mut O) -> &mut EventLoopTimer,
+    ) -> Self {
+        let owner_size = core::mem::size_of_val(owner);
+        let cell: *const EventLoopTimer = slot(owner);
+        Self::project(core::ptr::from_mut(owner), owner_size, cell)
+    }
+
     /// # Safety
-    /// `this` is a live timer just popped from `All.timers`; `now` is the
-    /// snapshot taken by `All::next`; `vm` is the per-thread VM. The handler
-    /// may free the container — caller must not touch `this` after.
-    pub unsafe fn fire(
-        this: *mut Self,
-        now: &timespec,
-        vm: *mut (), /* SAFETY: erased *mut VirtualMachine */
-    ) -> crate::JsResult<()> {
-        // SAFETY: per fn contract.
-        unsafe { __bun_fire_timer(this, now, vm) }
+    /// `slot` is an [`EventLoopTimer`] slot of a live [`TimerOwner`] (or is
+    /// otherwise pinned, unlinked before it is freed, and tagged for its
+    /// container), with provenance over that container.
+    #[inline]
+    pub unsafe fn from_raw(slot: *mut EventLoopTimer) -> Self {
+        debug_assert!(!slot.is_null());
+        // SAFETY: non-null per contract; `JsCell<T>` is `repr(transparent)` over `T`.
+        TimerRef(unsafe { NonNull::new_unchecked(slot.cast()) })
+    }
+
+    /// The slot's address, for the `container_of` dispatch and identity checks.
+    #[inline]
+    pub fn as_ptr(self) -> *mut EventLoopTimer {
+        self.0.as_ptr().cast()
+    }
+
+    #[inline]
+    fn cell(&self) -> &JsCell<EventLoopTimer> {
+        // SAFETY: `TimerOwner` / holder contract — the slot's owner is alive
+        // while this handle is in use (see the type docs for when that is).
+        unsafe { self.0.as_ref() }
+    }
+
+    #[inline]
+    pub fn tag(self) -> Tag {
+        self.cell().get().tag
+    }
+    #[inline]
+    pub fn state(self) -> State {
+        self.cell().get().state
+    }
+    #[inline]
+    pub fn set_state(self, state: State) {
+        self.cell().with_mut(|t| t.state = state);
+    }
+    #[inline]
+    pub fn next(self) -> timespec {
+        self.cell().get().next
+    }
+    #[inline]
+    pub fn set_next(self, next: timespec) {
+        self.cell().with_mut(|t| t.next = next);
+    }
+    #[inline]
+    pub fn in_heap(self) -> InHeap {
+        self.cell().get().in_heap
+    }
+}
+
+#[derive(Default)]
+pub struct TimerOrder;
+
+impl bun_io::heap::HeapContext<EventLoopTimer> for TimerOrder {
+    #[inline]
+    fn less(&self, a: &EventLoopTimer, b: &EventLoopTimer) -> bool {
+        EventLoopTimer::less((), a, b)
+    }
+}
+
+/// Pairing heap of [`EventLoopTimer`] slots, ordered by deadline (then JS
+/// epoch). Holds no ownership: each linked slot is kept alive by its
+/// [`TimerOwner`]. The heap is the only writer of a slot's links and
+/// [`InHeap`] membership, so `insert`/`remove` can refuse a slot that is
+/// already linked / not linked here instead of corrupting the structure.
+pub struct TimerHeap {
+    heap: bun_io::heap::Intrusive<EventLoopTimer, TimerOrder>,
+    kind: InHeap,
+}
+
+impl TimerHeap {
+    pub fn new(kind: InHeap) -> Self {
+        debug_assert!(kind != InHeap::None);
+        Self {
+            heap: Default::default(),
+            kind,
+        }
+    }
+
+    #[inline]
+    fn wrap(t: *mut EventLoopTimer) -> Option<TimerRef> {
+        // SAFETY: every node in the heap came from a `TimerRef` (`insert`).
+        (!t.is_null()).then(|| unsafe { TimerRef::from_raw(t) })
+    }
+
+    #[inline]
+    pub fn peek(&self) -> Option<TimerRef> {
+        Self::wrap(self.heap.peek())
+    }
+
+    /// Link `t`. A slot that is already in a heap is left where it is.
+    #[inline]
+    pub fn insert(&self, t: TimerRef) {
+        let cell = t.cell();
+        if cell.get().in_heap != InHeap::None {
+            debug_assert!(
+                false,
+                "TimerHeap::insert: slot already in {:?}",
+                cell.get().in_heap
+            );
+            return;
+        }
+        cell.with_mut(|t| t.in_heap = self.kind);
+        // SAFETY: unlinked (checked above); the `TimerOwner` / holder contract
+        // keeps the slot live and in place until it is unlinked again.
+        unsafe { self.heap.insert(t.as_ptr()) }
+    }
+
+    /// Unlink `t`. A slot that is not in this heap is left alone.
+    #[inline]
+    pub fn remove(&self, t: TimerRef) {
+        let cell = t.cell();
+        if cell.get().in_heap != self.kind {
+            debug_assert!(
+                false,
+                "TimerHeap::remove: slot is in {:?}",
+                cell.get().in_heap
+            );
+            return;
+        }
+        // SAFETY: `t` is live (`TimerOwner` contract) and linked into this heap
+        // (only `insert` sets `in_heap` to `self.kind`).
+        unsafe { self.heap.remove(t.as_ptr()) };
+        cell.with_mut(|t| t.in_heap = InHeap::None);
+    }
+
+    #[inline]
+    pub fn delete_min(&self) -> Option<TimerRef> {
+        let t = Self::wrap(self.heap.delete_min())?;
+        t.cell().with_mut(|t| t.in_heap = InHeap::None);
+        Some(t)
+    }
+
+    /// O(N).
+    #[inline]
+    pub fn find_max(&self) -> Option<TimerRef> {
+        Self::wrap(self.heap.find_max())
+    }
+
+    /// O(N).
+    #[inline]
+    pub fn count(&self) -> usize {
+        self.heap.count()
+    }
+
+    /// Every linked slot, in no particular order.
+    pub fn to_vec(&self) -> Vec<TimerRef> {
+        let mut out = Vec::new();
+        // SAFETY: as `wrap` — visited nodes are linked, hence from a `TimerRef`.
+        self.heap
+            .for_each(|t| out.push(unsafe { TimerRef::from_raw(t) }));
+        out
     }
 }
 
@@ -228,10 +424,12 @@ impl Tag {
 
 /// Stamp out one `unsafe fn $method(*const EventLoopTimer) -> *mut Self` per
 /// `(method => field)` pair: each recovers the embedding owner from a pointer
-/// to the named intrusive [`EventLoopTimer`] slot (typed container_of).
+/// to the named intrusive [`EventLoopTimer`] slot (typed container_of), and
+/// marks `$Owner` as a [`TimerOwner`] — **invoking this macro asserts that
+/// trait's contract** for the named slots.
 ///
 /// The accessor layer exists only as a cross-crate visibility shim: the
-/// `__bun_fire_timer` tag-dispatch in `bun_runtime` cannot name private timer
+/// `fire_timer` tag-dispatch in `bun_runtime` cannot name private timer
 /// fields on owners defined elsewhere, so each owner exports a named thunk per
 /// slot. The input is `*const` (so `*mut` / `&mut` / `&` all coerce at the
 /// call site); the field may be a bare `EventLoopTimer` or any
@@ -247,6 +445,8 @@ impl Tag {
 #[macro_export]
 macro_rules! impl_timer_owner {
     ($Owner:ty; $($method:ident => $field:ident),+ $(,)?) => {
+        // SAFETY: asserted by the invoker — see the macro docs.
+        unsafe impl $crate::EventLoopTimer::TimerOwner for $Owner {}
         impl $Owner {
             $(
                 /// Recover `*mut Self` from a pointer to its intrusive

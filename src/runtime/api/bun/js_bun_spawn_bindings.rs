@@ -1857,7 +1857,7 @@ fn spawn_maybe_sync(
                 // comparable with `now`.
                 if abort_signal_timeout.event_loop_timer.state
                     == crate::timer::EventLoopTimerState::ACTIVE
-                    && abort_signal_timeout.event_loop_timer.in_heap
+                    && abort_signal_timeout.event_loop_timer.in_heap()
                         == crate::timer::InHeap::Regular
                 {
                     let next = &abort_signal_timeout.event_loop_timer.next;

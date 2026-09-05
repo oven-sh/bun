@@ -1,30 +1,20 @@
 use bun_jsc::JSValue;
-use bun_jsc::virtual_machine::VirtualMachine;
 
-// Export functions for C++
-#[unsafe(no_mangle)]
-extern "C" fn Timer_enableEventLoopDelayMonitoring(
-    vm: *mut VirtualMachine,
+use crate::jsc_hooks::timer_all;
+
+// HOST_EXPORT(Timer_enableEventLoopDelayMonitoring, c)
+pub fn enable_event_loop_delay_monitoring(
+    vm: &bun_jsc::virtual_machine::VirtualMachine,
     histogram: JSValue,
     resolution_ms: i32,
 ) {
-    // SAFETY: vm is a valid non-null pointer passed from C++.
-    let vm = unsafe { &mut *vm };
-    // `vm.timer` is `()` (jsc/runtime crate cycle) — recover `All` via runtime_state().
-    let state = crate::jsc_hooks::runtime_state();
-    // SAFETY: `runtime_state()` is non-null after `bun_runtime::init()`; single
-    // JS thread, raw-ptr-per-field re-entry pattern (jsc_hooks.rs).
-    unsafe {
-        (*state)
-            .timer
-            .event_loop_delay
-            .enable(vm, histogram, resolution_ms)
-    };
+    let all = timer_all();
+    all.event_loop_delay
+        .enable(vm, all, histogram, resolution_ms);
 }
 
-#[unsafe(no_mangle)]
-extern "C" fn Timer_disableEventLoopDelayMonitoring() {
-    let state = crate::jsc_hooks::runtime_state();
-    // SAFETY: see `Timer_enableEventLoopDelayMonitoring`.
-    unsafe { (*state).timer.event_loop_delay.disable() };
+// HOST_EXPORT(Timer_disableEventLoopDelayMonitoring, c)
+pub fn disable_event_loop_delay_monitoring() {
+    let all = timer_all();
+    all.event_loop_delay.disable(all);
 }

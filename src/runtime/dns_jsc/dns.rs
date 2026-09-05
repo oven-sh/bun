@@ -4023,18 +4023,14 @@ impl Resolver {
             sec: now.sec,
             nsec: now.nsec,
         };
-        let uws_loop = vm.uws_loop();
+        let _ = vm;
         // R-2: `&self` carries no `noalias`, and every field touched below is
         // UnsafeCell-backed, so the re-entrant `ares_process_fd` callbacks
         // (`request_completed`, `drain_pending_*`) may freely re-derive
         // `&Resolver` from their stored ctx without aliasing UB.
         let deref_this = self.as_ctx_ptr();
         scopeguard::defer! {
-            // jsc/runtime crate cycle: low-tier `VirtualMachine.timer` is `()`;
-            // resolve via the high-tier `RuntimeState` hook.
-            let state = crate::jsc_hooks::runtime_state();
-            // SAFETY: `state` is the boxed per-thread `RuntimeState`; single-threaded JS heap.
-            unsafe { (*state).timer.increment_timer_ref(-1, uws_loop) };
+            crate::jsc_hooks::timer_all().increment_timer_ref(-1);
             // SAFETY: `deref_this` is the heap allocation from `init`; releases
             // `add_timer`'s ref. May be the final release; nothing touches
             // `*self` after this point.
@@ -4126,18 +4122,9 @@ impl Resolver {
                 nsec: next.nsec,
             }
         });
-        let uws_loop = self.vm().uws_loop();
-        let state = crate::jsc_hooks::runtime_state();
-        // SAFETY: `state` is the boxed per-thread `RuntimeState`; single-threaded JS heap.
-        unsafe {
-            (*state).timer.increment_timer_ref(1, uws_loop);
-            // whole-struct provenance: `from_field_ptr!` recovers the container on fire
-            (*state).timer.insert(
-                core::ptr::addr_of!(self.event_loop_timer)
-                    .cast::<bun_event_loop::EventLoopTimer::EventLoopTimer>()
-                    .cast_mut(),
-            );
-        }
+        let timers = crate::jsc_hooks::timer_all();
+        timers.increment_timer_ref(1);
+        timers.insert(crate::timer::TimerRef::new(self, |r| &r.event_loop_timer));
         true
     }
 
@@ -4155,16 +4142,13 @@ impl Resolver {
             // global-resolver permanent pin), so this
             // `deref` cannot reach 0 while `&self` is live.
             unsafe {
-                let uws_loop = (*this).vm().uws_loop();
-                let state = crate::jsc_hooks::runtime_state();
-                (*state).timer.increment_timer_ref(-1, uws_loop);
+                crate::jsc_hooks::timer_all().increment_timer_ref(-1);
                 Self::deref(this);
             }
         }
 
-        let state = crate::jsc_hooks::runtime_state();
-        // SAFETY: `state` is the boxed per-thread `RuntimeState`; single-threaded JS heap.
-        unsafe { (*state).timer.remove(self.event_loop_timer.as_ptr()) };
+        crate::jsc_hooks::timer_all()
+            .remove(crate::timer::TimerRef::new(self, |r| &r.event_loop_timer));
     }
 
     // ───────────── pending-cache helpers ─────────────

@@ -1,0 +1,20 @@
+{
+  "_id": "lodash",
+  "name": "lodash",
+  "dist-tags": {
+    "latest": "4.17.21"
+  },
+  "versions": {
+    "4.17.21": {
+      "name": "lodash",
+      "version": "4.17.21",
+      "main": "lodash.js",
+      "_id": "lodash@4.17.21",
+      "dist": {
+        "integrity": "sha512-21u0msCqIEPdbHDit6fbe736AtN0Km+oy9ra6NW7xkK6yqGRXhzHoEUnVOXrbN1a/MhhuMSkUj0rRP945EWgPg==",
+        "shasum": "862b278f278e14bc645a3ea12176ee34896659ff",
+        "tarball": "http://localhost:4873/lodash/-/lodash-4.17.21.tgz"
+      }
+    }
+  }
+}

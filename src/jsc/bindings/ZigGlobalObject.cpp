@@ -2610,6 +2610,12 @@ void GlobalObject::finishCreation(VM& vm)
         { OBJECT_OFFSETOF(GlobalObject, m_ipcRestoreAdvancedBuffersFunction), [](const LazyProperty<JSGlobalObject, JSFunction>::Initializer& init) {
              init.set(JSC::JSFunction::create(init.vm, init.owner, WebCore::ipcRestoreAdvancedBuffersCodeGenerator(init.vm), init.owner));
          } },
+        { OBJECT_OFFSETOF(GlobalObject, m_bunTestMergeFixturesFunction), [](const LazyProperty<JSGlobalObject, JSFunction>::Initializer& init) {
+             init.set(JSC::JSFunction::create(init.vm, init.owner, WebCore::bunTestFixturesMergeTestFixturesCodeGenerator(init.vm), init.owner));
+         } },
+        { OBJECT_OFFSETOF(GlobalObject, m_bunTestWrapFixtureCallbackFunction), [](const LazyProperty<JSGlobalObject, JSFunction>::Initializer& init) {
+             init.set(JSC::JSFunction::create(init.vm, init.owner, WebCore::bunTestFixturesWrapTestFixtureCallbackCodeGenerator(init.vm), init.owner));
+         } },
     };
 
     Bun::addNodeModuleConstructorProperties(vm, this);

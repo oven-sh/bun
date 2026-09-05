@@ -183,6 +183,12 @@ impl Order {
             }
         }
 
+        // fixture teardown runs after the afterEach hooks (the vitest/playwright order)
+        // SAFETY: caller-guaranteed live entry; the teardown Box it owns outlives the order.
+        if let Some(teardown) = unsafe { (*current.as_ptr()).fixture_teardown.as_deref_mut() } {
+            list.append(core::ptr::from_mut(teardown));
+        }
+
         // set skip_to values
         let mut index = list.first;
         let mut failure_skip_past: Option<*mut ExecutionEntry> = Some(current.as_ptr());

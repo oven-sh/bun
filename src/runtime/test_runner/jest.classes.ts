@@ -810,7 +810,7 @@ export default [
     forBind: true,
     finalize: true,
     JSType: "0b11101110",
-    values: ["each"],
+    values: ["each", "fixtures"],
     configurable: false,
     klass: {},
     proto: {
@@ -864,6 +864,10 @@ export default [
       },
       each: {
         fn: "fnEach",
+        length: 1,
+      },
+      extend: {
+        fn: "fnExtend",
         length: 1,
       },
     },

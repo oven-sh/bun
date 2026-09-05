@@ -97,6 +97,15 @@ pub(crate) struct ConfigureEnvOptions {
 pub(crate) struct RunCommand;
 
 impl RunCommand {
+    /// `npm run script -- args` drops the leading `--`.
+    #[inline]
+    pub(crate) fn passthrough_for_script(passthrough: &[Box<[u8]>]) -> &[Box<[u8]>] {
+        match passthrough.split_first() {
+            Some((first, rest)) if &**first == b"--" => rest,
+            _ => passthrough,
+        }
+    }
+
     /// `bun run --help` body.
     pub(crate) fn print_help(package_json: Option<&PackageJSON>) {
         // templates are passed as *string literals* so the
@@ -332,6 +341,8 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
             // duration of `init_and_run_from_source` — single-threaded mini loop,
             // no aliasing `&mut` exists across this call.
             let mini = unsafe { &mut *mini };
+            // The interpreter expands `$N` from `ctx.passthrough`.
+            ctx.passthrough = passthrough.to_vec();
             let code = match crate::shell::Interpreter::init_and_run_from_source(
                 ctx,
                 mini,
@@ -2438,7 +2449,8 @@ impl RunCommand {
                         // borrowck reshape — `ctx.passthrough` is a
                         // field of `ctx` but `run_package_script_foreground`
                         // takes `&mut ContextData`; clone the slice up-front.
-                        let passthrough: Vec<Box<[u8]>> = ctx.passthrough.clone();
+                        let passthrough: Vec<Box<[u8]>> =
+                            Self::passthrough_for_script(&ctx.passthrough).to_vec();
                         let silent = ctx.debug.silent;
                         let use_system_shell = ctx.debug.use_system_shell;
 
@@ -2577,6 +2589,9 @@ impl RunCommand {
             }
         }
 
+        let script_passthrough: Vec<Box<[u8]>> =
+            Self::passthrough_for_script(&ctx.passthrough).to_vec();
+
         // ── Windows .bunx fast-path ──────────────────────────────────────────
         #[cfg(windows)]
         if bun_core::FeatureFlags::WINDOWS_BUNX_FAST_PATH {
@@ -2608,8 +2623,7 @@ impl RunCommand {
                 ptr += ext.len();
                 buf[ptr] = 0;
 
-                let passthrough: Vec<Box<[u8]>> = ctx.passthrough.clone();
-                BunXFastPath::try_launch(ctx, ptr, env_loader, &passthrough);
+                BunXFastPath::try_launch(ctx, ptr, env_loader, &script_passthrough);
             }
         }
 
@@ -2639,14 +2653,13 @@ impl RunCommand {
                 {
                     let out = destination.as_bytes();
                     let stored = fs.dirname_store.append_slice(out)?;
-                    let passthrough: Vec<Box<[u8]>> = ctx.passthrough.clone();
                     Self::run_binary_without_bunx_path(
                         ctx,
                         stored,
                         destination,
                         top_level_dir,
                         env_loader,
-                        &passthrough,
+                        &script_passthrough,
                         Some(target_name),
                     )?;
                 }
@@ -3973,11 +3986,7 @@ impl BunXFastPath {
             i += 1;
             i += Self::append_windows_argument(&mut command_line[i..], arg);
         }
-        // `direct_launch_callback` →
-        // `Run::boot` reads `vm.argv = ctx.passthrough`, so the assignment must
-        // happen before the shim may call back. Current callers pass a clone of
-        // `ctx.passthrough` so this is a write-back of identical data, but the
-        // contract is that *this* `passthrough` wins.
+        // `direct_launch_callback` → `Run::boot` reads `vm.argv = ctx.passthrough`.
         ctx.passthrough = passthrough.to_vec();
 
         let env_block = env.map.write_windows_env_block();

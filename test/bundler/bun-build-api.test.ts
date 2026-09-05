@@ -1,6 +1,6 @@
 import assert from "assert";
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdirSync, readFileSync, symlinkSync, writeFileSync } from "fs";
+import { existsSync, mkdirSync, readFileSync, symlinkSync, writeFileSync } from "fs";
 import {
   bunEnv,
   bunExe,
@@ -367,6 +367,40 @@ describe("Bun.build", () => {
         sourcemap: "invalid",
       } as any),
     ).toThrow();
+  });
+
+  test.concurrent("publicPath with an interior NUL byte is rejected before anything is written", async () => {
+    using dir = tempDir("bun-build-api-public-path-nul", {
+      "index.js": `import a from "./asset.png"; console.log(a);`,
+      "asset.png": "PNG",
+    });
+    const outdir = join(String(dir), "out");
+    let thrown: any;
+    try {
+      Bun.build({
+        entrypoints: [join(String(dir), "index.js")],
+        outdir,
+        publicPath: "/p\0q/",
+      });
+    } catch (e) {
+      thrown = e;
+    }
+    expect(thrown).toBeInstanceOf(TypeError);
+    expect({ code: thrown.code, message: thrown.message }).toEqual({
+      code: "ERR_INVALID_ARG_VALUE",
+      message: `The property 'publicPath' must be a string without null bytes. Received "/p\\u0000q/"`,
+    });
+    expect(existsSync(outdir)).toBe(false);
+
+    // The same prefix without the NUL is accepted and lands in the artifact.
+    const result = await Bun.build({
+      entrypoints: [join(String(dir), "index.js")],
+      outdir,
+      publicPath: "/pq/",
+    });
+    expect(result.success).toBe(true);
+    const js = result.outputs.find(o => o.path.endsWith(".js"))!;
+    expect(await js.text()).toContain(`"/pq/asset-`);
   });
 
   test("returns errors properly", async () => {

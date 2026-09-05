@@ -1035,6 +1035,19 @@ pub mod js_bundler {
             }
 
             if let Some(slice) = config.get_optional_slice(global_this, b"publicPath")? {
+                // Prefixes every emitted chunk and asset URL verbatim; a NUL
+                // would land in the artifacts as a raw byte.
+                if bun_core::strings::index_of_char(slice.slice(), 0).is_some() {
+                    return Err(global_this
+                        .err(
+                            jsc::ErrorCode::INVALID_ARG_VALUE,
+                            format_args!(
+                                "The property 'publicPath' must be a string without null bytes. Received {}",
+                                bun_core::fmt::quote(slice.slice())
+                            ),
+                        )
+                        .throw());
+                }
                 this.public_path.append_slice_exact(slice.slice())?;
                 drop(slice);
             }

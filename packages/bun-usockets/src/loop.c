@@ -474,7 +474,7 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
                 struct us_loop_t *loop = accept_group->loop;
                 struct bsd_addr_t addr;
 
-                LIBUS_SOCKET_DESCRIPTOR client_fd = bsd_accept_socket(us_poll_fd(p), &addr);
+                LIBUS_SOCKET_DESCRIPTOR client_fd = bsd_accept_socket(us_poll_fd(p), &addr, listen_socket->shared);
                 if (client_fd == LIBUS_SOCKET_ERROR) {
                     /* Todo: start timer here */
 
@@ -540,7 +540,7 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
                             break;
                         }
 
-                    } while ((client_fd = bsd_accept_socket(us_poll_fd(p), &addr)) != LIBUS_SOCKET_ERROR);
+                    } while ((client_fd = bsd_accept_socket(us_poll_fd(p), &addr, listen_socket->shared)) != LIBUS_SOCKET_ERROR);
                 }
             }
         break;

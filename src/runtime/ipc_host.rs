@@ -176,10 +176,10 @@ pub(crate) fn do_send(
             match unsafe { (*listener).listener.get() } {
                 crate::socket::listener::ListenerType::Uws(socket_uws) => {
                     // may need to handle ssl case
-                    // SAFETY: `socket_uws` is a live non-null `*mut ListenSocket`
-                    // owned by uSockets; `get_socket` only reinterpret-casts to
-                    // `&mut us_socket_t` and `get_fd` is a read-only FFI call.
-                    let fd = unsafe { &mut *socket_uws }.get_socket().get_fd();
+                    // SAFETY: `socket_uws` is a live non-null `*mut ListenSocket` owned by uSockets.
+                    let listen_socket = unsafe { &mut *socket_uws };
+                    listen_socket.set_shared();
+                    let fd = listen_socket.get_socket().get_fd();
                     #[cfg(not(windows))]
                     match Handle::init_dup(fd, handle, false) {
                         Ok(h) => zig_handle = Some(h),

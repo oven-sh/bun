@@ -1,6 +1,6 @@
 #[cfg(any(target_os = "linux", target_os = "android"))]
 use bun_collections::VecExt;
-use bun_jsc::{self as jsc, JSGlobalObject, JSValue, JsResult};
+use bun_jsc::{self as jsc, JSGlobalObject, JSValue, JsResult, SysErrorJsc as _};
 #[cfg(windows)]
 use bun_sys::windows::libuv as uv;
 use bun_sys::{self as sys, Fd, FdExt as _};
@@ -8,6 +8,7 @@ use bun_sys::{self as sys, Fd, FdExt as _};
 // `bun.jsc.WebCore` lives in this crate (not `bun_jsc`); alias so the body can
 // say `webcore::ReadableStream` / `webcore::body::Value`.
 use crate::webcore;
+use crate::webcore::blob::BlobExt as _;
 use crate::webcore::blob::store::Data as StoreData;
 use crate::webcore::node_types::{PathLike, PathOrFileDescriptor};
 
@@ -580,6 +581,17 @@ impl Stdio {
     ) -> JsResult<()> {
         let fd = FdStdio::from_int(i).map(FdStdio::fd);
 
+        // A sliced file goes to stdin as bytes. At other slots the child may write to it.
+        let view = if i == 0 { file_view(&blob) } else { None };
+        let blob = match view {
+            Some(view) => {
+                let store = blob.store().expect("file_view found a store");
+                let file = store.data.as_file();
+                webcore::blob::Any::from_owned_slice(read_file_view(global, file, view)?)
+            }
+            None => blob,
+        };
+
         if blob.needs_to_read_file() {
             if let Some(store) = blob.store() {
                 if let StoreData::File(ref file) = store.data {
@@ -649,6 +661,94 @@ impl Stdio {
         *self = Stdio::Blob(blob);
         Ok(())
     }
+}
+
+/// The bytes of a sliced regular file that stdin gets.
+#[derive(Clone, Copy)]
+struct FileView {
+    offset: u64,
+    /// `MAX_SIZE` for a window that runs to EOF.
+    len: u64,
+    /// Whether `len` is clamped to the file's stat'd length.
+    clamped: bool,
+}
+
+/// The window of a sliced regular file, or `None` to pass the file to the child.
+fn file_view(blob: &webcore::blob::Any) -> Option<FileView> {
+    let webcore::blob::Any::Blob(blob) = blob else {
+        return None;
+    };
+    let (window_offset, window_len) = blob.file_window()?;
+    // Stats the file (once per store) and clamps the window to its length.
+    let (offset, size) = blob.resolved_size();
+    let file = blob.store()?.data.as_file();
+    // A pipe is passed on: a read here could block the JS thread.
+    if file.seekable != Some(true) {
+        return None;
+    }
+    // A regular file that reports no size (procfs) is read until the window or the file ends.
+    if file.max_size == 0 {
+        return Some(FileView {
+            offset: window_offset,
+            len: window_len,
+            clamped: false,
+        });
+    }
+    if offset == 0 && size == file.max_size {
+        return None;
+    }
+    Some(FileView {
+        offset,
+        len: size,
+        clamped: true,
+    })
+}
+
+fn read_file_view(
+    global: &JSGlobalObject,
+    file: &webcore::blob::store::File,
+    view: FileView,
+) -> JsResult<Vec<u8>> {
+    let opened;
+    let source: &sys::File = match &file.pathlike {
+        PathOrFileDescriptor::Fd(fd) => sys::File::borrow(fd),
+        PathOrFileDescriptor::Path(path) => {
+            opened = match sys::File::openat(
+                Fd::cwd(),
+                path.slice(),
+                sys::O::RDONLY | sys::O::CLOEXEC,
+                0,
+            ) {
+                Ok(file) => file,
+                Err(err) => return Err(err.with_path(path.slice()).throw(global)),
+            };
+            &opened
+        }
+    };
+    // A clamped window is one read. Any other window is read in chunks until it or the file ends.
+    let chunk = if view.clamped { view.len } else { 64 * 1024 };
+    let mut bytes: Vec<u8> = Vec::new();
+    loop {
+        let done = bytes.len();
+        let want = usize::try_from(chunk.min(view.len - done as u64)).expect("int cast");
+        if want == 0 {
+            break;
+        }
+        if bytes.try_reserve(want).is_err() {
+            return Err(sys::Error::from_code(sys::E::ENOMEM, sys::Tag::read).throw(global));
+        }
+        bytes.resize(done + want, 0);
+        // pread leaves a user-supplied fd's position alone.
+        let read = match source.pread_all(&mut bytes[done..], view.offset + done as u64) {
+            Ok(read) => read,
+            Err(err) => return Err(err.throw(global)),
+        };
+        bytes.truncate(done + read);
+        if read < want {
+            break;
+        }
+    }
+    Ok(bytes)
 }
 
 impl Stdio {

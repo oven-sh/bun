@@ -263,6 +263,7 @@ pub trait BlobExt {
     fn get_size(&self, _: &JSGlobalObject) -> JSValue;
     fn resolve_size(&self);
     fn resolved_size(&self) -> (SizeType, SizeType);
+    fn file_window(&self) -> Option<(SizeType, SizeType)>;
     fn constructor(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<*mut Blob>
     where
         Self: Sized;
@@ -764,10 +765,12 @@ impl BlobExt for Blob {
                 writer.write_int_le::<u32>(stored_name.len() as u32)?;
                 writer.write_all(stored_name)?;
             } else {
-                // Version 4: a file-backed slice's window end. Written before
-                // resolve_size() so an unresolved blob stays MAX_SIZE (unknown)
-                // on the wire and the receiver stats it locally, like v3.
-                writer.write_int_le::<u64>(self.size.get())?;
+                // Version 4: a window's end. MAX_SIZE (unknown) makes the receiver stat the file.
+                writer.write_int_le::<u64>(if self.size_is_explicit.get() {
+                    self.size.get()
+                } else {
+                    MAX_SIZE
+                })?;
                 self.resolve_size();
                 store.serialize(writer)?;
             }
@@ -1894,6 +1897,8 @@ impl BlobExt for Blob {
         let blob = self.dupe();
         blob.offset.set(offset);
         blob.size.set(len);
+        // `slice()` and `slice(0)` of a file whose size is unknown cover the whole file.
+        blob.size_is_explicit.set(len != MAX_SIZE);
 
         let content_type_was_allocated = content_type.is_owned() && !content_type.is_empty();
         // infer the content type if it was not specified
@@ -2170,15 +2175,15 @@ impl BlobExt for Blob {
                 return JSValue::js_number(f64::NAN);
             }
             self.resolve_size();
-            if self.size.get() == MAX_SIZE && self.store.get().is_some() {
-                return JSValue::js_number(f64::INFINITY);
-            } else if self.size.get() == 0 && self.store.get().is_some() {
-                if let store::Data::File(file) =
-                    &self.store().expect("infallible: store present").data
-                {
-                    if !file.seekable.unwrap_or(true) && file.max_size == MAX_SIZE {
-                        return JSValue::js_number(f64::INFINITY);
-                    }
+            if self.size.get() == MAX_SIZE {
+                if let Some(store) = self.store.get() {
+                    // A file that could not be stat'd reads as empty.
+                    return match &store.data {
+                        store::Data::File(file) if file.seekable.is_none() => {
+                            JSValue::js_number(0.0)
+                        }
+                        _ => JSValue::js_number(f64::INFINITY),
+                    };
                 }
             }
         }
@@ -2222,16 +2227,8 @@ impl BlobExt for Blob {
                     self.offset.set(store_size.min(offset));
                     let available = store_size - self.offset.get();
                     self.size.set(window_size(self.size.get(), available));
-                    return;
                 }
-
-                // For non-seekable files (pipes, FIFOs), the size is genuinely
-                // unknown — leave it as max_size so that stream readers don't
-                // treat it as an empty file.
-                if file.seekable == Some(false) {
-                    return;
-                }
-                self.size.set(0);
+                // A pipe has no size. A failed stat is tried again on the next call.
             }
             store::DataTag::S3 => self.size.set(0),
         }
@@ -2271,13 +2268,30 @@ impl BlobExt for Blob {
                     let available = store_size - offset;
                     return (offset, window_size(self.size.get(), available));
                 }
-                if file.seekable == Some(false) {
-                    return (self.offset.get(), self.size.get());
-                }
-                (self.offset.get(), 0)
+                (self.offset.get(), self.size.get())
             }
             store::DataTag::S3 => (self.offset.get(), 0),
         }
+    }
+
+    /// The `(offset, size)` that `slice()` set on a file Blob, or `None` for the whole file.
+    fn file_window(&self) -> Option<(SizeType, SizeType)> {
+        let store = self.store.get().as_ref()?;
+        if !matches!(store.data, store::Data::File(_)) {
+            return None;
+        }
+        let offset = self.offset.get();
+        let size = self.size.get();
+        // An unknown size is `MAX_SIZE`, and `slice(start)` of it ends there.
+        let size = if self.size_is_explicit.get() && offset.saturating_add(size) < MAX_SIZE {
+            size
+        } else {
+            MAX_SIZE
+        };
+        if offset == 0 && size == MAX_SIZE {
+            return None;
+        }
+        Some((offset, size))
     }
     fn constructor(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<*mut Blob> {
         let blob: Blob;
@@ -3190,6 +3204,7 @@ impl BlobExt for Blob {
                                     ),
                                     charset: Cell::new(blob.charset.get()),
                                     is_jsdom_file: Cell::new(blob.is_jsdom_file.get()),
+                                    size_is_explicit: Cell::new(blob.size_is_explicit.get()),
                                     ref_count: bun_ptr::RawRefCount::init(0), // setNotHeapAllocated
                                     global_this: Cell::new(blob.global_this.get()),
                                     last_modified: Cell::new(blob.last_modified.get()),
@@ -4028,6 +4043,7 @@ fn on_structured_clone_deserialize<B: AsRef<[u8]>>(
         // resolve_size() clamps this to the actual file size on first use.
         if size != MAX_SIZE {
             blob.size.set(size as SizeType);
+            blob.size_is_explicit.set(true);
         }
     }
     if let Some(store) = blob.store.get() {
@@ -4503,6 +4519,10 @@ pub(crate) fn write_file_with_source_destination(
     }
     // If this is file <> file, we can just copy the file
     else if destination_type == store::DataTag::File && source_type == store::DataTag::File {
+        // The copy reads only the source's window.
+        let (source_offset, source_size) = source_blob.file_window().unwrap_or((0, MAX_SIZE));
+        // Only a window that `slice()` set on the destination caps the copy.
+        let destination_window = destination_blob.file_window().unwrap_or((0, MAX_SIZE));
         #[cfg(windows)]
         {
             return Ok(copy_file::CopyFileWindows::init(
@@ -4510,7 +4530,9 @@ pub(crate) fn write_file_with_source_destination(
                 source_store,
                 ctx.bun_vm().event_loop_shared(),
                 options.mkdirp_if_not_exists.unwrap_or(true),
-                destination_blob.size.get(),
+                destination_window.1,
+                source_offset,
+                source_size,
                 options.mode,
             ));
         }
@@ -4519,8 +4541,10 @@ pub(crate) fn write_file_with_source_destination(
             return Ok(copy_file::CopyFile::create(
                 destination_store,
                 source_store,
-                destination_blob.offset.get(),
-                destination_blob.size.get(),
+                destination_window.0,
+                destination_window.1,
+                source_offset,
+                source_size,
                 ctx,
                 options.mkdirp_if_not_exists.unwrap_or(true),
                 options.mode,

@@ -17,7 +17,8 @@ import {
   tmpdirSync,
   withoutAggressiveGC,
 } from "harness";
-import { closeSync, fstatSync, openSync, readFileSync, readSync, rmSync, writeFileSync } from "node:fs";
+import { randomBytes } from "node:crypto";
+import { appendFileSync, closeSync, fstatSync, openSync, readFileSync, readSync, rmSync, writeFileSync } from "node:fs";
 import path, { join } from "path";
 
 let tmp: string;
@@ -1252,6 +1253,202 @@ describe("close handling", () => {
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
       expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({ stdout: "PASS", stderr: "", exitCode: 0 });
     });
+  });
+});
+
+// A sliced Bun.file() is a view (`offset`, `size`) over a store that names the
+// whole file. The child got the store's path or fd, so it read the whole file.
+describe("stdin: a sliced Bun.file() sends only the slice", () => {
+  const content = "abcdefghijklmnopqrstuvwxyz";
+  const echoStdin = "process.stdin.pipe(process.stdout)";
+
+  async function sendToChild(stdin: Blob | Response | ReadableStream) {
+    await using proc = spawn({ cmd: [bunExe(), "-e", echoStdin], env: bunEnv, stdin, stdout: "pipe", stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  }
+
+  function sendToChildSync(stdin: Blob) {
+    const { stdout, stderr, exitCode } = spawnSync({
+      cmd: [bunExe(), "-e", echoStdin],
+      env: bunEnv,
+      stdin,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    return { stdout: stdout.toString(), stderr: stderr.toString(), exitCode };
+  }
+
+  const windows: [name: string, start: number, end: number | undefined][] = [
+    ["a window in the middle", 10, 20],
+    ["a window at the start", 0, 5],
+    ["a window to EOF", 3, undefined],
+    ["a window that ends past EOF", 20, 100],
+    ["a window at the start that ends past EOF", 0, 100],
+    ["a window of the whole file", 0, content.length],
+    ["a window from the start to EOF", 0, undefined],
+    ["an empty window", 5, 5],
+    ["a window past EOF", 30, 40],
+  ];
+
+  it.concurrent.each(windows)("%s", async (_, start, end) => {
+    using dir = tempDir("spawn-stdin-slice", { "src.txt": content });
+    const file = Bun.file(join(String(dir), "src.txt"));
+
+    expect(await sendToChild(file.slice(start, end))).toEqual({
+      stdout: content.slice(start, end),
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  // Not concurrent: spawnSync blocks the event loop of the concurrent tests.
+  it.each(windows)("spawnSync: %s", (_, start, end) => {
+    using dir = tempDir("spawn-stdin-slice-sync", { "src.txt": content });
+    const file = Bun.file(join(String(dir), "src.txt"));
+
+    expect(sendToChildSync(file.slice(start, end))).toEqual({
+      stdout: content.slice(start, end),
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  it.concurrent.each([
+    ["a Response over the slice", 10, 20, (slice: Blob) => new Response(slice)],
+    ["a Response over the slice's stream", 10, 20, (slice: Blob) => new Response(slice.stream())],
+    ["the slice's stream", 10, 20, (slice: Blob) => slice.stream()],
+    ["the stream of a window at the start", 0, 5, (slice: Blob) => slice.stream()],
+  ])("%s", async (_, start, end, wrap) => {
+    using dir = tempDir("spawn-stdin-slice-body", { "src.txt": content });
+    const slice = Bun.file(join(String(dir), "src.txt")).slice(start, end);
+
+    expect(await sendToChild(wrap(slice))).toEqual({ stdout: content.slice(start, end), stderr: "", exitCode: 0 });
+  });
+
+  it.concurrent("a window of a file descriptor, without moving its position", async () => {
+    using dir = tempDir("spawn-stdin-slice-fd", { "src.txt": content });
+    const fd = openSync(join(String(dir), "src.txt"), "r");
+    try {
+      const child = await sendToChild(Bun.file(fd).slice(10, 20));
+      const next = Buffer.alloc(5);
+      const n = readSync(fd, next, 0, 5, null);
+
+      expect({ child, next: next.toString("utf8", 0, n) }).toEqual({
+        child: { stdout: "klmnopqrst", stderr: "", exitCode: 0 },
+        next: "abcde",
+      });
+    } finally {
+      closeSync(fd);
+    }
+  });
+
+  it.concurrent("a window larger than a pipe buffer", async () => {
+    const payload = randomBytes(3 * 1024 * 1024);
+    using dir = tempDir("spawn-stdin-slice-large", { "src.bin": payload });
+    const start = 1024 * 1024 + 3;
+    const end = 2 * 1024 * 1024 + 11;
+
+    await using proc = spawn({
+      cmd: [bunExe(), "-e", echoStdin],
+      env: bunEnv,
+      stdin: Bun.file(join(String(dir), "src.bin")).slice(start, end),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.bytes(), proc.stderr.text(), proc.exited]);
+    expect({
+      size: stdout.byteLength,
+      identical: Buffer.from(stdout).equals(payload.subarray(start, end)),
+      stderr,
+      exitCode,
+    }).toEqual({ size: end - start, identical: true, stderr: "", exitCode: 0 });
+  });
+
+  // procfs files are regular files with st_size == 0, so only the window bounds the read.
+  it.concurrent.skipIf(!isLinux)("a window of a file that reports no size", async () => {
+    const version = readFileSync("/proc/version", "utf8");
+    const file = Bun.file("/proc/version");
+    const [middle, toEnd] = await Promise.all([sendToChild(file.slice(3, 8)), sendToChild(file.slice(3))]);
+
+    expect({ middle, toEnd }).toEqual({
+      middle: { stdout: version.slice(3, 8), stderr: "", exitCode: 0 },
+      toEnd: { stdout: version.slice(3), stderr: "", exitCode: 0 },
+    });
+  });
+
+  it("spawnSync: a window at the end of a large file", () => {
+    const payload = randomBytes(1024 * 1024);
+    using dir = tempDir("spawn-stdin-slice-tail", { "src.bin": payload });
+    const { stdout, stderr, exitCode } = spawnSync({
+      cmd: [bunExe(), "-e", echoStdin],
+      env: bunEnv,
+      stdin: Bun.file(join(String(dir), "src.bin")).slice(payload.length - 12, payload.length),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    expect({ stdout: stdout.toString("hex"), stderr: stderr.toString(), exitCode }).toEqual({
+      stdout: payload.subarray(payload.length - 12).toString("hex"),
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  // A missing file has no window to read. It goes to the child as an unsliced file does.
+  it("a window of a missing file", () => {
+    using dir = tempDir("spawn-stdin-slice-missing", {});
+    const outcome = (stdin: Blob) => {
+      try {
+        return sendToChildSync(stdin);
+      } catch (err) {
+        return { code: (err as NodeJS.ErrnoException).code };
+      }
+    };
+
+    expect(outcome(Bun.file(join(String(dir), "a.txt")).slice(0, 5))).toEqual(
+      outcome(Bun.file(join(String(dir), "b.txt"))),
+    );
+  });
+
+  // The window applies to stdin only. At stdout, the child writes to the file.
+  it.concurrent("a window at stdout", async () => {
+    using dir = tempDir("spawn-stdout-slice", { "out.txt": "" });
+    const out = join(String(dir), "out.txt");
+    await using proc = spawn({
+      cmd: [bunExe(), "-e", "process.stdout.write('written')"],
+      env: bunEnv,
+      stdout: Bun.file(out).slice(0, 2),
+      stderr: "pipe",
+    });
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+
+    expect({ stderr, exitCode, written: readFileSync(out, "utf8") }).toEqual({
+      stderr: "",
+      exitCode: 0,
+      written: "written",
+    });
+  });
+
+  it.concurrent("an unsliced Bun.file() whose size was read sends the whole file", async () => {
+    using dir = tempDir("spawn-stdin-size-read", { "src.txt": content });
+    const src = join(String(dir), "src.txt");
+    const file = Bun.file(src);
+    expect(file.size).toBe(content.length);
+    appendFileSync(src, "0123");
+
+    expect(await sendToChild(file)).toEqual({ stdout: content + "0123", stderr: "", exitCode: 0 });
+  });
+
+  // A stat that fails must not leave a size of 0 behind.
+  it.concurrent.each(["exists()", ".size"])("a Bun.file() whose %s was read before the file existed", async probe => {
+    using dir = tempDir("spawn-stdin-created-later", {});
+    const src = join(String(dir), "src.txt");
+    const file = Bun.file(src);
+    expect(probe === "exists()" ? await file.exists() : file.size).toBe(probe === "exists()" ? false : 0);
+    writeFileSync(src, content);
+
+    expect(await sendToChild(file)).toEqual({ stdout: content, stderr: "", exitCode: 0 });
   });
 });
 

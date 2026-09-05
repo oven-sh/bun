@@ -214,6 +214,11 @@ struct Candidate {
     downgrade: bool,
 }
 
+/// Downgrades stay in the installed major (minor below 1.0.0): an older line is a different API, and the bulk response only carries advisories matching the installed versions, so its releases merely look safe (#39309).
+fn same_release_line(a: Semver::Version, b: Semver::Version) -> bool {
+    a.major == b.major && (a.major != 0 || a.minor == b.minor)
+}
+
 fn fmt_version(version: Semver::Version, buf: &[u8]) -> Box<[u8]> {
     let mut out: Vec<u8> = Vec::new();
     let _ = write!(out, "{}", version.fmt(buf));
@@ -690,7 +695,13 @@ pub fn plan_fixes(manager: &mut PackageManager, advisories: &[Advisory]) -> crat
         }
         let upgrade_count = candidates.len();
         for (i, &v) in releases.iter().enumerate().rev() {
-            if v.order(inst.current, manifest_buf, buf) == Ordering::Less && is_safe(v) {
+            if v.order(inst.current, manifest_buf, buf) != Ordering::Less {
+                continue;
+            }
+            if !same_release_line(v, inst.current) {
+                break;
+            }
+            if is_safe(v) {
                 candidates.push(Candidate {
                     version: v,
                     index: i,
@@ -818,7 +829,8 @@ pub fn plan_fixes(manager: &mut PackageManager, advisories: &[Advisory]) -> crat
                             edits.push(edit);
                         }
                         // A rewritten peer row is deferred by the differ and rebinds to the old package unless the edge is pinned too.
-                        if edge.peer {
+                        // A rewritten range re-resolves to the newest release it allows, which for a downgrade is the vulnerable one again (`^1.0.1` still takes 1.1.0).
+                        if edge.peer || candidate.downgrade {
                             edges.push(PlannedEdge {
                                 dep_id: edge.dep_id,
                                 parent: edge.parent,

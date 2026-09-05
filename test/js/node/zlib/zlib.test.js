@@ -7,6 +7,7 @@ import * as fs from "node:fs";
 import { resolve } from "node:path";
 import * as stream from "node:stream";
 import * as util from "node:util";
+import * as vm from "node:vm";
 import * as zlib from "node:zlib";
 
 describe("prototype and name and constructor", () => {
@@ -798,6 +799,71 @@ describe("dictionary buffer lifetime", () => {
     await promise;
 
     expect(Buffer.concat(chunks).toString()).toBe(input.toString());
+  });
+});
+
+describe("ArrayBuffer from another realm", () => {
+  // `instanceof ArrayBuffer` is false for a buffer created in a vm context.
+  // node accepts these because its check (util.types.isAnyArrayBuffer) is realm-independent.
+  const context = vm.createContext({});
+  const bytes = [104, 101, 108, 108, 111];
+  function realmBuffer(ctor) {
+    const ab = vm.runInContext(`new ${ctor}(${bytes.length})`, context);
+    new Uint8Array(ab).set(bytes);
+    return ab;
+  }
+
+  it("is not an instance of this realm's ArrayBuffer", () => {
+    expect(realmBuffer("ArrayBuffer") instanceof ArrayBuffer).toBe(false);
+    expect(realmBuffer("SharedArrayBuffer") instanceof SharedArrayBuffer).toBe(false);
+  });
+
+  const syncPairs = [
+    ["gzipSync", zlib.gzipSync, zlib.gunzipSync],
+    ["deflateSync", zlib.deflateSync, zlib.inflateSync],
+    ["deflateRawSync", zlib.deflateRawSync, zlib.inflateRawSync],
+    ["brotliCompressSync", zlib.brotliCompressSync, zlib.brotliDecompressSync],
+    ["zstdCompressSync", zlib.zstdCompressSync, zlib.zstdDecompressSync],
+  ];
+  for (const [name, compress, decompress] of syncPairs) {
+    for (const ctor of ["ArrayBuffer", "SharedArrayBuffer"]) {
+      it(`${name} accepts a ${ctor} from another realm`, () => {
+        const out = decompress(compress(realmBuffer(ctor)));
+        expect(Array.from(out)).toEqual(bytes);
+      });
+    }
+  }
+
+  const asyncPairs = [
+    ["gzip", zlib.gzip, zlib.gunzip],
+    ["deflate", zlib.deflate, zlib.inflate],
+    ["brotliCompress", zlib.brotliCompress, zlib.brotliDecompress],
+    ["zstdCompress", zlib.zstdCompress, zlib.zstdDecompress],
+  ];
+  for (const [name, compress, decompress] of asyncPairs) {
+    it(`${name} accepts an ArrayBuffer from another realm`, async () => {
+      const compressed = await util.promisify(compress)(realmBuffer("ArrayBuffer"));
+      const out = await util.promisify(decompress)(compressed);
+      expect(Array.from(out)).toEqual(bytes);
+    });
+  }
+
+  it("options.dictionary accepts an ArrayBuffer from another realm", () => {
+    const dictionary = realmBuffer("ArrayBuffer");
+    const input = "hello hello hello";
+    const compressed = zlib.deflateSync(input, { dictionary });
+    expect(zlib.inflateSync(compressed, { dictionary }).toString()).toBe(input);
+    const brotli = zlib.brotliCompressSync(input, { dictionary });
+    expect(zlib.brotliDecompressSync(brotli, { dictionary }).toString()).toBe(input);
+  });
+
+  it("still rejects a value that is not a buffer", () => {
+    expect(() => zlib.gzipSync(vm.runInContext("({})", context))).toThrow(
+      expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE" }),
+    );
+    expect(() => zlib.deflateSync("x", { dictionary: vm.runInContext("({})", context) })).toThrow(
+      expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE" }),
+    );
   });
 });
 

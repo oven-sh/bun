@@ -2499,11 +2499,11 @@ impl ExpectArrayContaining {
 /// (but only created for *custom* matchers, as built-ins have their own classes)
 // R-2 (host-fn re-entrancy): every JS-exposed method takes `&self`. The only
 // field, `flags`, is set once at construction (`create()`) and never written
-// thereafter, so it stays a bare `Flags` (no `Cell` needed). Both host-fns
-// call into user JS (`execute_impl` → `execute_custom_matcher`, `custom_print`
-// → `matcher_fn.call`) which can re-enter on the same `m_ctx`; holding a
-// `noalias` `&mut Self` across that call is Stacked-Borrows UB even with no
-// field writes. The codegen shim emits `&*__this` for `&self` receivers.
+// thereafter, so it stays a bare `Flags` (no `Cell` needed). The host-fn
+// calls into user JS (`execute_impl` → `execute_custom_matcher`) which can
+// re-enter on the same `m_ctx`; holding a `noalias` `&mut Self` across that
+// call is Stacked-Borrows UB even with no field writes. The codegen shim
+// emits `&*__this` for `&self` receivers.
 #[bun_jsc::JsClass(no_construct, no_constructor)]
 pub struct ExpectCustomAsymmetricMatcher {
     pub(crate) flags: Flags,
@@ -2608,65 +2608,6 @@ impl ExpectCustomAsymmetricMatcher {
         let matched = Self::execute_impl(self, callframe.this(), global_this, received_value)?;
         Ok(JSValue::from(matched))
     }
-
-    fn maybe_clear(global_this: &JSGlobalObject, err: JsError, dont_throw: bool) -> crate::Result<bool> {
-        if dont_throw {
-            global_this.clear_exception();
-            return Ok(false);
-        }
-        match err {
-            JsError::OutOfMemory => Err(crate::Error::Alloc(bun_alloc::AllocError)),
-            _ => Err(crate::Error::Unexpected),
-        }
-    }
-
-    /// Calls a custom implementation (if provided) to stringify this asymmetric matcher, and returns true if it was provided and it succeed
-    pub(crate) fn custom_print(
-        &self,
-        this_value: JSValue,
-        global_this: &JSGlobalObject,
-        writer: &mut (impl bun_io::Write + ?Sized),
-        dont_throw: bool,
-    ) -> crate::Result<bool> {
-        let Some(matcher_fn) = expect_custom_asymmetric_matcher_js::matcher_fn_get_cached(this_value) else { return Ok(false) };
-        let fn_value = match matcher_fn.get(global_this, "toAsymmetricMatcher") {
-            Ok(v) => v,
-            Err(e) => return Self::maybe_clear(global_this, e, dont_throw),
-        };
-        if let Some(fn_value) = fn_value {
-            if fn_value.js_type().is_function() {
-                let Some(captured_args) = expect_custom_asymmetric_matcher_js::captured_args_get_cached(this_value) else { return Ok(false) };
-                let args_len = match captured_args.get_length(global_this) {
-                    Ok(n) => n,
-                    Err(e) => return Self::maybe_clear(global_this, e, dont_throw),
-                };
-                let mut args: Vec<JSValue> = Vec::with_capacity(args_len as usize);
-                let mut iter = match captured_args.array_iterator(global_this) {
-                    Ok(it) => it,
-                    Err(e) => return Self::maybe_clear(global_this, e, dont_throw),
-                };
-                loop {
-                    match iter.next() {
-                        Ok(Some(arg)) => args.push(arg),
-                        Ok(None) => break,
-                        Err(e) => return Self::maybe_clear(global_this, e, dont_throw),
-                    }
-                }
-
-                let result = match matcher_fn.call(global_this, this_value, &args) {
-                    Ok(r) => r,
-                    Err(e) => return Self::maybe_clear(global_this, e, dont_throw),
-                };
-                let s = match result.to_bun_string(global_this) {
-                    Ok(s) => s,
-                    Err(e) => return Self::maybe_clear(global_this, e, dont_throw),
-                };
-                write!(writer, "{}", s)?;
-            }
-        }
-        Ok(false)
-    }
-
 }
 
 /// Reference: `MatcherContext` in https://github.com/jestjs/jest/blob/main/packages/expect/src/types.ts

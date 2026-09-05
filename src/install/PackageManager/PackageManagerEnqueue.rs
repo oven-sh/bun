@@ -2892,12 +2892,6 @@ fn get_or_put_resolved_package(
                             &mut buf2,
                             &[folder_path],
                         )
-                        // break :blk Path.joinAbsStringBuf(
-                        //     strings.withoutSuffixComptime(this.original_package_json_path, "package.json"),
-                        //     &buf2,
-                        //     &[_]string{folder_path},
-                        //     .auto,
-                        // );
                     };
 
                     break 'res FolderResolution::get_or_put(

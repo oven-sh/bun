@@ -152,9 +152,6 @@ impl<R> LayerBlockRule<R> {
     }
 
     pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
-        // #[cfg(feature = "sourcemap")]
-        // dest.add_mapping(self.loc);
-
         dest.write_str("@layer")?;
         if let Some(name) = &self.name {
             dest.write_char(b' ')?;
@@ -192,8 +189,6 @@ impl LayerStatementRule {
     }
 
     pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
-        // #[cfg(feature = "sourcemap")]
-        // dest.add_mapping(self.loc);
         if self.names.len() > 0 {
             dest.write_str("@layer ")?;
             css::to_css::from_list(self.names.slice(), dest)?;

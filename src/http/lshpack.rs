@@ -35,7 +35,6 @@ pub struct DecodeResult {
     pub name: &'static [u8],
     pub value: &'static [u8],
     pub never_index: bool,
-    pub well_know: u16,
     /// offset of the next header position in src
     pub next: usize,
 }
@@ -82,7 +81,6 @@ impl HPACK {
             value,
             next: offset,
             never_index: header.never_index,
-            well_know: header.hpack_index,
         })
     }
 

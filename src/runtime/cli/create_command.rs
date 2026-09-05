@@ -1180,13 +1180,6 @@ impl CreateCommand {
             Output::flush();
         }
 
-        // if (unsupported_packages.@"styled-jsx") {
-        //     Output.prettyErrorln("\n", .{});
-        //     unsupported_packages.print();
-        //     Output.prettyErrorln("\n", .{});
-        //     Output.flush();
-        // }
-
         if !create_options.skip_git && !create_options.skip_install {
             bun_core::pretty!(
                 "\n<d>A local git repository was created for you and dependencies were installed automatically.<r>\n",

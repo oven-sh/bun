@@ -16,8 +16,6 @@ pub struct ViewportRule {
 
 impl ViewportRule {
     pub(crate) fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
-        // #[cfg(feature = "sourcemap")]
-        // dest.add_mapping(self.loc);
         dest.write_char(b'@')?;
         super::vendor_prefix_to_css(self.vendor_prefix, dest)?;
         dest.write_str("viewport")?;

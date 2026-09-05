@@ -207,18 +207,6 @@ impl Drop for ShellSubprocess {
     }
 }
 
-// pub const Pipe = struct {
-//     writer: Writer = Writer{},
-//     parent: *Subprocess,
-//     src: WriterSrc,
-//
-//     writer: ?CapturedBufferedWriter = null,
-//
-//     status: Status = .{
-//         .pending = {},
-//     },
-// };
-
 pub type StaticPipeWriter = JscSubprocess::NewStaticPipeWriter<ShellSubprocess>;
 
 impl JscSubprocess::static_pipe_writer::StaticPipeWriterProcess for ShellSubprocess {

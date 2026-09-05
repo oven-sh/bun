@@ -2835,10 +2835,8 @@ pub enum SelectorParseErrorKind {
     InvalidPseudoClassAfterPseudoElement,
     MissingNestingSelector,
     MissingNestingPrefix,
-    ExpectedNamespace(Str),
     BadValueInAttr(Token),
     ExplicitNamespaceUnexpectedToken(Token),
-    UnexpectedIdent(Str),
     AmbiguousCssModuleClass(Str),
 }
 
@@ -2878,12 +2876,10 @@ impl SelectorParseErrorKind {
             K::InvalidPseudoClassAfterPseudoElement => S::invalid_pseudo_class_after_pseudo_element,
             K::MissingNestingSelector => S::missing_nesting_selector,
             K::MissingNestingPrefix => S::missing_nesting_prefix,
-            K::ExpectedNamespace(name) => S::expected_namespace(name),
             K::BadValueInAttr(token) => S::bad_value_in_attr(token),
             K::ExplicitNamespaceUnexpectedToken(token) => {
                 S::explicit_namespace_unexpected_token(token)
             }
-            K::UnexpectedIdent(ident) => S::unexpected_ident(ident),
             K::UnexpectedSelectorAfterPseudoElement(tok) => {
                 S::unexpected_selector_after_pseudo_element(tok)
             }

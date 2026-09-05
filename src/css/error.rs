@@ -361,8 +361,6 @@ pub enum SelectorError {
     empty_selector,
     /// A `|` was expected in an attribute selector.
     expected_bar_in_attr(Token),
-    /// A namespace was expected.
-    expected_namespace(Str),
     /// An unexpected token was encountered in a namespace.
     explicit_namespace_unexpected_token(Token),
     /// An invalid pseudo class was encountered after a pseudo element.
@@ -383,8 +381,6 @@ pub enum SelectorError {
     no_qualified_name_in_attribute_selector(Token),
     /// An invalid token was encountered in a pseudo element.
     pseudo_element_expected_ident(Token),
-    /// An unexpected identifier was encountered.
-    unexpected_ident(Str),
     /// An unexpected token was encountered inside an attribute selector.
     unexpected_token_in_attribute_selector(Token),
     /// An unsupported pseudo class or pseudo element was encountered.
@@ -415,8 +411,6 @@ impl fmt::Display for SelectorError {
                 f.write_str("-webkit-scrollbar state found before -webkit-scrollbar pseudo-element")
             }
 
-            Self::expected_namespace(s) => write!(f, "Expected namespace '{}'", bs(*s)),
-            Self::unexpected_ident(s) => write!(f, "Unexpected identifier '{}'", bs(*s)),
             Self::unsupported_pseudo_class_or_element(s) => {
                 write!(f, "Unsupported pseudo-class or pseudo-element '{}'", bs(*s))
             }

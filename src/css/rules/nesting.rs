@@ -12,8 +12,6 @@ pub struct NestingRule<R> {
 
 impl<R> NestingRule<R> {
     pub(crate) fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
-        // #[cfg(feature = "sourcemap")]
-        // dest.add_mapping(self.loc);
         if dest.context().is_none() {
             dest.write_str("@nest ")?;
         }

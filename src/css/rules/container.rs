@@ -337,9 +337,6 @@ pub struct ContainerRule<R> {
 
 impl<R> ContainerRule<R> {
     pub(crate) fn to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
-        // #[cfg(feature = "sourcemap")]
-        // dest.add_mapping(self.loc);
-
         dest.write_str("@container ")?;
         if let Some(name) = &self.name {
             name.to_css(dest)?;

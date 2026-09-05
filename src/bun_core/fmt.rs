@@ -1520,7 +1520,6 @@ pub enum ColorCode {
     Blue,
     Orange,
     Red,
-    Pink,
 }
 
 impl ColorCode {
@@ -1530,8 +1529,6 @@ impl ColorCode {
             ColorCode::Blue => "\x1b[34m",
             ColorCode::Orange => "\x1b[33m",
             ColorCode::Red => "\x1b[31m",
-            // light pink
-            ColorCode::Pink => "\x1b[38;5;206m",
         }
     }
 }

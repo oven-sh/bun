@@ -21,9 +21,6 @@ impl<R> MediaRule<R> {
             self.rules.to_css(dest)?;
             return Ok(());
         }
-        // #[cfg(feature = "sourcemap")]
-        // dest.add_mapping(self.loc);
-
         dest.write_str("@media ")?;
         self.query.to_css(dest)?;
         dest.block(|d| {

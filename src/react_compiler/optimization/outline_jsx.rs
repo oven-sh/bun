@@ -469,7 +469,6 @@ fn emit_outlined_fn(
         name_hint: None,
         fn_type: ReactFunctionType::Other,
         params: hir_vec![ParamPattern::Place(props_obj)],
-        return_type_annotation: None,
         returns: returns_place,
         context: AstAlloc::vec(),
         body: HIR {

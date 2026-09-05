@@ -550,11 +550,13 @@ impl<'a> Migrator<'a> {
         } else {
             name
         };
-        let href: &[u8] = self.manager.scope_for_package_name(name).url.href();
+        let href: &[u8] =
+            strings::without_trailing_slash(self.manager.scope_for_package_name(name).url.href());
         let url = &mut self.url;
         url.clear();
         url.reserve(
             href.len()
+                + 1
                 + name.len()
                 + b"/-/".len()
                 + unscoped.len()
@@ -563,6 +565,7 @@ impl<'a> Migrator<'a> {
                 + b".tgz".len(),
         );
         url.extend_from_slice(href);
+        url.push(b'/');
         url.extend_from_slice(name);
         url.extend_from_slice(b"/-/");
         url.extend_from_slice(unscoped);

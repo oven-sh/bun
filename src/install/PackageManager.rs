@@ -2240,6 +2240,16 @@ pub fn init(
             }
         }
 
+        // `options.load` applies BUN_CONFIG_MAX_HTTP_REQUESTS on top of this default.
+        http::async_http::MAX_SIMULTANEOUS_REQUESTS.store(
+            if env.has_http_proxy() {
+                DEFAULT_MAX_SIMULTANEOUS_REQUESTS_FOR_BUN_INSTALL_FOR_PROXIES
+            } else {
+                DEFAULT_MAX_SIMULTANEOUS_REQUESTS_FOR_BUN_INSTALL
+            },
+            Ordering::Relaxed,
+        );
+
         manager.options.load(
             // SAFETY: ctx.log is the process-lifetime CLI log set by
             // create_context_data(); single-threaded init region.
@@ -2263,6 +2273,11 @@ pub fn init(
                 .options
                 .enable
                 .set(options::Enable::MANIFEST_CACHE, true);
+        }
+
+        if let Some(network_concurrency) = cli_network_concurrency {
+            http::async_http::MAX_SIMULTANEOUS_REQUESTS
+                .store(usize::from(network_concurrency.max(1)), Ordering::Relaxed);
         }
 
         if let Some(config) = ctx.install.as_deref_mut() {
@@ -2312,22 +2327,6 @@ pub fn init(
             }
         }
     }
-
-    http::async_http::MAX_SIMULTANEOUS_REQUESTS.store(
-        'brk: {
-            if let Some(network_concurrency) = cli_network_concurrency {
-                break 'brk network_concurrency.max(1) as usize;
-            }
-
-            // If any HTTP proxy is set, use a diferent limit
-            if env.has_http_proxy() {
-                break 'brk DEFAULT_MAX_SIMULTANEOUS_REQUESTS_FOR_BUN_INSTALL_FOR_PROXIES;
-            }
-
-            DEFAULT_MAX_SIMULTANEOUS_REQUESTS_FOR_BUN_INSTALL
-        },
-        Ordering::Relaxed, // .monotonic
-    );
 
     // `InitOpts.ca: Vec<*const c_void>` (erased `[*:0]const u8`). The HTTP
     // thread reads these asynchronously after `init` returns, so park the

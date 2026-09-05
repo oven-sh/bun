@@ -376,6 +376,8 @@ impl PostgresSQLConnection {
 
     fn get_timeout_interval(&self) -> u32 {
         match self.status.get() {
+            // Never arm the idle timer while a query is outstanding (#30646).
+            Status::Connected if self.has_query_running() => 0,
             Status::Connected => self.idle_timeout_interval_ms,
             Status::Failed => 0,
             _ => self.connection_timeout_ms,
@@ -551,6 +553,8 @@ impl PostgresSQLConnection {
             return;
         }
 
+        // `Connected` here implies idle: `get_timeout_interval()` returns 0
+        // for a busy connection, taking the early return above.
         use bun_core::fmt::{ConnTimeoutKind::*, fmt_conn_timeout};
         let (code, kind, ms, sfx): (&[u8], _, _, _) = match self.status.get() {
             Status::Connected => (
@@ -582,6 +586,18 @@ impl PostgresSQLConnection {
         if self.status.get() == Status::Failed {
             return;
         }
+
+        // Don't kill a healthy in-flight query (#30646): retire at the next
+        // queue-drain boundary instead (the ReadyForQuery arm).
+        if self.status.get() == Status::Connected && self.has_query_running() {
+            self.update_flags(|f| f.insert(ConnectionFlags::LIFETIME_EXCEEDED));
+            return;
+        }
+
+        self.fail_lifetime_timeout();
+    }
+
+    fn fail_lifetime_timeout(&self) {
         use bun_core::fmt::{ConnTimeoutKind, fmt_conn_timeout};
         self.fail_fmt(
             b"ERR_POSTGRES_LIFETIME_TIMEOUT",
@@ -2484,6 +2500,25 @@ impl PostgresSQLConnection {
                         );
                     }
                 }
+
+                // maxLifetime expired mid-query (#30646): retire only once the head is
+                // finished; a named statement's Parse+Describe+Sync RFQs first.
+                if self
+                    .flags
+                    .get()
+                    .contains(ConnectionFlags::LIFETIME_EXCEEDED)
+                    && self.current().is_none_or(|request| {
+                        matches!(
+                            request.status.get(),
+                            QueryStatus::Success | QueryStatus::Fail
+                        )
+                    })
+                {
+                    self.fail_lifetime_timeout();
+                    self.update_ref();
+                    return Ok(());
+                }
+
                 self.advance();
 
                 self.register_auto_flusher();

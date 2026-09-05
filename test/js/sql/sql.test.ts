@@ -15,7 +15,16 @@ function rel(filename: string) {
 // Use docker-compose infrastructure
 import * as dockerCompose from "../../docker/index.ts";
 import { UnixDomainSocketProxy } from "../../unix-domain-socket-proxy.ts";
-import { neverAnsweringServer } from "./wire-frames";
+import {
+  listeningServer,
+  neverAnsweringServer,
+  pgAuthenticationOk,
+  pgCommandComplete,
+  pgDataRow,
+  pgRaw,
+  pgReadyForQuery,
+  pgRowDescription,
+} from "./wire-frames";
 
 if (isDockerEnabled()) {
   describe("PostgreSQL tests", async () => {
@@ -790,27 +799,8 @@ if (isDockerEnabled()) {
       expect(onclose).toHaveBeenCalledTimes(1);
     });
 
-    test("Idle timeout works at start", async () => {
-      const onclose = mock();
-      const onconnect = mock();
-      await using sql = postgres({
-        ...options,
-        idle_timeout: 0.5,
-        onconnect,
-        onclose,
-      });
-      let error: any;
-      try {
-        await sql`select pg_sleep(1)`;
-      } catch (e) {
-        error = e;
-      }
-      expect(error).toBeInstanceOf(SQL.SQLError);
-      expect(error).toBeInstanceOf(SQL.PostgresError);
-      expect(error.code).toBe(`ERR_POSTGRES_IDLE_TIMEOUT`);
-      expect(onconnect).toHaveBeenCalled();
-      expect(onclose).toHaveBeenCalledTimes(1);
-    });
+    // "Idle timeout does not kill an in-flight query (#30646)" below covers
+    // the in-flight case (the old "Idle timeout works at start" asserted the kill).
 
     test("Idle timeout is reset when a query is run", async () => {
       const onClosePromise = Promise.withResolvers();
@@ -833,36 +823,34 @@ if (isDockerEnabled()) {
       expect(err.code).toBe(`ERR_POSTGRES_IDLE_TIMEOUT`);
     });
 
-    test("Max lifetime works", async () => {
+    test("Max lifetime closes an idle connection and the pool reconnects", async () => {
       const onClosePromise = Promise.withResolvers();
       const onclose = mock(err => {
         onClosePromise.resolve(err);
       });
       const onconnect = mock();
-      const sql = postgres({
+      await using sql = postgres({
         ...options,
-        max_lifetime: 0.5,
+        max_lifetime: 1,
         onconnect,
         onclose,
       });
-      let error: any;
-      expect(await sql`select 1 as x`).toEqual([{ x: 1 }]);
-      expect(onconnect).toHaveBeenCalledTimes(1);
-      try {
-        while (true) {
-          for (let i = 0; i < 100; i++) {
-            await sql`select pg_sleep(1)`;
-          }
-        }
-      } catch (e) {
-        error = e;
-      }
 
+      // Grab the server-side backend pid before maxLifetime fires.
+      const [{ pid: pidBefore }] = await sql`select pg_backend_pid() as pid`;
+      expect(onconnect).toHaveBeenCalledTimes(1);
+
+      // maxLifetime fires while the connection is idle and retires it with the
+      // documented error code.
+      const err = await onClosePromise.promise;
+      expect(err).toBeInstanceOf(SQL.SQLError);
+      expect(err).toBeInstanceOf(SQL.PostgresError);
+      expect(err.code).toBe(`ERR_POSTGRES_LIFETIME_TIMEOUT`);
       expect(onclose).toHaveBeenCalledTimes(1);
 
-      expect(error).toBeInstanceOf(SQL.SQLError);
-      expect(error).toBeInstanceOf(SQL.PostgresError);
-      expect(error.code).toBe(`ERR_POSTGRES_LIFETIME_TIMEOUT`);
+      // The pool transparently reconnects — new backend pid.
+      const [{ pid: pidAfter }] = await sql`select pg_backend_pid() as pid`;
+      expect(pidAfter).not.toBe(pidBefore);
     });
 
     // https://github.com/oven-sh/bun/issues/39940
@@ -877,6 +865,95 @@ if (isDockerEnabled()) {
       expect(onconnect).toHaveBeenCalled();
       expect(onclose).toHaveBeenCalledTimes(onconnect.mock.calls.length);
     });
+
+    test("Max lifetime does not kill an in-flight query (#30646)", async () => {
+      const onClosePromise = Promise.withResolvers();
+      const onclose = mock(err => {
+        onClosePromise.resolve(err);
+      });
+      const onconnect = mock();
+      await using sql = postgres({
+        ...options,
+        max_lifetime: 1,
+        onconnect,
+        onclose,
+        max: 1,
+      });
+
+      // Record the backend pid, then launch a query that runs longer than max_lifetime.
+      // Before the fix this would reject with ERR_POSTGRES_LIFETIME_TIMEOUT.
+      const [{ pid: pidBefore }] = await sql`select pg_backend_pid() as pid`;
+      const result = await sql`select pg_sleep(3), 42 as x`;
+      // The query completed — the lifetime timer did not kill it mid-flight.
+      // (Retirement happens at the completion boundary, so onclose may already
+      // have fired by the time this continuation runs.)
+      expect(result[0].x).toBe(42);
+
+      // Once the query returns, the deferred lifetime retirement closes the
+      // connection with the documented error code, and the pool reconnects.
+      const err = await onClosePromise.promise;
+      expect(err).toBeInstanceOf(SQL.SQLError);
+      expect(err).toBeInstanceOf(SQL.PostgresError);
+      expect(err.code).toBe(`ERR_POSTGRES_LIFETIME_TIMEOUT`);
+      expect(onclose).toHaveBeenCalledTimes(1);
+
+      const [{ pid: pidAfter }] = await sql`select pg_backend_pid() as pid`;
+      expect(pidAfter).not.toBe(pidBefore);
+    }, 30_000);
+
+    test("Max lifetime does not kill an in-flight parameterized query (#30646)", async () => {
+      const onClosePromise = Promise.withResolvers();
+      const onclose = mock(err => {
+        onClosePromise.resolve(err);
+      });
+      await using sql = postgres({
+        ...options,
+        max_lifetime: 1,
+        onclose,
+        max: 1,
+      });
+
+      // A parameterized query uses a named statement (Parse+Describe+Sync gets
+      // its own ReadyForQuery before Bind+Execute); cover that path end to end.
+      const result = await sql`select pg_sleep(2), ${42}::int as x`;
+      expect(result[0].x).toBe(42);
+
+      const err = await onClosePromise.promise;
+      expect(err).toBeInstanceOf(SQL.PostgresError);
+      expect(err.code).toBe(`ERR_POSTGRES_LIFETIME_TIMEOUT`);
+    }, 30_000);
+
+    test("Idle timeout does not kill an in-flight query (#30646)", async () => {
+      const onClosePromise = Promise.withResolvers();
+      const onclose = mock(err => {
+        onClosePromise.resolve(err);
+      });
+      const onconnect = mock();
+      await using sql = postgres({
+        ...options,
+        idle_timeout: 1,
+        onconnect,
+        onclose,
+        max: 1,
+      });
+
+      // A query slower than idle_timeout must complete, not be killed by the timer.
+      // Before the fix this rejected with ERR_POSTGRES_IDLE_TIMEOUT.
+      const [{ pid: pidBefore }] = await sql`select pg_backend_pid() as pid`;
+      const result = await sql`select pg_sleep(3), 42 as x`;
+      expect(result[0].x).toBe(42);
+      // The idle timer must not have killed the query mid-flight.
+      expect(onclose).not.toHaveBeenCalled();
+
+      // Once the query returns, the connection is idle and the timer fires, closing it.
+      const err = await onClosePromise.promise;
+      expect(err).toBeInstanceOf(SQL.PostgresError);
+      expect(err.code).toBe(`ERR_POSTGRES_IDLE_TIMEOUT`);
+
+      // Pool reconnects on a fresh backend.
+      const [{ pid: pidAfter }] = await sql`select pg_backend_pid() as pid`;
+      expect(pidAfter).not.toBe(pidBefore);
+    }, 30_000);
 
     // Last one wins.
     test("Handles duplicate string column names", async () => {
@@ -12804,3 +12881,107 @@ test("data row that omits columns declared in the row description yields nulls f
   expect(filteredStderr).toBe("");
   expect(exitCode).toBe(0);
 }, 30_000);
+
+// Serverless twins of the in-flight timer tests (#30646). The container suites
+// above cover the same scenarios against a real server (which a mock must not
+// replace for producible behavior like a slow SELECT), but they are skipped
+// entirely where docker and the test services are unavailable, so these keep
+// the regression executable everywhere: the mock delays the query response
+// past the client-side timer, which on main kills the in-flight query.
+describe.concurrent("timers do not kill in-flight queries (no server, #30646)", () => {
+  // Startup-phase handshake (no SSL): AuthenticationOk + ReadyForQuery(idle).
+  const HANDSHAKE = Buffer.concat([pgAuthenticationOk(), pgReadyForQuery("I")]);
+
+  // Response to the extended-query batch for `SELECT 42 as x` (no params):
+  // ParseComplete + ParameterDescription + RowDescription + BindComplete +
+  // DataRow + CommandComplete + ReadyForQuery. Type oid 23 = int4.
+  const QUERY_RESPONSE = Buffer.concat([
+    pgRaw("1", Buffer.alloc(0)), // ParseComplete
+    pgRaw("t", Buffer.from([0, 0])), // ParameterDescription, 0 params
+    pgRowDescription([{ name: "x", typeOid: 23, typeSize: 4 }]),
+    pgRaw("2", Buffer.alloc(0)), // BindComplete
+    pgDataRow([Buffer.from("42")]),
+    pgCommandComplete("SELECT 1"),
+    pgReadyForQuery("I"),
+  ]);
+
+  // Replies to the startup packet immediately, then answers each query batch
+  // (one response per Sync / Simple Query) after `queryDelayMs`.
+  async function delayedServer(queryDelayMs: number): Promise<{ port: number; stop: () => void }> {
+    const timers = new Set<Timer>();
+    const { port, server } = await listeningServer(socket => {
+      let state: "startup" | "query" = "startup";
+      let buf: Buffer = Buffer.alloc(0);
+      socket.on("data", chunk => {
+        if (state === "startup") {
+          state = "query";
+          socket.write(HANDSHAKE);
+          return;
+        }
+        buf = buf.length === 0 ? chunk : Buffer.concat([buf, chunk]);
+        // Message format: type(1) + length(4 BE, length field included).
+        while (buf.length >= 5) {
+          const total = 1 + buf.readInt32BE(1);
+          if (buf.length < total) break;
+          const type = buf[0];
+          buf = buf.subarray(total);
+          if (type === 0x53 /* Sync */ || type === 0x51 /* Simple Query */) {
+            const t = setTimeout(() => {
+              timers.delete(t);
+              if (!socket.destroyed) socket.write(QUERY_RESPONSE);
+            }, queryDelayMs);
+            timers.add(t);
+          }
+        }
+      });
+      socket.on("error", () => {});
+    });
+    return {
+      port,
+      stop: () => {
+        for (const t of timers) clearTimeout(t);
+        server.close();
+      },
+    };
+  }
+
+  test("idleTimeout waits for the in-flight query", async () => {
+    // Server answers after 3s; idleTimeout is 1s. On main the idle timer kills
+    // the connection mid-query with ERR_POSTGRES_IDLE_TIMEOUT.
+    const { port, stop } = await delayedServer(3000);
+    try {
+      await using sql = new SQL({
+        url: `postgres://u@127.0.0.1:${port}/db?sslmode=disable`,
+        max: 1,
+        idleTimeout: 1,
+      });
+      const result = await sql`SELECT 42 as x`;
+      expect(result[0].x).toBe(42);
+    } finally {
+      stop();
+    }
+  }, 30_000);
+
+  test("maxLifetime waits for the in-flight query, then retires the connection", async () => {
+    // Server answers after 3s; maxLifetime is 1s. On main the lifetime timer
+    // kills the connection mid-query with ERR_POSTGRES_LIFETIME_TIMEOUT.
+    const onClosePromise = Promise.withResolvers();
+    const { port, stop } = await delayedServer(3000);
+    try {
+      await using sql = new SQL({
+        url: `postgres://u@127.0.0.1:${port}/db?sslmode=disable`,
+        max: 1,
+        maxLifetime: 1,
+        onclose: err => onClosePromise.resolve(err),
+      });
+      const result = await sql`SELECT 42 as x`;
+      expect(result[0].x).toBe(42);
+      // The deferred retirement still enforces maxLifetime once the query is done.
+      const err = (await onClosePromise.promise) as SQL.PostgresError;
+      expect(err).toBeInstanceOf(SQL.PostgresError);
+      expect(err.code).toBe(`ERR_POSTGRES_LIFETIME_TIMEOUT`);
+    } finally {
+      stop();
+    }
+  }, 30_000);
+});

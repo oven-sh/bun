@@ -108,7 +108,7 @@ worker.addEventListener("open", () => {
 });
 ```
 
-Messages posted before the worker's script has run are queued and delivered once it has, so you don't need to wait for the `"open"` event before sending.
+Messages posted before the worker's script has run are queued until it has, so you don't need to wait for the `"open"` event before sending. They are delivered to the handler the script installed while it ran. If it installed none, they are dropped.
 
 As in browsers, a message is dispatched to the worker as soon as the synchronous part of its script has run, whether or not a `"message"` handler exists yet, and a message dispatched while there is no handler is dropped. Install `self.onmessage` / `self.addEventListener("message", ...)` before the first top-level `await`:
 

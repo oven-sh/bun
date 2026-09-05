@@ -216,19 +216,20 @@ describe.concurrent("process-stdio", () => {
     test("non-blocking pipe: a write larger than the pipe waits for the reader", async () => {
       const size = 1 << 20;
       // `Bun.file(1).writer()` puts O_NONBLOCK on the stdout description, so the
-      // fallback meets EAGAIN once the pipe is full. The parent starts reading
-      // only after the child has begun its write.
+      // fallback meets EAGAIN once the pipe is full. The writer stays open: its
+      // end() closes the dup on another thread, which would free an fd slot.
+      // The parent starts reading only after the child has begun its write.
       const nonblockingScript = /* js */ `
         const fs = require("fs");
         new fs.WriteStream(null, { fd: 1, autoClose: false });
-        Bun.file(1).writer().end();
+        const writer = Bun.file(1).writer();
         const held = [];
         try {
           for (;;) held.push(fs.openSync("/dev/null", "r"));
         } catch {}
         fs.writeSync(2, "writing\\n");
         process.stdout.write(Buffer.alloc(${size}, "x"));
-        process.exit(0);
+        process.exit(writer ? 0 : 1);
       `;
       await using proc = spawn({
         cmd: ["/bin/sh", "-c", `ulimit -n 32 && exec "$1" -e "$2"`, "sh", bunExe(), nonblockingScript],

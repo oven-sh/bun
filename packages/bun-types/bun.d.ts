@@ -1593,9 +1593,17 @@ declare module "bun" {
       hardSoftBreaks?: boolean;
       /** Enable wiki-style links (`[[target]]` or `[[target|label]]`). Default: `false`. */
       wikiLinks?: boolean;
-      /** Enable underline syntax (`__text__` renders as `<u>` instead of `<strong>`). Default: `false`. */
+      /**
+       * Render underscore emphasis as underline: `_text_` produces `<u>`
+       * instead of `<em>`, and `__text__` produces nested `<u>` instead of
+       * `<strong>`. Asterisk emphasis is unchanged. Default: `false`.
+       */
       underline?: boolean;
-      /** Enable LaTeX math (`$inline$` and `$$display$$`). Default: `false`. */
+      /**
+       * Enable LaTeX math spans: `$inline$` renders as `<x-equation>` and
+       * `$$display$$` as `<x-equation type="display">`. The content of a math
+       * span is passed through verbatim, like a code span. Default: `false`.
+       */
       latexMath?: boolean;
       /** Collapse whitespace in text content. Default: `false`. */
       collapseWhitespace?: boolean;
@@ -1680,6 +1688,10 @@ declare module "bun" {
       /** Image title attribute. */
       title?: string;
     }
+    interface MathProps extends ChildrenProps {
+      /** Set for display math (`$$text$$`); absent for inline math (`$text$`). */
+      display?: true;
+    }
 
     /**
      * Component overrides for `react()`.
@@ -1722,7 +1734,9 @@ declare module "bun" {
       img?: Component<ImageProps>;
       code?: Component<ChildrenProps>;
       del?: Component<ChildrenProps>;
-      math?: Component<ChildrenProps>;
+      /** LaTeX math span. Only produced with the `latexMath` option. */
+      math?: Component<MathProps>;
+      /** Underline span. Only produced with the `underline` option. */
       u?: Component<ChildrenProps>;
       br?: Component<{}>;
     }
@@ -1913,8 +1927,8 @@ declare module "bun" {
      * Render markdown to an ANSI-colored terminal string.
      *
      * Supports headings, lists, tables, inline styles, syntax-highlighted
-     * code blocks, links, images, and blockquotes. By default, enables all
-     * GFM extensions plus wikilinks, underline, and LaTeX math.
+     * code blocks, links, images, and blockquotes. Enables all GFM
+     * extensions plus wikilinks, autolinks, and LaTeX math spans.
      *
      * @param input The markdown string or buffer to render
      * @param theme Optional theme overrides

@@ -375,6 +375,38 @@ describe("Bun.markdown.render", () => {
     expect(result).toContain("[www.example.com]");
   });
 
+  test("latexMath option: math content passes through and reaches the text callback", () => {
+    const seen: string[] = [];
+    const result = Markdown.render(
+      "x $a *b*$ $$c$$\n",
+      {
+        paragraph: (children: string) => children,
+        emphasis: () => "<never>",
+        text: (text: string) => {
+          seen.push(text);
+          return `[${text}]`;
+        },
+      },
+      { latexMath: true },
+    );
+    expect(result).toBe("[x ][a *b*][ ][c]");
+    expect(seen).toEqual(["x ", "a *b*", " ", "c"]);
+  });
+
+  test("underline option: underscores no longer reach the emphasis callback", () => {
+    const render = (opts?: any) =>
+      Markdown.render(
+        "_a_ *b*\n",
+        {
+          paragraph: (children: string) => children,
+          emphasis: (children: string) => `<em>${children}</em>`,
+        },
+        opts,
+      );
+    expect(render({ underline: true })).toBe("a <em>b</em>");
+    expect(render()).toBe("<em>a</em> <em>b</em>");
+  });
+
   test("headings option provides id in heading meta", () => {
     const result = Markdown.render(
       "## Hello World\n",

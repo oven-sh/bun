@@ -55,6 +55,10 @@ pub(crate) fn is_unicode_punctuation(codepoint: u32) -> bool {
     is_unicode_punctuation_extended(codepoint)
 }
 
+pub(crate) fn is_unicode_whitespace_or_punctuation(codepoint: u32) -> bool {
+    is_unicode_whitespace(codepoint) || is_unicode_punctuation(codepoint)
+}
+
 /// Check if byte is ASCII punctuation per CommonMark spec.
 #[inline]
 pub(crate) fn is_ascii_punctuation(c: u8) -> bool {

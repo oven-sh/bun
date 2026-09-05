@@ -233,6 +233,7 @@ pub struct Flags {
     pub(crate) strikethrough: bool,
     pub(crate) tasklists: bool,
     pub(crate) latex_math: bool,
+    pub(crate) underline: bool,
     pub(crate) wiki_links: bool,
 }
 

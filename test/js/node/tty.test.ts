@@ -1,5 +1,7 @@
 import { describe, expect, it, test } from "bun:test";
-import { bunEnv, bunExe, isWindows } from "harness";
+import { bunEnv, bunExe, isWindows, tempDir } from "harness";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { WriteStream } from "node:tty";
 
 describe("ReadStream.prototype.setRawMode", () => {
@@ -299,5 +301,51 @@ describe("WriteStream.prototype.getColorDepth", () => {
 
   it("empty", () => {
     expect(WriteStream.prototype.getColorDepth.call(undefined, {})).toBe(isWindows ? 24 : 1);
+  });
+});
+
+// Regression for oven-sh/bun#23061: in TTY mode Node increments
+// process.stdout/stderr.bytesWritten on write, but Bun left it at 0. Uses
+// Bun.spawn({ terminal }) for a real pty and a side-channel report file so the
+// stdout/stderr writes don't corrupt the assertion channel.
+describe("process.stdout/stderr.bytesWritten (#23061)", () => {
+  it("increments after writes in TTY mode", async () => {
+    using dir = tempDir("stdio-bytes-written", {});
+    const reportPath = join(dir, "bytes-written.json");
+    const script = `
+      const fs = require("node:fs");
+      process.stdout.write("out-🚀"); // 4 + 4 = 8 UTF-8 bytes (not 6 UTF-16 units)
+      process.stderr.write("err-⚡"); // 4 + 3 = 7 UTF-8 bytes
+      fs.writeFileSync(${JSON.stringify(reportPath)}, JSON.stringify({
+        stdoutIsTTY: process.stdout.isTTY,
+        stderrIsTTY: process.stderr.isTTY,
+        stdoutBytesWritten: process.stdout.bytesWritten,
+        stderrBytesWritten: process.stderr.bytesWritten,
+      }));
+      process.exit(0);
+    `;
+    const done = Promise.withResolvers<void>();
+    const proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script],
+      env: bunEnv,
+      terminal: {
+        cols: 200,
+        rows: 24,
+        data() {},
+        exit() {
+          done.resolve();
+        },
+      },
+    });
+    await Promise.race([done.promise, proc.exited]);
+    const exitCode = await proc.exited;
+    proc.terminal?.close();
+
+    const report = JSON.parse(readFileSync(reportPath, "utf8"));
+    expect(report.stdoutIsTTY).toBe(true);
+    expect(report.stderrIsTTY).toBe(true);
+    expect(report.stdoutBytesWritten).toBe(8); // "out-🚀"
+    expect(report.stderrBytesWritten).toBe(7); // "err-⚡"
+    expect(exitCode).toBe(0);
   });
 });

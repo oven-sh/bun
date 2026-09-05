@@ -4,7 +4,9 @@ const net = require("node:net");
 const Duplex = require("internal/streams/duplex");
 const EventEmitter = require("node:events");
 const addServerName = $newRustFunction("Listener.rs", "jsAddServerName", 3);
-const { throwNotImplemented } = require("internal/shared");
+const _getTicketKeys = $newRustFunction("Listener.rs", "jsGetTicketKeys", 1);
+const _setTicketKeys = $newRustFunction("Listener.rs", "jsSetTicketKeys", 2);
+const { throwNotImplemented, kInternalAssertionSuffix } = require("internal/shared");
 const {
   throwOnInvalidTLSArray,
   tlsStringToProtocolVersion,
@@ -20,6 +22,8 @@ const {
   validateBuffer,
   validateFunction,
 } = require("internal/validators");
+
+let _randomBytes: ((size: number) => Buffer) | undefined;
 
 const { Server: NetServer, Socket: NetSocket } = net;
 const { kArmHandshakeTimeout, kSecureConnectDone, kVerifyError } = require("internal/net/symbols");
@@ -1141,7 +1145,8 @@ let CLIENT_RENEG_LIMIT = 3,
   CLIENT_RENEG_WINDOW = 600;
 
 function buildSharedCreds(server) {
-  return (server._sharedCreds = new InternalSecureContext(
+  const ticketKeys = server._ticketKeys;
+  const sc = (server._sharedCreds = new InternalSecureContext(
     {
       ...server[ksharedCredsOptions],
       pfx: undefined,
@@ -1161,8 +1166,12 @@ function buildSharedCreds(server) {
       minVersion: server.minVersion,
       maxVersion: server.maxVersion,
     },
-    true,
+    // Per-server ticket keys must not land on a digest-cached shared SSL_CTX.
+    ticketKeys === undefined,
   ));
+  const { context } = sc;
+  if (ticketKeys !== undefined && context) _setTicketKeys(context, ticketKeys);
+  return sc;
 }
 
 function Server(options, secureConnectionListener): void {
@@ -1223,6 +1232,7 @@ function Server(options, secureConnectionListener): void {
   this.servername = undefined;
   this.ALPNProtocols = undefined;
   this._sharedCreds = undefined;
+  this._ticketKeys = undefined;
 
   let contexts: Map<string, typeof InternalSecureContext> | null = null;
 
@@ -1418,6 +1428,9 @@ function Server(options, secureConnectionListener): void {
       serverTLSOptions == null || serverTLSOptions instanceof InternalSecureContext
         ? serverTLSOptions
         : { ...serverTLSOptions };
+    // After _sharedCreds is assigned so the keys reach the new context.
+    const ticketKeys = options?.ticketKeys;
+    if (ticketKeys != null) this.setTicketKeys(ticketKeys);
   };
 
   // Lets net.ts's SNI dispatch recognize a raw native SecureContext handed to
@@ -1426,17 +1439,49 @@ function Server(options, secureConnectionListener): void {
   Server.prototype[kNativeSecureContextCtor] = NativeSecureContext;
 
   Server.prototype.getTicketKeys = function () {
-    throw Error("Not implented in Bun yet");
+    const { _handle } = this;
+    if (_handle) {
+      const keys = _getTicketKeys(_handle);
+      if (keys !== undefined) {
+        if (this._ticketKeys === undefined) {
+          // Pin so BoringSSL's default-key auto-rotation doesn't change later reads.
+          this._ticketKeys = Buffer.from(keys);
+          _setTicketKeys(_handle, keys);
+          if (this._sharedCreds && !(this[ksharedCredsOptions] instanceof InternalSecureContext)) {
+            this._sharedCreds = null;
+          }
+        }
+        return keys;
+      }
+    }
+    // Pre-listen: return the stored keys (generated lazily); applied at listen().
+    let stored = this._ticketKeys;
+    if (stored === undefined) {
+      stored = (_randomBytes ??= require("node:crypto").randomBytes)(48);
+      this._ticketKeys = stored;
+      if (this._sharedCreds && !(this[ksharedCredsOptions] instanceof InternalSecureContext)) {
+        this._sharedCreds = null;
+      }
+    }
+    return Buffer.from(stored);
   };
 
   Server.prototype.setTicketKeys = function (keys) {
-    if (!ArrayBuffer.isView(keys)) {
+    if (!isArrayBufferView(keys)) {
       throw $ERR_INVALID_ARG_TYPE("buffer", ["Buffer", "TypedArray", "DataView"], keys);
     }
     if (keys.byteLength !== 48) {
-      throw $ERR_INVALID_ARG_VALUE("buffer", keys, "Session ticket keys must be a 48-byte buffer");
+      // Node checks length via internal/assert, so ERR_INTERNAL_ASSERTION (Error).
+      throw $ERR_INTERNAL_ASSERTION("Session ticket keys must be a 48-byte buffer" + kInternalAssertionSuffix);
     }
-    throw Error("Not implented in Bun yet");
+    // Copy so caller-side mutation cannot change what is applied at listen().
+    const copy = (this._ticketKeys = Buffer.from(new Uint8Array(keys.buffer, keys.byteOffset, keys.byteLength)));
+    const { _handle } = this;
+    if (_handle) _setTicketKeys(_handle, copy);
+    // Drop cached creds so the next injected socket rebuilds with the new keys.
+    if (this._sharedCreds && !(this[ksharedCredsOptions] instanceof InternalSecureContext)) {
+      this._sharedCreds = null;
+    }
   };
 
   this[buntls] = function (port, host, isClient) {
@@ -1459,6 +1504,7 @@ function Server(options, secureConnectionListener): void {
         clientRenegotiationLimit: CLIENT_RENEG_LIMIT,
         clientRenegotiationWindow: CLIENT_RENEG_WINDOW,
         contexts: contexts,
+        ticketKeys: this._ticketKeys,
         // Translate minVersion/maxVersion/secureProtocol to the integer
         // protocol range the native layer applies (secureProtocol wins, like
         // Node's SecureContext::Init). When none are given the module-level

@@ -1954,7 +1954,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         scope_iter = scope.parent;
                     }
 
-                    // TODO: Log a build note for this like esbuild does
+                    if p.options.bundle {
+                        let r = js_lexer::range_of_identifier(p.source, e_.target.loc);
+                        p.log().add_range_debug(
+                            Some(p.source),
+                            r,
+                            b"Using direct eval with a bundler is not recommended and may cause problems",
+                        );
+                    }
                 }
             }
             Data::EDot(dot) => {

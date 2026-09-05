@@ -2294,6 +2294,28 @@ describe("bundler", () => {
       api.expectFile("/out.js").toMatch(/[^\.:]module/); // `.module` and `node:module` are not ok.
     },
   });
+  itBundled("edgecase/ImportMetaFilenameCjs", {
+    files: {
+      "/entry.ts": /* js */ `
+        console.log(typeof import.meta.filename);
+        console.log(typeof import.meta.dirname);
+        console.log(typeof import.meta.path);
+        console.log(import.meta.filename === import.meta.path);
+        console.log(import.meta.filename.length > import.meta.file.length);
+      `,
+    },
+    target: "node",
+    format: "cjs",
+    onAfterBundle(api) {
+      // `import.meta` is a syntax error in CommonJS under Node.js, so every
+      // property access must be folded to a string literal in cjs output.
+      api.expectFile("/out.js").not.toContain("import.meta");
+    },
+    run: {
+      runtime: "node",
+      stdout: "string\nstring\nstring\ntrue\ntrue",
+    },
+  });
   itBundled("edgecase/IdentifierInEnum#13081", {
     files: {
       "/entry.ts": `

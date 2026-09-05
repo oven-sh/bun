@@ -3545,8 +3545,11 @@ declare module "bun" {
      * A map of file paths to their contents for in-memory bundling.
      *
      * Use this to bundle virtual files that don't exist on disk, or override
-     * the contents of files that do exist on disk. The keys are file paths (which should
-     * match how they're imported) and the values are the file contents.
+     * the contents of files that do exist on disk. The keys are file paths and the values
+     * are the file contents. An import of a relative or absolute path resolves against the
+     * keys the same way it resolves against files on disk, so `./helper` finds
+     * `/app/helper.ts`. A bare specifier such as `helper` does not. An entry point in
+     * {@link entrypoints} must match a key exactly.
      *
      * File contents can be provided as:
      * - `string` - The source code as a string

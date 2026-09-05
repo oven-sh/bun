@@ -601,4 +601,138 @@ describe("bundler files option", () => {
     const output = await result.outputs[0].text();
     expect(output).toContain("injected by plugin");
   });
+
+  describe("an import resolves against the keys like a path on disk", () => {
+    // Bundles the config and returns the `from <file>` strings in the output, or the build errors.
+    async function picked(config: Bun.BuildConfig) {
+      const result = await Bun.build({ ...config, throw: false });
+      if (!result.success) return result.logs.map(log => log.message);
+      return (await result.outputs[0].text()).match(/from [\w./]+/g);
+    }
+
+    test.each([
+      ["./greet", "/app/greet.ts"],
+      ["./greet", "/app/greet.json"],
+      ["/app/greet", "/app/greet.tsx"],
+      ["../app/greet", "/app/greet.js"],
+      ["./lib", "/app/lib/index.ts"],
+      ["./lib/", "/app/lib/index.js"],
+      [".", "/app/index.js"],
+      ["./greet.js", "/app/greet.ts"],
+      ["./greet.mjs", "/app/greet.mts"],
+    ])("import %p finds %p", async (specifier, key) => {
+      const files = {
+        "/app/main.ts": `import greet from ${JSON.stringify(specifier)}; console.log(greet);`,
+        [key]: key.endsWith(".json") ? `"from ${key}"` : `export default "from ${key}";`,
+      };
+      expect(await picked({ entrypoints: ["/app/main.ts"], files })).toEqual([`from ${key}`]);
+    });
+
+    // The extension order depends on the import kind, and it is different inside node_modules.
+    test.each([
+      ["main.ts", `import { a } from "./a";`, ["a.ts", "a.mts", "a.js", "a.jsx"], "a.jsx"],
+      ["main.ts", `const { a } = require("./a");`, ["a.ts", "a.mts", "a.js", "a.jsx"], "a.ts"],
+      [
+        "node_modules/lib/main.js",
+        `const { a } = require("./a");`,
+        ["node_modules/lib/a.ts", "node_modules/lib/a.js"],
+        "node_modules/lib/a.js",
+      ],
+      ["main.ts", `import { a } from "./a";`, ["a.js", "a/index.ts"], "a.js"],
+      ["main.ts", `import { a } from "./a/";`, ["a.js", "a/index.ts"], "a/index.ts"],
+      ["main.ts", `import { a } from "./a.js";`, ["a.ts", "a.js.ts"], "a.js.ts"],
+      ["main.ts", `import { a } from "./a.js";`, ["a.mts", "a.tsx", "a.ts"], "a.ts"],
+    ])("%s: %s with %j picks %p, like the disk resolver", async (entry, statement, names, expected) => {
+      const sources = Object.fromEntries([
+        [entry, `${statement} console.log(a);`],
+        ...names.map(name => [name, `export const a = "from ${name}";`]),
+      ]);
+      using dir = tempDir("bundler-files-order", sources);
+      const disk = await picked({ entrypoints: [`${dir}/${entry}`] });
+      const memory = await picked({
+        entrypoints: [`/app/${entry}`],
+        files: Object.fromEntries(Object.entries(sources).map(([name, code]) => [`/app/${name}`, code])),
+      });
+      expect({ disk, memory }).toEqual({ disk: [`from ${expected}`], memory: [`from ${expected}`] });
+    });
+
+    test("a file on disk that a key overrides keeps its tsconfig.json when the import has no extension", async () => {
+      using dir = tempDir("bundler-files-override-tsconfig", {
+        "tsconfig.json": JSON.stringify({ compilerOptions: { jsx: "react", jsxFactory: "h" } }),
+        "main.ts": `import App from "./App"; console.log(App);`,
+        "App.tsx": `export default <div>from disk</div>;`,
+      });
+      const files = { [`${dir}/App.tsx`]: `export default <div>from memory</div>;` };
+      const result = await Bun.build({ entrypoints: [`${dir}/main.ts`], files, external: ["react/*"], throw: false });
+      expect(result.logs).toEqual([]);
+      expect(await result.outputs[0].text()).toContain(`h("div", null, "from memory")`);
+    });
+
+    test("a key that overrides a file on disk does not change which file an import picks", async () => {
+      using dir = tempDir("bundler-files-override-order", {
+        "main.ts": `import { a } from "./a"; console.log(a);`,
+        "a.jsx": `export const a = "from disk/a.jsx";`,
+        "a.ts": `export const a = "from disk/a.ts";`,
+      });
+      const files = { [`${dir}/a.ts`]: `export const a = "from memory/a.ts";` };
+      expect(await picked({ entrypoints: [`${dir}/main.ts`], files })).toEqual(["from disk/a.jsx"]);
+    });
+
+    test("a key wins over another file on disk that the import names", async () => {
+      using dir = tempDir("bundler-files-key-wins", {
+        "main.ts": `import { a } from "./a"; console.log(a);`,
+        "a.ts": `export const a = "from disk/a.ts";`,
+      });
+      const files = { [`${dir}/a.js`]: `export const a = "from memory/a.js";` };
+      expect(await picked({ entrypoints: [`${dir}/main.ts`], files })).toEqual(["from memory/a.js"]);
+    });
+
+    test("an exact key wins over the .js rewrite", async () => {
+      const files = {
+        "/app/main.ts": `import greet from "./greet.js"; console.log(greet);`,
+        "/app/greet.js": `export default "from greet.js";`,
+        "/app/greet.ts": `export default "from greet.ts";`,
+      };
+      expect(await picked({ entrypoints: ["/app/main.ts"], files })).toEqual(["from greet.js"]);
+    });
+
+    test("a bare import does not find a key", async () => {
+      const files = {
+        "/app/main.ts": `import greet from "greet"; console.log(greet);`,
+        "/app/greet.ts": `export default "from greet.ts";`,
+      };
+      expect(await picked({ entrypoints: ["/app/main.ts"], files })).toEqual([
+        expect.stringContaining('Could not resolve: "greet"'),
+      ]);
+    });
+
+    test("a file on disk imports an in-memory file without the extension", async () => {
+      using dir = tempDir("bundler-files-disk-importer", {
+        "main.ts": `import generated from "./generated"; console.log(generated);`,
+      });
+      const files = { [`${dir}/generated.ts`]: `export default "from generated.ts";` };
+      expect(await picked({ entrypoints: [`${dir}/main.ts`], files })).toEqual(["from generated.ts"]);
+    });
+
+    test("an import that an onResolve plugin declines finds the in-memory file", async () => {
+      let declined = 0;
+      const files = {
+        "/app/main.ts": `import greet from "./greet"; console.log(greet);`,
+        "/app/greet.ts": `export default "from greet.ts";`,
+      };
+      const plugins: Bun.BunPlugin[] = [
+        {
+          name: "decline",
+          setup(build) {
+            build.onResolve({ filter: /^\.\/greet$/ }, () => {
+              declined++;
+              return undefined;
+            });
+          },
+        },
+      ];
+      expect(await picked({ entrypoints: ["/app/main.ts"], files, plugins })).toEqual(["from greet.ts"]);
+      expect(declined).toBe(1);
+    });
+  });
 });

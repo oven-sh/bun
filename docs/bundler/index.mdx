@@ -250,6 +250,8 @@ console.log(output);
 
 When all entrypoints are in the `files` map, Bun uses the current working directory as the root.
 
+An import of a relative or absolute path resolves against the keys of `files` the same way it resolves against files on disk. In the example above, `./greet` and `./greet.js` also find `/app/greet.ts`, and `./lib` would find `/app/lib/index.ts`. A bare specifier such as `greet` does not find `/app/greet.ts`. An entrypoint must match a key exactly.
+
 #### Override files on disk
 
 In-memory files take priority over files on disk, so you can override specific files while keeping the rest of your codebase unchanged:

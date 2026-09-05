@@ -2923,4 +2923,178 @@ snapshots:
       expect(existsSync(join(String(dir), "bun.lock"))).toBe(false);
     });
   });
+
+  // pnpm's `onlyBuiltDependencies` is the allow-list of packages whose lifecycle
+  // scripts may run, which is `trustedDependencies` in bun.
+  describe("onlyBuiltDependencies", () => {
+    const LIFECYCLE_POSTINSTALL_1_0_0_INTEGRITY =
+      "sha512-+frsFSxvy+pkm5fjAsAHptt2NiMMMnU07dan43rZO1yCqxy8vU0X8wNTOYlgkViD7HCHT/bIpPhoki935Nc2pg==";
+
+    // `lifecycle-postinstall`'s postinstall writes postinstall.txt next to itself.
+    const lifecyclePostinstallLockfile = `lockfileVersion: '9.0'
+
+importers:
+
+  .:
+    dependencies:
+      lifecycle-postinstall:
+        specifier: 1.0.0
+        version: 1.0.0
+
+packages:
+
+  lifecycle-postinstall@1.0.0:
+    resolution: {integrity: ${LIFECYCLE_POSTINSTALL_1_0_0_INTEGRITY}}
+
+snapshots:
+
+  lifecycle-postinstall@1.0.0: {}
+`;
+
+    function postinstallRan(dir: string) {
+      return existsSync(join(dir, "node_modules", "lifecycle-postinstall", "postinstall.txt"));
+    }
+
+    for (const linker of ["hoisted", "isolated"] as const) {
+      test.concurrent(`pnpm-workspace.yaml list becomes trustedDependencies (${linker})`, async () => {
+        const { packageDir } = await verdaccio.createTestDir({
+          bunfigOpts: { linker },
+          files: {
+            "package.json": JSON.stringify({
+              name: "only-built-workspace-yaml",
+              dependencies: { "lifecycle-postinstall": "1.0.0" },
+            }),
+            "pnpm-workspace.yaml": "onlyBuiltDependencies:\n  - lifecycle-postinstall\n",
+            "pnpm-lock.yaml": lifecyclePostinstallLockfile,
+          },
+        });
+
+        const { stderr, exitCode } = await migrate(packageDir);
+
+        expect(stderr).toContain("pnpm-workspace.yaml onlyBuiltDependencies to trustedDependencies in package.json");
+        expect(stderr).toContain("migrated lockfile from pnpm-lock.yaml");
+        expect(exitCode).toBe(0);
+
+        expect(await Bun.file(join(packageDir, "package.json")).json()).toStrictEqual({
+          name: "only-built-workspace-yaml",
+          dependencies: { "lifecycle-postinstall": "1.0.0" },
+          trustedDependencies: ["lifecycle-postinstall"],
+        });
+        expect(await bunLockOf(packageDir)).toContain(`"trustedDependencies": [\n    "lifecycle-postinstall",\n  ]`);
+
+        const install = await run(packageDir, "install");
+
+        expect(install.stderr).not.toContain("error:");
+        expect(install.stdout).not.toContain("Blocked");
+        expect(postinstallRan(packageDir)).toBe(true);
+        expect(install.exitCode).toBe(0);
+      });
+
+      // Without an allow-list the scripts stay blocked, and the install has to say so.
+      test.concurrent(`blocked scripts are reported after migrating (${linker})`, async () => {
+        const { packageDir } = await verdaccio.createTestDir({
+          bunfigOpts: { linker },
+          files: {
+            "package.json": JSON.stringify({
+              name: "only-built-missing",
+              dependencies: { "lifecycle-postinstall": "1.0.0" },
+            }),
+            "pnpm-lock.yaml": lifecyclePostinstallLockfile,
+          },
+        });
+
+        const { stdout, stderr, exitCode } = await run(packageDir, "install");
+
+        expect(stderr).toContain("migrated lockfile from pnpm-lock.yaml");
+        expect(stderr).not.toContain("trustedDependencies");
+        expect(stdout).toContain("Blocked 1 postinstall. Run `bun pm untrusted` for details.");
+        expect(postinstallRan(packageDir)).toBe(false);
+        expect(exitCode).toBe(0);
+      });
+    }
+
+    test.concurrent("bun install migrates the list and runs the scripts in the same run", async () => {
+      const { packageDir } = await verdaccio.createTestDir({
+        bunfigOpts: { linker: "isolated" },
+        files: {
+          "package.json": JSON.stringify({
+            name: "only-built-install",
+            dependencies: { "lifecycle-postinstall": "1.0.0" },
+          }),
+          "pnpm-workspace.yaml": "onlyBuiltDependencies:\n  - lifecycle-postinstall\n",
+          "pnpm-lock.yaml": lifecyclePostinstallLockfile,
+        },
+      });
+
+      const { stdout, stderr, exitCode } = await run(packageDir, "install");
+
+      expect(stderr).toContain("pnpm-workspace.yaml onlyBuiltDependencies to trustedDependencies in package.json");
+      expect(stderr).toContain("migrated lockfile from pnpm-lock.yaml");
+      expect(stdout).not.toContain("Blocked");
+      expect(postinstallRan(packageDir)).toBe(true);
+      expect(exitCode).toBe(0);
+      expect((await Bun.file(join(packageDir, "package.json")).json()).trustedDependencies).toEqual([
+        "lifecycle-postinstall",
+      ]);
+    });
+
+    // pnpm 9 kept the list in package.json. Both sources merge into an existing list, and
+    // the pnpm block keeps its copy for anyone still running pnpm on the project.
+    test.concurrent("package.json pnpm.onlyBuiltDependencies merges into an existing trustedDependencies", async () => {
+      const pnpm = { onlyBuiltDependencies: ["esbuild", "from-package-json"] };
+      using dir = tempDir("pnpm-v9-only-built-pnpm-field", {
+        "package.json": JSON.stringify({
+          name: "only-built-pnpm-field",
+          trustedDependencies: ["already-trusted", "esbuild"],
+          pnpm,
+        }),
+        "pnpm-workspace.yaml": "onlyBuiltDependencies:\n  - from-workspace-yaml\n  - esbuild\n",
+        "pnpm-lock.yaml": `lockfileVersion: '9.0'
+
+importers:
+
+  .: {}
+`,
+      });
+
+      const { stderr, exitCode } = await migrate(String(dir));
+
+      expect(stderr).toContain(
+        "pnpm.onlyBuiltDependencies to trustedDependencies, pnpm-workspace.yaml onlyBuiltDependencies to trustedDependencies in package.json",
+      );
+      expect(stderr).toContain("migrated lockfile from pnpm-lock.yaml");
+      expect(exitCode).toBe(0);
+
+      expect(await Bun.file(join(String(dir), "package.json")).json()).toStrictEqual({
+        name: "only-built-pnpm-field",
+        trustedDependencies: ["already-trusted", "esbuild", "from-package-json", "from-workspace-yaml"],
+        pnpm,
+      });
+    });
+
+    test.concurrent("a list that adds nothing leaves package.json alone", async () => {
+      const packageJson = {
+        name: "only-built-nothing-new",
+        trustedDependencies: ["esbuild"],
+        pnpm: { onlyBuiltDependencies: [] },
+      };
+      using dir = tempDir("pnpm-v9-only-built-nothing-new", {
+        "package.json": JSON.stringify(packageJson),
+        "pnpm-workspace.yaml": "onlyBuiltDependencies:\n  - esbuild\n",
+        "pnpm-lock.yaml": `lockfileVersion: '9.0'
+
+importers:
+
+  .: {}
+`,
+      });
+
+      const { stderr, exitCode } = await migrate(String(dir));
+
+      expect(stderr).not.toContain("onlyBuiltDependencies");
+      expect(stderr).toContain("migrated lockfile from pnpm-lock.yaml");
+      expect(exitCode).toBe(0);
+      expect(await Bun.file(join(String(dir), "package.json")).json()).toStrictEqual(packageJson);
+    });
+  });
 });

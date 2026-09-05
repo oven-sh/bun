@@ -1622,7 +1622,7 @@ pub(crate) fn migrate_pnpm_lockfile<'a>(
 
     lockfile.fetch_necessary_package_metadata_after_yarn_or_pnpm_migration::<false>(manager)?;
 
-    update_package_json_after_migration(manager, log, dir, &found_patches)?;
+    update_package_json_after_migration(lockfile, manager, log, dir, &found_patches)?;
 
     Ok(LoadResult::Ok(LoadResultOk {
         lockfile,
@@ -2327,8 +2327,97 @@ fn rewrite_bare_patch_keys(
     Ok(())
 }
 
+/// pnpm's allow-list of packages that may run lifecycle scripts, i.e. bun's `trustedDependencies`.
+fn collect_only_built_dependencies(list: &Expr, out: &mut Vec<&'static [u8]>) -> bool {
+    let Some(mut items) = list.as_array() else {
+        return false;
+    };
+    let mut found_any = false;
+    while let Some(item) = items.next() {
+        let Some(name) = as_string(&item) else {
+            continue;
+        };
+        if name.is_empty() {
+            continue;
+        }
+        found_any = true;
+        if !out.contains(&name) {
+            out.push(js_ast::data_store_dupe_str(name));
+        }
+    }
+    found_any
+}
+
+/// The migrated root skips `Package::parse`, so the lockfile's list is filled in here as well.
+fn add_trusted_dependencies(
+    json: &mut Expr,
+    lockfile: &mut Lockfile,
+    bump: &bun_alloc::Arena,
+    names: &[&'static [u8]],
+) -> Result<bool, AllocError> {
+    let existing = e_object(json).get(b"trustedDependencies");
+    if existing.is_some_and(|existing| !matches!(existing.data, ExprData::EArray(_))) {
+        return Ok(false);
+    }
+
+    let mut items = js_ast::ExprNodeList::init_capacity(names.len());
+    if let Some(mut existing_items) = existing.as_ref().and_then(Expr::as_array) {
+        while let Some(item) = existing_items.next() {
+            VecExt::append(&mut items, item);
+        }
+    }
+
+    let mut added_any = false;
+    for &name in names {
+        if items
+            .slice()
+            .iter()
+            .any(|item| as_string(item) == Some(name))
+        {
+            continue;
+        }
+        VecExt::append(
+            &mut items,
+            Expr::init(E::EString::init(name), bun_ast::Loc::EMPTY),
+        );
+        added_any = true;
+    }
+
+    let trusted = lockfile
+        .trusted_dependencies
+        .get_or_insert_with(Default::default);
+    for item in items.slice() {
+        if let Some(name) = as_string(item) {
+            trusted.put(
+                semver::string::Builder::string_hash(name) as crate::TruncatedPackageNameHash,
+                Box::from(name),
+            )?;
+        }
+    }
+
+    if !added_any {
+        return Ok(false);
+    }
+
+    let is_single_line = items.len_u32() == 1;
+    e_object_mut(json).put(
+        bump,
+        b"trustedDependencies",
+        Expr::init(
+            E::Array {
+                items,
+                is_single_line,
+                ..Default::default()
+            },
+            bun_ast::Loc::EMPTY,
+        ),
+    )?;
+    Ok(true)
+}
+
 /// Updates package.json with workspace and catalog information after migration
 fn update_package_json_after_migration(
+    lockfile: &mut Lockfile,
     manager: &mut PackageManager,
     log: &mut bun_ast::Log,
     dir: Fd,
@@ -2365,6 +2454,11 @@ fn update_package_json_after_migration(
     let mut moved_overrides = false;
     let mut moved_patched_deps = false;
     let mut moved: Vec<&'static str> = Vec::new();
+
+    // Copied rather than moved out of the `pnpm` block: pnpm itself still reads it there.
+    let mut trusted_names: Vec<&'static [u8]> = Vec::new();
+    let mut pnpm_only_built_deps = false;
+    let mut workspace_only_built_deps = false;
 
     if let Some(mut pnpm_prop) = json.as_property(b"pnpm") {
         if pnpm_prop.expr.is_object() {
@@ -2427,6 +2521,11 @@ fn update_package_json_after_migration(
                     needs_update = true;
                     moved.push("pnpm.patchedDependencies to patchedDependencies");
                 }
+            }
+
+            if let Some(only_built) = pnpm_obj.get(b"onlyBuiltDependencies") {
+                pnpm_only_built_deps =
+                    collect_only_built_dependencies(&only_built, &mut trusted_names);
             }
 
             if moved_overrides || moved_patched_deps {
@@ -2569,6 +2668,11 @@ fn update_package_json_after_migration(
             .flatten()
             {
                 data_store_dupe_expr_strings(subtree);
+            }
+
+            if let Some(only_built) = ws_root.get(b"onlyBuiltDependencies") {
+                workspace_only_built_deps =
+                    collect_only_built_dependencies(&only_built, &mut trusted_names);
             }
         }
         Err(_) => {}
@@ -2725,6 +2829,18 @@ fn update_package_json_after_migration(
             }
             needs_update = true;
             moved.push("pnpm-workspace.yaml patchedDependencies to patchedDependencies");
+        }
+    }
+
+    if !trusted_names.is_empty()
+        && add_trusted_dependencies(&mut json, lockfile, &bump, &trusted_names)?
+    {
+        needs_update = true;
+        if pnpm_only_built_deps {
+            moved.push("pnpm.onlyBuiltDependencies to trustedDependencies");
+        }
+        if workspace_only_built_deps {
+            moved.push("pnpm-workspace.yaml onlyBuiltDependencies to trustedDependencies");
         }
     }
 

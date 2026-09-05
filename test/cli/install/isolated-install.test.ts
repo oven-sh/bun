@@ -2109,6 +2109,86 @@ test("runs lifecycle scripts correctly", async () => {
   expect(allLifecycleScriptsDir).toEqual(["all-lifecycle-scripts"]);
 });
 
+describe("blocked lifecycle scripts", () => {
+  const blockedLine = "Blocked 4 postinstalls. Run `bun pm untrusted` for details.";
+
+  async function createUntrustedScriptsDir(bunfigOpts: { linker: "isolated"; globalStore?: boolean }) {
+    const { packageJson, packageDir } = await registry.createTestDir({ bunfigOpts });
+    await write(
+      packageJson,
+      JSON.stringify({
+        name: "test-pkg-blocked-scripts",
+        dependencies: {
+          // one postinstall
+          "lifecycle-postinstall": "1.0.0",
+          // preinstall, install and postinstall
+          "all-lifecycle-scripts": "1.0.0",
+          // no scripts
+          "no-deps": "1.0.0",
+        },
+      }),
+    );
+    return packageDir;
+  }
+
+  test.concurrent("are reported in the install summary like the hoisted linker does", async () => {
+    const packageDir = await createUntrustedScriptsDir({ linker: "isolated" });
+
+    const { out } = await runBunInstall(bunEnv, packageDir);
+
+    expect(out).toContain(blockedLine);
+    expect(existsSync(join(packageDir, "node_modules", "lifecycle-postinstall", "postinstall.txt"))).toBeFalse();
+    expect(existsSync(join(packageDir, "node_modules", "all-lifecycle-scripts", "postinstall.txt"))).toBeFalse();
+  });
+
+  test.concurrent("are not reported for trusted packages", async () => {
+    const { packageJson, packageDir } = await registry.createTestDir({ bunfigOpts: { linker: "isolated" } });
+    await write(
+      packageJson,
+      JSON.stringify({
+        name: "test-pkg-blocked-scripts-trusted",
+        dependencies: { "lifecycle-postinstall": "1.0.0" },
+        trustedDependencies: ["lifecycle-postinstall"],
+      }),
+    );
+
+    const { out } = await runBunInstall(bunEnv, packageDir);
+
+    expect(out).not.toContain("Blocked");
+    expect(existsSync(join(packageDir, "node_modules", "lifecycle-postinstall", "postinstall.txt"))).toBeTrue();
+  });
+
+  test.concurrent("are still reported with --ignore-scripts", async () => {
+    const packageDir = await createUntrustedScriptsDir({ linker: "isolated" });
+
+    await using proc = spawn({
+      cmd: [bunExe(), "install", "--ignore-scripts"],
+      cwd: packageDir,
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(out).toContain(blockedLine);
+    expect(err).not.toContain("error:");
+    expect(exitCode).toBe(0);
+  });
+
+  test.concurrent("are reported for packages installed into the global store", async () => {
+    const packageDir = await createUntrustedScriptsDir({ linker: "isolated", globalStore: true });
+
+    const { out } = await runBunInstall(bunEnv, packageDir);
+
+    expect(out).toContain(blockedLine);
+    // Untrusted packages are eligible for the global store, so this is the
+    // path that bypasses script enqueueing entirely.
+    expect(lstatSync(join(packageDir, "node_modules", ".bun", "lifecycle-postinstall@1.0.0")).isSymbolicLink()).toBe(
+      true,
+    );
+  });
+});
+
 // Self-contained HTTP server that serves package manifests & tarballs
 // directly from the Verdaccio fixtures, with Cache-Control: max-age=300
 // to replicate npmjs.org behavior (fully synchronous on warm cache).

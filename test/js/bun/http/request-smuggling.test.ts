@@ -1725,6 +1725,32 @@ describe("Host header field values in request.url", () => {
   });
 
   test.each([
+    ["1.2.3.4.5"],
+    ["[::1"],
+    // The same fallback for a joined URL much longer than the other cases.
+    [`${Buffer.alloc(130, "x").toString()}.example:abc`],
+  ])(
+    "request.url is the request-target when the Host header %j is in the authority byte set but does not parse",
+    async host => {
+      await using server = Bun.serve({
+        port: 0,
+        hostname: "127.0.0.1",
+        fetch(req) {
+          return new Response(req.url);
+        },
+      });
+
+      const response = await sendRawRequest(
+        server,
+        `GET /index HTTP/1.1\r\nHost: ${host}\r\nConnection: close\r\n\r\n`,
+      );
+      expect(response).toStartWith("HTTP/1.1 200");
+      // Not `http://<host>/index`, which `new URL()` rejects.
+      expect(response.slice(response.indexOf("\r\n\r\n") + 4)).toBe("/index");
+    },
+  );
+
+  test.each([
     ["example.com", "http://example.com/index"],
     ["example.com:8080", "http://example.com:8080/index"],
     ["[::1]:3000", "http://[::1]:3000/index"],
@@ -1740,6 +1766,37 @@ describe("Host header field values in request.url", () => {
     const response = await sendRawRequest(server, `GET /index HTTP/1.1\r\nHost: ${host}\r\nConnection: close\r\n\r\n`);
     expect(response).toStartWith("HTTP/1.1 200");
     expect(response.slice(response.indexOf("\r\n\r\n") + 4)).toBe(url);
+  });
+
+  // Targets with bytes >= 0x80 take the UTF-8 join and are percent-encoded by
+  // the URL parser; an invalid byte becomes U+FFFD. The long one exercises the
+  // same branch past the length where the old code switched strategies.
+  test.each([
+    ["/caf\xC3\xA9?q=\xE2\x9C\x93", "example.com", "http://example.com/caf%C3%A9?q=%E2%9C%93"],
+    ["/\xFF", "example.com", "http://example.com/%EF%BF%BD"],
+    [
+      "/" + Buffer.alloc(200, "a").toString() + "\xC3\xA9",
+      "example.com",
+      "http://example.com/" + Buffer.alloc(200, "a").toString() + "%C3%A9",
+    ],
+    // A Host inside the byte set that the URL parser still rejects: the bare
+    // target, decoded the same way.
+    ["/\xFF", "example.com:abc", "/\uFFFD"],
+  ])("request.url with a non-ASCII target %j and Host %j", async (target, host, url) => {
+    await using server = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      fetch(req) {
+        return new Response(req.url);
+      },
+    });
+
+    const response = await sendRawRequest(
+      server,
+      `GET ${target} HTTP/1.1\r\nHost: ${host}\r\nConnection: close\r\n\r\n`,
+    );
+    expect(response).toStartWith("HTTP/1.1 200");
+    expect(Buffer.from(response.slice(response.indexOf("\r\n\r\n") + 4), "latin1").toString()).toBe(url);
   });
 
   test.each([
@@ -1796,13 +1853,15 @@ describe("Host header field values in request.url", () => {
 
       // RFC 3986 `uri-host [ ":" port ]`: unreserved / sub-delims / "%" / ":" / "[" / "]".
       // Every byte in [0x7f, 0xff] is outside that set, so neither URL uses any of them.
-      const isHostByte = (char: string) => /^[A-Za-z0-9._~%!$&'()*+,;=:\[\]-]$/.test(char);
+      // "%", ":", "[" and "]" are inside it, but `a%b`, `a:b`, `a[b` and `a]b` are not
+      // authorities the URL parser accepts, so those fall back to the request-target too.
+      const formsUrlAuthority = (char: string) => /^[A-Za-z0-9._~!$&'()*+,;=-]$/.test(char);
 
       async function checkByte(byte: number) {
         const char = String.fromCharCode(byte);
         const host = `a${char}b`;
-        // Request::is_valid_host_header decides whether the Host header becomes the
-        // request URL's authority; the request itself is served either way.
+        // Request::is_valid_host_header and then the URL parser decide whether the Host
+        // header becomes the request URL's authority; the request itself is served either way.
         // The two probes run sequentially so each batch keeps at most one socket per byte open.
         const http11 = await sendRawRequest(server, `GET /p HTTP/1.1\r\nHost: ${host}\r\nConnection: close\r\n\r\n`);
         const http10 = await sendRawRequest(server, `GET /p HTTP/1.0\r\nHost: ${host}\r\n\r\n`);
@@ -1826,7 +1885,7 @@ describe("Host header field values in request.url", () => {
         bytes.map(byte => {
           const char = String.fromCharCode(byte);
           // `req.url` carries the lowercased host (URL host normalization).
-          const url = isHostByte(char) ? `http://a${char.toLowerCase()}b/p` : "/p";
+          const url = formsUrlAuthority(char) ? `http://a${char.toLowerCase()}b/p` : "/p";
           return {
             char,
             http11Accepted: true,

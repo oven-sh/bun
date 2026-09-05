@@ -598,6 +598,9 @@ it("request.url should be based on the Host header", async () => {
 it.each([
   ["HTTP/1.0", "GET /helloooo HTTP/1.0\r\nHost: a/b\r\n\r\n"],
   ["HTTP/1.1", "GET /helloooo HTTP/1.1\r\nHost: a b\r\nConnection: close\r\n\r\n"],
+  // In the authority byte set, but the URL parser still rejects them.
+  ["HTTP/1.1 (bad port)", "GET /helloooo HTTP/1.1\r\nHost: example.com:abc\r\nConnection: close\r\n\r\n"],
+  ["HTTP/1.1 (bad escape)", "GET /helloooo HTTP/1.1\r\nHost: exa%zzmple.com\r\nConnection: close\r\n\r\n"],
 ])("request.url is the request-target when the %s Host header is not a valid authority", async (_version, payload) => {
   using server = Bun.serve({
     port: 0,

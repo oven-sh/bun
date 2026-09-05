@@ -17,22 +17,44 @@ use crate::bunfig::Bunfig;
 
 // ─── bunfig loading ──────────────────────────────────────────────────────────
 
+/// `None` when `dir/path` does not fit: nothing could be opened at such a path anyway.
+fn join_config_path<'buf>(
+    dir: &[u8],
+    path: &[u8],
+    buf: &'buf mut PathBuffer,
+) -> Option<&'buf ZStr> {
+    let max_len = buf.len() - 1;
+    let len = resolve_path::join_abs_string_buf_checked::<platform::Auto>(
+        dir,
+        &mut buf[..max_len],
+        &[path],
+    )?
+    .len();
+    buf[len] = 0;
+    Some(ZStr::from_buf(&buf[..], len))
+}
+
 fn get_home_config_path(buf: &mut PathBuffer) -> Option<&ZStr> {
-    let paths: [&[u8]; 1] = [b".bunfig.toml"];
+    let dir = env_var::XDG_CONFIG_HOME
+        .get()
+        .or_else(|| env_var::HOME.get())?;
+    join_config_path(dir, b".bunfig.toml", buf)
+}
 
-    if let Some(data_dir) = env_var::XDG_CONFIG_HOME.get() {
-        return Some(resolve_path::join_abs_string_buf_z::<platform::Auto>(
-            data_dir, &mut **buf, &paths,
-        ));
+fn unreadable_config(
+    auto_loaded: bool,
+    err: &bun_sys::Error,
+    config_path: &[u8],
+) -> Result<(), crate::Error> {
+    if auto_loaded {
+        return Ok(());
     }
-
-    if let Some(home_dir) = env_var::HOME.get() {
-        return Some(resolve_path::join_abs_string_buf_z::<platform::Auto>(
-            home_dir, &mut **buf, &paths,
-        ));
-    }
-
-    None
+    bun_core::pretty_errorln!(
+        "{}\nwhile reading config \"{}\"",
+        err,
+        BStr::new(config_path),
+    );
+    Global::exit(1);
 }
 
 fn load_bunfig(
@@ -44,17 +66,7 @@ fn load_bunfig(
     let source =
         match bun_ast::to_source(config_path, bun_ast::ToSourceOptions { convert_bom: true }) {
             Ok(s) => s,
-            Err(err) => {
-                if auto_loaded {
-                    return Ok(());
-                }
-                bun_core::pretty_errorln!(
-                    "{}\nwhile reading config \"{}\"",
-                    err,
-                    BStr::new(config_path.as_bytes()),
-                );
-                Global::exit(1);
-            }
+            Err(err) => return unreadable_config(auto_loaded, &err, config_path.as_bytes()),
         };
 
     bun_ast::stmt::data::Store::create();
@@ -193,11 +205,12 @@ pub fn load_config(
     if config_path_.is_empty() {
         return Ok(());
     }
-    let config_path_len: usize;
-    if config_path_[0] == b'/' {
-        config_buf[..config_path_.len()].copy_from_slice(config_path_);
-        config_buf[config_path_.len()] = 0;
-        config_path_len = config_path_.len();
+    let config_path: Option<&ZStr> = if config_path_[0] == b'/' {
+        if config_path_.len() < config_buf.len() {
+            Some(resolve_path::z(config_path_, &mut config_buf))
+        } else {
+            None
+        }
     } else {
         if ctx.args.absolute_working_dir.is_none() {
             let mut secondbuf = PathBuffer::uninit();
@@ -208,23 +221,20 @@ pub fn load_config(
             ctx.args.absolute_working_dir = Some(Box::<[u8]>::from(&secondbuf[..cwd_len]));
         }
 
-        // Reshaped for borrowck: `join_abs_string_buf` ties the
-        // returned slice's lifetime to both `cwd` (borrowed from `ctx.args`)
-        // and `config_buf`. We only need the length to NUL-terminate and
-        // re-wrap, so capture `joined.len()` and drop the `ctx` borrow before
-        // the `&mut ctx` call below.
-        config_path_len = {
-            let awd: &[u8] = ctx.args.absolute_working_dir.as_deref().unwrap();
-            let parts: [&[u8]; 2] = [awd, config_path_];
-            let joined =
-                resolve_path::join_abs_string_buf::<platform::Auto>(awd, &mut *config_buf, &parts);
-            joined.len()
-        };
-        config_buf[config_path_len] = 0;
-    }
-    // SAFETY: `config_buf[config_path_len] == 0` (written above on both arms);
-    // `config_buf` outlives the call.
-    let config_path = ZStr::from_buf(&config_buf[..], config_path_len);
+        join_config_path(
+            ctx.args.absolute_working_dir.as_deref().unwrap(),
+            config_path_,
+            &mut config_buf,
+        )
+    };
+    let Some(config_path) = config_path else {
+        return unreadable_config(
+            auto_loaded,
+            &bun_sys::Error::from_code(bun_sys::E::ENAMETOOLONG, bun_sys::Tag::open)
+                .with_path(config_path_),
+            config_path_,
+        );
+    };
 
     if let Err(err) = load_config_path(cmd, auto_loaded, config_path, ctx) {
         report_bunfig_load_failure(ctx.log, err);

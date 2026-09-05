@@ -86,6 +86,7 @@
 #include <uv.h>
 #include <io.h>
 #include <fcntl.h>
+#include "NodeExeImportsWindows.h"
 // Using the same typedef and define for `mode_t` and `umask` as node on windows.
 // https://github.com/nodejs/node/blob/ad5e2dab4c8306183685973387829c2f69e793da/src/node_process_methods.cc#L29
 #define umask _umask
@@ -542,8 +543,20 @@ JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(Process_functionDlopen, __attribute__((
 
     Bun__process_dlopen_count++;
 
+    // A module whose DllMain/constructors already called napi_module_register can still fail to
+    // load; drop what it queued so a later dlopen does not call into an unloaded image.
+    auto forgetModulesRegisteredByThisLoad = [globalObject, callCountAtStart,
+                                                 pendingNapiModulesAtStart = globalObject->m_pendingNapiModules.size(),
+                                                 pendingV8ModulesAtStart = globalObject->m_pendingV8Modules.size()] {
+        globalObject->m_pendingNapiModules.shrink(pendingNapiModulesAtStart);
+        globalObject->m_pendingV8Modules.shrink(pendingV8ModulesAtStart);
+        globalObject->napiModuleRegisterCallCount = callCountAtStart;
+        globalObject->m_pendingNapiModuleDlopenHandle = nullptr;
+    };
+
 #if OS(WINDOWS)
     BunString filename_str = Bun::toString(filename);
+    Bun::NodeExeImports::Scope nodeExeImports;
     HMODULE handle = Bun__LoadLibraryBunString(&filename_str);
 #else
 #if OS(LINUX)
@@ -597,6 +610,12 @@ JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(Process_functionDlopen, __attribute__((
             errorBuilder.append("error code "_s);
             errorBuilder.append(WTF::String::number(errorId));
         }
+        if (WTF::String unresolved = nodeExeImports.unresolvedImportError(nullptr); !unresolved.isNull()) {
+            errorBuilder.append(" "_s, unresolved, "."_s);
+        } else if (errorId == ERROR_MOD_NOT_FOUND && Bun::NodeExeImports::fileHasLoadTimeNodeExeImport(filename.wideCharacters().span().data())) {
+            errorBuilder.append(" "_s, filename,
+                " has a load-time (not delay-loaded) import of node.exe, so Windows can only load it while a node.exe is on the DLL search path, for example with Node.js on PATH."_s);
+        }
 
         WTF::String msg = errorBuilder.toString();
         if (messageBuffer)
@@ -604,8 +623,17 @@ JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(Process_functionDlopen, __attribute__((
 #else
         WTF::String msg = WTF::String::fromUTF8(dlerror());
 #endif
+        forgetModulesRegisteredByThisLoad();
         return throwError(globalObject, scope, ErrorCode::ERR_DLOPEN_FAILED, msg);
     }
+
+#if OS(WINDOWS)
+    if (WTF::String unresolved = nodeExeImports.unresolvedImportError(handle); !unresolved.isNull()) {
+        forgetModulesRegisteredByThisLoad();
+        FreeLibrary(handle);
+        return throwError(globalObject, scope, ErrorCode::ERR_DLOPEN_FAILED, makeString("Cannot load native addon "_s, filename, ": "_s, unresolved));
+    }
+#endif
 
     if (callCountAtStart != globalObject->napiModuleRegisterCallCount) {
         // Module self-registered via static constructor(s).
@@ -736,6 +764,7 @@ JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(Process_functionDlopen, __attribute__((
 
     if (!napi_register_module_v1) {
 #if OS(WINDOWS)
+        Bun::NodeExeImports::forget(handle);
         FreeLibrary(handle);
 #else
         dlclose(handle);

@@ -3576,6 +3576,13 @@ impl VirtualMachine {
             .unwrap_or(true)
     }
 
+    /// `BUN_FEATURE_FLAG_DISABLE_ADDON_DLL_NOTIFICATION` (see `NodeExeImportsWindows.cpp`).
+    #[unsafe(export_name = "Bun__disableAddonDllNotification")]
+    pub(crate) extern "C" fn disable_addon_dll_notification() -> bool {
+        bun_core::env_var::feature_flag::BUN_FEATURE_FLAG_DISABLE_ADDON_DLL_NOTIFICATION::get()
+            .unwrap_or(false)
+    }
+
     /// Whether `bun:ffi` `cc()` is allowed (`--no-ffi-cc` and `--no-addons` disable it).
     pub fn allow_ffi_cc(&self) -> bool {
         let opts = &self.transpiler.options.transform_options;

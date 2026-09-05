@@ -330,5 +330,59 @@
                 "NAPI_VERSION=8",
             ],
         },
+        # The five targets below are the Windows link shapes of an addon that names node.exe in its
+        # import tables without node-gyp's win_delay_load_hook (https://github.com/oven-sh/bun/issues/10690).
+        # napi.test.ts asserts each binary's PE import shape before loading it. On other platforms
+        # they are ordinary addons.
+        {
+            "target_name": "no_delay_load_hook_addon",
+            "sources": ["no_delay_load_hook_addon.c"],
+            # /DELAYLOAD:node.exe with no hook: cmake-js projects that omit ${CMAKE_JS_SRC}.
+            "win_delay_load_hook": "false",
+            "conditions": [
+                ["OS=='win'", {
+                    "msvs_settings": {
+                        "VCLinkerTool": {
+                            "DelayLoadDLLs": ["node.exe"],
+                        },
+                    },
+                }],
+            ],
+        },
+        {
+            "target_name": "regular_node_exe_import_addon",
+            "sources": ["no_delay_load_hook_addon.c"],
+            # Load-time node.exe import: Zig/Rust prebuilds linked straight against node.lib (#30454).
+            "win_delay_load_hook": "false",
+        },
+        {
+            "target_name": "no_delay_load_hook_ctor_addon",
+            "sources": ["no_delay_load_hook_addon.c"],
+            "defines": ["REGISTER_VIA_CONSTRUCTOR"],
+            # As above, registering from a static initializer (node_api.h < 18.17), i.e. inside DllMain.
+            "win_delay_load_hook": "false",
+            "conditions": [
+                ["OS=='win'", {
+                    "msvs_settings": {
+                        "VCLinkerTool": {
+                            "DelayLoadDLLs": ["node.exe"],
+                        },
+                    },
+                }],
+            ],
+        },
+        {
+            "target_name": "regular_node_exe_import_ctor_addon",
+            "sources": ["no_delay_load_hook_addon.c"],
+            "defines": ["REGISTER_VIA_CONSTRUCTOR"],
+            "win_delay_load_hook": "false",
+        },
+        {
+            "target_name": "regular_node_exe_import_missing_addon",
+            "sources": ["no_delay_load_hook_addon.c"],
+            "defines": ["IMPORT_MISSING_FROM_HOST"],
+            # Load-time node.exe import of a symbol bun.exe does not export: must fail to load, cleanly.
+            "win_delay_load_hook": "false",
+        },
     ]
 }

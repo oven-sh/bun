@@ -354,7 +354,13 @@ test.skipIf(!fault.available())(
       // Only populated when the assertion is about to fail, so the diff shows why.
       stderr: outOfMemory ? "" : stderr,
       signalCode: proc.signalCode,
-    }).toEqual({ stdout: "ARMED\n", outOfMemory: true, stderr: "", signalCode: "SIGABRT" });
+    }).toEqual({
+      stdout: "ARMED\n",
+      outOfMemory: true,
+      stderr: "",
+      // The crash handler ends in abort() on POSIX and in ExitProcess(3) on Windows.
+      signalCode: isWindows ? null : "SIGABRT",
+    });
     expect(exitCode).not.toBe(0);
   },
   // The child has already run alongside the other tests; this is the budget

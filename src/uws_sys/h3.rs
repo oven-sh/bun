@@ -94,6 +94,12 @@ impl Response {
     pub fn end_without_body(&mut self, close_connection: bool) {
         c::uws_h3_res_end_without_body(self, close_connection)
     }
+    /// node:http (the only caller) never reaches HTTP/3; kept for AnyResponse
+    /// dispatch parity. No node:http socket closes the transport afterwards
+    /// here, hence the reset.
+    pub(crate) fn abandon(&mut self) {
+        self.force_close()
+    }
     pub(crate) fn end_stream(&mut self, close_connection: bool) {
         c::uws_h3_res_end_stream(self, close_connection)
     }

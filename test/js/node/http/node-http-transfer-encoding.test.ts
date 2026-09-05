@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { once } from "events";
 import { bunEnv, bunExe, tls as tlsCert } from "harness";
-import { createServer, request } from "http";
+import { createServer, get, IncomingMessage, request, ServerResponse } from "http";
 import { createServer as createHttpsServer } from "https";
 import { AddressInfo, connect, Server } from "net";
 import { connect as tlsConnect } from "tls";
@@ -890,6 +890,183 @@ describe("tearing down a response with its headers on the wire adds no bytes", (
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stderr).toBe("");
     expect(JSON.parse(stdout)).toBe("5\r\nhello\r\n");
+    expect(exitCode).toBe(0);
+  });
+});
+
+// Counterpart of the block above for a response that is given up on before its
+// headers went out (res.destroy(), req.destroy()): nothing at all goes on the
+// wire, like Node, so the client sees the connection close rather than a
+// complete empty 200. The destroys below are scheduled with setImmediate so
+// they run after the request listener's dispatch has returned; while the
+// dispatch is on the stack the connection is corked, and a stray write would be
+// discarded together with the cork buffer at close, hiding the bug. The cases
+// that pass either way pin that corked behavior.
+describe("giving up on a response before its headers are sent", () => {
+  async function bytesReceivedByClient({
+    listener,
+    https = false,
+  }: {
+    listener: (req: IncomingMessage, res: ServerResponse) => void;
+    https?: boolean;
+  }) {
+    let requestDispatched = false;
+    const dispatch = (req: IncomingMessage, res: ServerResponse) => {
+      requestDispatched = true;
+      listener(req, res);
+    };
+    await using server = https ? createHttpsServer(tlsCert, dispatch) : createServer(dispatch);
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    const { port } = server.address() as AddressInfo;
+    const rawRequest = "GET / HTTP/1.1\r\nHost: x\r\n\r\n";
+    const socket = https
+      ? tlsConnect({ port, host: "127.0.0.1", rejectUnauthorized: false }, () => socket.write(rawRequest))
+      : connect(port, "127.0.0.1", () => socket.write(rawRequest));
+    const closed = Promise.withResolvers<void>();
+    let received = "";
+    socket.on("data", (chunk: Buffer) => (received += chunk.toString("latin1")));
+    // The server-side teardown may surface here as an error (ECONNRESET, or a
+    // TLS session ending without close_notify); which one is platform-specific
+    // and not what is under test. An empty `received` is only meaningful if the
+    // request actually reached the listener, so that is checked instead.
+    socket.on("error", () => {});
+    socket.on("close", () => closed.resolve());
+    await closed.promise;
+    expect(requestDispatched).toBe(true);
+    return received;
+  }
+
+  test.concurrent("res.destroy() after writeHead()", async () => {
+    const received = await bytesReceivedByClient({
+      listener(req, res) {
+        res.writeHead(200, { "x-a": "1" });
+        setImmediate(() => res.destroy());
+      },
+    });
+    expect(received).toBe("");
+  });
+
+  test.concurrent("res.destroy() after writeHead(500) does not turn into a 200", async () => {
+    const received = await bytesReceivedByClient({
+      listener(req, res) {
+        res.writeHead(500);
+        setImmediate(() => res.destroy());
+      },
+    });
+    expect(received).toBe("");
+  });
+
+  test.concurrent("res.destroy() on an untouched response", async () => {
+    const received = await bytesReceivedByClient({
+      listener(req, res) {
+        setImmediate(() => res.destroy());
+      },
+    });
+    expect(received).toBe("");
+  });
+
+  test.concurrent("req.destroy()", async () => {
+    const received = await bytesReceivedByClient({
+      listener(req, res) {
+        res.writeHead(200);
+        setImmediate(() => req.destroy());
+      },
+    });
+    expect(received).toBe("");
+  });
+
+  test.concurrent("res.destroy() over https", async () => {
+    const received = await bytesReceivedByClient({
+      https: true,
+      listener(req, res) {
+        res.writeHead(200, { "x-a": "1" });
+        setImmediate(() => res.destroy());
+      },
+    });
+    expect(received).toBe("");
+  });
+
+  test.concurrent("res.destroy() synchronously inside the request listener", async () => {
+    const received = await bytesReceivedByClient({
+      listener(req, res) {
+        res.writeHead(200);
+        res.destroy();
+      },
+    });
+    expect(received).toBe("");
+  });
+
+  // Node drops whatever destroy() finds still corked, so a res.write() in the
+  // same tick never reaches the client either. Distinct from the cases above:
+  // here the header block and the chunk have been handed to the connection and
+  // are sitting in its cork buffer, and the close has to discard them.
+  test.concurrent("res.destroy() right after res.write() discards the corked headers and chunk", async () => {
+    const received = await bytesReceivedByClient({
+      listener(req, res) {
+        res.writeHead(200, { "content-length": "10" });
+        res.write("hello");
+        res.destroy();
+      },
+    });
+    expect(received).toBe("");
+  });
+
+  test.concurrent("http.get() sees a socket hang up instead of an empty 200 response", async () => {
+    await using server = createServer((req, res) => {
+      res.writeHead(200);
+      setImmediate(() => res.destroy());
+    });
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    const { port } = server.address() as AddressInfo;
+    const outcome = await new Promise<unknown>(resolve => {
+      get({ port, host: "127.0.0.1" }, res => {
+        res.resume();
+        resolve({ statusCode: res.statusCode });
+      }).on("error", (err: NodeJS.ErrnoException) => resolve({ code: err.code, message: err.message }));
+    });
+    expect(outcome).toEqual({ code: "ECONNRESET", message: "socket hang up" });
+  });
+
+  // A request listener that throws is the other way a response is given up on
+  // before its headers are sent. Node leaves that connection open; Bun answers
+  // it, and the answer must not be an empty 200. Runs in a child because the
+  // throw reaches uncaughtException.
+  test.concurrent("a request listener that throws before writing gets a 500, not an empty 200", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        const { createServer } = require("node:http");
+        const { connect } = require("node:net");
+        process.on("uncaughtException", err => {
+          if (err.message !== "boom") throw err;
+        });
+        const server = createServer(() => {
+          throw new Error("boom");
+        });
+        server.listen(0, "127.0.0.1", () => {
+          const socket = connect(server.address().port, "127.0.0.1", () => {
+            socket.write("GET / HTTP/1.1\\r\\nHost: x\\r\\n\\r\\n");
+          });
+          let raw = "";
+          socket.on("data", chunk => (raw += chunk.toString("latin1")));
+          socket.on("error", () => {});
+          socket.on("close", () => {
+            const headerEnd = raw.indexOf("\\r\\n\\r\\n");
+            console.log(JSON.stringify({ statusLine: raw.slice(0, raw.indexOf("\\r\\n")), body: raw.slice(headerEnd + 4) }));
+            server.close();
+          });
+        });
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual({ statusLine: "HTTP/1.1 500 Internal Server Error", body: "" });
     expect(exitCode).toBe(0);
   });
 });

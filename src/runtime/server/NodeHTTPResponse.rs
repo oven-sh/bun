@@ -1561,7 +1561,7 @@ impl NodeHTTPResponse {
             raw_response.clear_on_data();
             raw_response.clear_on_writable();
             raw_response.clear_timeout();
-            raw_response.end_without_body(true);
+            raw_response.abandon();
         }
         self.on_request_complete();
         Ok(JSValue::UNDEFINED)

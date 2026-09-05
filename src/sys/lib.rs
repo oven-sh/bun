@@ -4926,13 +4926,14 @@ pub mod c {
     use core::ffi::{c_char, c_void};
     #[cfg(unix)]
     pub use libc::fchmod;
-    // `getuid`/`getgid` take no args and read kernel
+    // `getuid`/`geteuid`/`getgid` take no args and read kernel
     // process state — no preconditions, never fail. Declared locally as
     // `safe fn` (instead of re-exporting the `libc` crate's raw decls) so
     // callers need no per-site proof.
     #[cfg(unix)]
     unsafe extern "C" {
         pub safe fn getuid() -> libc::uid_t;
+        pub safe fn geteuid() -> libc::uid_t;
         pub safe fn getgid() -> libc::gid_t;
     }
     #[cfg(unix)]

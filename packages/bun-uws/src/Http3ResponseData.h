@@ -11,6 +11,7 @@
 namespace uWS {
 
 struct Http3Response;
+struct Http3WebTransportSession;
 
 struct Http3ResponseData {
     /* Same callback signatures as HttpResponseData so the C ABI matches. */
@@ -59,6 +60,22 @@ struct Http3ResponseData {
     BackPressure backpressure;
     bool endAfterDrain = false;
 
+    /* WebTransport, all inert until the extended CONNECT is upgraded. The
+     * capsule buffer is separate from `backpressure` because a session has no
+     * body; sharing one would only tangle the two lifetimes. */
+    void *wtUserData = nullptr;
+    /* Copied off the context at accept because it is read during teardown:
+     * Http3Context::free() destructs the context data before the engine that
+     * dispatches on_close. */
+    void (*wtOnClose)(struct Http3WebTransportSession *, uint32_t, const char *, size_t) = nullptr;
+    WTF::Vector<char, 32> wtCapsule;
+    /* Bytes of a capsule body we are dropping unread still to come. */
+    uint64_t wtSkip = 0;
+    /* The peer's close capsule, held until on_stream_close reports it. Zero
+     * and empty when the session ended without one. */
+    WTF::Vector<char, 32> wtCloseReason;
+    uint32_t wtCloseCode = 0;
+
     uint64_t offset = 0;
     uint8_t state = 0;
 
@@ -86,6 +103,12 @@ struct Http3ResponseData {
         hdrs.shrink(0);
         backpressure.clear();
         endAfterDrain = false;
+        wtUserData = nullptr;
+        wtOnClose = nullptr;
+        wtCapsule.shrink(0);
+        wtSkip = 0;
+        wtCloseReason.shrink(0);
+        wtCloseCode = 0;
         offset = 0;
         state = HTTP_RESPONSE_PENDING;
     }

@@ -12,10 +12,11 @@ namespace uWS {
 struct H3App {
     Http3Context *http3Context;
 
-    static H3App *create(SocketContextOptions options, unsigned idleTimeoutSecs = 0) {
+    static H3App *create(SocketContextOptions options, unsigned idleTimeoutSecs = 0,
+                         bool webtransport = false) {
         us_bun_socket_context_options_t raw;
         memcpy(&raw, &options, sizeof(raw));
-        Http3Context *ctx = Http3Context::create(Loop::get(), raw, idleTimeoutSecs);
+        Http3Context *ctx = Http3Context::create(Loop::get(), raw, idleTimeoutSecs, webtransport);
         if (!ctx) return nullptr;
         return new H3App{ctx};
     }
@@ -48,6 +49,26 @@ struct H3App {
                    MoveOnlyFunction<void(us_quic_listen_socket_t *)> &&cb) {
         cb(http3Context->listen(host.empty() ? nullptr : host.c_str(), port, options));
         return std::move(*this);
+    }
+
+    /* The WebTransport session route. High priority so the per-method
+     * wildcard fallback cannot cull it; see Http3Context::onHttp. */
+    H3App &&webtransportConnect(std::string_view pattern,
+                                MoveOnlyFunction<void(Http3Response *, Http3Request *)> &&handler) {
+        http3Context->onHttp("connect", pattern, std::move(handler), true);
+        return std::move(*this);
+    }
+
+    /* Session-lifetime callbacks. Opening one is the CONNECT route's job, so
+     * there is no `open` here. */
+    void onWebTransport(
+        void (*onDatagram)(Http3WebTransportSession *, const char *, unsigned),
+        void (*onClose)(Http3WebTransportSession *, uint32_t, const char *, size_t),
+        void (*onDrain)(Http3WebTransportSession *))
+    {
+        http3Context->getContextData()->onWebTransportDatagram = onDatagram;
+        http3Context->getContextData()->onWebTransportClose = onClose;
+        http3Context->getContextData()->onWebTransportDrain = onDrain;
     }
 
     void clearRoutes() {

@@ -242,6 +242,203 @@ Set `http1: false` to refuse HTTP/1.x clients. Over TLS, clients that offer ALPN
 
 ---
 
+## WebTransport
+
+<Note>
+  WebTransport in `Bun.serve` is **experimental** and may change in future releases. Bun implements **datagrams only** —
+  see [Streams are not implemented](#streams-are-not-implemented) below.
+</Note>
+
+[WebTransport](https://developer.mozilla.org/en-US/docs/Web/API/WebTransport) gives a browser an unreliable, unordered
+message channel to your server over HTTP/3 — the thing WebSockets are not. A dropped datagram is never retransmitted and
+never blocks the one behind it, which is what makes it the right transport for game state, voice, and telemetry, where a
+late message is worth less than the next one.
+
+Set `webtransport` alongside `http3: true`. Both are required; `webtransport` without `http3` throws.
+
+```ts
+Bun.serve({
+  tls: {
+    key: Bun.file("./key.pem"),
+    cert: Bun.file("./cert.pem"),
+  },
+  http3: true,
+  webtransport: {
+    open(session) {
+      console.log("session opened");
+    },
+    datagram(session, data) {
+      session.sendDatagram(data); // echo it back
+    },
+    close(session, code, reason) {
+      console.log("session closed", code, reason);
+    },
+  },
+  fetch(req) {
+    return new Response("Ordinary HTTP/3 requests still work here");
+  },
+});
+```
+
+The `fetch` handler is still required and still serves ordinary requests. A WebTransport session arrives as an extended
+`CONNECT`, which Bun routes to `webtransport` instead of `fetch`; a `CONNECT` without the WebTransport protocol still
+reaches `fetch`.
+
+From a browser:
+
+```js
+const wt = new WebTransport("https://localhost:3000/");
+await wt.ready;
+
+const writer = wt.datagrams.writable.getWriter();
+const reader = wt.datagrams.readable.getReader();
+
+await writer.write(new Uint8Array([1, 2, 3]));
+
+const { value } = await reader.read();
+console.log(value); // Uint8Array(3) [1, 2, 3]
+```
+
+<Note>
+  Start reading before you write a burst. The incoming datagram queue in a browser is shallow by spec and drops the
+  oldest entry when it overflows, so a page that writes ten datagrams and only then calls `read()` will usually see
+  fewer than ten answers — a property of the client, not of the server.
+</Note>
+
+### Accepting and refusing sessions
+
+The `upgrade` handler is the only point where the request is still visible and refusing is still possible. Return a
+`Response` to refuse; return anything else — or nothing — to accept, and what you return becomes the session's `data`.
+
+```ts
+webtransport: {
+  upgrade(req) {
+    const url = new URL(req.url);
+    if (url.pathname !== "/game") return new Response(null, { status: 404 });
+
+    const user = verify(req.headers.get("authorization"));
+    if (!user) return new Response(null, { status: 401 });
+
+    return { user, joined: Date.now() };
+  },
+  datagram(session, data) {
+    session.data.user; // whatever `upgrade` returned
+  },
+},
+```
+
+Without an `upgrade` handler, Bun accepts every WebTransport `CONNECT` on the server. Authentication and routing by path
+belong here — there are no `routes` for sessions.
+
+The `Response` is the one refusal, and the status is yours to pick. Everything else is data: returning `false` accepts a
+session whose `data` is `false`, and there is no `{ data }` unwrapping as in `server.upgrade()` for WebSockets — what
+comes back is stored as-is. A throwing `upgrade` also refuses, but reports the exception the way a throwing WebSocket
+handler does; a deliberate refusal is a returned `Response`, not a `throw`.
+
+`upgrade` receives the server as its second argument, as `fetch` does, and `server.requestIP(req)` answers inside
+`upgrade` — and only there, since it needs the connection the request arrived on. Per-address limits belong here for the
+same reason the rest of the gatekeeping does: a server that relays datagrams and cannot cap sessions per source address
+is an amplifier waiting for a spoofed peer. A session that should know its address later should return it into
+`session.data`.
+
+```ts
+const perAddress = new Map<string, number>();
+webtransport: {
+  upgrade(req, server) {
+    const ip = server.requestIP(req);
+    if (!ip || (perAddress.get(ip.address) ?? 0) >= 64) return new Response(null, { status: 429 });
+    perAddress.set(ip.address, (perAddress.get(ip.address) ?? 0) + 1);
+    return { address: ip.address };
+  },
+  close(session) {
+    const n = perAddress.get(session.data.address) ?? 1;
+    perAddress.set(session.data.address, n - 1);
+  },
+},
+```
+
+`upgrade` is synchronous. The `CONNECT` has to be answered while the request is still in hand, so Bun does not await a
+returned promise and treats it as an ordinary truthy value. A refusing `Response` needs a buffered body and a real
+status: Bun cannot send a streaming body, an already-read body, or `Response.error()` on a `CONNECT`, and answers `500`
+instead.
+
+To type `session.data`, declare the handler separately — a session is not an upgraded request and shares nothing with
+`websocket`, so the server option carries no type parameter for it.
+
+```ts
+const webtransport: Bun.WebTransportHandler<{ seen: number }> = {
+  upgrade: () => ({ seen: 0 }),
+  datagram(session, data) {
+    session.data.seen += data.length; // typed
+  },
+};
+
+Bun.serve({ tls, http3: true, webtransport, fetch: () => new Response() });
+```
+
+### Sending datagrams
+
+`sendDatagram` never throws and never blocks. Its return value tells you what happened:
+
+| Return   | Meaning                                                                                                |
+| -------- | ------------------------------------------------------------------------------------------------------ |
+| positive | Bytes queued, including the session's frame prefix — an empty payload still reports a positive number. |
+| `0`      | The connection's queue had no room, or the session has already ended.                                  |
+| `-1`     | The payload is larger than `session.maxDatagramSize`.                                                  |
+
+A `0` means drop it. There is no retransmission on this path, and the next datagram is worth more than a late one. The
+queue lives on the connection — 64 KB of it, shared by the connection's sessions — and when it has refused a send and
+then emptied, the `drain` handler fires for each session on that connection. A bulk sender writes until `0`, stops, and
+resumes in `drain`; polling on a timer is never needed. Because the queue is per connection, a session that never saw a
+`0` can still hear a `drain` that another session's burst caused.
+
+`maxDatagramSize` is the server's own limit capped by the `max_datagram_frame_size` the peer advertised, less the
+session's frame prefix. It bounds what the server sends; the browser's `wt.datagrams.maxDatagramSize` bounds the other
+direction, and the two need not agree — each side computes its own limit from what its peer advertised. A `-1` from an
+oversized payload is not backpressure: unlike `0`, it never comes back on its own. A `0` there means the peer offered no datagram support at all — that session carries no
+datagrams and every `sendDatagram` returns `-1`. A closed session also reports `0`, so check `session.closed` to tell
+the two apart.
+
+`session.rtt` is the connection's smoothed round-trip time to the peer, in milliseconds — the figure the browser's API
+reports as `smoothedRtt`, read from the server's side. A relay puts it in its own telemetry so a client can see the leg
+it cannot measure itself. It reads `0` once the session has ended; a live session always has an estimate, because its
+handshake took at least one round trip.
+
+### Closing and draining
+
+`close(code?, reason?)` sends a `WT_CLOSE_SESSION` capsule and ends the session's stream. The `close` handler runs
+before `close()` returns, with the `code` and `reason` you passed.
+
+`startDraining()` asks the peer to wind the session up without ending it. Datagrams still flow and the `close` handler
+does not run until something actually closes the session; a browser surfaces the signal as `WebTransport.draining`. Use
+it to let sessions finish before a redeploy, and `close()` when they should stop now. It is unrelated to the `drain`
+handler, which is the send queue regaining room.
+
+In the `close` handler the session is already gone: `sendDatagram` returns `0` and `closed` is `true`. `code` and
+`reason` are whatever ended the session: the peer's capsule, the arguments of your own `close()`, or `0` and `""` when
+it went away without either — which is what a dropped connection looks like.
+
+### Streams are not implemented
+
+WebTransport's bidirectional and unidirectional streams are not implemented. A stream the peer opens on a session is
+refused rather than left waiting, and there is no API for opening one from the server. Use datagrams for the unreliable
+traffic WebTransport is best at, and an ordinary HTTP/3 request or a WebSocket for anything that has to arrive.
+
+<Note>
+  `server.reload()` can replace the WebTransport handlers on a server that started with them, but throws when asked to
+  add `webtransport` to a server that started without it: an HTTP/3 listener advertises WebTransport in the SETTINGS it
+  was bound with, so handlers added later could never fire.
+</Note>
+
+<Note>
+  **Certificates in development** — browsers refuse a WebTransport connection to a self-signed certificate the way they
+  refuse any other. Either use a certificate the machine already trusts, or pass `serverCertificateHashes` to `new
+  WebTransport()` with the SHA-256 hash of your certificate, which browsers accept for certificates valid for 14 days or
+  fewer.
+</Note>
+
+---
+
 ## idleTimeout
 
 By default, `Bun.serve` closes connections after **10 seconds** of inactivity. A connection is idle when no data is being sent or received. That includes in-flight requests where your handler is still running but hasn't written any bytes to the response yet. Browsers and `fetch()` clients see this as a connection reset.
@@ -378,7 +575,8 @@ server.reload({
 });
 ```
 
-Use this for development and hot reloading. You can update only `fetch`, `error`, `routes`, and `websocket`.
+Use this for development and hot reloading. You can update only `fetch`, `error`, `routes`, `websocket`, and — on a
+server that started with it — `webtransport` (see [WebTransport](#webtransport)).
 
 ---
 

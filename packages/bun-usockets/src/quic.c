@@ -89,6 +89,13 @@ struct us_quic_socket_context_s {
     void (*on_stream_data)(us_quic_stream_t *, const char *, unsigned int, int);
     void (*on_stream_writable)(us_quic_stream_t *);
     void (*on_stream_close)(us_quic_stream_t *);
+    void (*on_wt_datagram)(us_quic_stream_t *, const char *, unsigned int);
+    void (*on_wt_drain)(us_quic_stream_t *);
+    /* Connections whose datagram ring refused a send and has since emptied;
+     * nonzero makes the post-process walk of ctx->conns actually happen. */
+    unsigned int wt_drain_pending;
+    /* Fixed at engine creation: lsquic reads es_* once, in lsquic_engine_new. */
+    int webtransport;
 
     char read_buf[US_QUIC_READ_BUF];
     /* ext follows */
@@ -111,6 +118,21 @@ struct us_quic_socket_s {
     int reject_unauthorized;
     int going_away;
     char *hostname;
+    /* Sessions on this connection and the datagrams queued for them; both NULL
+     * until one is accepted. An array, not a list: the lookup is per inbound
+     * datagram and a connection holds one or two. */
+    us_quic_stream_t **wt_sessions;
+    unsigned int wt_session_count, wt_session_cap;
+    /* [uint16 length][payload] records, head-read and tail-written. Does not
+     * wrap — a write that will not fit compacts first. */
+    char *wt_dgram_ring;
+    unsigned int wt_dgram_head, wt_dgram_tail;
+    /* Peer's max_datagram_frame_size, read once at first accept — transport
+     * parameters are fixed by then. 0 means the peer offered no datagrams. */
+    uint64_t wt_peer_max_dgram;
+    /* 0 = never refused; 1 = a send got the ring-full 0 since it last
+     * emptied; 2 = it has emptied again and the drain callback is owed. */
+    int wt_dgram_blocked;
     /* ext follows */
 };
 
@@ -120,6 +142,11 @@ struct us_quic_stream_s {
     struct us_quic_hset *hset;
     int headers_delivered;
     int fin_delivered;
+    /* Non-NULL once accepted as a session. Held directly rather than derived
+     * from the stream: teardown unregisters after lsquic's stream→conn link is
+     * already going. */
+    us_quic_socket_t *wt_conn;
+    uint64_t wt_qsid;
     /* ext follows */
 };
 
@@ -150,6 +177,8 @@ static void us_quic_on_timer(struct us_timer_t *t) {
 }
 #endif
 
+static void us_quic_wt_fire_drains(us_quic_socket_context_t *ctx);
+
 void us_quic_loop_process(struct us_loop_t *loop) {
     int min_diff = 0, have_tick = 0;
     for (us_quic_socket_context_t *ctx = loop->data.quic_head; ctx; ctx = ctx->next) {
@@ -158,6 +187,7 @@ void us_quic_loop_process(struct us_loop_t *loop) {
         ctx->pending_write_bytes = 0;
         lsquic_engine_process_conns(ctx->engine);
         ctx->processing = 0;
+        us_quic_wt_fire_drains(ctx);
         int diff;
         if (lsquic_engine_earliest_adv_tick(ctx->engine, &diff)) {
             if (!have_tick || diff < min_diff) min_diff = diff;
@@ -196,6 +226,7 @@ static void us_quic_process(us_quic_socket_context_t *ctx) {
     ctx->processing = 1;
     lsquic_engine_process_conns(ctx->engine);
     ctx->processing = 0;
+    us_quic_wt_fire_drains(ctx);
 }
 
 /* ───── packets out ───── */
@@ -572,6 +603,10 @@ static void us_quic_on_conn_closed(lsquic_conn_t *conn) {
         if (*pp == qs) { *pp = qs->next; break; }
     }
     us_free(qs->hostname);
+    if (qs->wt_dgram_blocked == 2) ctx->wt_drain_pending--;
+    /* Streams are freed by their own on_close; this drops the index. */
+    us_free(qs->wt_sessions);
+    us_free(qs->wt_dgram_ring);
     us_free(qs);
 #ifndef LIBUS_USE_LIBUV
     ctx->loop->num_polls--;
@@ -611,9 +646,29 @@ static lsquic_stream_ctx_t *us_quic_on_new_stream(void *if_ctx, lsquic_stream_t 
     return (lsquic_stream_ctx_t *) s;
 }
 
+/* From lsquic_stream.h (not in the public header). */
+void lsquic_stream_maybe_reset(struct lsquic_stream *, uint64_t error_code, int);
+
+/* From node_quic_shim.c, which owns the transport-params struct it reads. */
+uint64_t us_nq_peer_max_datagram_frame_size(const lsquic_conn_t *);
+
+/* A WebTransport stream the peer opened. Only datagrams are implemented, and a
+ * stream nobody will ever read is worse refused than left hanging until the
+ * peer's own timeout. lsquic sets the flag while parsing the 0x41 prefix inside
+ * lsquic_stream_read, so this is checked after each read, not once on entry.
+ * 0x170d7b68 is WEBTRANSPORT_SESSION_GONE, draft-ietf-webtrans-http3 §4.6. */
+static int us_quic_refuse_webtransport_stream(lsquic_stream_t *stream) {
+    if (!lsquic_stream_is_webtransport_client_bidi_stream(stream)) return 0;
+    /* The trailing 1 is do_close: the reset shuts both halves down itself. */
+    lsquic_stream_maybe_reset(stream, 0x170d7b68, 1);
+    return 1;
+}
+
 static void us_quic_on_read(lsquic_stream_t *stream, lsquic_stream_ctx_t *h) {
     us_quic_stream_t *s = (us_quic_stream_t *) h;
     us_quic_socket_context_t *ctx = s->ctx;
+
+    if (us_quic_refuse_webtransport_stream(stream)) return;
 
     /* lsquic queues a fresh hset for every HEADERS block (1xx interims,
      * the final response, trailers). lsquic_stream_get_hset returns the
@@ -635,6 +690,7 @@ static void us_quic_on_read(lsquic_stream_t *stream, lsquic_stream_ctx_t *h) {
 
     ssize_t r;
     while ((r = lsquic_stream_read(stream, ctx->read_buf, US_QUIC_READ_BUF)) > 0) {
+        if (us_quic_refuse_webtransport_stream(stream)) return;
         if (ctx->on_stream_data)
             ctx->on_stream_data(s, ctx->read_buf, (unsigned int) r, 0);
         if (!s->stream) return;
@@ -658,6 +714,9 @@ static void us_quic_on_close(lsquic_stream_t *stream, lsquic_stream_ctx_t *h) {
     us_quic_stream_t *s = (us_quic_stream_t *) h;
     if (!s) return;
     if (s->ctx->on_stream_close) s->ctx->on_stream_close(s);
+    /* Unregister before the free, or an inbound datagram naming this session
+     * finds a dangling stream. */
+    us_quic_wt_detach(s);
     s->stream = NULL;
     us_quic_hset_free(s->hset);
     us_free(s);
@@ -674,6 +733,252 @@ static void us_quic_on_reset(lsquic_stream_t *stream, lsquic_stream_ctx_t *h, in
     if (h && stream && how == 0) lsquic_stream_close(stream);
 }
 
+/* ───── WebTransport ─────
+ *
+ * lsquic negotiates the extension and parses nothing else, so the session
+ * table and datagram framing are ours. A datagram is varint(quarter stream id)
+ * then the payload (RFC 9297 §2.1); the quarter stream id is the CONNECT
+ * stream's id over four. */
+
+/* Per-connection datagram queue, sized in bytes rather than records: a count
+ * sized for an MTU-sized datagram would give a 120-byte one the same few slots.
+ *
+ * It bridges one turn of the event loop — bytes leave at the next
+ * process_conns — and that turn is not one datagram long: loop.c drains the UDP
+ * socket in a do/while, so a handler answering each packet queues an answer for
+ * every packet of many recvmmsg batches first. Past this it drops, which is
+ * right: nothing here retransmits. */
+#define US_QUIC_WT_DGRAM_RING (64 * 1024)
+
+/* RFC 9000 §16 varint. lsquic's vint.h is internal and these are small. */
+static unsigned int us_quic_varint_len(uint64_t v) {
+    return v <= 63 ? 1 : v <= 16383 ? 2 : v <= 1073741823 ? 4 : 8;
+}
+
+static unsigned int us_quic_varint_write(unsigned char *p, uint64_t v) {
+    unsigned int n = us_quic_varint_len(v);
+    for (unsigned int i = 0; i < n; i++) p[n - 1 - i] = (unsigned char) (v >> (i * 8));
+    /* Top two bits carry log2 of the length. */
+    p[0] = (unsigned char) (p[0] | (n == 1 ? 0x00 : n == 2 ? 0x40 : n == 4 ? 0x80 : 0xc0));
+    return n;
+}
+
+/* Bytes consumed, or 0 when `len` stops short of a whole varint. */
+static unsigned int us_quic_varint_read(const unsigned char *p, size_t len, uint64_t *out) {
+    if (!len) return 0;
+    unsigned int n = 1u << (p[0] >> 6);
+    if (len < n) return 0;
+    uint64_t v = p[0] & 0x3f;
+    for (unsigned int i = 1; i < n; i++) v = (v << 8) | p[i];
+    *out = v;
+    return n;
+}
+
+static us_quic_stream_t *us_quic_wt_find(us_quic_socket_t *qs, uint64_t qsid) {
+    for (unsigned int i = 0; i < qs->wt_session_count; i++) {
+        if (qs->wt_sessions[i]->wt_qsid == qsid) return qs->wt_sessions[i];
+    }
+    return NULL;
+}
+
+/* Point lsquic at the head record and ask for a write. The minimum size
+ * matters: it is what on_dg_write's buffer is sized to, and left at zero the
+ * callback can be handed less room than the queued record on a nearly-full
+ * packet — a record that never fits is a queue that never drains. */
+static void us_quic_wt_arm_dgram(us_quic_socket_t *qs) {
+    /* A head the peer will not accept can never leave and would wedge
+     * everything behind it. Enqueue already refuses those; this loop is the
+     * backstop. */
+    while (qs->wt_dgram_head != qs->wt_dgram_tail) {
+        const unsigned char *rec = (const unsigned char *) qs->wt_dgram_ring + qs->wt_dgram_head;
+        size_t len = (size_t) rec[0] | ((size_t) rec[1] << 8);
+        if (lsquic_conn_set_min_datagram_size(qs->conn, len) == 0) {
+            lsquic_conn_want_datagram_write(qs->conn, 1);
+            return;
+        }
+        qs->wt_dgram_head += (unsigned int) (2 + len);
+    }
+    qs->wt_dgram_head = qs->wt_dgram_tail = 0;
+    lsquic_conn_want_datagram_write(qs->conn, 0);
+}
+
+static void us_quic_on_datagram(lsquic_conn_t *conn, const void *buf, size_t sz) {
+    us_quic_socket_t *qs = (us_quic_socket_t *) lsquic_conn_get_ctx(conn);
+    if (!qs || !qs->ctx->on_wt_datagram) return;
+    uint64_t qsid;
+    unsigned int n = us_quic_varint_read((const unsigned char *) buf, sz, &qsid);
+    if (!n) return;
+    /* RFC 9297 §2.1: a datagram naming an unknown session is dropped, not an
+     * error — that window is normal while a close is in flight. */
+    us_quic_stream_t *session = us_quic_wt_find(qs, qsid);
+    if (!session) return;
+    qs->ctx->on_wt_datagram(session, (const char *) buf + n, (unsigned int) (sz - n));
+}
+
+static ssize_t us_quic_on_dg_write(lsquic_conn_t *conn, void *buf, size_t sz) {
+    us_quic_socket_t *qs = (us_quic_socket_t *) lsquic_conn_get_ctx(conn);
+    if (!qs || qs->wt_dgram_head == qs->wt_dgram_tail) {
+        if (qs) lsquic_conn_want_datagram_write(conn, 0);
+        return -1;
+    }
+    const unsigned char *rec = (const unsigned char *) qs->wt_dgram_ring + qs->wt_dgram_head;
+    size_t len = (size_t) rec[0] | ((size_t) rec[1] << 8);
+    if (len > sz) return -1; /* arm_dgram asked for room; try again next packet */
+    memcpy(buf, rec + 2, len);
+    qs->wt_dgram_head += (unsigned int) (2 + len);
+    us_quic_wt_arm_dgram(qs);
+    /* Owed, not fired: this callback runs inside lsquic's packet generation,
+     * where a handler closing a stream is not a call lsquic promises to
+     * survive. The fire happens after process_conns returns. */
+    if (qs->wt_dgram_head == qs->wt_dgram_tail && qs->wt_dgram_blocked == 1) {
+        qs->wt_dgram_blocked = 2;
+        qs->ctx->wt_drain_pending++;
+    }
+    return (ssize_t) len;
+}
+
+/* Fire the owed drain callbacks, one per session on each connection whose
+ * ring refused a send and has since emptied. Runs after process_conns, so a
+ * handler may send (queued for the next tick) or close without re-entering
+ * lsquic. The ring is per connection, so every session on it regains room at
+ * once; a handler that never saw a 0 may still hear a drain. */
+static void us_quic_wt_fire_drains(us_quic_socket_context_t *ctx) {
+    if (!ctx->wt_drain_pending) return;
+    for (us_quic_socket_t *qs = ctx->conns; qs && ctx->wt_drain_pending; qs = qs->next) {
+        if (qs->wt_dgram_blocked != 2) continue;
+        qs->wt_dgram_blocked = 0;
+        ctx->wt_drain_pending--;
+        if (!ctx->on_wt_drain) continue;
+        /* A handler can detach sessions (swap-remove) mid-walk; re-check
+         * membership rather than trusting the index. The array holds one or
+         * two entries, so the rescan costs nothing. */
+        for (unsigned int i = 0; i < qs->wt_session_count; i++) {
+            us_quic_stream_t *session = qs->wt_sessions[i];
+            ctx->on_wt_drain(session);
+            if (i >= qs->wt_session_count || qs->wt_sessions[i] != session) i--;
+        }
+    }
+}
+
+int us_quic_stream_is_webtransport(us_quic_stream_t *s) { return s->wt_conn != NULL; }
+
+/* Take the session out of its connection's table, both at stream teardown and
+ * when the server closes the session itself — after the close report no
+ * datagram may reach a wrapper already told the session is over. Datagrams
+ * already queued stay queued: one wasted packet, cheaper than walking the
+ * ring. */
+void us_quic_wt_detach(us_quic_stream_t *s) {
+    us_quic_socket_t *qs = s->wt_conn;
+    if (!qs) return;
+    for (unsigned int i = 0; i < qs->wt_session_count; i++) {
+        if (qs->wt_sessions[i] == s) {
+            qs->wt_sessions[i] = qs->wt_sessions[--qs->wt_session_count];
+            break;
+        }
+    }
+    s->wt_conn = NULL;
+}
+
+int us_quic_stream_accept_webtransport(us_quic_stream_t *s) {
+    if (s->wt_conn) return 0;
+    if (!s->stream || !s->ctx->webtransport) return -1;
+    us_quic_socket_t *qs = (us_quic_socket_t *)
+        lsquic_conn_get_ctx(lsquic_stream_conn(s->stream));
+    if (!qs) return -1;
+
+    /* Advertised in SETTINGS, so honoured here: a peer that ignores it gets a
+     * refused CONNECT rather than growing this array indefinitely. */
+    if (qs->wt_session_count >= US_QUIC_WT_MAX_SESSIONS) return -1;
+
+    if (qs->wt_session_count == qs->wt_session_cap) {
+        unsigned int ncap = qs->wt_session_cap ? qs->wt_session_cap * 2 : 4;
+        us_quic_stream_t **ns = (us_quic_stream_t **)
+            us_realloc(qs->wt_sessions, ncap * sizeof(*ns));
+        if (!ns) return -1;
+        qs->wt_sessions = ns;
+        qs->wt_session_cap = ncap;
+    }
+    if (!qs->wt_dgram_ring) {
+        qs->wt_dgram_ring = (char *) us_malloc(US_QUIC_WT_DGRAM_RING);
+        if (!qs->wt_dgram_ring) return -1;
+        qs->wt_peer_max_dgram = us_nq_peer_max_datagram_frame_size(qs->conn);
+    }
+
+    /* Nothing here reads this back — client stream routing is gated on
+     * es_webtransport_server — but it is the documented way to mark the stream,
+     * and a streams implementation would need it. */
+    lsquic_stream_set_webtransport_session(s->stream);
+    s->wt_qsid = lsquic_stream_id(s->stream) / 4;
+    s->wt_conn = qs;
+    qs->wt_sessions[qs->wt_session_count++] = s;
+    return 0;
+}
+
+/* Largest payload this session carries: our own limit, capped by the peer's
+ * advertised size less the frame prefix. 0 when the peer offered none. */
+unsigned int us_quic_wt_max_datagram_size(us_quic_stream_t *s) {
+    us_quic_socket_t *qs = s->wt_conn;
+    if (!qs) return 0;
+    unsigned int plen = us_quic_varint_len(s->wt_qsid);
+    uint64_t peer = qs->wt_peer_max_dgram;
+    if (!peer) return 0;
+    uint64_t room = peer > plen ? peer - plen : 0;
+    return room < US_QUIC_WT_MAX_DATAGRAM ? (unsigned int) room : US_QUIC_WT_MAX_DATAGRAM;
+}
+
+int us_quic_wt_send_datagram(us_quic_stream_t *s, const char *data, unsigned int len) {
+    us_quic_socket_t *qs = s->wt_conn;
+    if (!qs || len > us_quic_wt_max_datagram_size(s)) return -1;
+
+    unsigned char prefix[8];
+    unsigned int plen = us_quic_varint_write(prefix, s->wt_qsid);
+    unsigned int need = 2 + plen + len;
+
+    /* Compact rather than wrap: the queue is almost always empty, so the
+     * memmove is rare and on_dg_write never sees a split record. */
+    if (qs->wt_dgram_tail + need > US_QUIC_WT_DGRAM_RING && qs->wt_dgram_head) {
+        unsigned int live = qs->wt_dgram_tail - qs->wt_dgram_head;
+        memmove(qs->wt_dgram_ring, qs->wt_dgram_ring + qs->wt_dgram_head, live);
+        qs->wt_dgram_head = 0;
+        qs->wt_dgram_tail = live;
+    }
+    if (qs->wt_dgram_tail + need > US_QUIC_WT_DGRAM_RING) {
+        qs->wt_dgram_blocked = 1;
+        return 0;
+    }
+
+    /* After the room check on purpose: this setter is the one step with a side
+     * effect, and leaving the minimum pointing at a record that was never
+     * queued would size on_dg_write's buffer for the wrong datagram. arm_dgram
+     * puts it back; lsquic validates before assigning, so a refusal is inert. */
+    if (lsquic_conn_set_min_datagram_size(qs->conn, (size_t) (plen + len)) != 0) return -1;
+
+    char *rec = qs->wt_dgram_ring + qs->wt_dgram_tail;
+    unsigned int payload = plen + len;
+    rec[0] = (char) (payload & 0xff);
+    rec[1] = (char) (payload >> 8);
+    memcpy(rec + 2, prefix, plen);
+    memcpy(rec + 2 + plen, data, len);
+    qs->wt_dgram_tail += need;
+
+    us_quic_wt_arm_dgram(qs);
+    /* Prefix included, so a zero-length payload doesn't report the 0 that
+     * means the queue had no room. */
+    return (int) payload;
+}
+
+void us_quic_socket_context_on_wt_datagram(us_quic_socket_context_t *ctx,
+    void (*on_datagram)(us_quic_stream_t *, const char *, unsigned int))
+{
+    ctx->on_wt_datagram = on_datagram;
+}
+
+void us_quic_socket_context_on_wt_drain(us_quic_socket_context_t *ctx,
+    void (*on_drain)(us_quic_stream_t *))
+{
+    ctx->on_wt_drain = on_drain;
+}
+
 /* ───── public API ───── */
 
 static const struct lsquic_stream_if us_quic_stream_if = {
@@ -686,6 +991,10 @@ static const struct lsquic_stream_if us_quic_stream_if = {
     .on_write = us_quic_on_write,
     .on_close = us_quic_on_close,
     .on_reset = us_quic_on_reset,
+    /* Required whenever es_datagrams is on: lsquic calls on_datagram straight
+     * out of packet processing with no null check. */
+    .on_datagram = us_quic_on_datagram,
+    .on_dg_write = us_quic_on_dg_write,
 };
 
 static const struct lsquic_hset_if us_quic_hset_if = {
@@ -729,7 +1038,7 @@ static void us_quic_prepare_ssl_ctx(SSL_CTX *ssl, const struct us_bun_socket_con
 
 us_quic_socket_context_t *us_create_quic_socket_context(
     struct us_loop_t *loop, struct us_bun_socket_context_options_t options,
-    unsigned int ext_size, unsigned int idle_timeout_s)
+    unsigned int ext_size, unsigned int idle_timeout_s, int webtransport)
 {
     enum create_bun_socket_error_t ssl_err = 0;
     SSL_CTX *ssl = us_ssl_ctx_build_raw(options, &ssl_err);
@@ -761,6 +1070,19 @@ us_quic_socket_context_t *us_create_quic_socket_context(
      * stream-hash walk on every write. */
     ctx->settings.es_ext_http_prio = 0;
     if (idle_timeout_s) ctx->settings.es_idle_timeout = idle_timeout_s > 600 ? 600 : idle_timeout_s;
+
+    ctx->webtransport = webtransport;
+    if (webtransport) {
+        /* The four SETTINGS a browser looks for. es_webtransport_server writes
+         * ENABLE_WEBTRANSPORT, WT_MAX_SESSIONS and ENABLE_CONNECT_PROTOCOL;
+         * es_h3_datagram writes H3_DATAGRAM. Neither writes the other's — see
+         * patches/lsquic/webtransport-settings.patch. */
+        ctx->settings.es_datagrams = 1;
+        ctx->settings.es_h3_datagram = 1;
+        ctx->settings.es_h3_connect_protocol = 1;
+        ctx->settings.es_webtransport_server = 1;
+        ctx->settings.es_max_webtransport_server_streams = US_QUIC_WT_MAX_SESSIONS;
+    }
 
     struct lsquic_engine_api api;
     memset(&api, 0, sizeof(api));
@@ -1078,9 +1400,6 @@ void us_quic_stream_close(us_quic_stream_t *s) {
     if (s->stream) lsquic_stream_close(s->stream);
 }
 
-/* From lsquic_stream.h (not in the public header). */
-void lsquic_stream_maybe_reset(struct lsquic_stream *, uint64_t error_code, int);
-
 /* Abort the send half with RESET_STREAM(H3_REQUEST_CANCELLED) instead of
  * FIN. lsquic_stream_close/shutdown queue FIN after the buffered tail,
  * which is a protocol error if a content-length was advertised and the
@@ -1134,6 +1453,15 @@ void us_quic_socket_remote_address(us_quic_socket_t *s, char *buf, int *len, int
         *port = ntohs(a->sin_port);
         *len = 4; memcpy(buf, &a->sin_addr, 4);
     }
+}
+
+unsigned int us_quic_socket_rtt(us_quic_socket_t *s) {
+    struct lsquic_conn_info info;
+    /* Only the post-handshake conn implements ci_get_info, but a stream to
+     * hang this question on exists only after the handshake, so the failure
+     * left is a conn already gone. */
+    if (!s->conn || lsquic_conn_get_info(s->conn, &info) != 0) return 0;
+    return info.lci_rtt;
 }
 
 void us_quic_socket_close(us_quic_socket_t *s) { if (s->conn) lsquic_conn_close(s->conn); }

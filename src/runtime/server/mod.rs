@@ -97,6 +97,14 @@ pub use html_bundle::HTMLBundle;
 pub mod server_web_socket;
 pub use server_web_socket::ServerWebSocket;
 
+#[path = "WebTransportSession.rs"]
+pub mod web_transport_session;
+pub use web_transport_session::WebTransportSession;
+
+#[path = "WebTransportServerContext.rs"]
+pub mod web_transport_server_context;
+pub use web_transport_server_context::WebTransportHandler;
+
 #[path = "NodeHTTPResponse.rs"]
 pub mod node_http_response;
 pub use node_http_response::NodeHTTPResponse;
@@ -264,6 +272,10 @@ pub struct NewServer<const SSL: bool, const DEBUG: bool> {
     /// `Cell` because the open/close accounting arrives through shared
     /// `AnyServer` handles on the JS thread.
     pub(crate) active_websocket_count: core::cell::Cell<u32>,
+    /// Live WebTransport sessions. Each holds an `AnyServer` and dispatches
+    /// off the wrapper's `wtOn*` slots, which are the handlers' only GC root,
+    /// so neither the native server nor the wrapper may go while one is open.
+    pub(crate) active_webtransport_count: core::cell::Cell<u32>,
     /// Set across [`NewServer::deinit_if_we_can`] and the synchronous
     /// `app.close()` drain in `stop_listening`; lets a nested call (reached
     /// via a callback the body fires) early-return instead of re-running the
@@ -603,8 +615,9 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
 /// `JSValue::ZERO` slots are cheap no-ops on both sides (the C++
 /// `gcProtect`/`gcUnprotect` early-return on non-cells), so there is no need
 /// to branch on `is_empty()`.
-pub(crate) fn protect_handler_shadows(config: &ServerConfig) -> [bun_jsc::js_value::Protected; 10] {
+pub(crate) fn protect_handler_shadows(config: &ServerConfig) -> [bun_jsc::js_value::Protected; 14] {
     let ws = config.websocket.as_ref().map(|w| &w.handler);
+    let wt = config.webtransport_handler.as_ref();
     let z = JSValue::ZERO;
     [
         config.on_request,
@@ -617,6 +630,10 @@ pub(crate) fn protect_handler_shadows(config: &ServerConfig) -> [bun_jsc::js_val
         ws.map_or(z, |h| h.on_error),
         ws.map_or(z, |h| h.on_ping),
         ws.map_or(z, |h| h.on_pong),
+        wt.map_or(z, |h| h.on_upgrade),
+        wt.map_or(z, |h| h.on_open),
+        wt.map_or(z, |h| h.on_datagram),
+        wt.map_or(z, |h| h.on_close),
     ]
     .map(JSValue::protected)
 }
@@ -1567,6 +1584,22 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         remaining == 0
     }
 
+    pub(crate) fn note_webtransport_opened(&self) {
+        self.active_webtransport_count
+            .set(self.active_webtransport_count.get().saturating_add(1));
+    }
+
+    /// Returns true when this close drained the last live session.
+    pub(crate) fn note_webtransport_closed(&self) -> bool {
+        let prev = self.active_webtransport_count.get();
+        if prev == 0 {
+            return false;
+        }
+        let remaining = prev - 1;
+        self.active_webtransport_count.set(remaining);
+        remaining == 0
+    }
+
     fn note_websocket_opened(&self) {
         self.active_websocket_count
             .set(self.active_websocket_count.get().saturating_add(1));
@@ -1589,6 +1622,10 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         self.active_sockets_count() > 0
     }
 
+    pub(crate) fn has_active_webtransport(&self) -> bool {
+        self.active_webtransport_count.get() > 0
+    }
+
     /// What the `stop()` promise (node:http: the `'close'` event) and the
     /// loop unref wait for. Bun.serve waits for open HTTP connections too;
     /// node:http's `server.close()` reports closed without them (Node's own
@@ -1604,8 +1641,14 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
     /// Nothing is left that can dispatch a handler: [`Self::is_closed`] and
     /// no open HTTP connection. The wrapper may only go `Weak` from here on
     /// (see [`Self::js_value_for_dispatch`]).
+    /// Live WebTransport sessions count here but not in [`Self::is_closed`].
+    /// What this gates is the wrapper downgrade, and a session dispatches off
+    /// the wrapper's `wtOn*` slots — their only GC root — so it must outlive
+    /// them. `stop()` is deliberately not gated: nothing can force a session
+    /// closed the way `stop(true)` closes a websocket, so waiting on one would
+    /// hang rather than drain. HTTP/3 requests do not gate it either.
     pub(crate) fn is_drained(&self) -> bool {
-        self.is_closed() && !self.has_active_connections()
+        self.is_closed() && !self.has_active_connections() && !self.has_active_webtransport()
     }
 
     pub(crate) fn has_listener(&self) -> bool {
@@ -1662,6 +1705,15 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                 // Graceful: GOAWAY + drain via the still-open UDP socket; the
                 // engine rejects new conns and the timer keeps in-flight streams
                 // progressing until deinit. Abrupt: close the fd now.
+                //
+                // Bracketed like the TCP `app.close()` below: both drain
+                // synchronously, and a WebTransport session's close defers
+                // calls `on_webtransport_closed`, which would dispatch
+                // `deinit_if_we_can` through a fresh `&mut NewServer` while
+                // this frame still holds `&mut self`. `h3_listener` is already
+                // taken, so on an HTTP/3-only server `has_listener()` is
+                // false by now and the nested pass would run in full.
+                self.deinit_running.set(true);
                 if !abrupt {
                     if let Some(h3a) = self.h3_app {
                         // S008: `h3::App` is an `opaque_ffi!` ZST — safe deref.
@@ -1671,6 +1723,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                     // S008: `h3::ListenSocket` is an `opaque_ffi!` ZST — safe deref.
                     bun_opaque::opaque_deref_mut(h3l).close();
                 }
+                self.deinit_running.set(false);
             }
         }
 
@@ -2165,6 +2218,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             pending_requests: core::cell::Cell::new(0),
             active_connection_count: core::cell::Cell::new(0),
             active_websocket_count: core::cell::Cell::new(0),
+            active_webtransport_count: core::cell::Cell::new(0),
             deinit_running: core::cell::Cell::new(false),
             request_pool: <Self as ServerPools<SSL, DEBUG>>::request_pool(),
             // Servers that enable neither HTTP/2 nor HTTP/3 never allocate the
@@ -2307,6 +2361,63 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                 .handler
                 .flags
                 .set(web_socket_server_context::HandlerFlags::SSL, SSL);
+        }
+
+        // --- 2b. WebTransport ---
+        // One catch-all CONNECT route: the `upgrade` handler routes by path,
+        // and a session has no status to choose beyond accept or refuse. It is
+        // registered high-priority because step 9's per-method fallback also
+        // claims CONNECT on the wildcard pattern and would otherwise cull it;
+        // yielding from here still falls through to that fallback.
+        if Self::HAS_H3 && self.config.webtransport_handler.is_some() {
+            if let Some(h3_app) = self.h3_app {
+                // S008: `h3::App` is an `opaque_ffi!` ZST — safe deref.
+                let h3_app = bun_opaque::opaque_deref_mut(h3_app);
+                h3_app.webtransport_connect(b"/*", self_ptr, |server: &mut Self, req, res| {
+                    // The same gate every other dispatch entry point takes, and
+                    // this path needs it most: an HTTP/3 stream is not in the
+                    // connection accounting, so a CONNECT can still arrive after
+                    // the drain, and `decide` runs the user's `upgrade` handler.
+                    let Some(server_value) = server.js_value_for_dispatch() else {
+                        server_body::respond_stopped_503(res);
+                        return;
+                    };
+                    let global = server.global_this();
+                    let Some(on_upgrade) = server
+                        .config
+                        .webtransport_handler
+                        .as_ref()
+                        .map(|h| h.on_upgrade)
+                    else {
+                        res.write_status(b"501 Not Implemented");
+                        res.end(b"", false);
+                        return;
+                    };
+                    // Borrow ends here: refusing needs `server` again.
+                    match WebTransportSession::decide(global, on_upgrade, req, res, server_value) {
+                        web_transport_session::Decision::Yield => req.set_yield(true),
+                        web_transport_session::Decision::Failed => {
+                            res.write_status(b"500 Internal Server Error");
+                            res.end(b"", false);
+                        }
+                        web_transport_session::Decision::Refuse(response_value) => {
+                            Self::write_wt_refusal(server, global, response_value, res);
+                        }
+                        web_transport_session::Decision::Accept(data_value) => {
+                            let Some(handler) = server.config.webtransport_handler.as_ref() else {
+                                return;
+                            };
+                            let any = AnyServer::from(core::ptr::from_ref::<Self>(server));
+                            WebTransportSession::accept(global, handler, req, res, data_value, any);
+                        }
+                    }
+                });
+                h3_app.on_webtransport(
+                    web_transport_session::on_datagram,
+                    web_transport_session::on_close,
+                    web_transport_session::on_drain,
+                );
+            }
         }
 
         // --- 3. Register compiled user routes & track "/*" coverage ---
@@ -2865,7 +2976,8 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
 
             if Self::HAS_H3 && this_ref.config.http3 {
                 let idle_timeout = this_ref.config.idle_timeout as u32;
-                let h3 = match uws_sys::h3::App::create(&ssl_options, idle_timeout) {
+                let webtransport = this_ref.config.webtransport;
+                let h3 = match uws_sys::h3::App::create(&ssl_options, idle_timeout, webtransport) {
                     Some(a) => Some(a),
                     None => {
                         if !global.has_exception() {
@@ -3189,7 +3301,15 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                         // QUIC over AF_UNIX is non-standard and Alt-Svc can't
                         // advertise it; drop the H3 listener instead of wiring
                         // an exotic transport nobody can reach.
-                        bun_core::warn!("http3: true with a unix socket — HTTP/3 listener skipped");
+                        if this_ref.config.webtransport_handler.is_some() {
+                            bun_core::warn!(
+                                "http3: true with a unix socket — HTTP/3 listener skipped, and 'webtransport' with it"
+                            );
+                        } else {
+                            bun_core::warn!(
+                                "http3: true with a unix socket — HTTP/3 listener skipped"
+                            );
+                        }
                         // SAFETY: h3a is a live H3::App handle just taken from self.h3_app.
                         unsafe { uws_sys::h3::App::destroy(h3a) };
                     }
@@ -3257,7 +3377,8 @@ mod cached_values {
         ($ty:literal) => {
             bun_jsc::codegen_cached_accessors!(
                 $ty; routeList, onRequest, onError, onNodeHTTPRequest, onClientError, onConnection,
-                wsOnOpen, wsOnMessage, wsOnClose, wsOnDrain, wsOnError, wsOnPing, wsOnPong
+                wsOnOpen, wsOnMessage, wsOnClose, wsOnDrain, wsOnError, wsOnPing, wsOnPong,
+                wtOnUpgrade, wtOnOpen, wtOnDatagram, wtOnDrain, wtOnClose
             );
         };
     }
@@ -3317,6 +3438,11 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
     slot_setter!(js_gc_ws_on_error_set, ws_on_error_set_cached);
     slot_setter!(js_gc_ws_on_ping_set, ws_on_ping_set_cached);
     slot_setter!(js_gc_ws_on_pong_set, ws_on_pong_set_cached);
+    slot_setter!(js_gc_wt_on_upgrade_set, wt_on_upgrade_set_cached);
+    slot_setter!(js_gc_wt_on_open_set, wt_on_open_set_cached);
+    slot_setter!(js_gc_wt_on_datagram_set, wt_on_datagram_set_cached);
+    slot_setter!(js_gc_wt_on_drain_set, wt_on_drain_set_cached);
+    slot_setter!(js_gc_wt_on_close_set, wt_on_close_set_cached);
 
     /// Mirror all 7 `Handler.on_*` shadows into the wrapper's `m_wsOn*`
     /// WriteBarrier slots, applying the async-context wrap (deferred from
@@ -3356,6 +3482,68 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         wrap_handler_slot(error, server_js, global, Self::js_gc_ws_on_error_set);
         wrap_handler_slot(ping, server_js, global, Self::js_gc_ws_on_ping_set);
         wrap_handler_slot(pong, server_js, global, Self::js_gc_ws_on_pong_set);
+    }
+
+    /// Send the `Response` an `upgrade` handler returned instead of opening a
+    /// session. Through `StaticRoute` because it already strips the headers
+    /// HTTP/3 forbids (RFC 9114 §4.2) and writes a buffered body to an
+    /// `AnyResponse::H3`. A streaming or used body throws in `from_js` and is
+    /// answered 500 — a refusal is a status and a short body.
+    fn write_wt_refusal(
+        server: &Self,
+        global: &JSGlobalObject,
+        response_value: JSValue,
+        res: &mut uws_sys::h3::Response,
+    ) {
+        let route = match crate::server::StaticRoute::from_js(global, response_value) {
+            Ok(Some(route)) => route,
+            Ok(None) => {
+                res.write_status(b"500 Internal Server Error");
+                res.end(b"", false);
+                return;
+            }
+            Err(e) => {
+                let err = global.take_exception(e);
+                let _ = bun_jsc::virtual_machine::VirtualMachine::get()
+                    .as_mut()
+                    .uncaught_exception(global, err, false);
+                res.write_status(b"500 Internal Server Error");
+                res.end(b"", false);
+                return;
+            }
+        };
+        // The `RefPtr` from `from_js` gives its reference back when it drops;
+        // `server` outlives this call.
+        route
+            .server
+            .set(Some(AnyServer::from(core::ptr::from_ref::<Self>(server))));
+        crate::server::StaticRoute::on(
+            route.this_ptr(),
+            uws_sys::AnyResponse::H3(core::ptr::from_mut(res)),
+        );
+    }
+
+    /// The `wtOn*` counterpart of [`Self::write_ws_handler_slots`]. Every slot
+    /// is written, so a reload whose block leaves one out drops its root rather
+    /// than keeping it live under a handler that no longer mentions it.
+    pub(crate) fn write_wt_handler_slots(&mut self, server_js: JSValue, global: &JSGlobalObject) {
+        let mut zeros = [JSValue::ZERO; 5];
+        let [upgrade, open, datagram, drain, close] =
+            match self.config.webtransport_handler.as_mut() {
+                Some(h) => [
+                    &mut h.on_upgrade,
+                    &mut h.on_open,
+                    &mut h.on_datagram,
+                    &mut h.on_drain,
+                    &mut h.on_close,
+                ],
+                None => zeros.each_mut(),
+            };
+        wrap_handler_slot(upgrade, server_js, global, Self::js_gc_wt_on_upgrade_set);
+        wrap_handler_slot(open, server_js, global, Self::js_gc_wt_on_open_set);
+        wrap_handler_slot(datagram, server_js, global, Self::js_gc_wt_on_datagram_set);
+        wrap_handler_slot(drain, server_js, global, Self::js_gc_wt_on_drain_set);
+        wrap_handler_slot(close, server_js, global, Self::js_gc_wt_on_close_set);
     }
 }
 
@@ -3939,6 +4127,23 @@ impl AnyServer {
 
     fn on_websocket_opened(&self) {
         any_server_dispatch!(self, |s| s.note_websocket_opened());
+    }
+
+    /// The [`Self::on_webtransport_closed`] counterpart. Increment only; the
+    /// idle pass has nothing to do while a session is being added.
+    pub(crate) fn note_webtransport_opened_any(&self) {
+        any_server_dispatch!(self, |s| s.note_webtransport_opened())
+    }
+
+    /// The [`Self::on_websocket_closed`] counterpart. Same reason: a session
+    /// dispatches off the server wrapper's `wtOn*` slots, so the wrapper may
+    /// not be downgraded while one is live.
+    pub(crate) fn on_webtransport_closed(&self) {
+        let drained =
+            any_server_dispatch!(self, |s| s.note_webtransport_closed() && !s.has_listener());
+        if drained {
+            any_server_dispatch_mut!(self, |s| s.deinit_if_we_can());
+        }
     }
 
     /// Decrement the live-socket count and, when the last socket drained on

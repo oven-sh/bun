@@ -1381,6 +1381,7 @@ fn serve(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSVa
                 is_fetch_required: true,
                 previous_fetch: false,
                 previous_routes: false,
+                is_reload: false,
             },
         )?;
 
@@ -1397,7 +1398,7 @@ fn serve(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSVa
     // all trigger a GC in that window, so gcProtect each handler for its
     // duration. `Protected`'s `Drop` unprotects on every exit path (including
     // a thrown `listen()` and the hot-reload early return).
-    let _handler_pins: [bun_jsc::js_value::Protected; 10] =
+    let _handler_pins: [bun_jsc::js_value::Protected; 14] =
         crate::server::protect_handler_shadows(&config);
 
     // SAFETY: same VM pointer; re-borrow after `args` is dropped.
@@ -1490,6 +1491,11 @@ fn serve(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSVa
             // would be 7 wasted FFI calls.
             if server_ref.config.websocket.is_some() {
                 server_ref.write_ws_handler_slots(obj, global_object);
+            }
+            // Same reasoning one block down: nothing to clear when the server
+            // declared no `webtransport` handlers.
+            if server_ref.config.webtransport_handler.is_some() {
+                server_ref.write_wt_handler_slots(obj, global_object);
             }
             server_ref.js_value.set_strong(obj, global_object);
             // Slots are rooted; release the scoped gcProtects and run the

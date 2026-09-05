@@ -2143,6 +2143,23 @@ where
             self.write_ws_handler_slots(server_js, global);
         }
 
+        // Only when the listener already advertises the extension: a hot
+        // reload skips `reload()`'s check, and handlers no session can reach
+        // would 501 every CONNECT while looking live.
+        if let Some(wt) = new_config.webtransport_handler.take() {
+            if self.config.webtransport {
+                self.config.webtransport_handler = Some(wt);
+                self.write_wt_handler_slots(server_js, global);
+            } else {
+                // `reload()` throws for this; a hot reload has no call to throw
+                // from, and dropping it in silence looks like a working server
+                // whose handlers never fire.
+                bun_core::warn!(
+                    "Ignoring 'webtransport': this server started without it, and an HTTP/3 listener advertises WebTransport only from the SETTINGS it was bound with"
+                );
+            }
+        }
+
         // These get re-applied when we set the static routes again.
         if let Some(dev_server) = self.dev_server.as_deref_mut() {
             // Prevent a use-after-free in the hash table keys.
@@ -2218,8 +2235,19 @@ where
                 is_fetch_required: true,
                 previous_fetch: !self.config.on_request.is_empty_or_undefined_or_null(),
                 previous_routes: !self.user_routes.is_empty(),
+                is_reload: true,
             },
         )?;
+
+        // A reload cannot introduce WebTransport: the SETTINGS were fixed when
+        // the listener's lsquic engine was built. Replacing handlers on a
+        // server that started with them is fine.
+        if new_config.webtransport_handler.is_some() && !self.config.webtransport {
+            drop(new_config);
+            return Err(global.throw_invalid_arguments(format_args!(
+                "'webtransport' cannot be added by reload(): the HTTP/3 listener advertises it at startup"
+            )));
+        }
 
         // `on_reload_from_zig` moves `new_config.websocket` into the unscanned
         // `self.config` heap box before `write_ws_handler_slots` roots the 7

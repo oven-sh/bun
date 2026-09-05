@@ -127,6 +127,29 @@ export const lsquic: Dependency = {
     // never be encrypted and the peer idled out instead of learning of the
     // close. Select the PNS by handshake progress, as ngtcp2 does.
     "patches/lsquic/connection-close-pns.patch",
+    // The WebTransport SETTINGS block advertised draft-02's 0x2b603742 /
+    // 0x2b603743 in place of SETTINGS_WEBTRANSPORT_MAX_SESSIONS (0xc671706a),
+    // which Chrome 141 ignores before failing the handshake, and wrote
+    // SETTINGS_H3_DATAGRAM on top of node-quic-accessors.patch's -- a repeated
+    // setting id is H3_SETTINGS_ERROR (RFC 9114 §7.2.4.1).
+    // No upstream issue: the duplicate id is an interaction with our own
+    // node-quic-accessors.patch rather than an upstream defect, and the draft
+    // lsquic targets is its choice to make, not a bug to file.
+    "patches/lsquic/webtransport-settings.patch",
+    // The WebTransport flags belong to `enum stream_b_flags` (the `sm_bflags`
+    // field), but all five sites read and write `stream_flags`, whose bits 14
+    // and 15 are STREAM_HEAD_IN_FIN and STREAM_FRAMES_ELIDED. Marking a session
+    // corrupted lsquic's record of the request, and the WebTransport test
+    // answered yes for any request whose frames had been elided.
+    // Reported as https://github.com/litespeedtech/lsquic/issues/674 and
+    // merged upstream (litespeedtech/lsquic#676, first release 4.9.4), so
+    // this patch dies at the next lsquic bump.
+    //
+    // Separately, upstream's draft PR #629 deletes these accessors and the
+    // two flags outright, replacing them with a session/switch-stream
+    // abstraction, and drops LSQUIC_WEBTRANSPORT_SERVER_SUPPORT with them --
+    // taking that is a rewrite of our side, not a version bump.
+    "patches/lsquic/webtransport-stream-flags.patch",
   ],
 
   fetchDeps: ["zlib", "lshpack", "lsqpack", "boringssl"],
@@ -168,7 +191,11 @@ export const lsquic: Dependency = {
         // lsquic_conn_get_info; those fields are gated on this define.
         LSQUIC_CONN_STATS: 1,
         LSQUIC_QIR: 0,
-        LSQUIC_WEBTRANSPORT_SERVER_SUPPORT: 0,
+        // Bun.serve's `webtransport` handler: gates the extended-CONNECT
+        // SETTINGS and the WebTransport stream-type parsing in lsquic_stream.c.
+        // Adds two fields to struct lsquic_engine_settings, so bun's own TUs
+        // must match -- see `defines` in scripts/build/flags.ts.
+        LSQUIC_WEBTRANSPORT_SERVER_SUPPORT: 1,
       },
       cflags: [
         // -w: lsquic emits a lot of -Wsign-compare and -Wunused under -Wall;

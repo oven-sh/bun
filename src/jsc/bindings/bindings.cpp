@@ -3620,12 +3620,23 @@ CPP_DECL uint8_t JSC__JSValue__pinArrayBuffer(JSC::EncodedJSValue v)
 // Only for a value `pinStorage` answered `Pinned` for: that buffer still exists (pinned buffers are not detached).
 CPP_DECL void JSC__JSValue__unpinArrayBuffer(JSC::EncodedJSValue v)
 {
+    // Reached from finalizers during GC sweep, where classInfo() (and so any
+    // dynamicDowncast) is forbidden; dispatch on JSType like JSC::Weak<T>::get().
     auto value = JSC::JSValue::decode(v);
+    if (!value.isCell())
+        return;
+    JSC::JSCell* cell = value.asCell();
+    JSC::JSType type = cell->type();
     JSC::ArrayBuffer* buf = nullptr;
-    if (auto* jb = dynamicDowncast<JSC::JSArrayBuffer>(value))
-        buf = jb->impl();
-    else if (auto* view = dynamicDowncast<JSC::JSArrayBufferView>(value); view && view->hasArrayBuffer())
-        buf = view->possiblySharedBuffer();
+    if (type == JSC::ArrayBufferType)
+        buf = static_cast<JSC::JSArrayBuffer*>(cell)->impl();
+    else if (type == JSC::DataViewType)
+        buf = static_cast<JSC::JSDataView*>(cell)->possiblySharedBuffer();
+    else if (JSC::isTypedArrayType(type)) {
+        auto* view = static_cast<JSC::JSArrayBufferView*>(cell);
+        if (JSC::isWastefulTypedArray(view->mode()))
+            buf = view->butterfly()->indexingHeader()->arrayBuffer();
+    }
     if (buf && !buf->isShared())
         buf->unpin();
 }

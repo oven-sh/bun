@@ -1600,7 +1600,26 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
     /// (FFI signature is `*mut`). Returning `NonNull` instead of `&FetchHeaders`
     /// avoids deriving `&mut T` from `&T` at the call sites (UB).
     fn get_fetch_headers(&self) -> Option<NonNull<FetchHeaders>>;
+    /// Create the lazily-built headers now, copying the body Blob's Content-Type in.
+    fn materialize_headers(&self, global_object: &JSGlobalObject) -> JsResult<()>;
     fn get_form_data_encoding(&self) -> JsResult<Option<Box<bun_core::form_data::AsyncFormData>>>;
+
+    /// Called by every body consumer before it takes the Blob: the Blob is the
+    /// only place a body-derived Content-Type (a multipart boundary) lives.
+    fn preserve_body_content_type(&self, global_object: &JSGlobalObject) -> JsResult<()> {
+        if self.get_fetch_headers().is_some() {
+            return Ok(());
+        }
+        // reshaped for borrowck
+        let blob_has_content_type = matches!(
+            self.get_body_value(),
+            Value::Blob(blob) if !blob.content_type_slice().is_empty()
+        );
+        if blob_has_content_type {
+            self.materialize_headers(global_object)?;
+        }
+        Ok(())
+    }
 
     // ────────────────────────────────────────────────────────────────────
     // Twin methods (identical for Request/Response). These were previously
@@ -1732,6 +1751,7 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
             }
         }
 
+        self.preserve_body_content_type(global_object)?;
         let value = self.get_body_value();
         let mut blob = value.use_as_any_blob_allow_non_utf8_string();
         let result = JSPromise::wrap(global_object, |g| blob.to_string(g, Lifetime::Transfer));
@@ -1750,6 +1770,7 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
                 return Ok(readable.value);
             }
         }
+        self.preserve_body_content_type(global_this)?;
         let stream = self.get_body_value().to_readable_stream(global_this)?;
         // The wrapper's traced `m_stream` slot owns the stream from here;
         // release the `Strong` `to_readable_stream` parked in `Locked.readable`.
@@ -1780,6 +1801,7 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
 
         // Step 2: null body → a new empty closed ReadableStream.
         // Steps 3-6: decode directly from the body's backing bytes.
+        self.preserve_body_content_type(global_this)?;
         let stream = self.get_body_value().to_text_readable_stream(global_this)?;
         if stream.is_null() {
             return ReadableStream::empty(global_this);
@@ -1873,6 +1895,7 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
             }
         }
 
+        self.preserve_body_content_type(global_object)?;
         let value = self.get_body_value();
         let mut blob = value.use_as_any_blob_allow_non_utf8_string();
         let result = JSPromise::wrap(global_object, |g| blob.to_json(g, Lifetime::Share));
@@ -1927,6 +1950,7 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
         }
 
         // toArrayBuffer in AnyBlob checks for non-UTF8 strings
+        self.preserve_body_content_type(global_object)?;
         let value = self.get_body_value();
         let mut blob: AnyBlob = value.use_as_any_blob_allow_non_utf8_string();
         let result = JSPromise::wrap(global_object, |g| {
@@ -1978,6 +2002,7 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
         }
 
         // toArrayBuffer in AnyBlob checks for non-UTF8 strings
+        self.preserve_body_content_type(global_object)?;
         let value = self.get_body_value();
         let mut blob: AnyBlob = value.use_as_any_blob_allow_non_utf8_string();
         let result = JSPromise::wrap(global_object, |g| {
@@ -2035,6 +2060,7 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
                 .reject());
         };
 
+        self.preserve_body_content_type(global_object)?;
         let value = self.get_body_value();
         if let Value::Locked(_locked) = value {
             let owned_readable = self.get_body_readable_stream();
@@ -2132,6 +2158,7 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
             }
         }
 
+        self.preserve_body_content_type(global_object)?;
         let value = self.get_body_value();
         let blob_ptr = Blob::new(value.use_());
         // SAFETY: `Blob::new` returns a freshly heap-allocated, ref-counted Blob.

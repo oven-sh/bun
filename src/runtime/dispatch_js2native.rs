@@ -84,6 +84,30 @@ pub(crate) fn bun_set_default_ca_certificates(
             certs.push(cert);
         }
     }
+    // Build a context once here so a certificate BoringSSL rejects throws to
+    // the caller, like node's setDefaultCACertificates. The HTTP thread then
+    // rebuilds from the same list and can only fail on allocation.
+    if !certs.is_empty() {
+        let ptrs: Vec<*const core::ffi::c_char> = certs.iter().map(|c| c.as_ptr()).collect();
+        let mut err = bun_uws::create_bun_socket_error_t::none;
+        let opts = bun_uws::SocketContext::BunSocketContextOptions {
+            ca: ptrs.as_ptr().cast(),
+            ca_count: u32::try_from(ptrs.len()).expect("int cast"),
+            request_cert: 1,
+            ..Default::default()
+        };
+        if opts.create_ssl_context(&mut err).is_none() {
+            if crate::server::throw_ssl_error_if_necessary(global) {
+                return Err(bun_jsc::JsError::Thrown);
+            }
+            return Err(global
+                .err(
+                    bun_jsc::ErrorCode::CRYPTO_OPERATION_FAILED,
+                    format_args!("Failed to load the provided CA certificates"),
+                )
+                .throw());
+        }
+    }
     bun_http::default_ca::set(certs);
     Ok(JSValue::UNDEFINED)
 }

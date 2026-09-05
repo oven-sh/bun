@@ -3656,9 +3656,14 @@ impl<'a> Resolver<'a> {
                     esm_resolution.status = Status::ModuleNotFound;
                     return MatchStatus::NotFound;
                 };
+                // SAFETY: rfs points at the process-global RealFS; the lazy-stat
+                // rewrite inside `kind()` is serialized on the per-entry mutex.
+                let entry_kind = entry_lookup
+                    .as_ref()
+                    .map(|q| unsafe { q.entry().kind(self.rfs_ptr(), self.store_fd) });
                 let entry_query = match entry_lookup {
-                    Some(q) => q,
-                    None => {
+                    Some(q) if entry_kind != Some(Fs::file_system::EntryKind::Dangling) => q,
+                    _ => {
                         let ends_with_star = esm_resolution.status == Status::ExactEndsWithStar;
                         esm_resolution.status = Status::ModuleNotFound;
 
@@ -3677,11 +3682,7 @@ impl<'a> Resolver<'a> {
                     }
                 };
 
-                // SAFETY: rfs points at the process-global RealFS; the lazy-stat
-                // rewrite inside `kind()` is serialized on the per-entry mutex.
-                if unsafe { entry_query.entry().kind(self.rfs_ptr(), self.store_fd) }
-                    == Fs::file_system::EntryKind::Dir
-                {
+                if entry_kind == Some(Fs::file_system::EntryKind::Dir) {
                     let ends_with_star = esm_resolution.status == Status::ExactEndsWithStar;
                     if ends_with_star
                         && self.probe_target_extensions(

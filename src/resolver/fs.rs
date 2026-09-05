@@ -112,6 +112,8 @@ pub trait EntryKindResolver {
 pub enum EntryKind {
     Dir,
     File,
+    /// A symlink to nothing; treated like a missing entry, as `stat()` would report it.
+    Dangling,
 }
 
 #[derive(Clone, Copy)]

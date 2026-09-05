@@ -641,6 +641,8 @@ impl<'a> RouteLoader<'a> {
                         }
                     }
                 }
+
+                Fs::EntryKind::Dangling => {}
             }
         }
     }

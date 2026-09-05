@@ -173,6 +173,13 @@ impl StreamingDecoder {
                 }
                 c::BrotliDecoderResult::needs_more_input => {
                     self.state = ReaderState::Inflating;
+                    // Input ran out with the output buffer full. Brotli keeps
+                    // the rest of the decoded bytes in its ring buffer and
+                    // still reports `needs_more_input`. Loop to drain them
+                    // before we stop for this chunk.
+                    if bytes_written > 0 && BrotliDecoder::has_more_output(self.brotli_mut()) {
+                        continue;
+                    }
                     if is_done {
                         self.state = ReaderState::Error;
                         return Err(crate::Error::BrotliDecompressionError);

@@ -48,6 +48,7 @@ unsafe extern "C" {
     // `!Freeze` (UnsafeCell) so internal C mutation through `&` is sound.
     pub safe fn BrotliDecoderGetErrorCode(state: &BrotliDecoder) -> BrotliDecoderErrorCode2;
     pub safe fn BrotliDecoderErrorString(c: BrotliDecoderErrorCode) -> *const c_char;
+    pub safe fn BrotliDecoderHasMoreOutput(state: &BrotliDecoder) -> c_int;
 }
 
 bun_opaque::opaque_ffi! {
@@ -104,6 +105,13 @@ impl BrotliDecoder {
                     .unwrap_or(core::ptr::null_mut()),
             )
         }
+    }
+
+    /// True when decoded bytes are still held in the decoder's ring buffer.
+    /// `decompress_stream` can return `needs_more_input` with output pending
+    /// when the caller's output buffer filled up.
+    pub fn has_more_output(state: &BrotliDecoder) -> bool {
+        BrotliDecoderHasMoreOutput(state) != 0
     }
 
     pub fn initialize_brotli() -> bool {

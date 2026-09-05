@@ -1962,6 +1962,17 @@ pub fn init(
             ini::load_npmrc_config(&mut install, env, true, &[&*npmrc_local])
         };
 
+        // bunfig credentials document `$VAR` references. Resolve them here,
+        // after .env loading, so every later consumer sees literal values.
+        if let Some(registry) = bunfig_install.default_registry.as_mut() {
+            registry.resolve_credential_refs(env);
+        }
+        if let Some(scoped) = bunfig_install.scoped.as_mut() {
+            for registry in scoped.scopes.values_mut() {
+                registry.resolve_credential_refs(env);
+            }
+        }
+
         ini::apply_registry_auth(&mut bunfig_install, &registry_auth);
         overlay_bunfig_install(&mut install, bunfig_install);
         ctx.install = Some(Box::new(install));
@@ -2247,6 +2258,7 @@ pub fn init(
             env,
             Some(cli),
             ctx.install.as_deref(),
+            false,
             subcommand,
         )?;
 
@@ -2657,7 +2669,7 @@ fn init_with_runtime_once(
 
     match manager
         .options
-        .load(log, env, Some(cli), bun_install, Subcommand::Install)
+        .load(log, env, Some(cli), bun_install, true, Subcommand::Install)
     {
         Ok(()) => {}
         Err(e) => {

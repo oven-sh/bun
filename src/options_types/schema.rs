@@ -174,8 +174,35 @@ pub mod api {
             registry
         }
 
-        pub fn has_credentials(&self) -> bool {
-            !self.token.is_empty() || !self.username.is_empty() || !self.password.is_empty()
+        /// True for a credential that can produce an Authorization header:
+        /// a token, or a username+password pair.
+        pub fn has_usable_credentials(&self) -> bool {
+            !self.token.is_empty() || (!self.username.is_empty() && !self.password.is_empty())
+        }
+
+        /// Resolves `$VAR` credential references in place; a reference to an
+        /// unset variable warns and becomes no credential. Called only at entry
+        /// points that document `$VAR` support; .npmrc values stay literal.
+        pub fn resolve_credential_refs(&mut self, env: &bun_dotenv::Loader) {
+            for (name, field) in [
+                ("token", &mut self.token),
+                ("username", &mut self.username),
+                ("password", &mut self.password),
+            ] {
+                if field.len() >= 2 && field[0] == b'$' {
+                    match env.get(field) {
+                        Some(value) => *field = Box::from(value),
+                        None => {
+                            bun_core::warn!(
+                                "registry {} references <b>${}<r>, but that environment variable is not set; treating it as no credential",
+                                name,
+                                bstr::BStr::new(&field[1..]),
+                            );
+                            *field = Box::default();
+                        }
+                    }
+                }
+            }
         }
     }
 

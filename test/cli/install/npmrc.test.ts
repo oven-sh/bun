@@ -814,3 +814,266 @@ describe.skipIf(!isIPv6())("registry on a bracketed IPv6 host", () => {
     expect(exitCode).not.toBe(0);
   });
 });
+
+// https://github.com/oven-sh/bun/issues/41044
+describe("registry credentials from $VAR env references", () => {
+  function authLoggingRegistry(auths: (string | null)[]) {
+    return Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      fetch(req) {
+        auths.push(req.headers.get("authorization"));
+        return new Response("unauthorized", { status: 401 });
+      },
+    });
+  }
+
+  function scopeFiles(port: number, creds: string, withNpmrc: boolean) {
+    return {
+      "package.json": JSON.stringify({
+        name: "app",
+        version: "1.0.0",
+        dependencies: { "@myscope/no-deps": "1.0.0" },
+      }),
+      "bunfig.toml": `[install.scopes]\nmyscope = { url = "http://127.0.0.1:${port}/", ${creds} }\n`,
+      ...(withNpmrc ? { ".npmrc": `//127.0.0.1:${port}/:_authToken=npmrc-token\n` } : {}),
+    };
+  }
+
+  function defaultRegistryFiles(port: number, creds: string) {
+    return {
+      "package.json": JSON.stringify({
+        name: "app",
+        version: "1.0.0",
+        dependencies: { "no-deps": "1.0.0" },
+      }),
+      "bunfig.toml": `[install]\nregistry = { url = "http://127.0.0.1:${port}/", ${creds} }\n`,
+    };
+  }
+
+  // The registry answers 401, so the install itself always fails. Assert the
+  // returned exit code last, after the Authorization assertions.
+  async function install(dir: string, extraEnv: Record<string, string>, cliArgs: string[] = []) {
+    const testEnv: Record<string, string | undefined> = {
+      ...env,
+      // An ambient proxy would intercept the requests to the local registry.
+      http_proxy: "",
+      https_proxy: "",
+      HTTP_PROXY: "",
+      HTTPS_PROXY: "",
+    };
+    delete testEnv.UNSET_TOKEN_41044;
+    Object.assign(testEnv, extraEnv);
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "install", "--no-cache", "--ignore-scripts", ...cliArgs],
+      cwd: dir,
+      env: testEnv as Record<string, string>,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stderr, exitCode };
+  }
+
+  test.concurrent("an unset $VAR token sends no Authorization header and warns", async () => {
+    const auths: (string | null)[] = [];
+    await using server = authLoggingRegistry(auths);
+    using dir = tempDir("bunfig-unset-token", scopeFiles(server.port!, `token = "$UNSET_TOKEN_41044"`, false));
+    const { stderr, exitCode } = await install(String(dir), {});
+    expect(auths).toEqual([null]);
+    expect(stderr).toContain("$UNSET_TOKEN_41044");
+    expect(stderr).toContain("is not set");
+    expect(exitCode).not.toBe(0);
+  });
+
+  test.concurrent("an unset $VAR token falls back to the .npmrc credential", async () => {
+    const auths: (string | null)[] = [];
+    await using server = authLoggingRegistry(auths);
+    using dir = tempDir("bunfig-unset-token-npmrc", scopeFiles(server.port!, `token = "$UNSET_TOKEN_41044"`, true));
+    const { exitCode } = await install(String(dir), {});
+    expect(auths).toEqual(["Bearer npmrc-token"]);
+    expect(exitCode).not.toBe(0);
+  });
+
+  test.concurrent("a set $VAR token wins over the .npmrc credential", async () => {
+    const auths: (string | null)[] = [];
+    await using server = authLoggingRegistry(auths);
+    using dir = tempDir("bunfig-set-token-npmrc", scopeFiles(server.port!, `token = "$UNSET_TOKEN_41044"`, true));
+    const { exitCode } = await install(String(dir), { UNSET_TOKEN_41044: "bunfig-token" });
+    expect(auths).toEqual(["Bearer bunfig-token"]);
+    expect(exitCode).not.toBe(0);
+  });
+
+  // A lone password can never produce an Authorization header, so it must
+  // not block the .npmrc fallback either.
+  test.concurrent("an unset $VAR username with a literal password falls back to the .npmrc credential", async () => {
+    const auths: (string | null)[] = [];
+    await using server = authLoggingRegistry(auths);
+    using dir = tempDir(
+      "bunfig-half-pair-npmrc",
+      scopeFiles(server.port!, `username = "$UNSET_TOKEN_41044", password = "literalpass"`, true),
+    );
+    const { exitCode } = await install(String(dir), {});
+    expect(auths).toEqual(["Bearer npmrc-token"]);
+    expect(exitCode).not.toBe(0);
+  });
+
+  // The runtime auto-install path feeds the raw bunfig config to the
+  // package manager and must resolve $VAR references too.
+  test.concurrent("runtime auto-install does not send an unset $VAR token", async () => {
+    const auths: (string | null)[] = [];
+    await using server = authLoggingRegistry(auths);
+    using dir = tempDir("bunfig-auto-install-unset", {
+      "index.ts": `import "@myscope/no-deps";`,
+      "bunfig.toml": `[install.scopes]\nmyscope = { url = "http://127.0.0.1:${server.port}/", token = "$UNSET_TOKEN_41044" }\n`,
+    });
+    const testEnv: Record<string, string | undefined> = {
+      ...env,
+      http_proxy: "",
+      https_proxy: "",
+      HTTP_PROXY: "",
+      HTTPS_PROXY: "",
+      BUN_INSTALL_CACHE_DIR: join(String(dir), ".cache"),
+    };
+    delete testEnv.UNSET_TOKEN_41044;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "run", "index.ts"],
+      cwd: String(dir),
+      env: testEnv as Record<string, string>,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(auths).toEqual([null]);
+    // The registry answers 401, so the run fails to resolve the import.
+    expect(exitCode).not.toBe(0);
+  });
+
+  // .npmrc values never go through $VAR substitution: a decoded _password
+  // that happens to start with "$" is a literal.
+  test.concurrent("a .npmrc _password that decodes to a $-prefixed value is sent verbatim", async () => {
+    const auths: (string | null)[] = [];
+    await using server = authLoggingRegistry(auths);
+    using dir = tempDir("npmrc-dollar-password", {
+      "package.json": JSON.stringify({
+        name: "app",
+        version: "1.0.0",
+        dependencies: { "@myscope/no-deps": "1.0.0" },
+      }),
+      "bunfig.toml": `[install.scopes]\nmyscope = { url = "http://127.0.0.1:${server.port}/" }\n`,
+      ".npmrc":
+        `//127.0.0.1:${server.port}/:username=alice\n` +
+        `//127.0.0.1:${server.port}/:_password=${btoa("$uperSecret")}\n`,
+    });
+    const { exitCode } = await install(String(dir), {});
+    expect(auths).toEqual([`Basic ${btoa("alice:$uperSecret")}`]);
+    expect(exitCode).not.toBe(0);
+  });
+
+  // An unresolvable token must not shadow the scope's own username/password pair.
+  test.concurrent("an unset $VAR token next to a resolved username/password pair sends Basic auth", async () => {
+    const auths: (string | null)[] = [];
+    await using server = authLoggingRegistry(auths);
+    using dir = tempDir(
+      "bunfig-unset-token-own-pair",
+      scopeFiles(server.port!, `token = "$UNSET_TOKEN_41044", username = "alice", password = "s3cret"`, false),
+    );
+    const { exitCode } = await install(String(dir), {});
+    expect(auths).toEqual([`Basic ${btoa("alice:s3cret")}`]);
+    expect(exitCode).not.toBe(0);
+  });
+
+  // The stale "$UNSET" token must not block from_api's username/password
+  // branch once .npmrc supplies the pair.
+  test.concurrent("an unset $VAR token falls back to a .npmrc username/_password pair", async () => {
+    const auths: (string | null)[] = [];
+    await using server = authLoggingRegistry(auths);
+    using dir = tempDir("bunfig-unset-token-npmrc-pair", {
+      ...scopeFiles(server.port!, `token = "$UNSET_TOKEN_41044"`, false),
+      ".npmrc":
+        `//127.0.0.1:${server.port}/:username=bob\n` + `//127.0.0.1:${server.port}/:_password=${btoa("s3cret")}\n`,
+    });
+    const { exitCode } = await install(String(dir), {});
+    expect(auths).toEqual([`Basic ${btoa("bob:s3cret")}`]);
+    expect(exitCode).not.toBe(0);
+  });
+
+  test.concurrent("a resolved $VAR username and password pair wins over the .npmrc credential", async () => {
+    const auths: (string | null)[] = [];
+    await using server = authLoggingRegistry(auths);
+    using dir = tempDir(
+      "bunfig-pair-npmrc",
+      scopeFiles(server.port!, `username = "$USER_41044", password = "$PASS_41044"`, true),
+    );
+    const { exitCode } = await install(String(dir), { USER_41044: "alice", PASS_41044: "s3cret" });
+    expect(auths).toEqual([`Basic ${btoa("alice:s3cret")}`]);
+    expect(exitCode).not.toBe(0);
+  });
+
+  test.concurrent("BUN_CONFIG_REGISTRY with an unset $VAR credential keeps the same-host bunfig token", async () => {
+    const auths: (string | null)[] = [];
+    await using server = authLoggingRegistry(auths);
+    using dir = tempDir("bunfig-env-registry-unset", defaultRegistryFiles(server.port!, `token = "realtoken"`));
+    const { exitCode } = await install(String(dir), {
+      BUN_CONFIG_REGISTRY: `http://:$UNSET_TOKEN_41044@127.0.0.1:${server.port}/`,
+    });
+    expect(auths).toEqual(["Bearer realtoken"]);
+    expect(exitCode).not.toBe(0);
+  });
+
+  test.concurrent("--registry with an unset $VAR credential keeps the same-origin bunfig token", async () => {
+    const auths: (string | null)[] = [];
+    await using server = authLoggingRegistry(auths);
+    using dir = tempDir("bunfig-cli-registry-unset", defaultRegistryFiles(server.port!, `token = "realtoken"`));
+    const { exitCode } = await install(String(dir), {}, [
+      `--registry=http://:$UNSET_TOKEN_41044@127.0.0.1:${server.port}/`,
+    ]);
+    expect(auths).toEqual(["Bearer realtoken"]);
+    expect(exitCode).not.toBe(0);
+  });
+
+  // The BUN_CONFIG_REGISTRY same-host path carries the already-resolved
+  // credentials into the new scope. A token value that itself starts with
+  // "$" must not go through $VAR resolution a second time.
+  test.concurrent("a token value that starts with $ survives the BUN_CONFIG_REGISTRY same-host carry", async () => {
+    const auths: (string | null)[] = [];
+    await using server = authLoggingRegistry(auths);
+    using dir = tempDir("bunfig-env-registry-dollar", defaultRegistryFiles(server.port!, `token = "$TOK_41044"`));
+    const { exitCode } = await install(String(dir), {
+      TOK_41044: "$ecret123",
+      BUN_CONFIG_REGISTRY: `http://127.0.0.1:${server.port}/`,
+    });
+    expect(auths).toEqual(["Bearer $ecret123"]);
+    expect(exitCode).not.toBe(0);
+  });
+
+  test.concurrent("BUN_CONFIG_REGISTRY with no credentials keeps the same-host bunfig Basic credentials", async () => {
+    const auths: (string | null)[] = [];
+    await using server = authLoggingRegistry(auths);
+    using dir = tempDir(
+      "bunfig-env-registry-basic",
+      defaultRegistryFiles(server.port!, `username = "$USER_41044", password = "$PASS_41044"`),
+    );
+    const { exitCode } = await install(String(dir), {
+      USER_41044: "alice",
+      PASS_41044: "s3cret",
+      BUN_CONFIG_REGISTRY: `http://127.0.0.1:${server.port}/`,
+    });
+    expect(auths).toEqual([`Basic ${btoa("alice:s3cret")}`]);
+    expect(exitCode).not.toBe(0);
+  });
+
+  test.concurrent("a credential in the BUN_CONFIG_REGISTRY URL wins over the bunfig credential", async () => {
+    const auths: (string | null)[] = [];
+    await using server = authLoggingRegistry(auths);
+    using dir = tempDir(
+      "bunfig-env-registry-url-auth",
+      defaultRegistryFiles(server.port!, `username = "alice", password = "s3cret"`),
+    );
+    const { exitCode } = await install(String(dir), {
+      BUN_CONFIG_REGISTRY: `http://127.0.0.1:${server.port}/:_auth=${btoa("urluser:urlpass")}`,
+    });
+    expect(auths).toEqual([`Basic ${btoa("urluser:urlpass")}`]);
+    expect(exitCode).not.toBe(0);
+  });
+});

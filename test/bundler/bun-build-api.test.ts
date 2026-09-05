@@ -563,6 +563,31 @@ describe("Bun.build", () => {
     Bun.gc(true);
   });
 
+  test("outdir under a dangling symlink fails with ENOENT instead of never settling", async () => {
+    // mkdir on the link reports EEXIST, mkdir below it reports ENOENT. The
+    // recursive mkdir used to retry that pair forever and the build promise
+    // never settled. Run in a child so the spin cannot take the runner down.
+    using dir = tempDir("build-outdir-dangling", {
+      "index.js": `console.log("built");`,
+      "build.js": `
+        const r = await Bun.build({ entrypoints: ["./index.js"], outdir: "./dangling/out", throw: false });
+        console.log(r.success, r.logs.map(l => l.message).join("\\n"));
+      `,
+    });
+    symlinkSync(join(String(dir), "does-not-exist"), join(String(dir), "dangling"));
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build.js"],
+      env: bunEnv,
+      cwd: String(dir),
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout).toContain("false Failed to create output directory ENOENT");
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+  });
+
   test("BuildArtifact properties", async () => {
     Bun.gc(true);
     const outdir = tempDirWithFiles("build-artifact-properties", {

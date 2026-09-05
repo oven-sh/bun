@@ -1259,9 +1259,11 @@ Full documentation is available at <magenta>https://bun.com/docs/pm/cli/prune<r>
         // `args` must stay alive for the program duration —
         // `cli` stores slices into it. Park the parsed `Args` in a process-global
         // `OnceLock` so outer slice borrows (`positionals()`, `options()`) are
-        // `'static`; inner `&[u8]` are argv-backed and already `'static`. CLI args
-        // are parsed exactly once per process.
+        // `'static`; inner `&[u8]` are argv-backed and already `'static`.
+        // Some subcommands (e.g. `bun update [-i]`) re-enter `parse` with the
+        // same argv; the first parse's `Args` is canonical.
         static PARSED_ARGS: OnceLock<clap::Args<clap::Help>> = OnceLock::new();
+        let first_parse;
         let args: &'static clap::Args<clap::Help> = match clap::parse::<clap::Help>(
             params,
             clap::ParseOptions {
@@ -1271,8 +1273,9 @@ Full documentation is available at <magenta>https://bun.com/docs/pm/cli/prune<r>
             },
         ) {
             Ok(a) => {
-                // `set` only fails on second call; CLI parse runs once.
-                let _ = PARSED_ARGS.set(a);
+                // `set` succeeds only on the first parse; on re-entry reuse
+                // the cached one.
+                first_parse = PARSED_ARGS.set(a).is_ok();
                 PARSED_ARGS.get().unwrap()
             }
             Err(err) => {
@@ -1605,35 +1608,39 @@ Full documentation is available at <magenta>https://bun.com/docs/pm/cli/prune<r>
         }
 
         if let Some(cwd_) = args.option(b"--cwd") {
-            let mut buf = PathBuffer::uninit();
-            let mut buf2 = PathBuffer::uninit();
+            // A re-entrant parse already chdir'd; a second relative `chdir`
+            // would resolve from the changed cwd and hit ENOENT (#31152).
+            if first_parse {
+                let mut buf = PathBuffer::uninit();
+                let mut buf2 = PathBuffer::uninit();
 
-            let final_path: &mut bun_core::ZStr = if !cwd_.is_empty() && cwd_[0] == b'.' {
-                let cwd_len = bun_sys::getcwd(&mut buf[..])?;
-                let cwd = &buf[..cwd_len];
-                let parts: [&[u8]; 1] = [cwd_];
-                let len = Path::resolve_path::join_abs_string_buf::<Path::platform::Auto>(
-                    cwd,
-                    &mut buf2[..],
-                    &parts,
-                )
-                .len();
-                buf2[len] = 0;
-                bun_core::ZStr::from_buf_mut(&mut buf2[..], len)
-            } else {
-                buf[..cwd_.len()].copy_from_slice(cwd_);
-                buf[cwd_.len()] = 0;
-                bun_core::ZStr::from_buf_mut(&mut buf[..], cwd_.len())
-            };
-            if let Err(err) = bun_sys::chdir(final_path) {
-                Output::err_generic(
-                    "failed to change directory to \"{}\": {}\n",
-                    (
-                        bstr::BStr::new(final_path.as_bytes()),
-                        bstr::BStr::new(err.name()),
-                    ),
-                );
-                Global::crash();
+                let final_path: &mut bun_core::ZStr = if !cwd_.is_empty() && cwd_[0] == b'.' {
+                    let cwd_len = bun_sys::getcwd(&mut buf[..])?;
+                    let cwd = &buf[..cwd_len];
+                    let parts: [&[u8]; 1] = [cwd_];
+                    let len = Path::resolve_path::join_abs_string_buf::<Path::platform::Auto>(
+                        cwd,
+                        &mut buf2[..],
+                        &parts,
+                    )
+                    .len();
+                    buf2[len] = 0;
+                    bun_core::ZStr::from_buf_mut(&mut buf2[..], len)
+                } else {
+                    buf[..cwd_.len()].copy_from_slice(cwd_);
+                    buf[cwd_.len()] = 0;
+                    bun_core::ZStr::from_buf_mut(&mut buf[..], cwd_.len())
+                };
+                if let Err(err) = bun_sys::chdir(final_path) {
+                    Output::err_generic(
+                        "failed to change directory to \"{}\": {}\n",
+                        (
+                            bstr::BStr::new(final_path.as_bytes()),
+                            bstr::BStr::new(err.name()),
+                        ),
+                    );
+                    Global::crash();
+                }
             }
         }
 

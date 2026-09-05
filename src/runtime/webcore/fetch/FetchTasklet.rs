@@ -1332,10 +1332,9 @@ impl FetchTasklet {
                 .as_deref()
                 .and_then(ssl_error_reason)
             {
-                Some(reason) => BunString::create_format(format_args!(
-                    "ERR_SSL_{}",
-                    BStr::new(reason)
-                )),
+                Some(reason) => {
+                    BunString::create_format(format_args!("ERR_SSL_{}", BStr::new(reason)))
+                }
                 None => BunString::static_("EPROTO"),
             },
             _ => BunString::static_(fail.name()),

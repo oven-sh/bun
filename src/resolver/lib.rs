@@ -1814,7 +1814,7 @@ pub mod dir_entry_accessor {
     use crate::fs::{DirEntry, EntriesOption, Entry, EntryKind, FileSystem as FS, Implementation};
     use bun_core::ZStr;
     use bun_glob::walk::{Accessor, AccessorDirEntry, AccessorDirIter, AccessorHandle};
-    use bun_paths::{PathBuffer, Platform, resolve_path};
+    use bun_paths::{Platform, path_buffer_pool, platform, resolve_path};
     use bun_sys::{self as Syscall, Error as SysError, Result as Maybe, Stat};
 
     pub struct DirEntryAccessor;
@@ -1956,56 +1956,43 @@ pub mod dir_entry_accessor {
         }
     }
 
+    impl DirEntryAccessor {
+        /// `path` joined onto the handle's directory. Both fit a path buffer, the result need not.
+        fn full_path<'a>(
+            handle: DirEntryHandle,
+            path: &'a ZStr,
+            buf: &'a mut [u8],
+            spill: &'a mut Vec<u8>,
+        ) -> &'a ZStr {
+            match handle.value {
+                Some(entry) if !Platform::AUTO.is_absolute(path.as_bytes()) => {
+                    resolve_path::join_z_buf_spill::<platform::Auto>(
+                        buf,
+                        spill,
+                        &[entry.dir, path.as_bytes()],
+                    )
+                }
+                _ => path,
+            }
+        }
+    }
+
     impl Accessor for DirEntryAccessor {
         const COUNT_FDS: bool = false;
         type Handle = DirEntryHandle;
         type DirIter = DirEntryDirIter;
 
         fn statat(handle: DirEntryHandle, path_: &ZStr) -> Maybe<Stat> {
-            let mut buf = PathBuffer::uninit();
-            let path: &ZStr = if !Platform::AUTO.is_absolute(path_.as_bytes()) {
-                if let Some(entry) = handle.value {
-                    let slice = resolve_path::join_string_buf::<bun_paths::platform::Auto>(
-                        &mut buf,
-                        &[entry.dir, path_.as_bytes()],
-                    );
-                    let len = slice.len();
-                    buf[len] = 0;
-                    // SAFETY: buf[len] == 0 written above
-                    ZStr::from_buf(&buf[..], len)
-                } else {
-                    path_
-                }
-            } else {
-                path_
-            };
-            Syscall::stat(path)
+            let mut buf = path_buffer_pool::get();
+            let mut spill = Vec::new();
+            Syscall::stat(Self::full_path(handle, path_, &mut buf[..], &mut spill))
         }
 
         /// Like statat but does not follow symlinks.
         fn lstatat(handle: DirEntryHandle, path_: &ZStr) -> Maybe<Stat> {
-            let mut buf = PathBuffer::uninit();
-            if let Some(entry) = handle.value {
-                return Syscall::lstatat(entry.fd, path_);
-            }
-
-            let path: &ZStr = if !Platform::AUTO.is_absolute(path_.as_bytes()) {
-                if let Some(entry) = handle.value {
-                    let slice = resolve_path::join_string_buf::<bun_paths::platform::Auto>(
-                        &mut buf,
-                        &[entry.dir, path_.as_bytes()],
-                    );
-                    let len = slice.len();
-                    buf[len] = 0;
-                    // SAFETY: buf[len] == 0 written above
-                    ZStr::from_buf(&buf[..], len)
-                } else {
-                    path_
-                }
-            } else {
-                path_
-            };
-            Syscall::lstat(path)
+            let mut buf = path_buffer_pool::get();
+            let mut spill = Vec::new();
+            Syscall::lstat(Self::full_path(handle, path_, &mut buf[..], &mut spill))
         }
 
         fn open(path: &ZStr) -> Result<Maybe<DirEntryHandle>, bun_core::Error> {
@@ -2016,23 +2003,15 @@ pub mod dir_entry_accessor {
             handle: DirEntryHandle,
             path_: &ZStr,
         ) -> Result<Maybe<DirEntryHandle>, bun_core::Error> {
-            let mut buf = PathBuffer::uninit();
-            let mut path: &[u8] = path_.as_bytes();
-
-            if !Platform::AUTO.is_absolute(path) {
-                if let Some(entry) = handle.value {
-                    path = resolve_path::join_string_buf::<bun_paths::platform::Auto>(
-                        &mut buf,
-                        &[entry.dir, path],
-                    );
-                }
-            }
+            let mut buf = path_buffer_pool::get();
+            let mut spill = Vec::new();
+            let path = Self::full_path(handle, path_, &mut buf[..], &mut spill);
             // TODO do we want to propagate ENOTDIR through the 'Maybe' to match the SyscallAccessor?
             // The glob implementation specifically checks for this error when dealing with symlinks
             // return Err(SysError::from_code(E::NOTDIR, Syscall::Tag::open));
             let res = FS::instance()
                 .fs
-                .read_directory(path, None, 0, false)
+                .read_directory(path.as_bytes(), None, 0, false)
                 .map_err(crate::Error::into_core)?;
             match res {
                 EntriesOption::Entries(entry) => {

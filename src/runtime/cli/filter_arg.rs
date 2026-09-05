@@ -64,11 +64,18 @@ fn get_candidate_package_patterns<'a>(
     'walk: loop {
         'body: {
             let mut name_buf = PathBuffer::uninit();
-            let json_path: &ZStr = resolve_path::join_abs_string_buf_z::<platform::Auto>(
+            let name_buf_len = name_buf.len();
+            // Does not fit: as unreadable as a missing package.json, so try the parent.
+            let Some(json_path) = resolve_path::join_abs_string_buf_checked::<platform::Auto>(
                 workdir,
-                &mut name_buf[..],
+                &mut name_buf[..name_buf_len - 1],
                 &[b"package.json".as_slice()],
-            );
+            ) else {
+                break 'body;
+            };
+            let json_path_len = json_path.len();
+            name_buf[json_path_len] = 0;
+            let json_path: &ZStr = ZStr::from_buf(&name_buf[..], json_path_len);
 
             log.msgs.clear();
             log.errors = 0;

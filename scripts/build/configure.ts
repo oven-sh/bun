@@ -19,8 +19,8 @@ import {
   type Toolchain,
   detectHost,
   findRepoRoot,
-  resolveConfig,
   modeCompilesCpp,
+  resolveConfig,
 } from "./config.ts";
 import { allDeps } from "./deps/index.ts";
 import { BuildError } from "./error.ts";

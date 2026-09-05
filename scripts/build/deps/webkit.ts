@@ -31,7 +31,7 @@ import { spawnSync } from "node:child_process";
 import { existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, rmSync } from "node:fs";
 import { basename, isAbsolute, join, resolve } from "node:path";
 import { cc, cxx, link, pch } from "../compile.ts";
-import { type Config, modeCompilesCpp } from "../config.ts";
+import { modeCompilesCpp, type Config } from "../config.ts";
 import { BuildError, assert } from "../error.ts";
 import { computeDepFlags, computeTargetLinkFlags, systemLibs } from "../flags.ts";
 import { writeIfChanged } from "../fs.ts";

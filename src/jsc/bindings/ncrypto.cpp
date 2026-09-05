@@ -1279,6 +1279,54 @@ bool EqualNoCase(const WTF::StringView a, const WTF::StringView b)
     if (a.length() != b.length()) return false;
     return a.startsWithIgnoringASCIICase(b);
 }
+
+#ifdef OPENSSL_IS_BORINGSSL
+bool MatchesPrime(const BIGNUM* p, BIGNUM* (*getPrime)(BIGNUM*))
+{
+    BignumPointer known(getPrime(nullptr));
+    return known && BN_cmp(p, known.get()) == 0;
+}
+
+// BoringSSL exposes this group as a DH, not as a BIGNUM getter.
+bool IsFfdhe2048(const BIGNUM* p)
+{
+    DHPointer known(DH_get_rfc7919_2048());
+    if (!known) return false;
+    const BIGNUM* knownP = nullptr;
+    DH_get0_pqg(known.get(), &knownP, nullptr, nullptr);
+    return BN_cmp(p, knownP) == 0;
+}
+
+// OpenSSL's DH_check() skips its primality tests for the built-in named groups
+// (DH_get_nid() != NID_undef). BoringSSL's does not, so check() does it here for
+// the named groups BoringSSL ships: RFC 3526 modp1536..8192 and RFC 7919 ffdhe2048.
+bool IsWellKnownGroup(const DH* dh)
+{
+    const BIGNUM* p = nullptr;
+    const BIGNUM* q = nullptr;
+    const BIGNUM* g = nullptr;
+    DH_get0_pqg(dh, &p, &q, &g);
+    if (p == nullptr || q != nullptr || g == nullptr) return false;
+    if (!BN_is_word(g, DH_GENERATOR_2)) return false;
+
+    switch (BN_num_bits(p)) {
+    case 1536:
+        return MatchesPrime(p, BN_get_rfc3526_prime_1536);
+    case 2048:
+        return MatchesPrime(p, BN_get_rfc3526_prime_2048) || IsFfdhe2048(p);
+    case 3072:
+        return MatchesPrime(p, BN_get_rfc3526_prime_3072);
+    case 4096:
+        return MatchesPrime(p, BN_get_rfc3526_prime_4096);
+    case 6144:
+        return MatchesPrime(p, BN_get_rfc3526_prime_6144);
+    case 8192:
+        return MatchesPrime(p, BN_get_rfc3526_prime_8192);
+    default:
+        return false;
+    }
+}
+#endif // OPENSSL_IS_BORINGSSL
 } // namespace
 
 DHPointer::DHPointer(DH* dh)
@@ -1391,6 +1439,9 @@ DHPointer::CheckResult DHPointer::check()
 {
     ClearErrorOnReturn clearErrorOnReturn;
     if (!dh_) return DHPointer::CheckResult::NONE;
+#ifdef OPENSSL_IS_BORINGSSL
+    if (IsWellKnownGroup(dh_.get())) return DHPointer::CheckResult::NONE;
+#endif
     int codes = 0;
     if (DH_check(dh_.get(), &codes) != 1)
         return DHPointer::CheckResult::CHECK_FAILED;

@@ -689,6 +689,71 @@ describe("DiffieHellman", () => {
       value: expect.objectContaining({ code: "ERR_INVALID_ARG_VALUE" }),
     });
   });
+
+  // OpenSSL's DH_check() returns at once, with no flags set, for its built-in
+  // named groups. So Node constructs every modp group in microseconds with
+  // verifyError 0. BoringSSL's DH_check() has no such shortcut: it runs 64
+  // Miller-Rabin rounds on p and on (p - 1) / 2, about 26 s for the 8192-bit
+  // group, and its generator heuristic then reports DH_NOT_SUITABLE_GENERATOR.
+  describe("well-known groups", () => {
+    const { DH_CHECK_P_NOT_PRIME } = crypto.constants;
+
+    it.each(["modp5", "modp14", "modp15", "modp16", "modp17", "modp18"])(
+      "getDiffieHellman(%s) reports verifyError 0",
+      group => {
+        expect(crypto.getDiffieHellman(group).verifyError).toBe(0);
+      },
+    );
+
+    it("constructs the 8192-bit group without running the primality tests", () => {
+      const start = performance.now();
+      const named = crypto.getDiffieHellman("modp18");
+      const group = new crypto.DiffieHellmanGroup("modp18");
+      const fromPrime = crypto.createDiffieHellman(named.getPrime(), 2);
+      const fromBufferGenerator = crypto.createDiffieHellman(named.getPrime(), Buffer.from([2]));
+      const elapsed = performance.now() - start;
+
+      expect([named.verifyError, group.verifyError, fromPrime.verifyError, fromBufferGenerator.verifyError]).toEqual([
+        0, 0, 0, 0,
+      ]);
+      // Without the shortcut the four constructions above take about 107 s.
+      expect(elapsed).toBeLessThan(5_000);
+    });
+
+    // RFC 7919 appendix A.1. Node has no group name for it, so it only arrives
+    // as a prime. It is 2048 bits wide, like modp14, so it also shows that the
+    // match is on the value and not on the width alone.
+    it("recognizes ffdhe2048", () => {
+      const ffdhe2048 =
+        "FFFFFFFFFFFFFFFFADF85458A2BB4A9AAFDC5620273D3CF1D8B9C583CE2D3695" +
+        "A9E13641146433FBCC939DCE249B3EF97D2FE363630C75D8F681B202AEC4617A" +
+        "D3DF1ED5D5FD65612433F51F5F066ED0856365553DED1AF3B557135E7F57C935" +
+        "984F0C70E0E68B77E2A689DAF3EFE8721DF158A136ADE73530ACCA4F483A797A" +
+        "BC0AB182B324FB61D108A94BB2C8E3FBB96ADAB760D7F4681D4F42A3DE394DF4" +
+        "AE56EDE76372BB190B07A7C8EE0A6D709E02FCE1CDF7E2ECC03404CD28342F61" +
+        "9172FE9CE98583FF8E4F1232EEF28183C3FE3B1B4C6FAD733BB5FCBC2EC22005" +
+        "C58EF1837D1683B2C6F34A26C1B2EFFA886B423861285C97FFFFFFFFFFFFFFFF";
+      const dh = crypto.createDiffieHellman(ffdhe2048, "hex", 2);
+      expect(dh.getPrime().length).toBe(crypto.getDiffieHellman("modp14").getPrime().length);
+      expect(dh.verifyError).toBe(0);
+    });
+
+    it("matches the prime by value, not by length", () => {
+      const p = crypto.getDiffieHellman("modp5").getPrime();
+      // Flip bit 1 so p stays odd and keeps its width, but is no longer prime.
+      p[p.length - 1] ^= 0x02;
+      const dh = crypto.createDiffieHellman(p, 2);
+      expect(dh.verifyError & DH_CHECK_P_NOT_PRIME).toBe(DH_CHECK_P_NOT_PRIME);
+    });
+
+    it("only skips the check for generator 2", () => {
+      const p = crypto.getDiffieHellman("modp5").getPrime();
+      const pMinusOne = Buffer.from(p);
+      pMinusOne[pMinusOne.length - 1] -= 1;
+      // g = p - 1 is outside the valid range, which the full check reports.
+      expect(crypto.createDiffieHellman(p, pMinusOne).verifyError).not.toBe(0);
+    });
+  });
 });
 
 // An integer-valued Number is not always an int32 JSValue. An element of an array that
@@ -995,11 +1060,7 @@ it("verifyError should not be on the prototype of DiffieHellman and DiffieHellma
   const dhg = crypto.createDiffieHellmanGroup("modp5");
   expect("verifyError" in crypto.DiffieHellmanGroup.prototype).toBeFalse();
   expect("verifyError" in dhg).toBeTrue();
-
-  // boringssl seems to set DH_NOT_SUITABLE_GENERATOR for both
-  // DH_GENERATOR_2 and DH_GENERATOR_5 if not using
-  // DH_generate_parameters_ex
-  expect(dhg.verifyError).toBe(8);
+  expect(dhg.verifyError).toBe(0);
 });
 it("cipher.setAAD should not throw if encoding or plaintextLength is undefined #18700", () => {
   const key = crypto.randomBytes(32);

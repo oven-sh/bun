@@ -135,10 +135,17 @@ export function parseHandle(target, serialized, fd) {
         throw new Error(`failed to adopt received dgram handle: ${err.code || err.message}`, { cause: err });
       }
       socket.once("error", throwOnAdoptionFailure);
-      socket.bind({ fd, exclusive: true }, () => {
+      try {
+        // bind({ fd }) throws at once for a descriptor that is not a UDP socket
+        // or is already adopted, before any 'error' event.
+        socket.bind({ fd, exclusive: true }, () => {
+          socket.removeListener("error", throwOnAdoptionFailure);
+          emit(target, serialized.msg, socket);
+        });
+      } catch (err) {
         socket.removeListener("error", throwOnAdoptionFailure);
-        emit(target, serialized.msg, socket);
-      });
+        throwOnAdoptionFailure(err);
+      }
       return;
     }
     default: {

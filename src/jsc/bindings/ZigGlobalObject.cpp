@@ -370,12 +370,12 @@ extern "C" void JSCInitialize(const char* envp[], size_t envc, void (*onCrash)(c
                         continue;
                     }
 
-                    if (!JSC::Options::setOption(env + 8)) [[unlikely]] {
+                    // Options::initialize verifies all of them once after this callback.
+                    if (!JSC::Options::setOption(env + 8, /* verify */ false)) [[unlikely]] {
                         onCrash(env, strlen(env));
                     }
                 }
             }
-            JSC::Options::assertOptionsAreCoherent();
         }); // end JSC::initialize lambda
 
 #if OS(WINDOWS) && (CPU(X86_64) || CPU(ARM64))

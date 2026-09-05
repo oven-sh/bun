@@ -348,15 +348,24 @@ function processServerTlsOptions(options) {
 // https://github.com/nodejs/node/blob/main/lib/_tls_wrap.js
 function serverSetSecureContext(this: Server, options) {
   validateObject(options, "options");
+  // requestCert and rejectUnauthorized belong to the constructor; node's
+  // setSecureContext does not read them.
+  // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L1367-L1368
+  const previous = this[tlsSymbol];
   const tls = processServerTlsOptions({ ...options }) ?? normalizeServerTls({});
+  if (previous) {
+    tls.requestCert = previous.requestCert;
+    tls.rejectUnauthorized = previous.rejectUnauthorized;
+  }
   this[tlsSymbol] = tls;
   const handle = this[serverSymbol];
   if (handle) setServerSecureContext(handle, tls);
 }
 
+// Stays registered: the listener socket is created on each listen(), so a
+// 'keylog' listener added after a later listen() must reach that socket too.
 function onKeylogNewListener(this: Server, event) {
   if (event !== "keylog") return;
-  this.removeListener("newListener", onKeylogNewListener);
   const handle = this[serverSymbol];
   if (handle) enableServerKeylog(handle);
 }
@@ -652,7 +661,6 @@ Server.prototype.listen = function () {
     if (cluster === undefined) cluster = require("node:cluster");
 
     const notifyListening = () => {
-      // No channel (NODE_UNIQUE_ID inherited by a plain child, or already disconnected): nothing to notify.
       cluster.worker.state = "listening";
       const address = server.address();
       const isObjectAddress = address !== null && typeof address === "object";
@@ -1303,9 +1311,11 @@ function onServerConnection(this: Server, socketHandle) {
     return;
   }
 
-  if (isTLS && this.listenerCount("keylog") > 0) {
+  // Once a 'keylog' listener has armed the listener socket every connection
+  // parks its lines, so drain them even when the listener is gone by now.
+  if (isTLS) {
     const lines = socketHandle.drainKeylog();
-    if (lines !== null) {
+    if (lines !== null && this.listenerCount("keylog") > 0) {
       for (let i = 0; i < lines.length; i++) {
         this.emit("keylog", lines[i], socket);
       }

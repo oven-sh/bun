@@ -580,7 +580,7 @@ function newNativeSecureContext(options, cached = false) {
     }
     const rejectUnauthorized = options.rejectUnauthorized;
     if (rejectUnauthorized !== undefined && typeof rejectUnauthorized !== "boolean") {
-      options = { ...options, rejectUnauthorized: true };
+      options = { ...options, rejectUnauthorized: normalizeRejectUnauthorized(rejectUnauthorized) };
     }
     const allowPartialTrustChain = options.allowPartialTrustChain;
     if (allowPartialTrustChain !== undefined && typeof allowPartialTrustChain !== "boolean") {
@@ -609,10 +609,6 @@ function newNativeSecureContext(options, cached = false) {
       }
       options = { ...options, minVersion, maxVersion };
     }
-  }
-  const rejectUnauthorized = options.rejectUnauthorized;
-  if (rejectUnauthorized !== undefined && typeof rejectUnauthorized !== "boolean") {
-    options = { ...options, rejectUnauthorized: normalizeRejectUnauthorized(rejectUnauthorized) };
   }
   const ctx = (cached ? NativeSecureContext.intern : NativeSecureContext.createPrivate)(options);
   if (pfxExtraCAs) {

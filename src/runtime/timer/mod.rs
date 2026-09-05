@@ -781,8 +781,8 @@ impl All {
         // SAFETY: callback fires on the JS thread (libuv invokes on the loop's
         // thread); `all` is live for the VM lifetime. `drain_timers` may
         // re-enter `(*runtime_state()).timer` — it forms only short-lived
-        // `&mut All` around heap pop/peek, so the raw-ptr deref here is sound.
-        unsafe { (*all).drain_timers(vm) };
+        // `&mut All` around heap pop/peek, so it takes the raw pointer.
+        unsafe { All::drain_timers(all, vm) };
         // SAFETY: see above; re-arm for the next-soonest deadline (if any).
         unsafe { (*all).ensure_uv_timer() };
     }
@@ -882,16 +882,20 @@ impl All {
         }
     }
 
+    /// Returns the next deadline, and whether it fired a timer.
     unsafe fn drain_due_wtf_timers(
         this: *mut Self,
         maybe_now: &mut Option<Timespec>,
         vm: *mut (),
-    ) -> Option<Timespec> {
+    ) -> (Option<Timespec>, bool) {
+        let mut fired = false;
         loop {
             let min = {
                 // SAFETY: `this` is live; the guard drops before `fire`.
                 let mut wtf = unsafe { &(*this).wtf_timers }.lock();
-                let min = wtf.peek()?;
+                let Some(min) = wtf.peek() else {
+                    return (None, fired);
+                };
                 // SAFETY: `peek` returned a live heap node.
                 let min_next = unsafe {
                     Timespec {
@@ -902,7 +906,7 @@ impl All {
                 let now = *maybe_now
                     .get_or_insert_with(|| Timespec::now(TimespecMockMode::ForceRealTime));
                 if min_next.greater(&now) {
-                    return Some(min_next);
+                    return (Some(min_next), fired);
                 }
                 let min = wtf.delete_min().expect("peek succeeded");
                 // SAFETY: `min` is the node `peek` returned above.
@@ -914,13 +918,14 @@ impl All {
                 sec: now.sec,
                 nsec: now.nsec,
             };
+            fired = true;
             // SAFETY: `min` is live; no guard or borrow of `All` is held here.
-            let fired = unsafe { EventLoopTimer::fire(min, &el_now, vm) };
+            let result = unsafe { EventLoopTimer::fire(min, &el_now, vm) };
             // WTF timers run JSC-internal work, not user JS; a stop found here
             // is the loop's to act on at its next gate, and the heap's next
             // deadline is still reported to the poll.
             // SAFETY: `vm` is the erased per-thread VM per fn contract.
-            let _ = unsafe { fold_timer(vm, fired) };
+            let _ = unsafe { fold_timer(vm, result) };
         }
     }
 
@@ -967,7 +972,7 @@ impl All {
         let maybe_now: &mut Option<Timespec> = now_out;
 
         // SAFETY: `this` is the live per-thread `All`; `vm` per fn contract.
-        let wtf_next = unsafe { Self::drain_due_wtf_timers(this, maybe_now, vm) };
+        let (wtf_next, _) = unsafe { Self::drain_due_wtf_timers(this, maybe_now, vm) };
 
         // SAFETY: `this` is live, and only this thread touches the regular heap.
         let reg_next = (unsafe { &*this }).timers.peek().map(|min| {
@@ -1042,33 +1047,29 @@ impl All {
         Some(timer)
     }
 
+    /// Fires the due timers. Returns whether it fired one.
+    ///
     /// # Safety
-    /// `vm` is the erased `*mut VirtualMachine` for the calling JS thread and
-    /// must remain live across any `EventLoopTimer::fire` re-entry.
-    // Forwards `vm` to `__bun_fire_timer` without dereferencing it;
-    // not_unsafe_ptr_arg_deref is a false positive on opaque-token forwarding.
-    #[allow(clippy::not_unsafe_ptr_arg_deref)]
-    pub(crate) fn drain_timers(&mut self, vm: *mut () /* erased *mut VirtualMachine */) {
+    /// `this` is the live per-thread `All`. `vm` is the erased
+    /// `*mut VirtualMachine` for the calling JS thread and must remain live
+    /// across any `EventLoopTimer::fire` re-entry.
+    pub(crate) unsafe fn drain_timers(
+        this: *mut Self,
+        vm: *mut (), /* erased *mut VirtualMachine */
+    ) -> bool {
         // Note (§Forbidden aliased-&mut): fired handlers re-enter `vm.timer`
         // (e.g. setInterval reschedule → `vm.timer.update(...)`, `cancel()` →
         // `vm.timer.remove(...)`). In Rust those re-entrant calls resolve to
         // `(*runtime_state()).timer.{update,remove}()`, minting a fresh
-        // `&mut All` to this same allocation while the outer `&mut self` is
-        // live → UB under Stacked Borrows. Convert `self` to a raw pointer
-        // up-front and form a *short-lived* `&mut` only around `next()`,
-        // dropping it before `fire()` so no `&mut All` is held across the
-        // re-entrant call (mirroring the raw-ptr pattern in
+        // `&mut All` to this same allocation. So this takes a raw pointer and
+        // forms a *short-lived* `&mut` only around `next()`, dropping it
+        // before `fire()` so no `&mut All` is held across the re-entrant call
+        // (mirroring the raw-ptr pattern in
         // `TimerObjectInternals::run_immediate_task`).
-        //
-        // TODO: the call-site auto-ref at jsc_hooks.rs (`(*state).timer
-        // .drain_timers(...)`) still creates a `&mut All` for the call frame
-        // itself; switch it to `All::drain_timers(core::ptr::addr_of_mut!(
-        // (*state).timer), vm)` and change this signature to `this: *mut Self`.
-        let this: *mut Self = self;
 
         let mut wtf_now: Option<Timespec> = None;
         // SAFETY: `this` is the live per-thread `All`; `vm` per fn contract.
-        let _ = unsafe { Self::drain_due_wtf_timers(this, &mut wtf_now, vm) };
+        let (_, mut fired) = unsafe { Self::drain_due_wtf_timers(this, &mut wtf_now, vm) };
 
         let mut now = Timespec { sec: 0, nsec: 0 };
         let mut has_set_now = false;
@@ -1078,6 +1079,7 @@ impl All {
             let Some(t) = (unsafe { &mut *this }).next(&mut has_set_now, &mut now) else {
                 break;
             };
+            fired = true;
             // Note: re-pack into bun_event_loop's local Timespec stub
             // until the lower tier unifies on bun_core::Timespec.
             let el_now = ElTimespec {
@@ -1088,12 +1090,13 @@ impl All {
             // `fire` dispatches through the FIRE_TIMER hook (§Dispatch hot
             // path) and may re-enter `(*runtime_state()).timer` — no `&mut`
             // to `All` is live here.
-            let fired = unsafe { EventLoopTimer::fire(t, &el_now, vm) };
+            let result = unsafe { EventLoopTimer::fire(t, &el_now, vm) };
             // SAFETY: `vm` per fn contract.
-            if unsafe { fold_timer(vm, fired) }.is_err() {
+            if unsafe { fold_timer(vm, result) }.is_err() {
                 break;
             }
         }
+        fired
     }
 
     /// # Safety

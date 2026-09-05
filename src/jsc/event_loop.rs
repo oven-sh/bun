@@ -71,6 +71,8 @@ pub struct EventLoop {
     /// until the queue is empty (a task that re-posts itself there never lets
     /// the loop poll). Promoted into `tasks` by `auto_tick`, like immediates.
     pub yield_tasks: Vec<Task>,
+    /// A `tick()` ran a task since `auto_tick` last took this.
+    ran_tasks: bool,
 
     pub concurrent_tasks: ConcurrentQueue,
     /// Set only on Bun.spawnSync's isolated loop: how other threads reach *this*
@@ -121,6 +123,7 @@ impl Default for EventLoop {
             immediate_tasks: Vec::new(),
             next_immediate_tasks: Vec::new(),
             yield_tasks: Vec::new(),
+            ran_tasks: false,
             concurrent_tasks: ConcurrentQueue::default(),
             isolated_poster: None,
             global: None,
@@ -451,6 +454,15 @@ impl EventLoop {
         self.drain_microtasks_with_global(global, jsc_vm)
     }
 
+    /// `auto_tick`, after the poll. A callback that ran inside an entered scope
+    /// (a nested loop, such as a wait for a promise) did not drain the
+    /// microtask queue at its exit.
+    pub fn drain_microtasks_if_nested(&mut self) {
+        if self.entered_event_loop_count > 0 {
+            let _ = self.drain_microtasks();
+        }
+    }
+
     // should be called after exit()
     pub fn maybe_drain_microtasks(&mut self) -> Result<(), Stopped> {
         if self.entered_event_loop_count == 0 && !self.vm_ref().is_inside_deferred_task_queue.get()
@@ -539,7 +551,11 @@ impl EventLoop {
     /// turn is over (`tick()` / `tick_tasks_only()` return rather than run more against that VM).
     fn tick_with_count(&mut self, virtual_machine: *mut VirtualMachine) -> Result<u32, Stopped> {
         let mut counter: u32 = 0;
-        tick_queue_with_count(self, virtual_machine, &mut counter)?;
+        let result = tick_queue_with_count(self, virtual_machine, &mut counter);
+        if counter > 0 {
+            self.ran_tasks = true;
+        }
+        result?;
         Ok(counter)
     }
 
@@ -948,6 +964,11 @@ impl EventLoop {
             return self.enqueue_task(task);
         }
         self.yield_tasks.push(task);
+    }
+
+    /// `auto_tick`: whether a `tick()` ran a task since the last call.
+    pub fn take_ran_tasks(&mut self) -> bool {
+        core::mem::take(&mut self.ran_tasks)
     }
 
     /// `auto_tick`, before it polls: last iteration's yielded tasks become

@@ -726,7 +726,9 @@ impl NodeHTTPResponse {
         self.buffered_request_body_data_during_pause
             .with_mut(|b| b.clear_and_free());
         let mut server = self.server;
-        self.poll_ref.with_mut(|r| r.unref(vm));
+        if !self.is_open_tunnel() {
+            self.poll_ref.with_mut(|r| r.unref(vm));
+        }
         self.unregister_auto_flush();
 
         server.on_request_complete();
@@ -820,7 +822,7 @@ impl NodeHTTPResponse {
     }
 
     pub(crate) fn js_ref(&self, global_object: &JSGlobalObject, _frame: &CallFrame) -> JSValue {
-        if !self.is_done() {
+        if !self.is_done() || self.is_open_tunnel() {
             self.poll_ref
                 .with_mut(|r| r.r#ref(bun_vm_mut(global_object)));
         }
@@ -828,7 +830,7 @@ impl NodeHTTPResponse {
     }
 
     pub(crate) fn js_unref(&self, global_object: &JSGlobalObject, _frame: &CallFrame) -> JSValue {
-        if !self.is_done() {
+        if !self.is_done() || self.is_open_tunnel() {
             self.poll_ref
                 .with_mut(|r| r.unref(bun_vm_mut(global_object)));
         }
@@ -1307,14 +1309,24 @@ impl NodeHTTPResponse {
     #[uws::uws_callback(export = "Bun__NodeHTTPResponse_setClosed", no_catch)]
     pub(crate) fn set_closed(&self) {
         self.update_flags(|f| f.insert(Flags::SOCKET_CLOSED));
+        self.poll_ref.with_mut(|r| r.unref(vm_get()));
     }
 
-    /// Flag-only: the pending-request release happens deterministically in
-    /// the dispatch tail (`on_node_http_request*` in `mod.rs`) or, for an
-    /// Upgrade with a body, at the body's fin chunk.
+    /// The pending-request release happens deterministically in the dispatch
+    /// tail (`on_node_http_request*` in `mod.rs`) or, for an Upgrade with a
+    /// body, at the body's fin chunk.
     #[uws::uws_callback(export = "Bun__NodeHTTPResponse_markTunneled", no_catch)]
     pub(crate) fn mark_tunneled(&self) {
         self.update_flags(|f| f.insert(Flags::TUNNELED));
+        if self.is_open_tunnel() {
+            self.poll_ref.with_mut(|r| r.r#ref(vm_get()));
+        }
+    }
+
+    /// Like a Node socket, a tunnel holds the loop until it reads EOF or closes.
+    fn is_open_tunnel(&self) -> bool {
+        let flags = self.flags.get();
+        flags.contains(Flags::TUNNELED) && !flags.contains(Flags::SOCKET_CLOSED)
     }
 
     fn on_timeout(&self, _resp: uws::AnyResponse) {
@@ -1434,7 +1446,9 @@ impl NodeHTTPResponse {
         }
         scoped_log!(NodeHTTPResponse, "onRequestComplete");
         self.update_flags(|f| f.insert(Flags::REQUEST_HAS_COMPLETED));
-        self.poll_ref.with_mut(|r| r.unref(vm_get()));
+        if !self.is_open_tunnel() {
+            self.poll_ref.with_mut(|r| r.unref(vm_get()));
+        }
 
         self.mark_request_as_done_if_necessary();
     }

@@ -2883,7 +2883,10 @@ mod stdio_stores {
         });
         let blob = Blob::new(Blob::init_with_store(store, global_this));
         // SAFETY: `Blob::new` heap-allocates; the JS wrapper takes ownership.
-        unsafe { (&*blob).to_js(global_this) }
+        let blob_ref = unsafe { &*blob };
+        // Bun.stdin/stdout/stderr are BunFile, so they get File.prototype.
+        blob_ref.is_jsdom_file.set(true);
+        blob_ref.to_js(global_this)
     }
 
     pub(super) fn stdin(global_this: &JSGlobalObject) -> JSValue {

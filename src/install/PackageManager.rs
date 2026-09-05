@@ -446,6 +446,9 @@ pub struct PackageManager {
     // bun dedupe: printed by dedupe::print_dedupe_summary in place of the install summary.
     pub(crate) dedupe_report: Option<crate::dedupe::Report>,
 
+    // Rows `bun audit fix` moved to a fixed version; the post-resolve collapse leaves them there.
+    pub(crate) fixed_rows: bun_collections::DynamicBitSet,
+
     // add/remove/update --filter: only these importers are linked; None = every importer.
     pub(crate) filtered_link_targets: Option<workspace_selection::LinkTargets>,
 
@@ -2142,6 +2145,7 @@ pub fn init(
         wr!(kept_patched, Vec::new());
         wr!(kept_patched_text, Vec::new());
         wr!(dedupe_report, None);
+        wr!(fixed_rows, bun_collections::DynamicBitSet::default());
         wr!(filtered_link_targets, None);
         wr!(pending_filtered_write, None);
         wr!(edited_package_jsons, Vec::new());
@@ -2609,6 +2613,7 @@ fn init_with_runtime_once(
         wr!(kept_patched, Vec::new());
         wr!(kept_patched_text, Vec::new());
         wr!(dedupe_report, None);
+        wr!(fixed_rows, bun_collections::DynamicBitSet::default());
         wr!(filtered_link_targets, None);
         wr!(pending_filtered_write, None);
         wr!(edited_package_jsons, Vec::new());

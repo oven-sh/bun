@@ -20,6 +20,9 @@ struct Pass<'a> {
     groups: &'a [Vec<PackageID>],
     group_of: &'a [u32],
     pinned: &'a DynamicBitSet,
+    /// Packages below this id (loaded from the lockfile) keep their edges, and so do root/workspace rows and audit-fixed rows.
+    frozen_below: Option<PackageID>,
+    fixed_rows: &'a DynamicBitSet,
     edges: Vec<Vec<(DependencyID, bool)>>,
     candidates: Vec<PackageID>,
     edge_count: usize,
@@ -42,6 +45,8 @@ impl<'a> Pass<'a> {
         groups: &'a [Vec<PackageID>],
         group_of: &'a [u32],
         pinned: &'a DynamicBitSet,
+        frozen_below: Option<PackageID>,
+        fixed_rows: &'a DynamicBitSet,
         max_candidates: usize,
         max_edges: usize,
     ) -> Pass<'a> {
@@ -51,6 +56,8 @@ impl<'a> Pass<'a> {
             groups,
             group_of,
             pinned,
+            frozen_below,
+            fixed_rows,
             edges: vec![Vec::new(); groups.len()],
             candidates: Vec::with_capacity(max_candidates),
             edge_count: 0,
@@ -197,7 +204,7 @@ impl<'a> Pass<'a> {
             self.cur_c.resize(m, 0);
             self.required.unmanaged.set_all(false);
 
-            for (e, &(dep_id, _)) in edges.iter().enumerate() {
+            for (e, &(dep_id, direct)) in edges.iter().enumerate() {
                 let dep = &deps[dep_id as usize];
                 let target = cur[dep_id as usize];
                 let cur_c = self
@@ -208,7 +215,15 @@ impl<'a> Pass<'a> {
                 self.cur_c[e] = cur_c;
                 let row = e * n;
 
-                let range = if pinned.is_set(target as usize) || dep.behavior.is_bundled() {
+                let frozen = self.frozen_below.is_some_and(|below| {
+                    direct
+                        || target < below
+                        || self
+                            .fixed_rows
+                            .is_set_allow_out_of_bound(dep_id as usize, false)
+                });
+                let range = if pinned.is_set(target as usize) || frozen || dep.behavior.is_bundled()
+                {
                     None
                 } else {
                     effective_npm_range(lockfile, dep_id, dep)
@@ -346,7 +361,11 @@ fn plural(n: usize) -> &'static str {
     if n == 1 { "" } else { "s" }
 }
 
-fn dedupe_lockfile(lockfile: &mut Lockfile) -> Report {
+fn dedupe_lockfile(
+    lockfile: &mut Lockfile,
+    frozen_below: Option<PackageID>,
+    fixed_rows: &DynamicBitSet,
+) -> Report {
     let buf = lockfile.buffers.string_bytes.as_slice();
     let pkg_res = lockfile.packages.items_resolution();
     let checked = pkg_res.len();
@@ -378,7 +397,9 @@ fn dedupe_lockfile(lockfile: &mut Lockfile) -> Report {
             .copied()
             .filter(|&id| pkg_res[id as usize].tag == ResolutionTag::Npm)
             .collect();
-        if candidates.len() < 2 {
+        if candidates.len() < 2
+            || frozen_below.is_some_and(|below| candidates.iter().all(|&id| id < below))
+        {
             continue;
         }
         index_sort::sort_indices(&mut candidates, &mut |a, b| {
@@ -430,6 +451,8 @@ fn dedupe_lockfile(lockfile: &mut Lockfile) -> Report {
                 &groups,
                 &group_of,
                 &pinned,
+                frozen_below,
+                fixed_rows,
                 max_candidates,
                 max_edges,
             );
@@ -855,7 +878,7 @@ pub fn dedupe_after_differ(manager: &mut PackageManager) {
         refuse_out_of_date(manager);
     }
 
-    let report = dedupe_lockfile(&mut manager.lockfile);
+    let report = dedupe_lockfile(&mut manager.lockfile, None, &DynamicBitSet::default());
     if report.rows.is_empty() {
         report_already_deduplicated(manager, &report);
     }
@@ -901,4 +924,23 @@ pub fn dedupe_after_differ(manager: &mut PackageManager) {
         .options
         .enable
         .set(Enable::FORCE_SAVE_LOCKFILE, true);
+}
+
+/// Collapses the versions appended this session onto the fewest that satisfy their edges, so the result does not depend on the order manifests landed in. Packages loaded from the lockfile and root/workspace rows keep their edges.
+pub fn collapse_appended(manager: &mut PackageManager) {
+    let lockfile = &mut *manager.lockfile;
+    let frozen_below = lockfile.loaded_package_count;
+    if lockfile.packages.len() as PackageID <= frozen_below {
+        return;
+    }
+    let report = dedupe_lockfile(lockfile, Some(frozen_below), &manager.fixed_rows);
+    for row in &report.rows {
+        bun_output::scoped_log!(
+            PackageManager,
+            "collapsed {}@{} onto {}",
+            BStr::new(&row.name),
+            BStr::new(&row.from),
+            BStr::new(&row.to)
+        );
+    }
 }

@@ -1,4 +1,7 @@
-import { describe, expect } from "bun:test";
+import type { Subprocess } from "bun";
+import { describe, expect, test } from "bun:test";
+import { bunEnv, bunExe, isCI, isDebug, isWindows, tempDir } from "harness";
+import { join } from "node:path";
 import { itBundled } from "./expectBundled";
 
 // `BUN_JSC_dumpOptions=2` prints every JSC option as `   name=value` on stderr
@@ -452,5 +455,182 @@ describe("bundler", () => {
       stdout: '[["--smol"],["--print"]]',
       validate: expectFullJSCConfiguration,
     },
+  });
+});
+
+// The standalone boot path parses exec argv into the CLI context and then
+// builds the VM through `init_with_module_graph`. Flags that only the VM acts
+// on (the inspector, the DNS result order) must survive that hand-off, not
+// just show up in `process.execArgv`.
+describe("compile-exec-argv runtime flags reach the VM", () => {
+  // Serial, like the other compile tests: each `bun build --compile` rewrites
+  // the whole runtime binary (~800 MB for a debug build), and overlapping
+  // builds starve CI (see bundler_compile.test.ts). Same local budget as the
+  // `itBundled` compile tests.
+  const compileTest = (name: string, fn: () => Promise<void>) =>
+    test(name, fn, isCI ? undefined : isDebug ? Infinity : 30_000);
+
+  // One program for every case. It reports what reached the VM and exits, or
+  // stays up for an inspector client when run with `hold` (a connected client
+  // then keeps it alive). A binary that dropped `--inspect` and runs without
+  // `hold` exits at once, so its stderr ends without a URL.
+  const entry = /* js */ `
+    import { getDefaultResultOrder } from "node:dns";
+    console.log(JSON.stringify({ execArgv: process.execArgv, dnsOrder: getDefaultResultOrder() }));
+    if (process.argv.includes("hold")) setTimeout(() => {}, 10_000);
+  `;
+  const waitFlags = ["--inspect-wait=127.0.0.1:0", "--dns-result-order=ipv4first"];
+  const inspectFlag = "--inspect=127.0.0.1:0";
+
+  async function waitForInspectorUrl(stderr: ReadableStream<Uint8Array>): Promise<URL> {
+    const reader = stderr.getReader();
+    const decoder = new TextDecoder();
+    let text = "";
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      text += decoder.decode(value, { stream: true });
+      const match = text.match(/^\s*(ws:\/\/\S+)\n/m);
+      if (match) {
+        // Keep draining so the child never blocks on a full stderr pipe.
+        void (async () => {
+          while (!(await reader.read()).done) {}
+        })();
+        return new URL(match[1]);
+      }
+    }
+    throw new Error(`inspector did not start. stderr:\n${text}`);
+  }
+
+  async function readLine(stdout: ReadableStream<Uint8Array>): Promise<string> {
+    const reader = stdout.getReader();
+    const decoder = new TextDecoder();
+    let text = "";
+    while (!text.includes("\n")) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      text += decoder.decode(value, { stream: true });
+    }
+    reader.releaseLock();
+    return text;
+  }
+
+  async function compile(dir: string, execArgv: readonly string[]): Promise<string> {
+    const exe = join(dir, isWindows ? "app.exe" : "app");
+    await using build = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "build",
+        "--compile",
+        ...(execArgv.length ? [`--compile-exec-argv=${execArgv.join(" ")}`] : []),
+        "--outfile",
+        exe,
+        "entry.js",
+      ],
+      cwd: dir,
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [, buildStderr, buildExit] = await Promise.all([build.stdout.text(), build.stderr.text(), build.exited]);
+    expect(buildStderr).not.toContain("error");
+    expect(buildExit).toBe(0);
+    return exe;
+  }
+
+  // Opens a session on the inspectee. A dropped socket or a dead inspectee
+  // rejects whatever is awaited instead of leaving it to the test timeout.
+  async function connectInspector(proc: Subprocess, url: URL) {
+    const ws = new WebSocket(url.href);
+    const failed = Promise.withResolvers<never>();
+    failed.promise.catch(() => {});
+    ws.onerror = event => failed.reject(new Error("WebSocket error", { cause: event }));
+    ws.onclose = event => failed.reject(new Error(`WebSocket closed (${event.code})`));
+    proc.exited.then(code => failed.reject(new Error(`inspectee exited (${code}) before the inspector answered`)));
+
+    const opened = Promise.withResolvers<void>();
+    ws.onopen = () => opened.resolve();
+    await Promise.race([opened.promise, failed.promise]);
+
+    const pending = new Map<number, (reply: unknown) => void>();
+    ws.onmessage = event => {
+      const message = JSON.parse(String(event.data));
+      pending.get(message.id)?.(message);
+    };
+    let nextId = 1;
+    return {
+      request(method: string, params: Record<string, unknown> = {}): Promise<unknown> {
+        const id = nextId++;
+        const reply = Promise.withResolvers<unknown>();
+        pending.set(id, reply.resolve);
+        ws.send(JSON.stringify({ id, method, params }));
+        return Promise.race([reply.promise, failed.promise]);
+      },
+      close: () => ws.close(),
+    };
+  }
+
+  // `--inspect-wait` blocks the program until a client sends
+  // `Inspector.initialized`: the binary prints the listening URL and waits,
+  // then runs and reports the flags once the client releases it.
+  async function expectWaitThenRun(exe: string, env: Record<string, string>) {
+    await using proc = Bun.spawn({
+      cmd: [exe],
+      env: { ...bunEnv, ...env },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const url = await waitForInspectorUrl(proc.stderr);
+    expect(url.hostname).toBe("127.0.0.1");
+
+    const inspector = await connectInspector(proc, url);
+    expect(await inspector.request("Inspector.initialized")).toEqual({ id: 1, result: {} });
+    expect(await inspector.request("Runtime.evaluate", { expression: "1 + 1" })).toMatchObject({
+      id: 2,
+      result: { result: { type: "number", value: 2 } },
+    });
+    inspector.close();
+
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    expect(JSON.parse(stdout)).toEqual({ execArgv: waitFlags, dnsOrder: "ipv4first" });
+    expect(exitCode).toBe(0);
+  }
+
+  // Plain `--inspect` must not block the program: it reports before any client
+  // connects, and the inspector answers while it runs.
+  async function expectRunWithInspector(exe: string, env: Record<string, string>) {
+    await using proc = Bun.spawn({
+      cmd: [exe, "hold"],
+      env: { ...bunEnv, ...env },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    expect(JSON.parse(await readLine(proc.stdout))).toEqual({ execArgv: [inspectFlag], dnsOrder: "verbatim" });
+
+    const url = await waitForInspectorUrl(proc.stderr);
+    const inspector = await connectInspector(proc, url);
+    expect(await inspector.request("Runtime.evaluate", { expression: "1 + 1" })).toMatchObject({
+      id: 1,
+      result: { result: { type: "number", value: 2 } },
+    });
+    inspector.close();
+  }
+
+  compileTest("--inspect-wait and --dns-result-order from --compile-exec-argv", async () => {
+    using dir = tempDir("compile-exec-argv-wait", { "entry.js": entry });
+    await expectWaitThenRun(await compile(String(dir), waitFlags), {});
+  });
+
+  compileTest("--inspect from --compile-exec-argv does not block the program", async () => {
+    using dir = tempDir("compile-exec-argv-inspect", { "entry.js": entry });
+    await expectRunWithInspector(await compile(String(dir), [inspectFlag]), {});
+  });
+
+  // The environment is read at run time, so one binary serves both cases.
+  compileTest("--inspect-wait, --dns-result-order and --inspect from BUN_OPTIONS", async () => {
+    using dir = tempDir("compile-exec-argv-bun-options", { "entry.js": entry });
+    const exe = await compile(String(dir), []);
+    await expectWaitThenRun(exe, { BUN_OPTIONS: waitFlags.join(" ") });
+    await expectRunWithInspector(exe, { BUN_OPTIONS: inspectFlag });
   });
 });

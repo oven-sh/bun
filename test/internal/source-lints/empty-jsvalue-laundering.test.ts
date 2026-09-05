@@ -1,8 +1,12 @@
-import { file } from "bun";
 import { expect, test } from "bun:test";
-import { realpathSync } from "fs";
-import path from "path";
-import { globAllSources } from "../../../scripts/glob-sources.ts";
+import {
+  isPathExpr,
+  parseRustFragment,
+  unwrapParens,
+  type MethodCall,
+  type RustFile,
+} from "../../../scripts/rust-parser/index.ts";
+import { rustSources } from "./rust-sources.ts";
 
 // An empty `JSValue` is not a value: by JSC convention it means "an exception is
 // pending on the VM". A native completion that converts its result to JS can
@@ -20,52 +24,78 @@ import { globAllSources } from "../../../scripts/glob-sources.ts";
 // `JSPromise::{resolve,reject}` also refuse an empty value at runtime (they turn
 // it into "reject with the pending exception", or bail on a termination); this
 // lint keeps the laundering pattern from being written in the first place.
+//
+// The query looks at every method call: `.unwrap_or(JSValue::ZERO)` with the
+// path spelled exactly so, and `.unwrap_or_else(|_| JSValue::ZERO)` whose
+// closure ignores its argument and returns that path.
 
-const root = path.resolve(import.meta.dir, "..", "..", "..");
-const rustSources = globAllSources().rust.filter(abs => abs.endsWith(".rs"));
+const ZERO = "JSValue::ZERO";
 
-const tracked: Set<string> | null = (() => {
-  const r = Bun.spawnSync({
-    cmd: ["git", "-C", root, "ls-tree", "-r", "--name-only", "-z", "HEAD"],
-    stdout: "pipe",
-    stderr: "ignore",
-  });
-  if (!r.success) return null;
-  return new Set(r.stdout.toString().split("\0").filter(Boolean));
-})();
-
-const BANNED: { name: string; re: RegExp; hint: string }[] = [
+const BANNED: { name: string; matches: (call: MethodCall) => boolean; hint: string }[] = [
   {
     name: "unwrap_or(JSValue::ZERO)",
-    re: /\.unwrap_or\(\s*JSValue::ZERO\s*\)/g,
+    matches: call =>
+      call.method === "unwrap_or" && call.args.length === 1 && isPathExpr(unwrapParens(call.args[0]), ZERO),
     hint: "carry the JsResult to the boundary (JSPromise::settle / `?` / HostReturn::or_pending_exception); for an Option use unwrap_or_default()",
   },
   {
     name: "unwrap_or_else(|_| JSValue::ZERO)",
-    re: /\.unwrap_or_else\(\s*\|_\|\s*JSValue::ZERO\s*\)/g,
+    matches: call => {
+      if (call.method !== "unwrap_or_else" || call.args.length !== 1) return false;
+      const closure = unwrapParens(call.args[0]);
+      return (
+        closure.kind === "Closure" &&
+        closure.params.length === 1 &&
+        closure.params[0].pat.kind === "PatWild" &&
+        isPathExpr(unwrapParens(closure.body), ZERO)
+      );
+    },
     hint: "as above",
   },
 ];
 
+/** Every method call in the file that launders a failed conversion into an empty `JSValue`. */
+function findLaunderedJsValues(file: RustFile): { name: string; hint: string; call: MethodCall }[] {
+  const out: { name: string; hint: string; call: MethodCall }[] = [];
+  for (const call of file.find("MethodCall")) {
+    const banned = BANNED.find(b => b.matches(call));
+    if (banned) out.push({ name: banned.name, hint: banned.hint, call });
+  }
+  return out;
+}
+
+const sources = rustSources();
 const offenders: string[] = [];
-let scanned = 0;
-for (const abs of rustSources) {
-  const source = path.relative(root, abs).replaceAll(path.sep, "/");
-  if (path.relative(root, realpathSync(abs)).replaceAll(path.sep, "/") !== source) continue;
-  if (tracked !== null && !tracked.has(source)) continue;
-  scanned++;
-  const content = await file(abs).text();
-  const stripped = content.replace(/^[ \t]*\/\/.*$/gm, "");
-  for (const { name, re, hint } of BANNED) {
-    for (const m of stripped.matchAll(re)) {
-      const line = stripped.slice(0, m.index).split("\n").length;
-      offenders.push(`${source}:${line}: ${name} → ${hint}`);
-    }
+for (const src of sources) {
+  for (const { name, hint, call } of findLaunderedJsValues(src.file)) {
+    offenders.push(`${src.file.location(call)}: ${name} → ${hint}`);
   }
 }
 
 test("scans a non-empty set of tracked Rust sources", () => {
-  expect(scanned).toBeGreaterThan(0);
+  expect(sources.length).toBeGreaterThan(0);
+});
+
+test("the query recognizes the spellings it claims to", () => {
+  const matches = (snippet: string) => findLaunderedJsValues(parseRustFragment(snippet)).length > 0;
+  const banned = [
+    "promise.resolve(global, v.unwrap_or(JSValue::ZERO));",
+    "cb.call(global, this, &[value.to_js(global).unwrap_or(JSValue::ZERO)]);",
+    "let v = result.unwrap_or_else(|_| JSValue::ZERO);",
+    // rustfmt-wrapped.
+    "let v = value\n    .to_js(global)\n    .unwrap_or(\n        JSValue::ZERO,\n    );",
+  ];
+  const allowed = [
+    "let v = opt.unwrap_or_default();",
+    "let v = result.unwrap_or(JSValue::UNDEFINED);",
+    "let v = result.unwrap_or_else(|e| report(e));",
+    "let v = result.unwrap_or_else(|_| JSValue::UNDEFINED);",
+    // Prose about the shape is not the shape.
+    "// let v = result.unwrap_or(JSValue::ZERO);",
+    'log("result.unwrap_or(JSValue::ZERO)");',
+  ];
+  expect(banned.filter(s => !matches(s))).toEqual([]);
+  expect(allowed.filter(matches)).toEqual([]);
 });
 
 test("no JsResult<JSValue> is laundered into an empty JSValue", () => {

@@ -1,8 +1,6 @@
-import { file } from "bun";
 import { expect, test } from "bun:test";
-import { realpathSync } from "fs";
-import path from "path";
-import { globAllSources } from "../../../scripts/glob-sources.ts";
+import { metaItemPaths, parseRust, type Attribute, type RustFile } from "../../../scripts/rust-parser/index.ts";
+import { rustSources } from "./rust-sources.ts";
 
 // `MaybeUninit::uninit().assume_init()` on an integer array produces a value
 // whose bytes are uninitialized. The Rust reference lists that as undefined
@@ -25,52 +23,64 @@ import { globAllSources } from "../../../scripts/glob-sources.ts";
 // from growing; remove the entry when those two are fixed.
 const KNOWN_SITES = ["src/bun_core/util.rs"];
 
-const root = path.resolve(import.meta.dir, "..", "..", "..");
-const rustSources = globAllSources().rust.filter(p => p.endsWith(".rs"));
+// The lints whose suppression marks the pattern.
+const LINTS = ["invalid_value", "clippy::uninit_assumed_init"];
 
-// Only scan files tracked in HEAD (a `git stash` round-trip can leave stray
-// `.rs` files in the working tree; CI runs on a clean checkout). Same guard as
-// dead-code-escapes.test.ts.
-const tracked: Set<string> | null = (() => {
-  const r = Bun.spawnSync({
-    cmd: ["git", "-C", root, "ls-tree", "-r", "--name-only", "-z", "HEAD"],
-    stdout: "pipe",
-    stderr: "ignore",
-  });
-  if (!r.success) return null;
-  return new Set(r.stdout.toString().split("\0").filter(Boolean));
-})();
-
-const sources = new Map<string, string>();
-for (const abs of rustSources) {
-  const source = path.relative(root, abs).replaceAll(path.sep, "/");
-  // `src/cli` is a symlink into `src/runtime/cli`; count each file once under
-  // its canonical path.
-  if (path.relative(root, realpathSync(abs)).replaceAll(path.sep, "/") !== source) continue;
-  if (tracked !== null && !tracked.has(source)) continue;
-  const content = await file(abs).text();
-  // Strip full-line comments so prose mentions don't count.
-  sources.set(source, content.replace(/^\s*\/\/.*$/gm, ""));
+/**
+ * `#[allow(..)]` / `#[expect(..)]` attributes, outer or inner, wherever they
+ * are written (macro input and `macro_rules!` templates included), whose list
+ * names one of `LINTS` directly. rustfmt wrapping and the position in the list
+ * do not matter; prose in comments and strings is never matched.
+ */
+function findUninitEscapes(file: RustFile): Attribute[] {
+  return file
+    .allAttributes()
+    .filter(
+      attr =>
+        (attr.name === "allow" || attr.name === "expect") &&
+        attr.meta.kind === "MetaList" &&
+        metaItemPaths(attr.meta).some(lint => LINTS.includes(lint)),
+    );
 }
 
-function scan(pattern: RegExp): string[] {
-  const offenders: string[] = [];
-  for (const [source, stripped] of sources) {
-    if (pattern.test(stripped)) {
-      offenders.push(source);
-    }
-  }
-  return offenders.sort();
-}
+const sources = rustSources();
+const sites = sources
+  .filter(src => findUninitEscapes(src.file).length > 0)
+  .map(src => src.path)
+  .sort();
 
 test("scans a non-empty set of tracked Rust sources", () => {
-  // Guards against the tracked/realpath filters above over-firing and leaving
-  // nothing to scan, which would make the assertion below pass vacuously.
-  expect(sources.size).toBeGreaterThan(0);
+  // Guards against the corpus filters over-firing and leaving nothing to
+  // scan, which would make the assertion below pass vacuously.
+  expect(sources.length).toBeGreaterThan(0);
+});
+
+test("the query recognizes the attribute spellings it claims to", () => {
+  const matches = (snippet: string) => findUninitEscapes(parseRust(snippet)).length > 0;
+  const banned = [
+    "#[allow(invalid_value)]\nfn f() {}",
+    "#[allow(clippy::uninit_assumed_init)]\nfn f() {}",
+    "#[allow(invalid_value, clippy::uninit_assumed_init)]\nfn f() {}",
+    "#[expect(invalid_value)]\nfn f() {}",
+    "#![allow(invalid_value)]\nfn f() {}",
+    // rustfmt-wrapped, and on a statement rather than an item.
+    "fn f() {\n    #[allow(\n        clippy::uninit_assumed_init,\n        invalid_value\n    )]\n    let buf: [u8; 4] = unsafe { MaybeUninit::uninit().assume_init() };\n}",
+    // Inside a macro template: the escape lands at every expansion.
+    "macro_rules! m { () => { #[allow(invalid_value)] fn f() {} }; }",
+  ];
+  const allowed = [
+    "#[allow(dead_code)]\nfn f() {}",
+    "#[allow(clippy::uninit_vec)]\nfn f() {}",
+    "#[deny(invalid_value)]\nfn f() {}",
+    // Prose about the attribute is not the attribute.
+    "// #[allow(invalid_value)]\nfn f() {}",
+    'const S: &str = "#[allow(invalid_value)]";',
+    "fn f() {\n    let invalid_value = 1;\n}",
+  ];
+  expect(banned.filter(s => !matches(s))).toEqual([]);
+  expect(allowed.filter(matches)).toEqual([]);
 });
 
 test("no new #[allow(invalid_value)] or #[allow(clippy::uninit_assumed_init)]", () => {
-  // `[^)]*` spans the multi-line form of the attribute; lint paths never
-  // contain `)`.
-  expect(scan(/#!?\[(?:allow|expect)\([^)]*\b(?:invalid_value|clippy::uninit_assumed_init)\b/)).toEqual(KNOWN_SITES);
+  expect(sites).toEqual(KNOWN_SITES);
 });

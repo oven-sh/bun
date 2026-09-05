@@ -355,6 +355,9 @@ export async function expectRssDeltaBelow(
       ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "quarantine_size_mb=0", "thread_local_quarantine_size_kb=0"]
         .filter(Boolean)
         .join(":"),
+      // mimalloc returns freed pages to the OS only after a delay, so a reading
+      // taken right after a free can still hold about 1 MiB of them.
+      MIMALLOC_PURGE_DELAY: "0",
     },
     stdout: "pipe",
     stderr: "pipe",

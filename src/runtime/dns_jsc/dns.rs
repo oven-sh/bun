@@ -937,9 +937,9 @@ pub mod get_addr_info_request {
     /// nothing is settled.
     #[cfg(not(windows))]
     pub struct LibcRequest(pub(crate) NonNull<super::GetAddrInfoRequest>);
-    // SAFETY: only the JS thread touches the request (see type doc).
+    // JS-thread state: only the JS thread touches the request (see type doc).
     #[cfg(not(windows))]
-    unsafe impl bun_jsc::job::JsAffine for LibcRequest {}
+    impl bun_jsc::job::JsAffine for LibcRequest {}
     #[cfg(not(windows))]
     impl Drop for LibcRequest {
         fn drop(&mut self) {

@@ -1291,8 +1291,7 @@ impl fmt::Display for FlagsFormatter {
 // ──────────────────────────────────────────────────────────────────────────
 
 // `bun_alloc::heap_breakdown` is a no-op outside macOS Instruments
-// heap-breakdown builds, so the 128-slot hive is unconditional here (same
-// choice as `RuntimeTranspilerStore`'s TranspilerJob hive).
+// heap-breakdown builds, so the 128-slot hive is unconditional here.
 #[cfg(not(windows))]
 const HIVE_SIZE: usize = 128;
 #[cfg(not(windows))]

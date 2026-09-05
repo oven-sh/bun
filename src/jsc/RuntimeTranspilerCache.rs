@@ -930,9 +930,15 @@ pub static IS_DISABLED: AtomicBool = AtomicBool::new(false);
 // constructs that lower-tier cache with this vtable so the parser's
 // `cache.get()` reaches the disk-backed `RuntimeTranspilerCache::get()` above.
 // On a hit the concrete `Entry` is boxed and stored type-erased in
-// `bun_ast::RuntimeTranspilerCache.entry`; the store casts it back via
-// `heap::take(ptr.cast::<Entry>())`.
+// `bun_ast::RuntimeTranspilerCache.entry`; [`take_entry`] casts it back.
 // ──────────────────────────────────────────────────────────────────────────
+
+/// Take the cache hit (if any) that the `Jsc` bridge below left in `cache`.
+pub fn take_entry(from: &mut bun_ast::RuntimeTranspilerCache) -> Option<Box<Entry>> {
+    let entry = from.entry.take()?;
+    // SAFETY: an `ErasedEntry` is only minted (below) from a boxed `Entry`.
+    Some(unsafe { bun_core::heap::take(entry.into_raw().as_ptr().cast::<Entry>()) })
+}
 
 bun_ast::link_impl_TranspilerCacheImpl! {
     Jsc for extern bun_ast::RuntimeTranspilerCache => |this| {
@@ -953,7 +959,9 @@ bun_ast::link_impl_TranspilerCacheImpl! {
             this.features_hash = jsc.features_hash;
             this.exports_kind = jsc.exports_kind;
             if let Some(entry) = jsc.entry {
-                this.entry = Some(bun_core::heap::into_raw(Box::new(entry)).cast::<()>());
+                this.entry = Some(bun_ast::ErasedEntry::new(
+                    bun_core::heap::into_raw_nn(Box::new(entry)).cast::<()>(),
+                ));
             }
             hit
         },

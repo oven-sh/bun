@@ -96,7 +96,6 @@ pub mod task_tag {
         Read,
         Readv,
         FlushPendingFileSinkTask,
-        RuntimeTranspilerStore,
         S3HttpDownloadStreamingTask,
         S3HttpSimpleTask,
         SendQueueDeferred,        // bun_runtime::ipc::SendQueue (close / after-close hop)
@@ -193,6 +192,42 @@ impl Task {
     pub fn from_boxed<T: Taskable>(task: Box<T>) -> Task {
         Task::new(T::TAG, bun_core::heap::into_raw(task).cast::<()>())
     }
+
+    /// The one payload-free task: "poll your pending modules". Its dispatch
+    /// and release arms (`bun_runtime::dispatch`) never read `ptr`, so a null
+    /// payload is fine here — and only here, which is why no other tag can be
+    /// built this way.
+    #[inline]
+    pub const fn poll_pending_modules() -> Task {
+        Task::new(task_tag::PollPendingModulesTask, core::ptr::null_mut())
+    }
+}
+
+/// A [`Taskable`] that is only ever queued as the `Box<Self>` handed to
+/// [`Task::from_boxed`], so a task that will never run is released by taking
+/// the box back. Implement this (the safe half) and let [`boxed_task!`] emit
+/// the `Taskable` impl.
+pub trait BoxedTask: Sized {
+    /// See [`Taskable::release_unrun`]: JS thread, heap alive, the task will
+    /// never be dispatched. The default drops the box.
+    fn release_unrun(self: Box<Self>) {}
+}
+
+/// `impl Taskable for $ty` for a [`BoxedTask`]: ties `$ty` to
+/// `task_tag::$tag` and reclaims the queued box for
+/// [`BoxedTask::release_unrun`].
+#[macro_export]
+macro_rules! boxed_task {
+    ($ty:ty, $tag:ident) => {
+        impl $crate::Taskable for $ty {
+            const TAG: $crate::TaskTag = $crate::task_tag::$tag;
+            unsafe fn release_unrun(this: *mut Self) {
+                // SAFETY: `Taskable::release_unrun` contract — `this` came off the
+                // queue under this tag, where only `Task::from_boxed` puts it.
+                <$ty as $crate::BoxedTask>::release_unrun(unsafe { ::bun_core::heap::take(this) })
+            }
+        }
+    };
 }
 
 // Taskable impls for the low-tier task wrappers defined in this crate.

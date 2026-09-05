@@ -635,7 +635,7 @@ impl Config {
 pub(crate) struct TransformTask {
     pub input_code: ThreadIsolated<StringOrBuffer<'static>>,
     pub output_code: BunString,
-    pub transpiler: core::mem::ManuallyDrop<Transpiler::Transpiler<'static>>,
+    pub transpiler: Transpiler::transpiler::JobTranspiler,
     pub log: bun_ast::Log,
     pub err: Option<Error>,
     pub macro_map: MacroMap,
@@ -681,11 +681,11 @@ impl TransformTask {
         let mut log = bun_ast::Log::init();
         log.level = config.log.level;
 
-        // SAFETY: `ManuallyDrop` keeps this bitwise copy from freeing what the
-        // wrapper owns; `run` re-aims its log and arena pointers.
-        let transpiler_copy = core::mem::ManuallyDrop::new(unsafe {
-            core::ptr::read(transpiler.transpiler.as_ptr())
-        });
+        // SAFETY: the wrapper (kept alive by `TransformJs::_transpiler`) owns
+        // what the copy aliases and does not reconfigure it while a transform
+        // runs; `run` re-aims the copy's log and arena.
+        let transpiler_copy =
+            unsafe { Transpiler::transpiler::JobTranspiler::new(transpiler.transpiler.get()) };
 
         let task = TransformTask {
             input_code,
@@ -725,48 +725,36 @@ impl TransformTask {
             self.tsconfig.map(|p| &*unsafe { p.under_ticket(vm) });
 
         let arena = Arena::new();
+        self.run_in(&arena, name, tsconfig);
+        // The macro context a parse lazily creates tears down through this
+        // thread's per-thread state, so release it here rather than wherever
+        // the job is dropped.
+        self.transpiler.release_macro_context();
+    }
 
-        // `self.transpiler` is a `ManuallyDrop` bytewise copy of the
-        // `JSTranspiler`'s long-lived transpiler (`ptr::read` in `create()`),
-        // so its `macro_context` may alias a box the `JSTranspiler` still owns
-        // — and that box's `resolver`/`remap` raw pointers point at the
-        // *original* transpiler, not this copy. Null it so `parse()` lazily
-        // creates a fresh one whose self-refs target this copy, then reclaim
-        // the fresh box on every return path (mirrors `RuntimeTranspilerStore`).
-        self.transpiler.macro_context = None;
-        let _macro_ctx_guard = scopeguard::guard(
-            core::ptr::addr_of_mut!(self.transpiler.macro_context),
-            |slot| {
-                // SAFETY: `slot` points into the heap-stable `TransformTask`
-                // box; only this thread holds `&mut self`, and the parser's
-                // `&mut MacroContext` borrow ended with `parse()`.
-                if let Some(ctx) = unsafe { (*slot).take() } {
-                    ctx.deinit();
-                }
-            },
-        );
-
-        let mut ast_memory_allocator = bun_ast::ASTMemoryAllocator::borrowing(&arena);
+    fn run_in<'a>(
+        &'a mut self,
+        arena: &'a Arena,
+        name: &'static str,
+        tsconfig: Option<&TSConfigJSON>,
+    ) {
+        let mut ast_memory_allocator = bun_ast::ASTMemoryAllocator::borrowing(arena);
         let _ast_scope = ast_memory_allocator.enter();
 
-        // SAFETY: `arena` outlives every use through `self.transpiler` in this fn body;
-        // Transpiler<'static> forces the borrow to 'static, so launder through a raw ptr.
-        let arena_ref: &'static Arena = unsafe { bun_ptr::detach_lifetime_ref(&arena) };
-        let source: &bun_ast::Source = arena_ref.alloc(bun_ast::Source::init_path_string(
+        let source: &bun_ast::Source = arena.alloc(bun_ast::Source::init_path_string(
             name,
             self.input_code.slice(),
         ));
-        self.transpiler.set_arena(arena_ref);
-        self.transpiler.set_log(&raw mut self.log);
+        let mut transpiler = self.transpiler.for_call(arena, &mut self.log);
         // self.log.msgs.allocator = bun.default_allocator → no-op
 
         let jsx = match tsconfig {
-            Some(ts) => ts.merge_jsx(self.transpiler.options.jsx.clone()),
-            None => self.transpiler.options.jsx.clone(),
+            Some(ts) => ts.merge_jsx(transpiler.options.jsx.clone()),
+            None => transpiler.options.jsx.clone(),
         };
 
         let parse_options = ParseOptions {
-            arena: arena_ref,
+            arena,
             macro_remappings: clone_macro_map(&self.macro_map),
             dirname_fd: bun_sys::Fd::INVALID,
             file_descriptor: None,
@@ -793,7 +781,7 @@ impl TransformTask {
             allow_bytecode_cache: false,
         };
 
-        let Some(parse_result) = self.transpiler.parse(parse_options, None) else {
+        let Some(parse_result) = transpiler.parse(parse_options, None) else {
             self.err = Some(crate::Error::ParseError);
             return;
         };
@@ -811,9 +799,9 @@ impl TransformTask {
         buffer_writer.reset();
 
         let mut printer = JSPrinter::BufferPrinter::init(buffer_writer);
-        // Same per-call `arena` that `set_arena(&arena)` and `parse()` used.
-        let printed = match self.transpiler.print(
-            &arena,
+        // Same per-call `arena` that `for_call` and `parse()` used.
+        let printed = match transpiler.print(
+            arena,
             parse_result,
             &mut printer,
             Transpiler::transpiler::PrintFormat::EsmAscii,

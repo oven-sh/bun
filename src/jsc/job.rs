@@ -19,7 +19,6 @@
 //! `WorkerRunLoop::postTask` with `ActiveDOMObject`-owned completions.
 
 use core::marker::PhantomData;
-use core::mem::ManuallyDrop;
 use core::ptr::NonNull;
 
 use bun_io::KeepAlive;
@@ -72,51 +71,33 @@ impl JSGlobalObject {
 /// anything built from them. In a job it lives on the [`Js`](JobContext::Js)
 /// side, which the carrier only touches there. Derive it
 /// (`#[derive(bun_jsc::JsAffine)]`) for aggregates; the derive checks every
-/// field.
+/// field, so what a completion holds is decided type by type here rather than
+/// as a leak-or-UAF question at teardown.
 ///
-/// # Safety
-/// Implement only for types whose every use and whose `Drop` are sound on the
-/// owning JS thread with the heap alive (and need not be sound elsewhere).
-pub unsafe trait JsAffine {}
+/// Not an `unsafe trait`: nothing relies on it for soundness (the carrier never
+/// moves the `Js` half off the JS thread whatever its type); it is the list of
+/// types vetted to sit on that side.
+pub trait JsAffine {}
 
-// SAFETY (each below): a GC/loop handle or plain data — used and dropped only
-// on the owning JS thread by construction of `Job`.
-// SAFETY: see the group note above.
-unsafe impl JsAffine for crate::Strong {}
-// SAFETY: see the group note above.
-unsafe impl JsAffine for crate::StrongOptional {}
-// SAFETY: see the group note above.
-unsafe impl JsAffine for crate::JSPromiseStrong {}
-// SAFETY: see the group note above.
-unsafe impl<T> JsAffine for crate::Weak<T> {}
-// SAFETY: see the group note above.
-unsafe impl JsAffine for crate::JsRef {}
-// SAFETY: see the group note above.
-unsafe impl JsAffine for crate::JSValue {}
-// SAFETY: see the group note above.
-unsafe impl JsAffine for crate::GlobalRef {}
-// SAFETY: see the group note above.
-unsafe impl JsAffine for bun_ptr::BackRef<JSGlobalObject> {}
-// SAFETY: see the group note above.
-unsafe impl JsAffine for KeepAlive {}
-// SAFETY: see the group note above.
-unsafe impl JsAffine for AsyncTaskTracker {}
-// SAFETY: see the group note above.
-unsafe impl JsAffine for () {}
-// SAFETY: see the group note above.
-unsafe impl JsAffine for bool {}
-// SAFETY: see the group note above.
-unsafe impl<T: JsAffine> JsAffine for Option<T> {}
-// SAFETY: see the group note above.
-unsafe impl<T: JsAffine> JsAffine for Box<T> {}
-// SAFETY: see the group note above.
-unsafe impl<A: JsAffine, B: JsAffine> JsAffine for (A, B) {}
-// SAFETY: see the group note above.
-unsafe impl<A: JsAffine, B: JsAffine, C: JsAffine> JsAffine for (A, B, C) {}
-// SAFETY: see the group note above.
-unsafe impl<T: ?Sized> JsAffine for JsPtr<T> {}
-// SAFETY: see the group note above.
-unsafe impl JsAffine for Protected {}
+impl JsAffine for crate::Strong {}
+impl JsAffine for crate::StrongOptional {}
+impl JsAffine for crate::JSPromiseStrong {}
+impl<T> JsAffine for crate::Weak<T> {}
+impl JsAffine for crate::JsRef {}
+impl JsAffine for crate::JSValue {}
+impl JsAffine for crate::GlobalRef {}
+impl JsAffine for bun_ptr::BackRef<JSGlobalObject> {}
+impl JsAffine for KeepAlive {}
+impl JsAffine for AsyncTaskTracker {}
+impl JsAffine for bun_core::String {}
+impl JsAffine for () {}
+impl JsAffine for bool {}
+impl<T: JsAffine> JsAffine for Option<T> {}
+impl<T: JsAffine> JsAffine for Box<T> {}
+impl<A: JsAffine, B: JsAffine> JsAffine for (A, B) {}
+impl<A: JsAffine, B: JsAffine, C: JsAffine> JsAffine for (A, B, C) {}
+impl<T: ?Sized> JsAffine for JsPtr<T> {}
+impl JsAffine for Protected {}
 
 /// A GC-protected value a job's completion needs (Node: a `Global<Value>` on
 /// the req_wrap). Unprotected on drop.
@@ -218,11 +199,23 @@ pub trait JobContext: Sized + 'static {
 /// linked into its VM's [`JobList`] while the job is live.
 #[repr(C)]
 pub struct JobHeader {
-    complete: unsafe fn(*mut JobHeader, &JsThread<'_>) -> JsResult<()>,
-    release_unrun: unsafe fn(*mut JobHeader),
+    /// Recovers the whole `Job<C>` as a trait object from a pointer to its
+    /// header (a raw-pointer cast and unsize — no dereference), for the
+    /// dispatcher's [`erased_from_raw`].
+    erase: fn(*mut JobHeader) -> *mut dyn ErasedJob,
     cancel: unsafe fn(*mut JobHeader),
     prev: *mut JobHeader,
     next: *mut JobHeader,
+}
+
+/// A [`Job<C>`] as the event loop sees it once posted back: something to
+/// complete (or release) on the JS thread, whatever its `C`.
+pub trait ErasedJob {
+    /// JS thread, VM still running script: run the completion and free the job.
+    fn complete(self: Box<Self>, cx: &JsThread<'_>) -> JsResult<()>;
+    /// JS thread, heap alive, the completion will never run (its VM is
+    /// stopping): free the job and both its halves.
+    fn release_unrun(self: Box<Self>);
 }
 
 /// A VM's live [cancellable](JobContext::CANCELLABLE) jobs (JS thread only;
@@ -288,15 +281,6 @@ pub struct Job<C: JobContext> {
     js: C::Js,
 }
 
-impl<C: JobContext> bun_event_loop::Taskable for Job<C> {
-    const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::AnyTaskJob;
-    /// Reached through the header (`release_unrun_erased`): the tag is shared.
-    unsafe fn release_unrun(this: *mut Self) {
-        // SAFETY: fn contract; JS thread with the heap alive.
-        drop(unsafe { Self::take(this, VirtualMachine::get()) })
-    }
-}
-
 impl<C: JobContext> Job<C> {
     /// JS thread: build the job, keep the loop alive for it, hand it to the pool.
     #[track_caller]
@@ -305,14 +289,9 @@ impl<C: JobContext> Job<C> {
         keep_alive.ref_(bun_io::js_vm_ctx());
         let job = bun_core::heap::into_raw(Box::new(Self {
             header: JobHeader {
-                // SAFETY: (this and the entry below) the erased dispatchers are
-                // only reached through this header, so `p` is this `Job<C>`.
-                complete: |p, cx| unsafe { Self::complete(p.cast::<Self>(), cx) },
-                // SAFETY: as above.
-                release_unrun: |p| unsafe {
-                    <Self as bun_event_loop::Taskable>::release_unrun(p.cast::<Self>())
-                },
-                // SAFETY: linked ⇒ live; see `JobContext::cancel`.
+                erase: |p| p.cast::<Self>() as *mut dyn ErasedJob,
+                // SAFETY: only reached through this header (linked ⇒ live), so
+                // `p` is this `Job<C>`; see `JobContext::cancel`.
                 cancel: |p| unsafe { C::cancel(&raw mut (*p.cast::<Self>()).off) },
                 prev: core::ptr::null_mut(),
                 next: core::ptr::null_mut(),
@@ -345,6 +324,7 @@ impl<C: JobContext> Job<C> {
         let done = Completion {
             job: NonNull::new(this).expect("job"),
             ticket,
+            obligation: Obligation,
         };
         if done.ticket().cancelled() {
             return done.finish();
@@ -354,36 +334,32 @@ impl<C: JobContext> Job<C> {
         }
     }
 
-    /// JS thread: reclaim a posted job and drop its keep-alive; the two halves
-    /// are the caller's to complete or drop.
-    ///
-    /// # Safety
-    /// `this` is the job its `Completion` posted; called once, on `vm`'s thread.
-    unsafe fn take(this: *mut Self, vm: &VirtualMachine) -> (C::OffThread, C::Js) {
+    /// JS thread: drop the job's keep-alive and VM registration and hand back
+    /// its two halves, freeing the box.
+    #[allow(clippy::boxed_local)] // the VM's job list links the boxed header's address
+    fn into_halves(mut self: Box<Self>, vm: &VirtualMachine) -> (C::OffThread, C::Js) {
         if C::CANCELLABLE {
-            // SAFETY: fn contract.
-            vm.jobs
-                .with_mut(|j| j.unlink(unsafe { &raw mut (*this).header }));
+            let header: *mut JobHeader = &raw mut self.header;
+            vm.jobs.with_mut(|j| j.unlink(header));
         }
-        // SAFETY: fn contract.
         let Job {
             mut keep_alive,
             off,
             js,
             ..
-        } = unsafe { *Box::from_raw(this) };
+        } = *self;
         keep_alive.unref(bun_io::js_vm_ctx());
         (off, js)
     }
+}
 
-    /// JS thread dispatch: run the completion and free the job.
-    ///
-    /// # Safety
-    /// As [`take`](Self::take).
-    unsafe fn complete(this: *mut Self, cx: &JsThread<'_>) -> JsResult<()> {
-        // SAFETY: fn contract.
-        let (off, js) = unsafe { Self::take(this, cx.vm()) };
+impl<C: JobContext> ErasedJob for Job<C> {
+    fn complete(self: Box<Self>, cx: &JsThread<'_>) -> JsResult<()> {
+        let (off, js) = self.into_halves(cx.vm());
         C::then(off, js, cx)
+    }
+    fn release_unrun(self: Box<Self>) {
+        drop(self.into_halves(VirtualMachine::get()));
     }
 }
 
@@ -395,6 +371,7 @@ impl<C: JobContext> Job<C> {
 pub struct Completion<C: JobContext> {
     job: NonNull<Job<C>>,
     ticket: Ticket,
+    obligation: Obligation,
 }
 // SAFETY: `finish` only posts the job through its (thread-safe) ticket.
 unsafe impl<C: JobContext> Send for Completion<C> {}
@@ -402,12 +379,17 @@ impl<C: JobContext> Completion<C> {
     /// Post the job back to its VM. The ticket outlives the post (the JS
     /// thread may free the job the moment it is queued) and is dropped here.
     pub fn finish(self) {
-        // Consumed: the obligation is met here, so its Drop check must not run.
-        let me = ManuallyDrop::new(self);
-        // SAFETY: moving the field out of a value that is never dropped.
-        let ticket = unsafe { core::ptr::read(&raw const me.ticket) };
-        ticket.post(bun_event_loop::ConcurrentTask::ConcurrentTask::create_from(
-            me.job.as_ptr(),
+        let Completion {
+            job,
+            ticket,
+            obligation,
+        } = self;
+        let _met = core::mem::ManuallyDrop::new(obligation);
+        ticket.post(bun_event_loop::ConcurrentTask::ConcurrentTask::create(
+            bun_event_loop::Task::new(
+                bun_event_loop::task_tag::AnyTaskJob,
+                job.as_ptr().cast::<()>(),
+            ),
         ));
     }
     /// The job's ticket: its VM is alive while this is held.
@@ -416,44 +398,30 @@ impl<C: JobContext> Completion<C> {
         &self.ticket
     }
 }
-impl<C: JobContext> Drop for Completion<C> {
+
+/// Dropped only if a [`Completion`] is dropped without being finished.
+struct Obligation;
+impl Drop for Obligation {
     fn drop(&mut self) {
         debug_assert!(false, "job dropped without being finished");
     }
 }
 
-/// Event-loop dispatch for every `Job<C>` (one tag): run its completion.
+/// Event-loop dispatch for the one `AnyTaskJob` tag: recover the posted job,
+/// to [`complete`](ErasedJob::complete) it or — if it will never run —
+/// [`release_unrun`](ErasedJob::release_unrun) it.
 ///
 /// # Safety
-/// `ptr` is a `Job<C>` posted by its `Completion` (for some `C`).
-pub unsafe fn complete_erased(ptr: *mut (), cx: &JsThread<'_>) -> JsResult<()> {
+/// `ptr` is a `Job<C>` (for some `C`) posted by its [`Completion`], and is not
+/// used afterwards.
+pub unsafe fn erased_from_raw(ptr: *mut ()) -> Box<dyn ErasedJob> {
     let header = ptr.cast::<JobHeader>();
-    // A completion dispatched after the VM was asked to stop (a parent's
-    // terminate() lands while the worker still ticks): its `then` would only
-    // build script-facing values under a pending termination. Release it as
-    // teardown would — Node's threadpool `after` callbacks bail the same way
-    // on `!can_call_into_js()`.
-    if !cx.vm().script_allowed() {
-        // SAFETY: as below; released exactly once, here.
-        unsafe { ((*header).release_unrun)(header) };
-        return Ok(());
-    }
-    // SAFETY: `Job<C>` is `#[repr(C)]` with the header first.
-    unsafe { ((*header).complete)(header, cx) }
+    // SAFETY: fn contract; `Job<C>` is `#[repr(C)]` with the header first, and
+    // `erase` only casts.
+    unsafe { bun_core::heap::take(((*header).erase)(header)) }
 }
 
-/// Teardown's release for a queued, never-dispatched `Job<C>` completion
-/// (JS thread, heap alive).
-///
-/// # Safety
-/// As [`complete_erased`].
-pub unsafe fn release_unrun_erased(ptr: *mut ()) {
-    let header = ptr.cast::<JobHeader>();
-    // SAFETY: as above.
-    unsafe { ((*header).release_unrun)(header) }
-}
-
-// The erased dispatchers above cast `*mut Job<C>` to `*mut JobHeader`.
+// The erased dispatch above casts `*mut Job<C>` to `*mut JobHeader`.
 const _: () = assert!(core::mem::offset_of!(Job<Never>, header) == 0);
 
 #[doc(hidden)]

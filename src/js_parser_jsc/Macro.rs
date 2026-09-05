@@ -62,9 +62,9 @@ pub(crate) struct MacroContext {
     /// prints it before the `Transpiler` drops).
     ///
     /// Lazy: `Arena::new()` calls `mi_heap_new()`, and `MacroContext::init`
-    /// runs once per `RuntimeTranspilerStore::TranspilerJob::run` iteration
-    /// (the worker bytewise-copies `vm.transpiler`, sets `macro_context =
-    /// None`, and `parse_maybe` re-creates it). `call()` is only reached when
+    /// runs once per `RuntimeTranspilerStore` transpile job (the job carries
+    /// a `JobTranspiler` bytewise copy of `vm.transpiler` with `macro_context
+    /// = None`, and `parse_maybe` re-creates it). `call()` is only reached when
     /// a file actually invokes a macro, so deferring the heap until then
     /// avoids one `mi_heap_new`/`mi_heap_destroy` pair on every dynamic
     /// `import()` (require-cache.test.ts T040 — on macOS arm64 the per-iter
@@ -264,8 +264,8 @@ fn __bun_macro_context_init(transpiler: *mut core::ffi::c_void) -> js_parser::Ma
     // `&mut bun_bundler::Transpiler<'_>`; the lifetime parameter is erased at
     // runtime so reading it as `'static` is layout-identical. The boxed state
     // is leaked for the long-lived `vm.transpiler` instance — but callers that run on a
-    // short-lived bytewise-cloned `Transpiler` (e.g.
-    // `RuntimeTranspilerStore::TranspilerJob::run`) MUST pair this with
+    // short-lived bytewise-cloned `Transpiler` (`JobTranspiler`, e.g.
+    // `RuntimeTranspilerStore`'s transpile jobs) MUST pair this with
     // `__bun_macro_context_deinit` or the `Box<MacroContext>` (and, if a macro
     // was actually invoked, its lazily-created `bump` arena) leaks per
     // iteration. `bump` is `None` on init, so this fn itself never calls

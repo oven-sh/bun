@@ -184,9 +184,9 @@ impl Drop for ReadFileCompletionFns {
     }
 }
 
-// SAFETY: the ctx holds JS-thread state (promise, Blob); it is only ever completed or cancelled on
+// The ctx holds JS-thread state (promise, Blob); it is only ever completed or cancelled on
 // the JS thread — as a Job's `Js` side, or inside the JS-thread-only ReadFileUV.
-unsafe impl bun_jsc::job::JsAffine for ReadFileCompletionFns {}
+impl bun_jsc::job::JsAffine for ReadFileCompletionFns {}
 
 pub struct ReadFileRead {
     /// Always a `Box::<[u8]>::into_raw` from the producer's read buffer

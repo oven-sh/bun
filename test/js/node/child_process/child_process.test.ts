@@ -390,6 +390,87 @@ describe("spawn()", () => {
     expect(end! - start < 2000).toBe(true);
   });
 
+  it("should deliver the timeout kill even after child.unref()", async () => {
+    using dir = tempDir("child-process-timeout-unref", {
+      "parent.js": `
+        const { spawn } = require("node:child_process");
+        const t0 = performance.now();
+        const child = spawn(process.execPath, ["-e", "setInterval(() => {}, 100)"], {
+          timeout: 500,
+          stdio: "ignore",
+          detached: true,
+        });
+        child.unref();
+        process.on("exit", () => {
+          process.stdout.write(JSON.stringify({ pid: child.pid, elapsed: performance.now() - t0 }));
+        });
+      `,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), path.join(String(dir), "parent.js")],
+      env: { ...bunEnv, BUN_FEATURE_FLAG_NO_ORPHANS: undefined },
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const { pid, elapsed } = JSON.parse(stdout);
+    try {
+      expect(stderr).toBe("");
+      expect(pid).toBeGreaterThan(0);
+
+      // The parent has exited. The timeout timer must have kept its event loop
+      // alive until the deadline, then sent the kill signal, so the grandchild
+      // should be dead (or dying) now rather than orphaned.
+      let alive = true;
+      for (let i = 0; alive && i < 100; i++) {
+        try {
+          process.kill(pid, 0);
+        } catch {
+          alive = false;
+        }
+        if (alive) await Bun.sleep(10);
+      }
+      expect({ grandchildAlive: alive, parentWaitedForTimeout: elapsed >= 400 }).toEqual({
+        grandchildAlive: false,
+        parentWaitedForTimeout: true,
+      });
+      expect(exitCode).toBe(0);
+    } finally {
+      try {
+        process.kill(pid);
+      } catch {}
+    }
+  });
+
+  it("should clear the timeout timer and release the loop when the child exits first", async () => {
+    using dir = tempDir("child-process-timeout-clear", {
+      "parent.js": `
+        const { spawn } = require("node:child_process");
+        const t0 = performance.now();
+        const child = spawn(process.execPath, ["-e", ""], { timeout: 60000, stdio: "ignore" });
+        child.unref();
+        process.on("exit", () => {
+          process.stdout.write(JSON.stringify({ elapsed: performance.now() - t0 }));
+        });
+      `,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), path.join(String(dir), "parent.js")],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    const { elapsed } = JSON.parse(stdout);
+    expect(elapsed).toBeLessThan(30000);
+    expect(exitCode).toBe(0);
+  });
+
   it("should allow us to set env", async () => {
     async function getChildEnv(env: any): Promise<object> {
       const result: string = await new Promise(resolve => {

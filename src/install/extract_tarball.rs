@@ -586,59 +586,99 @@ impl ExtractTarball {
                         true,
                     ) {
                         bun_sys::Result::Err(err) => {
-                            if retries < MAX_RETRIES {
-                                match err.get_errno() {
-                                    sys::Errno::NOTEMPTY
+                            let _ = sys::close(dir_to_move);
+                            if matches!(
+                                err.get_errno(),
+                                sys::Errno::NOTEMPTY
                                     | sys::Errno::PERM
                                     | sys::Errno::BUSY
-                                    | sys::Errno::EXIST => {
-                                        // before we attempt to delete the destination, let's close the source dir.
-                                        let _ = sys::close(dir_to_move);
-
-                                        // We tried to move the folder over
-                                        // but it didn't work!
-                                        // so instead of just simply deleting the folder
-                                        // we rename it back into the temp dir
-                                        // and then delete that temp dir
-                                        // The goal is to make it more difficult for an application to reach this folder
-                                        let mut tempdest_buf = PathBuffer::uninit();
-                                        tempdest_buf[0..tmpname.len()]
-                                            .copy_from_slice(tmpname.as_bytes());
-                                        tempdest_buf[tmpname.len()..][0..4]
-                                            .copy_from_slice(&[b't', b'm', b'p', 0]);
-                                        let tempdest =
-                                            ZStr::from_buf(&tempdest_buf, tmpname.len() + 3);
-                                        let mut folder_name_z_buf = PathBuffer::uninit();
-                                        folder_name_z_buf[0..folder_name.len()]
-                                            .copy_from_slice(folder_name);
-                                        folder_name_z_buf[folder_name.len()] = 0;
-                                        let folder_name_z =
-                                            ZStr::from_buf(&folder_name_z_buf, folder_name.len());
-                                        match sys::renameat(
-                                            Fd::from_std_dir(cache_dir),
-                                            folder_name_z,
-                                            Fd::from_std_dir(tmpdir),
-                                            tempdest,
-                                        ) {
-                                            bun_sys::Result::Err(_) => {}
-                                            bun_sys::Result::Ok(_) => {
-                                                let _ = tmpdir.delete_tree(tempdest.as_bytes());
-                                            }
+                                    | sys::Errno::EXIST
+                            ) {
+                                // The cache path is keyed by package identity, so a valid
+                                // destination is an equivalent entry a concurrent `bun install`
+                                // published first: accept it and drop our copy instead of
+                                // deleting theirs, which would leave a window where neither
+                                // exists. "Valid" here mirrors `package_missing_from_cache()`:
+                                // Npm requires `package.json`; other tags only require the
+                                // directory. An Npm destination without `package.json` is a
+                                // stale entry nothing reads from; move it aside by handle (not
+                                // by path, so a concurrently-published fresh entry is never
+                                // touched) and retry, like the POSIX arm's RENAME_EXCHANGE.
+                                match sys::open_dir_at_windows_a(
+                                    Fd::from_std_dir(cache_dir),
+                                    folder_name,
+                                    sys::WindowsOpenDirOptions {
+                                        can_rename_or_delete: true,
+                                        iterable: false,
+                                        ..Default::default()
+                                    },
+                                ) {
+                                    Ok(dest) => {
+                                        let valid = self.resolution.tag != ResolutionTag::Npm
+                                            || sys::exists_at(
+                                                dest,
+                                                ZStr::from_static(b"package.json\0"),
+                                            );
+                                        if valid {
+                                            let _ = sys::close(dest);
+                                            let _ = tmpdir.delete_tree(tmpname.as_bytes());
+                                            break;
                                         }
+                                        let evicted = if retries < MAX_RETRIES {
+                                            let mut tempdest_buf = PathBuffer::uninit();
+                                            tempdest_buf[0..tmpname.len()]
+                                                .copy_from_slice(tmpname.as_bytes());
+                                            tempdest_buf[tmpname.len()..][0..3]
+                                                .copy_from_slice(b"tmp");
+                                            let tempdest =
+                                                &tempdest_buf[..tmpname.len() + 3];
+                                            let mut tempdest_w_buf = WPathBuffer::uninit();
+                                            let tempdest_w = strings::to_wpath_normalized(
+                                                &mut tempdest_w_buf,
+                                                tempdest,
+                                            );
+                                            let r = bun_sys::windows::move_opened_file_at(
+                                                dest,
+                                                Fd::from_std_dir(tmpdir),
+                                                tempdest_w,
+                                                true,
+                                            );
+                                            let _ = sys::close(dest);
+                                            if r.is_ok() {
+                                                let _ = tmpdir.delete_tree(tempdest);
+                                                true
+                                            } else {
+                                                false
+                                            }
+                                        } else {
+                                            let _ = sys::close(dest);
+                                            false
+                                        };
+                                        if retries < MAX_RETRIES {
+                                            retries += 1;
+                                            if !evicted {
+                                                std::thread::sleep(
+                                                    std::time::Duration::from_millis(
+                                                        10u64 << (retries - 1),
+                                                    ),
+                                                );
+                                            }
+                                            continue;
+                                        }
+                                    }
+                                    Err(_) if retries < MAX_RETRIES => {
                                         retries += 1;
-                                        // 10ms, 20ms, 40ms, 80ms — long enough
-                                        // for a concurrent close to land,
-                                        // short enough to not slow a legit
-                                        // failure noticeably.
+                                        // 10ms, 20ms, 40ms, 80ms — long enough for a
+                                        // concurrent close to land, short enough to not
+                                        // slow a legitimate failure noticeably.
                                         std::thread::sleep(std::time::Duration::from_millis(
                                             10u64 << (retries - 1),
                                         ));
                                         continue;
                                     }
-                                    _ => {}
+                                    Err(_) => {}
                                 }
                             }
-                            let _ = sys::close(dir_to_move);
                             log.add_error_fmt(
                                 None,
                                 bun_ast::Loc::EMPTY,

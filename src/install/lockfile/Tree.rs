@@ -537,8 +537,7 @@ impl<'a, const METHOD: BuilderMethod> Builder<'a, METHOD> {
 // is_filtered_dependency_or_workspace
 // ──────────────────────────────────────────────────────────────────────────
 
-/// The `--omit` / `--production` feature set that applies to the dependencies
-/// of the package resolved as `parent_res`.
+/// The `--omit` feature set for the dependencies of the package resolved as `parent_res`.
 pub(crate) fn dependency_features(
     manager: &PackageManager,
     parent_res: &Resolution,
@@ -551,14 +550,12 @@ pub(crate) fn dependency_features(
     }
 }
 
-/// What to do with a peer dependency when `--omit=peer` (`install.peer = false`)
-/// turns peer dependencies off.
+/// How a peer dependency is treated under `--omit=peer`.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) enum DisabledPeers {
-    /// Drop the edge. The hoisted linker never places the peer.
+    /// Drop the edge.
     Filter,
-    /// Keep the edge. The isolated store builder still links the peer when an
-    /// ancestor provides it, and only skips the auto-install fallback.
+    /// Keep the edge so an ancestor can still provide the peer. Nothing is auto-installed.
     Keep,
 }
 

@@ -688,9 +688,6 @@ pub(crate) fn build_store(
                 }
             }
 
-            // `--omit=peer` only disables the auto-install fallback below. A peer
-            // that an ancestor provides is still linked into the entry, like
-            // pnpm with `auto-install-peers=false`.
             for &dep_id in &dep_ids_sort_buf {
                 if is_filtered_dependency_or_workspace_with(
                     dep_id,
@@ -741,7 +738,6 @@ pub(crate) fn build_store(
                 // ids are equal.
                 let peer_dep = &dependencies[peer_dep_id as usize];
 
-                // The version to auto-install when no parent provides the peer.
                 let best_version = if auto_install_peers {
                     resolutions[peer_dep_id as usize]
                 } else {
@@ -837,8 +833,7 @@ pub(crate) fn build_store(
             };
 
             if resolved_pkg_id == invalid_package_id {
-                // optional peers, and peers disabled with `--omit=peer`, that found no
-                // dependency with a matching name. they are completely excluded
+                // no parent provides the peer and it cannot be auto-installed
                 continue;
             }
 

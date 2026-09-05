@@ -732,6 +732,43 @@ impl Subprocess<'_> {
         self.process_mut().kill(sig.0)
     }
 
+    #[bun_jsc::host_fn(method)]
+    pub(crate) fn kill_tree(
+        this: &Self,
+        global_this: &JSGlobalObject,
+        callframe: &CallFrame,
+    ) -> JsResult<JSValue> {
+        this.this_value
+            .with_mut(|v| v.update(global_this, callframe.this()));
+
+        let [signal_arg] = callframe.arguments_as_array::<1>();
+        let sig: SignalCode = bun_sys_jsc::signal_code_jsc::from_js(signal_arg, global_this)?;
+
+        if global_this.has_exception() {
+            return Ok(JSValue::ZERO);
+        }
+
+        match this.try_kill_tree(sig) {
+            bun_sys::Result::Ok(()) => {}
+            bun_sys::Result::Err(err) => {
+                return Err(global_this.throw_value(err.to_js(global_this)));
+            }
+        }
+
+        Ok(JSValue::UNDEFINED)
+    }
+
+    pub(crate) fn try_kill_tree(&self, sig: SignalCode) -> bun_sys::Result<()> {
+        if self.has_exited() {
+            return bun_sys::Result::Ok(());
+        }
+        // Signal 0 is a liveness probe; walking (and so stopping) the tree for it would be observable.
+        if sig.0 == 0 {
+            return self.process_mut().kill(0);
+        }
+        self.process_mut().kill_tree(sig.0)
+    }
+
     fn has_called_getter(&self, getter: ObservableGetter) -> bool {
         self.observable_getters.get().contains(getter)
     }

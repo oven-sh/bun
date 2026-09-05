@@ -368,6 +368,7 @@ fn spawn_maybe_sync(
     let mut uid: Option<u32> = None;
     let mut gid: Option<u32> = None;
     let mut kill_signal: SignalCode = SignalCode::DEFAULT;
+    let mut death_signal: Option<SignalCode> = None;
     let mut max_buffer: Option<i64> = None;
     #[cfg(any(target_os = "linux", target_os = "android"))]
     let mut cgroup: Option<CgroupTarget> = None;
@@ -766,6 +767,21 @@ fn spawn_maybe_sync(
                 }
             }
 
+            if let Some(val) = args.get(global_this, "deathSignal")? {
+                if !val.is_empty_or_undefined_or_null() {
+                    let sig = signal_code_from_js(val, global_this)?;
+                    if sig.0 == 0 {
+                        return Err(global_this
+                            .err(
+                                jsc::ErrorCode::ERR_UNKNOWN_SIGNAL,
+                                format_args!("Unknown signal: 0"),
+                            )
+                            .throw());
+                    }
+                    death_signal = Some(sig);
+                }
+            }
+
             if let Some(val) = args.get(global_this, "maxBuffer")? {
                 if val.is_number() && val.is_finite() {
                     // 'Infinity' does not set maxBuffer
@@ -1101,6 +1117,7 @@ fn spawn_maybe_sync(
         detached,
         uid,
         gid,
+        linux_pdeathsig: death_signal.map(|s| s.0),
         stdin: match stdio[0].as_spawn_option(0) {
             stdio::ResultT::Result(opt) => opt,
             stdio::ResultT::Err(e) => return Err(e.throw_js(global_this)),

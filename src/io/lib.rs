@@ -264,6 +264,8 @@ pub mod parent_death_watchdog {
 
     #[inline]
     pub fn install_on_event_loop(_handle: EventLoopCtx) {}
+    #[inline]
+    pub fn kill_process_tree(_root: i32, _signal: core::ffi::c_int) {}
 }
 pub use parent_death_watchdog as ParentDeathWatchdog;
 

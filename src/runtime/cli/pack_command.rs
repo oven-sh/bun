@@ -1446,7 +1446,7 @@ fn get_bundled_deps(
 // ───────────────────────────────────────────────────────────────────────────
 
 #[derive(Clone, Copy, PartialEq, Eq)]
-enum BinType {
+pub(crate) enum BinType {
     File,
     Dir,
 }
@@ -1461,15 +1461,11 @@ fn get_package_bins(json: &Expr) -> Result<Vec<BinInfo>, AllocError> {
 
     let mut path_buf = PathBuffer::uninit();
 
-    if let Some(bin) = json.as_property(b"bin") {
+    if let Some(bin) = non_empty_bin(json) {
         if let Some(bin_str) = bin.expr.as_string(pack_bump()) {
-            let normalized = resolve_path::normalize_buf::<resolve_path::platform::Posix>(
-                bin_str,
-                &mut path_buf,
-            );
-            if !bin_path_escapes_root(normalized) {
+            if let Some(subpath) = bin_subpath(bin_str, BinType::File, &mut path_buf) {
                 bins.push(BinInfo {
-                    path: ZBox::from_bytes(normalized),
+                    path: ZBox::from_bytes(subpath),
                     ty: BinType::File,
                 });
             }
@@ -1484,13 +1480,9 @@ fn get_package_bins(json: &Expr) -> Result<Vec<BinInfo>, AllocError> {
             for bin_prop in bin_obj.properties.slice() {
                 if let Some(bin_prop_value) = &bin_prop.value {
                     if let Some(bin_str) = bin_prop_value.as_string(pack_bump()) {
-                        let normalized = resolve_path::normalize_buf::<resolve_path::platform::Posix>(
-                            bin_str,
-                            &mut path_buf,
-                        );
-                        if !bin_path_escapes_root(normalized) {
+                        if let Some(subpath) = bin_subpath(bin_str, BinType::File, &mut path_buf) {
                             bins.push(BinInfo {
-                                path: ZBox::from_bytes(normalized),
+                                path: ZBox::from_bytes(subpath),
                                 ty: BinType::File,
                             });
                         }
@@ -1506,13 +1498,9 @@ fn get_package_bins(json: &Expr) -> Result<Vec<BinInfo>, AllocError> {
         if let ExprData::EObject(directories_obj) = &directories.expr.data {
             if let Some(bin) = directories_obj.as_property(b"bin") {
                 if let Some(bin_str) = bin.expr.as_string(pack_bump()) {
-                    let normalized = resolve_path::normalize_buf::<resolve_path::platform::Posix>(
-                        bin_str,
-                        &mut path_buf,
-                    );
-                    if !bin_path_escapes_root(normalized) {
+                    if let Some(subpath) = bin_subpath(bin_str, BinType::Dir, &mut path_buf) {
                         bins.push(BinInfo {
-                            path: ZBox::from_bytes(normalized),
+                            path: ZBox::from_bytes(subpath),
                             ty: BinType::Dir,
                         });
                     }
@@ -1524,8 +1512,27 @@ fn get_package_bins(json: &Expr) -> Result<Vec<BinInfo>, AllocError> {
     Ok(bins)
 }
 
-fn bin_path_escapes_root(p: &[u8]) -> bool {
-    path::is_absolute_loose(p) || p == b".." || p.starts_with(b"../")
+/// Like `bun install`, an empty `"bin"` string counts as absent.
+pub(crate) fn non_empty_bin(json: &Expr) -> Option<bun_ast::expr::Query> {
+    json.as_property(b"bin")
+        .filter(|bin| !matches!(&bin.expr.data, ExprData::EString(bin_str) if bin_str.is_blank()))
+}
+
+pub(crate) fn bin_subpath<'a>(value: &[u8], ty: BinType, buf: &'a mut [u8]) -> Option<&'a [u8]> {
+    let normalized: &'a [u8] =
+        resolve_path::normalize_buf::<resolve_path::platform::Posix>(value, buf);
+    let subpath = match ty {
+        BinType::Dir => strings::without_trailing_slash(normalized),
+        BinType::File if normalized.ends_with(b"/") || normalized == b"package.json" => {
+            return None;
+        }
+        BinType::File => normalized,
+    };
+    (!is_package_root_or_outside(subpath)).then_some(subpath)
+}
+
+pub(crate) fn is_package_root_or_outside(p: &[u8]) -> bool {
+    p.is_empty() || p == b"." || path::is_absolute_loose(p) || p == b".." || p.starts_with(b"../")
 }
 
 fn is_package_bin(bins: &[BinInfo], maybe_bin_path: &[u8]) -> bool {
@@ -1537,9 +1544,8 @@ fn is_package_bin(bins: &[BinInfo], maybe_bin_path: &[u8]) -> bool {
                 }
             }
             BinType::Dir => {
-                let bin_without_trailing = strings::without_trailing_slash(bin.path.as_bytes());
-                if maybe_bin_path.starts_with(bin_without_trailing) {
-                    let remain = &maybe_bin_path[bin_without_trailing.len()..];
+                if maybe_bin_path.starts_with(bin.path.as_bytes()) {
+                    let remain = &maybe_bin_path[bin.path.as_bytes().len()..];
                     if remain.len() > 1
                         && remain[0] == b'/'
                         && strings::index_of_char(&remain[1..], b'/').is_none()

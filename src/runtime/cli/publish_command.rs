@@ -1589,6 +1589,11 @@ impl PublishCommand {
         None
     }
 
+    fn bin_target<'a>(value: &[u8], path_buf: &'a mut [u8]) -> Option<&'a ZStr> {
+        let target: &'a ZStr = normalize_buf_z::<path::platform::Posix>(value, path_buf);
+        (!pack::is_package_root_or_outside(target.as_bytes())).then_some(target)
+    }
+
     fn normalize_bin(
         json: &mut Expr,
         bump: &bun_alloc::Arena,
@@ -1604,35 +1609,31 @@ impl PublishCommand {
             };
         }
         let mut path_buf = PathBuffer::uninit();
+        let use_directories_bin = pack::non_empty_bin(json).is_none();
         if let Some(bin_query) = json.as_property(b"bin") {
             match &bin_query.expr.data {
                 ExprData::EString(bin_str) => {
                     let mut bin_props: Vec<G::Property> = Vec::new();
-                    let normalized = strings::without_prefix_comptime_z(
-                        normalize_buf_z::<path::platform::Posix>(
-                            bin_str.string(bump)?,
-                            &mut *path_buf,
-                        ),
-                        b"./",
-                    );
-                    if !bun_sys::exists_at(workspace_root, normalized) {
-                        bun_core::warn!(
-                            "bin '{}' does not exist",
-                            bstr::BStr::new(normalized.as_bytes()),
-                        );
-                    }
+                    if let Some(value) = Self::bin_target(bin_str.string(bump)?, &mut *path_buf) {
+                        if !bun_sys::exists_at(workspace_root, value) {
+                            bun_core::warn!(
+                                "bin '{}' does not exist",
+                                bstr::BStr::new(value.as_bytes()),
+                            );
+                        }
 
-                    bin_props.push(G::Property {
-                        key: Some(Expr::init(
-                            E::String::init(leak!(package_name)),
-                            bun_ast::Loc::EMPTY,
-                        )),
-                        value: Some(Expr::init(
-                            E::String::init(leak!(normalized.as_bytes())),
-                            bun_ast::Loc::EMPTY,
-                        )),
-                        ..Default::default()
-                    });
+                        bin_props.push(G::Property {
+                            key: Some(Expr::init(
+                                E::String::init(leak!(package_name)),
+                                bun_ast::Loc::EMPTY,
+                            )),
+                            value: Some(Expr::init(
+                                E::String::init(leak!(value.as_bytes())),
+                                bun_ast::Loc::EMPTY,
+                            )),
+                            ..Default::default()
+                        });
+                    }
 
                     json.data
                         .e_object_mut()
@@ -1674,32 +1675,17 @@ impl PublishCommand {
                             continue;
                         }
 
-                        let value: Option<bun_core::ZBox> = 'value: {
-                            if let Some(value) = &bin_prop.value {
-                                if let Some(vs) = value.data.as_e_string() {
-                                    if vs.len() != 0 {
-                                        break 'value Some(bun_core::ZBox::from_bytes(
-                                            strings::without_prefix_comptime_z(
-                                                // replace separators
-                                                normalize_buf_z::<path::platform::Posix>(
-                                                    vs.string(bump)?,
-                                                    &mut *path_buf,
-                                                ),
-                                                b"./",
-                                            )
-                                            .as_bytes(),
-                                        ));
-                                    }
-                                }
-                            }
-                            None
-                        };
-                        let Some(value) = value else { continue };
-                        if value.is_empty() {
+                        let Some(value) =
+                            bin_prop.value.as_ref().and_then(|v| v.data.as_e_string())
+                        else {
                             continue;
-                        }
+                        };
+                        let Some(value) = Self::bin_target(value.string(bump)?, &mut *path_buf)
+                        else {
+                            continue;
+                        };
 
-                        if !bun_sys::exists_at(workspace_root, &value) {
+                        if !bun_sys::exists_at(workspace_root, value) {
                             bun_core::warn!(
                                 "bin '{}' does not exist",
                                 bstr::BStr::new(value.as_bytes()),
@@ -1734,22 +1720,21 @@ impl PublishCommand {
                 }
                 _ => {}
             }
-        } else if let Some(directories_query) = json.as_property(b"directories") {
+        }
+
+        // An empty "bin" string is now `{}`. The listing below replaces it.
+        if use_directories_bin && let Some(directories_query) = json.as_property(b"directories") {
             if let Some(bin_query) = directories_query.expr.as_property(b"bin") {
                 let Some(bin_dir_str) = bin_query.expr.as_string(bump) else {
                     return Ok(());
                 };
                 let mut bin_props: Vec<G::Property> = Vec::new();
-                let normalized_bin_dir = bun_core::ZBox::from_bytes(
-                    strings::without_trailing_slash(strings::without_prefix(
-                        normalize_buf::<path::platform::Posix>(bin_dir_str, &mut *path_buf),
-                        b"./",
-                    )),
-                );
-
-                if normalized_bin_dir.is_empty() {
+                let Some(bin_dir_subpath) =
+                    pack::bin_subpath(bin_dir_str, pack::BinType::Dir, &mut *path_buf)
+                else {
                     return Ok(());
-                }
+                };
+                let normalized_bin_dir = bun_core::ZBox::from_bytes(bin_dir_subpath);
 
                 let bin_dir = match bun_sys::openat(
                     workspace_root,
@@ -1758,14 +1743,22 @@ impl PublishCommand {
                     0,
                 ) {
                     Ok(fd) => fd,
-                    Err(e) => {
-                        if e.get_errno() == bun_sys::E::ENOENT {
+                    Err(e) => match e.get_errno() {
+                        bun_sys::E::ENOENT => {
                             bun_core::warn!(
                                 "bin directory '{}' does not exist",
                                 bstr::BStr::new(normalized_bin_dir.as_bytes()),
                             );
                             return Ok(());
-                        } else {
+                        }
+                        bun_sys::E::ENOTDIR => {
+                            bun_core::warn!(
+                                "bin directory '{}' is not a directory",
+                                bstr::BStr::new(normalized_bin_dir.as_bytes()),
+                            );
+                            return Ok(());
+                        }
+                        _ => {
                             Output::err(
                                 e,
                                 "failed to open bin directory: '{}'",
@@ -1773,19 +1766,16 @@ impl PublishCommand {
                             );
                             Global::crash();
                         }
-                    }
+                    },
                 };
 
-                let mut dirs: Vec<(Fd, Box<[u8]>, bool)> = Vec::new();
+                let mut dirs: Vec<(Fd, Box<[u8]>)> = Vec::new();
 
-                dirs.push((bin_dir, normalized_bin_dir.as_bytes().into(), false));
+                dirs.push((bin_dir, normalized_bin_dir.as_bytes().into()));
 
-                while let Some(dir_info) = dirs.pop() {
-                    let (dir, dir_subpath, close_dir) = dir_info;
-                    let _close = scopeguard::guard(dir, move |d| {
-                        if close_dir {
-                            let _ = d.close();
-                        }
+                while let Some((dir, dir_subpath)) = dirs.pop() {
+                    let _close = scopeguard::guard(dir, |d| {
+                        let _ = d.close();
                     });
 
                     let mut iter = DirIterator::iterate(dir);
@@ -1845,7 +1835,7 @@ impl PublishCommand {
                             else {
                                 continue;
                             };
-                            dirs.push((subdir, subpath.as_bytes().into(), true));
+                            dirs.push((subdir, subpath.as_bytes().into()));
                         }
                     }
                 }

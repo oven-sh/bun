@@ -2020,6 +2020,134 @@ describe.concurrent("bins", () => {
     ]);
   });
 
+  // None of these name a file that can be packed as a bin: the package root, a
+  // file spelled as a directory, a directory, and the root package.json (which
+  // is always in the tarball). The package packs as if "bin" were absent.
+  test.each(["", ".", "cli.js/", "lib/", "package.json"])('"bin" of %p is ignored', async bin => {
+    using dir = tempDir("pack-bins-not-a-file", {
+      "package.json": JSON.stringify({ name: "pack-bins-not-a-file", version: "1.0.0", bin }),
+      "cli.js": "console.log('cli')",
+      "lib/a.js": "console.log('a')",
+    });
+
+    const { err, exitCode } = await runPack(dir);
+    expect(err).toBe("");
+    expect(exitCode).toBe(0);
+
+    const tarball = readTarball(join(dir, "pack-bins-not-a-file-1.0.0.tgz"));
+    expect(
+      tarball.entries.map(entry => ({ pathname: entry.pathname, executable: (entry.perm & 0o111) !== 0 })),
+    ).toEqual([
+      { pathname: "package/package.json", executable: false },
+      { pathname: "package/cli.js", executable: false },
+      { pathname: "package/lib/a.js", executable: false },
+    ]);
+  });
+
+  test("ignored entries of a bin object do not affect the others", async () => {
+    using dir = tempDir("pack-bins-partly-ignored", {
+      "package.json": JSON.stringify({
+        name: "pack-bins-partly-ignored",
+        version: "1.0.0",
+        bin: { dir: "lib/", cli: "cli.js", pkg: "package.json" },
+      }),
+      "cli.js": "console.log('cli')",
+      "lib/a.js": "console.log('a')",
+    });
+
+    const { err, exitCode } = await runPack(dir);
+    expect(err).toBe("");
+    expect(exitCode).toBe(0);
+
+    const tarball = readTarball(join(dir, "pack-bins-partly-ignored-1.0.0.tgz"));
+    expect(
+      tarball.entries.map(entry => ({ pathname: entry.pathname, executable: (entry.perm & 0o111) !== 0 })),
+    ).toEqual([
+      { pathname: "package/package.json", executable: false },
+      { pathname: "package/cli.js", executable: true },
+      { pathname: "package/lib/a.js", executable: false },
+    ]);
+  });
+
+  // The bin directory is packed by its own walk, and the walk over the rest of
+  // the package has to skip it. Each `files` value below routes that skip
+  // through a different walk.
+  describe('"directories.bin" with a trailing slash', () => {
+    test.each([
+      [undefined, ["package/index.js", "package/lib/bins/bin.js", "package/lib/index.js"]],
+      [["index.js"], ["package/index.js", "package/lib/bins/bin.js"]],
+      [["lib"], ["package/lib/bins/bin.js", "package/lib/index.js"]],
+      [["lib/bins"], ["package/lib/bins/bin.js"]],
+    ])("files: %p", async (files, expected) => {
+      using dir = tempDir("pack-bins-dir-trailing-slash", {
+        "package.json": JSON.stringify({
+          name: "pack-bins-dir-trailing-slash",
+          version: "1.0.0",
+          files,
+          directories: { bin: "./lib/bins/" },
+        }),
+        "index.js": "console.log('index')",
+        "lib/index.js": "console.log('lib')",
+        "lib/bins/bin.js": "console.log('bin')",
+      });
+
+      const { err, exitCode } = await runPack(dir);
+      expect(err).toBe("");
+      expect(exitCode).toBe(0);
+
+      const tarball = readTarball(join(dir, "pack-bins-dir-trailing-slash-1.0.0.tgz"));
+      expect(entryNames(tarball)).toEqual(["package/package.json", ...expected]);
+      const bin = tarball.entries.find(entry => entry.pathname === "package/lib/bins/bin.js");
+      expect(bin.perm & 0o111).toBe(0o111);
+    });
+  });
+
+  test.each(["", ".", "./"])('"directories.bin" of %p (the package root) is ignored', async bin => {
+    using dir = tempDir("pack-bins-dir-root", {
+      "package.json": JSON.stringify({ name: "pack-bins-dir-root", version: "1.0.0", directories: { bin } }),
+      "index.js": "console.log('index')",
+      "lib/a.js": "console.log('a')",
+    });
+
+    const { err, exitCode } = await runPack(dir);
+    expect(err).toBe("");
+    expect(exitCode).toBe(0);
+
+    expect(tarballEntries(join(dir, "pack-bins-dir-root-1.0.0.tgz"))).toEqual([
+      "package/package.json",
+      "package/index.js",
+      "package/lib/a.js",
+    ]);
+  });
+
+  // An empty "bin" string counts as absent, as in `bun install`, so
+  // "directories.bin" applies. Any other "bin" string wins over it.
+  test.each([
+    ["", ["package/bins/a.js"]],
+    ["cli.js", ["package/cli.js"]],
+  ])('"bin" of %p with "directories.bin"', async (bin, executable) => {
+    using dir = tempDir("pack-bins-with-dir", {
+      "package.json": JSON.stringify({
+        name: "pack-bins-with-dir",
+        version: "1.0.0",
+        bin,
+        directories: { bin: "bins" },
+      }),
+      "cli.js": "console.log('cli')",
+      "bins/a.js": "console.log('a')",
+    });
+
+    const { err, exitCode } = await runPack(dir);
+    expect(err).toBe("");
+    expect(exitCode).toBe(0);
+
+    const tarball = readTarball(join(dir, "pack-bins-with-dir-1.0.0.tgz"));
+    expect(entryNames(tarball)).toEqual(["package/package.json", "package/bins/a.js", "package/cli.js"]);
+    expect(tarball.entries.filter(entry => (entry.perm & 0o111) !== 0).map(entry => entry.pathname)).toEqual(
+      executable,
+    );
+  });
+
   test('deduplicate with "files"', async () => {
     using dir = tempDir("pack-bins-and-files-dedupe", {
       "package.json": JSON.stringify({

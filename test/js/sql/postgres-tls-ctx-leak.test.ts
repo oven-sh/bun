@@ -20,9 +20,9 @@ import { listeningServer, pgAuthenticationOk, pgReadyForQuery, pgSSLResponse } f
 //
 // This test doesn't need a real Postgres server: the tls_ctx is allocated up
 // front in PostgresSQLConnection.call() as soon as sslmode != disable, before
-// any TLS handshake. A minimal mock server refuses SSL ('N') but then
-// immediately sends AuthenticationOk + ReadyForQuery so the client reaches
-// `.connected`, letting close() -> disconnect() -> GC -> finalize() ->
+// any TLS handshake. A minimal mock server refuses SSL ('N'), then answers the
+// plaintext StartupMessage with AuthenticationOk + ReadyForQuery so the client
+// reaches `.connected`, letting close() -> disconnect() -> GC -> finalize() ->
 // deinit() exercise the teardown path.
 
 async function countPostgresConnectionsAfterGC(maxWait = 3000): Promise<number> {
@@ -40,11 +40,16 @@ async function countPostgresConnectionsAfterGC(maxWait = 3000): Promise<number> 
 }
 
 test("Postgres connections with sslmode != disable are finalized after close", async () => {
-  // 'N' (SSL refused) + AuthenticationOk + ReadyForQuery('I')
-  const handshake = Buffer.concat([pgSSLResponse("N"), pgAuthenticationOk(), pgReadyForQuery("I")]);
-
   const { server, port } = await listeningServer(socket => {
-    socket.once("data", () => socket.write(handshake));
+    let sawSSLRequest = false;
+    socket.on("data", () => {
+      if (!sawSSLRequest) {
+        sawSSLRequest = true;
+        socket.write(pgSSLResponse("N"));
+        return;
+      }
+      socket.write(Buffer.concat([pgAuthenticationOk(), pgReadyForQuery("I")]));
+    });
     socket.on("error", () => {});
   });
 

@@ -19,8 +19,6 @@ pub use self::unicode::{
 // Sub-modules (peer files under `src/string/immutable/`).
 #[path = "immutable/escapeHTML.rs"]
 pub mod escape_html;
-#[path = "immutable/exact_size_matcher.rs"]
-pub mod exact_size_matcher;
 pub use escape_html::{html_escape_entity, xml_escape_entity};
 #[path = "immutable/unicode.rs"]
 mod unicode_draft;
@@ -1199,6 +1197,34 @@ pub fn has_prefix_case_insensitive(str: &[u8], prefix: &[u8]) -> bool {
     has_prefix_case_insensitive_t(str, prefix)
 }
 
+/// Edit distance counting adjacent swaps as one (optimal string alignment), ASCII case-insensitive.
+pub fn edit_distance(a: &[u8], b: &[u8]) -> usize {
+    if a.is_empty() || b.is_empty() {
+        return a.len() + b.len();
+    }
+    let width = b.len() + 1;
+    // Rows `i - 2`, `i - 1` and `i` of the distance table.
+    let mut rows: [Vec<usize>; 3] = [vec![0; width], (0..width).collect(), vec![0; width]];
+    for (i, &ca) in a.iter().enumerate() {
+        let [before, prev, cur] = &mut rows;
+        cur[0] = i + 1;
+        for (j, &cb) in b.iter().enumerate() {
+            let cost = usize::from(!ca.eq_ignore_ascii_case(&cb));
+            let mut best = (prev[j] + cost).min(prev[j + 1] + 1).min(cur[j] + 1);
+            if i > 0
+                && j > 0
+                && ca.eq_ignore_ascii_case(&b[j - 1])
+                && a[i - 1].eq_ignore_ascii_case(&cb)
+            {
+                best = best.min(before[j - 1] + 1);
+            }
+            cur[j + 1] = best;
+        }
+        rows.rotate_left(1);
+    }
+    rows[1][b.len()]
+}
+
 // same rationale as `eql_case_insensitive_ascii` — `check_len` is a runtime
 // 3rd arg to match the dominant call shape (`eql_long(a, b, true)`).
 #[inline]
@@ -1967,8 +1993,6 @@ pub fn to_ascii_hex_value(character: u8) -> u8 {
     debug_assert!(character.is_ascii_hexdigit());
     crate::fmt::hex_digit_value(character).expect("ascii hex digit")
 }
-
-pub use exact_size_matcher::ExactSizeMatcher;
 
 pub const UNICODE_REPLACEMENT: u32 = 0xFFFD;
 
@@ -2773,5 +2797,21 @@ mod tests {
         assert_eq!(out, &[0xD800][..]);
         let out = super::convert_utf8_to_utf16_in_buffer(&mut buf, b"\xC3\xA9\xF0\x9F\x98\x80");
         assert_eq!(out, &[0x00E9, 0xD83D, 0xDE00][..]);
+    }
+
+    #[test]
+    fn edit_distance_counts_edits_and_swaps() {
+        assert_eq!(super::edit_distance(b"build", b"build"), 0);
+        assert_eq!(super::edit_distance(b"Build", b"build"), 0);
+        assert_eq!(super::edit_distance(b"", b"dev"), 3);
+        assert_eq!(super::edit_distance(b"dev", b""), 3);
+        assert_eq!(super::edit_distance(b"buidl", b"build"), 1);
+        assert_eq!(super::edit_distance(b"tset", b"test"), 1);
+        assert_eq!(super::edit_distance(b"buld", b"build"), 1);
+        assert_eq!(super::edit_distance(b"buildd", b"build"), 1);
+        assert_eq!(super::edit_distance(b"bulid", b"build"), 1);
+        assert_eq!(super::edit_distance(b"dev", b"dev:server"), 7);
+        assert_eq!(super::edit_distance(b"kitten", b"sitting"), 3);
+        assert_eq!(super::edit_distance(b"ca", b"abc"), 3);
     }
 }

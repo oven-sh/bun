@@ -211,6 +211,8 @@ pub(crate) mod ci_info_generated {
 pub mod add_completions;
 #[path = "colon_list_type.rs"]
 pub mod colon_list_type;
+#[path = "did_you_mean.rs"]
+pub(crate) mod did_you_mean;
 #[path = "discord_command.rs"]
 pub(crate) mod discord_command;
 #[path = "shell_completions.rs"]
@@ -844,8 +846,8 @@ pub mod command {
     ///
     /// `which()` classifies any first positional that isn't one of the ~40
     /// subcommand keywords as [`Tag::AutoCommand`] — but it pays for the
-    /// `RootCommandMatcher` packed-u96 keyword table (and its rodata) to find
-    /// that out, and `start()` then walks the full per-tag dispatch `match`.
+    /// `ROOT_COMMANDS` keyword table (and its rodata) to find that out, and
+    /// `start()` then walks the full per-tag dispatch `match`.
     /// For a first positional that *looks* like a path — `.`/`..`, a `./`,
     /// `../`, `/` (or, on Windows, `\`, `.\`, `..\`, `X:\`) prefix, or
     /// anything whose basename carries a `.` (a file extension) — none of
@@ -895,8 +897,8 @@ pub mod command {
     /// `#[inline(never)]`: argv→`Tag` classification, called once from
     /// `Cli::start` on every `bun` invocation. Kept a concrete symbol so
     /// `src/startup.order` can place it next to `Cli::start` /
-    /// `create_context_data` (and the `RootCommandMatcher` helpers it pulls
-    /// in) in the front-loaded startup window, rather than letting fat-LTO
+    /// `create_context_data` (and the `ROOT_COMMANDS` table it reads) in the
+    /// front-loaded startup window, rather than letting fat-LTO
     /// inline-and-scatter it through cold code.
     #[inline(never)]
     fn which() -> Tag {
@@ -952,134 +954,99 @@ pub mod command {
             }
         }
 
-        type RootCommandMatcher = strings::ExactSizeMatcher<12>;
-        let x = RootCommandMatcher::r#match(first_arg_name);
-        // PERF: `if x == const` is a chain of compares rather than a jump
-        // table on the packed u96 — profile if it shows up on a hot path.
-        if x == RootCommandMatcher::case(b"init") {
-            return Tag::InitCommand;
-        }
-        if x == RootCommandMatcher::case(b"build") || x == RootCommandMatcher::case(b"bun") {
-            return Tag::BuildCommand;
-        }
-        if x == RootCommandMatcher::case(b"discord") {
-            return Tag::DiscordCommand;
-        }
-        if x == RootCommandMatcher::case(b"upgrade") {
-            return Tag::UpgradeCommand;
-        }
-        if x == RootCommandMatcher::case(b"completions") {
-            return Tag::InstallCompletionsCommand;
-        }
-        if x == RootCommandMatcher::case(b"getcompletes") {
-            return Tag::GetCompletionsCommand;
-        }
-        if x == RootCommandMatcher::case(b"link") {
-            return Tag::LinkCommand;
-        }
-        if x == RootCommandMatcher::case(b"unlink") {
-            return Tag::UnlinkCommand;
-        }
-        if x == RootCommandMatcher::case(b"x") {
-            return Tag::BunxCommand;
-        }
-        if x == RootCommandMatcher::case(b"repl") {
-            return Tag::ReplCommand;
-        }
-        if x == RootCommandMatcher::case(b"i") || x == RootCommandMatcher::case(b"install") {
-            for arg in argv.iter() {
-                if arg == b"-g" || arg == b"--global" {
-                    return Tag::AddCommand;
+        let Some(command) = ROOT_COMMANDS.iter().find(|c| c.matches(first_arg_name)) else {
+            return Tag::AutoCommand;
+        };
+        match command.tag {
+            // `bun install -g <pkg>` is `bun add -g <pkg>`; `bun ci` is not.
+            Tag::InstallCommand if command.name != b"ci" => {
+                for arg in argv.iter() {
+                    if arg == b"-g" || arg == b"--global" {
+                        return Tag::AddCommand;
+                    }
                 }
+                Tag::InstallCommand
             }
-            return Tag::InstallCommand;
+            Tag::FuzzilliCommand if !bun_core::Environment::ENABLE_FUZZILLI => Tag::AutoCommand,
+            tag => tag,
         }
-        if x == RootCommandMatcher::case(b"ci") {
-            return Tag::InstallCommand;
-        }
-        if x == RootCommandMatcher::case(b"c") || x == RootCommandMatcher::case(b"create") {
-            return Tag::CreateCommand;
-        }
-        if x == RootCommandMatcher::case(b"test") {
-            return Tag::TestCommand;
-        }
-        if x == RootCommandMatcher::case(b"pm") {
-            return Tag::PackageManagerCommand;
-        }
-        if x == RootCommandMatcher::case(b"add") || x == RootCommandMatcher::case(b"a") {
-            return Tag::AddCommand;
-        }
-        if x == RootCommandMatcher::case(b"update") || x == RootCommandMatcher::case(b"up") {
-            return Tag::UpdateCommand;
-        }
-        if x == RootCommandMatcher::case(b"patch") {
-            return Tag::PatchCommand;
-        }
-        if x == RootCommandMatcher::case(b"patch-commit") {
-            return Tag::PatchCommitCommand;
-        }
-        if x == RootCommandMatcher::case(b"r")
-            || x == RootCommandMatcher::case(b"remove")
-            || x == RootCommandMatcher::case(b"rm")
-            || x == RootCommandMatcher::case(b"uninstall")
-        {
-            return Tag::RemoveCommand;
-        }
-        if x == RootCommandMatcher::case(b"run") {
-            return Tag::RunCommand;
-        }
-        if x == RootCommandMatcher::case(b"help") {
-            return Tag::HelpCommand;
-        }
-        if x == RootCommandMatcher::case(b"exec") {
-            return Tag::ExecCommand;
-        }
-        if x == RootCommandMatcher::case(b"outdated") {
-            return Tag::OutdatedCommand;
-        }
-        if x == RootCommandMatcher::case(b"publish") {
-            return Tag::PublishCommand;
-        }
-        if x == RootCommandMatcher::case(b"audit") {
-            return Tag::AuditCommand;
-        }
-        if x == RootCommandMatcher::case(b"info") {
-            return Tag::InfoCommand;
-        }
-        if x == RootCommandMatcher::case(b"dedupe") {
-            return Tag::DedupeCommand;
-        }
-        if x == RootCommandMatcher::case(b"prune") {
-            return Tag::PruneCommand;
-        }
-        // reserved
-        if x == RootCommandMatcher::case(b"deploy")
-            || x == RootCommandMatcher::case(b"cloud")
-            || x == RootCommandMatcher::case(b"config")
-            || x == RootCommandMatcher::case(b"use")
-            || x == RootCommandMatcher::case(b"auth")
-            || x == RootCommandMatcher::case(b"login")
-            || x == RootCommandMatcher::case(b"logout")
-        {
-            return Tag::ReservedCommand;
-        }
-        if x == RootCommandMatcher::case(b"whoami") || x == RootCommandMatcher::case(b"list") {
-            return Tag::PackageManagerCommand;
-        }
-        if x == RootCommandMatcher::case(b"why") {
-            return Tag::WhyCommand;
-        }
-        if x == RootCommandMatcher::case(b"fuzzilli") {
-            if bun_core::Environment::ENABLE_FUZZILLI {
-                return Tag::FuzzilliCommand;
-            }
-            return Tag::AutoCommand;
-        }
-        if x == RootCommandMatcher::case(b"-e") {
-            return Tag::AutoCommand;
-        }
-        Tag::AutoCommand
     }
+
+    /// A `bun <name>` command: its name in `bun --help`, its other words, and its `Tag`.
+    pub(crate) struct RootCommand {
+        pub(crate) name: &'static [u8],
+        pub(crate) aliases: &'static [&'static [u8]],
+        pub(crate) tag: Tag,
+    }
+
+    impl RootCommand {
+        const fn new(
+            name: &'static [u8],
+            aliases: &'static [&'static [u8]],
+            tag: Tag,
+        ) -> RootCommand {
+            RootCommand { name, aliases, tag }
+        }
+
+        fn matches(&self, word: &[u8]) -> bool {
+            self.name == word || self.aliases.contains(&word)
+        }
+
+        /// A command to suggest: not a reserved word, not one bun runs on itself.
+        pub(crate) fn is_for_users(&self) -> bool {
+            !matches!(
+                self.tag,
+                Tag::ReservedCommand
+                    | Tag::GetCompletionsCommand
+                    | Tag::DiscordCommand
+                    | Tag::FuzzilliCommand
+            )
+        }
+    }
+
+    /// Every word `bun <word>` dispatches on; anything else is [`Tag::AutoCommand`].
+    pub(crate) static ROOT_COMMANDS: &[RootCommand] = &[
+        RootCommand::new(b"init", &[], Tag::InitCommand),
+        RootCommand::new(b"build", &[b"bun"], Tag::BuildCommand),
+        RootCommand::new(b"discord", &[], Tag::DiscordCommand),
+        RootCommand::new(b"upgrade", &[], Tag::UpgradeCommand),
+        RootCommand::new(b"completions", &[], Tag::InstallCompletionsCommand),
+        RootCommand::new(b"getcompletes", &[], Tag::GetCompletionsCommand),
+        RootCommand::new(b"link", &[], Tag::LinkCommand),
+        RootCommand::new(b"unlink", &[], Tag::UnlinkCommand),
+        RootCommand::new(b"x", &[], Tag::BunxCommand),
+        RootCommand::new(b"repl", &[], Tag::ReplCommand),
+        RootCommand::new(b"install", &[b"i"], Tag::InstallCommand),
+        RootCommand::new(b"ci", &[], Tag::InstallCommand),
+        RootCommand::new(b"create", &[b"c"], Tag::CreateCommand),
+        RootCommand::new(b"test", &[], Tag::TestCommand),
+        RootCommand::new(b"pm", &[], Tag::PackageManagerCommand),
+        RootCommand::new(b"whoami", &[], Tag::PackageManagerCommand),
+        RootCommand::new(b"list", &[], Tag::PackageManagerCommand),
+        RootCommand::new(b"add", &[b"a"], Tag::AddCommand),
+        RootCommand::new(b"update", &[b"up"], Tag::UpdateCommand),
+        RootCommand::new(b"patch", &[], Tag::PatchCommand),
+        RootCommand::new(b"patch-commit", &[], Tag::PatchCommitCommand),
+        RootCommand::new(b"remove", &[b"r", b"rm", b"uninstall"], Tag::RemoveCommand),
+        RootCommand::new(b"run", &[], Tag::RunCommand),
+        RootCommand::new(b"help", &[], Tag::HelpCommand),
+        RootCommand::new(b"exec", &[], Tag::ExecCommand),
+        RootCommand::new(b"outdated", &[], Tag::OutdatedCommand),
+        RootCommand::new(b"publish", &[], Tag::PublishCommand),
+        RootCommand::new(b"audit", &[], Tag::AuditCommand),
+        RootCommand::new(b"info", &[], Tag::InfoCommand),
+        RootCommand::new(b"dedupe", &[], Tag::DedupeCommand),
+        RootCommand::new(b"prune", &[], Tag::PruneCommand),
+        RootCommand::new(b"why", &[], Tag::WhyCommand),
+        RootCommand::new(b"fuzzilli", &[], Tag::FuzzilliCommand),
+        RootCommand::new(b"deploy", &[], Tag::ReservedCommand),
+        RootCommand::new(b"cloud", &[], Tag::ReservedCommand),
+        RootCommand::new(b"config", &[], Tag::ReservedCommand),
+        RootCommand::new(b"use", &[], Tag::ReservedCommand),
+        RootCommand::new(b"auth", &[], Tag::ReservedCommand),
+        RootCommand::new(b"login", &[], Tag::ReservedCommand),
+        RootCommand::new(b"logout", &[], Tag::ReservedCommand),
+    ];
 
     /// Initialize the process-global `CONTEXT_DATA` and publish it via
     /// `Context::set_global`. Shared by `create_context_data` and the
@@ -1203,7 +1170,7 @@ pub mod command {
         // `--print=` spellings), and the dominant `bun <path>` / `bun .` run
         // shape. Hoisted ABOVE `which()` and the per-tag `match` so these
         // common invocations never decode the subcommand-name classifier
-        // (`which()` + its `RootCommandMatcher` name table / rodata) or walk
+        // (`which()` + its `ROOT_COMMANDS` name table / rodata) or walk
         // the per-tag dispatch `match`. `bun --version` also skips
         // `create_context_data` entirely (`arguments::parse` builds-and-drops
         // a full `api::TransformOptions` and forces two `LazyLock`s for what
@@ -1260,8 +1227,8 @@ pub mod command {
                 // subcommand keyword can be, so `which()` would unambiguously
                 // return `Tag::AutoCommand`; short-circuit straight to that
                 // arm so a plain `bun <file>` never decodes the subcommand
-                // classifier (`which()` + its `RootCommandMatcher` keyword
-                // table / rodata) or walks the per-tag dispatch `match` below.
+                // classifier (`which()` + its `ROOT_COMMANDS` keyword table /
+                // rodata) or walks the per-tag dispatch `match` below.
                 // Dispatches to exactly the arm `which()` would have selected,
                 // so config loading / arg parsing / passthrough are unchanged.
                 if argv

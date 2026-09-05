@@ -119,6 +119,17 @@ package.json scripts (2 found):
     bun server.ts
 ```
 
+If there is no script with the name you typed, Bun points at the closest ones it knows: the `package.json` scripts, the executables in `node_modules/.bin`, and, for the `bun <script>` shorthand, its own commands.
+
+```bash terminal icon="terminal"
+bun run claen
+```
+
+```txt
+error: Script not found "claen"
+note: did you mean "bun run clean"?
+```
+
 Bun respects lifecycle hooks. For instance, `bun run clean` runs `preclean` and `postclean`, if defined. If the `pre<script>` fails, Bun does not run the script itself.
 
 ### `--bun`

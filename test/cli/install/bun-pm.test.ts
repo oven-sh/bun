@@ -1084,3 +1084,25 @@ test("bun pm cache rm does not create the directory named by a project-local .en
   expect(stderr).not.toContain("error");
   expect(exitCode).toBe(0);
 });
+
+// `lsit` is a typo of the alias `list`; the suggestion is the subcommand's name.
+test.each([
+  ["lsit", '\nerror: "lsit" unknown command\nnote: did you mean "bun pm ls"?\n'],
+  ["frobnicate", '\nerror: "frobnicate" unknown command\n'],
+])("bun pm %s prints the help, the error and the closest subcommand", async (subcommand, expectedStderr) => {
+  using dir = tempDir("pm-did-you-mean", {
+    "package.json": JSON.stringify({ name: "pm-did-you-mean", version: "1.0.0" }),
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "pm", subcommand],
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+    env: bunEnv,
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stdout).toContain("bun pm ls");
+  expect(stderr).toBe(expectedStderr);
+  expect(exitCode).toBe(1);
+});

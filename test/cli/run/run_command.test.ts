@@ -42,6 +42,95 @@ describe("bun", () => {
   });
 });
 
+describe.concurrent("did you mean", () => {
+  async function run(dir: string, ...args: string[]) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), ...args],
+      cwd: dir,
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  }
+
+  test("suggests the package.json script a typo is close to", async () => {
+    using dir = tempDir("run-did-you-mean", {
+      "package.json": JSON.stringify({ scripts: { build: "echo hi", lint: "echo lint" } }),
+    });
+    const { stdout, stderr, exitCode } = await run(String(dir), "run", "buidl");
+    expect(stdout).toBe("");
+    expect(stderr).toBe('error: Script not found "buidl"\nnote: did you mean "bun run build"?\n');
+    expect(exitCode).toBe(1);
+  });
+
+  test("ignores case, lists the scripts the name is a prefix of, and stops at three", async () => {
+    using dir = tempDir("run-did-you-mean-prefix", {
+      "package.json": JSON.stringify({
+        scripts: { "build:watch": "echo", "build:server": "echo", "build:client": "echo", build: "echo", test: "echo" },
+      }),
+    });
+    const { stderr, exitCode } = await run(String(dir), "run", "Buil");
+    // Closest first, then package.json order: the shorter prefix match before the longer ones.
+    expect(stderr).toBe(
+      'error: Script not found "Buil"\nnote: did you mean "bun run build", "bun run build:watch" or "bun run build:server"?\n',
+    );
+    expect(exitCode).toBe(1);
+
+    const dev = await run(String(dir), "run", "dev");
+    expect(dev.stderr).toBe('error: Script not found "dev"\n');
+    expect(dev.exitCode).toBe(1);
+  });
+
+  test("suggests a node_modules/.bin entry, from a subdirectory too", async () => {
+    using dir = tempDir("run-did-you-mean-bin", {
+      "package.json": JSON.stringify({ scripts: { start: "echo" } }),
+      [isWindows ? "node_modules/.bin/eslint.cmd" : "node_modules/.bin/eslint"]: "",
+      "src/deep/.keep": "",
+    });
+    const { stderr, exitCode } = await run(join(String(dir), "src", "deep"), "run", "eslnt");
+    expect(stderr).toBe('error: Script not found "eslnt"\nnote: did you mean "bun run eslint"?\n');
+    expect(exitCode).toBe(1);
+  });
+
+  test("a bare `bun <name>` also gets bun's own commands, `bun run <name>` does not", async () => {
+    using dir = tempDir("run-did-you-mean-command", {
+      "package.json": JSON.stringify({ scripts: { start: "echo" } }),
+    });
+    const bare = await run(String(dir), "instal");
+    expect(bare.stderr).toBe('error: Script not found "instal"\nnote: did you mean "bun install"?\n');
+    expect(bare.exitCode).toBe(1);
+
+    const explicit = await run(String(dir), "run", "instal");
+    expect(explicit.stderr).toBe('error: Script not found "instal"\n');
+    expect(explicit.exitCode).toBe(1);
+  });
+
+  test("a typo of an alias is pointed at the command's name", async () => {
+    using dir = tempDir("run-did-you-mean-alias", {
+      "package.json": JSON.stringify({ scripts: { start: "echo" } }),
+    });
+    const { stderr, exitCode } = await run(String(dir), "uninstal");
+    expect(stderr).toBe('error: Script not found "uninstal"\nnote: did you mean "bun remove"?\n');
+    expect(exitCode).toBe(1);
+
+    // Reserved words (`deploy`) are not commands yet and are not suggested.
+    const reserved = await run(String(dir), "depoy");
+    expect(reserved.stderr).toBe('error: Script not found "depoy"\n');
+    expect(reserved.exitCode).toBe(1);
+  });
+
+  test("says nothing when no name is close", async () => {
+    using dir = tempDir("run-did-you-mean-none", {
+      "package.json": JSON.stringify({ scripts: { build: "echo", test: "echo" } }),
+    });
+    const { stderr, exitCode } = await run(String(dir), "run", "deploy");
+    expect(stderr).toBe('error: Script not found "deploy"\n');
+    expect(exitCode).toBe(1);
+  });
+});
+
 test.if(isWindows)("[windows] A file in drive root runs", async () => {
   const path = "C:\\root-file" + Math.random().toString().slice(2) + ".js";
   try {

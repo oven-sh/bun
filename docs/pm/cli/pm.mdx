@@ -5,6 +5,17 @@ description: "Package manager utilities"
 
 The `bun pm` command group is a set of utilities for working with Bun's package manager.
 
+If the subcommand you type does not exist, `bun pm` prints its help and points at the closest one it has.
+
+```bash terminal icon="terminal"
+bun pm lsit
+```
+
+```txt
+error: "lsit" unknown command
+note: did you mean "bun pm ls"?
+```
+
 ## pack
 
 To create a tarball of the current workspace:

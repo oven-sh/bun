@@ -22,6 +22,8 @@ pub struct WindowsWatcher {
     pub(crate) watcher: DirWatcher,
     pub(crate) buf: PathBuffer,
     pub(crate) base_idx: usize,
+    /// Paths come in the cwd's spelling (8.3 names, junctions) or the real one, so both are roots.
+    pub(crate) real_root: Option<Box<[u8]>>,
 }
 
 impl Default for WindowsWatcher {
@@ -35,6 +37,7 @@ impl Default for WindowsWatcher {
             },
             buf: PathBuffer::uninit(),
             base_idx: 0,
+            real_root: None,
         }
     }
 }
@@ -285,6 +288,15 @@ impl WindowsWatcher {
         } else {
             root.len()
         };
+        self.real_root = real_root_prefix(root, &self.buf[..self.base_idx]);
+        if let Some(real_root) = self.real_root.as_deref() {
+            bun_core::scoped_log!(
+                watcher,
+                "root {} also watched as {}",
+                bstr::BStr::new(&self.buf[..self.base_idx]),
+                bstr::BStr::new(real_root)
+            );
+        }
 
         // disarm the cleanup scopeguards on success
         scopeguard::ScopeGuard::into_inner(iocp_guard);
@@ -376,6 +388,33 @@ impl WindowsWatcher {
     }
 }
 
+/// See [`WindowsWatcher::real_root`]. A root that cannot be resolved is watched as given, as before.
+fn real_root_prefix(root: &[u8], given_prefix: &[u8]) -> Option<Box<[u8]>> {
+    let mut root_buf = bun_paths::path_buffer_pool::get();
+    let mut real_buf = bun_paths::path_buffer_pool::get();
+    let root_z = bun_paths::resolve_path::z(root, &mut root_buf);
+    let real = match bun_sys::realpath(root_z, &mut real_buf) {
+        Ok(real) => real,
+        Err(err) => {
+            bun_core::scoped_log!(watcher, "realpath of the watched root failed: {}", err);
+            return None;
+        }
+    };
+    let mut prefix = Vec::with_capacity(real.len() + 1);
+    prefix.extend_from_slice(real);
+    if !real
+        .last()
+        .is_some_and(|&c| bun_paths::string_paths::char_is_any_slash(c))
+    {
+        prefix.push(b'\\');
+    }
+    // Case-insensitive like the path matching, so a case difference needs no second root.
+    if strings::eql_case_insensitive_ascii(&prefix, given_prefix, true) {
+        return None;
+    }
+    Some(prefix.into_boxed_slice())
+}
+
 #[repr(u32)]
 #[derive(Copy, Clone, Eq, PartialEq)]
 pub(crate) enum Timeout {
@@ -387,6 +426,8 @@ pub(crate) fn watch_loop_cycle(this: &mut Watcher) -> bun_sys::Result<()> {
     // We re-borrow buf inside the inner loop instead of holding `&this.platform.buf`
     // across calls to `this.platform.next()`.
     let base_idx = this.platform.base_idx;
+    // The current event's path spelled under `real_root`; empty while there is none.
+    let mut real_eventpath: Vec<u8> = Vec::new();
 
     let mut event_id: usize = 0;
 
@@ -414,6 +455,11 @@ pub(crate) fn watch_loop_cycle(this: &mut Watcher) -> bun_sys::Result<()> {
             let convert_res =
                 strings::copy_utf16_into_utf8(&mut this.platform.buf[base_idx..], filename);
             let eventpath_len = base_idx + convert_res.written as usize;
+            if let Some(real_root) = this.platform.real_root.as_deref() {
+                real_eventpath.clear();
+                real_eventpath.extend_from_slice(real_root);
+                real_eventpath.extend_from_slice(&this.platform.buf[base_idx..eventpath_len]);
+            }
 
             bun_core::scoped_log!(
                 watcher,
@@ -439,7 +485,10 @@ pub(crate) fn watch_loop_cycle(this: &mut Watcher) -> bun_sys::Result<()> {
                 let rel = {
                     let eventpath = &this.platform.buf[..eventpath_len];
                     let path = &this.watchlist.items_file_path()[item_idx];
-                    let rel = is_parent_or_equal(path.as_ref(), eventpath);
+                    let mut rel = is_parent_or_equal(path.as_ref(), eventpath);
+                    if rel == ParentEqual::Unrelated && !real_eventpath.is_empty() {
+                        rel = is_parent_or_equal(path.as_ref(), &real_eventpath);
+                    }
                     bun_core::scoped_log!(
                         watcher,
                         "checking path: {} = .{}",

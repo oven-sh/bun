@@ -1929,6 +1929,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     let last: &mut Decl = &mut local.decls.slice_mut()[last_idx];
                     let Some(replacement) = last.value else { break };
 
+                    // "let f = () => {}" gives the value ".name" via NamedEvaluation;
+                    // substituting it away would make the name observably "".
+                    if replacement.is_anonymous_named() {
+                        break;
+                    }
+
                     // The binding must be an identifier that is only used once.
                     // Ignore destructuring bindings since that's not the simple case.
                     // Destructuring bindings could potentially execute side-effecting

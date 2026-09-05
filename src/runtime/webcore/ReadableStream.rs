@@ -813,6 +813,12 @@ pub trait SourceContext: Sized {
 
     /// Default no-op.
     fn set_flowing(&mut self, _flag: bool) {}
+
+    /// Raw OS fd behind this source as a JS-visible number. `-1` when the
+    /// source is closed or not fd-backed.
+    fn get_fd(&mut self) -> i32 {
+        -1
+    }
 }
 
 // Hand-wired JSC class (the `#[bun_jsc::JsClass]` derive cannot be used on a
@@ -1293,6 +1299,14 @@ impl<C: SourceContext> NewSource<C> {
         debug_assert!(flag.is_boolean());
         this.context.set_flowing(flag == JSValue::TRUE);
         Ok(JSValue::UNDEFINED)
+    }
+
+    pub fn get_fd_from_js(
+        this: &mut Self,
+        _global: &JSGlobalObject,
+        _call_frame: &CallFrame,
+    ) -> JsResult<JSValue> {
+        Ok(JSValue::js_number_from_int32(this.context.get_fd()))
     }
 
     pub fn memory_cost(&self) -> usize {

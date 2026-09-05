@@ -3495,6 +3495,14 @@ describe("expect()", () => {
       expect({ a: "hello derived String" }).not.toMatchObject({ a: expect.stringContaining(new DString("rivd")) });
       expect({ a: "hello world" }).toMatchObject({ a: expect.stringMatching("wor") });
       expect({ a: "hello world" }).not.toMatchObject({ a: expect.stringMatching("word") });
+      // a string sample is a pattern, as in Jest (`new RegExp(sample)`)
+      expect({ a: "hello world" }).toMatchObject({ a: expect.stringMatching("^hel+o w.r") });
+      expect({ a: "hello world" }).toMatchObject({ a: expect.stringMatching("w[a-z]+d$") });
+      expect({ a: "hello world" }).not.toMatchObject({ a: expect.stringMatching("^world") });
+      expect("hello world").toEqual(expect.stringMatching("o w"));
+      expect("hello world").toEqual(expect.stringMatching("^h.*d$"));
+      expect("hello world").not.toEqual(expect.stringMatching("^d"));
+      expect(() => expect("x").toEqual(expect.stringMatching("("))).toThrow(SyntaxError);
       expect({ a: "hello world" }).toMatchObject({ a: "hello world" });
       expect({ a: "hello world" }).toMatchObject({ a: expect.stringMatching(/wor/) });
       expect({ a: "hello world" }).not.toMatchObject({ a: expect.stringMatching(/word/) });
@@ -5027,3 +5035,13 @@ function tmpFile(exists) {
   }
   return tmpFile;
 }
+
+test("expect.stringMatching rejects an invalid string pattern when it is created", () => {
+  // Jest compiles the sample with `new RegExp(sample)` at construction time.
+  expect(() => expect.stringMatching("(")).toThrow(SyntaxError);
+  expect(() => expect.stringMatching("[a")).toThrow(SyntaxError);
+  expect(() => expect.stringMatching("a{2,1}")).toThrow(SyntaxError);
+  // a valid string is still a pattern
+  expect("hello world").toEqual(expect.stringMatching("^hello"));
+  expect({ a: 1 }).toEqual({ a: expect.not.stringMatching("^x") });
+});

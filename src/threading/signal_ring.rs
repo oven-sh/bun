@@ -5,19 +5,14 @@ use core::sync::atomic::{AtomicU8, AtomicU32, AtomicU64, Ordering};
 /// Multi-producer, single-consumer ring of nonzero `u8` values. `enqueue` is
 /// atomics only, so signal handlers on any thread may run it at once or nested.
 /// `CAPACITY` is a power of two up to 32768: `u16` indices, `tail - head` fits.
-///
-/// A full ring never loses a signal: the number is recorded in `overflow`, one
-/// bit per value, and `dequeue` hands it out once the ring is empty. A storm of
-/// one signal can therefore delay a different one, but not drop it.
+/// A full ring records the signal in `overflow` instead of dropping it.
 pub struct SignalRing<const CAPACITY: usize> {
     /// 0 while free or claimed but not yet written (signal numbers start at 1).
     slots: [AtomicU8; CAPACITY],
     /// `head` (consumer) in the low half, `tail` (producer) in the high half,
     /// so one load reads a consistent pair and one CAS claims against it.
     state: AtomicU32,
-    /// Bit `n` set: signal `n` arrived while the ring was full. Producers set
-    /// bits only while the ring is full, so the consumer reads them only once
-    /// the ring is empty.
+    /// Bit `n` set: signal `n` arrived while the ring was full.
     overflow: [AtomicU64; 4],
 }
 
@@ -62,10 +57,8 @@ impl<const CAPACITY: usize> SignalRing<CAPACITY> {
         &self.slots[index as usize % CAPACITY]
     }
 
-    /// Producer side, any thread. `signal` is never 0. Returns `true` when the
-    /// signal took a ring slot, `false` when the ring was full and the signal
-    /// was coalesced into `overflow` instead. The consumer must be woken in
-    /// both cases.
+    /// Producer side, any thread. `signal` is never 0. Returns `false` when the
+    /// ring was full and the signal went into `overflow`.
     pub fn enqueue(&self, signal: u8) -> bool {
         debug_assert_ne!(signal, 0, "0 is the empty-slot sentinel");
         let mut state = self.state.load(Ordering::Acquire);
@@ -92,7 +85,7 @@ impl<const CAPACITY: usize> SignalRing<CAPACITY> {
     }
 
     /// Consumer side, one thread only. Returns the oldest published signal,
-    /// then, once the ring is empty, each signal that overflowed it.
+    /// or an overflowed one once the ring is empty.
     /// `None` means empty, or that the oldest claimed slot is still 0 because
     /// its producer has not stored yet: come back after that producer's
     /// wakeup, nothing behind it is skipped.
@@ -176,8 +169,7 @@ mod tests {
         outstanding_limit: isize,
     ) -> Stress {
         let done = AtomicUsize::new(0);
-        // Signed: an overflowed signal is counted out once by its producer and
-        // again by the consumer that later dequeues it from the overflow mask.
+        // Signed: an overflowed signal is counted out twice, once per side.
         let outstanding = AtomicIsize::new(0);
         let mut dequeued = vec![0usize; usize::from(PRODUCERS)];
         let mut zeros = 0;
@@ -255,8 +247,7 @@ mod tests {
         for i in 0..usize::from(PRODUCERS) {
             let (accepted, coalesced, dequeued) =
                 (result.accepted[i], result.coalesced[i], result.dequeued[i]);
-            // Every slot is delivered once. Overflows of one number are
-            // delivered at least once and at most once per overflow.
+            // Slots deliver once, overflows at least once and at most once each.
             assert!(dequeued >= accepted, "{i}: {dequeued} < {accepted}");
             assert!(
                 dequeued <= accepted + coalesced,
@@ -292,8 +283,7 @@ mod tests {
         }
     }
 
-    /// A storm of one signal that fills the ring delays a different signal
-    /// but never drops it, and the storm itself is coalesced to one delivery.
+    /// A storm that fills the ring delays other signals but never drops them.
     #[test]
     fn full_ring_coalesces_each_signal_into_one_delivery() {
         let ring = SignalRing::<4>::new();

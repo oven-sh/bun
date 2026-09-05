@@ -23,9 +23,7 @@ impl PosixSignalHandle {
         Box::new(init)
     }
 
-    /// Never loses a signal: a full ring coalesces it into a per-number
-    /// pending bit that `drain` delivers after the ring. The caller wakes the
-    /// loop in both cases.
+    /// Never loses a signal: a full ring coalesces it into a pending bit.
     #[allow(dead_code)]
     pub(crate) fn enqueue(&self, signal: u8) {
         self.ring.enqueue(signal);

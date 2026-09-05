@@ -596,6 +596,10 @@ pub(crate) struct All {
     /// TimerObjectInternals.epoch. Masked to 25 bits on increment.
     pub(crate) epoch: u32,
     pub(crate) immediate_ref_count: i32,
+    /// Ref'd `setTimeout`/`setInterval` objects only. `active_timer_count` is
+    /// also bumped by the DNS retry ticker and `Bun.spawn` timeouts, so it
+    /// cannot back `process.getActiveResourcesInfo()`.
+    pub(crate) js_timeout_ref_count: i32,
     #[cfg(windows)]
     pub(crate) uv_idle: bun_sys::windows::libuv::uv_idle_t,
     pub(crate) event_loop_delay: EventLoopDelayMonitor,
@@ -618,6 +622,7 @@ impl All {
             warned_not_number: false,
             epoch: 0,
             immediate_ref_count: 0,
+            js_timeout_ref_count: 0,
             #[cfg(windows)]
             uv_idle: bun_core::ffi::zeroed(),
             event_loop_delay: EventLoopDelayMonitor::default(),

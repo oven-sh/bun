@@ -4348,9 +4348,22 @@ JSC_DEFINE_HOST_FUNCTION(Process_setSourceMapsEnabled, (JSC::JSGlobalObject * le
     return JSValue::encode(jsUndefined());
 }
 
-JSC_DEFINE_HOST_FUNCTION(Process_stubFunctionReturningArray, (JSGlobalObject * globalObject, CallFrame* callFrame))
+static JSValue constructGetActiveResourcesInfo(VM& vm, JSObject* processObject)
 {
-    return JSValue::encode(JSC::constructEmptyArray(globalObject, nullptr));
+    auto* globalObject = defaultGlobalObject(processObject->globalObject());
+    return JSC::JSFunction::create(vm, globalObject, processObjectInternalsGetActiveResourcesInfoCodeGenerator(vm), globalObject);
+}
+
+static JSValue constructGetActiveHandles(VM& vm, JSObject* processObject)
+{
+    auto* globalObject = defaultGlobalObject(processObject->globalObject());
+    return JSC::JSFunction::create(vm, globalObject, processObjectInternalsGetActiveHandlesCodeGenerator(vm), globalObject);
+}
+
+static JSValue constructGetActiveRequests(VM& vm, JSObject* processObject)
+{
+    auto* globalObject = defaultGlobalObject(processObject->globalObject());
+    return JSC::JSFunction::create(vm, globalObject, processObjectInternalsGetActiveRequestsCodeGenerator(vm), globalObject);
 }
 
 static JSValue Process_stubEmptyArray(VM& vm, JSObject* processObject)
@@ -4944,8 +4957,8 @@ extern "C" void Process__emitErrorEvent(Zig::GlobalObject* global, EncodedJSValu
 /* Source for Process.lut.h
 @begin processObjectTable
   _eval                            processGetEval                                      CustomAccessor
-  _getActiveHandles                Process_stubFunctionReturningArray                  Function 0
-  _getActiveRequests               Process_stubFunctionReturningArray                  Function 0
+  _getActiveHandles                constructGetActiveHandles                           PropertyCallback
+  _getActiveRequests               constructGetActiveRequests                          PropertyCallback
   _kill                            Process_functionReallyKill                          Function 2
   _linkedBinding                   Process_stubEmptyFunction                           Function 0
   _preload_modules                 Process_stubEmptyArray                              PropertyCallback
@@ -4982,7 +4995,7 @@ extern "C" void Process__emitErrorEvent(Zig::GlobalObject* global, EncodedJSValu
   exitCode                         processExitCode                                     CustomAccessor|DontDelete
   _fatalException                  Process_functionFatalException                      Function 1
   features                         constructFeatures                                   PropertyCallback
-  getActiveResourcesInfo           Process_stubFunctionReturningArray                  Function 0
+  getActiveResourcesInfo           constructGetActiveResourcesInfo                     PropertyCallback
   getBuiltinModule                 Process_functionLoadBuiltinModule                   Function 1
   hasUncaughtExceptionCaptureCallback Process_hasUncaughtExceptionCaptureCallback      Function 0
   hrtime                           constructProcessHrtimeObject                        PropertyCallback

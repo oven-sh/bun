@@ -39,6 +39,24 @@ impl All {
         }
     }
 
+    pub(crate) fn active_timeout_count() -> u32 {
+        let all = timer_all();
+        if all.is_null() {
+            return 0;
+        }
+        // SAFETY: `all` is the live per-thread `All`; single-threaded JS heap.
+        unsafe { (*all).js_timeout_ref_count.max(0) as u32 }
+    }
+
+    pub(crate) fn active_immediate_count() -> u32 {
+        let all = timer_all();
+        if all.is_null() {
+            return 0;
+        }
+        // SAFETY: `all` is the live per-thread `All`; single-threaded JS heap.
+        unsafe { (*all).immediate_ref_count.max(0) as u32 }
+    }
+
     /// # Safety
     /// `vm` must point to the live per-thread `VirtualMachine`.
     // Forwards `vm` to `DateHeaderTimer::enable` without dereferencing it here;
@@ -575,5 +593,27 @@ pub(crate) mod internal_bindings {
         // bun_jsc::JSValue has no `js_number_from_int64`; route via
         // `js_number(f64)` (i64 → f64 is lossless for the millisecond range).
         Ok(JSValue::js_number(now as f64))
+    }
+
+    /// Ref'd `setTimeout`/`setInterval` count for `process.getActiveResourcesInfo()`.
+    #[bun_jsc::host_fn]
+    pub(crate) fn get_active_timeout_count(
+        global_this: &JSGlobalObject,
+        call_frame: &CallFrame,
+    ) -> JsResult<JSValue> {
+        let _ = global_this;
+        let _ = call_frame;
+        Ok(JSValue::js_number(f64::from(All::active_timeout_count())))
+    }
+
+    /// Pending `setImmediate` count for `process.getActiveResourcesInfo()`.
+    #[bun_jsc::host_fn]
+    pub(crate) fn get_active_immediate_count(
+        global_this: &JSGlobalObject,
+        call_frame: &CallFrame,
+    ) -> JsResult<JSValue> {
+        let _ = global_this;
+        let _ = call_frame;
+        Ok(JSValue::js_number(f64::from(All::active_immediate_count())))
     }
 }

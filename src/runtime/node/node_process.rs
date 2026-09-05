@@ -222,6 +222,39 @@ mod _impl {
         bun_jsc::to_js_host_fn_result(global_object, create_exec_argv(global_object))
     }
 
+    /// execArgv options that consume the NEXT argv token as their value (clap's
+    /// `One`/`Many` space form), so a following `--` is that value, not the
+    /// option terminator. `OneOptional` options (`--inspect`) only take `=`-form
+    /// values and never consume the next token. Built from `AUTO_PARAMS`.
+    static EXEC_ARGV_VALUE_PARAMS: std::sync::LazyLock<bun_collections::StringSet> =
+        std::sync::LazyLock::new(|| {
+            let mut set = bun_collections::StringSet::new();
+            for param in crate::cli::arguments::AUTO_PARAMS.iter() {
+                if matches!(
+                    param.takes_value,
+                    bun_clap::Values::One | bun_clap::Values::Many
+                ) {
+                    if let Some(name) = param.names.long {
+                        let mut k = Vec::with_capacity(2 + name.len());
+                        k.extend_from_slice(b"--");
+                        k.extend_from_slice(name);
+                        bun_core::handle_oom(set.insert(&k));
+                    }
+                    if let Some(name) = param.names.short {
+                        bun_core::handle_oom(set.insert(&[b'-', name]));
+                    }
+                }
+            }
+            // Node's whole-token aliases are not params, so they never land
+            // above; an alias takes a value iff its target does.
+            for (from, to) in crate::cli::arguments::NODE_SHORT_ALIASES {
+                if set.contains(to) {
+                    bun_core::handle_oom(set.insert(from));
+                }
+            }
+            set
+        });
+
     fn create_exec_argv(global_object: &JSGlobalObject) -> JsResult<JSValue> {
         // SAFETY: `bun_vm()` returns the live per-thread VM for this global.
         let vm = global_object.bun_vm();
@@ -229,9 +262,40 @@ mod _impl {
         if let Some(worker) = vm.worker_ref() {
             // was explicitly overridden for the worker?
             if let Some(exec_argv) = worker.exec_argv() {
-                return JSValue::create_array_from_iter(global_object, exec_argv.iter(), |&wtf| {
-                    super::worker_option_string(wtf).into_js(global_object)
-                });
+                let mut end = exec_argv.len();
+                let mut awaiting_value = false;
+                for (i, &wtf) in exec_argv.iter().enumerate() {
+                    if awaiting_value {
+                        awaiting_value = false;
+                        continue;
+                    }
+                    // SAFETY: non-null impl borrowed from the live `WorkerOptions`
+                    // (see `worker_option_string`); only read here, never retained.
+                    let imp = unsafe { &*wtf };
+                    // `is_8bit()` is the storage encoding, not the content: ASCII
+                    // decoded from UTF-16 bytes arrives in 16-bit storage. Narrow it
+                    // for the comparison; a token with non-ASCII units or longer than
+                    // any option name is an ordinary token either way.
+                    let mut narrow = [0u8; 64];
+                    let bytes: &[u8] = if imp.is_8bit() {
+                        imp.latin1_slice()
+                    } else {
+                        match bun_core::strings::narrow_ascii_u16(imp.utf16_slice(), &mut narrow) {
+                            Some(n) => n,
+                            None => b"",
+                        }
+                    };
+                    if bytes == b"--" {
+                        end = i;
+                        break;
+                    }
+                    awaiting_value = EXEC_ARGV_VALUE_PARAMS.contains(bytes);
+                }
+                return JSValue::create_array_from_iter(
+                    global_object,
+                    exec_argv[..end].iter(),
+                    |&wtf| super::worker_option_string(wtf).into_js(global_object),
+                );
             }
         }
 
@@ -271,64 +335,34 @@ mod _impl {
         let mut args = Vec::<BunString>::with_capacity(argv.len().saturating_sub(1));
 
         let mut seen_run = false;
-        let mut prev: Option<&[u8]> = None;
+        let mut awaiting_value = false;
 
         // we re-parse the process argv to extract execArgv, since this is a very uncommon operation
         // it isn't worth doing this as a part of the CLI
         let mut iter = argv.iter();
         let _ = iter.next(); // skip argv[0]
         for arg in iter {
-            // emulate `defer prev = arg` by setting at end of each iteration body
             let arg: &[u8] = arg;
+
+            if awaiting_value {
+                args.push(BunString::clone_utf8(arg));
+                awaiting_value = false;
+                continue;
+            }
+
+            if arg == b"--" {
+                break;
+            }
 
             if arg.len() >= 1 && arg[0] == b'-' {
                 args.push(BunString::clone_utf8(arg));
-                prev = Some(arg);
+                awaiting_value = EXEC_ARGV_VALUE_PARAMS.contains(arg);
                 continue;
             }
 
             if !seen_run && arg == b"run" {
                 seen_run = true;
-                prev = Some(arg);
                 continue;
-            }
-
-            // A set of execArgv args consume an extra argument, so we do not want to
-            // confuse these with script names.
-            // Build the set lazily at runtime from the `AUTO_PARAMS` table:
-            // `--long` / `-s` for every param with a value.
-            static MAP: std::sync::LazyLock<bun_collections::StringSet> =
-                std::sync::LazyLock::new(|| {
-                    let mut set = bun_collections::StringSet::new();
-                    for param in crate::cli::arguments::AUTO_PARAMS.iter() {
-                        if param.takes_value != bun_clap::Values::None {
-                            if let Some(name) = param.names.long {
-                                let mut k = Vec::with_capacity(2 + name.len());
-                                k.extend_from_slice(b"--");
-                                k.extend_from_slice(name);
-                                bun_core::handle_oom(set.insert(&k));
-                            }
-                            if let Some(name) = param.names.short {
-                                bun_core::handle_oom(set.insert(&[b'-', name]));
-                            }
-                        }
-                    }
-                    // Node's whole-token aliases are not params, so they never
-                    // land above; an alias takes a value iff its target does.
-                    for (from, to) in crate::cli::arguments::NODE_SHORT_ALIASES {
-                        if set.contains(to) {
-                            bun_core::handle_oom(set.insert(from));
-                        }
-                    }
-                    set
-                });
-
-            if let Some(p) = prev {
-                if MAP.contains(p) {
-                    args.push(BunString::clone_utf8(arg));
-                    prev = Some(arg);
-                    continue;
-                }
             }
 
             // we hit the script name

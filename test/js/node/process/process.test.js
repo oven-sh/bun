@@ -2,7 +2,7 @@ import { spawnSync, which } from "bun";
 import { CString, dlopen, ptr } from "bun:ffi";
 import { describe, expect, it } from "bun:test";
 import { familySync } from "detect-libc";
-import { bunEnv, bunExe, isMacOS, isWindows, tempDir, tmpdirSync } from "harness";
+import { bunEnv, bunExe, isMacOS, isWindows, tempDir, tls as tlsCert, tmpdirSync } from "harness";
 import { basename, join, resolve } from "path";
 
 const process_sleep = resolve(import.meta.dir, "process-sleep.js");
@@ -1715,6 +1715,13 @@ it("process.execArgv", async () => {
     ["index.ts --bun -a -b -c", [], ["--bun", "-a", "-b", "-c"]],
     ["--bun index.ts index.ts", ["--bun"], ["index.ts"]],
     ["run -e bruh -b index.ts foo -a -b -c", ["-e", "bruh", "-b"], ["foo", "-a", "-b", "-c"]],
+    ["--conditions -- index.ts", ["--conditions", "--"], []],
+    ["--smol -- index.ts", ["--smol"], []],
+    ["--conditions foo -- index.ts", ["--conditions", "foo"], []],
+    ["--conditions --conditions -- index.ts", ["--conditions", "--conditions"], []],
+    ["--conditions --inspect -- index.ts", ["--conditions", "--inspect"], []],
+    // The CLI consumes the next token as the value even when it spells `run`.
+    ["--conditions run index.ts", ["--conditions", "run"], []],
   ];
 
   for (const [cmd, execArgv, argv] of fixtures) {
@@ -1722,6 +1729,63 @@ it("process.execArgv", async () => {
     const result = await Bun.$`${bunExe()} ${{ raw: replacedCmd }}`.json();
     expect(result, `bun ${cmd}`).toEqual({ execArgv, argv });
   }
+});
+
+it.skipIf(isWindows)("process.execArgv drops `--` after a flag whose value is only taken via `=`", async () => {
+  using dir = tempDir("execargv-inspect", {});
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "--inspect", "--", join(__dirname, "print-process-execArgv.js")],
+    env: { ...bunEnv, BUN_INSPECT: `unix://${dir}/probe.sock` },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stdout, stderr).not.toBe("");
+  expect(JSON.parse(stdout)).toEqual({ execArgv: ["--inspect"], argv: [] });
+  expect(exitCode).toBe(0);
+});
+
+it("worker execArgv `--` handling does not depend on the strings' storage encoding", async () => {
+  // A UTF-16 decode yields ASCII content in 16-bit storage. The terminator
+  // scan must still see such a `--conditions` as value-taking and such a `--`
+  // as the terminator; a non-ASCII token stays an ordinary token.
+  using dir = tempDir("execargv-wide", {
+    "fixture.js": `
+      const { Worker, isMainThread, parentPort } = require("worker_threads");
+      if (!isMainThread) {
+        parentPort.postMessage(process.execArgv);
+      } else {
+        const wide = s => Buffer.from(s, "utf16le").toString("utf16le");
+        const run = execArgv => new Promise((resolve, reject) => {
+          const w = new Worker(__filename, { execArgv });
+          w.once("message", resolve);
+          w.once("error", reject);
+        });
+        (async () => {
+          console.log(JSON.stringify({
+            wideValueParamKeepsTerminator: await run([wide("--conditions"), "--", "x"]),
+            wideTerminatorTruncates: await run(["--smol", wide("--"), "after"]),
+            nonAsciiIsOrdinary: await run(["--smol", "ключ", "--", "x"]),
+          }));
+        })();
+      }
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "fixture.js"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(JSON.parse(stdout)).toEqual({
+    wideValueParamKeepsTerminator: ["--conditions", "--", "x"],
+    wideTerminatorTruncates: ["--smol"],
+    nonAsciiIsOrdinary: ["--smol", "ключ"],
+  });
+  expect(exitCode).toBe(0);
 });
 
 describe("process.exitCode", () => {
@@ -2639,6 +2703,170 @@ it("process.throwDeprecation is per-Worker, not process-global", async () => {
   expect(exitCode).toBe(0);
 });
 
+it("getActiveResourcesInfo reports a listening http.Server like node", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `const http = require("http");
+       const server = http.createServer((req, res) => res.end("ok"));
+       server.listen(0, "127.0.0.1", () => {
+         const tcp = () => process.getActiveResourcesInfo().filter(x => x === "TCPServerWrap").length;
+         const out = { listening: tcp() };
+         out.handleWhileListening = server._handle != null && process._getActiveHandles().includes(server);
+         server.unref();
+         out.unrefed = tcp();
+         server.ref();
+         out.refed = tcp();
+         server.close(() => {
+           // Settle before sampling: node (v26.3.0, the expected transcript)
+           // keeps the closing wrap listed until uv's OnClose, which has no
+           // JS-side signal; only after it does this script print closed:0.
+           setTimeout(() => {
+             out.closed = tcp();
+             out.handleAfterClose = server._handle === null && !process._getActiveHandles().includes(server);
+             console.log(JSON.stringify(out));
+           }, 50);
+         });
+       });`,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stdout.trim()).toBe(
+    '{"listening":1,"handleWhileListening":true,"unrefed":0,"refed":1,"closed":0,"handleAfterClose":true}',
+  );
+  expect(exitCode).toBe(0);
+});
+
+it("getActiveResourcesInfo reports a unix-socket http.Server as PipeWrap like node", async () => {
+  using dir = tempDir("http-pipewrap", {});
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `const http = require("http");
+       const server = http.createServer(() => {});
+       server.listen(process.argv[1], () => {
+         const info = process.getActiveResourcesInfo();
+         console.log(JSON.stringify({
+           pipe: info.filter(x => x === "PipeWrap").length,
+           tcp: info.filter(x => x === "TCPServerWrap").length,
+         }));
+         server.close();
+       });`,
+      `${dir}/s.sock`,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(stdout.trim()).toBe('{"pipe":1,"tcp":0}');
+  expect(exitCode).toBe(0);
+});
+
+it.skipIf(isWindows)("getActiveResourcesInfo keeps PipeWrap through a client-side TLS wrap", async () => {
+  using dir = tempDir("tls-client-pipewrap", {});
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `const net = require("net");
+       const tls = require("tls");
+       const server = net.createServer(() => {});
+       server.listen(process.argv[1], () => {
+         const raw = net.connect(process.argv[1], () => {
+           const tlsSocket = tls.connect({ socket: raw, rejectUnauthorized: false });
+           // Sample only once the wrap is registered, or the listener and the
+           // accepted socket alone would satisfy the pipe count.
+           let attempts = 0;
+           const inspect = () => {
+             const handles = process._getActiveHandles();
+             if (!handles.includes(tlsSocket) && ++attempts < 50) {
+               setImmediate(inspect);
+               return;
+             }
+             const info = process.getActiveResourcesInfo();
+             console.log(JSON.stringify({
+               tlsHandle: handles.includes(tlsSocket),
+               pipe: info.filter(x => x === "PipeWrap").length,
+               tcp: info.filter(x => x === "TCPSocketWrap").length,
+             }));
+             process.exit(0);
+           };
+           setImmediate(inspect);
+         });
+       });`,
+      `${dir}/s.sock`,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  const parsed = JSON.parse(stdout.trim());
+  expect(parsed.tlsHandle).toBe(true);
+  expect(parsed.tcp).toBe(0);
+  expect(parsed.pipe).toBeGreaterThanOrEqual(2);
+  expect(exitCode).toBe(0);
+});
+
+it.skipIf(isWindows)("getActiveResourcesInfo keeps PipeWrap through a server-side TLS wrap", async () => {
+  using dir = tempDir("tls-pipewrap", {});
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `const net = require("net");
+       const tls = require("tls");
+       const server = net.createServer((conn) => {
+         const wrap = new tls.TLSSocket(conn, {
+           isServer: true,
+           cert: process.env.FIXTURE_CERT,
+           key: process.env.FIXTURE_KEY,
+         });
+         // The fd-adoption arm defers a tick; sample only once the wrap is
+         // registered so the kind assertion exercises it.
+         let attempts = 0;
+         const inspect = () => {
+           const handles = process._getActiveHandles();
+           if (!handles.includes(wrap) && ++attempts < 50) {
+             setImmediate(inspect);
+             return;
+           }
+           const info = process.getActiveResourcesInfo();
+           console.log(JSON.stringify({
+             tlsHandle: handles.includes(wrap),
+             pipe: info.filter(x => x === "PipeWrap").length,
+             tcp: info.filter(x => x === "TCPSocketWrap").length,
+           }));
+           process.exit(0);
+         };
+         setImmediate(inspect);
+       });
+       server.listen(process.argv[1], () => {
+         net.connect(process.argv[1]);
+       });`,
+      `${dir}/s.sock`,
+    ],
+    env: { ...bunEnv, FIXTURE_CERT: tlsCert.cert, FIXTURE_KEY: tlsCert.key },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  const parsed = JSON.parse(stdout.trim());
+  expect(parsed.tlsHandle).toBe(true);
+  expect(parsed.tcp).toBe(0);
+  expect(parsed.pipe).toBeGreaterThanOrEqual(2);
+  expect(exitCode).toBe(0);
+});
+
 describe("NODE_NO_WARNINGS", () => {
   // Node suppresses only on the exact string "1" (test-env-var-no-warnings.js).
   // Bun's generic boolean env parse used to accept "true", "01", etc.
@@ -2668,6 +2896,99 @@ describe("NODE_NO_WARNINGS", () => {
   it.concurrent('suppresses warnings for NODE_NO_WARNINGS="1"', async () => {
     expect(await warn("1")).not.toMatch(/Warning: foo/);
   });
+});
+
+it("getActiveResourcesInfo reports connecting sockets and pending dns lookups like node", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `const net = require("net");
+       const dns = require("dns");
+       const out = {};
+       const socket = net.connect(1, "127.0.0.1");
+       socket.on("error", () => {});
+       out.connecting = process.getActiveResourcesInfo().filter(x => x === "TCPSocketWrap").length;
+       socket.destroy();
+       out.afterDestroy = process.getActiveResourcesInfo().filter(x => x === "TCPSocketWrap").length;
+       dns.lookup("localhost", () => {
+         out.dnsSettled = process.getActiveResourcesInfo().filter(x => x === "GetAddrInfoReqWrap").length;
+         out.reqsSettled = process._getActiveRequests().filter(r => r.constructor.name === "GetAddrInfoReqWrap").length;
+         // The promise form parks a wrap too, like node's createLookupPromise.
+         const p = dns.promises.lookup("localhost");
+         out.promisePending = process.getActiveResourcesInfo().filter(x => x === "GetAddrInfoReqWrap").length;
+         p.catch(() => {}).then(() => {
+           out.promiseSettled = process.getActiveResourcesInfo().filter(x => x === "GetAddrInfoReqWrap").length;
+           console.log(JSON.stringify(out));
+         });
+       });
+       out.dnsPending = process.getActiveResourcesInfo().filter(x => x === "GetAddrInfoReqWrap").length;
+       out.reqsPending = process._getActiveRequests().filter(r => r.constructor.name === "GetAddrInfoReqWrap").length;`,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(JSON.parse(stdout.trim())).toEqual({
+    connecting: 1,
+    afterDestroy: 0,
+    dnsPending: 1,
+    reqsPending: 1,
+    dnsSettled: 0,
+    reqsSettled: 0,
+    promisePending: 1,
+    promiseSettled: 0,
+  });
+  expect(exitCode).toBe(0);
+});
+
+it("_getActiveRequests entries carry node's request-wrap constructor names", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `const fs = require("fs");
+       fs.readFile("/dev/null", () => {});
+       const names = process._getActiveRequests().map(r => r.constructor.name);
+       console.log(JSON.stringify({ named: names.length > 0 && names.every(n => n === "FSReqCallback") }));`,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stdout.trim()).toBe('{"named":true}');
+  expect(exitCode).toBe(0);
+});
+
+it("synchronous connect/lookup validation throws do not leak registry entries", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `const net = require("net");
+       const dns = require("dns");
+       for (let i = 0; i < 3; i++) {
+         try { net.connect({ port: 80, localAddress: "not-an-ip" }); } catch {}
+         try { net.connect({ path: 123 }); } catch {}
+         try { dns.lookupService("not-an-ip", 80, () => {}); } catch {}
+       }
+       const info = process.getActiveResourcesInfo();
+       console.log(JSON.stringify({
+         tcp: info.filter(x => x === "TCPSocketWrap").length,
+         pipe: info.filter(x => x === "PipeWrap").length,
+         nameinfo: info.filter(x => x === "GetNameInfoReqWrap").length,
+         handles: process._getActiveHandles().length,
+       }));`,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stdout.trim()).toBe('{"tcp":0,"pipe":0,"nameinfo":0,"handles":0}');
+  expect(exitCode).toBe(0);
 });
 
 it("process.exit() does not run microtasks or nextTicks that were queued before it", async () => {

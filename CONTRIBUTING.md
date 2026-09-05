@@ -20,29 +20,45 @@ This provides all dependencies in an isolated, reproducible environment without 
 
 Using your system's package manager, install Bun's dependencies:
 
-{% codetabs group="os" %}
+<details>
+  <summary>macOS (Homebrew)</summary>
 
-```bash#macOS (Homebrew)
+  ```bash
 $ brew install automake ccache cmake coreutils gnu-sed go icu4c libiconv libtool ninja pkg-config rustup-init ruby
-```
+  ```
+</details>
 
-```bash#Ubuntu/Debian
+<details>
+  <summary>Ubuntu/Debian</summary>
+
+  ```bash
 $ sudo apt install curl wget lsb-release software-properties-common cmake git golang libtool ninja-build pkg-config ruby-full xz-utils
-```
+  ```
+</details>
 
-```bash#Arch
+<details>
+  <summary>Arch</summary>
+
+  ```bash
 $ sudo pacman -S base-devel cmake git go libiconv libtool make ninja pkg-config python rustup sed unzip ruby
-```
+  ```
+</details>
 
-```bash#Fedora
+<details>
+  <summary>Fedora</summary>
+
+  ```bash
 $ sudo dnf install clang21 llvm21 lld21 cmake git golang libtool ninja-build pkg-config ruby libatomic-static libstdc++-static sed unzip which libicu-devel 'perl(Math::BigInt)'
-```
+  ```
+</details>
 
-```bash#openSUSE Tumbleweed
+<details>
+  <summary>openSUSE Tumbleweed</summary>
+
+  ```bash
 $ sudo zypper install go cmake ninja automake git icu rustup
-```
-
-{% /codetabs %}
+  ```
+</details>
 
 Bun is written in Rust and requires a specific nightly toolchain (pinned in [`rust-toolchain.toml`](/rust-toolchain.toml)). Install Rust via [rustup](https://rustup.rs) rather than your distro's `rust`/`cargo` packages — the build scripts use rustup to automatically install and update the pinned nightly:
 
@@ -52,22 +68,30 @@ $ curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 
 Before starting, you will need to already have a release build of Bun installed, as we use our bundler to transpile and minify our code, as well as for code generation scripts.
 
-{% codetabs %}
+<details>
+  <summary>Native</summary>
 
-```bash#Native
+  ```bash
 $ curl -fsSL https://bun.com/install | bash
-```
+  ```
+</details>
 
-```bash#npm
+<details>
+  <summary>npm</summary>
+
+  ```bash
 $ npm install -g bun
-```
+  ```
+</details>
 
-```bash#Homebrew
+<details>
+  <summary>Homebrew</summary>
+
+  ```bash
 $ brew tap oven-sh/bun
 $ brew install bun
-```
-
-{% /codetabs %}
+  ```
+</details>
 
 ### Optional: Install `ccache`
 
@@ -96,30 +120,46 @@ Our build scripts will automatically detect and use `ccache` if available. You c
 
 Bun requires LLVM 21.1.8 (`clang` is part of LLVM). This version is enforced by the build system — mismatching versions will cause memory allocation failures at runtime. In most cases, you can install LLVM through your system package manager:
 
-{% codetabs group="os" %}
+<details>
+  <summary>macOS (Homebrew)</summary>
 
-```bash#macOS (Homebrew)
+  ```bash
 $ brew install llvm@21
-```
+  ```
+</details>
 
-```bash#Ubuntu/Debian
+<details>
+  <summary>Ubuntu/Debian</summary>
+
+  ```bash
 $ # LLVM has an automatic installation script that is compatible with all versions of Ubuntu
 $ wget https://apt.llvm.org/llvm.sh -O - | sudo bash -s -- 21 all
-```
+  ```
+</details>
 
-```bash#Arch
+<details>
+  <summary>Arch</summary>
+
+  ```bash
 $ sudo pacman -S llvm clang lld
-```
+  ```
+</details>
 
-```bash#Fedora
+<details>
+  <summary>Fedora</summary>
+
+  ```bash
 $ sudo dnf install llvm clang lld-devel
-```
+  ```
+</details>
 
-```bash#openSUSE Tumbleweed
+<details>
+  <summary>openSUSE Tumbleweed</summary>
+
+  ```bash
 $ sudo zypper install clang21 lld21 llvm21
-```
-
-{% /codetabs %}
+  ```
+</details>
 
 If none of the above solutions apply, you will have to install it [manually](https://github.com/llvm/llvm-project/releases/tag/llvmorg-21.1.8).
 
@@ -131,20 +171,24 @@ $ which clang-21
 
 If not, run this to manually add it:
 
-{% codetabs group="os" %}
+<details>
+  <summary>macOS (Homebrew)</summary>
 
-```bash#macOS (Homebrew)
+  ```bash
 # use fish_add_path if you're using fish
 # use path+="$(brew --prefix llvm@21)/bin" if you are using zsh
 $ export PATH="$(brew --prefix llvm@21)/bin:$PATH"
-```
+  ```
+</details>
 
-```bash#Arch
+<details>
+  <summary>Arch</summary>
+
+  ```bash
 # use fish_add_path if you're using fish
 $ export PATH="$PATH:/usr/lib/llvm21/bin"
-```
-
-{% /codetabs %}
+  ```
+</details>
 
 > ⚠️ Ubuntu distributions (<= 20.04) may require installation of the C++ standard library independently. See the [troubleshooting section](#span-file-not-found-on-ubuntu) for more information.
 

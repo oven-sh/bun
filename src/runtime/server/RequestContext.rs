@@ -71,7 +71,7 @@ type ResponseStreamJSSink<const SSL_ENABLED: bool> =
 /// It costs about 655,632 bytes.
 // Capacity 0 when heap-breakdown is enabled routes every allocation through
 // the fallback heap path so the per-type malloc zones can attribute them.
-const REQUEST_CONTEXT_POOL_CAPACITY: usize = if bun_alloc::heap_breakdown::ENABLED {
+pub(crate) const REQUEST_CONTEXT_POOL_CAPACITY: usize = if bun_alloc::heap_breakdown::ENABLED {
     0
 } else {
     2048
@@ -102,7 +102,7 @@ pub(crate) enum UpgradeState {
 /// type tag into the low bits of a pointer to this.
 #[repr(align(16))]
 pub struct RequestContext<
-    ThisServer,
+    ThisServer: 'static,
     const SSL_ENABLED: bool,
     const DEBUG_MODE: bool,
     const MUX: bool,
@@ -110,7 +110,7 @@ pub struct RequestContext<
     /// BACKREF to the embedding `Server` — the server owns this request
     /// context (allocated from its `HiveArray` pool) and outlives it, so the
     /// pointee is live for the holder's entire lifetime. `None` once detached.
-    pub(crate) server: Cell<Option<bun_ptr::BackRef<ThisServer, bun_ptr::Mut>>>,
+    pub(crate) server: Cell<Option<bun_ptr::BackRef<ThisServer, bun_ptr::Root>>>,
     pub(crate) resp: Cell<Option<uws::AnyResponse>>,
     pub(crate) req: Cell<Option<*mut Req<SSL_ENABLED, MUX>>>,
     pub(crate) request_weakref: JsCell<request::WeakRef>,
@@ -139,6 +139,10 @@ pub struct RequestContext<
     // here would root the Response unconditionally and change GC behavior.
     pub(crate) response_jsvalue: Cell<JSValue>,
     root: Cell<*mut Self>,
+    /// This context's own pool slot; dropping it (in `deinit`) frees `self`.
+    pub(crate) pool_slot: Cell<
+        Option<bun_collections::hive_array::Pooled<'static, Self, REQUEST_CONTEXT_POOL_CAPACITY>>,
+    >,
     pub(crate) ref_count: Cell<u8>,
     pub(crate) pin_count: Cell<u8>,
 
@@ -227,7 +231,7 @@ where
     pub(crate) fn dev_server(&self) -> Option<&crate::bake::DevServer::DevServer> {
         let server = self.server.get()?;
         // SAFETY: BACKREF — the server outlives every context it allocates.
-        unsafe { &*server.as_ptr() }.dev_server()
+        unsafe { &*server.as_const_ptr() }.dev_server()
     }
 }
 
@@ -578,7 +582,7 @@ where
                 .server
                 .get()
                 .expect("infallible: server bound")
-                .as_ptr()
+                .as_const_ptr()
         }
     }
 
@@ -984,10 +988,8 @@ where
         }
 
         if let Some(server) = self.server.take() {
-            server.release_request_context(self.as_ctx_ptr().cast::<c_void>(), MUX);
-            // SAFETY: `&mut` through the backref — the server outlives this
-            // context and no other borrow of it is live here.
-            unsafe { (*server.as_ptr()).on_request_complete() };
+            drop(self.pool_slot.take());
+            server.on_request_complete();
         }
     }
 
@@ -1403,28 +1405,28 @@ where
         }
     }
 
-    pub(crate) fn create(
-        this: &mut core::mem::MaybeUninit<Self>,
-        server: *mut ThisServer,
+    // Inlined so the value is built directly in the pool slot.
+    #[inline(always)]
+    pub(crate) fn init(
+        slot: NonNull<Self>,
+        server: bun_ptr::BackRef<ThisServer, bun_ptr::Root>,
         req: *mut Req<SSL_ENABLED, MUX>,
         resp: uws::AnyResponse,
         should_deinit_context: Option<DeferDeinitFlag>,
         method: Option<Method>,
-    ) {
+    ) -> Self {
         let resolved_method = method
             .or_else(|| Method::which(Self::req_method(req)))
             .unwrap_or(Method::GET);
-        let slot: *mut Self = this.as_mut_ptr();
-        // SAFETY: writing to MaybeUninit slot
-        unsafe {
-            slot.write(Self {
-                root: Cell::new(slot),
+        ctx_log!("create<d> ({:p})<r>", slot);
+        {
+            Self {
+                root: Cell::new(slot.as_ptr()),
+                pool_slot: Cell::new(None),
                 resp: Cell::new(Some(resp)),
                 req: Cell::new(Some(req)),
                 method: resolved_method,
-                server: Cell::new(
-                    NonNull::new(server).map(|p| bun_ptr::BackRef::from_raw_mut(p.as_ptr())),
-                ),
+                server: Cell::new(Some(server)),
                 defer_deinit_until_callback_completes: Cell::new(should_deinit_context),
                 range: RangeRequest::raw_from_request(&Self::any_request(req)),
                 request_weakref: JsCell::new(request::WeakRef::EMPTY),
@@ -1450,10 +1452,8 @@ where
                 response_buf_owned: JsCell::new(Vec::new()),
                 additional_on_abort: JsCell::new(None),
                 promise_cell: Cell::new(JSValue::ZERO),
-            });
+            }
         }
-
-        ctx_log!("create<d> ({:p})<r>", this.as_ptr());
     }
 
     fn on_abort(this: *mut Self, resp: uws::AnyResponse) {
@@ -1501,7 +1501,7 @@ where
         }
 
         if let Some(request) = this.request_mut() {
-            request.request_context = AnyRequestContext::NULL;
+            request.request_context.set(AnyRequestContext::NULL);
             this.request_weakref.set(request::WeakRef::EMPTY);
         }
         // if signal is not aborted, abort the signal
@@ -1615,7 +1615,7 @@ where
         drop(self.cookies.replace(None));
 
         if let Some(request) = self.request_mut() {
-            request.request_context = AnyRequestContext::NULL;
+            request.request_context.set(AnyRequestContext::NULL);
             self.request_weakref.set(request::WeakRef::EMPTY);
         }
 
@@ -2355,7 +2355,7 @@ where
     fn to_async_without_abort_handler(
         &self,
         req: *mut Req<SSL_ENABLED, MUX>,
-        request_object: &mut Request,
+        request_object: &Request,
     ) {
         debug_assert!(self.server.get().is_some());
 
@@ -2367,6 +2367,7 @@ where
             // type is `uws::Request`, so the cast is nominal.
             request_object
                 .request_context
+                .get()
                 .set_request(req.cast::<uws::Request>());
         }
 
@@ -2384,10 +2385,10 @@ where
 
         // This object dies after the stack frame is popped
         // so we have to clear it in here too
-        request_object.request_context.detach_request();
+        request_object.request_context.get().detach_request();
     }
 
-    pub(crate) fn to_async(&self, req: *mut Req<SSL_ENABLED, MUX>, request_object: &mut Request) {
+    pub(crate) fn to_async(&self, req: *mut Req<SSL_ENABLED, MUX>, request_object: &Request) {
         ctx_log!("toAsync");
         self.to_async_without_abort_handler(req, request_object);
         if DEBUG_MODE {
@@ -4580,17 +4581,29 @@ request_ctx_exports! {
         Bun__HTTPRequestContextDebugMuxTLS__onRejectStream;
 }
 
-struct StreamPair<'a, ThisServer, const SSL: bool, const DBG: bool, const MUX: bool> {
+struct StreamPair<'a, ThisServer: 'static, const SSL: bool, const DBG: bool, const MUX: bool> {
     pub this: &'a RequestContext<ThisServer, SSL, DBG, MUX>,
     pub stream: WebCore::ReadableStream,
 }
 
-struct HeaderResponseSizePair<'a, ThisServer, const SSL: bool, const DBG: bool, const MUX: bool> {
+struct HeaderResponseSizePair<
+    'a,
+    ThisServer: 'static,
+    const SSL: bool,
+    const DBG: bool,
+    const MUX: bool,
+> {
     pub this: &'a RequestContext<ThisServer, SSL, DBG, MUX>,
     pub(crate) size: usize,
 }
 
-struct HeaderResponsePair<'a, ThisServer, const SSL: bool, const DBG: bool, const MUX: bool> {
+struct HeaderResponsePair<
+    'a,
+    ThisServer: 'static,
+    const SSL: bool,
+    const DBG: bool,
+    const MUX: bool,
+> {
     pub this: &'a RequestContext<ThisServer, SSL, DBG, MUX>,
     /// The JS wrapper's cell pointer, not a `&mut Response`: the receiving
     /// frame hands it to `set_response`, which stores it in a `WeakPtr` that
@@ -4598,7 +4611,8 @@ struct HeaderResponsePair<'a, ThisServer, const SSL: bool, const DBG: bool, cons
     pub(crate) response: *mut Response,
 }
 
-struct PathnameFormatter<'a, ThisServer, const SSL: bool, const DBG: bool, const MUX: bool> {
+struct PathnameFormatter<'a, ThisServer: 'static, const SSL: bool, const DBG: bool, const MUX: bool>
+{
     ctx: &'a RequestContext<ThisServer, SSL, DBG, MUX>,
 }
 

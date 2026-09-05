@@ -238,13 +238,19 @@ impl AnyRequestContext {
     /// JS thread.
     pub(crate) fn dev_server_mut(self) -> Option<*mut crate::bake::DevServer::DevServer> {
         dispatch!(self, None, |_T, ctx| {
-            let server = ctx.server.get()?.as_ptr();
-            // SAFETY: `ctx.server` is a non-null backref that outlives this context
-            // and `dev_server` is a `Box` field never moved while requests are in
-            // flight, so dereferencing for exclusive access on the JS thread is sound.
-            let ds = unsafe { (*server).dev_server.as_deref_mut()? };
+            let server = ctx.server.get()?;
+            // SAFETY: `dev_server` is a `Box` field never moved while requests
+            // are in flight, so dereferencing the slot for exclusive access on
+            // the JS thread is sound.
+            let ds = unsafe { (*server.dev_server.as_ptr()).as_deref_mut()? };
             Some(core::ptr::from_mut(ds))
         })
+    }
+
+    /// The context behind this handle if it is a `T`.
+    pub(crate) fn get_ref<T: CtxKind + 'static>(&self) -> Option<&T> {
+        dispatch!(*self, None, |_T, ctx| (ctx as &dyn core::any::Any)
+            .downcast_ref::<T>())
     }
 
     pub fn deref(self) {

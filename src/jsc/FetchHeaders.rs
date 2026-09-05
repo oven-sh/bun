@@ -303,6 +303,102 @@ impl FetchHeaders {
     }
 }
 
+/// RAII handle to a C++-owned `WebCore::FetchHeaders`.
+///
+/// Holds exactly one ref on the C++ intrusive refcount; `Drop` releases it via
+/// `WebCore__FetchHeaders__deref`. NOT a `std::rc::Rc` (the payload lives on
+/// the C++ heap and is opaque here).
+///
+/// Intentionally not `Clone`: the only "share" operation the surface
+/// exposes is `clone_this()`, which deep-copies a fresh `FetchHeaders` on the
+/// C++ side. Transferring ownership is by-move.
+#[repr(transparent)]
+pub struct HeadersRef(NonNull<FetchHeaders>);
+
+impl HeadersRef {
+    /// Adopt a freshly-created `FetchHeaders*` (refcount already 1).
+    ///
+    /// # Safety
+    /// `ptr` must be a valid `WebCore::FetchHeaders*` and the caller must
+    /// transfer ownership of one ref.
+    #[inline]
+    pub unsafe fn adopt(ptr: NonNull<FetchHeaders>) -> Self {
+        Self(ptr)
+    }
+
+    #[inline]
+    pub fn as_ptr(&self) -> *mut FetchHeaders {
+        self.0.as_ptr()
+    }
+
+    /// `FetchHeaders.createEmpty()` — fresh C++ allocation, refcount 1.
+    #[inline]
+    pub fn create_empty() -> Self {
+        Self(FetchHeaders::create_empty())
+    }
+
+    /// `FetchHeaders.createFromUWS(req)` — fresh C++ allocation, refcount 1.
+    #[inline]
+    pub fn create_from_uws(uws_request: *mut c_void) -> Self {
+        Self(FetchHeaders::create_from_uws(uws_request))
+    }
+
+    /// `FetchHeaders.createFromH3(req)` — fresh C++ allocation, refcount 1.
+    #[inline]
+    pub fn create_from_h3(h3_request: *mut c_void) -> Self {
+        Self(FetchHeaders::create_from_h3(h3_request))
+    }
+
+    /// `FetchHeaders.createFromJS(global, value)` — may throw, may return null.
+    #[inline]
+    pub fn create_from_js(global: &JSGlobalObject, value: JSValue) -> JsResult<Option<Self>> {
+        Ok(FetchHeaders::create_from_js(global, value)?.map(Self))
+    }
+
+    /// `FetchHeaders.cloneThis(global)` — deep copy on the C++ side.
+    #[inline]
+    pub fn clone_this(&self, global: &JSGlobalObject) -> JsResult<Option<Self>> {
+        bun_opaque::opaque_deref_mut(self.0.as_ptr()).clone_this_ref(global)
+    }
+}
+
+impl FetchHeaders {
+    /// [`clone_this`](Self::clone_this), owning the copy.
+    #[inline]
+    pub fn clone_this_ref(&mut self, global: &JSGlobalObject) -> JsResult<Option<HeadersRef>> {
+        Ok(self.clone_this(global)?.map(HeadersRef))
+    }
+}
+
+impl core::ops::Deref for HeadersRef {
+    type Target = FetchHeaders;
+    #[inline]
+    fn deref(&self) -> &FetchHeaders {
+        // `FetchHeaders` is an opaque ZST FFI handle (S008); `self.0` is live
+        // for the lifetime of `self` — safe `*const → &` via `opaque_deref`.
+        bun_opaque::opaque_deref(self.0.as_ptr())
+    }
+}
+
+impl core::ops::DerefMut for HeadersRef {
+    #[inline]
+    fn deref_mut(&mut self) -> &mut FetchHeaders {
+        // `FetchHeaders` is an opaque ZST FFI handle (S008); `self.0` is live
+        // for the lifetime of `self` — safe `*mut → &mut` via `opaque_deref_mut`.
+        bun_opaque::opaque_deref_mut(self.0.as_ptr())
+    }
+}
+
+impl Drop for HeadersRef {
+    #[inline]
+    fn drop(&mut self) {
+        // `self.0` is live; releasing our +1 ref via WebCore__FetchHeaders__deref.
+        // Explicit UFCS to avoid `core::ops::Deref::deref` resolution ambiguity.
+        // `FetchHeaders` is an opaque ZST FFI handle (S008) — safe deref.
+        FetchHeaders::deref(bun_opaque::opaque_deref_mut(self.0.as_ptr()));
+    }
+}
+
 // Canonical enum lives in `bun_http_types::Method::HeaderName` (same 92
 // `#[repr(u8)]` discriminants mirroring WebCore's `HTTPHeaderNames.in`). The
 // `WebCore__FetchHeaders__put` extern decl above and the `fast_*` methods take

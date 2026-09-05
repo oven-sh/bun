@@ -459,9 +459,10 @@ pub(crate) fn run_task(
 
         // ── server / bundler / streams ───────────────────────────────────
         task_tag::ServerAllConnectionsClosedTask => {
-            ServerAllConnectionsClosedTask::run_from_js_thread(cast_ptr!(
-                ServerAllConnectionsClosedTask
-            ))?;
+            // SAFETY: `ServerAllConnectionsClosedTask::schedule` boxed it; the arm consumes the box.
+            ServerAllConnectionsClosedTask::run_from_js_thread(*unsafe {
+                bun_core::heap::take(cast_ptr!(ServerAllConnectionsClosedTask))
+            })?;
         }
         task_tag::BundleV2DeferredBatchTask => {
             // `bun_bundler` is JSC-free so the exception-scope check is hoisted
@@ -1270,7 +1271,10 @@ fn __bun_release_task_unrun(task: bun_event_loop::Task) {
         task_tag::S3HttpDownloadStreamingTask => release!(S3HttpDownloadStreamingTask),
         task_tag::S3HttpSimpleTask => release!(S3HttpSimpleTask),
         task_tag::SendQueueDeferred => release!(crate::ipc::SendQueue),
-        task_tag::ServerAllConnectionsClosedTask => release!(ServerAllConnectionsClosedTask),
+        task_tag::ServerAllConnectionsClosedTask => ServerAllConnectionsClosedTask::release_unrun(
+            // SAFETY: as `release!`; `schedule` boxed it.
+            *unsafe { bun_core::heap::take(task.ptr.cast::<ServerAllConnectionsClosedTask>()) },
+        ),
         task_tag::ShellAsync => release!(crate::shell::dispatch_tasks::ShellAsyncTask),
         task_tag::ShellCondExprStatTask => release!(ShellCondExprStatTask),
         task_tag::ShellCpTask => release!(ShellCpTask),

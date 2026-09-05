@@ -394,14 +394,13 @@ unsafe fn init_runtime_state(
             // `HiveArray::new_boxed`). Allocate it on the heap and initialize it in
             // place instead — only the occupancy bitset is written.
             let pool = crate::webcore::body::HiveAllocator::new_boxed();
-            // SAFETY: `new_boxed` leaks a `Box<HiveAllocator>`; reclaim ownership of
-            // that same allocation. `ManuallyDrop` is `repr(transparent)`, so
+            // SAFETY: re-box the same allocation. `ManuallyDrop` is `repr(transparent)`, so
             // `Box<ManuallyDrop<T>>` and `Box<T>` have identical layout — the wrapper
             // only suppresses the inner drop, which is the behavior documented on the
             // field.
             unsafe {
                 Box::from_raw(
-                    pool.as_ptr()
+                    Box::into_raw(pool)
                         .cast::<core::mem::ManuallyDrop<crate::webcore::body::HiveAllocator>>(),
                 )
             }
@@ -1776,7 +1775,7 @@ fn stop_active_handles(vm: &mut VirtualMachine, reason: StopReason) -> SweepResu
             // registered entry implies `close()` has not run, and `deinit`
             // cannot fire before `close()` drops the wrapper's Strong ref.
             ActiveHandle::StatWatcher(w) => bun_ptr::ParentRef::from(w).close(),
-            ActiveHandle::Server(mut s) => s.stop(true),
+            ActiveHandle::Server(s) => s.stop(true),
             ActiveHandle::Listener(l) => {
                 // SAFETY: live until it unregisters in `do_stop`/`finalize`.
                 crate::socket::Listener::stop_for_vm_teardown(unsafe { l.as_ref() })

@@ -1267,11 +1267,11 @@ impl DevServer {
     /// Returns true if a catch-all handler was attached.
     pub(crate) fn set_routes<const SSL: bool, const DEBUG: bool>(
         &mut self,
-        server: &mut crate::server::NewServer<SSL, DEBUG>,
+        server: &crate::server::NewServer<SSL, DEBUG>,
     ) -> crate::Result<bool> {
         // TODO: all paths here must be prefixed with publicPath if set.
         self.server = Some(AnyServer::from(server));
-        let app = server.app.unwrap();
+        let app = server.app_ptr().expect("server app is live");
         let dev = std::ptr::from_mut::<Self>(self).cast::<c_void>();
 
         // The ZST-fn-item trampoline pattern used by
@@ -1314,13 +1314,17 @@ impl DevServer {
         );
         route!(any, INTERNAL_PREFIX.as_bytes(), DevHandlerId::NotFound);
 
-        // SAFETY: see `route!` — statement-scoped reborrow of the live app.
-        unsafe { &mut *app }.ws(
-            const_format::concatcp!(INTERNAL_PREFIX, "/hmr").as_bytes(),
-            dev,
-            0,
-            hmr_socket_behavior::<SSL>(),
-        );
+        // SAFETY: see `route!` — statement-scoped reborrow of the live app;
+        // `dev` is this `DevServer`, the `hmr_socket_behavior` upgrade server,
+        // which outlives the route (routes are cleared before it drops).
+        unsafe {
+            (*app).ws(
+                const_format::concatcp!(INTERNAL_PREFIX, "/hmr").as_bytes(),
+                dev,
+                0,
+                hmr_socket_behavior::<SSL>(),
+            )
+        };
 
         // Only attach a catch-all handler if the framework has filesystem
         // router types. Otherwise, this can just be Bun.serve's default handler.
@@ -1604,50 +1608,43 @@ impl bun_uws_sys::web_socket::WebSocketHandler for HmrSocket {
     unsafe fn on_pong(_this: *mut Self, _ws: bun_uws_sys::AnyWebSocket, _message: &[u8]) {}
 }
 impl<const SSL: bool> bun_uws_sys::web_socket::WebSocketUpgradeServer<SSL> for DevServer {
-    unsafe fn on_websocket_upgrade(
-        this: *mut Self,
-        res: *mut bun_uws_sys::NewAppResponse<SSL>,
+    fn on_websocket_upgrade(
+        this: bun_ptr::ThisPtr<Self>,
+        res: &mut bun_uws_sys::NewAppResponse<SSL>,
         req: &mut Request,
         upgrade_ctx: &mut WebSocketUpgradeContext,
         id: usize,
     ) {
         debug_assert_eq!(id, 0);
+        let this: *mut Self = this.as_ptr();
         // Note: DevServer always registers `*mut Self` with `id == 0`
         // (`set_routes` → `app.ws(prefix, this, 0, ..)`); live for the upgrade
         // callback's duration. `res.upgrade(..)` synchronously runs `on_open`
         // → `HmrSocket::dev()`, which materializes a second `&mut DevServer`
         // from the socket's backref, so no `&mut DevServer` may span it — the
-        // pre-upgrade borrows below are scoped to their statements. uWS
-        // guarantees `res` is non-null and live for the upgrade callback
-        // (`Response<SSL>` is an opaque handle); every `&mut *res` below is
-        // likewise statement-scoped.
+        // pre-upgrade borrows below are scoped to their statements.
         //
         // SAFETY: `this` is the live DevServer registered for the upgrade callback.
         if !is_allowed_dev_host(unsafe { &*this }, req) {
-            // SAFETY: `res` is live for this callback (see Note above).
-            host_forbidden(unsafe { &mut *res }.as_any_response());
+            host_forbidden(res.as_any_response());
             return;
         }
         if !is_allowed_dev_origin(req) {
-            // SAFETY: `res` is live for this callback (see Note above).
-            origin_forbidden(unsafe { &mut *res }.as_any_response());
+            origin_forbidden(res.as_any_response());
             return;
         }
         // SAFETY: as above; the borrow is statement-scoped, ending before `upgrade`.
         let dw = bun_core::heap::into_raw(HmrSocket::new(unsafe { &mut *this }));
         // SAFETY: `this` is live (see above).
         let _ = unsafe { (*this).active_websocket_connections.insert(dw, ()) };
-        // SAFETY: `res` is live for this callback (see Note above); `on_open`
-        // (run synchronously inside `upgrade`) re-derives DevServer, not `res`.
-        let _ = unsafe {
-            (&mut *res).upgrade(
-                dw,
-                req.header(b"sec-websocket-key").unwrap_or(b""),
-                req.header(b"sec-websocket-protocol").unwrap_or(b""),
-                req.header(b"sec-websocket-extension").unwrap_or(b""),
-                Some(upgrade_ctx),
-            )
-        };
+        // `on_open` (run synchronously inside `upgrade`) re-derives DevServer, not `res`.
+        let _ = res.upgrade(
+            dw,
+            req.header(b"sec-websocket-key").unwrap_or(b""),
+            req.header(b"sec-websocket-protocol").unwrap_or(b""),
+            req.header(b"sec-websocket-extension").unwrap_or(b""),
+            Some(upgrade_ctx),
+        );
     }
 }
 
@@ -1965,7 +1962,7 @@ fn ensure_route_is_bundled<Ctx: EnsureRouteCtx>(
                                     .as_ref()
                                     .expect("infallible: server bound")
                                     .get_or_load_plugins(
-                                        crate::server::ServePluginsCallback::DevServer(dev),
+                                        crate::server::ServePluginsCallback::DevServer,
                                     );
                                 match load_result {
                                     crate::server::GetOrStartLoadResult::Pending => {
@@ -2589,10 +2586,10 @@ impl DevServer {
             let url_bunstr = match &req {
                 // SAFETY: r is a uws Request ptr valid for the duration of the handler callback
                 SavedRequestUnion::Stack(r) => bun_core::StringView::borrow_utf8((**r).url()),
-                SavedRequestUnion::Saved(data) => {
-                    // SAFETY: data.request is a live *mut webcore::Request (held strong by ctx)
-                    bun_core::StringView::new(unsafe { (*data.request).url.get() })
-                }
+                SavedRequestUnion::Saved(data) => match data.request() {
+                    Some(r) => bun_core::StringView::new(r.url.get()),
+                    None => bun_core::StringView::EMPTY,
+                },
             };
             let url = url_bunstr.to_utf8();
             // Extract pathname from URL (remove protocol, host, query, hash)
@@ -3072,8 +3069,11 @@ impl DeferredRequest {
             Handler::ServerHandler(saved) => {
                 deferred_request::debug_log_dr!(
                     "  request url: {}",
-                    // SAFETY: saved.request is a live *mut webcore::Request (held strong by ctx)
-                    bstr::BStr::new(unsafe { (*saved.request).url.get() }.byte_slice())
+                    bstr::BStr::new(
+                        saved
+                            .request()
+                            .map_or(&b""[..], |r| r.url.get().byte_slice())
+                    )
                 );
                 saved
                     .ctx
@@ -6510,7 +6510,7 @@ fn bundle_new_route_js_function_impl(
 
     // SAFETY: request_ptr is a *bun.webcore.Request from C++
     let request: &mut WebRequest = unsafe { &mut *request_ptr.cast::<WebRequest>() };
-    let Some(dev) = request.request_context.dev_server() else {
+    let Some(dev) = request.request_context.get().dev_server() else {
         return Err(global.throw(format_args!(
             "Request context does not belong to dev server"
         )));
@@ -6536,7 +6536,7 @@ fn bundle_new_route_js_function_impl(
     let _exit = dev.vm().enter_event_loop_scope();
 
     let _ = dev;
-    let Some(dev_ptr) = request.request_context.dev_server_mut() else {
+    let Some(dev_ptr) = request.request_context.get().dev_server_mut() else {
         return Err(global.throw(format_args!(
             "Request context does not belong to dev server"
         )));
@@ -6650,7 +6650,7 @@ fn new_route_params_for_bundle_promise_for_js(
     };
     // SAFETY: `from_js` returned a live native pointer; JS holds the GC ref.
     let request: &mut WebRequest = unsafe { &mut *request_ptr };
-    let Some(dev_ptr) = request.request_context.dev_server_mut() else {
+    let Some(dev_ptr) = request.request_context.get().dev_server_mut() else {
         return Err(global.throw(format_args!(
             "Request context does not belong to dev server"
         )));

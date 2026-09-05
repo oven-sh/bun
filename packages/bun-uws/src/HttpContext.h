@@ -387,7 +387,6 @@ private:
         /* Mark that we are inside the parser now. Save/restore the parsed
          * socket: node:http's read replay can nest a parse inside another
          * socket's dispatch. */
-        httpContextData->flags.isParsingHttp = true;
         struct us_socket_t *prevParsingSocket = httpContextData->parsingSocket;
         httpContextData->parsingSocket = s;
         httpResponseData->isIdle = false;
@@ -635,7 +634,6 @@ private:
         auto httpErrorStatusCode = result.httpErrorStatusCode();
 
         /* Mark that we are no longer parsing Http */
-        httpContextData->flags.isParsingHttp = false;
         httpContextData->parsingSocket = prevParsingSocket;
         /* If we got fullptr that means the parser wants us to close the socket from error (same as calling the errorHandler) */
         if (httpErrorStatusCode) {

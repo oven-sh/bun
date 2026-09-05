@@ -271,6 +271,12 @@ impl JSPromise {
         JSC__JSPromise__setHandled(self)
     }
 
+    /// Spec `PromiseResolve(%Promise%, value)`, what `await value` waits on. `None`: not a thenable.
+    pub fn awaitable(global: &JSGlobalObject, value: JSValue) -> JsResult<Option<&mut JSPromise>> {
+        let promise = crate::cpp::JSC__JSPromise__awaitable(global, value)?;
+        Ok((!promise.is_null()).then(|| JSPromise::opaque_mut(promise)))
+    }
+
     /// Create a new resolved promise resolving to a given value.
     ///
     /// Note: If you want the result as a `JSValue`, use `resolved_promise_value` instead.

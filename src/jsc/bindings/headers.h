@@ -120,6 +120,7 @@ CPP_DECL void WebCore__AbortSignal__unref(WebCore::AbortSignal* arg0);
 #pragma mark - JSC::JSPromise
 
 CPP_DECL JSC::EncodedJSValue JSC__JSPromise__asValue(JSC::JSPromise* arg0, JSC::JSGlobalObject* arg1);
+CPP_DECL JSC::JSPromise* JSC__JSPromise__awaitable(JSC::JSGlobalObject* arg0, JSC::EncodedJSValue JSValue1);
 CPP_DECL JSC::JSPromise* JSC__JSPromise__create(JSC::JSGlobalObject* arg0);
 CPP_DECL void JSC__JSPromise__reject(JSC::JSPromise* arg0, JSC::JSGlobalObject* arg1, JSC::EncodedJSValue JSValue2);
 CPP_DECL void JSC__JSPromise__rejectAsHandled(JSC::JSPromise* arg0, JSC::JSGlobalObject* arg1, JSC::EncodedJSValue JSValue2);

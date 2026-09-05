@@ -4027,6 +4027,27 @@ JSC::JSPromise* JSC__JSPromise__resolvedPromise(JSC::JSGlobalObject* globalObjec
     promise->markAsHandled();
 }
 
+// Spec PromiseResolve(%Promise%, value), the coercion `await` applies. nullptr: not a thenable.
+[[ZIG_EXPORT(check_slow)]] JSC::JSPromise* JSC__JSPromise__awaitable(JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue encodedValue)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSC::JSValue value = JSC::JSValue::decode(encodedValue);
+    if (!value.isObject())
+        return nullptr;
+    JSC::JSPromise* promise = JSC::JSPromise::resolvedPromise(globalObject, value);
+    RETURN_IF_EXCEPTION(scope, nullptr);
+    ASSERT(promise);
+    if (JSC::JSValue(promise) == value)
+        return promise;
+    // The caller observes the adopter; a `then` getter that threw already rejected it.
+    promise->markAsHandled();
+    // `then` is not callable: the value itself is the outcome.
+    if (promise->status() == JSC::JSPromise::Status::Fulfilled)
+        return nullptr;
+    return promise;
+}
+
 #pragma mark - JSC::JSInternalPromise (now aliased to JSPromise)
 
 JSC::JSPromise* JSC__JSInternalPromise__create(JSC::JSGlobalObject* globalObject)

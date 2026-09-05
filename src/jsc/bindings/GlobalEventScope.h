@@ -30,11 +30,6 @@ public:
     using RefCounted::deref;
     using RefCounted::ref;
 
-    static Ref<GlobalEventScope> create(ScriptExecutionContext* context)
-    {
-        return adoptRef(*new GlobalEventScope(context));
-    }
-
     ~GlobalEventScope() = default;
 
     EventTargetInterface eventTargetInterface() const final { return EventTargetInterface::DOMWindowEventTargetInterfaceType; }

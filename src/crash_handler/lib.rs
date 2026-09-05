@@ -577,13 +577,6 @@ mod draft {
     /// The counter is incremented/decremented atomically.
     /// Shared with bun_core::PANICKING so T0 callers see the same state.
     use bun_core::PANICKING;
-    // D131: dedup — these read the shared `PANICKING` atomic and were byte-identical
-    // to the bun_core (T0) copies. Re-export so `bun_crash_handler::{is_panicking,
-    // sleep_forever_if_another_thread_is_crashing}` keeps resolving for any
-    // out-of-tree callers. `dump_current_stack_trace` is intentionally NOT deduped:
-    // the bun_core version is an `extern "Rust"` dispatch shim, this crate's is the
-    // real impl (linked via `__bun_crash_handler_dump_stack_trace`).
-    pub use bun_core::{is_panicking, sleep_forever_if_another_thread_is_crashing};
 
     // Locked to avoid interleaving panic messages from multiple threads.
     // TODO: I don't think it's safe to lock/unlock a mutex inside a signal handler.

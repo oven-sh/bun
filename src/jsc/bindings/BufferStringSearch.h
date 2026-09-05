@@ -24,7 +24,6 @@ public:
     }
 
     size_t length() const { return length_; }
-    bool forward() const { return is_forward_; }
 
     T operator[](size_t index) const
     {

@@ -12,7 +12,6 @@
 namespace Inspector {
 
 class FrontendRouter;
-class BackendDispatcher;
 class LifecycleReporterFrontendDispatcher;
 enum class DisconnectReason;
 

@@ -917,9 +917,6 @@ unsafe extern "C" {
         cb: Option<unsafe extern "C" fn(ssl: *const SSL, line: *const c_char)>,
     );
     pub fn SSL_CTX_set_early_data_enabled(ctx: *mut SSL_CTX, enabled: c_int);
-    pub fn SSL_get_SSL_CTX(ssl: *const SSL) -> *mut SSL_CTX;
-    pub fn SSL_get_ex_data(ssl: *const SSL, idx: c_int) -> *mut c_void;
-    pub fn SSL_set_ex_data(ssl: *mut SSL, idx: c_int, data: *mut c_void) -> c_int;
     pub fn SSL_set_tlsext_host_name(ssl: *mut SSL, name: *const c_char) -> c_int;
     pub fn SSL_set_alpn_protos(ssl: *mut SSL, protos: *const u8, protos_len: usize) -> c_int;
     pub fn SSL_get0_alpn_selected(ssl: *const SSL, out_data: *mut *const u8, out_len: *mut c_uint);

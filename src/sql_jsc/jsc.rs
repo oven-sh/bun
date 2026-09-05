@@ -639,7 +639,6 @@ pub mod codegen {
             target
         }
     );
-    pub use js_mysql_query as JSMySQLQuery;
 }
 
 // ──────────────────────────────────────────────────────────────────────────

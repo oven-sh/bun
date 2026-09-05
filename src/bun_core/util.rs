@@ -3420,7 +3420,6 @@ pub trait Integer: Copy + Default {
     fn from_f64(v: f64) -> Self;
     fn from_i64(v: i64) -> Self;
     fn from_u64(v: u64) -> Self;
-    fn to_f64(self) -> f64;
 }
 macro_rules! impl_integer {
     ($($t:ty: $signed:expr),* $(,)?) => { $(
@@ -3433,7 +3432,6 @@ macro_rules! impl_integer {
             #[inline] fn from_f64(v: f64) -> Self { v as Self }
             #[inline] fn from_i64(v: i64) -> Self { v as Self }
             #[inline] fn from_u64(v: u64) -> Self { v as Self }
-            #[inline] fn to_f64(self) -> f64 { self as f64 }
         }
     )* };
 }
@@ -3450,8 +3448,6 @@ pub trait NativeEndianInt: Copy + 'static {
     const SIZE: usize;
     /// Reinterpret `b[..SIZE]` as `Self` (native endian).
     fn from_ne_slice(b: &[u8]) -> Self;
-    /// Write `self.to_ne_bytes()` into `out[..SIZE]`.
-    fn encode_ne(self, out: &mut [u8]);
 }
 
 macro_rules! impl_native_endian_int {
@@ -3463,10 +3459,6 @@ macro_rules! impl_native_endian_int {
                 let mut a = [0u8; core::mem::size_of::<$t>()];
                 a.copy_from_slice(&b[..core::mem::size_of::<$t>()]);
                 <$t>::from_ne_bytes(a)
-            }
-            #[inline]
-            fn encode_ne(self, out: &mut [u8]) {
-                out[..core::mem::size_of::<$t>()].copy_from_slice(&self.to_ne_bytes());
             }
         }
     )*};
@@ -5464,5 +5456,3 @@ pub mod form_data {
         }
     }
 }
-/// `bun.FormData` — capitalized namespace alias.
-pub use form_data as FormData;

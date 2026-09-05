@@ -14,26 +14,22 @@ public:
         Internal, // WebKit Internal (e.g. Media Controls)
     };
 
-    static Ref<DOMWrapperWorld> create(JSC::VM& vm, Type type = Type::Internal, const String& name = {})
+    static Ref<DOMWrapperWorld> create(JSC::VM& vm, Type type = Type::Internal)
     {
-        return adoptRef(*new DOMWrapperWorld(vm, type, name));
+        return adoptRef(*new DOMWrapperWorld(vm, type));
     }
     WEBCORE_EXPORT ~DOMWrapperWorld();
 
-    Type type() const { return m_type; }
     bool isNormal() const { return m_type == Type::Normal; }
-
-    const String& name() const { return m_name; }
 
     JSC::VM& vm() const { return m_vm; }
 
 protected:
-    DOMWrapperWorld(JSC::VM&, Type, const String& name);
+    DOMWrapperWorld(JSC::VM&, Type);
 
 private:
     JSC::VM& m_vm;
 
-    String m_name;
     Type m_type { Type::Internal };
 };
 

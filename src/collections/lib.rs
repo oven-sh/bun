@@ -26,10 +26,8 @@ pub mod linear_fifo;
 
 pub mod bit_set;
 pub mod pool;
-pub use pool::{ObjectPool, ObjectPoolType, PoolGuard};
 #[path = "StaticHashMap.rs"]
 pub mod static_hash_map;
-pub use static_hash_map::StaticHashMap;
 
 pub use bounded_array::BoundedArray;
 pub use hive_array::{

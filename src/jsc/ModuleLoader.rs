@@ -18,7 +18,6 @@ use crate::{
 // Re-exports.
 pub use crate::runtime_transpiler_store::RuntimeTranspilerStore;
 pub use bun_resolve_builtins::HardcodedModule;
-pub use bun_resolver::node_fallbacks;
 
 bun_core::declare_scope!(ModuleLoader, hidden);
 

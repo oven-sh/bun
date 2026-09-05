@@ -33,8 +33,7 @@ pub use crate::error::{
     MinifyError, MinifyErrorKind, ParseError, ParserError, PrinterError, PrinterErrorKind,
     SelectorError,
 };
-pub use crate::generics::{self as generic, implement_deep_clone, implement_hash};
-pub use crate::logical::{self, PropertyCategory};
+pub use crate::generics as generic;
 pub use crate::prefixes;
 pub use crate::printer::{self as css_printer, ImportInfo, Printer, PrinterOptions};
 pub use crate::small_list::SmallList;
@@ -54,7 +53,7 @@ pub use crate::values::{
 // expose.
 pub(crate) use crate::context::PropertyHandlerContext;
 pub use crate::declaration::{self, DeclarationBlock, DeclarationHandler, DeclarationList};
-pub use crate::media_query::{self, MediaFeatureType, MediaList};
+pub use crate::media_query::{self, MediaList};
 pub use crate::properties::{
     self as css_properties, Property, PropertyId, PropertyIdTag,
     css_modules::Composes,
@@ -70,7 +69,7 @@ pub use crate::rules::{
     unknown::UnknownAtRule,
 };
 pub use crate::selectors::{
-    parser::{Component, PseudoClass, PseudoElement, Selector, SelectorList},
+    parser::{Component, PseudoClass, Selector, SelectorList},
     selector,
 };
 pub use crate::values::ident::{CustomIdentFns, DashedIdentFns};

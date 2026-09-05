@@ -66,7 +66,6 @@ pub use signals::Signals;
 pub use thread_safe_stream_buffer::ThreadSafeStreamBuffer;
 #[path = "ssl_config.rs"]
 pub mod ssl_config;
-pub use ssl_config::SSLConfig;
 // SSLWrapper was MOVE_DOWN to bun_uws (tier 4); re-export here so
 // `crate::ssl_wrapper::SSLWrapper` resolves for ProxyTunnel/HTTPContext.
 pub use bun_uws::ssl_wrapper;

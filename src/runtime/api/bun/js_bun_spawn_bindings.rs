@@ -165,7 +165,7 @@ fn get_argv(
     argv: &mut Vec<CStrPtr>,
     storage: &mut Vec<ZBox>,
 ) -> JsResult<()> {
-    if args.is_empty_or_undefined_or_null() {
+    if !args.is_array() {
         return Err(
             global_this.throw_invalid_arguments(format_args!("cmd must be an array of strings"))
         );

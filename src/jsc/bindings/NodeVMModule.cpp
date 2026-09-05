@@ -284,9 +284,14 @@ void NodeVMModule::evaluateDependencies(JSGlobalObject* globalObject, AbstractMo
                 // promise means the dependency uses top-level await; the
                 // root record's evaluate() drives the async machinery to
                 // completion and the wrapper status reconciles lazily
-                // (reconcileEvaluationState), so a pending result is fine
-                // here.
-                UNUSED_PARAM(dependencyResult);
+                // (reconcileEvaluationState). Nothing observes this promise
+                // afterwards: a later evaluate() on the dependency re-throws
+                // the stored error, and AsyncModuleExecutionRejected delivers
+                // the same error through the importer's own capability. Mark
+                // it handled so a top-level-await rejection in the dependency
+                // is not reported as unhandled.
+                if (auto* promise = dynamicDowncast<JSPromise>(dependencyResult))
+                    promise->markAsHandled();
             }
         }
     }

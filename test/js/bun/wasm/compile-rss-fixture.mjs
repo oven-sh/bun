@@ -92,6 +92,7 @@ function makeModule({ functionCount = 35, opsPerFunction = 1400, giantOps = 3000
 }
 
 const targetMiB = Number(process.argv[2]);
+if (!Number.isFinite(targetMiB)) throw new Error(`expected the target in MiB as argv[2], got ${process.argv[2]}`);
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 const bytes = makeModule();
 Bun.gc(true);

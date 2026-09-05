@@ -3715,6 +3715,23 @@ describe("rmdir", () => {
     rmdir(join(String(dir), "missing"), { recursive: true }, resolve);
     expect(await promise).toMatchObject({ code: "ENOENT" });
   });
+  // Node 16 to 24 semantics: rmdir never honors `force`, and a file goes to the plain
+  // rmdir(2) instead of rm.
+  it("does not remove a file with recursive: true", async () => {
+    using dir = tempDir("rmdir-recursive-cb-file", { "file.txt": "x" });
+    const file = join(String(dir), "file.txt");
+    const { promise, resolve } = Promise.withResolvers<NodeJS.ErrnoException | null>();
+    rmdir(file, { recursive: true }, resolve);
+    expect(await promise).toMatchObject({ code: isWindows ? "ENOENT" : "ENOTDIR", syscall: "rmdir", path: file });
+    expect(existsSync(file)).toBe(true);
+  });
+  it("reports ENOENT for a missing path with recursive: true and force: true", async () => {
+    using dir = tempDir("rmdir-recursive-cb-force", {});
+    const missing = join(String(dir), "missing");
+    const { promise, resolve } = Promise.withResolvers<NodeJS.ErrnoException | null>();
+    rmdir(missing, { recursive: true, force: true }, resolve);
+    expect(await promise).toMatchObject({ code: "ENOENT", syscall: "lstat", path: missing });
+  });
 });
 
 describe("rmdirSync", () => {
@@ -3744,6 +3761,41 @@ describe("rmdirSync", () => {
     rmdirSync(a, { recursive: true, maxRetries: 1, retryDelay: 0 });
     expect(readdirSync(String(dir))).toEqual(["e"]);
     expect(() => rmdirSync(a, { recursive: true })).toThrow(expect.objectContaining({ code: "ENOENT" }));
+  });
+  // Node 16 to 24 semantics: rmdir never honors `force`, and a file goes to the plain
+  // rmdir(2) instead of rm.
+  it("does not remove a file with recursive: true", () => {
+    using dir = tempDir("rmdirsync-recursive-file", { "file.txt": "x" });
+    const file = join(String(dir), "file.txt");
+    expect(() => rmdirSync(file, { recursive: true })).toThrow(
+      expect.objectContaining({ code: isWindows ? "ENOENT" : "ENOTDIR", syscall: "rmdir", path: file }),
+    );
+    expect(() => rmdirSync(file, { recursive: true, force: true })).toThrow(
+      expect.objectContaining({ code: isWindows ? "ENOENT" : "ENOTDIR", syscall: "rmdir" }),
+    );
+    expect(existsSync(file)).toBe(true);
+  });
+  it("reports ENOENT for a missing path with recursive: true and force: true", () => {
+    using dir = tempDir("rmdirsync-recursive-force", {});
+    const missing = join(String(dir), "missing");
+    expect(() => rmdirSync(missing, { recursive: true, force: true })).toThrow(
+      expect.objectContaining({ code: "ENOENT", syscall: "lstat", path: missing }),
+    );
+  });
+  it("validates the options before it looks at the path with recursive: true", () => {
+    using dir = tempDir("rmdirsync-recursive-validate", { "file.txt": "x" });
+    const file = join(String(dir), "file.txt");
+    const missing = join(String(dir), "missing");
+    expect(() => rmdirSync(missing, { recursive: 1 })).toThrow(
+      expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE" }),
+    );
+    expect(() => rmdirSync(missing, { recursive: true, maxRetries: -1 })).toThrow(
+      expect.objectContaining({ code: "ERR_OUT_OF_RANGE" }),
+    );
+    expect(() => rmdirSync(file, { recursive: true, retryDelay: "1" })).toThrow(
+      expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE" }),
+    );
+    expect(existsSync(file)).toBe(true);
   });
 });
 
@@ -4934,6 +4986,35 @@ describe("fs/promises", () => {
       await rmdir(a, { recursive: true });
       expect(readdirSync(String(dir))).toEqual(["e"]);
       await expect(rmdir(a, { recursive: true })).rejects.toMatchObject({ code: "ENOENT" });
+    });
+    // Node 16 to 24 semantics: rmdir never honors `force`, and a file goes to the plain
+    // rmdir(2) instead of rm.
+    it("does not remove a file with recursive: true", async () => {
+      using dir = tempDir("rmdir-recursive-promises-file", { "file.txt": "x" });
+      const file = join(String(dir), "file.txt");
+      await expect(rmdir(file, { recursive: true })).rejects.toMatchObject({
+        code: isWindows ? "ENOENT" : "ENOTDIR",
+        syscall: "rmdir",
+        path: file,
+      });
+      expect(existsSync(file)).toBe(true);
+    });
+    it("reports ENOENT for a missing path with recursive: true and force: true", async () => {
+      using dir = tempDir("rmdir-recursive-promises-force", {});
+      const missing = join(String(dir), "missing");
+      await expect(rmdir(missing, { recursive: true, force: true })).rejects.toMatchObject({
+        code: "ENOENT",
+        syscall: "lstat",
+        path: missing,
+      });
+    });
+    it("validates the options before it looks at the path with recursive: true", async () => {
+      using dir = tempDir("rmdir-recursive-promises-validate", {});
+      const missing = join(String(dir), "missing");
+      await expect(rmdir(missing, { recursive: 1 })).rejects.toMatchObject({ code: "ERR_INVALID_ARG_TYPE" });
+      await expect(rmdir(missing, { recursive: true, maxRetries: -1 })).rejects.toMatchObject({
+        code: "ERR_OUT_OF_RANGE",
+      });
     });
   });
 

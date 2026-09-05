@@ -758,6 +758,74 @@ describe.concurrent("tarball integrity metadata forms", () => {
     expect(stdout).not.toContain("1 package installed");
     expect(exitCode).not.toBe(0);
   });
+
+  it("--no-verify installs a tarball whose bytes don't match the advertised integrity", async () => {
+    const real = buildTarball(Buffer.from('{"name":"pkg","version":"1.0.0"}\n'));
+    const other = buildTarball(Buffer.from('{"name":"other","version":"9.9.9"}\n'));
+
+    await using server = serveManifest(other.sha512, real.tgz);
+    using dir = projectDir("integrity-no-verify-flag", server.port);
+
+    await using proc = spawn({
+      cmd: [bunExe(), "install", "--no-verify"],
+      cwd: String(dir),
+      env: { ...env, BUN_INSTALL_CACHE_DIR: join(String(dir), ".cache") },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stderr, stdout, exitCode] = await Promise.all([proc.stderr.text(), proc.stdout.text(), proc.exited]);
+    expect(stderr + stdout).not.toContain("Integrity check failed");
+    expect(stdout).toContain("1 package installed");
+    expect(await file(join(String(dir), "node_modules", "pkg", "package.json")).json()).toEqual({
+      name: "pkg",
+      version: "1.0.0",
+    });
+    expect(exitCode).toBe(0);
+  });
+
+  it("BUN_CONFIG_NO_VERIFY=1 skips the integrity check like --no-verify", async () => {
+    const real = buildTarball(Buffer.from('{"name":"pkg","version":"1.0.0"}\n'));
+    const other = buildTarball(Buffer.from('{"name":"other","version":"9.9.9"}\n'));
+
+    await using server = serveManifest(other.sha512, real.tgz);
+    using dir = projectDir("integrity-no-verify-env-1", server.port);
+
+    await using proc = spawn({
+      cmd: [bunExe(), "install"],
+      cwd: String(dir),
+      env: { ...env, BUN_INSTALL_CACHE_DIR: join(String(dir), ".cache"), BUN_CONFIG_NO_VERIFY: "1" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stderr, stdout, exitCode] = await Promise.all([proc.stderr.text(), proc.stdout.text(), proc.exited]);
+    expect(stderr + stdout).not.toContain("Integrity check failed");
+    expect(stdout).toContain("1 package installed");
+    expect(await file(join(String(dir), "node_modules", "pkg", "package.json")).json()).toEqual({
+      name: "pkg",
+      version: "1.0.0",
+    });
+    expect(exitCode).toBe(0);
+  });
+
+  it("BUN_CONFIG_NO_VERIFY=0 keeps the integrity check enabled", async () => {
+    const real = buildTarball(Buffer.from('{"name":"pkg","version":"1.0.0"}\n'));
+    const other = buildTarball(Buffer.from('{"name":"other","version":"9.9.9"}\n'));
+
+    await using server = serveManifest(other.sha512, real.tgz);
+    using dir = projectDir("integrity-no-verify-env-0", server.port);
+
+    await using proc = spawn({
+      cmd: [bunExe(), "install"],
+      cwd: String(dir),
+      env: { ...env, BUN_INSTALL_CACHE_DIR: join(String(dir), ".cache"), BUN_CONFIG_NO_VERIFY: "0" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stderr, stdout, exitCode] = await Promise.all([proc.stderr.text(), proc.stdout.text(), proc.exited]);
+    expect(stderr + stdout).toContain("Integrity check failed");
+    expect(stdout).not.toContain("1 package installed");
+    expect(exitCode).not.toBe(0);
+  });
 });
 
 describe.concurrent.each(["hoisted", "isolated"] as const)("tarball download failure (%s)", linker => {

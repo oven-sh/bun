@@ -1323,9 +1323,7 @@ impl FetchTasklet {
 
         let code = match fail {
             http::Error::ConnectionClosed => BunString::static_("ECONNRESET"),
-            // Same shape as node:tls's `tlsHandshakeError` (src/js/node/net.ts):
-            // `ERR_SSL_<REASON>` from the OpenSSL string, `EPROTO` when it
-            // does not parse.
+            // `ERR_SSL_<REASON>` like node:tls's `tlsHandshakeError`; `EPROTO` if unparsed.
             http::Error::EPROTO => match self
                 .result
                 .tls_handshake_reason

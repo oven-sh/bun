@@ -929,13 +929,10 @@ for (const { body, fn } of bodyTypes) {
       for (const actual of invalidTests) {
         test(actual || "<empty>", async () => {
           expect(async () => await fn(actual).json()).toThrow(SyntaxError);
-          // An empty body is rejected before the parser runs, with its own message.
-          if (actual !== "") {
-            const error = await fn(actual)
-              .json()
-              .catch(error => error);
-            expect(error.message).toBe(jsonParseError(actual).message);
-          }
+          const error = await fn(actual)
+            .json()
+            .catch(error => error);
+          expect(error.message).toBe(jsonParseError(actual).message);
         });
       }
     });
@@ -1532,5 +1529,65 @@ describe.concurrent("a fetch() Response that cannot have a body", () => {
     expect(stderr).toBe("");
     expect(JSON.parse(stdout)).toEqual({ status: 205, body: null, text: "" });
     expect(exitCode).toBe(0);
+  });
+});
+
+// #24955: an empty body must reject .json() the way JSON.parse("") throws, on
+// every path that holds the body. A fetch() Response resolved null.
+describe.concurrent("an empty body rejects .json() with the JSON.parse error", () => {
+  const expected = { name: "SyntaxError", message: jsonParseError("").message };
+  const settle = (promise: Promise<unknown>) =>
+    promise.then(
+      value => ({ resolved: value }),
+      (error: Error) => ({ name: error.name, message: error.message }),
+    );
+
+  test("fetch() Response", async () => {
+    await using server = Bun.serve({ port: 0, fetch: () => new Response("") });
+    const response = await fetch(server.url);
+    expect(await settle(response.json())).toEqual(expected);
+  });
+
+  test("fetch() Response with a Content-Type", async () => {
+    await using server = Bun.serve({
+      port: 0,
+      fetch: () => new Response("", { headers: { "Content-Type": "application/json" } }),
+    });
+    const response = await fetch(server.url);
+    expect(await settle(response.json())).toEqual(expected);
+  });
+
+  test("fetch() Response with no body (204)", async () => {
+    await using server = Bun.serve({ port: 0, fetch: () => new Response(null, { status: 204 }) });
+    const response = await fetch(server.url);
+    expect(await settle(response.json())).toEqual(expected);
+  });
+
+  test("Request received by Bun.serve()", async () => {
+    await using server = Bun.serve({
+      port: 0,
+      fetch: async request => Response.json(await settle(request.json())),
+    });
+    const response = await fetch(server.url, { method: "POST", body: "" });
+    expect(await response.json()).toEqual(expected);
+  });
+
+  test.each([
+    ["Response('')", () => new Response("")],
+    ["Response(null)", () => new Response(null)],
+    ["Response(new Uint8Array(0))", () => new Response(new Uint8Array(0))],
+    ["Request('')", () => new Request("http://example.com/", { method: "POST", body: "" })],
+    ["Blob([])", () => new Blob([])],
+    ["Blob(['\\uFEFF'])", () => new Blob(["\uFEFF"])],
+    ["Blob([]).stream()", () => new Blob([]).stream()],
+    ["Response(ReadableStream)", () => new Response(new ReadableStream({ start: controller => controller.close() }))],
+  ])("%s", async (_, make) => {
+    expect(await settle(make().json())).toEqual(expected);
+  });
+
+  test("Bun.file()", async () => {
+    using dir = tempDir("empty-json", { "empty.json": "", "bom.json": "\uFEFF" });
+    expect(await settle(file(`${dir}/empty.json`).json())).toEqual(expected);
+    expect(await settle(file(`${dir}/bom.json`).json())).toEqual(expected);
   });
 });

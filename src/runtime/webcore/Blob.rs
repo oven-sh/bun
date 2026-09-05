@@ -2723,15 +2723,6 @@ impl BlobExt for Blob {
         // SAFETY: `raw_bytes` is valid for reads for the duration of this call
         // (either a leaked Box for `Temporary` or a store-backed view otherwise).
         let (bom, buf) = strings::BOM::detect_and_split(unsafe { &*raw_bytes });
-        if buf.is_empty() {
-            if LIFETIME == Lifetime::Temporary {
-                // SAFETY: `Temporary` ⇒ caller passed a leaked `Box<[u8]>`; reclaim it.
-                unsafe { drop(bun_core::heap::take(raw_bytes)) };
-            }
-            return Err(global.throw_value(
-                global.create_syntax_error_instance(format_args!("Unexpected end of JSON input")),
-            ));
-        }
 
         if bom == Some(strings::BOM::Utf16Le) {
             // Reinterpret as u16: drop a trailing odd byte.
@@ -6342,9 +6333,6 @@ impl Any {
         match self {
             Any::Blob(b) => b.to_json(global, lifetime),
             Any::InternalBlob(ib) => {
-                if ib.bytes.is_empty() {
-                    return Ok(JSValue::NULL);
-                }
                 let str = ib.to_json(global);
                 // the GC will collect the string
                 *self = Any::Blob(Blob::default());
@@ -6354,9 +6342,6 @@ impl Any {
                 let str =
                     BunString::adopt_wtf_impl(core::mem::replace(impl_, core::ptr::null_mut()));
                 *self = Any::Blob(Blob::default());
-                if str.length() == 0 {
-                    return Ok(JSValue::NULL);
-                }
                 str.to_js_by_parse_json(global)
             }
         }

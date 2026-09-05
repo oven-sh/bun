@@ -713,6 +713,31 @@ describe.concurrent("version-scoped targets", () => {
     await installOk(dir, "--frozen-lockfile");
   });
 
+  // #41371: `^1.0.0` admits no 2.0.0 prerelease, so a selector whose lower bound is one does not intersect it.
+  describe.concurrent.each([
+    { rule: { "no-deps@>=2.0.0-alpha.0 <3": "1.0.0" } },
+    { rule: { "no-deps@>=2.0.0-0": "1.0.0" } },
+    { rule: { "one-range-dep": { "no-deps@>=2.0.0-alpha.0 <3": "1.0.0" } } },
+  ])("a prerelease lower bound above the declared range does not match %j", ({ rule }) => {
+    test("leaves the edge alone", async () => {
+      const dir = await project({ dependencies: { "one-range-dep": "1.0.0" }, overrides: rule });
+      const { err } = await installOk(dir);
+      expect(err).not.toContain("warn:");
+      expect(await versionSeenBy(dir, "one-range-dep", "no-deps")).toBe("1.1.0");
+      await installOk(dir, "--frozen-lockfile");
+    });
+  });
+
+  test("a prerelease selector still matches a declared range that admits that prerelease", async () => {
+    const dir = await project({
+      dependencies: { "no-deps": ">=1.0.0 <2.0.0-beta" },
+      overrides: { "no-deps@>=2.0.0-alpha.0 <3": "1.0.0" },
+    });
+    await installOk(dir);
+    expect(await versionSeenBy(dir, undefined, "no-deps")).toBe("1.0.0");
+    await installOk(dir, "--frozen-lockfile");
+  });
+
   test("a non-intersecting range leaves the edge alone and is still recorded", async () => {
     const dir = await project({
       dependencies: { "one-range-dep": "1.0.0", "one-dep": "1.0.0" },

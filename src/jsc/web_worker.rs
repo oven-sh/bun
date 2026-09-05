@@ -1098,18 +1098,14 @@ impl WebWorker {
     /// Takes `&self` (not `&mut self`) because `request_termination` /
     /// other threads may concurrently hold `&WebWorker` on another
     /// thread; producing `&mut` here would be aliased-&mut UB.
-    pub fn exit(&self) {
+    ///
+    /// `vm` is the caller's: `self.vm` is already null while `shutdown()` runs the 'exit' handlers.
+    pub fn exit(&self, vm: &VirtualMachine) {
         self.exit_called.store(true, Ordering::Relaxed);
         let _ = self.set_requested_terminate();
-        // Stop subsequent JS at the next safepoint. `this.vm` is null during
-        // `vm.onExit()` (shutdown nulls it first), so a re-entrant
-        // process.exit() from an exit handler does not re-arm the trap.
-        let vm_ptr = self.vm_ptr();
-        if !vm_ptr.is_null() {
-            // From an immediate this runs before the turn's poll; the wake is what ends it.
-            // SAFETY: this thread's live VM.
-            unsafe { (*vm_ptr).handle_ref().request_termination() };
-        }
+        // Stop subsequent JS at the next safepoint. From an immediate this runs
+        // before the turn's poll; the wake is what ends it.
+        vm.handle_ref().request_termination();
     }
 
     // =========================================================================

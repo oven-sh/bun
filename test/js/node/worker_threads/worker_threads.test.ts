@@ -2437,6 +2437,40 @@ describe("a worker that stops itself from an immediate exits right away", () => 
   });
 });
 
+// Node: process.exit() inside an 'exit' listener stops the worker there, however
+// the listeners were reached. The rest of that listener, the later 'exit'
+// listeners, and anything after an outer process.exit() do not run, and the code
+// it passed is the worker's exit code.
+describe("process.exit() inside an 'exit' listener does not return", () => {
+  test.concurrent.each([
+    ["the event loop draining", "process.exitCode = 3;"],
+    ["process.exit()", 'process.exit(3); writeSync(2, "after the outer process.exit\\n");'],
+  ])("'exit' reached by %s", async (_label, reach) => {
+    const workerSrc = `const { writeSync } = require("node:fs");
+      process.on("exit", code => {
+        writeSync(2, "first " + code + "\\n");
+        process.exit(7);
+        writeSync(2, "after process.exit\\n");
+      });
+      process.on("exit", code => writeSync(2, "second " + code + "\\n"));
+      ${reach}`;
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const { Worker } = require("node:worker_threads");
+         const w = new Worker(${JSON.stringify(workerSrc)}, { eval: true });
+         w.on("exit", code => console.log("exit " + code));`,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "exit 7\n", stderr: "first 3\n", exitCode: 0 });
+  });
+});
+
 // Node's setupPortReferencing: the parent side of parentPort keeps the parent
 // alive while the Worker has 'message' listeners, independently of unref().
 test("an unref'ed worker with a 'message' listener still delivers to the parent", async () => {

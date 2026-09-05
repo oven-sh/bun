@@ -1,7 +1,61 @@
+/// The field of the embedded module graph that `StandaloneModuleGraph::from_bytes` found out of range.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Corruption {
+    ByteCount,
+    ModuleList,
+    EntryPointId,
+    ModuleName,
+    ModuleContents,
+    ModuleSourceMap,
+    ModuleBytecode,
+    ModuleInfo,
+    BytecodeOriginPath,
+    CompileExecArgv,
+    SourceHashes,
+    BuiltinBytecode,
+    BytecodeStringTable,
+    StartupModuleCount,
+    ModuleInfoStringTable,
+}
+
+impl Corruption {
+    pub const fn message(self) -> &'static str {
+        match self {
+            Self::ByteCount => "Corrupted module graph: byte count is out of range",
+            Self::ModuleList => "Corrupted module graph: module list is out of range",
+            Self::EntryPointId => {
+                "Corrupted module graph: entry point ID is out of range for the module list"
+            }
+            Self::ModuleName => "Corrupted module graph: module name is out of range",
+            Self::ModuleContents => "Corrupted module graph: module contents are out of range",
+            Self::ModuleSourceMap => "Corrupted module graph: module source map is out of range",
+            Self::ModuleBytecode => "Corrupted module graph: module bytecode is out of range",
+            Self::ModuleInfo => "Corrupted module graph: module info is out of range",
+            Self::BytecodeOriginPath => {
+                "Corrupted module graph: bytecode origin path is out of range"
+            }
+            Self::CompileExecArgv => "Corrupted module graph: compile exec argv is out of range",
+            Self::SourceHashes => "Corrupted module graph: source hashes are out of range",
+            Self::BuiltinBytecode => {
+                "Corrupted module graph: builtin bytecode table is out of range"
+            }
+            Self::BytecodeStringTable => {
+                "Corrupted module graph: bytecode string table is out of range"
+            }
+            Self::StartupModuleCount => {
+                "Corrupted module graph: startup module count is out of range"
+            }
+            Self::ModuleInfoStringTable => {
+                "Corrupted module graph: module info string table is out of range"
+            }
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 pub enum Error {
-    #[error("Corrupted module graph: entry point ID is greater than module list count")]
-    CorruptedModuleGraphEntryPointIDIsGreaterThanModuleListCount,
+    #[error("{}", .0.message())]
+    CorruptedModuleGraph(Corruption),
     #[error("TargetNotFound")]
     TargetNotFound,
     #[error("NetworkError")]
@@ -28,6 +82,12 @@ pub enum Error {
     Options(#[from] bun_options_types::Error),
 }
 
+impl From<Corruption> for Error {
+    fn from(c: Corruption) -> Self {
+        Self::CorruptedModuleGraph(c)
+    }
+}
+
 impl From<bun_sys::Error> for Error {
     fn from(e: bun_sys::Error) -> Self {
         Self::Sys(e.into())
@@ -38,9 +98,7 @@ impl Error {
     #[allow(clippy::trivially_copy_pass_by_ref)]
     pub fn name(&self) -> &'static str {
         match self {
-            Self::CorruptedModuleGraphEntryPointIDIsGreaterThanModuleListCount => {
-                "Corrupted module graph: entry point ID is greater than module list count"
-            }
+            Self::CorruptedModuleGraph(c) => c.message(),
             Self::TargetNotFound => "TargetNotFound",
             Self::NetworkError => "NetworkError",
             Self::InvalidResponse => "InvalidResponse",

@@ -94,35 +94,11 @@ declare global {
       _exiting: boolean;
       noDeprecation?: boolean | undefined;
 
-      /**
-       * Emitted when the operating system signals that available memory is
-       * running low. Use this to release caches or reap idle resources instead
-       * of polling.
-       *
-       * On macOS `level` distinguishes `"warning"` from `"critical"` based on
-       * the kernel's memorystatus thresholds. On Linux (PSI) and Windows the
-       * event is always emitted with `"critical"`. On Linux, the underlying
-       * PSI trigger requires `CAP_SYS_RESOURCE` on kernels before 6.6; when
-       * unavailable the event is never emitted.
-       *
-       * This listener does not keep the event loop alive.
-       */
-      on(event: "memoryPressure", listener: (level: "warning" | "critical") => void): this;
-      once(event: "memoryPressure", listener: (level: "warning" | "critical") => void): this;
-      off(event: "memoryPressure", listener: (level: "warning" | "critical") => void): this;
-      addListener(event: "memoryPressure", listener: (level: "warning" | "critical") => void): this;
-      removeListener(event: "memoryPressure", listener: (level: "warning" | "critical") => void): this;
-      prependListener(event: "memoryPressure", listener: (level: "warning" | "critical") => void): this;
-      prependOnceListener(event: "memoryPressure", listener: (level: "warning" | "critical") => void): this;
-      emit(event: "memoryPressure", level: "warning" | "critical"): boolean;
-
-      // @types/node <= 24 does not declare `off`/`removeListener` directly on
-      // `Process` (they are only inherited from EventEmitter), so the
-      // `memoryPressure` overloads above would hide the inherited generic
-      // signatures and reject every other event name (#40003). Re-declare the
-      // generic signatures so both stay visible.
-      off(event: string | symbol, listener: (...args: any[]) => void): this;
-      removeListener(event: string | symbol, listener: (...args: any[]) => void): this;
+      // Bun's process events go in the `ProcessEventMap` augmentation at the
+      // bottom of this file. Do not declare `on`/`once`/`emit`/... overloads
+      // here: a method declared on this merge hides the one `Process`
+      // inherits, so on @types/node releases where `Process` inherits its
+      // event methods, every other event name is rejected (#39807, #40003).
 
       binding(m: "constants"): {
         os: typeof import("node:os").constants;
@@ -346,6 +322,25 @@ declare global {
 
 declare module "node:fs/promises" {
   function exists(path: Bun.PathLike): Promise<boolean>;
+}
+
+declare module "node:process" {
+  interface ProcessEventMap {
+    /**
+     * Emitted when the operating system signals that available memory is
+     * running low. Use this to release caches or reap idle resources instead
+     * of polling.
+     *
+     * On macOS `level` distinguishes `"warning"` from `"critical"` based on
+     * the kernel's memorystatus thresholds. On Linux (PSI) and Windows the
+     * event is always emitted with `"critical"`. On Linux, the underlying
+     * PSI trigger requires `CAP_SYS_RESOURCE` on kernels before 6.6; when
+     * unavailable the event is never emitted.
+     *
+     * This listener does not keep the event loop alive.
+     */
+    memoryPressure: [level: "warning" | "critical"];
+  }
 }
 
 declare module "node:tls" {

@@ -112,6 +112,15 @@ pub struct PackageInstaller<'a> {
     pub(crate) trees: Box<[TreeContext]>,
 
     pub(crate) seen_bin_links: StringHashMap<()>,
+
+    /// Joined and replayed by `complete_parallel_installs()`; see `ParallelHoistedTask`.
+    #[cfg(unix)]
+    pub(crate) parallel_tasks: Vec<*mut ParallelHoistedTask>,
+    #[cfg(unix)]
+    pub(crate) parallel_wait_group: bun_threading::WaitGroup,
+    /// Flushed to the thread pool once per tree by `schedule_parallel_batch()`.
+    #[cfg(unix)]
+    pub(crate) parallel_batch: bun_threading::thread_pool::Batch,
 }
 
 use bun_core::UnwrapOrOom;
@@ -364,6 +373,155 @@ fn abs_node_modules_path(
     abs
 }
 
+#[cfg(unix)]
+/// A cache→`node_modules` link on the thread pool; replayed by `complete_parallel_installs()`.
+pub(crate) struct ParallelHoistedTask {
+    /// BACKREF; aliasing contract in `run()`'s SAFETY note.
+    installer: *mut PackageInstaller<'static>,
+    pub(crate) task: bun_threading::thread_pool::Task,
+
+    node_modules_path: Box<[u8]>,
+    /// NUL-terminated.
+    destination_dir_subpath: Box<[u8]>,
+    /// NUL-terminated.
+    cache_dir_subpath: Box<[u8]>,
+    /// Borrowed; owned by `PackageManager`.
+    cache_dir: Fd,
+
+    pub(crate) resolution_tag: resolution::Tag,
+    pub(crate) dependency_id: DependencyID,
+    pub(crate) package_id: PackageID,
+    pub(crate) tree_id: lockfile::tree::Id,
+    /// Snapshot: `fix_cached_lockfile_package_slices()` may reallocate `names` under workers.
+    pub(crate) package_name: String,
+    /// `tree_id` is in `copy_trees`: a self-contained workspace gets real files, not links.
+    copy_tree: bool,
+
+    pub(crate) result: package_install::InstallResult,
+    /// Entry absent or missing its marker; `complete_parallel_installs()` re-downloads it.
+    pub(crate) missing_from_cache: bool,
+}
+
+#[cfg(unix)]
+bun_threading::intrusive_work_task!(ParallelHoistedTask, task);
+
+#[cfg(unix)]
+impl ParallelHoistedTask {
+    unsafe fn run_from_thread_pool(task: *mut bun_threading::thread_pool::Task) {
+        use bun_threading::IntrusiveWorkTask as _;
+        // SAFETY: `task` is the `.task` field of a heap `ParallelHoistedTask`
+        // allocated via `heap::into_raw` and registered with
+        // `intrusive_work_task!`. The main thread holds the only other
+        // pointer (in `parallel_tasks`) and blocks on `parallel_wait_group`
+        // before touching it.
+        let this = unsafe { &mut *Self::from_task_ptr(task) };
+        this.result = this.run();
+        // SAFETY: BACKREF. The group is live with this task counted: its owner frees it only
+        // after `wait()` returns, which is what this call permits, so this is `finish_raw`'s
+        // contract, not `finish()`'s. `addr_of!` keeps the worker from forming a reference into
+        // the `PackageInstaller` the main thread holds `&mut` to.
+        unsafe {
+            bun_threading::WaitGroup::finish_raw(core::ptr::addr_of!(
+                (*this.installer).parallel_wait_group
+            ))
+        };
+    }
+
+    fn run(&mut self) -> package_install::InstallResult {
+        // SAFETY: BACKREF. The main thread holds `&mut PackageInstaller` while workers run
+        // (`run_tasks(this, &mut installer, ..)`, the next tree's `install_package`), so a worker
+        // must never form `&PackageInstaller`; it projects the one field it reads with `addr_of!`.
+        // Workers touch exactly two fields: `root_node_modules_folder`, an open fd that is not
+        // mutated during the install pass, and the atomic `parallel_wait_group` in
+        // `run_from_thread_pool`. Everything else, the lockfile included, is main-thread only.
+        let root_node_modules_folder: &Dir =
+            unsafe { &*core::ptr::addr_of!((*self.installer).root_node_modules_folder) };
+
+        // SAFETY: `cache_dir_subpath` was copied with its trailing NUL at enqueue time.
+        let cache_z = unsafe {
+            ZStr::from_raw(
+                self.cache_dir_subpath.as_ptr(),
+                self.cache_dir_subpath.len() - 1,
+            )
+        };
+        // The serial cache check, moved here: an entry missing its marker is re-downloaded.
+        if !crate::package_manager::directories::is_package_in_cache_at(
+            self.cache_dir,
+            cache_z,
+            self.resolution_tag,
+        ) {
+            self.missing_from_cache = true;
+            return package_install::InstallResult::fail(
+                crate::Error::Sys(bun_errno::SystemErrno::ENOENT),
+                package_install::Step::OpeningCacheDir,
+                None,
+            );
+        }
+
+        // Root tree reuses the open fd; nested trees open (creating if needed) their own.
+        let owned_dir: Option<Dir> = if self.tree_id == 0 {
+            None
+        } else {
+            let path = &*self.node_modules_path;
+            let opened = match Dir::borrow(&Fd::cwd()).open_at(path) {
+                Ok(d) => d,
+                Err(_) => {
+                    // May pre-create the parent's dir, costing it macOS's whole-dir clonefile.
+                    let _ = bun_sys::make_path::make_path(Dir::borrow(&Fd::cwd()), path);
+                    match Dir::borrow(&Fd::cwd()).open_at(path) {
+                        Ok(d) => d,
+                        Err(err) => {
+                            return package_install::InstallResult::fail(
+                                err.into(),
+                                package_install::Step::OpeningDestDir,
+                                None,
+                            );
+                        }
+                    }
+                }
+            };
+            Some(opened)
+        };
+        let destination_dir: &Dir = owned_dir.as_ref().unwrap_or(root_node_modules_folder);
+
+        let local_node_modules = NodeModulesFolder {
+            tree_id: self.tree_id,
+            path: self.node_modules_path.to_vec(),
+        };
+        let mut subpath_buf = PathBuffer::uninit();
+        let dest_len = self.destination_dir_subpath.len();
+        subpath_buf.as_mut_slice()[..dest_len].copy_from_slice(&self.destination_dir_subpath);
+
+        // SAFETY: `destination_dir_subpath` was copied with its trailing NUL at enqueue time.
+        let dest_z = unsafe { ZStr::from_raw(self.destination_dir_subpath.as_ptr(), dest_len - 1) };
+        let mut pi = PackageInstall {
+            progress: None,
+            cache_dir: self.cache_dir,
+            cache_dir_subpath: cache_z,
+            destination_dir_subpath: dest_z,
+            destination_dir_subpath_buf: subpath_buf.as_mut_slice(),
+            package_name: self.package_name,
+            package_version: b"",
+            patch: None,
+            node_modules: &local_node_modules,
+            lockfile: None,
+        };
+
+        let method = if self.copy_tree {
+            package_install::Method::Copyfile
+        } else {
+            pi.get_install_method()
+        };
+        let result = pi.install(true, destination_dir, method, self.resolution_tag);
+        if let package_install::InstallResult::Failure(f) = &result {
+            if f.is_package_missing_from_cache() {
+                self.missing_from_cache = true;
+            }
+        }
+        result
+    }
+}
+
 /// A dependency alias becomes the install destination inside `node_modules`
 /// (the existing entry is renamed aside, deleted, and re-created). Reject
 /// anything that could escape `node_modules`: empty names, `.`/`..`
@@ -455,6 +613,109 @@ impl<'a> PackageInstaller<'a> {
         // `*self`; the install pass is single-threaded so no concurrent `&mut
         // Progress` exists. Same shape as `manager_mut`/`lockfile_mut`.
         unsafe { &mut *self.progress }
+    }
+
+    /// Fresh `node_modules` only: `skip_delete` means there is no rename-aside step to serialise.
+    #[cfg(unix)]
+    pub(crate) fn can_use_parallel_hoisted_install(&self) -> bool {
+        if bun_core::env_var::BUN_INSTALL_SERIAL_HOISTED
+            .get()
+            .unwrap_or(false)
+        {
+            return false;
+        }
+        self.skip_delete
+    }
+
+    /// Called once per tree so workers start before the iteration finishes.
+    #[cfg(unix)]
+    pub(crate) fn schedule_parallel_batch(&mut self) {
+        if self.parallel_batch.len == 0 {
+            return;
+        }
+        let batch = core::mem::take(&mut self.parallel_batch);
+        self.manager_mut().thread_pool.schedule(batch);
+    }
+
+    /// Windows no-ops so `hoisted_install` can call these unconditionally.
+    #[cfg(windows)]
+    #[inline]
+    pub(crate) fn schedule_parallel_batch(&mut self) {}
+    #[cfg(windows)]
+    #[inline]
+    pub(crate) fn complete_parallel_installs(&mut self, _log_level: Options::LogLevel) -> bool {
+        false
+    }
+
+    /// Joins the workers and replays their results; `true` means some were rerouted to downloads.
+    #[cfg(unix)]
+    pub(crate) fn complete_parallel_installs(&mut self, log_level: Options::LogLevel) -> bool {
+        self.schedule_parallel_batch();
+        if self.parallel_tasks.is_empty() {
+            return false;
+        }
+        self.parallel_wait_group.wait();
+
+        if bun_core::env_var::feature_flag::BUN_INTERNAL_PARALLEL_HOISTED_MARKER
+            .get()
+            .unwrap_or(false)
+        {
+            bun_core::pretty_errorln!(
+                "[ParallelHoistedInstall] {} tasks",
+                self.parallel_tasks.len()
+            );
+            Output::flush();
+        }
+
+        let tasks = core::mem::take(&mut self.parallel_tasks);
+        let saved_tree_id = self.current_tree_id;
+        let saved_nm = core::mem::take(&mut self.node_modules);
+        let mut had_missing = false;
+
+        for raw in &tasks {
+            // SAFETY: every pointer was `heap::into_raw`'d at enqueue; we
+            // hold the only reference now that `wait()` returned.
+            let t: Box<ParallelHoistedTask> = unsafe { bun_core::heap::take(*raw) };
+            self.current_tree_id = t.tree_id;
+            self.node_modules = NodeModulesFolder {
+                tree_id: t.tree_id,
+                path: t.node_modules_path.to_vec(),
+            };
+
+            let resolution = self.resolutions[t.package_id as usize];
+            // Replay counts as pending: it enqueues no tasks and leaves the drain to the caller.
+            let is_pending_package_install = true;
+            if t.missing_from_cache {
+                had_missing = true;
+                // The worker already verified the entry.
+                let needs_verify = false;
+                self.install_package_with_name_and_resolution(
+                    t.dependency_id,
+                    t.package_id,
+                    log_level,
+                    t.package_name,
+                    &resolution,
+                    needs_verify,
+                    is_pending_package_install,
+                );
+            } else {
+                // Root fd suffices for the EACCES fstat: on a fresh tree every nested dir has its mode.
+                self.handle_install_result(
+                    t.dependency_id,
+                    t.package_id,
+                    log_level,
+                    t.package_name,
+                    &resolution,
+                    t.result,
+                    self.root_node_modules_folder.fd(),
+                    is_pending_package_install,
+                );
+            }
+        }
+
+        self.current_tree_id = saved_tree_id;
+        self.node_modules = saved_nm;
+        had_missing
     }
 
     /// Increments the number of installed packages for a tree id and runs available scripts
@@ -999,6 +1260,12 @@ impl<'a> PackageInstaller<'a> {
         // .monotonic is okay because this value isn't modified from any other thread.
         (deps.subset_of(&self.completed_trees.unmanaged)
             || deps.eql(&self.completed_trees.unmanaged))
+            // Deps may live in any ancestor tree; the parallel linker doesn't install ancestors first.
+            && Self::can_install_package_for_tree(
+                &self.completed_trees,
+                self.lockfile().buffers.trees.as_slice(),
+                scripts_tree_id,
+            )
             && LifecycleScriptSubprocess::alive_count().load(Ordering::Relaxed)
                 < self.manager().options.max_concurrent_lifecycle_scripts
     }
@@ -1022,6 +1289,12 @@ impl<'a> PackageInstaller<'a> {
         }
 
         true
+    }
+
+    /// Packages in this tree are copied rather than linked from the cache.
+    fn is_copy_tree(&self, tree_id: lockfile::tree::Id) -> bool {
+        (tree_id as usize) < self.copy_trees.bit_length()
+            && self.copy_trees.is_set(tree_id as usize)
     }
 
     // `pub fn deinit` dropped. All owned fields (`pending_lifecycle_scripts: Vec`,
@@ -1223,6 +1496,316 @@ impl<'a> PackageInstaller<'a> {
         count
     }
 
+    /// Shared by the serial path and `complete_parallel_installs()`.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn handle_install_result(
+        &mut self,
+        dependency_id: DependencyID,
+        package_id: PackageID,
+        log_level: Options::LogLevel,
+        pkg_name: String,
+        resolution: &Resolution,
+        install_result: package_install::InstallResult,
+        #[allow(unused_variables)] destination_dir_fd: Fd,
+        is_pending_package_install: bool,
+    ) {
+        // SAFETY: `buffers.string_bytes` is append-only and never freed
+        // for the lifetime of this `PackageInstaller`.
+        let string_buf_ptr =
+            bun_ptr::RawSlice::new(self.lockfile().buffers.string_bytes.as_slice());
+        macro_rules! string_buf {
+            () => {
+                string_buf_ptr.slice()
+            };
+        }
+        let alias = self.lockfile().buffers.dependencies.as_slice()[dependency_id as usize].name;
+        let pkg_name_hash = self.pkg_name_hashes[package_id as usize];
+
+        match install_result {
+            package_install::InstallResult::Success => {
+                let is_duplicate = self.successfully_installed.is_set(package_id as usize);
+                self.summary.success += (!is_duplicate) as u32;
+                self.successfully_installed.set(package_id as usize);
+
+                if log_level.show_progress() {
+                    self.node.complete_one();
+                }
+
+                if self.bins[package_id as usize].tag != bin::Tag::None {
+                    self.trees[self.current_tree_id as usize]
+                        .binaries
+                        .add(dependency_id)
+                        .unwrap_or_oom();
+                }
+
+                let dep = &self.lockfile().buffers.dependencies.as_slice()[dependency_id as usize];
+                let dep_behavior = dep.behavior;
+                let truncated_dep_name_hash: TruncatedPackageNameHash =
+                    dep.name_hash as TruncatedPackageNameHash;
+                let (is_trusted, is_trusted_through_update_request) = 'brk: {
+                    if self
+                        .trusted_dependencies_from_update_requests
+                        .contains(&package_id)
+                    {
+                        break 'brk (true, true);
+                    }
+                    if self.lockfile().has_trusted_dependency(
+                        alias.slice(string_buf!()),
+                        pkg_name.slice(string_buf!()),
+                        resolution,
+                    ) {
+                        break 'brk (true, false);
+                    }
+                    break 'brk (false, false);
+                };
+
+                if resolution.tag != resolution::Tag::Root
+                    && (resolution.tag == resolution::Tag::Workspace || is_trusted)
+                {
+                    let mut folder_path =
+                        AutoAbsPath::from(self.node_modules.path.as_slice()).unwrap_or_oom();
+                    // `defer folder_path.deinit()` — AbsPath impls Drop.
+                    folder_path
+                        .append(alias.slice(string_buf!()))
+                        .unwrap_or_oom();
+
+                    'enqueue_lifecycle_scripts: {
+                        if self
+                            .manager()
+                            .postinstall_optimizer
+                            .should_ignore_lifecycle_scripts(
+                                &postinstall_optimizer::PkgInfo {
+                                    name_hash: pkg_name_hash,
+                                    version: if resolution.tag == resolution::Tag::Npm {
+                                        Some(resolution.npm().version)
+                                    } else {
+                                        None
+                                    },
+                                    version_buf: string_buf!(),
+                                },
+                                self.lockfile().packages.items_resolutions()[package_id as usize]
+                                    .get(self.lockfile().buffers.resolutions.as_slice()),
+                                self.lockfile().packages.items_meta(),
+                                self.manager().options.cpu,
+                                self.manager().options.os,
+                            )
+                        {
+                            if PackageManager::verbose_install() {
+                                bun_core::pretty_errorln!(
+                                    "<d>[Lifecycle Scripts]<r> ignoring {} lifecycle scripts",
+                                    bstr::BStr::new(pkg_name.slice(string_buf!())),
+                                );
+                            }
+                            break 'enqueue_lifecycle_scripts;
+                        }
+
+                        if self.enqueue_lifecycle_scripts(
+                            alias.slice(string_buf!()),
+                            log_level,
+                            &mut folder_path,
+                            package_id,
+                            dep_behavior.contains(crate::dependency::Behavior::OPTIONAL),
+                            resolution,
+                        ) {
+                            if is_trusted_through_update_request {
+                                let (trusted_name, trusted_name_hash) =
+                                    if resolution.tag == resolution::Tag::Npm {
+                                        (pkg_name, pkg_name_hash as TruncatedPackageNameHash)
+                                    } else {
+                                        (alias, truncated_dep_name_hash)
+                                    };
+                                self.manager_mut()
+                                    .trusted_deps_to_add_to_package_json
+                                    .push(Box::<[u8]>::from(trusted_name.slice(string_buf!())));
+
+                                if self.lockfile().trusted_dependencies.is_none() {
+                                    self.lockfile_mut().trusted_dependencies =
+                                        Some(Default::default());
+                                }
+                                self.lockfile_mut()
+                                    .trusted_dependencies
+                                    .as_mut()
+                                    .unwrap()
+                                    .put(
+                                        trusted_name_hash,
+                                        Box::<[u8]>::from(trusted_name.slice(string_buf!())),
+                                    )
+                                    .unwrap_or_oom();
+                            }
+                        }
+                    }
+                }
+
+                match resolution.tag {
+                    resolution::Tag::Root | resolution::Tag::Workspace => {
+                        // these will never be blocked
+                    }
+                    _ => {
+                        if !is_trusted && self.metas[package_id as usize].has_install_script() {
+                            // Check if the package actually has scripts. `hasInstallScript` can be false positive if a package is published with
+                            // an auto binding.gyp rebuild script but binding.gyp is excluded from the published files.
+                            let mut folder_path =
+                                AutoAbsPath::from(self.node_modules.path.as_slice())
+                                    .unwrap_or_oom();
+                            folder_path
+                                .append(alias.slice(string_buf!()))
+                                .unwrap_or_oom();
+
+                            let count = self.get_installed_package_scripts_count(
+                                alias.slice(string_buf!()),
+                                package_id,
+                                resolution.tag,
+                                &mut folder_path,
+                                log_level,
+                            );
+                            if count > 0 {
+                                if log_level.is_verbose() {
+                                    bun_core::pretty_error!(
+                                        "Blocked {} scripts for: {}@{}\n",
+                                        count,
+                                        bstr::BStr::new(alias.slice(string_buf!())),
+                                        resolution.fmt(string_buf!(), PathSep::Posix),
+                                    );
+                                }
+                                let entry = self
+                                    .summary
+                                    .packages_with_blocked_scripts
+                                    .get_or_put(truncated_dep_name_hash)
+                                    .unwrap_or_oom();
+                                if !entry.found_existing {
+                                    *entry.value_ptr = 0;
+                                }
+                                *entry.value_ptr += count;
+                            }
+                        }
+                    }
+                }
+
+                self.increment_tree_install_count(
+                    !is_pending_package_install,
+                    self.current_tree_id,
+                    log_level,
+                );
+            }
+            package_install::InstallResult::Failure(cause) => {
+                debug_assert!(
+                    !cause.is_package_missing_from_cache()
+                        || (resolution.tag != resolution::Tag::Symlink
+                            && resolution.tag != resolution::Tag::Workspace)
+                );
+
+                // even if the package failed to install, we still need to increment the install
+                // counter for this tree
+                self.increment_tree_install_count(
+                    !is_pending_package_install,
+                    self.current_tree_id,
+                    log_level,
+                );
+
+                if cause.err == crate::Error::DanglingSymlink {
+                    bun_core::pretty_errorln!(
+                        "<r><red>error<r>: <b>{}<r> \"link:{}\" not found (try running 'bun link' in the intended package's folder)<r>",
+                        cause.err.name(),
+                        bstr::BStr::new(self.names[package_id as usize].slice(string_buf!())),
+                    );
+                    self.summary.fail += 1;
+                } else if resolution.tag == resolution::Tag::Folder
+                    && cause.is_package_missing_from_cache()
+                {
+                    bun_core::pretty_errorln!(
+                        "<r><red>error<r>: Could not find folder \"file:{}\" for dependency \"{}\"",
+                        bstr::BStr::new(resolution.folder().slice(string_buf!())),
+                        bstr::BStr::new(alias.slice(string_buf!())),
+                    );
+                    self.summary.fail += 1;
+                } else if matches!(
+                    cause.err,
+                    crate::Error::Sys(bun_errno::SystemErrno::EACCES) | crate::Error::AccessDenied
+                ) {
+                    // there are two states this can happen
+                    // - Access Denied because node_modules/ is unwritable
+                    // - Access Denied because this specific package is unwritable
+                    // in the case of the former, the logs are extremely noisy, so we
+                    // will exit early, otherwise set a flag to not re-stat
+                    // Static flag since Rust lacks fn-local mutable statics.
+                    static NODE_MODULES_IS_OK: core::sync::atomic::AtomicBool =
+                        core::sync::atomic::AtomicBool::new(false);
+                    if !NODE_MODULES_IS_OK.load(Ordering::Relaxed) {
+                        #[cfg(not(windows))]
+                        {
+                            let dir = destination_dir_fd;
+                            let stat = match bun_sys::fstat(dir) {
+                                Ok(s) => s,
+                                Err(err) => {
+                                    Output::err(
+                                        "EACCES",
+                                        "Permission denied while installing <b>{}<r>",
+                                        (bstr::BStr::new(self.names[package_id as usize].slice(
+                                            self.lockfile().buffers.string_bytes.as_slice(),
+                                        )),),
+                                    );
+                                    if cfg!(debug_assertions) {
+                                        Output::err(err, "Failed to stat node_modules", ());
+                                    }
+                                    Global::exit(1);
+                                }
+                            };
+
+                            // `bun_sys::c::getuid`/`getgid` are local `safe fn`
+                            // redecls (zero args, read kernel process state —
+                            // no preconditions), so no `unsafe` needed.
+                            // `st_mode` is u16 on FreeBSD, u32 elsewhere; widen.
+                            let st_mode = stat.st_mode as u32;
+                            let is_writable = if stat.st_uid == bun_sys::c::getuid() {
+                                st_mode & bun_sys::S::IWUSR > 0
+                            } else if stat.st_gid == bun_sys::c::getgid() {
+                                st_mode & bun_sys::S::IWGRP > 0
+                            } else {
+                                st_mode & bun_sys::S::IWOTH > 0
+                            };
+
+                            if !is_writable {
+                                Output::err_tag(
+                                    "EACCES",
+                                    format_args!(
+                                        "Permission denied while writing packages into node_modules."
+                                    ),
+                                );
+                                Global::exit(1);
+                            }
+                        }
+                        NODE_MODULES_IS_OK.store(true, Ordering::Relaxed);
+                    }
+
+                    Output::err(
+                        "EACCES",
+                        "Permission denied while installing <b>{}<r>",
+                        (bstr::BStr::new(
+                            self.names[package_id as usize].slice(string_buf!()),
+                        ),),
+                    );
+
+                    self.summary.fail += 1;
+                } else {
+                    Output::err(
+                        cause.err,
+                        "failed {} for package <b>{}<r>",
+                        (
+                            bstr::BStr::new(cause.step.name()),
+                            bstr::BStr::new(self.names[package_id as usize].slice(string_buf!())),
+                        ),
+                    );
+                    #[cfg(bun_debug)]
+                    {
+                        let t = cause.debug_trace;
+                        bun_crash_handler::dump_stack_trace(&t.trace(), Default::default());
+                    }
+                    self.summary.fail += 1;
+                }
+            }
+        }
+    }
+
     pub(crate) fn install_package_with_name_and_resolution(
         &mut self,
         dependency_id: DependencyID,
@@ -1400,7 +1983,7 @@ impl<'a> PackageInstaller<'a> {
             // BACKREF accessor — `self.lockfile` is `*mut Lockfile` (never null,
             // outlives `'a`); `lockfile()` centralises the raw deref so this
             // site stays safe.
-            lockfile: self.lockfile(),
+            lockfile: Some(self.lockfile()),
             cache_dir_subpath: ZStr::EMPTY,
         };
         bun_output::scoped_log!(
@@ -1577,6 +2160,65 @@ impl<'a> PackageInstaller<'a> {
             || !installer.verify(resolution, &self.root_node_modules_folder);
 
         if needs_install {
+            // The worker checks the cache; a miss comes back as ENOENT and is rerouted on replay.
+            #[cfg(unix)]
+            if needs_verify
+                && !is_pending_package_install
+                && self.can_use_parallel_hoisted_install()
+                && installer.patch.is_none()
+                && installer.get_install_method() != package_install::Method::Symlink
+                && matches!(
+                    resolution.tag,
+                    resolution::Tag::Npm
+                        | resolution::Tag::Git
+                        | resolution::Tag::Github
+                        | resolution::Tag::LocalTarball
+                        | resolution::Tag::RemoteTarball
+                )
+            {
+                let dest = Box::<[u8]>::from(installer.destination_dir_subpath.as_bytes_with_nul());
+                let cache = Box::<[u8]>::from(installer.cache_dir_subpath.as_bytes_with_nul());
+                let cache_dir = installer.cache_dir;
+                // Ends `installer`'s borrows of `self.*_buf` before `self` is cast to a raw pointer.
+                #[allow(clippy::drop_non_drop)]
+                drop(installer);
+
+                // SAFETY: BACKREF — lifetime-erased raw; workers use it
+                // only until `parallel_wait_group.wait()` returns, and
+                // `Drop for PackageInstaller` waits before any field is
+                // freed. Workers never form a `&mut PackageInstaller`.
+                let this_ptr: *mut PackageInstaller<'static> =
+                    core::ptr::from_mut::<PackageInstaller<'_>>(self).cast();
+                let raw = bun_core::heap::into_raw(Box::new(ParallelHoistedTask {
+                    installer: this_ptr,
+                    task: bun_threading::thread_pool::Task {
+                        node: bun_threading::thread_pool::Node::default(),
+                        callback: ParallelHoistedTask::run_from_thread_pool,
+                    },
+                    node_modules_path: Box::<[u8]>::from(self.node_modules.path.as_slice()),
+                    destination_dir_subpath: dest,
+                    cache_dir_subpath: cache,
+                    cache_dir,
+                    resolution_tag: resolution.tag,
+                    dependency_id,
+                    package_id,
+                    tree_id: self.current_tree_id,
+                    package_name: pkg_name,
+                    copy_tree: self.is_copy_tree(self.current_tree_id),
+                    result: package_install::InstallResult::Success,
+                    missing_from_cache: false,
+                }));
+                self.parallel_tasks.push(raw);
+                self.parallel_wait_group.add_one();
+                // SAFETY: `raw` is live for the install pass; the Batch
+                // stores only the intrusive `task` node pointer.
+                self.parallel_batch
+                    .push(bun_threading::thread_pool::Batch::from(unsafe {
+                        core::ptr::addr_of_mut!((*raw).task)
+                    }));
+                return;
+            }
+
             if resolution.tag.can_enqueue_install_task()
                 && installer.package_missing_from_cache(
                     self.manager_mut(),
@@ -1897,9 +2539,7 @@ impl<'a> PackageInstaller<'a> {
                         break 'result result;
                     }
 
-                    let method = if (self.current_tree_id as usize) < self.copy_trees.bit_length()
-                        && self.copy_trees.is_set(self.current_tree_id as usize)
-                    {
+                    let method = if self.is_copy_tree(self.current_tree_id) {
                         package_install::Method::Copyfile
                     } else {
                         installer.get_install_method()
@@ -1913,296 +2553,16 @@ impl<'a> PackageInstaller<'a> {
                 }
             };
 
-            match install_result {
-                package_install::InstallResult::Success => {
-                    let is_duplicate = self.successfully_installed.is_set(package_id as usize);
-                    self.summary.success += (!is_duplicate) as u32;
-                    self.successfully_installed.set(package_id as usize);
-
-                    if log_level.show_progress() {
-                        self.node.complete_one();
-                    }
-
-                    if self.bins[package_id as usize].tag != bin::Tag::None {
-                        self.trees[self.current_tree_id as usize]
-                            .binaries
-                            .add(dependency_id)
-                            .unwrap_or_oom();
-                    }
-
-                    let dep =
-                        &self.lockfile().buffers.dependencies.as_slice()[dependency_id as usize];
-                    let dep_behavior = dep.behavior;
-                    let truncated_dep_name_hash: TruncatedPackageNameHash =
-                        dep.name_hash as TruncatedPackageNameHash;
-                    let (is_trusted, is_trusted_through_update_request) = 'brk: {
-                        if self
-                            .trusted_dependencies_from_update_requests
-                            .contains(&package_id)
-                        {
-                            break 'brk (true, true);
-                        }
-                        if self.lockfile().has_trusted_dependency(
-                            alias.slice(string_buf!()),
-                            pkg_name.slice(string_buf!()),
-                            resolution,
-                        ) {
-                            break 'brk (true, false);
-                        }
-                        break 'brk (false, false);
-                    };
-
-                    if resolution.tag != resolution::Tag::Root
-                        && (resolution.tag == resolution::Tag::Workspace || is_trusted)
-                    {
-                        let mut folder_path =
-                            AutoAbsPath::from(self.node_modules.path.as_slice()).unwrap_or_oom();
-                        // `defer folder_path.deinit()` — AbsPath impls Drop.
-                        folder_path
-                            .append(alias.slice(string_buf!()))
-                            .unwrap_or_oom();
-
-                        'enqueue_lifecycle_scripts: {
-                            if self
-                                .manager()
-                                .postinstall_optimizer
-                                .should_ignore_lifecycle_scripts(
-                                    &postinstall_optimizer::PkgInfo {
-                                        name_hash: pkg_name_hash,
-                                        version: if resolution.tag == resolution::Tag::Npm {
-                                            Some(resolution.npm().version)
-                                        } else {
-                                            None
-                                        },
-                                        version_buf: string_buf!(),
-                                    },
-                                    self.lockfile().packages.items_resolutions()
-                                        [package_id as usize]
-                                        .get(self.lockfile().buffers.resolutions.as_slice()),
-                                    self.lockfile().packages.items_meta(),
-                                    self.manager().options.cpu,
-                                    self.manager().options.os,
-                                )
-                            {
-                                if PackageManager::verbose_install() {
-                                    bun_core::pretty_errorln!(
-                                        "<d>[Lifecycle Scripts]<r> ignoring {} lifecycle scripts",
-                                        bstr::BStr::new(pkg_name.slice(string_buf!())),
-                                    );
-                                }
-                                break 'enqueue_lifecycle_scripts;
-                            }
-
-                            if self.enqueue_lifecycle_scripts(
-                                alias.slice(string_buf!()),
-                                log_level,
-                                &mut folder_path,
-                                package_id,
-                                dep_behavior.contains(crate::dependency::Behavior::OPTIONAL),
-                                resolution,
-                            ) {
-                                if is_trusted_through_update_request {
-                                    let (trusted_name, trusted_name_hash) =
-                                        if resolution.tag == resolution::Tag::Npm {
-                                            (pkg_name, pkg_name_hash as TruncatedPackageNameHash)
-                                        } else {
-                                            (alias, truncated_dep_name_hash)
-                                        };
-                                    self.manager_mut()
-                                        .trusted_deps_to_add_to_package_json
-                                        .push(Box::<[u8]>::from(trusted_name.slice(string_buf!())));
-
-                                    if self.lockfile().trusted_dependencies.is_none() {
-                                        self.lockfile_mut().trusted_dependencies =
-                                            Some(Default::default());
-                                    }
-                                    self.lockfile_mut()
-                                        .trusted_dependencies
-                                        .as_mut()
-                                        .unwrap()
-                                        .put(
-                                            trusted_name_hash,
-                                            Box::<[u8]>::from(trusted_name.slice(string_buf!())),
-                                        )
-                                        .unwrap_or_oom();
-                                }
-                            }
-                        }
-                    }
-
-                    match resolution.tag {
-                        resolution::Tag::Root | resolution::Tag::Workspace => {
-                            // these will never be blocked
-                        }
-                        _ => {
-                            if !is_trusted && self.metas[package_id as usize].has_install_script() {
-                                // Check if the package actually has scripts. `hasInstallScript` can be false positive if a package is published with
-                                // an auto binding.gyp rebuild script but binding.gyp is excluded from the published files.
-                                let mut folder_path =
-                                    AutoAbsPath::from(self.node_modules.path.as_slice())
-                                        .unwrap_or_oom();
-                                folder_path
-                                    .append(alias.slice(string_buf!()))
-                                    .unwrap_or_oom();
-
-                                let count = self.get_installed_package_scripts_count(
-                                    alias.slice(string_buf!()),
-                                    package_id,
-                                    resolution.tag,
-                                    &mut folder_path,
-                                    log_level,
-                                );
-                                if count > 0 {
-                                    if log_level.is_verbose() {
-                                        bun_core::pretty_error!(
-                                            "Blocked {} scripts for: {}@{}\n",
-                                            count,
-                                            bstr::BStr::new(alias.slice(string_buf!())),
-                                            resolution.fmt(string_buf!(), PathSep::Posix),
-                                        );
-                                    }
-                                    let entry = self
-                                        .summary
-                                        .packages_with_blocked_scripts
-                                        .get_or_put(truncated_dep_name_hash)
-                                        .unwrap_or_oom();
-                                    if !entry.found_existing {
-                                        *entry.value_ptr = 0;
-                                    }
-                                    *entry.value_ptr += count;
-                                }
-                            }
-                        }
-                    }
-
-                    self.increment_tree_install_count(
-                        !is_pending_package_install,
-                        self.current_tree_id,
-                        log_level,
-                    );
-                }
-                package_install::InstallResult::Failure(cause) => {
-                    debug_assert!(
-                        !cause.is_package_missing_from_cache()
-                            || (resolution.tag != resolution::Tag::Symlink
-                                && resolution.tag != resolution::Tag::Workspace)
-                    );
-
-                    // even if the package failed to install, we still need to increment the install
-                    // counter for this tree
-                    self.increment_tree_install_count(
-                        !is_pending_package_install,
-                        self.current_tree_id,
-                        log_level,
-                    );
-
-                    if cause.err == crate::Error::DanglingSymlink {
-                        bun_core::pretty_errorln!(
-                            "<r><red>error<r>: <b>{}<r> \"link:{}\" not found (try running 'bun link' in the intended package's folder)<r>",
-                            cause.err.name(),
-                            bstr::BStr::new(self.names[package_id as usize].slice(string_buf!())),
-                        );
-                        self.summary.fail += 1;
-                    } else if resolution.tag == resolution::Tag::Folder
-                        && cause.is_package_missing_from_cache()
-                    {
-                        bun_core::pretty_errorln!(
-                            "<r><red>error<r>: Could not find folder \"file:{}\" for dependency \"{}\"",
-                            bstr::BStr::new(resolution.folder().slice(string_buf!())),
-                            bstr::BStr::new(alias.slice(string_buf!())),
-                        );
-                        self.summary.fail += 1;
-                    } else if matches!(
-                        cause.err,
-                        crate::Error::Sys(bun_errno::SystemErrno::EACCES)
-                            | crate::Error::AccessDenied
-                    ) {
-                        // there are two states this can happen
-                        // - Access Denied because node_modules/ is unwritable
-                        // - Access Denied because this specific package is unwritable
-                        // in the case of the former, the logs are extremely noisy, so we
-                        // will exit early, otherwise set a flag to not re-stat
-                        // Static flag since Rust lacks fn-local mutable statics.
-                        static NODE_MODULES_IS_OK: core::sync::atomic::AtomicBool =
-                            core::sync::atomic::AtomicBool::new(false);
-                        if !NODE_MODULES_IS_OK.load(Ordering::Relaxed) {
-                            #[cfg(not(windows))]
-                            {
-                                let dir = destination_dir.fd();
-                                let stat = match bun_sys::fstat(dir) {
-                                    Ok(s) => s,
-                                    Err(err) => {
-                                        Output::err(
-                                            "EACCES",
-                                            "Permission denied while installing <b>{}<r>",
-                                            (bstr::BStr::new(
-                                                self.names[package_id as usize].slice(
-                                                    self.lockfile().buffers.string_bytes.as_slice(),
-                                                ),
-                                            ),),
-                                        );
-                                        if cfg!(debug_assertions) {
-                                            Output::err(err, "Failed to stat node_modules", ());
-                                        }
-                                        Global::exit(1);
-                                    }
-                                };
-
-                                // `bun_sys::c::getuid`/`getgid` are local `safe fn`
-                                // redecls (zero args, read kernel process state —
-                                // no preconditions), so no `unsafe` needed.
-                                // `st_mode` is u16 on FreeBSD, u32 elsewhere; widen.
-                                let st_mode = stat.st_mode as u32;
-                                let is_writable = if stat.st_uid == bun_sys::c::getuid() {
-                                    st_mode & bun_sys::S::IWUSR > 0
-                                } else if stat.st_gid == bun_sys::c::getgid() {
-                                    st_mode & bun_sys::S::IWGRP > 0
-                                } else {
-                                    st_mode & bun_sys::S::IWOTH > 0
-                                };
-
-                                if !is_writable {
-                                    Output::err_tag(
-                                        "EACCES",
-                                        format_args!(
-                                            "Permission denied while writing packages into node_modules."
-                                        ),
-                                    );
-                                    Global::exit(1);
-                                }
-                            }
-                            NODE_MODULES_IS_OK.store(true, Ordering::Relaxed);
-                        }
-
-                        Output::err(
-                            "EACCES",
-                            "Permission denied while installing <b>{}<r>",
-                            (bstr::BStr::new(
-                                self.names[package_id as usize].slice(string_buf!()),
-                            ),),
-                        );
-
-                        self.summary.fail += 1;
-                    } else {
-                        Output::err(
-                            cause.err,
-                            "failed {} for package <b>{}<r>",
-                            (
-                                bstr::BStr::new(cause.step.name()),
-                                bstr::BStr::new(
-                                    self.names[package_id as usize].slice(string_buf!()),
-                                ),
-                            ),
-                        );
-                        #[cfg(bun_debug)]
-                        {
-                            let t = cause.debug_trace;
-                            bun_crash_handler::dump_stack_trace(&t.trace(), Default::default());
-                        }
-                        self.summary.fail += 1;
-                    }
-                }
-            }
+            self.handle_install_result(
+                dependency_id,
+                package_id,
+                log_level,
+                pkg_name,
+                resolution,
+                install_result,
+                destination_dir.fd(),
+                is_pending_package_install,
+            );
         } else {
             // Same gate as the `needs_install` branch: a pending parent's
             // `uninstall_before_install` would delete this verified package.
@@ -2487,5 +2847,20 @@ impl<'a> PackageInstaller<'a> {
             needs_verify,
             is_pending_package_install,
         );
+    }
+}
+
+#[cfg(unix)]
+impl Drop for PackageInstaller<'_> {
+    fn drop(&mut self) {
+        // An error return from `hoisted_install` can drop this with workers in flight; join them first.
+        self.schedule_parallel_batch();
+        if !self.parallel_tasks.is_empty() {
+            self.parallel_wait_group.wait();
+            for raw in self.parallel_tasks.drain(..) {
+                // SAFETY: `heap::into_raw`'d at enqueue, sole owner now.
+                unsafe { bun_core::heap::destroy(raw) };
+            }
+        }
     }
 }

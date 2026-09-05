@@ -2417,16 +2417,33 @@ impl<'a> Resolver<'a> {
     /// See `assertValidCacheKey` for requirements on the input
     pub fn bust_dir_cache(&mut self, path: &[u8]) -> bool {
         Self::assert_valid_cache_key(path);
+        // A symlinked directory is also cached under its real path
+        // (`DirInfo.abs_real_path`), and resolve results are realpath'd, so a
+        // follow-up resolve reads the real-path key. Bust that alias too.
+        let real_path: Option<&'static [u8]> = self
+            .dir_cache_mut()
+            .get(path)
+            .map(|info| strings::without_trailing_slash_windows_path(info.abs_real_path))
+            .filter(|real| !real.is_empty() && *real != path);
         let first_bust = self.fs_mut().fs.bust_entries_cache(path);
         let second_bust = self.dir_cache_mut().remove(path);
+        let alias_bust = match real_path {
+            Some(real) => {
+                let a = self.fs_mut().fs.bust_entries_cache(real);
+                let b = self.dir_cache_mut().remove(real);
+                a || b
+            }
+            None => false,
+        };
         bun_core::scoped_log!(
             ResolverDev,
-            "Bust {} = {}, {}",
+            "Bust {} = {}, {}, alias {}",
             bstr::BStr::new(path),
             first_bust,
-            second_bust
+            second_bust,
+            alias_bust
         );
-        first_bust || second_bust
+        first_bust || second_bust || alias_bust
     }
 
     /// bust both the named file and a parent directory, because `./hello` can resolve

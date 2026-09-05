@@ -899,6 +899,52 @@ describe.if(isWindows)("#30839 - imports entry pointing at a scoped package", ()
   });
 });
 
+// A directory reached through a symlink is cached under two keys: the symlink
+// path and its real path. Requiring a file in it caches both listings; when a
+// sibling file is created afterwards, only the symlink-side key was busted, so
+// the follow-up resolve of the realpath'd result hit a stale listing and
+// failed with "Cannot find module ... from ''". macOS always hits this because
+// os.tmpdir() is behind the /var -> /private/var symlink.
+// https://github.com/oven-sh/bun/issues/40585
+it("requires a newly created sibling .ts file in a directory behind a symlink", async () => {
+  using dir = tempDir("resolve-symlink-alias", {
+    "main.ts": `
+      import { mkdir, writeFile } from "node:fs/promises";
+      import { createRequire } from "node:module";
+      import { join } from "node:path";
+      import { pathToFileURL } from "node:url";
+
+      const dir = join(import.meta.dir, "link", "warm");
+      await mkdir(dir, { recursive: true });
+      const a = join(dir, "a.ts");
+      await writeFile(a, "export const A = 1;\\n");
+      createRequire(pathToFileURL(a).href)(a);
+      const b = join(dir, "b.ts");
+      await writeFile(b, "export const B = 2;\\n");
+      const result = createRequire(pathToFileURL(b).href)(b);
+      console.log(JSON.stringify(result));
+    `,
+  });
+  const root = String(dir);
+  mkdirSync(join(root, "real"));
+  // The symlink must exist before the child process starts, like /var on
+  // macOS. "junction" is the Windows-appropriate symlink kind for directories.
+  symlinkSync(join(root, "real"), join(root, "link"), "junction");
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "main.ts"],
+    env: bunEnv,
+    cwd: root,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stderr).toBe("");
+  expect(stdout).toBe('{"B":2}\n');
+  expect(exitCode).toBe(0);
+});
+
 // dirInfoCachedMaybeLog reads the rfs.entries cache without checking the union
 // tag. If readDirectory() previously failed with a non-ENOENT error (e.g.
 // EACCES), a `.err` variant is stored there; re-resolving the directory after

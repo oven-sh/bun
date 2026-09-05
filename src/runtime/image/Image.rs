@@ -129,7 +129,8 @@ pub enum Source {
 // pipeline) and have no `bun_jsc` wrapper.
 unsafe extern "C" {
     fn JSC__JSValue__unpinArrayBuffer(v: JSValue);
-    /// 0 = detached/null, 1 = FastTypedArray (≤~1 KB, GC-movable — dupe),
+    /// 0 = detached/null, 1 = caller dupes, no unpin (a GC-movable
+    /// FastTypedArray, or wasm-memory/resizable storage a pin cannot hold),
     /// 2 = pinned an existing ArrayBuffer (caller must unpin). 3 = held a
     /// bufferless OversizeTypedArray: valid for the op, nothing to unpin (the
     /// caller roots the value as it does for 2).
@@ -699,10 +700,13 @@ impl Image {
     /// Pin the source ArrayBuffer for the duration of one off-thread task and
     /// return a slice that's safe for the worker to read. Unpinned in `then()`.
     ///
-    /// We deliberately DON'T copy: the encoded input can be tens of MB and
-    /// nobody mutates a buffer they just handed to a decoder. The contract is
-    /// documented and `.shared`/`.resizable` are refused at construction. The
-    /// codec layer is hardened so a hostile mid-decode mutation degrades to
+    /// We deliberately DON'T copy storage a pin (or hold) keeps in place: the
+    /// encoded input can be tens of MB and nobody mutates a buffer they just
+    /// handed to a decoder. The contract is documented and
+    /// `.shared`/`.resizable` are refused at construction; the borrow helper
+    /// copies the storage a pin cannot hold (wasm-memory views, which report
+    /// neither flag). The codec layer is hardened so a hostile mid-decode
+    /// mutation degrades to
     /// `DecodeFailed`, not OOB/heap-leak — see `codec_jpeg.rs` cropping +
     /// post-check, `codec_webp.rs` dim re-check. (If the attacker already runs
     /// JS in-process the threat model is moot anyway; the surface that matters
@@ -732,9 +736,10 @@ impl Image {
                     JSC__JSValue__borrowBytesForOffThread(v, &raw mut ptr, &raw mut len)
                 } {
                     0 => Err(PinError::Detached),
-                    // FastTypedArray (≤ fastSizeLimit elements, GC-movable): tiny
-                    // by definition — dupe instead of forcing JSC to copy via
-                    // tryCreate(span()) + allocate a butterfly.
+                    // Dupe mode: a FastTypedArray (≤ fastSizeLimit elements,
+                    // GC-movable), or wasm-memory/resizable storage a pin
+                    // cannot hold in place — which can be any size, so this
+                    // copy is not bounded.
                     1 => {
                         if len == 0 {
                             Err(PinError::Detached)
@@ -1458,7 +1463,8 @@ pub struct Input {
     // Borrows `image.source.path` (NUL-terminated); the owning `Image` is
     // held via BACKREF for the task's lifetime, same as `bytes` above.
     path: Option<*const ZStr>,
-    /// FastTypedArray inputs are tiny and GC-movable: copied instead of pinned.
+    /// Inputs a pin can't protect (GC-movable FastTypedArray, wasm-memory or
+    /// resizable storage): copied instead of pinned.
     copied: Option<Vec<u8>>,
 }
 

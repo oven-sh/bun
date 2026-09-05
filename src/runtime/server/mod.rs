@@ -32,7 +32,7 @@ use bun_uws as uws;
 use bun_uws_sys as uws_sys;
 use bun_uws_sys::app::c as uws_app_c;
 
-use bun_jsc::{JSGlobalObject, JSValue, JsResult};
+use bun_jsc::{JSGlobalObject, JSValue, JsResult, SysErrorJsc as _};
 
 // ─── httplog ─────────────────────────────────────────────────────────────────
 // Output.scoped(.Server, .visible) — debug-build no-op until bun_output wires.
@@ -2846,6 +2846,15 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                 Self::deinit(this);
                 return JSValue::ZERO;
             };
+            let ssl_options = match ssl_options.load_files() {
+                Ok(loaded) => loaded,
+                Err(err) => {
+                    let _ = err.err.throw(global);
+                    // SAFETY: caller contract — `this` is the live boxed server from `init()`.
+                    Self::deinit(this);
+                    return JSValue::ZERO;
+                }
+            };
 
             app = match uws_sys::NewApp::<SSL>::create(&ssl_options) {
                 Some(a) => a,
@@ -2969,6 +2978,15 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                 let sni_name = unsafe { bun_core::ffi::cstr(name_ptr) };
                 // SAFETY: sni_name is a CStr; NUL invariant holds for ZStr.
                 let z = unsafe { bun_core::ZStr::from_raw(name_ptr.cast(), name_len) };
+                let sni_opts = match sni_opts.load_files() {
+                    Ok(loaded) => loaded,
+                    Err(err) => {
+                        let _ = err.err.throw(global);
+                        // SAFETY: caller contract — `this` is the live boxed server from `init()`.
+                        Self::deinit(this);
+                        return JSValue::ZERO;
+                    }
+                };
 
                 if Self::HAS_H3 {
                     if let Some(h3_app) = this_ref.h3_app {
@@ -3016,8 +3034,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                 let _ = unsafe { (*this).set_routes() };
             }
         } else {
-            app = match uws_sys::NewApp::<SSL>::create(&uws_sys::BunSocketContextOptions::default())
-            {
+            app = match uws_sys::NewApp::<SSL>::create(&uws_sys::LoadedOptions::default()) {
                 Some(a) => a,
                 None => {
                     if !global.has_exception() {

@@ -110,6 +110,10 @@ pub enum create_bun_socket_error_t {
     invalid_ciphers,
     invalid_crl,
     invalid_ecdh_curve,
+    /// A `*_file_name` option could not be read. Set from Rust only.
+    load_key_file,
+    load_cert_file,
+    load_dh_params_file,
 }
 
 impl create_bun_socket_error_t {
@@ -122,6 +126,9 @@ impl create_bun_socket_error_t {
             Self::invalid_ciphers => Some(b"Invalid ciphers"),
             Self::invalid_crl => Some(b"Invalid CRL"),
             Self::invalid_ecdh_curve => Some(b"Failed to set ECDH curve"),
+            Self::load_key_file => Some(b"Failed to load key file"),
+            Self::load_cert_file => Some(b"Failed to load certificate file"),
+            Self::load_dh_params_file => Some(b"Failed to load DH params file"),
         }
     }
 }
@@ -489,7 +496,9 @@ pub use listen_socket::ListenSocket;
 pub use request::{AnyRequest, Request};
 pub use response::c::uws_res;
 pub use response::{AnyResponse, SocketAddress, WebSocketUpgradeContext};
-pub use socket_context::BunSocketContextOptions;
+pub use socket_context::{
+    BunSocketContextOptions, LoadFileError, LoadedOptions, RawSocketContextOptions, TlsFile,
+};
 pub use socket_group::ConnectResult;
 pub use socket_group::SocketGroup;
 pub use us_socket::{CloseCode, UsIoVec, us_socket_stream_buffer_t, us_socket_t};

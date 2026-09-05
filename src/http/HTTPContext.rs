@@ -546,7 +546,10 @@ impl<const SSL: bool> HTTPContext<SSL> {
                     uws::create_bun_socket_error_t::invalid_crl => InitError::InvalidCRL,
                     uws::create_bun_socket_error_t::none
                     | uws::create_bun_socket_error_t::invalid_ciphers
-                    | uws::create_bun_socket_error_t::invalid_ecdh_curve => {
+                    | uws::create_bun_socket_error_t::invalid_ecdh_curve
+                    | uws::create_bun_socket_error_t::load_key_file
+                    | uws::create_bun_socket_error_t::load_cert_file
+                    | uws::create_bun_socket_error_t::load_dh_params_file => {
                         InitError::FailedToOpenSocket
                     }
                 });
@@ -580,7 +583,13 @@ impl<const SSL: bool> HTTPContext<SSL> {
             request_cert: 1,
             ..Default::default()
         };
-        self.init_with_opts(&opts)
+        match self.init_with_opts(&opts) {
+            // The file replaces the inline `ca`, so a rejected CA came from it.
+            Err(InitError::InvalidCA) if !opts.ca_file_name.is_null() => {
+                Err(InitError::InvalidCAFile)
+            }
+            result => result,
+        }
     }
 
     pub(crate) fn init(&mut self) {

@@ -6,7 +6,7 @@ use bun_core::ZStr;
 use bun_http_types::Method::Method;
 
 use crate::response::Response;
-use crate::socket_context::BunSocketContextOptions;
+use crate::socket_context::{LoadedOptions, RawSocketContextOptions};
 use crate::web_socket::c::uws_ws;
 use crate::{
     AnyRequest, AnyResponse, ListenSocket as UwsListenSocket, Opcode, Request, SendStatus,
@@ -111,9 +111,10 @@ impl<const SSL: bool> App<SSL> {
         c::uws_app_close_idle(Self::SSL_FLAG, self.as_raw(), i32::from(close_when_idle))
     }
 
-    pub fn create(opts: &BunSocketContextOptions) -> Option<*mut Self> {
-        // SAFETY: FFI call; uws_create_app returns null on failure.
-        let app = unsafe { c::uws_create_app(Self::SSL_FLAG, *opts) };
+    pub fn create(opts: &LoadedOptions) -> Option<*mut Self> {
+        // SAFETY: FFI call; uws_create_app returns null on failure. `opts` keeps
+        // the buffers the options point at alive for the call.
+        let app = unsafe { c::uws_create_app(Self::SSL_FLAG, **opts) };
         if app.is_null() {
             None
         } else {
@@ -393,16 +394,17 @@ impl<const SSL: bool> App<SSL> {
     pub fn add_server_name_with_options(
         &mut self,
         hostname_pattern: &core::ffi::CStr,
-        opts: &BunSocketContextOptions,
+        opts: &LoadedOptions,
         apply_client_cert_policy: bool,
     ) -> Result<(), AddServerNameError> {
-        // SAFETY: self is a valid app; hostname_pattern is NUL-terminated.
+        // SAFETY: self is a valid app; hostname_pattern is NUL-terminated; `opts`
+        // keeps the buffers the options point at alive for the call.
         let rc = unsafe {
             c::uws_add_server_name_with_options(
                 Self::SSL_FLAG,
                 std::ptr::from_mut::<Self>(self).cast::<uws_app_t>(),
                 hostname_pattern.as_ptr(),
-                *opts,
+                **opts,
                 i32::from(apply_client_cert_policy),
             )
         };
@@ -533,7 +535,7 @@ pub mod c {
             handler: extern "C" fn(*mut c_void, c_int, *mut us_socket_t, u8, *mut u8, c_int),
             user_data: *mut c_void,
         );
-        pub(crate) fn uws_create_app(ssl: i32, options: BunSocketContextOptions) -> *mut uws_app_t;
+        pub(crate) fn uws_create_app(ssl: i32, options: RawSocketContextOptions) -> *mut uws_app_t;
         pub(crate) fn uws_app_destroy(ssl: i32, app: *mut uws_app_t);
         pub(crate) safe fn uws_app_set_flags(
             ssl: i32,
@@ -668,7 +670,7 @@ pub mod c {
             ssl: i32,
             app: *mut uws_app_t,
             hostname_pattern: *const c_char,
-            options: BunSocketContextOptions,
+            options: RawSocketContextOptions,
             apply_client_cert_policy: c_int,
         ) -> i32;
         pub(crate) safe fn uws_filter(

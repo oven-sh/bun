@@ -297,6 +297,17 @@ fn handle_path(
     string: &bun_core::String,
 ) -> JsResult<*const c_char> {
     let name = string.to_owned_slice_z();
+    let name = if name.is_empty() || bun_paths::is_absolute(name.as_bytes()) {
+        name
+    } else {
+        let mut abs = bun_paths::AutoAbsPathChecked::init_top_level_dir();
+        if abs.join(&[name.as_bytes()]).is_err() {
+            return Err(
+                global.throw_invalid_arguments(format_args!("Unable to access {} path", field))
+            );
+        }
+        bun_core::ZBox::from_bytes(abs.slice())
+    };
     // `bun_sys::access` routes to `access(2)` on POSIX and
     // `GetFileAttributesW` on Windows (via `sys_uv`), so this is the
     // cross-platform existence probe.

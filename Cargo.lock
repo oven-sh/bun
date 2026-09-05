@@ -1692,6 +1692,7 @@ dependencies = [
  "bun_opaque",
  "bun_paths",
  "bun_ptr",
+ "bun_sys",
  "bun_windows_sys",
  "libc",
  "strum",

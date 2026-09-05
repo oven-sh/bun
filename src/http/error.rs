@@ -97,6 +97,38 @@ pub enum Error {
     InvalidCRL,
     #[error("UnsupportedProxyProtocol")]
     UnsupportedProxyProtocol,
+    #[error("SOCKS proxy credentials must include both a username and password.")]
+    SocksCredentialsIncomplete,
+    #[error("SOCKS proxy credentials contain invalid percent-encoding.")]
+    SocksCredentialsInvalid,
+    #[error("SOCKS proxy credentials exceed the RFC 1929 length limit.")]
+    SocksCredentialsTooLong,
+    #[error("SOCKS proxy target hostname exceeds the RFC 1928 length limit.")]
+    SocksDomainTooLong,
+    #[error("SOCKS proxy returned an invalid protocol response.")]
+    SocksProtocolError,
+    #[error("SOCKS proxy accepted none of the offered authentication methods.")]
+    SocksNoAcceptableMethods,
+    #[error("SOCKS proxy authentication failed.")]
+    SocksAuthenticationFailed,
+    #[error("SOCKS proxy reported a general failure.")]
+    SocksGeneralFailure,
+    #[error("SOCKS proxy did not allow the connection.")]
+    SocksConnectionNotAllowed,
+    #[error("SOCKS proxy reported the network is unreachable.")]
+    SocksNetworkUnreachable,
+    #[error("SOCKS proxy reported the host is unreachable.")]
+    SocksHostUnreachable,
+    #[error("SOCKS proxy reported the connection was refused.")]
+    SocksConnectionRefused,
+    #[error("SOCKS proxy reported the TTL expired.")]
+    SocksTTLExpired,
+    #[error("SOCKS proxy does not support the requested command.")]
+    SocksCommandNotSupported,
+    #[error("SOCKS proxy does not support the requested address type.")]
+    SocksAddressTypeNotSupported,
+    #[error("SOCKS proxy requests do not support preconnect.")]
+    SocksPreconnectUnsupported,
     #[error(transparent)]
     Cert(#[from] CertError),
     #[error(transparent)]
@@ -308,6 +340,22 @@ impl Error {
             Self::FailedToOpenSocket => "FailedToOpenSocket",
             Self::InvalidCRL => "InvalidCRL",
             Self::UnsupportedProxyProtocol => "UnsupportedProxyProtocol",
+            Self::SocksCredentialsIncomplete => "SocksCredentialsIncomplete",
+            Self::SocksCredentialsInvalid => "SocksCredentialsInvalid",
+            Self::SocksCredentialsTooLong => "SocksCredentialsTooLong",
+            Self::SocksDomainTooLong => "SocksDomainTooLong",
+            Self::SocksProtocolError => "SocksProtocolError",
+            Self::SocksNoAcceptableMethods => "SocksNoAcceptableMethods",
+            Self::SocksAuthenticationFailed => "SocksAuthenticationFailed",
+            Self::SocksGeneralFailure => "SocksGeneralFailure",
+            Self::SocksConnectionNotAllowed => "SocksConnectionNotAllowed",
+            Self::SocksNetworkUnreachable => "SocksNetworkUnreachable",
+            Self::SocksHostUnreachable => "SocksHostUnreachable",
+            Self::SocksConnectionRefused => "SocksConnectionRefused",
+            Self::SocksTTLExpired => "SocksTTLExpired",
+            Self::SocksCommandNotSupported => "SocksCommandNotSupported",
+            Self::SocksAddressTypeNotSupported => "SocksAddressTypeNotSupported",
+            Self::SocksPreconnectUnsupported => "SocksPreconnectUnsupported",
             Self::Cert(e) => <&'static str>::from(e),
             Self::Alloc(_) => "OutOfMemory",
             Self::Hpack(e) => <&'static str>::from(e),
@@ -365,6 +413,35 @@ impl From<bun_picohttp::ParseResponseError> for Error {
         match e {
             bun_picohttp::ParseResponseError::ShortRead => Error::ShortRead,
             _ => Error::Picohttp(e),
+        }
+    }
+}
+
+impl From<crate::socks5::Socks5Error> for Error {
+    fn from(err: crate::socks5::Socks5Error) -> Self {
+        use crate::socks5::Socks5Error;
+        match err {
+            Socks5Error::CredentialsIncomplete => Self::SocksCredentialsIncomplete,
+            Socks5Error::CredentialsInvalid => Self::SocksCredentialsInvalid,
+            Socks5Error::CredentialsTooLong => Self::SocksCredentialsTooLong,
+            Socks5Error::DomainTooLong => Self::SocksDomainTooLong,
+            Socks5Error::InvalidVersion
+            | Socks5Error::InvalidReserved
+            | Socks5Error::InvalidAddressType
+            | Socks5Error::InvalidAuthenticationResponse
+            | Socks5Error::InvalidReply
+            | Socks5Error::InvalidWriteProgress
+            | Socks5Error::HandshakeTooLarge => Self::SocksProtocolError,
+            Socks5Error::NoAcceptableMethods => Self::SocksNoAcceptableMethods,
+            Socks5Error::AuthenticationFailed => Self::SocksAuthenticationFailed,
+            Socks5Error::GeneralFailure => Self::SocksGeneralFailure,
+            Socks5Error::ConnectionNotAllowed => Self::SocksConnectionNotAllowed,
+            Socks5Error::NetworkUnreachable => Self::SocksNetworkUnreachable,
+            Socks5Error::HostUnreachable => Self::SocksHostUnreachable,
+            Socks5Error::ConnectionRefused => Self::SocksConnectionRefused,
+            Socks5Error::TtlExpired => Self::SocksTTLExpired,
+            Socks5Error::CommandNotSupported => Self::SocksCommandNotSupported,
+            Socks5Error::AddressTypeNotSupported => Self::SocksAddressTypeNotSupported,
         }
     }
 }

@@ -427,6 +427,26 @@ impl<'a> URL<'a> {
         strings::eql_case_insensitive_ascii(self.protocol, b"http", true)
     }
 
+    /// Whether this URL names a SOCKS5 proxy. Proxy schemes are compared
+    /// case-insensitively just like the HTTP schemes above; URL parsing keeps
+    /// the original bytes for round-tripping.
+    #[inline]
+    pub fn is_socks5(&self) -> bool {
+        strings::eql_case_insensitive_ascii(self.protocol, b"socks5", true)
+    }
+
+    /// Whether this URL names a SOCKS5 hostname-routing proxy. The `h` suffix
+    /// asks the proxy to resolve hostnames; IP literals use their native ATYP.
+    #[inline]
+    pub fn is_socks5h(&self) -> bool {
+        strings::eql_case_insensitive_ascii(self.protocol, b"socks5h", true)
+    }
+
+    #[inline]
+    pub fn is_socks(&self) -> bool {
+        self.is_socks5() || self.is_socks5h()
+    }
+
     pub fn display_hostname(&self) -> &[u8] {
         if !self.hostname.is_empty() {
             self.hostname
@@ -491,6 +511,19 @@ impl<'a> URL<'a> {
 
     pub fn get_port_auto(&self) -> u16 {
         self.get_port().unwrap_or_else(|| self.get_default_port())
+    }
+
+    /// Return the proxy listener port, defaulting to 1080 for SOCKS5 and to
+    /// the URL's normal scheme default for HTTP(S). Keeping this on URL makes
+    /// every connect path (including custom SSL cache paths) agree.
+    pub fn get_proxy_port_auto(&self) -> u16 {
+        self.get_port().unwrap_or_else(|| {
+            if self.is_socks() {
+                1080
+            } else {
+                self.get_default_port()
+            }
+        })
     }
 
     pub(crate) fn get_default_port(&self) -> u16 {

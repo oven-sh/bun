@@ -43,6 +43,8 @@ pub mod send_file;
 pub mod session_cache;
 #[path = "Signals.rs"]
 pub mod signals;
+#[path = "Socks5.rs"]
+pub mod socks5;
 #[path = "ThreadSafeStreamBuffer.rs"]
 pub mod thread_safe_stream_buffer;
 #[path = "websocket.rs"]
@@ -830,6 +832,10 @@ pub struct HTTPClient<'a> {
     /// moved to the keep-alive pool with the socket. The pointee is also
     /// recovered raw from the SSLWrapper callback `ctx`, hence intrusive.
     pub(crate) proxy_tunnel: Option<RefPtr<ProxyTunnel>>,
+    /// SOCKS5 handshake in progress on the plain outer socket. Never pooled:
+    /// every connect attempt negotiates a fresh tunnel and this is cleared once
+    /// CONNECT succeeds or the request fails.
+    pub(crate) socks: Option<Box<socks5::Socks5>>,
     /// Set when this request is bound to a stream on an HTTP/2 session.
     /// Owned by the session; cleared by the session when the stream completes.
     pub(crate) h2: Option<NonNull<h2::Stream>>,
@@ -1656,7 +1662,7 @@ impl<'a> HTTPClient<'a> {
     /// How this request authenticates the peer of its outer socket on a fresh
     /// handshake (an HTTPS proxy's own certificate always takes the native path).
     pub(crate) fn socket_verification(&self) -> PeerVerification {
-        if self.http_proxy.is_some() {
+        if self.http_proxy.is_some() && !self.is_socks_proxy() {
             if self.flags.reject_unauthorized {
                 PeerVerification::Native
             } else {
@@ -2018,6 +2024,14 @@ impl<'a> HTTPClient<'a> {
             }
         }
 
+        // SOCKS5 is an application handshake on a plain outer socket. It must
+        // run before any HTTP request bytes are generated, including for an
+        // HTTPS origin (the origin TLS handshake starts only after CONNECT).
+        if self.is_socks_proxy() {
+            self.start_socks5::<IS_SSL>(socket);
+            return;
+        }
+
         if IS_SSL {
             let ssl_ptr: *mut boringssl::c::SSL = socket
                 .get_native_handle()
@@ -2060,6 +2074,40 @@ impl<'a> HTTPClient<'a> {
                 self.on_writable::<true, IS_SSL>(socket);
             }
             _ => {}
+        }
+    }
+
+    fn start_socks5<const IS_SSL: bool>(&mut self, socket: HttpSocket<IS_SSL>) {
+        debug_assert!(!IS_SSL);
+        debug_assert!(self.socks.is_some());
+        self.state.request_stage = RequestStage::ProxyHandshake;
+        self.state.response_stage = ResponseStage::ProxyHandshake;
+        self.on_socks_writable::<IS_SSL>(socket);
+    }
+
+    fn on_socks_writable<const IS_SSL: bool>(&mut self, socket: HttpSocket<IS_SSL>) {
+        debug_assert!(!IS_SSL);
+        if socket.is_closed() || socket.is_shutdown() {
+            self.close_and_fail::<IS_SSL>(crate::Error::ConnectionClosed, socket);
+            return;
+        }
+        let Some(socks) = self.socks.as_deref_mut() else {
+            debug_assert!(false, "unexpected SOCKS state in on_socks_writable");
+            self.close_and_fail::<IS_SSL>(crate::Error::ConnectionClosed, socket);
+            return;
+        };
+        let pending = socks.pending_write();
+        if pending.is_empty() {
+            return;
+        }
+        let amount = socket.write(pending);
+        if amount < 0 {
+            self.close_and_fail::<IS_SSL>(crate::Error::WriteFailed, socket);
+            return;
+        }
+        let amount = usize::try_from(amount).expect("socket write amount is non-negative");
+        if let Err(err) = socks.written(amount) {
+            self.close_and_fail::<IS_SSL>(err.into(), socket);
         }
     }
 
@@ -2113,6 +2161,7 @@ impl<'a> HTTPClient<'a> {
             self.fail(crate::Error::Aborted);
             return;
         }
+        self.socks = None;
         self.close_proxy_tunnel(true);
         let in_progress = self.state.stage != Stage::Done
             && self.state.stage != Stage::Fail
@@ -2224,6 +2273,11 @@ impl<'a> HTTPClient<'a> {
     }
 
     pub(crate) fn is_keep_alive_possible(&self) -> bool {
+        // A SOCKS tunnel is bound to one origin; reusing it would route the
+        // next request to the wrong host.
+        if self.is_socks_proxy() {
+            return false;
+        }
         if FeatureFlags::ENABLE_KEEPALIVE {
             // check state
             if self.state.flags.allow_keepalive && !self.flags.disable_keepalive {
@@ -2463,7 +2517,7 @@ impl<'a> HTTPClient<'a> {
             header_count += 1;
         }
 
-        if !override_connection_header && !self.flags.disable_keepalive {
+        if !override_connection_header && !self.flags.disable_keepalive && !self.is_socks_proxy() {
             request_headers_buf[header_count] = CONNECTION_HEADER;
             header_count += 1;
         }
@@ -2580,6 +2634,7 @@ impl<'a> HTTPClient<'a> {
         self.flags.redirected = true;
         debug_assert!(self.redirect_type == FetchRedirect::Follow);
         self.unregister_abort_tracker();
+        self.socks = None;
 
         // By the time doRedirect runs, handleResponseMetadata has already mutated
         // this.url to the redirect destination. Pooling the tunnel here would
@@ -2659,7 +2714,11 @@ impl<'a> HTTPClient<'a> {
                 // SAFETY: self-borrow. `href` points into `self.proxy_settings`'s
                 // boxed storage, which lives as long as `self` (>= `'a`).
                 let proxy: URL<'a> = unsafe { URL::parse(href).erase_lifetime() };
-                self.proxy_authorization = async_http::build_proxy_authorization(&proxy);
+                self.proxy_authorization = if proxy.is_socks() {
+                    None
+                } else {
+                    async_http::build_proxy_authorization(&proxy)
+                };
                 self.http_proxy = Some(proxy);
             }
         }
@@ -2673,9 +2732,15 @@ impl<'a> HTTPClient<'a> {
         self.url.is_https()
     }
 
+    #[inline]
+    pub(crate) fn is_socks_proxy(&self) -> bool {
+        self.http_proxy.as_ref().is_some_and(URL::is_socks)
+    }
+
     pub(crate) fn start(&mut self, body: HTTPRequestBody<'a>) {
         debug_assert!(self.state.response_message_buffer.list.capacity() == 0);
         self.state = InternalState::init(body);
+        self.socks = None;
 
         if self.is_https() {
             self.start_::<true>();
@@ -2703,6 +2768,27 @@ impl<'a> HTTPClient<'a> {
             self.fail(crate::Error::AbortedBeforeConnecting);
             self.complete_connecting_process();
             return;
+        }
+
+        if self.is_socks_proxy() {
+            if self.flags.is_preconnect_only {
+                self.fail(crate::Error::SocksPreconnectUnsupported);
+                self.complete_connecting_process();
+                return;
+            }
+            let proxy = self.http_proxy.as_ref().expect("SOCKS proxy exists");
+            let socks = socks5::Authentication::from_url(proxy).and_then(|auth| {
+                let target = socks5::TargetHost::parse(self.url.hostname)?;
+                socks5::Socks5::new(auth, target, self.url.get_port_auto())
+            });
+            match socks {
+                Ok(socks) => self.socks = Some(Box::new(socks)),
+                Err(err) => {
+                    self.fail(err.into());
+                    self.complete_connecting_process();
+                    return;
+                }
+            }
         }
 
         // protocol: "http2" is documented as HTTPS-only (h2c is out of scope).
@@ -2949,7 +3035,7 @@ impl<'a> HTTPClient<'a> {
 
         let request = self.build_request(self.body_len_for_send());
 
-        if self.http_proxy.is_some() {
+        if self.http_proxy.is_some() && !self.is_socks_proxy() {
             if self.url.is_https() {
                 bun_core::scoped_log!(fetch, "start proxy tunneling (https proxy)");
                 // DO the tunneling!
@@ -3239,6 +3325,14 @@ impl<'a> HTTPClient<'a> {
                 self.on_preconnect::<IS_SSL>(socket);
                 return;
             }
+        }
+
+        if self.state.request_stage == RequestStage::ProxyHandshake
+            && self.proxy_tunnel.is_none()
+            && self.is_socks_proxy()
+        {
+            self.on_socks_writable::<IS_SSL>(socket);
+            return;
         }
 
         if let Some(proxy) = self.proxy_tunnel_ptr() {
@@ -3812,6 +3906,57 @@ impl<'a> HTTPClient<'a> {
             return;
         }
 
+        if self.state.request_stage == RequestStage::ProxyHandshake
+            && self.proxy_tunnel.is_none()
+            && self.is_socks_proxy()
+        {
+            let Some(socks) = self.socks.as_deref_mut() else {
+                debug_assert!(false, "unexpected SOCKS state in ProxyHandshake on_data");
+                self.close_and_fail::<IS_SSL>(crate::Error::ConnectionClosed, socket);
+                return;
+            };
+            let established = match socks.receive(incoming_data) {
+                Ok(established) => established,
+                Err(err) => {
+                    self.close_and_fail::<IS_SSL>(err.into(), socket);
+                    return;
+                }
+            };
+            if !established {
+                // A method/auth response may have queued the next frame. Try
+                // it immediately; a zero write simply waits for onWritable.
+                self.on_socks_writable::<IS_SSL>(socket);
+                return;
+            }
+
+            let leftover = socks.take_leftover();
+            self.socks = None;
+            let tcp_socket = uws::SocketTCP::from_any(socket.socket);
+
+            if self.url.is_https() {
+                // SOCKS only establishes a byte stream. Origin TLS/SNI/
+                // certificate verification belongs to ProxyTunnel and
+                // must use a plain outer socket plus all coalesced bytes.
+                self.flags.proxy_tunneling = true;
+                self.start_proxy_handshake::<false>(tcp_socket, &leftover);
+                return;
+            }
+
+            // HTTP over SOCKS is ordinary origin-form HTTP. Start the
+            // request only after CONNECT succeeds. A server cannot legally
+            // send an origin response before that request, so preserve the
+            // invariant rather than touching the client after a potentially
+            // terminal write callback.
+            if !leftover.is_empty() {
+                self.close_and_fail::<false>(crate::Error::UnexpectedData, tcp_socket);
+                return;
+            }
+            self.state.request_stage = RequestStage::Opened;
+            self.state.response_stage = ResponseStage::Pending;
+            self.on_writable::<true, false>(tcp_socket);
+            return;
+        }
+
         if let Some(proxy) = self.proxy_tunnel_ptr() {
             // Body phase only, mirroring the non-proxy dispatch below (header
             // phase is an absolute deadline; see [`IDLE_TIMEOUT_SECONDS`]).
@@ -3956,6 +4101,7 @@ impl<'a> HTTPClient<'a> {
         self.unregister_abort_tracker();
         self.resolve_pending_h2(PendingH2Resolution::LeaderFailed);
 
+        self.socks = None;
         self.close_proxy_tunnel(true);
         if self.state.stage != Stage::Done && self.state.stage != Stage::Fail {
             self.state.request_stage = RequestStage::Fail;

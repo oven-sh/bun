@@ -1,7 +1,7 @@
 import axios from "axios";
 import type { Server } from "bun";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, tls as tlsCert } from "harness";
+import { bunEnv, bunExe, expiredTls, isASAN, isIPv6, tls as tlsCert } from "harness";
 import { HttpsProxyAgent } from "https-proxy-agent";
 import { once } from "node:events";
 import net from "node:net";
@@ -132,6 +132,267 @@ async function createProxyServer(is_tls: boolean) {
   const port = server.address().port;
   const url = `http${is_tls ? "s" : ""}://localhost:${port}`;
   return { server, url, log: log };
+}
+
+type Socks5FixtureOptions = {
+  credentials?: { username: string; password: string };
+  methods?: number[];
+  authStatus?: number;
+  reply?: number;
+  fragmentResponses?: boolean;
+  connectReplySuffix?: Buffer;
+  failFirstConnect?: boolean;
+};
+
+type Socks5Observation = {
+  atyp: number;
+  host: string;
+  port: number;
+};
+
+type Socks5Fixture = {
+  readonly port: number;
+  readonly connectionCount: number;
+  readonly observations: Socks5Observation[];
+  readonly authAttempts: Array<{ username: string; password: string }>;
+  readonly requestBytes: () => Buffer;
+  readonly proxy: (scheme?: string, credentials?: string) => string;
+  readonly close: () => Promise<void>;
+};
+
+// A deliberately small SOCKS5 server used by the tests below. The parser is
+// independent from Node's SOCKS agents: it accepts arbitrary fragmentation and
+// multiple frames in one data event, and it keeps bytes that follow CONNECT
+// while the target socket is still connecting. This makes the tests exercise
+// the client's wire state machine rather than timing assumptions.
+async function createSocks5Fixture(options: Socks5FixtureOptions = {}): Promise<Socks5Fixture> {
+  const sockets = new Set<net.Socket>();
+  const state = {
+    connectionCount: 0,
+    observations: [] as Socks5Observation[],
+    authAttempts: [] as Array<{ username: string; password: string }>,
+    requestChunks: [] as Buffer[],
+  };
+
+  const server = net.createServer(client => {
+    sockets.add(client);
+    state.connectionCount++;
+    client.on("error", () => {});
+    client.once("close", () => sockets.delete(client));
+
+    let phase: "methods" | "auth" | "connect" | "established" | "closed" = "methods";
+    let input = Buffer.alloc(0);
+    let upstream: net.Socket | undefined;
+    let queuedForUpstream = Buffer.alloc(0);
+
+    const append = (left: Buffer, right: Buffer) => Buffer.concat([left, right]);
+
+    const writeReply = (reply: Buffer) => {
+      if (options.fragmentResponses) {
+        for (let i = 0; i < reply.length; i++) client.write(reply.subarray(i, i + 1));
+      } else {
+        client.write(reply);
+      }
+    };
+
+    const closeAfterReply = (reply: Buffer) => {
+      phase = "closed";
+      if (options.fragmentResponses) {
+        for (let i = 0; i < reply.length; i++) client.write(reply.subarray(i, i + 1));
+        client.end();
+      } else {
+        client.end(reply);
+      }
+    };
+
+    const ipv6 = (address: Buffer) => {
+      const groups: string[] = [];
+      for (let i = 0; i < address.length; i += 2) groups.push(address.readUInt16BE(i).toString(16));
+      return groups.join(":");
+    };
+
+    const drain = () => {
+      while (phase !== "closed") {
+        if (phase === "methods") {
+          if (input.length < 2) return;
+          if (input[0] !== 5) {
+            client.destroy();
+            return;
+          }
+          const count = input[1]!;
+          if (input.length < 2 + count) return;
+          const offered = input.subarray(2, 2 + count);
+          input = input.subarray(2 + count);
+          const supported = options.methods ?? (options.credentials ? [2] : [0, 2]);
+          const selected =
+            options.credentials && supported.includes(2) && offered.includes(2)
+              ? 2
+              : supported.includes(0) && offered.includes(0)
+                ? 0
+                : 0xff;
+          if (selected === 0xff) {
+            closeAfterReply(Buffer.from([5, 0xff]));
+            return;
+          }
+          writeReply(Buffer.from([5, selected]));
+          phase = selected === 2 ? "auth" : "connect";
+        }
+
+        if (phase === "auth") {
+          if (input.length < 2) return;
+          if (input[0] !== 1) {
+            client.destroy();
+            return;
+          }
+          const usernameLength = input[1]!;
+          if (input.length < 2 + usernameLength + 1) return;
+          const passwordLengthOffset = 2 + usernameLength;
+          const passwordLength = input[passwordLengthOffset]!;
+          if (input.length < passwordLengthOffset + 1 + passwordLength) return;
+          const username = input.subarray(2, passwordLengthOffset).toString();
+          const password = input
+            .subarray(passwordLengthOffset + 1, passwordLengthOffset + 1 + passwordLength)
+            .toString();
+          input = input.subarray(passwordLengthOffset + 1 + passwordLength);
+          state.authAttempts.push({ username, password });
+          const expected = options.credentials;
+          const status =
+            options.authStatus ??
+            (expected && (expected.username !== username || expected.password !== password) ? 1 : 0);
+          if (status !== 0) {
+            closeAfterReply(Buffer.from([1, status]));
+            return;
+          }
+          writeReply(Buffer.from([1, 0]));
+          phase = "connect";
+        }
+
+        if (phase === "connect") {
+          if (input.length < 4) return;
+          const version = input[0]!;
+          const command = input[1]!;
+          const reserved = input[2]!;
+          if (version !== 5 || command !== 1 || reserved !== 0) {
+            closeAfterReply(Buffer.from([5, command === 1 ? 1 : 7, 0, 1, 0, 0, 0, 0, 0, 0]));
+            return;
+          }
+          const atyp = input[3]!;
+          let offset = 4;
+          let host = "";
+          if (atyp === 1) {
+            if (input.length < offset + 4) return;
+            const address = input.subarray(offset, offset + 4);
+            host = Array.from(address).join(".");
+            offset += 4;
+          } else if (atyp === 4) {
+            if (input.length < offset + 16) return;
+            const address = input.subarray(offset, offset + 16);
+            host = ipv6(address);
+            offset += 16;
+          } else if (atyp === 3) {
+            if (input.length < offset + 1) return;
+            const length = input[offset]!;
+            if (input.length < offset + 1 + length) return;
+            host = input.subarray(offset + 1, offset + 1 + length).toString();
+            offset += 1 + length;
+          } else {
+            closeAfterReply(Buffer.from([5, 8, 0, 1, 0, 0, 0, 0, 0, 0]));
+            return;
+          }
+          if (input.length < offset + 2) return;
+          const port = input.readUInt16BE(offset);
+          input = input.subarray(offset + 2);
+          state.observations.push({ atyp, host, port });
+
+          if (options.failFirstConnect && state.connectionCount === 1) {
+            closeAfterReply(Buffer.from([5, 5, 0, 1, 0, 0, 0, 0, 0, 0]));
+            return;
+          }
+
+          if (options.reply && options.reply !== 0) {
+            closeAfterReply(Buffer.from([5, options.reply, 0, 1, 0, 0, 0, 0, 0, 0]));
+            return;
+          }
+
+          queuedForUpstream = input;
+          input = Buffer.alloc(0);
+          if (queuedForUpstream.length > 0) state.requestChunks.push(queuedForUpstream);
+          phase = "established";
+          const targetHost = host === "localhost" ? "127.0.0.1" : host;
+          upstream = net.connect(port, targetHost, () => {
+            const reply = Buffer.from([5, 0, 0, 1, 0, 0, 0, 0, 0, 0]);
+            writeReply(options.connectReplySuffix ? Buffer.concat([reply, options.connectReplySuffix]) : reply);
+            if (queuedForUpstream.length > 0) {
+              upstream!.write(queuedForUpstream);
+              queuedForUpstream = Buffer.alloc(0);
+            }
+          });
+          sockets.add(upstream);
+          upstream.on("data", data => client.write(data));
+          upstream.on("error", () => client.destroy());
+          upstream.on("close", () => {
+            sockets.delete(upstream!);
+            if (!client.destroyed) client.end();
+          });
+          continue;
+        }
+
+        if (phase === "established") {
+          if (input.length > 0) {
+            state.requestChunks.push(input);
+            if (upstream && !upstream.destroyed) upstream.write(input);
+            else queuedForUpstream = append(queuedForUpstream, input);
+            input = Buffer.alloc(0);
+          }
+          return;
+        }
+      }
+    };
+
+    client.on("data", data => {
+      if (phase === "established") {
+        state.requestChunks.push(data);
+        if (upstream && !upstream.destroyed) upstream.write(data);
+        else queuedForUpstream = append(queuedForUpstream, data);
+        return;
+      }
+      input = append(input, data);
+      drain();
+    });
+  });
+
+  server.listen(0, "127.0.0.1");
+  await once(server, "listening");
+  const port = (server.address() as net.AddressInfo).port;
+  return {
+    port,
+    get connectionCount() {
+      return state.connectionCount;
+    },
+    observations: state.observations,
+    authAttempts: state.authAttempts,
+    requestBytes: () => Buffer.concat(state.requestChunks),
+    proxy: (scheme = "socks5", credentials = "") =>
+      `${scheme}://${credentials ? `${credentials}@` : ""}127.0.0.1:${port}`,
+    close: async () => {
+      for (const socket of sockets) socket.destroy();
+      if (server.listening) {
+        const closed = once(server, "close");
+        server.close();
+        await closed;
+      }
+    },
+  };
+}
+
+async function fetchErrorName(url: string, options: Record<string, unknown>) {
+  try {
+    await fetch(url, options as any);
+    return "NO_ERROR";
+  } catch (error) {
+    const value = error as { code?: unknown; name?: unknown };
+    return String(value.code ?? value.name ?? error);
+  }
 }
 
 let httpServer: Server;
@@ -2366,32 +2627,378 @@ describe("http_proxy env var scheme is case-insensitive", () => {
       await once(proxy, "close");
     }
   });
+});
 
-  // An unrecognized scheme must still be rejected loudly instead of silently
-  // going direct.
-  test.concurrent("socks5:// is still rejected with UnsupportedProxyProtocol", async () => {
-    using origin = Bun.serve({ port: 0, fetch: () => new Response("origin") });
-    await using proc = Bun.spawn({
-      cmd: [
-        bunExe(),
-        "-e",
-        `try { await fetch(${JSON.stringify(`http://127.0.0.1:${origin.port}/x`)}); console.log("OK"); } catch (e) { console.log("ERR", e?.code ?? e?.name); }`,
-      ],
-      env: {
-        ...bunEnv,
-        NO_PROXY: undefined,
-        no_proxy: undefined,
-        HTTP_PROXY: undefined,
-        http_proxy: "socks5://127.0.0.1:1",
-        HTTPS_PROXY: undefined,
-        https_proxy: undefined,
-      },
-      stdout: "pipe",
-      stderr: "pipe",
+describe("SOCKS5 proxy", () => {
+  test("HTTP uses numeric IPv4 ATYP and origin-form request", async () => {
+    const fixture = await createSocks5Fixture({ fragmentResponses: true });
+    try {
+      const target = new URL(httpServer.url);
+      target.hostname = "127.0.0.1";
+      target.pathname = "/socks5-origin";
+      const response = await fetch(target, {
+        proxy: fixture.proxy("SoCkS5"),
+        keepalive: false,
+      });
+      expect(response.status).toBe(200);
+      expect(await response.text()).toBe("");
+      expect(fixture.observations[0]).toMatchObject({
+        atyp: 1,
+        host: "127.0.0.1",
+        port: Number(target.port),
+      });
+      const firstLine = fixture.requestBytes().toString("latin1").split("\r\n", 1)[0];
+      expect(firstLine).toBe("GET /socks5-origin HTTP/1.1");
+      expect(firstLine.includes("CONNECT")).toBe(false);
+      expect(firstLine.includes(target.origin)).toBe(false);
+    } finally {
+      await fixture.close();
+    }
+  });
+
+  test("HTTP rejects bytes coalesced after the CONNECT reply", async () => {
+    const fixture = await createSocks5Fixture({
+      connectReplySuffix: Buffer.from("HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n"),
     });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(stderr).toBe("");
-    expect(stdout.trim()).toBe("ERR UnsupportedProxyProtocol");
-    expect(exitCode).toBe(0);
+    try {
+      await expect(fetch(httpServer.url, { proxy: fixture.proxy(), keepalive: false })).rejects.toMatchObject({
+        code: "UnexpectedData",
+      });
+    } finally {
+      await fixture.close();
+    }
+  });
+
+  test("HTTPS keeps origin TLS/SNI on the SOCKS byte stream", async () => {
+    const serverNames: string[] = [];
+    const tlsOrigin = tls.createServer({ ...tlsCert, rejectUnauthorized: false }, socket => {
+      serverNames.push(socket.servername ?? "");
+      socket.on("error", () => {});
+      let request = Buffer.alloc(0);
+      socket.on("data", chunk => {
+        request = Buffer.concat([request, chunk]);
+        if (request.includes(Buffer.from("\r\n\r\n"))) {
+          socket.end("HTTP/1.1 200 OK\r\nContent-Length: 7\r\nConnection: close\r\n\r\nTLS OK!");
+        }
+      });
+    });
+    tlsOrigin.on("tlsClientError", () => {});
+    tlsOrigin.listen(0, "127.0.0.1");
+    await once(tlsOrigin, "listening");
+    const targetPort = (tlsOrigin.address() as net.AddressInfo).port;
+    const fixture = await createSocks5Fixture({ fragmentResponses: true });
+    try {
+      const response = await fetch(`https://localhost:${targetPort}/socks5-tls`, {
+        proxy: fixture.proxy("socks5h"),
+        keepalive: false,
+        tls: { ca: tlsCert.cert },
+      });
+      expect(response.status).toBe(200);
+      expect(await response.text()).toBe("TLS OK!");
+      expect(serverNames).toContain("localhost");
+      expect(fixture.observations[0]).toMatchObject({ atyp: 3, host: "localhost", port: targetPort });
+    } finally {
+      await fixture.close();
+      tlsOrigin.close();
+      await once(tlsOrigin, "close");
+    }
+  });
+
+  test("HTTPS verifies the origin certificate through SOCKS", async () => {
+    const tlsOrigin = tls.createServer(tlsCert, socket => socket.end());
+    tlsOrigin.on("tlsClientError", () => {});
+    tlsOrigin.listen(0, "127.0.0.1");
+    await once(tlsOrigin, "listening");
+    const targetPort = (tlsOrigin.address() as net.AddressInfo).port;
+    const fixture = await createSocks5Fixture();
+    try {
+      expect(
+        await fetchErrorName(`https://localhost:${targetPort}/`, {
+          proxy: fixture.proxy("socks5h"),
+          tls: { ca: expiredTls.cert },
+        }),
+      ).toBe("DEPTH_ZERO_SELF_SIGNED_CERT");
+      expect(fixture.observations).toEqual([{ atyp: 3, host: "localhost", port: targetPort }]);
+    } finally {
+      await fixture.close();
+      const closed = once(tlsOrigin, "close");
+      tlsOrigin.close();
+      await closed;
+    }
+  });
+
+  test("RFC 1929 decodes credentials and rejects bad or partial credentials", async () => {
+    const target = new URL(httpServer.url);
+    target.hostname = "127.0.0.1";
+
+    const authenticated = await createSocks5Fixture({
+      credentials: { username: "u@ser", password: "p:ss" },
+      fragmentResponses: true,
+    });
+    try {
+      const response = await fetch(target, {
+        proxy: authenticated.proxy("socks5", "u%40ser:p%3Ass"),
+        keepalive: false,
+      });
+      expect(response.status).toBe(200);
+      expect(authenticated.authAttempts).toEqual([{ username: "u@ser", password: "p:ss" }]);
+    } finally {
+      await authenticated.close();
+    }
+
+    const badAuth = await createSocks5Fixture({
+      credentials: { username: "user", password: "pass" },
+      authStatus: 1,
+      fragmentResponses: true,
+    });
+    try {
+      expect(await fetchErrorName(target.href, { proxy: badAuth.proxy("socks5", "user:pass"), keepalive: false })).toBe(
+        "SocksAuthenticationFailed",
+      );
+    } finally {
+      await badAuth.close();
+    }
+
+    const partial = await createSocks5Fixture();
+    try {
+      expect(await fetchErrorName(target.href, { proxy: partial.proxy("socks5", ":password"), keepalive: false })).toBe(
+        "SocksCredentialsIncomplete",
+      );
+      expect(partial.connectionCount).toBe(0);
+    } finally {
+      await partial.close();
+    }
+  });
+
+  test.skipIf(!isIPv6())("IPv6 literals use ATYP 4 end-to-end", async () => {
+    const origin = Bun.serve({
+      hostname: "::1",
+      port: 0,
+      fetch() {
+        return new Response("IPv6 SOCKS");
+      },
+    });
+    const fixture = await createSocks5Fixture({ fragmentResponses: true });
+    try {
+      const response = await fetch(`http://[::1]:${origin.port}/`, {
+        proxy: fixture.proxy("socks5"),
+        keepalive: false,
+      });
+      expect(response.status).toBe(200);
+      expect(await response.text()).toBe("IPv6 SOCKS");
+      expect(fixture.observations).toEqual([{ atyp: 4, host: "0:0:0:0:0:0:0:1", port: origin.port }]);
+    } finally {
+      await fixture.close();
+      origin.stop(true);
+    }
+  });
+
+  test("hostnames are forwarded as domain ATYP for both socks5 and socks5h; literals use native ATYP", async () => {
+    const target = new URL(httpServer.url);
+    target.hostname = "localhost";
+    for (const scheme of ["SOCKS5H", "socks5"]) {
+      const hostnameProxy = await createSocks5Fixture({ fragmentResponses: true });
+      try {
+        const response = await fetch(target, {
+          proxy: hostnameProxy.proxy(scheme),
+          keepalive: false,
+        });
+        expect(response.status).toBe(200);
+        expect(hostnameProxy.observations[0]).toMatchObject({ atyp: 3, host: "localhost" });
+      } finally {
+        await hostnameProxy.close();
+      }
+    }
+
+    const numericTarget = new URL(httpServer.url);
+    numericTarget.hostname = "127.0.0.1";
+    const numericProxy = await createSocks5Fixture({ fragmentResponses: true });
+    try {
+      const response = await fetch(numericTarget, {
+        proxy: numericProxy.proxy("socks5h"),
+        keepalive: false,
+      });
+      expect(response.status).toBe(200);
+      expect(numericProxy.observations[0]).toMatchObject({ atyp: 1, host: "127.0.0.1" });
+    } finally {
+      await numericProxy.close();
+    }
+  });
+
+  test("maps SOCKS reply codes and no-method responses to named errors", async () => {
+    const target = new URL(httpServer.url);
+    target.hostname = "127.0.0.1";
+    const replies = [
+      [1, "SocksGeneralFailure"],
+      [2, "SocksConnectionNotAllowed"],
+      [3, "SocksNetworkUnreachable"],
+      [4, "SocksHostUnreachable"],
+      [5, "SocksConnectionRefused"],
+      [6, "SocksTTLExpired"],
+      [7, "SocksCommandNotSupported"],
+      [8, "SocksAddressTypeNotSupported"],
+    ] as const;
+    for (const [reply, name] of replies) {
+      const fixture = await createSocks5Fixture({ reply, fragmentResponses: true });
+      try {
+        try {
+          await fetch(target.href, { proxy: fixture.proxy("sOcKs5"), keepalive: false });
+          throw new Error("expected the SOCKS proxy to reject the connection");
+        } catch (error) {
+          const value = error as Error & { code?: string };
+          expect(value.code ?? value.name).toBe(name);
+          if (reply === 1) {
+            expect(value.message).toContain("SOCKS proxy reported a general failure.");
+          }
+        }
+      } finally {
+        await fixture.close();
+      }
+    }
+
+    const noMethods = await createSocks5Fixture({ methods: [2], fragmentResponses: true });
+    try {
+      expect(await fetchErrorName(target.href, { proxy: noMethods.proxy(), keepalive: false })).toBe(
+        "SocksNoAcceptableMethods",
+      );
+    } finally {
+      await noMethods.close();
+    }
+  });
+
+  test("redirects establish a fresh SOCKS tunnel", async () => {
+    using destination = Bun.serve({
+      hostname: "127.0.0.1",
+      port: 0,
+      fetch() {
+        return new Response("redirected through socks");
+      },
+    });
+    using origin = Bun.serve({
+      hostname: "127.0.0.1",
+      port: 0,
+      fetch() {
+        return Response.redirect(`http://127.0.0.1:${destination.port}/final`, 302);
+      },
+    });
+    const fixture = await createSocks5Fixture({ fragmentResponses: true });
+    try {
+      const response = await fetch(`http://127.0.0.1:${origin.port}/start`, {
+        proxy: fixture.proxy(),
+        keepalive: false,
+      });
+      expect(await response.text()).toBe("redirected through socks");
+      expect(fixture.connectionCount).toBe(2);
+      expect(fixture.observations[1]).toMatchObject({ host: "127.0.0.1", port: destination.port });
+    } finally {
+      await fixture.close();
+    }
+  });
+
+  test("environment SOCKS proxy honors NO_PROXY", async () => {
+    using origin = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch: () => new Response("direct") });
+    const fixture = await createSocks5Fixture({ fragmentResponses: true });
+    try {
+      const numericTarget = `http://127.0.0.1:${origin.port}/env`;
+      const localhostTarget = `http://localhost:${origin.port}/env`;
+      const run = async (target: string, noProxy?: string) => {
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), "-e", `console.log(await (await fetch(${JSON.stringify(target)})).text())`],
+          env: {
+            ...bunEnv,
+            NO_PROXY: undefined,
+            no_proxy: noProxy,
+            HTTP_PROXY: undefined,
+            http_proxy: fixture.proxy("SoCkS5"),
+            HTTPS_PROXY: undefined,
+            https_proxy: undefined,
+          },
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect(stderr).toBe("");
+        expect(exitCode).toBe(0);
+        return stdout.trim();
+      };
+
+      expect(await run(numericTarget)).toBe("direct");
+      expect(fixture.connectionCount).toBe(1);
+      for (const noProxy of ["*", "127.0.0.1", `127.0.0.1:${origin.port}`]) {
+        expect(await run(numericTarget, noProxy)).toBe("direct");
+        expect(fixture.connectionCount).toBe(1);
+      }
+      expect(await run(localhostTarget, "localhost")).toBe("direct");
+      expect(fixture.connectionCount).toBe(1);
+      expect(await run(numericTarget, "example.com")).toBe("direct");
+      expect(fixture.connectionCount).toBe(2);
+    } finally {
+      await fixture.close();
+    }
+  });
+
+  test("https_proxy=socks5h via env routes TLS origin through SOCKS (P5)", async () => {
+    const tlsOrigin = tls.createServer(tlsCert, socket => {
+      socket.on("error", () => {});
+      let req = Buffer.alloc(0);
+      socket.on("data", chunk => {
+        req = Buffer.concat([req, chunk]);
+        if (req.includes(Buffer.from("\r\n\r\n"))) {
+          socket.end("HTTP/1.1 200 OK\r\nContent-Length: 7\r\nConnection: close\r\n\r\nTLS OK!");
+        }
+      });
+    });
+    tlsOrigin.listen(0, "127.0.0.1");
+    await once(tlsOrigin, "listening");
+    const tlsPort = (tlsOrigin.address() as net.AddressInfo).port;
+    const fixture = await createSocks5Fixture({ fragmentResponses: true });
+    try {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `console.log(await (await fetch(${JSON.stringify(`https://localhost:${tlsPort}/`)}, { tls: { ca: ${JSON.stringify(tlsCert.cert)} } })).text())`,
+        ],
+        env: {
+          ...bunEnv,
+          NO_PROXY: undefined,
+          no_proxy: undefined,
+          HTTP_PROXY: undefined,
+          http_proxy: undefined,
+          HTTPS_PROXY: undefined,
+          https_proxy: fixture.proxy("socks5h"),
+        },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(stdout.trim()).toBe("TLS OK!");
+      expect(exitCode).toBe(0);
+      expect(fixture.observations[0]).toMatchObject({ atyp: 3, host: "localhost", port: tlsPort });
+    } finally {
+      await fixture.close();
+      tlsOrigin.close();
+      await once(tlsOrigin, "close");
+    }
+  });
+
+  test("SOCKS retried after first CONNECT failure uses fresh tunnel (P6)", async () => {
+    using origin = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch: () => new Response("retry ok") });
+    const fixture = await createSocks5Fixture({ failFirstConnect: true, fragmentResponses: true });
+    try {
+      // First fetch fails with ConnectionRefused (reply 0x05)
+      expect(
+        await fetchErrorName(`http://127.0.0.1:${origin.port}/`, { proxy: fixture.proxy(), keepalive: false }),
+      ).toBe("SocksConnectionRefused");
+      expect(fixture.connectionCount).toBe(1);
+      // Second fetch on a fresh tunnel succeeds
+      const res = await fetch(`http://127.0.0.1:${origin.port}/`, { proxy: fixture.proxy(), keepalive: false });
+      expect(await res.text()).toBe("retry ok");
+      expect(fixture.connectionCount).toBe(2);
+      expect(fixture.observations[1]).toMatchObject({ host: "127.0.0.1", port: origin.port });
+    } finally {
+      await fixture.close();
+    }
   });
 });

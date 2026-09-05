@@ -159,11 +159,40 @@ pub(crate) fn write_bind<Context: WriterContext>(
         // for mistakes on our end, such as stripping the timezone
         // differently than what Postgres does when given a timestamp with
         // timezone.
-        let effective_tag = if tag.is_binary_format_supported() && value.is_string() {
+        let mut effective_tag = if tag.is_binary_format_supported() && value.is_string() {
             types::Tag::text
         } else {
             tag
         };
+
+        if effective_tag.is_unspecified() {
+            match crate::postgres::types::tag_jsc::from_js(global, value)
+                .map_err(js_error_to_postgres)?
+            {
+                // Objects with their own toString() (decimal.js, sql.array(), ...) keep binding as that string.
+                types::Tag::json => {
+                    if value.is_array()
+                        || !value
+                            .implements_to_string(global)
+                            .map_err(js_error_to_postgres)?
+                    {
+                        effective_tag = types::Tag::json;
+                    }
+                }
+                types::Tag::timestamptz => {
+                    let mut buf = [0u8; 64];
+                    // An invalid Date has no ISO form and falls through to toString().
+                    if let Some(iso) = value.to_iso_string(global, &mut buf) {
+                        let l = writer.length()?;
+                        writer.write(iso)?;
+                        l.write_excluding_self()?;
+                        i += 1;
+                        continue;
+                    }
+                }
+                _ => {}
+            }
+        }
         match effective_tag {
             types::Tag::jsonb | types::Tag::json => {
                 // Use jsonStringifyFast for SIMD-optimized serialization

@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import { existsSync } from "fs";
-import { bunExe, isWindows } from "harness";
+import { bunExe, isCI, isWindows } from "harness";
 import path from "path";
 
 const binaryName = isWindows ? "testFFI.exe" : "testFFI";
@@ -17,7 +17,17 @@ function findTestFFI(): string | null {
 
 const testFFI = findTestFFI();
 
-test.skipIf(!testFFI)(
+// Every CI build ships testFFI next to bun (scripts/build/bun.ts builds it,
+// ci.ts packages it), so a missing binary there is a packaging regression,
+// not a reason to skip. Locally it is absent only for a --webkit=prebuilt
+// build that has not fetched the tarball's copy.
+if (isCI) {
+  test("testFFI binary is packaged next to bun", () => {
+    expect(testFFI, `no ${binaryName} next to ${bunExe()} (or at $BUN_TESTFFI_PATH)`).not.toBeNull();
+  });
+}
+
+test.skipIf(!testFFI && !isCI)(
   "testFFI (JavaScriptCore FFI C++/ABI checks)",
   async () => {
     await using proc = Bun.spawn({

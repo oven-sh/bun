@@ -37,6 +37,7 @@
 namespace Zig {
 
 extern "C" void Bun__onDidAppendPlugin(void* bunVM, JSGlobalObject* globalObject);
+extern "C" bool Bun__VirtualMachine__waitForPromise(JSC::JSGlobalObject*, JSC::EncodedJSValue);
 using OnAppendPluginCallback = void (*)(void*, JSGlobalObject* globalObject);
 
 static bool isValidNamespaceString(String& namespaceString)
@@ -599,23 +600,38 @@ extern "C" JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(JSMock__jsModuleMock, __attr
 
         if (result && result.isObject()) {
             while (JSC::JSPromise* promise = dynamicDowncast<JSC::JSPromise>(result)) {
+                if (promise->status() == JSC::JSPromise::Status::Pending) {
+                    // The module is already in the registry, so its live bindings must be
+                    // patched before this returns — there is no async point to defer to.
+                    promise->markAsHandled();
+                    if (!Bun__VirtualMachine__waitForPromise(globalObject, JSValue::encode(promise))) {
+                        return {}; // terminated; exception already pending
+                    }
+                }
+
                 switch (promise->status()) {
                 case JSC::JSPromise::Status::Rejected: {
                     result = promise->result();
+                    promise->markAsHandled();
                     scope.throwException(globalObject, result);
                     return {};
-                    break;
                 }
                 case JSC::JSPromise::Status::Fulfilled: {
                     result = promise->result();
                     break;
                 }
-                // TODO: blocking wait for promise
-                default: {
-                    break;
+                case JSC::JSPromise::Status::Pending: {
+                    RELEASE_ASSERT_NOT_REACHED();
                 }
                 }
             }
+        }
+
+        // executeOnce() checked the factory's return value, but a promise is an object;
+        // what it resolves to still has to be one.
+        if (!result || !result.isObject()) {
+            scope.throwException(globalObject, JSC::createTypeError(globalObject, "mock(module, fn) requires a function that returns an object"_s));
+            return {};
         }
 
         return result;
@@ -649,7 +665,11 @@ extern "C" JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(JSMock__jsModuleMock, __attr
 
                         if (object) {
                             JSC::PropertyNameArrayBuilder names(vm, PropertyNameMode::Strings, PrivateSymbolMode::Exclude);
-                            JSObject::getOwnPropertyNames(object, globalObject, names, DontEnumPropertiesMode::Exclude);
+                            // Dispatch through the method table: a factory that returns a module
+                            // namespace object (`() => import("./dep.mock")`) keeps its exports in
+                            // JSModuleNamespaceObject's own map, so the static JSObject version
+                            // reports none of them and nothing gets patched.
+                            object->methodTable()->getOwnPropertyNames(object, globalObject, names, DontEnumPropertiesMode::Exclude);
                             RETURN_IF_EXCEPTION(scope, {});
 
                             // Read every export before overriding any, so a throwing getter leaves the

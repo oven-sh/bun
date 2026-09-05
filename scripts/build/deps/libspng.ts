@@ -33,9 +33,8 @@ export const libspng: Dependency = {
     includes: ["spng"],
     defines: {
       SPNG_STATIC: true,
-      // 1 = SSE2. spng's defilter SIMD is gated on __SSE2__ anyway, so this
-      // is a no-op on arm64 (the #if falls through to scalar).
-      ...(cfg.x64 ? { SPNG_SSE: 1 } : {}),
+      // 4 = SSE4.1 defilter paths (pabsw/pblendvb); our x64 floor is nehalem. No-op on arm64 (NEON is auto-detected).
+      ...(cfg.x64 ? { SPNG_SSE: 4 } : {}),
     },
     cflags: [`-I${depBuildDir(cfg, "zlib")}`],
   }),

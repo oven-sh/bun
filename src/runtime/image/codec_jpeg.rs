@@ -154,13 +154,12 @@ pub(crate) fn decode(
     let src_w: u32 = u32::try_from(rw).expect("int cast");
     let src_h: u32 = u32::try_from(rh).expect("int cast");
     codecs::guard(src_w, src_h, max_pixels)?;
-    // 4-component (CMYK / YCCK) JPEGs: libjpeg-turbo refuses to decompress
-    // these to any RGB pixel format, so ask for packed CMYK — conveniently
-    // also 4 bytes/px, so every buffer/pitch/crop bound below is unchanged —
-    // and convert to RGBA ourselves after the decompress.
+    // libjpeg-turbo won't convert 4-component JPEGs to RGB; decode as packed CMYK (also 4 bytes/px) and convert below.
     // SAFETY: `h` is live; tj3Get only reads handle state.
-    let cs = unsafe { tj3Get(h, TJPARAM_COLORSPACE) };
-    let cmyk = cs == TJCS_CMYK || cs == TJCS_YCCK;
+    let cmyk = matches!(
+        unsafe { tj3Get(h, TJPARAM_COLORSPACE) },
+        TJCS_CMYK | TJCS_YCCK
+    );
 
     let mut w = src_w;
     let mut ht = src_h;
@@ -265,15 +264,7 @@ pub(crate) fn decode(
     // SAFETY: rc 0 (no warning) with unchanged dims means all `ht` rows of `w` pixels were written.
     unsafe { bun_core::vec::commit_spare(&mut out, out_len) };
     if cmyk {
-        // Adobe-convention inverted CMYK (stored byte = 255 − ink) → RGB,
-        // the same non-CMS formula Skia and Firefox use: R = C·K/255.
-        for px in out.as_chunks_mut::<4>().0 {
-            let k = u32::from(px[3]);
-            px[0] = u8::try_from((u32::from(px[0]) * k + 127) / 255).expect("int cast");
-            px[1] = u8::try_from((u32::from(px[1]) * k + 127) / 255).expect("int cast");
-            px[2] = u8::try_from((u32::from(px[2]) * k + 127) / 255).expect("int cast");
-            px[3] = 255;
-        }
+        codecs::cmyk_to_rgba(&mut out);
     }
 
     // Extract the APP2 ICC profile (if the source carried one). The marker
@@ -289,8 +280,7 @@ pub(crate) fn decode(
     let mut icc_ptr: *mut u8 = core::ptr::null_mut();
     let mut icc_size: usize = 0;
     let icc: Option<Vec<u8>> = 'blk: {
-        // A CMYK source's ICC profile describes ink channels, not the RGBA
-        // produced above — drop it.
+        // A CMYK profile describes ink channels, not the RGBA produced above.
         if cmyk {
             break 'blk None;
         }

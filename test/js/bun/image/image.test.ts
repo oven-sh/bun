@@ -85,14 +85,7 @@ const gradientPng = makePng(16, 16, (x, y) => {
   return [v, v, v, 255];
 });
 
-// ─── CMYK / YCCK JPEG fixtures ──────────────────────────────────────────────
-// Bun.Image only writes 3-component YCbCr JPEGs, so 4-component inputs are
-// pre-baked: a 64×64 quadrant pattern — TL cyan ink, TR magenta ink, BL a
-// mixed C=128/M=64/K=64 ink, BR solid black ink — compressed with
-// libjpeg-turbo (quality 95, 4:4:4) from Adobe-convention inverted CMYK
-// (stored byte = 255 − ink), which is what Photoshop / ImageMagick / libvips
-// all emit. Once with JPEG colorspace CMYK (APP14 transform=0), once as YCCK
-// (transform=2), and once as CMYK carrying a dummy APP2 ICC_PROFILE payload.
+// 64×64 4-component JPEGs (q95 4:4:4, Adobe-inverted CMYK): quadrants TL cyan, TR magenta, BL C128/M64/K64, BR black.
 const cmykJpeg = Buffer.from(
   "/9j/7gAOQWRvYmUAZAAAAAAA/9sAQwACAQEBAQECAQEBAgICAgIEAwICAgIFBAQDBAYFBgYGBQYGBgcJCAYHCQcGBggLCAkKCgoKCgYICwwLCgwJCgoK/8AAFAgAQABABEMRAE0RAFkRAEsRAP/EAB8AAAEFAQEBAQEBAAAAAAAAAAABAgMEBQYHCAkKC//EALUQAAIBAwMCBAMFBQQEAAABfQECAwAEEQUSITFBBhNRYQcicRQygZGhCCNCscEVUtHwJDNicoIJChYXGBkaJSYnKCkqNDU2Nzg5OkNERUZHSElKU1RVVldYWVpjZGVmZ2hpanN0dXZ3eHl6g4SFhoeIiYqSk5SVlpeYmZqio6Slpqeoqaqys7S1tre4ubrCw8TFxsfIycrS09TV1tfY2drh4uPk5ebn6Onq8fLz9PX29/j5+v/aAA4EQwBNAFkASwAAPwD+f+v38r9/K/fyiiiiiiiiiiiiv7/K/gDoooooooooooooor+AOv7/ACiiiiiiiiiiiiiiv7/K/gDoooooooooooooor+AOv7/ACiiiiiiiiiiiiiiv7/K/gDoooooooooooooor+AOv7/ACiiiiiiiiiiiiiiv7/K/gDoooooooooooooor+f+v6/KK/P+iiiiiiiiiiiiv6AK/QCiv5A6KKKKKKKKKKKK/n/AK/P+iv6/KKKKKKKKKKKKK/oAr9AKK/kDoooooooooooor+f+vz/AKK/r8oooooooooooor+gCv0Aor+QOiiiiiiiiiiiiv5/wCvz/or+vyiiiiiiiiiiiiv6AK/QCiv5A6KKKKKKKKKKKK//9k=",
   "base64",
@@ -800,8 +793,8 @@ describe("Bun.Image", () => {
       expect(extractWebpIccp(lossless)).toBeNull();
     });
 
-    test("CMYK JPEG's ICC profile is dropped on re-encode — it describes ink channels, not the RGB output", async () => {
-      expect(extractJpegIcc(cmykIccJpeg)).not.toBeNull(); // fixture sanity: profile is present going in
+    test("CMYK JPEG's ink-channel ICC profile is dropped on re-encode", async () => {
+      expect(extractJpegIcc(cmykIccJpeg)).not.toBeNull();
       const jpg = await new Bun.Image(cmykIccJpeg).jpeg({ quality: 90 }).bytes();
       expect(extractJpegIcc(jpg)).toBeNull();
       const png = await new Bun.Image(cmykIccJpeg).png().bytes();
@@ -809,32 +802,21 @@ describe("Bun.Image", () => {
     });
   });
 
-  // 4-component JPEG decode. libjpeg-turbo can't emit RGB from these, so the
-  // codec decodes to packed CMYK and converts with the browser formula
-  // (R = C·K/255 on the Adobe-inverted stored bytes). Each fixture should
-  // land each quadrant on its nominal RGB colour, give or take JPEG loss.
   describe("CMYK / YCCK JPEG decode", () => {
-    // Expected RGB is the formula applied to the stored bytes. Cyan/magenta
-    // are fixed points of it (K_s=255 ⇒ R=C_s), so they pin channel order and
-    // inversion; the mixed quadrant — stored (127,191,255,191) →
-    // (95,143,191) — and black — stored (255,255,255,0) → (0,0,0) — only
-    // come out right if the conversion actually ran.
+    // Expected RGB = CMY·K/255 on the stored bytes; the mixed and black quadrants only match if the conversion ran.
     const quadrants: [string, number, number, [number, number, number]][] = [
       ["top-left cyan", 16, 16, [0, 255, 255]],
       ["top-right magenta", 48, 16, [255, 0, 255]],
       ["bottom-left mixed ink", 16, 48, [95, 143, 191]],
       ["bottom-right black", 48, 48, [0, 0, 0]],
     ];
-    // Quadrant centres of a q95 4:4:4 encode sit within a couple of units of
-    // the source; 8 leaves headroom without letting a channel mixup through
-    // (any swapped/un-inverted channel is off by ≥ 128).
     function expectQuadrants(data: Uint8Array, w: number, scale = 1) {
       const got = quadrants.map(([name, x, y, [r, g, b]]) => {
         const px = rgbaAt(data, w, x * scale, y * scale);
         const err = Math.max(Math.abs(px[0] - r), Math.abs(px[1] - g), Math.abs(px[2] - b));
         return { name, alpha: px[3], rgb: err <= 8 ? "within tolerance" : `got [${px}], off by ${err}` };
       });
-      expect(got).toEqual(quadrants.map(([name]) => ({ name, alpha: 255, rgb: "within tolerance" })));
+      expect(got).toStrictEqual(quadrants.map(([name]) => ({ name, alpha: 255, rgb: "within tolerance" })));
     }
 
     test.each([
@@ -847,9 +829,7 @@ describe("Bun.Image", () => {
       expectQuadrants(data, w);
     });
 
-    test("4-component JPEG without the Adobe APP14 marker decodes as CMYK", async () => {
-      // Strip the APP14 segment the encoder put right after SOI — decoders
-      // must fall back to "4 components ⇒ CMYK".
+    test("4-component JPEG without an Adobe APP14 marker decodes as CMYK", async () => {
       expect([cmykJpeg[2], cmykJpeg[3]]).toEqual([0xff, 0xee]);
       const seglen = (cmykJpeg[4] << 8) | cmykJpeg[5];
       const bare = Buffer.concat([cmykJpeg.subarray(0, 2), cmykJpeg.subarray(2 + 2 + seglen)]);
@@ -857,9 +837,7 @@ describe("Bun.Image", () => {
       expectQuadrants(data, w);
     });
 
-    test("resize + JPEG re-encode (the issue's pipeline) — covers the DCT-scaled decode", async () => {
-      // 64→32 engages libjpeg-turbo's 1/2 IDCT scaling, so the CMYK→RGBA
-      // conversion runs on the scaled buffer.
+    test("resize + JPEG re-encode runs the conversion on the DCT-scaled buffer", async () => {
       const out = await new Bun.Image(cmykJpeg).resize(32, 32).jpeg().bytes();
       expect([out[0], out[1]]).toEqual([0xff, 0xd8]);
       const { w, h, data } = decodePngRaw(await new Bun.Image(out).png().bytes());

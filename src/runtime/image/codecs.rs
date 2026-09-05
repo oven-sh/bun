@@ -215,11 +215,9 @@ pub struct Decoded {
     /// ICC color profile bytes pulled from the source container (JPEG APP2,
     /// PNG iCCP, WebP ICCP), global-allocator-owned. `None` when the
     /// source didn't carry one or the decode path doesn't extract it —
-    /// BMP/GIF (no ICC chunk), system backends (which already colour-
+    /// BMP/GIF (no ICC chunk) and system backends (which already colour-
     /// manage into sRGB during decode, so the profile is no longer
-    /// needed), and CMYK/YCCK JPEGs (an ink-channel profile doesn't
-    /// describe the converted RGBA). The image
-    /// pipeline hands this straight to the matching
+    /// needed). The image pipeline hands this straight to the matching
     /// encoder — the RGBA buffer is NOT converted to sRGB, so the bytes
     /// only have their intended colour meaning when the profile travels
     /// with them. Dropping it on a Display-P3 / Adobe RGB / XYB source
@@ -657,6 +655,13 @@ unsafe extern "C" {
     fn bun_image_rotate_rgba8(src: *const u8, w: i32, h: i32, dst: *mut u8, deg: i32);
     fn bun_image_flip_rgba8(src: *const u8, w: i32, h: i32, dst: *mut u8, horiz: i32);
     fn bun_image_modulate_rgba8(buf: *mut u8, len: usize, brightness: f32, saturation: f32);
+    fn bun_image_cmyk_to_rgba8(buf: *mut u8, len: usize);
+}
+
+/// In-place inverted-CMYK (libjpeg-turbo `TJPF_CMYK` output) → opaque RGBA.
+pub(crate) fn cmyk_to_rgba(px: &mut [u8]) {
+    // SAFETY: ptr+len from a valid slice; C++ kernel writes within bounds.
+    unsafe { bun_image_cmyk_to_rgba8(px.as_mut_ptr(), px.len()) }
 }
 
 /// In-place brightness/saturation. brightness multiplies V (so 1.0 is

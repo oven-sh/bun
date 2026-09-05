@@ -239,6 +239,84 @@ describe("Bun.serve() directory routes", () => {
     expect(await res.text()).toBe("");
   });
 
+  describe("method handling", () => {
+    describe.each(["DELETE", "POST", "PUT", "PATCH", "PROPFIND"])("%s", method => {
+      it("gets 405 with Allow", async () => {
+        using dir = tempDir("serve-dir-405", {
+          "public/app.js": "console.log(1)",
+        });
+
+        server = serve({
+          port: 0,
+          routes: { "/assets/*": { dir: join(String(dir), "public") } },
+          fetch: () => new Response("fallback"),
+        });
+
+        const res = await fetch(`${server.url}assets/app.js`, { method });
+        expect(res.headers.get("allow")).toBe("GET, HEAD, OPTIONS");
+        expect(await res.text()).toBe("");
+        expect(res.status).toBe(405);
+      });
+    });
+
+    it("OPTIONS gets 204 with Allow and no body", async () => {
+      using dir = tempDir("serve-dir-options", {
+        "public/app.js": "console.log(1)",
+      });
+
+      server = serve({
+        port: 0,
+        routes: { "/assets/*": { dir: join(String(dir), "public") } },
+      });
+
+      const res = await fetch(`${server.url}assets/app.js`, { method: "OPTIONS" });
+      expect(res.headers.get("allow")).toBe("GET, HEAD, OPTIONS");
+      expect(await res.text()).toBe("");
+      expect(res.status).toBe(204);
+    });
+
+    it("GET and HEAD still serve the file", async () => {
+      using dir = tempDir("serve-dir-get-head", {
+        "public/app.js": "console.log(1)",
+      });
+
+      server = serve({
+        port: 0,
+        routes: { "/assets/*": { dir: join(String(dir), "public") } },
+      });
+
+      const get = await fetch(`${server.url}assets/app.js`);
+      expect(await get.text()).toBe("console.log(1)");
+      expect(get.status).toBe(200);
+
+      const head = await fetch(`${server.url}assets/app.js`, { method: "HEAD" });
+      expect(await head.text()).toBe("");
+      expect(head.status).toBe(200);
+    });
+
+    it("a method-scoped dir route serves only that method", async () => {
+      using dir = tempDir("serve-dir-scoped", {
+        "public/app.js": "console.log(1)",
+      });
+
+      server = serve({
+        port: 0,
+        routes: { "/assets/*": { POST: { dir: join(String(dir), "public") } } },
+        fetch: () => new Response("fallback", { status: 418 }),
+      });
+
+      // The explicit POST registration serves the file for POST.
+      const post = await fetch(`${server.url}assets/app.js`, { method: "POST" });
+      expect(await post.text()).toBe("console.log(1)");
+      expect(post.status).toBe(200);
+
+      // GET is not registered, so it falls through to fetch.
+      const get = await fetch(`${server.url}assets/app.js`);
+      expect(await get.text()).toBe("fallback");
+      expect(get.status).toBe(418);
+    });
+  });
+
   it("sends Last-Modified and a weak ETag", async () => {
     using dir = tempDir("serve-dir-lm", {
       "public/data.json": '{"key":"value"}',

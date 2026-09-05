@@ -37,9 +37,7 @@ test/cli/install/bun-pack.test.ts
 test/cli/install/bun-pm-pkg.test.ts
 test/cli/install/bun-pm-version.test.ts
 test/cli/install/bun-pm.test.ts
-test/cli/install/bun-repl.test.ts
 test/cli/run/filter-workspace.test.ts
-test/js/bun/repl/repl.test.ts
 test/cli/install/bun-update.test.ts
 test/cli/install/bun-workspaces.test.ts
 test/cli/install/bunx.test.ts

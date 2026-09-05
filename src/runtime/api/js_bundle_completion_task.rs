@@ -940,6 +940,7 @@ impl CompletionStruct for JSBundleCompletionTask {
                 std::borrow::Cow::Borrowed(b"react".as_slice())
             },
             side_effects: config.jsx.side_effects,
+            set_fields: config.jsx.set_fields,
             parse: true,
             import_source: options::jsx::ImportSource {
                 development: if !jsx_import.is_empty() {

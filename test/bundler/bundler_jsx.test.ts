@@ -1073,23 +1073,21 @@ describe("bundler", () => {
         expect(file).not.toContain("/* @__PURE__ */");
         expect(normalizeBunSnapshot(file)).toMatchInlineSnapshot(`
           "// @bun
-          // node_modules/react/jsx-dev-runtime.js
-          var $$typeof = Symbol.for("jsxdev");
-          function jsxDEV(type, props, key, source, self) {
+          // node_modules/react/jsx-runtime.js
+          var $$typeof = Symbol.for("jsx");
+          function jsx(type, props, key) {
             return {
               $$typeof,
               type,
               props,
-              key,
-              source,
-              self
+              key
             };
           }
-          var Fragment = Symbol.for("jsxdev.fragment");
+          var Fragment = Symbol.for("jsx.fragment");
 
           // index.jsx
-          console.log(jsxDEV("a", {}, undefined, false, undefined, this));
-          console.log(jsxDEV(Fragment, {}, undefined, false, undefined, this));"
+          console.log(jsx("a", {}));
+          console.log(jsx(Fragment, {}));"
         `);
       },
     });

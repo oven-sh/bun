@@ -8,6 +8,7 @@ import { expect, test } from "bun:test";
 import {
   listeningServer,
   mysqlAckSessionSetup,
+  mysqlErrPacket,
   mysqlHandshakeV10,
   mysqlLenencInt,
   mysqlOkPacket,
@@ -32,6 +33,11 @@ test("mysqlLenencInt encodes per page_protocol_basic_dt_integers.html", () => {
   expect(mysqlLenencInt(0x1_0000)).toEqual(Buffer.from([0xfd, 0x00, 0x00, 0x01]));
   expect(mysqlLenencInt(0xff_ffffn)).toEqual(Buffer.from([0xfd, 0xff, 0xff, 0xff]));
   expect(mysqlLenencInt(0x1_00_0000n)).toEqual(Buffer.from([0xfe, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00]));
+});
+
+test("mysqlErrPacket encodes per page_protocol_basic_err_packet.html", () => {
+  // error_code 1064 = 0x0428, little-endian; the 3-byte packet length counts the payload only
+  expect(mysqlErrPacket(1, 1064, "42000", "x")).toEqual(Buffer.from("\x0a\x00\x00\x01\xff\x28\x04#42000x", "binary"));
 });
 
 test("pgErrorResponse encodes per §55.7", () => {

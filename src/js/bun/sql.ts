@@ -50,6 +50,21 @@ function settleReservedTransaction(
   settle(value);
 }
 
+function onPendingWorkSettled(timer: ReturnType<typeof setTimeout>, resolve: () => void) {
+  clearTimeout(timer);
+  resolve();
+}
+
+/// The grace period of close({ timeout }): resolves once `pending` has settled or after `timeout` seconds.
+function waitForPendingWork(pending: PromiseLike<unknown>[], timeout: number): Promise<void> {
+  const { promise, resolve } = Promise.withResolvers<void>();
+  const timer = setTimeout(resolve, timeout * 1000);
+  timer.unref(); // dont block the event loop
+  // allSettled: one rejected query must not cut the grace period short for the rest
+  Promise.allSettled(pending).then(onPendingWorkSettled.bind(null, timer, resolve));
+  return promise;
+}
+
 function adapterFromOptions(options: Bun.SQL.__internal.DefinedOptions) {
   switch (options.adapter) {
     case "postgres":
@@ -478,33 +493,16 @@ const SQL: typeof Bun.SQL = function SQL(
           throw $ERR_INVALID_ARG_VALUE("options.timeout", timeout, "must be a non-negative integer less than 2^31");
         }
         if (timeout > 0 && (reserveQueries.size > 0 || reservedTransaction.size > 0)) {
-          const { promise, resolve } = Promise.withResolvers();
-          // race all queries vs timeout
-          const pending_queries = Array.from(reserveQueries);
-          const pending_transactions = Array.from(reservedTransaction);
-          const timer = setTimeout(() => {
-            state.connectionState |= ReservedConnectionState.closed;
-            for (const query of reserveQueries) {
-              (query as Query<any, any>).cancel();
-            }
-            state.connectionState |= ReservedConnectionState.closed;
-            pooledConnection.close();
-
-            resolve();
-          }, timeout * 1000);
-          timer.unref(); // dont block the event loop
-          Promise.all([Promise.all(pending_queries), Promise.all(pending_transactions)]).finally(() => {
-            clearTimeout(timer);
-            resolve();
-          });
-          return promise;
+          await waitForPendingWork([...reserveQueries, ...reservedTransaction], timeout);
+          // release() or a disconnect may have ended the reservation while we waited
+          if (state.connectionState & ReservedConnectionState.closed) return;
         }
       }
       state.connectionState |= ReservedConnectionState.closed;
       for (const query of reserveQueries) {
         (query as Query<any, any>).cancel();
       }
-
+      // the close handler attached above returns the pool slot
       pooledConnection.close();
 
       return Promise.$resolve(undefined);

@@ -47,6 +47,7 @@ const { kArmHandshakeTimeout, kSecureConnectDone, kVerifyError } = require("inte
 const ArrayPrototypeIncludes = Array.prototype.includes;
 const ArrayPrototypeJoin = Array.prototype.join;
 const ArrayPrototypePush = Array.prototype.push;
+const ArrayPrototypeSlice = Array.prototype.slice;
 const MathMax = Math.max;
 const MathMin = Math.min;
 
@@ -428,6 +429,14 @@ const SocketHandlers: SocketHandler = {
     self.connecting = false;
     if (callback) {
       const writeChunk = self._pendingData;
+      if ($isArray(writeChunk)) {
+        self._pendingData = self[kwriteCallback] = null;
+        if (writeChunksUntilFull(self, socket, writeChunk, callback)) {
+          unrefAfterDrain(self, socket);
+          callback(null);
+        }
+        return;
+      }
       const res = socket.$write(writeChunk || "", self._pendingEncoding || "utf8");
       if (res < 0) {
         // The retried send failed for good (peer gone): $write returned -errno.
@@ -1284,6 +1293,14 @@ const SocketHandlers2: SocketHandler<NonNullable<import("node:net").Socket["_han
     self.connecting = false;
     if (callback) {
       const writeChunk = self._pendingData;
+      if ($isArray(writeChunk)) {
+        self._pendingData = self[kwriteCallback] = null;
+        if (writeChunksUntilFull(self, socket, writeChunk, callback)) {
+          unrefAfterDrain(self, socket);
+          callback(null);
+        }
+        return;
+      }
       const res = socket.$write(writeChunk || "", self._pendingEncoding || "utf8");
       if (res < 0) {
         // The retried send failed for good (peer gone): $write returned -errno.
@@ -1845,7 +1862,11 @@ Object.defineProperty(Socket.prototype, "bytesWritten", {
       for (let i = 0; i < data.length; i++) {
         const chunk = data[i];
         if (data.allBuffers || chunk instanceof Buffer) bytes += chunk.length;
-        else bytes += Buffer.byteLength(chunk.chunk, chunk.encoding);
+        else {
+          const inner = chunk.chunk;
+          if (inner !== undefined) bytes += Buffer.byteLength(inner, chunk.encoding);
+          else bytes += chunk.length;
+        }
       }
     } else if (data) {
       // Writes are either a string or a Buffer.
@@ -2714,34 +2735,116 @@ Socket.prototype.destroySoon = function destroySoon() {
   else this.once("finish", this.destroy);
 };
 
+function parkPendingChunks(self, socket, chunks, callback) {
+  self._pendingData = chunks;
+  self._pendingEncoding = "";
+  self[kwriteCallback] = callback;
+  // Same hold as _write's short-write branch; unrefAfterDrain lets go again.
+  if ((self[kended] || self[kPausedUnref]) && !self[kUserUnrefed]) socket.ref?.();
+}
+
+function writeChunksUntilFull(self, socket, chunks, callback) {
+  // Never feed a chunk while the native buffer still holds a tail (open() calls drain() manually).
+  if (getBufferedAmount(socket) > 0) {
+    parkPendingChunks(self, socket, chunks, callback);
+    return false;
+  }
+  const len = chunks.length;
+  for (let i = 0; i < len; i++) {
+    const res = socket.$write(chunks[i], "buffer");
+    if (res < 0) {
+      self[kBytesWritten] = socket.bytesWritten;
+      process.nextTick(failWrite, self, res, callback);
+      return false;
+    }
+    if (!res) {
+      self[kBytesWritten] = socket.bytesWritten;
+      parkPendingChunks(self, socket, i + 1 < len ? ArrayPrototypeSlice.$call(chunks, i + 1) : null, callback);
+      return false;
+    }
+  }
+  self[kBytesWritten] = socket.bytesWritten;
+  return true;
+}
+
 //TODO: migrate to native
 Socket.prototype._writev = function _writev(data, callback) {
   const allBuffers = data.allBuffers;
-  const chunks = data;
-  if (allBuffers) {
-    if (data.length === 1) {
-      return this._write(data[0], "buffer", callback);
-    }
-    for (let i = 0; i < data.length; i++) {
-      data[i] = data[i].chunk;
-    }
-  } else {
-    if (data.length === 1) {
-      const { chunk, encoding } = data[0];
-      return this._write(chunk, encoding, callback);
-    }
-    for (let i = 0; i < data.length; i++) {
-      const { chunk, encoding } = data[i];
-      if (typeof chunk === "string") {
-        data[i] = Buffer.from(chunk, encoding);
-      } else {
-        data[i] = chunk;
-      }
-    }
+  for (let i = 0; i < data.length; i++) {
+    const entry = data[i];
+    const chunk = entry.chunk;
+    data[i] = allBuffers || typeof chunk !== "string" ? chunk : Buffer.from(chunk, entry.encoding);
   }
-  const chunk = Buffer.concat(chunks || []);
-  return this._write(chunk, "buffer", callback);
+  if (data.length === 1) {
+    return this._write(data[0], "buffer", callback);
+  }
+  if (process.platform === "win32") {
+    // Winsock only sync-completes a first large send as one WSASend; no vectored send in usockets here.
+    return this._write(Buffer.concat(data), "buffer", callback);
+  }
+
+  // cork()/uncork() can reach _writev before the handle is live; defer like _write.
+  const connecting = this.connecting;
+  if (connecting || (!this._handle && this[kupgraded] && !this.destroyed)) {
+    this._pendingData = data;
+    this._pendingEncoding = "";
+    this[kwriteCallback] = callback;
+    const retry = onWritevHandleReady.bind(this, data, callback);
+    const onClose = onWritevCloseBeforeReady.bind(this, connecting, callback);
+    this.once(connecting ? "connect" : kUpgradeAttached, function () {
+      this.off("close", onClose);
+      retry();
+    });
+    this.once("close", onClose);
+    return;
+  }
+
+  const socket = this._handle;
+  this._pendingData = null;
+  this._pendingEncoding = "";
+  this[kwriteCallback] = null;
+  if (!socket) {
+    callback($ERR_SOCKET_CLOSED());
+    return false;
+  }
+  this._unrefTimer();
+  if (socket.readyState < 0) {
+    process.nextTick(callback, new ErrnoException(-9 /* UV_EBADF */, "write"));
+    return false;
+  }
+
+  if (writeChunksUntilFull(this, socket, data, callback)) {
+    if (this.encrypted) process.nextTick(callback);
+    else callback();
+  }
 };
+
+function onWritevHandleReady(data, callback) {
+  if (this[kwriteCallback] !== callback) return;
+  const socket = this._handle;
+  this._pendingData = null;
+  this._pendingEncoding = "";
+  this[kwriteCallback] = null;
+  if (!socket) {
+    callback($ERR_SOCKET_CLOSED());
+    return;
+  }
+  this._unrefTimer();
+  if (socket.readyState < 0) {
+    process.nextTick(callback, new ErrnoException(-9 /* UV_EBADF */, "write"));
+    return;
+  }
+  if (writeChunksUntilFull(this, socket, data, callback)) {
+    if (this.encrypted) process.nextTick(callback);
+    else callback();
+  }
+}
+
+function onWritevCloseBeforeReady(connecting, callback) {
+  if (this[kwriteCallback] !== callback) return;
+  this[kwriteCallback] = null;
+  callback(connecting ? $ERR_SOCKET_CLOSED_BEFORE_CONNECTION() : $ERR_SOCKET_CLOSED());
+}
 
 Socket.prototype._write = function _write(chunk, encoding, callback) {
   $debug("Socket.prototype._write");

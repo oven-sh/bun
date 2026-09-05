@@ -367,9 +367,6 @@ impl App {
         // SAFETY: caller contract above
         unsafe { c::uws_h2_app_destroy(this) }
     }
-    pub fn close(&mut self) {
-        c::uws_h2_app_close(self)
-    }
     /// Streams parked on backpressure need another drain pass outside the
     /// current call; `cb(user, ctx)` should arrange for [`drain`] to run soon.
     pub fn on_schedule_drain(
@@ -524,7 +521,6 @@ mod c {
             user: *mut c_void,
         );
         pub(super) safe fn uws_h2_app_drain(app: &mut App) -> bool;
-        pub(super) safe fn uws_h2_app_close(app: &mut App);
         pub(super) safe fn uws_h2_app_clear_routes(app: &mut App);
         pub(super) safe fn uws_h2_res_write_continue(res: &mut Response);
         pub(super) fn uws_h2_app_get(

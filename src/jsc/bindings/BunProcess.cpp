@@ -4427,15 +4427,6 @@ void Process::queueNextTick(JSC::JSGlobalObject* globalObject, const ArgList& ar
     RELEASE_AND_RETURN(scope, void());
 }
 
-void Process::queueNextTick(JSC::JSGlobalObject* globalObject, JSValue value)
-{
-    ASSERT_WITH_MESSAGE(value.isCallable(), "Must be a function for us to call");
-    MarkedArgumentBuffer args;
-    if (!value.isEmpty())
-        args.append(value);
-    this->queueNextTick(globalObject, args);
-}
-
 void Process::queueNextTick(JSC::JSGlobalObject* globalObject, JSValue value, JSValue arg1)
 {
     ASSERT_WITH_MESSAGE(value.isCallable(), "Must be a function for us to call");

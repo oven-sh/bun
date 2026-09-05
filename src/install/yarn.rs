@@ -3,7 +3,7 @@ use std::borrow::Cow;
 use std::io::Write as _;
 
 use crate::Error;
-use bun_collections::{HashMap, StringHashMap, index_sort};
+use bun_collections::StringHashMap;
 use bun_install::bin::Bin;
 use bun_install::dependency::{self, Dependency, DependencyExt as _};
 use bun_install::install::{self, DependencyID, PackageID, PackageManager};
@@ -26,7 +26,7 @@ use bun_install::npm;
 // `bun_install::resolution` stub keeps `Value` as a struct-of-fields and has no `init`.
 use crate::bun_json;
 use crate::repository::Repository;
-use crate::resolution_real::{Resolution, Tag as ResolutionTag, TaggedValue as ResolutionValue};
+use crate::resolution_real::{Resolution, TaggedValue as ResolutionValue};
 use crate::versioned_url::VersionedURL;
 use bun_core::strings;
 use bun_paths::PathBuffer;
@@ -1380,222 +1380,9 @@ pub(crate) fn migrate_yarn_lockfile<'a>(
         }
     }
 
-    for (base_name, versions) in scoped_packages.iter_mut() {
-        let base_name: &[u8] = base_name.as_ref();
-
-        index_sort::sort_slice_by(versions, |a, b| a.package_id.cmp(&b.package_id));
-
-        let original_name_hash = string_hash(base_name);
-        // `remove` drops the value (and thus the `Ids` Vec) automatically.
-        let _ = this.package_index.remove(&original_name_hash);
-    }
-
-    for (base_name, versions) in scoped_packages.iter() {
-        let base_name: &[u8] = base_name.as_ref();
-
-        for version_info in versions.iter() {
-            let package_id = version_info.package_id;
-
-            let mut found_in_index = false;
-            for (_, index_value) in this.package_index.iter() {
-                match index_value {
-                    lockfile::PackageIndexEntry::Id(id) => {
-                        if *id == package_id {
-                            found_in_index = true;
-                            break;
-                        }
-                    }
-                    lockfile::PackageIndexEntry::Ids(ids) => {
-                        for id in ids.iter() {
-                            if *id == package_id {
-                                found_in_index = true;
-                                break;
-                            }
-                        }
-                        if found_in_index {
-                            break;
-                        }
-                    }
-                }
-            }
-
-            if !found_in_index {
-                let mut fallback_name = Vec::new();
-                write!(
-                    &mut fallback_name,
-                    "{}#{}",
-                    bstr::BStr::new(base_name),
-                    package_id
-                )
-                .expect("unreachable");
-
-                let fallback_hash = string_hash(&fallback_name);
-                this.get_or_put_id(package_id, fallback_hash)?;
-            }
-        }
-    }
-
-    let mut package_names: Vec<&[u8]> = vec![b"".as_slice(); next_package_id as usize];
-
-    for (yarn_idx, entry) in yarn_lock.entries.iter().enumerate() {
-        let package_id = yarn_entry_to_package_id[yarn_idx];
-        if package_names[package_id as usize].is_empty() {
-            package_names[package_id as usize] = Entry::get_name_from_spec(entry.specs[0]);
-        }
-    }
-
-    let mut root_packages: StringHashMap<PackageID> = StringHashMap::new();
-
-    let mut usage_count: StringHashMap<u32> = StringHashMap::new();
-    for entry_idx in 0..yarn_lock.entries.len() {
-        let package_id = yarn_entry_to_package_id[entry_idx];
-        if package_id == install::INVALID_PACKAGE_ID {
-            continue;
-        }
-        let base_name = package_names[package_id as usize];
-
-        for dep_entry in yarn_lock.entries.iter() {
-            if let Some(deps) = &dep_entry.dependencies {
-                for (dep_name_key, _) in deps.iter() {
-                    if dep_name_key.as_ref() == base_name {
-                        let count = usage_count.get(base_name).copied().unwrap_or(0);
-                        usage_count.put(base_name, count + 1)?;
-                    }
-                }
-            }
-        }
-    }
-
-    for entry_idx in 0..yarn_lock.entries.len() {
-        let package_id = yarn_entry_to_package_id[entry_idx];
-        if package_id == install::INVALID_PACKAGE_ID {
-            continue;
-        }
-        let base_name = package_names[package_id as usize];
-
-        if root_packages.get(base_name).is_none() {
-            root_packages.put(base_name, package_id)?;
-            let name_hash = string_hash(base_name);
-            this.get_or_put_id(package_id, name_hash)?;
-        }
-    }
-
-    let mut scoped_names: HashMap<PackageID, Vec<u8>> = HashMap::new();
-    let mut scoped_count: u32 = 0;
-    for entry_idx in 0..yarn_lock.entries.len() {
-        let package_id = yarn_entry_to_package_id[entry_idx];
-        if package_id == install::INVALID_PACKAGE_ID {
-            continue;
-        }
-        let base_name = package_names[package_id as usize];
-
-        if let Some(root_pkg_id) = root_packages.get(base_name).copied() {
-            if root_pkg_id == package_id {
-                continue;
-            }
-        } else {
-            continue;
-        }
-
-        let mut scoped_name: Option<Vec<u8>> = None;
-        for (dep_entry_idx, dep_entry) in yarn_lock.entries.iter().enumerate() {
-            let dep_package_id = yarn_entry_to_package_id[dep_entry_idx];
-            if dep_package_id == install::INVALID_PACKAGE_ID {
-                continue;
-            }
-
-            if let Some(deps) = &dep_entry.dependencies {
-                for (dep_name_key, _) in deps.iter() {
-                    if dep_name_key.as_ref() == base_name {
-                        if dep_package_id != package_id {
-                            let parent_name = package_names[dep_package_id as usize];
-
-                            let mut potential_name = Vec::new();
-                            write!(
-                                &mut potential_name,
-                                "{}/{}",
-                                bstr::BStr::new(parent_name),
-                                bstr::BStr::new(base_name)
-                            )
-                            .expect("unreachable");
-
-                            let mut name_already_used = false;
-                            for existing_name in scoped_names.values() {
-                                if existing_name.as_slice() == potential_name.as_slice() {
-                                    name_already_used = true;
-                                    break;
-                                }
-                            }
-
-                            if !name_already_used {
-                                scoped_name = Some(potential_name);
-                                break;
-                            }
-                            // else: potential_name dropped
-                        }
-                    }
-                }
-                if scoped_name.is_some() {
-                    break;
-                }
-            }
-        }
-
-        if scoped_name.is_none() {
-            let pkg_resolution = this.packages.get(package_id as usize).resolution;
-            let version_str: Vec<u8> = match pkg_resolution.tag {
-                ResolutionTag::Npm => 'brk: {
-                    let mut version_buf = [0u8; 64];
-                    let mut cursor = &mut version_buf[..];
-                    let npm_version = pkg_resolution.npm().version;
-                    let _ = write!(
-                        &mut cursor,
-                        "{}",
-                        npm_version.fmt(this.buffers.string_bytes.as_slice())
-                    );
-                    let written = 64 - cursor.len();
-                    break 'brk version_buf[..written].to_vec();
-                }
-                _ => b"unknown".to_vec(),
-            };
-            let mut name = Vec::new();
-            write!(
-                &mut name,
-                "{}@{}",
-                bstr::BStr::new(base_name),
-                bstr::BStr::new(&version_str)
-            )
-            .expect("unreachable");
-            scoped_name = Some(name);
-        }
-
-        if let Some(final_scoped_name) = scoped_name {
-            let name_hash = string_hash(&final_scoped_name);
-            this.get_or_put_id(package_id, name_hash)?;
-            scoped_names.put(package_id, final_scoped_name)?;
-            scoped_count += 1;
-        }
-    }
-    let _ = scoped_count;
-
-    for (yarn_idx, entry) in yarn_lock.entries.iter().enumerate() {
-        let package_id = yarn_entry_to_package_id[yarn_idx];
-        if package_id == install::INVALID_PACKAGE_ID {
-            continue;
-        }
-
-        if let Some(resolved) = entry.resolved.as_deref() {
-            if let Some(real_name) = Entry::get_package_name_from_resolved_url(resolved) {
-                for spec in entry.specs.iter() {
-                    let alias_name = Entry::get_name_from_spec(spec);
-
-                    if alias_name != real_name {
-                        let alias_hash = string_hash(alias_name);
-                        this.get_or_put_id(package_id, alias_hash)?;
-                    }
-                }
-            }
-        }
+    for id in 0..this.packages.len() {
+        let name_hash = this.packages.items_name_hash()[id];
+        this.get_or_put_id(id as PackageID, name_hash)?;
     }
 
     this.buffers.trees[0].dependencies = lockfile::DependencyIDSlice::new(0, 0);

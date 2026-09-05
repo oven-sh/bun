@@ -2447,6 +2447,135 @@ describe("default 'warning' listener is registered at startup", () => {
   });
 });
 
+// Node's onWarning writes through console.error, which swallows a failing stderr
+// (lib/internal/console/constructor.js kWriteToConsole). Verified against node
+// v26.3.0: each of these prints "alive" / "0" and exits 0 there.
+describe("default warning printer survives a failing stderr", () => {
+  const env = { ...bunEnv, NODE_NO_WARNINGS: undefined };
+
+  it.concurrent("stderr.write throwing synchronously", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `process.stderr.write = () => { throw new Error("boom"); };
+         process.emitWarning("w");
+         setImmediate(() => console.log("alive"));`,
+      ],
+      env,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "alive\n", stderr: "", exitCode: 0 });
+  });
+
+  it.concurrent("stderr pipe whose reader is gone (EPIPE)", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `process.stdin.once("data", () => {
+           process.emitWarning("w");
+           setImmediate(() => console.log("alive"));
+         });`,
+      ],
+      env,
+      stdin: "pipe",
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    // Close our end of stderr before letting the child warn, so the print gets EPIPE.
+    await proc.stderr.cancel();
+    proc.stdin.write("go");
+    await proc.stdin.end();
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    expect({ stdout, exitCode }).toEqual({ stdout: "alive\n", exitCode: 0 });
+  });
+
+  it.concurrent("leaves no 'error' listener behind on a healthy stderr", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `process.emitWarning("one");
+         process.emitWarning("two");
+         setImmediate(() => console.log(process.stderr.listenerCount("error")));`,
+      ],
+      env,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toMatch(/Warning: one[\s\S]*Warning: two/);
+    expect({ stdout, exitCode }).toEqual({ stdout: "0\n", exitCode: 0 });
+  });
+
+  it.concurrent("process.stderr replaced by a bare { write } object", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `process.stderr = { write(s) { console.log("mock:" + s.trimEnd()); return true; } };
+         process.emitWarning("w");
+         setImmediate(() => console.log("alive"));`,
+      ],
+      env,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout).toMatch(/^mock:\(node:\d+\) Warning: w\nmock:\(Use `.*--trace-warnings .*\)\nalive\n$/);
+    expect({ stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
+  });
+
+  // An emitter that is not a Writable has no _writableState for the write callback to read,
+  // so the printer must not hand it one. 'beforeExit' only runs if nothing threw later.
+  it.concurrent("process.stderr replaced by an EventEmitter mock whose write() calls back", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const { EventEmitter } = require("node:events");
+         process.stderr = Object.assign(new EventEmitter(), {
+           write(s, cb) { console.log("mock:" + s.trimEnd()); if (cb) setImmediate(cb); return true; },
+         });
+         process.emitWarning("w");
+         process.on("beforeExit", () => console.log("alive", process.stderr.listenerCount("error")));`,
+      ],
+      env,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout).toMatch(/^mock:\(node:\d+\) Warning: w\nmock:\(Use `.*--trace-warnings .*\)\nalive 0\n$/);
+    expect({ stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
+  });
+
+  // The opposite half-stream: spreading the real stderr keeps its own _writableState but none
+  // of the prototype's listener methods, so the printer must not arm the guard on it either.
+  it.concurrent("process.stderr replaced by a spread copy of the real stream", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `process.stderr = { ...process.stderr, write(s) { console.log("mock:" + s.trimEnd()); return true; } };
+         console.log(process.stderr._writableState !== undefined, typeof process.stderr.removeListener);
+         process.emitWarning("w");
+         process.on("beforeExit", () => console.log("alive"));`,
+      ],
+      env,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout).toMatch(
+      /^true undefined\nmock:\(node:\d+\) Warning: w\nmock:\(Use `.*--trace-warnings .*\)\nalive\n$/,
+    );
+    expect({ stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
+  });
+});
+
 it("--disable-warning suppresses print but not user 'warning' listeners", async () => {
   await using proc = Bun.spawn({
     cmd: [

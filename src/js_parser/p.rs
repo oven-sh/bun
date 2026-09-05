@@ -5482,12 +5482,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     ) -> Result<Expr, crate::Error> {
         let result = self.find_symbol(loc, parts[0])?;
 
+        // `find_symbol` recorded the use. A name here would make `handle_identifier`
+        // resolve it again and count a second use per JSX element.
         let value = self.handle_identifier(
             loc,
             E::Identifier::init(result.r#ref)
                 .with_must_keep_due_to_with_stmt(result.is_inside_with_scope)
                 .with_can_be_removed_if_unused(true),
-            Some(parts[0]),
+            None,
             IdentifierOpts::new().with_was_originally_identifier(true),
         );
         if parts.len() > 1 {

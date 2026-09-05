@@ -503,6 +503,13 @@ pub use bun_install::PRETEND_TO_BE_NODE;
 /// This is set `true` during `Command.which()` if argv0 is "bunx"
 static IS_BUNX_EXE: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
 
+/// argv index of the subcommand keyword as located by `Command::which()`.
+/// `bun init …` → 1; `bun --smol init …` → 2, as does `bun init …` with
+/// `BUN_OPTIONS=--smol`, whose tokens are spliced in after argv[0]. Commands
+/// that read their arguments straight out of argv start after this index.
+static SUBCOMMAND_ARGV_INDEX: core::sync::atomic::AtomicUsize =
+    core::sync::atomic::AtomicUsize::new(1);
+
 bun_core::declare_scope!(CLI, hidden);
 
 pub(crate) type LoaderColonList =
@@ -791,6 +798,12 @@ pub mod command {
         (0..a.len()).map(|i| a.get(i).unwrap()).collect()
     }
 
+    /// See [`SUBCOMMAND_ARGV_INDEX`](super::SUBCOMMAND_ARGV_INDEX).
+    #[inline]
+    pub(crate) fn subcommand_argv_index() -> usize {
+        super::SUBCOMMAND_ARGV_INDEX.load(core::sync::atomic::Ordering::Relaxed)
+    }
+
     pub use bun_options_types::command_tag::Tag;
     pub use bun_options_types::command_tag::{LOADS_CONFIG, USES_GLOBAL_OPTIONS};
     pub use bun_options_types::context::{Context, ContextData, HotReload, TestOptions};
@@ -936,6 +949,7 @@ pub mod command {
             return Tag::RunAsNodeCommand;
         }
 
+        let mut idx: usize = 1;
         let Some(mut first_arg_name) = iter.next() else {
             return Tag::AutoCommand;
         };
@@ -947,10 +961,14 @@ pub mod command {
             // routes to RunCommand::exec_node_repl. An early ReplCommand return here would bypass
             // that and boot the legacy `bun repl` implementation instead.
             match iter.next() {
-                Some(n) => first_arg_name = n,
+                Some(n) => {
+                    idx += 1;
+                    first_arg_name = n;
+                }
                 None => return Tag::AutoCommand,
             }
         }
+        SUBCOMMAND_ARGV_INDEX.store(idx, core::sync::atomic::Ordering::Relaxed);
 
         type RootCommandMatcher = strings::ExactSizeMatcher<12>;
         let x = RootCommandMatcher::r#match(first_arg_name);
@@ -1498,7 +1516,8 @@ pub mod command {
     fn exec_init() -> CmdResult {
         // InitCommand parses its own argv (no Context).
         let argv = argv_zslice();
-        super::init_command::InitCommand::exec(&argv[2.min(argv.len())..])
+        let start = (subcommand_argv_index() + 1).min(argv.len());
+        super::init_command::InitCommand::exec(&argv[start..])
     }
 
     #[cold]
@@ -1930,29 +1949,15 @@ To create a project with the official Next.js scaffolding tool, run\n\
         // Parse arguments manually since the standard flow doesn't work for standalone commands
         let cli = CommandLineArguments::parse(PmSubcommand::Info)?;
         let json_output = cli.json_output;
+        // `positionals[0]` is the `info` keyword itself.
+        let positionals = match cli.positionals {
+            [b"info", rest @ ..] => rest,
+            rest => rest,
+        };
+        let package_name: &[u8] = positionals.first().copied().unwrap_or(b"");
+        let property_path: Option<&[u8]> = positionals.get(1).copied();
         let ctx = init(Tag::InfoCommand, log)?;
         let (pm, _) = PackageManager::init(ctx, cli, Subcommand::Info)?;
-
-        // Handle arguments correctly for standalone info command
-        let mut package_name: &[u8] = b"";
-        let mut property_path: Option<&[u8]> = None;
-
-        // Find non-flag arguments starting from argv[2] (after "bun info").
-        let mut found_package = false;
-        let argv = bun::argv();
-        for arg in argv.iter().skip(2) {
-            // Skip flags
-            if !arg.is_empty() && arg[0] == b'-' {
-                continue;
-            }
-            if !found_package {
-                package_name = arg;
-                found_package = true;
-            } else {
-                property_path = Some(arg);
-                break;
-            }
-        }
 
         super::pm_view_command::view(pm, package_name, property_path, json_output)
     }

@@ -2131,6 +2131,174 @@ export default class {
       expect(stdout).toBe('["m2","_m2"]\n');
       expect(exitCode).toBe(0);
     });
+
+    // tsc rewrites every reference to an export of a merged namespace block as a
+    // property access on the namespace object, whether it is read or assigned to.
+    it("assignment to an export of a sibling namespace block becomes a property access", () => {
+      ts.expectPrinted_(
+        `namespace ns {
+  export let x = 1;
+  export let y = { k: 1 };
+}
+namespace ns {
+  x = 2;
+  x++;
+  x += 3;
+  x ??= 4;
+  [x] = [5];
+  ({ x } = { x: 6 });
+  ({ k: x } = { k: 7 });
+  for (x of [8]) ;
+  for (x in { 9: 0 }) ;
+  y.k = x;
+}`,
+        `var ns;
+((ns) => {
+  ns.x = 1;
+  ns.y = { k: 1 };
+})(ns ||= {});
+((ns) => {
+  ns.x = 2;
+  ns.x++;
+  ns.x += 3;
+  ns.x ??= 4;
+  [ns.x] = [5];
+  ({ x: ns.x } = { x: 6 });
+  ({ k: ns.x } = { k: 7 });
+  for (ns.x of [8])
+    ;
+  for (ns.x in { 9: 0 })
+    ;
+  ns.y.k = ns.x;
+})(ns ||= {})`,
+      );
+    });
+
+    it("assignment to a function exported from a sibling namespace block becomes a property access", () => {
+      ts.expectPrinted_(
+        `namespace ns {
+  export function f() {}
+}
+namespace ns {
+  f = () => {};
+}`,
+        `var ns;
+((ns) => {
+  function f() {}
+  ns.f = f;
+})(ns ||= {});
+((ns) => {
+  ns.f = () => {};
+})(ns ||= {})`,
+      );
+    });
+
+    it("assignment to an export declared in a later namespace block becomes a property access", () => {
+      ts.expectPrinted_(
+        `namespace ns {
+  export function f() { x = 1; }
+}
+namespace ns {
+  export let x = 0;
+}`,
+        `var ns;
+((ns) => {
+  function f() {
+    ns.x = 1;
+  }
+  ns.f = f;
+})(ns ||= {});
+((ns) => {
+  ns.x = 0;
+})(ns ||= {})`,
+      );
+    });
+
+    it("assignment from a nested namespace to an export of a sibling block uses the outer namespace object", () => {
+      ts.expectPrinted_(
+        `namespace outer {
+  export let x = 0;
+}
+namespace outer {
+  export namespace inner {
+    export function f() { x = 1; }
+  }
+}`,
+        `var outer;
+((outer) => {
+  outer.x = 0;
+})(outer ||= {});
+((outer) => {
+  let inner;
+  ((inner) => {
+    function f() {
+      outer.x = 1;
+    }
+    inner.f = f;
+  })(inner = outer.inner ||= {});
+})(outer ||= {})`,
+      );
+    });
+
+    it("a local declared in the namespace block still shadows a sibling block's export", () => {
+      ts.expectPrinted_(
+        `namespace ns {
+  export let x = 1;
+}
+namespace ns {
+  let local = 0;
+  local = x;
+  x = local;
+}
+namespace ns {
+  let x = 0;
+  x = 2;
+}`,
+        `var ns;
+((ns) => {
+  ns.x = 1;
+})(ns ||= {});
+((ns) => {
+  let local = 0;
+  local = ns.x;
+  ns.x = local;
+})(ns ||= {});
+((ns) => {
+  let x = 0;
+  x = 2;
+})(ns ||= {})`,
+      );
+    });
+
+    it("assigning to a sibling block's export at runtime updates the namespace, not an outer variable", async () => {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `let v: any = "outer";
+          namespace N {
+            export let v: any = 1;
+          }
+          namespace N {
+            export function set() { v = 99; }
+            export function inc() { v++; }
+            export function get() { return v; }
+          }
+          N.set();
+          N.inc();
+          console.log(JSON.stringify({ "N.v": N.v, get: N.get(), outer: v }));`,
+        ],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      expect(stderr).toBe("");
+      expect(stdout).toBe('{"N.v":100,"get":100,"outer":"outer"}\n');
+      expect(exitCode).toBe(0);
+    });
   });
 
   describe("exports.replace", () => {

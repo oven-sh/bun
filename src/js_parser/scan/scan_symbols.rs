@@ -93,6 +93,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                         alias: js_ast::StoreStr::new(name),
                                         ..Default::default()
                                     }));
+                                // The alias only rewrites reads; this also rewrites assignments.
+                                self.is_exported_inside_namespace.insert(new_ref, arg_ref);
                                 break 'brk new_ref;
                             }
                         }

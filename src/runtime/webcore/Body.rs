@@ -1702,6 +1702,63 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
         Ok(cloned)
     }
 
+    /// Fetch §Request ctor step 45: move this body out and leave this owner
+    /// `Used`. `Null` passes through; a stream JS may hold is proxied (45.2)
+    /// so the caller's handle locks; the result is strongly `Held` because the
+    /// slot cleared here was its root.
+    fn transfer_body_value(&self, global_this: &JSGlobalObject) -> JsResult<Value> {
+        if matches!(self.get_body_value(), Value::Null) {
+            return Ok(Value::Null);
+        }
+        // A Bun.serve body shares its slot with the RequestContext (= `task`):
+        // hand out a detached PendingValue instead of moving the Locked out.
+        if matches!(self.get_body_value(), Value::Locked(l) if l.task.is_some()) {
+            let readable = match self.get_body_readable_stream() {
+                Some(rs) => rs.proxy(global_this)?,
+                None => {
+                    let v = self.get_body_value().to_readable_stream(global_this)?;
+                    ReadableStream::from_js_direct(v)
+                }
+            };
+            *self.get_body_value() = Value::Used;
+            self.clear_body_cache(global_this);
+            return Ok(match readable {
+                Some(rs) => Value::Locked(PendingValue {
+                    readable: webcore::readable_stream::Strong::init(rs, global_this),
+                    ..PendingValue::new(global_this)
+                }),
+                None => Value::Null,
+            });
+        }
+        // JS is the source of truth for the stream (see `get_body_readable_stream`).
+        let cached_stream = self
+            .js_ref()
+            .and_then(Self::stream_get_cached)
+            .and_then(ReadableStream::from_js_direct);
+        // Proxy (step 45.2) before the move so a failure leaves the input untouched.
+        let live_stream = match self.get_body_value() {
+            Value::Locked(locked) => cached_stream.or_else(|| locked.readable.get()),
+            _ => None,
+        };
+        let proxied = match live_stream {
+            Some(rs) => rs.proxy(global_this)?.or(Some(rs)),
+            None => None,
+        };
+        let mut body = core::mem::replace(self.get_body_value(), Value::Used);
+        if let (Value::Locked(locked), Some(rs)) = (&mut body, proxied) {
+            locked.readable = webcore::readable_stream::Strong::init(rs, global_this);
+        }
+        self.clear_body_cache(global_this);
+        Ok(body)
+    }
+
+    fn clear_body_cache(&self, global_this: &JSGlobalObject) {
+        if let Some(js_ref) = self.js_ref() {
+            Self::stream_set_cached(js_ref, global_this, JSValue::ZERO);
+            Self::body_set_cached(js_ref, global_this, JSValue::ZERO);
+        }
+    }
+
     fn get_text(&self, global_object: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
         let value = self.get_body_value();
         if matches!(value, Value::Used) {
@@ -1819,13 +1876,16 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
         JSValue::from(self.body_stream_check(global_object, ReadableStream::is_disturbed))
     }
 
+    /// "This is unusable": the body is non-null and its stream is disturbed or
+    /// locked. <https://fetch.spec.whatwg.org/#body-unusable>
+    fn body_is_unusable(&self, global_object: &JSGlobalObject) -> bool {
+        self.body_stream_check(global_object, |s, g| s.is_disturbed(g) || s.is_locked(g))
+    }
+
     /// Fetch spec step 1 of both `clone()` algorithms: throw a `TypeError`
-    /// when "this is unusable", i.e. the body is non-null and its stream is
-    /// disturbed or locked. <https://fetch.spec.whatwg.org/#body-unusable>
+    /// when "this is unusable".
     fn throw_if_body_unusable(&self, global_object: &JSGlobalObject) -> JsResult<()> {
-        let unusable =
-            self.body_stream_check(global_object, |s, g| s.is_disturbed(g) || s.is_locked(g));
-        if unusable {
+        if self.body_is_unusable(global_object) {
             return Err(global_object
                 .err(
                     jsc::ErrorCode::BODY_ALREADY_USED,

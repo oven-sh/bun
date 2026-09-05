@@ -8,6 +8,7 @@
 #include "JSDOMWrapperCache.h"
 #include "JSReadableStream.h"
 #include "JSReadableStreamDefaultController.h"
+#include "JSTransformStream.h"
 #include "WebCoreJSBuiltins.h"
 #include "ZigGeneratedClasses.h"
 #include "ZigGlobalObject.h"
@@ -120,6 +121,25 @@ extern "C" bool ReadableStream__tee(JSC::EncodedJSValue possibleReadableStream, 
     *possibleReadableStream1 = JSValue::encode(branches.first);
     *possibleReadableStream2 = JSValue::encode(branches.second);
     return true;
+}
+
+// Streams spec "create a proxy": pipe `stream` through an identity TransformStream and return the
+// readable side. Locks `stream`; cancelling the proxy forwards the reason to `stream` unchanged.
+extern "C" JSC::EncodedJSValue ReadableStream__proxy(JSC::EncodedJSValue possibleReadableStream, Zig::GlobalObject* globalObject)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto* stream = toReadableStream(globalObject, scope, possibleReadableStream);
+    RETURN_IF_EXCEPTION(scope, {});
+    auto* domGlobalObject = defaultGlobalObject(globalObject);
+    auto* transform = WebCore::JSTransformStream::create(vm, WebCore::getDOMStructure<WebCore::JSTransformStream>(vm, *domGlobalObject));
+    setUpNativeTransformStream(globalObject, transform, TransformerKind::Identity);
+    RETURN_IF_EXCEPTION(scope, {});
+
+    auto* promise = readableStreamPipeTo(globalObject, stream, transform->m_writable.get(), false, false, false, nullptr);
+    RETURN_IF_EXCEPTION(scope, {});
+    markPromiseAsHandled(vm, promise);
+    return JSValue::encode(transform->m_readable.get());
 }
 
 extern "C" bool ReadableStream__is(JSC::EncodedJSValue value)

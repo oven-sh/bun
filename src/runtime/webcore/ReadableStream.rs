@@ -122,6 +122,8 @@ unsafe extern "C" {
         out1: &mut JSValue,
         out2: &mut JSValue,
     ) -> bool;
+    /// Streams "create a proxy": identity pipeThrough. Empty iff it threw.
+    safe fn ReadableStream__proxy(stream: JSValue, global_this: &JSGlobalObject) -> JSValue;
     /// A held `JSReadableStream`'s tag and native source (`Invalid` if `value` is anything else). Pure.
     safe fn ReadableStreamTag__taggedStream(value: JSValue, ptr: &mut *mut c_void) -> Tag;
     /// `possible_readable_stream` is read+overwritten in place; `ptr` is a
@@ -178,6 +180,15 @@ impl ReadableStream {
             return Ok(None);
         };
         Ok(Some((out_stream1, out_stream2)))
+    }
+
+    /// Lock this stream behind an identity proxy (fetch "create a proxy") and
+    /// return the proxy. Cancelling the proxy forwards the reason to `self`.
+    pub fn proxy(&self, global_this: &JSGlobalObject) -> JsResult<Option<ReadableStream>> {
+        let out = bun_jsc::from_js_host_call(global_this, || {
+            ReadableStream__proxy(self.value, global_this)
+        })?;
+        Ok(ReadableStream::from_js_direct(out))
     }
 
     /// Re-read this stream's tag (its native source may have changed hands). Pure, like `from_js_direct`.

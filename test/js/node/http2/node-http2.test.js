@@ -1844,6 +1844,177 @@ it("http2 session.goaway() validates input types", async done => {
   });
 });
 
+// Resolves with the arguments of the next `event`; rejects instead if the emitter errors or closes
+// first, so a frame that never shows up fails with the reason rather than with the test timeout.
+// The listeners are removed once settled, so errors a test expects later stay its own business.
+function nextEvent(emitter, event) {
+  const { promise, resolve, reject } = Promise.withResolvers();
+  const onEvent = (...args) => resolve(args);
+  const onClose = () => reject(new Error(`'close' was emitted before '${event}'`));
+  emitter.once(event, onEvent).once("error", reject).once("close", onClose);
+  return promise.finally(() => emitter.off(event, onEvent).off("error", reject).off("close", onClose));
+}
+
+// node defines goaway() once, on Http2Session, so a client session rejects the same arguments
+// as a server session. Every rejected call below must throw synchronously without putting a
+// GOAWAY frame on the wire.
+it("http2 client and server sessions validate goaway() arguments identically", async () => {
+  const server = http2.createServer();
+  await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
+  const serverSessionOpened = nextEvent(server, "session");
+  const client = http2.connect(`http://127.0.0.1:${server.address().port}`);
+  try {
+    await nextEvent(client, "connect");
+    const [serverSession] = await serverSessionOpened;
+
+    function thrown(fn) {
+      try {
+        fn();
+      } catch (e) {
+        return `${e.name} ${e.code}: ${e.message}`;
+      }
+      return "did not throw";
+    }
+
+    for (const [label, session] of [
+      ["client", client],
+      ["server", serverSession],
+    ]) {
+      const actual = [label];
+      const expected = [label];
+      for (const input of [true, "1", {}, [], null, new Date(), new ArrayBuffer(1)]) {
+        const received = invalidArgTypeHelper(input);
+        actual.push(
+          thrown(() => session.goaway(input)),
+          thrown(() => session.goaway(0, input)),
+          thrown(() => session.goaway(0, 0, input)),
+        );
+        expected.push(
+          `TypeError ERR_INVALID_ARG_TYPE: The "code" argument must be of type number.${received}`,
+          `TypeError ERR_INVALID_ARG_TYPE: The "lastStreamID" argument must be of type number.${received}`,
+          `TypeError ERR_INVALID_ARG_TYPE: The "opaqueData" argument must be an instance of Buffer, TypedArray, or DataView.${received}`,
+        );
+      }
+      expect(actual).toEqual(expected);
+    }
+
+    // Frames are ordered on the wire, so the first GOAWAY the server sees being the valid one
+    // proves none of the rejected client calls sent anything (a string opaqueData used to).
+    const goawayReceived = nextEvent(serverSession, "goaway");
+    client.goaway(http2.constants.NGHTTP2_ENHANCE_YOUR_CALM, 0, Buffer.from("bye"));
+    const [code, lastStreamID, opaqueData] = await goawayReceived;
+    expect({ code, lastStreamID, opaqueData: opaqueData.toString() }).toEqual({
+      code: http2.constants.NGHTTP2_ENHANCE_YOUR_CALM,
+      lastStreamID: 0,
+      opaqueData: "bye",
+    });
+
+    // Like node, the destroyed check runs before argument validation.
+    client.destroy();
+    expect(thrown(() => client.goaway(true))).toBe("Error ERR_HTTP2_INVALID_SESSION: The session has been destroyed");
+  } finally {
+    client.destroy();
+    server.close();
+  }
+});
+
+// node's Http2Session#goaway (https://github.com/nodejs/node/blob/v26.3.0/lib/internal/http2/core.js)
+// only type-checks the code: any number is accepted and converted to a uint32 on the way out, and
+// destroy(error, code) hands its code to the same path. node v26.3.0 produces exactly this table
+// from either side. The server session used to throw ERR_OUT_OF_RANGE on all four of its rows,
+// which for destroy() also left the session half torn down with destroyed === false.
+it("http2 session.goaway() and destroy() accept any numeric code like node and send it as a uint32", async () => {
+  const server = http2.createServer();
+  server.on("sessionError", () => {});
+  await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
+
+  // Runs `issue` against the chosen side of a fresh connection and reports what the other side's
+  // 'goaway' event carried. One connection per call: the receiver tears the session down right
+  // after emitting a non-zero GOAWAY, so a connection can only observe one of them.
+  async function issueAndReadPeer(sender, issue) {
+    const serverSessionOpened = nextEvent(server, "session");
+    const client = http2.connect(`http://127.0.0.1:${server.address().port}`);
+    // The non-zero codes below make whichever side receives them destroy itself with
+    // ERR_HTTP2_SESSION_ERROR, and the destroy() row emits its error on the issuing side.
+    client.on("error", () => {});
+    try {
+      await nextEvent(client, "connect");
+      const [serverSession] = await serverSessionOpened;
+      const [session, peer] = sender === "client" ? [client, serverSession] : [serverSession, client];
+      try {
+        issue(session);
+      } catch (e) {
+        return { threw: e.code, destroyed: session.destroyed };
+      }
+      const destroyed = session.destroyed;
+      // The frame just written cannot reach the peer before this tick yields, so listening for it
+      // only now is safe and leaves nothing pending on the `threw` path above.
+      const [code] = await nextEvent(peer, "goaway");
+      return { code, destroyed };
+    } finally {
+      client.destroy();
+    }
+  }
+
+  const issues = {
+    "goaway(-1)": session => session.goaway(-1),
+    "goaway(1.5)": session => session.goaway(1.5),
+    "goaway(NaN)": session => session.goaway(NaN),
+    "destroy(error, -1)": session => session.destroy(new Error("boom"), -1),
+  };
+  try {
+    const results = {};
+    for (const sender of ["client", "server"]) {
+      for (const [name, issue] of Object.entries(issues)) {
+        results[`${sender}.${name}`] = await issueAndReadPeer(sender, issue);
+      }
+    }
+    expect(results).toEqual({
+      "client.goaway(-1)": { code: 0xffffffff, destroyed: false },
+      "client.goaway(1.5)": { code: 1, destroyed: false },
+      "client.goaway(NaN)": { code: 0, destroyed: false },
+      "client.destroy(error, -1)": { code: 0xffffffff, destroyed: true },
+      "server.goaway(-1)": { code: 0xffffffff, destroyed: false },
+      "server.goaway(1.5)": { code: 1, destroyed: false },
+      "server.goaway(NaN)": { code: 0, destroyed: false },
+      "server.destroy(error, -1)": { code: 0xffffffff, destroyed: true },
+    });
+  } finally {
+    server.close();
+  }
+});
+
+it("http2 client session.goaway() sends opaqueData given as any Buffer, TypedArray, or DataView view", async () => {
+  const bytes = Buffer.from("__bye");
+  const views = {
+    Buffer: bytes.subarray(2),
+    Uint8Array: new Uint8Array(bytes.buffer, bytes.byteOffset + 2, 3),
+    DataView: new DataView(bytes.buffer, bytes.byteOffset + 2, 3),
+  };
+  const server = http2.createServer();
+  await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
+  try {
+    const received = {};
+    for (const [name, view] of Object.entries(views)) {
+      const serverSessionOpened = nextEvent(server, "session");
+      const client = http2.connect(`http://127.0.0.1:${server.address().port}`);
+      try {
+        await nextEvent(client, "connect");
+        const [serverSession] = await serverSessionOpened;
+        const goawayReceived = nextEvent(serverSession, "goaway");
+        client.goaway(http2.constants.NGHTTP2_NO_ERROR, 0, view);
+        const [, , opaqueData] = await goawayReceived;
+        received[name] = opaqueData.toString();
+      } finally {
+        client.destroy();
+      }
+    }
+    expect(received).toEqual({ Buffer: "bye", Uint8Array: "bye", DataView: "bye" });
+  } finally {
+    server.close();
+  }
+});
+
 it("http2 stream.close() validates input types and ranges", async () => {
   const server = http2.createServer();
 

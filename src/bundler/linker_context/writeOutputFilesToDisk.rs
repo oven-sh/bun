@@ -393,7 +393,7 @@ pub(crate) fn write_output_files_to_disk(
                     Loader::Js
                 };
 
-                if loader.is_javascript_like() {
+                if matches!(chunk.content, Content::Javascript(_)) && loader.is_javascript_like() {
                     let mut fdpath = PathBuffer::uninit();
                     let source_provider_url = BunString::create_format(format_args!(
                         "{}{}",
@@ -487,6 +487,17 @@ pub(crate) fn write_output_files_to_disk(
                             source_index: IndexOptional::NONE,
                             bake_extra: BakeExtra::default(),
                         }));
+                    } else {
+                        // `log_disjoint`: split-borrow with `parse_graph` above.
+                        c.log_disjoint().add_error_fmt(
+                            None,
+                            Loc::EMPTY,
+                            format_args!(
+                                "Failed to generate bytecode for {}",
+                                bstr::BStr::new(&chunk.final_rel_path)
+                            ),
+                        );
+                        return Err(crate::Error::BuildFailed);
                     }
                 }
             }

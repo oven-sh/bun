@@ -1,40 +1,65 @@
 /**
- * Subprocess fixture for proxy-stress-concurrent.test.ts: issue many
- * requests through a local CONNECT proxy to a local HTTPS origin, under
- * one of several modes (complete, abort-immediate, abort-after-connect,
- * concurrent-32, concurrent-32-abort, redirect), tracking RSS across the
- * run. Emits a single JSON summary line on stdout and exits 0 on clean
- * completion.
+ * Subprocess fixture for the "memory probe" block of
+ * proxy-stress-concurrent.test.ts.
+ *
+ * Issues <iterations> requests through a local CONNECT proxy (plain or TLS
+ * outer socket, selected by argv) to a local https origin, in one of the
+ * modes below, and prints exactly one JSON line:
+ *
+ *   completed     requests that returned status 200 with the expected body
+ *   failed        requests that rejected or returned something else
+ *   errors        `failed`, counted by error code (or error name)
+ *   connects      CONNECT requests the proxy received
+ *   sslCtxGrowth  live SSL_CTX count at the end minus the count after the
+ *                 warm-up. Every tunnel owns one SSL_CTX (ProxyTunnel::start
+ *                 builds it through us_ssl_ctx_from_options), so a tunnel
+ *                 that is never released shows up here as +1 per request,
+ *                 independent of how much memory it holds.
+ *   sslCtxInFlight  the highest live SSL_CTX count sampled while tunnels were
+ *                 in flight, minus the lowest count sampled while none were.
+ *                 This is the number of tunnels alive at once that owned a
+ *                 context: the proof that `sslCtxGrowth` can see a leak.
+ *   rssGrowth     RSS at the end minus RSS after the warm-up, in bytes
+ *
+ * The first quarter of the iterations is the warm-up (JIT, allocator and
+ * TLS first-use costs); both growth figures are measured over the rest.
  *
  * Usage: bun proxy-stress-memory-fixture.ts <http|https> <mode> <iterations>
+ * Env:   TLS_CERT, TLS_KEY: PEM used by the origin and by the https proxy.
+ *        The test passes them in so this child does not import "harness",
+ *        which costs about a second of start-up per child in a debug build.
+ *        The rest of the environment is bunEnv, which is also what enables
+ *        the `bun:internal-for-testing` import below; to run this file by
+ *        hand, set BUN_FEATURE_FLAG_INTERNAL_FOR_TESTING=1 and
+ *        BUN_GARBAGE_COLLECTOR_LEVEL=0 as well.
  */
 
+import { sslCtxLiveCount } from "bun:internal-for-testing";
+import { once } from "node:events";
 import net from "node:net";
 import tls from "node:tls";
-import { once } from "node:events";
-import { tls as tlsCert } from "harness";
 
 const [proxyScheme, mode, iterStr] = process.argv.slice(2);
-const iterations = Number(iterStr ?? "600");
+const iterations = Number(iterStr);
 const isHttpsProxy = proxyScheme === "https";
+const tlsCert = { cert: process.env.TLS_CERT!, key: process.env.TLS_KEY! };
 
-type ConnectRecord = { count: number; resolveNext?: () => void };
-const connectRecord: ConnectRecord = { count: 0 };
-
-function notifyConnect() {
-  connectRecord.count++;
-  if (connectRecord.resolveNext) {
-    const r = connectRecord.resolveNext;
-    connectRecord.resolveNext = undefined;
-    r();
-  }
-}
-
-function waitForNextConnect(): Promise<void> {
-  return new Promise<void>(resolve => {
-    connectRecord.resolveNext = resolve;
-  });
-}
+type Abort = "never" | "microtask" | "after-connect";
+const MODES: Record<string, { concurrency: number; abort: (i: number) => Abort }> = {
+  // Let every request finish.
+  "complete": { concurrency: 1, abort: () => "never" },
+  // Abort on the microtask after fetch() returns: races the HTTP thread's connect.
+  "abort-immediate": { concurrency: 1, abort: () => "microtask" },
+  // Abort as soon as the proxy has read the CONNECT head.
+  "abort-after-connect": { concurrency: 1, abort: () => "after-connect" },
+  // 32 in flight at once, all complete.
+  "concurrent-32": { concurrency: 32, abort: () => "never" },
+  // 32 in flight at once, the odd ones aborted on the next microtask.
+  "concurrent-32-abort": { concurrency: 32, abort: i => (i % 2 === 1 ? "microtask" : "never") },
+  // The origin redirects once per request, so every iteration opens two tunnels.
+  "redirect": { concurrency: 1, abort: () => "never" },
+};
+const { concurrency, abort } = MODES[mode];
 
 // HTTPS origin. Optionally redirects once (for mode=redirect).
 const origin = Bun.serve({
@@ -49,8 +74,19 @@ const origin = Bun.serve({
   },
 });
 
-// A CONNECT proxy (HTTP or HTTPS outer socket). It intentionally tracks
-// connects so the fixture can synchronize aborts to the CONNECT boundary.
+let connects = 0;
+let onNextConnect: (() => void) | undefined;
+
+// SSL_CTX samples. `sslCtxStart` is taken after the warm-up; until then the
+// in-flight and idle samples are skipped, so that contexts created lazily
+// during the warm-up do not count as tunnels.
+let sslCtxStart = -1;
+let sslCtxIdleMin = Infinity;
+let sslCtxBusyMax = -Infinity;
+
+// A CONNECT proxy (plain or TLS outer socket). It counts CONNECT heads so
+// the test can check that every request went through it and so that
+// "after-connect" aborts can be synchronized to the CONNECT boundary.
 function handleClient(client: net.Socket) {
   client.on("error", () => {});
   let head = Buffer.alloc(0);
@@ -64,18 +100,28 @@ function handleClient(client: net.Socket) {
     head = Buffer.concat([head, chunk]);
     const end = head.indexOf("\r\n\r\n");
     if (end === -1) return;
-    notifyConnect();
+    const requestLine = head.subarray(0, head.indexOf("\r\n")).toString("latin1");
+    const [method, target] = requestLine.split(" ");
+    if (method === "CONNECT") {
+      connects++;
+      onNextConnect?.();
+      onNextConnect = undefined;
+    }
     const leftover = head.subarray(end + 4);
-    const firstLine = head.subarray(0, head.indexOf("\r\n")).toString("latin1");
-    const [, hostPort] = firstLine.split(" ");
-    const colon = hostPort!.lastIndexOf(":");
-    const host = hostPort!.slice(0, colon);
-    const port = Number(hostPort!.slice(colon + 1));
-    upstream = net.connect(port, host, () => {
+    // Dial the loopback address directly instead of resolving the target's
+    // `localhost` (as proxy-stress-helpers does); only the port is taken from
+    // the target.
+    const port = Number(target.slice(target.lastIndexOf(":") + 1));
+    upstream = net.connect(port, "127.0.0.1", () => {
       client.write("HTTP/1.1 200 Connection Established\r\n\r\n");
       if (leftover.length) upstream!.write(leftover);
-      // client → upstream relay is the outer on("data") handler above;
-      // only pipe the upstream → client direction here.
+      // The first upstream byte is the origin's TLS ServerHello: the client
+      // has started its tunnel by now, so its SSL_CTX is alive and counted.
+      upstream!.once("data", () => {
+        if (sslCtxStart !== -1) sslCtxBusyMax = Math.max(sslCtxBusyMax, sslCtxLiveCount());
+      });
+      // client → upstream is relayed by the "data" handler above; only the
+      // upstream → client direction is piped.
       upstream!.pipe(client);
     });
     upstream.on("error", () => client.destroy());
@@ -88,113 +134,103 @@ const proxy = isHttpsProxy
   : net.createServer(handleClient);
 proxy.listen(0, "127.0.0.1");
 await once(proxy, "listening");
-const proxyPort = (proxy.address() as net.AddressInfo).port;
-const proxyUrl = `${isHttpsProxy ? "https" : "http"}://127.0.0.1:${proxyPort}`;
+const proxyUrl = `${proxyScheme}://127.0.0.1:${(proxy.address() as net.AddressInfo).port}`;
 
 const laxTls = { ca: tlsCert.cert, rejectUnauthorized: false } as const;
-const originUrl = (p: string) => `https://localhost:${origin.port}${p}`;
 
 let completed = 0;
 let failed = 0;
-let firstError: string | undefined;
-let rssStart = 0;
-let rssMax = 0;
+const errors: Record<string, number> = {};
 
-function recordError(i: number, e: unknown) {
+function recordFailure(key: string) {
   failed++;
-  if (firstError === undefined) {
-    const any = e as { code?: unknown; name?: unknown; message?: unknown };
-    firstError = `[i=${i}] ${any?.code ?? any?.name ?? "Error"}: ${any?.message ?? e}`;
-  }
+  errors[key] = (errors[key] ?? 0) + 1;
 }
 
-const rss =
-  process.platform === "darwin" && typeof Bun.unsafe.memoryFootprint === "function"
-    ? Bun.unsafe.memoryFootprint
-    : process.memoryUsage.rss;
+function errorKey(e: unknown): string {
+  const any = e as { code?: unknown; name?: unknown };
+  return typeof any?.code === "string" ? any.code : typeof any?.name === "string" ? any.name : String(e);
+}
 
 async function one(i: number): Promise<void> {
   const path = mode === "redirect" ? "/start" : `/${i}`;
-  const ac = new AbortController();
-
-  if (mode === "abort-immediate") {
-    queueMicrotask(() => ac.abort());
-  } else if (mode === "abort-after-connect") {
-    waitForNextConnect().then(() => ac.abort());
+  const expectedBody = mode === "redirect" ? "ok-/final" : `ok-${path}`;
+  let signal: AbortSignal | undefined;
+  const when = abort(i);
+  if (when !== "never") {
+    const ac = new AbortController();
+    signal = ac.signal;
+    if (when === "microtask") queueMicrotask(() => ac.abort());
+    else new Promise<void>(resolve => (onNextConnect = resolve)).then(() => ac.abort());
   }
 
   try {
-    const res = await fetch(originUrl(path), {
+    const res = await fetch(`https://localhost:${origin.port}${path}`, {
       proxy: proxyUrl,
       keepalive: false,
       tls: laxTls,
-      signal: mode.startsWith("abort") ? ac.signal : undefined,
+      signal,
     });
-    await res.arrayBuffer();
-    completed++;
+    const body = await res.text();
+    if (res.status === 200 && body === expectedBody) {
+      completed++;
+    } else {
+      recordFailure(`unexpected response ${res.status} ${JSON.stringify(body)}`);
+    }
   } catch (e) {
-    recordError(i, e);
+    recordFailure(errorKey(e));
   }
 }
 
-async function run() {
-  // Warm-up: first 20 iterations establish baseline RSS (JIT, TLS session
-  // cache, first-time allocations). rssStart is sampled after.
-  const WARMUP = Math.min(20, Math.floor(iterations / 4));
+// Same choice as harness's rss().
+const rss: () => number =
+  process.platform === "darwin" && typeof Bun.unsafe.memoryFootprint === "function"
+    ? (Bun.unsafe.memoryFootprint as () => number)
+    : process.memoryUsage.rss;
 
-  if (mode === "concurrent-32" || mode === "concurrent-32-abort") {
-    let i = 0;
-    while (i < iterations) {
-      const batch = Math.min(32, iterations - i);
-      const tasks: Promise<void>[] = [];
-      for (let j = 0; j < batch; j++) {
-        const idx = i + j;
-        if (mode === "concurrent-32-abort" && idx % 2 === 1) {
-          const ac = new AbortController();
-          const p = fetch(originUrl(`/${idx}`), {
-            proxy: proxyUrl,
-            keepalive: false,
-            tls: laxTls,
-            signal: ac.signal,
-          })
-            .then(async r => {
-              await r.arrayBuffer();
-              completed++;
-            })
-            .catch(e => {
-              recordError(idx, e);
-            });
-          queueMicrotask(() => ac.abort());
-          tasks.push(p);
-        } else {
-          tasks.push(one(idx));
-        }
-      }
-      await Promise.all(tasks);
-      i += batch;
-      if (i >= WARMUP && rssStart === 0) {
-        Bun.gc(true);
-        rssStart = rss();
-      }
-      rssMax = Math.max(rssMax, rss());
-    }
-  } else {
-    for (let i = 0; i < iterations; i++) {
-      await one(i);
-      if (i === WARMUP) {
-        Bun.gc(true);
-        rssStart = rss();
-      }
-      rssMax = Math.max(rssMax, rss());
-    }
+const warmup = Math.floor(iterations / 4);
+let rssStart = -1;
+
+for (let done = 0; done < iterations; ) {
+  const batch = Math.min(concurrency, iterations - done);
+  await Promise.all(Array.from({ length: batch }, (_, j) => one(done + j)));
+  done += batch;
+  // Nothing is in flight here.
+  if (rssStart === -1 && done >= warmup) {
+    Bun.gc(true);
+    rssStart = rss();
+    sslCtxStart = sslCtxLiveCount();
   }
+  if (sslCtxStart !== -1) sslCtxIdleMin = Math.min(sslCtxIdleMin, sslCtxLiveCount());
+}
 
+Bun.gc(true);
+const rssEnd = rss();
+
+// The HTTP thread frees the last request's tunnel (and its SSL_CTX) shortly
+// after the response is delivered; wait for the count to come back down
+// rather than read it mid-teardown. A leak keeps the count up and the loop
+// gives up at the deadline, so the growth is still reported.
+const deadline = Date.now() + 5_000;
+while (sslCtxLiveCount() > sslCtxStart && Date.now() < deadline) {
+  await Bun.sleep(5);
   Bun.gc(true);
-  const rssEnd = rss();
-  console.log(JSON.stringify({ completed, failed, firstError, rssStart, rssEnd, rssMax }));
 }
+const sslCtxEnd = sslCtxLiveCount();
+sslCtxIdleMin = Math.min(sslCtxIdleMin, sslCtxEnd);
 
-await run();
+console.log(
+  JSON.stringify({
+    completed,
+    failed,
+    errors,
+    connects,
+    sslCtxGrowth: sslCtxEnd - sslCtxStart,
+    sslCtxInFlight: sslCtxBusyMax === -Infinity ? 0 : sslCtxBusyMax - sslCtxIdleMin,
+    rssGrowth: rssEnd - rssStart,
+  }),
+);
+
 origin.stop(true);
 proxy.close();
 process.exit(0);

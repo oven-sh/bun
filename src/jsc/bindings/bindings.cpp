@@ -2770,7 +2770,7 @@ JSC::EncodedJSValue JSGlobalObject__createOutOfMemoryError(JSC::JSGlobalObject* 
     return JSValue::encode(exception);
 }
 
-static JSC::EncodedJSValue systemErrorToErrorInstance(const SystemError* arg0, JSC::JSGlobalObject* globalObject, JSC::ErrorType errorType)
+static JSC::EncodedJSValue systemErrorToErrorInstance(const SystemError* arg0, JSC::JSGlobalObject* globalObject)
 {
     SystemError err = *arg0;
 
@@ -2784,7 +2784,7 @@ static JSC::EncodedJSValue systemErrorToErrorInstance(const SystemError* arg0, J
 
     auto& names = WebCore::builtinNames(vm);
 
-    JSC::JSObject* result = createError(globalObject, errorType, message);
+    JSC::JSObject* result = createError(globalObject, ErrorType::Error, message);
 
     auto clientData = WebCore::clientData(vm);
 
@@ -2845,12 +2845,29 @@ static JSC::EncodedJSValue systemErrorToErrorInstance(const SystemError* arg0, J
 
 JSC::EncodedJSValue SystemError__toErrorInstance(const SystemError* arg0, JSC::JSGlobalObject* globalObject)
 {
-    return systemErrorToErrorInstance(arg0, globalObject, ErrorType::Error);
+    return systemErrorToErrorInstance(arg0, globalObject);
 }
 
-JSC::EncodedJSValue SystemError__toTypeErrorInstance(const SystemError* arg0, JSC::JSGlobalObject* globalObject)
+// undici's rejection shape: TypeError("fetch failed" | "terminated") with the system error as a non-enumerable `cause` and `.code` mirrored.
+JSC::EncodedJSValue SystemError__toFetchFailedInstance(const SystemError* arg0, JSC::JSGlobalObject* globalObject, bool terminated)
 {
-    return systemErrorToErrorInstance(arg0, globalObject, ErrorType::TypeError);
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+
+    JSC::JSValue cause = JSC::JSValue::decode(systemErrorToErrorInstance(arg0, globalObject));
+    JSC::JSObject* result = createError(globalObject, ErrorType::TypeError, terminated ? "terminated"_s : "fetch failed"_s);
+    result->putDirect(vm, vm.propertyNames->cause, cause, static_cast<unsigned>(JSC::PropertyAttribute::DontEnum));
+
+    if (arg0->code.tag != BunStringTag::Empty) {
+        JSC::JSValue code = Bun::toJS(globalObject, arg0->code);
+        if (scope.exception()) {
+            scope.clearException();
+        } else {
+            result->putDirect(vm, WebCore::clientData(vm)->builtinNames().codePublicName(), code, JSC::PropertyAttribute::DontDelete | 0);
+        }
+    }
+
+    return JSC::JSValue::encode(result);
 }
 
 JSC::EncodedJSValue SystemError__toErrorInstanceWithInfoObject(const SystemError* arg0, JSC::JSGlobalObject* globalObject)

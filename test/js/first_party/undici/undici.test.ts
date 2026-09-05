@@ -246,9 +246,9 @@ describe("undici.request maxRedirections", () => {
       // redirect may be followed, so the client stops at /redirect/1 instead
       // of chasing the chain to the end.
       hits.length = 0;
-      await expect(request(`${origin}/redirect/0`, { maxRedirections: 1 })).rejects.toThrow(
-        "redirected too many times",
-      );
+      await expect(request(`${origin}/redirect/0`, { maxRedirections: 1 })).rejects.toMatchObject({
+        code: "TooManyRedirects",
+      });
       expect(hits).toEqual(["/redirect/0", "/redirect/1"]);
 
       // A cap large enough for the whole chain still reaches the final response.

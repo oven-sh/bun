@@ -1098,8 +1098,7 @@ describe("HTMLRewriter", () => {
     const fullBody = "<div id=a><p>hello <b>world</b></p></div>";
     // Ties the rejection to the connection failure so an unrelated rejection
     // ("Body already used", an internal rewriter error) can't keep this green.
-    // The exact RST message varies by platform, so match loosely.
-    const connectionError = /socket|connection|ECONNRESET/i;
+    const connectionError = expect.objectContaining({ code: "ECONNRESET" });
 
     async function withPartialBodyServer(fn) {
       let release;
@@ -1138,17 +1137,19 @@ describe("HTMLRewriter", () => {
     function settle(promise) {
       return promise.then(
         value => ({ rejected: false, value }),
-        error => ({ rejected: true, name: error?.name, message: String(error?.message) }),
+        error => ({ rejected: true, name: error?.name, code: error?.code, message: String(error?.message) }),
       );
     }
     const rejectedWithConnectionError = {
       rejected: true,
       name: "TypeError",
-      message: expect.stringMatching(connectionError),
+      code: "ECONNRESET",
+      message: expect.any(String),
     };
     const rejectedWithBodyAlreadyUsed = {
       rejected: true,
       name: "TypeError",
+      code: "ERR_BODY_ALREADY_USED",
       message: "Body already used",
     };
 

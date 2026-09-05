@@ -569,8 +569,11 @@ pub enum Tag {
 pub enum ValueError {
     AbortReason(CommonAbortReason),
     SystemError(SystemError),
-    /// `SystemError` surfaced as a JS `TypeError` (fetch network errors).
-    SystemTypeError(SystemError),
+    /// `TypeError("fetch failed" | "terminated", { cause })`; see `SystemError::to_fetch_failed_instance`.
+    FetchFailed {
+        cause: SystemError,
+        terminated: bool,
+    },
     Message(BunString),
     /// Surfaces as a JS `TypeError`. The fetch spec maps every "network
     /// error" to TypeError, so use this for fetch-layer rejections that
@@ -610,8 +613,8 @@ impl ValueError {
             ValueError::SystemError(system_error) => {
                 core::mem::take(system_error).to_error_instance(global_object)
             }
-            ValueError::SystemTypeError(system_error) => {
-                core::mem::take(system_error).to_type_error_instance(global_object)
+            ValueError::FetchFailed { cause, terminated } => {
+                core::mem::take(cause).to_fetch_failed_instance(global_object, *terminated)
             }
             ValueError::Message(message) => message.to_error_instance(global_object),
             ValueError::TypeError(message) => message.to_type_error_instance(global_object),
@@ -627,7 +630,10 @@ impl ValueError {
     pub(crate) fn dupe(&self, global_object: &JSGlobalObject) -> Self {
         match self {
             ValueError::SystemError(e) => ValueError::SystemError(e.clone()),
-            ValueError::SystemTypeError(e) => ValueError::SystemTypeError(e.clone()),
+            ValueError::FetchFailed { cause, terminated } => ValueError::FetchFailed {
+                cause: cause.clone(),
+                terminated: *terminated,
+            },
             ValueError::Message(m) => ValueError::Message(m.clone()),
             ValueError::TypeError(m) => ValueError::TypeError(m.clone()),
             ValueError::JSValue(js_ref) => {

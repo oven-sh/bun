@@ -988,10 +988,10 @@ describe.concurrent("fetch() over HTTP/2 (BUN_FEATURE_FLAG_EXPERIMENTAL_HTTP2_CL
         async url => {
           await using proc = await spawnFetch(`
             try { await fetch("${url}", { tls: { rejectUnauthorized: false } }); console.log("ok"); }
-            catch (e) { console.log("rejected", String(e).includes("Refused")); }
+            catch (e) { console.log("rejected", e?.code); }
           `);
           const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-          expect(stdout.trim()).toBe("rejected true");
+          expect(stdout.trim()).toBe("rejected HTTP2RefusedStream");
           expect(exitCode).toBe(0);
           // initial + 5 retries
           expect(attempts).toBe(6);
@@ -1290,10 +1290,10 @@ describe.concurrent("fetch() over HTTP/2 (BUN_FEATURE_FLAG_EXPERIMENTAL_HTTP2_CL
               const r = await fetch("${url}", { tls: { rejectUnauthorized: false } });
               await r.text();
               console.log("ok");
-            } catch (e) { console.log("rejected", String(e).includes("ContentLength")); }
+            } catch (e) { console.log("rejected", e?.code); }
           `);
           const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-          expect(stdout.trim()).toBe("rejected true");
+          expect(stdout.trim()).toBe("rejected HTTP2ContentLengthMismatch");
           expect(exitCode).toBe(0);
         },
       );
@@ -1312,10 +1312,10 @@ describe.concurrent("fetch() over HTTP/2 (BUN_FEATURE_FLAG_EXPERIMENTAL_HTTP2_CL
             try {
               const r = await fetch("${url}", { tls: { rejectUnauthorized: false } });
               console.log("ok", r.status, (await r.text()).length);
-            } catch (e) { console.log("rejected", String(e).includes("ContentLength")); }
+            } catch (e) { console.log("rejected", e?.code); }
           `);
           const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-          expect(stdout.trim()).toBe("rejected true");
+          expect(stdout.trim()).toBe("rejected HTTP2ContentLengthMismatch");
           expect(exitCode).toBe(0);
         },
       );

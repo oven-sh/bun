@@ -96,7 +96,7 @@ it("should be able to abruptly stop the server many times", async () => {
         await fetch(url, { keepalive: true }).then(res => res.text());
         expect.unreachable();
       } catch (e) {
-        expect(["ECONNRESET", "ConnectionRefused"]).toContain(e.code);
+        expect(["ECONNRESET", "ECONNREFUSED"]).toContain(e.code);
       }
     }
 
@@ -3057,9 +3057,9 @@ it.concurrent(
       const res = await fetch(new URL(pathname, server.url.origin));
       expect(res.status).toBe(200);
       if (success) {
-        expect(res.text()).resolves.toBe("Hello, World!");
+        await expect(res.text()).resolves.toBe("Hello, World!");
       } else {
-        expect(res.text()).rejects.toThrow(/The socket connection was closed unexpectedly./);
+        await expect(res.text()).rejects.toMatchObject({ code: "ECONNRESET" });
       }
     }
     await Promise.all([testTimeout("/ok", true), testTimeout("/timeout", false)]);

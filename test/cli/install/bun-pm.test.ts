@@ -1,5 +1,5 @@
 import { spawn } from "bun";
-import { afterAll, afterEach, beforeAll, beforeEach, expect, it, test } from "bun:test";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, test } from "bun:test";
 import { exists, mkdir, writeFile } from "fs/promises";
 import { bunEnv, bunExe, bunEnv as env, normalizeBunSnapshot, readdirSorted, tempDir, tmpdirSync } from "harness";
 import { cpSync } from "node:fs";
@@ -864,6 +864,61 @@ test("bun pm whoami still works", async () => {
 
   // Exit code will be non-zero due to missing auth
   expect(exitCode).toBe(1);
+});
+
+describe.concurrent("bun pm whoami user-agent", () => {
+  // The host may itself be a CI runner. Drop its `CI` so each case decides.
+  // AGOLA_GIT_REF is the first probe in the vendor table, so no other marker
+  // that leaks from the host can shadow it.
+  const cleanEnv = { ...bunEnv };
+  delete cleanEnv.CI;
+
+  async function whoamiUserAgent(extraEnv: Record<string, string>): Promise<string | null> {
+    let userAgent: string | null = null;
+    using registry = Bun.serve({
+      port: 0,
+      fetch(req) {
+        userAgent = req.headers.get("user-agent");
+        return Response.json({ username: "whoami-ua" });
+      },
+    });
+    using dir = tempDir("bun-pm-whoami-ua", {
+      "package.json": JSON.stringify({ name: "whoami-ua", version: "1.0.0" }),
+      "bunfig.toml": Bun.TOML.stringify({
+        install: {
+          cache: false,
+          registry: { url: `http://localhost:${registry.port}`, token: "whoami-ua-token" },
+        },
+      }),
+    });
+
+    await using proc = spawn({
+      cmd: [bunExe(), "pm", "whoami"],
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+      env: { ...cleanEnv, ...extraEnv },
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout).toBe("whoami-ua\n");
+    expect(stderr).not.toContain("error:");
+    expect(exitCode).toBe(0);
+    return userAgent;
+  }
+
+  const baseUserAgent = `Bun/${Bun.version} ${process.platform} ${process.arch} workspaces/false`;
+
+  test("names the CI vendor", async () => {
+    expect(await whoamiUserAgent({ AGOLA_GIT_REF: "refs/heads/main" })).toBe(`${baseUserAgent} ci/agola-ci`);
+  });
+
+  test("CI=false is not CI", async () => {
+    expect(await whoamiUserAgent({ CI: "false" })).toBe(baseUserAgent);
+  });
+
+  test("CI=false wins over a vendor variable", async () => {
+    expect(await whoamiUserAgent({ CI: "false", AGOLA_GIT_REF: "refs/heads/main" })).toBe(baseUserAgent);
+  });
 });
 
 test.each([

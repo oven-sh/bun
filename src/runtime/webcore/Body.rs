@@ -2064,6 +2064,11 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
         let js_value =
             match webcore::form_data::FormData::to_js(global_object, blob.slice(), &encoding) {
                 Ok(v) => v,
+                Err(crate::Error::JSError) => {
+                    blob.detach();
+                    let error = global_object.take_error(jsc::JsError::Thrown);
+                    return Ok(JSPromise::rejected_promise(global_object, error).to_js());
+                }
                 Err(err) => {
                     blob.detach();
                     return Ok(global_object

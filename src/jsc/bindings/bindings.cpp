@@ -6330,8 +6330,13 @@ CPP_DECL JSC::EncodedJSValue WebCore__DOMFormData__createFromURLQuery(JSC::JSGlo
         auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
         return Bun::ERR::STRING_TOO_LONG(scope, globalObject);
     }
-    auto formData = DOMFormData::create(globalObject->scriptExecutionContext(), WTF::move(str));
-    return JSValue::encode(toJSNewlyCreated(arg0, globalObject, WTF::move(formData)));
+    auto formData = DOMFormData::create(globalObject->scriptExecutionContext(), str);
+    if (formData.hasException()) [[unlikely]] {
+        auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+        WebCore::propagateException(*globalObject, scope, formData.releaseException());
+        return {};
+    }
+    return JSValue::encode(toJSNewlyCreated(arg0, globalObject, formData.releaseReturnValue()));
 }
 
 CPP_DECL JSC::EncodedJSValue WebCore__DOMFormData__create(JSC::JSGlobalObject* arg0)

@@ -2811,6 +2811,7 @@ impl BlobExt for Blob {
         let buf = unsafe { &*buf };
         match crate::webcore::form_data::FormData::to_js(global, buf, &encoder.encoding) {
             Ok(v) => v,
+            Err(crate::Error::JSError) => global.take_error(jsc::JsError::Thrown),
             Err(err) => {
                 global.create_error_instance(format_args!("FormData encoding failed: {err}"))
             }

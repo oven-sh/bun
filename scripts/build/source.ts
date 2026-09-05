@@ -672,8 +672,10 @@ export function registerDepRules(n: Ninja, cfg: Config): void {
     depfile: "$out.d",
     deps: "gcc",
   });
+  // The GNU clang driver tokenizes @file GNU-style (backslash = escape) even
+  // on Windows, where ninja writes the object paths with backslashes.
   n.rule("host_link", {
-    command: `${q(cfg.hostCxx)} -o $out @$out.rsp $flags`,
+    command: `${q(cfg.hostCxx)}${hostWin ? " --rsp-quoting=windows" : ""} -o $out @$out.rsp $flags`,
     description: "host-link $out",
     rspfile: "$out.rsp",
     rspfile_content: "$in_newline",

@@ -16,7 +16,9 @@ import { bunEnv, bunExe, isLinux, tempDir } from "harness";
 import http from "node:http";
 import { join } from "node:path";
 
-const linuxOnly = test.skipIf(!isLinux);
+// OHOS sandbox denies reading /proc/self/net/tcp (EACCES), so the probe
+// cannot run there even though the platform reports "linux".
+const linuxOnly = test.skipIf(!isLinux || Bun.env.BUN_OHOS === "1");
 
 // Spin up a server that holds the response open, run the request via
 // `startRequest`, and return the kernel timer field for the client

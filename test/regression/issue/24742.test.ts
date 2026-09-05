@@ -7,7 +7,7 @@
 
 import { expect, test } from "bun:test";
 import { chmodSync, closeSync, cpSync, existsSync, openSync, readSync } from "fs";
-import { bunEnv, bunExe, isLinux, isMusl, tempDir } from "harness";
+import { bunEnv, bunExe, isLinux, isMusl, isOhos, tempDir } from "harness";
 import { join } from "path";
 
 const patchelf = Bun.which("patchelf");
@@ -71,7 +71,10 @@ function hostLooksNix(): boolean {
   return false;
 }
 
-test.skipIf(!isLinux || !patchelf || !existsSync(ldso) || hostLooksNix())(
+// isOhos: the bottle binary carries a codesign section, so patchelf appends the
+// relocated interp near EOF and the compile-time tail relocate drops it (see
+// OHOS_TEST_STATUS.md 2026-08-09 write-back finding); scenario is NixOS-only anyway.
+test.skipIf(!isLinux || isOhos || !patchelf || !existsSync(ldso) || hostLooksNix())(
   "bun build --compile normalizes /nix/store interpreter (#24742)",
   async () => {
     using dir = tempDir("nix-interp", {

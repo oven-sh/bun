@@ -29,7 +29,8 @@ describe("Bun.serve basic options", () => {
   });
 });
 
-describe("unix socket", () => {
+// OHOS sandbox denies unix domain sockets (EPERM on listen).
+describe.skipIf(Bun.env.BUN_OHOS === "1")("unix socket", () => {
   const permutations = [
     {
       unix: Math.random().toString(32).slice(2, 15) + ".sock",
@@ -698,7 +699,8 @@ describe("Bun.serve unix socket validation", () => {
     }
   });
 
-  test("unix socket path coercion", () => {
+  // OHOS sandbox denies unix domain sockets (EPERM on listen).
+  test.skipIf(Bun.env.BUN_OHOS === "1")("unix socket path coercion", () => {
     // Number should coerce to string
     using server = serve({
       // @ts-expect-error - Testing runtime coercion

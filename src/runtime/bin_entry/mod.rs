@@ -191,6 +191,28 @@ pub(crate) unsafe extern "C" fn main(argc: c_int, argv: *const *const c_char) ->
     #[cfg(any(target_os = "linux", target_os = "android"))]
     pregrow_fd_table();
 
+    // OHOS: /tmp is read-only. Subprocesses (node-gyp, compiler, postinstall
+    // scripts) rely on $TMPDIR for temporary files. Set it to a writable
+    // fallback if not already configured and /tmp isn't writable.
+    #[cfg(target_env = "ohos")]
+    {
+        let tmpdir_ok = unsafe { libc::access(b"/tmp\0".as_ptr() as *const libc::c_char, libc::W_OK) } == 0;
+        if !tmpdir_ok && std::env::var("TMPDIR").is_err() {
+            let fallback = if let Ok(home) = std::env::var("HOME") {
+                let p = format!("{}/tmp", home);
+                let cs = std::ffi::CString::new(p.as_str()).unwrap();
+                if unsafe { libc::access(cs.as_ptr(), libc::W_OK) } == 0 {
+                    p
+                } else {
+                    "/data/storage/el2/base/tmp".to_string()
+                }
+            } else {
+                "/data/storage/el2/base/tmp".to_string()
+            };
+            let _ = unsafe { std::env::set_var("TMPDIR", &fallback) };
+        }
+    }
+
     // 5. Per-thread stack-limit cache for the JS recursion guard.
     StackCheck::configure_thread();
     bun_io::ParentDeathWatchdog::install();

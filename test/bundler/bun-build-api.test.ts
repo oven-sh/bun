@@ -2127,7 +2127,11 @@ test.skipIf(isWindows)(
       const dir = process.argv[2];
       const fs = require("fs");
       const fifo = join(dir, "fifo");
-      require("child_process").execFileSync("mkfifo", [fifo]);
+      // mkfifo is not on the sandbox PATH on OHOS (/system/bin)
+      require("child_process").execFileSync(
+        require("fs").existsSync("/system/bin/mkfifo") ? "/system/bin/mkfifo" : "mkfifo",
+        [fifo],
+      );
       await Bun.build({ entrypoints: [join(dir, "a.ts")], outdir: join(dir, "out") });
       let readDone = false, readErr;
       // a pool thread blocks opening/reading the FIFO

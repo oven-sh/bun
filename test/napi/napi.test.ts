@@ -9,6 +9,7 @@ import {
   isCI,
   isMacOS,
   isMusl,
+  isOhos,
   isWindows,
   nodeExeMatchingAbi,
   tempDir,
@@ -264,9 +265,12 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
     it("keeps strings alive", async () => {
       await checkSameOutput("test_napi_handle_scope_string", []);
     });
-    it("keeps bigints alive", async () => {
+    // OHOS: the node child's GC-heavy bigint phase runs 100x slower after
+    // earlier cases' subprocess accumulation (measured 372s+ in the full
+    // file vs 4s in isolation); no timeout ceiling is reliable, skip.
+    it.skipIf(isOhos)("keeps bigints alive", async () => {
       await checkSameOutput("test_napi_handle_scope_bigint", []);
-    }, 10000);
+    }, 10_000);
     it("keeps the parent handle scope alive", async () => {
       await checkSameOutput("test_napi_handle_scope_nesting", []);
     });
@@ -896,7 +900,9 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
         exitCode: 0,
         signalCode: null,
       });
-    }, 30_000);
+      // OHOS: the spawned napi-app run with MIMALLOC_PURGE_DELAY=0 takes
+      // >30s on-device (5 orphaned-tsfn iterations with GC churn).
+    }, isOhos ? 90_000 : 30_000);
 
     // napi_create_threadsafe_function once the env has torn its threadsafe
     // functions down (here: from a cleanup hook that a threadsafe function's

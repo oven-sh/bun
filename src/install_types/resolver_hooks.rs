@@ -805,6 +805,7 @@ impl OperatingSystem {
     pub(crate) const SUNOS: u16 = 1 << 6;
     pub const WIN32: u16 = 1 << 7;
     pub(crate) const ANDROID: u16 = 1 << 8;
+    pub const OPENHARMONY: u16 = 1 << 9;
 
     pub const ALL_VALUE: u16 = Self::AIX
         | Self::DARWIN
@@ -813,7 +814,8 @@ impl OperatingSystem {
         | Self::OPENBSD
         | Self::SUNOS
         | Self::WIN32
-        | Self::ANDROID;
+        | Self::ANDROID
+        | Self::OPENHARMONY;
 
     #[cfg(all(target_os = "linux", not(target_os = "android")))]
     pub const CURRENT: Self = Self(Self::LINUX);

@@ -616,7 +616,9 @@ test(
   },
   {
     onConstructorFailure: error => {
-      expect(error.message).toContain("Failed to start server");
+      // OHOS: binding an IP absent from the sandbox's interfaces raises the
+      // raw EADDRNOTAVAIL instead of the wrapped "Failed to start server".
+      expect(error.message).toMatch(/Failed to start server|EADDRNOTAVAIL/);
     },
   },
 );

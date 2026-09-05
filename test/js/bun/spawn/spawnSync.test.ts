@@ -28,7 +28,8 @@ describe("spawnSync", () => {
         maxBuffer: 0,
       });
       const end = performance.now();
-      expect(end - start).toBeLessThan(1000);
+      // OHOS devices: spawning a child takes ~1.3s.
+      expect(end - start).toBeLessThan(Bun.env.BUN_OHOS === "1" ? 5000 : 1000);
       expect(!!result.exitedDueToTimeout).toBe(false);
       expect(result.exitCode).toBe(0);
     });
@@ -54,7 +55,8 @@ describe("spawnSync", () => {
     }).toEqual({ stdout: "ok", exitedDueToTimeout: false, exitCode: 0 });
   });
 
-  it.skipIf(process.platform !== "linux")("should use memfd when possible", async () => {
+  // OHOS: memfd is intentionally disabled (memfd writes not visible to fstat).
+  it.skipIf(process.platform !== "linux" || Bun.env.BUN_OHOS === "1")("should use memfd when possible", async () => {
     expect(await bunRun(join(import.meta.dir, "spawnSync-memfd-fixture.ts"))).toSpawn();
   });
 
@@ -218,7 +220,9 @@ describe("uid/gid", () => {
   it.if(isPosix && !isRoot)("throws EPERM for a uid the process cannot set", () => {
     let thrown: any;
     try {
-      Bun.spawnSync({ cmd: ["id"], uid: 0 });
+      // OHOS: $PATH lacks /bin and /system/bin, so use an absolute path.
+      const idBin = Bun.env.BUN_OHOS === "1" ? "/system/bin/id" : "id";
+      Bun.spawnSync({ cmd: [idBin], uid: 0 });
     } catch (e) {
       thrown = e;
     }

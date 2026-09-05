@@ -4,6 +4,23 @@ BUN_1.2 {
 	node_api_*;
 	node_module_register;
 
+	/* ohos-compat-shim interposers (shims/ohos_compat_shim.c, OHOS builds
+	   only — see workarounds.ts "ohos-compat-shim-embed"). Exported so
+	   dlopen'd native modules resolve them from the executable, matching
+	   LD_PRELOAD semantics. The version script's `local: *` overrides
+	   --export-dynamic-symbol/--dynamic-list in lld, so this global list
+	   is the only way to export them. On non-OHOS targets these names are
+	   undefined imports from libc and a version script has no effect on
+	   undefined symbols — this block is a no-op there. */
+	syscall;
+	close_range;
+	getcwd;
+	getpwuid_r;
+	tmpfile;
+	linkat;
+	symlinkat;
+	splice;
+
 
   uv_accept;
   uv_async_init;

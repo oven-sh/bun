@@ -444,7 +444,14 @@ mod _impl {
         // Real syscall (not the resolver's cached top_level_dir): Node's
         // process.cwd() calls uv_cwd() so a deleted cwd must surface here.
         let mut buf = PathBuffer::uninit();
-        match bun_sys::getcwd(&mut buf[..]) {
+        // OHOS: use process_cwd(), which surfaces a rmdir'd cwd as ENOENT
+        // (Node's uv_cwd() contract) instead of the ohos-compat-shim's $HOME
+        // fallback. Other platforms use the plain getcwd().
+        #[cfg(target_env = "ohos")]
+        let result = bun_sys::process_cwd(&mut buf[..]);
+        #[cfg(not(target_env = "ohos"))]
+        let result = bun_sys::getcwd(&mut buf[..]);
+        match result {
             bun_sys::Result::Ok(len) => {
                 bun_string_jsc::create_utf8_for_js(global_object, &buf[..len])
             }

@@ -6,7 +6,7 @@
 // when an http URL is needed) or tarballs built in memory.
 import { afterAll, beforeAll, expect, test } from "bun:test";
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "fs";
-import { bunEnv, bunExe, isLinux, isWindows, normalizeBunSnapshot, tempDir } from "harness";
+import { bunEnv, bunExe, isLinux, isOhos, isWindows, normalizeBunSnapshot, tempDir } from "harness";
 import { join } from "path";
 import { pathToFileURL } from "url";
 
@@ -293,6 +293,7 @@ function expectedGitPackages(
 // appear both directly and transitively (same repo URL + committish) raced
 // against the shared clone/checkout tasks and failed with "failed to resolve".
 test.concurrent(
+  // OHOS: 26 local git clones over http take >30s on-device
   "installs every git dependency when many branches of one repo appear directly and transitively",
   async () => {
     using dir = tempDir("git-dep-dup", {});
@@ -319,7 +320,7 @@ test.concurrent(
       expect(exitCode).toBe(0);
     }
   },
-  30_000,
+  isOhos ? 120_000 : 30_000,
 );
 
 // same mechanism as above but for tarball-URL dependencies (issues #10915,
@@ -381,7 +382,7 @@ test.concurrent(
       expect(exitCode).toBe(0);
     }
   },
-  30_000,
+  isOhos ? 120_000 : 30_000,
 );
 
 // issue #11348: same mechanism for `github:` dependencies. The root and a
@@ -450,7 +451,7 @@ test.concurrent(
       expect(exitCode).toBe(0);
     }
   },
-  30_000,
+  isOhos ? 120_000 : 30_000,
 );
 
 // issue #35420 bug 2: installing from a complete lockfile with a cold cache
@@ -490,7 +491,7 @@ test.concurrent(
     expect(await lockedPackages(project)).toEqual(locked);
     expect(exitCode).toBe(0);
   },
-  30_000,
+  isOhos ? 120_000 : 30_000,
 );
 
 // With the isolated linker, a cold-cache frozen install re-enqueues each

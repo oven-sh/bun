@@ -18,6 +18,14 @@ describe.if(isPosix)("garbage env", () => {
       expect(exitCode).toBe(0);
     }
 
+    if (process.platform === "openharmony") {
+      // Freshly compiled here via a raw `cc` invocation, so it never goes
+      // through bun's own install/build signing pipeline — exec then fails
+      // with EACCES/Permission denied.
+      const bin = exe;
+      await Bun.$`binary-sign-tool sign -selfSign 1 -inFile ${bin} -outFile ${bin}.signed && cp ${bin}.signed ${bin} && chmod +x ${bin}`;
+    }
+
     const { exitCode, stderr } = await Bun.$`${exe}`.env({ BUN_PATH: bunExe() });
     const stderrText = stderr.toString();
     if (stderrText.length > 0) {

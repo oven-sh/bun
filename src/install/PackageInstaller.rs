@@ -1913,6 +1913,14 @@ impl<'a> PackageInstaller<'a> {
                 }
             };
 
+            #[cfg(target_env = "ohos")]
+            if let package_install::InstallResult::Success = &install_result {
+                let mut fd_path_buf = PathBuffer::uninit();
+                if let Ok(pkg_path) = Syscall::get_fd_path(destination_dir.fd(), &mut fd_path_buf) {
+                    ohos_sign_native_binaries(pkg_path);
+                }
+            }
+
             match install_result {
                 package_install::InstallResult::Success => {
                     let is_duplicate = self.successfully_installed.is_set(package_id as usize);
@@ -2487,5 +2495,60 @@ impl<'a> PackageInstaller<'a> {
             needs_verify,
             is_pending_package_install,
         );
+    }
+}
+
+// ───────────────────────────── OHOS install-time signing ─────────────────────────────
+
+/// On OHOS, scan a package directory for native binaries (.so, .node) and
+/// sign any that are not already signed. Called after a package is installed
+/// into node_modules, before lifecycle scripts run.
+#[cfg(target_env = "ohos")]
+pub(crate) fn ohos_sign_native_binaries(pkg_dir: &[u8]) {
+    let dir = match Dir::open(pkg_dir) {
+        Ok(d) => d,
+        Err(_) => return,
+    };
+    let w = match Syscall::walker_skippable::walk(dir.fd(), &[], &[]) {
+        Ok(w) => w,
+        Err(_) => return,
+    };
+    let mut w = w;
+    while let Ok(Some(entry)) = w.next() {
+        if entry.kind != Syscall::EntryKind::File {
+            continue;
+        }
+        let name = entry.basename.as_bytes();
+        // Sign any ELF file — not just .so/.node. Postinstall scripts
+        // download/compile executables (esbuild, node-gyp output, .bin links)
+        // that also need signing. Check the ELF magic bytes.
+        let is_elf = {
+            let mut full = Vec::with_capacity(pkg_dir.len() + 1 + name.len());
+            full.extend_from_slice(pkg_dir);
+            full.push(b'/');
+            full.extend_from_slice(name);
+            let full_str = unsafe { core::str::from_utf8_unchecked(&full) };
+            let p = std::path::Path::new(full_str);
+            if let Ok(bytes) = std::fs::read(p) {
+                bytes.len() > 4 && bytes[..4] == [0x7f, 0x45, 0x4c, 0x46]
+            } else {
+                false
+            }
+        };
+        if !is_elf {
+            continue;
+        }
+        let mut full = Vec::with_capacity(pkg_dir.len() + 1 + name.len());
+        full.extend_from_slice(pkg_dir);
+        full.push(b'/');
+        full.extend_from_slice(name);
+        let full_str = unsafe { core::str::from_utf8_unchecked(&full) };
+        let p = std::path::Path::new(full_str);
+        // Re-sign unconditionally: a stale .codesign section defeats
+        // has_codesign() while the signature no longer covers the file, and
+        // exec then fails with EACCES. Strip any old section and re-sign
+        // (no-op strip when none present). Failures are silent — the
+        // postinstall/exec reports the real error.
+        let _ = ohos_sign::sign_selfsign_inplace_with_strip(p);
     }
 }

@@ -1,6 +1,6 @@
 import { $ as Shell, fileURLToPath } from "bun";
 import { afterAll, beforeAll, describe, expect, setDefaultTimeout, test } from "bun:test";
-import { bunEnv, bunExe, isDebug, makeTree } from "harness";
+import { bunEnv, bunExe, isDebug, isOhos, makeTree } from "harness";
 import { existsSync, readFileSync } from "node:fs";
 import { cp, mkdir, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -397,7 +397,9 @@ describe("@types/bun integration test", () => {
   // Runs on debug builds too: spawning tsc over a single file is cheap,
   // unlike the in-process LanguageService runs above.
   describe("Bun.mmap", () => {
-    test("MMapOptions accepts offset and size", async () => {
+    // OHOS: typescript@latest is the native (Go) tsc, which cannot execute
+    // on the musl sandbox (EACCES), so the CLI spawn always fails.
+    test.skipIf(Bun.env.BUN_OHOS === "1")("MMapOptions accepts offset and size", async () => {
       const checkDir = join(TEMP_DIR, "mmap-options-check");
       const tsconfig = structuredClone(sourceTsconfig);
       tsconfig.include = ["mmap-options.ts"];
@@ -429,7 +431,12 @@ describe("@types/bun integration test", () => {
 
   // Runs on debug builds too, same as the Bun.mmap block above.
   describe("TextDecoder", () => {
-    test("accepts the encoding labels the runtime supports", async () => {
+    // OHOS: the fixture's typescript is the native preview (@typescript/
+    // typescript-linux-arm64) whose ELF launcher has no OHOS codesign
+    // section, so exec fails EACCES and the launcher's error leaks to
+    // stderr. The encoding labels are still exercised by
+    // "the fixture label table matches the runtime".
+    test.skipIf(isOhos)("accepts the encoding labels the runtime supports", async () => {
       const checkDir = join(TEMP_DIR, "text-decoder-encoding-check");
       const tsconfig = structuredClone(sourceTsconfig);
       tsconfig.include = ["text-decoder-encodings.ts"];

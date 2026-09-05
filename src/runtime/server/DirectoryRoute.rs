@@ -302,8 +302,65 @@ impl DirectoryRoute {
         let flags = bun_sys::O::RDONLY | bun_sys::O::CLOEXEC | bun_sys::O::NONBLOCK;
         #[cfg(windows)]
         let flags = bun_sys::O::RDONLY | bun_sys::O::CLOEXEC;
-        #[cfg(any(target_os = "linux", target_os = "android"))]
+        #[cfg(all(
+            any(target_os = "linux", target_os = "android"),
+            not(target_env = "ohos")
+        ))]
         let fd = bun_sys::openat2_in_root(self.root_fd.get(), zrel, flags, 0).ok()?;
+        // OHOS: the sandbox's openat2 accepts RESOLVE_IN_ROOT paths that
+        // traverse a symlink out of the tree (returns Ok where a real kernel
+        // would EXDEV), so a directory route would serve files outside its
+        // root. Resolve the target's real path via /proc/self/fd (the root
+        // was opened O_DIRECTORY in create) and require it to stay inside
+        // the root's own real path before opening.
+        #[cfg(all(
+            any(target_os = "linux", target_os = "android"),
+            target_env = "ohos"
+        ))]
+        let fd = {
+            // /proc/self/fd/<root_fd> resolves (server-side, d_path) to the
+            // root directory's real path even when it is reachable via
+            // symlinks or bind mounts.
+            let mut proc_link = [0u8; 64];
+            let fd_num = self.root_fd.get().native();
+            let digits = fd_num.to_string();
+            let base = b"/proc/self/fd/";
+            let total = base.len() + digits.len();
+            if total >= proc_link.len() {
+                return None;
+            }
+            proc_link[..base.len()].copy_from_slice(base);
+            proc_link[base.len()..total].copy_from_slice(digits.as_bytes());
+            let mut link_buf = [0u8; 4096];
+            let n = unsafe {
+                libc::readlink(
+                    proc_link.as_ptr().cast(),
+                    link_buf.as_mut_ptr().cast(),
+                    link_buf.len() - 1,
+                )
+            };
+            if n <= 0 {
+                return None;
+            }
+            let root_real = &link_buf[..n as usize];
+
+            let mut joined_buf = bun_paths::path_buffer_pool::get();
+            let joined = resolve_path::join_string_buf::<resolve_path::platform::Posix>(
+                &mut joined_buf.0[..],
+                &[root_real, rel],
+            );
+            let mut real_buf = bun_paths::path_buffer_pool::get();
+            let joined_z = resolve_path::z(joined, &mut *real_buf);
+            let mut real_target_buf = bun_paths::path_buffer_pool::get();
+            let real_target = bun_sys::realpath(joined_z, &mut *real_target_buf).ok()?;
+            if !matches!(
+                resolve_path::is_parent_or_equal(root_real, real_target),
+                resolve_path::ParentEqual::Parent | resolve_path::ParentEqual::Equal
+            ) {
+                return None;
+            }
+            bun_sys::openat(self.root_fd.get(), zrel, flags, 0).ok()?
+        };
         #[cfg(not(any(target_os = "linux", target_os = "android")))]
         let fd = bun_sys::openat(self.root_fd.get(), zrel, flags, 0).ok()?;
         // Windows `openat` returns a HANDLE; `FileResponseStream` needs a

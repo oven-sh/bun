@@ -1,0 +1,38 @@
+--- a/lib/dictBuilder/cover.c	2026-05-08 19:22:53.704000000 +0800
++++ b/lib/dictBuilder/cover.c	2026-05-08 19:22:53.732000000 +0800
+@@ -29,6 +29,35 @@
+ #endif
+ #endif
+ 
++/* OHOS musl lacks qsort_r entirely -- implement via selection sort with
++ * dynamically sized swap buffer (avoids stack overflow for large elements). */
++#if defined(__OHOS__)
++#include <stdlib.h>
++#include <string.h>
++typedef int (*_zstd_qsort_r_cmp)(const void *, const void *, void *);
++static void _zstd_qsort_r_impl(void *base, size_t nmemb, size_t size,
++                                _zstd_qsort_r_cmp compar, void *arg) {
++    char *b = (char *)base;
++    char *tmp;
++    size_t i, j;
++    if (nmemb < 2 || size == 0) return;
++    tmp = (char *)malloc(size);
++    if (!tmp) return;
++    for (i = 0; i < nmemb; i++) {
++        for (j = i + 1; j < nmemb; j++) {
++            if (compar(b + j * size, b + i * size, arg) < 0) {
++                memcpy(tmp, b + i * size, size);
++                memcpy(b + i * size, b + j * size, size);
++                memcpy(b + j * size, tmp, size);
++            }
++        }
++    }
++    free(tmp);
++}
++#define qsort_r(base, nmemb, size, compar, arg) _zstd_qsort_r_impl(base, nmemb, size, compar, arg)
++#endif
++
++
+ #include <stdio.h>  /* fprintf */
+ #include <stdlib.h> /* malloc, free, qsort_r */
+ 

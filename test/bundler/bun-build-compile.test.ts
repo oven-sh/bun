@@ -1,5 +1,19 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isArm64, isDebug, isLinux, isMacOS, isMusl, isPosix, isWindows, tempDir } from "harness";
+import {
+  bunEnv,
+  bunExe,
+  isArm64,
+  isDebug,
+  isLinux,
+  isMacOS,
+  isMusl,
+  isOhos,
+  isOHOS,
+  isPosix,
+  isWindows,
+  nodeExe,
+  tempDir,
+} from "harness";
 import { chmodSync, closeSync, cpSync, existsSync, openSync, readdirSync, readSync } from "node:fs";
 import { join } from "path";
 
@@ -963,6 +977,51 @@ describe("compiled binary in a deleted cwd", () => {
 //
 // Debug builds lower the limit through BUN_DEBUG_TEST_STANDALONE_GRAPH_MAX_BYTES
 // so the test does not need a 4 GiB input. The message still names the real limit.
+const ohosNode = isOHOS ? nodeExe() : null;
+describe.skipIf(!isOHOS || !ohosNode)("HarmonyOS: compiled binary's spawned node child", () => {
+  test("gets a working os.userInfo() with a clean env, simulating a fresh device", async () => {
+    using dir = tempDir("build-compile-ohos-node-userinfo", {
+      "app.js": `
+        const nodePath = process.argv[2];
+        const proc = Bun.spawnSync([
+          nodePath,
+          "-e",
+          "try{console.log(JSON.stringify(require('os').userInfo()))}catch(e){console.log('THROW:'+e.code)}",
+        ]);
+        console.log(proc.stdout.toString().trim());
+      `,
+    });
+
+    const outfile = join(dir + "", "app-ohos-userinfo");
+    const result = await Bun.build({
+      entrypoints: [join(dir + "", "app.js")],
+      compile: { outfile },
+    });
+    expect(result.success).toBe(true);
+
+    // No $USER/$LOGNAME/$NODE_OPTIONS: this dev machine's .zshrc exports
+    // $USER via ohos-whoami, which would otherwise mask the exact failure
+    // this feature exists to fix -- a compiled binary shipped to a device
+    // with no shell profile at all.
+    const cleanEnv = { ...bunEnv, USER: undefined, LOGNAME: undefined, NODE_OPTIONS: undefined };
+
+    await using proc = Bun.spawn({
+      cmd: [result.outputs[0].path, ohosNode!],
+      env: cleanEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stdout.trim().startsWith("THROW:"), stderr).toBe(false);
+    const info = JSON.parse(stdout.trim());
+    expect(typeof info.username).toBe("string");
+    expect(info.username.length).toBeGreaterThan(0);
+    expect(info.username).not.toBe("unknown");
+    expect(exitCode).toBe(0);
+  });
+});
+
 describe.concurrent("embedded module graph size limit", () => {
   const asset = Buffer.alloc(8 * 1024 * 1024, "x");
   const files = {

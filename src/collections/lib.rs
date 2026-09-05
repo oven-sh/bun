@@ -4,10 +4,9 @@
     type_info,
     adt_const_params,
     unsized_const_params,
-    const_cmp,
     const_trait_impl,
-    core_intrinsics,
-    allocator_api
+    allocator_api,
+    core_intrinsics
 )]
 #![allow(incomplete_features, internal_features)]
 #![warn(unused_must_use)]

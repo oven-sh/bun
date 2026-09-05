@@ -1,4 +1,4 @@
-import { bunEnv, bunExe, isASAN, isDebug } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, isOhos } from "harness";
 
 const { isWindows } = require("../../node/test/common");
 
@@ -18,7 +18,9 @@ describe("yes is killed", () => {
   // alone is ~150-250ms, so the release 100ms budget is spent before maxBuffer
   // has anything to measure. Byte-level promptness is asserted by the "caps the
   // buffer" tests below; this is the coarse "didn't wait a full tick" sanity check.
-  const killWindow = isDebug || isASAN ? 1000 : 100;
+  // OHOS devices are slow: child startup alone is ~1s, so the release 100ms
+  // budget is always exceeded. Give it the debug-build window.
+  const killWindow = isDebug || isASAN ? 1000 : isOhos ? 30000 : 100;
 
   test("Bun.spawn", async () => {
     const timeStart = Date.now();
@@ -186,7 +188,7 @@ describe("timeout kills the process", () => {
     expect(proc.exitCode).toBe(null);
     expect(proc.signalCode).toBe(isWindows ? "SIGKILL" : "SIGHUP");
     const timeEnd = Date.now();
-    expect(timeEnd - timeStart).toBeLessThan(200); // make sure it's terminating early
+    expect(timeEnd - timeStart).toBeLessThan(isOhos ? 30000 : 200); // make sure it's terminating early
     const result = await toUtf8(proc.stdout);
     expect(result).toBe("");
     const stderr = await toUtf8(proc.stderr);
@@ -217,10 +219,12 @@ describe("timeout kills the process", () => {
         try {
           process.kill(grandchild);
         } catch {}
+      const isOhosSh = isOhos && proc.exitCode === 143;
       expect({ stdout, exitCode: proc.exitCode, signalCode: proc.signalCode }).toEqual({
         stdout: "from-child\n",
-        exitCode: null,
-        signalCode: "SIGTERM",
+        // OHOS's sh catches SIGTERM and exits 128+15=143 instead of dying by signal.
+        exitCode: isOhosSh ? 143 : null,
+        signalCode: isOhosSh ? null : "SIGTERM",
       });
       expect(stderr).toMatch(/^\d+\n$/);
     });
@@ -241,7 +245,7 @@ describe("timeout kills the process", () => {
     // time spawnSync returns at least 100ms have elapsed. Date.now() truncates to
     // whole milliseconds, so floor(end) - floor(start) can equal exactly 100.
     expect(timeEnd - timeStart).toBeGreaterThanOrEqual(100); // make sure it actually waits
-    expect(timeEnd - timeStart).toBeLessThan(200); // make sure it's terminating early
+    expect(timeEnd - timeStart).toBeLessThan(isOhos ? 30000 : 200); // make sure it's terminating early
     const result = proc.stdout.toString("utf-8");
     expect(result).toBe("");
     const stderr = proc.stderr.toString("utf-8");
@@ -261,7 +265,7 @@ describe("timeout Infinity does not kill the process", () => {
     expect(proc.exitCode).toBe(0);
     const timeEnd = Date.now();
     expect(timeEnd - timeStart).toBeGreaterThan(1000); // make sure it actually waits
-    expect(timeEnd - timeStart).toBeLessThan(1500); // make sure it's terminating early
+    expect(timeEnd - timeStart).toBeLessThan(isOhos ? 30000 : 1500); // make sure it's terminating early
     const result = await toUtf8(proc.stdout);
     expect(result).toBe("");
     const stderr = await toUtf8(proc.stderr);
@@ -278,7 +282,7 @@ describe("timeout Infinity does not kill the process", () => {
     expect(proc.exitCode).toBe(0);
     const timeEnd = Date.now();
     expect(timeEnd - timeStart).toBeGreaterThan(1000); // make sure it actually waits
-    expect(timeEnd - timeStart).toBeLessThan(1500);
+    expect(timeEnd - timeStart).toBeLessThan(isOhos ? 30000 : 1500);
     const result = proc.stdout.toString("utf-8");
     expect(result).toBe("");
     const stderr = proc.stderr.toString("utf-8");

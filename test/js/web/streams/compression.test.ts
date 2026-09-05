@@ -674,6 +674,14 @@ describe("CompressionStream chunk handling (Node v26 semantics)", () => {
   test("CompressionStream -> native HTTP sink applies backpressure to a stalled client", async () => {
     // Incompressible data so the gzipped output is ~as large as the input.
     const chunk = crypto.getRandomValues(new Uint8Array(64 * 1024));
+    // Backpressure parks after ~tens of pulls (a few MB of socket+sink buffer /
+    // 64KB); 200 is enough headroom to distinguish "parked" from "ran away"
+    // without pushing ~32MB through gzip+HTTP under debug+ASAN.
+    // OHOS network buffers are larger than Linux's, so the sink parks later
+    // (200 x 64KB stalls never parked there); 4096 keeps the test meaningful
+    // (~256MB through gzip under debug) while still bounding a runaway pull
+    // loop.
+    const TOTAL = 4096;
     let source!: ReturnType<typeof countingSource>;
     const { promise: requested, resolve: onRequest } = Promise.withResolvers<void>();
     await using server = Bun.serve({

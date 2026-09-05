@@ -73,7 +73,9 @@ describe("mv", async () => {
   describe("cross-device (EXDEV)", () => {
     const tmp = tmpdir();
     function findCrossDeviceDir(): string | undefined {
-      if (!isPosix) return undefined;
+      // OHOS sandbox: access() passes for /dev/shm but actual writes get
+      // EACCES, so no second writable mount exists there.
+      if (!isPosix || Bun.env.BUN_OHOS === "1") return undefined;
       const refDev = statSync(tmp).dev;
       for (const candidate of ["/dev/shm", "/tmp"]) {
         try {

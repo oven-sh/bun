@@ -68,9 +68,19 @@ export const cpuTargetFlags: Flag[] = [
     desc: "ARM64 Windows: clang-cl prefix required (/clang: passes to clang)",
   },
   {
+    flag: ["-march=armv8-a", "-mtune=cortex-a53"],
+    when: c => c.ohos && c.arm64,
+    desc: "OHOS aarch64: ARMv8.0 baseline (no crypto, no SVE, no dotprod, no LSE)",
+  },
+  {
     flag: "-march=nehalem",
-    when: c => c.x64,
-    desc: "x64: Nehalem (2008) — no AVX, broadest compatibility",
+    when: c => c.x64 && c.baseline,
+    desc: "x64 baseline: Nehalem (2008) — no AVX, broadest compatibility",
+  },
+  {
+    flag: "-march=haswell",
+    when: c => c.x64 && !c.baseline,
+    desc: "x64 default: Haswell (2013) — AVX2, BMI2 available",
   },
 ];
 
@@ -203,6 +213,56 @@ export const globalFlags: Flag[] = [
     desc: "macOS cross: address-significance table for the linker's safe ICF",
   },
 
+  // ─── OHOS cross-compilation ───
+  {
+    flag: c => [
+      `--target=aarch64-linux-ohos`,
+      `--sysroot=${c.ohosSysroot!}`,
+      `-D__MUSL__`,
+      `-D__OHOS__`,
+      `-mbranch-protection=none`,
+      `-mno-outline-atomics`,
+    ],
+    when: c => c.ohos && c.arm64,
+    desc: "OHOS target triple + sysroot + musl libc (no PAC/BTI/outline-atomics for OHOS device compat)",
+  },
+  {
+    flag: "-Wno-macro-redefined",
+    when: c => c.ohos,
+    desc: "OHOS: suppress WebKit cmakeconfig vs PlatformHave.h HAVE_INT128_T conflict",
+  },
+  {
+    flag: c => [`-nostdinc++`, `-I${c.ohosCrossLibs}/libcxx/include/v1`, `-I${c.ohosCrossLibs}/libcxxabi/include`],
+    when: c => c.ohos && !!c.ohosCrossLibs,
+    lang: "cxx",
+    desc: "OHOS: use musl-compatible libc++ headers from the cross-compiled libc++",
+  },
+  {
+    flag: c => [`-I${c.ohosIcuDir!}/include`],
+    when: c => c.ohos && !!c.ohosIcuDir,
+    desc: "OHOS: use cross-compiled ICU headers (sysroot ICU is incomplete); no U_DISABLE_RENAMING to match ICU lib symbol versions",
+  },
+  // OHOS musl math.h does not define the FP_* classification macros
+  // (FP_NAN, FP_INFINITE, FP_NORMAL, FP_SUBNORMAL, FP_ZERO) that LLVM's
+  // libc++ <math.h> expects. Define them explicitly.
+  {
+    flag: "-DFP_NAN=FP_NAN -DFP_INFINITE=FP_INFINITE -DFP_NORMAL=FP_NORMAL -DFP_SUBNORMAL=FP_SUBNORMAL -DFP_ZERO=FP_ZERO",
+    when: c => c.ohos,
+    desc: "OHOS: define FP_* classification macros missing from musl math.h",
+  },
+  {
+    flag: "-fno-c++-static-destructors",
+    when: c => c.ohos,
+    lang: "cxx",
+    desc: "OHOS: match libc++ build config",
+  },
+  // OHOS PIE (compile-time) — must be in globalFlags so compiler sees it; -pie stays in linkerFlags
+  {
+    flag: "-fPIE",
+    when: c => c.ohos,
+    desc: "OHOS PIE: position-independent executable (applied to C and C++ since OHOS requires PIE for all code)",
+  },
+
   // ─── CPU target ───
   ...cpuTargetFlags,
   {
@@ -301,13 +361,21 @@ export const globalFlags: Flag[] = [
     // Nix LLVM doesn't support zstd — but we target standard distros.
     // Nix users can override via profile if needed.
     flag: ["-g3", "-gz=zstd"],
-    when: c => c.unix && c.debug,
+    when: c => c.unix && !c.ohos && c.debug,
     desc: "Full debug info, zstd-compressed",
   },
   {
     flag: ["-g", "-gz=zstd"],
-    when: c => c.unix && c.release && !c.lto,
+    when: c => c.unix && !c.ohos && c.release && !c.lto,
     desc: "Full debug info (types and variables) where no LTO link has to carry it: local release, asan, the non-LTO CI lanes",
+  },
+  {
+    // OHOS release: -gz=zstd unsupported (host LLVM lacks zstd debug
+    // section compression); use -g1 line tables like the pre-upstream
+    // release lane did.
+    flag: "-g1",
+    when: c => c.ohos && c.release && !c.lto,
+    desc: "OHOS release: line tables only (no zstd support in host LLVM)",
   },
   {
     // -glldb implies -fstandalone-debug: every TU emits the definition of
@@ -495,11 +563,30 @@ export const globalFlags: Flag[] = [
     // WebKit macos -lto prebuilts and rustc's -Clinker-plugin-lto bitcode are
     // both ThinLTO-summaried, so this makes the whole link one uniform
     // ThinLTO graph with cross-module importing across C++/Rust/JSC
-    // boundaries. All platforms now use ThinLTO (the linux JSC ThinLTO
-    // miscompile was fixed in the WebKit prebuilt).
+    // boundaries. Darwin only for now — see the -flto=full entry below.
     flag: "-flto=thin",
-    when: c => c.unix && c.lto,
+    when: c => c.darwin && c.lto,
     desc: "Thin link-time optimization",
+  },
+  {
+    // Linux stays on full LTO: the LLVM 22 ThinLTO backend pipeline
+    // (rust-lld) miscompiles JavaScriptCore on linux at every opt level
+    // above --lto-O0 — a JIT-tier correctness bug plus several bundler hangs
+    // in the test suite, on both x64 and aarch64, with cross-module
+    // importing disabled, ICF ruled out, and WPD ruled out. The same
+    // bitcode through ld64.lld on darwin is fine. Full LTO uses a different
+    // (regular-LTO) pass pipeline over one merged module and has shipped
+    // green for months. Cost: the link is serial (~14 min vs ~1.5 min).
+    // Rust<->C++ cross-language inlining still happens: the Rust side emits
+    // one fat, summary-less bitcode module (CARGO_PROFILE_RELEASE_LTO=fat
+    // under -Clinker-plugin-lto — see rust.ts) that joins the same
+    // regular-LTO partition as the C++, so nothing goes through the
+    // miscompiling ThinLTO backends. Revisit ThinLTO once the bad pass is
+    // isolated — the repro is `bun -e 'require("axobject-query")'` failing
+    // in the DFG tier.
+    flag: "-flto=full",
+    when: c => c.unix && !c.darwin && c.lto,
+    desc: "Full link-time optimization (linux: ThinLTO miscompiles JSC, see comment)",
   },
   {
     // Windows (cross) uses ThinLTO like darwin: clang-cl accepts -flto=thin
@@ -536,9 +623,13 @@ export const globalFlags: Flag[] = [
     // (typeidCompatibleVTable entries) and whole-program devirtualization
     // runs in index-based mode via --lto-whole-program-visibility at link
     // time. 0 is also the default for rustc, for Apple targets, and for the
-    // WebKit -lto prebuilts, so this is the configuration that can't drift.
+    // WebKit macos/windows -lto prebuilts, so this is the configuration that
+    // can't drift. Windows: -fwhole-program-vtables is never passed there
+    // (see above) so 0 is already the default — kept explicit so the
+    // ThinLTO graph can't drift if that ever changes. Not linux: full LTO
+    // (no per-module summaries, so the flag is meaningless there).
     flag: "-fno-split-lto-unit",
-    when: c => c.lto,
+    when: c => (c.darwin || c.windows) && c.lto,
     desc: "Index-based WPD: keep type metadata in the ThinLTO summaries, no regular-LTO half",
   },
 
@@ -595,6 +686,12 @@ export const bunOnlyFlags: Flag[] = [
     when: c => c.linux || c.freebsd,
     lang: "cxx",
     desc: "C++23 with GNU extensions (required to match WebKit's ABI on Linux/FreeBSD)",
+  },
+  {
+    flag: "-std=gnu++23",
+    when: c => c.ohos,
+    lang: "cxx",
+    desc: "C++23 with GNU extensions (match new WebKit prebuilt ABI for OHOS compat)",
   },
   {
     flag: "-std=c++23",
@@ -665,7 +762,7 @@ export const bunOnlyFlags: Flag[] = [
   },
   {
     flag: ["-fno-pic", "-fno-pie"],
-    when: c => c.unix && c.abi !== "android",
+    when: c => c.unix && c.abi !== "android" && !c.ohos,
     desc: "No position-independent code (we're a final executable)",
   },
   {
@@ -864,24 +961,21 @@ export const linkerFlags: Flag[] = [
     // only fires for classes explicitly annotated [[clang::lto_visibility]],
     // i.e. never. A static executable that only dlopens C-ABI addons (NAPI)
     // satisfies the whole-program assumption. ld64.lld has no named option
-    // for this; -mllvm reaches the underlying cl::opt directly.
+    // for this; -mllvm reaches the underlying cl::opt directly. Darwin only:
+    // linux is on full LTO where this was never enabled.
     flag: ["-Wl,-mllvm,-whole-program-visibility"],
     when: c => c.darwin && c.lto,
     desc: "Enable index-based whole-program devirtualization at link time",
   },
   {
-    // ELF spelling of the entry above. The WebKit -lto prebuilts carry the
-    // !type/!vcall_visibility metadata (built with -fwhole-program-vtables),
-    // so this upgrades JSC/WTF's exported classes to hidden LTO visibility
-    // and lets WPD fire on them, not just on our -fvisibility=hidden classes.
-    flag: ["-Wl,--lto-whole-program-visibility"],
-    when: c => c.unix && !c.darwin && c.lto,
-    desc: "Enable index-based whole-program devirtualization at link time (lld ELF)",
+    flag: ["-flto=thin", "-fwhole-program-vtables", "-fforce-emit-vtables"],
+    when: c => c.darwin && c.lto,
+    desc: "LTO at link time (matches compile-side -flto=thin)",
   },
   {
-    flag: ["-flto=thin", "-fwhole-program-vtables", "-fforce-emit-vtables"],
-    when: c => c.unix && c.lto,
-    desc: "LTO at link time (matches compile-side -flto=thin)",
+    flag: ["-flto=full", "-fwhole-program-vtables", "-fforce-emit-vtables"],
+    when: c => c.unix && !c.darwin && c.lto,
+    desc: "LTO at link time (matches compile-side -flto=full)",
   },
   {
     // Without -O at link time, clang's driver defaults LTO codegen to -O2.
@@ -1163,17 +1257,82 @@ export const linkerFlags: Flag[] = [
     desc: "Sort startup-hot functions to the front of __text (cuts resident binary pages)",
   },
 
-  // ─── Linux ───
+  // ─── OHOS ───
   {
-    flag: c => [`--target=${c.crossTarget!}`, `--sysroot=${c.sysroot!}`],
-    when: c => c.linux && c.abi !== "android" && c.crossTarget !== undefined && c.sysroot !== undefined,
-    desc: "linux sysroot link (gnu: ubuntu:20.04+gcc-13; musl: alpine)",
+    flag: c => [`--target=aarch64-linux-ohos`, `--sysroot=${c.ohosSysroot!}`],
+    when: c => c.ohos,
+    desc: "OHOS target triple + sysroot at link time",
   },
   {
-    // Wrap glibc symbols whose default version on the sysroot's glibc (2.31)
-    // is > 2.17. Each __wrap_X in workaround-missing-symbols.cpp pins to the
+    flag: "-Wl,--allow-multiple-definition",
+    when: c => c.ohos,
+    desc: "OHOS: allow iostream stub duplicate; mimalloc override disabled",
+  },
+  {
+    flag: c =>
+      [
+        `-L${c.ohosCrossLibs!}/libcxx/lib`,
+        `-L${c.ohosCrossLibs!}/libcxxabi/lib`,
+        `-L${c.ohosCrossLibs!}/libunwind/lib`,
+        c.ohosIcuDir ? `-L${c.ohosIcuDir}/lib` : "",
+        "-lc++",
+        "-lc++abi",
+        "-lunwind",
+        // OHOS: brew ICU (icu4c@78) is built against libc++'s `__n1` ABI
+        // namespace, which the static libc++_static.a (llvm@21, `__h`) does
+        // not provide. Resolve ICU's `__n1` undefined references from the
+        // SDK's libc++_shared.so at link time; the runtime loads it via
+        // DT_NEEDED alongside bun's statically-linked `__h` libc++ (the two
+        // namespaces are disjoint, so they coexist).
+        ...(c.ohosIcuDir && c.ohosSdkRoot
+          ? [join(c.ohosSdkRoot!, "native/llvm/lib/aarch64-linux-ohos/libc++_shared.so")]
+          : []),
+        "-lc",
+      ].filter(f => f !== ""),
+    when: c => c.ohos,
+    desc: "OHOS: link the cross-compiled libc++ + libc++abi + libunwind + dynamic libc",
+  },
+  {
+    flag: [
+      "-Wl,--as-needed",
+      "-Wl,-z,stack-size=8192000",
+      "-Wl,-z,lazy",
+      "-Wl,-z,norelro",
+      "-Wl,-O2",
+      "-Wl,--sort-section=name",
+      "-Wl,--hash-style=both",
+      "-Wl,--build-id=sha1",
+    ],
+    when: c => c.ohos,
+    desc: "OHOS linker tuning: 8MB stack (debug compression skipped — host LLVM lacks zlib)",
+  },
+  {
+    flag: ["-pie", "-Wl,-dynamic-linker=/system/lib/ld-musl-aarch64.so.1"],
+    when: c => c.ohos,
+    desc: "OHOS PIE: dynamic linking (allows fork/clone through seccomp)",
+  },
+  {
+    flag: "-Wl,--noinhibit-exec",
+    when: c => c.ohos,
+    desc: "OHOS: LLD alignment warnings → ignore (SCTLR_EL1.A is 0 on aarch64)",
+  },
+  {
+    flag: c => [
+      "-Wl,-Bsymbolic-functions",
+      "-rdynamic",
+      `-Wl,--dynamic-list=${c.cwd}/src/symbols.dyn`,
+      `-Wl,--version-script=${c.cwd}/src/linker.lds`,
+    ],
+    when: c => c.ohos,
+    desc: "OHOS: dynamic symbol list + version script (mirror linux block; exposes napi_/node_api_ for .node dlopen)",
+  },
+
+  // ─── Linux ───
+  {
+    // Wrap glibc symbols whose default version on a modern build host is
+    // > 2.17. Each __wrap_X in workaround-missing-symbols.cpp pins to the
     // 2.2.5/2.17 compat version (or a raw syscall) so the binary's verneed
-    // never exceeds the floor.
+    // never exceeds the floor regardless of the host's glibc.
     flag: [
       "exp",
       "exp2",
@@ -1235,7 +1394,7 @@ export const linkerFlags: Flag[] = [
     // for clone(CLONE_FS) during that window (the --watch reload). Behavioral,
     // not a version pin, so it applies to every Linux libc.
     flag: ["-Wl,--wrap=execve", "-Wl,--wrap=pthread_create"],
-    when: c => c.linux,
+    when: c => c.linux || c.ohos,
     desc: "Retry pthread_create EAGAIN caused by an in-flight execve",
   },
   {
@@ -1285,7 +1444,7 @@ export const linkerFlags: Flag[] = [
   },
   {
     flag: ["-fno-pic", "-Wl,-no-pie"],
-    when: c => c.linux && c.abi !== "android",
+    when: c => c.linux && c.abi !== "android" && !c.ohos,
     desc: "No PIE (we don't need ASLR; simpler codegen)",
   },
   {
@@ -1434,13 +1593,13 @@ export const linkerFlags: Flag[] = [
     //   LLVM_ENABLE_ZLIB or did not find zlib at build time`.
     // We only fall onto rust-lld for cross-language LTO when rustc's LLVM is
     // newer than the system clang/lld (see config.ts `cfg.ld` selection); in
-    // that case the link-time flag is dropped and llvm-objcopy compresses
-    // post-link instead (shims.ts elfDebugCompressPostlinkCommand) — an
-    // uncompressed bun-profile is ~2x larger and every `--compile` test
-    // copies it, so leaving it uncompressed times CI out.
+    // that case, drop the flag rather than fail the link. Larger debug
+    // sections in `bun-profile` is a build-size cost, not a correctness one —
+    // and only on agents where the LLVM versions diverge. The system lld path
+    // (linux/freebsd llvm-* packages) keeps compressing.
     flag: "-Wl,--compress-debug-sections=zlib",
-    when: c => (c.linux || c.freebsd) && c.ld !== c.rustLld,
-    desc: "Compress ELF debug sections (post-link via llvm-objcopy with rust-lld — built without zlib)",
+    when: c => (c.linux || c.freebsd) && c.ld !== c.rustLld && !c.ohos,
+    desc: "Compress ELF debug sections (skipped with rust-lld and OHOS host LLVM — both built without zlib)",
   },
   {
     flag: "-Wl,--gc-sections",
@@ -1794,7 +1953,7 @@ export function computeDepFlags(cfg: Config): { cflags: string[]; cxxflags: stri
 /**
  * Just the -march/-mcpu/-mtune flags. For deps (WebKit) whose own build system
  * sets -O/-g/sanitizer flags but never sets a CPU target, so without this they
- * end up targeting generic x86-64 while the rest of bun targets nehalem.
+ * end up targeting generic x86-64 while the rest of bun targets haswell.
  */
 export function computeCpuTargetFlags(cfg: Config): string[] {
   const out: string[] = [];

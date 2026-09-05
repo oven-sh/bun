@@ -800,7 +800,7 @@ describe("`bun audit` with a secret in the registry URL", () => {
     return { stdout, stderr, exitCode };
   }
 
-  test.concurrent("the failed POST line masks the secret", async () => {
+  test("the failed POST line masks the secret", async () => {
     await using registry = registryAnswering("not found", { status: 404 });
     const { url, printed } = secretRegistry(registry);
     using dir = project({ "no-deps": "1.0.0" });
@@ -811,7 +811,7 @@ describe("`bun audit` with a secret in the registry URL", () => {
     expect(exitCode).toBe(1);
   });
 
-  test.concurrent("the non-JSON response line masks the secret", async () => {
+  test("the non-JSON response line masks the secret", async () => {
     await using registry = registryAnswering("<html><body>sign in</body></html>");
     const { url, printed } = secretRegistry(registry);
     using dir = project({ "no-deps": "1.0.0" });
@@ -824,7 +824,7 @@ describe("`bun audit` with a secret in the registry URL", () => {
 
   // A body starting with `{` gets past the response check and is rejected when it is parsed instead; the report,
   // --json and fix code paths each report that themselves.
-  test.concurrent("the unparsable response line masks the secret in every mode", async () => {
+  test("the unparsable response line masks the secret in every mode", async () => {
     const body = "{ not json";
     await using registry = registryAnswering(body);
     const { url, printed } = secretRegistry(registry);
@@ -873,7 +873,7 @@ describe("`bun audit` with a secret in the registry URL", () => {
     expect(fix.exitCode).toBe(0);
   }
 
-  test.concurrent("the skipped registry warning and the --json unaudited entry mask the secret", async () => {
+  test("the skipped registry warning and the --json unaudited entry mask the secret", async () => {
     await using scoped = registryAnswering("not found", { status: 404 });
     const { url, printed } = secretRegistry(scoped);
     using dir = project({ "@foo/bar": "1.0.0" }, { ".npmrc": `@foo:registry=${url}\n` });
@@ -881,7 +881,7 @@ describe("`bun audit` with a secret in the registry URL", () => {
     await expectSkippedRegistry(dir, printed);
   });
 
-  test.concurrent("the skipped registry warning and the --json unaudited entry leave out URL credentials", async () => {
+  test("the skipped registry warning and the --json unaudited entry leave out URL credentials", async () => {
     await using scoped = registryAnswering("not found", { status: 404 });
     const url = `${scoped.url.protocol}//alice:s3cret@${scoped.url.host}/`;
     using dir = project({ "@foo/bar": "1.0.0" }, { "bunfig.toml": `[install.scopes]\nfoo = { url = "${url}" }\n` });
@@ -892,7 +892,7 @@ describe("`bun audit` with a secret in the registry URL", () => {
 
 describe("`bun audit --prod`", () => {
   // pnpm#13605: an optional peer that only a devDependency brought in is not a production dependency.
-  test.concurrent("bun audit --prod skips a dev-only optional peer of a production package", async () => {
+  test("bun audit --prod skips a dev-only optional peer of a production package", async () => {
     await using server = startRegistry({ "no-deps": [adv("<1.0.1")] });
     using dir = await setup(server, {
       name: "foo",
@@ -909,7 +909,7 @@ describe("`bun audit --prod`", () => {
   });
 
   // pnpm#13605: production status is per installed version, not per name.
-  test.concurrent(
+  test(
     "bun audit --prod skips a dev-only version of a name that is also a production dependency",
     async () => {
       await using server = startRegistry({ "no-deps": [adv("<1.0.1")] });
@@ -930,7 +930,7 @@ describe("`bun audit --prod`", () => {
     },
   );
 
-  test.concurrent(
+  test(
     "bun audit --prod still reports the production version of a name that also has a dev version",
     async () => {
       await using server = startRegistry({ "no-deps": [adv("1.0.1")] });
@@ -965,7 +965,7 @@ describe("`bun audit --omit`", () => {
     },
   );
 
-  test.concurrent("--omit=optional keeps auditing dev dependencies", async () => {
+  test("--omit=optional keeps auditing dev dependencies", async () => {
     await using server = startRegistry({ "no-deps": [adv("<1.0.1")] });
     using dir = await setup(server, { name: "foo", devDependencies: { "no-deps": "1.0.0" } });
 
@@ -974,7 +974,7 @@ describe("`bun audit --omit`", () => {
     expect(exitCode).toBe(1);
   });
 
-  test.concurrent("--prod in a workspace is scoped to the workspace the command runs in", async () => {
+  test("--prod in a workspace is scoped to the workspace the command runs in", async () => {
     await using server = startRegistry({ "no-deps": [adv("<1.0.1")], "a-dep": [adv("<1.0.4", 2)] });
     using dir = await setup(
       server,
@@ -1013,7 +1013,7 @@ describe("`bun audit --omit`", () => {
     expect(fromAAll.exitCode).toBe(1);
   });
 
-  test.concurrent("--json --prod sends only production packages and prints the empty response", async () => {
+  test("--json --prod sends only production packages and prints the empty response", async () => {
     await using server = startRegistry({ "no-deps": [adv("<1.0.1")] });
     using dir = await setup(server, { name: "foo", devDependencies: { "no-deps": "1.0.0" } });
 
@@ -1026,7 +1026,7 @@ describe("`bun audit --omit`", () => {
     expect(prod.exitCode).toBe(0);
   });
 
-  test.concurrent("-p and -P are accepted as --prod", async () => {
+  test("-p and -P are accepted as --prod", async () => {
     await using server = startRegistry({ "no-deps": [adv("<1.0.1")] });
     using dir = await setup(server, { name: "foo", devDependencies: { "no-deps": "1.0.0" } });
 
@@ -1041,7 +1041,7 @@ describe("`bun audit --omit`", () => {
 });
 
 describe("`bun audit` report", () => {
-  test.concurrent("an unknown severity is counted and filtered as moderate", async () => {
+  test("an unknown severity is counted and filtered as moderate", async () => {
     await using server = startRegistry({ "a-dep": [{ ...adv("<1.0.4"), severity: "info" }] });
     using dir = await setup(server, { name: "foo", dependencies: { "a-dep": "1.0.2" } });
 
@@ -1059,7 +1059,7 @@ describe("`bun audit` report", () => {
     expect(moderate.exitCode).toBe(1);
   });
 
-  test.concurrent("names the installed version, one range per advisory, and ends on the fix commands", async () => {
+  test("names the installed version, one range per advisory, and ends on the fix commands", async () => {
     await using server = startRegistry({
       "no-deps": [
         { ...adv("<1.1.0", 1), severity: "moderate", title: "ReDoS in no-deps" },
@@ -1093,7 +1093,7 @@ describe("`bun audit` report", () => {
     expect(exitCode).toBe(1);
   });
 
-  test.concurrent("writes nothing", async () => {
+  test("writes nothing", async () => {
     await using server = startRegistry({ "a-dep": [adv("<1.0.4")] });
     using dir = await setup(server, { name: "foo", dependencies: { "a-dep": "1.0.2" } });
     const lockBefore = await lock(dir);
@@ -1106,7 +1106,7 @@ describe("`bun audit` report", () => {
     expect(await pkgJsonText(dir)).toBe(pkgJsonBefore);
   });
 
-  test.concurrent(
+  test(
     "`bun audit --fix` is not `bun audit fix`: the unknown flag is ignored and a plain audit runs",
     async () => {
       const bulkHits = { count: 0 };
@@ -1130,7 +1130,7 @@ describe("`bun audit` report", () => {
     },
   );
 
-  test.concurrent("`bun audit -L` is rejected before the registry is contacted", async () => {
+  test("`bun audit -L` is rejected before the registry is contacted", async () => {
     const bulkHits = { count: 0 };
     await using server = startRegistry({ "a-dep": [adv("<1.0.4")] }, { bulkHits });
     using dir = await setup(server, { name: "foo", dependencies: { "a-dep": "1.0.2" } });
@@ -1142,7 +1142,7 @@ describe("`bun audit` report", () => {
     expect(bulkHits.count).toBe(0);
   });
 
-  test.concurrent("advisories from the default and a scoped registry are merged into one report", async () => {
+  test("advisories from the default and a scoped registry are merged into one report", async () => {
     await using scoped = startRegistry({ "@types/is-number": [adv("<2.0.0", 2)] });
     await using server = startRegistry({ "a-dep": [adv("<1.0.4")] });
     using dir = await setup(
@@ -1168,7 +1168,7 @@ describe("`bun audit` report", () => {
     expect(json.exitCode).toBe(1);
   });
 
-  test.concurrent("--json prints an unparsable response and reports the parse failure", async () => {
+  test("--json prints an unparsable response and reports the parse failure", async () => {
     const body = "<html><body>registry is down</body></html>";
     await using server = startRegistry({}, { bulkBody: body });
     using dir = await setup(server, { name: "foo", dependencies: { "a-dep": "1.0.2" } });
@@ -1184,7 +1184,7 @@ describe("`bun audit` report", () => {
     expect(text.exitCode).toBe(1);
   });
 
-  test.concurrent("a response whose root is not an object is a parse failure", async () => {
+  test("a response whose root is not an object is a parse failure", async () => {
     await using server = startRegistry({}, { bulkBody: "[]" });
     using dir = await setup(server, { name: "foo", dependencies: { "a-dep": "1.0.2" } });
     const lockBefore = await lock(dir);
@@ -1201,7 +1201,7 @@ describe("`bun audit` report", () => {
     expect(await lock(dir)).toBe(lockBefore);
   });
 
-  test.concurrent("a 5xx from the default registry fails the audit", async () => {
+  test("a 5xx from the default registry fails the audit", async () => {
     await using server = startRegistry({}, { bulkStatus: 500 });
     using dir = await setup(server, { name: "foo", dependencies: { "a-dep": "1.0.2" } });
 
@@ -1213,7 +1213,7 @@ describe("`bun audit` report", () => {
     expect(exitCode).toBe(1);
   });
 
-  test.concurrent("a default registry that refuses the connection fails both commands", async () => {
+  test("a default registry that refuses the connection fails both commands", async () => {
     await using server = startRegistry({});
     using dir = await setup(server, { name: "foo", dependencies: { "a-dep": "1.0.2" } });
     const lockBefore = await lock(dir);
@@ -1231,7 +1231,7 @@ describe("`bun audit` report", () => {
     expect(await lock(dir)).toBe(lockBefore);
   });
 
-  test.concurrent("a scoped registry that refuses the connection is skipped", async () => {
+  test("a scoped registry that refuses the connection is skipped", async () => {
     await using scoped = startRegistry({});
     await using server = startRegistry({});
     using dir = await setup(
@@ -1266,7 +1266,7 @@ describe("`bun audit` report", () => {
     expect(fix.exitCode).toBe(0);
   });
 
-  test.concurrent("a scoped registry that answers 200 with a non-JSON body is skipped", async () => {
+  test("a scoped registry that answers 200 with a non-JSON body is skipped", async () => {
     await using scoped = startRegistry({}, { bulkBody: "<html><body>sign in</body></html>" });
     await using server = startRegistry({});
     using dir = await setup(
@@ -1301,7 +1301,7 @@ describe("`bun audit` report", () => {
 });
 
 describe("`bun audit fix`", () => {
-  test.concurrent("fixes a direct dependency to the lowest safe version, not the newest", async () => {
+  test("fixes a direct dependency to the lowest safe version, not the newest", async () => {
     await using server = startRegistry({ "a-dep": [adv("<1.0.4")] });
     using dir = await setupVulnerableADep(server);
     const pkgJsonBefore = await file(join(dir, "package.json")).text();
@@ -1334,7 +1334,7 @@ describe("`bun audit fix`", () => {
     await runBunInstall(installEnv(dir), dir, { frozenLockfile: true });
   });
 
-  test.concurrent("fixes a transitive dependency and leaves its dependent alone", async () => {
+  test("fixes a transitive dependency and leaves its dependent alone", async () => {
     await using server = startRegistry({ "no-deps": [adv("<1.0.1")] });
     using dir = await setup(server, { name: "foo", dependencies: { "one-range-dep": "1.0.0", "no-deps": "1.0.0" } });
     await reinstall(dir, { name: "foo", dependencies: { "one-range-dep": "1.0.0" } });
@@ -1356,7 +1356,7 @@ describe("`bun audit fix`", () => {
     await runBunInstall(installEnv(dir), dir, { frozenLockfile: true });
   });
 
-  test.concurrent("reports a fix that would violate a dependent's range and changes nothing", async () => {
+  test("reports a fix that would violate a dependent's range and changes nothing", async () => {
     const bulkHits = { count: 0 };
     await using server = startRegistry({ "no-deps": [adv("<1.1.0")] }, { bulkHits });
     using dir = await setup(server, { name: "foo", dependencies: { "one-dep": "1.0.0" } });
@@ -1384,7 +1384,7 @@ describe("`bun audit fix`", () => {
     expect(await pkgJsonText(dir, "node_modules", "one-dep")).toBe(dependentBefore);
   });
 
-  test.concurrent("a safe older release outside the dependent's range is not a downgrade candidate", async () => {
+  test("a safe older release outside the dependent's range is not a downgrade candidate", async () => {
     await using server = startRegistry({ "no-deps": [adv(">=1.0.1 <2.0.0")] });
     using dir = await setup(server, { name: "foo", dependencies: { "one-dep": "1.0.0" } });
     const lockBefore = await lock(dir);
@@ -1406,7 +1406,7 @@ describe("`bun audit fix`", () => {
     expect(await lock(dir)).toBe(lockBefore);
   });
 
-  test.concurrent("--dry-run prints the plan and writes nothing", async () => {
+  test("--dry-run prints the plan and writes nothing", async () => {
     const bulkHits = { count: 0 };
     await using server = startRegistry({ "a-dep": [adv("<1.0.4")] }, { bulkHits });
     using dir = await setupVulnerableADep(server);
@@ -1429,7 +1429,7 @@ describe("`bun audit fix`", () => {
     expect(await installedVersion(dir, "a-dep")).toBe("1.0.2");
   });
 
-  test.concurrent(
+  test(
     "the configured security scanner is sent every package, with the fix at its new version",
     async () => {
       await using server = startRegistry({ "a-dep": [adv("<1.0.4")] });
@@ -1449,7 +1449,7 @@ describe("`bun audit fix`", () => {
     },
   );
 
-  test.concurrent(
+  test(
     "a fatal advisory from the security scanner for the fixed version aborts before anything is written",
     async () => {
       await using server = startRegistry({ "a-dep": [adv("<1.0.4")] });
@@ -1475,7 +1475,7 @@ describe("`bun audit fix`", () => {
     },
   );
 
-  test.concurrent("--dry-run does not run the security scanner", async () => {
+  test("--dry-run does not run the security scanner", async () => {
     await using server = startRegistry({ "a-dep": [adv("<1.0.4")] });
     using dir = await setupVulnerableADep(server);
     const lockBefore = await lock(dir);
@@ -1491,7 +1491,7 @@ describe("`bun audit fix`", () => {
     expect(await installedVersion(dir, "a-dep")).toBe("1.0.2");
   });
 
-  test.concurrent("--json stays a single document when the security scanner runs clean", async () => {
+  test("--json stays a single document when the security scanner runs clean", async () => {
     await using server = startRegistry({ "a-dep": [adv("<1.0.4")] });
     using dir = await setupVulnerableADep(server);
     await configureScanner(dir, server);
@@ -1525,7 +1525,7 @@ describe("`bun audit fix`", () => {
     expect(await installedVersion(dir, "a-dep")).toBe("1.0.4");
   });
 
-  test.concurrent("a range that rejects every safe release is blocked on the highest safe downgrade", async () => {
+  test("a range that rejects every safe release is blocked on the highest safe downgrade", async () => {
     await using server = startRegistry({ "no-deps": [adv(">=2.0.0")] });
     using dir = await setup(server, { name: "foo", dependencies: { "no-deps": "^2.0.0" } });
     const lockBefore = await lock(dir);
@@ -1547,7 +1547,7 @@ describe("`bun audit fix`", () => {
     expect(await lock(dir)).toBe(lockBefore);
   });
 
-  test.concurrent("no vulnerabilities", async () => {
+  test("no vulnerabilities", async () => {
     await using server = startRegistry({});
     using dir = await setup(server, { name: "foo", dependencies: { "no-deps": "1.0.0" } });
     const lockBefore = await lock(dir);
@@ -1566,7 +1566,7 @@ describe("`bun audit fix`", () => {
     expect(report.exitCode).toBe(0);
   });
 
-  test.concurrent("the hint sits under the blocked entry --latest can fix, not the last one", async () => {
+  test("the hint sits under the blocked entry --latest can fix, not the last one", async () => {
     await using server = startRegistry({ "a-dep": [adv("<1.0.4")], "no-deps": [adv("<1.1.0", 2)] });
     using dir = await setup(server, { name: "foo", dependencies: { "a-dep": "<1.0.4", "one-dep": "1.0.0" } });
     const lockBefore = await lock(dir);
@@ -1613,7 +1613,7 @@ describe("`bun audit fix`", () => {
     expect(await lock(dir)).toBe(lockBefore);
   });
 
-  test.concurrent("a workspace dependent is named by its package.json path", async () => {
+  test("a workspace dependent is named by its package.json path", async () => {
     await using server = startRegistry({ "a-dep": [adv("<1.0.4")] });
     using dir = await setup(
       server,
@@ -1645,7 +1645,7 @@ describe("`bun audit fix`", () => {
     expect(json.exitCode).toBe(1);
   });
 
-  test.concurrent("--silent prints nothing and the exit code carries the result", async () => {
+  test("--silent prints nothing and the exit code carries the result", async () => {
     await using server = startRegistry({ "a-dep": [adv("<1.0.4")], "no-deps": [adv("<1.1.0", 2)] });
     using dir = await setup(server, { name: "foo", dependencies: { "a-dep": "1.0.2", "one-dep": "1.0.0" } });
     await reinstall(dir, { name: "foo", dependencies: { "a-dep": "^1.0.2", "one-dep": "1.0.0" } });
@@ -1671,7 +1671,7 @@ describe("`bun audit fix`", () => {
     expect(json.exitCode).toBe(1);
   });
 
-  test.concurrent("--silent with a fix that clears everything exits 0 without printing", async () => {
+  test("--silent with a fix that clears everything exits 0 without printing", async () => {
     await using server = startRegistry({ "a-dep": [adv("<1.0.4")] });
     using dir = await setupVulnerableADep(server);
 
@@ -1683,7 +1683,7 @@ describe("`bun audit fix`", () => {
     expect(await installedVersion(dir, "a-dep")).toBe("1.0.4");
   });
 
-  test.concurrent("refuses when package.json has changed since bun.lock was written", async () => {
+  test("refuses when package.json has changed since bun.lock was written", async () => {
     await using server = startRegistry({ "a-dep": [adv("<1.0.4")] });
     using dir = await setupVulnerableADep(server);
     const lockBefore = await lock(dir);
@@ -1708,7 +1708,7 @@ describe("`bun audit fix`", () => {
     expect(await lock(dir)).toBe(lockBefore);
   });
 
-  test.concurrent("peer dependency edges constrain the fix and are re-pointed", async () => {
+  test("peer dependency edges constrain the fix and are re-pointed", async () => {
     await using server = startRegistry({ "no-deps": [adv("<1.0.1")] });
     using dir = await setup(server, { name: "foo", dependencies: { "peer-deps-fixed": "1.0.0", "no-deps": "1.0.0" } });
     await reinstall(dir, { name: "foo", dependencies: { "peer-deps-fixed": "1.0.0", "no-deps": "^1.0.0" } });
@@ -1728,7 +1728,7 @@ describe("`bun audit fix`", () => {
     await runBunInstall(installEnv(dir), dir, { frozenLockfile: true });
   });
 
-  test.concurrent("instances of the same package are planned independently", async () => {
+  test("instances of the same package are planned independently", async () => {
     await using server = startRegistry({ "no-deps": [adv("<1.1.0")] });
     using dir = await setup(server, { name: "foo", dependencies: { "one-dep": "1.0.0", "no-deps": "1.0.0" } });
     await reinstall(dir, { name: "foo", dependencies: { "one-dep": "1.0.0", "no-deps": "^1.0.0" } });
@@ -1761,7 +1761,7 @@ describe("`bun audit fix`", () => {
   });
 
   // pnpm#10646: one advisory hitting two installed versions is one vulnerability, as `bun audit` counts it.
-  test.concurrent("one advisory across two fixable versions counts once", async () => {
+  test("one advisory across two fixable versions counts once", async () => {
     await using server = startRegistry({ "no-deps": [adv("<1.1.0")] });
     const workspace = (name: string, range: string) => JSON.stringify({ name, dependencies: { "no-deps": range } });
     const root = { name: "root", workspaces: ["packages/*"] };
@@ -1792,7 +1792,7 @@ describe("`bun audit fix`", () => {
   });
 
   // pnpm#8943: a patch release on the current line wins over the next major that the range would also allow.
-  test.concurrent("prefers an in-line patch over a major that the range also allows", async () => {
+  test("prefers an in-line patch over a major that the range also allows", async () => {
     await using server = startRegistry({ "no-deps": [adv("<1.0.1")] });
     using dir = await setup(server, { name: "foo", dependencies: { "no-deps": "1.0.0" } });
     await reinstall(dir, { name: "foo", dependencies: { "no-deps": ">=1.0.0" } });
@@ -1808,7 +1808,7 @@ describe("`bun audit fix`", () => {
   });
 
   // pnpm#12651 / #13824: an advisory with no released fix must not invent a version or leave bun.lock unusable.
-  test.concurrent("an advisory covering the newest release leaves a lockfile that still installs frozen", async () => {
+  test("an advisory covering the newest release leaves a lockfile that still installs frozen", async () => {
     await using server = startRegistry({ "a-dep": [adv("<=1.0.10")] });
     using dir = await setup(server, { name: "foo", dependencies: { "a-dep": "^1.0.0" } });
     const lockBefore = await lock(dir);
@@ -1833,7 +1833,7 @@ describe("`bun audit fix`", () => {
   });
 
   // pnpm#11101: a workspace package sharing a name with an advised npm package is not audited.
-  test.concurrent("a workspace package is never matched against an advisory for its name", async () => {
+  test("a workspace package is never matched against an advisory for its name", async () => {
     await using server = startRegistry({ "no-deps": [adv("<1.0.1")] });
     using dir = await setup(
       server,
@@ -1850,7 +1850,7 @@ describe("`bun audit fix`", () => {
   });
 
   // pnpm#10486 / #12487: a package kept alive only by a peer edge is still upgraded.
-  test.concurrent("fixes a package reachable only through a peer dependency edge", async () => {
+  test("fixes a package reachable only through a peer dependency edge", async () => {
     await using server = startRegistry({ "no-deps": [adv("<1.0.1")] });
     using dir = await setup(server, { name: "foo", dependencies: { "peer-deps-fixed": "1.0.0", "no-deps": "1.0.0" } });
     await reinstall(dir, { name: "foo", dependencies: { "peer-deps-fixed": "1.0.0" } });
@@ -1869,7 +1869,7 @@ describe("`bun audit fix`", () => {
     await runBunInstall(installEnv(dir), dir, { frozenLockfile: true });
   });
 
-  test.concurrent("honours catalog ranges", async () => {
+  test("honours catalog ranges", async () => {
     await using server = startRegistry({ "no-deps": [adv("<1.0.1")] });
     using dir = await setup(
       server,
@@ -1895,7 +1895,7 @@ describe("`bun audit fix`", () => {
     expect(await pkgJsonText(dir, "packages", "a")).toBe(memberBefore);
   });
 
-  test.concurrent("--ignore and --audit-level filter what gets fixed", async () => {
+  test("--ignore and --audit-level filter what gets fixed", async () => {
     await using server = startRegistry({ "a-dep": [{ ...adv("<1.0.4", 7), severity: "low" }] });
     using dir = await setupVulnerableADep(server);
     const lockBefore = await lock(dir);
@@ -1918,7 +1918,7 @@ describe("`bun audit fix`", () => {
     expect(await lock(dir)).toContain('"a-dep@1.0.4"');
   });
 
-  test.concurrent("rejects extra arguments", async () => {
+  test("rejects extra arguments", async () => {
     await using server = startRegistry({});
     using dir = await setup(server, { name: "foo", dependencies: { "no-deps": "1.0.0" } });
     const lockBefore = await lock(dir);
@@ -1934,7 +1934,7 @@ describe("`bun audit fix`", () => {
     expect(await lock(dir)).toBe(lockBefore);
   });
 
-  test.concurrent("an unknown subcommand is rejected before the registry is contacted", async () => {
+  test("an unknown subcommand is rejected before the registry is contacted", async () => {
     const bulkHits = { count: 0 };
     await using server = startRegistry({ "a-dep": [adv("<1.0.4")] }, { bulkHits });
     using dir = await setupVulnerableADep(server);
@@ -1949,7 +1949,7 @@ describe("`bun audit fix`", () => {
     expect(await lock(dir)).toBe(lockBefore);
   });
 
-  test.concurrent("refuses to run against a frozen lockfile", async () => {
+  test("refuses to run against a frozen lockfile", async () => {
     await using server = startRegistry({ "a-dep": [adv("<1.0.4")] });
     using dir = await setupVulnerableADep(server);
     const lockBefore = await lock(dir);
@@ -1969,7 +1969,7 @@ describe("`bun audit fix`", () => {
     expect(await lock(dir)).toBe(lockBefore);
   });
 
-  test.concurrent("an optional peer edge does not keep the vulnerable version alive", async () => {
+  test("an optional peer edge does not keep the vulnerable version alive", async () => {
     await using server = startRegistry({ "no-deps": [adv("<1.0.1")] });
     using dir = await setup(server, {
       name: "foo",
@@ -1993,7 +1993,7 @@ describe("`bun audit fix`", () => {
   });
 
   // The peer holder hoists before the dependent, so a slot still bound to the old version takes the root folder.
-  test.concurrent(
+  test(
     "an optional peer edge hoisted before the dependent does not keep the vulnerable version",
     async () => {
       await using server = startRegistry({ "no-deps": [adv("<1.0.1")] });
@@ -2025,7 +2025,7 @@ describe("`bun audit fix`", () => {
     },
   );
 
-  test.concurrent("an advisory for an installed prerelease is matched and the pin is rewritten", async () => {
+  test("an advisory for an installed prerelease is matched and the pin is rewritten", async () => {
     const bulkHits = { count: 0 };
     await using server = startRegistry(
       {},
@@ -2049,7 +2049,7 @@ describe("`bun audit fix`", () => {
     await runBunInstall(installEnv(dir), dir, { frozenLockfile: true });
   });
 
-  test.concurrent("advisories that match no installed version are listed, not just counted", async () => {
+  test("advisories that match no installed version are listed, not just counted", async () => {
     await using server = startRegistry(
       {},
       { bulkResponse: { "no-deps": [adv(">=5.0.0"), adv(">=5.0.0", 2), adv("not a range", 3)] } },
@@ -2072,7 +2072,7 @@ describe("`bun audit fix`", () => {
     expect(await lock(dir)).toBe(lockBefore);
   });
 
-  test.concurrent("an unparsable advisory does not hide a real fix for the same package", async () => {
+  test("an unparsable advisory does not hide a real fix for the same package", async () => {
     const bulkHits = { count: 0 };
     await using server = startRegistry(
       {},
@@ -2093,7 +2093,7 @@ describe("`bun audit fix`", () => {
     expect(await lock(dir)).toContain('"a-dep@1.0.4"');
   });
 
-  test.concurrent("a bundled dependency is never claimed as fixed", async () => {
+  test("a bundled dependency is never claimed as fixed", async () => {
     await using server = startRegistry({ "no-deps": [adv("<1.0.1")] });
     using dir = await setup(server, { name: "foo", dependencies: { "bundled-1": "1.0.0" } });
     const lockBefore = await lock(dir);
@@ -2116,7 +2116,7 @@ describe("`bun audit fix`", () => {
     expect(await installedVersion(dir, "bundled-1", "node_modules", "no-deps")).toBe("1.0.0");
   });
 
-  test.concurrent("multiple advisories on one instance are cleared together", async () => {
+  test("multiple advisories on one instance are cleared together", async () => {
     await using server = startRegistry({ "a-dep": [adv("<1.0.4", 1), adv("<1.0.6", 2)] });
     using dir = await setupVulnerableADep(server);
 
@@ -2135,7 +2135,7 @@ describe("`bun audit fix`", () => {
   });
 
   // pnpm fixtures/update-multiple: two advisories for one name with disjoint ranges.
-  test.concurrent("disjoint advisory ranges for one package are all avoided", async () => {
+  test("disjoint advisory ranges for one package are all avoided", async () => {
     const bulkBodies: Record<string, string[]>[] = [];
     await using server = startRegistry(
       { "no-deps": [adv(">=1.0.0 <1.0.1", 1), adv(">=1.1.0 <2.0.0", 2)] },
@@ -2157,7 +2157,7 @@ describe("`bun audit fix`", () => {
     expect(recheck.exitCode).toBe(0);
   });
 
-  test.concurrent("an advisory that only covers the version the fix moves to is reported by the re-audit", async () => {
+  test("an advisory that only covers the version the fix moves to is reported by the re-audit", async () => {
     const bulkBodies: Record<string, string[]>[] = [];
     await using server = startRegistry(
       { "no-deps": [adv(">=1.0.0 <1.0.1", 1), adv(">=1.0.1 <2.0.0", 2)] },
@@ -2189,7 +2189,7 @@ describe("`bun audit fix`", () => {
     expect(recheck.exitCode).toBe(1);
   });
 
-  test.concurrent("a registry failure on the re-audit fails the run after the fix was installed", async () => {
+  test("a registry failure on the re-audit fails the run after the fix was installed", async () => {
     const bulkHits = { count: 0 };
     await using server = startRegistry({ "a-dep": [adv("<1.0.4")] }, { bulkFailAfter: 1, bulkHits });
     using dir = await setupVulnerableADep(server);
@@ -2207,7 +2207,7 @@ describe("`bun audit fix`", () => {
   });
 
   // npm-style advisory objects carry extra fields (findings, patched_versions, ...) that must be ignored.
-  test.concurrent("ignores unknown advisory fields and treats >=0.0.0 as unfixable", async () => {
+  test("ignores unknown advisory fields and treats >=0.0.0 as unfixable", async () => {
     await using server = startRegistry(
       {},
       {
@@ -2243,7 +2243,7 @@ describe("`bun audit fix`", () => {
     expect(await lock(dir)).toBe(lockBefore);
   });
 
-  test.concurrent("parses a large bulk response and only plans installed packages", async () => {
+  test("parses a large bulk response and only plans installed packages", async () => {
     const bulkResponse = await file(
       join(import.meta.dirname, "registry", "fixtures", "audit", "pnpm-all-vulnerabilities-response.json"),
     ).json();
@@ -2262,7 +2262,7 @@ describe("`bun audit fix`", () => {
     expect(await lock(dir)).toBe(lockBefore);
   });
 
-  test.concurrent("fixes two packages in one run and leaves the rest of the lockfile alone", async () => {
+  test("fixes two packages in one run and leaves the rest of the lockfile alone", async () => {
     await using server = startRegistry({ "a-dep": [adv("<1.0.4")], "no-deps": [adv("<1.0.1", 2)] });
     using dir = await setup(server, {
       name: "foo",
@@ -2290,7 +2290,7 @@ describe("`bun audit fix`", () => {
     expect(lockAfter).toContain('"no-deps@1.0.1"');
   });
 
-  test.concurrent("fixes a scoped package", async () => {
+  test("fixes a scoped package", async () => {
     await using server = startRegistry({ "@types/is-number": [adv("<2.0.0")] });
     using dir = await setup(server, { name: "foo", dependencies: { "@types/is-number": "1.0.0" } });
     await reinstall(dir, { name: "foo", dependencies: { "@types/is-number": ">=1.0.0" } });
@@ -2306,7 +2306,7 @@ describe("`bun audit fix`", () => {
     expect(await installedVersion(dir, "@types", "is-number")).toBe("2.0.0");
   });
 
-  test.concurrent("fixes an npm: alias pointing at a vulnerable package", async () => {
+  test("fixes an npm: alias pointing at a vulnerable package", async () => {
     await using server = startRegistry({ "a-dep": [adv("<1.0.4")] });
     using dir = await setup(server, { name: "foo", dependencies: { nd: "npm:a-dep@1.0.2" } });
     await reinstall(dir, { name: "foo", dependencies: { nd: "npm:a-dep@^1.0.2" } });
@@ -2324,7 +2324,7 @@ describe("`bun audit fix`", () => {
     await runBunInstall(installEnv(dir), dir, { frozenLockfile: true });
   });
 
-  test.concurrent("a version held by an overrides entry is blocked and the override is not rewritten", async () => {
+  test("a version held by an overrides entry is blocked and the override is not rewritten", async () => {
     await using server = startRegistry({ "a-dep": [adv("<1.0.4")] });
     using dir = await setup(server, {
       name: "foo",
@@ -2351,7 +2351,7 @@ describe("`bun audit fix`", () => {
     expect(await pkgJsonText(dir)).toBe(pkgJsonBefore);
   });
 
-  test.concurrent("a pinned catalog entry is rewritten and the member keeps `catalog:`", async () => {
+  test("a pinned catalog entry is rewritten and the member keeps `catalog:`", async () => {
     await using server = startRegistry({ "no-deps": [adv("<1.0.1")] });
     const member = JSON.stringify({ name: "a", dependencies: { "no-deps": "catalog:" } });
     using dir = await setup(
@@ -2378,7 +2378,7 @@ describe("`bun audit fix`", () => {
     await runBunInstall(installEnv(dir), dir, { frozenLockfile: true });
   });
 
-  test.concurrent("rewrites a named catalog entry and leaves unused catalogs alone", async () => {
+  test("rewrites a named catalog entry and leaves unused catalogs alone", async () => {
     await using server = startRegistry({ "no-deps": [adv("<1.0.1")] });
     const member = JSON.stringify({ name: "a", dependencies: { "no-deps": "catalog:build" } });
     using dir = await setup(
@@ -2410,7 +2410,7 @@ describe("`bun audit fix`", () => {
   });
 
   // mismatched-peer-deps-lvl1's own dependency declares a peer the install warns about, so runBunInstall cannot be used.
-  test.concurrent("a peer edge that rejects the fix is split off and labelled with the peer dependent", async () => {
+  test("a peer edge that rejects the fix is split off and labelled with the peer dependent", async () => {
     await using server = startRegistry({ "no-deps": [adv("<=1.0.1")] });
     const rootPkgJson = (noDeps: string) =>
       JSON.stringify({ name: "foo", dependencies: { "mismatched-peer-deps-lvl1": "1.0.0", "no-deps": noDeps } });
@@ -2431,7 +2431,7 @@ describe("`bun audit fix`", () => {
     expect(await lock(dir)).toContain('"no-deps@1.1.0"');
   });
 
-  test.concurrent("a depth-3 blocker names the immediate dependent", async () => {
+  test("a depth-3 blocker names the immediate dependent", async () => {
     await using server = startRegistry({ "no-deps": [adv("<1.1.0")] });
     using dir = await setup(server, { name: "foo", dependencies: { "one-one-dep": "1.0.0" } });
     const lockBefore = await lock(dir);
@@ -2453,7 +2453,7 @@ describe("`bun audit fix`", () => {
   });
 
   // Workspaces default to the isolated linker, so the linker is pinned to keep node_modules paths predictable.
-  test.concurrent("fixes a workspace member's dependency when run from the member directory", async () => {
+  test("fixes a workspace member's dependency when run from the member directory", async () => {
     await using server = startRegistry({ "a-dep": [adv("<1.0.4")] });
     const member = (range: string) => JSON.stringify({ name: "a", dependencies: { "a-dep": range } });
     const rootPkgJson = JSON.stringify({ name: "root", workspaces: ["packages/*"] });
@@ -2481,7 +2481,7 @@ describe("`bun audit fix`", () => {
     expect(frozen.exitCode).toBe(0);
   });
 
-  test.concurrent("isolated linker layout", async () => {
+  test("isolated linker layout", async () => {
     await using server = startRegistry({ "a-dep": [adv("<1.0.4")] });
     using dir = tempDir("audit-fix-", {
       "package.json": JSON.stringify({ name: "foo", dependencies: { "a-dep": "1.0.2" } }),
@@ -2507,7 +2507,7 @@ describe("`bun audit fix`", () => {
   });
 
   // Every a-dep release was published in 2023, so a 100-year minimum age gates all of them.
-  test.concurrent("a fix newer than --minimum-release-age is installed anyway", async () => {
+  test("a fix newer than --minimum-release-age is installed anyway", async () => {
     await using server = startRegistry({ "a-dep": [adv("<1.0.4")] });
     using dir = await setupVulnerableADep(server);
     const lockBefore = await lock(dir);
@@ -2529,7 +2529,7 @@ describe("`bun audit fix`", () => {
     await expectInstall(dir, "--frozen-lockfile", "--minimum-release-age", "3153600000");
   });
 
-  test.concurrent(
+  test(
     "the lowest safe release is taken even when only it is newer than --minimum-release-age",
     async () => {
       await using server = startRegistry(
@@ -2548,7 +2548,7 @@ describe("`bun audit fix`", () => {
     },
   );
 
-  test.concurrent("a failing bulk endpoint changes nothing", async () => {
+  test("a failing bulk endpoint changes nothing", async () => {
     await using server = startRegistry({}, { bulkStatus: 500 });
     using dir = await setupVulnerableADep(server);
     const lockBefore = await lock(dir);
@@ -2562,7 +2562,7 @@ describe("`bun audit fix`", () => {
     expect(await lock(dir)).toBe(lockBefore);
   });
 
-  test.concurrent("a bulk response that is not JSON is reported on stderr and changes nothing", async () => {
+  test("a bulk response that is not JSON is reported on stderr and changes nothing", async () => {
     await using server = startRegistry({}, { bulkBody: "<html><body>registry is down</body></html>" });
     using dir = await setupVulnerableADep(server);
     const lockBefore = await lock(dir);
@@ -2574,7 +2574,7 @@ describe("`bun audit fix`", () => {
     expect(await lock(dir)).toBe(lockBefore);
   });
 
-  test.concurrent("a manifest that fails to download is reported, not fixed", async () => {
+  test("a manifest that fails to download is reported, not fixed", async () => {
     const denyManifests = new Set<string>();
     await using server = startRegistry({ "a-dep": [adv("<1.0.4")] }, { denyManifests });
     using dir = await setupVulnerableADep(server);
@@ -2595,7 +2595,7 @@ describe("`bun audit fix`", () => {
     expect(await lock(dir)).toBe(lockBefore);
   });
 
-  test.concurrent("a manifest that fails to download does not stop the other fixes", async () => {
+  test("a manifest that fails to download does not stop the other fixes", async () => {
     const denyManifests = new Set<string>();
     await using server = startRegistry({ "a-dep": [adv("<1.0.4")], "no-deps": [adv("<1.0.1", 2)] }, { denyManifests });
     using dir = await setup(server, { name: "foo", dependencies: { "a-dep": "1.0.2", "no-deps": "1.0.0" } });
@@ -2620,7 +2620,7 @@ describe("`bun audit fix`", () => {
     expect(lockfile).toContain('"a-dep@1.0.2"');
   });
 
-  test.concurrent("a fix whose tarball fails to download is not reported as fixed", async () => {
+  test("a fix whose tarball fails to download is not reported as fixed", async () => {
     const denyTarballs = new Set<string>();
     const bulkHits = { count: 0 };
     await using server = startRegistry({ "a-dep": [adv("<1.0.4")] }, { denyTarballs, bulkHits });
@@ -2637,7 +2637,7 @@ describe("`bun audit fix`", () => {
     expect(await installedVersion(dir, "a-dep")).toBe("1.0.2");
   });
 
-  test.concurrent("refuses to run without a lockfile", async () => {
+  test("refuses to run without a lockfile", async () => {
     await using server = startRegistry({});
     using dir = tempDir("audit-fix-", {
       "package.json": JSON.stringify({ name: "foo" }),
@@ -2651,7 +2651,7 @@ describe("`bun audit fix`", () => {
     expect(await exists(join(dir, "bun.lock"))).toBeFalse();
   });
 
-  test.concurrent("refuses --no-save before contacting the registry", async () => {
+  test("refuses --no-save before contacting the registry", async () => {
     await using server = startRegistry({}, { bulkStatus: 500 });
     using dir = await setupVulnerableADep(server);
     const lockBefore = await lock(dir);
@@ -2666,7 +2666,7 @@ describe("`bun audit fix`", () => {
     expect(await lock(dir)).toBe(lockBefore);
   });
 
-  test.concurrent("rewrites an exact direct pin", async () => {
+  test("rewrites an exact direct pin", async () => {
     await using server = startRegistry({ "a-dep": [adv("<1.0.4")] });
     const before = [
       "{",
@@ -2703,7 +2703,7 @@ describe("`bun audit fix`", () => {
     await runBunInstall(installEnv(dir), dir, { frozenLockfile: true });
   });
 
-  test.concurrent("--dry-run does not rewrite a pin", async () => {
+  test("--dry-run does not rewrite a pin", async () => {
     await using server = startRegistry({ "a-dep": [adv("<1.0.4")] });
     using dir = await setup(server, { name: "foo", dependencies: { "a-dep": "1.0.2" } });
     const pkgJsonBefore = await pkgJsonText(dir);
@@ -2719,7 +2719,7 @@ describe("`bun audit fix`", () => {
     expect(await installedVersion(dir, "a-dep")).toBe("1.0.2");
   });
 
-  test.concurrent("a pin is only widened within its major", async () => {
+  test("a pin is only widened within its major", async () => {
     await using server = startRegistry({ "no-deps": [adv("<2.0.0")] });
     using dir = await setup(server, { name: "foo", dependencies: { "no-deps": "1.0.0" } });
     const pkgJsonBefore = await pkgJsonText(dir);
@@ -2743,7 +2743,7 @@ describe("`bun audit fix`", () => {
     expect(await lock(dir)).toBe(lockBefore);
   });
 
-  test.concurrent("rewrites an exact npm: alias pin", async () => {
+  test("rewrites an exact npm: alias pin", async () => {
     await using server = startRegistry({ "a-dep": [adv("<1.0.4")] });
     using dir = await setup(server, { name: "foo", dependencies: { nd: "npm:a-dep@1.0.2" } });
     expect(await lock(dir)).toContain('"a-dep@1.0.2"');
@@ -2759,7 +2759,7 @@ describe("`bun audit fix`", () => {
     await runBunInstall(installEnv(dir), dir, { frozenLockfile: true });
   });
 
-  test.concurrent("rewrites a pinned devDependency in its own group only", async () => {
+  test("rewrites a pinned devDependency in its own group only", async () => {
     await using server = startRegistry({ "a-dep": [adv("<1.0.4")], "no-deps": [adv("<1.0.1", 2)] });
     using dir = await setup(server, {
       name: "foo",
@@ -2789,7 +2789,7 @@ describe("`bun audit fix`", () => {
     await runBunInstall(installEnv(dir), dir, { frozenLockfile: true });
   });
 
-  test.concurrent("rewrites a workspace member's pin and leaves the root alone", async () => {
+  test("rewrites a workspace member's pin and leaves the root alone", async () => {
     await using server = startRegistry({ "a-dep": [adv("<1.0.4")] });
     const rootPkgJson = JSON.stringify({ name: "root", workspaces: ["packages/*"] });
     using dir = await setup(server, rootPkgJson, {
@@ -2812,7 +2812,7 @@ describe("`bun audit fix`", () => {
     await runBunInstall(installEnv(dir), dir, { frozenLockfile: true });
   });
 
-  test.concurrent("rewrites a workspace member's pin when run from the member directory", async () => {
+  test("rewrites a workspace member's pin when run from the member directory", async () => {
     await using server = startRegistry({ "a-dep": [adv("<1.0.4")] });
     const rootPkgJson = JSON.stringify({ name: "root", workspaces: ["packages/*"] });
     using dir = tempDir("audit-fix-", {
@@ -2836,7 +2836,7 @@ describe("`bun audit fix`", () => {
     await expectInstall(dir, "--frozen-lockfile", "--linker", "hoisted");
   });
 
-  test.concurrent("splits an instance when only some dependents accept the fix", async () => {
+  test("splits an instance when only some dependents accept the fix", async () => {
     await using server = startRegistry({ "no-deps": [adv("<1.0.1")] });
     using dir = await setup(server, { name: "foo", dependencies: { "one-fixed-dep": "1.0.0", "no-deps": "1.0.0" } });
     await reinstall(dir, { name: "foo", dependencies: { "one-fixed-dep": "1.0.0", "no-deps": "^1.0.0" } });
@@ -2862,7 +2862,7 @@ describe("`bun audit fix`", () => {
     await runBunInstall(installEnv(dir), dir, { frozenLockfile: true });
   });
 
-  test.concurrent("splits an instance shared by two transitive dependents", async () => {
+  test("splits an instance shared by two transitive dependents", async () => {
     await using server = startRegistry({ "no-deps": [adv("<1.0.1")] });
     using dir = await setup(server, {
       name: "foo",
@@ -2891,7 +2891,7 @@ describe("`bun audit fix`", () => {
     await runBunInstall(installEnv(dir), dir, { frozenLockfile: true });
   });
 
-  test.concurrent("hoisted: a vulnerable nested copy collapsed onto the fixed root copy is removed", async () => {
+  test("hoisted: a vulnerable nested copy collapsed onto the fixed root copy is removed", async () => {
     await using server = startRegistry({ "no-deps": [adv(">=1.1.0 <2.0.0")] });
     using dir = await setup(server, { name: "foo", dependencies: { "one-range-dep": "1.0.0" } });
     await reinstall(dir, { name: "foo", dependencies: { "one-range-dep": "1.0.0", "no-deps": "1.0.1" } });
@@ -2919,7 +2919,7 @@ describe("`bun audit fix`", () => {
     await runBunInstall(installEnv(dir), dir, { frozenLockfile: true });
   });
 
-  test.concurrent("a split instance under the isolated linker keeps both versions in the store", async () => {
+  test("a split instance under the isolated linker keeps both versions in the store", async () => {
     await using server = startRegistry({ "no-deps": [adv("<1.0.1")] });
     const rootPkgJson = (deps: Record<string, string>) => JSON.stringify({ name: "foo", dependencies: deps });
     using dir = tempDir("audit-fix-", {
@@ -2946,7 +2946,7 @@ describe("`bun audit fix`", () => {
     await expectInstall(dir, "--frozen-lockfile", "--linker", "isolated");
   });
 
-  test.concurrent(
+  test(
     "a rewritten root pin moves even though a transitive dependent still pins the old version",
     async () => {
       await using server = startRegistry({ "a-dep": [adv("<1.0.4")] });
@@ -2972,7 +2972,7 @@ describe("`bun audit fix`", () => {
     },
   );
 
-  test.concurrent("downgrades when no newer release is safe", async () => {
+  test("downgrades when no newer release is safe", async () => {
     await using server = startRegistry({ "a-dep": [adv(">=1.0.3")] });
     using dir = await setup(server, { name: "foo", dependencies: { "a-dep": "^1.0.0" } });
     const lockBefore = await lock(dir);
@@ -3006,7 +3006,7 @@ describe("`bun audit fix`", () => {
     expectClean(recheck, 1);
   });
 
-  test.concurrent("downgrades a transitive dependency within its dependent's range", async () => {
+  test("downgrades a transitive dependency within its dependent's range", async () => {
     await using server = startRegistry({ "no-deps": [adv(">=1.0.1 <2.0.0")] });
     using dir = await setup(server, { name: "foo", dependencies: { "one-range-dep": "1.0.0" } });
     expect(await lock(dir)).toContain('"no-deps@1.1.0"');
@@ -3026,7 +3026,7 @@ describe("`bun audit fix`", () => {
     await runBunInstall(installEnv(dir), dir, { frozenLockfile: true });
   });
 
-  test.concurrent("prefers the lowest safe upgrade over any downgrade", async () => {
+  test("prefers the lowest safe upgrade over any downgrade", async () => {
     await using server = startRegistry({ "a-dep": [adv(">=1.0.2 <1.0.4")] });
     using dir = await setup(server, { name: "foo", dependencies: { "a-dep": "1.0.2" } });
     await reinstall(dir, { name: "foo", dependencies: { "a-dep": "^1.0.1" } });
@@ -3043,7 +3043,7 @@ describe("`bun audit fix`", () => {
     expect(lockfile).not.toContain('"a-dep@1.0.5"');
   });
 
-  test.concurrent("counts a vulnerability removed by another fix from the written lockfile", async () => {
+  test("counts a vulnerability removed by another fix from the written lockfile", async () => {
     await using server = startRegistry({ "one-fixed-dep": [adv("<2.0.0")], "no-deps": [adv("<1.0.1", 2)] });
     using dir = await setup(server, { name: "foo", dependencies: { "one-fixed-dep": "1.0.0" } });
     await reinstall(dir, { name: "foo", dependencies: { "one-fixed-dep": ">=1.0.0" } });
@@ -3067,7 +3067,7 @@ describe("`bun audit fix`", () => {
     expectClean(recheck, 2);
   });
 
-  test.concurrent("reports a vulnerable version the fix pulled in from the re-audit", async () => {
+  test("reports a vulnerable version the fix pulled in from the re-audit", async () => {
     const bulkBodies: Record<string, string[]>[] = [];
     await using server = startRegistry(
       { "one-fixed-dep": [adv("<2.0.0")], "no-deps": [adv(">=2.0.0", 2)] },
@@ -3096,7 +3096,7 @@ describe("`bun audit fix`", () => {
     expect(recheck.exitCode).toBe(1);
   });
 
-  test.concurrent("--json prints a plan document with --dry-run", async () => {
+  test("--json prints a plan document with --dry-run", async () => {
     await using server = startRegistry({ "a-dep": [adv("<1.0.4")] });
     using dir = await setup(server, { name: "foo", dependencies: { "a-dep": "1.0.2" } });
     const pkgJsonBefore = await pkgJsonText(dir);
@@ -3129,7 +3129,7 @@ describe("`bun audit fix`", () => {
     expect(await lock(dir)).toBe(lockBefore);
   });
 
-  test.concurrent("--json prints the result after installing", async () => {
+  test("--json prints the result after installing", async () => {
     await using server = startRegistry({ "a-dep": [adv("<1.0.4")] });
     using dir = await setupVulnerableADep(server);
 
@@ -3155,7 +3155,7 @@ describe("`bun audit fix`", () => {
     expect(clean.exitCode).toBe(0);
   });
 
-  test.concurrent("--json takes remaining and vulnerableAfterInstall from the re-audit", async () => {
+  test("--json takes remaining and vulnerableAfterInstall from the re-audit", async () => {
     const bulkBodies: Record<string, string[]>[] = [];
     await using server = startRegistry(
       { "no-deps": [adv(">=1.0.0 <1.0.1", 1), adv(">=1.0.1 <2.0.0", 2)] },
@@ -3191,7 +3191,7 @@ describe("`bun audit fix`", () => {
     expect(bulkBodies.length).toBe(2);
   });
 
-  test.concurrent("--json with a blocked and an unmatched advisory", async () => {
+  test("--json with a blocked and an unmatched advisory", async () => {
     await using server = startRegistry({}, { bulkResponse: { "no-deps": [adv("<1.1.0"), adv(">=9.0.0", 2)] } });
     using dir = await setup(server, { name: "foo", dependencies: { "one-dep": "1.0.0" } });
     const lockBefore = await lock(dir);
@@ -3215,7 +3215,7 @@ describe("`bun audit fix`", () => {
     expect(await lock(dir)).toBe(lockBefore);
   });
 
-  test.concurrent("--json after installing carries the fixed and the blocked entries", async () => {
+  test("--json after installing carries the fixed and the blocked entries", async () => {
     await using server = startRegistry({ "a-dep": [adv("<1.0.4")], "no-deps": [adv("<1.1.0", 2)] });
     using dir = await setup(server, { name: "foo", dependencies: { "a-dep": "1.0.2", "one-dep": "1.0.0" } });
     await reinstall(dir, { name: "foo", dependencies: { "a-dep": "^1.0.2", "one-dep": "1.0.0" } });
@@ -3239,7 +3239,7 @@ describe("`bun audit fix`", () => {
     expect(await installedVersion(dir, "a-dep")).toBe("1.0.4");
   });
 
-  test.concurrent("audits and fixes a package served by a scoped registry", async () => {
+  test("audits and fixes a package served by a scoped registry", async () => {
     await using scoped = startRegistry({ "@types/is-number": [adv("<2.0.0")] });
     await using server = startRegistry({});
     using dir = await setup(
@@ -3269,7 +3269,7 @@ describe("`bun audit fix`", () => {
     expectClean(recheck, 1);
   });
 
-  test.concurrent("a scoped registry that does not answer the audit request is reported", async () => {
+  test("a scoped registry that does not answer the audit request is reported", async () => {
     await using scoped = startRegistry({}, { bulkStatus: 404 });
     await using server = startRegistry({ "a-dep": [adv("<1.0.4")] });
     using dir = await setup(
@@ -3302,7 +3302,7 @@ describe("`bun audit fix`", () => {
     expect(await lock(dir)).toContain('"a-dep@1.0.4"');
   });
 
-  test.concurrent("`bun audit` and `bun audit fix` print the skipped registry at the same position", async () => {
+  test("`bun audit` and `bun audit fix` print the skipped registry at the same position", async () => {
     await using scoped = startRegistry({}, { bulkStatus: 404 });
     await using server = startRegistry({});
     using dir = await setup(
@@ -3326,7 +3326,7 @@ describe("`bun audit fix`", () => {
     expect(fix.exitCode).toBe(0);
   });
 
-  test.concurrent("--json lists a scoped registry that did not answer under unaudited", async () => {
+  test("--json lists a scoped registry that did not answer under unaudited", async () => {
     await using scoped = startRegistry({}, { bulkStatus: 404 });
     await using server = startRegistry({ "a-dep": [adv("<1.0.4")] });
     using dir = await setup(
@@ -3362,7 +3362,7 @@ describe("`bun audit fix`", () => {
     expect(exitCode).toBe(0);
   });
 
-  test.concurrent("fixes advisories from the default and a scoped registry in one run", async () => {
+  test("fixes advisories from the default and a scoped registry in one run", async () => {
     await using scoped = startRegistry({ "@types/is-number": [adv("<2.0.0", 2)] });
     await using server = startRegistry({ "a-dep": [adv("<1.0.4")] });
     using dir = await setup(
@@ -3392,7 +3392,7 @@ describe("`bun audit fix`", () => {
     expectClean(recheck, 2);
   });
 
-  test.concurrent("dependents whose lowest acceptable fixes differ are moved to one common version", async () => {
+  test("dependents whose lowest acceptable fixes differ are moved to one common version", async () => {
     await using server = startRegistry({ "no-deps": [adv("<1.0.1")] });
     using dir = await setup(server, { name: "foo", dependencies: { "one-range-dep": "1.0.0", "no-deps": "1.0.0" } });
     await reinstall(dir, { name: "foo", dependencies: { "one-range-dep": "1.0.0", "no-deps": "1.0.0 || >=1.1.0" } });
@@ -3420,7 +3420,7 @@ describe("`bun audit fix`", () => {
     await runBunInstall(installEnv(dir), dir, { frozenLockfile: true });
   });
 
-  test.concurrent("rewrites pins in the root and in a workspace member in one run", async () => {
+  test("rewrites pins in the root and in a workspace member in one run", async () => {
     await using server = startRegistry({ "a-dep": [adv("<1.0.4")], "no-deps": [adv("<1.0.1", 2)] });
     using dir = await setup(
       server,
@@ -3455,7 +3455,7 @@ describe("`bun audit fix`", () => {
     await runBunInstall(installEnv(dir), dir, { frozenLockfile: true });
   });
 
-  test.concurrent("rewrites two pins in one package.json and keeps its formatting", async () => {
+  test("rewrites two pins in one package.json and keeps its formatting", async () => {
     await using server = startRegistry({ "a-dep": [adv("<1.0.4")], "no-deps": [adv("<1.0.1", 2)] });
     const before = [
       "{",
@@ -3509,7 +3509,7 @@ describe("`bun audit fix`", () => {
     await runBunInstall(installEnv(dir), dir, { frozenLockfile: true });
   });
 
-  test.concurrent("only the group whose literal is the pin is rewritten", async () => {
+  test("only the group whose literal is the pin is rewritten", async () => {
     await using server = startRegistry({ "a-dep": [adv("<1.0.4")] });
     using dir = await setup(server, {
       name: "foo",
@@ -3535,7 +3535,7 @@ describe("`bun audit fix`", () => {
     await runBunInstall(installEnv(dir), dir, { frozenLockfile: true });
   });
 
-  test.concurrent("the same pin in two groups of one package.json is one edit", async () => {
+  test("the same pin in two groups of one package.json is one edit", async () => {
     await using server = startRegistry({ "a-dep": [adv("<1.0.4")] });
     using dir = await setup(server, {
       name: "foo",
@@ -3564,7 +3564,7 @@ describe("`bun audit fix`", () => {
     await runBunInstall(installEnv(dir), dir, { frozenLockfile: true });
   });
 
-  test.concurrent("an npm: alias pin is rewritten even when its target name has an override", async () => {
+  test("an npm: alias pin is rewritten even when its target name has an override", async () => {
     await using server = startRegistry({ "a-dep": [adv("<1.0.4")] });
     using dir = await setup(server, {
       name: "foo",
@@ -3625,7 +3625,7 @@ describe("`bun audit fix`", () => {
     },
   );
 
-  test.concurrent("a dist-tag dependency blocks the fix and is reported with its literal", async () => {
+  test("a dist-tag dependency blocks the fix and is reported with its literal", async () => {
     await using server = startRegistry({ "dep-with-tags": [adv("<2.0.0")] });
     using dir = await setup(server, { name: "foo", dependencies: { "dep-with-tags": "pre-1" } });
     const lockBefore = await lock(dir);
@@ -3666,7 +3666,7 @@ describe("`bun audit fix`", () => {
     expect(exitCode).toBe(1);
   });
 
-  test.concurrent("an advisory with empty vulnerable_versions covers every version", async () => {
+  test("an advisory with empty vulnerable_versions covers every version", async () => {
     await using server = startRegistry({}, { bulkResponse: { "no-deps": [adv("")] } });
     using dir = await setup(server, { name: "foo", dependencies: { "no-deps": "1.0.0" } });
     const lockBefore = await lock(dir);
@@ -3686,7 +3686,7 @@ describe("`bun audit fix`", () => {
     expect(await lock(dir)).toBe(lockBefore);
   });
 
-  test.concurrent("the unfixable section prints one --ignore line for every advisory", async () => {
+  test("the unfixable section prints one --ignore line for every advisory", async () => {
     const ghsa = (range: string, id: number, tag: string) => ({
       ...adv(range, id),
       url: `https://github.com/advisories/GHSA-${tag}`,
@@ -3731,7 +3731,7 @@ describe("`bun audit fix`", () => {
     expect(await lock(dir)).toBe(lockBefore);
   });
 
-  test.concurrent("--json carries an unfixable version", async () => {
+  test("--json carries an unfixable version", async () => {
     await using server = startRegistry({}, { bulkResponse: { "no-deps": [adv(">=0.0.0")] } });
     using dir = await setup(server, { name: "foo", dependencies: { "no-deps": "^1.0.0" } });
     const lockBefore = await lock(dir);
@@ -3754,7 +3754,7 @@ describe("`bun audit fix`", () => {
     expect(await lock(dir)).toBe(lockBefore);
   });
 
-  test.concurrent("--json carries a version whose manifest could not be fetched", async () => {
+  test("--json carries a version whose manifest could not be fetched", async () => {
     const denyManifests = new Set<string>();
     await using server = startRegistry({ "a-dep": [adv("<1.0.4")] }, { denyManifests });
     using dir = await setupVulnerableADep(server);
@@ -3778,7 +3778,7 @@ describe("`bun audit fix`", () => {
     expect(await lock(dir)).toBe(lockBefore);
   });
 
-  test.concurrent("--json carries versions that are vulnerable after the install", async () => {
+  test("--json carries versions that are vulnerable after the install", async () => {
     const bulkHits = { count: 0 };
     await using server = startRegistry(
       { "one-fixed-dep": [adv("<2.0.0")], "no-deps": [adv(">=2.0.0", 2)] },
@@ -3815,7 +3815,7 @@ describe("`bun audit fix`", () => {
     expect(await lock(dir)).toContain('"no-deps@2.0.0"');
   });
 
-  test.concurrent("--json marks a downgrade", async () => {
+  test("--json marks a downgrade", async () => {
     await using server = startRegistry({ "a-dep": [adv(">=1.0.3")] });
     using dir = await setup(server, { name: "foo", dependencies: { "a-dep": "^1.0.0" } });
     const lockBefore = await lock(dir);
@@ -3838,7 +3838,7 @@ describe("`bun audit fix`", () => {
     expect(await lock(dir)).toBe(lockBefore);
   });
 
-  test.concurrent("--json marks a fix newer than --minimum-release-age", async () => {
+  test("--json marks a fix newer than --minimum-release-age", async () => {
     await using server = startRegistry({ "a-dep": [adv("<1.0.4")] });
     using dir = await setupVulnerableADep(server);
     const lockBefore = await lock(dir);
@@ -3860,7 +3860,7 @@ describe("`bun audit fix`", () => {
     expect(await lock(dir)).toBe(lockBefore);
   });
 
-  test.concurrent("--json marks a bundled blocker", async () => {
+  test("--json marks a bundled blocker", async () => {
     await using server = startRegistry({ "no-deps": [adv("<1.0.1")] });
     using dir = await setup(server, { name: "foo", dependencies: { "bundled-1": "1.0.0" } });
     const lockBefore = await lock(dir);
@@ -3882,7 +3882,7 @@ describe("`bun audit fix`", () => {
     expect(await lock(dir)).toBe(lockBefore);
   });
 
-  test.concurrent("--json marks a blocked fix that would be a downgrade", async () => {
+  test("--json marks a blocked fix that would be a downgrade", async () => {
     await using server = startRegistry({ "no-deps": [adv(">=2.0.0")] });
     using dir = await setup(server, { name: "foo", dependencies: { "no-deps": "^2.0.0" } });
     const lockBefore = await lock(dir);
@@ -3933,7 +3933,7 @@ describe("`bun audit fix`", () => {
     expect(await lock(dir)).toContain('"no-deps@1.0.1"');
   });
 
-  test.concurrent("a bunfig.toml that freezes or stops saving the lockfile is explained in the note", async () => {
+  test("a bunfig.toml that freezes or stops saving the lockfile is explained in the note", async () => {
     await using server = startRegistry({ "a-dep": [adv("<1.0.4")] });
     using dir = await setupVulnerableADep(server);
     const lockBefore = await lock(dir);
@@ -3957,7 +3957,7 @@ describe("`bun audit fix`", () => {
     expect(await lock(dir)).toBe(lockBefore);
   });
 
-  test.concurrent("--frozen-lockfile --silent exits 1 without printing", async () => {
+  test("--frozen-lockfile --silent exits 1 without printing", async () => {
     const bulkHits = { count: 0 };
     await using server = startRegistry({ "a-dep": [adv("<1.0.4")] }, { bulkHits });
     using dir = await setupVulnerableADep(server);
@@ -3971,7 +3971,7 @@ describe("`bun audit fix`", () => {
     expect(await lock(dir)).toBe(lockBefore);
   });
 
-  test.concurrent("-p and -P are rejected before the registry is contacted", async () => {
+  test("-p and -P are rejected before the registry is contacted", async () => {
     const bulkHits = { count: 0 };
     await using server = startRegistry({ "a-dep": [adv("<1.0.4")] }, { bulkHits });
     using dir = await setupVulnerableADep(server);
@@ -3989,7 +3989,7 @@ describe("`bun audit fix --latest`", () => {
   // Every no-deps 1.x release is vulnerable, so the only fix is 2.0.0, which no 1.x range accepts.
   const noDeps1x = () => startRegistry({ "no-deps": [adv("<2.0.0")] });
 
-  test.concurrent("rewrites a root range that excludes the fix", async () => {
+  test("rewrites a root range that excludes the fix", async () => {
     await using server = noDeps1x();
     using dir = await setup(server, { name: "foo", dependencies: { "no-deps": "^1.0.0" } });
     const lockBefore = await lock(dir);
@@ -4040,7 +4040,7 @@ describe("`bun audit fix --latest`", () => {
     await runBunInstall(installEnv(dir), dir, { frozenLockfile: true });
   });
 
-  test.concurrent("a ~ range keeps its ~", async () => {
+  test("a ~ range keeps its ~", async () => {
     await using server = noDeps1x();
     using dir = await setup(server, { name: "foo", dependencies: { "no-deps": "~1.0.0" } });
     expect(await lock(dir)).toContain('"no-deps@1.0.1"');
@@ -4079,7 +4079,7 @@ describe("`bun audit fix --latest`", () => {
     await runBunInstall(installEnv(dir), dir, { frozenLockfile: true });
   });
 
-  test.concurrent("-L is accepted as --latest", async () => {
+  test("-L is accepted as --latest", async () => {
     await using server = noDeps1x();
     using dir = await setup(server, { name: "foo", dependencies: { "no-deps": "^1.0.0" } });
     expect(await lock(dir)).toContain('"no-deps@1.1.0"');
@@ -4093,7 +4093,7 @@ describe("`bun audit fix --latest`", () => {
     expect(await lock(dir)).toContain('"no-deps@2.0.0"');
   });
 
-  test.concurrent("an exact pin stays exact", async () => {
+  test("an exact pin stays exact", async () => {
     await using server = noDeps1x();
     using dir = await setup(server, { name: "foo", dependencies: { "no-deps": "1.0.0" } });
 
@@ -4107,7 +4107,7 @@ describe("`bun audit fix --latest`", () => {
     expect(await installedVersion(dir, "no-deps")).toBe("2.0.0");
   });
 
-  test.concurrent("an = pin keeps its =", async () => {
+  test("an = pin keeps its =", async () => {
     await using server = noDeps1x();
     using dir = await setup(server, { name: "foo", dependencies: { "no-deps": "=1.0.0" } });
     expect(await lock(dir)).toContain('"no-deps@1.0.0"');
@@ -4120,7 +4120,7 @@ describe("`bun audit fix --latest`", () => {
     expect(await lock(dir)).toContain('"no-deps@2.0.0"');
   });
 
-  test.concurrent("keeps an npm: alias prefix", async () => {
+  test("keeps an npm: alias prefix", async () => {
     await using server = noDeps1x();
     using dir = await setup(server, { name: "foo", dependencies: { nd: "npm:no-deps@^1.0.0" } });
     expect(await lock(dir)).toContain('"no-deps@1.1.0"');
@@ -4138,7 +4138,7 @@ describe("`bun audit fix --latest`", () => {
     await runBunInstall(installEnv(dir), dir, { frozenLockfile: true });
   });
 
-  test.concurrent("install.exact writes the bare version", async () => {
+  test("install.exact writes the bare version", async () => {
     await using server = noDeps1x();
     using dir = await setup(server, { name: "foo", dependencies: { "no-deps": "^1.0.0" } });
     await write(
@@ -4156,7 +4156,7 @@ describe("`bun audit fix --latest`", () => {
     expect(await lock(dir)).toContain('"no-deps@2.0.0"');
   });
 
-  test.concurrent("rewrites a workspace member's own range and leaves the root alone", async () => {
+  test("rewrites a workspace member's own range and leaves the root alone", async () => {
     await using server = noDeps1x();
     const rootPkgJson = JSON.stringify({ name: "root", workspaces: ["packages/*"] });
     using dir = await setup(server, rootPkgJson, {
@@ -4186,7 +4186,7 @@ describe("`bun audit fix --latest`", () => {
     await runBunInstall(installEnv(dir), dir, { frozenLockfile: true });
   });
 
-  test.concurrent("rewrites a ranged catalog entry and the member keeps `catalog:`", async () => {
+  test("rewrites a ranged catalog entry and the member keeps `catalog:`", async () => {
     await using server = noDeps1x();
     const member = JSON.stringify({ name: "a", dependencies: { "no-deps": "catalog:" } });
     using dir = await setup(
@@ -4219,7 +4219,7 @@ describe("`bun audit fix --latest`", () => {
     await runBunInstall(installEnv(dir), dir, { frozenLockfile: true });
   });
 
-  test.concurrent("--dry-run prints the package.json edit and writes nothing", async () => {
+  test("--dry-run prints the package.json edit and writes nothing", async () => {
     await using server = noDeps1x();
     using dir = await setup(server, { name: "foo", dependencies: { "no-deps": "^1.0.0" } });
     const pkgJsonBefore = await pkgJsonText(dir);
@@ -4242,7 +4242,7 @@ describe("`bun audit fix --latest`", () => {
     expect(await installedVersion(dir, "no-deps")).toBe("1.1.0");
   });
 
-  test.concurrent("--json carries the package.json edit", async () => {
+  test("--json carries the package.json edit", async () => {
     await using server = noDeps1x();
     using dir = await setup(server, { name: "foo", dependencies: { "no-deps": "^1.0.0" } });
 
@@ -4264,7 +4264,7 @@ describe("`bun audit fix --latest`", () => {
     expect(await lock(dir)).toContain('"no-deps@2.0.0"');
   });
 
-  test.concurrent("a package blocked only by a transitive dependent stays blocked", async () => {
+  test("a package blocked only by a transitive dependent stays blocked", async () => {
     await using server = startRegistry({ "no-deps": [adv("<1.1.0")] });
     using dir = await setup(server, { name: "foo", dependencies: { "one-dep": "1.0.0" } });
     const lockBefore = await lock(dir);
@@ -4288,7 +4288,7 @@ describe("`bun audit fix --latest`", () => {
     expect(await lock(dir)).toBe(lockBefore);
   });
 
-  test.concurrent("a version held by an overrides entry stays blocked", async () => {
+  test("a version held by an overrides entry stays blocked", async () => {
     await using server = startRegistry({ "a-dep": [adv("<1.0.4")] });
     using dir = await setup(server, {
       name: "foo",
@@ -4308,7 +4308,7 @@ describe("`bun audit fix --latest`", () => {
     expect(await lock(dir)).toBe(lockBefore);
   });
 
-  test.concurrent("a bundled dependency stays blocked without a --latest hint", async () => {
+  test("a bundled dependency stays blocked without a --latest hint", async () => {
     await using server = startRegistry({ "no-deps": [adv("<1.0.1")] });
     using dir = await setup(server, { name: "foo", dependencies: { "bundled-1": "1.0.0" } });
     const lockBefore = await lock(dir);
@@ -4321,7 +4321,7 @@ describe("`bun audit fix --latest`", () => {
     expect(await lock(dir)).toBe(lockBefore);
   });
 
-  test.concurrent("a fix inside the declared range does not touch package.json", async () => {
+  test("a fix inside the declared range does not touch package.json", async () => {
     await using server = startRegistry({ "a-dep": [adv("<1.0.4")] });
     using dir = await setupVulnerableADep(server);
     const pkgJsonBefore = await pkgJsonText(dir);
@@ -4335,7 +4335,7 @@ describe("`bun audit fix --latest`", () => {
     expect(await lock(dir)).toContain('"a-dep@1.0.4"');
   });
 
-  test.concurrent("`bun audit --latest` without fix is rejected before the registry is contacted", async () => {
+  test("`bun audit --latest` without fix is rejected before the registry is contacted", async () => {
     const bulkHits = { count: 0 };
     await using server = startRegistry({ "a-dep": [adv("<1.0.4")] }, { bulkHits });
     using dir = await setupVulnerableADep(server);

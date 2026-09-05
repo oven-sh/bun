@@ -358,7 +358,7 @@ describe.concurrent("socket", () => {
     expect(exitCode).toBe(0);
   }, 60_000);
 
-  it.skipIf(isWindows)("kqueue should not dispatch spurious drain events on readable", async () => {
+  it.skipIf(isWindows || Bun.env.BUN_OHOS === "1")("kqueue should not dispatch spurious drain events on readable", async () => {
     expect(await bunRun(fileURLToPath(new URL("./kqueue-filter-coalesce-fixture.ts", import.meta.url)))).toSpawn();
   });
 

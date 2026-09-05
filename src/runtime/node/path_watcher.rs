@@ -931,7 +931,7 @@ impl Linux {
                     return;
                 }
             }
-            let n = rc as usize;
+            let mut n = rc as usize;
             if n == 0 {
                 continue;
             }
@@ -1020,6 +1020,59 @@ impl Linux {
                 };
 
                 let is_dir_child = ev.mask & IN::ISDIR != 0;
+                // Suppress the OpenHarmony creation-labeling ATTRIB (see
+                // `attrib_shadowed_by_create`). `i` already points past this
+                // event, i.e. at the first lookahead candidate.
+                if ev.mask & IN::ATTRIB != 0 && !name.is_empty() {
+                    let attrib_wd = ev.watch_descriptor;
+                    let mut shadowed =
+                        attrib_shadowed_by_create(&buf.0[..n], i, attrib_wd, name);
+                    if !shadowed && n < buf.0.len() {
+                        // The labeling CRE is queued by the same syscall as the
+                        // ATTRIB, but on a quiet queue the reader wakes on the
+                        // ATTRIB before the syscall reaches the create hook, so
+                        // same-batch lookahead alone races (observed on-device:
+                        // creates through a symlinked dir still reported
+                        // "change" first). Give the kernel a brief window and
+                        // re-check across the read boundary. Newly read events
+                        // extend this batch (`n` grows), so ordering is intact.
+                        // `ev`/`name` are raw-pointer-derived and the re-read
+                        // only writes the disjoint tail `buf.0[n..]`, so both
+                        // stay valid across it.
+                        let mut pfd = [sys::posix::PollFd {
+                            fd: fd.native(),
+                            events: sys::posix::POLL_IN,
+                            revents: 0,
+                        }];
+                        if matches!(sys::posix::poll(&mut pfd, 2), Ok(rc) if rc > 0) {
+                            // SAFETY: `n < buf.0.len()`, so `buf.0[n..]` is a
+                            // non-empty writable tail of the boxed buffer.
+                            let rc2 = unsafe {
+                                sys::linux::read(
+                                    fd.native(),
+                                    buf.0.as_mut_ptr().add(n),
+                                    buf.0.len() - n,
+                                )
+                            };
+                            let got = match sys::get_errno(rc2) {
+                                E::SUCCESS => rc2 as usize,
+                                _ => 0,
+                            };
+                            if got > 0 {
+                                n += got;
+                                shadowed = attrib_shadowed_by_create(
+                                    &buf.0[..n],
+                                    i,
+                                    attrib_wd,
+                                    name,
+                                );
+                            }
+                        }
+                    }
+                    if shadowed {
+                        continue;
+                    }
+                }
                 let event_type: WatchEventKind = if ev.mask
                     & (IN::CREATE
                         | IN::DELETE
@@ -1201,6 +1254,50 @@ impl Linux {
 /// field naming there is `watch_descriptor` / `name_len`.
 #[cfg(any(target_os = "linux", target_os = "android"))]
 use bun_watcher::inotify_watcher::Event as InotifyEvent;
+
+/// OpenHarmony kernels queue a spurious IN_ATTRIB immediately before IN_CREATE
+/// when an inode is created via open(O_CREAT)/mkdir (security labeling at
+/// creation; established by a raw inotify probe against the device kernel,
+/// which shows ATTR→CRE where a stock-Linux container shows CRE alone — and
+/// node on the device surfaces the same leading "change"). Every other
+/// platform guarantees a new entry's first event is "rename", and bun's own
+/// watcher tests encode that ordering, so the reader suppresses the labeling
+/// ATTRIB when a later event in the same read buffer is an IN_CREATE for the
+/// same (wd, name). Genuine attribute changes (chmod/chown/utimens) are never
+/// followed by IN_CREATE and pass through untouched. The two events are
+/// queued back-to-back by the same syscall; the small lookahead bound covers
+/// interleaving from other writers without an O(n²) scan on ATTRIB-heavy
+/// batches (a mass chmod never matches anyway).
+#[cfg(any(target_os = "linux", target_os = "android"))]
+fn attrib_shadowed_by_create(buf: &[u8], mut off: usize, wd: i32, name: &[u8]) -> bool {
+    const HEADER: usize = core::mem::size_of::<InotifyEvent>();
+    for _ in 0..16 {
+        if off + HEADER > buf.len() {
+            return false;
+        }
+        // SAFETY: same guarantees as the reader loop — inotify returns whole
+        // events, `buf` came from the 4-byte-aligned AlignedBuf, and every
+        // offset derived from kernel-reported name_len stays in bounds
+        // (checked immediately below).
+        let ev: &InotifyEvent = unsafe { &*buf.as_ptr().add(off).cast::<InotifyEvent>() };
+        let next = off + HEADER + ev.name_len as usize;
+        if next > buf.len() {
+            return false;
+        }
+        if ev.watch_descriptor == wd && ev.mask & bun_sys::linux::IN::CREATE != 0 {
+            let raw = &buf[off + HEADER..next];
+            let ev_name = match raw.iter().position(|&b| b == 0) {
+                Some(z) => &raw[..z],
+                None => raw,
+            };
+            if ev_name == name {
+                return true;
+            }
+        }
+        off = next;
+    }
+    false
+}
 
 // ────────────────────────────────────────────────────────────────────────────────
 // Darwin

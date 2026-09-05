@@ -7,13 +7,23 @@
 
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe, isLinux, tempDir } from "harness";
-import { readdirSync, rmSync } from "node:fs";
+import { existsSync, readdirSync, rmSync } from "node:fs";
 import { join } from "node:path";
 
 const cc = isLinux ? (Bun.which("cc") ?? Bun.which("gcc")) : null;
 
 // Paths under `root` whose bytes match `expected`. Content-match (not name
 // pattern) keeps the check robust against any future naming scheme.
+//
+// On OHOS every dlopen'ed ELF is re-signed in place (`.codesign` section
+// injected) before the loader accepts it, so the extracted file's bytes no
+// longer equal the embedded ones. The dedup property under test is the
+// *count* of extracted files, so on OHOS match by `.so` presence instead.
+const isOhos =
+  Bun.env.BUN_OHOS === "1" ||
+  // OHOS musl loader lives under /system/lib; absence of BUN_OHOS (single
+  // test runs) shouldn't change behavior.
+  (process.platform === "linux" && process.arch === "arm64" && existsSync("/system/lib/ld-musl-aarch64.so.1"));
 async function findExtractedCopies(root: string, expected: Buffer): Promise<string[]> {
   let entries: string[];
   try {
@@ -25,6 +35,10 @@ async function findExtractedCopies(root: string, expected: Buffer): Promise<stri
   for (const rel of entries) {
     if (!rel.endsWith(".so")) continue;
     const p = join(root, rel);
+    if (isOhos) {
+      matches.push(p);
+      continue;
+    }
     try {
       const f = Bun.file(p);
       if (f.size !== expected.length) continue;

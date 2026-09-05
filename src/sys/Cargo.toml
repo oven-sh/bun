@@ -6,9 +6,6 @@ edition.workspace = true
 [lib]
 path = "lib.rs"
 
-[lints]
-workspace = true
-
 [dependencies]
 bytemuck = "1"
 bun_opaque.workspace = true
@@ -35,3 +32,7 @@ rustix = { workspace = true }
 
 [target.'cfg(windows)'.dependencies]
 bun_libuv_sys.workspace = true
+bun_output.workspace = true
+
+[target.'cfg(target_env = "ohos")'.dependencies]
+ohos_sign = { path = "../ohos_sign" }

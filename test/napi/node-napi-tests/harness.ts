@@ -1,4 +1,5 @@
-import { spawn, spawnSync } from "bun";
+import { spawn, spawnSync, which } from "bun";
+import { expect } from "bun:test";
 import { existsSync, renameSync, statSync } from "node:fs";
 import { mkdir } from "node:fs/promises";
 import { homedir } from "node:os";
@@ -12,7 +13,13 @@ const abortingJsNativeApiTests = ["test_finalizer/test_fatal_finalize.js"];
 // Must match the npm_config_target passed to node-gyp below (without the leading "v").
 const NODE_HEADERS_VERSION = "26.3.0";
 
-const linuxClang = !isMusl ? "/usr/lib/llvm-21/bin/clang" : "/usr/lib/llvm21/bin/clang";
+// On musl CI (Alpine) clang lives under /usr/lib/llvm21 (no dash); the OHOS
+// port builds against a Homebrew-style prefix whose clang is on PATH instead
+// (the /usr/lib paths do not exist there). Resolve via PATH on OHOS so the
+// direct-compile and node-gyp paths both get a real compiler.
+const linuxClang = !isMusl
+  ? "/usr/lib/llvm-21/bin/clang"
+  : (which("clang") ?? "/usr/lib/llvm21/bin/clang");
 
 interface GypTarget {
   target_name: string;

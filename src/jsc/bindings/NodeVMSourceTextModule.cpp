@@ -165,6 +165,8 @@ JSValue NodeVMSourceTextModule::createModuleRecord(JSGlobalObject* globalObject)
         return {};
     }
 
+    JSC::VariableEnvironment declaredVariables;
+    JSC::VariableEnvironment lexicalVariables;
     ModuleAnalyzer analyzer(globalObject, Identifier::fromString(vm, m_identifier), m_sourceCode, AllFeatures);
 
     RETURN_IF_EXCEPTION(scope, {});

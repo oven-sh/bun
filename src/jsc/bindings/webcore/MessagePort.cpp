@@ -411,7 +411,27 @@ void MessagePort::contextDestroyed()
     ASSERT(scriptExecutionContext());
 
     close();
+
+    // A close() that ran while the context was still alive set
+    // m_closeEventPending and queued the deferred close-event task. If the
+    // context dies before that task is dispatched — a Worker terminated
+    // right after closing its ports is the ordinary case — the task is
+    // dropped with the queue and the flag stays set forever.
+    // hasPendingActivity() reports true for as long as it is set, so the GC
+    // never collects the wrapper and the port leaks for the life of the
+    // process. close() cannot clear it on this path: m_isDetached is
+    // already true by then, so the call above returns at its first line.
+    //
+    // Measured before the fix: a worker creating 8000 MessageChannels,
+    // closing every port, then being terminated leaked ~8 MB per cycle,
+    // growing linearly (4/8/16/32 cycles → 33/65/127/254 MB). Giving the
+    // loop 300ms to drain the queue first brought the same workload down to
+    // allocator noise, which is what identified the pending task as the
+    // retainer.
+    m_closeEventPending.store(false, std::memory_order_release);
+
     ActiveDOMObject::contextDestroyed();
+
 }
 
 bool MessagePort::virtualHasPendingActivity() const

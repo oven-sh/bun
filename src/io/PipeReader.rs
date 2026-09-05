@@ -210,6 +210,12 @@ bitflags::bitflags! {
         const USE_PREAD                = 1 << 8;
         const IS_PAUSED                = 1 << 9;
         const KEEP_ALIVE               = 1 << 10; // default true
+        /// Opt-in: enroll this reader's fd in `epoll_rearm_watchdog` (a
+        /// confirmed real-device OHOS kernel epoll defect recovery -- see
+        /// `Flags::EpollRearmWatch` in posix_event_loop.rs). Set before the
+        /// first `register_poll()`/`read()` call; currently only
+        /// `Bun.Terminal`'s PTY-master reader.
+        const EPOLL_REARM_WATCH        = 1 << 11;
     }
 }
 
@@ -533,6 +539,10 @@ impl PosixBufferedReader {
             && self.flags.contains(PosixFlags::KEEP_ALIVE)
         {
             poll.enable_keeping_process_alive(ev);
+        }
+
+        if self.flags.contains(PosixFlags::EPOLL_REARM_WATCH) {
+            poll.set_flag(FilePollFlag::EpollRearmWatch);
         }
 
         match poll.register_with_fd(lp.cast(), FilePollKind::Readable, poll.fd()) {

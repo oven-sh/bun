@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, isASAN } from "harness";
+import { bunEnv, bunExe, isASAN, isOhos } from "harness";
 
 test("sleep should saturate timeout values", async () => {
   const fixturesThatShouldTimeout = [
@@ -19,8 +19,9 @@ test("sleep should saturate timeout values", async () => {
   ];
   // ASAN with the system allocator makes subprocess startup dramatically
   // slower; spawning ~11 children can take well over 10s, so the "completes
-  // instantly" bound needs much more headroom.
-  const ASAN_MULTIPLIER = isASAN ? 60 : 1;
+  // instantly" bound needs much more headroom. OHOS spawns ~600ms/child
+  // (11 children ≈ 7.4s measured), so it gets headroom too.
+  const ASAN_MULTIPLIER = isASAN ? 60 : isOhos ? 10 : 1;
 
   const toKill = fixturesThatShouldTimeout.map(timeout => {
     const proc = Bun.spawn({

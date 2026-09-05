@@ -6,6 +6,13 @@
 
 #undef HWY_TARGET_INCLUDE
 #define HWY_TARGET_INCLUDE "highway_xml.cpp"
+// BitsFromMask only defined for fixed-size SVE (SVE2_128/SVE_256) and
+// NEON, not for scalable SVE/SVE2. Disable all SVE on ARM64 and use NEON
+// instead. Not gated on __OHOS__ — any aarch64 host using scalable SVE
+// hits the same missing symbol (same guard as highway_sourcemap.cpp).
+#if defined(__aarch64__)
+#define HWY_DISABLED_TARGETS (HWY_ALL_SVE)
+#endif
 #include <hwy/foreach_target.h>
 #include <hwy/highway.h>
 #include "highway_dispatch.h"

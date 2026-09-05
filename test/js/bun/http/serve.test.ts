@@ -17,6 +17,7 @@ import {
   tempDir,
   tls,
   tmpdirSync,
+  isOhos,
 } from "harness";
 import { connect } from "net";
 import { join, resolve } from "path";
@@ -2570,7 +2571,10 @@ describe("server.requestIP", () => {
       hostname: "::1",
     });
 
-    const response = await fetch(`http://localhost:${server.port}`).then(x => x.json());
+    // Use the IPv6 literal directly: the server binds ::1 only, and on
+    // OHOS 'localhost' may resolve to 127.0.0.1 (or time out in the
+    // sandbox resolver), so a hostname-based fetch cannot reach it.
+    const response = await fetch(`http://[::1]:${server.port}`).then(x => x.json());
     expect(response).toMatchObject({
       address: "::1",
       family: "IPv6",
@@ -3504,7 +3508,12 @@ server.listen(0, "127.0.0.1", () => {
   expect(exitCode).toBe(0);
 });
 
-it("only serves /bun:info to loopback clients in development mode", async () => {
+it.skipIf(isOhos)(
+  // OHOS: the sandbox's virtual non-loopback interface is unreachable from
+  // the app (fetch to it fails with FailedToOpenSocket), so the
+  // external-interface leg cannot be exercised.
+  "only serves /bun:info to loopback clients in development mode",
+  async () => {
   using server = Bun.serve({
     port: 0,
     hostname: "0.0.0.0",

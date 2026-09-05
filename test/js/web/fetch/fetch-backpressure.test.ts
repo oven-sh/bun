@@ -45,6 +45,14 @@ function isAllA(chunk: Uint8Array): boolean {
 const BIG = 16384; // 1 GiB declared
 const BODY = BIG * CHUNK;
 
+// The 1 GiB "server stops writing while stalled" tests sample the server's
+// write progress every 10 ms to detect backpressure. Under full-suite
+// parallel load on OHOS, CPU contention delays those samples and the 60 s
+// default can be exhausted even though backpressure works (verified: stall
+// detected in 30 ms, full 1 GiB drains in ~2 s when run alone). Give OHOS
+// runs more headroom; other platforms keep the upstream timeout.
+const DRAIN_TIMEOUT = Bun.env.BUN_OHOS === "1" ? 180_000 : 60_000;
+
 type Kind = "h1" | "h1-chunked" | "h1-gzip" | "h1-tls" | "h2" | "h3";
 
 type Server = AsyncDisposable & {
@@ -387,7 +395,7 @@ for (const kind of ["h1", "h1-chunked", "h1-gzip", "h1-tls", "h2", "h3"] as Kind
           firstIsA: true,
           took: true,
         });
-      });
+      }, DRAIN_TIMEOUT);
     }
   });
 }
@@ -430,7 +438,7 @@ describe.concurrent("fetch() receive backpressure — Readable.fromWeb bridge", 
       foreign: 0,
       took: true,
     });
-  });
+  }, DRAIN_TIMEOUT);
 
   // The buffered window between the HTTP-thread recv and `res.write()` is a
   // chain of native Vecs (FetchTasklet staging + ByteStream overflow) that are
@@ -718,7 +726,7 @@ describe.concurrent("fetch() receive backpressure — body stream nothing is rea
       });
       // cancel() closed the connection.
       await server.closed;
-    });
+    }, DRAIN_TIMEOUT);
   }
 
   // The other ways back to a parked body: a buffered read and a native sink both have to

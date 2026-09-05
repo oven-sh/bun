@@ -4261,6 +4261,14 @@ function normalizeArgs(args: unknown[]): [options: Record<PropertyKey, any>, cb:
     }
   }
 
+  // node accepts a net.AddressInfo object ({ address, family, port }) as
+  // connect options (what server.address() returns); map its `address`
+  // field onto host so "::" / "127.0.0.1" connect directly instead of
+  // falling back to a "localhost" lookup.
+  if (options.host === undefined && typeof options.address === "string") {
+    options.host = options.address;
+  }
+
   const cb = args[args.length - 1];
   if (typeof cb !== "function") arr = [options, null];
   else arr = [options, cb];

@@ -446,6 +446,23 @@ impl bun_core::output::ErrName for &Error {
 }
 
 // ──────────────────────────────────────────────────────────────────────────
+// `From<bun_sys::Error> for bun_core::Error` — orphan rule lets the higher
+// tier (sys) implement this for its own type. Needed by `CrateResult` call
+// sites that use `?` on `bun_sys::Error`.
+// ──────────────────────────────────────────────────────────────────────────
+impl From<Error> for bun_core::Error {
+    fn from(e: Error) -> Self {
+        match e.errno as u16 {
+            x if x == E::EACCES as u16 || x == E::EPERM as u16 => Self::AccessDenied,
+            x if x == E::ENOENT as u16 => Self::FileNotFound,
+            x if x == E::ENAMETOOLONG as u16 => Self::NameTooLong,
+            x if x == E::ENOSPC as u16 => Self::NoSpaceLeft,
+            _ => Self::Unexpected,
+        }
+    }
+}
+
+// ──────────────────────────────────────────────────────────────────────────
 // `ReturnCodeExt` — `ReturnCode::to_error(tag) -> Option<Error>` lives here (not
 // in `bun_libuv_sys`) because `Error`/`Tag` are higher-tier types.
 // ──────────────────────────────────────────────────────────────────────────

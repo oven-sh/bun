@@ -692,7 +692,7 @@ fn is_exiting() -> bool {
 // args and are `noreturn`/kernel-validated — no memory-safety preconditions,
 // so `safe fn` discharges the link-time proof and the call sites are plain
 // calls. `#[link_name]` avoids colliding with this module's own `pub fn exit`.
-#[allow(suspicious_runtime_symbol_definitions)] // signatures are ABI-identical; `safe fn` is intentional (above)
+#[allow(suspicious_runtime_symbol_definitions, unknown_lints)] // signatures are ABI-identical; `safe fn` is intentional (above)
 unsafe extern "C" {
     #[link_name = "abort"]
     safe fn libc_abort() -> !;

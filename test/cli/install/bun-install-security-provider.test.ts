@@ -93,7 +93,8 @@ function test(
     {
       // Default raised from 5_000 because tests now run concurrently; per-test
       // wall time is higher under CPU contention even though total time drops.
-      timeout: options.testTimeout ?? 30_000,
+      // OHOS: full runs under 5-way parallel load push scanner IPC past 30s.
+      timeout: options.testTimeout ?? (Bun.env.BUN_OHOS === "1" ? 120_000 : 30_000),
     },
   );
 }

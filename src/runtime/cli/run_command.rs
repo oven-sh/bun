@@ -626,8 +626,35 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
 
         // SAFETY: `Transpiler::init` always sets `fs` to the process singleton.
         let top_level_dir = unsafe { (*this_transpiler.fs).top_level_dir };
-        let root_dir_info: bun_resolver::DirInfoRef =
+        // On OHOS, a permission-denied top-level dir (e.g. a FUSE mount where
+        // getcwd/openat is blocked by SELinux) is not fatal — the resolver
+        // already silences EPERM/EACCES internally (see the matching handling
+        // at resolver.rs:4454), and this recovers with a $HOME/"/" fallback
+        // DirInfo instead. Everywhere else, a failure to read the top-level
+        // directory is a real, fatal error and must be reported as such —
+        // restore that upstream behavior exactly.
+        //
+        // The recovery is limited to `with_linker` callers (install and
+        // friends), which need a resolver root but never read the cwd's
+        // package.json as an identity. `bun run <script>` (with_linker=false)
+        // must NOT recover: it looks the script up in
+        // `root_dir_info.enclosing_package_json`, so a $HOME fallback silently
+        // runs $HOME's same-named script instead of the project's, with no
+        // diagnostic — measured: a project defining `start` in an unreadable
+        // cwd ran $HOME's `start`, and inherited its npm_package_name/version/
+        // config_* plus a PATH led by $HOME/node_modules/.bin. Failing loudly
+        // is the only safe answer when the directory the user pointed at
+        // cannot be read.
+        let root_dir_info: Option<bun_resolver::DirInfoRef> =
             match this_transpiler.resolver.read_dir_info(top_level_dir) {
+                #[cfg(target_env = "ohos")]
+                Err(err)
+                    if with_linker
+                        && (err == bun_resolver::Error::Sys(bun_errno::SystemErrno::EPERM)
+                            || err == bun_resolver::Error::Sys(bun_errno::SystemErrno::EACCES)) =>
+                {
+                    None
+                }
                 Err(err) => {
                     if !opts.log_errors {
                         return Err(crate::Error::CouldntReadCurrentDirectory);
@@ -647,6 +674,8 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
                     Output::flush();
                     return Err(err.into());
                 }
+                #[cfg(target_env = "ohos")]
+                Ok(None) if with_linker => None,
                 Ok(None) => {
                     // SAFETY: see `Err` arm above.
                     let _ = unsafe { ctx.log() }.print(std::ptr::from_mut::<bun_core::io::Writer>(
@@ -656,8 +685,52 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
                     Output::flush();
                     return Err(crate::Error::CouldntReadCurrentDirectory);
                 }
-                Ok(Some(info)) => info,
+                Ok(Some(info)) => Some(info),
             };
+        // OHOS-only fallback root DirInfo for the two None cases above (only
+        // reachable with `with_linker`; see the arms). Uses $HOME which is
+        // always readable; "/" may be blocked by SELinux. Returns an error
+        // only when neither path is readable.
+        //
+        // This root exists purely so the resolver has somewhere to start. It
+        // is NOT the user's project, so `root_dir_info_is_fallback` gates the
+        // npm_package_* seeding below: those variables describe "the package
+        // being run", and taking them from $HOME's package.json hands the
+        // script a different package's name, version and entire config block.
+        #[cfg(target_env = "ohos")]
+        let mut root_dir_info_is_fallback = false;
+        #[cfg(target_env = "ohos")]
+        let root_dir_info: bun_resolver::DirInfoRef = match root_dir_info {
+            Some(info) => info,
+            None => {
+                root_dir_info_is_fallback = true;
+                let home = std::env::var("HOME").unwrap_or_default();
+                let info = this_transpiler
+                    .resolver
+                    .read_dir_info_ignore_error(if home.is_empty() { b"/" } else { home.as_bytes() })
+                    .or_else(|| this_transpiler.resolver.read_dir_info_ignore_error(b"/"))
+                    .ok_or(crate::Error::CouldntReadCurrentDirectory)?;
+                // Say so. A silent substitution makes every downstream
+                // oddity (wrong package name, unexpected $PATH entry) look
+                // like it came from somewhere else.
+                if opts.log_errors {
+                    pretty_errorln!(
+                        "<r><yellow>warn<r><d>:<r> cannot read {}; resolving from <b>{}<r> instead",
+                        bun_core::fmt::QuotedFormatter {
+                            text: top_level_dir
+                        },
+                        bstr::BStr::new(info.abs_path),
+                    );
+                    Output::flush();
+                }
+                info
+            }
+        };
+        // Off OHOS, every arm above either diverges (return Err(...)) or
+        // produces Some(info), so this is always populated.
+        #[cfg(not(target_env = "ohos"))]
+        let root_dir_info: bun_resolver::DirInfoRef =
+            root_dir_info.expect("Ok(None)/EPERM/EACCES arms are OHOS-only; other arms diverge");
 
         this_transpiler.resolver.store_fd = false;
 
@@ -736,7 +809,15 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
             }
         }
 
-        if let Some(package_json) = root_dir_info.enclosing_package_json {
+        // Skip when the root is the $HOME/"/" fallback rather than the user's
+        // directory: npm_package_name/version/config_* describe the package
+        // being run, and a substituted root has no claim to that identity.
+        #[cfg(target_env = "ohos")]
+        let seed_package_env = !root_dir_info_is_fallback;
+        #[cfg(not(target_env = "ohos"))]
+        let seed_package_env = true;
+        if let Some(package_json) = root_dir_info.enclosing_package_json.filter(|_| seed_package_env)
+        {
             if !package_json.name.is_empty() {
                 if env_loader.map.get(NpmArgs::PACKAGE_NAME).is_none() {
                     env_loader
@@ -1746,6 +1827,7 @@ impl RunCommand {
     // Canonical definition lives in `bun_install::RunCommand` (lower tier so
     // the package manager can use it without depending on `bun_runtime`).
     #[cfg(not(windows))]
+    #[allow(dead_code)] // OHOS uses the runtime bun_node_dir_bytes() instead.
     pub(crate) const BUN_NODE_DIR: &'static str = bun_install::RunCommand::BUN_NODE_DIR;
 
     /// Returns the path to the
@@ -1753,8 +1835,28 @@ impl RunCommand {
     pub(crate) fn bun_node_file_utf8() -> crate::Result<&'static ZStr> {
         #[cfg(not(windows))]
         {
-            const BUN_NODE_DIR_Z: &str = const_format::concatcp!(RunCommand::BUN_NODE_DIR, "\0");
-            Ok(ZStr::from_static(BUN_NODE_DIR_Z.as_bytes()))
+            #[cfg(target_env = "ohos")]
+            {
+                // OHOS: shim dir lives under $TMPDIR (see
+                // RunCommand::bun_node_dir_bytes). Resolve once, leak the
+                // buffer (process-lifetime, one allocation).
+                use std::sync::OnceLock;
+                static NODE_FILE: OnceLock<&'static ZStr> = OnceLock::new();
+                Ok(NODE_FILE.get_or_init(|| {
+                    let dir = bun_install::RunCommand::bun_node_dir_bytes();
+                    let mut buf = Vec::with_capacity(dir.len() + 6);
+                    buf.extend_from_slice(dir);
+                    buf.extend_from_slice(b"/node\0");
+                    let buf = buf.leak();
+                    // SAFETY: buf is NUL-terminated and never freed.
+                    unsafe { ZStr::from_raw(buf.as_ptr(), dir.len() + 5) }
+                }))
+            }
+            #[cfg(not(target_env = "ohos"))]
+            {
+                const BUN_NODE_DIR_Z: &str = const_format::concatcp!(RunCommand::BUN_NODE_DIR, "\0");
+                Ok(ZStr::from_static(BUN_NODE_DIR_Z.as_bytes()))
+            }
         }
         #[cfg(windows)]
         {
@@ -2922,6 +3024,56 @@ impl RunCommand {
         // their own `.env.{mode}` resolution (Vite etc.) don't see pre-populated
         // values. Explicit `--env-file` is still honored. #6338
         ctx.args.disable_default_env_files = true;
+
+        // `bun node <file>`: argv[1]=="node" made which() take the node
+        // emulation path, but the literal "node" positional is still in
+        // ctx.positionals[0] — clap's stop_after_positional_at=1 parked
+        // everything after it in passthrough, so node flags like `-e` were
+        // never parsed either. Remove the "node" placeholder and re-parse the
+        // passthrough head as node flags. argv0=node (symlink) keeps
+        // IS_NODE_ARG false and never takes this path.
+        if crate::cli::IS_NODE_ARG.load(::core::sync::atomic::Ordering::Relaxed) {
+            if ctx.positionals.first().is_some_and(|p| p.as_ref() == b"node") {
+                ctx.positionals.remove(0);
+                // Re-parse node flags parked in passthrough (they were never
+                // seen by clap): -e/--eval <code>, -p/--print <code>,
+                // --version, --revision, --help.
+                while let Some(first) = ctx.passthrough.first().cloned() {
+                    let first: &[u8] = &first;
+                    if first == b"--" {
+                        ctx.passthrough.remove(0);
+                        break;
+                    }
+                    if first == b"-e" || first == b"--eval" {
+                        ctx.passthrough.remove(0);
+                        if !ctx.passthrough.is_empty() {
+                            ctx.runtime_options.eval.script = ctx.passthrough.remove(0);
+                        }
+                    } else if first == b"-p" || first == b"--print" {
+                        ctx.passthrough.remove(0);
+                        if !ctx.passthrough.is_empty() {
+                            ctx.runtime_options.eval.script = ctx.passthrough.remove(0);
+                            ctx.runtime_options.eval.eval_and_print = true;
+                        }
+                    } else if first == b"--version" {
+                        crate::cli::print_version_and_exit();
+                    } else if first == b"--revision" {
+                        crate::cli::print_revision_and_exit();
+                    } else if first == b"--help" || first == b"-h" {
+                        crate::cli::command::tag_print_help(CommandTag::RunAsNodeCommand, true);
+                        Output::flush();
+                        bun_core::Global::exit(0);
+                    } else {
+                        break;
+                    }
+                }
+                if ctx.positionals.is_empty() && !ctx.passthrough.is_empty() {
+                    // The real target file (or remaining arg) parked in
+                    // passthrough; promote it back.
+                    ctx.positionals.push(ctx.passthrough.remove(0));
+                }
+            }
+        }
 
         // `node --interactive [-e code]`: same gate as AutoCommand — a script
         // positional wins, and `-p` currently bypasses the REPL (see mod.rs).

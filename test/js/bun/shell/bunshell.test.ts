@@ -8,7 +8,18 @@ import { $ } from "bun";
 import { afterAll, beforeAll, describe, expect, it, test } from "bun:test";
 import { chmodSync, mkdirSync } from "fs";
 import { mkdir, rm, stat } from "fs/promises";
-import { bunExe, isPosix, isWindows, rss, runWithErrorPromise, tempDir, tempDirWithFiles, tmpdirSync } from "harness";
+import {
+  bunExe,
+  isOHOS,
+  isOhos,
+  isPosix,
+  isWindows,
+  rss,
+  runWithErrorPromise,
+  tempDir,
+  tempDirWithFiles,
+  tmpdirSync,
+} from "harness";
 import { join, sep } from "path";
 import { createTestBuilder, sortedShellOutput } from "./util";
 const TestBuilder = createTestBuilder(import.meta.path);
@@ -578,7 +589,12 @@ describe("bunshell", () => {
   // its pipes (EMFILE). The pipeline must print the error on its stderr and
   // finish with exit code 1 so the `$` promise settles and the script goes on,
   // instead of throwing from inside the interpreter and never completing.
-  describe.skipIf(isWindows)("pipeline that fails to create its pipes", () => {
+  // OHOS does not honor `ulimit -n` the way this test needs (its toybox `ulimit`
+  // is effectively a no-op), so the fd cap can never be hit and EMFILE is never
+  // triggered there. The block is already skipped on Windows for the same reason;
+  // on OHOS Bun reports `process.platform === "linux"`, so the musl-loader check
+  // in `isOhos` (not `isOHOS`) is what detects the platform and skips it.
+  describe.skipIf(isWindows || isOHOS || isOhos)("pipeline that fails to create its pipes", () => {
     const runWithFdLimit = (limit: number, script: string, env = bunEnv) =>
       Bun.spawn({
         cmd: ["/bin/sh", "-c", `ulimit -n ${limit} && exec "$1" -e "$2"`, "sh", bunExe(), script],

@@ -2,7 +2,7 @@ import type { BunLockFile } from "bun";
 import { $, file, spawn } from "bun";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, setDefaultTimeout, test } from "bun:test";
 import { access, appendFile, copyFile, mkdir, readlink, rm, writeFile } from "fs/promises";
-import { bunExe, bunEnv as env, readdirSorted, tmpdirSync, toBeValidBin, toBeWorkspaceLink, toHaveBins } from "harness";
+import { bunExe, bunEnv as env, readdirSorted, tmpdirSync, toBeValidBin, toBeWorkspaceLink, toHaveBins, isOhos } from "harness";
 import { join, relative, resolve } from "path";
 import { pathToFileURL } from "url";
 import {
@@ -1520,7 +1520,9 @@ const gitNameTests = [
   { desc: "git dep with package.json with empty name", dep: "dylan-conway/install-test-3#v1.0.2" },
 ];
 for (const { desc, dep } of gitNameTests) {
-  it(desc, async () => {
+  // OHOS: these clone dylan-conway/install-test-3 from github.com, which the
+  // app sandbox cannot reach (72s timeout observed).
+  it.skipIf(isOhos)(desc, async () => {
     await Bun.write(
       join(package_dir, "package.json"),
       JSON.stringify({

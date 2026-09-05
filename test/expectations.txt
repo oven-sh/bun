@@ -35,3 +35,28 @@
 # only hold on the distributing model. Passes on macOS and Windows.
 # (Verified still failing on every Linux lane, build 87834.)
 [ LINUX ] test/js/node/test/sequential/test-net-listen-shared-ports.js [ FAIL ] # SO_REUSEPORT shared-listener semantics on Linux
+
+# --- js/bun/spawn: getMaxFD leak detection false positive on OHOS ---
+# OHOS kernel close() leaves a stale /proc/self/fd entry (fd number is actually
+# reusable — verified: socketpair reuses the closed fd number immediately).
+# getMaxFD() reads /proc/self/fd and is fooled by the stale entry, so the
+# "didn't leak any fds" assertion fails 100% deterministically. Not a real bun fd leak.
+[ OPENHARMONY ] test/js/bun/spawn/spawn-streaming-stdin.test.ts [ Skip ] # getMaxFD leak check is a false positive (OHOS kernel stale /proc/self/fd entry after close)
+[ OPENHARMONY ] test/js/web/fetch/fetch-tcp-keepalive.test.ts [ Skip ] # /proc/self/net/tcp blocked by OHOS app sandbox (EACCES); the LD_PRELOAD shim half already verifies SO_KEEPALIVE is set, but the /proc/net/tcp timer-state half cannot run
+
+# ── js/third_party: external-service / platform-binding deps unavailable on OHOS ──
+# CI getSecret() throws when a secret is missing, so the key-gated suites fail
+# on OHOS instead of skipping (the sandbox has none of these services). pnpm /
+# next-auth need the npm registry / a live service; grpc-js resolves DNS names
+# through the sandbox resolver; @napi-rs/canvas ships no ohos skia binding.
+[ OPENHARMONY ] test/js/third_party/@azure/service-bus/azure-service-bus.test.ts [ Skip ] # needs external service credentials
+[ OPENHARMONY ] test/js/third_party/@napi-rs/canvas/napi-rs-canvas.test.ts [ Skip ] # no skia binding for openharmony-arm64
+[ OPENHARMONY ] test/js/third_party/grpc-js/test-resolver.test.ts [ Skip ] # DNS resolution through the sandbox resolver
+[ OPENHARMONY ] test/js/third_party/mongodb/mongodb.test.ts [ Skip ] # needs external service credentials
+[ OPENHARMONY ] test/js/third_party/next-auth/next-auth.test.ts [ Skip ] # needs live auth service (90s timeout)
+[ OPENHARMONY ] test/js/third_party/nodemailer/nodemailer.test.ts [ Skip ] # needs external service credentials
+[ OPENHARMONY ] test/js/third_party/pg/pg.test.ts [ Skip ] # needs external service credentials
+[ OPENHARMONY ] test/js/third_party/pnpm/pnpm.test.ts [ Skip ] # needs npm registry install
+[ OPENHARMONY ] test/js/third_party/postgres/postgres.test.ts [ Skip ] # needs external service credentials
+[ OPENHARMONY ] test/js/third_party/prisma/prisma.test.ts [ Skip ] # needs external service credentials
+[ OPENHARMONY ] test/js/third_party/stripe/stripe.test.ts [ Skip ] # needs external service credentials

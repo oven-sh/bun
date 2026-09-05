@@ -447,6 +447,114 @@ describe("SETTINGS value ranges (checklist §6.5.2)", () => {
   });
 });
 
+// node reads the SETTINGS parameters from `options.settings`, and the session limits from the top
+// level of the options. A key in the other place is ignored: it is not validated, and a SETTINGS
+// key does not go on the wire.
+describe("session options and SETTINGS parameters", () => {
+  test.each([
+    ["Infinity", Infinity],
+    ["-1", -1],
+    ["NaN", NaN],
+    ["1.5", 1.5],
+    ["2**53", 2 ** 53],
+    ['"10"', "10"],
+  ])("a top-level maxHeaderListSize of %s is ignored by createServer() and connect()", async (_, value) => {
+    const server = http2.createServer({ maxHeaderListSize: value } as any);
+    server.on("stream", (stream: any) => {
+      stream.respond({ ":status": 204 });
+      stream.end();
+    });
+    server.listen(0);
+    await once(server, "listening");
+    let client: http2.ClientHttp2Session | undefined;
+    try {
+      client = http2.connect(`http://127.0.0.1:${(server.address() as net.AddressInfo).port}`, {
+        maxHeaderListSize: value,
+      } as any);
+      const req = client.request({ ":path": "/" });
+      req.end();
+      const [headers] = await once(req, "response");
+      expect(headers[":status"]).toBe(204);
+    } finally {
+      client?.destroy();
+      server.close();
+    }
+  });
+
+  test("the initial SETTINGS frame carries only the keys under options.settings", async () => {
+    async function initialSettings(options: object) {
+      const server = http2.createServer(options);
+      server.listen(0);
+      await once(server, "listening");
+      const c = await RawH2.connect((server.address() as net.AddressInfo).port);
+      try {
+        c.sendPreface();
+        c.sendEmptySettings();
+        const frame = await c.waitFor(f => f.type === FrameType.SETTINGS && (f.flags & 0x1) === 0);
+        const settings: Record<number, number> = {};
+        for (let i = 0; i < frame.payload.length; i += 6) {
+          settings[frame.payload.readUInt16BE(i)] = frame.payload.readUInt32BE(i + 2);
+        }
+        return settings;
+      } finally {
+        c.destroy();
+        server.close();
+      }
+    }
+
+    expect(
+      await initialSettings({
+        headerTableSize: 100,
+        enablePush: true,
+        maxConcurrentStreams: 7,
+        initialWindowSize: 100000,
+        maxFrameSize: 20000,
+        maxHeaderListSize: 1000,
+        maxHeaderSize: 1000,
+        enableConnectProtocol: true,
+        customSettings: { 1000: 5 },
+      }),
+    ).toEqual({});
+    expect(
+      await initialSettings({ maxHeaderListSize: -1, settings: { maxHeaderListSize: 1000, maxConcurrentStreams: 7 } }),
+    ).toEqual({ 3: 7, 6: 1000 });
+    // RFC 9113 §6.5.2: a server MUST NOT send SETTINGS_ENABLE_PUSH with a value other than 0.
+    expect(await initialSettings({ settings: { enablePush: true } })).toEqual({ 2: 0 });
+  });
+
+  test("a session limit applies at the top level of the options, not under options.settings", async () => {
+    // 4 pseudo-headers and 10 regular headers: over a maxHeaderListPairs of 4.
+    const headers: Record<string, string> = { ":path": "/" };
+    for (let i = 0; i < 10; i++) headers[`x-header-${i}`] = "1";
+
+    async function request(options: object) {
+      const server = http2.createServer(options);
+      server.on("stream", (stream: any) => {
+        stream.respond({ ":status": 204 });
+        stream.end();
+      });
+      server.listen(0);
+      await once(server, "listening");
+      const client = http2.connect(`http://127.0.0.1:${(server.address() as net.AddressInfo).port}`);
+      client.on("error", () => {});
+      try {
+        const req = client.request(headers);
+        req.end();
+        const [response] = await once(req, "response");
+        return response[":status"];
+      } catch (err: any) {
+        return err.code;
+      } finally {
+        client.destroy();
+        server.close();
+      }
+    }
+
+    expect(await request({ settings: { maxHeaderListPairs: 4 } })).toBe(204);
+    expect(await request({ maxHeaderListPairs: 4 })).toBe("ERR_HTTP2_STREAM_ERROR");
+  });
+});
+
 describe("frame size limit (checklist §4.2)", () => {
   test("a frame exceeding SETTINGS_MAX_FRAME_SIZE is a FRAME_SIZE_ERROR", async () => {
     const c = await RawH2.connect(port);

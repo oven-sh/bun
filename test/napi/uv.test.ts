@@ -96,6 +96,21 @@ describe.if(!isWindows)("uv stubs", () => {
     expect(nativeModule.testUvOnce()).toBe(1);
   });
 
+  test("uv_cwd", () => {
+    const result = nativeModule.testCwd();
+    const cwdBytes = Buffer.byteLength(process.cwd());
+    expect(result.rc).toBe(0);
+    expect(result.cwd).toBe(process.cwd());
+    expect(result.size).toBe(cwdBytes);
+
+    expect(result.nullBuffer).toBe(result.UV_EINVAL);
+    expect(result.nullSize).toBe(result.UV_EINVAL);
+    expect(result.zeroSize).toBe(result.UV_EINVAL);
+
+    expect(result.smallRc).toBe(result.UV_ENOBUFS);
+    expect(result.smallRequired).toBe(cwdBytes + 1);
+  });
+
   test("hrtime", () => {
     const result = nativeModule.testHrtime();
 

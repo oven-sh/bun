@@ -8,6 +8,7 @@ use crate::{JSGlobalObject, JSPromise, JSValue};
 #[repr(C)]
 #[derive(Clone)]
 pub struct SystemError {
+    /// [`SystemError::NO_ERRNO`] = the JS error gets `errno: undefined`
     pub errno: c_int,
     /// label for errno
     pub code: bun_core::String,
@@ -80,6 +81,12 @@ unsafe extern "C" {
 }
 
 impl SystemError {
+    /// `errno` for an error that has no numeric system error code, only a
+    /// string `code`. Node reports such errors (a c-ares resolver failure, for
+    /// example) with an own `errno` property whose value is `undefined`, and
+    /// the C++ side (`systemErrorToErrorInstance`) emits exactly that.
+    pub const NO_ERRNO: c_int = c_int::MIN;
+
     /// Converts to a JS `Error`, consuming `self`. C++ only borrows the string
     /// fields; `Drop` releases them when `self` goes out of scope. `.clone()`
     /// first when two `Error`s are genuinely wanted.

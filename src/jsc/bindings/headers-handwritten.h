@@ -179,6 +179,7 @@ public:
 static_assert(sizeof(ErrorableResolvedSource) == 144 && alignof(ErrorableResolvedSource) == 8, "ErrorableResolvedSource layout is mirrored in src/jsc/Errorable.rs");
 
 typedef struct SystemError {
+    /// MinInt (`SystemError::NO_ERRNO` in Rust) = the error gets `errno: undefined`
     int errno_;
     BunString code;
     BunString message;

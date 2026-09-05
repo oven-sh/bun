@@ -640,6 +640,18 @@ fn any_reply_to_js(
 }
 
 // ── Error ──────────────────────────────────────────────────────────────────
+
+/// Node only gives a DNS error a numeric `errno` when libuv reported one
+/// (`getaddrinfo`/`getnameinfo`). A c-ares resolver failure (`query*`,
+/// `getHostByAddr`) only has a string `code`, so its `errno` is undefined.
+fn errno_for_syscall(this: c_ares::Error, syscall: &[u8]) -> c_int {
+    if strings::has_prefix_comptime(syscall, b"query") || strings::eql(syscall, b"getHostByAddr") {
+        SystemError::NO_ERRNO
+    } else {
+        this as c_int
+    }
+}
+
 pub(crate) struct ErrorDeferred {
     pub errno: c_ares::Error,
     pub syscall: &'static [u8],
@@ -679,7 +691,7 @@ impl ErrorDeferred {
             ))
         };
         let system_error = SystemError {
-            errno: self.errno as i32,
+            errno: errno_for_syscall(self.errno, self.syscall),
             code: bstr::String::static_(code),
             message,
             syscall: bstr::String::clone_utf8(self.syscall),
@@ -765,7 +777,7 @@ pub(crate) fn error_to_js_with_syscall(
 ) -> JsResult<JSValue> {
     let code = this.code();
     let instance = SystemError {
-        errno: this as i32,
+        errno: errno_for_syscall(this, syscall),
         code: bstr::String::static_(&code[4..]),
         syscall: bstr::String::static_(syscall),
         message: bstr::String::create_format(format_args!(
@@ -796,7 +808,7 @@ pub(crate) fn system_error_with_syscall_and_hostname(
 ) -> SystemError {
     let code = this.code();
     SystemError {
-        errno: this as i32,
+        errno: errno_for_syscall(this, syscall),
         code: bstr::String::static_(&code[4..]),
         message: bstr::String::create_format(format_args!(
             "{} {} {}",

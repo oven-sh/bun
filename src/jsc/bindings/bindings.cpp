@@ -2770,6 +2770,15 @@ JSC::EncodedJSValue JSGlobalObject__createOutOfMemoryError(JSC::JSGlobalObject* 
     return JSValue::encode(exception);
 }
 
+// `SystemError::NO_ERRNO` on the Rust side: the error has a string `code` but
+// no numeric errno, and Node reports those with `errno: undefined`.
+static JSC::JSValue systemErrorErrnoValue(const SystemError& err)
+{
+    if (err.errno_ == std::numeric_limits<int>::min())
+        return JSC::jsUndefined();
+    return JSC::jsNumber(err.errno_);
+}
+
 static JSC::EncodedJSValue systemErrorToErrorInstance(const SystemError* arg0, JSC::JSGlobalObject* globalObject, JSC::ErrorType errorType)
 {
     SystemError err = *arg0;
@@ -2838,7 +2847,7 @@ static JSC::EncodedJSValue systemErrorToErrorInstance(const SystemError* arg0, J
         }
     }
 
-    result->putDirect(vm, names.errnoPublicName(), jsNumber(err.errno_), JSC::PropertyAttribute::DontDelete | 0);
+    result->putDirect(vm, names.errnoPublicName(), systemErrorErrnoValue(err), JSC::PropertyAttribute::DontDelete | 0);
 
     return JSC::JSValue::encode(result);
 }
@@ -2884,8 +2893,9 @@ JSC::EncodedJSValue SystemError__toErrorInstanceWithInfoObject(const SystemError
     info->putDirect(vm, clientData->builtinNames().codePublicName(), jsString(vm, codeString), JSC::PropertyAttribute::DontDelete | 0);
     info->putDirect(vm, vm.propertyNames->message, jsString(vm, messageString), JSC::PropertyAttribute::DontDelete | 0);
 
-    info->putDirect(vm, clientData->builtinNames().errnoPublicName(), jsNumber(err.errno_), JSC::PropertyAttribute::DontDelete | 0);
-    result->putDirect(vm, clientData->builtinNames().errnoPublicName(), jsNumber(err.errno_), JSC::PropertyAttribute::DontDelete | 0);
+    JSC::JSValue errnoValue = systemErrorErrnoValue(err);
+    info->putDirect(vm, clientData->builtinNames().errnoPublicName(), errnoValue, JSC::PropertyAttribute::DontDelete | 0);
+    result->putDirect(vm, clientData->builtinNames().errnoPublicName(), errnoValue, JSC::PropertyAttribute::DontDelete | 0);
 
     return JSC::JSValue::encode(result);
 }

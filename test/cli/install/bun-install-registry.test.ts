@@ -2,7 +2,7 @@ import { file, spawn, write } from "bun";
 import { install_test_helpers, npm_manifest_test_helpers } from "bun:internal-for-testing";
 import { afterAll, beforeAll, beforeEach, describe, expect, setDefaultTimeout, test } from "bun:test";
 import { copyFileSync, mkdirSync } from "fs";
-import { cp, exists, lstat, mkdir, readlink, rename, rm, writeFile } from "fs/promises";
+import { cp, exists, lstat, mkdir, readFile, readlink, rename, rm, writeFile } from "fs/promises";
 import {
   assertManifestsPopulated,
   bunExe,
@@ -2547,6 +2547,98 @@ describe("binaries", () => {
       });
     });
   }
+
+  describe("existing destinations in the global bin dir", () => {
+    // What a bin named `name` occupies in a bin dir: the symlink itself on POSIX, the `.exe` half
+    // of the `.exe` + `.bunx` shim pair on Windows.
+    const binEntry = (name: string) => (isWindows ? `${name}.exe` : name);
+    const linkTarget = (pkg: string, file: string) =>
+      join("..", "global-install-dir", "install", "global", "node_modules", pkg, file);
+
+    async function installGlobal(...packages: string[]) {
+      await write(
+        join(packageDir, "bunfig.toml"),
+        Bun.TOML.stringify({
+          install: {
+            cache: false,
+            registry: `http://localhost:${port}/`,
+            globalBinDir: join(packageDir, "global-bin-dir"),
+          },
+        }),
+      );
+      await using proc = spawn({
+        cmd: [
+          bunExe(),
+          "install",
+          "--linker=hoisted",
+          "-g",
+          `--config=${join(packageDir, "bunfig.toml")}`,
+          ...packages,
+        ],
+        cwd: packageDir,
+        stdout: "pipe",
+        stderr: "pipe",
+        env: { ...env, BUN_INSTALL: join(packageDir, "global-install-dir") },
+      });
+      const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      return { out, err, exitCode };
+    }
+
+    test("a file or directory that is not the package's bin stays", async () => {
+      const binDir = join(packageDir, "global-bin-dir");
+      await Promise.all([
+        // A regular file, which is what `bun` itself is in this directory.
+        write(join(binDir, binEntry("what-bin")), "not a bin of what-bin"),
+        write(join(binDir, binEntry("map-bin-2"), "inner.txt"), "keep"),
+      ]);
+
+      const { err, exitCode } = await installGlobal("what-bin", "dep-with-map-bins");
+      expect(err).toContain("Failed to link what-bin: EEXIST");
+      expect(err).toContain("Failed to link dep-with-map-bins: EEXIST");
+      expect(exitCode).toBe(1);
+
+      expect(await readFile(join(binDir, binEntry("what-bin")), "utf8")).toBe("not a bin of what-bin");
+      expect(await readFile(join(binDir, binEntry("map-bin-2"), "inner.txt"), "utf8")).toBe("keep");
+      // Linked before the package's other bin ran into the directory.
+      expect(join(binDir, "map-bin-1")).toBeValidBin(linkTarget("dep-with-map-bins", "map-bin-1"));
+    });
+
+    test("the package's own bin from an earlier install is replaced", async () => {
+      const bin = join(packageDir, "global-bin-dir", "what-bin");
+
+      let result = await installGlobal("what-bin@1.0.0");
+      expect(result.err).not.toContain("error:");
+      expect(result.exitCode).toBe(0);
+      expect(bin).toBeValidBin(linkTarget("what-bin", "what-bin.js"));
+
+      result = await installGlobal("what-bin@1.5.0");
+      expect(result.err).not.toContain("error:");
+      expect(result.out).toContain("what-bin@1.5.0");
+      expect(result.exitCode).toBe(0);
+      expect(bin).toBeValidBin(linkTarget("what-bin", "what-bin.js"));
+    });
+
+    test("a foreign entry is reported for a package with a native binlink as well", async () => {
+      const binDir = join(packageDir, "global-bin-dir");
+      await Promise.all([
+        write(join(binDir, binEntry("test-binlink-cmd")), "not a bin of test-native-binlink"),
+        // The installer first links the bin of the platform package, then retries with the
+        // package's own bin. The error has to survive the retry.
+        write(
+          join(packageDir, "global-install-dir", "install", "global", "package.json"),
+          JSON.stringify({ dependencies: {}, nativeDependencies: ["test-native-binlink"] }),
+        ),
+      ]);
+
+      const { err, exitCode } = await installGlobal("test-native-binlink");
+      expect(err).toContain("Failed to link test-native-binlink: EEXIST");
+      expect(exitCode).toBe(1);
+      expect(await readFile(join(binDir, binEntry("test-binlink-cmd")), "utf8")).toBe(
+        "not a bin of test-native-binlink",
+      );
+    });
+  });
+
   test("it should correctly link binaries after deleting node_modules", async () => {
     const json: any = {
       name: "foo",

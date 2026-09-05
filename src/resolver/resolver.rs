@@ -2488,6 +2488,21 @@ impl<'a> Resolver<'a> {
         }
         // NOTE: `decrease_indent()` is called explicitly at every return point below.
 
+        // On POSIX `\` is a filename character, not a separator. The `abs_buf*`
+        // joins below use Platform::Loose (which rewrites `\` to `/`), so reject
+        // `\` here to match Node and keep the exports / `..` guards effective.
+        #[cfg(not(windows))]
+        if strings::index_of_char(import_path, b'\\').is_some() {
+            if let Some(d) = self.debug_logs.as_mut() {
+                d.add_note_fmt(format_args!(
+                    "Rejecting bare specifier containing '\\' on POSIX: \"{}\"",
+                    bstr::BStr::new(import_path)
+                ));
+                d.decrease_indent();
+            }
+            return MatchStatus::NotFound;
+        }
+
         // First, check path overrides from the nearest enclosing TypeScript "tsconfig.json" file
 
         if let Some(tsconfig) = dir_info.enclosing_tsconfig_json {

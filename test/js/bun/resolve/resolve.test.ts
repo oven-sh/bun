@@ -1758,6 +1758,109 @@ describe("tsconfig paths skip `.d.ts` substitutions", () => {
   });
 });
 
+// On POSIX, `\` is a valid filename character, not a path separator. Node
+// refuses every bare specifier containing `\` on POSIX (it looks for a
+// literal file named e.g. `pk\secret.js` in node_modules, which does not
+// exist). Bun's Platform::Loose path normalization rewrites `\` to `/`
+// before hitting the filesystem, which let `pk\secret.js` bypass the
+// `exports` map and `pk\..\..` escape the package root entirely.
+describe.skipIf(isWindows)("backslash in bare package specifier (POSIX)", () => {
+  const fixture = `
+    const { createRequire } = require("node:module");
+    const req = createRequire(process.cwd() + "/app/x.cjs");
+    const probe = s => {
+      try { return JSON.stringify(req(s)); }
+      catch (e) { return "ERR:" + (e.code || e.name); }
+    };
+    const rprobe = s => {
+      try { return req.resolve(s); }
+      catch (e) { return "ERR:" + (e.code || e.name); }
+    };
+    const out = {
+      // control: forward-slash forms are correctly refused today
+      fwd_secret: probe("pk/secret.js"),
+      fwd_escape: probe("pk/../../appfile.js"),
+      // backslash forms: must be refused on POSIX (Node parity)
+      bs_secret: probe("pk\\\\secret.js"),
+      bs_escape_app: probe("pk\\\\..\\\\..\\\\appfile.js"),
+      bs_escape_outside: probe("pk\\\\..\\\\..\\\\..\\\\outside.js"),
+      bs_resolve_outside: rprobe("pk\\\\..\\\\..\\\\..\\\\outside.js"),
+      bs_no_pkg: probe("nosuch\\\\..\\\\..\\\\appfile.js"),
+      // mixed: forward-slash after name, backslash in subpath (no exports map)
+      bs_mixed_noexports: probe("noexp/..\\\\..\\\\appfile.js"),
+    };
+    console.log(JSON.stringify(out));
+  `;
+
+  function makeDir() {
+    return tempDir("bs-bare-specifier", {
+      "app/package.json": JSON.stringify({ name: "app" }),
+      "app/node_modules/pk/package.json": JSON.stringify({
+        name: "pk",
+        exports: { ".": "./main.js", "./pub": "./pub.js" },
+      }),
+      "app/node_modules/pk/main.js": `module.exports = "MAIN";`,
+      "app/node_modules/pk/pub.js": `module.exports = "PUB";`,
+      "app/node_modules/pk/secret.js": `module.exports = "SECRET-UNEXPORTED";`,
+      "app/node_modules/noexp/package.json": JSON.stringify({ name: "noexp" }),
+      "app/node_modules/noexp/index.js": `module.exports = "NOEXP";`,
+      "app/appfile.js": `module.exports = "APP-ROOT-FILE";`,
+      "outside.js": `module.exports = "OUTSIDE-APP-ROOT";`,
+      "app/entry.js": fixture,
+    });
+  }
+
+  const expected = {
+    fwd_secret: "ERR:MODULE_NOT_FOUND",
+    fwd_escape: "ERR:MODULE_NOT_FOUND",
+    bs_secret: "ERR:MODULE_NOT_FOUND",
+    bs_escape_app: "ERR:MODULE_NOT_FOUND",
+    bs_escape_outside: "ERR:MODULE_NOT_FOUND",
+    bs_resolve_outside: "ERR:MODULE_NOT_FOUND",
+    bs_no_pkg: "ERR:MODULE_NOT_FOUND",
+    bs_mixed_noexports: "ERR:MODULE_NOT_FOUND",
+  };
+
+  it.concurrent("require / require.resolve refuse backslash specifiers", async () => {
+    using dir = makeDir();
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "app/entry.js"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual(expected);
+    expect(exitCode).toBe(0);
+  });
+
+  it.concurrent("bun build refuses backslash specifiers", async () => {
+    using dir = tempDir("bs-bare-specifier-build", {
+      "package.json": JSON.stringify({ name: "app" }),
+      "node_modules/pk/package.json": JSON.stringify({
+        name: "pk",
+        exports: { ".": "./main.js" },
+      }),
+      "node_modules/pk/main.js": `module.exports = "MAIN";`,
+      "node_modules/pk/secret.js": `module.exports = "SECRET-UNEXPORTED";`,
+      "entry.js": `console.log(require("pk\\\\secret.js"));`,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build", "--target=bun", "entry.js"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout).not.toContain("SECRET-UNEXPORTED");
+    expect(stderr.toLowerCase()).toContain("could not resolve");
+    expect(exitCode).not.toBe(0);
+  });
+});
+
 it.skipIf(isWindows)("runs a script from a working directory nested 256 directories deep", async () => {
   using dir = tempDir("resolver-deep-cwd", { ".keep": "" });
   const base = realpathSync(String(dir));

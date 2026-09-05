@@ -693,6 +693,22 @@ int us_socket_ipc_write_fd(struct us_socket_t *s, const char *data, int length, 
 
     return sent;
 }
+
+/* The owner learned out of band that the peer is gone (the child process on the
+ * other end of an IPC socketpair was reaped) and is about to close this socket.
+ * What the peer wrote before exiting is still queued in the kernel, and its
+ * readable event may not have been dispatched yet (the exit can arrive through
+ * a task queue that runs before the next poll). Run the readable dispatch now
+ * with the EOF hint set: it reads and dispatches on_data until recv() reports
+ * EOF or would block, then dispatches on_end and closes the socket, exactly as
+ * the peer's FIN would have. Would-block still ends the socket, so a peer end
+ * that something else (a grandchild) still holds open cannot keep it alive. */
+void us_socket_drain_readable_then_end(struct us_socket_t *s) {
+    if (us_socket_is_closed(s)) {
+        return;
+    }
+    us_internal_dispatch_ready_poll(&s->p, 0, 1, LIBUS_SOCKET_READABLE);
+}
 #endif
 
 __attribute__((always_inline)) void *us_socket_ext(struct us_socket_t *s) {

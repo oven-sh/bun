@@ -405,6 +405,16 @@ impl<const IS_SSL: bool> NewSocketHandler<IS_SSL> {
         }
     }
 
+    /// Synchronously reads out remaining data, then ends and closes the
+    /// socket; handlers (`on_data`, `on_end`, `on_close`) run before this
+    /// returns. See `us_socket_t::drain_readable_then_end`.
+    #[cfg(not(windows))]
+    pub fn drain_readable_then_end(&self) {
+        if let InternalSocket::Connected(s) = self.socket {
+            sock(s).drain_readable_then_end();
+        }
+    }
+
     /// Vectored raw write: one writev on real sockets; sequential raw writes on
     /// transports without an fd (duplex/pipe). Plain-TCP callers only — raw
     /// writes bypass TLS framing.

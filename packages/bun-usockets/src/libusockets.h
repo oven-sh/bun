@@ -694,6 +694,12 @@ void us_socket_local_address(us_socket_r s, char *nonnull_arg buf, int *nonnull_
 
 struct us_socket_t *us_socket_detach(us_socket_r s) nonnull_fn_decl;
 int us_socket_ipc_write_fd(us_socket_r s, const char *data, int length, int fd) nonnull_fn_decl;
+/* Synchronously read and dispatch whatever the kernel still holds for `s`, then
+ * dispatch on_end and close it as if the peer's EOF had been read. For owners
+ * that learn out of band that the peer is gone (IPC child exit) and would
+ * otherwise close on top of undelivered data. Stops at EOF or would-block, so a
+ * peer end still held open elsewhere does not stall it. POSIX only. */
+void us_socket_drain_readable_then_end(us_socket_r s) nonnull_fn_decl;
 void us_socket_sendfile_needs_more(us_socket_r s) nonnull_fn_decl;
 void *us_listen_socket_ext(struct us_listen_socket_t *ls) nonnull_fn_decl;
 LIBUS_SOCKET_DESCRIPTOR us_listen_socket_get_fd(struct us_listen_socket_t *ls) nonnull_fn_decl;

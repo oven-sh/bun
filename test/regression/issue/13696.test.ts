@@ -43,6 +43,8 @@ for (const socketMode of ["tcp", "unix"] as const) {
       let chunkReceived = Promise.withResolvers<void>();
 
       await using server = net.createServer(async sock => {
+        // req.destroy() at the end of the test may reset the connection.
+        sock.on("error", () => {});
         // The single write() must dispatch the headers and the body chunk
         // without req.end().
         request = await readUntil(sock, chunkedFrame);
@@ -58,7 +60,11 @@ for (const socketMode of ["tcp", "unix"] as const) {
         }
         sock.end();
       });
-      server.listen(...(socketPath ? [socketPath] : [0, "127.0.0.1"]));
+      if (socketPath) {
+        server.listen(socketPath);
+      } else {
+        server.listen(0, "127.0.0.1");
+      }
       await once(server, "listening");
 
       const requestOpts = socketPath
@@ -84,11 +90,17 @@ for (const socketMode of ["tcp", "unix"] as const) {
           req.on("response", res => {
             events.push(`response-status:${res.statusCode}`);
             res.setEncoding("utf8");
+            // Only a complete line counts as a received chunk: a data event
+            // can carry part of a line.
+            let pending = "";
             res.on("data", (chunk: string) => {
-              for (const line of chunk.split("\n")) {
-                if (line) events.push(`recv:${line}`);
+              pending += chunk;
+              const lines = pending.split("\n");
+              pending = lines.pop()!;
+              for (const line of lines) {
+                events.push(`recv:${line}`);
+                chunkReceived.resolve();
               }
-              chunkReceived.resolve();
             });
             res.on("end", () => {
               events.push("response-end");
@@ -130,6 +142,7 @@ for (const socketMode of ["tcp", "unix"] as const) {
 test.concurrent("http.request emits 'response' in duplex mode after flushHeaders() without end()", async () => {
   let request = "";
   await using server = net.createServer(async sock => {
+    sock.on("error", () => {});
     request = await readUntil(sock, "\r\n\r\n");
     sock.write("HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\n\r\nhello");
     sock.end();

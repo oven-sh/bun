@@ -44,211 +44,116 @@ pub struct PatchFile<'a> {
     pub(crate) parts: Vec<PatchFilePart<'a>>,
 }
 
-#[cfg_attr(unix, allow(dead_code))]
-struct ApplyState {
-    pathbuf: PathBuffer,
-    patch_dir_abs_path: Option<usize>,
-}
-
-impl ApplyState {
-    fn new() -> Self {
-        Self {
-            pathbuf: PathBuffer::uninit(),
-            patch_dir_abs_path: None,
-        }
-    }
-
-    #[cfg_attr(unix, allow(dead_code))]
-    fn patch_dir_abs_path(&mut self, fd: Fd) -> sys::Result<&ZStr> {
-        if let Some(len) = self.patch_dir_abs_path {
-            // pathbuf[len] == 0 was written below on a previous call.
-            return sys::Result::Ok(ZStr::from_buf(&self.pathbuf.0, len));
-        }
-        match sys::get_fd_path(fd, &mut self.pathbuf) {
-            sys::Result::Ok(p) => {
-                // reshaped for borrowck — capture len, drop `p`,
-                // then re-borrow `self.pathbuf` to write the sentinel.
-                let len = p.len();
-                // On Linux `readlink(2)` does not NUL-terminate, so write the
-                // sentinel explicitly (the buffer is zero-initialized but be
-                // defensive).
-                self.pathbuf.0[len] = 0;
-                self.patch_dir_abs_path = Some(len);
-                sys::Result::Ok(ZStr::from_buf(&self.pathbuf.0, len))
-            }
-            sys::Result::Err(e) => sys::Result::Err(e.with_fd(fd)),
-        }
-    }
-}
-
 impl<'a> PatchFile<'a> {
     pub fn apply(&self, patch_dir: Fd) -> Option<sys::Error> {
-        let mut state = ApplyState::new();
-
         for part in &self.parts {
-            match part {
-                PatchFilePart::FileDeletion(file_deletion) => {
-                    if !is_safe_patch_path(file_deletion.path) {
-                        return Some(sys::Error::from_code(sys::E::EINVAL, sys::Tag::unlink));
-                    }
-                    let pathz = ZBox::from_vec_with_nul(file_deletion.path.to_vec());
-
-                    if let sys::Result::Err(e) = sys::unlinkat(patch_dir, &pathz) {
-                        return Some(e.without_path());
-                    }
+            let result = match part {
+                PatchFilePart::FileDeletion(d) => {
+                    delete_file(patch_dir, d.path).map_err(|e| e.with_path(d.path))
                 }
-                PatchFilePart::FileRename(file_rename) => {
-                    if !is_safe_patch_path(file_rename.from_path)
-                        || !is_safe_patch_path(file_rename.to_path)
-                    {
-                        return Some(sys::Error::from_code(sys::E::EINVAL, sys::Tag::rename));
-                    }
-                    let from_path = ZBox::from_vec_with_nul(file_rename.from_path.to_vec());
-                    let to_path = ZBox::from_vec_with_nul(file_rename.to_path.to_vec());
-
-                    let todir = paths::dirname_simple(to_path.as_bytes());
-                    if !todir.is_empty() {
-                        if let sys::Result::Err(e) =
-                            sys::mkdir_recursive_at_mode(patch_dir, todir, 0o755)
-                        {
-                            return Some(e.without_path());
-                        }
-                    }
-
-                    if let sys::Result::Err(e) =
-                        sys::renameat(patch_dir, &from_path, patch_dir, &to_path)
-                    {
-                        return Some(e.without_path());
-                    }
+                // `rename_file` attributes its own errors, since either side can fail.
+                PatchFilePart::FileRename(r) => rename_file(patch_dir, r),
+                PatchFilePart::FileCreation(c) => {
+                    create_file(patch_dir, c).map_err(|e| e.with_path(c.path))
                 }
-                PatchFilePart::FileCreation(file_creation) => {
-                    if !is_safe_patch_path(file_creation.path) {
-                        return Some(sys::Error::from_code(sys::E::EINVAL, sys::Tag::open));
-                    }
-                    let filepath_z = ZBox::from_vec_with_nul(file_creation.path.to_vec());
-                    let filedir = paths::dirname_simple(filepath_z.as_bytes());
-                    let mode = file_creation.mode;
-
-                    if !filedir.is_empty() {
-                        // Create the directory under `patch_dir` so the
-                        // subsequent `openat` against `patch_dir` succeeds
-                        // (resolving `filedir` against the process CWD would be
-                        // inconsistent when `patch_dir != cwd`).
-                        if let sys::Result::Err(e) =
-                            sys::mkdir_recursive_at_mode(patch_dir, filedir, mode.to_bun_mode())
-                        {
-                            return Some(e.without_path());
-                        }
-                    }
-
-                    let newfile_fd = match sys::openat(
-                        patch_dir,
-                        &filepath_z,
-                        sys::O::CREAT | sys::O::WRONLY | sys::O::TRUNC,
-                        mode.to_bun_mode(),
-                    ) {
-                        sys::Result::Ok(fd) => fd,
-                        sys::Result::Err(e) => return Some(e.without_path()),
-                    };
-                    let _close_newfile = scopeguard::guard(newfile_fd, |fd| fd.close());
-
-                    let Some(hunk) = &file_creation.hunk else {
-                        continue;
-                    };
-                    // A crafted `@@ -0,0 +0,0 @@` header with no body parses to a
-                    // hunk with zero parts; treat it as an empty file rather than
-                    // indexing `parts[0]`.
-                    let Some(first_part) = hunk.parts.first() else {
-                        continue;
-                    };
-
-                    let last_line = first_part.lines.len().saturating_sub(1);
-                    let no_newline_at_end_of_file = first_part.no_newline_at_end_of_file;
-
-                    let count = {
-                        let mut total: usize = 0;
-                        for (i, line) in first_part.lines.iter().enumerate() {
-                            total += line.len();
-                            total += (i < last_line) as usize;
-                        }
-                        total += (!no_newline_at_end_of_file) as usize;
-                        total
-                    };
-
-                    // TODO: this additional allocation is probably not necessary in all cases and should be avoided or use stack buffer
-                    let file_contents: Vec<u8> = {
-                        let mut contents = vec![0u8; count];
-                        let mut i: usize = 0;
-                        for (idx, line) in first_part.lines.iter().enumerate() {
-                            contents[i..i + line.len()].copy_from_slice(line);
-                            i += line.len();
-                            if idx < last_line || !no_newline_at_end_of_file {
-                                contents[i] = b'\n';
-                                i += 1;
-                            }
-                        }
-                        contents
-                    };
-
-                    let mut written: usize = 0;
-                    while written < file_contents.len() {
-                        match sys::write(newfile_fd, &file_contents[written..]) {
-                            sys::Result::Ok(bytes) => written += bytes,
-                            sys::Result::Err(e) => return Some(e.without_path()),
-                        }
-                    }
+                PatchFilePart::FilePatch(f) => {
+                    patch_file(patch_dir, f).map_err(|e| e.with_path(f.path))
                 }
-                PatchFilePart::FilePatch(file_patch) => {
-                    if !is_safe_patch_path(file_patch.path) {
-                        return Some(sys::Error::from_code(sys::E::EINVAL, sys::Tag::open));
-                    }
-                    // TODO: should we compute the hash of the original file and check it against the on in the patch?
-                    if let sys::Result::Err(e) = apply_patch(file_patch, patch_dir, &mut state) {
-                        return Some(e.without_path());
-                    }
+                PatchFilePart::FileModeChange(m) => {
+                    change_mode(patch_dir, m).map_err(|e| e.with_path(m.path))
                 }
-                PatchFilePart::FileModeChange(file_mode_change) => {
-                    if !is_safe_patch_path(file_mode_change.path) {
-                        return Some(sys::Error::from_code(sys::E::EINVAL, sys::Tag::fchmodat));
-                    }
-                    let newmode = file_mode_change.new_mode;
-                    let filepath = ZBox::from_vec_with_nul(file_mode_change.path.to_vec());
-                    #[cfg(unix)]
-                    {
-                        if let sys::Result::Err(e) =
-                            sys::fchmodat(patch_dir, &filepath, newmode.to_bun_mode(), 0)
-                        {
-                            return Some(e.without_path());
-                        }
-                    }
-
-                    #[cfg(windows)]
-                    {
-                        let absfilepath = match state.patch_dir_abs_path(patch_dir) {
-                            sys::Result::Ok(p) => p,
-                            sys::Result::Err(e) => return Some(e.without_path()),
-                        };
-                        let mut buf = PathBuffer::uninit();
-                        let joined_absfilepath =
-                            paths::resolve_path::join_z_buf::<paths::platform::Auto>(
-                                &mut buf[..],
-                                &[absfilepath.as_bytes(), filepath.as_bytes()],
-                            );
-                        let fd = match sys::open(&joined_absfilepath, sys::O::RDWR, 0) {
-                            sys::Result::Err(e) => return Some(e.without_path()),
-                            sys::Result::Ok(f) => f,
-                        };
-                        let _close = scopeguard::guard(fd, |fd| fd.close());
-                        if let sys::Result::Err(e) = sys::fchmod(fd, newmode.to_bun_mode()) {
-                            return Some(e.without_path());
-                        }
-                    }
-                }
+            };
+            if let Err(e) = result {
+                return Some(e);
             }
         }
-
         None
     }
+}
+
+fn delete_file(patch_dir: Fd, path: &[u8]) -> sys::Result<()> {
+    let (parent, base) = resolve_target(patch_dir, path, None)?;
+    sys::unlinkat(parent.fd, &base)
+}
+
+fn rename_file(patch_dir: Fd, rename: &FileRename<'_>) -> sys::Result<()> {
+    let (from_parent, from_base) = resolve_target(patch_dir, rename.from_path, None)
+        .map_err(|e| e.with_path(rename.from_path))?;
+    let (to_parent, to_base) = resolve_target(patch_dir, rename.to_path, Some(CREATED_DIR_MODE))
+        .map_err(|e| e.with_path(rename.to_path))?;
+    sys::renameat(from_parent.fd, &from_base, to_parent.fd, &to_base)
+        .map_err(|e| e.with_path_dest(rename.from_path, rename.to_path))
+}
+
+fn create_file(patch_dir: Fd, creation: &FileCreation<'_>) -> sys::Result<()> {
+    let (parent, base) = resolve_target(patch_dir, creation.path, Some(CREATED_DIR_MODE))?;
+    let (fd, _) = open_target_file(
+        parent.fd,
+        &base,
+        sys::O::CREAT | sys::O::RDWR,
+        creation.mode.to_bun_mode(),
+    )?;
+    let _close = scopeguard::guard(fd, |fd| fd.close());
+    // Truncation is deferred until after the target is verified (no
+    // `O_TRUNC`), so a rejected target is never destroyed.
+    sys::ftruncate(fd, 0)?;
+
+    // A crafted `@@ -0,0 +0,0 @@` header with no body parses to a hunk with
+    // zero parts; either way the file is left empty.
+    let Some(first_part) = creation.hunk.as_ref().and_then(|h| h.parts.first()) else {
+        return Ok(());
+    };
+
+    let last_line = first_part.lines.len().saturating_sub(1);
+    let no_newline_at_end_of_file = first_part.no_newline_at_end_of_file;
+
+    let count = {
+        let mut total: usize = 0;
+        for (i, line) in first_part.lines.iter().enumerate() {
+            total += line.len();
+            total += (i < last_line) as usize;
+        }
+        total += (!no_newline_at_end_of_file) as usize;
+        total
+    };
+
+    let file_contents: Vec<u8> = {
+        let mut contents = vec![0u8; count];
+        let mut i: usize = 0;
+        for (idx, line) in first_part.lines.iter().enumerate() {
+            contents[i..i + line.len()].copy_from_slice(line);
+            i += line.len();
+            if idx < last_line || !no_newline_at_end_of_file {
+                contents[i] = b'\n';
+                i += 1;
+            }
+        }
+        contents
+    };
+
+    let mut written: usize = 0;
+    while written < file_contents.len() {
+        written += sys::write(fd, &file_contents[written..])?;
+    }
+    Ok(())
+}
+
+fn patch_file(patch_dir: Fd, patch: &FilePatch<'_>) -> sys::Result<()> {
+    let (parent, base) = resolve_target(patch_dir, patch.path, None)?;
+    apply_patch(patch, parent.fd, &base)
+}
+
+fn change_mode(patch_dir: Fd, change: &FileModeChange<'_>) -> sys::Result<()> {
+    let (parent, base) = resolve_target(patch_dir, change.path, None)?;
+    let (fd, _) = open_target_file(parent.fd, &base, sys::O::RDONLY, 0)?;
+    // On Windows `fchmod` needs a CRT-backed fd, and closing that one also
+    // closes the underlying HANDLE; elsewhere the conversion is the identity.
+    let fd = fd.make_libuv_owned().map_err(|()| {
+        fd.close();
+        sys::Error::from_code(sys::E::EMFILE, sys::Tag::chmod)
+    })?;
+    let _close = scopeguard::guard(fd, |fd| fd.close());
+    sys::fchmod(fd, change.new_mode.to_bun_mode())
 }
 
 /// Invariants:
@@ -259,42 +164,20 @@ impl<'a> PatchFile<'a> {
 /// we can speed it up by:
 /// - If file size <= PAGE_SIZE, read the whole file into memory. memcpy/memmove the file contents around will be fast
 /// - If file size > PAGE_SIZE, rather than making a list of lines, make a list of chunks
-fn apply_patch(patch: &FilePatch<'_>, patch_dir: Fd, state: &mut ApplyState) -> sys::Result<()> {
-    let file_path = ZBox::from_vec_with_nul(patch.path.to_vec());
+fn apply_patch(patch: &FilePatch<'_>, parent: Fd, base: &ZStr) -> sys::Result<()> {
+    let invalid = |tag: sys::Tag| sys::Error::from_code(sys::E::EINVAL, tag);
 
-    // Need to get the mode of the original file
-    // And also get the size to read file into memory
-    let stat = {
-        #[cfg(unix)]
-        let r = sys::fstatat(patch_dir, &file_path);
-        #[cfg(not(unix))]
-        let r = {
-            let p = match state.patch_dir_abs_path(patch_dir) {
-                sys::Result::Ok(p) => paths::resolve_path::join_z::<paths::platform::Auto>(&[
-                    p.as_bytes(),
-                    file_path.as_bytes(),
-                ]),
-                sys::Result::Err(e) => return sys::Result::Err(e),
-            };
-            sys::stat(p)
-        };
-        match r {
-            sys::Result::Err(e) => return sys::Result::Err(e.with_path(file_path.as_bytes())),
-            sys::Result::Ok(stat) => stat,
-        }
-    };
-    #[cfg(unix)]
-    let _ = state; // suppress unused on posix
+    // One fd is used for the read and the write-back, so nothing can be
+    // swapped in for the target in between them.
+    let (file_fd, stat) = open_target_file(parent, base, sys::O::RDWR, 0)?;
+    let _close_file = scopeguard::guard(file_fd, |fd| fd.close());
 
-    let filebuf: Vec<u8> = match read_file_alloc(patch_dir, &file_path, 1024 * 1024 * 1024 * 4) {
-        Ok(b) => b,
-        Err(_) => {
-            return sys::Result::Err(
-                sys::Error::from_code(sys::E::EINVAL, sys::Tag::read)
-                    .with_path(file_path.as_bytes()),
-            );
-        }
-    };
+    if stat.st_size as u64 > MAX_PATCH_TARGET_BYTES {
+        return Err(invalid(sys::Tag::read));
+    }
+    let filebuf: Vec<u8> = sys::File::borrow(&file_fd)
+        .read_to_end()
+        .map_err(|_| invalid(sys::Tag::read))?;
 
     let file_line_count: usize;
     let lines_count: usize = {
@@ -345,10 +228,7 @@ fn apply_patch(patch: &FilePatch<'_>, patch_dir: Fd, state: &mut ApplyState) -> 
 
         // Validate hunk start position is within bounds
         if line_cursor > lines.len() {
-            return sys::Result::Err(
-                sys::Error::from_code(sys::E::EINVAL, sys::Tag::fstatat)
-                    .with_path(file_path.as_bytes()),
-            );
+            return Err(invalid(sys::Tag::fstatat));
         }
 
         for part in &hunk.parts {
@@ -359,10 +239,7 @@ fn apply_patch(patch: &FilePatch<'_>, patch_dir: Fd, state: &mut ApplyState) -> 
 
                     // Validate context lines exist
                     if line_cursor + part.lines.len() > lines.len() {
-                        return sys::Result::Err(
-                            sys::Error::from_code(sys::E::EINVAL, sys::Tag::fstatat)
-                                .with_path(file_path.as_bytes()),
-                        );
+                        return Err(invalid(sys::Tag::fstatat));
                     }
 
                     line_cursor += part.lines.len();
@@ -370,10 +247,7 @@ fn apply_patch(patch: &FilePatch<'_>, patch_dir: Fd, state: &mut ApplyState) -> 
                 PartType::Insertion => {
                     // Validate insertion position is within bounds
                     if line_cursor > lines.len() {
-                        return sys::Result::Err(
-                            sys::Error::from_code(sys::E::EINVAL, sys::Tag::fstatat)
-                                .with_path(file_path.as_bytes()),
-                        );
+                        return Err(invalid(sys::Tag::fstatat));
                     }
 
                     lines.splice(line_cursor..line_cursor, part.lines.iter().copied());
@@ -387,10 +261,7 @@ fn apply_patch(patch: &FilePatch<'_>, patch_dir: Fd, state: &mut ApplyState) -> 
 
                     // Validate deletion range is within bounds
                     if line_cursor + part.lines.len() > lines.len() {
-                        return sys::Result::Err(
-                            sys::Error::from_code(sys::E::EINVAL, sys::Tag::fstatat)
-                                .with_path(file_path.as_bytes()),
-                        );
+                        return Err(invalid(sys::Tag::fstatat));
                     }
 
                     lines.drain(line_cursor..line_cursor + part.lines.len());
@@ -403,42 +274,185 @@ fn apply_patch(patch: &FilePatch<'_>, patch_dir: Fd, state: &mut ApplyState) -> 
         }
     }
 
-    let file_fd = match sys::openat(
-        patch_dir,
-        &file_path,
-        sys::O::CREAT | sys::O::WRONLY | sys::O::TRUNC,
-        stat.st_mode as sys::Mode,
-    ) {
-        sys::Result::Err(e) => return sys::Result::Err(e.with_path(file_path.as_bytes())),
-        sys::Result::Ok(fd) => fd,
-    };
-    let _close_file = scopeguard::guard(file_fd, |fd| fd.close());
+    sys::ftruncate(file_fd, 0)?;
+    // `read_to_end` advanced the cursor on Windows (POSIX reads use `pread`);
+    // rewind so the write lands at offset 0 instead of leaving a hole.
+    sys::set_file_offset(file_fd, 0)?;
 
     let contents = join_bytes(b"\n", &lines);
 
     let mut written: usize = 0;
     while written < contents.len() {
-        match sys::write(file_fd, &contents[written..]) {
-            sys::Result::Ok(w) => written += w,
-            sys::Result::Err(e) => return sys::Result::Err(e.with_path(file_path.as_bytes())),
-        }
+        written += sys::write(file_fd, &contents[written..])?;
     }
 
-    sys::Result::Ok(())
+    Ok(())
 }
 
-fn read_file_alloc(dir: Fd, path: &ZStr, max: usize) -> sys::Result<Vec<u8>> {
-    // Allocate `min(size, max)` and error past `max`, so a pathological
-    // multi-GiB target file errors instead of allocating unboundedly. (The
-    // too-big error would surface as `.INVAL` at the only call site anyway,
-    // so we map it to EINVAL here.)
-    let stat = sys::fstatat(dir, path)?;
-    if stat.st_size as u64 > max as u64 {
-        return sys::Result::Err(
-            sys::Error::from_code(sys::E::EINVAL, sys::Tag::read).with_path(path.as_bytes()),
-        );
+/// Cap on a patch target read into memory; a larger `st_size` is an error
+/// rather than an unbounded allocation.
+const MAX_PATCH_TARGET_BYTES: u64 = 4 * 1024 * 1024 * 1024;
+
+/// Mode for directories a patch has to create. A new file's header mode
+/// describes only the file; a directory given 0o644 cannot be entered.
+const CREATED_DIR_MODE: sys::Mode = 0o755;
+
+/// Directory handle returned by [`open_parent_beneath`]: `patch_dir` itself
+/// for single-component paths (not closed), an owned fd otherwise.
+struct ParentDir {
+    fd: Fd,
+    owned: bool,
+}
+
+impl Drop for ParentDir {
+    fn drop(&mut self) {
+        if self.owned {
+            self.fd.close();
+        }
     }
-    sys::File::read_from(dir, path)
+}
+
+/// The separators [`paths::dirname_simple`] splits on, so the walk below and
+/// the basename it leaves behind always reassemble the original path.
+const PATH_SEPS: &[u8] = if cfg!(windows) { b"/\\" } else { b"/" };
+
+/// Validates a patch path and resolves it to the verified directory holding
+/// its final component plus that component as a NUL-terminated name, the
+/// pair every `*at` syscall in `apply` operates on.
+fn resolve_target(
+    patch_dir: Fd,
+    path: &[u8],
+    create_mode: Option<sys::Mode>,
+) -> sys::Result<(ParentDir, ZBox)> {
+    if !is_safe_patch_path(path) {
+        return Err(sys::Error::from_code(sys::E::EINVAL, sys::Tag::open));
+    }
+    let parent = open_parent_beneath(patch_dir, path, create_mode)?;
+    let dir = paths::dirname_simple(path);
+    let base = if dir.is_empty() {
+        path
+    } else {
+        &path[dir.len() + 1..]
+    };
+    Ok((parent, ZBox::from_vec_with_nul(base.to_vec())))
+}
+
+/// Opens the parent directory of `path` one component at a time from
+/// `patch_dir`, refusing symlinks, creating missing components when
+/// `create_mode` is given. `path` must have passed [`is_safe_patch_path`],
+/// which is what rules out `..`.
+fn open_parent_beneath(
+    patch_dir: Fd,
+    path: &[u8],
+    create_mode: Option<sys::Mode>,
+) -> sys::Result<ParentDir> {
+    let mut cur = ParentDir {
+        fd: patch_dir,
+        owned: false,
+    };
+    for component in strings::split_any(paths::dirname_simple(path), PATH_SEPS) {
+        if component.is_empty() || component == b"." {
+            continue;
+        }
+        let component_z = ZBox::from_vec_with_nul(component.to_vec());
+        cur = ParentDir {
+            fd: open_dir_component(cur.fd, &component_z, create_mode)?,
+            owned: true,
+        };
+    }
+    Ok(cur)
+}
+
+/// On Windows `O_NOFOLLOW` opens a reparse point itself rather than failing,
+/// and `fstat` on that handle reports an ordinary file or directory, so the
+/// entry's own attributes are checked by name first (hence not atomic against
+/// a concurrent swap, unlike the POSIX path).
+#[cfg(windows)]
+fn reject_reparse_point(dir: Fd, name: &ZStr) -> sys::Result<()> {
+    match sys::get_file_attributes_at(dir, name) {
+        Ok(attrs) if attrs.is_reparse_point => {
+            Err(sys::Error::from_code(sys::E::ELOOP, sys::Tag::open))
+        }
+        // Nonexistent (about to be created) or unreadable: the open that
+        // follows reports the real error.
+        _ => Ok(()),
+    }
+}
+
+/// One step of the walk: opens `component` under `dir` as a directory
+/// without following a symlink, creating it first on ENOENT when
+/// `create_mode` is given.
+fn open_dir_component(
+    dir: Fd,
+    component: &ZStr,
+    create_mode: Option<sys::Mode>,
+) -> sys::Result<Fd> {
+    #[cfg(windows)]
+    reject_reparse_point(dir, component)?;
+    let flags = sys::O::RDONLY | sys::O::DIRECTORY | sys::O::NOFOLLOW;
+    let open_err = match sys::openat(dir, component, flags, 0) {
+        Ok(fd) => return Ok(fd),
+        Err(e) => e,
+    };
+    let Some(mode) = create_mode.filter(|_| open_err.get_errno() == sys::E::ENOENT) else {
+        return Err(symlink_component_err(dir, component, open_err));
+    };
+    match sys::mkdirat(dir, component, mode) {
+        Ok(()) => {}
+        // Lost a creation race; the open below verifies whatever is there now.
+        Err(e) if e.get_errno() == sys::E::EEXIST => {}
+        Err(e) => return Err(e),
+    }
+    sys::openat(dir, component, flags, 0).map_err(|e| symlink_component_err(dir, component, e))
+}
+
+/// `O_NOFOLLOW` on a symlink reports ENOTDIR or ELOOP on Linux, ELOOP on
+/// Darwin, and EMLINK on FreeBSD; report the symlink case as ELOOP everywhere.
+/// (Only the errno depends on this lstat, never whether the open was refused.)
+fn symlink_component_err(dir: Fd, component: &ZStr, e: sys::Error) -> sys::Error {
+    if matches!(
+        e.get_errno(),
+        sys::E::ENOTDIR | sys::E::ELOOP | sys::E::EMLINK
+    ) && let Ok(st) = sys::lstatat(dir, component)
+        && sys::S::ISLNK(st.st_mode as u32)
+    {
+        return sys::Error::from_code(sys::E::ELOOP, sys::Tag::open);
+    }
+    e
+}
+
+/// Opens `base` under a verified parent without following a symlink and
+/// requires a regular file with a single hard link: a second link means the
+/// same inode is also reachable from outside the patch dir.
+fn open_target_file(
+    parent: Fd,
+    base: &ZStr,
+    flags: i32,
+    mode: sys::Mode,
+) -> sys::Result<(Fd, sys::Stat)> {
+    #[cfg(windows)]
+    reject_reparse_point(parent, base)?;
+    // Without `O_NONBLOCK`, opening a FIFO blocks until a writer appears and
+    // the `!ISREG` rejection below is never reached.
+    let nonblock = if cfg!(windows) { 0 } else { sys::O::NONBLOCK };
+    let fd = sys::openat(parent, base, flags | sys::O::NOFOLLOW | nonblock, mode)
+        .map_err(|e| symlink_component_err(parent, base, e))?;
+    let stat = match sys::fstat(fd) {
+        Ok(st) => st,
+        Err(e) => {
+            fd.close();
+            return Err(e);
+        }
+    };
+    if !sys::S::ISREG(stat.st_mode as u32) {
+        fd.close();
+        return Err(sys::Error::from_code(sys::E::EINVAL, sys::Tag::open));
+    }
+    if stat.st_nlink > 1 {
+        fd.close();
+        return Err(sys::Error::from_code(sys::E::EMLINK, sys::Tag::open));
+    }
+    Ok((fd, stat))
 }
 
 /// Joins byte slices with a separator.
@@ -1040,6 +1054,10 @@ fn is_safe_patch_path(path: &[u8]) -> bool {
     !path.is_empty()
         && !strings::contains_char(path, 0)
         && !paths::is_absolute_loose(path)
+        // On Windows, openat strips a drive prefix from a relative component,
+        // so `"C:.."` (not byte-equal to `..` below) resolves a real `..`.
+        // `:` never occurs in a legitimate NTFS file name.
+        && !(cfg!(windows) && strings::contains_char(path, b':'))
         && !strings::split_any(path, b"/\\").any(|part| part == b"..")
 }
 

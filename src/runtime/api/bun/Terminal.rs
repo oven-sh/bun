@@ -1760,6 +1760,17 @@ impl Terminal {
             if let Some(hpcon) = self.hpcon.take() {
                 self.close_pseudoconsole_off_thread(hpcon);
             }
+            // A paused reader stopped its libuv read, so it would never
+            // observe the EOF this early return waits for: the reader ref
+            // would leak and the handle would keep the event loop alive.
+            // Resume so the final drain and onReaderDone still happen;
+            // post-close data delivery then matches an unpaused close.
+            // (pause() is a no-op once CLOSED, so the resumed drain cannot
+            // re-pause from a callback.)
+            if self.flags.get().contains(Flags::PAUSED) {
+                self.update_flags(|f| f.remove(Flags::PAUSED));
+                self.reader.with_mut(|r| r.unpause());
+            }
             // Leave the reader open; onReaderDone closes it on EOF.
             let flags = self.flags.get();
             if flags.contains(Flags::READER_STARTED) && !flags.contains(Flags::READER_DONE) {

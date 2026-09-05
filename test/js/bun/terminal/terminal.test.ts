@@ -670,6 +670,51 @@ describe("Bun.Terminal", () => {
         await proc.exited;
       }
     });
+
+    test("close after pause still finishes (exit fires)", async () => {
+      const { promise, resolve } = Promise.withResolvers<void>();
+      let exitCode: number | null = null;
+
+      const terminal = new Bun.Terminal({
+        exit(term, code) {
+          exitCode = code;
+          resolve();
+        },
+      });
+
+      terminal.pause();
+      expect(terminal.paused).toBe(true);
+      terminal.close();
+      expect(terminal.closed).toBe(true);
+
+      // On Windows close() waits for EOF with the reader left open; a paused
+      // reader must be resumed so EOF (and the exit callback) still arrives
+      // instead of hanging the event loop on the leaked reader ref.
+      await promise;
+
+      expect(exitCode).toBe(0);
+      expect(terminal.paused).toBe(false);
+    });
+
+    test("asyncDispose after pause resolves and closes", async () => {
+      let exited = false;
+
+      const terminal = new Bun.Terminal({
+        exit() {
+          exited = true;
+        },
+      });
+
+      terminal.pause();
+      expect(terminal.paused).toBe(true);
+
+      await terminal[Symbol.asyncDispose]();
+
+      expect(terminal.closed).toBe(true);
+      expect(terminal.paused).toBe(false);
+      // Dispose suppresses the exit callback like an unpaused dispose does.
+      expect(exited).toBe(false);
+    });
   });
 
   // ConPTY has no line discipline echo without a child process, so termios-echo

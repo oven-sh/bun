@@ -728,10 +728,10 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
 
         if env_loader.get(b"npm_execpath").is_none() {
             // we don't care if this fails
-            if let Ok(self_exe_path) = bun_core::self_exe_path() {
+            if let Some(exec_path) = crate::node::process::exec_path_bytes() {
                 env_loader
                     .map
-                    .put_default(b"npm_execpath", self_exe_path.as_bytes())
+                    .put_default(b"npm_execpath", exec_path)
                     .expect("unreachable");
             }
         }
@@ -4005,6 +4005,48 @@ impl BunXFastPath {
         bun_core::scoped_log!(BUNX_FAST_PATH_LOG, "did not start via shim");
     }
 
+    /// Give the in-process launch the identity a POSIX bunx child gets by
+    /// exec'ing through the temp `node` shim: argv in the
+    /// `bun <BUN_OPTIONS> <script> <args>` shape (the `process.execArgv`
+    /// re-parse must not see bunx CLI flags) and argv[0] at the override
+    /// `cli::detect_bunx_exec_path_override` recorded (a fork of `bunx.exe`
+    /// re-enters bunx CLI mode, #40298).
+    fn assume_runtime_identity(script_path: &[u8], passthrough: &[Box<[u8]>]) {
+        fn leak_zstr(bytes: &[u8]) -> &'static ZStr {
+            let mut v = Vec::with_capacity(bytes.len() + 1);
+            v.extend_from_slice(bytes);
+            v.push(0);
+            ZStr::from_slice_with_nul(v.leak())
+        }
+
+        let argv0: &'static ZStr = match cli::Bun__Node__ExecPathOverride.get() {
+            Some(path) => path.as_zstr(),
+            None => match core::self_exe_path().ok() {
+                Some(z) => z,
+                None => core::argv().get(0).unwrap_or(core::zstr!("bun")),
+            },
+        };
+
+        let bun_options_argc = core::bun_options_argc();
+        let mut new_argv: Vec<&'static ZStr> =
+            Vec::with_capacity(2 + bun_options_argc + passthrough.len());
+        new_argv.push(argv0);
+        // BUN_OPTIONS tokens sit at argv[1..]; keep them so `process.execArgv`
+        // reports them, as the POSIX child does after its own env re-splice.
+        for i in 1..=bun_options_argc {
+            if let Some(z) = core::argv().get(i) {
+                new_argv.push(z);
+            }
+        }
+        new_argv.push(leak_zstr(script_path));
+        for arg in passthrough {
+            new_argv.push(leak_zstr(arg));
+        }
+        // SAFETY: single-threaded CLI dispatch, before the VM boots; no
+        // concurrent `argv()` readers exist yet.
+        unsafe { core::set_argv(core::intern_argv(new_argv)) };
+    }
+
     fn direct_launch_callback(wpath: &mut [u16], ctx: bun_options_types::context::Context<'_>) {
         // SAFETY: process-lifetime static, single-threaded CLI dispatch.
         // `try_launch` (still on the call stack) holds live `&mut [u16]`
@@ -4021,6 +4063,7 @@ impl BunXFastPath {
             ::core::slice::from_raw_parts_mut(raw.cast::<u8>(), bun_paths::PATH_MAX_WIDE * 2)
         };
         let utf8 = strings::convert_utf16_to_utf8_in_buffer(out_buf, wpath);
+        Self::assume_runtime_identity(utf8, &ctx.passthrough);
         if let Err(err) = RunCommand::boot(ctx, utf8.to_vec().into_boxed_slice(), None) {
             // SAFETY: `ctx.log` was set in `create_context_data`.
             let _ = unsafe { &mut *ctx.log }.print(std::ptr::from_mut(Output::error_writer()));

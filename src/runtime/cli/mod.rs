@@ -427,6 +427,38 @@ pub(crate) static Bun__Node__RedirectWarnings: std::sync::OnceLock<Box<[u8]>> =
 pub(crate) static Bun__Node__DisabledWarnings: std::sync::OnceLock<Vec<Box<[u8]>>> =
     std::sync::OnceLock::new();
 
+#[allow(non_upper_case_globals)]
+/// Overrides `process.execPath` / `process.argv[0]` / `npm_execpath`. Set
+/// once, at bunx dispatch on Windows, when the process is `bunx.exe`, whose
+/// path children cannot be spawned from (it dispatches to bunx CLI mode).
+pub(crate) static Bun__Node__ExecPathOverride: std::sync::OnceLock<bun_core::ZBox> =
+    std::sync::OnceLock::new();
+
+/// When the process is `bunx.exe`, record the sibling `bun.exe` as the
+/// executable path before anything captures it (`npm_execpath` in the run
+/// env, `process.execPath` in the in-process fast path). A child spawned
+/// from `bunx.exe` re-enters bunx CLI mode (#40298). POSIX needs no
+/// override: `bunx` is a symlink and `self_exe_path` resolves through it.
+#[cfg(windows)]
+fn detect_bunx_exec_path_override() {
+    let Ok(self_exe) = bun::self_exe_path() else {
+        return;
+    };
+    let bytes = self_exe.as_bytes();
+    if !strings::eql_case_insensitive_ascii_check_length(bun_paths::basename(bytes), b"bunx.exe") {
+        return;
+    }
+    let Some(dir) = bun_paths::dirname(bytes) else {
+        return;
+    };
+    let mut sibling = Vec::with_capacity(dir.len() + b"\\bun.exe".len());
+    sibling.extend_from_slice(dir);
+    sibling.extend_from_slice(b"\\bun.exe");
+    if bun_sys::exists(&sibling) {
+        let _ = Bun__Node__ExecPathOverride.set(bun_core::ZBox::from_vec(sibling));
+    }
+}
+
 /// Backing storage for [`cli_arena`]. Written exactly once in [`Cli::start`]
 /// during single-threaded process startup (before `Command::start`, hence
 /// before any `cli_arena()` / `cli_dupe` caller), then read freely — same
@@ -1528,6 +1560,8 @@ pub mod command {
     #[cold]
     #[inline(never)]
     fn exec_bunx(log: &mut bun_ast::Log) -> CmdResult {
+        #[cfg(windows)]
+        detect_bunx_exec_path_override();
         let ctx = init(Tag::BunxCommand, log)?;
         let start_idx = if IS_BUNX_EXE.load(core::sync::atomic::Ordering::Relaxed) {
             0

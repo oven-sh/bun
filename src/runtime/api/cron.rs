@@ -833,9 +833,9 @@ pub(crate) fn cron_register(global: &JSGlobalObject, frame: &CallFrame) -> JsRes
         }
     }
 
-    let bun_exe = match bun_core::self_exe_path() {
-        Ok(p) => p,
-        Err(_) => {
+    let bun_exe = match crate::node::process::exec_path_zstr() {
+        Some(p) => p,
+        None => {
             return Err(global.throw(format_args!("Failed to get bun executable path")));
         }
     };

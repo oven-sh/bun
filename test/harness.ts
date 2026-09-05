@@ -1928,10 +1928,17 @@ export class VerdaccioRegistry {
     // whatever `localhost` resolves to, which is `::1` on hosts that list it first,
     // while the install client connects to 127.0.0.1 and every request is refused.
     const listen = `127.0.0.1:${this.port}`;
+    // In CI the `bun` on PATH is the binary under test. Verdaccio is a node application: under the ASAN
+    // build it needs seconds to start and about a second per request, so CI hosts it on the runner's node.
+    const node = isCI ? nodeExe() : null;
     this.process = fork(require.resolve("verdaccio/bin/verdaccio"), ["-c", this.configPath, "-l", listen], {
       silent,
-      // Prefer using a release build of Bun since it's faster
-      execPath: isCI ? bunExe() : Bun.which("bun") || bunExe(),
+      // Locally, prefer the release build of Bun on PATH since it's faster than a debug build.
+      execPath: node ?? (isCI ? bunExe() : Bun.which("bun") || bunExe()),
+      // Node 26 removed `SlowBuffer`; verdaccio's dependency buffer-equal-constant-time reads it at load time.
+      execArgv: node
+        ? ["--require", join(import.meta.dir, "cli", "install", "registry", "slowbuffer-shim.cjs")]
+        : undefined,
       env: {
         ...(bunEnv as any),
         NODE_NO_WARNINGS: "1",

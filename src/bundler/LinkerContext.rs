@@ -3283,7 +3283,46 @@ impl<'a> LinkerContext<'a> {
                     }
                 }
             }
+
+            if !self.graph.files_with_code.is_set(source_index as usize) {
+                let flags = self.graph.meta.items_flags();
+                // A wrapped file prints its `__esm` / `__commonJS` closure.
+                if flags[source_index as usize].wrap != WrapKind::None
+                    || Self::part_prints_code(flags, records, part)
+                {
+                    self.graph.files_with_code.set(source_index as usize);
+                }
+            }
         }
+    }
+
+    /// Whether the part prints anything into its chunk (what `convert_stmts_for_chunk` keeps).
+    fn part_prints_code(
+        flags: &[crate::js_meta::Flags],
+        records: &[ImportRecord],
+        part: &Part,
+    ) -> bool {
+        // With tree shaking, each top-level statement is its own part.
+        let [stmt] = part.stmts.slice() else {
+            return !part.stmts.is_empty();
+        };
+        let (record, is_export_star) = match stmt.data {
+            bun_ast::StmtData::SImport(s) => (&records[s.import_record_index as usize], false),
+            bun_ast::StmtData::SExportFrom(s) => (&records[s.import_record_index as usize], false),
+            bun_ast::StmtData::SExportStar(s) => {
+                (&records[s.import_record_index as usize], s.alias.is_none())
+            }
+            bun_ast::StmtData::SExportClause(_) => return false,
+            _ => return true,
+        };
+        !record.flags.contains(bun_ast::ImportRecordFlags::IS_UNUSED)
+            && (!record.source_index.is_valid()
+                || flags[record.source_index.get() as usize].wrap != WrapKind::None
+                // `export * from` a module with dynamic exports prints `__reExport(...)`.
+                || (is_export_star
+                    && record
+                        .flags
+                        .contains(bun_ast::ImportRecordFlags::CALLS_RUNTIME_RE_EXPORT_FN)))
     }
 } // end tree-shaking impl
 

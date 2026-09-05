@@ -2251,6 +2251,37 @@ pub(crate) fn shell_dup(fd: Fd) -> bun_sys::Result<Fd> {
     }
 }
 
+/// Joins argv-sized `parts` into an owned, normalized path. The fs layers the
+/// builtins hand their paths to copy them into `MAX_PATH_BYTES` buffers, so a
+/// result that would not fit one is `ENAMETOOLONG` (tagged `syscall`, naming
+/// the path) here instead.
+pub(crate) fn shell_join_path(
+    syscall: bun_sys::Tag,
+    parts: &[&[u8]],
+) -> bun_sys::Result<bun_core::ZBox> {
+    let mut spill = Vec::new();
+    let joined =
+        bun_paths::resolve_path::join_spill::<bun_paths::platform::Auto>(&mut spill, parts);
+    if joined.len() >= bun_paths::MAX_PATH_BYTES {
+        return Err(bun_sys::Error::from_code(bun_sys::E::ENAMETOOLONG, syscall).with_path(joined));
+    }
+    Ok(bun_core::ZBox::from_bytes(joined))
+}
+
+/// A builtin's path `operand` made absolute against the shell's `cwd`, via
+/// [`shell_join_path`].
+pub(crate) fn shell_resolve_operand(
+    syscall: bun_sys::Tag,
+    cwd: &[u8],
+    operand: &[u8],
+) -> bun_sys::Result<bun_core::ZBox> {
+    if bun_paths::Platform::AUTO.is_absolute(operand) {
+        shell_join_path(syscall, &[operand])
+    } else {
+        shell_join_path(syscall, &[cwd, operand])
+    }
+}
+
 /// Windows-only: rewrite shell paths so POSIX-absolute `/foo` resolves onto
 /// `dirfd`'s drive root, `/dev/null` maps to `NUL`, and relative paths are
 /// joined against `dirfd`'s real path. Returns a NUL-terminated slice that

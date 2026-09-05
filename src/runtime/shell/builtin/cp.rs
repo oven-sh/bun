@@ -4,7 +4,8 @@ use crate::node::PathLike;
 use crate::shell::builtin::{Builtin, BuiltinState, IoKind, Kind};
 use crate::shell::interpreter::{
     EventLoopHandle, FlagParser, Interpreter, NodeId, OutputSrc, OutputTask, OutputTaskVTable,
-    ParseFlagResult, ShellTask, parse_flags, unsupported_flag,
+    ParseFlagResult, ShellTask, parse_flags, shell_join_path, shell_resolve_operand,
+    unsupported_flag,
 };
 use crate::shell::io_writer::{ChildPtr, WriterTag};
 use crate::shell::yield_::Yield;
@@ -605,26 +606,16 @@ impl ShellCpTask {
         &mut self,
         poster: &bun_jsc::ConcurrentPoster,
     ) -> Option<ShellErr> {
-        use resolve_path::{Platform, platform};
-
-        let mut buf2 = bun_paths::PathBuffer::uninit();
-        let mut buf3 = bun_paths::PathBuffer::uninit();
         // We have to give an absolute path to our cp implementation for it to
         // work with cwd.
-        let src: &bun_core::ZStr = if Platform::AUTO.is_absolute(&self.src) {
-            // `self.src` is the bare argv bytes (no NUL); re-terminate via
-            // the thread-local join buffer.
-            resolve_path::join_z::<platform::Auto>(&[&self.src])
-        } else {
-            resolve_path::join_z::<platform::Auto>(&[&self.cwd_path, &self.src])
+        let src = match shell_resolve_operand(bun_sys::Tag::copyfile, &self.cwd_path, &self.src) {
+            Ok(path) => path,
+            Err(e) => return Some(ShellErr::new_sys(&e)),
         };
-        let mut tgt: &bun_core::ZStr = if Platform::AUTO.is_absolute(&self.tgt) {
-            resolve_path::join_z_buf::<platform::Auto>(buf2.as_mut_slice(), &[&self.tgt])
-        } else {
-            resolve_path::join_z_buf::<platform::Auto>(
-                buf2.as_mut_slice(),
-                &[&self.cwd_path, &self.tgt],
-            )
+        let mut tgt = match shell_resolve_operand(bun_sys::Tag::copyfile, &self.cwd_path, &self.tgt)
+        {
+            Ok(path) => path,
+            Err(e) => return Some(ShellErr::new_sys(&e)),
         };
 
         // Cases:
@@ -635,7 +626,7 @@ impl ShellCpTask {
         //   folder -> folder
         // We need to check dest to see what it is; if it doesn't exist we
         // need to create it.
-        let src_is_dir = match Self::is_dir(src) {
+        let src_is_dir = match Self::is_dir(&src) {
             Ok(x) => x,
             Err(e) => return Some(ShellErr::new_sys(&e)),
         };
@@ -660,7 +651,7 @@ impl ShellCpTask {
             ));
         }
 
-        let (tgt_is_dir, tgt_exists) = match Self::is_dir(tgt) {
+        let (tgt_is_dir, tgt_exists) = match Self::is_dir(&tgt) {
             Ok(is_dir) => (is_dir, true),
             Err(e) if e.get_errno() == bun_sys::E::ENOENT => {
                 // If it has a trailing directory separator, it's a directory.
@@ -678,10 +669,10 @@ impl ShellCpTask {
             // 2nd synopsis: -R source_files... -> target.
             if tgt_exists {
                 let basename = resolve_path::basename(src.as_bytes());
-                tgt = resolve_path::join_z_buf::<platform::Auto>(
-                    buf3.as_mut_slice(),
-                    &[tgt.as_bytes(), basename],
-                );
+                tgt = match shell_join_path(bun_sys::Tag::copyfile, &[tgt.as_bytes(), basename]) {
+                    Ok(path) => path,
+                    Err(e) => return Some(ShellErr::new_sys(&e)),
+                };
             } else if self.operands == 2 {
                 // source_dir -> new_target_dir.
             } else {
@@ -709,10 +700,10 @@ impl ShellCpTask {
                 ));
             }
             let basename = resolve_path::basename(src.as_bytes());
-            tgt = resolve_path::join_z_buf::<platform::Auto>(
-                buf3.as_mut_slice(),
-                &[tgt.as_bytes(), basename],
-            );
+            tgt = match shell_join_path(bun_sys::Tag::copyfile, &[tgt.as_bytes(), basename]) {
+                Ok(path) => path,
+                Err(e) => return Some(ShellErr::new_sys(&e)),
+            };
             _copying_many = true;
         }
 

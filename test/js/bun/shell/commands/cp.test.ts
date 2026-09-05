@@ -1,7 +1,7 @@
 import { $ } from "bun";
 import { shellInternals } from "bun:internal-for-testing";
-import { describe, expect } from "bun:test";
-import { tempDirWithFiles } from "harness";
+import { describe, expect, test } from "bun:test";
+import { bunEnv, isWindows, tempDir, tempDirWithFiles } from "harness";
 import { bunExe, createTestBuilder } from "../test_builder";
 import { sortedShellOutput } from "../util";
 const { builtinDisabled } = shellInternals;
@@ -171,6 +171,115 @@ describe.if(!builtinDisabled("cp"))("bunshell cp", async () => {
       .testMini({ cwd: mini_tmpdir })
       .runAsTest("cp_recurse");
   });
+});
+
+// The builtin resolved each operand (and `target/basename` when copying into a
+// directory) into fixed-size path buffers without checking that the result fit,
+// so an operand longer than the buffer aborted the whole process. Runs in a
+// child process so the abort shows up as a failed assertion; on POSIX the cp
+// builtin is experimental and must be enabled explicitly.
+test("operands longer than the path buffers are reported as ENAMETOOLONG", async () => {
+  using dir = tempDir("cp-long-operands", {
+    "f": "source",
+    "target": {},
+    "cp-long-operands-fixture.ts": /* ts */ `
+      import { $ } from "bun";
+      import { existsSync, mkdirSync, writeFileSync } from "node:fs";
+      import { join } from "node:path";
+
+      $.nothrow();
+      const cwd = process.cwd();
+      // Longer than the path buffer on every platform (1024 bytes on macOS,
+      // 4096 on Linux, 98302 on Windows).
+      const over = Buffer.alloc(100_000, "a").toString();
+      // Applied in order; the deep directory below goes in front because its
+      // path starts with cwd.
+      const placeholders: [string, string][] = [[over, "<over>"], [cwd, "<cwd>"]];
+
+      async function cp(...args: string[]) {
+        const { exitCode, stderr } = await $\`cp \${args}\`.quiet();
+        let message = stderr.toString();
+        for (const [value, placeholder] of placeholders) message = message.replaceAll(value, placeholder);
+        return { exitCode, stderr: message };
+      }
+
+      const names: Record<string, string> = {};
+      const results: Record<string, unknown> = {};
+      results.longSource = await cp(over, "target");
+      results.longTarget = await cp("f", over);
+      results.longAbsoluteTarget = await cp("f", join(cwd, over));
+      results.longSourceAmongOthers = { ...(await cp("f", over, "target")), otherCopied: existsSync("target/f") };
+
+      // Copying into a directory appends the basename to the directory's path,
+      // which needs an existing directory just below the limit. Not reachable
+      // on Windows, where the buffer holds more than any directory path NT
+      // can address.
+      if (process.platform !== "win32") {
+        // A path of PATH_MAX - 1 bytes is the longest one the OS accepts.
+        const PATH_MAX = process.platform === "linux" ? 4096 : 1024;
+        // Nest directories until fewer than ~200 bytes remain below that, so
+        // the basenames straddling the limit are short enough to exist in the
+        // cwd (NAME_MAX is 255).
+        const segment = Buffer.alloc(200, "d").toString();
+        // Length of the name that makes \`dir/name\` exactly PATH_MAX - 1 bytes.
+        const atLimitNameLength = (dir: string) => PATH_MAX - 1 - (dir.length + 1);
+        let deep = join(cwd, segment);
+        while (atLimitNameLength(join(deep, segment)) >= 1) deep = join(deep, segment);
+        mkdirSync(deep, { recursive: true });
+        placeholders.unshift([deep, "<deep>"]);
+
+        const atLimitLength = atLimitNameLength(deep);
+        names.atLimit = Buffer.alloc(atLimitLength, "s").toString();
+        names.onePast = Buffer.alloc(atLimitLength + 1, "t").toString();
+        names.onePastDir = Buffer.alloc(atLimitLength + 1, "u").toString();
+        writeFileSync(names.atLimit, "at limit");
+        writeFileSync(names.onePast, "one past");
+        mkdirSync(names.onePastDir);
+
+        results.deepPathLengths = {
+          atLimit: join(deep, names.atLimit).length,
+          onePast: join(deep, names.onePast).length,
+        };
+        results.intoDeepDirAtLimit = {
+          ...(await cp(names.atLimit, deep)),
+          copied: existsSync(join(deep, names.atLimit)),
+        };
+        results.intoDeepDirOnePast = await cp(names.onePast, deep);
+        results.recursiveIntoDeepDir = await cp("-R", names.onePastDir, deep);
+      }
+
+      console.log(JSON.stringify({ names, results }));
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "cp-long-operands-fixture.ts"],
+    env: { ...bunEnv, BUN_ENABLE_EXPERIMENTAL_SHELL_BUILTINS: "1" },
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  const { names, results } = JSON.parse(stdout);
+
+  const tooLong = (path: string) => ({ exitCode: 1, stderr: `cp: File name too long: ${p(path)}\n` });
+  const PATH_MAX = process.platform === "linux" ? 4096 : 1024;
+  expect(results).toEqual({
+    longSource: tooLong("<cwd>/<over>"),
+    longTarget: tooLong("<cwd>/<over>"),
+    longAbsoluteTarget: tooLong("<cwd>/<over>"),
+    longSourceAmongOthers: { ...tooLong("<cwd>/<over>"), otherCopied: true },
+    ...(isWindows
+      ? {}
+      : {
+          // The fixture placed deep/<name> exactly at the OS limit and one byte past it.
+          deepPathLengths: { atLimit: PATH_MAX - 1, onePast: PATH_MAX },
+          intoDeepDirAtLimit: { exitCode: 0, stderr: "", copied: true },
+          intoDeepDirOnePast: tooLong(`<deep>/${names.onePast}`),
+          recursiveIntoDeepDir: tooLong(`<deep>/${names.onePastDir}`),
+        }),
+  });
+  expect(exitCode).toBe(0);
 });
 
 function expectSortedOutput(expected: string) {

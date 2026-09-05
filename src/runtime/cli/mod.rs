@@ -373,6 +373,8 @@ pub mod pm_version_command;
 pub mod pm_view_command;
 #[path = "pm_why_command.rs"]
 pub(crate) mod pm_why_command;
+#[path = "prompt_signal.rs"]
+pub(crate) mod prompt_signal;
 #[path = "prune_command.rs"]
 pub(crate) mod prune_command;
 #[path = "publish_command.rs"]

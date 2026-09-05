@@ -246,15 +246,21 @@ impl InitCommand {
 
     /// `Choices` must implement `RadioChoice`.
     fn radio<C: RadioChoice>(label: &[u8]) -> Result<C, Error> {
-        // Set raw mode to read single characters without echo
+        // Restore the cursor if the process dies mid-prompt (#30890);
+        // see `crate::cli::prompt_signal`.
+        let _signal_guard = crate::cli::prompt_signal::install();
+
+        // Set raw mode. `ENABLE_PROCESSED_INPUT` stays unset (#30890, see
+        // `crate::cli::prompt_signal`).
         #[cfg(windows)]
         let _restore =
             bun_sys::windows::StdinModeGuard::set(bun_sys::windows::UpdateStdioModeFlagsOpts {
-                // virtual terminal input enables arrow keys, processed input lets ctrl+c kill the program
-                set: bun_sys::windows::ENABLE_VIRTUAL_TERMINAL_INPUT
-                    | bun_sys::windows::ENABLE_PROCESSED_INPUT,
+                // virtual terminal input enables arrow keys
+                set: bun_sys::windows::ENABLE_VIRTUAL_TERMINAL_INPUT,
                 // disabling line input sends keys immediately, disabling echo input makes sure it doesn't print to the terminal
-                unset: bun_sys::windows::ENABLE_LINE_INPUT | bun_sys::windows::ENABLE_ECHO_INPUT,
+                unset: bun_sys::windows::ENABLE_LINE_INPUT
+                    | bun_sys::windows::ENABLE_ECHO_INPUT
+                    | bun_sys::windows::ENABLE_PROCESSED_INPUT,
             });
 
         #[cfg(unix)]
@@ -263,6 +269,9 @@ impl InitCommand {
         let selection = match Self::process_radio_button::<C>(label) {
             Ok(s) => s,
             Err(crate::Error::Core(bun_core::Error::EndOfStream)) => {
+                // `Global::exit` does not unwind; drop the guard explicitly
+                // to restore the console mode.
+                drop(_restore);
                 Output::flush();
                 // Add an "x" cancelled
                 bun_core::prettyln!("\n<r><red>x<r> Cancelled");

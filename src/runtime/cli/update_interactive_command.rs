@@ -1212,13 +1212,19 @@ impl UpdateInteractiveCommand {
             show_workspace: columns.show_workspace, // Show workspace if packages have workspaces
         };
 
-        // Set raw mode — RAII guard restores the original terminal mode on Drop.
+        // Restore the cursor if the process dies mid-prompt (#30890);
+        // see `crate::cli::prompt_signal`.
+        let _signal_guard = crate::cli::prompt_signal::install();
+
+        // Set raw mode. `ENABLE_PROCESSED_INPUT` stays unset (#30890, see
+        // `crate::cli::prompt_signal`).
         #[cfg(windows)]
         let _restore =
             bun_sys::windows::StdinModeGuard::set(bun_sys::windows::UpdateStdioModeFlagsOpts {
-                set: bun_sys::windows::ENABLE_VIRTUAL_TERMINAL_INPUT
+                set: bun_sys::windows::ENABLE_VIRTUAL_TERMINAL_INPUT,
+                unset: bun_sys::windows::ENABLE_LINE_INPUT
+                    | bun_sys::windows::ENABLE_ECHO_INPUT
                     | bun_sys::windows::ENABLE_PROCESSED_INPUT,
-                unset: bun_sys::windows::ENABLE_LINE_INPUT | bun_sys::windows::ENABLE_ECHO_INPUT,
             });
 
         #[cfg(unix)]
@@ -1228,6 +1234,9 @@ impl UpdateInteractiveCommand {
             Ok(r) => r,
             Err(err) => {
                 if matches!(err, crate::Error::Core(bun_core::Error::EndOfStream)) {
+                    // `Global::exit` does not unwind; drop the guard
+                    // explicitly to restore the console mode.
+                    drop(_restore);
                     Output::flush();
                     bun_core::prettyln!("\n<r><red>x<r> Cancelled");
                     Global::exit(0);

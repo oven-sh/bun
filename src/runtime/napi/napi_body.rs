@@ -4060,6 +4060,8 @@ mod posix_platform_specific_v8_apis {
 
 #[cfg(unix)]
 mod uv_functions_to_export {
+    // Symbol-export placeholders never called from Rust; see the NOTE on
+    // `uv_os_getpid` / `uv_os_getppid` above.
     unsafe extern "C" {
         pub(super) fn uv_accept();
         pub(super) fn uv_async_init();

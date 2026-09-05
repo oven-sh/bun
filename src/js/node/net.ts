@@ -702,6 +702,14 @@ function SocketEmitEndNT(self, _err?) {
   }
 }
 
+// The native layer reports "the ClientHello carried no SNI" as undefined; node's
+// TLSWrap::GetServername() reports it as false, and that is what reaches users
+// through socket.servername and the ALPNCallback argument.
+// https://github.com/nodejs/node/blob/v26.3.0/src/crypto/crypto_tls.cc#L1359-L1373
+function servernameOrFalse(servername: string | undefined): string | false {
+  return servername ?? false;
+}
+
 // --- SNICallback dispatch helpers (hoisted: no per-handshake closures) ---
 
 // Normalizes non-Error rejections (cb(true), cb("reason"), throw true): the
@@ -792,7 +800,8 @@ const ServerHandlers: SocketHandler<NetSocket> = {
     }
     let result;
     try {
-      result = cb.$call(self, { servername, protocols });
+      // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L243
+      result = cb.$call(self, { servername: servernameOrFalse(servername), protocols });
     } catch (err) {
       // Node: a throwing ALPNCallback refuses the connection (fatal
       // no_application_protocol alert) and surfaces the thrown error as
@@ -943,6 +952,10 @@ const ServerHandlers: SocketHandler<NetSocket> = {
       } else {
         err = tlsHandshakeError(verifyError);
       }
+      // Not servernameOrFalse: node only stores a name the ClientHello did carry
+      // here (TLSWrap::SelectSNIContextCallback); its `false` comes from
+      // _finishInit, which a failed handshake never reaches.
+      // https://github.com/nodejs/node/blob/v26.3.0/src/crypto/crypto_tls.cc#L1396-L1399
       self.servername = socket.getServername();
       self._hadError = true;
       // Node's onerror destroys *with* the error when the handshake never
@@ -957,7 +970,8 @@ const ServerHandlers: SocketHandler<NetSocket> = {
     self._securePending = false;
     self.secureConnecting = false;
     self._secureEstablished = !!success;
-    self.servername = socket.getServername();
+    // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L1094-L1096
+    self.servername = servernameOrFalse(socket.getServername());
     self.alpnProtocol = socket.alpnProtocol;
     self[kVerifyError] = verifyError ?? null;
     // The native verifier reports a non-OK code when there is no peer certificate,

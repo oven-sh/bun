@@ -283,95 +283,118 @@ void WorkerMessagingProxy::rejectAllCrossVMRequests()
 // a fixed count rather than "everything that was queued when the drain began": with a producer on
 // another thread that snapshot can be arbitrarily large, and the receiving loop's timers and I/O
 // wait behind it. `UntilEmpty` is for the sender having exited: the queue is finite and everything
-// in it precedes 'close'. Worker inboxes never change owner, so up to a budget's worth is moved out
-// under one lock acquisition and dispatched uncontended; the queue itself is only swapped out whole
-// when it fits the budget, so a continuation never has to hand a tail back.
+// in it precedes 'close'.
+//
+// drainScheduled is cleared before any user JS runs: a handler (or a promise continuation its
+// microtask drain unblocks) can park this loop in a nested event-loop wait, and a send arriving
+// then has to post a fresh wakeup task or that wait never wakes (#37189). Messages move
+// queue -> `draining` a small batch per lock acquisition and are popped from `draining` one at a
+// time, so such a nested drain observes the shared deques and delivery stays FIFO.
 enum class DrainBudget { Bounded,
     UntilEmpty };
 static constexpr size_t drainBatchLimit = 1024;
 
 template<typename Dispatch>
-static bool drainInbox(WorkerMessagingProxy::MessageInbox& inbox, Zig::GlobalObject& globalObject, ScriptExecutionContext& context, DrainBudget budget, Dispatch&& dispatch)
+static bool drainInbox(WorkerMessagingProxy::MessageInbox& inbox, Zig::GlobalObject& globalObject, ScriptExecutionContext& context, DrainBudget budget, bool fromYieldContinuation, Dispatch&& dispatch)
 {
     auto& vm = globalObject.vm();
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     size_t remaining = budget == DrainBudget::UntilEmpty ? std::numeric_limits<size_t>::max() : drainBatchLimit;
+    static constexpr size_t takeAtOnce = 64;
+
+    {
+        Locker locker { inbox.lock };
+        // A spent budget hands the rest to an after-yield continuation so a
+        // self-feeding message loop cannot starve timers and I/O; wakeup tasks
+        // posted by a send in the meantime stand down until it has run. An
+        // UntilEmpty flush overrides it: the sender has exited and everything
+        // queued precedes 'close'.
+        if (inbox.yieldPending) {
+            if (!fromYieldContinuation && budget != DrainBudget::UntilEmpty)
+                return false;
+            inbox.yieldPending = false;
+        }
+        inbox.drainScheduled = false;
+    }
 
     while (true) {
-        Deque<MessageWithMessagePorts> batch;
+        std::optional<MessageWithMessagePorts> message;
         {
             Locker locker { inbox.lock };
-            if (inbox.queue.isEmpty()) {
-                inbox.drainScheduled = false;
-                return false;
-            }
-            if (!remaining)
-                return true; // budget spent, messages left
-            if (inbox.queue.size() <= remaining)
-                batch = std::exchange(inbox.queue, {});
-            else {
-                for (size_t i = 0; i < remaining; ++i)
-                    batch.append(inbox.queue.takeFirst());
-            }
-        }
-        if (budget == DrainBudget::Bounded)
-            remaining -= batch.size();
-
-        while (!batch.isEmpty()) {
-            // The receiving VM is being stopped: nothing more is delivered (the
-            // rest is dropped with the proxy).
-            if (context.isJSExecutionForbidden())
-                return false;
-            auto message = batch.takeFirst();
-            auto ports = MessagePort::entanglePorts(context, WTF::move(message.transferredPorts));
-            // message port post message steps (7.3): if deserializing throws, catch it and fire messageerror.
-            auto event = MessageEvent::create(globalObject, message.message.releaseNonNull(), nullptr, WTF::move(ports));
-            if (scope.exception()) [[unlikely]] {
-                if (vm.hasPendingTerminationException())
+            if (inbox.draining.isEmpty()) {
+                if (inbox.queue.isEmpty())
                     return false;
-                scope.clearException();
-                dispatch(MessageEvent::create(eventNames().messageerrorEvent, MessageEvent::Init { {}, jsNull() }, MessageEvent::IsTrusted::Yes));
-            } else
-                dispatch(event->event);
-            bool terminating = globalObject.drainMicrotasks();
-            RETURN_IF_EXCEPTION(scope, false);
-            if (terminating)
-                return false; // termination pending
+                if (!remaining) {
+                    // Budget spent; the caller posts the after-yield
+                    // continuation that this marks as the only invocation
+                    // allowed to keep draining. Nested waits still progress:
+                    // the loop tick they spin promotes after-yield tasks.
+                    inbox.yieldPending = true;
+                    return true;
+                }
+                size_t n = std::min({ takeAtOnce, remaining, static_cast<size_t>(inbox.queue.size()) });
+                for (size_t i = 0; i < n; ++i)
+                    inbox.draining.append(inbox.queue.takeFirst());
+                if (budget == DrainBudget::Bounded)
+                    remaining -= n;
+            }
+            message = inbox.draining.takeFirst();
         }
+
+        // The receiving VM is being stopped: nothing more is delivered (the
+        // rest is dropped with the proxy).
+        if (context.isJSExecutionForbidden())
+            return false;
+        auto ports = MessagePort::entanglePorts(context, WTF::move(message->transferredPorts));
+        // message port post message steps (7.3): if deserializing throws, catch it and fire messageerror.
+        auto event = MessageEvent::create(globalObject, message->message.releaseNonNull(), nullptr, WTF::move(ports));
+        if (scope.exception()) [[unlikely]] {
+            if (vm.hasPendingTerminationException())
+                return false;
+            scope.clearException();
+            dispatch(MessageEvent::create(eventNames().messageerrorEvent, MessageEvent::Init { {}, jsNull() }, MessageEvent::IsTrusted::Yes));
+        } else
+            dispatch(event->event);
+        bool terminating = globalObject.drainMicrotasks();
+        RETURN_IF_EXCEPTION(scope, false);
+        if (terminating)
+            return false; // termination pending
     }
 }
 
-void WorkerMessagingProxy::drainMessagesToWorkerGlobalScope(ScriptExecutionContext& context)
+void WorkerMessagingProxy::drainMessagesToWorkerGlobalScope(ScriptExecutionContext& context, bool fromYieldContinuation)
 {
     auto& globalObject = *defaultGlobalObject(context.globalObject());
-    bool more = drainInbox(m_toWorker, globalObject, context, DrainBudget::Bounded, [&](Event& event) {
+    bool more = drainInbox(m_toWorker, globalObject, context, DrainBudget::Bounded, fromYieldContinuation, [&](Event& event) {
         globalObject.globalEventScope->dispatchEvent(event);
     });
     if (more) {
         // Budget spent with messages left: continue after the loop has polled,
         // or a producer faster than this drain starves timers and I/O for good.
         context.postTaskAfterYield([protectedThis = Ref { *this }](ScriptExecutionContext& context) {
-            protectedThis->drainMessagesToWorkerGlobalScope(context);
+            protectedThis->drainMessagesToWorkerGlobalScope(context, /* fromYieldContinuation */ true);
         });
     }
 }
 
-void WorkerMessagingProxy::drainMessagesToWorkerObject(ScriptExecutionContext& context, DrainBudget budget)
+void WorkerMessagingProxy::drainMessagesToWorkerObject(ScriptExecutionContext& context, DrainBudget budget, bool fromYieldContinuation)
 {
     if (!m_workerObject) {
         Locker locker { m_toParent.lock };
         m_toParent.queue.clear();
+        m_toParent.draining.clear();
         m_toParent.drainScheduled = false;
+        m_toParent.yieldPending = false;
         return;
     }
     Ref workerObject = *m_workerObject;
     auto& globalObject = *defaultGlobalObject(context.globalObject());
-    bool more = drainInbox(m_toParent, globalObject, context, budget, [&](Event& event) {
+    bool more = drainInbox(m_toParent, globalObject, context, budget, fromYieldContinuation, [&](Event& event) {
         workerObject->dispatchEvent(event);
     });
     if (more) {
         context.postTaskAfterYield([protectedThis = Ref { *this }](ScriptExecutionContext& context) {
-            protectedThis->drainMessagesToWorkerObject(context, DrainBudget::Bounded);
+            protectedThis->drainMessagesToWorkerObject(context, DrainBudget::Bounded, /* fromYieldContinuation */ true);
         });
     }
 }

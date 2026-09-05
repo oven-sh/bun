@@ -62,7 +62,7 @@ var access = function access(path, mode, callback) {
     }
 
     callback = ensureCallback(callback);
-    fs.access(path, mode).then(callback, callback);
+    fs.access(path, mode).then(FunctionPrototypeBind.$call(callOnceWithNull, undefined, callback), callback);
   },
   appendFile = function appendFile(path, data, options, callback) {
     if (!$isCallable(callback)) {
@@ -425,7 +425,10 @@ var access = function access(path, mode, callback) {
       callback = wrapFsCallback(callback);
     }
 
-    fs.symlink(target, path, type).then(callback, callback);
+    fs.symlink(target, path, type).then(
+      $isCallable(callback) ? FunctionPrototypeBind.$call(callOnceWithNull, undefined, callback) : callback,
+      callback,
+    );
   },
   truncate = function truncate(path, len, callback) {
     if (typeof path === "number") {

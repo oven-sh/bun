@@ -250,26 +250,20 @@ impl ShellSubprocess {
     }
 
     /// The `< ${buffer}` stdin writer closed: release it and let the `Cmd`
-    /// finish. The stdin close can be the last of the four completion events
-    /// (exit, stdin, stdout, stderr), so it runs the same finish check the
-    /// others do.
+    /// finish.
     ///
     /// # Safety
-    /// `this` must be live and unborrowed. `Cmd::deinit`, reached through the
-    /// Yield run here, may free it before this returns, which is why it is raw.
+    /// `this` must be live and unborrowed; the Yield run here may free it.
     unsafe fn on_stdin_writer_close(this: *mut Self) {
         {
-            // SAFETY: caller contract; the borrow ends with this block, before
-            // the Yield runs.
+            // SAFETY: caller contract; the borrow ends before the Yield runs.
             let slot = unsafe { &mut (*this).stdin };
             match core::mem::replace(slot, Writable::Ignore) {
-                // Dropping the `RefPtr` releases `create()`'s ref; `start()`'s
-                // keeps the writer alive until this callback returns.
+                // Drops `create()`'s ref; `start()`'s ref outlives this call.
                 Writable::Buffer(buffer) => {
                     // SAFETY: single-threaded; sole borrow of the payload.
                     unsafe { buffer_mut(&buffer) }.source.detach();
                 }
-                // The writer only exists while the slot holds it.
                 other => {
                     *slot = other;
                     return;
@@ -283,8 +277,8 @@ impl ShellSubprocess {
             this as usize,
             handle.id
         );
-        // SAFETY: the owning Cmd outlives its subprocess (its `deinit` is what
-        // frees it); the `&mut Cmd` ends before the Yield runs.
+        // SAFETY: the owning Cmd outlives its subprocess; the `&mut Cmd` ends
+        // before the Yield runs.
         let y = unsafe { handle.cmd_mut() }.buffered_input_close();
         // May free `*this`.
         y.run(&handle.interp);
@@ -361,7 +355,7 @@ impl ShellSubprocess {
     }
 
     /// A stdout/stderr `PipeReader` finished: swap it out of its slot for its
-    /// buffered bytes. Stdin closes through [`Self::on_stdin_writer_close`].
+    /// buffered bytes.
     pub(crate) fn on_close_io(&mut self, kind: StdioKind) {
         let out: &mut Readable = match kind {
             StdioKind::Stdout => &mut self.stdout,
@@ -909,11 +903,8 @@ impl ShellSubprocess {
         Ok(())
     }
 
-    /// Exit handler (`link_impl_ProcessExit!` above).
-    ///
     /// # Safety
-    /// Same contract as [`Self::on_stdin_writer_close`]: `this` must be live
-    /// and unborrowed, and may be freed by the time this returns.
+    /// `this` must be live and unborrowed; the Yield run here may free it.
     unsafe fn on_process_exit(this: *mut Self, status: &Status) {
         log!("onProcessExit({:x})", this as usize);
         // SAFETY: caller contract; the borrow ends at the `;`.
@@ -944,8 +935,8 @@ impl ShellSubprocess {
         let Some(code) = exit_code else { return };
         // SAFETY: caller contract; `CmdHandle` is `Copy`, no borrow is kept.
         let handle = unsafe { (*this).cmd_parent };
-        // SAFETY: the owning Cmd outlives its subprocess (its `deinit` is what
-        // frees it); the `&mut Cmd` ends before the Yield runs.
+        // SAFETY: the owning Cmd outlives its subprocess; the `&mut Cmd` ends
+        // before the Yield runs.
         let cmd = unsafe { handle.cmd_mut() };
         cmd.base.interrupted |= interrupted;
         let y = cmd.on_exit(code.into());
@@ -1798,8 +1789,7 @@ impl PipeReader {
             return self.reader.start_with_current_pipe();
         }
 
-        // The fd moves into `reader`, which closes it from here on. An
-        // un-started reader still holds it in `stdio_result` (see `Drop`).
+        // `reader` owns the fd from here; `Drop` closes an un-started one.
         #[cfg(not(windows))]
         match self.reader.start(self.stdio_result.take().unwrap(), true) {
             bun_sys::Result::Err(err) => bun_sys::Result::Err(err),
@@ -2138,8 +2128,7 @@ impl Drop for PipeReader {
         #[cfg(unix)]
         {
             debug_assert!(self.reader.is_done() || matches!(self.state, PipeReaderState::Err(_)));
-            // `start()` never ran (the spawn was aborted first), so the
-            // parent end of the socketpair is still ours to close.
+            // Never started: the parent end is still ours to close.
             if let Some(fd) = self.stdio_result.take() {
                 fd.close();
             }

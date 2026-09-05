@@ -947,8 +947,7 @@ impl Cmd {
         }
     }
 
-    /// Mark the subprocess's buffered stdin as closed; this may be the close
-    /// that finishes the command.
+    /// Mark the subprocess's buffered stdin as closed.
     pub(crate) fn buffered_input_close(&mut self) -> Yield {
         let Exec::Subproc(sub) = &mut self.exec else {
             return Yield::suspended();
@@ -958,8 +957,7 @@ impl Cmd {
     }
 
     /// Mark the subprocess's buffered stdout/stderr as closed (flushing the
-    /// captured bytes into the shell buffers); this may be the close that
-    /// finishes the command.
+    /// captured bytes into the shell buffers).
     pub(crate) fn buffered_output_close(
         &mut self,
         kind: OutKind,
@@ -975,17 +973,15 @@ impl Cmd {
     /// Called by `ShellSubprocess::on_process_exit`.
     pub(crate) fn on_exit(&mut self, exit_code: ExitCode) -> Yield {
         log!("cmd exit code={}", exit_code);
-        // A stdio error already recorded its errno as the exit code
-        // (`buffered_output_close`); the process status does not replace it.
+        // Keep the errno a stdio error already recorded.
         if self.exit_code.is_none() {
             self.exit_code = Some(exit_code);
         }
         self.finish_if_done()
     }
 
-    /// `Done` once the exit code and every piped stdio are in. The caller runs
-    /// the Yield: the four completion events (exit, stdin, stdout, stderr)
-    /// arrive as separate callbacks in no fixed order, so each one ends here.
+    /// `Done` once the exit code and every piped stdio are in; the caller runs
+    /// the Yield.
     fn finish_if_done(&mut self) -> Yield {
         if matches!(self.state, CmdState::Done) || !self.has_finished() {
             return Yield::suspended();
@@ -993,12 +989,10 @@ impl Cmd {
         self.state = CmdState::Done;
         let (interp, this_id) = match &self.exec {
             Exec::Subproc(sub) => (sub.interp, sub.this_id),
-            // Builtins finish through `Builtin::done` → `on_exec_done` instead.
+            // Builtins finish through `Builtin::done`.
             _ => return Yield::suspended(),
         };
-        // `exec.interp` stays null until the spawn returns; a Yield run here
-        // would reach `Cmd::deinit` and free the `ShellSubprocess` still on
-        // the spawn frame. `transition_to_exec` resumes a `Done` command.
+        // Still inside the spawn; `transition_to_exec` resumes from `state`.
         if interp.is_null() {
             return Yield::suspended();
         }

@@ -145,6 +145,11 @@ const kSetTOS = Symbol("kSetTOS");
 const kSetKeepAlive = Symbol("kSetKeepAlive");
 const kSyncWriteFd = Symbol("kSyncWriteFd");
 const kSetKeepAliveInitialDelay = Symbol("kSetKeepAliveInitialDelay");
+
+// The delay is stored in whole seconds like node; the native handle takes int32 milliseconds.
+function keepAliveDelayMs(seconds) {
+  return MathMin(seconds * 1000, 2147483647);
+}
 const kConnectOptions = Symbol("connect-options");
 const kAttach = Symbol("kAttach");
 const kCloseRawConnection = Symbol("kCloseRawConnection");
@@ -508,7 +513,7 @@ const SocketHandlers: SocketHandler = {
     }
 
     if (self[kSetKeepAlive]) {
-      socket.setKeepAlive(true, self[kSetKeepAliveInitialDelay]);
+      socket.setKeepAlive(true, keepAliveDelayMs(self[kSetKeepAliveInitialDelay]));
     }
 
     // A TOS value set before the connection existed (setTypeOfService before
@@ -1224,7 +1229,7 @@ function onconnection(err, clientHandle) {
   if (self.keepAlive && clientHandle.setKeepAlive) {
     _socket[kSetKeepAlive] = true;
     _socket[kSetKeepAliveInitialDelay] = self.keepAliveInitialDelay;
-    clientHandle.setKeepAlive(true, self.keepAliveInitialDelay);
+    clientHandle.setKeepAlive(true, keepAliveDelayMs(self.keepAliveInitialDelay));
   }
 
   self._connections++;
@@ -1586,9 +1591,8 @@ function Socket(options?) {
 
   this[kSetNoDelay] = Boolean(noDelay);
   this[kSetKeepAlive] = Boolean(keepAlive);
-  // Bun's native _handle.setKeepAlive takes milliseconds (it is the public
-  // Bun.Socket), so store ms here. Node stores seconds because libuv does.
-  this[kSetKeepAliveInitialDelay] = MathMax(0, ~~keepAliveInitialDelay);
+  // Whole seconds, as in node.
+  this[kSetKeepAliveInitialDelay] = MathMax(0, ~~(keepAliveInitialDelay / 1000));
 
   this[khandlers] = SocketHandlers2;
   this.bytesRead = 0;
@@ -1873,7 +1877,7 @@ Socket.prototype[kAttach] = function (port, socket) {
   }
 
   if (this[kSetKeepAlive]) {
-    socket.setKeepAlive(true, this[kSetKeepAliveInitialDelay]);
+    socket.setKeepAlive(true, keepAliveDelayMs(this[kSetKeepAliveInitialDelay]));
   }
 
   if (!this[kupgraded]) {
@@ -2149,7 +2153,8 @@ Socket.prototype.connect = function connect(...args) {
 Socket.prototype[kReinitializeHandle] = function reinitializeHandle(handle) {
   this._handle?.close();
 
-  this._handle = handle;
+  // node's TLSSocket override creates the handle itself; Bun's TLS sockets share this method.
+  this._handle = handle ?? newDetachedSocket(typeof this[bunTlsSymbol] === "function");
   this._handle[owner_symbol] = this;
 
   initSocketHandle(this);
@@ -2584,10 +2589,8 @@ Socket.prototype.resetAndDestroy = function resetAndDestroy() {
 
 Socket.prototype.setKeepAlive = function setKeepAlive(enable = false, initialDelayMsecs = 0) {
   enable = Boolean(enable);
-  // Bun's native _handle.setKeepAlive takes milliseconds; the ms→seconds
-  // conversion for TCP_KEEPIDLE lives in the native binding. Clamp to 0 so
-  // negatives and ~~ overflow match Node's no-validate behavior.
-  const initialDelay = MathMax(0, ~~initialDelayMsecs);
+  // Whole seconds, as in node.
+  const initialDelay = MathMax(0, ~~(initialDelayMsecs / 1000));
 
   if (!this._handle) {
     this[kSetKeepAlive] = enable;
@@ -2600,7 +2603,7 @@ Socket.prototype.setKeepAlive = function setKeepAlive(enable = false, initialDel
   if (enable !== this[kSetKeepAlive] || (enable && this[kSetKeepAliveInitialDelay] !== initialDelay)) {
     this[kSetKeepAlive] = enable;
     this[kSetKeepAliveInitialDelay] = initialDelay;
-    this._handle.setKeepAlive(enable, initialDelay);
+    this._handle.setKeepAlive(enable, keepAliveDelayMs(initialDelay));
   }
   return this;
 };
@@ -3374,7 +3377,7 @@ function afterConnect(status, handle, req, readable, writable) {
     }
 
     if (self[kSetKeepAlive] && self._handle.setKeepAlive) {
-      self._handle.setKeepAlive(true, self[kSetKeepAliveInitialDelay]);
+      self._handle.setKeepAlive(true, keepAliveDelayMs(self[kSetKeepAliveInitialDelay]));
     }
 
     // Ours already reads, Node's starts at read(): stop a paused plain socket now, and after the listeners unless one asked for a read.
@@ -3522,7 +3525,7 @@ function Server(options?, connectionListener?) {
   // https://github.com/nodejs/node/blob/843dc5f0d5ad/lib/net.js#L1880
   this.allowHalfOpen = allowHalfOpen;
   this.keepAlive = Boolean(keepAlive);
-  this.keepAliveInitialDelay = MathMax(0, ~~keepAliveInitialDelay);
+  this.keepAliveInitialDelay = MathMax(0, ~~(keepAliveInitialDelay / 1000));
   this.highWaterMark = highWaterMark;
   this.pauseOnConnect = Boolean(pauseOnConnect);
   this.noDelay = Boolean(noDelay);

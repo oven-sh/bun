@@ -424,13 +424,14 @@ pub(super) fn set_max_send_fragment(
         return Err(global.throw(format_args!("Expected size to be a number")));
     }
     let size = arg.coerce_to_int64(global)?;
-    if !(512..=16384).contains(&size) {
+    if size < 0 {
         return Ok(JSValue::FALSE);
     }
 
     let Some(ssl_ptr) = this.socket.get().ssl() else {
         return Ok(JSValue::FALSE);
     };
+    // Like node, return SSL_set_max_send_fragment's own verdict (BoringSSL clamps the size).
     Ok(JSValue::from(
         ffi::SSL_set_max_send_fragment(
             boringssl::SSL::opaque_ref(ssl_ptr),

@@ -1324,9 +1324,8 @@ extern "C" void Bun__logUnhandledException(JSC::EncodedJSValue exception);
 
 extern "C" int Bun__handleUncaughtException(JSC::JSGlobalObject* lexicalGlobalObject, JSC::JSValue exception, int isRejection)
 {
-    if (!lexicalGlobalObject->inherits(Zig::GlobalObject::info()))
-        return false;
-    auto* globalObject = uncheckedDowncast<Zig::GlobalObject>(lexicalGlobalObject);
+    // The exception may come from a node:vm context, which has no process of its own.
+    auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
     auto* process = globalObject->processObject();
     auto& wrapped = process->wrapped();
     auto& vm = JSC::getVM(globalObject);
@@ -1372,14 +1371,14 @@ extern "C" int Bun__handleUncaughtException(JSC::JSGlobalObject* lexicalGlobalOb
     auto capture = process->getUncaughtExceptionCaptureCallback();
     if (!capture.isEmpty() && !capture.isUndefinedOrNull()) {
         auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-        (void)call(lexicalGlobalObject, capture, args, "uncaughtExceptionCaptureCallback"_s);
+        (void)call(globalObject, capture, args, "uncaughtExceptionCaptureCallback"_s);
         if (auto ex = scope.exception()) {
             (void)scope.tryClearException();
             if (vm.hasPendingTerminationException()) [[unlikely]]
                 return true;
             // if an exception is thrown in the uncaughtException handler, we abort
             Bun__logUnhandledException(JSValue::encode(JSValue(ex)));
-            Bun__Process__exit(lexicalGlobalObject, 1);
+            Bun__Process__exit(globalObject, 1);
         }
     } else if (wrapped.listenerCount(uncaughtExceptionIdent) > 0) {
         auto emitScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);

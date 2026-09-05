@@ -1,16 +1,14 @@
-use core::ptr::NonNull;
+use core::cell::{Cell, RefCell};
 use std::io::Write as _;
 
 use crate::cli::command::TestOptions;
 use crate::cli::test_command::CommandLineReporter;
+use crate::timer::ElTimespec;
 use bun_collections::{ArrayHashMap, MultiArrayList};
 use bun_core::Output;
 use bun_jsc::bun_string_jsc;
 use bun_jsc::virtual_machine::VirtualMachine;
-use bun_jsc::{
-    self as jsc, CallFrame, JSGlobalObject, JSValue, JsClass as _, JsResult, RegularExpression,
-};
-use crate::timer::ElTimespec;
+use bun_jsc::{self as jsc, CallFrame, JSGlobalObject, JSValue, JsResult, RegularExpression};
 
 pub use super::bun_test;
 use super::expect::{Expect, ExpectTypeOf};
@@ -41,9 +39,9 @@ impl CurrentFile {
         prefix: &[u8],
         repeat_count: u32,
         repeat_index: u32,
-        reporter: &mut CommandLineReporter,
+        reporter: &CommandLineReporter,
     ) {
-        if reporter.worker_ipc_file_idx.is_some() {
+        if reporter.worker_ipc_file_idx.get().is_some() {
             // Coordinator owns the terminal and prints its own per-test file
             // context; the worker should not emit a header to stderr.
             self.has_printed_filename = true;
@@ -84,11 +82,7 @@ impl CurrentFile {
                 );
             }
         } else {
-            bun_core::pretty_errorln!(
-                "{}{}:\n",
-                bstr::BStr::new(prefix),
-                bstr::BStr::new(title)
-            );
+            bun_core::pretty_errorln!("{}{}:\n", bstr::BStr::new(prefix), bstr::BStr::new(title));
         }
 
         Output::flush();
@@ -109,11 +103,15 @@ impl CurrentFile {
     }
 }
 
+/// Per-process `bun test` state. Leaked for the process lifetime by
+/// `test_command::exec` (as part of `CommandLineReporter`) and reached from JS
+/// host functions through [`Jest::runner`], so it is `&self`-only; everything
+/// mutated after registration is a `Cell`/`RefCell`.
 pub struct TestRunner<'a> {
-    pub(crate) current_file: CurrentFile,
-    pub(crate) files: FileList,
-    pub(crate) index: FileMap,
-    pub(crate) only: bool,
+    pub(crate) current_file: RefCell<CurrentFile>,
+    pub(crate) files: RefCell<FileList>,
+    pub(crate) index: RefCell<FileMap>,
+    pub(crate) only: Cell<bool>,
     pub(crate) run_todo: bool,
     pub(crate) concurrent: bool,
     /// The --seed value when --randomize is on. Used to derive a per-file
@@ -127,49 +125,52 @@ pub struct TestRunner<'a> {
     pub(crate) bail: u32,
     pub(crate) max_concurrency: u32,
 
-    pub(crate) snapshots: Snapshots,
+    pub(crate) snapshots: RefCell<Snapshots>,
 
     pub(crate) default_timeout_ms: u32,
 
     /// from `setDefaultTimeout() or jest.setTimeout()`. maxInt(u32) means override not set.
-    pub(crate) default_timeout_override: u32,
+    pub(crate) default_timeout_override: Cell<u32>,
 
     pub(crate) test_options: &'a TestOptions,
 
-    /// Used for --test-name-pattern to reduce allocations.
-    /// Raw `*mut` because `RegularExpression::matches` mutates its internal
-    /// cursor through C++ — storing `&'a RegularExpression` and casting back to
-    /// `*mut` at the use site would launder shared provenance into a write (UB).
+    /// Used for --test-name-pattern to reduce allocations. An `opaque_ffi!`
+    /// Yarr handle owned by the CLI context for the process lifetime.
     pub(crate) filter_regex: Option<core::ptr::NonNull<RegularExpression>>,
 
-    pub(crate) unhandled_errors_between_tests: u32,
-    pub(crate) summary: Summary,
+    pub(crate) unhandled_errors_between_tests: Cell<u32>,
+    pub(crate) summary: RefCell<Summary>,
 
     /// Set once any `node:test` registration API is called; gates `process.on('exit')` dispatch at the end of the run.
-    pub(crate) node_test_used: bool,
+    pub(crate) node_test_used: Cell<bool>,
 
     pub(crate) bun_test_root: bun_test::BunTestRoot,
 }
 
 impl<'a> TestRunner<'a> {
+    /// The registered source path for `file_id`.
+    pub(crate) fn file_path(&self, file_id: FileId) -> bun_paths::fs::Path<'static> {
+        self.files.borrow().items_source()[file_id as usize].path
+    }
+
     pub(crate) fn get_active_timeout(&self) -> bun_core::Timespec {
-        let Some(active_file) = self.bun_test_root.active_file.as_deref() else {
+        let Some(active_file) = self.bun_test_root.clone_active_file() else {
             return bun_core::Timespec::EPOCH;
         };
         // Per-entry deadline, not the (only-advances-sooner) file timer.
         // `on_stack_entry` pins the caller when still synchronously on stack;
         // else take the latest running entry so a sibling never terminates early.
         if let Some(entry) = active_file.execution.on_stack_entry.get() {
-            // SAFETY: arena-owned entry, alive for the lifetime of BunTest.
-            return unsafe { entry.as_ref() }.timespec;
+            return active_file.execution.timespec_of(entry);
         }
-        if active_file.phase == bun_test::Phase::Execution {
-            if let Some(group) = active_file.execution.active_group_ref() {
+        if active_file.phase.get() == bun_test::Phase::Execution {
+            if let Some(group) = active_file.execution.active_group() {
                 let mut latest: Option<bun_core::Timespec> = None;
-                for seq in group.sequences_const(&active_file.execution) {
-                    let Some(entry) = seq.active_entry else { continue };
-                    // SAFETY: arena-owned entry, alive for the lifetime of BunTest.
-                    let ts = unsafe { entry.as_ref() }.timespec;
+                for seq in group.sequences(&active_file.execution) {
+                    let Some(entry) = seq.active_entry.get() else {
+                        continue;
+                    };
+                    let ts = active_file.execution.timespec_of(entry);
                     if latest.is_none_or(|l| ts.order(&l) == core::cmp::Ordering::Greater) {
                         latest = Some(ts);
                     }
@@ -179,8 +180,8 @@ impl<'a> TestRunner<'a> {
                 }
             }
         }
-        if active_file.timer.state != TimerState::ACTIVE
-            || active_file.timer.next == ElTimespec::EPOCH
+        if active_file.timer_state() != TimerState::ACTIVE
+            || active_file.timer_next() == ElTimespec::EPOCH
         {
             return bun_core::Timespec::EPOCH;
         }
@@ -188,27 +189,25 @@ impl<'a> TestRunner<'a> {
         // same `{sec, nsec}` shape as bun_core::Timespec; convert by field
         // until the lower tier unifies on bun_core::Timespec (see
         // src/runtime/timer/mod.rs ElTimespec alias).
-        bun_core::Timespec { sec: active_file.timer.next.sec, nsec: active_file.timer.next.nsec }
+        let next = active_file.timer_next();
+        bun_core::Timespec {
+            sec: next.sec,
+            nsec: next.nsec,
+        }
     }
 
-    pub(crate) fn remove_active_timeout(&mut self, vm: &mut VirtualMachine) {
-        let Some(active_file) = self.bun_test_root.active_file.as_ref() else {
+    pub(crate) fn remove_active_timeout(&self, vm: &mut VirtualMachine) {
+        let Some(active_file) = self.bun_test_root.clone_active_file() else {
             return;
         };
-        // SAFETY: single-threaded JS VM; only borrow of this BunTest for the
-        // duration of the timer-removal below. The const→mut projection is
-        // centralized in `buntest_as_mut` pending the BunTestPtr interior-mut
-        // reshape (see bun_test.rs).
-        let active_file = unsafe { bun_test::buntest_as_mut(active_file) };
-        if active_file.timer.state != TimerState::ACTIVE
-            || active_file.timer.next == ElTimespec::EPOCH
+        if active_file.timer_state() != TimerState::ACTIVE
+            || active_file.timer_next() == ElTimespec::EPOCH
         {
             return;
         }
         let _ = vm;
-        bun_test::vm_timer().remove(&raw mut active_file.timer);
+        active_file.remove_timer();
     }
-
 
     pub(crate) fn should_file_run_concurrently(&self, file_id: FileId) -> bool {
         // Check if global concurrent flag is set
@@ -222,10 +221,10 @@ impl<'a> TestRunner<'a> {
         };
 
         // Get the file path from the file_id
-        if file_id as usize >= self.files.len() {
+        if file_id as usize >= self.files.borrow().len() {
             return false;
         }
-        let file_path = self.files.items_source()[file_id as usize].path.text();
+        let file_path = self.file_path(file_id).text;
 
         // Check if the file path matches any of the glob patterns
         for pattern in glob_patterns {
@@ -236,15 +235,17 @@ impl<'a> TestRunner<'a> {
         false
     }
 
-    pub(crate) fn get_or_put_file(&mut self, file_path: &'static [u8]) -> GetOrPutFileResult {
-        let entry = self.index.get_or_put(file_path).expect("unreachable");
+    pub(crate) fn get_or_put_file(&self, file_path: &'static [u8]) -> GetOrPutFileResult {
+        let mut index = self.index.borrow_mut();
+        let entry = index.get_or_put(file_path).expect("unreachable");
         if entry.found_existing {
             return GetOrPutFileResult {
                 file_id: *entry.value_ptr,
             };
         }
-        let file_id = self.files.len() as FileId;
-        self.files
+        let mut files = self.files.borrow_mut();
+        let file_id = files.len() as FileId;
+        files
             .append(File {
                 source: bun_ast::Source::init_empty_file(file_path),
             })
@@ -296,41 +297,32 @@ bun_collections::multi_array_columns! {
 // allocation and distinct paths never alias.
 pub(crate) type FileMap = ArrayHashMap<&'static [u8], FileId>;
 
+// HOST_EXPORT(Bun__Jest__createTestModuleObject, c)
+pub fn create_test_module_object(global_object: &JSGlobalObject) -> JSValue {
+    match Jest::create_test_module(global_object) {
+        Ok(v) => v,
+        Err(_) => JSValue::ZERO,
+    }
+}
+
 #[allow(non_snake_case)]
 pub mod Jest {
     use super::*;
 
-    // JS-VM-thread-only singleton; RacyCell
-    // over `Option<NonNull<_>>` so direct `.read()` projections in
-    // `snapshot.rs` etc. keep their shape.
-    pub(crate) static RUNNER: bun_core::RacyCell<Option<NonNull<TestRunner<'static>>>> =
-        bun_core::RacyCell::new(None);
+    /// The registered runner; bound to the thread that runs `bun test`
+    /// (`test_command::exec`), so Workers and other threads see `None`.
+    static RUNNER: bun_core::ThreadBound<&'static TestRunner<'static>> =
+        bun_core::ThreadBound::new();
 
-    pub(crate) fn runner() -> Option<&'static mut TestRunner<'static>> {
-        // SAFETY: RUNNER is only ever accessed from the single JS VM thread.
-        unsafe { RUNNER.read().map(|p| &mut *p.as_ptr()) }
+    pub(crate) fn runner() -> Option<&'static TestRunner<'static>> {
+        RUNNER.get()
     }
 
-    /// Raw-pointer accessor for callers that must not materialise
-    /// an exclusive `&mut TestRunner` because a sub-borrow of it (e.g.
-    /// `&BunTestRoot`, `&mut BunTest`) is already live — see
-    /// `BunTestRoot::on_before_print` / `BunTest::enter_file`.
-    pub(crate) fn runner_ptr() -> Option<NonNull<TestRunner<'static>>> {
-        // SAFETY: RUNNER is only ever accessed from the single JS VM thread.
-        unsafe { RUNNER.read() }
+    pub(crate) fn set_runner(runner: Option<&'static TestRunner<'static>>) {
+        RUNNER.set(runner);
     }
 
-    #[unsafe(no_mangle)]
-    extern "C" fn Bun__Jest__createTestModuleObject(
-        global_object: &JSGlobalObject,
-    ) -> JSValue {
-        match create_test_module(global_object) {
-            Ok(v) => v,
-            Err(_) => JSValue::ZERO,
-        }
-    }
-
-    fn create_test_module(global_object: &JSGlobalObject) -> JsResult<JSValue> {
+    pub(super) fn create_test_module(global_object: &JSGlobalObject) -> JsResult<JSValue> {
         let module = JSValue::create_empty_object(global_object, 23);
 
         let test_scope_functions = create_bound(
@@ -376,35 +368,79 @@ pub mod Jest {
         module.put(
             global_object,
             b"beforeEach",
-            jsc::JSFunction::create(global_object, "beforeEach", generic_hook::__jsc_host_before_each, 1, Default::default()),
+            jsc::JSFunction::create(
+                global_object,
+                "beforeEach",
+                generic_hook::__jsc_host_before_each,
+                1,
+                Default::default(),
+            ),
         );
         module.put(
             global_object,
             b"beforeAll",
-            jsc::JSFunction::create(global_object, "beforeAll", generic_hook::__jsc_host_before_all, 1, Default::default()),
+            jsc::JSFunction::create(
+                global_object,
+                "beforeAll",
+                generic_hook::__jsc_host_before_all,
+                1,
+                Default::default(),
+            ),
         );
         module.put(
             global_object,
             b"afterAll",
-            jsc::JSFunction::create(global_object, "afterAll", generic_hook::__jsc_host_after_all, 1, Default::default()),
+            jsc::JSFunction::create(
+                global_object,
+                "afterAll",
+                generic_hook::__jsc_host_after_all,
+                1,
+                Default::default(),
+            ),
         );
         module.put(
             global_object,
             b"afterEach",
-            jsc::JSFunction::create(global_object, "afterEach", generic_hook::__jsc_host_after_each, 1, Default::default()),
+            jsc::JSFunction::create(
+                global_object,
+                "afterEach",
+                generic_hook::__jsc_host_after_each,
+                1,
+                Default::default(),
+            ),
         );
         module.put(
             global_object,
             b"onTestFinished",
-            jsc::JSFunction::create(global_object, "onTestFinished", generic_hook::__jsc_host_on_test_finished, 1, Default::default()),
+            jsc::JSFunction::create(
+                global_object,
+                "onTestFinished",
+                generic_hook::__jsc_host_on_test_finished,
+                1,
+                Default::default(),
+            ),
         );
         module.put(
             global_object,
             b"setDefaultTimeout",
-            jsc::JSFunction::create(global_object, "setDefaultTimeout", __jsc_host_js_set_default_timeout, 1, Default::default()),
+            jsc::JSFunction::create(
+                global_object,
+                "setDefaultTimeout",
+                __jsc_host_js_set_default_timeout,
+                1,
+                Default::default(),
+            ),
         );
-        module.put(global_object, b"expect", jsc::codegen::js::get_constructor::<Expect>(global_object));
-        module.put(global_object, b"expectTypeOf", jsc::codegen::js::get_constructor::<ExpectTypeOf>(global_object));
+        module.put(
+            global_object,
+            b"expect",
+            jsc::codegen::js::get_constructor::<Expect>(global_object),
+        );
+        module.put(
+            global_object,
+            b"expectTypeOf",
+            jsc::codegen::js::get_constructor::<ExpectTypeOf>(global_object),
+        );
 
         // will add more 9 properties in the module here so we need to allocate 23 properties
         create_mock_objects(global_object, module);
@@ -413,15 +449,52 @@ pub mod Jest {
     }
 
     fn create_mock_objects(global_object: &JSGlobalObject, module: JSValue) {
-        let set_system_time = jsc::JSFunction::create(global_object, "setSystemTime", JSMock__jsSetSystemTime, 0, Default::default());
+        let set_system_time = jsc::JSFunction::create(
+            global_object,
+            "setSystemTime",
+            JSMock__jsSetSystemTime,
+            0,
+            Default::default(),
+        );
         module.put(global_object, b"setSystemTime", set_system_time);
 
-        let mock_fn = jsc::JSFunction::create(global_object, "fn", JSMock__jsMockFn, 1, Default::default());
-        let spy_on = jsc::JSFunction::create(global_object, "spyOn", JSMock__jsSpyOn, 2, Default::default());
-        let restore_all_mocks = jsc::JSFunction::create(global_object, "restoreAllMocks", JSMock__jsRestoreAllMocks, 2, Default::default());
-        let clear_all_mocks = jsc::JSFunction::create(global_object, "clearAllMocks", JSMock__jsClearAllMocks, 2, Default::default());
-        let reset_all_mocks = jsc::JSFunction::create(global_object, "resetAllMocks", JSMock__jsResetAllMocks, 2, Default::default());
-        let mock_module_fn = jsc::JSFunction::create(global_object, "module", JSMock__jsModuleMock, 2, Default::default());
+        let mock_fn =
+            jsc::JSFunction::create(global_object, "fn", JSMock__jsMockFn, 1, Default::default());
+        let spy_on = jsc::JSFunction::create(
+            global_object,
+            "spyOn",
+            JSMock__jsSpyOn,
+            2,
+            Default::default(),
+        );
+        let restore_all_mocks = jsc::JSFunction::create(
+            global_object,
+            "restoreAllMocks",
+            JSMock__jsRestoreAllMocks,
+            2,
+            Default::default(),
+        );
+        let clear_all_mocks = jsc::JSFunction::create(
+            global_object,
+            "clearAllMocks",
+            JSMock__jsClearAllMocks,
+            2,
+            Default::default(),
+        );
+        let reset_all_mocks = jsc::JSFunction::create(
+            global_object,
+            "resetAllMocks",
+            JSMock__jsResetAllMocks,
+            2,
+            Default::default(),
+        );
+        let mock_module_fn = jsc::JSFunction::create(
+            global_object,
+            "module",
+            JSMock__jsModuleMock,
+            2,
+            Default::default(),
+        );
         module.put(global_object, b"mock", mock_fn);
         mock_fn.put(global_object, b"module", mock_module_fn);
         mock_fn.put(global_object, b"restore", restore_all_mocks);
@@ -435,12 +508,30 @@ pub mod Jest {
         jest.put(global_object, b"clearAllMocks", clear_all_mocks);
         jest.put(global_object, b"resetAllMocks", reset_all_mocks);
         jest.put(global_object, b"setSystemTime", set_system_time);
-        jest.put(global_object, b"now", jsc::JSFunction::create(global_object, "now", JSMock__jsNow, 0, Default::default()));
-        jest.put(global_object, b"setTimeout", jsc::JSFunction::create(global_object, "setTimeout", __jsc_host_js_set_default_timeout, 1, Default::default()));
+        jest.put(
+            global_object,
+            b"now",
+            jsc::JSFunction::create(global_object, "now", JSMock__jsNow, 0, Default::default()),
+        );
+        jest.put(
+            global_object,
+            b"setTimeout",
+            jsc::JSFunction::create(
+                global_object,
+                "setTimeout",
+                __jsc_host_js_set_default_timeout,
+                1,
+                Default::default(),
+            ),
+        );
 
         module.put(global_object, b"jest", jest);
         module.put(global_object, b"spyOn", spy_on);
-        module.put(global_object, b"expect", jsc::codegen::js::get_constructor::<Expect>(global_object));
+        module.put(
+            global_object,
+            b"expect",
+            jsc::codegen::js::get_constructor::<Expect>(global_object),
+        );
 
         let vi = JSValue::create_empty_object(global_object, 6 + fake_timers::TIMER_FNS_COUNT);
         vi.put(global_object, b"fn", mock_fn);
@@ -478,7 +569,9 @@ pub mod Jest {
             let arguments = callframe.arguments();
 
             if arguments.len() < 1 || !arguments[0].is_string() {
-                return Err(global_object.throw(format_args!("Bun.jest() expects a string filename")));
+                return Err(
+                    global_object.throw(format_args!("Bun.jest() expects a string filename"))
+                );
             }
             let str = arguments[0].to_utf8(global_object)?;
             let slice = str.slice();
@@ -501,14 +594,16 @@ pub mod Jest {
     ) -> JsResult<JSValue> {
         let arguments = callframe.arguments();
         if arguments.len() < 1 || !arguments[0].is_number() {
-            return Err(global_object.throw(format_args!("setTimeout() expects a number (milliseconds)")));
+            return Err(
+                global_object.throw(format_args!("setTimeout() expects a number (milliseconds)"))
+            );
         }
 
         let timeout_ms: u32 =
             u32::try_from(arguments[0].coerce::<i32>(global_object)?.max(0)).unwrap();
 
         if let Some(test_runner) = runner() {
-            test_runner.default_timeout_override = timeout_ms;
+            test_runner.default_timeout_override.set(timeout_ms);
         }
 
         Ok(JSValue::UNDEFINED)
@@ -521,15 +616,11 @@ pub(crate) fn js_file_generation(
     global: &JSGlobalObject,
     _callframe: &CallFrame,
 ) -> JsResult<JSValue> {
-    // `runner_ptr()` rather than `runner()`: node:test calls this on every test
-    // registration, and an exclusive `&mut TestRunner` would invalidate the
-    // `bun_test_root` pointer `test_command.rs` keeps live across the file run.
-    // SAFETY: same invariant as `runner()` — RUNNER is only read on the JS thread.
-    let generation = Jest::runner_ptr().map_or(0, |p| unsafe {
+    let generation = Jest::runner().map_or(0, |runner| {
         if global.bun_vm().worker_ref().is_none() {
-            (*p.as_ptr()).node_test_used = true;
+            runner.node_test_used.set(true);
         }
-        (*p.as_ptr()).bun_test_root.file_generation
+        runner.bun_test_root.file_generation.get()
     });
     Ok(JSValue::from(generation))
 }
@@ -547,27 +638,34 @@ pub(crate) fn js_node_test_mark_result(
     let Some(buntest_strong) = bun_test::clone_active_strong() else {
         return Ok(JSValue::UNDEFINED);
     };
-    // SAFETY: single-threaded JS VM; the strong is dropped before any re-borrow.
-    let buntest = unsafe { bun_test::buntest_as_mut(&buntest_strong) };
+    let buntest: &bun_test::BunTest = &buntest_strong;
     // `done` is a JSBoundFunction whose bound-this is the DoneCallback wrapper.
     let wrapper = bun_jsc::cpp::Bun__JSBoundFunction__boundThis(done);
-    let Some(dcb) = bun_test::DoneCallback::from_js(wrapper) else {
+    let Some(dcb) = wrapper.as_class_ref::<bun_test::DoneCallback>() else {
         return Ok(JSValue::UNDEFINED);
     };
-    // SAFETY: `dcb` is the live `*mut DoneCallback` from `from_js`; single-
-    // threaded JS VM, GC roots `done` (and its bound-this) for this frame.
-    let (dcb_ref, dcb_called) = unsafe { ((*dcb).r#ref.as_deref(), (*dcb).called) };
-    let bound = match dcb_ref {
-        Some(refdata) => refdata.phase,
+    let dcb_ref = dcb.r#ref.take();
+    let dcb_phase = dcb_ref.as_ref().map(|r| r.phase.clone());
+    // A DoneCallback minted by an earlier file / `--rerun-each` iteration names
+    // indices into that file's execution, not this one's.
+    let stale = dcb_ref
+        .as_ref()
+        .is_some_and(|r| !r.bun_test().is_some_and(|b| std::rc::Rc::ptr_eq(&b, &buntest_strong)));
+    dcb.r#ref.set(dcb_ref);
+    if stale {
+        return Ok(JSValue::UNDEFINED);
+    }
+    let bound = match dcb_phase {
+        Some(phase) => phase,
         // `r#ref` unset: `.then()` fired inside run_test_callback's microtask
         // drain before it stamps the DoneCallback. `get_current_state_data()`
         // can't name a sequence inside a concurrent group, but
         // `on_stack_entry_data` holds exactly the `cfg_data` that
         // `run_test_callback` was invoked with (set/restored around it), so
         // the mark lands on the right sequence under --concurrent too.
-        None if !dcb_called => match buntest.execution.on_stack_entry_data.get() {
+        None if !dcb.called.get() => match buntest.execution.on_stack_entry_data.get() {
             Some(entry_data) => bun_test::RefDataValue::Execution {
-                group_index: buntest.execution.group_index,
+                group_index: buntest.execution.group_index.get(),
                 entry_data: Some(entry_data),
             },
             None => buntest.get_current_state_data(),
@@ -575,15 +673,18 @@ pub(crate) fn js_node_test_mark_result(
         // done() already ran and reported — nothing left to mark.
         None => return Ok(JSValue::UNDEFINED),
     };
-    let Some((sequence_ptr, _)) =
-        buntest.execution.get_current_and_valid_execution_sequence(&bound)
+    let Some((sequence, _)) = buntest
+        .execution
+        .get_current_and_valid_execution_sequence(&bound)
     else {
         return Ok(JSValue::UNDEFINED);
     };
-    // SAFETY: NonNull into `execution.sequences`; deref at point-of-use only.
-    let sequence = unsafe { &mut *sequence_ptr.as_ptr() };
-    if sequence.result == ExecResult::Pending {
-        sequence.result = if mode.to_boolean() { ExecResult::Todo } else { ExecResult::Skip };
+    if sequence.result.get() == ExecResult::Pending {
+        sequence.result.set(if mode.to_boolean() {
+            ExecResult::Todo
+        } else {
+            ExecResult::Skip
+        });
     }
     Ok(JSValue::UNDEFINED)
 }
@@ -597,21 +698,15 @@ pub(crate) mod on_unhandled_rejection {
         rejection: JSValue,
     ) {
         if let Some(buntest_strong) = bun_test::clone_active_strong() {
-            // `buntest_strong` released by Rc drop.
-            // SAFETY: single-threaded JS VM; `buntest_strong` is the only handle
-            // dereferenced for this scope and is dropped before `BunTest::run`
-            // re-borrows. Const→mut projection is centralized in `buntest_as_mut`
-            // pending the BunTestPtr interior-mut reshape (see bun_test.rs).
-            let buntest = unsafe { bun_test::buntest_as_mut(&buntest_strong) };
+            let buntest: &bun_test::BunTest = &buntest_strong;
             // mark unhandled errors as belonging to the currently active test. note that this can be misleading.
             let mut current_state_data = buntest.get_current_state_data();
-            // split entry()/sequence() borrows via raw-ptr capture (per-use reborrow).
-            let entry_ptr: Option<*mut bun_test::ExecutionEntry> = current_state_data
-                .entry(buntest)
-                .map(std::ptr::from_mut::<bun_test::ExecutionEntry>);
-            if let Some(entry) = entry_ptr {
+            if let Some(entry) = current_state_data.entry(buntest) {
                 if let Some(sequence) = current_state_data.sequence(buntest) {
-                    if sequence.test_entry.map(|p| p.as_ptr()) != Some(entry) {
+                    let is_test_entry = sequence
+                        .test_entry
+                        .is_some_and(|t| std::rc::Rc::ptr_eq(&buntest.execution.entry(t), &entry));
+                    if !is_test_entry {
                         // mark errors in hooks as 'unhandled error between tests'
                         current_state_data = RefDataValue::Start;
                     }
@@ -624,13 +719,11 @@ pub(crate) mod on_unhandled_rejection {
                 &current_state_data,
             );
             buntest.add_result(current_state_data);
-            if let Err(e) = bun_test::BunTest::run(&buntest_strong, global_object) {
-                // As `RunTestsTask::call`: what advancing the runner threw is
+            if let Err(e) = buntest.run(global_object) {
+                // As `RunTestsTask::run`: what advancing the runner threw is
                 // recorded against wherever the runner now is; a termination is
                 // left where it is.
                 if !global_object.has_pending_termination_exception() {
-                    // SAFETY: as above; `run` has returned, this is the only handle.
-                    let buntest = unsafe { bun_test::buntest_as_mut(&buntest_strong) };
                     let phase = buntest.get_current_state_data();
                     buntest.on_uncaught_exception(
                         global_object,
@@ -643,13 +736,7 @@ pub(crate) mod on_unhandled_rejection {
             return;
         }
 
-        // SAFETY: `on_unhandled_rejection_exception_list` is either None or a
-        // live `NonNull<ExceptionList>` owned by the VM; reborrow as `&mut`
-        // for the duration of `run_error_handler` (single-threaded JS thread).
-        let exception_list = jsc_vm
-            .on_unhandled_rejection_exception_list
-            .map(|p| unsafe { &mut *p.as_ptr() });
-        jsc_vm.run_error_handler(rejection, exception_list);
+        VirtualMachine::default_on_unhandled_rejection(jsc_vm, global_object, rejection);
     }
 }
 
@@ -702,7 +789,9 @@ pub(crate) fn format_label(
                     let c = label[var_end];
                     if c == b'.' {
                         if var_end + 1 < label.len()
-                            && bun_js_parser::js_lexer::is_identifier_continue(label[var_end + 1] as i32)
+                            && bun_js_parser::js_lexer::is_identifier_continue(
+                                label[var_end + 1] as i32,
+                            )
                         {
                             var_end += 1;
                         } else {
@@ -833,13 +922,12 @@ pub(crate) fn capture_test_line_number(callframe: &CallFrame, global_this: &JSGl
     if let Some(runner) = Jest::runner() {
         if runner.test_options.reporters.junit {
             unsafe extern "C" {
-                fn Bun__CallFrame__getLineNumber(
-                    callframe: *const CallFrame,
-                    global: *const JSGlobalObject,
+                safe fn Bun__CallFrame__getLineNumber(
+                    callframe: &CallFrame,
+                    global: &JSGlobalObject,
                 ) -> u32;
             }
-            // SAFETY: callframe and global_this are valid live references.
-            return unsafe { Bun__CallFrame__getLineNumber(callframe, global_this) };
+            return Bun__CallFrame__getLineNumber(callframe, global_this);
         }
     }
     0

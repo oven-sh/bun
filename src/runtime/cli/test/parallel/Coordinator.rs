@@ -28,7 +28,7 @@ pub struct Coordinator<'a> {
     /// Typed enum mirror of `vm.event_loop()` for the io-layer FilePoll vtable
     /// (`bun_io::EventLoopHandle` wraps `*const EventLoopHandle`).
     pub(crate) event_loop_handle: bun_jsc::EventLoopHandle,
-    pub(crate) reporter: &'a mut CommandLineReporter,
+    pub(crate) reporter: &'static CommandLineReporter,
     pub(crate) files: Vec<Interned>,
     /// `--timings`: recorded cost per `files` index; stealing then goes by remaining time and takes the victim's slowest file.
     pub(crate) costs: Option<Vec<u64>>,
@@ -361,7 +361,7 @@ impl<'a> Coordinator<'a> {
     }
 
     fn record_timing(&mut self, file_idx: u32, dispatched_at: i64) {
-        if let Some(t) = self.reporter.timings.as_mut() {
+        if let Some(t) = self.reporter.timings.borrow_mut().as_mut() {
             t.record_since(self.files[file_idx as usize].as_bytes(), dispatched_at);
         }
     }
@@ -494,7 +494,7 @@ impl<'a> Coordinator<'a> {
                 // `self.reporter.jest`) and `bail_out()` must run after the
                 // summary borrow is released.
                 {
-                    let summary = self.reporter.summary();
+                    let mut summary = self.reporter.summary();
                     summary.pass += pass;
                     summary.fail += fail;
                     summary.skip += skip;
@@ -503,7 +503,8 @@ impl<'a> Coordinator<'a> {
                     summary.skipped_because_label += skipped_label;
                     summary.files += files;
                 }
-                self.reporter.jest.unhandled_errors_between_tests += unhandled;
+                let n = &self.reporter.jest.unhandled_errors_between_tests;
+                n.set(n.get() + unhandled);
                 self.record_timing(idx, w.dispatched_at);
 
                 w.inflight = None;
@@ -525,12 +526,15 @@ impl<'a> Coordinator<'a> {
                 // explicit splitting.
                 self.reporter
                     .failures_to_repeat_buf
+                    .borrow_mut()
                     .extend_from_slice(rd.str());
                 self.reporter
                     .skips_to_repeat_buf
+                    .borrow_mut()
                     .extend_from_slice(rd.str());
                 self.reporter
                     .todos_to_repeat_buf
+                    .borrow_mut()
                     .extend_from_slice(rd.str());
             }
             frame::Kind::CoverageFile => {

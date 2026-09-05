@@ -1,11 +1,10 @@
 use crate::test_runner::expect::JSValueTestExt;
-use core::ffi::c_void;
 
 use bun_collections::HashMap;
 use bun_core::fmt as bun_fmt;
 use bun_jsc::{
     self as jsc, ComptimeStringMapExt as _, JSGlobalObject, JSObject,
-    JSPropertyIterator, JSType, JSValue, JsError, JsResult, VM,
+    JSPropertyIterator, JSType, JSValue, JsError, JsResult,
 };
 use bun_core::{strings, EncodedSlice, Utf8Bytes};
 
@@ -304,14 +303,15 @@ pub mod visited {
     // storage; without it `ObjectPool<Map, true, 16>` defaults to
     // `UnwiredStorage` which panics on first `get_node()`.
     bun_collections::object_pool!(pub Pool: Map, threadsafe, 16);
-    pub type PoolNode = bun_collections::pool::Node<Map>;
+    pub type PoolGuard = bun_collections::PoolGuard<'static, Map>;
 }
 
 pub struct Formatter<'a> {
     pub(crate) remaining_values: &'a [JSValue],
     pub(crate) map: visited::Map,
-    /// Lazily acquired from `visited::Pool`; released back in `Drop`.
-    pub(crate) map_node: Option<core::ptr::NonNull<visited::PoolNode>>,
+    /// Lazily acquired from `visited::Pool`; its map is moved into `map` while
+    /// held and moved back (cleared) in `Drop`, which returns it to the pool.
+    pub(crate) map_node: Option<visited::PoolGuard>,
     pub global_this: &'a JSGlobalObject,
     pub(crate) indent: u32,
     pub(crate) quote_strings: bool,
@@ -359,16 +359,8 @@ impl<'a> Formatter<'a> {
 impl Drop for Formatter<'_> {
     fn drop(&mut self) {
         if let Some(mut node) = self.map_node.take() {
-            // SAFETY: `node` came from `visited::Pool::get_node()` and is
-            // exclusively owned for this `Formatter`'s lifetime; its `data` was
-            // initialized by `Map::INIT`, so `assume_init_mut` observes a valid
-            // `Map`.
-            unsafe {
-                let data = node.as_mut().data.assume_init_mut();
-                *data = core::mem::take(&mut self.map);
-                data.clear();
-                visited::Pool::release(node.as_ptr());
-            }
+            *node = core::mem::take(&mut self.map);
+            node.clear();
         }
     }
 }
@@ -761,14 +753,8 @@ pub(crate) struct MapIterator<'a, 'f, W: bun_io::Write, const ENABLE_ANSI_COLORS
 impl<'a, 'f, W: bun_io::Write, const ENABLE_ANSI_COLORS: bool>
     MapIterator<'a, 'f, W, ENABLE_ANSI_COLORS>
 {
-    pub(crate) extern "C" fn for_each(
-        _: *mut VM,
-        global_object: &JSGlobalObject,
-        ctx: *mut c_void,
-        next_value: JSValue,
-    ) {
-        // SAFETY: ctx was passed as `&mut Self as *mut c_void` by the caller of for_each.
-        let Some(ctx) = (unsafe { ctx.cast::<Self>().as_mut() }) else { return };
+    pub(crate) fn visit(&mut self, global_object: &JSGlobalObject, next_value: JSValue) {
+        let ctx = self;
         if ctx.formatter.failed {
             return;
         }
@@ -812,14 +798,8 @@ pub(crate) struct SetIterator<'a, 'f, W: bun_io::Write, const ENABLE_ANSI_COLORS
 impl<'a, 'f, W: bun_io::Write, const ENABLE_ANSI_COLORS: bool>
     SetIterator<'a, 'f, W, ENABLE_ANSI_COLORS>
 {
-    pub(crate) extern "C" fn for_each(
-        _: *mut VM,
-        global_object: &JSGlobalObject,
-        ctx: *mut c_void,
-        next_value: JSValue,
-    ) {
-        // SAFETY: ctx was passed as `&mut Self as *mut c_void` by the caller of for_each.
-        let Some(ctx) = (unsafe { ctx.cast::<Self>().as_mut() }) else { return };
+    pub(crate) fn visit(&mut self, global_object: &JSGlobalObject, next_value: JSValue) {
+        let ctx = self;
         if ctx.formatter.failed {
             return;
         }
@@ -894,10 +874,10 @@ impl<'a, 'f, W: bun_io::Write, const ENABLE_ANSI_COLORS: bool>
         Ok(())
     }
 
-    extern "C" fn for_each(
+    fn visit(
+        &mut self,
         global_this: &JSGlobalObject,
-        ctx_ptr: *mut c_void,
-        key_: *mut EncodedSlice,
+        key: &EncodedSlice,
         value: JSValue,
         is_symbol: bool,
         is_private_symbol: bool,
@@ -906,14 +886,12 @@ impl<'a, 'f, W: bun_io::Write, const ENABLE_ANSI_COLORS: bool>
             return;
         }
 
-        // SAFETY: key_ is non-null per JSC contract for property iteration.
-        let key = unsafe { *key_ };
+        let key = *key;
         if key.eq_ascii(b"constructor") {
             return;
         }
 
-        // SAFETY: ctx_ptr was passed as `&mut Self as *mut c_void` by the caller of for_each.
-        let Some(ctx) = (unsafe { ctx_ptr.cast::<Self>().as_mut() }) else { return };
+        let ctx = self;
         if ctx.formatter.failed {
             return;
         }
@@ -1049,23 +1027,12 @@ impl<'a> Formatter<'a> {
 
         if FORMAT.can_have_circular_references() {
             if self.map_node.is_none() {
-                // `visited::Pool::get()` returns an RAII `PoolGuard` that
-                // would release on scope exit; instead the raw node is stashed on
-                // `self` and released from `JestPrettyFormat::format`'s tail, so
-                // take the raw node directly. `data` is initialized by
-                // `Map::INIT` (see `visited::Map: ObjectPoolType`).
-                let node = core::ptr::NonNull::new(visited::Pool::get_node())
-                    .expect("ObjectPool::get_node never returns null");
+                // Take the pooled map here and swap it back into the node in
+                // `Drop`, so the pooled allocation is retained across uses.
+                let mut node = visited::Pool::get();
+                node.clear();
+                self.map = core::mem::take(&mut *node);
                 self.map_node = Some(node);
-                // Take the map here and swap it back into
-                // `node.data` at release time (see JestPrettyFormat::format tail),
-                // so the pooled allocation is retained across uses.
-                // SAFETY: see above.
-                unsafe {
-                    let data = (*node.as_ptr()).data.assume_init_mut();
-                    data.clear();
-                    self.map = core::mem::take(data);
-                }
             }
 
             let entry = self.map.get_or_put(value).expect("unreachable");
@@ -1495,11 +1462,7 @@ impl<'a> Formatter<'a> {
                     // bodies re-enter this formatter through the `ConsoleFormatter` impl
                     // below for nested values, so the byte sink is wrapped in `AsFmt` (a
                     // `core::fmt::Write` view of the same writer).
-                    if let Some(response) = value.as_::<crate::webcore::Response>() {
-                        // SAFETY: `as_` returned non-null; the GC keeps the cell alive while
-                        // `value` is on the stack (conservative scan). `write_format` does not
-                        // re-enter `as_` for the same cell, so the `&mut` is unique here.
-                        let response = unsafe { &mut *response };
+                    if let Some(response) = value.as_class_ref::<crate::webcore::Response>() {
                         let mut bridge = AsFmt::new(&mut *writer.ctx);
                         if response
                             .write_format::<_, _, ENABLE_ANSI_COLORS>(self, &mut bridge)
@@ -1515,9 +1478,7 @@ impl<'a> Formatter<'a> {
                             }
                             return Err(JsError::Thrown);
                         }
-                    } else if let Some(request) = value.as_::<crate::webcore::Request>() {
-                        // SAFETY: see Response branch above.
-                        let request = unsafe { &mut *request };
+                    } else if let Some(request) = value.as_class_ref::<crate::webcore::Request>() {
                         let mut bridge = AsFmt::new(&mut *writer.ctx);
                         if request
                             .write_format::<_, _, ENABLE_ANSI_COLORS>(value, self, &mut bridge)
@@ -1534,10 +1495,7 @@ impl<'a> Formatter<'a> {
                             return Err(JsError::Thrown);
                         }
                         return Ok(());
-                    } else if let Some(build) = value.as_::<crate::api::BuildArtifact>() {
-                        // SAFETY: see Response branch above. `write_format` is
-                        // `&self` post-R-2, so a shared borrow is sufficient.
-                        let build = unsafe { &*build };
+                    } else if let Some(build) = value.as_class_ref::<crate::api::BuildArtifact>() {
                         let mut bridge = AsFmt::new(&mut *writer.ctx);
                         if build
                             .write_format::<_, _, ENABLE_ANSI_COLORS>(value, self, &mut bridge)
@@ -1553,9 +1511,7 @@ impl<'a> Formatter<'a> {
                             }
                             return Err(JsError::Thrown);
                         }
-                    } else if let Some(blob) = value.as_::<crate::webcore::Blob>() {
-                        // SAFETY: see Response branch above.
-                        let blob = unsafe { &mut *blob };
+                    } else if let Some(blob) = value.as_class_ref::<crate::webcore::Blob>() {
                         let mut bridge = AsFmt::new(&mut *writer.ctx);
                         if blob
                             .write_format::<_, _, ENABLE_ANSI_COLORS>(self, &mut bridge)
@@ -1747,11 +1703,7 @@ impl<'a> Formatter<'a> {
                             formatter: self,
                             writer: writer.ctx,
                         };
-                        let result = value.for_each(
-                            global,
-                            (&raw mut iter).cast::<c_void>(),
-                            MapIterator::<W, ENABLE_ANSI_COLORS>::for_each,
-                        );
+                        let result = value.for_each_iter(global, |g, v| iter.visit(g, v));
                         // `indent` / `quote_strings` must be restored on every exit,
                         // including thrown exceptions — restore before propagating.
                         self.indent = self.indent.saturating_sub(1);
@@ -1794,11 +1746,7 @@ impl<'a> Formatter<'a> {
                             formatter: self,
                             writer: writer.ctx,
                         };
-                        let result = value.for_each(
-                            global,
-                            (&raw mut iter).cast::<c_void>(),
-                            SetIterator::<W, ENABLE_ANSI_COLORS>::for_each,
-                        );
+                        let result = value.for_each_iter(global, |g, v| iter.visit(g, v));
                         // `indent` / `quote_strings` must be restored on every exit,
                         // including thrown exceptions — restore before propagating.
                         self.indent = self.indent.saturating_sub(1);
@@ -2324,11 +2272,10 @@ impl<'a> Formatter<'a> {
                         parent: value,
                     };
 
-                    let result = value.for_each_property_ordered(
-                        global,
-                        (&raw mut iter).cast::<c_void>(),
-                        PropertyIterator::<W, ENABLE_ANSI_COLORS>::for_each,
-                    );
+                    let result =
+                        value.for_each_property_iter(global, true, |g, k, v, sym, private| {
+                            iter.visit(g, k, v, sym, private)
+                        });
 
                     let iter_i = iter.i;
                     let iter_always_newline = iter.always_newline;
@@ -2425,15 +2372,11 @@ impl<'a> Formatter<'a> {
 
                     macro_rules! print_typed_slice {
                         ($t:ty) => {{
-                            // SAFETY: `Unaligned<$t>` has align 1 and the same size as `$t`, so any
-                            // `*const u8` is a valid `*const Unaligned<$t>`; `slice` is the live
-                            // backing store of a JSC typed array whose elements are valid `$t`.
-                            let slice_with_type: &[bun_core::Unaligned<$t>] = unsafe {
-                                core::slice::from_raw_parts(
-                                    slice.as_ptr().cast::<bun_core::Unaligned<$t>>(),
-                                    slice.len() / core::mem::size_of::<$t>(),
-                                )
-                            };
+                            // `Unaligned<$t>` has align 1, so this holds for any backing
+                            // store (external ArrayBuffers need not be `$t`-aligned).
+                            let whole = slice.len() - slice.len() % core::mem::size_of::<$t>();
+                            let slice_with_type: &[bun_core::Unaligned<$t>] =
+                                bytemuck::cast_slice(&slice[..whole]);
                             self.indent += 1;
                             for el in slice_with_type {
                                 writer.write_all(b"\n");

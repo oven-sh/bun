@@ -15,7 +15,7 @@ use bun_wyhash::hash;
 
 use super::diff_format::DiffFormatter;
 use super::expect::Expect;
-use super::jest::{FileColumns as _, Jest};
+use super::jest::Jest;
 use bun_collections::index_sort;
 
 // TestRunner.File.ID — concrete alias from jest.rs (`pub type FileId = u32`).
@@ -142,10 +142,7 @@ impl Snapshots {
         target_value: &[u8],
         hint: &[u8],
     ) -> Result<Option<&[u8]>, Error> {
-        let buntest_strong = expect
-            .bun_test()
-            .ok_or(crate::Error::SnapshotFailed)?;
-        let bun_test = buntest_strong.get();
+        let bun_test = expect.bun_test().ok_or(crate::Error::SnapshotFailed)?;
         match self.get_snapshot_file(bun_test.file_id)? {
             bun_sys::Result::Ok(()) => {}
             bun_sys::Result::Err(err) => {
@@ -238,18 +235,10 @@ impl Snapshots {
         let arena = bun_alloc::Arena::new();
         let mut temp_log = bun_ast::Log::init();
 
-        // do NOT call `Jest::runner()` here — it hands out an exclusive ref to the global TestRunner,
-        // and `self: &mut Snapshots` is a live borrow of that same TestRunner's `.snapshots`
-        // field. Retagging the whole TestRunner would invalidate `self` under Stacked Borrows.
-        // Project the disjoint `.files` sibling through the raw `RUNNER` pointer instead.
-        // SAFETY: single-threaded JS VM; RUNNER is set before any Snapshots method runs
-        // (Snapshots is a field of TestRunner). Raw-pointer place projection touches only
-        // `.files` bytes, disjoint from `&mut self`.
-        let test_file_source = unsafe {
-            let p = Jest::RUNNER.read().expect("Jest runner not set").as_ptr();
-            &(*p).files.items_source()[file.id as usize]
-        };
-        let name = test_file_source.path.name();
+        let test_file_path = Jest::runner()
+            .ok_or(Error::SnapshotFailed)?
+            .file_path(file.id);
+        let name = test_file_path.name();
         let test_filename = name.filename;
         let dir_path = name.dir_with_trailing_slash();
 
@@ -416,15 +405,13 @@ impl Snapshots {
             });
 
             // 2. load file text
-            // avoid `Jest::runner()` (would alias `&mut TestRunner` over the live
-            // `&mut self` / `ils_info` borrow of `runner.snapshots`). See comment in `parse_file`.
-            // SAFETY: see `parse_file` — raw-pointer projection to disjoint `.files` field.
-            let test_file_source = unsafe {
-                let p = Jest::RUNNER.read().expect("Jest runner not set").as_ptr();
-                &(*p).files.items_source()[file_id as usize]
+            let Some(runner) = Jest::runner() else {
+                success.set(false);
+                continue;
             };
+            let test_file_path = runner.file_path(file_id);
             let test_filename: Box<[u8]> = {
-                let mut v = test_file_source.path.text.to_vec();
+                let mut v = test_file_path.text.to_vec();
                 v.push(0);
                 v.into_boxed_slice()
             };
@@ -531,24 +518,11 @@ impl Snapshots {
                     }
                     next_start += fn_name.len();
 
-                    // `Lexer.initWithoutReading` and `TSXParser.init` both need the same
-                    // `Log`, but Rust forbids two live `&'a mut Log`;
-                    // derive a raw pointer so borrowck doesn't track the lexer/parser borrow,
-                    // matching the pattern in `js_parser::Parser::init`. The unique `&mut`
-                    // logically lives inside `parser.lexer`; `log.add_error_fmt` calls below
-                    // reborrow via the scopeguard between parser uses.
-                    // SAFETY: `log` outlives the `'blk` block; lexer/parser are dropped at
-                    // block exit (or `continue 'ils`). See Parser.rs:214 for the provenance
-                    // discussion.
-                    let log_ptr: *mut bun_ast::Log = &raw mut *log;
-                    let mut lexer = js_lexer::Lexer::init_without_reading(
-                        // SAFETY: `log_ptr` derived from `&raw mut *log` just above; `log`
-                        // outlives `'blk` and no other `&mut Log` is live until `lexer` is
-                        // moved into `parser` below.
-                        unsafe { &mut *log_ptr },
-                        &source,
-                        &arena,
-                    );
+                    // The lexer (and the parser built over it) log to `log`; the
+                    // `log.add_error_fmt` calls below are each followed by
+                    // `continue 'ils`, which drops the parser.
+                    let mut lexer =
+                        js_lexer::Lexer::init_without_reading(&mut log, &source, &arena);
                     if next_start > 0 {
                         // equivalent to lexer.consumeRemainderBytes(next_start)
                         lexer.current += next_start - (lexer.current - lexer.end);
@@ -560,32 +534,13 @@ impl Snapshots {
                         vm.transpiler.options.jsx.clone(),
                         bun_ast::Loader::Js,
                     );
-                    // `P::init` takes an out-param
-                    // since 9a98701c980c — `P` is ~5 KiB and the previous
-                    // `let p = P::init(..)?` shape forced 2-3 by-value moves.
-                    // Mirror `init_p!` from `js_parser/parse/parse_entry.rs` here
-                    // (that macro is crate-local).
-                    let mut __parser_slot =
-                        core::mem::MaybeUninit::<js_parser::TSXParser<'_>>::uninit();
-                    // `P::init` writes a fully-initialized value on `Ok`. On `Err` we
-                    // `?`-return before arming the drop guard, so the slot stays
-                    // uninitialized and untouched.
-                    js_parser::TSXParser::init(
-                        &mut __parser_slot,
+                    let mut parser = js_parser::TSXParser::new_boxed(
                         &arena,
-                        core::ptr::NonNull::new(log_ptr).expect("log_ptr derived from &mut *log"),
                         &source,
                         &vm.transpiler.options.define,
                         lexer,
                         opts,
                     )?;
-                    // SAFETY: `init` returned `Ok`, so `*__parser_slot` is initialized;
-                    // the guard's drop closure is the sole owner of the slot from here.
-                    let mut __parser_guard =
-                        scopeguard::guard(__parser_slot, |mut s| unsafe { s.assume_init_drop() });
-                    // SAFETY: guard armed only after `init` succeeded.
-                    let parser: &mut js_parser::TSXParser<'_> =
-                        unsafe { __parser_guard.assume_init_mut() };
 
                     parser.lexer.expect(js_lexer::T::TOpenParen)?;
                     let after_open_paren_loc = parser.lexer.loc().start;
@@ -784,8 +739,7 @@ impl Snapshots {
                 result_text.extend_from_slice(b"`");
 
                 if ils.is_added {
-                    // `runner.snapshots` *is* `*self`: going back through `Jest::runner()` would
-                    // create a second `&mut Snapshots` aliasing `self` (UB) and invalidate `ils_info`.
+                    // `runner.snapshots` *is* `*self` (the caller holds its `RefCell` borrow).
                     self.added += 1;
                 }
             }
@@ -835,13 +789,10 @@ impl Snapshots {
         if self._current_file.is_none() || self._current_file.as_ref().unwrap().id != file_id {
             self.write_snapshot_file()?;
 
-            // avoid `Jest::runner()` (aliases `&mut TestRunner` over live `&mut self`).
-            // SAFETY: see `parse_file` — raw-pointer projection to disjoint `.files` field.
-            let test_file_source = unsafe {
-                let p = Jest::RUNNER.read().expect("Jest runner not set").as_ptr();
-                &(*p).files.items_source()[file_id as usize]
-            };
-            let name = test_file_source.path.name();
+            let test_file_path = Jest::runner()
+                .ok_or(Error::SnapshotFailed)?
+                .file_path(file_id);
+            let name = test_file_path.name();
             let test_filename = name.filename;
             let dir_path = name.dir_with_trailing_slash();
 

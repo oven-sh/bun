@@ -1,12 +1,11 @@
 use core::fmt;
-use core::ptr::NonNull;
 use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::io::Write as _;
 
 use bun_jsc::JsResult;
 
 use crate::test_runner::bun_test::{DescribeScope, ExecutionEntry, TestScheduleEntry};
-use crate::test_runner::execution::Execution;
+use crate::test_runner::execution::{EntryId, Execution};
 
 fn dump_sub(current: &TestScheduleEntry) -> JsResult<()> {
     if !group::get_log_enabled() {
@@ -29,23 +28,23 @@ pub(crate) fn dump_describe(describe: &DescribeScope) -> JsResult<()> {
         bstr::BStr::new(describe.base.name.as_deref().unwrap_or(b"(unnamed)")),
         describe.base.concurrent,
         describe.base.mode.tag_name(),
-        describe.base.only.tag_name(),
-        describe.base.has_callback,
+        describe.base.only.get().tag_name(),
+        describe.base.has_callback.get(),
     ));
 
-    for entry in describe.before_all.as_slice() {
+    for entry in describe.before_all.borrow().iter() {
         dump_test(entry, b"beforeAll")?;
     }
-    for entry in describe.before_each.as_slice() {
+    for entry in describe.before_each.borrow().iter() {
         dump_test(entry, b"beforeEach")?;
     }
-    for entry in describe.entries.as_slice() {
+    for entry in describe.entries.borrow().iter() {
         dump_sub(entry)?;
     }
-    for entry in describe.after_each.as_slice() {
+    for entry in describe.after_each.borrow().iter() {
         dump_test(entry, b"afterEach")?;
     }
-    for entry in describe.after_all.as_slice() {
+    for entry in describe.after_all.borrow().iter() {
         dump_test(entry, b"afterAll")?;
     }
     Ok(())
@@ -60,7 +59,7 @@ fn dump_test(current: &ExecutionEntry, label: &[u8]) -> JsResult<()> {
         bstr::BStr::new(label),
         bstr::BStr::new(current.base.name.as_deref().unwrap_or(b"(unnamed)")),
         current.base.concurrent,
-        current.base.only.tag_name(),
+        current.base.only.get().tag_name(),
     ));
     Ok(())
 }
@@ -71,32 +70,31 @@ pub(crate) fn dump_order(this: &Execution) -> JsResult<()> {
     }
     let _guard = group::begin_msg(format_args!("dumpOrder"));
 
-    for (group_index, group_value) in this.groups.iter().enumerate() {
+    for (group_index, group_value) in this.groups().iter().enumerate() {
         let _guard = group::begin_msg(format_args!(
             "{} ConcurrentGroup ({}-{})",
             group_index, group_value.sequence_start, group_value.sequence_end,
         ));
 
-        for (sequence_index, sequence) in group_value.sequences_const(this).iter().enumerate() {
+        for (sequence_index, sequence) in group_value.sequences(this).iter().enumerate() {
             let _guard = group::begin_msg(format_args!(
                 "{} Sequence ({}x)",
-                sequence_index, sequence.remaining_repeat_count,
+                sequence_index,
+                sequence.remaining_repeat_count.get(),
             ));
 
-            let mut current_entry: Option<NonNull<ExecutionEntry>> = sequence.first_entry;
-            while let Some(entry_ptr) = current_entry {
-                // SAFETY: linked-list nodes are owned by the Execution and remain valid for the
-                // duration of this read-only dump.
-                let entry = unsafe { entry_ptr.as_ref() };
+            let mut current_entry: Option<EntryId> = sequence.first_entry;
+            while let Some(entry_id) = current_entry {
+                let entry = this.entry(entry_id);
                 group::log(format_args!(
                     "ExecutionEntry \"{}\" (concurrent={}, mode={}, only={}, has_callback={})",
                     bstr::BStr::new(entry.base.name.as_deref().unwrap_or(b"(unnamed)")),
                     entry.base.concurrent,
                     entry.base.mode.tag_name(),
-                    entry.base.only.tag_name(),
-                    entry.base.has_callback,
+                    entry.base.only.get().tag_name(),
+                    entry.base.has_callback.get(),
                 ));
-                current_entry = entry.next.and_then(NonNull::new);
+                current_entry = this.next_of(entry_id);
             }
         }
     }

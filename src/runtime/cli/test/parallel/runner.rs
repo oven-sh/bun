@@ -36,7 +36,7 @@ const DEFAULT_SCALE_UP_AFTER_MS: i64 = 5;
 /// fell back to the sequential path (≤1 effective worker). The caller uses
 /// this to decide whether to run the serial coverage/JUnit reporters.
 pub(crate) fn run_as_coordinator(
-    reporter: &mut CommandLineReporter,
+    reporter: &'static CommandLineReporter,
     vm: *mut VirtualMachine,
     files: &[Interned],
     ctx: Command::Context,
@@ -94,7 +94,8 @@ pub(crate) fn run_as_coordinator(
     // of file count, and each chunk is dispatched slowest-first (cache hits
     // depend on which worker runs a file, not the order within the worker).
     let mut costs: Option<Vec<u64>> = None;
-    let ranges: Vec<FileRange> = match reporter.timings.as_ref() {
+    let timings = reporter.timings.borrow();
+    let ranges: Vec<FileRange> = match timings.as_ref() {
         Some(t) if !t.is_empty() && !ctx.test_options.randomize => {
             let ranges = t.partition(&sorted, k);
             for r in &ranges {
@@ -110,6 +111,7 @@ pub(crate) fn run_as_coordinator(
             })
             .collect(),
     };
+    drop(timings);
 
     let mut workers: Vec<Worker> = Vec::with_capacity(k as usize);
     // Populate fully BEFORE constructing Coordinator so it can hold
@@ -505,13 +507,13 @@ impl ChannelOwner for WorkerCommands {
 
 // Hoisted from a local struct inside run_as_worker — Rust does not
 // support method-bearing local structs that need to be named in a generic call.
-struct WorkerLoop<'a> {
-    reporter: &'a mut CommandLineReporter,
+struct WorkerLoop {
+    reporter: &'static CommandLineReporter,
     vm: *mut VirtualMachine,
     cmds: WorkerCommands,
 }
 
-impl<'a> WorkerLoop<'a> {
+impl WorkerLoop {
     fn begin(&mut self) {
         // SAFETY: vm pointer is valid for the worker's lifetime.
         let vm = unsafe { &mut *self.vm };
@@ -561,13 +563,13 @@ impl<'a> WorkerLoop<'a> {
             };
             self.cmds.pending_idx = None;
 
-            self.reporter.worker_ipc_file_idx = Some(idx);
+            self.reporter.worker_ipc_file_idx.set(Some(idx));
             wf.begin(frame::Kind::FileStart);
             wf.u32(idx);
             self.cmds.send(wf.finish());
 
             let before = *self.reporter.summary();
-            let before_unhandled = self.reporter.jest.unhandled_errors_between_tests;
+            let before_unhandled = self.reporter.jest.unhandled_errors_between_tests.get();
             let started_ns =
                 bun_core::Timespec::now(bun_core::TimespecMockMode::ForceRealTime).ns();
 
@@ -593,7 +595,7 @@ impl<'a> WorkerLoop<'a> {
             } else {
                 Global::mimalloc_cleanup(false);
             }
-            self.reporter.jest.default_timeout_override = u32::MAX;
+            self.reporter.jest.default_timeout_override.set(u32::MAX);
 
             let elapsed_ns = bun_core::Timespec::now(bun_core::TimespecMockMode::ForceRealTime)
                 .ns()
@@ -610,7 +612,7 @@ impl<'a> WorkerLoop<'a> {
                 after.expectations - before.expectations,
                 after.skipped_because_label - before.skipped_because_label,
                 after.files - before.files,
-                self.reporter.jest.unhandled_errors_between_tests - before_unhandled,
+                self.reporter.jest.unhandled_errors_between_tests.get() - before_unhandled,
             ] {
                 wf.u32(v);
             }
@@ -632,7 +634,7 @@ impl<'a> WorkerLoop<'a> {
 // would alias. The `# Safety` contract above documents the caller's obligation.
 #[allow(clippy::not_unsafe_ptr_arg_deref)]
 pub(crate) fn run_as_worker(
-    reporter: &mut CommandLineReporter,
+    reporter: &'static CommandLineReporter,
     vm: *mut VirtualMachine,
     ctx: Command::Context,
 ) -> ! {
@@ -691,7 +693,7 @@ pub(crate) fn run_as_worker(
 }
 
 fn worker_flush_aggregates(
-    reporter: &mut CommandLineReporter,
+    reporter: &CommandLineReporter,
     vm: &mut VirtualMachine,
     ctx: &Command::ContextData,
     cmds: &mut WorkerCommands,
@@ -699,17 +701,18 @@ fn worker_flush_aggregates(
     // Snapshots flush lazily when the next file opens its snapshot file; the
     // last file each worker ran has no successor to trigger that.
     if let Some(runner) = crate::test_runner::jest::Jest::runner() {
-        let _ = runner.snapshots.write_inline_snapshots().unwrap_or(false);
-        let _ = runner.snapshots.write_snapshot_file();
+        let mut snapshots = runner.snapshots.borrow_mut();
+        let _ = snapshots.write_inline_snapshots().unwrap_or(false);
+        let _ = snapshots.write_snapshot_file();
     }
 
     // SAFETY: single-threaded worker; WORKER_FRAME is a process-global scratch buffer
     let wf = unsafe { &mut *WORKER_FRAME.get() };
 
     wf.begin(frame::Kind::RepeatBufs);
-    wf.str(reporter.failures_to_repeat_buf.as_slice());
-    wf.str(reporter.skips_to_repeat_buf.as_slice());
-    wf.str(reporter.todos_to_repeat_buf.as_slice());
+    wf.str(reporter.failures_to_repeat_buf.borrow().as_slice());
+    wf.str(reporter.skips_to_repeat_buf.borrow().as_slice());
+    wf.str(reporter.todos_to_repeat_buf.borrow().as_slice());
     cmds.send(wf.finish());
 
     if ctx.test_options.coverage.enabled {

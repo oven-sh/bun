@@ -1100,20 +1100,10 @@ pub(crate) unsafe fn __bun_fire_timer(
         }
         EventLoopTimerTag::BunTest => {
             let container = owner!(BunTest, timer);
-            // SAFETY: container is the payload of a live `Rc<BunTestCell>`; the
-            // strong count is ≥1 (held by `Jest.active_file`).
-            // `BunTestCell` is a `UnsafeCell<BunTest>` newtype — same
-            // layout as `BunTest`, so the raw `*mut BunTest` recovered above is
-            // also the `Rc` payload pointer.
-            let strong: BunTestPtr = unsafe {
-                let rc = std::rc::Rc::from_raw(
-                    container as *const crate::test_runner::bun_test::BunTestCell,
-                );
-                let cloned = std::rc::Rc::clone(&rc);
-                // Don't drop the original ref — it's borrowed, not owned here.
-                let _ = std::rc::Rc::into_raw(rc);
-                cloned
-            };
+            // SAFETY: container is the payload of a live `Rc<BunTest>` (an armed
+            // timer is unlinked in `Drop for BunTest`); take our own strong ref
+            // for the callback, which may drop `Jest.active_file`'s.
+            let strong: BunTestPtr = unsafe { (*container).strong() };
             // SAFETY: per fn contract. `bun_test_timeout_callback` takes a
             // `&bun_core::Timespec`; the low-tier `EventLoopTimer::Timespec` is
             // a layout-identical local stub.
@@ -1123,7 +1113,7 @@ pub(crate) unsafe fn __bun_fire_timer(
                     nsec: (*now).nsec,
                 }
             };
-            BunTest::bun_test_timeout_callback(&strong, &now_core, VirtualMachine::get());
+            strong.bun_test_timeout_callback(&now_core, VirtualMachine::get());
             Ok(())
         }
         EventLoopTimerTag::CronJob => {

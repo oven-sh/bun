@@ -1854,24 +1854,19 @@ unsafe fn retroactively_report_discovered_tests(
     let Some(runner) = Jest::runner() else {
         return next_test_id;
     };
-    let Some(active_file) = runner.bun_test_root.active_file.as_ref() else {
+    let Some(active_file) = runner.bun_test_root.clone_active_file() else {
         return next_test_id;
     };
-    // SAFETY: single-threaded; `active_file` keeps the cell alive for this call.
-    let active_file = unsafe { &mut *active_file.as_ptr() };
 
     // Only report if we're in collection or execution phase (tests have been
     // discovered).
-    match active_file.phase {
+    match active_file.phase.get() {
         Phase::Collection | Phase::Execution => {}
         Phase::Done => return next_test_id,
     }
 
     // Get the file path for source location info.
-    use crate::test_runner::jest::FileColumns as _;
-    let file_path = runner.files.items_source()[active_file.file_id as usize]
-        .path
-        .text();
+    let file_path = runner.file_path(active_file.file_id).text;
     let source_url = bun_core::String::from_bytes(file_path);
 
     let mut max_id: i32 = next_test_id;
@@ -1879,7 +1874,7 @@ unsafe fn retroactively_report_discovered_tests(
     // Recursively report all discovered tests starting from root scope.
     retroactively_report_scope(
         agent,
-        &mut active_file.collection.root_scope,
+        &active_file.collection.root_scope,
         -1,
         &mut max_id,
         &source_url,
@@ -1889,20 +1884,20 @@ unsafe fn retroactively_report_discovered_tests(
 
     fn retroactively_report_scope(
         agent: *mut TestReporterHandle,
-        scope: &mut DescribeScope,
+        scope: &DescribeScope,
         parent_id: i32,
         max_id: &mut i32,
         source_url: &bun_core::String,
     ) {
-        for entry in scope.entries.iter_mut() {
+        for entry in scope.entries.borrow().iter() {
             match entry {
                 TestScheduleEntry::Describe(describe) => {
-                    if describe.base.test_id_for_debugger == 0 {
+                    if describe.base.test_id_for_debugger.get() == 0 {
                         *max_id += 1;
                         let test_id = *max_id;
                         // Assign the ID so start/end events will fire during
                         // execution.
-                        describe.base.test_id_for_debugger = test_id;
+                        describe.base.test_id_for_debugger.set(test_id);
                         let name = bun_core::String::from_bytes(
                             describe.base.name.as_deref().unwrap_or(b"(unnamed)"),
                         );
@@ -1921,15 +1916,15 @@ unsafe fn retroactively_report_discovered_tests(
                     } else {
                         // Already has ID, just recurse with existing ID as
                         // parent.
-                        let existing = describe.base.test_id_for_debugger;
+                        let existing = describe.base.test_id_for_debugger.get();
                         retroactively_report_scope(agent, describe, existing, max_id, source_url);
                     }
                 }
                 TestScheduleEntry::TestCallback(test_entry) => {
-                    if test_entry.base.test_id_for_debugger == 0 {
+                    if test_entry.base.test_id_for_debugger.get() == 0 {
                         *max_id += 1;
                         let test_id = *max_id;
-                        test_entry.base.test_id_for_debugger = test_id;
+                        test_entry.base.test_id_for_debugger.set(test_id);
                         let name = bun_core::String::from_bytes(
                             test_entry.base.name.as_deref().unwrap_or(b"(unnamed)"),
                         );

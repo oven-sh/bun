@@ -1384,7 +1384,7 @@ impl VirtualMachine {
         Bun__emitHandledPromiseEvent(global_object, promise)
     }
 
-    pub(crate) fn default_on_unhandled_rejection(
+    pub fn default_on_unhandled_rejection(
         this: &mut VirtualMachine,
         _: &JSGlobalObject,
         value: JSValue,

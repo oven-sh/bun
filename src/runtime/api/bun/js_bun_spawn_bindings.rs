@@ -292,15 +292,11 @@ pub(crate) fn spawn_sync(
         && result.is_ok()
         && !global_this.has_exception()
         && let Some(runner) = crate::test_runner::jest::Jest::runner()
-        && let Some(active_file) = runner.bun_test_root.active_file.clone()
+        && let Some(active_file) = runner.bun_test_root.clone_active_file()
     {
         let vm = global_this.bun_vm().as_mut();
         runner.remove_active_timeout(vm);
-        crate::test_runner::bun_test::BunTest::bun_test_timeout_callback(
-            &active_file,
-            &deadline,
-            vm,
-        );
+        active_file.bun_test_timeout_callback(&deadline, vm);
         if global_this.has_exception() {
             return Ok(JSValue::ZERO);
         }
@@ -1949,11 +1945,9 @@ fn spawn_maybe_sync(
                         if let Some(active_file) = crate::test_runner::jest::Jest::runner()
                             .unwrap()
                             .bun_test_root
-                            .active_file
-                            .clone()
+                            .clone_active_file()
                         {
                             active_file
-                                .get()
                                 .execution
                                 .kill_dangling_processes_on_timeout(global_this);
                         }

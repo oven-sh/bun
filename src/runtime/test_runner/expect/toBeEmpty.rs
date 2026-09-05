@@ -1,6 +1,6 @@
-use core::ffi::c_void;
-
-use bun_jsc::{CallFrame, JSGlobalObject, JSPropertyIterator, JSPropertyIteratorOptions, JSValue, JsResult, VM};
+use bun_jsc::{
+    CallFrame, JSGlobalObject, JSPropertyIterator, JSPropertyIteratorOptions, JSValue, JsResult,
+};
 
 use super::{throw, Expect};
 
@@ -22,22 +22,7 @@ pub(crate) fn to_be_empty(
         if value.js_type_loose().is_object() {
             if value.is_iterable(global)? {
                 let mut any_properties_in_iterator = false;
-
-                extern "C" fn anything_in_iterator(
-                    _: *mut VM,
-                    _: &JSGlobalObject,
-                    any_: *mut c_void,
-                    _: JSValue,
-                ) {
-                    // SAFETY: `any_` is the `&mut bool` passed to `for_each` below.
-                    unsafe { *any_.cast::<bool>() = true };
-                }
-
-                value.for_each(
-                    global,
-                    (&raw mut any_properties_in_iterator).cast::<c_void>(),
-                    anything_in_iterator,
-                )?;
+                value.for_each_iter(global, |_, _| any_properties_in_iterator = true)?;
                 pass = !any_properties_in_iterator;
             } else {
                 let Some(_cell) = value.to_cell() else {

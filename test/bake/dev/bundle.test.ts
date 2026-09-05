@@ -412,6 +412,65 @@ devTest("removing 'use client' from a component with a pending resolution failur
     expect(res).toBeInstanceOf(Response);
   },
 });
+// Regression test for #40113: with separateSSRGraph, a "use client" file
+// whose import fails to resolve is parsed under the browser target, so its
+// failure is attributed to the client graph. The file never reached
+// server-component-boundary registration, so the server graph had no node
+// for it and the route had no edge to the failure. Editing a sibling client
+// component then let checkRouteFailures trace nothing, mark the route
+// Loaded, and run it, which threw "Failed to load bundled module" and left
+// the route's server module permanently stuck.
+devTest("a sibling client component's resolution failure keeps the route failed after an unrelated edit", {
+  framework: {
+    ...minimalFramework,
+    serverComponents: {
+      ...minimalFramework.serverComponents!,
+      separateSSRGraph: true,
+    },
+  },
+  files: {
+    "routes/index.ts": `
+      import * as Comp from '../components/Comp';
+      import '../components/Sibling';
+      export default function (req, meta) {
+        return new Response('page: ' + (typeof Comp.marker));
+      }
+    `,
+    "components/Comp.ts": `
+      "use client";
+      export const marker = "initial";
+    `,
+    "components/Sibling.ts": `
+      "use client";
+      import './sibling-missing';
+      export const sibling = 1;
+    `,
+  },
+  async test(dev) {
+    // Sibling.ts cannot resolve './sibling-missing', so the route serves
+    // the build error page.
+    let res = await dev.fetch("/");
+    expect(await res.text()).toContain("<title>Bun - Build Failed</title>");
+    expect(res.status).toBe(500);
+
+    // Edit the client component that compiles cleanly. The rebuild only
+    // contains Comp.ts, so the route's failure trace must still reach
+    // Sibling's failure through the boundary placeholder in the server
+    // graph. Before the fix this request ran the route and poisoned its
+    // server module registry entry.
+    await dev.write("components/Comp.ts", `"use client";\nexport const marker = "edited";`, { errors: null });
+    res = await dev.fetch("/");
+    expect(await res.text()).toContain("<title>Bun - Build Failed</title>");
+    expect(res.status).toBe(500);
+
+    // Create the missing file. Every import resolves now, so the route
+    // must recover and render.
+    await dev.write("components/sibling-missing.ts", `export {};`, { errors: null });
+    res = await dev.fetch("/");
+    expect(await res.text()).toBe("page: object");
+    expect(res.status).toBe(200);
+  },
+});
 devTest("deinit with a free-list slot in DirectoryWatchStore.dependencies", {
   files: {
     "index.html": emptyHtmlFile({ scripts: ["index.ts"] }),

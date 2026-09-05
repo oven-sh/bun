@@ -347,6 +347,7 @@ bun_dispatch::link_interface! {
         fn handle_parse_task_failure(err: crate::Error, graph: bake_types::Graph, abs_path: &[u8], log: *const bun_ast::Log, bv2: *mut bundle_v2::BundleV2<'_>) -> Result<(), crate::Error>;
         fn put_or_overwrite_asset(path: *const (), contents: &[u8], content_hash: u64) -> Result<(), crate::Error>;
         fn track_resolution_failure(import_source: &[u8], specifier: &[u8], renderer: bake_types::Graph, loader: bun_ast::Loader) -> Result<(), crate::Error>;
+        fn insert_stale_client_component_boundary(abs_path: &[u8]) -> Result<(), crate::Error>;
         fn is_file_cached(abs_path: &[u8], side: bake_types::Graph) -> Option<bake_types::CacheEntry>;
         fn asset_hash(abs_path: &[u8]) -> Option<u64>;
         fn current_bundle_start_data() -> *mut ();

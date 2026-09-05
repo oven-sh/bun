@@ -6101,6 +6101,8 @@ pub mod bv2_impl {
             // parse_result.value (invalidating the `result` pointer).
             let source_index = result.source.index;
             let target = result.ast.target;
+            let use_directive = result.use_directive;
+            let source_path = result.source.path.text;
             let mut resolve_result = this.resolve_import_records(&mut ResolveImportRecordCtx {
                 import_records: &mut result.ast.import_records,
                 source: &result.source,
@@ -6112,6 +6114,24 @@ pub mod bv2_impl {
             if let Some(err) = resolve_result.last_error {
                 bun_core::scoped_log!(Bundle, "failed with error: {}", err.name());
                 resolve_result.resolve_queue.clear();
+
+                // With a separate SSR graph, a failed "use client" file skips
+                // server-component-boundary registration (the Success arm), so
+                // the server graph would have no node for it and routes no
+                // edge to its failure. Give the dev server a placeholder.
+                if use_directive == crate::UseDirective::Client
+                    && target == Target::Browser
+                    && this.framework.as_ref().is_some_and(|f| {
+                        f.server_components
+                            .as_ref()
+                            .is_some_and(|sc| sc.separate_ssr_graph)
+                    })
+                {
+                    if let Some(dev) = this.dev_server {
+                        dev.insert_stale_client_component_boundary(source_path)
+                            .expect("oom");
+                    }
+                }
 
                 // Preserve the parsed import_records on the graph so any plugin
                 // onResolve tasks already dispatched for *other* records in this

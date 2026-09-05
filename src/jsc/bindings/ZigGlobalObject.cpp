@@ -159,6 +159,7 @@
 #include "napi_handle_scope.h"
 #include "napi_type_tag.h"
 #include "NativePromiseContext.h"
+#include "NativeMicrotaskContext.h"
 #include "napi.h"
 #include "NodeHTTP.h"
 #include "NodeVM.h"
@@ -1318,18 +1319,10 @@ JSC_DEFINE_HOST_FUNCTION(functionQueueMicrotask,
     return JSC::JSValue::encode(JSC::jsUndefined());
 }
 
-using MicrotaskCallback = void (*)(void*);
-
 JSC_DEFINE_HOST_FUNCTION(functionNativeMicrotaskTrampoline,
     (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
-    // Do not use JSCell* here because the GC will try to visit it.
-    double cellPtr = callFrame->uncheckedArgument(0).asNumber();
-    double callbackPtr = callFrame->uncheckedArgument(1).asNumber();
-
-    void* cell = reinterpret_cast<void*>(std::bit_cast<uintptr_t>(cellPtr));
-    auto* callback = reinterpret_cast<MicrotaskCallback>(std::bit_cast<uintptr_t>(callbackPtr));
-    callback(cell);
+    uncheckedDowncast<Bun::NativeMicrotaskContext>(callFrame->uncheckedArgument(0))->run();
     return JSValue::encode(jsUndefined());
 }
 
@@ -2384,6 +2377,9 @@ void GlobalObject::finishCreation(VM& vm)
         { OBJECT_OFFSETOF(GlobalObject, m_NativePromiseContextStructure), [](const LazyProperty<JSGlobalObject, Structure>::Initializer& init) {
              init.set(Bun::NativePromiseContext::createStructure(init.vm, init.owner));
          } },
+        { OBJECT_OFFSETOF(GlobalObject, m_NativeMicrotaskContextStructure), [](const LazyProperty<JSGlobalObject, Structure>::Initializer& init) {
+             init.set(Bun::NativeMicrotaskContext::createStructure(init.vm, init.owner));
+         } },
         { OBJECT_OFFSETOF(GlobalObject, m_JSHTTPResponseController), [](const LazyProperty<JSGlobalObject, Structure>::Initializer& init) {
              auto* structure = createJSSinkControllerStructure(init.vm, init.owner, WebCore::SinkID::HTTPResponseSink);
              init.set(structure);
@@ -2596,7 +2592,7 @@ void GlobalObject::finishCreation(VM& vm)
              init.set(JSC::JSFunction::create(init.vm, init.owner, wasmStreamingConsumeStreamCodeGenerator(init.vm), init.owner));
          } },
         { OBJECT_OFFSETOF(GlobalObject, m_nativeMicrotaskTrampoline), [](const LazyProperty<JSGlobalObject, JSFunction>::Initializer& init) {
-             init.set(JSFunction::create(init.vm, init.owner, 2, ""_s, functionNativeMicrotaskTrampoline, ImplementationVisibility::Private));
+             init.set(JSFunction::create(init.vm, init.owner, 1, ""_s, functionNativeMicrotaskTrampoline, ImplementationVisibility::Private));
          } },
         { OBJECT_OFFSETOF(GlobalObject, m_ipcParseHandleFunction), [](const LazyProperty<JSGlobalObject, JSFunction>::Initializer& init) {
              init.set(JSC::JSFunction::create(init.vm, init.owner, WebCore::ipcParseHandleCodeGenerator(init.vm), init.owner));
@@ -3388,20 +3384,15 @@ extern "C" [[ZIG_EXPORT(check_slow)]] void JSC__JSGlobalObject__reload(JSC::JSGl
     globalObject->reload();
 }
 
-extern "C" void JSC__JSGlobalObject__queueMicrotaskCallback(Zig::GlobalObject* globalObject, void* ptr, MicrotaskCallback callback)
+// The queue owns `ptr` from here: `run(ptr)` when the microtask fires, else `drop(ptr)` when the
+// discarded task's context cell is destroyed.
+extern "C" void JSC__JSGlobalObject__queueMicrotaskCallback(Zig::GlobalObject* globalObject, void* ptr, Bun::NativeMicrotaskContext::Callback run, Bun::NativeMicrotaskContext::Callback drop)
 {
+    auto& vm = globalObject->vm();
     JSFunction* function = globalObject->nativeMicrotaskTrampoline();
-
-#if ASSERT_ENABLED
-    ASSERT_WITH_MESSAGE(function, "Invalid microtask function");
-    ASSERT_WITH_MESSAGE(ptr, "Invalid microtask context");
-    ASSERT_WITH_MESSAGE(callback, "Invalid microtask callback");
-#endif
-
-    // Do not use JSCell* here because the GC will try to visit it.
-    // Use BunInvokeJobWithArguments to pass the two arguments (ptr and callback) to the trampoline function
-    JSC::QueuedTask task { nullptr, JSC::InternalMicrotask::BunInvokeJobWithArguments, 0, globalObject, function, JSValue(std::bit_cast<double>(reinterpret_cast<uintptr_t>(ptr))), JSValue(std::bit_cast<double>(reinterpret_cast<uintptr_t>(callback))) };
-    globalObject->vm().queueMicrotask(WTF::move(task));
+    auto* context = Bun::NativeMicrotaskContext::create(vm, globalObject->NativeMicrotaskContextStructure(), ptr, run, drop);
+    JSC::QueuedTask task { nullptr, JSC::InternalMicrotask::BunInvokeJobWithArguments, 0, globalObject, function, context };
+    vm.queueMicrotask(WTF::move(task));
 }
 
 extern "C" const Latin1Character* Bun__standaloneModuleKey(const Latin1Character*, size_t, size_t* outLength);

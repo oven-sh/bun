@@ -63,6 +63,7 @@ public:
     GCClient::IsoSubspace* m_clientSubspaceForStrongRootBlock { nullptr };
     GCClient::IsoSubspace* m_clientSubspaceForNapiTypeTag { nullptr };
     GCClient::IsoSubspace* m_clientSubspaceForNativePromiseContext { nullptr };
+    GCClient::IsoSubspace* m_clientSubspaceForNativeMicrotaskContext { nullptr };
     GCClient::IsoSubspace* m_clientSubspaceForObjectTemplate { nullptr };
     GCClient::IsoSubspace* m_clientSubspaceForInternalFieldObject { nullptr };
     GCClient::IsoSubspace* m_clientSubspaceForJSMIMEType { nullptr };

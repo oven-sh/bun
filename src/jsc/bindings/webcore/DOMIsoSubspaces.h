@@ -61,6 +61,7 @@ public:
     IsoSubspace* m_subspaceForStrongRootBlock { nullptr };
     IsoSubspace* m_subspaceForNapiTypeTag { nullptr };
     IsoSubspace* m_subspaceForNativePromiseContext { nullptr };
+    IsoSubspace* m_subspaceForNativeMicrotaskContext { nullptr };
     IsoSubspace* m_subspaceForObjectTemplate { nullptr };
     IsoSubspace* m_subspaceForInternalFieldObject { nullptr };
     IsoSubspace* m_subspaceForV8GlobalInternals { nullptr };

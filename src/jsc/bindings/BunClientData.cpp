@@ -28,6 +28,7 @@
 #include "../../runtime/bake/BakeGlobalObject.h"
 #include "napi_handle_scope.h"
 #include "NativePromiseContext.h"
+#include "NativeMicrotaskContext.h"
 #include "StrongRootBlock.h"
 
 namespace WebCore {
@@ -41,6 +42,7 @@ JSHeapData::JSHeapData(Heap& heap)
     , m_heapCellTypeForBakeGlobalObject(JSC::IsoHeapCellType::Args<Bake::GlobalObject>())
     , m_heapCellTypeForNapiHandleScopeImpl(JSC::IsoHeapCellType::Args<Bun::NapiHandleScopeImpl>())
     , m_heapCellTypeForNativePromiseContext(JSC::IsoHeapCellType::Args<Bun::NativePromiseContext>())
+    , m_heapCellTypeForNativeMicrotaskContext(JSC::IsoHeapCellType::Args<Bun::NativeMicrotaskContext>())
     , m_domConstructorSpace ISO_SUBSPACE_INIT(heap, heap.cellHeapCellType, JSDOMConstructorBase)
     , m_domNamespaceObjectSpace ISO_SUBSPACE_INIT(heap, heap.cellHeapCellType, JSDOMObject)
     , m_subspaces(makeUnique<ExtendedDOMIsoSubspaces>())

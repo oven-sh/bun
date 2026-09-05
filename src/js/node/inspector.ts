@@ -452,6 +452,12 @@ class Session extends EventEmitter {
     this.#connected = true;
   }
 
+  #notify(method: string, params: object) {
+    const message = { method, params };
+    this.emit(method, message);
+    this.emit("inspectorNotification", message);
+  }
+
   connectToMainThread() {
     if (Bun.isMainThread) {
       throw $ERR_INSPECTOR_NOT_WORKER();
@@ -676,9 +682,7 @@ class Session extends EventEmitter {
         const title = `[worker ${wt.threadId}] ${wt.threadName}`;
         const workerInfo = { workerId: String(wt.threadId), type: "worker", title };
         queueMicrotask(() => {
-          this.emit("NodeWorker.attachedToWorker", {
-            params: { sessionId: `worker:${wt.threadId}`, workerInfo },
-          });
+          this.#notify("NodeWorker.attachedToWorker", { sessionId: `worker:${wt.threadId}`, workerInfo });
         });
         return {};
       }
@@ -719,15 +723,9 @@ class Session extends EventEmitter {
         // (trace events, then metadata) before signalling completion. Emit
         // synchronously: listeners observe everything before the post()
         // callback (queued as a microtask above) runs.
-        this.emit("NodeTracing.dataCollected", {
-          method: "NodeTracing.dataCollected",
-          params: { value: collected },
-        });
-        this.emit("NodeTracing.dataCollected", {
-          method: "NodeTracing.dataCollected",
-          params: { value: metadata },
-        });
-        this.emit("NodeTracing.tracingComplete", { method: "NodeTracing.tracingComplete", params: {} });
+        this.#notify("NodeTracing.dataCollected", { value: collected });
+        this.#notify("NodeTracing.dataCollected", { value: metadata });
+        this.#notify("NodeTracing.tracingComplete", {});
         return {};
       }
 

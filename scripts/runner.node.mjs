@@ -1560,16 +1560,23 @@ async function runTests() {
  * every thread in each bun process. The output goes to the job log so a stall
  * that never reproduces locally still names the blocked process and its stack.
  *
- * Everything here is bounded: one `ps`, a few /proc reads, and at most
- * `maxBacktraces` gdb attaches of 20s each.
+ * The whole report has to finish within `budgetMs` of wall-clock time. It runs
+ * synchronously, so the caller's kill waits for it: one `ps`, a few /proc
+ * reads, then gdb attaches only while time remains.
  * @param {number} rootPid
  * @param {string} execPath the bun binary under test
+ * @param {number} [budgetMs]
  * @returns {string}
  */
-function describeStalledProcessTree(rootPid, execPath) {
+function describeStalledProcessTree(rootPid, execPath, budgetMs = 60_000) {
   if (isWindows) return "";
+  const deadline = Date.now() + budgetMs;
+  const remaining = () => deadline - Date.now();
   let out = `\n======== process tree under ${rootPid} at the stall ========\n`;
-  const ps = spawnSync("ps", ["-eo", "pid=,ppid=,stat=,etime=,args="], { encoding: "utf-8", timeout: 10_000 });
+  const ps = spawnSync("ps", ["-eo", "pid=,ppid=,stat=,etime=,args="], {
+    encoding: "utf-8",
+    timeout: Math.min(10_000, budgetMs),
+  });
   if (ps.status !== 0 || !ps.stdout) {
     return `${out}ps failed: ${ps.error?.message ?? ps.stderr ?? `code ${ps.status}`}\n`;
   }
@@ -1630,7 +1637,11 @@ function describeStalledProcessTree(rootPid, execPath) {
   const denied = lines => lines.some(line => /^(ptrace:|Could not attach)/.test(line));
   const backtrace = pid => {
     const [command, ...argv] = [...prefix, "gdb", "-p", String(pid), "-batch", "-ex", "thread apply all bt 16"];
-    const gdb = spawnSync(command, argv, { encoding: "utf-8", timeout: 20_000, stdio: ["ignore", "pipe", "pipe"] });
+    const gdb = spawnSync(command, argv, {
+      encoding: "utf-8",
+      timeout: Math.min(20_000, remaining()),
+      stdio: ["ignore", "pipe", "pipe"],
+    });
     if (gdb.error) return { error: gdb.error.message, lines: [] };
     const lines = `${gdb.stdout}\n${gdb.stderr}`
       .split("\n")
@@ -1638,18 +1649,23 @@ function describeStalledProcessTree(rootPid, execPath) {
     return { status: gdb.status, lines };
   };
   for (const { pid, args } of targets) {
+    if (remaining() < 5_000) {
+      out += `\nno time left in the ${budgetMs / 1000}s report budget for more backtraces\n`;
+      break;
+    }
     out += `\n======== gdb ${pid}: ${args.length > 120 ? `${args.slice(0, 117)}...` : args} ========\n`;
     let result = backtrace(pid);
     if (
       denied(result.lines) &&
       prefix.length === 0 &&
+      remaining() >= 5_000 &&
       spawnSync("sudo", ["-n", "true"], { stdio: "ignore", timeout: 5_000 }).status === 0
     ) {
       prefix = ["sudo", "-n"];
       result = backtrace(pid);
     }
     if (result.error) {
-      out += `gdb did not run: ${result.error}\n`;
+      out += `gdb failed: ${result.error}\n`;
       break;
     }
     out += result.lines.length ? `${result.lines.join("\n")}\n` : `no backtrace (exit ${result.status})\n`;
@@ -1757,7 +1773,8 @@ async function spawnSafe(options) {
           clearTimeout(idleTimer);
           if (options.gracefulTimeout && !isWindows) {
             // The batch is about to be killed for a stall. Record who was
-            // blocked, and where, while the processes are still alive.
+            // blocked, and where, while the processes are still alive. The
+            // report is synchronous and holds the kill for at most its budget.
             const elapsed = ((Date.now() - timestamp) / 1000).toFixed(0);
             const reason = idledOut ? `no output for ${options.idleTimeout / 1000}s` : `timeout after ${elapsed}s`;
             let report = `\n${reason}, killing the batch.`;

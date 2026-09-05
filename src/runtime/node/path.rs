@@ -3621,3 +3621,26 @@ export_path_host_fn! {
     "Bun__Path__resolve" => resolve,
     "Bun__Path__toNamespacedPath" => to_namespaced_path,
 }
+
+// Fixed-arity `Bun__Path__resolve` for C++ callers. Plain `extern "C"`: headers.h declares them without `SYSV_ABI`.
+
+// HOST_EXPORT(Bun__Path__resolve2, c)
+pub fn resolve2(
+    global: &JSGlobalObject,
+    is_windows: bool,
+    arg0: JSValue,
+    arg1: JSValue,
+) -> JsResult<JSValue> {
+    resolve(global, is_windows, &[arg0, arg1])
+}
+
+// HOST_EXPORT(Bun__Path__resolve3, c)
+pub fn resolve3(
+    global: &JSGlobalObject,
+    is_windows: bool,
+    arg0: JSValue,
+    arg1: JSValue,
+    arg2: JSValue,
+) -> JsResult<JSValue> {
+    resolve(global, is_windows, &[arg0, arg1, arg2])
+}

@@ -9223,6 +9223,21 @@ fn fd_write_all_quiet(fd: Fd, mut bytes: &[u8]) -> bool {
         match write(fd, bytes) {
             Ok(0) => return false, // short write → give up
             Ok(n) => bytes = &bytes[n..],
+            #[cfg(unix)]
+            Err(e) if e.get_errno() == E::EINTR => continue,
+            #[cfg(unix)]
+            Err(e) if e.get_errno() == E::EAGAIN => {
+                // fd 1/2 may be O_NONBLOCK once `process.stdout`/`stderr` is
+                // materialized; block until writable instead of dropping bytes.
+                let mut pfd = [posix::PollFd {
+                    fd: fd.native() as core::ffi::c_int,
+                    events: posix::POLL_OUT,
+                    revents: 0,
+                }];
+                if posix::poll(&mut pfd, -1).is_err() {
+                    return false;
+                }
+            }
             Err(_) => return false,
         }
     }

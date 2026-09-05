@@ -79,6 +79,15 @@ struct DedupeInfo {
     peers: store::node::Peers,
 }
 
+/// Which store entry owns the `node_modules/.bun/node_modules/<pkg name>`
+/// fallback link, and whether its dependency name is an alias (`npm:`) of the
+/// package name.
+#[derive(Clone, Copy, Default)]
+struct HiddenHoistClaim {
+    entry_id: store::entry::Id,
+    aliased: bool,
+}
+
 #[derive(Clone, Copy)]
 struct QueuedEntry {
     node_id: store::node::Id,
@@ -891,7 +900,7 @@ pub(crate) fn build_store(
 
     let mut public_hoisted: StringArrayHashMap<()> = StringArrayHashMap::default();
 
-    let mut hidden_hoisted: StringArrayHashMap<()> = StringArrayHashMap::default();
+    let mut hidden_hoisted: StringArrayHashMap<HiddenHoistClaim> = StringArrayHashMap::default();
 
     // Second pass: Deduplicate nodes when the pkg_id and peer set match an existing entry.
     'next_entry: while let Some(entry) = entry_queue.read_item() {
@@ -931,6 +940,27 @@ pub(crate) fn build_store(
 
                 if info.peers.eql(curr_peers, &eql_ctx) {
                     // dedupe! depend on the already created entry
+
+                    // The fallback-link claim follows the first dependency
+                    // whose name matches the package name, including one that
+                    // dedupes into an existing entry (#40355).
+                    if manager.options.hoist && curr_dep_id != invalid_dependency_id {
+                        let pkg_name = pkg_names[pkg_id as usize].slice(string_buf);
+                        let dep_name = dependencies[curr_dep_id as usize].name.slice(string_buf);
+                        if dep_name == pkg_name {
+                            if let Some(claim) = hidden_hoisted.get_mut(pkg_name) {
+                                if claim.aliased {
+                                    let entry_hoisted = store_entries.items_hoisted_mut();
+                                    entry_hoisted[claim.entry_id.get() as usize] = false;
+                                    entry_hoisted[info.entry_id.get() as usize] = true;
+                                    *claim = HiddenHoistClaim {
+                                        entry_id: info.entry_id,
+                                        aliased: false,
+                                    };
+                                }
+                            }
+                        }
+                    }
 
                     let mut entries = store_entries.slice();
                     // disjoint-column views via `split_mut`.
@@ -1006,6 +1036,9 @@ pub(crate) fn build_store(
 
         let new_entry_parents: Vec<store::entry::Id> = vec![entry.entry_parent_id];
 
+        let new_entry_id: store::entry::Id =
+            store::entry::Id::from(u32::try_from(store_entries.len()).expect("int cast"));
+
         let hoisted = 'hoisted: {
             if !manager.options.hoist {
                 break 'hoisted false;
@@ -1015,21 +1048,39 @@ pub(crate) fn build_store(
                 break 'hoisted false;
             }
 
+            // The fallback link is created under the package name, so the
+            // claim is keyed on the package name. Keying on the dependency
+            // name lets an `npm:` alias and the real name each claim the same
+            // link, and the install tasks then race for it (#40355).
+            let pkg_name = pkg_names[pkg_id as usize].slice(string_buf);
+
+            if let Some(hoist_pattern) = &manager.options.hoist_pattern {
+                if !hoist_pattern.is_match(pkg_name) {
+                    break 'hoisted false;
+                }
+            }
+
             let dep_name = dependencies[new_entry_dep_id as usize]
                 .name
                 .slice(string_buf);
+            let aliased = dep_name != pkg_name;
 
-            let Some(hoist_pattern) = &manager.options.hoist_pattern else {
-                let hoist_entry = hidden_hoisted.get_or_put(dep_name)?;
-                break 'hoisted !hoist_entry.found_existing;
-            };
-
-            if hoist_pattern.is_match(dep_name) {
-                let hoist_entry = hidden_hoisted.get_or_put(dep_name)?;
-                break 'hoisted !hoist_entry.found_existing;
+            let hoist_entry = hidden_hoisted.get_or_put(pkg_name)?;
+            if hoist_entry.found_existing {
+                // A dependency whose name matches the package name takes the
+                // link over an aliased claim, so the fallback mirrors
+                // `node_modules/<pkg name>` when that link exists.
+                if aliased || !hoist_entry.value_ptr.aliased {
+                    break 'hoisted false;
+                }
+                let prev_entry_id = hoist_entry.value_ptr.entry_id;
+                store_entries.items_hoisted_mut()[prev_entry_id.get() as usize] = false;
             }
-
-            break 'hoisted false;
+            *hoist_entry.value_ptr = HiddenHoistClaim {
+                entry_id: new_entry_id,
+                aliased,
+            };
+            break 'hoisted true;
         };
 
         let new_entry = StoreEntry {
@@ -1043,8 +1094,7 @@ pub(crate) fn build_store(
             scripts: core::cell::Cell::new(None),
         };
 
-        let new_entry_id: store::entry::Id =
-            store::entry::Id::from(u32::try_from(store_entries.len()).expect("int cast"));
+        debug_assert!(new_entry_id.get() as usize == store_entries.len());
         store_entries.append(new_entry)?;
 
         if let Some(entry_parent_id) = entry.entry_parent_id.try_get() {

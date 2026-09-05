@@ -434,6 +434,11 @@ void us_ssl_ctx_set_sni_policy(struct ssl_ctx_st *ctx, int request_cert,
  * client-certificate verification error. */
 int us_socket_server_name_reject_unauthorized(us_socket_r s);
 int us_ssl_ctx_reject_unauthorized(struct ssl_ctx_st *ctx);
+/* 1 iff serving `host` (an HTTP Host header value; :port allowed) on this
+ * connection would bypass a per-serverName requestCert policy the handshake
+ * never applied (the client's SNI selected a different entry, or none). */
+int us_socket_host_header_bypasses_sni_policy(us_socket_r s,
+    const char *host, size_t host_len);
 /* Socket-level SNI resolver, for a server-side socket adopted into TLS with no
  * listen socket behind it. Same contract as the listener resolver: an owned
  * SSL_CTX ref or NULL; *abort_handshake 1 = drop silently, 2 = suspend. */

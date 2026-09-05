@@ -56,6 +56,9 @@ struct us_quic_socket_context_s {
     SSL_CTX *ssl_ctx;
     struct us_quic_sni *sni;
     unsigned int sni_count, sni_cap;
+    /* Set once any sni[] entry was added with requestCert, so the per-request
+     * :authority-vs-negotiated-SNI check can skip servers without one. */
+    unsigned char sni_has_cert_policy;
     int processing;
     int closing;
     int is_client;
@@ -111,6 +114,13 @@ struct us_quic_socket_s {
     int reject_unauthorized;
     int going_away;
     char *hostname;
+    /* Server only: the SSL_CTX the handshake negotiated (the SNI-selected
+     * sni[] entry or the default), captured at on_new_conn because lsquic
+     * drops the per-connection SSL object once the handshake is confirmed.
+     * Borrowed for pointer comparison only; every registered ctx outlives the
+     * conns. NULL only if lsquic_conn_get_ssl returned NULL at accept, which
+     * the per-request check below treats as fail-closed. */
+    struct ssl_ctx_st *negotiated_ctx;
     /* ext follows */
 };
 
@@ -373,9 +383,10 @@ static void us_quic_udp_on_close(struct us_udp_socket_t *u) {
 
 /* ───── SSL ───── */
 
-/* Exact match, then `*.tail` wildcards (matches "a.tail" but not "tail"). */
-static SSL_CTX *us_quic_match_sni(us_quic_socket_context_t *ctx, const char *sni) {
-    if (!sni) return ctx->ssl_ctx;
+/* Exact match, then `*.tail` wildcards (matches "a.tail" but not "tail").
+ * Named entries only; NULL when nothing matches (the callers decide whether
+ * the default context applies). */
+static SSL_CTX *us_quic_match_sni_named(us_quic_socket_context_t *ctx, const char *sni) {
     size_t sl = strlen(sni);
     for (unsigned i = 0; i < ctx->sni_count; i++) {
         if (strcmp(ctx->sni[i].name, sni) == 0) return ctx->sni[i].ctx;
@@ -387,7 +398,13 @@ static SSL_CTX *us_quic_match_sni(us_quic_socket_context_t *ctx, const char *sni
             if (sl > tl && memcmp(sni + sl - tl, n + 1, tl) == 0) return ctx->sni[i].ctx;
         }
     }
-    return ctx->ssl_ctx;
+    return NULL;
+}
+
+static SSL_CTX *us_quic_match_sni(us_quic_socket_context_t *ctx, const char *sni) {
+    if (!sni) return ctx->ssl_ctx;
+    SSL_CTX *named = us_quic_match_sni_named(ctx, sni);
+    return named ? named : ctx->ssl_ctx;
 }
 
 static SSL_CTX *us_quic_get_ssl_ctx(void *peer_ctx, const struct sockaddr *local) {
@@ -543,6 +560,15 @@ static lsquic_conn_ctx_t *us_quic_on_new_conn(void *if_ctx, lsquic_conn_t *conn)
     if (!qs) return NULL;
     qs->conn = conn;
     qs->ctx = ctx;
+    /* Record which context the handshake's SNI selected, for the per-request
+     * :authority-vs-policy check. A server conn reaches on_new_conn right
+     * after its handshake (mini-conn promotion), while the per-connection SSL
+     * still exists; lsquic drops it once the handshake is confirmed, so this
+     * is the place to look. */
+    {
+        SSL *ssl = lsquic_conn_get_ssl(conn);
+        if (ssl) qs->negotiated_ctx = SSL_get_SSL_CTX(ssl);
+    }
     /* QUIC connections share one UDP fd, so they aren't real polls. Count
      * each as a virtual poll so the loop stays alive while conns are open —
      * the same invariant H1 gets from each TCP socket being a us_poll_t.
@@ -808,6 +834,9 @@ int us_quic_socket_context_add_server_name(us_quic_socket_context_t *ctx,
     ctx->sni[ctx->sni_count].name = name;
     ctx->sni[ctx->sni_count].ctx = ssl;
     ctx->sni_count++;
+    if (options.request_cert) {
+        ctx->sni_has_cert_policy = 1;
+    }
     return 0;
 }
 
@@ -1104,6 +1133,30 @@ us_quic_socket_t *us_quic_stream_socket(us_quic_stream_t *s) {
 }
 
 us_quic_socket_context_t *us_quic_stream_context(us_quic_stream_t *s) { return s->ctx; }
+
+/* The HTTP/3 sibling of us_socket_host_header_bypasses_sni_policy: whether
+ * serving a request whose :authority (or Host) is `host` on this stream's
+ * connection would bypass a per-serverName requestCert policy the QUIC
+ * handshake never applied (the client's SNI selected a different entry, or
+ * none). Only named sni[] entries are consulted: the default context carries
+ * the server-level policy, which every connection already got. */
+int us_quic_stream_host_header_bypasses_sni_policy(us_quic_stream_t *s,
+                                                   const char *host, size_t host_len) {
+    us_quic_socket_context_t *ctx = s ? s->ctx : NULL;
+    if (!ctx || !ctx->sni_has_cert_policy || !s->stream) return 0;
+    /* Sized for a maximal 253-char DNS name plus the root dot and NUL. */
+    char name[255];
+    if (!us_internal_normalize_host_header(host, host_len, name, sizeof(name))) return 0;
+    SSL_CTX *named = us_quic_match_sni_named(ctx, name);
+    if (!named || !us_internal_ssl_ctx_sni_request_cert(named)) return 0;
+    us_quic_socket_t *qs = us_quic_stream_socket(s);
+    if (!qs) return 0;
+    /* The :authority names a gated entry; without the negotiated context we
+     * cannot prove the handshake applied its policy, so fail closed (same
+     * direction the HTTP/1 check takes when SSL_get_SSL_CTX is unavailable). */
+    if (!qs->negotiated_ctx) return 1;
+    return qs->negotiated_ctx != named;
+}
 
 
 unsigned int us_quic_stream_header_count(us_quic_stream_t *s) {

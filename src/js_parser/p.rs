@@ -9144,7 +9144,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             };
             if self.has_import_meta {
                 self.import_meta_ref =
-                    self.new_symbol(js_ast::symbol::Kind::Other, b"$Bun_import_meta");
+                    self.new_symbol(js_ast::symbol::Kind::Other, E::ImportMeta::CJS_WRAPPER_ARG);
                 args[5] = Arg {
                     binding: self.b(
                         B::Identifier {

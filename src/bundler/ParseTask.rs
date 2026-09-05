@@ -2639,6 +2639,10 @@ pub mod parse_worker {
             opts.lower_import_meta_main_for_node_js = true;
         }
 
+        // For bun, cjs output gets import.meta from the `@bun-cjs` wrapper instead.
+        opts.inline_import_meta_paths = topts.framework.is_some()
+            || (output_format == options::Format::Cjs && !target.is_bun());
+
         opts.tree_shaking = if task.source_index.is_runtime() {
             true
         } else {

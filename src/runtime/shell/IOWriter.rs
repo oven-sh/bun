@@ -1230,13 +1230,19 @@ pub(crate) fn on_io_writer_chunk(
         WriterTag::Subproc => {
             let _ = interp;
             debug_assert!(!child.raw.is_null());
-            // SAFETY: `raw` was set from `&mut CapturedWriter` in
-            // `CapturedWriter::do_write`; the PipeReader (and the embedded
-            // CapturedWriter) is kept alive by the `Readable::Pipe` Arc on
-            // the owning ShellSubprocess until `on_close_io` runs, which only
-            // happens after the writer has finished draining. Single-threaded.
-            let cw = unsafe { &mut *child.raw.cast::<crate::shell::subproc::CapturedWriter>() };
-            cw.on_iowriter_chunk(written, err)
+            // SAFETY: `raw` is the `CapturedWriter` inside the `Arc<PipeReader>`
+            // that enqueued this chunk in `do_write`; a PipeReader cancels its
+            // queued chunks before it can be freed, so it is live here. The
+            // callee may drop that last `Arc` (`Cmd::buffered_output_close` →
+            // `close_io` → `detach`), so it is dispatched by raw pointer with
+            // no `&mut` formed here. Single-threaded.
+            unsafe {
+                crate::shell::subproc::CapturedWriter::on_iowriter_chunk(
+                    child.raw.cast::<crate::shell::subproc::CapturedWriter>(),
+                    written,
+                    err,
+                )
+            }
         }
     }
 }

@@ -74,6 +74,7 @@ pub mod resolution;
 // Legacy alias kept while callers migrate from the stub/real split.
 pub use resolution as resolution_real;
 pub mod auto_installer;
+pub(crate) mod cache_rename;
 #[path = "ConfigVersion.rs"]
 pub mod config_version;
 pub mod dependency;

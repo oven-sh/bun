@@ -13,6 +13,7 @@ use bun_semver::String as SemverString;
 use bun_sys::{FdDirExt as _, FdExt as _};
 
 use crate::bin_real;
+use crate::cache_rename::RenameRetry;
 use crate::lockfile::package;
 use crate::lockfile_real::PackageIDSlice;
 use crate::package_install::{Method as InstallMethod, Summary as InstallSummary};
@@ -2481,61 +2482,84 @@ impl<'a> Installer<'a> {
         let mut final_ = AutoAbsPath::init();
         self.append_global_store_entry_path(&mut final_, entry_id, Which::Final);
 
-        match sys::renameat(Fd::cwd(), staging.slice_z(), Fd::cwd(), final_.slice_z()) {
-            sys::Result::Ok(()) => sys::Result::Ok(()),
-            sys::Result::Err(err) => {
-                if !is_rename_collision(&err) {
-                    let _ = Fd::cwd().delete_tree(staging.slice());
-                    return sys::Result::Err(err);
-                }
-                // Under --force, the existing entry may be the corrupt one
-                // we were asked to replace. Swap it aside (atomic from a
-                // reader's POV: `final` is always either the old or the new
-                // tree, never missing), publish staging, then GC the old
-                // tree. Without --force, the existing entry came from a
-                // concurrent install and is content-identical — keep it and
-                // discard ours.
-                if self.manager().options.enable.force_install() {
-                    let mut old = AutoAbsPath::init();
-                    let _ = old.append(self.global_store_path.as_ref().unwrap().as_bytes()); // OOM/capacity: fire-and-forget
-                    // OOM/capacity: fire-and-forget
-                    let _ = old.append_fmt(format_args!(
-                        "{}.old-{:x}",
-                        store::entry::fmt_global_store_path(entry_id, self.store, self.lockfile()),
-                        bun_core::fast_random(),
-                    ));
-                    if let Some(swap_err) =
-                        sys::renameat(Fd::cwd(), final_.slice_z(), Fd::cwd(), old.slice_z()).err()
-                    {
-                        let _ = Fd::cwd().delete_tree(staging.slice());
-                        return sys::Result::Err(swap_err);
-                    }
-                    match sys::renameat(Fd::cwd(), staging.slice_z(), Fd::cwd(), final_.slice_z()) {
-                        sys::Result::Ok(()) => {
-                            let _ = Fd::cwd().delete_tree(old.slice());
-                            return sys::Result::Ok(());
-                        }
-                        sys::Result::Err(publish_err) => {
-                            // Another --force install raced us in the window
-                            // between swap-out and publish. Theirs is fresh
-                            // too; clean up both temp trees.
-                            let _ = Fd::cwd().delete_tree(staging.slice());
-                            let _ = Fd::cwd().delete_tree(old.slice());
-                            return if is_rename_collision(&publish_err) {
-                                sys::Result::Ok(())
-                            } else {
-                                sys::Result::Err(publish_err)
-                            };
-                        }
-                    }
+        let mut retry = RenameRetry::start();
+        loop {
+            let err = match sys::renameat(Fd::cwd(), staging.slice_z(), Fd::cwd(), final_.slice_z())
+            {
+                sys::Result::Ok(()) => return sys::Result::Ok(()),
+                sys::Result::Err(err) => err,
+            };
+            if is_rename_collision(&err, final_.slice_z()) {
+                break;
+            }
+            if RenameRetry::is_transient(&err) && retry.wait() {
+                continue;
+            }
+            let _ = Fd::cwd().delete_tree(staging.slice());
+            report_exhausted_publish(&retry, &final_);
+            return sys::Result::Err(err);
+        }
+
+        // Under --force, the existing entry may be the corrupt one
+        // we were asked to replace. Swap it aside (atomic from a
+        // reader's POV: `final` is always either the old or the new
+        // tree, never missing), publish staging, then GC the old
+        // tree. Without --force, the existing entry came from a
+        // concurrent install and is content-identical — keep it and
+        // discard ours.
+        if self.manager().options.enable.force_install() {
+            let mut old = AutoAbsPath::init();
+            let _ = old.append(self.global_store_path.as_ref().unwrap().as_bytes()); // OOM/capacity: fire-and-forget
+            // OOM/capacity: fire-and-forget
+            let _ = old.append_fmt(format_args!(
+                "{}.old-{:x}",
+                store::entry::fmt_global_store_path(entry_id, self.store, self.lockfile()),
+                bun_core::fast_random(),
+            ));
+            while let Some(swap_err) =
+                sys::renameat(Fd::cwd(), final_.slice_z(), Fd::cwd(), old.slice_z()).err()
+            {
+                if RenameRetry::is_transient(&swap_err) && retry.wait() {
+                    continue;
                 }
                 let _ = Fd::cwd().delete_tree(staging.slice());
-                // A concurrent install renamed first; both writers produced
-                // the same content-addressed bytes, so theirs is as good as
-                // ours.
-                sys::Result::Ok(())
+                report_exhausted_publish(&retry, &final_);
+                return sys::Result::Err(swap_err);
+            }
+            loop {
+                let publish_err = match sys::renameat(
+                    Fd::cwd(),
+                    staging.slice_z(),
+                    Fd::cwd(),
+                    final_.slice_z(),
+                ) {
+                    sys::Result::Ok(()) => {
+                        let _ = Fd::cwd().delete_tree(old.slice());
+                        return sys::Result::Ok(());
+                    }
+                    sys::Result::Err(err) => err,
+                };
+                let raced = is_rename_collision(&publish_err, final_.slice_z());
+                if !raced && RenameRetry::is_transient(&publish_err) && retry.wait() {
+                    continue;
+                }
+                // Another --force install raced us in the window
+                // between swap-out and publish. Theirs is fresh
+                // too; clean up both temp trees.
+                let _ = Fd::cwd().delete_tree(staging.slice());
+                let _ = Fd::cwd().delete_tree(old.slice());
+                if raced {
+                    return sys::Result::Ok(());
+                }
+                report_exhausted_publish(&retry, &final_);
+                return sys::Result::Err(publish_err);
             }
         }
+        let _ = Fd::cwd().delete_tree(staging.slice());
+        // A concurrent install renamed first; both writers produced
+        // the same content-addressed bytes, so theirs is as good as
+        // ours.
+        sys::Result::Ok(())
     }
 
     /// Project-local path `node_modules/.bun/<storepath>` (the symlink that
@@ -2830,13 +2854,23 @@ pub enum Which {
     Staging,
 }
 
-fn is_rename_collision(err: &sys::Error) -> bool {
+fn is_rename_collision(err: &sys::Error, final_: &ZStr) -> bool {
     match err.get_errno() {
         sys::Errno::EEXIST | sys::Errno::ENOTEMPTY => true,
-        // Windows maps a rename onto an in-use directory to
-        // ERROR_ACCESS_DENIED; on POSIX PERM/ACCES are real
-        // permission failures and must propagate.
-        sys::Errno::EPERM | sys::Errno::EACCES => cfg!(windows),
+        // Windows reports both "destination directory exists" and "a scanner
+        // has one of our staged files open" as ERROR_ACCESS_DENIED; only the
+        // former is a collision. On POSIX these are real permission failures.
+        sys::Errno::EPERM | sys::Errno::EACCES => cfg!(windows) && sys::exists_z(final_),
         _ => false,
+    }
+}
+
+fn report_exhausted_publish(retry: &RenameRetry, final_: &AutoAbsPath) {
+    if retry.exhausted() {
+        bun_core::pretty_errorln!(
+            "<r><red>error<r>: publishing {} to the global store failed{}",
+            bstr::BStr::new(final_.slice()),
+            retry.exhausted_hint(),
+        );
     }
 }

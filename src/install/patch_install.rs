@@ -13,6 +13,7 @@ use bun_sys::{self as sys, Fd, FdExt};
 use bun_threading::IntrusiveWorkTask as _;
 use bun_threading::thread_pool::{Batch, Node as ThreadPoolNode, Task as ThreadPoolTask};
 
+use crate::cache_rename::RenameRetry;
 use crate::package_install::PackageInstall;
 use crate::package_manager;
 use crate::{
@@ -577,26 +578,33 @@ impl PatchTask {
         );
 
         let cache_dir_subpath_z: &ZStr = patch.cache_dir_subpath.as_zstr();
-        if let Err(e) = sys::renameat_concurrently(
-            system_tmpdir,
-            path_in_tmpdir,
-            patch.cache_dir,
-            cache_dir_subpath_z,
-            sys::RenameOptions {
-                move_fallback: true,
-                ..Default::default()
-            },
-        ) {
+        let mut retry = RenameRetry::start();
+        loop {
+            let Err(e) = sys::renameat_concurrently(
+                system_tmpdir,
+                path_in_tmpdir,
+                patch.cache_dir,
+                cache_dir_subpath_z,
+                sys::RenameOptions {
+                    move_fallback: true,
+                    ..Default::default()
+                },
+            ) else {
+                return Ok(());
+            };
+            if RenameRetry::is_transient(&e) && retry.wait() {
+                continue;
+            }
             log.add_error_fmt_opts(
                 format_args!(
-                    "renaming changes to cache dir: {}",
+                    "renaming changes to cache dir{}: {}",
+                    retry.exhausted_hint(),
                     e.with_path(cache_dir_subpath_z.as_bytes())
                 ),
                 Default::default(),
             );
             return Ok(());
         }
-        Ok(())
     }
 
     pub(crate) fn calc_hash(&mut self) -> Option<u64> {

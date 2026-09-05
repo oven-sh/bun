@@ -701,8 +701,8 @@ pub use bun_alloc::SEP;
 /// crates share ONE nominal type and callers can pass a `bun_paths` buffer to
 /// `bun_core::getcwd`/`which` without a pointer cast.
 ///
-/// Scratch instances come from [`crate::path_buffer_pool::get`]. `ZEROED` /
-/// `Default` are for long-lived struct fields: on Windows this is 98 KB.
+/// Scratch instances come from `bun_paths::path_buffer_pool::get()`. `ZEROED`
+/// is for long-lived struct fields: on Windows it is a 98 KB memset.
 ///
 /// NOTE on alignment: `os_path_kernel32` (Windows) reinterprets a
 /// `&mut PathBuffer` as `&mut [u16]` via [`bytes_as_slice_mut`]. The language
@@ -724,12 +724,6 @@ impl PathBuffer {
     #[inline]
     pub fn as_slice(&self) -> &[u8] {
         &self.0
-    }
-}
-impl Default for PathBuffer {
-    #[inline]
-    fn default() -> Self {
-        Self::ZEROED
     }
 }
 impl core::ops::Deref for PathBuffer {
@@ -755,12 +749,6 @@ impl WPathBuffer {
     #[inline]
     pub fn as_mut_slice(&mut self) -> &mut [u16] {
         &mut self.0
-    }
-}
-impl Default for WPathBuffer {
-    #[inline]
-    fn default() -> Self {
-        Self::ZEROED
     }
 }
 impl core::ops::Deref for WPathBuffer {
@@ -4630,7 +4618,7 @@ fn spawn_sync_inherit_impl(
         #[cfg(any(target_os = "linux", target_os = "freebsd"))]
         let pid: libc::pid_t = {
             let arg0 = argv[0].as_ref();
-            let mut pathbuf = crate::path_buffer_pool::get();
+            let mut pathbuf = PathBuffer::ZEROED;
             let exe: *const core::ffi::c_char = if crate::strings::contains_char(arg0, b'/') {
                 // Contains a separator → use as-is (execve resolves relative
                 // to cwd, matching posix_spawnp semantics for non-bare names).

@@ -10,7 +10,7 @@ pub mod error;
 pub use error::{Error, Result};
 
 // `bun.w_path_buffer_pool` — u16 sibling. Backed by the same generic
-// thread-local pool as the u8 one (`bun_core::path_buffer_pool` handles both
+// thread-local pool as the u8 one (path_buffer_pool.rs already handles both
 // via `PoolStorage`).
 pub mod w_path_buffer_pool {
     use super::WPathBuffer;
@@ -325,8 +325,7 @@ pub type OSPathBuffer = WPathBuffer;
 #[cfg(not(windows))]
 pub type OSPathBuffer = PathBuffer;
 
-// Defined in `bun_core` so `bun_core` can use it too.
-pub use bun_core::path_buffer_pool;
+pub mod path_buffer_pool;
 
 // resolve_path: enum const-generics lowered to sealed `PlatformT` trait + ZSTs
 // (done). 46× E0106 remain — TLS-buf-returning wrappers need `'static` lifetime

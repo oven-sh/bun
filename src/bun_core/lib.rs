@@ -19,7 +19,6 @@ pub mod atomic_cell;
 pub mod comptime_string_map;
 pub mod error;
 pub mod hint;
-pub mod path_buffer_pool;
 pub mod result;
 pub mod thread_id;
 pub mod tty;

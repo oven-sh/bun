@@ -15,7 +15,7 @@ use core::cell::RefCell;
 use core::marker::PhantomData;
 use core::ops::{Deref, DerefMut};
 
-use crate::{PathBuffer, WPathBuffer};
+use bun_core::{PathBuffer, WPathBuffer};
 
 const POOL_CAP: usize = 4;
 
@@ -75,7 +75,7 @@ impl PoolStorage for WPathBuffer {
 /// discarded its stack slot, so LeakSanitizer would report the buffer.
 #[inline]
 fn lsan_ignore<T>(buf: Box<T>) -> Box<T> {
-    crate::asan::ignore_object((&raw const *buf).cast());
+    bun_core::asan::ignore_object((&raw const *buf).cast());
     buf
 }
 
@@ -215,6 +215,6 @@ mod tests {
         U16_POOL.with(|p| p.borrow_mut().clear());
         let w = w_path_buffer_pool::get();
         assert!(w.iter().all(|&unit| unit == 0));
-        assert_eq!(w.len(), crate::PATH_MAX_WIDE);
+        assert_eq!(w.len(), bun_core::PATH_MAX_WIDE);
     }
 }

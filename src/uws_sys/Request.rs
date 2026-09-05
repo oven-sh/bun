@@ -90,6 +90,12 @@ impl Request {
         // ffi::slice tolerates the (null, 0) shape uWS returns when no parameter is present.
         unsafe { bun_core::ffi::slice(ptr, len) }
     }
+
+    /// Returns the size the copy needs; writes it only when `dest` is at least that large.
+    pub fn copy_head(&self, dest: &mut [core::mem::MaybeUninit<u8>]) -> usize {
+        // SAFETY: the shim writes at most `dest.len()` bytes, into `dest`.
+        unsafe { c::uws_req_copy_head(self, dest.as_mut_ptr().cast::<u8>(), dest.len()) }
+    }
 }
 
 mod c {
@@ -115,5 +121,6 @@ mod c {
             dest: &mut *const u8,
         ) -> usize;
         pub(super) safe fn uws_req_has_transfer_encoding(res: &Request) -> bool;
+        pub(super) fn uws_req_copy_head(res: &Request, dest: *mut u8, capacity: usize) -> usize;
     }
 }

@@ -220,6 +220,9 @@ pub use response::Response;
 pub mod request;
 pub use request::Request;
 
+#[path = "webcore/request_head.rs"]
+pub(crate) mod request_head;
+
 #[path = "webcore/ReadableStream.rs"]
 pub mod readable_stream;
 pub use readable_stream::ReadableStream;

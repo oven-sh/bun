@@ -327,7 +327,7 @@ static JSPromise* importModuleInner(JSGlobalObject* globalObject, JSString* modu
         args.append(owner);
     } else if (auto* nodeVmGlobalObject = dynamicDowncast<NodeVMGlobalObject>(globalObject)) {
         if (nodeVmGlobalObject->isNotContextified()) {
-            args.append(nodeVmGlobalObject->specialSandbox());
+            args.append(nodeVmGlobalObject->globalThis());
         } else {
             args.append(nodeVmGlobalObject->contextifiedObject());
         }
@@ -774,10 +774,6 @@ NodeVMGlobalObject* getGlobalObjectFromContext(JSGlobalObject* globalObject, JSV
     auto* zigGlobalObject = defaultGlobalObject(globalObject);
     JSValue scopeValue = zigGlobalObject->vmModuleContextMap()->get(context);
     if (scopeValue.isUndefined()) {
-        if (auto* specialSandbox = dynamicDowncast<NodeVMSpecialSandbox>(context)) {
-            return specialSandbox->parentGlobal();
-        }
-
         if (auto* proxy = dynamicDowncast<JSGlobalProxy>(context)) {
             if (auto* nodeVmGlobalObject = dynamicDowncast<NodeVMGlobalObject>(proxy->target())) {
                 return nodeVmGlobalObject;
@@ -823,10 +819,6 @@ bool isContext(JSGlobalObject* globalObject, JSValue value)
         return true;
     }
 
-    if (value.inherits(NodeVMSpecialSandbox::info())) {
-        return true;
-    }
-
     if (auto* proxy = dynamicDowncast<JSGlobalProxy>(value); proxy && proxy->target()) {
         return proxy->target()->inherits(NodeVMGlobalObject::info());
     }
@@ -864,54 +856,6 @@ bool isUseMainContextDefaultLoaderConstant(JSGlobalObject* globalObject, JSValue
 } // namespace NodeVM
 
 using namespace NodeVM;
-
-template<typename, JSC::SubspaceAccess mode> JSC::GCClient::IsoSubspace* NodeVMSpecialSandbox::subspaceFor(JSC::VM& vm)
-{
-    if constexpr (mode == JSC::SubspaceAccess::Concurrently)
-        return nullptr;
-    return WebCore::subspaceForImpl<NodeVMSpecialSandbox, WebCore::UseCustomHeapCellType::No>(vm, BUN_SUBSPACE_SLOTS(m_clientSubspaceForNodeVMSpecialSandbox, m_subspaceForNodeVMSpecialSandbox));
-}
-
-NodeVMSpecialSandbox* NodeVMSpecialSandbox::create(VM& vm, NodeVMGlobalObject* globalObject)
-{
-    // The structure's prototype must be the sandbox realm's Object.prototype so that the
-    // prototype chain of globalThis inside a DONT_CONTEXTIFY context never reaches the
-    // host realm. This can't be cached on the host global because it differs per sandbox.
-    auto* structure = createStructure(vm, globalObject, globalObject->objectPrototype());
-    NodeVMSpecialSandbox* ptr = new (NotNull, allocateCell<NodeVMSpecialSandbox>(vm)) NodeVMSpecialSandbox(vm, structure, globalObject);
-    ptr->finishCreation(vm);
-    return ptr;
-}
-
-JSC::Structure* NodeVMSpecialSandbox::createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
-{
-    return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
-}
-
-NodeVMSpecialSandbox::NodeVMSpecialSandbox(VM& vm, Structure* structure, NodeVMGlobalObject* globalObject)
-    : Base(vm, structure)
-{
-    m_parentGlobal.set(vm, this, globalObject);
-}
-
-void NodeVMSpecialSandbox::finishCreation(VM& vm)
-{
-    Base::finishCreation(vm);
-    ASSERT(inherits(info()));
-}
-
-const JSC::ClassInfo NodeVMSpecialSandbox::s_info = { "NodeVMSpecialSandbox"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(NodeVMSpecialSandbox) };
-
-template<typename Visitor>
-void NodeVMSpecialSandbox::visitChildrenImpl(JSCell* cell, Visitor& visitor)
-{
-    auto* thisObject = uncheckedDowncast<NodeVMSpecialSandbox>(cell);
-    ASSERT_GC_OBJECT_INHERITS(thisObject, info());
-    Base::visitChildren(thisObject, visitor);
-    visitor.append(thisObject->m_parentGlobal);
-}
-
-DEFINE_VISIT_CHILDREN(NodeVMSpecialSandbox);
 
 NodeVMGlobalObject::NodeVMGlobalObject(JSC::VM& vm, JSC::Structure* structure, NodeVMContextOptions contextOptions, JSValue importer)
     : Base(vm, structure, &globalObjectMethodTable())
@@ -1126,7 +1070,7 @@ bool NodeVMGlobalObject::put(JSCell* cell, JSGlobalObject* globalObject, Propert
 {
     auto* thisObject = uncheckedDowncast<NodeVMGlobalObject>(cell);
 
-    if (!thisObject->m_sandbox) {
+    if (thisObject->isNotContextified() || !thisObject->m_sandbox) {
         return Base::put(cell, globalObject, propertyName, value, slot);
     }
 
@@ -1155,12 +1099,6 @@ bool NodeVMGlobalObject::put(JSCell* cell, JSGlobalObject* globalObject, Propert
         RELEASE_AND_RETURN(scope, Base::put(cell, globalObject, propertyName, value, slot));
     }
 
-    if (thisObject->m_contextOptions.notContextified) {
-        JSObject* specialSandbox = thisObject->specialSandbox();
-        slot.setThisValue(specialSandbox);
-        RELEASE_AND_RETURN(scope, specialSandbox->putInline(globalObject, propertyName, value, slot));
-    }
-
     slot.setThisValue(sandbox);
 
     bool result = sandbox->methodTable()->put(sandbox, globalObject, propertyName, value, slot);
@@ -1178,31 +1116,6 @@ bool NodeVMGlobalObject::put(JSCell* cell, JSGlobalObject* globalObject, Propert
 // This is copy-pasted from JSC's ProxyObject.cpp
 static const ASCIILiteral s_proxyAlreadyRevokedErrorMessage { "Proxy has already been revoked. No more operations are allowed to be performed on it"_s };
 
-bool NodeVMSpecialSandbox::getOwnPropertySlot(JSObject* cell, JSGlobalObject* globalObject, PropertyName propertyName, PropertySlot& slot)
-{
-    VM& vm = JSC::getVM(globalObject);
-    auto scope = DECLARE_THROW_SCOPE(vm);
-
-    auto* thisObject = uncheckedDowncast<NodeVMSpecialSandbox>(cell);
-    NodeVMGlobalObject* parentGlobal = thisObject->parentGlobal();
-
-    if (propertyName == vm.propertyNames->globalThis) [[unlikely]] {
-        slot.disableCaching();
-        slot.setThisValue(thisObject);
-        slot.setValue(thisObject, slot.attributes(), thisObject);
-        return true;
-    }
-
-    bool result = parentGlobal->getOwnPropertySlot(parentGlobal, globalObject, propertyName, slot);
-    RETURN_IF_EXCEPTION(scope, false);
-
-    if (result) {
-        return true;
-    }
-
-    RELEASE_AND_RETURN(scope, Base::getOwnPropertySlot(cell, globalObject, propertyName, slot));
-}
-
 bool NodeVMGlobalObject::getOwnPropertySlot(JSObject* cell, JSGlobalObject* globalObject, PropertyName propertyName, PropertySlot& slot)
 {
     VM& vm = JSC::getVM(globalObject);
@@ -1210,13 +1123,8 @@ bool NodeVMGlobalObject::getOwnPropertySlot(JSObject* cell, JSGlobalObject* glob
 
     auto* thisObject = uncheckedDowncast<NodeVMGlobalObject>(cell);
 
-    bool notContextified = thisObject->isNotContextified();
-
-    if (notContextified && propertyName == vm.propertyNames->globalThis) [[unlikely]] {
-        slot.disableCaching();
-        slot.setThisValue(thisObject);
-        slot.setValue(thisObject, slot.attributes(), thisObject->specialSandbox());
-        return true;
+    if (thisObject->isNotContextified()) {
+        RELEASE_AND_RETURN(scope, Base::getOwnPropertySlot(cell, globalObject, propertyName, slot));
     }
 
     if (JSObject* contextifiedObject = thisObject->contextifiedObject()) {
@@ -1294,33 +1202,31 @@ bool NodeVMGlobalObject::getOwnPropertySlot(JSObject* cell, JSGlobalObject* glob
             goto try_from_global;
         }
 
-        if (!notContextified) {
-            if (slot.internalMethodType() == JSC::PropertySlot::InternalMethodType::Get) {
-                bool result = contextifiedObject->getPropertySlot(globalObject, propertyName, slot);
+        if (slot.internalMethodType() == JSC::PropertySlot::InternalMethodType::Get) {
+            bool result = contextifiedObject->getPropertySlot(globalObject, propertyName, slot);
+            RETURN_IF_EXCEPTION(scope, false);
+            if (result) {
+                // Materialize the value (like V8's contextify GetterCallback) so that,
+                // when a lookup on the sandbox yields the sandbox object itself, we can
+                // substitute the context's global proxy to keep identities consistent.
+                JSValue value = slot.getValue(globalObject, propertyName);
                 RETURN_IF_EXCEPTION(scope, false);
-                if (result) {
-                    // Materialize the value (like V8's contextify GetterCallback) so that,
-                    // when a lookup on the sandbox yields the sandbox object itself, we can
-                    // substitute the context's global proxy to keep identities consistent.
-                    JSValue value = slot.getValue(globalObject, propertyName);
-                    RETURN_IF_EXCEPTION(scope, false);
-                    if (value == contextifiedObject)
-                        value = thisObject->globalThis();
-                    unsigned ignoredAttributes = 0;
-                    slot.disableCaching();
-                    slot.setValue(contextifiedObject, ignoredAttributes, value);
-                    return true;
-                }
-            } else {
-                // For [[GetOwnProperty]] and [[HasProperty]], only own properties of the
-                // sandbox may be reported on the context's global object. Properties from
-                // the sandbox's prototype chain remain readable through normal lookup
-                // (InternalMethodType::Get above) but must not appear as own properties,
-                // matching Node's contextify Query/Descriptor callbacks.
-                bool result = contextifiedObject->methodTable()->getOwnPropertySlot(contextifiedObject, globalObject, propertyName, slot);
-                RETURN_IF_EXCEPTION(scope, false);
-                if (result) return true;
+                if (value == contextifiedObject)
+                    value = thisObject->globalThis();
+                unsigned ignoredAttributes = 0;
+                slot.disableCaching();
+                slot.setValue(contextifiedObject, ignoredAttributes, value);
+                return true;
             }
+        } else {
+            // For [[GetOwnProperty]] and [[HasProperty]], only own properties of the
+            // sandbox may be reported on the context's global object. Properties from
+            // the sandbox's prototype chain remain readable through normal lookup
+            // (InternalMethodType::Get above) but must not appear as own properties,
+            // matching Node's contextify Query/Descriptor callbacks.
+            bool result = contextifiedObject->methodTable()->getOwnPropertySlot(contextifiedObject, globalObject, propertyName, slot);
+            RETURN_IF_EXCEPTION(scope, false);
+            if (result) return true;
         }
 
     try_from_global:
@@ -1329,19 +1235,7 @@ bool NodeVMGlobalObject::getOwnPropertySlot(JSObject* cell, JSGlobalObject* glob
         RETURN_IF_EXCEPTION(scope, false);
     }
 
-    bool result = Base::getOwnPropertySlot(cell, globalObject, propertyName, slot);
-    RETURN_IF_EXCEPTION(scope, false);
-
-    if (result) {
-        return true;
-    }
-
-    if (thisObject->m_contextOptions.notContextified) {
-        JSObject* specialSandbox = thisObject->specialSandbox();
-        RELEASE_AND_RETURN(scope, JSObject::getOwnPropertySlot(specialSandbox, globalObject, propertyName, slot));
-    }
-
-    return false;
+    RELEASE_AND_RETURN(scope, Base::getOwnPropertySlot(cell, globalObject, propertyName, slot));
 }
 
 bool NodeVMGlobalObject::getOwnPropertySlotByIndex(JSObject* cell, JSGlobalObject* globalObject, unsigned index, PropertySlot& slot)
@@ -1356,11 +1250,11 @@ bool NodeVMGlobalObject::defineOwnProperty(JSObject* cell, JSGlobalObject* globa
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     auto* thisObject = uncheckedDowncast<NodeVMGlobalObject>(cell);
-    if (!thisObject->m_sandbox) [[likely]] {
+    if (thisObject->isNotContextified() || !thisObject->m_sandbox) {
         RELEASE_AND_RETURN(scope, Base::defineOwnProperty(cell, globalObject, propertyName, descriptor, shouldThrow));
     }
 
-    auto* contextifiedObject = thisObject->isNotContextified() ? thisObject->specialSandbox() : thisObject->m_sandbox.get();
+    auto* contextifiedObject = thisObject->m_sandbox.get();
 
     PropertySlot slot(globalObject, PropertySlot::InternalMethodType::GetOwnProperty, nullptr);
     bool isDeclaredOnGlobalProxy = globalObject->JSC::JSGlobalObject::getOwnPropertySlot(globalObject, globalObject, propertyName, slot);
@@ -1407,7 +1301,6 @@ void NodeVMGlobalObject::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     Base::visitChildren(cell, visitor);
     auto* thisObject = uncheckedDowncast<NodeVMGlobalObject>(cell);
     visitor.append(thisObject->m_sandbox);
-    visitor.append(thisObject->m_specialSandbox);
     visitor.append(thisObject->m_dynamicImportCallback);
 }
 
@@ -1564,13 +1457,6 @@ JSC_DEFINE_HOST_FUNCTION(vmModule_createContext, (JSGlobalObject * globalObject,
     JSObject* sandbox = asObject(contextArg);
 
     if (isContext(globalObject, sandbox)) {
-        if (auto* proxy = dynamicDowncast<JSC::JSGlobalProxy>(sandbox)) {
-            if (auto* targetContext = dynamicDowncast<NodeVMGlobalObject>(proxy->target())) {
-                if (targetContext->isNotContextified()) {
-                    return JSValue::encode(targetContext->specialSandbox());
-                }
-            }
-        }
         return JSValue::encode(sandbox);
     }
 
@@ -1582,18 +1468,16 @@ JSC_DEFINE_HOST_FUNCTION(vmModule_createContext, (JSGlobalObject * globalObject,
 
     RETURN_IF_EXCEPTION(scope, {});
 
+    if (notContextified) {
+        // The context's own global is the handle; there is no sandbox to install.
+        return JSValue::encode(targetContext->globalThis());
+    }
+
     // Set sandbox as contextified object
     targetContext->setContextifiedObject(sandbox);
 
     // Store context in WeakMap for isContext checks
     zigGlobalObject->vmModuleContextMap()->set(vm, sandbox, targetContext);
-
-    if (notContextified) {
-        auto* specialSandbox = NodeVMSpecialSandbox::create(vm, targetContext);
-        RETURN_IF_EXCEPTION(scope, {});
-        targetContext->setSpecialSandbox(specialSandbox);
-        return JSValue::encode(targetContext->specialSandbox());
-    }
 
     return JSValue::encode(sandbox);
 }
@@ -1615,7 +1499,7 @@ const ClassInfo NodeVMGlobalObject::s_info = { "NodeVMGlobalObject"_s, &Base::s_
 bool NodeVMGlobalObject::deleteProperty(JSCell* cell, JSGlobalObject* globalObject, PropertyName propertyName, JSC::DeletePropertySlot& slot)
 {
     auto* thisObject = uncheckedDowncast<NodeVMGlobalObject>(cell);
-    if (!thisObject->m_sandbox) [[unlikely]] {
+    if (thisObject->isNotContextified() || !thisObject->m_sandbox) {
         return Base::deleteProperty(cell, globalObject, propertyName, slot);
     }
 
@@ -1967,17 +1851,8 @@ bool CompileFunctionOptions::fromJS(JSC::JSGlobalObject* globalObject, JSC::VM& 
         RETURN_IF_EXCEPTION(scope, {});
 
         if (!parsingContextValue.isEmpty() && !parsingContextValue.isUndefined()) {
-            if (parsingContextValue.isNull() || !parsingContextValue.isObject())
-                return ERR::INVALID_ARG_INSTANCE(scope, globalObject, "options.parsingContext"_s, "Context"_s, parsingContextValue);
-
-            JSObject* context = asObject(parsingContextValue);
-            auto* zigGlobalObject = defaultGlobalObject(globalObject);
-            JSValue scopeValue = zigGlobalObject->vmModuleContextMap()->get(context);
-
-            if (scopeValue.isUndefined())
-                return ERR::INVALID_ARG_INSTANCE(scope, globalObject, "options.parsingContext"_s, "Context"_s, parsingContextValue);
-
-            parsingContext = dynamicDowncast<NodeVMGlobalObject>(scopeValue);
+            parsingContext = getGlobalObjectFromContext(globalObject, parsingContextValue, false);
+            RETURN_IF_EXCEPTION(scope, false);
             if (!parsingContext)
                 return ERR::INVALID_ARG_INSTANCE(scope, globalObject, "options.parsingContext"_s, "Context"_s, parsingContextValue);
 

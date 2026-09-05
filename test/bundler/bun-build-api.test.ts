@@ -586,47 +586,6 @@ describe("Bun.build", () => {
     Bun.gc(true);
   });
 
-  // [hash] is 8 characters (40 bits of the content hash); with a few thousand
-  // `--splitting` chunks two of them print the same name about once per
-  // million builds and the build fails with "Multiple files share the same
-  // output path". [hashN] prints N ≤ 13 characters; [hash13] carries all 64 bits.
-  test("[hashN] prints N characters of the content hash", async () => {
-    const dir = tempDirWithFiles("build-hash-width", {
-      "a.js": `export default "a" + (await import("./shared.js")).default;`,
-      "b.js": `export default "b" + (await import("./shared.js")).default;`,
-      "shared.js": `export default "shared";`,
-    });
-    const hashes = async (naming: string) => {
-      const build = await Bun.build({
-        entrypoints: [join(dir, "a.js"), join(dir, "b.js")],
-        splitting: true,
-        naming: { entry: `[name]-${naming}.[ext]`, chunk: `chunk-${naming}.[ext]` },
-      });
-      expect(build.success).toBe(true);
-      for (const output of build.outputs) {
-        expect(path.basename(output.path)).toEndWith(`-${output.hash}.js`);
-      }
-      return Object.fromEntries(
-        build.outputs.map(o => [path.basename(o.path).replace(/-[0-9a-z]+\.js$/, ""), o.hash!]),
-      );
-    };
-    // The naming template is itself part of the content hash, so values are
-    // only comparable within one template; check widths.
-    for (const [naming, width] of [
-      ["[hash]", 8],
-      ["[hash8]", 8],
-      ["[hash10]", 10],
-      ["[hash13]", 13],
-      ["[hash99]", 13],
-    ] as const) {
-      const h = await hashes(naming);
-      expect(Object.keys(h).sort()).toEqual(["a", "b", "chunk"]);
-      for (const value of Object.values(h)) {
-        expect(value).toMatch(new RegExp(`^[0-9a-z]{${width}}$`));
-      }
-    }
-  });
-
   test("BuildArtifact properties + entry.naming", async () => {
     Bun.gc(true);
     const outdir = tempDirWithFiles("build-artifact-properties-entry-naming", {
@@ -1424,60 +1383,6 @@ describe.concurrent("sourcemap positions", () => {
 
     await SourceMapConsumer.with(map, null, consumer => {
       for (const token of ['new Error("A")', 'new Error("B")', 'new Error("C")', 'new Error("D")']) {
-        const { line, column } = consumer.originalPositionFor(lineColumn(generated, generated.indexOf(token)));
-        expect({ token, line, column }).toEqual({ token, ...lineColumn(source, source.indexOf(token)) });
-      }
-    });
-  });
-
-  // Chunk paths and split-require chunk ids are substituted into the output
-  // after printing; when the linker widens some `[hash]` names to keep them
-  // distinct, the substituted strings differ in length from one another and
-  // the mappings after them must still line up.
-  test("tokens after chunk paths whose [hash] names were widened", async () => {
-    const n = 40;
-    const files: Record<string, string> = {};
-    for (let i = 0; i < n; i++) files[`m${i}.js`] = `export const v = ${i};\n`;
-    const imports = Array.from({ length: n }, (_, i) => `import("./m${i}.js")`).join(", ");
-    const requires = Array.from({ length: n }, (_, i) => `require("./m${i}.js")`).join(", ");
-    const source = [
-      `export const mods = [${imports}, "__A__"];`,
-      `export const reqs = () => [${requires}, "__B__"];`,
-      `export function c1() { throw new Error("C"); }`,
-      ``,
-    ].join("\n");
-    files["in.js"] = source;
-    const dir = tempDirWithFiles("build-sourcemap-widened-hash", files);
-
-    const build = await Bun.build({
-      entrypoints: [join(dir, "in.js")],
-      outdir: join(dir, "out"),
-      splitting: true,
-      target: "bun",
-      naming: { entry: "[name].[ext]", chunk: "c[hash1].[ext]" },
-      sourcemap: "external",
-    });
-    expect(build.success).toBe(true);
-    const chunks = build.outputs.filter(o => o.kind === "chunk").map(o => path.basename(o.path));
-    expect(chunks.length).toBe(n);
-    expect(new Set(chunks).size).toBe(n);
-    // 40 names cannot all differ in one character of a 32-character alphabet.
-    expect(chunks.some(c => c.length > "cX.js".length)).toBe(true);
-
-    const entry = build.outputs.find(o => o.kind === "entry-point")!;
-    const generated = await entry.text();
-    for (const c of chunks) expect(generated).toContain(c);
-    const map = await build.outputs.find(o => o.kind === "sourcemap" && o.path === entry.path + ".map")!.json();
-
-    const lineColumn = (text: string, index: number) => {
-      const before = text.slice(0, index);
-      return { line: before.split("\n").length, column: index - (before.lastIndexOf("\n") + 1) };
-    };
-    await SourceMapConsumer.with(map, null, consumer => {
-      // "__A__" and "__B__" sit on the same generated line as, and after, the
-      // forty substituted chunk paths.
-      for (const token of ['"__A__"', '"__B__"', 'new Error("C")']) {
-        expect(generated.indexOf(token)).toBeGreaterThan(0);
         const { line, column } = consumer.originalPositionFor(lineColumn(generated, generated.indexOf(token)));
         expect({ token, line, column }).toEqual({ token, ...lineColumn(source, source.indexOf(token)) });
       }

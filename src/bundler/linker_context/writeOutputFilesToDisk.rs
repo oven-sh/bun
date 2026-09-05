@@ -467,11 +467,11 @@ pub(crate) fn write_output_files_to_disk(
                             output_path: Box::<[u8]>::from(source_provider_url_str.slice()),
                             input_path: input_path_buf.into_boxed_slice(),
                             input_loader: Loader::File,
-                            hash: chunk
-                                .template
-                                .placeholder
-                                .hash
-                                .map(|_| chunk.template.content_hash(hash(&bytecode))),
+                            hash: if chunk.template.placeholder.hash.is_some() {
+                                Some(hash(&bytecode))
+                            } else {
+                                None
+                            },
                             output_kind: options::OutputKind::Bytecode,
                             loader: Loader::File,
                             size: Some(bytecode.len()),

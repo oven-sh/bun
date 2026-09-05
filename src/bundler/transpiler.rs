@@ -3104,8 +3104,7 @@ impl<'a> Transpiler<'a> {
             template.placeholder.target = self.options.target.naming_placeholder().into();
         }
         if template.needs(options::PlaceholderField::Hash) {
-            template.placeholder.hash =
-                Some(template.content_hash(crate::ContentHasher::run(output)));
+            template.placeholder.hash = Some(crate::ContentHasher::run(output));
         }
 
         let mut dest_path = Vec::new();

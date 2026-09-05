@@ -385,7 +385,7 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
 
     // TODO: enforceNoCyclicChunkImports()
     {
-        let mut path_names_map: StringHashMap<u32> = StringHashMap::default();
+        let mut path_names_map: StringHashMap<()> = StringHashMap::default();
 
         #[derive(Default)]
         struct DuplicateEntry {
@@ -416,30 +416,23 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                 .expect("write to Vec<u8>");
             path::resolve_path::platform_to_posix_in_place::<u8>(&mut rel_path);
 
+            if path_names_map.get_or_put(&rel_path)?.found_existing {
+                // collect all duplicates in a list
+                let dup = duplicates_map.get_or_put(&rel_path)?;
+                if !dup.found_existing {
+                    *dup.value_ptr = DuplicateEntry::default();
+                }
+                dup.value_ptr.sources.push(bun_ptr::BackRef::new(&*chunk));
+                continue;
+            }
+
             // A `./[dir]/…` template with `[dir] == "."` yields `././x.js`,
             // which importers of the chunk would copy verbatim.
             while let Some(i) = strings::index_of(&rel_path, b"/./") {
                 rel_path.drain(i..i + 2);
             }
 
-            let claimed = path_names_map.get_or_put(&rel_path)?;
-            if claimed.found_existing {
-                let first = *claimed.value_ptr as usize;
-                let dup = duplicates_map.get_or_put(&rel_path)?;
-                if !dup.found_existing {
-                    *dup.value_ptr = DuplicateEntry::default();
-                    dup.value_ptr
-                        .sources
-                        .push(bun_ptr::BackRef::new(&chunks[first]));
-                }
-                dup.value_ptr
-                    .sources
-                    .push(bun_ptr::BackRef::new(&chunks[index]));
-                continue;
-            }
-            *claimed.value_ptr = index as u32;
-
-            chunks[index].final_rel_path = rel_path.into_boxed_slice();
+            chunk.final_rel_path = rel_path.into_boxed_slice();
         }
 
         if duplicates_map.count() > 0 {
@@ -494,21 +487,12 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                 let Some(template) = template else { continue };
 
                 let mut text: Vec<u8> = Vec::new();
-                if crate::options::path_template_hash_len(template).is_some() {
-                    write!(
-                        &mut text,
-                        "{} naming is '{}'; these inputs produce identical content",
-                        name,
-                        bstr::BStr::new(template),
-                    )?;
-                } else {
-                    write!(
-                        &mut text,
-                        "{} naming is '{}', consider adding '[hash]' to make filenames unique",
-                        name,
-                        bstr::BStr::new(template),
-                    )?;
-                }
+                write!(
+                    &mut text,
+                    "{} naming is '{}', consider adding '[hash]' to make filenames unique",
+                    name,
+                    bstr::BStr::new(template),
+                )?;
                 c.log_mut().add_msg(bun_ast::Msg {
                     kind: bun_ast::Kind::Note,
                     data: bun_ast::Data {
@@ -1125,9 +1109,11 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                                 output_path: Box::from(source_provider_url_str.slice()),
                                 input_path: input_path_buf.into_boxed_slice(),
                                 input_loader: Loader::Js,
-                                hash: chunk.template.placeholder.hash.map(|_| {
-                                    chunk.template.content_hash(bun_wyhash::hash(&bytecode))
-                                }),
+                                hash: if chunk.template.placeholder.hash.is_some() {
+                                    Some(bun_wyhash::hash(&bytecode))
+                                } else {
+                                    None
+                                },
                                 output_kind: options::OutputKind::Bytecode,
                                 loader: Loader::File,
                                 size: Some(bytecode.len()),
@@ -1187,11 +1173,11 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                                         output_path: out_path.into_boxed_slice(),
                                         input_path: in_path.into_boxed_slice(),
                                         input_loader: Loader::Js,
-                                        hash: chunk.template.placeholder.hash.map(|_| {
-                                            chunk
-                                                .template
-                                                .content_hash(bun_wyhash::hash(module_info_bytes))
-                                        }),
+                                        hash: if chunk.template.placeholder.hash.is_some() {
+                                            Some(bun_wyhash::hash(module_info_bytes))
+                                        } else {
+                                            None
+                                        },
                                         output_kind: options::OutputKind::ModuleInfo,
                                         loader: Loader::File,
                                         size: Some(module_info_bytes.len()),

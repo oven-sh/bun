@@ -1909,7 +1909,7 @@ pub struct BuildArtifact {
     pub(crate) blob: Blob,
     pub(crate) loader: bun_ast::Loader,
     pub path: Box<[u8]>,
-    pub(crate) hash: bun_core::fmt::ContentHash,
+    pub(crate) hash: u64,
     pub(crate) output_kind: OutputKind,
 }
 
@@ -2001,7 +2001,7 @@ impl BuildArtifact {
         use std::io::Write;
         let mut buf = [0u8; 512];
         let mut cursor = &mut buf[..];
-        write!(cursor, "{}", this.hash).expect("Unexpected");
+        write!(cursor, "{}", bun_core::fmt::truncated_hash32(this.hash)).expect("Unexpected");
         let written = 512 - cursor.len();
         bun_string_jsc::create_utf8_for_js(global_this, &buf[..written])
     }
@@ -2097,7 +2097,7 @@ impl BuildArtifact {
                 <&'static str>::from(self.output_kind),
             )?;
 
-            if self.hash.value != 0 {
+            if self.hash != 0 {
                 formatter
                     .print_comma::<W, ENABLE_ANSI_COLORS>(writer)
                     .expect("unreachable");
@@ -2108,7 +2108,7 @@ impl BuildArtifact {
                     writer,
                     ENABLE_ANSI_COLORS,
                     "<r>hash<r>: <green>\"{f}\"<r>",
-                    self.hash,
+                    bun_core::fmt::truncated_hash32(self.hash),
                 )?;
             }
 

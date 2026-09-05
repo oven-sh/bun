@@ -522,6 +522,7 @@ pub struct S3SimpleRequestOptions<'a> {
 
     // http request options
     pub(crate) body: &'a [u8],
+    /// Explicit override; `None`/empty resolves env proxies per request.
     pub(crate) proxy_url: Option<&'a [u8]>,
     /// Owned; ownership transfers to the spawned task (or is dropped on sign error).
     pub(crate) range: Option<Box<[u8]>>,
@@ -547,6 +548,24 @@ impl<'a> Default for S3SimpleRequestOptions<'a> {
             request_payer: false,
         }
     }
+}
+
+/// Resolve the proxy like fetch: an explicit proxy is still subject to
+/// NO_PROXY; otherwise HTTP_PROXY/HTTPS_PROXY is picked by URL scheme.
+/// Owned (empty = none): `process.env` writes can free the env href.
+pub(crate) fn resolve_proxy_url(url: &URL<'_>, explicit: Option<&[u8]>) -> Box<[u8]> {
+    let env = VirtualMachine::get().transpiler.env_mut();
+    if let Some(explicit) = explicit {
+        if !explicit.is_empty() {
+            if env.is_no_proxy(Some(url.hostname), Some(url.host)) {
+                return Box::default();
+            }
+            return Box::from(explicit);
+        }
+    }
+    env.get_http_proxy_for(url)
+        .map(|proxy| Box::from(proxy.href))
+        .unwrap_or_default()
 }
 
 pub(crate) fn execute_simple_s3_request(
@@ -620,7 +639,7 @@ pub(crate) fn execute_simple_s3_request(
     poll_ref.ref_(bun_io::posix_event_loop::get_vm_ctx(
         bun_io::AllocatorType::Js,
     ));
-    let proxy = options.proxy_url.unwrap_or(b"");
+    let proxy_url = resolve_proxy_url(&URL::parse(&result.url), options.proxy_url);
     let task_ptr = S3HttpSimpleTask::new(S3HttpSimpleTask {
         // written below via `MaybeUninit::write` before any read.
         http: core::mem::MaybeUninit::uninit(),
@@ -632,11 +651,7 @@ pub(crate) fn execute_simple_s3_request(
         response_buffer: MutableString::default(),
         result: HTTPClientResult::default(),
         concurrent_task: ConcurrentTask::default(),
-        proxy_url: if !proxy.is_empty() {
-            Box::<[u8]>::from(proxy)
-        } else {
-            Box::default()
-        },
+        proxy_url,
         body: Box::<[u8]>::from(options.body),
         poll_ref,
         signal_store: Default::default(),

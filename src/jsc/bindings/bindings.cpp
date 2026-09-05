@@ -1297,18 +1297,6 @@ bool Bun__deepEquals(JSC::JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
     return true;
 }
 
-static bool isTemporalObject(JSC::JSObject* object)
-{
-    return object->inherits<JSC::TemporalInstant>()
-        || object->inherits<JSC::TemporalPlainDate>()
-        || object->inherits<JSC::TemporalPlainDateTime>()
-        || object->inherits<JSC::TemporalPlainTime>()
-        || object->inherits<JSC::TemporalZonedDateTime>()
-        || object->inherits<JSC::TemporalPlainYearMonth>()
-        || object->inherits<JSC::TemporalPlainMonthDay>()
-        || object->inherits<JSC::TemporalDuration>();
-}
-
 // Temporal objects keep their state in internal slots and have no own
 // properties, so the generic own-property walk would call any two instances
 // of a class equal. Compare the internal fields instead, the way JSDateType
@@ -1357,7 +1345,7 @@ static std::optional<bool> temporalObjectsDequal(JSC::JSObject* o1, JSC::JSObjec
     }
     // `o1` is not a Temporal object; a Temporal `o2` can then never be equal
     // (and must not reach the own-property walk).
-    if (isTemporalObject(o2))
+    if (JSC::temporalType(o2) != JSC::TemporalType::None)
         return false;
     return std::nullopt;
 }
@@ -2200,6 +2188,11 @@ bool Bun__deepMatch(
     if (objValue == subsetValue) return true;
     JSObject* obj = objValue.getObject();
     JSObject* subsetObj = subsetValue.getObject();
+
+    // A Temporal subset has no enumerable properties to walk (its value lives
+    // in internal slots), so the property loop below would accept any object.
+    if (JSC::temporalType(subsetValue) != JSC::TemporalType::None)
+        return temporalObjectsDequal(obj, subsetObj).value();
 
     PropertyNameArrayBuilder subsetProps(vm, PropertyNameMode::StringsAndSymbols, PrivateSymbolMode::Include);
     subsetObj->getPropertyNames(globalObject, subsetProps, DontEnumPropertiesMode::Exclude);

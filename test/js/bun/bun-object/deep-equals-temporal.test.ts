@@ -132,6 +132,93 @@ describe("expect().toEqual on Temporal values", () => {
   });
 });
 
+// Subset matching walks the expected object's enumerable properties, and a
+// Temporal object has none, so without dedicated handling a Temporal expected
+// value accepted any received object.
+describe("subset matching on Temporal values", () => {
+  const cases: [name: string, makeA: () => unknown, makeB: () => unknown][] = [
+    [
+      "Instant",
+      () => Temporal.Instant.from("2024-06-15T12:34:56Z"),
+      () => Temporal.Instant.from("2024-06-15T12:34:56.000000001Z"),
+    ],
+    [
+      "PlainDateTime",
+      () => Temporal.PlainDateTime.from("2024-06-15T12:34:56"),
+      () => Temporal.PlainDateTime.from("2024-06-15T12:34:57"),
+    ],
+    ["PlainDate", () => Temporal.PlainDate.from("2024-01-01"), () => Temporal.PlainDate.from("2099-12-31")],
+    ["PlainTime", () => Temporal.PlainTime.from("12:34:56"), () => Temporal.PlainTime.from("12:34:56.000000001")],
+    [
+      "ZonedDateTime",
+      () => Temporal.ZonedDateTime.from("2024-06-15T12:34:56+02:00[Europe/Berlin]"),
+      () => Temporal.ZonedDateTime.from("2024-06-15T10:34:56+00:00[UTC]"),
+    ],
+    ["PlainYearMonth", () => Temporal.PlainYearMonth.from("2024-06"), () => Temporal.PlainYearMonth.from("2024-07")],
+    ["PlainMonthDay", () => Temporal.PlainMonthDay.from("06-15"), () => Temporal.PlainMonthDay.from("06-16")],
+    ["Duration", () => Temporal.Duration.from("PT1H"), () => Temporal.Duration.from("PT60M")],
+  ];
+
+  describe.each(cases)("%s", (_, makeA, makeB) => {
+    it("toMatchObject compares a Temporal property by value", () => {
+      expect({ when: makeA(), other: 1 }).toMatchObject({ when: makeA() });
+      expect({ when: makeA(), other: 1 }).not.toMatchObject({ when: makeB() });
+      expect([makeA()]).toMatchObject([makeA()]);
+      expect([makeA()]).not.toMatchObject([makeB()]);
+    });
+
+    it("toMatchObject compares a Temporal received value by value", () => {
+      expect(makeA()).toMatchObject(makeA());
+      expect(makeA()).not.toMatchObject(makeB());
+    });
+
+    it("expect.objectContaining compares a Temporal pattern by value", () => {
+      expect(makeA()).toEqual(expect.objectContaining(makeA()));
+      expect(makeA()).not.toEqual(expect.objectContaining(makeB()));
+    });
+
+    it("Bun.deepMatch compares Temporal values by value", () => {
+      expect(Bun.deepMatch({ when: makeA() }, { when: makeA(), other: 1 })).toBe(true);
+      expect(Bun.deepMatch({ when: makeB() }, { when: makeA(), other: 1 })).toBe(false);
+      expect(Bun.deepMatch(makeA(), makeA())).toBe(true);
+      expect(Bun.deepMatch(makeB(), makeA())).toBe(false);
+    });
+  });
+
+  it("a Temporal expected value does not match a different class or a plain object", () => {
+    const date = Temporal.PlainDate.from("2024-06-15");
+    const dateTime = Temporal.PlainDateTime.from("2024-06-15T00:00:00");
+    expect({ when: dateTime }).not.toMatchObject({ when: date });
+    expect({ when: {} }).not.toMatchObject({ when: date });
+    expect(Bun.deepMatch(date, dateTime)).toBe(false);
+    expect(Bun.deepMatch(date, {})).toBe(false);
+  });
+
+  it("a plain expected object still matches a Temporal received value through its getters", () => {
+    const date = Temporal.PlainDate.from("2024-06-15");
+    expect({ when: date }).toMatchObject({ when: {} });
+    expect(date).toMatchObject({ year: 2024, month: 6, day: 15 });
+    expect(date).not.toMatchObject({ year: 2025 });
+    expect(Bun.deepMatch({ year: 2024 }, date)).toBe(true);
+    expect(Bun.deepMatch({ year: 2025 }, date)).toBe(false);
+  });
+
+  it("extra own properties are ignored, matching toEqual", () => {
+    const withExtra = Object.assign(Temporal.PlainDate.from("2024-06-15"), { extra: 1 });
+    expect({ when: withExtra }).toMatchObject({ when: Temporal.PlainDate.from("2024-06-15") });
+    expect({ when: Temporal.PlainDate.from("2024-06-15") }).toMatchObject({ when: withExtra });
+    expect({ when: withExtra }).not.toMatchObject({ when: Temporal.PlainDate.from("2024-06-16") });
+  });
+
+  it("snapshot property matchers compare a Temporal property by value", () => {
+    const received = { when: Temporal.PlainDate.from("2024-01-01"), id: 1 };
+    // The property matchers are checked before the snapshot itself is compared.
+    expect(() =>
+      expect(received).toMatchInlineSnapshot({ when: Temporal.PlainDate.from("2099-12-31") }, "not compared"),
+    ).toThrow("to match properties from received object");
+  });
+});
+
 describe("util.isDeepStrictEqual on Temporal values", () => {
   it("compares by value", () => {
     expect(isDeepStrictEqual(Temporal.PlainDate.from("2024-06-15"), Temporal.PlainDate.from("2024-06-15"))).toBe(true);

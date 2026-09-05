@@ -103,23 +103,8 @@ fn from_html(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JS
         return Err(global_this
             .throw_invalid_arguments(format_args!("Expected a string or buffer to convert")));
     }
-    let Some(buffer) = StringOrBuffer::from_js(global_this, input_value)? else {
-        return Err(global_this
-            .throw_invalid_arguments(format_args!("Expected a string or buffer to convert")));
-    };
-    // The conversion never re-enters JS, so a buffer input needs no pinning.
-    let bytes: &[u8] = buffer.slice();
-    if bytes.len() > h::MAX_INPUT_LEN {
-        return Err(global_this.throw_range_error(
-            bytes.len() as i64,
-            RangeErrorOptions {
-                max: h::MAX_INPUT_LEN as i64,
-                field_name: b"input.byteLength",
-                ..Default::default()
-            },
-        ));
-    }
-
+    // Options first: property getters can run arbitrary JS, which must not
+    // happen while a raw view of an input buffer is held below.
     let mut options = h::Options::default();
     if opts_value.is_object() {
         if let Some(v) = opts_value.get_optional_enum_from_map(
@@ -195,6 +180,23 @@ fn from_html(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JS
         if let Some(v) = opts_value.get_boolean_loose(global_this, "tasklists")? {
             options.tasklists = v;
         }
+    }
+
+    let Some(buffer) = StringOrBuffer::from_js(global_this, input_value)? else {
+        return Err(global_this
+            .throw_invalid_arguments(format_args!("Expected a string or buffer to convert")));
+    };
+    // Nothing from here on re-enters JS, so a buffer input needs no pinning.
+    let bytes: &[u8] = buffer.slice();
+    if bytes.len() > h::MAX_INPUT_LEN {
+        return Err(global_this.throw_range_error(
+            bytes.len() as i64,
+            RangeErrorOptions {
+                max: h::MAX_INPUT_LEN as i64,
+                field_name: b"input.byteLength",
+                ..Default::default()
+            },
+        ));
     }
 
     // html5ever consumes `&str`. JS strings arrive as valid UTF-8; a raw

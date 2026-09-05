@@ -365,6 +365,19 @@ describe("Bun.markdown.fromHTML", () => {
     test("lone surrogate in a JS string does not throw", () => {
       expect(typeof fromHTML("<p>a\ud800b</p>")).toBe("string");
     });
+    test("option getters run before the input buffer is read", () => {
+      // A getter that detaches the buffer must not leave the converter
+      // reading freed memory: options are evaluated first, then the (now
+      // empty) buffer is read.
+      const buf = new Uint8Array(new TextEncoder().encode("<p>hello</p>"));
+      const opts = {
+        get headingStyle() {
+          buf.buffer.transfer();
+          return "atx";
+        },
+      };
+      expect(fromHTML(buf, opts as any)).toBe("");
+    });
     test("NUL bytes", () => {
       expect(fromHTML("<p>a\u0000b</p>")).toBe("ab");
     });

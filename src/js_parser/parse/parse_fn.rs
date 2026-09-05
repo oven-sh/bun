@@ -14,6 +14,11 @@ use bun_ast::{E, Expr, Flags, G, S, Stmt};
 
 type Error = crate::Error;
 
+#[inline]
+fn is_legal_comment(text: &[u8]) -> bool {
+    text.len() > 2 && text[2] == b'!'
+}
+
 impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_ONLY> {
     /// This assumes the "function" token has already been parsed
     pub(crate) fn parse_fn_stmt(
@@ -160,6 +165,34 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Ok(p.s(S::Function { func }, loc))
     }
 
+    fn drain_arg_leading_comments_into(
+        &mut self,
+        out: &mut bun_alloc::ArenaVec<'a, G::Comment>,
+        base: usize,
+    ) {
+        let buf = &mut self.lexer.comments_to_preserve_before;
+        let mut i = base.min(buf.len());
+        while i < buf.len() {
+            if is_legal_comment(buf[i].text.slice()) {
+                i += 1;
+            } else {
+                out.push(buf.remove(i));
+            }
+        }
+    }
+
+    fn discard_non_legal_comments_from(&mut self, base: usize) {
+        let buf = &mut self.lexer.comments_to_preserve_before;
+        let mut i = base.min(buf.len());
+        while i < buf.len() {
+            if is_legal_comment(buf[i].text.slice()) {
+                i += 1;
+            } else {
+                buf.remove(i);
+            }
+        }
+    }
+
     pub(crate) fn parse_fn(
         &mut self,
         name: Option<js_ast::LocRef>,
@@ -182,6 +215,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             open_parens_loc: p.lexer.loc(),
             ..Default::default()
         };
+
+        // Keep `/* ... */` inside `(...)` for Function.prototype.toString().
+        let old_preserve_comments = p.lexer.preserve_all_comments_before;
+        let mut comments_base = p.lexer.comments_to_preserve_before.len();
+        p.lexer.preserve_all_comments_before = true;
         p.lexer.expect(T::TOpenParen)?;
 
         // Await and yield are not allowed in function arguments
@@ -213,6 +251,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         while p.lexer.token != T::TCloseParen {
             // Skip over "this" type annotations
             if Self::IS_TYPESCRIPT_ENABLED && p.lexer.token == T::TThis {
+                p.discard_non_legal_comments_from(comments_base);
+                p.lexer.preserve_all_comments_before = old_preserve_comments;
                 p.lexer.next()?;
                 if p.lexer.token == T::TColon {
                     p.lexer.next()?;
@@ -222,13 +262,21 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     break;
                 }
 
+                comments_base = p.lexer.comments_to_preserve_before.len();
+                p.lexer.preserve_all_comments_before = true;
                 p.lexer.next()?;
                 continue;
             }
 
+            let mut leading = bun_alloc::ArenaVec::<G::Comment>::new_in(p.arena);
+
             let mut ts_decorators = bun_alloc::AstAlloc::vec();
             if opts.allow_ts_decorators {
+                p.drain_arg_leading_comments_into(&mut leading, comments_base);
+                p.lexer.preserve_all_comments_before = old_preserve_comments;
                 ts_decorators = p.parse_type_script_decorators()?;
+                comments_base = p.lexer.comments_to_preserve_before.len();
+                p.lexer.preserve_all_comments_before = true;
                 if ts_decorators.len_u32() > 0 {
                     arg_has_decorators = true;
                 }
@@ -240,6 +288,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 rest_arg = true;
                 func.flags.insert(Flags::Function::HasRestArg);
             }
+
+            p.drain_arg_leading_comments_into(&mut leading, comments_base);
+            let leading_comments = if leading.is_empty() {
+                bun_ast::StoreSlice::EMPTY
+            } else {
+                bun_ast::StoreSlice::from_bump(leading)
+            };
+            p.lexer.preserve_all_comments_before = old_preserve_comments;
 
             let mut is_typescript_ctor_field = false;
             let is_identifier = p.lexer.token == T::TIdentifier;
@@ -322,6 +378,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 // We need to track this because it affects code generation
                 is_typescript_ctor_field,
                 ts_metadata,
+                leading_comments,
             });
 
             if p.lexer.token != T::TComma {
@@ -340,9 +397,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 break;
             }
 
+            comments_base = p.lexer.comments_to_preserve_before.len();
+            p.lexer.preserve_all_comments_before = true;
             p.lexer.next()?;
             rest_arg = false;
         }
+        p.lexer.preserve_all_comments_before = old_preserve_comments;
+        p.discard_non_legal_comments_from(comments_base);
+
         if !args.is_empty() {
             func.args = bun_ast::StoreSlice::new_mut(args.into_bump_slice_mut());
         }

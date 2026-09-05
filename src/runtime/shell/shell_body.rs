@@ -56,10 +56,6 @@ impl ShellErr {
     pub(crate) fn new_sys(e: &sys::Error) -> Self {
         ShellErr::Sys(e.to_shell_system_error())
     }
-    /// Spec `ShellErr.newSys(jsc.SystemError)` — already JS-shaped.
-    pub(crate) fn from_system(e: SystemError) -> Self {
-        ShellErr::Sys(e)
-    }
 
     /// Spec `ShellErr.throwJS` — "basically `transferToJS`". Consumes `self`:
     /// each arm takes ownership of its payload and releases it exactly once.

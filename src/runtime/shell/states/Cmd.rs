@@ -289,19 +289,13 @@ impl Cmd {
         }
     }
 
-    /// IOWriter completion callback for the error message written in
-    /// `WaitingWriteErr`: throw on write failure, otherwise finish the Cmd
-    /// with exit code 1.
+    /// The error message written in `WaitingWriteErr` completed: exit 1.
     pub(crate) fn on_io_writer_chunk(
         interp: &Interpreter,
         this: NodeId,
         _written: usize,
-        e: Option<bun_sys::SystemError>,
+        _err: Option<bun_sys::SystemError>,
     ) -> Yield {
-        if let Some(err) = e {
-            interp.throw(crate::shell::ShellErr::from_system(err));
-            return Yield::failed();
-        }
         debug_assert!(matches!(
             interp.as_cmd(this).state,
             CmdState::WaitingWriteErr
@@ -957,14 +951,22 @@ impl Cmd {
     /// Mark the subprocess's buffered stdout/stderr as closed (flushing the
     /// captured bytes into the shell buffers); if that makes the command
     /// finished, transition to `Done` and yield back to the trampoline.
+    ///
+    /// `err`: relayed output was lost; exit 1 unless the process exited non-zero itself.
     pub(crate) fn buffered_output_close(
         &mut self,
         kind: OutKind,
         err: Option<bun_sys::SystemError>,
     ) -> Yield {
+        if let Some(e) = err {
+            log!("cmd output relay failed: {}", e.message);
+            if !matches!(self.exit_code, Some(code) if code != 0) {
+                self.exit_code = Some(1);
+            }
+        }
         match kind {
-            OutKind::Stdout => self.buffered_output_close_stdout(err),
-            OutKind::Stderr => self.buffered_output_close_stderr(err),
+            OutKind::Stdout => self.buffered_output_close_stdout(),
+            OutKind::Stderr => self.buffered_output_close_stderr(),
         }
         if self.has_finished() {
             // Set `state = Done` and hand the Yield back to the caller
@@ -989,12 +991,9 @@ impl Cmd {
         Yield::suspended()
     }
 
-    fn buffered_output_close_stdout(&mut self, err: Option<bun_sys::SystemError>) {
+    fn buffered_output_close_stdout(&mut self) {
         debug_assert!(matches!(self.exec, Exec::Subproc(_)));
         log!("cmd close buffered stdout");
-        if let Some(e) = err {
-            self.exit_code = Some(e.errno.unsigned_abs() as ExitCode);
-        }
         let redirect = self.ast_node().redirect;
         let Exec::Subproc(sub) = &mut self.exec else {
             return;
@@ -1025,12 +1024,9 @@ impl Cmd {
         child.close_io(StdioKind::Stdout);
     }
 
-    fn buffered_output_close_stderr(&mut self, err: Option<bun_sys::SystemError>) {
+    fn buffered_output_close_stderr(&mut self) {
         debug_assert!(matches!(self.exec, Exec::Subproc(_)));
         log!("cmd close buffered stderr");
-        if let Some(e) = err {
-            self.exit_code = Some(e.errno.unsigned_abs() as ExitCode);
-        }
         let redirect = self.ast_node().redirect;
         let Exec::Subproc(sub) = &mut self.exec else {
             return;

@@ -30,7 +30,6 @@ pub enum RmState {
     Done {
         exit_code: ExitCode,
     },
-    Err(ExitCode),
 }
 
 pub struct ExecState {
@@ -109,7 +108,6 @@ impl Rm {
                 ParseOpts(u32, bool),
                 Exec,
                 Done(ExitCode),
-                Err(ExitCode),
             }
             let tag = match &Self::state_mut(interp, cmd).state {
                 RmState::Idle => Tag::Idle,
@@ -119,7 +117,6 @@ impl Rm {
                 } => Tag::ParseOpts(*idx, *wait_write_err),
                 RmState::Exec(_) => Tag::Exec,
                 RmState::Done { exit_code } => Tag::Done(*exit_code),
-                RmState::Err(c) => Tag::Err(*c),
             };
             match tag {
                 Tag::Idle => {
@@ -330,7 +327,6 @@ impl Rm {
                     return Yield::suspended();
                 }
                 Tag::Done(code) => return Builtin::done(interp, cmd, code),
-                Tag::Err(code) => return Builtin::done(interp, cmd, code),
             }
         }
     }
@@ -365,15 +361,8 @@ impl Rm {
                     None
                 }
             }
-            state => {
-                if let Some(err) = &e {
-                    let code = err.get_errno() as ExitCode;
-                    *state = RmState::Err(code);
-                    Some(code)
-                } else {
-                    Some(1)
-                }
-            }
+            // An error message from `ParseOpts` completed, or failed: exit 1.
+            _ => Some(1),
         };
         drop(e);
         match outcome {

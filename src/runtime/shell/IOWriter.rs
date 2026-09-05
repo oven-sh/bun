@@ -84,6 +84,8 @@ impl ChildPtr {
 pub enum WriterTag {
     /// Builtin running inside a Cmd — dispatch via `Builtin::on_io_writer_chunk`.
     Builtin,
+    /// `Builtin::done`'s write-error report; any completion finishes the Cmd with exit 1.
+    BuiltinReport,
     Cmd,
     CondExpr,
     Pipeline,
@@ -1217,6 +1219,7 @@ pub(crate) fn on_io_writer_chunk(
     use crate::shell::states::{cmd, cond_expr, pipeline};
     match child.tag {
         WriterTag::Builtin => Builtin::on_io_writer_chunk(interp, child.node, written, err),
+        WriterTag::BuiltinReport => cmd::Cmd::on_exec_done(interp, child.node, 1),
         WriterTag::Cmd => cmd::Cmd::on_io_writer_chunk(interp, child.node, written, err),
         WriterTag::CondExpr => {
             cond_expr::CondExpr::on_io_writer_chunk(interp, child.node, written, err)

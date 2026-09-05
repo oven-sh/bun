@@ -88,6 +88,10 @@ const spawnTimeout = 5_000;
 const spawnBunTimeout = 20_000; // when running with ASAN/LSAN bun can take a bit longer to exit, not a bug.
 const testTimeout = 3 * 60_000;
 const integrationTimeout = 5 * 60_000;
+// Per git command of a vendor checkout. The whole checkout takes about 3s on
+// the darwin agents; a command that stalls is given up on and retried rather
+// than waited out.
+const vendorGitTimeout = 60_000;
 
 const resolutionGatingFlags = new Set([
   "--expose-internals",
@@ -569,7 +573,8 @@ async function runTests() {
   // owns every `docker compose` invocation for this shard — `compose up` is
   // not concurrency-safe, so exactly one process runs it — and prestarts the
   // services this shard's tests need (mysql/postgres/redis/minio/…) in the
-  // background while getVendorTests below installs vendor deps. Tests reach
+  // background while the tests that don't need them run (getRelevantTests
+  // sorts the docker-backed files last). Tests reach
   // it through the unix socket in BUN_DOCKER_COORDINATOR (inherited by every
   // spawned test process); ensure() waits for the coordinator's ready message
   // instead of shelling out to compose itself. Without the env var, ensure()
@@ -624,19 +629,17 @@ async function runTests() {
     coordinator.stdout?.unref?.();
   }
 
-  /** @type {VendorTest[] | undefined} */
-  let vendorTests;
-  let vendorTotal = 0;
+  /** @type {Vendor[]} */
+  let vendors = [];
   if (/true|1|yes|on/i.test(options["vendor"]) || (isCI && typeof options["vendor"] === "undefined")) {
-    vendorTests = await getVendorTests(cwd);
-    if (vendorTests.length) {
-      vendorTotal = vendorTests.reduce((total, { testPaths }) => total + testPaths.length + 1, 0);
-      !isQuiet && console.log("Running vendor tests:", vendorTotal);
-    }
+    vendors = getVendors(cwd);
+    !isQuiet && console.log("Running vendors:", vendors.length);
   }
 
   let i = 0;
-  let total = vendorTotal + tests.length + 2;
+  // Per vendor: the checkout, install and build steps. Its test files are
+  // added once the checkout exists.
+  let total = tests.length + 2 + vendors.length * 3;
 
   const okResults = [];
   const flakyResults = [];
@@ -1292,51 +1295,66 @@ async function runTests() {
     await Promise.all(parallelSafeTests.map(t => parallelSafeLimit(() => runOneTest(t, parallelSafeWidth > 1))));
   }
 
-  if (vendorTests?.length) {
-    for (const { cwd: vendorPath, packageManager, testRunner, testPaths } of vendorTests) {
-      if (!testPaths.length) {
+  // A vendor's setup steps (checkout, install, build) go through runTest like
+  // its test files: a failure is retried, then reported, and skips only that
+  // vendor. Throwing instead would lose the summary, JUnit upload and exit
+  // code of everything that ran above.
+  for (const vendor of vendors) {
+    const { package: name, packageManager = "bun", testRunner = "bun" } = vendor;
+    const vendorPath = join(cwd, "vendor", name);
+    const vendorTitle = relative(cwd, vendorPath).replace(/\\/g, "/");
+
+    const checkout = await runTest(vendorTitle, () => spawnVendorCheckout(vendor, vendorPath));
+    if (!checkout.ok) {
+      continue;
+    }
+
+    const testPaths = getVendorTestPaths(vendor, vendorPath);
+    !isQuiet && console.log("Running vendor tests:", vendorTitle, testPaths.length);
+    if (!testPaths.length) {
+      continue;
+    }
+    total += testPaths.length;
+
+    if (packageManager === "bun") {
+      const { ok } = await runTest(`${vendorTitle}/package.json`, () => spawnBunInstall(execPath, { cwd: vendorPath }));
+      if (!ok) {
         continue;
       }
+    } else {
+      throw new Error(`Unsupported package manager: ${packageManager}`);
+    }
 
-      const packageJson = join(relative(cwd, vendorPath), "package.json").replace(/\\/g, "/");
-      if (packageManager === "bun") {
-        const { ok } = await runTest(packageJson, () => spawnBunInstall(execPath, { cwd: vendorPath }));
-        if (!ok) {
-          continue;
-        }
+    const buildTitle = `${vendorTitle} (bun run build)`;
+    const build = await runTest(buildTitle, async () =>
+      getStepResult(
+        buildTitle,
+        "bun run build",
+        await spawnBun(execPath, { cwd: vendorPath, args: ["run", "build"], timeout: 60_000 }),
+      ),
+    );
+    if (!build.ok) {
+      continue;
+    }
+
+    for (const testPath of testPaths) {
+      const title = `${vendorTitle}/${testPath.replace(/\\/g, "/")}`;
+
+      if (testRunner === "bun") {
+        await runTest(title, index =>
+          spawnBunTest(execPath, testPath, { cwd: vendorPath, env: { TEST_SERIAL_ID: index } }),
+        );
       } else {
-        throw new Error(`Unsupported package manager: ${packageManager}`);
-      }
-
-      // build
-      const buildResult = await spawnBun(execPath, {
-        cwd: vendorPath,
-        args: ["run", "build"],
-        timeout: 60_000,
-      });
-      if (!buildResult.ok) {
-        throw new Error(`Failed to build vendor: ${buildResult.error}`);
-      }
-
-      for (const testPath of testPaths) {
-        const title = join(relative(cwd, vendorPath), testPath).replace(/\\/g, "/");
-
-        if (testRunner === "bun") {
-          await runTest(title, index =>
-            spawnBunTest(execPath, testPath, { cwd: vendorPath, env: { TEST_SERIAL_ID: index } }),
-          );
-        } else {
-          const testRunnerPath = join(cwd, "test", "runners", `${testRunner}.ts`);
-          if (!existsSync(testRunnerPath)) {
-            throw new Error(`Unsupported test runner: ${testRunner}`);
-          }
-          await runTest(title, () =>
-            spawnBunTest(execPath, testPath, {
-              cwd: vendorPath,
-              args: ["--preload", testRunnerPath],
-            }),
-          );
+        const testRunnerPath = join(cwd, "test", "runners", `${testRunner}.ts`);
+        if (!existsSync(testRunnerPath)) {
+          throw new Error(`Unsupported test runner: ${testRunner}`);
         }
+        await runTest(title, () =>
+          spawnBunTest(execPath, testPath, {
+            cwd: vendorPath,
+            args: ["--preload", testRunnerPath],
+          }),
+        );
       }
     }
   }
@@ -2339,7 +2357,7 @@ async function spawnBunInstall(execPath, options) {
   // image's baked cache when one exists (bootstrap.{sh,ps1} set
   // BUN_INSTALL_CACHE_DIR machine-wide).
   const cacheDir = process.env.BUN_INSTALL_CACHE_DIR;
-  let { ok, error, stdout, duration, crashes } = await spawnBun(execPath, {
+  const result = await spawnBun(execPath, {
     args: ["install"],
     timeout: testTimeout,
     ...options,
@@ -2353,9 +2371,19 @@ async function spawnBunInstall(execPath, options) {
       ...(cacheDir && { BUN_INSTALL_CACHE_DIR: cacheDir }),
     },
   });
+  return getStepResult(join(relative(cwd, options.cwd), "package.json"), "bun install", result);
+}
+
+/**
+ * A setup step (an install, a vendor checkout or build) in the shape of a test
+ * result, so that runTest retries, counts and reports it like a test file.
+ * @param {string} testPath reported in place of a test file
+ * @param {string} step
+ * @param {SpawnBunResult} result
+ * @returns {TestResult}
+ */
+function getStepResult(testPath, step, { ok, error, stdout, duration, crashes }) {
   if (crashes) stdout += crashes;
-  const relativePath = relative(cwd, options.cwd);
-  const testPath = join(relativePath, "package.json");
   const status = ok ? "pass" : "fail";
   return {
     testPath,
@@ -2363,14 +2391,7 @@ async function spawnBunInstall(execPath, options) {
     status,
     error,
     errors: [],
-    tests: [
-      {
-        file: testPath,
-        test: "bun install",
-        status,
-        duration: parseDuration(duration),
-      },
-    ],
+    tests: [{ file: testPath, test: step, status, duration }],
     stdout,
     stdoutPreview: stdout,
   };
@@ -2500,18 +2521,11 @@ function getTests(cwd) {
  */
 
 /**
- * @typedef {object} VendorTest
- * @property {string} cwd
- * @property {string} packageManager
- * @property {string} testRunner
- * @property {string[]} testPaths
- */
-
-/**
+ * The entries of test/vendor.json that this shard runs.
  * @param {string} cwd
- * @returns {Promise<VendorTest[]>}
+ * @returns {Vendor[]}
  */
-async function getVendorTests(cwd) {
+function getVendors(cwd) {
   const vendorPath = join(cwd, "test", "vendor.json");
   if (!existsSync(vendorPath)) {
     throw new Error(`Did not find vendor.json: ${vendorPath}`);
@@ -2524,102 +2538,98 @@ async function getVendorTests(cwd) {
 
   const shardId = parseInt(options["shard"]);
   const maxShards = parseInt(options["max-shards"]);
-
-  /** @type {Vendor[]} */
-  let relevantVendors = [];
   if (maxShards > 1) {
-    for (let i = 0; i < vendors.length; i++) {
-      if (i % maxShards === shardId) {
-        relevantVendors.push(vendors[i]);
-      }
+    return vendors.filter((_, i) => i % maxShards === shardId);
+  }
+  return vendors;
+}
+
+/**
+ * Checks the vendor's pinned tag out into `vendorPath`. A clone from github
+ * stalls now and then, so this is a step runTest retries; a failed attempt
+ * removes whatever it left in `vendorPath` so that the next one clones anew.
+ * @param {Vendor} vendor
+ * @param {string} vendorPath
+ * @returns {Promise<TestResult>}
+ */
+async function spawnVendorCheckout({ repository, tag, testPath }, vendorPath) {
+  const commands = [];
+  if (!existsSync(vendorPath)) {
+    commands.push({ args: ["clone", "--depth", "1", "--single-branch", repository, vendorPath], cwd });
+  }
+  commands.push({ args: ["fetch", "--depth", "1", "origin", "tag", tag], cwd: vendorPath });
+  commands.push({ args: ["checkout", tag], cwd: vendorPath });
+
+  let stdout = "";
+  let duration = 0;
+  let error;
+  for (const { args, cwd: commandCwd } of commands) {
+    const command = `$ git ${args.join(" ")}`;
+    console.log(command);
+    stdout += `${command}\n`;
+    const result = await spawnSafe({ command: "git", args, cwd: commandCwd, timeout: vendorGitTimeout });
+    stdout += result.stdout;
+    duration += result.duration;
+    if (!result.ok) {
+      error = `git ${args[0]}: ${result.error}`;
+      break;
     }
-  } else {
-    relevantVendors = vendors.flat();
   }
 
-  return Promise.all(
-    relevantVendors.map(
-      async ({ package: name, repository, tag, testPath, testExtensions, testRunner, packageManager, skipTests }) => {
-        const vendorPath = join(cwd, "vendor", name);
+  const testDir = testPath || "test";
+  if (!error && !existsSync(join(vendorPath, testDir))) {
+    error = `no test directory '${testDir}' at ${tag}`;
+  }
 
-        if (!existsSync(vendorPath)) {
-          const { ok, error } = await spawnSafe({
-            command: "git",
-            args: ["clone", "--depth", "1", "--single-branch", repository, vendorPath],
-            timeout: testTimeout,
-            cwd,
-          });
-          if (!ok) throw new Error(`failed to git clone vendor '${name}': ${error}`);
+  if (error) {
+    try {
+      rmSync(vendorPath, { recursive: true, force: true });
+    } catch (cause) {
+      console.warn(`Failed to remove ${vendorPath}:`, cause);
+    }
+  }
+
+  const title = relative(cwd, vendorPath).replace(/\\/g, "/");
+  return getStepResult(title, `git checkout ${tag}`, { ok: !error, error, stdout, duration });
+}
+
+/**
+ * The test files to run in a vendor checkout, relative to it.
+ * @param {Vendor} vendor
+ * @param {string} vendorPath
+ * @returns {string[]}
+ */
+function getVendorTestPaths({ testPath, testExtensions, skipTests }, vendorPath) {
+  const testPathPrefix = testPath || "test";
+
+  const isTest = path => {
+    if (!isJavaScriptTest(path)) {
+      return false;
+    }
+
+    if (typeof skipTests === "boolean") {
+      return !skipTests;
+    }
+
+    if (typeof skipTests === "object") {
+      for (const [glob, reason] of Object.entries(skipTests)) {
+        const pattern = new RegExp(`^${glob.replace(/\*/g, ".*")}$`);
+        if (pattern.test(path) && reason) {
+          return false;
         }
+      }
+    }
 
-        let { ok, error } = await spawnSafe({
-          command: "git",
-          args: ["fetch", "--depth", "1", "origin", "tag", tag],
-          timeout: testTimeout,
-          cwd: vendorPath,
-        });
-        if (!ok) throw new Error(`failed to fetch tag ${tag} for vendor '${name}': ${error}`);
+    return true;
+  };
 
-        ({ ok, error } = await spawnSafe({
-          command: "git",
-          args: ["checkout", tag],
-          timeout: testTimeout,
-          cwd: vendorPath,
-        }));
-        if (!ok) throw new Error(`failed to checkout tag ${tag} for vendor '${name}': ${error}`);
-
-        const packageJsonPath = join(vendorPath, "package.json");
-        if (!existsSync(packageJsonPath)) {
-          throw new Error(`Vendor '${name}' does not have a package.json: ${packageJsonPath}`);
-        }
-
-        const testPathPrefix = testPath || "test";
-        const testParentPath = join(vendorPath, testPathPrefix);
-        if (!existsSync(testParentPath)) {
-          throw new Error(`Vendor '${name}' does not have a test directory: ${testParentPath}`);
-        }
-
-        const isTest = path => {
-          if (!isJavaScriptTest(path)) {
-            return false;
-          }
-
-          if (typeof skipTests === "boolean") {
-            return !skipTests;
-          }
-
-          if (typeof skipTests === "object") {
-            for (const [glob, reason] of Object.entries(skipTests)) {
-              const pattern = new RegExp(`^${glob.replace(/\*/g, ".*")}$`);
-              if (pattern.test(path) && reason) {
-                return false;
-              }
-            }
-          }
-
-          return true;
-        };
-
-        const testPaths = readdirSync(testParentPath, { encoding: "utf-8", recursive: true })
-          .filter(filename =>
-            testExtensions ? testExtensions.some(ext => filename.endsWith(`.${ext}`)) : isTest(filename),
-          )
-          .map(filename => join(testPathPrefix, filename))
-          .filter(
-            filename =>
-              !filters?.length ||
-              filters.some(filter => join(vendorPath, filename).replace(/\\/g, "/").includes(filter)),
-          );
-
-        return {
-          cwd: vendorPath,
-          packageManager: packageManager || "bun",
-          testRunner: testRunner || "bun",
-          testPaths,
-        };
-      },
-    ),
-  );
+  return readdirSync(join(vendorPath, testPathPrefix), { encoding: "utf-8", recursive: true })
+    .filter(filename => (testExtensions ? testExtensions.some(ext => filename.endsWith(`.${ext}`)) : isTest(filename)))
+    .map(filename => join(testPathPrefix, filename))
+    .filter(
+      filename =>
+        !filters?.length || filters.some(filter => join(vendorPath, filename).replace(/\\/g, "/").includes(filter)),
+    );
 }
 
 /**

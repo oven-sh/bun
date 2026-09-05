@@ -143,41 +143,33 @@ describe("Bun.Cookie.parse with exotic inputs", () => {
   });
 
   describe("handles various Date formats for Expires", () => {
-    const dateFormats = [
-      // Standard format
-      "name=value; Expires=Wed, 21 Oct 2025 07:28:00 GMT",
+    // Expected results follow RFC 6265bis §5.1.1 (the cookie-date algorithm browsers use).
+    const at = "2025-10-21T07:28:00.000Z";
+    const dateFormats: [string, string | undefined][] = [
+      // Standard IMF-fixdate
+      ["Wed, 21 Oct 2025 07:28:00 GMT", at],
       // Without day name
-      "name=value; Expires=21 Oct 2025 07:28:00 GMT",
-      // Different day format
-      "name=value; Expires=Wed, 21-Oct-2025 07:28:00 GMT",
-      // Without seconds
-      "name=value; Expires=Wed, 21 Oct 2025 07:28 GMT",
-      // Without time
-      "name=value; Expires=Wed, 21 Oct 2025",
-      // Without GMT
-      "name=value; Expires=Wed, 21 Oct 2025 07:28:00",
-      // With timezone offset
-      "name=value; Expires=Wed, 21 Oct 2025 07:28:00 +0000",
-      // Non-standard but often accepted
-      "name=value; Expires=2025-10-21T07:28:00Z",
+      ["21 Oct 2025 07:28:00 GMT", at],
+      // Hyphenated rfc850-style date
+      ["Wed, 21-Oct-2025 07:28:00 GMT", at],
+      // Without seconds: time production requires H:M:S, so Expires is dropped
+      ["Wed, 21 Oct 2025 07:28 GMT", undefined],
+      // Without time: dropped
+      ["Wed, 21 Oct 2025", undefined],
+      // Without GMT (cookie-date has no timezone; always UTC)
+      ["Wed, 21 Oct 2025 07:28:00", at],
+      // Numeric timezone offset is tokenized and ignored
+      ["Wed, 21 Oct 2025 07:28:00 +0000", at],
+      // ISO 8601 does not satisfy the cookie-date grammar
+      ["2025-10-21T07:28:00Z", undefined],
     ];
 
-    for (const cookieStr of dateFormats) {
-      test(cookieStr, () => {
-        try {
-          const cookie = Bun.Cookie.parse(cookieStr);
-          expect(cookie).toBeDefined();
-          expect(cookie.name).toBe("name");
-          expect(cookie.value).toBe("value");
-
-          // Expires should be set to some timestamp
-          if ("expires" in cookie) {
-            expect(typeof cookie.expires).toBe("number");
-          }
-        } catch (error) {
-          // Some formats might not be supported
-          expect(error).toBeDefined();
-        }
+    for (const [date, expected] of dateFormats) {
+      test(date, () => {
+        const cookie = Bun.Cookie.parse("name=value; Expires=" + date);
+        expect(cookie.name).toBe("name");
+        expect(cookie.value).toBe("value");
+        expect(cookie.expires?.toISOString()).toBe(expected);
       });
     }
   });

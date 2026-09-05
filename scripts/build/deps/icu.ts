@@ -146,7 +146,8 @@ export const icu: Dependency = {
             `-I${i18n}`,
             `-I${join(S, "tools", "toolutil")}`,
           ],
-          ldflags: cfg.host.os === "linux" ? ["-ldl", "-lpthread"] : [],
+          // wintz.cpp reads the registry (advapi32) on a Windows host.
+          ldflags: cfg.host.os === "linux" ? ["-ldl", "-lpthread"] : cfg.host.os === "windows" ? ["-ladvapi32"] : [],
         },
         {
           outputs: [asm, outDat, dict],

@@ -5494,7 +5494,9 @@ describe("fs.read/readv/write/writev pass the buffer to the callback on error", 
   // mode, so a write that lands on a full pipe returns EAGAIN. writeAll retries
   // with the rest of the buffer it got back from the callback. Without it the
   // retry read `.slice` off `undefined` and the process died with a TypeError.
-  it.skipIf(isWindows)("fs.WriteStream retries an EAGAIN write on a non-blocking pipe", async () => {
+  // Like Node, writeAll gives up after five EAGAINs in a row with a handled
+  // "write failed" error, so a fast reader sees either outcome.
+  it.skipIf(isWindows)("fs.WriteStream survives an EAGAIN write on a non-blocking pipe", async () => {
     const size = 4 * 1024 * 1024;
     await using proc = Bun.spawn({
       cmd: [
@@ -5504,10 +5506,7 @@ describe("fs.read/readv/write/writev pass the buffer to the callback on error", 
           const fs = require("node:fs");
           process.stdout.write("");
           const ws = fs.createWriteStream(null, { fd: 1, autoClose: false });
-          ws.on("error", err => {
-            console.error("error " + err.code + " " + err.message);
-            process.exit(2);
-          });
+          ws.on("error", err => console.error("error " + err.message));
           ws.write(Buffer.alloc(${size}, 0x61), err => {
             if (err) return;
             console.error("written " + ws.bytesWritten);
@@ -5520,8 +5519,13 @@ describe("fs.read/readv/write/writev pass the buffer to the callback on error", 
       stderr: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.bytes(), proc.stderr.text(), proc.exited]);
-    expect(stderr.trim()).toBe(`written ${size}`);
-    expect(stdout.byteLength).toBe(size);
+    expect(stderr.trim()).toBeOneOf([`written ${size}`, "error write failed"]);
+    if (stderr.startsWith("written")) {
+      expect(stdout.byteLength).toBe(size);
+    } else {
+      expect(stdout.byteLength).toBeGreaterThan(0);
+      expect(stdout.byteLength).toBeLessThan(size);
+    }
     expect(exitCode).toBe(0);
   });
 });

@@ -699,14 +699,19 @@ pub mod js_bundler {
                         || env == JSValue::FALSE
                         || (env.is_number() && env.as_number() == 0.0)
                     {
-                        this.env_behavior = api::DotEnvBehavior::Disable;
+                        this.env_behavior = api::DotEnvBehavior::DisableWithoutInlining;
                     } else if env == JSValue::TRUE || (env.is_number() && env.as_number() == 1.0) {
                         this.env_behavior = api::DotEnvBehavior::LoadAll;
                     } else if env.is_string() {
                         let slice = env.to_utf8(global_this)?;
                         match api::DotEnvBehavior::parse_str(slice.slice()) {
                             Ok((behavior, prefix)) => {
-                                this.env_behavior = behavior;
+                                // `Disable` is also the no-option default, which defines NODE_ENV.
+                                this.env_behavior = if behavior == api::DotEnvBehavior::Disable {
+                                    api::DotEnvBehavior::DisableWithoutInlining
+                                } else {
+                                    behavior
+                                };
                                 if let Some(prefix) = prefix {
                                     this.env_prefix.append_slice_exact(prefix)?;
                                 }

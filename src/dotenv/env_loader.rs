@@ -79,10 +79,14 @@ impl DirEntryProbe for DirEntryKeys {
 pub enum DotEnvBehavior {
     #[default]
     _none = 0,
+    /// No-option default: no `.env` files, nothing inlined, NODE_ENV / BUN_ENV still defined.
     disable = 1,
     prefix = 2,
     load_all = 3,
+    /// Loads `.env` files, inlines nothing (not even NODE_ENV): runtime, `bun build --env disable`.
     load_all_without_inlining = 4,
+    /// `disable` minus the NODE_ENV defines; set by `Bun.build({ env: "disable" })`.
+    disable_without_inlining = 5,
 }
 
 #[allow(non_upper_case_globals)]
@@ -94,6 +98,7 @@ impl DotEnvBehavior {
     pub const Prefix: Self = Self::prefix;
     pub const LoadAll: Self = Self::load_all;
     pub const LoadAllWithoutInlining: Self = Self::load_all_without_inlining;
+    pub const DisableWithoutInlining: Self = Self::disable_without_inlining;
 
     /// String-branch classifier shared by bunfig (serve.env) and
     /// JSBundler (Bun.build env). Only the *string* arm is common to

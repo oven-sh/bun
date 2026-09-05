@@ -226,8 +226,10 @@ function ccacheEnv(cfg: Config): Record<string, string> {
     // source at different checkout locations shares cache entries.
     CCACHE_BASEDIR: cfg.cwd,
     CCACHE_NOHASHDIR: "1",
-    // Copy-on-write for cache entries — near-free on btrfs/APFS/ReFS.
-    CCACHE_FILECLONE: "1",
+    // Not CCACHE_FILECLONE: on APFS a cloned cache hit keeps the cache
+    // entry's mtime, so objects come out "older" than headers generated in
+    // the same run and the next build recompiles everything. Plain copies
+    // are stamped now.
     CCACHE_STATSLOG: resolve(cfg.buildDir, "ccache.log"),
   };
   if (!cfg.ci) {

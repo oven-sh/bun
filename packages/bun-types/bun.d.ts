@@ -1478,12 +1478,64 @@ declare module "bun" {
    */
   namespace YAML {
     /**
+     * Converts a node tagged with one of the tags in {@link ParseOptions.tags}.
+     *
+     * @param value The node without its tag: the text of a scalar (a tagged `123` is the string `"123"`),
+     *              the array of a sequence, or the object of a mapping. Tagged nodes inside it have
+     *              already been converted.
+     * @param tag The tag, spelled as in the `tags` option.
+     * @returns The value that takes the node's place in the result.
+     */
+    type TagHandler = (value: any, tag: string) => unknown;
+
+    interface ParseOptions {
+      /**
+       * Handlers for tagged nodes, keyed by tag: a local tag such as `"!env"`, a `"!!name"` tag of the
+       * `tag:yaml.org,2002:` namespace, or a full tag URI such as `"tag:example.com,2000:app/name"`.
+       * Tags that are not listed are ignored, as without this option. Every alias of an anchored
+       * tagged node shares the one value its handler returned.
+       *
+       * @example
+       * ```ts
+       * import { YAML } from "bun";
+       *
+       * const config = YAML.parse("port: !env [PORT, 3000]\nmotd: !upper hello", {
+       *   tags: {
+       *     ...YAML.tags,
+       *     "!upper": (text: string) => text.toUpperCase(),
+       *   },
+       * });
+       * // { port: 3000, motd: "HELLO" } when PORT is not set
+       * ```
+       */
+      tags?: Record<string, TagHandler>;
+    }
+
+    /**
+     * The tag handlers Bun provides. They are used only when passed as the `tags` option of {@link parse}.
+     *
+     * - `!env NAME` is `process.env.NAME`, or `undefined` when it is not set.
+     * - `!env [NAME, fallback]` is `fallback` when `NAME` is not set.
+     *
+     * @example
+     * ```ts
+     * import { YAML } from "bun";
+     *
+     * YAML.parse("home: !env HOME", { tags: YAML.tags }); // { home: "/home/me" }
+     * ```
+     */
+    const tags: {
+      readonly "!env": TagHandler;
+    };
+
+    /**
      * Parse a YAML string into a JavaScript value. Every alias (`*name`) of an anchored collection yields the
      * same object, and an alias may refer to a collection that contains it, so the result can be cyclic.
      *
      * @category Utilities
      *
      * @param input The YAML string to parse
+     * @param options Handlers for tagged nodes, see {@link ParseOptions}
      * @returns A JavaScript value, or an array of them for a multi-document stream
      *
      * @example
@@ -1496,9 +1548,10 @@ declare module "bun" {
      * console.log(YAML.parse("abc")) // "abc"
      * console.log(YAML.parse("- abc")) // [ "abc" ]
      * console.log(YAML.parse("abc: def")) // { "abc": "def" }
+     * console.log(YAML.parse("home: !env HOME", { tags: YAML.tags })) // { "home": "/home/me" }
      * ```
      */
-    export function parse(input: string): unknown;
+    export function parse(input: string, options?: ParseOptions): unknown;
 
     /**
      * Convert a JavaScript value into a YAML string. Strings are double quoted if they contain keywords, non-printable or

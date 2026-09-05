@@ -1336,6 +1336,42 @@ describe.concurrent(() => {
       expect(await new Response(child.stdout).text()).toBe("PASS\n");
     });
 
+    it.skipIf(isWindows)("a signal that arrives behind a storm of another signal is not lost", async () => {
+      // kill(2) to our own pid delivers the signal to the calling thread before
+      // the syscall returns, so there is no kernel coalescing, and nothing
+      // drains the pending signals until the script finishes. SIGHUP is 1 and
+      // SIGTERM is 15 on every POSIX platform, so the storm runs first.
+      await using child = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `
+          let hup = 0;
+          process.on("SIGHUP", () => { hup++; });
+          process.on("SIGTERM", () => {
+            console.log("SIGTERM after " + hup + " SIGHUP");
+            process.exit(0);
+          });
+          for (let i = 0; i < 10_000; i++) process.kill(process.pid, "SIGHUP");
+          process.kill(process.pid, "SIGTERM");
+          // Only reached when SIGTERM was dropped: every queued signal is
+          // delivered on the first loop tick.
+          setTimeout(() => {
+            console.log("SIGTERM lost after " + hup + " SIGHUP");
+            process.exit(1);
+          }, 3000);
+          `,
+        ],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "inherit",
+      });
+      const [stdout, exitCode] = await Promise.all([child.stdout.text(), child.exited]);
+      // One loop tick runs at most 8192 listener calls per signal number.
+      expect(stdout).toBe("SIGTERM after 8192 SIGHUP\n");
+      expect(exitCode).toBe(0);
+    });
+
     it.serial("process.kill(2) works", async () => {
       await using child = Bun.spawn({
         cmd: [bunExe(), process_sleep, "1000000"],

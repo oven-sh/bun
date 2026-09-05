@@ -2198,21 +2198,59 @@ impl TestCommand {
                     }
                 };
                 changed_module_graph_files = result.module_graph_files;
-                if result.test_files.is_empty() && result.changed_count == 0 {
+                if result.test_files.is_empty() && result.source_count == 0 {
                     pretty_error!("<r><d>--changed:<r> no changed files, nothing to run\n");
                     pass_with_no_tests_from_filter = true;
                 } else if result.test_files.is_empty() {
                     pretty_error!(
                         "<r><d>--changed:<r> {} changed file{}, but no test files are affected\n",
-                        result.changed_count,
-                        if result.changed_count == 1 { "" } else { "s" }
+                        result.source_count,
+                        if result.source_count == 1 { "" } else { "s" }
                     );
                     pass_with_no_tests_from_filter = true;
                 } else {
                     pretty_error!(
                         "<r><d>--changed:<r> {} changed file{}, running {}/{} test file{}\n",
-                        result.changed_count,
-                        if result.changed_count == 1 { "" } else { "s" },
+                        result.source_count,
+                        if result.source_count == 1 { "" } else { "s" },
+                        result.test_files.len(),
+                        result.total_tests,
+                        if result.total_tests == 1 { "" } else { "s" }
+                    );
+                }
+                Output::flush();
+                break 'brk result.test_files;
+            }
+        } else if !ctx.test_options.related_files.is_empty() {
+            'brk: {
+                let result = match ChangedFilesFilter::filter_related(
+                    &ctx,
+                    vm,
+                    &mut all_test_files[..],
+                    &ctx.test_options.related_files,
+                ) {
+                    Ok(r) => r,
+                    Err(err) => {
+                        Output::err(
+                            err,
+                            "--find-related-tests: unable to determine related tests",
+                            (),
+                        );
+                        Global::exit(1);
+                    }
+                };
+                if result.test_files.is_empty() {
+                    pretty_error!(
+                        "<r><d>--find-related-tests:<r> {} source file{}, but no test files are related\n",
+                        result.source_count,
+                        if result.source_count == 1 { "" } else { "s" }
+                    );
+                    pass_with_no_tests_from_filter = true;
+                } else {
+                    pretty_error!(
+                        "<r><d>--find-related-tests:<r> {} source file{}, running {}/{} test file{}\n",
+                        result.source_count,
+                        if result.source_count == 1 { "" } else { "s" },
                         result.test_files.len(),
                         result.total_tests,
                         if result.total_tests == 1 { "" } else { "s" }

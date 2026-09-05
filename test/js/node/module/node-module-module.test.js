@@ -107,6 +107,20 @@ describe.concurrent("node-module-module", () => {
     expect(exitCode).toBe(0);
   });
 
+  test("_stat reports directories, files, missing, empty and over-long paths", () => {
+    using dir = tempDir("module-stat", { "file.js": "", "sub": {} });
+    // On Windows the empty path (which is also what an over-long relative path
+    // is converted to) used to be probed relative to the cwd handle, which
+    // answered for the cwd itself (1).
+    expect({
+      directory: Module._stat(path.join(String(dir), "sub")),
+      file: Module._stat(path.join(String(dir), "file.js")),
+      missing: Module._stat(path.join(String(dir), "missing")),
+      empty: Module._stat(""),
+      overlong: Module._stat(Buffer.alloc(40000, "a").toString()),
+    }).toEqual({ directory: 1, file: 0, missing: -1, empty: -1, overlong: -1 });
+  });
+
   test("module.enableCompileCache validates its argument", () => {
     expect(Module.enableCompileCache.length).toBe(1);
     for (const invalid of [0, null, false, 1, NaN, true, Symbol(0)]) {

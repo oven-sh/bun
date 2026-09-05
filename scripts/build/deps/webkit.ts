@@ -1459,9 +1459,10 @@ function webkitFlags(wk: WebKitBuild): WebKitFlags {
         "/utf-8",
         "/validate-charset",
         ...(cfg.release ? ["/Ob2"] : ["/Ob0", "/FS"]),
-        // OptionsMSVC.cmake: /W4 (before any -Wno-*), MS include-resolution notes.
+        // OptionsMSVC.cmake: /W4, before any -Wno-*. (Its /Wmicrosoft-include
+        // fails cmake's flag probe under clang-cl and is dropped there, so it
+        // is not part of the build.)
         "/W4",
-        "/Wmicrosoft-include",
         ...webkitWarningFlags,
       ]
     : [

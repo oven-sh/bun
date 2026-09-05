@@ -2,7 +2,16 @@ import type { BunLockFile } from "bun";
 import { $, file, spawn } from "bun";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, setDefaultTimeout, test } from "bun:test";
 import { access, appendFile, copyFile, mkdir, readlink, rm, writeFile } from "fs/promises";
-import { bunExe, bunEnv as env, readdirSorted, tmpdirSync, toBeValidBin, toBeWorkspaceLink, toHaveBins } from "harness";
+import {
+  bunExe,
+  bunEnv as env,
+  readdirSorted,
+  tempDir,
+  tmpdirSync,
+  toBeValidBin,
+  toBeWorkspaceLink,
+  toHaveBins,
+} from "harness";
 import { join, relative, resolve } from "path";
 import { pathToFileURL } from "url";
 import {
@@ -2998,4 +3007,197 @@ it("bun add --trust keeps the new package when another --trust package is alread
       "b-scripted": "file:./b-scripted",
     },
   });
+});
+
+// Global installs live in <home>/.bun/install/global for the tests below. Every
+// location is pinned explicitly so BUN_INSTALL* variables from the environment
+// running the tests cannot redirect them.
+function globalInstallEnv(home: string) {
+  return {
+    ...env,
+    HOME: home,
+    BUN_INSTALL: join(home, ".bun"),
+    BUN_INSTALL_GLOBAL_DIR: join(home, ".bun", "install", "global"),
+    BUN_INSTALL_BIN: join(home, ".bun", "bin"),
+  };
+}
+
+// The global dir does not exist before the first `bun add -g`. `init` chdirs
+// into it and used to walk up looking for a package.json, so a project
+// package.json in $HOME became the "global" project: the dependency was added
+// to ~/package.json and installed into ~/node_modules. The first global add
+// must instead create <global>/package.json and install there.
+it("first `bun add -g` creates the global package.json instead of adopting ~/package.json", async () => {
+  const homeProject = JSON.stringify({ name: "home-project", private: true });
+  using home = tempDir("bun-add-global-home-project", {
+    "package.json": homeProject,
+    "pkg/package.json": JSON.stringify({ name: "pkg", version: "1.0.0" }),
+  });
+  const homeDir = String(home);
+  const globalDir = join(homeDir, ".bun", "install", "global");
+
+  const { stdout, stderr, exited } = spawn({
+    cmd: [bunExe(), "add", "-g", `file:${join(homeDir, "pkg").replaceAll("\\", "/")}`],
+    cwd: homeDir,
+    stdout: "pipe",
+    stdin: "pipe",
+    stderr: "pipe",
+    env: globalInstallEnv(homeDir),
+  });
+
+  const err = await stderr.text();
+  expect(err).not.toContain("error:");
+  const out = await stdout.text();
+  expect(out).toContain("installed pkg@");
+  expect(await exited).toBe(0);
+
+  expect(await file(join(globalDir, "package.json")).json()).toEqual({
+    dependencies: { pkg: expect.any(String) },
+  });
+  expect(await file(join(globalDir, "node_modules", "pkg", "package.json")).json()).toEqual({
+    name: "pkg",
+    version: "1.0.0",
+  });
+
+  // The home project gained no lockfile or node_modules, and its package.json is untouched.
+  expect(await readdirSorted(homeDir)).toEqual([".bun", "package.json", "pkg"]);
+  expect(await file(join(homeDir, "package.json")).text()).toBe(homeProject);
+});
+
+// https://github.com/oven-sh/bun/issues/30658
+// Same walk-up, different symptom: a stray package.json with an old npm v1
+// package-lock.json next to it in a parent directory (typically $HOME on
+// Windows) was adopted as the root project, and lockfile migration then failed
+// with "Please upgrade package-lock.json to lockfileVersion 2 or 3".
+it("`bun add -g` ignores package.json/package-lock.json above the global dir", async () => {
+  using home = tempDir("bun-add-global-parent-lockfile", {
+    // stray files in the parent of <home>/.bun/install/global
+    "package.json": JSON.stringify({ name: "stray-root", version: "1.0.0" }),
+    "package-lock.json": JSON.stringify({
+      name: "stray-root",
+      version: "1.0.0",
+      lockfileVersion: 1,
+      requires: true,
+      dependencies: {},
+    }),
+    ".bun": { install: { global: {} } },
+  });
+
+  const { stdout, stderr, exited } = spawn({
+    // point at an unreachable registry so we never touch the real network,
+    // but still exercise the full init/walk-up code path that used to fail.
+    cmd: [bunExe(), "add", "-g", "--registry=http://127.0.0.1:1/", "chalk"],
+    cwd: `${home}`,
+    stdout: "pipe",
+    stdin: "pipe",
+    stderr: "pipe",
+    env: globalInstallEnv(`${home}`),
+  });
+
+  const err = await stderr.text();
+  // the bug: the stray lockfile used to get picked up and migration failed here.
+  expect(err).not.toContain("Please upgrade package-lock.json");
+  expect(err).not.toContain("lockfileVersion");
+  await stdout.text();
+  // The install itself fails (registry is unreachable on purpose), but the
+  // failure must come after lockfile migration, not from it.
+  expect(await exited).not.toBe(0);
+
+  // And the stray root's package.json must not have been mutated.
+  expect(await file(join(`${home}`, "package.json")).text()).toBe(
+    JSON.stringify({ name: "stray-root", version: "1.0.0" }),
+  );
+});
+
+// https://github.com/oven-sh/bun/issues/28247
+// Same walk-up problem, different symptom: if a parent directory's
+// package.json defines `workspaces` (plus any `workspace:*` deps), global
+// install used to hop onto it as the workspace root and then fail to
+// resolve those workspace-scoped deps:
+// "error: Workspace dependency \"…\" not found"
+// Global installs shouldn't participate in a parent workspace at all.
+it("`bun add -g` ignores a workspaces package.json above the global dir", async () => {
+  using home = tempDir("bun-add-global-parent-workspaces", {
+    // parent package.json declares workspaces + a workspace-protocol dep
+    // that doesn't actually exist on disk, the same shape as the reports.
+    "package.json": JSON.stringify({
+      name: "stray-root",
+      version: "1.0.0",
+      workspaces: ["packages/*"],
+      dependencies: { "@scope/nonexistent": "workspace:*" },
+    }),
+    ".bun": { install: { global: {} } },
+  });
+
+  const { stdout, stderr, exited } = spawn({
+    cmd: [bunExe(), "add", "-g", "--registry=http://127.0.0.1:1/", "chalk"],
+    cwd: `${home}`,
+    stdout: "pipe",
+    stdin: "pipe",
+    stderr: "pipe",
+    env: globalInstallEnv(`${home}`),
+  });
+
+  const err = await stderr.text();
+  expect(err).not.toContain("Workspace dependency");
+  // If bun touches the parent workspace at all, its deps (this one in particular)
+  // would appear in the error output. They must not.
+  expect(err).not.toContain("@scope/nonexistent");
+  // Positive check: bun must have gotten *past* init into dependency
+  // resolution (and failed there on the unreachable registry), proving the
+  // walk-up path actually ran rather than an unrelated early init failure.
+  expect(err).toContain("Resolving dependencies");
+  await stdout.text();
+  expect(await exited).not.toBe(0);
+});
+
+// https://github.com/oven-sh/bun/issues/28247
+// The case above is caught by the walk-up break, because the global dir has
+// no package.json so the walk ascends to the parent. This variant instead
+// pins the *second* guard: the global dir already has a package.json (as it
+// would after a prior `bun add -g`), so the walk-up loop stops there on its
+// first iteration and the break never fires. The only thing that keeps the
+// parent workspace from being adopted as root is the `!cli.global` gate on
+// the workspace-root hop. The parent lists the global dir as a workspace
+// member so, without the gate, the hop adopts it and its `workspace:*` dep
+// fails to resolve.
+it("`bun add -g` does not adopt a parent workspace that lists the global dir", async () => {
+  using home = tempDir("bun-add-global-parent-workspace-member", {
+    "package.json": JSON.stringify({
+      name: "stray-root",
+      version: "1.0.0",
+      workspaces: [".bun/install/global"],
+      dependencies: { "@scope/nonexistent": "workspace:*" },
+    }),
+    // the global dir already has a package.json, so the walk-up loop stops
+    // here immediately and the first guard is never exercised.
+    ".bun": { install: { global: { "package.json": JSON.stringify({ name: "g", version: "1.0.0" }) } } },
+  });
+
+  const { stdout, stderr, exited } = spawn({
+    cmd: [bunExe(), "add", "-g", "--registry=http://127.0.0.1:1/", "chalk"],
+    cwd: `${home}`,
+    stdout: "pipe",
+    stdin: "pipe",
+    stderr: "pipe",
+    env: globalInstallEnv(`${home}`),
+  });
+
+  const err = await stderr.text();
+  expect(err).not.toContain("Workspace dependency");
+  expect(err).not.toContain("@scope/nonexistent");
+  // Positive check: resolution began, so init got past the workspace-root hop
+  // instead of erroring out early (which would pass the negative checks too).
+  expect(err).toContain("Resolving dependencies");
+  // The parent workspace must be left untouched, not adopted as the root.
+  expect(await file(join(`${home}`, "package.json")).text()).toBe(
+    JSON.stringify({
+      name: "stray-root",
+      version: "1.0.0",
+      workspaces: [".bun/install/global"],
+      dependencies: { "@scope/nonexistent": "workspace:*" },
+    }),
+  );
+  await stdout.text();
+  expect(await exited).not.toBe(0);
 });

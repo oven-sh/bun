@@ -6,7 +6,6 @@ use crate::options::Loader;
 use crate::Error;
 use crate::options::{OutputKind, Side};
 use bun_core::String as BunString;
-use bun_paths::PathBuffer;
 use bun_paths::fs;
 use bun_paths::resolve_path::{self, platform};
 use bun_sys::Fd;
@@ -232,7 +231,7 @@ impl OutputFile {
                     bun_sys::Dir::borrow(&root_dir).make_path(parent)?;
                 }
 
-                let mut path_buf = PathBuffer::uninit();
+                let mut path_buf = bun_paths::path_buffer_pool::get();
                 let _ = bun_sys::write_file_with_path_buffer(
                     &mut path_buf,
                     &bun_sys::WriteFileArgs {
@@ -252,14 +251,14 @@ impl OutputFile {
     }
 
     pub(crate) fn copy_to(&self, rel_path: &[u8], dir: Fd) -> Result<(), Error> {
-        let mut out_buf = PathBuffer::uninit();
+        let mut out_buf = bun_paths::path_buffer_pool::get();
         let fd_out = bun_sys::openat(
             dir,
             resolve_path::z(rel_path, &mut out_buf),
             bun_sys::O::WRONLY | bun_sys::O::CREAT | bun_sys::O::TRUNC,
             0o644,
         )?;
-        let mut in_buf = PathBuffer::uninit();
+        let mut in_buf = bun_paths::path_buffer_pool::get();
         let fd_in = bun_sys::openat(
             Fd::cwd(),
             resolve_path::z(self.src_path.text, &mut in_buf),

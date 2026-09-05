@@ -224,7 +224,7 @@ impl<'a, const PATH_STYLE: IteratorPathStyle> Iterator<'a, PATH_STYLE> {
             hoisted_dependencies,
             dependencies,
             string_bytes,
-            path_buf: PathBuffer::uninit(),
+            path_buf: PathBuffer::ZEROED,
             depth_stack: depth_buf_uninit(),
         };
         if PATH_STYLE == IteratorPathStyle::NodeModules {

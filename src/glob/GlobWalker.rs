@@ -47,10 +47,9 @@ pub(crate) fn statat_windows(fd: Fd, path: &ZStr) -> Maybe<Stat> {
     // passing the same buffer as both `join_z_buf`'s output and an input part,
     // so we need two buffers — but on Windows `PathBuffer` is ~96 KB,
     // and this is called from deep inside `Iterator::next()` (via `lstatat`
-    // for `FileKind::Unknown`), so two stack `PathBuffer`s (~192 KB, zero-
-    // initialized by `PathBuffer::uninit()`) risk overflowing the smaller
-    // worker-thread stacks. Draw both from the per-thread heap pool instead
-    // (uninit, RAII-returned) — zero stack footprint, no zero-fill.
+    // for `FileKind::Unknown`), so two stack `PathBuffer`s (~192 KB) risk
+    // overflowing the smaller worker-thread stacks. Draw both from the
+    // per-thread heap pool instead (RAII-returned) — zero stack footprint.
     let mut dir_buf = bun_paths::path_buffer_pool::get();
     let dir = Syscall::get_fd_path(fd, &mut dir_buf)?;
     let parts: &[&[u8]] = &[&dir[..], path.as_bytes()];
@@ -256,7 +255,7 @@ pub struct GlobWalker<A: Accessor, const SENTINEL: bool> {
     pub(crate) error_on_broken_symlinks: bool,
     pub(crate) only_files: bool,
 
-    pub(crate) path_buf: Box<PathBuffer>,
+    pub(crate) path_buf: bun_paths::path_buffer_pool::Guard,
     // iteration state
     pub(crate) workbuf: Vec<WorkItem<A>>,
 
@@ -319,7 +318,7 @@ pub enum IterState<A: Accessor> {
 pub struct Directory<A: Accessor> {
     pub(crate) fd: A::Handle,
     pub(crate) iter: A::DirIter,
-    pub(crate) path: Box<PathBuffer>,
+    pub(crate) path: bun_paths::path_buffer_pool::Guard,
     // The dir path is a prefix of `path` (self-referential).
     // Store the length and reconstruct on demand.
     pub(crate) dir_path_len: usize,
@@ -555,7 +554,7 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
         log!("transition => {}", bstr::BStr::new(work_item_path));
         // Build the Directory in a local and assign at the end (borrowck:
         // mutating `iter_state` in place would overlap the `self.walker` borrow).
-        let mut dir_path_buf = Box::new(PathBuffer::uninit());
+        let mut dir_path_buf = bun_paths::path_buffer_pool::get();
         let mut dir_path_len: usize = 'dir_path: {
             if ROOT {
                 if !self.walker.absolute {
@@ -1450,7 +1449,7 @@ impl<A: Accessor, const SENTINEL: bool> GlobWalker<A, SENTINEL> {
             end_byte_of_basename_excluding_special_syntax: 0,
             pattern_components: Vec::new(),
             matched_paths: MatchedMap::default(),
-            path_buf: Box::new(PathBuffer::uninit()),
+            path_buf: bun_paths::path_buffer_pool::get(),
             workbuf: Vec::new(),
             followed_links: Vec::new(),
             is_ignored: ignore_filter_fn.unwrap_or(dummy_filter_false),

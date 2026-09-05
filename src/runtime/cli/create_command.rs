@@ -614,7 +614,7 @@ impl CreateCommand {
                 };
 
                 #[cfg(windows)]
-                let mut destination_buf: bun_paths::WPathBuffer = bun_paths::WPathBuffer::uninit();
+                let mut destination_buf = bun_paths::w_path_buffer_pool::get();
                 #[cfg(windows)]
                 let dst_without_trailing_slash: &[u8] =
                     strings::without_trailing_slash(destination);
@@ -625,8 +625,7 @@ impl CreateCommand {
                 }
 
                 #[cfg(windows)]
-                let mut template_path_buf: bun_paths::WPathBuffer =
-                    bun_paths::WPathBuffer::uninit();
+                let mut template_path_buf = bun_paths::w_path_buffer_pool::get();
                 #[cfg(windows)]
                 let src_without_trailing_slash: &[u8] =
                     strings::without_trailing_slash(abs_template_path);

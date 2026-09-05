@@ -466,7 +466,7 @@ impl<'a> Transpiler<'a> {
         match self._resolve_entry_point(entry_point) {
             Ok(r) => self.reject_unbundleable_entry_point(r, entry_point),
             Err(err) => {
-                let mut cache_bust_buf = bun_paths::PathBuffer::uninit();
+                let mut cache_bust_buf = bun_paths::path_buffer_pool::get();
 
                 // Bust directory cache and try again
                 // reshaped for borrowck — a single labelled block would
@@ -1763,7 +1763,7 @@ impl<'a> Transpiler<'a> {
                                     // No shared const for the bytecode extension
                                     // in `bun_core` yet, so inline the literal.
                                     const BYTECODE_EXT: &[u8] = b".jsc";
-                                    let mut path_buf2 = bun_paths::PathBuffer::uninit();
+                                    let mut path_buf2 = bun_paths::path_buffer_pool::get();
                                     let n = path.text.len();
                                     let total = n + BYTECODE_EXT.len();
                                     // `ZStr::from_buf` needs `buf[total] == 0`

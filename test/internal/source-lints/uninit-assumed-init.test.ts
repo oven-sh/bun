@@ -18,12 +18,10 @@ import { globAllSources } from "../../../scripts/glob-sources.ts";
 // `[MaybeUninit<T>; N]` instead, written with `write_copy_of_slice` / `write`
 // and read back through `assume_init_ref` on the written prefix. See
 // `bun_url::URL::join_normalize` and `bun_paths::resolve_path::join_string_buf_t`.
-//
-// `PathBuffer::uninit` and `WPathBuffer::uninit` in `src/bun_core/util.rs`
-// still use the pattern. Their ~400 call sites need an initialized-prefix API
-// (or the path buffer pool) before they can change. This lint keeps that set
-// from growing; remove the entry when those two are fixed.
-const KNOWN_SITES = ["src/bun_core/util.rs"];
+// Scratch path storage comes from `bun_core::path_buffer_pool`, which zeroes
+// a buffer once on allocation and reuses it (issue #41437 covers the old
+// `PathBuffer::uninit` / `WPathBuffer::uninit` constructors).
+const KNOWN_SITES: string[] = [];
 
 const root = path.resolve(import.meta.dir, "..", "..", "..");
 const rustSources = globAllSources().rust.filter(p => p.endsWith(".rs"));

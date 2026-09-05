@@ -695,11 +695,19 @@ pub type OSPathSlice<'a> = &'a [OSPathChar];
 
 pub use bun_alloc::SEP;
 
-/// `[u8; MAX_PATH_BYTES]` stack buffer for path syscalls.
+/// `[u8; MAX_PATH_BYTES]` scratch buffer for path syscalls.
 ///
 /// Canonical definition; `bun_paths::PathBuffer` re-exports this so the two
 /// crates share ONE nominal type and callers can pass a `bun_paths` buffer to
 /// `bun_core::getcwd`/`which` without a pointer cast.
+///
+/// Scratch instances come from [`crate::path_buffer_pool::get`], which zeroes
+/// a buffer once on allocation and then reuses it. On Windows `MAX_PATH_BYTES`
+/// is 98 302 (vs 4 096 Linux / 1 024 macOS), so a by-value `ZEROED` at every
+/// call site would be a ~100 KB `memset` per call, and a by-value buffer whose
+/// bytes are never written is UB (a `u8` must be initialized; "every bit
+/// pattern is valid" does not cover uninitialized memory). `ZEROED` / `Default`
+/// are for long-lived struct fields.
 ///
 /// NOTE on alignment: `os_path_kernel32` (Windows) reinterprets a
 /// `&mut PathBuffer` as `&mut [u16]` via [`bytes_as_slice_mut`]. The language
@@ -714,23 +722,6 @@ pub use bun_alloc::SEP;
 pub struct PathBuffer(pub [u8; MAX_PATH_BYTES]);
 impl PathBuffer {
     pub const ZEROED: Self = Self([0; MAX_PATH_BYTES]);
-    /// The bytes are immediately overwritten by the syscall
-    /// that fills it, so the initial contents are never observed.
-    ///
-    /// On Windows `MAX_PATH_BYTES` is 98 302 (vs 4 096 Linux / 1 024 macOS), so
-    /// the previous `Self::ZEROED` body here was a ~100 KB `memset` at every
-    /// one of the ~400 call sites — turning hot loops (glob scan, module load,
-    /// stack-trace formatting) into multi-GB zero-fill workloads and timing out
-    /// the leak/stress tests. Leave the bytes uninit.
-    #[inline]
-    #[allow(invalid_value, clippy::uninit_assumed_init)]
-    pub fn uninit() -> Self {
-        // SAFETY: `PathBuffer` is `repr(transparent)` over `[u8; N]`; every bit
-        // pattern is a valid `u8`, and callers treat this as a write-only
-        // scratch buffer (length-tracked). No byte is read before being
-        // written by the consuming syscall / encoder.
-        unsafe { core::mem::MaybeUninit::uninit().assume_init() }
-    }
     #[inline]
     pub fn as_mut_slice(&mut self) -> &mut [u8] {
         &mut self.0
@@ -743,7 +734,7 @@ impl PathBuffer {
 impl Default for PathBuffer {
     #[inline]
     fn default() -> Self {
-        Self::uninit()
+        Self::ZEROED
     }
 }
 impl core::ops::Deref for PathBuffer {
@@ -761,22 +752,13 @@ impl core::ops::DerefMut for PathBuffer {
 }
 
 /// `[u16; PATH_MAX_WIDE]` wide path buffer. Same newtype shape as [`PathBuffer`].
+/// Scratch instances come from `bun_paths::w_path_buffer_pool::get()`: 32 767
+/// `u16`s (~64 KB) per Windows syscall for UTF-8→UTF-16 path conversion, so a
+/// by-value zero-fill would dominate the hot path.
 #[repr(transparent)]
 pub struct WPathBuffer(pub [u16; PATH_MAX_WIDE]);
 impl WPathBuffer {
     pub const ZEROED: Self = Self([0; PATH_MAX_WIDE]);
-    /// See [`PathBuffer::uninit`] — `PATH_MAX_WIDE` is
-    /// 32 767 `u16`s (~64 KB), and these are allocated per Windows syscall
-    /// for UTF-8→UTF-16 path conversion, so zero-initialising dominated the
-    /// hot path on Windows.
-    #[inline]
-    #[allow(invalid_value, clippy::uninit_assumed_init)]
-    pub fn uninit() -> Self {
-        // SAFETY: `repr(transparent)` over `[u16; N]`; every bit pattern is a
-        // valid `u16`. Callers treat this as a write-only scratch buffer and
-        // track the written length out-of-band.
-        unsafe { core::mem::MaybeUninit::uninit().assume_init() }
-    }
     #[inline]
     pub fn as_mut_slice(&mut self) -> &mut [u16] {
         &mut self.0
@@ -785,7 +767,7 @@ impl WPathBuffer {
 impl Default for WPathBuffer {
     #[inline]
     fn default() -> Self {
-        Self::uninit()
+        Self::ZEROED
     }
 }
 impl core::ops::Deref for WPathBuffer {
@@ -4655,7 +4637,7 @@ fn spawn_sync_inherit_impl(
         #[cfg(any(target_os = "linux", target_os = "freebsd"))]
         let pid: libc::pid_t = {
             let arg0 = argv[0].as_ref();
-            let mut pathbuf = PathBuffer::uninit();
+            let mut pathbuf = crate::path_buffer_pool::get();
             let exe: *const core::ffi::c_char = if crate::strings::contains_char(arg0, b'/') {
                 // Contains a separator → use as-is (execve resolves relative
                 // to cwd, matching posix_spawnp semantics for non-bare names).

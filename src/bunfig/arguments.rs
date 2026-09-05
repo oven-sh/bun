@@ -86,7 +86,7 @@ fn load_global_bunfig(cmd: CommandTag, ctx: Context<'_>) -> Result<(), crate::Er
     }
     ctx.has_loaded_global_config = true;
 
-    let mut config_buf = PathBuffer::uninit();
+    let mut config_buf = bun_paths::path_buffer_pool::get();
     if let Some(path) = get_home_config_path(&mut config_buf) {
         load_bunfig(cmd, true, path, ctx)?;
     }
@@ -150,7 +150,7 @@ pub fn load_config(
         }
     }
 
-    let mut config_buf = PathBuffer::uninit();
+    let mut config_buf = bun_paths::path_buffer_pool::get();
     if cmd.read_global_config() {
         if !ctx.has_loaded_global_config {
             ctx.has_loaded_global_config = true;
@@ -200,7 +200,7 @@ pub fn load_config(
         config_path_len = config_path_.len();
     } else {
         if ctx.args.absolute_working_dir.is_none() {
-            let mut secondbuf = PathBuffer::uninit();
+            let mut secondbuf = bun_paths::path_buffer_pool::get();
             let cwd_len = match bun_sys::getcwd(&mut *secondbuf) {
                 Ok(n) => n,
                 Err(_) => return Ok(()),

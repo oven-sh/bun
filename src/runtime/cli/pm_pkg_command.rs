@@ -10,7 +10,7 @@ use bun_core::{Global, Output};
 use bun_install::PackageManager;
 use bun_js_printer as js_printer;
 use bun_parsers::json;
-use bun_paths::{self as path, PathBuffer};
+use bun_paths as path;
 use bun_sys;
 
 pub(crate) struct PmPkgCommand;
@@ -118,7 +118,7 @@ impl PmPkgCommand {
     }
 
     fn find_package_json(cwd: &[u8]) -> Result<Box<[u8]>, Error> {
-        let mut path_buf = PathBuffer::uninit();
+        let mut path_buf = bun_paths::path_buffer_pool::get();
         let mut current_dir = cwd;
 
         loop {
@@ -412,7 +412,7 @@ impl PmPkgCommand {
                         if pkg_dir.is_empty() {
                             pkg_dir = cwd;
                         }
-                        let mut buf = PathBuffer::uninit();
+                        let mut buf = bun_paths::path_buffer_pool::get();
                         let full_path = path::resolve_path::join_abs_string_buf_z::<
                             path::platform::Auto,
                         >(pkg_dir, &mut buf, &[bin_path]);

@@ -738,6 +738,28 @@ static bool isModuleEvaluating(JSC::AbstractModuleRecord* record)
     return cyclic && cyclic->status() == JSC::CyclicModuleRecord::Status::Evaluating;
 }
 
+// No load of this entry is in flight: it evaluated (maybe with an error) or its load failed.
+static bool isModuleLoadSettled(JSC::ModuleRegistryEntry* entry)
+{
+    switch (entry->status()) {
+    case JSC::ModuleRegistryEntry::Status::New:
+    case JSC::ModuleRegistryEntry::Status::Fetching:
+        return false;
+    case JSC::ModuleRegistryEntry::Status::FetchFailed:
+    case JSC::ModuleRegistryEntry::Status::InstantiationFailed:
+    case JSC::ModuleRegistryEntry::Status::EvaluationFailed:
+        return true;
+    case JSC::ModuleRegistryEntry::Status::Fetched:
+        break;
+    }
+    auto* record = entry->record();
+    if (!record)
+        return false;
+    if (auto* cyclic = dynamicDowncast<JSC::CyclicModuleRecord>(record))
+        return cyclic->status() == JSC::CyclicModuleRecord::Status::Evaluated;
+    return record->moduleEnvironmentMayBeNull() != nullptr;
+}
+
 JSC_DEFINE_HOST_FUNCTION(functionEsmNamespaceForCjs, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     auto& vm = JSC::getVM(globalObject);
@@ -765,6 +787,11 @@ JSC_DEFINE_HOST_FUNCTION(functionEsmRegistryDelete, (JSC::JSGlobalObject * globa
     auto key = JSC::Identifier::fromString(vm, asString(keyValue)->value(globalObject));
     RETURN_IF_EXCEPTION(scope, {});
     auto* moduleLoader = globalObject->moduleLoader();
+    // A module whose load is in flight is not in require.cache and is not evicted.
+    for (auto& [mapKey, entry] : moduleLoader->moduleMap()) {
+        if (mapKey.first == key.impl() && entry && !isModuleLoadSettled(entry.get()))
+            return JSValue::encode(jsBoolean(false));
+    }
     // JSModuleLoader::visitChildrenImpl iterates these maps on the GC thread
     // under cellLock(); take the same lock so the removal can't race it.
     WTF::Locker locker { moduleLoader->cellLock() };

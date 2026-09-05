@@ -122,10 +122,6 @@ bool findHTTP2PseudoHeaderName(WTF::StringView, HTTP2PseudoHeaderName&);
 
 #define HTTP_HEADERS_INDEX_ENTRY(literal, name) name,
 
-#define HTTP_HEADERS_ACCESSOR_DEFINITIONS(literal, name)                                     \
-    JSC::Identifier& name##Identifier(JSC::VM& vm) { return identifierAt(vm, Index::name); } \
-    JSC::JSString* name##String(JSC::JSGlobalObject* g) { return stringAt(g, Index::name); }
-
 // Per-VM cache: one Identifier and one JSString per header name, for the lifetime of the VM.
 class HTTPHeaderIdentifiers {
 public:
@@ -136,9 +132,6 @@ public:
         Count
     };
     // clang-format on
-
-    HTTP_HEADERS_EACH_NAME(HTTP_HEADERS_ACCESSOR_DEFINITIONS)
-    HTTP2_PSEUDO_HEADERS_EACH_NAME(HTTP_HEADERS_ACCESSOR_DEFINITIONS)
 
     HTTPHeaderIdentifiers();
 
@@ -155,9 +148,7 @@ private:
     static constexpr size_t PseudoOffset = numHTTPHeaderNames;
 
     JSC::Identifier& identifierAt(JSC::VM&, size_t);
-    JSC::Identifier& identifierAt(JSC::VM& vm, Index i) { return identifierAt(vm, static_cast<size_t>(i)); }
     JSC::JSString* stringAt(JSC::JSGlobalObject* g, size_t i) { return m_strings[i].getInitializedOnMainThread(g); }
-    JSC::JSString* stringAt(JSC::JSGlobalObject* g, Index i) { return stringAt(g, static_cast<size_t>(i)); }
 
     JSC::LazyProperty<JSC::JSGlobalObject, JSC::JSString> m_strings[Count];
     JSC::Identifier m_identifiers[Count];
@@ -166,4 +157,3 @@ private:
 } // namespace WebCore
 
 #undef HTTP_HEADERS_INDEX_ENTRY
-#undef HTTP_HEADERS_ACCESSOR_DEFINITIONS

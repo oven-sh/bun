@@ -514,16 +514,4 @@ JSC::JSValue toJSNewlyCreated(JSC::JSGlobalObject*, JSDOMGlobalObject* globalObj
     return createWrapper<URLPattern>(globalObject, WTF::move(impl));
 }
 
-JSC::JSValue toJS(JSC::JSGlobalObject* lexicalGlobalObject, JSDOMGlobalObject* globalObject, URLPattern& impl)
-{
-    return wrap(lexicalGlobalObject, globalObject, impl);
-}
-
-URLPattern* JSURLPattern::toWrapped(JSC::VM&, JSC::JSValue value)
-{
-    if (auto* wrapper = dynamicDowncast<JSURLPattern>(value))
-        return &wrapper->wrapped();
-    return nullptr;
-}
-
 }

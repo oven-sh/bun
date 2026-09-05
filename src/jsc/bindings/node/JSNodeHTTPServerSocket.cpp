@@ -43,12 +43,6 @@ JSNodeHTTPServerSocket* JSNodeHTTPServerSocket::create(JSC::VM& vm, JSC::Structu
     return object;
 }
 
-JSNodeHTTPServerSocket* JSNodeHTTPServerSocket::create(JSC::VM& vm, Zig::GlobalObject* globalObject, us_socket_t* socket, bool is_ssl, WebCore::JSNodeHTTPResponse* response)
-{
-    auto* structure = globalObject->m_JSNodeHTTPServerSocketStructure.getInitializedOnMainThread(globalObject);
-    return create(vm, structure, socket, is_ssl, response);
-}
-
 template<bool SSL>
 void JSNodeHTTPServerSocket::clearSocketData(bool upgraded, us_socket_t* socket)
 {

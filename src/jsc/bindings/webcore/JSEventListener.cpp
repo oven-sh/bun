@@ -43,10 +43,9 @@
 namespace WebCore {
 using namespace JSC;
 
-JSEventListener::JSEventListener(JSObject* function, JSObject* wrapper, bool isAttribute, CreatedFromMarkup createdFromMarkup, DOMWrapperWorld& isolatedWorld)
+JSEventListener::JSEventListener(JSObject* function, JSObject* wrapper, bool isAttribute, DOMWrapperWorld& isolatedWorld)
     : EventListener(JSEventListenerType)
     , m_isAttribute(isAttribute)
-    , m_wasCreatedFromMarkup(createdFromMarkup == CreatedFromMarkup::Yes)
     , m_isInitialized(false)
     , m_wrapper(wrapper)
     , m_isolatedWorld(&isolatedWorld)
@@ -84,7 +83,7 @@ void JSEventListener::willDestroyVM()
 
 Ref<JSEventListener> JSEventListener::create(JSC::JSObject& listener, JSC::JSObject& wrapper, bool isAttribute, DOMWrapperWorld& world)
 {
-    return adoptRef(*new JSEventListener(&listener, &wrapper, isAttribute, CreatedFromMarkup::No, world));
+    return adoptRef(*new JSEventListener(&listener, &wrapper, isAttribute, world));
 }
 
 JSObject* JSEventListener::initializeJSFunction(ScriptExecutionContext&) const
@@ -98,7 +97,6 @@ void JSEventListener::replaceJSFunctionForAttributeListener(JSObject* function, 
     ASSERT(function);
     ASSERT(wrapper);
 
-    m_wasCreatedFromMarkup = false;
     m_jsFunction = Weak { function };
     if (m_isInitialized)
         ASSERT(m_wrapper.get() == wrapper);
@@ -276,21 +274,6 @@ bool JSEventListener::operator==(const EventListener& listener) const
         return false;
     auto& other = downcast<JSEventListener>(listener);
     return m_jsFunction == other.m_jsFunction && m_isAttribute == other.m_isAttribute;
-}
-
-String JSEventListener::functionName() const
-{
-    if (!m_wrapper || !m_jsFunction || !m_isolatedWorld)
-        return {};
-
-    auto& vm = m_isolatedWorld->vm();
-    JSC::JSLockHolder lock(vm);
-
-    auto* handlerFunction = dynamicDowncast<JSC::JSFunction>(m_jsFunction.get());
-    if (!handlerFunction)
-        return {};
-
-    return handlerFunction->name(vm);
 }
 
 } // namespace WebCore

@@ -50,10 +50,6 @@ function header() {
             }                                                                                                                                                                       
             void initializeProperties(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSObject* prototype);   
             
-            
-            // Must be defined for each specialization class.
-            static JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES construct(JSC::JSGlobalObject*, JSC::CallFrame*);
-                                                                                                                                                               
         private:                                                                                                                                                                    
             ${constructor}(JSC::VM& vm, JSC::Structure* structure, JSC::NativeFunction nativeFunction)                                                                  
                 : Base(vm, structure, nativeFunction, nativeFunction)                                                                                                               
@@ -726,11 +722,6 @@ void ${constructor}::finishCreation(VM& vm, JSC::JSGlobalObject* globalObject, J
     ASSERT(inherits(info()));
     initializeProperties(vm, globalObject, prototype);
 }
-
-JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES ${constructor}::construct(JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame) {
-    return ${name}__construct(globalObject, callFrame);
-}
-
 
 void ${constructor}::initializeProperties(VM& vm, JSC::JSGlobalObject* globalObject, JSObject* prototype)
 {

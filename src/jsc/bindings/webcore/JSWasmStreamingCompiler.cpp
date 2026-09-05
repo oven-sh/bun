@@ -13,18 +13,6 @@ namespace WebCore {
 
 using namespace JSC;
 
-// Define the toWrapped template function for WasmStreamingCompiler
-template<typename ExceptionThrower>
-Wasm::StreamingCompiler* toWrapped(JSGlobalObject& lexicalGlobalObject, ExceptionThrower&& exceptionThrower, JSValue value)
-{
-    auto& vm = getVM(&lexicalGlobalObject);
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    auto* impl = JSWasmStreamingCompiler::toWrapped(vm, value);
-    if (!impl) [[unlikely]]
-        exceptionThrower(lexicalGlobalObject, scope);
-    return impl;
-}
-
 static JSC_DECLARE_HOST_FUNCTION(jsWasmStreamingCompilerPrototypeFunction_addBytes);
 static JSC_DECLARE_HOST_FUNCTION(jsWasmStreamingCompilerPrototypeFunction_finalize);
 static JSC_DECLARE_HOST_FUNCTION(jsWasmStreamingCompilerPrototypeFunction_fail);
@@ -97,11 +85,6 @@ JSObject* JSWasmStreamingCompiler::createPrototype(VM& vm, JSDOMGlobalObject& gl
     auto* structure = JSWasmStreamingCompilerPrototype::createStructure(vm, &globalObject, globalObject.objectPrototype());
     structure->setMayBePrototype(true);
     return JSWasmStreamingCompilerPrototype::create(vm, &globalObject, structure);
-}
-
-JSObject* JSWasmStreamingCompiler::prototype(VM& vm, JSDOMGlobalObject& globalObject)
-{
-    return getDOMPrototype<JSWasmStreamingCompiler>(vm, globalObject);
 }
 
 void JSWasmStreamingCompiler::destroy(JSCell* cell)
@@ -204,18 +187,6 @@ void JSWasmStreamingCompiler::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
 JSValue toJSNewlyCreated(JSGlobalObject*, JSDOMGlobalObject* globalObject, Ref<Wasm::StreamingCompiler>&& impl)
 {
     return createWrapper<Wasm::StreamingCompiler>(globalObject, WTF::move(impl));
-}
-
-JSValue toJS(JSGlobalObject* lexicalGlobalObject, JSDOMGlobalObject* globalObject, Wasm::StreamingCompiler& impl)
-{
-    return wrap(lexicalGlobalObject, globalObject, impl);
-}
-
-Wasm::StreamingCompiler* JSWasmStreamingCompiler::toWrapped(VM& vm, JSValue value)
-{
-    if (auto* wrapper = dynamicDowncast<JSWasmStreamingCompiler>(value))
-        return &wrapper->wrapped();
-    return nullptr;
 }
 
 }

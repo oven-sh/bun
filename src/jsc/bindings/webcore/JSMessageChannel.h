@@ -37,7 +37,6 @@ public:
 
     static JSC::JSObject* createPrototype(JSC::VM&, JSDOMGlobalObject&);
     static JSC::JSObject* prototype(JSC::VM&, JSDOMGlobalObject&);
-    static MessageChannel* toWrapped(JSC::VM&, JSC::JSValue);
     static void destroy(JSC::JSCell*);
 
     DECLARE_INFO;
@@ -67,8 +66,6 @@ protected:
     DECLARE_DEFAULT_FINISH_CREATION;
 };
 
-JSC::JSValue toJS(JSC::JSGlobalObject*, JSDOMGlobalObject*, MessageChannel&);
-inline JSC::JSValue toJS(JSC::JSGlobalObject* lexicalGlobalObject, JSDOMGlobalObject* globalObject, MessageChannel* impl) { return impl ? toJS(lexicalGlobalObject, globalObject, *impl) : JSC::jsNull(); }
 JSC::JSValue toJSNewlyCreated(JSC::JSGlobalObject*, JSDOMGlobalObject*, Ref<MessageChannel>&&);
 inline JSC::JSValue toJSNewlyCreated(JSC::JSGlobalObject* lexicalGlobalObject, JSDOMGlobalObject* globalObject, RefPtr<MessageChannel>&& impl) { return impl ? toJSNewlyCreated(lexicalGlobalObject, globalObject, impl.releaseNonNull()) : JSC::jsNull(); }
 

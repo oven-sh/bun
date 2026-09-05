@@ -33,9 +33,7 @@
 #include "ErrorEvent.h"
 
 #include "DOMWrapperWorld.h"
-#include "EventNames.h"
 #include <JavaScriptCore/HeapInlines.h>
-#include <JavaScriptCore/StrongInlines.h>
 #include <wtf/TZoneMallocInlines.h>
 
 namespace WebCore {
@@ -50,21 +48,6 @@ ErrorEvent::ErrorEvent(const AtomString& type, const Init& initializer, IsTruste
     , m_lineNumber(initializer.lineno)
     , m_columnNumber(initializer.colno)
     , m_error(initializer.error)
-{
-}
-
-ErrorEvent::ErrorEvent(const AtomString& type, const String& message, const String& fileName, unsigned lineNumber, unsigned columnNumber, JSC::Strong<JSC::Unknown> error)
-    : Event(ErrorEventInterfaceType, type, CanBubble::No, IsCancelable::Yes)
-    , m_message(message)
-    , m_fileName(fileName)
-    , m_lineNumber(lineNumber)
-    , m_columnNumber(columnNumber)
-    , m_error(error.get())
-{
-}
-
-ErrorEvent::ErrorEvent(const String& message, const String& fileName, unsigned lineNumber, unsigned columnNumber, JSC::Strong<JSC::Unknown> error)
-    : ErrorEvent(eventNames().errorEvent, message, fileName, lineNumber, columnNumber, error)
 {
 }
 

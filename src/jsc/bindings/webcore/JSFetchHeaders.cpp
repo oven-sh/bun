@@ -507,7 +507,6 @@ JSC_DEFINE_HOST_FUNCTION(jsFetchHeadersPrototypeFunction_set, (JSGlobalObject * 
 }
 
 struct FetchHeadersIteratorTraits {
-    static constexpr JSDOMIteratorType type = JSDOMIteratorType::Map;
     using KeyType = IDLDOMString;
     using ValueType = IDLDOMString;
 };
@@ -689,12 +688,5 @@ JSC::JSValue toJSNewlyCreated(JSC::JSGlobalObject*, JSDOMGlobalObject* globalObj
 JSC::JSValue toJS(JSC::JSGlobalObject* lexicalGlobalObject, JSDOMGlobalObject* globalObject, FetchHeaders& impl)
 {
     return wrap(lexicalGlobalObject, globalObject, impl);
-}
-
-FetchHeaders* JSFetchHeaders::toWrapped(JSC::VM& vm, JSC::JSValue value)
-{
-    if (auto* wrapper = dynamicDowncast<JSFetchHeaders>(value))
-        return &wrapper->wrapped();
-    return nullptr;
 }
 }

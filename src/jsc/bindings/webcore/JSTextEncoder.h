@@ -40,7 +40,6 @@ public:
 
     static JSC::JSObject* createPrototype(JSC::VM&, JSDOMGlobalObject&);
     static JSC::JSObject* prototype(JSC::VM&, JSDOMGlobalObject&);
-    static TextEncoder* toWrapped(JSC::VM&, JSC::JSValue);
     static void destroy(JSC::JSCell*);
 
     DECLARE_INFO;
@@ -66,8 +65,6 @@ protected:
     void finishCreation(JSC::VM&);
 };
 
-JSC::JSValue toJS(JSC::JSGlobalObject*, JSDOMGlobalObject*, TextEncoder&);
-inline JSC::JSValue toJS(JSC::JSGlobalObject* lexicalGlobalObject, JSDOMGlobalObject* globalObject, TextEncoder* impl) { return impl ? toJS(lexicalGlobalObject, globalObject, *impl) : JSC::jsNull(); }
 JSC::JSValue toJSNewlyCreated(JSC::JSGlobalObject*, JSDOMGlobalObject*, Ref<TextEncoder>&&);
 inline JSC::JSValue toJSNewlyCreated(JSC::JSGlobalObject* lexicalGlobalObject, JSDOMGlobalObject* globalObject, RefPtr<TextEncoder>&& impl) { return impl ? toJSNewlyCreated(lexicalGlobalObject, globalObject, impl.releaseNonNull()) : JSC::jsNull(); }
 

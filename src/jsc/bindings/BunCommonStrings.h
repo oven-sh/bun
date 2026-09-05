@@ -42,8 +42,6 @@
     macro(httpMSEARCH, "M-SEARCH") \
     macro(httpNOTIFY, "NOTIFY") \
     macro(httpOPTIONS, "OPTIONS") \
-    macro(OperationFailed, "The operation failed.") \
-    macro(OperationTimedOut, "The operation timed out.") \
     /* node's AbortError default message, which unlike the DOMException one has no trailing period: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/errors.js#L980 */ \
     macro(OperationWasAborted, "The operation was aborted") \
     macro(httpPATCH, "PATCH") \

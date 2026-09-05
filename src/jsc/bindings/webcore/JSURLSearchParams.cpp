@@ -659,7 +659,6 @@ JSC_DEFINE_HOST_FUNCTION(jsURLSearchParamsPrototypeFunction_toJSON, (JSGlobalObj
 }
 
 struct URLSearchParamsIteratorTraits {
-    static constexpr JSDOMIteratorType type = JSDOMIteratorType::Map;
     using KeyType = IDLUSVString;
     using ValueType = IDLUSVString;
 };
@@ -771,13 +770,6 @@ JSC::JSValue toJSNewlyCreated(JSC::JSGlobalObject*, JSDOMGlobalObject* globalObj
 JSC::JSValue toJS(JSC::JSGlobalObject* lexicalGlobalObject, JSDOMGlobalObject* globalObject, URLSearchParams& impl)
 {
     return wrap(lexicalGlobalObject, globalObject, impl);
-}
-
-URLSearchParams* JSURLSearchParams::toWrapped(JSC::VM& vm, JSC::JSValue value)
-{
-    if (auto* wrapper = dynamicDowncast<JSURLSearchParams>(value))
-        return &wrapper->wrapped();
-    return nullptr;
 }
 
 size_t JSURLSearchParams::estimatedSize(JSC::JSCell* cell, JSC::VM& vm)

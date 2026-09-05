@@ -1645,7 +1645,9 @@ function describeStalledProcessTree(rootPid, execPath, budgetMs = 60_000) {
   // gdb is a sibling of the batch. Fall back to passwordless sudo when the
   // agent has it.
   let prefix = [];
-  const denied = lines => lines.some(line => /^(ptrace:|Could not attach)/.test(line));
+  // A permission failure is the same for every process. Any other attach
+  // failure (the process exited after `ps`, for one) is local to this pid.
+  const denied = lines => lines.some(line => /Operation not permitted|^Could not attach/.test(line));
   const backtrace = pid => {
     const [command, ...argv] = [...prefix, "gdb", "-p", String(pid), "-batch", "-ex", "thread apply all bt 16"];
     // spawnSync treats timeout 0 as "none", so never let it reach 0.
@@ -1654,11 +1656,13 @@ function describeStalledProcessTree(rootPid, execPath, budgetMs = 60_000) {
       timeout: Math.max(1, Math.min(20_000, remaining())),
       stdio: ["ignore", "pipe", "pipe"],
     });
-    if (gdb.error) return { error: gdb.error.message, lines: [] };
-    const lines = `${gdb.stdout}\n${gdb.stderr}`
+    // A timeout still returns what gdb printed so far. Only a spawn failure
+    // (no gdb on this agent) has no output and ends the search.
+    const missing = gdb.error && gdb.error.code !== "ETIMEDOUT" ? gdb.error.message : undefined;
+    const lines = `${gdb.stdout ?? ""}\n${gdb.stderr ?? ""}`
       .split("\n")
       .filter(line => /^(Thread \d+|#\d+|ptrace:|warning: .*ptrace|Could not attach)/.test(line));
-    return { status: gdb.status, lines };
+    return { status: gdb.status, timedOut: gdb.error?.code === "ETIMEDOUT", missing, lines };
   };
   for (const { pid, args } of targets) {
     if (remaining() < 5_000) {
@@ -1677,12 +1681,12 @@ function describeStalledProcessTree(rootPid, execPath, budgetMs = 60_000) {
       prefix = ["sudo", "-n"];
       result = backtrace(pid);
     }
-    if (result.error) {
-      out += `gdb failed: ${result.error}\n`;
+    if (result.missing) {
+      out += `gdb failed: ${result.missing}\n`;
       break;
     }
     out += result.lines.length ? `${result.lines.join("\n")}\n` : `no backtrace (exit ${result.status})\n`;
-    // Not allowed to attach: the same answer for every other process.
+    if (result.timedOut) out += `(gdb timed out, output above is partial)\n`;
     if (denied(result.lines)) break;
   }
   return out;

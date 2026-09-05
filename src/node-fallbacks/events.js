@@ -530,15 +530,4 @@ Object.assign(EventEmitter, {
   listenerCount,
 });
 
-export default EventEmitter;
-export {
-  EventEmitter,
-  addAbortListener,
-  captureRejectionSymbol,
-  getEventListeners,
-  getMaxListeners,
-  EventEmitter as init,
-  listenerCount,
-  once,
-  setMaxListeners,
-};
+module.exports = EventEmitter;

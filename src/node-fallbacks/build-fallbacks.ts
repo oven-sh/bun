@@ -8,6 +8,8 @@ const outdir = process.argv[2];
 const builtins = Module.builtinModules;
 let commands: Promise<void>[] = [];
 
+const commonJSFiles = ["assert.js", "events.js", "stream.js"];
+
 let moduleFiles: string[] = [];
 for (const name of allFiles) {
   const mod = basename(name, extname(name)).replaceAll(".", "/");
@@ -33,7 +35,7 @@ for (let fileIndex = 0; fileIndex < allFiles.length; fileIndex++) {
 
   // Create the build command with all the specified options
   const buildCommand =
-    Bun.$`bun build --define=process.env.NODE_DEBUG:"false" --define=process.env.READABLE_STREAM="'enable'" --define=global:globalThis --outdir=${outdir} ${name} --minify-syntax --minify-whitespace --format=${name.includes("stream") ? "cjs" : "esm"} --target=node ${{ raw: externalModules }}`.text();
+    Bun.$`bun build --define=process.env.NODE_DEBUG:"false" --define=process.env.READABLE_STREAM="'enable'" --define=global:globalThis --outdir=${outdir} ${name} --minify-syntax --minify-whitespace --format=${commonJSFiles.includes(name) ? "cjs" : "esm"} --target=node ${{ raw: externalModules }}`.text();
 
   commands.push(
     buildCommand.then(async text => {

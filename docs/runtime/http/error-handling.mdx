@@ -27,16 +27,22 @@ In development mode, when a request handler throws and no `error` handler return
 
 To handle server-side errors, implement an `error` handler. Return a `Response` to serve to the client when an error occurs. In `development` mode, this response replaces Bun's default error page.
 
+Error messages and stack traces often contain request input (paths, query parameters, header values) and absolute filesystem paths. If you render them as HTML, escape them with [`Bun.escapeHTML`](/runtime/utils#bun-escapehtml), and avoid returning them to clients in production; log the error on the server and respond with a generic message instead.
+
 ```ts
+const dev = process.env.NODE_ENV !== "production";
+
 Bun.serve({
+  development: dev,
   fetch(req) {
     throw new Error("woops!");
   },
   error(error) {
-    return new Response(`<pre>${error}\n${error.stack}</pre>`, {
-      headers: {
-        "Content-Type": "text/html",
-      },
+    console.error(error);
+    if (!dev) return new Response("Internal Server Error", { status: 500 });
+    return new Response(`<pre>${Bun.escapeHTML(`${error}\n${error.stack}`)}</pre>`, {
+      status: 500,
+      headers: { "Content-Type": "text/html; charset=utf-8" },
     });
   },
 });

@@ -305,6 +305,56 @@ export function createRequireCache() {
   return proxy;
 }
 
+// Mirrors Node's lib/internal/modules/cjs/loader.js `Module.prototype.load`.
+$overriddenName = "load";
+$visibility = "Private";
+export function modulePrototypeLoad(this: JSCommonJSModule, filename: string) {
+  const assert = require("node:assert");
+  assert(!this.loaded, "Module already loaded");
+
+  const Module = require("node:module");
+  const path = require("node:path");
+
+  const dirname = path.dirname(filename);
+  // Like Node, preserve caller-preset filename/paths (`??=` in Node's load).
+  this.filename ??= filename;
+  // `path` backs the `__dirname` the native .js handler passes to the module body.
+  this.path = dirname;
+  this.paths ??= Module._nodeModulePaths(dirname);
+
+  // findLongestRegisteredExtension: `path.extname` only returns the trailing
+  // suffix, so it would miss compound extensions like `.test.js`.
+  const basename = path.basename(filename);
+  const extensions = Module._extensions;
+  let handler: any;
+  let startDot = basename.indexOf(".");
+  while (startDot !== -1) {
+    if (startDot === 0) {
+      // Skip a leading dot so dotfiles don't match a handler named after them.
+      startDot = basename.indexOf(".", 1);
+      continue;
+    }
+    const suffix = basename.slice(startDot);
+    handler = extensions[suffix];
+    if (handler) break;
+    startDot = basename.indexOf(".", startDot + 1);
+  }
+  if (!handler) {
+    handler = extensions[".js"];
+  }
+
+  try {
+    handler.$call(extensions, this, filename);
+  } catch (e) {
+    // `_compile` sets `hasEvaluated` before running user code; reset it on
+    // failure so a retry doesn't trip the assert above.
+    this.loaded = false;
+    throw e;
+  }
+
+  this.loaded = true;
+}
+
 type WrapperMutate = (start: string, end: string) => void;
 export function getWrapperArrayProxy(onMutate: WrapperMutate, start: string, end: string) {
   const wrapper = [start, end];

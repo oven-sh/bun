@@ -758,7 +758,7 @@ JSC_DEFINE_CUSTOM_SETTER(setNodeModuleWrapper,
 static JSValue getModulePrototypeObject(VM& vm, JSObject* moduleObject)
 {
     auto* globalObject = defaultGlobalObject(moduleObject->globalObject());
-    auto prototype = constructEmptyObject(globalObject, globalObject->objectPrototype(), 2);
+    auto prototype = constructEmptyObject(globalObject, globalObject->objectPrototype(), 4);
 
     prototype->putDirectCustomAccessor(
         vm, WebCore::clientData(vm)->builtinNames().requirePublicName(),
@@ -767,6 +767,19 @@ static JSValue getModulePrototypeObject(VM& vm, JSObject* moduleObject)
         0);
 
     Bun::putDirectNamed(vm, prototype, "_compile"_s, globalObject->modulePrototypeUnderscoreCompileFunction());
+
+    // This object is distinct from the instance prototype
+    // (`JSCommonJSModulePrototype`); mirror `load` and `isPreloading` here so
+    // `require("module").prototype.load` etc. match Node.
+    prototype->putDirect(
+        vm, Identifier::fromString(vm, "load"_s),
+        JSC::JSFunction::create(vm, globalObject, WebCore::commonJSModulePrototypeLoadCodeGenerator(vm), globalObject),
+        0);
+
+    prototype->putDirectCustomAccessor(
+        vm, Identifier::fromString(vm, "isPreloading"_s),
+        JSC::CustomGetterSetter::create(vm, getterIsPreloading, nullptr),
+        JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::DontDelete);
 
     return prototype;
 }

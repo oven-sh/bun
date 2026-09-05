@@ -447,12 +447,12 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
         }
     case POLL_TYPE_SEMI_SOCKET: {
             /* Both connect and listen sockets are semi-sockets
-             * but they poll for different events. A connecting socket starts
-             * out polling WRITABLE only, but a write issued before the connect
-             * completes (the kernel buffers it) can partial-write and call
-             * us_poll_change(R|W) from us_socket_write*. Test the WRITABLE bit
-             * rather than exact equality so the connect-complete is still
-             * recognized; listen sockets only ever poll READABLE. */
+             * but they poll for different events. A connecting socket polls
+             * WRITABLE (us_socket_write* never reaches the kernel before the
+             * connect completes, see us_internal_socket_is_connecting); listen
+             * sockets only ever poll READABLE. Test the WRITABLE bit rather
+             * than exact equality so an added READABLE interest cannot hide
+             * the connect-complete. */
             if (us_poll_events(p) & LIBUS_SOCKET_WRITABLE) {
                 /* The connecting fd became writable with an error/HUP flag also
                  * set: the handshake may have completed and then been reset

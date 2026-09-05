@@ -2615,6 +2615,32 @@ it("http2 connect supports various URL formats", async done => {
   });
 });
 
+it("http2 client reports ECONNREFUSED when a plaintext connect is refused", async () => {
+  // Listen and close again so the port is one nothing accepts on.
+  const probe = net.createServer();
+  await new Promise(resolve => probe.listen(0, "127.0.0.1", resolve));
+  const port = probe.address().port;
+  await new Promise(resolve => probe.close(resolve));
+
+  // The client corks its connection preface before the socket has connected. That write
+  // must wait for the connect: a send() on the connecting socket eats the kernel's pending
+  // ECONNREFUSED and the connect failure is then reported as ECONNRESET.
+  const client = http2.connect(`http://127.0.0.1:${port}`);
+  const { promise, resolve } = Promise.withResolvers();
+  client.on("connect", () => resolve(new Error("connected to a closed port")));
+  client.on("error", resolve);
+  const error = await promise;
+  client.destroy();
+
+  expect(error.message).toBe(`connect ECONNREFUSED 127.0.0.1:${port}`);
+  expect(error).toMatchObject({
+    code: "ECONNREFUSED",
+    syscall: "connect",
+    address: "127.0.0.1",
+    port,
+  });
+});
+
 it("http2 request.close() validates input and manages stream state", async done => {
   const { mustCall } = createCallCheckCtx(done);
   const server = http2.createServer();

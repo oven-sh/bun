@@ -144,8 +144,6 @@ export namespace t {
   export const undefined = builtinType<undefined>()("undefined");
   /** Does not throw on parse. Equivalent to `!!value` */
   export const boolean = builtinType<boolean>()("boolean");
-  /** Throws if the value is not a boolean. */
-  export const strictBoolean = builtinType<boolean>()("strictBoolean");
 
   /**
    * Equivalent to IDL's `unrestricted double`, allowing NaN and Infinity.
@@ -241,14 +239,6 @@ export namespace t {
    * request object in as itself.
    */
   export function ref<T>(name: string): Type<T> {
-    return new TypeImpl("ref", name);
-  }
-
-  /**
-   * Reference an external class type that is not defined with `bindgen`,
-   * from either WebCore, JavaScriptCore, or Bun.
-   */
-  export function externalClass<T>(name: string): Type<T> {
     return new TypeImpl("ref", name);
   }
 

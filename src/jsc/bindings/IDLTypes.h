@@ -49,15 +49,11 @@ class DOMPromise;
 template<typename T>
 struct IDLType {
     using ImplementationType = T;
-    using StorageType = T;
     using SequenceStorageType = T;
-    using ConversionResultType = T;
-    using NullableConversionResultType = std::optional<T>;
 
     using ParameterType = T;
     using NullableParameterType = std::optional<ImplementationType>;
 
-    using InnerParameterType = T;
     using NullableInnerParameterType = std::optional<ImplementationType>;
 
     using NullableType = std::optional<ImplementationType>;
@@ -77,8 +73,6 @@ struct IDLAny : IDLType<JSC::Strong<JSC::Unknown>> {
     // IDLSequence<IDLAny> would yield a Vector<JSC::JSValue>, whose contents
     // are invisible to the GC.
     // [do not uncomment] using SequenceStorageType = JSC::JSValue;
-    using ConversionResultType = JSC::JSValue;
-    using NullableConversionResultType = JSC::JSValue;
     using ParameterType = JSC::JSValue;
     using NullableParameterType = JSC::JSValue;
 
@@ -117,11 +111,9 @@ struct IDLUnsignedLongLong : IDLInteger<uint64_t> {
 };
 
 template<typename T> struct IDLClampAdaptor : IDLInteger<typename T::ImplementationType> {
-    using InnerType = T;
 };
 
 template<typename T> struct IDLEnforceRangeAdaptor : IDLInteger<typename T::ImplementationType> {
-    using InnerType = T;
 };
 
 template<typename FloatingPointType> struct IDLFloatingPoint : IDLNumber<FloatingPointType> {
@@ -136,8 +128,6 @@ struct IDLUnrestrictedDouble : IDLFloatingPoint<double> {
 };
 
 template<typename StringType> struct IDLString : IDLType<StringType> {
-    using ConversionResultType = StringType;
-    using NullableConversionResultType = StringType;
     using ParameterType = const StringType&;
     using NullableParameterType = const StringType&;
 
@@ -158,20 +148,15 @@ struct IDLUSVString : IDLString<String> {
 };
 
 template<typename T> struct IDLAtomStringAdaptor : IDLString<AtomString> {
-    using InnerType = T;
 };
 
 template<typename T> struct IDLRequiresExistingAtomStringAdaptor : IDLString<AtomString> {
-    using InnerType = T;
 };
 
 template<typename T> struct IDLAllowSharedAdaptor : T {
-    using InnerType = T;
 };
 
 struct IDLObject : IDLType<JSC::Strong<JSC::JSObject>> {
-    using ConversionResultType = JSC::Strong<JSC::JSObject>;
-    using NullableConversionResultType = JSC::Strong<JSC::JSObject>;
     using NullableType = JSC::Strong<JSC::JSObject>;
 
     static inline NullableType nullValue() { return {}; }
@@ -182,14 +167,9 @@ struct IDLObject : IDLType<JSC::Strong<JSC::JSObject>> {
 template<typename T> struct IDLWrapper : IDLType<RefPtr<T>> {
     using RawType = T;
 
-    using StorageType = Ref<T>;
-    using ConversionResultType = std::reference_wrapper<T>;
-    using NullableConversionResultType = T*;
-
     using ParameterType = T&;
     using NullableParameterType = T*;
 
-    using InnerParameterType = Ref<T>;
     using NullableInnerParameterType = RefPtr<T>;
 
     using NullableType = RefPtr<T>;
@@ -214,14 +194,10 @@ template<typename T> struct IDLEnumeration : IDLType<T> {
 };
 
 template<typename T> struct IDLNullable : IDLType<typename T::NullableType> {
-    using InnerType = T;
 
-    using ConversionResultType = typename T::NullableConversionResultType;
-    using NullableConversionResultType = std::optional<ConversionResultType>;
     using ParameterType = typename T::NullableParameterType;
     using NullableParameterType = typename T::NullableParameterType;
 
-    using InnerParameterType = typename T::NullableInnerParameterType;
     using NullableInnerParameterType = typename T::NullableInnerParameterType;
 
     using NullableType = typename T::NullableType;
@@ -236,14 +212,12 @@ template<typename T> struct IDLOptional : IDLNullable<T> {
 
 template<typename T, typename VectorType = Vector<typename T::SequenceStorageType>>
 struct IDLSequence : IDLType<VectorType> {
-    using InnerType = T;
 
     using ParameterType = const VectorType&;
     using NullableParameterType = const std::optional<VectorType>&;
 };
 
 template<typename T> struct IDLFrozenArray : IDLType<Vector<typename T::SequenceStorageType>> {
-    using InnerType = T;
 
     using ParameterType = const Vector<typename T::SequenceStorageType>&;
     using NullableParameterType = const std::optional<Vector<typename T::SequenceStorageType>>&;
@@ -258,7 +232,6 @@ template<typename K, typename V> struct IDLRecord : IDLType<Vector<KeyValuePair<
 };
 
 template<typename T> struct IDLPromise : IDLWrapper<DOMPromise> {
-    using InnerType = T;
 };
 
 template<typename... Ts>

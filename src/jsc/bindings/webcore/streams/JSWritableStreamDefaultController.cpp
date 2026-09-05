@@ -30,8 +30,7 @@ namespace WebStreams {
 using namespace JSC;
 
 // The [[writeAlgorithm]] dispatch. The reachable SinkKind set on a writable default
-// controller is {JavaScript, Nothing, Transform} (CrossRealm: transferable streams are not
-// implemented, so nothing creates one).
+// controller is {JavaScript, Nothing, Transform}.
 // Returns nullptr with no exception pending when the write completed synchronously with a
 // non-thenable result: the caller queues the upon-fulfillment handler without a wrapper promise.
 static JSC::JSPromise* performWriteAlgorithm(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSWritableStreamDefaultController* controller, JSC::JSValue chunk)
@@ -55,8 +54,6 @@ static JSC::JSPromise* performWriteAlgorithm(JSC::VM& vm, JSC::JSGlobalObject* g
         return nullptr;
     case SinkKind::Transform:
         RELEASE_AND_RETURN(scope, transformStreamDefaultSinkWriteAlgorithm(globalObject, uncheckedDowncast<JSTransformStream>(controller->m_algorithms.algorithmContext.get()), chunk));
-    case SinkKind::CrossRealm:
-        break;
     }
     RELEASE_ASSERT_NOT_REACHED();
     return nullptr;
@@ -80,8 +77,6 @@ static JSC::JSPromise* performCloseAlgorithm(JSC::VM& vm, JSC::JSGlobalObject* g
         return nullptr;
     case SinkKind::Transform:
         RELEASE_AND_RETURN(scope, transformStreamDefaultSinkCloseAlgorithm(globalObject, uncheckedDowncast<JSTransformStream>(controller->m_algorithms.algorithmContext.get())));
-    case SinkKind::CrossRealm:
-        break;
     }
     RELEASE_ASSERT_NOT_REACHED();
     return nullptr;
@@ -108,8 +103,6 @@ static JSC::JSPromise* performAbortAlgorithm(JSC::VM& vm, JSC::JSGlobalObject* g
         RELEASE_AND_RETURN(scope, promiseFulfilledWith(globalObject, JSC::jsUndefined()));
     case SinkKind::Transform:
         RELEASE_AND_RETURN(scope, transformStreamDefaultSinkAbortAlgorithm(globalObject, uncheckedDowncast<JSTransformStream>(controller->m_algorithms.algorithmContext.get()), reason));
-    case SinkKind::CrossRealm:
-        break;
     }
     RELEASE_ASSERT_NOT_REACHED();
     return nullptr;

@@ -100,7 +100,6 @@ public:
     IsoSubspace* m_subspaceForReadIntoRequest { nullptr };
     IsoSubspace* m_subspaceForPullIntoDescriptor { nullptr };
     IsoSubspace* m_subspaceForStreamTeeState { nullptr };
-    IsoSubspace* m_subspaceForCrossRealmTransformState { nullptr };
     IsoSubspace* m_subspaceForStreamFromIterableContext { nullptr };
     IsoSubspace* m_subspaceForDirectStreamController { nullptr };
     IsoSubspace* m_subspaceForNativeStreamSourceAdapter { nullptr };

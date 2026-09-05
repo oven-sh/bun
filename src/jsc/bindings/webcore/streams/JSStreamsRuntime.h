@@ -148,11 +148,6 @@ namespace WebCore {
 #define FOR_EACH_WEB_STREAMS_REACTION_HANDLER_TS_CONTROLLER(V) \
     V(onTSPerformTransformRejected)
 
-// owner: CrossRealmTransform.cpp (transferable streams are not implemented; the handler may
-// assert-not-reached). context = the JSCrossRealmTransformState.
-#define FOR_EACH_WEB_STREAMS_REACTION_HANDLER_CROSS_REALM(V) \
-    V(onCrossRealmWritableBackpressureFulfilled)
-
 // owner: BunStreamSource.cpp.
 //   onNativePull*: context = the JSNativeStreamSourceAdapter.
 //   onNativeSourceCallCloseMicrotask: the native source's `queueMicrotask(callClose)` job;
@@ -228,7 +223,6 @@ namespace WebCore {
     FOR_EACH_WEB_STREAMS_REACTION_HANDLER_WS_CONTROLLER(V)         \
     FOR_EACH_WEB_STREAMS_REACTION_HANDLER_TS_OPERATIONS(V)         \
     FOR_EACH_WEB_STREAMS_REACTION_HANDLER_TS_CONTROLLER(V)         \
-    FOR_EACH_WEB_STREAMS_REACTION_HANDLER_CROSS_REALM(V)           \
     FOR_EACH_WEB_STREAMS_REACTION_HANDLER_BUN_SOURCE(V)            \
     FOR_EACH_WEB_STREAMS_REACTION_HANDLER_DIRECT_CONTROLLER(V)     \
     FOR_EACH_WEB_STREAMS_REACTION_HANDLER_READER(V)                \
@@ -312,7 +306,6 @@ JSC_DECLARE_HOST_FUNCTION(jsWebStreamsCountQueuingStrategySize);
     V(pullIntoDescriptorStructure, JSPullIntoDescriptor)                     \
     V(pipeToOperationStructure, JSStreamPipeToOperation)                     \
     V(teeStateStructure, JSStreamTeeState)                                   \
-    V(crossRealmTransformStateStructure, JSCrossRealmTransformState)         \
     V(fromIterableContextStructure, JSStreamFromIterableContext)             \
     V(directStreamControllerStructure, JSDirectStreamController)             \
     V(nativeStreamSourceAdapterStructure, JSNativeStreamSourceAdapter)       \

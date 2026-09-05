@@ -246,3 +246,54 @@ test("error.stack of // @bun code with a truncated VLQ in sourceMappingURL warns
   expect(stdout).toBe("");
   expect(exitCode).toBe(1);
 });
+
+// `sourcesContent` is optional per the source-map v3 spec. The runtime decoder
+// must accept maps where it is absent, `null`, or shorter than `sources`, and
+// still remap error.stack via `mappings` + `sources`.
+test.concurrent.each([
+  ["absent", undefined],
+  ["null", null],
+  ["empty array", []],
+  ["[null]", [null]],
+])("error.stack of // @bun code remaps with sourcesContent %s", async (label, sourcesContent) => {
+  // Generated line 3 col 2 -> original.ts line 5 col 3 (all 0-based in VLQ).
+  const B64 = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+  const vlq = v => {
+    let out = "";
+    let x = v < 0 ? (-v << 1) | 1 : v << 1;
+    do {
+      let d = x & 31;
+      x >>>= 5;
+      if (x) d |= 32;
+      out += B64[d];
+    } while (x);
+    return out;
+  };
+  const seg = vlq(2) + vlq(0) + vlq(4) + vlq(2);
+  const map = { version: 3, sources: ["original.ts"], names: [], mappings: ";;" + seg + ";" };
+  if (sourcesContent !== undefined) map.sourcesContent = sourcesContent;
+
+  using dir = tempDir("sourcemap-optional-sourcescontent", {
+    "entry.js":
+      `// @bun\n` +
+      `function t() {\n` +
+      `  throw new Error("SC");\n` +
+      `}\n` +
+      `try { t(); } catch (e) { console.log(String(e.stack).split("\\n")[1].trim()); }\n` +
+      `//# sourceMappingURL=entry.js.map\n`,
+    "entry.js.map": JSON.stringify(map),
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "run", "entry.js"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).not.toContain("Could not decode sourcemap");
+  expect(stdout.trim()).toContain("original.ts:5:3");
+  expect(exitCode).toBe(0);
+});

@@ -8,6 +8,7 @@
 // - Write test for import {foo} from "./foo"; export {foo}
 
 import { expect, mock, spyOn, test } from "bun:test";
+import { bunEnv, bunExe, tempDir } from "harness";
 import { default as defaultValue, fn, iCallFn, rexported, rexportedAs, variable } from "./mock-module-fixture";
 import * as spyFixture from "./spymodule-fixture";
 
@@ -212,4 +213,95 @@ test("onResolve plugin errors surface from mock.module; an unresolvable specifie
   } finally {
     Bun.plugin.clearAll();
   }
+});
+
+// require() used to hand every "node:" id straight to the builtin table. That threw for a mocked
+// name that is not a builtin and skipped the mock of a name that is, while import() returned the
+// mock in both cases.
+test("mocking a node: name that is not a builtin applies to require()", async () => {
+  mock.module("node:i-am-not-a-builtin", () => ({ default: 42, named: "yes" }));
+
+  const required = require("node:i-am-not-a-builtin");
+  expect({ ...required }).toEqual({ default: 42, named: "yes" });
+  expect(require("node:i-am-not-a-builtin")).toBe(required);
+  // @ts-expect-error
+  expect(await import("node:i-am-not-a-builtin")).toBe(required);
+  expect(require.resolve("node:i-am-not-a-builtin")).toBe("node:i-am-not-a-builtin");
+});
+
+test("mocking a node: name with __esModule returns the default export from require()", () => {
+  const defaultExport = { unwrapped: true };
+  mock.module("node:i-am-not-a-builtin-either", () => ({ __esModule: true, default: defaultExport }));
+
+  expect(require("node:i-am-not-a-builtin-either")).toBe(defaultExport);
+});
+
+test("mocking a builtin applies to require() like it does to import()", async () => {
+  mock.module("querystring", () => ({ stringify: () => "mocked" }));
+
+  const imported = await import("node:querystring");
+  expect(imported.stringify({})).toBe("mocked");
+  expect(require("node:querystring")).toBe(imported);
+  expect(require("querystring")).toBe(imported);
+});
+
+test("mocking a builtin by its node: name applies to require() in both spellings", () => {
+  mock.module("node:punycode", () => ({ encode: () => "mocked" }));
+
+  expect(require("node:punycode").encode("x")).toBe("mocked");
+  expect(require("punycode").encode("x")).toBe("mocked");
+});
+
+test("mocking a builtin with __esModule returns the default export from require()", () => {
+  const defaultExport = { start: () => "mocked" };
+  mock.module("node:repl", () => ({ __esModule: true, default: defaultExport }));
+
+  expect(require("node:repl")).toBe(defaultExport);
+  expect(require("repl")).toBe(defaultExport);
+});
+
+test("outside of bun test, a node: mock applies to require() unless a builtin has that name", async () => {
+  using dir = tempDir("mock-module-node-prefix", {
+    "index.ts": `
+      import { mock } from "bun:test";
+
+      mock.module("node:i-am-not-a-builtin", () => ({ default: 42 }));
+      mock.module("node:querystring", () => ({ stringify: () => "mocked" }));
+
+      function attempt(fn) {
+        try {
+          return fn();
+        } catch (error) {
+          return "threw: " + error.message;
+        }
+      }
+
+      console.log(
+        JSON.stringify({
+          importedMock: (await import("node:i-am-not-a-builtin")).default,
+          requiredMock: attempt(() => require("node:i-am-not-a-builtin").default),
+          importedBuiltin: (await import("node:querystring")).stringify({ a: 1 }),
+          requiredBuiltin: attempt(() => require("node:querystring").stringify({ a: 1 })),
+        }),
+      );
+    `,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "index.ts"],
+    env: bunEnv,
+    cwd: String(dir),
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  // The script reports its own failures, so empty stdout means it crashed.
+  expect(stdout.trim() ? JSON.parse(stdout) : { crashed: stderr }).toEqual({
+    importedMock: 42,
+    requiredMock: 42,
+    // Builtins cannot be mocked outside of `bun test`; require() agrees with import() on that.
+    importedBuiltin: "a=1",
+    requiredBuiltin: "a=1",
+  });
+  expect(exitCode).toBe(0);
 });

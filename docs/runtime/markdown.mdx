@@ -7,11 +7,12 @@ description: Parse and render Markdown with Bun's built-in Markdown API, support
   **Unstable API** — This API is under active development and may change in future versions of Bun.
 </Callout>
 
-Bun includes a fast, built-in Markdown parser written in Rust. It supports GitHub Flavored Markdown (GFM) extensions and provides three APIs:
+Bun includes a fast, built-in Markdown parser written in Rust. It supports GitHub Flavored Markdown (GFM) extensions and provides these APIs:
 
 - `Bun.markdown.html()` — render Markdown to an HTML string
 - `Bun.markdown.render()` — render Markdown with custom callbacks for each element
 - `Bun.markdown.react()` — render Markdown to React JSX elements
+- `Bun.markdown.fromHTML()` — convert HTML to Markdown
 
 ---
 
@@ -379,3 +380,106 @@ const el = Bun.markdown.react("## Hello World", undefined, {
   autolinks: true,
 });
 ```
+
+---
+
+## `Bun.markdown.fromHTML()`
+
+Convert an HTML string to Markdown. This is the inverse of `Bun.markdown.html()`: it takes a document or fragment of HTML and produces GitHub Flavored Markdown.
+
+```ts
+const md = Bun.markdown.fromHTML("<h1>Hello <em>world</em></h1><p>See <a href='https://bun.com'>bun.com</a>.</p>");
+// "# Hello _world_\n\nSee [bun.com](https://bun.com)."
+```
+
+Whole pages work the same way as fragments:
+
+```ts
+const res = await fetch("https://bun.com/docs/runtime/markdown");
+const md = Bun.markdown.fromHTML(await res.text());
+```
+
+Bun parses the input with a spec-compliant HTML5 parser, so malformed markup is recovered the same way a browser recovers it. The conversion never throws on bad HTML. Only `<body>` content is converted. `<script>`, `<style>`, `<template>`, and `<noscript>` elements are dropped, and comments are ignored.
+
+GFM output is on by default. Tables become pipe tables, `<del>` becomes `~~strikethrough~~`, and checkboxes at the start of list items become task list markers:
+
+```ts
+const md = Bun.markdown.fromHTML(`
+  <table>
+    <thead><tr><th>Feature</th><th align="right">Status</th></tr></thead>
+    <tbody><tr><td>Tables</td><td><del>todo</del> done</td></tr></tbody>
+  </table>
+  <ul><li><input type="checkbox" checked> shipped</li></ul>
+`);
+```
+
+```md
+| Feature |        Status |
+| ------- | ------------: |
+| Tables  | ~~todo~~ done |
+
+- [x] shipped
+```
+
+### Conversion rules
+
+The rules follow [turndown](https://github.com/mixmark-io/turndown), the most widely used JavaScript HTML-to-Markdown converter, with its GFM plugin:
+
+| HTML                                                    | Markdown                                                                                                                                                        |
+| ------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `<h1>`–`<h6>`                                           | `#` headings                                                                                                                                                    |
+| `<p>`, `<div>`, `<section>`, other block elements       | Paragraphs separated by a blank line                                                                                                                            |
+| `<br>`                                                  | Hard line break                                                                                                                                                 |
+| `<hr>`                                                  | `---`                                                                                                                                                           |
+| `<em>`, `<i>`                                           | `_text_`                                                                                                                                                        |
+| `<strong>`, `<b>`                                       | `**text**`                                                                                                                                                      |
+| `<del>`, `<s>`, `<strike>`                              | `~~text~~`                                                                                                                                                      |
+| `<code>`                                                | `` `text` ``                                                                                                                                                    |
+| `<pre>`                                                 | Fenced code block. A `language-*` or `lang-*` class on the `<pre>` or its `<code>` (or a `highlight-source-*` class on a wrapping `<div>`) sets the info string |
+| `<a href>`                                              | `[text](href "title")`                                                                                                                                          |
+| `<img src>`                                             | `![alt](src "title")`                                                                                                                                           |
+| `<ul>`, `<ol>`, `<li>`                                  | `-` and `1.` list items, nested by indentation. `<ol start>` is honored                                                                                         |
+| `<blockquote>`                                          | `>` quoted lines                                                                                                                                                |
+| `<table>`                                               | GFM pipe table. The first row becomes the header row. `align` and `text-align` set column alignment                                                             |
+| `<input type="checkbox">` at the start of an `<li>`     | `[x]` or `[ ]`                                                                                                                                                  |
+| Anything else (`<span>`, `<sup>`, custom elements, SVG) | Its text content                                                                                                                                                |
+
+Characters in text that Markdown would otherwise treat as syntax (`*`, `_`, `` ` ``, `[`, `\`, a leading `-`, `#`, `>` or `1.`) are backslash-escaped, so the output renders back to the same text.
+
+Pipe-table cells cannot hold block content, so paragraphs, lists, and line breaks inside a table cell are joined onto one line. A table that cannot form a grid, such as a single cell or a layout table that wraps other tables, is unwrapped into ordinary blocks instead.
+
+Whitespace is collapsed the way a browser renders it: runs of spaces and newlines become a single space, except inside `<pre>`.
+
+### Options
+
+Pass an options object as the second argument. Every option chooses between equivalent Markdown spellings or toggles a GFM extension:
+
+```ts
+Bun.markdown.fromHTML("<ul><li>one</li></ul><hr>", {
+  bulletListMarker: "*",
+  hr: "***",
+});
+// "* one\n\n***"
+```
+
+| Option             | Values                                                     | Default    | Description                                                                         |
+| ------------------ | ---------------------------------------------------------- | ---------- | ----------------------------------------------------------------------------------- |
+| `headingStyle`     | `"atx"`, `"setext"`                                        | `"atx"`    | `"setext"` underlines `<h1>` and `<h2>` with `===` and `---`                        |
+| `hr`               | `"---"`, `"***"`, `"___"`, `"- - -"`, `"* * *"`, `"_ _ _"` | `"---"`    | Thematic break for `<hr>`                                                           |
+| `bulletListMarker` | `"-"`, `"*"`, `"+"`                                        | `"-"`      | Marker for `<ul>` items                                                             |
+| `codeBlockStyle`   | `"fenced"`, `"indented"`                                   | `"fenced"` | `"indented"` writes four-space indented code blocks with no info string             |
+| `fence`            | `"```"`, `"~~~"`                                           | `"```"`    | Fence for code blocks. It grows automatically when the code contains the same run   |
+| `emDelimiter`      | `"_"`, `"*"`                                               | `"_"`      | Delimiter for `<em>`                                                                |
+| `strongDelimiter`  | `"**"`, `"__"`                                             | `"**"`     | Delimiter for `<strong>`                                                            |
+| `br`               | `"  "`, `"\\"`                                             | `"  "`     | How a `<br>` ends its line: two spaces or a backslash                               |
+| `tables`           | `boolean`                                                  | `true`     | Write GFM pipe tables. When `false`, table cells become consecutive blocks          |
+| `strikethrough`    | `boolean`                                                  | `true`     | Write `~~text~~` for `<del>`. When `false`, the text is kept without markup         |
+| `tasklists`        | `boolean`                                                  | `true`     | Write `[x]` / `[ ]` for list-item checkboxes. When `false`, the checkbox is dropped |
+
+An unrecognized option value throws a `TypeError`.
+
+### Input
+
+`fromHTML()` accepts a string or any `TypedArray`, `DataView`, or `ArrayBuffer` holding UTF-8 bytes. Invalid UTF-8 sequences in a buffer are replaced with U+FFFD, as a browser does.
+
+Deeply nested markup is handled without recursion limits in the parser. Like browsers, Bun stops nesting elements past a depth of 512 and keeps their text in the deepest open element.

@@ -1551,6 +1551,8 @@ declare module "bun" {
    * - `render()` — render with custom callbacks for each element
    * - `react()` — parse to React-compatible JSX elements
    *
+   * And converts the other way with `fromHTML()` — HTML to Markdown.
+   *
    * Supports GFM extensions (tables, strikethrough, task lists, autolinks) and
    * component overrides to replace default HTML tags with custom components.
    *
@@ -2038,6 +2040,122 @@ declare module "bun" {
       components?: ComponentOverrides,
       options?: ReactOptions,
     ): import("./jsx.d.ts").JSX.Element;
+
+    /**
+     * Options for {@link fromHTML}. Every option chooses between equivalent
+     * Markdown spellings or toggles a GFM extension; none of them change which
+     * content is kept.
+     */
+    interface FromHTMLOptions {
+      /**
+       * How `<h1>`–`<h6>` are written.
+       * - `"atx"`: `# Heading`
+       * - `"setext"`: `Heading` underlined with `===` / `---` for levels 1–2
+       *   (levels 3–6 are always ATX)
+       * @default "atx"
+       */
+      headingStyle?: "atx" | "setext";
+      /**
+       * The thematic break written for `<hr>`.
+       * @default "---"
+       */
+      hr?: "---" | "***" | "___" | "- - -" | "* * *" | "_ _ _";
+      /**
+       * The marker for `<ul>` items.
+       * @default "-"
+       */
+      bulletListMarker?: "-" | "*" | "+";
+      /**
+       * How `<pre>` blocks are written.
+       * - `"fenced"`: wrapped in a fence, with the language taken from a
+       *   `language-*` class when present
+       * - `"indented"`: indented by four spaces (no language)
+       * @default "fenced"
+       */
+      codeBlockStyle?: "fenced" | "indented";
+      /**
+       * The fence used when `codeBlockStyle` is `"fenced"`. The fence grows
+       * automatically when the code itself contains a run of the same character.
+       * @default "```"
+       */
+      fence?: "```" | "~~~";
+      /**
+       * The delimiter for `<em>` / `<i>`.
+       * @default "_"
+       */
+      emDelimiter?: "_" | "*";
+      /**
+       * The delimiter for `<strong>` / `<b>`.
+       * @default "**"
+       */
+      strongDelimiter?: "**" | "__";
+      /**
+       * How `<br>` is written: two trailing spaces or a trailing backslash
+       * before the newline.
+       * @default "  "
+       */
+      br?: "  " | "\\";
+      /**
+       * Write `<table>` as a GFM pipe table. The first row becomes the header
+       * row. Cell content is flattened onto one line. Tables that cannot form a
+       * grid (a single cell, or layout tables that nest other tables) are
+       * unwrapped into consecutive blocks instead. When `false`, every table is
+       * unwrapped that way.
+       * @default true
+       */
+      tables?: boolean;
+      /**
+       * Write `<del>`, `<s>`, and `<strike>` as `~~text~~`. When `false` the
+       * text is kept without markup.
+       * @default true
+       */
+      strikethrough?: boolean;
+      /**
+       * Write an `<input type="checkbox">` at the start of a list item as
+       * `[x]` / `[ ]`. When `false` the checkbox is dropped.
+       * @default true
+       */
+      tasklists?: boolean;
+    }
+
+    /**
+     * Convert HTML to Markdown.
+     *
+     * The input is parsed with a spec-compliant HTML5 parser, so malformed
+     * markup is recovered the same way a browser would and never throws.
+     * Full documents and fragments are both accepted; only `<body>` content is
+     * converted, and `<script>`, `<style>`, `<template>`, and `<noscript>`
+     * are dropped. The result uses GitHub Flavored Markdown (tables,
+     * strikethrough, task lists) by default.
+     *
+     * The conversion rules follow [turndown](https://github.com/mixmark-io/turndown)'s:
+     * block elements become paragraphs, headings, lists, block quotes, fenced
+     * code blocks and tables; inline elements become emphasis, links, images
+     * and code spans; unknown elements keep their text. Characters that would
+     * otherwise be read as Markdown syntax are backslash-escaped.
+     *
+     * @param input The HTML to convert, as a string or UTF-8 bytes
+     * @param options Output style and GFM toggles
+     * @returns A Markdown string (empty when the input has no content)
+     *
+     * @example
+     * ```ts
+     * Bun.markdown.fromHTML("<h1>Hello <em>world</em></h1><p>See <a href='https://bun.com'>bun.com</a>.</p>");
+     * // "# Hello _world_\n\nSee [bun.com](https://bun.com)."
+     *
+     * // Convert a fetched page
+     * const res = await fetch("https://example.com");
+     * const md = Bun.markdown.fromHTML(await res.text());
+     *
+     * // Pick different spellings
+     * Bun.markdown.fromHTML("<ul><li>one</li></ul><hr>", { bulletListMarker: "*", hr: "***" });
+     * // "* one\n\n***"
+     * ```
+     */
+    export function fromHTML(
+      input: string | NodeJS.TypedArray | DataView<ArrayBufferLike> | ArrayBufferLike,
+      options?: FromHTMLOptions,
+    ): string;
   }
 
   /**

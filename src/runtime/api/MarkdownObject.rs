@@ -83,8 +83,190 @@ pub(crate) fn create(global_this: &JSGlobalObject) -> JSValue {
             ("ansi", __jsc_host_render_to_ansi, 2),
             ("render", __jsc_host_render, 3),
             ("react", __jsc_host_render_react, 3),
+            ("fromHTML", __jsc_host_from_html, 2),
         ],
     )
+}
+
+/// `Bun.markdown.fromHTML(html, options?)` — convert an HTML document or
+/// fragment to Markdown. `options` picks between equivalent Markdown
+/// spellings (`{ headingStyle, hr, bulletListMarker, codeBlockStyle, fence,
+/// emDelimiter, strongDelimiter, br }`) and toggles the GFM extensions
+/// (`{ tables, strikethrough, tasklists }`, all on by default).
+#[bun_jsc::host_fn]
+fn from_html(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+    use bun_md::from_html as h;
+
+    let [input_value, opts_value] = callframe.arguments_as_array::<2>();
+
+    if input_value.is_empty_or_undefined_or_null() {
+        return Err(global_this
+            .throw_invalid_arguments(format_args!("Expected a string or buffer to convert")));
+    }
+    let Some(buffer) = StringOrBuffer::from_js(global_this, input_value)? else {
+        return Err(global_this
+            .throw_invalid_arguments(format_args!("Expected a string or buffer to convert")));
+    };
+    // The conversion never re-enters JS, so a buffer input needs no pinning.
+    let bytes: &[u8] = buffer.slice();
+    if bytes.len() > h::MAX_INPUT_LEN {
+        return Err(global_this.throw_range_error(
+            bytes.len() as i64,
+            RangeErrorOptions {
+                max: h::MAX_INPUT_LEN as i64,
+                field_name: b"input.byteLength",
+                ..Default::default()
+            },
+        ));
+    }
+
+    let mut options = h::Options::default();
+    if opts_value.is_object() {
+        if let Some(v) = opts_value.get_optional_enum_from_map(
+            global_this,
+            "headingStyle",
+            &from_html_options::HEADING_STYLE,
+            "\"atx\" or \"setext\"",
+        )? {
+            options.heading_style = v;
+        }
+        if let Some(v) = opts_value.get_optional_enum_from_map(
+            global_this,
+            "hr",
+            &from_html_options::HR,
+            "\"---\", \"***\", \"___\", \"- - -\", \"* * *\", or \"_ _ _\"",
+        )? {
+            options.thematic_break = v;
+        }
+        if let Some(v) = opts_value.get_optional_enum_from_map(
+            global_this,
+            "bulletListMarker",
+            &from_html_options::BULLET,
+            "\"-\", \"*\", or \"+\"",
+        )? {
+            options.bullet_list_marker = v;
+        }
+        if let Some(v) = opts_value.get_optional_enum_from_map(
+            global_this,
+            "codeBlockStyle",
+            &from_html_options::CODE_BLOCK_STYLE,
+            "\"fenced\" or \"indented\"",
+        )? {
+            options.code_block_style = v;
+        }
+        if let Some(v) = opts_value.get_optional_enum_from_map(
+            global_this,
+            "fence",
+            &from_html_options::FENCE,
+            "\"```\" or \"~~~\"",
+        )? {
+            options.fence = v;
+        }
+        if let Some(v) = opts_value.get_optional_enum_from_map(
+            global_this,
+            "emDelimiter",
+            &from_html_options::EM,
+            "\"_\" or \"*\"",
+        )? {
+            options.em_delimiter = v;
+        }
+        if let Some(v) = opts_value.get_optional_enum_from_map(
+            global_this,
+            "strongDelimiter",
+            &from_html_options::STRONG,
+            "\"**\" or \"__\"",
+        )? {
+            options.strong_delimiter = v;
+        }
+        if let Some(v) = opts_value.get_optional_enum_from_map(
+            global_this,
+            "br",
+            &from_html_options::BR,
+            "\"  \" (two spaces) or \"\\\\\"",
+        )? {
+            options.line_break = v;
+        }
+        if let Some(v) = opts_value.get_boolean_loose(global_this, "tables")? {
+            options.tables = v;
+        }
+        if let Some(v) = opts_value.get_boolean_loose(global_this, "strikethrough")? {
+            options.strikethrough = v;
+        }
+        if let Some(v) = opts_value.get_boolean_loose(global_this, "tasklists")? {
+            options.tasklists = v;
+        }
+    }
+
+    // html5ever consumes `&str`. JS strings arrive as valid UTF-8; a raw
+    // buffer may not be, in which case invalid sequences become U+FFFD —
+    // what a browser does when it decodes the same bytes as UTF-8.
+    let markdown = if bun_core::strings::is_valid_utf8(bytes) {
+        // SAFETY: validated on the line above.
+        h::convert(unsafe { core::str::from_utf8_unchecked(bytes) }, &options)
+    } else {
+        #[allow(clippy::disallowed_methods)]
+        let lossy = String::from_utf8_lossy(bytes);
+        h::convert(&lossy, &options)
+    };
+
+    bun_string_jsc::owned_utf8_into_js(global_this, markdown.into_bytes())
+}
+
+mod from_html_options {
+    use bun_md::from_html::*;
+    bun_core::comptime_string_map! {
+        pub(super) static HEADING_STYLE: HeadingStyle = {
+            b"atx" => HeadingStyle::Atx,
+            b"setext" => HeadingStyle::Setext,
+        };
+    }
+    bun_core::comptime_string_map! {
+        pub(super) static HR: ThematicBreak = {
+            b"---" => ThematicBreak::Dashes,
+            b"***" => ThematicBreak::Asterisks,
+            b"___" => ThematicBreak::Underscores,
+            b"- - -" => ThematicBreak::SpacedDashes,
+            b"* * *" => ThematicBreak::SpacedAsterisks,
+            b"_ _ _" => ThematicBreak::SpacedUnderscores,
+        };
+    }
+    bun_core::comptime_string_map! {
+        pub(super) static BULLET: BulletListMarker = {
+            b"-" => BulletListMarker::Dash,
+            b"*" => BulletListMarker::Asterisk,
+            b"+" => BulletListMarker::Plus,
+        };
+    }
+    bun_core::comptime_string_map! {
+        pub(super) static CODE_BLOCK_STYLE: CodeBlockStyle = {
+            b"fenced" => CodeBlockStyle::Fenced,
+            b"indented" => CodeBlockStyle::Indented,
+        };
+    }
+    bun_core::comptime_string_map! {
+        pub(super) static FENCE: Fence = {
+            b"```" => Fence::Backticks,
+            b"~~~" => Fence::Tildes,
+        };
+    }
+    bun_core::comptime_string_map! {
+        pub(super) static EM: EmDelimiter = {
+            b"_" => EmDelimiter::Underscore,
+            b"*" => EmDelimiter::Asterisk,
+        };
+    }
+    bun_core::comptime_string_map! {
+        pub(super) static STRONG: StrongDelimiter = {
+            b"**" => StrongDelimiter::Asterisks,
+            b"__" => StrongDelimiter::Underscores,
+        };
+    }
+    bun_core::comptime_string_map! {
+        pub(super) static BR: LineBreak = {
+            b"  " => LineBreak::Spaces,
+            b"\\" => LineBreak::Backslash,
+        };
+    }
 }
 
 /// `bun:internal-for-testing`'s `setMaxMarkdownBlockBytesForTesting(limit)`:

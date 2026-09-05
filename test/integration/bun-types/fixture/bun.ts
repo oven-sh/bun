@@ -93,3 +93,24 @@ tsd
 
 tsd.expectType(Bun.mmap("./data.bin", { offset: 4096 })).is<Uint8Array<ArrayBuffer>>();
 tsd.expectType(Bun.mmap("./data.bin", { size: 1024 })).is<Uint8Array<ArrayBuffer>>();
+
+tsd.expectType(Bun.markdown.fromHTML("<h1>hi</h1>")).is<string>();
+tsd
+  .expectType(
+    Bun.markdown.fromHTML(new TextEncoder().encode("<p>x</p>"), {
+      headingStyle: "setext",
+      hr: "* * *",
+      bulletListMarker: "*",
+      codeBlockStyle: "indented",
+      fence: "~~~",
+      emDelimiter: "*",
+      strongDelimiter: "__",
+      br: "\\",
+      tables: false,
+      strikethrough: false,
+      tasklists: false,
+    }),
+  )
+  .is<string>();
+// @ts-expect-error - only the two-space and backslash spellings exist
+Bun.markdown.fromHTML("<br>", { br: " " });

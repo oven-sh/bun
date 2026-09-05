@@ -364,6 +364,8 @@ thiserror = "2"
 smallvec = "1"
 itoa = "1"
 encoding_rs = "0.8.35"
+# Spec-compliant HTML5 parser behind `Bun.markdown.fromHTML` (src/md/from_html).
+html5ever = "0.39"
 # Vendored, not crates.io — see the `exclude = ["vendor"]` note above.
 lol_html = { path = "vendor/lolhtml" }
 bun_opaque = { path = "src/opaque" }

@@ -790,7 +790,7 @@ mod draft {
             Output::disable_scoped_debug_writer();
         }
 
-        let mut trace_str_buf = BoundedArray::<u8, 1024>::default();
+        let mut trace_str_buf = TraceStringBuf::default();
 
         match PANIC_STAGE.with(|s| s.get()) {
             0 => {
@@ -1020,7 +1020,7 @@ mod draft {
                         }
                     }
 
-                    let mut addr_buf: [usize; 20] = [0; 20];
+                    let mut addr_buf: [usize; MAX_FRAMES] = [0; MAX_FRAMES];
                     let trace_buf: StackTrace;
 
                     let trace: &StackTrace = {
@@ -1753,7 +1753,7 @@ mod draft {
         let reason =
             CrashReason::Panic(unsafe { bun_collections::detach_lifetime(msg_buf.const_slice()) });
 
-        let mut trace_str_buf = BoundedArray::<u8, 1024>::default();
+        let mut trace_str_buf = TraceStringBuf::default();
         {
             let _panic_guard = PANIC_MUTEX.lock();
             let writer = &mut stderr_writer();
@@ -1789,7 +1789,7 @@ mod draft {
                 let _ = writeln!(writer, "Crashed while {}", action);
             }
 
-            let mut addr_buf: [usize; 20] = [0; 20];
+            let mut addr_buf: [usize; MAX_FRAMES] = [0; MAX_FRAMES];
             let idx = debug::capture_stack_trace(debug::return_address(), &mut addr_buf);
             let trace = StackTrace {
                 index: idx,
@@ -2404,14 +2404,27 @@ mod draft {
     };
 
     struct StackLine {
+        /// Offset inside the image.
         address: i32,
-        // None -> from bun.exe
+        /// None -> bun's own executable; otherwise the image as the loader names it (a path on POSIX, a basename on Windows).
         object: Option<Box<[u8]>>,
         // Box<[u8]> rather than a borrowed slice into caller's `name_bytes`,
         // since the only caller writes into a stack buffer and the value is consumed immediately.
     }
 
     impl StackLine {
+        /// `None` when the loader has no name for the image.
+        #[cfg(not(windows))]
+        fn in_foreign_image(image_path: &[u8], image_relative_address: usize) -> Option<StackLine> {
+            if bun_paths::basename_posix(image_path).is_empty() {
+                return None;
+            }
+            Some(StackLine {
+                address: i32::try_from(image_relative_address).ok()?,
+                object: Some(Box::<[u8]>::from(image_path)),
+            })
+        }
+
         /// `None` implies the trace is not known.
         fn from_address(addr: usize, name_bytes: &mut [u8]) -> Option<StackLine> {
             #[cfg(windows)]
@@ -2498,6 +2511,7 @@ mod draft {
                                     // Subtract ASLR value for stable address
                                     let stable_address: usize = address - vmaddr_slide;
 
+                                    // Image 0 is the main executable.
                                     if i == 0 {
                                         let image_relative_address = stable_address - seg_start;
                                         if image_relative_address > i32::MAX as usize {
@@ -2514,8 +2528,16 @@ mod draft {
                                                 .expect("int cast"),
                                         });
                                     } else {
-                                        // these libraries are not interesting, mark as unknown
-                                        return None;
+                                        let name = bun_sys::c::_dyld_get_image_name(i);
+                                        if name.is_null() {
+                                            return None;
+                                        }
+                                        // SAFETY: dyld owns the NUL-terminated path and keeps it while the image is loaded; `address` is inside that image.
+                                        let name = unsafe { bun_core::ffi::cstr(name) }.to_bytes();
+                                        return StackLine::in_foreign_image(
+                                            name,
+                                            stable_address - seg_start,
+                                        );
                                     }
                                 }
                             }
@@ -2533,12 +2555,20 @@ mod draft {
                 let _ = name_bytes;
                 let address = addr.saturating_sub(1);
                 let m = bun_sys::elf::find_loaded_module(address)?;
+                if m.base_address != own_image_base() {
+                    return StackLine::in_foreign_image(&m.name, address - m.base_address);
+                }
                 return Some(StackLine {
-                    address: i32::try_from(address - m.base_address).expect("int cast"),
+                    address: i32::try_from(address - m.base_address).ok()?,
                     object: None,
                 });
             }
         }
+
+        /// A longer basename is cut; its start still identifies the image.
+        const MAX_NAME_LEN: usize = 64;
+        /// Marker VLQ, length VLQ, name, and an address VLQ of up to 7 digits.
+        const MAX_ENCODED_LEN: usize = 1 + 2 + Self::MAX_NAME_LEN + 7;
 
         fn write_encoded(self_: Option<&StackLine>, writer: &mut impl Write) -> crate::Result<()> {
             let Some(known) = self_ else {
@@ -2547,17 +2577,43 @@ mod draft {
             };
 
             if let Some(object) = &known.object {
+                // The report carries the basename only, which bun.report shows as the frame's package.
+                let name = bun_paths::basename_posix(object);
+                let name = &name[..name.len().min(Self::MAX_NAME_LEN)];
                 writer.write_all(VLQ::encode(1).slice())?;
-                writer.write_all(
-                    VLQ::encode(i32::try_from(object.len()).expect("int cast")).slice(),
-                )?;
-                writer.write_all(object)?;
+                writer
+                    .write_all(VLQ::encode(i32::try_from(name.len()).expect("int cast")).slice())?;
+                // Goes into the URL verbatim and is decoded by length: one URL-safe byte per byte.
+                for &byte in name.iter() {
+                    writer.write_byte(match byte {
+                        b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'.' | b'_' | b'-' => byte,
+                        _ => b'_',
+                    })?;
+                }
             }
 
             writer.write_all(VLQ::encode(known.address).slice())?;
             Ok(())
         }
     }
+
+    /// Load base of bun's executable. It is what identifies the main program: glibc names it "", musl names it by path.
+    #[cfg(not(any(windows, target_os = "macos")))]
+    fn own_image_base() -> usize {
+        static BASE: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+        *BASE.get_or_init(|| {
+            bun_sys::elf::find_loaded_module(own_image_base as *const () as usize)
+                .map_or(usize::MAX, |m| m.base_address)
+        })
+    }
+
+    /// Frames a crash captures. An abort inside an addon routinely has more than 20 frames of its own before the first bun one.
+    const MAX_FRAMES: usize = 64;
+    /// The trace string is built in a buffer of this size; `report()` copies it into 4 KB command lines.
+    const TRACE_STRING_CAPACITY: usize = 2048;
+    /// Bytes of the trace string the frames may take; the rest holds the header and the reason, which for a panic is the compressed message.
+    const FRAMES_CAPACITY: usize = TRACE_STRING_CAPACITY / 2;
+    type TraceStringBuf = BoundedArray<u8, TRACE_STRING_CAPACITY>;
 
     struct TraceString<'a> {
         trace: &'a StackTrace<'a>,
@@ -2596,11 +2652,17 @@ mod draft {
         write_u64_as_two_vlqs(writer, packed_features as usize)?;
 
         let mut name_bytes: [u8; 1024] = [0; 1024];
-
+        let mut frames = BoundedArray::<u8, FRAMES_CAPACITY>::default();
         for &addr in &opts.trace.instruction_addresses[0..opts.trace.index] {
             let line = StackLine::from_address(addr, &mut name_bytes);
-            StackLine::write_encoded(line.as_ref(), writer)?;
+            let mut frame = BoundedArray::<u8, { StackLine::MAX_ENCODED_LEN }>::default();
+            StackLine::write_encoded(line.as_ref(), frame.writer())?;
+            // Frames past the budget are the outermost ones; dropping them keeps the string decodable.
+            if frames.append_slice(frame.const_slice()).is_err() {
+                break;
+            }
         }
+        writer.write_all(frames.const_slice())?;
 
         writer.write_all(VLQ::ZERO.slice())?;
 
@@ -3135,28 +3197,39 @@ mod draft {
     fn spawn_symbolizer(program: &bun_core::ZStr, trace: &StackTrace) -> crate::Result<()> {
         let mut argv: Vec<Vec<u8>> = Vec::new();
         argv.push(program.as_bytes().to_vec());
-        argv.push(b"--exe".to_vec());
-        argv.push({
-            #[cfg(windows)]
-            {
-                // `to_utf8_alloc` is infallible (Vec<u8>); OOM aborts.
-                let image_path = strings::to_utf8_alloc(bun_sys::windows::exe_path_w());
-                let mut s = image_path[0..image_path.len() - 3].to_vec();
-                s.extend_from_slice(b"pdb");
-                s
-            }
-            #[cfg(not(windows))]
-            {
-                bun_core::self_exe_path()?.as_bytes().to_vec()
-            }
-        });
+        #[cfg(windows)]
+        {
+            argv.push(b"--exe".to_vec());
+            // `to_utf8_alloc` is infallible (Vec<u8>); OOM aborts.
+            let image_path = strings::to_utf8_alloc(bun_sys::windows::exe_path_w());
+            let mut pdb_path = image_path[0..image_path.len() - 3].to_vec();
+            pdb_path.extend_from_slice(b"pdb");
+            argv.push(pdb_path);
+        }
+        #[cfg(not(windows))]
+        let exe_path = bun_core::self_exe_path()?;
 
         let mut name_bytes: [u8; 1024] = [0; 1024];
         for &addr in &trace.instruction_addresses[0..trace.index] {
             let Some(line) = StackLine::from_address(addr, &mut name_bytes) else {
                 continue;
             };
-            argv.push(format!("0x{:X}", line.address).into_bytes());
+            #[cfg(windows)]
+            {
+                // pdb-addr2line reads bun's PDB only; a frame of another DLL has nothing to be resolved against.
+                if line.object.is_some() {
+                    continue;
+                }
+                argv.push(format!("0x{:X}", line.address).into_bytes());
+            }
+            #[cfg(not(windows))]
+            {
+                // One `"<file>" <offset>` argument per frame resolves each frame against the image it is in.
+                let mut arg = b"\"".to_vec();
+                arg.extend_from_slice(line.object.as_deref().unwrap_or(exe_path.as_bytes()));
+                arg.extend_from_slice(format!("\" 0x{:X}", line.address).as_bytes());
+                argv.push(arg);
+            }
         }
 
         // PORTING.md: no std::process — routed through bun_core::spawn_sync_inherit (posix_spawn).

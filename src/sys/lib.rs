@@ -4947,6 +4947,13 @@ pub mod c {
     ))]
     pub use libc::{getloadavg, sockaddr_dl, sysctlbyname};
 
+    /// `dlsym` pseudo-handle: the objects loaded after the caller's.
+    #[cfg(all(unix, not(target_os = "android")))]
+    pub use libc::RTLD_NEXT;
+    /// Bionic's 64-bit `<dlfcn.h>` value; the `libc` crate does not bind it for Android.
+    #[cfg(all(target_os = "android", target_pointer_width = "64"))]
+    pub const RTLD_NEXT: *mut c_void = -1isize as *mut c_void;
+
     /// libc `dlsym` (RTLD_DEFAULT when `handle` is null).
     #[cfg(unix)]
     pub unsafe fn dlsym(handle: *mut c_void, name: *const c_char) -> *mut c_void {
@@ -5094,6 +5101,8 @@ pub mod c {
         /// index; out-of-range returns null (no precondition).
         #[link_name = "_dyld_get_image_header"]
         safe fn dyld_get_image_header_raw(image_index: u32) -> *const core::ffi::c_void;
+        /// `const char* _dyld_get_image_name(uint32_t)`: dyld-owned path, live while the image is; null when out of range.
+        pub safe fn _dyld_get_image_name(image_index: u32) -> *const core::ffi::c_char;
     }
     /// `mach_task_self()` — C macro `#define mach_task_self() mach_task_self_`.
     #[cfg(target_os = "macos")]

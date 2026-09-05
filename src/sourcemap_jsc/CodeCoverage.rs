@@ -619,6 +619,15 @@ pub struct BasicBlockRange {
     execution_count: usize,
 }
 
+impl BasicBlockRange {
+    /// Hit count this block contributes to each line (a line reports the
+    /// max over the blocks touching it). JSC's synthetic function ranges
+    /// have `has_executed` with a zero count, so executed blocks count ≥ 1.
+    fn line_execution_count(&self) -> u32 {
+        u32::try_from(self.execution_count.max(usize::from(self.has_executed))).unwrap_or(u32::MAX)
+    }
+}
+
 pub struct ByteRangeMapping {
     pub(crate) line_offset_table: line_offset_table::List,
     pub(crate) source_id: i32,
@@ -731,6 +740,7 @@ impl ByteRangeMapping {
                 let mut max_line: u32 = 0;
 
                 let has_executed = block.has_executed || block.execution_count > 0;
+                let execution_count = block.line_execution_count();
 
                 for byte_offset in min..max {
                     let Some(new_line_index) = LineOffsetTable::find_index(
@@ -753,7 +763,8 @@ impl ByteRangeMapping {
                     executable_lines.set(line as usize);
                     if has_executed {
                         lines_which_have_executed.set(line as usize);
-                        line_hits_slice[line as usize] += 1;
+                        let hits = &mut line_hits_slice[line as usize];
+                        *hits = (*hits).max(execution_count);
                     }
                 }
 
@@ -802,7 +813,8 @@ impl ByteRangeMapping {
                 // only mark the lines as executable if the function has not executed
                 // functions that have executed have non-executable lines in them and thats fine.
                 if !did_fn_execute {
-                    let end = max_line.min(line_count);
+                    // `max_line` is inclusive.
+                    let end = (max_line + 1).min(line_count);
                     line_hits_slice[min_line as usize..end as usize].fill(0);
                     for line in min_line..end {
                         executable_lines.set(line as usize);
@@ -836,6 +848,7 @@ impl ByteRangeMapping {
                 let mut min_line: u32 = u32::MAX;
                 let mut max_line: u32 = 0;
                 let has_executed = block.has_executed || block.execution_count > 0;
+                let execution_count = block.line_execution_count();
 
                 for byte_offset in min..max {
                     let Some(new_line_index) = LineOffsetTable::find_index(
@@ -886,7 +899,8 @@ impl ByteRangeMapping {
                         executable_lines.set(line as usize);
                         if has_executed {
                             lines_which_have_executed.set(line as usize);
-                            line_hits_slice[line as usize] += 1;
+                            let hits = &mut line_hits_slice[line as usize];
+                            *hits = (*hits).max(execution_count);
                         }
 
                         min_line = min_line.min(line);
@@ -975,7 +989,8 @@ impl ByteRangeMapping {
                 // only mark the lines as executable if the function has not executed
                 // functions that have executed have non-executable lines in them and thats fine.
                 if !did_fn_execute {
-                    let end = max_line.min(line_count);
+                    // `max_line` is inclusive.
+                    let end = (max_line + 1).min(line_count);
                     for line in min_line..end {
                         executable_lines.set(line as usize);
                         lines_which_have_executed.unset(line as usize);

@@ -1799,6 +1799,42 @@ it("sensitive headers should work", async () => {
   }
 });
 
+it("should not send symbol-keyed properties of the headers object on the wire", async () => {
+  const server = http2.createServer();
+  let client;
+  try {
+    const received = Promise.withResolvers();
+    const closed = Promise.withResolvers();
+    server.on("stream", (stream, headers) => {
+      received.resolve(headers);
+      stream.respond({ ":status": 200 });
+      stream.end();
+    });
+    server.listen(0, () => {
+      const port = server.address().port;
+      client = http2.connect(`http://localhost:${port}`);
+      client.on("error", received.reject);
+      const req = client.request({
+        ":path": "/",
+        "x-secret": "value",
+        [http2.sensitiveHeaders]: ["x-secret"],
+        [Symbol("x-arbitrary")]: "nope",
+      });
+      req.on("error", received.reject);
+      req.on("close", closed.resolve);
+      req.end();
+    });
+    const names = Object.keys(await received.promise);
+    expect(names).toContain("x-secret");
+    expect(names).not.toContain("nodejs.http2.sensitiveheaders");
+    expect(names).not.toContain("x-arbitrary");
+    await closed.promise;
+  } finally {
+    server.close();
+    client?.close?.();
+  }
+});
+
 it("http2 session.goaway() validates input types", async done => {
   const { mustCall } = createCallCheckCtx(done);
   const server = http2.createServer((req, res) => {

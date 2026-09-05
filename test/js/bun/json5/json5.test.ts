@@ -718,6 +718,13 @@ describe("stringify", () => {
     expect(JSON5.stringify(null)).toEqual("null");
   });
 
+  test("skips symbol-keyed properties like JSON.stringify", () => {
+    const sym = Symbol("SYMK");
+    expect(JSON5.stringify({ a: 2, [sym]: 1 })).toEqual("{a:2}");
+    expect(JSON5.stringify({ [sym]: 1 })).toEqual("{}");
+    expect(JSON5.stringify({ [Symbol.iterator]: 1 })).toEqual("{}");
+  });
+
   test("stringifies booleans", () => {
     expect(JSON5.stringify(true)).toEqual("true");
     expect(JSON5.stringify(false)).toEqual("false");

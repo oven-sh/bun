@@ -45,7 +45,11 @@ extern "C" JSPropertyIterator* Bun__JSPropertyIterator__create(JSC::JSGlobalObje
     ASSERT(count);
 
     auto scope = DECLARE_THROW_SCOPE(vm);
-    JSC::PropertyNameArrayBuilder array(vm, PropertyNameMode::StringsAndSymbols, PrivateSymbolMode::Exclude);
+    // Strings only: the name crosses the FFI as a BunString, so a symbol key would be
+    // indistinguishable from a string key equal to its description (and leaked into
+    // serializers, child process env, HTTP/2 headers, etc.). Callers that need symbol
+    // keys use forEachProperty, which reports an isSymbol flag.
+    JSC::PropertyNameArrayBuilder array(vm, PropertyNameMode::Strings, PrivateSymbolMode::Exclude);
 
     if (object->hasNonReifiedStaticProperties()) [[unlikely]] {
         object->reifyAllStaticProperties(globalObject);

@@ -177,17 +177,10 @@ The build does not run cross-compiled executables on the host (it skips the `--r
 
 ### LTO
 
-x64 release cross builds support ThinLTO with cross-language (Rust↔C++) LTO. It's opt-in:
+x64 release cross builds use ThinLTO with cross-language (Rust↔C++) LTO, like every release build (`--lto=off` for faster relinks):
 
-```bash
-bun run build --profile=windows-x64-release --lto=on
-```
+- Bun's C/C++ and JavaScriptCore compile with `-flto=thin`
+- rustc emits LLVM bitcode (`-Clinker-plugin-lto`)
+- everything links with rustc's bundled `lld-link` (its LLVM is new enough to read both compilers' bitcode)
 
-`--lto=on` does the following:
-
-- compiles Bun's C/C++ with `-flto=thin`
-- makes rustc emit LLVM bitcode (`-Clinker-plugin-lto`)
-- pulls the `bun-webkit-windows-amd64-lto` ThinLTO prebuilt
-- links everything with rustc's bundled `lld-link` (its LLVM is new enough to read both compilers' bitcode)
-
-There is no LTO for arm64, because there is no `-lto` WebKit prebuilt: LLVM's CodeView emitter can't handle ARM64 NEON tuple registers during LTO codegen. There is also no LTO for `--baseline`.
+There is no LTO for arm64: LLVM's CodeView emitter can't handle ARM64 NEON tuple registers when JSC goes through LTO codegen.

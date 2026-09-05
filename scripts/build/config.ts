@@ -778,19 +778,16 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
   // build:asan always set ENABLE_ASSERTIONS=ON for this reason.
   const assertions = partial.assertions ?? (debug || asan);
 
-  // LTO: default on for CI release non-asan non-assertions builds across
-  // linux, darwin-cross, and windows-cross (ThinLTO; that is how CI builds
-  // them). Native windows/darwin hosts default off (in prebuilt mode there
-  // is no -lto tarball for them either).
-  const windowsCross = windows && host.os !== "windows";
-  const ltoDefault = release && (linux || darwinCross || windowsCross) && ci && !assertions && !asan;
+  // LTO (ThinLTO across bun, JSC and the Rust side): on for every release
+  // build without assertions or ASAN, locally as in CI, so a local release
+  // binary has the codegen CI ships. `--lto=off` for faster relinks.
+  const ltoDefault = release && !assertions && !asan;
   let lto = partial.lto ?? ltoDefault;
   // ASAN and LTO don't mix — ASAN wins (silently, no warn — config is explicit).
-  // Android: off (no -lto prebuilt; not enabled for the source build either).
+  // Android, FreeBSD: not enabled (never built that way; untested).
   // Windows arm64: off — LLVM's CodeView emitter aborts on ARM64 NEON tuple
-  // registers when JSC goes through LTO (why oven-sh/WebKit ships no
-  // windows-arm64-lto tarball too).
-  if ((asan && lto) || abi === "android" || (windows && arm64)) {
+  // registers when JSC goes through LTO.
+  if ((asan && lto) || abi === "android" || freebsd || (windows && arm64)) {
     lto = false;
   }
 

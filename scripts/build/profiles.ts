@@ -13,7 +13,7 @@
  *
  *   debug              → Debug build (the default). JSC is compiled from the
  *                        pinned WEBKIT_VERSION like every other dep.
- *   release            → Release build, no LTO
+ *   release            → Release build (LTO, as CI ships)
  *                        (your own WebKit clone: either profile plus
  *                        `--local-deps=WebKit=<path>`; `bun run build:local`
  *                        passes `--local-deps=WebKit`, i.e. $BUN_WEBKIT_PATH)
@@ -111,29 +111,13 @@ export const profiles = {
     arch: "aarch64",
   },
 
-  /** Release build for local testing. No LTO (that's CI-only). */
+  /**
+   * Release build: the codegen CI ships (ThinLTO across bun, JSC and Rust; no
+   * PGO or symbol ordering — those are CI post-steps). `--lto=off` trades that
+   * for fast relinks while iterating.
+   */
   release: {
     buildType: "Release",
-    lto: false,
-  },
-
-  /**
-   * Bench-till-green profile. Mirrors the codegen the CI release build
-   * actually ships (`ci-release` resolves `lto: true` for ci+release+linux),
-   * so PORT-vs-SYS comparisons measure what we'd actually ship — no PGO, no
-   * symbol ordering, no special-case linker layout. lto=true compiles JSC
-   * as ThinLTO bitcode with the rest (`-flto=thin -fwhole-program-vtables`)
-   * so cross-TU inlining runs; a non-LTO build outlines JSC slow-paths and
-   * the bench then reports a ~6-8% time / ~1 MB RSS "regression" that is
-   * pure binary layout.
-   */
-  btg: {
-    buildType: "Release",
-    lto: true,
-    // Pin the build dir so `--profile=btg` alone lands here and can never
-    // be confused with `--profile=release --build-dir=build/btg` (which
-    // would persist lto:false and silently de-LTO the bench binary).
-    buildDir: "build/btg",
   },
 
   /**
@@ -145,7 +129,6 @@ export const profiles = {
     buildType: "RelWithDebInfo",
     assertions: true,
     logs: true,
-    lto: false,
   },
 
   /**

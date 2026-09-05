@@ -83,23 +83,21 @@ describe.skipIf(isWindows)("Windows cross-compile LTO config (non-windows host)"
     expect(cfg.crossLangLto).toBe(true);
   });
 
-  test("no -lto WebKit prebuilt exists for arm64 — LTO is forced off there", () => {
+  test("arm64: LTO is forced off", () => {
     // arm64: LLVM's CodeView emitter aborts on ARM64 NEON tuple registers
-    // during LTO codegen, so oven-sh/WebKit ships no windows-arm64-lto.
+    // when JSC goes through LTO codegen.
     const arm64 = resolveWindowsCross({ arch: "aarch64" });
     expect(arm64.lto).toBe(false);
     expect(arm64.crossLangLto).toBe(false);
-    // Forced off even when explicitly requested, so the WebKit fetch never
-    // 404s on a tarball that doesn't exist.
+    // Forced off even when explicitly requested.
     expect(resolveWindowsCross({ arch: "aarch64", lto: true }).lto).toBe(false);
   });
 
-  test("local (non-ci) release builds stay non-LTO unless asked", () => {
-    const local = resolveWindowsCross({ ci: false });
-    expect(local.lto).toBe(false);
-    const explicit = resolveWindowsCross({ ci: false, lto: true, baseline: false });
-    expect(explicit.lto).toBe(true);
-    expect(explicit.crossLangLto).toBe(true);
+  test("local (non-ci) release builds are LTO too, unless turned off", () => {
+    const local = resolveWindowsCross({ ci: false, baseline: false });
+    expect(local.lto).toBe(true);
+    expect(local.crossLangLto).toBe(true);
+    expect(resolveWindowsCross({ ci: false, lto: false }).lto).toBe(false);
   });
 
   test("compile flags use clang-cl ThinLTO without whole-program vtables", () => {

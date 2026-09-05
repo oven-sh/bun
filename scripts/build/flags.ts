@@ -1390,7 +1390,7 @@ export const linkerFlags: Flag[] = [
     desc: "Identical-code-folding (safe; perf symbolication uses the linker-map)",
   },
   {
-    // When a PGO profile is loaded (`--pgo-use`, e.g. the two-stage `btg`
+    // When a PGO profile is loaded (`--pgo-use`, e.g. the two-stage
     // build driven by scripts/build-pgo.ts) clang AND rustc emit `.text.hot` /
     // `.text.unlikely` section prefixes from *measured* execution counts.
     // Tell lld to keep those prefixes (it merges them into one `.text` by

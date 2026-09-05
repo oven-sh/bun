@@ -90,7 +90,10 @@ describe("debug-info flag order", () => {
 
   test("release without LTO: full, homed debug info", () => {
     using dir = tempDir("build-debug-info", {});
-    for (const partial of [{ buildType: "Release" }, { buildType: "Release", asan: true }] as const) {
+    for (const partial of [
+      { buildType: "Release", lto: false },
+      { buildType: "Release", asan: true },
+    ] as const) {
       const cfg = linuxConfig(partial, String(dir));
       expect(cfg.lto).toBe(false);
       for (const flags of allCompileFlagLists(cfg)) {

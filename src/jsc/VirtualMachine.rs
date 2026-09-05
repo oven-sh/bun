@@ -1331,18 +1331,11 @@ impl VirtualMachine {
 
     pub fn is_event_loop_alive_excluding_immediates(&self) -> bool {
         let el = self.event_loop_shared();
-        let active = self
-            .platform_loop_opt()
-            .map(|h| h.is_active())
-            .unwrap_or(false);
         self.unhandled_error_counter == 0
-            && ((active as usize)
-                + self.active_tasks
-                + el.tasks.readable_length()
-                + el.yield_tasks.len()
-                + (el.has_concurrent_tasks() as usize)
-                + (el.has_pending_refs() as usize)
-                > 0)
+            && (self.has_keep_alives()
+                || el.tasks.readable_length() > 0
+                || !el.yield_tasks.is_empty()
+                || el.has_concurrent_tasks())
     }
 
     pub fn is_event_loop_alive(&self) -> bool {
@@ -1350,6 +1343,13 @@ impl VirtualMachine {
         self.is_event_loop_alive_excluding_immediates()
             || !el.immediate_tasks.is_empty()
             || !el.next_immediate_tasks.is_empty()
+    }
+
+    /// The ref'd-handle terms of `is_event_loop_alive()`, without its task queues or error gate.
+    pub fn has_keep_alives(&self) -> bool {
+        self.platform_loop_opt().is_some_and(|h| h.is_active())
+            || self.active_tasks > 0
+            || self.event_loop_shared().has_pending_refs()
     }
 
     pub fn wakeup(&mut self) {
@@ -4953,6 +4953,7 @@ impl VirtualMachine {
     pub(crate) fn reload_entry_point_for_test_runner(
         &mut self,
         entry_path: &[u8],
+        after_preloads: impl FnOnce(&Self),
     ) -> crate::CrateResult<*mut JSInternalPromise> {
         self.has_loaded = false;
         self.set_main(entry_path);
@@ -4977,6 +4978,8 @@ impl VirtualMachine {
                 }
             }
         }
+
+        after_preloads(self);
 
         // Note: reshaped for borrowck.
         let global = self.global;
@@ -5010,11 +5013,13 @@ impl VirtualMachine {
     }
 
     /// Loads a test-file entry point and waits for the load promise to settle.
+    /// `after_preloads` runs once preloads have finished, before the file is evaluated.
     pub fn load_entry_point_for_test_runner(
         &mut self,
         entry_path: &[u8],
+        after_preloads: impl FnOnce(&Self),
     ) -> crate::CrateResult<*mut JSInternalPromise> {
-        let promise = self.reload_entry_point_for_test_runner(entry_path)?;
+        let promise = self.reload_entry_point_for_test_runner(entry_path, after_preloads)?;
 
         // pending_internal_promise can change if hot module reloading is enabled
         if self.is_watcher_enabled() {

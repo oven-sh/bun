@@ -130,6 +130,12 @@ impl ReplCommand {
         VirtualMachine::get().as_mut().is_main_thread = true;
         bun_jsc::virtual_machine::IS_MAIN_THREAD_VM.set(true);
 
+        {
+            let vm = VirtualMachine::get().as_mut();
+            let _api_lock = vm.global().vm().get_api_lock();
+            crate::cli::profiling::configure(vm, &ctx.runtime_options);
+        }
+
         // Store VM reference in REPL (safe - no JS allocation)
         repl.vm = Some(VirtualMachine::get());
         repl.global = Some(VirtualMachine::get().global());

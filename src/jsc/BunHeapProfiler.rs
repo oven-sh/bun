@@ -7,10 +7,8 @@ use bun_sys::{self as sys, E, Fd, FdDirExt};
 use crate::VM;
 
 pub struct HeapProfilerConfig {
-    // The config originates from CLI args and lives until process exit, so
-    // `&'static [u8]` matches the ownership exactly.
-    pub name: &'static [u8],
-    pub dir: &'static [u8],
+    pub name: Box<[u8]>,
+    pub dir: Box<[u8]>,
     pub text_format: bool,
 }
 
@@ -106,7 +104,7 @@ fn build_output_path(
     // Generate filename
     let mut filename_buf = PathBuffer::uninit();
     let filename: &[u8] = if !config.name.is_empty() {
-        config.name
+        &config.name
     } else {
         generate_default_filename(&mut filename_buf, config.text_format)?
     };
@@ -114,7 +112,7 @@ fn build_output_path(
     // Join directory and filename; `join` resolves absolute segments where
     // `append` asserts on them (node accepts absolute --heap-prof-dir/-name).
     if !config.dir.is_empty() {
-        path.join(&[config.dir])?;
+        path.join(&[&config.dir])?;
     }
     path.join(&[filename])?;
     Ok(())

@@ -1295,41 +1295,7 @@ impl Run<'_> {
         vm.hot_reload = ctx.debug.hot_reload;
         vm.on_unhandled_rejection = Run::on_unhandled_rejection_before_close;
 
-        // ── CPU profiler ────────────────────────────────────────────────────
-        if ctx.runtime_options.cpu_prof.enabled {
-            let opts = &ctx.runtime_options.cpu_prof;
-            // SAFETY: `ctx` is process-lifetime; erase `Box<[u8]>` borrows to
-            // `'static` for `CPUProfilerConfig`.
-            let name: &'static [u8] = unsafe { &*std::ptr::from_ref::<[u8]>(opts.name.as_ref()) };
-            // SAFETY: same process-lifetime erasure as `name` above.
-            let dir: &'static [u8] = unsafe { &*std::ptr::from_ref::<[u8]>(opts.dir.as_ref()) };
-            vm.cpu_profiler_config = Some(bun_jsc::bun_cpu_profiler::CPUProfilerConfig {
-                name,
-                dir,
-                md_format: opts.md_format,
-                json_format: opts.json_format,
-                interval: opts.interval,
-            });
-            bun_jsc::bun_cpu_profiler::set_sampling_interval(opts.interval);
-            // SAFETY: `vm.jsc_vm` set in `init`.
-            bun_jsc::bun_cpu_profiler::start_cpu_profiler(unsafe { &mut *vm.jsc_vm });
-            bun_analytics::features::cpu_profile.fetch_add(1, Ordering::Relaxed);
-        }
-
-        // ── Heap profiler ───────────────────────────────────────────────────
-        if ctx.runtime_options.heap_prof.enabled {
-            let opts = &ctx.runtime_options.heap_prof;
-            // SAFETY: `ctx` is process-lifetime; see CPU-profiler note above.
-            let name: &'static [u8] = unsafe { &*std::ptr::from_ref::<[u8]>(opts.name.as_ref()) };
-            // SAFETY: same process-lifetime erasure as `name` above.
-            let dir: &'static [u8] = unsafe { &*std::ptr::from_ref::<[u8]>(opts.dir.as_ref()) };
-            vm.heap_profiler_config = Some(bun_jsc::bun_heap_profiler::HeapProfilerConfig {
-                name,
-                dir,
-                text_format: opts.text_format,
-            });
-            bun_analytics::features::heap_snapshot.fetch_add(1, Ordering::Relaxed);
-        }
+        cli::profiling::configure(vm, &ctx.runtime_options);
 
         Self::add_conditional_globals(vm, ctx);
 

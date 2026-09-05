@@ -1409,7 +1409,7 @@ impl CommandLineReporter {
                     Output::flush();
                     this.write_junit_report_if_needed();
                     this.write_timings_if_needed();
-                    Global::exit(1);
+                    exit_after_writing_profiles(1);
                 }
             }
         }
@@ -1503,7 +1503,7 @@ impl CommandLineReporter {
         Self::for_each_coverage_report(vm, opts, |report| reports.push(report.into_owned()));
         if let Err(err) = print_coverage_reports(opts, &reports) {
             Output::err(err, "Failed to write lcov.info", ());
-            Global::exit(1);
+            exit_after_writing_profiles(1);
         }
     }
 }
@@ -1999,6 +1999,12 @@ impl TestCommand {
                 Some(bun_jsc::virtual_machine::synthetic_allocation_limit());
         }
 
+        {
+            let _api_lock = vm.global().vm().get_api_lock();
+            crate::cli::profiling::configure(vm, &ctx.runtime_options);
+        }
+        scopeguard::defer! { write_test_profiles(); }
+
         if ctx.test_options.test_worker {
             // Worker mode: skip discovery; files arrive over stdin and
             // results go out over fd 3. Never returns.
@@ -2060,7 +2066,10 @@ impl TestCommand {
                             // SAFETY: `vm_ptr` reborrows the live `&mut VirtualMachine`;
                             // `run_with_api_lock` takes `&self` only and `global_exit()`
                             // diverges, so the closure is the sole mutator.
-                            vm.run_with_api_lock(|| unsafe { (*vm_ptr).global_exit() });
+                            vm.run_with_api_lock(|| unsafe {
+                                (*vm_ptr).write_profiles();
+                                (*vm_ptr).global_exit()
+                            });
                         }
                     }
                 }
@@ -2157,7 +2166,10 @@ impl TestCommand {
                     // SAFETY: `vm_ptr` reborrows the live `&mut VirtualMachine`;
                     // `run_with_api_lock` takes `&self` only and `global_exit()`
                     // diverges, so the closure is the sole mutator.
-                    vm.run_with_api_lock(|| unsafe { (*vm_ptr).global_exit() });
+                    vm.run_with_api_lock(|| unsafe {
+                        (*vm_ptr).write_profiles();
+                        (*vm_ptr).global_exit()
+                    });
                 }
             }
         }
@@ -2194,7 +2206,7 @@ impl TestCommand {
                     Ok(r) => r,
                     Err(err) => {
                         Output::err(err, "--changed: unable to determine affected tests", ());
-                        Global::exit(1);
+                        exit_after_writing_profiles(1);
                     }
                 };
                 changed_module_graph_files = result.module_graph_files;
@@ -2952,6 +2964,7 @@ impl TestCommand {
                             (*bun_test_root_ptr).deinit_for_exit();
                             jest::Jest::RUNNER.write(None);
                         }
+                        vm.write_profiles();
                         let vm_ptr = std::ptr::from_mut::<VirtualMachine>(vm);
                         // SAFETY: global_exit diverges; `vm_ptr` is a fresh
                         // raw-ptr reborrow of the exclusive `vm` borrow.
@@ -3047,5 +3060,16 @@ pub(crate) fn handle_top_level_test_error_before_javascript_start(err: &crate::E
             bun_core::debug_warn!("Unhandled error: {}", err.name());
         }
     }
-    Global::exit(1);
+    exit_after_writing_profiles(1);
+}
+
+fn exit_after_writing_profiles(exit_code: u32) -> ! {
+    write_test_profiles();
+    Global::exit(exit_code);
+}
+
+fn write_test_profiles() {
+    let vm = VirtualMachine::get().as_mut();
+    let _api_lock = vm.global().vm().get_api_lock();
+    vm.write_profiles();
 }

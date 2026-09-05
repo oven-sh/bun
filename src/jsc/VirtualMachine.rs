@@ -597,24 +597,31 @@ impl VMHolder {
         let Some(vm_ptr) = VM.get() else { return };
         // SAFETY: called on the JS thread that owns this VM (process._kill).
         let vm = unsafe { &mut *vm_ptr };
-        if let Some(config) = vm.cpu_profiler_config.take() {
-            if let Err(e) =
-                crate::bun_cpu_profiler::stop_and_write_profile(vm.jsc_vm_mut(), &config)
-            {
-                bun_core::Output::err(<&'static str>::from(e), "Failed to write CPU profile", ());
-            }
-        }
-        if let Some(config) = vm.heap_profiler_config.take() {
-            if let Err(e) =
-                crate::bun_heap_profiler::generate_and_write_profile(vm.jsc_vm_mut(), &config)
-            {
-                bun_core::Output::err(e, "Failed to write heap profile", ());
-            }
-        }
+        vm.write_profiles();
         // Node runs RunAtExit (incl. compile cache) on self-directed fatal signals. Non-latching:
         // the signal may prove non-fatal, and latching here would no-op the real exit's persist.
         // https://github.com/nodejs/node/blob/main/src/env.cc (AtExit(FlushCompileCache))
         crate::node_compile_cache::persist_now();
+    }
+}
+
+impl VirtualMachine {
+    /// Writes each configured profile at most once. Call on the JS thread under the API lock.
+    pub fn write_profiles(&mut self) {
+        if let Some(config) = self.cpu_profiler_config.take() {
+            if let Err(e) =
+                crate::bun_cpu_profiler::stop_and_write_profile(self.jsc_vm_mut(), &config)
+            {
+                bun_core::Output::err(<&'static str>::from(e), "Failed to write CPU profile", ());
+            }
+        }
+        if let Some(config) = self.heap_profiler_config.take() {
+            if let Err(e) =
+                crate::bun_heap_profiler::generate_and_write_profile(self.jsc_vm_mut(), &config)
+            {
+                bun_core::Output::err(e, "Failed to write heap profile", ());
+            }
+        }
     }
 }
 
@@ -1797,25 +1804,7 @@ impl VirtualMachine {
             }
         }
 
-        // Write CPU profile if profiling was enabled - do this FIRST before any
-        // shutdown begins. Grab the config and null it out to make this
-        // idempotent.
-        if let Some(config) = self.cpu_profiler_config.take() {
-            if let Err(e) =
-                crate::bun_cpu_profiler::stop_and_write_profile(self.jsc_vm_mut(), &config)
-            {
-                bun_core::Output::err(<&'static str>::from(e), "Failed to write CPU profile", ());
-            }
-        }
-        // Write heap profile if profiling was enabled - do this after CPU
-        // profile but before shutdown.
-        if let Some(config) = self.heap_profiler_config.take() {
-            if let Err(e) =
-                crate::bun_heap_profiler::generate_and_write_profile(self.jsc_vm_mut(), &config)
-            {
-                bun_core::Output::err(e, "Failed to write heap profile", ());
-            }
-        }
+        self.write_profiles();
 
         ExitHandler::dispatch_on_exit(self);
 
@@ -2644,11 +2633,8 @@ impl VirtualMachine {
             addr_of_mut!((*vm).origin_timer).write(std::time::Instant::now());
             addr_of_mut!((*vm).origin_timestamp).write(get_origin_timestamp());
             addr_of_mut!((*vm).smol).write(opts.smol);
-            // `Option<{CPU,Heap}ProfilerConfig>` are NOT zero-valid: each
-            // payload contains a `bool`, and rustc picks that field's invalid
-            // range (not the `&[u8]` null-ptr) as the enum niche, so all-zero
-            // bytes decode as `Some` with null-ref slices. Write `None`
-            // explicitly.
+            // `Option<{CPU,Heap}ProfilerConfig>` is not guaranteed to accept an
+            // all-zero representation. Write `None` explicitly.
             addr_of_mut!((*vm).cpu_profiler_config).write(None);
             addr_of_mut!((*vm).heap_profiler_config).write(None);
             // `Option<bool>` uses the bool's invalid range (2) as the niche, so

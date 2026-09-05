@@ -1413,6 +1413,19 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
             }
         }
 
+        if cmd == CommandTag::TestCommand
+            && ctx.test_options.parallel > 1
+            && (ctx.runtime_options.cpu_prof.enabled || ctx.runtime_options.heap_prof.enabled)
+        {
+            bun_core::pretty_errorln!(
+                "<red>error<r>: profiling is not supported with multiple bun test --parallel workers"
+            );
+            bun_core::pretty_errorln!(
+                "<blue>note<r><d>:<r> Use --parallel=1 or remove --parallel to profile the test process."
+            );
+            Global::exit(1);
+        }
+
         if args.flag(b"--experimental-stream-iter") {
             bun_resolve_builtins::set_stream_iter_enabled(true);
         }

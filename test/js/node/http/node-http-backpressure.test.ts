@@ -109,9 +109,12 @@ async function readRawResponse(
   });
   socket.on("end", () => (ended = true));
   socket.on("error", () => {});
+  // Not once(socket, "close"): that also rejects on 'error', so a reset would
+  // throw instead of showing up as `ended: false` in the assertion diff.
+  const closed = new Promise<void>(resolve => socket.once("close", () => resolve()));
   if (halfClose) socket.end(request);
   else socket.write(request);
-  await once(socket, "close");
+  await closed;
   return {
     status: head.slice(0, head.indexOf("\r\n")),
     body: chunked ? chunked.bytes : body,

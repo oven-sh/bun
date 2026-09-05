@@ -6069,14 +6069,26 @@ pub fn dtoa_short(buf: &mut [u8; 129], value: f32, precision: u8) -> (&[u8], Opt
 pub(crate) fn dtoa_short_impl(buf: &mut [u8; 129], value: f32, precision: u8) -> (&[u8], Notation) {
     buf[0] = b'0';
     debug_assert!(value.is_finite());
-    // bun_core::fmt::FormatDouble::dtoa wants a fixed-size [u8; 124] buffer.
-    let buf_len = {
-        let inner: &mut [u8; 124] = (&mut buf[1..125])
-            .try_into()
-            .expect("infallible: size matches");
-        bun_core::fmt::FormatDouble::dtoa(inner, value as f64).len()
+    // `restrict_prec` has to round the f32's own shortest round-trip digits,
+    // as lightningcss (dtoa-short) does. Formatting `value as f64` would hand
+    // it the f32's f64 expansion instead: f32 56.89655 is 56.896549224853516,
+    // which rounds to 56.8965 where lightningcss prints 56.8966, and f32
+    // 0.000001 is 9.999999974752427e-7, whose carry comes out as `10e-7`.
+    //
+    // dtoa-short prints magnitudes from 1e-6 up to (not including) 1e21 in
+    // plain notation and everything else in exponent form (`1e-7`, `1e21`: no
+    // `+`); `{}` and `{:e}` are exactly those two layouts. The f32 literals
+    // below are the f32s nearest to the two powers of ten, and a digit string
+    // round-trips to an f32 at or above that nearest f32 exactly when the
+    // string itself is at or above the power of ten, so this magnitude test
+    // agrees with dtoa-short's digit-based one for every f32.
+    let magnitude = value.abs();
+    let len = if magnitude == 0.0 || (1e-6..1e21).contains(&magnitude) {
+        bun_core::fmt::buf_print_infallible(&mut buf[1..], format_args!("{value}")).len()
+    } else {
+        bun_core::fmt::buf_print_infallible(&mut buf[1..], format_args!("{value:e}")).len()
     };
-    restrict_prec(&mut buf[0..buf_len + 1], precision)
+    restrict_prec(&mut buf[..len + 1], precision)
 }
 
 fn restrict_prec(buf: &mut [u8], prec: u8) -> (&[u8], Notation) {

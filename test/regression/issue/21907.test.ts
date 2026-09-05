@@ -85,13 +85,13 @@ test("CSS parser should handle extremely large floating-point values without cra
   expect(normalizeCSSOutput(outputContent)).toMatchInlineSnapshot(`
     "/* [path] */
     .test-rounded-full {
-      border-radius: 3.40282e+38px;
+      border-radius: 3.40282e38px;
       width: 2147480000px;
       height: -2147480000px;
     }
 
     .test-negative {
-      border-radius: -3.40282e+38px;
+      border-radius: -3.40282e38px;
     }
 
     .test-very-large, .test-large-integer {

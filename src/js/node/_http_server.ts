@@ -1,6 +1,7 @@
 // Hardcoded module "node:_http_server"
 const EventEmitter: typeof import("node:events").EventEmitter = require("node:events");
 const { Stream } = require("node:stream");
+const { isIP } = require("internal/net/isIP");
 const {
   _checkInvalidHeaderChar: checkInvalidHeaderChar,
   chunkExpression,
@@ -100,6 +101,12 @@ const MathFloor = Math.floor;
 const DateNow = Date.now;
 
 let cluster;
+
+let BlockList;
+function isBlockList(value) {
+  BlockList ??= $rust("node_net_binding.rs", "BlockList");
+  return BlockList.isBlockList(value);
+}
 
 function emitCloseServer(self: Server) {
   callCloseCallback(self);
@@ -366,6 +373,15 @@ function Server(options, callback): void {
         requestCert: options.requestCert,
         rejectUnauthorized: options.rejectUnauthorized,
       });
+
+      // TLS-only like Node, where tls.Server passes its options through to net.Server and http.Server does not.
+      const blockList = options.blockList;
+      if (blockList) {
+        if (!isBlockList(blockList)) {
+          throw $ERR_INVALID_ARG_TYPE("options.blockList", "net.BlockList", blockList);
+        }
+        this.blockList = blockList;
+      }
     } else {
       this[tlsSymbol] = null;
     }
@@ -1154,6 +1170,18 @@ function onServerConnection(this: Server, socketHandle) {
     socket.destroy();
     this.emit("drop", data);
     return;
+  }
+
+  // Node's onconnection checks server.blockList next and closes a blocked peer silently: no 'drop', no 'connection'.
+  const blockList = this.blockList;
+  if (blockList) {
+    const remoteAddress = socket.remoteAddress;
+    const addressType = isIP(remoteAddress);
+    if (addressType && blockList.check(remoteAddress, `ipv${addressType}`)) {
+      tracked?.delete(socket);
+      socket.destroy();
+      return;
+    }
   }
 
   // Node's connectionListener attaches the HTTPParser (socket.parser) before

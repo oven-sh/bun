@@ -2333,6 +2333,11 @@ impl<'a> Installer<'a> {
             Which::Staging,
         );
 
+        // `bun add -g`: root-level update requests link into `options.bin_path`
+        // (~/.bun/bin); everything else stays in the parent's local `.bin/`.
+        let link_into_global_bin =
+            self.manager().options.global && parent_entry_id == StoreEntryId::ROOT;
+
         for dep in entry_deps[parent_entry_id.get() as usize].slice() {
             let node_id = entry_node_ids[dep.entry_id.get() as usize];
             let dep_id = node_dep_ids[node_id.get() as usize];
@@ -2373,6 +2378,19 @@ impl<'a> Installer<'a> {
                 );
             }
 
+            let global = if !link_into_global_bin {
+                false
+            } else {
+                'global: {
+                    for request in self.manager().update_requests.iter() {
+                        if request.package_id == pkg_id {
+                            break 'global true;
+                        }
+                    }
+                    break 'global false;
+                }
+            };
+
             // see the matching note in `Step::LinkBinaries` —
             // `target_node_modules_path` may alias `node_modules_path` and
             // the Linker field is a raw `*const AbsPath` to permit that.
@@ -2401,7 +2419,7 @@ impl<'a> Installer<'a> {
                 skipped_due_to_missing_bin: false,
             };
 
-            bin_linker.link(false);
+            bin_linker.link(global);
 
             if target_node_modules_path.is_some()
                 && (bin_linker.skipped_due_to_missing_bin || bin_linker.err.is_some())
@@ -2417,7 +2435,7 @@ impl<'a> Installer<'a> {
                     );
                 }
 
-                bin_linker.link(false);
+                bin_linker.link(global);
             }
 
             if let Some(err) = bin_linker.err {

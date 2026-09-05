@@ -7,7 +7,7 @@ use bun_core::{Environment, Global, Output};
 use bun_core::{ZStr, strings};
 use bun_paths::{self as paths, AbsPath, AutoAbsPath, AutoRelPath};
 use bun_sys::{self as sys, Fd};
-use bun_threading::{Mutex, UnboundedQueue, thread_pool};
+use bun_threading::{Mutex, UnboundedQueue, WaitGroup, thread_pool};
 
 use bun_semver::String as SemverString;
 use bun_sys::{FdDirExt as _, FdExt as _};
@@ -91,6 +91,13 @@ pub struct Installer<'a> {
     pub(crate) task_queue: UnboundedQueue<Task>, // intrusive via .next
     pub(crate) tasks: Box<[Task]>,
 
+    /// Tasks currently on the thread pool: `start_task` adds one, the
+    /// `CountedTask` in `Task::task` finishes it, and `Drop` waits for it.
+    pub(crate) tasks_in_flight: &'a WaitGroup,
+
+    /// Main thread only: entries whose pending-task slot has been released.
+    pub(crate) released: Bitset,
+
     /// Stable Rust has no
     /// generic atomic-enum, so store the `#[repr(u8)]` discriminant and
     /// round-trip via `Method::from_u8` at the load sites below.
@@ -117,6 +124,14 @@ pub struct Installer<'a> {
     /// Main-thread only: `waiters_head[dep]` starts the intrusive list of blocked entries waiting on `dep`, linked through `next_waiter`.
     pub(crate) waiters_head: Box<[StoreEntryId]>,
     pub(crate) next_waiter: Box<[StoreEntryId]>,
+}
+
+impl Drop for Installer<'_> {
+    /// Tasks on the pool read `self` and the store through `Task::installer`, so
+    /// neither may be freed until they have returned.
+    fn drop(&mut self) {
+        self.tasks_in_flight.wait();
+    }
 }
 
 impl<'a> Installer<'a> {
@@ -166,10 +181,36 @@ impl<'a> Installer<'a> {
             | Result::RunScripts(_)
         ));
 
+        if Environment::CI_ASSERT {
+            assert!(
+                !self.released.is_set(entry_id.get() as usize),
+                "isolated install: started entry {} after its pending task was released",
+                entry_id.get()
+            );
+        }
+
         task.result = Result::None;
+        self.tasks_in_flight.add_one();
+        let task: *mut Task = task;
+        // SAFETY: raw projection through the whole `tasks[entry_id]` slot, so the
+        // pointer `Task::callback` gets back keeps provenance over the whole `Task`.
+        let pool_task = unsafe { &raw mut (*task).task.task };
         manager
             .thread_pool
-            .schedule(thread_pool::Batch::from(&raw mut task.task));
+            .schedule(thread_pool::Batch::from(pool_task));
+    }
+
+    /// Main thread only. Every entry releases its pending-task slot exactly once.
+    fn release_pending_task(&mut self, entry_id: StoreEntryId) {
+        if Environment::CI_ASSERT {
+            assert!(
+                !self.released.is_set(entry_id.get() as usize),
+                "isolated install: released the pending task of entry {} twice",
+                entry_id.get()
+            );
+        }
+        self.released.set(entry_id.get() as usize);
+        self.manager_mut().decrement_pending_tasks();
     }
 
     /// Called from main thread, for an existing project-local store entry.
@@ -440,12 +481,8 @@ impl<'a> Installer<'a> {
 
         self.summary.fail += 1;
 
-        self.decrement_pending_tasks();
+        self.release_pending_task(entry_id);
         self.resume_unblocked_tasks(entry_id);
-    }
-
-    pub(crate) fn decrement_pending_tasks(&mut self) {
-        self.manager_mut().decrement_pending_tasks();
     }
 
     /// Called from main thread
@@ -522,7 +559,7 @@ impl<'a> Installer<'a> {
             );
         }
 
-        self.decrement_pending_tasks();
+        self.release_pending_task(entry_id);
         self.resume_unblocked_tasks(entry_id);
 
         if let Some(node) = self.install_node.as_mut() {
@@ -657,7 +694,8 @@ pub struct Task {
     /// any `start_task` call — see `isolated_install.rs`.
     pub(crate) installer: bun_ptr::BackRef<Installer<'static>>,
 
-    pub(crate) task: thread_pool::Task,
+    /// Counted on `Installer::tasks_in_flight`; runs `Task::callback`.
+    pub(crate) task: thread_pool::CountedTask,
     pub(crate) next: bun_threading::Link<Task>, // INTRUSIVE: bun.UnboundedQueue(Task, .next) link
 
     pub(crate) result: Result,
@@ -1929,15 +1967,17 @@ impl Task {
             Err(_oom) => bun_core::out_of_memory(),
         };
 
-        // SAFETY: installer outlives all tasks (BACKREF). `callback` runs on the
-        // thread pool concurrently across many `Task`s sharing the same
-        // `*mut Installer` — never materialize `&mut Installer`. `task_queue.push`
-        // takes `&self` (lock-free); `store.entries` columns are atomic / per-entry;
-        // both are reached through a shared `&Installer`. `manager.wake()` is the
-        // cross-thread wakeup: route through `PackageManager::wake_raw` which never
-        // forms `&mut PackageManager`, so two threads finishing simultaneously do
-        // not hold aliased exclusive borrows ("deref it fresh per call" alone
-        // would not prevent the `&mut` lifetimes from overlapping).
+        // SAFETY: the installer is alive until this fn returns: `Task::task` counts
+        // on `Installer::tasks_in_flight` until then, and `Installer::drop` waits
+        // for that count. `callback` runs on the thread pool concurrently across
+        // many `Task`s sharing the same `*mut Installer` — never materialize
+        // `&mut Installer`. `task_queue.push` takes `&self` (lock-free);
+        // `store.entries` columns are atomic / per-entry; both are reached through
+        // a shared `&Installer`. `manager.wake()` is the cross-thread wakeup: route
+        // through `PackageManager::wake_raw` which never forms
+        // `&mut PackageManager`, so two threads finishing simultaneously do not
+        // hold aliased exclusive borrows ("deref it fresh per call" alone would
+        // not prevent the `&mut` lifetimes from overlapping).
         let installer_ptr = this.installer;
         let installer = installer_ptr.get();
         let manager_ptr: *mut PackageManager = installer.manager;

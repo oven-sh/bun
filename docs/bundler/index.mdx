@@ -1657,8 +1657,7 @@ BuildArtifact (entry-point) {
 
 The `bytecode: boolean` option generates bytecode for any JavaScript/TypeScript entrypoints, which can greatly improve startup times for large applications. Requires `"target": "bun"` and a matching version of Bun.
 
-- **CommonJS**: Works with or without `compile: true`. Generates a `.jsc` file alongside each entrypoint.
-- **ESM**: Requires `compile: true`. Bun embeds the bytecode and module metadata in the standalone executable.
+Works for both CommonJS and ESM output, with or without `compile: true`. Without `compile`, a `.jsc` bytecode file is generated alongside each chunk and loaded automatically at runtime; with `compile`, the bytecode is embedded in the standalone executable.
 
 Without an explicit `format`, bytecode defaults to CommonJS.
 
@@ -1674,13 +1673,12 @@ The `bytecodeDepth: number` option (a non-negative integer) limits how many leve
       bytecode: true,
     })
 
-    // ESM bytecode (requires compile)
+    // ESM bytecode (generates .js + .js.jsc)
     await Bun.build({
       entrypoints: ["./index.tsx"],
-      outfile: "./mycli",
+      outdir: "./out",
       bytecode: true,
       format: "esm",
-      compile: true,
     })
     ```
 
@@ -1690,8 +1688,8 @@ The `bytecodeDepth: number` option (a non-negative integer) limits how many leve
     # CommonJS bytecode
     bun build ./index.tsx --outdir ./out --bytecode
 
-    # ESM bytecode (requires --compile)
-    bun build ./index.tsx --outfile ./mycli --bytecode --format=esm --compile
+    # ESM bytecode
+    bun build ./index.tsx --outdir ./out --bytecode --format=esm
     ```
 
   </Tab>
@@ -1869,8 +1867,9 @@ interface BuildConfig {
    * start times, but will make the final output larger and slightly increase
    * memory usage.
    *
-   * - CommonJS: works with or without `compile: true`
-   * - ESM: requires `compile: true`
+   * Works for both CommonJS and ESM output, with or without `compile: true`.
+   * Without `compile`, the bytecode is written to a `.jsc` sidecar next to
+   * each `.js` chunk and loaded automatically at runtime.
    *
    * Without an explicit `format`, defaults to CommonJS.
    *

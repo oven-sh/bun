@@ -85,6 +85,9 @@ const BASE_PARAMS_: &[ParamType] = concat_params!(
             "--cwd <STR>                       Absolute path to resolve files & entry points from. This just changes the process' cwd."
         ),
         parse_param!(
+            "--prefix <STR>                    Run from the specified directory (alias for --cwd)"
+        ),
+        parse_param!(
             "-c, --config <PATH>?              Specify path to Bun config file. Default <d>$cwd<r>/bunfig.toml"
         ),
         parse_param!("-h, --help                        Display this menu and exit"),
@@ -772,6 +775,85 @@ pub use bun_bunfig::arguments::{load_config_path, load_config_with_cmd_args};
 /// the attached value `e`. Bun's `-p` takes the code, so `-pe X` is `-p X`.
 pub const NODE_SHORT_ALIASES: &[(&[u8], &[u8])] = &[(b"-pe", b"-p")];
 
+fn missing_option_value(flag: &[u8]) -> ! {
+    bun_core::pretty_errorln!(
+        "<red>error<r><d>:<r> The argument '{}' requires a value but none was supplied.",
+        BStr::new(flag),
+    );
+    Output::flush();
+    Global::exit(1);
+}
+
+fn cwd_prefix_scan_limit(remaining: &[&[u8]], positionals: &[&[u8]]) -> usize {
+    if positionals.iter().any(|p| *p == b"--") {
+        return 0;
+    }
+    remaining
+        .iter()
+        .position(|a| *a == b"--")
+        .unwrap_or(remaining.len())
+}
+
+fn passthrough_start(remaining: &[&[u8]], positionals: &[&[u8]]) -> usize {
+    if positionals.iter().any(|p| *p == b"--") {
+        return 0;
+    }
+    remaining
+        .iter()
+        .position(|a| *a == b"--")
+        .map(|i| i + 1)
+        .unwrap_or(0)
+}
+
+/// `--cwd` / `--prefix` can appear after the script name for `bun run` (npm-style).
+/// `stop_after_positional_at` leaves them in `remaining()` instead of `option()`.
+fn cwd_prefix_in_remaining<'a>(
+    remaining: &'a [&'static [u8]],
+    scan_limit: usize,
+) -> (Option<&'a [u8]>, Option<&'a [u8]>, Vec<usize>) {
+    let mut cwd = None;
+    let mut prefix = None;
+    let mut skip = Vec::new();
+    let mut i = 0;
+    while i < scan_limit {
+        let arg = remaining[i];
+        let slot: &mut Option<&[u8]> = if arg == b"--cwd" {
+            &mut cwd
+        } else if arg == b"--prefix" {
+            &mut prefix
+        } else if arg.len() > b"--cwd".len() + 1
+            && strings::has_prefix_comptime(arg, b"--cwd")
+            && arg[b"--cwd".len()] == b'='
+        {
+            cwd = Some(&arg[b"--cwd".len() + 1..]);
+            skip.push(i);
+            i += 1;
+            continue;
+        } else if arg.len() > b"--prefix".len() + 1
+            && strings::has_prefix_comptime(arg, b"--prefix")
+            && arg[b"--prefix".len()] == b'='
+        {
+            prefix = Some(&arg[b"--prefix".len() + 1..]);
+            skip.push(i);
+            i += 1;
+            continue;
+        } else {
+            i += 1;
+            continue;
+        };
+
+        if i + 1 < scan_limit {
+            *slot = Some(remaining[i + 1]);
+            skip.push(i);
+            skip.push(i + 1);
+            i += 2;
+        } else {
+            missing_option_value(arg);
+        }
+    }
+    (cwd, prefix, skip)
+}
+
 /// Parse `argv` into `api::TransformOptions` for the given subcommand.
 ///
 /// `command::tag_params(cmd)` does a runtime lookup of the per-subcommand
@@ -821,10 +903,29 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
         }
     }
 
-    // ── --cwd ────────────────────────────────────────────────────────────────
+    // ── --cwd / --prefix ─────────────────────────────────────────────────────
     // `api::TransformOptions.absolute_working_dir` is `Option<Box<[u8]>>`,
     // so we dupe into a plain `Box<[u8]>`.
-    let cwd: Box<[u8]> = if let Some(cwd_arg) = args.option(b"--cwd") {
+    let remaining = args.remaining();
+    let positionals = args.positionals();
+    let scan_limit = cwd_prefix_scan_limit(remaining, positionals);
+    let passthrough_start = passthrough_start(remaining, positionals);
+    let (remaining_cwd, remaining_prefix, passthrough_skip) =
+        if matches!(
+            cmd,
+            CommandTag::RunCommand | CommandTag::AutoCommand | CommandTag::RunAsNodeCommand
+        ) {
+            cwd_prefix_in_remaining(remaining, scan_limit)
+        } else {
+            (None, None, Vec::new())
+        };
+    // Last same-type flag wins, including after the script name. All --cwd
+    // values still beat --prefix.
+    let cwd_arg = remaining_cwd
+        .or(args.option(b"--cwd"))
+        .or(remaining_prefix)
+        .or(args.option(b"--prefix"));
+    let cwd: Box<[u8]> = if let Some(cwd_arg) = cwd_arg {
         let mut outbuf = PathBuffer::uninit();
         // An absolute --cwd needs no base; a relative one still requires a
         // live cwd (an exe-dir base would silently chdir somewhere else).
@@ -987,7 +1088,13 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
         ctx.runtime_options.preserve_symlinks_main = true;
     }
 
-    ctx.passthrough = slice_to_owned(args.remaining());
+    ctx.passthrough = remaining
+        .iter()
+        .enumerate()
+        .filter(|(i, _)| *i >= passthrough_start)
+        .filter(|(i, _)| !passthrough_skip.contains(i))
+        .map(|(_, s)| Box::<[u8]>::from(*s))
+        .collect();
 
     if matches!(
         cmd,

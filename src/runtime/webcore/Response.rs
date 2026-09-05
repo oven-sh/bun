@@ -12,8 +12,9 @@ use crate::webcore::jsc::{
     JsResult, StringJsc as _,
 };
 use bun_core::Output;
-use bun_core::{String as BunString, Utf8Bytes};
+use bun_core::String as BunString;
 use bun_http_types::Method::Method;
+use std::borrow::Cow;
 
 use super::body::{Body, BodyMixin, Value as BodyValue, ValueError as BodyValueError};
 use super::{FetchHeaders, ReadableStream, Request};
@@ -443,7 +444,7 @@ impl Response {
             return Ok(None);
         };
         // content_type_slice drops at scope exit
-        let Some(encoding) = bun_core::form_data::Encoding::get(content_type_slice.slice()) else {
+        let Some(encoding) = bun_core::form_data::Encoding::get(&content_type_slice) else {
             return Ok(None);
         };
         Ok(Some(bun_core::form_data::AsyncFormData::init(encoding)))
@@ -615,19 +616,19 @@ impl Response {
         Ok(this.get_or_create_headers(global_this)?.to_js(global_this))
     }
 
-    pub(crate) fn get_content_type(&self) -> JsResult<Option<Utf8Bytes<'_>>> {
+    pub(crate) fn get_content_type(&self) -> JsResult<Option<Cow<'_, [u8]>>> {
         // R-2 escape hatch via `init_mut()` — `fast_get` (FFI out-param write)
         // does not re-enter JS.
         if let Some(headers) = self.init_mut().headers.as_mut() {
             if let Some(value) = headers.fast_get(HTTPHeaderName::ContentType) {
-                return Ok(Some(value.to_utf8()));
+                return Ok(Some(value.to_latin1()));
             }
         }
 
         if let BodyValue::Blob(blob) = self.body.get().value.get() {
             let content_type = blob.content_type_slice();
             if !content_type.is_empty() {
-                return Ok(Some(Utf8Bytes::Borrowed(content_type)));
+                return Ok(Some(Cow::Borrowed(content_type)));
             }
         }
 

@@ -51,7 +51,7 @@ fn get_body_stream_or_bytes_for_wasm_streaming(
     {
         let content_type_slice = response.get_content_type()?;
         let content_type: &[u8] = match &content_type_slice {
-            Some(ct) => ct.slice(),
+            Some(ct) => ct,
             None => b"null",
         };
 

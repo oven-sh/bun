@@ -1189,12 +1189,12 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
             let headers_ref = bun_opaque::opaque_deref_mut(headers_);
             if url.is_s3() {
                 if let Some(range_) = headers_ref.fast_get(HTTPHeaderName::Range) {
-                    range = Some(range_.to_owned_slice_z());
+                    range = Some(bun_core::ZBox::from_bytes(&*range_.to_latin1()));
                 }
             }
 
             if let Some(upgrade_) = headers_ref.fast_get(HTTPHeaderName::Upgrade) {
-                if http::upgrade_header_is_not_h2(upgrade_.to_utf8().slice()) {
+                if http::upgrade_header_is_not_h2(&upgrade_.to_latin1()) {
                     upgraded_connection = true;
                 }
             }

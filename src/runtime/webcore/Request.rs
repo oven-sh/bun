@@ -341,25 +341,25 @@ impl Request {
         Ok(None)
     }
 
-    pub(crate) fn get_content_type(&self) -> JsResult<Option<bun_core::Utf8Bytes<'_>>> {
+    pub(crate) fn get_content_type(&self) -> JsResult<Option<Cow<'_, [u8]>>> {
         if let Some(req) = self.request_context.get_request() {
             // S008: `uws::Request` is an `opaque_ffi!` ZST handle — safe deref.
             let req = bun_opaque::opaque_deref(req);
             if let Some(value) = req.header(b"content-type") {
-                return Ok(Some(bun_core::Utf8Bytes::Borrowed(value)));
+                return Ok(Some(Cow::Borrowed(value)));
             }
         }
 
         if let Some(headers) = self.headers_mut().as_mut() {
             if let Some(value) = headers.fast_get(HTTPHeaderName::ContentType) {
-                return Ok(Some(value.to_utf8()));
+                return Ok(Some(value.to_latin1()));
             }
         }
 
         if let BodyValue::Blob(blob) = self.body_value() {
             let ct = blob.content_type_slice();
             if !ct.is_empty() {
-                return Ok(Some(bun_core::Utf8Bytes::Borrowed(ct)));
+                return Ok(Some(Cow::Borrowed(ct)));
             }
         }
 
@@ -440,8 +440,7 @@ impl Request {
         let Some(content_type_slice) = self.get_content_type()? else {
             return Ok(None);
         };
-        let Some(encoding) = crate::webcore::form_data::Encoding::get(content_type_slice.slice())
-        else {
+        let Some(encoding) = crate::webcore::form_data::Encoding::get(&content_type_slice) else {
             return Ok(None);
         };
         Ok(Some(crate::webcore::form_data::AsyncFormData::init(

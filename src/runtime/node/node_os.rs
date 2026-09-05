@@ -1124,7 +1124,8 @@ mod _impl {
             }
 
             // Does this entry already exist?
-            if let Some(array) = ret.get(global_this, interface_name)? {
+            let interface_name = BunString::borrow_utf8(interface_name);
+            if let Some(array) = ret.get_own(global_this, &interface_name)? {
                 // Add this interface entry to the existing array
                 let next_index: u32 =
                     u32::try_from(array.get_length(global_this)?).expect("int cast");
@@ -1133,7 +1134,7 @@ mod _impl {
                 // Add it as an array with this interface as an element
                 let array = JSValue::create_empty_array(global_this, 1)?;
                 array.put_index(global_this, 0, interface)?;
-                ret.put(global_this, interface_name, array);
+                ret.put(global_this, &interface_name, array);
             }
 
             it = next;
@@ -1303,8 +1304,9 @@ mod _impl {
 
             // Does this entry already exist?
             // SAFETY: iface.name is a NUL-terminated C string from libuv
-            let interface_name = unsafe { bun_core::ffi::cstr(iface.name) }.to_bytes();
-            if let Some(array) = ret.get(global_this, interface_name)? {
+            let interface_name =
+                BunString::borrow_utf8(unsafe { bun_core::ffi::cstr(iface.name) }.to_bytes());
+            if let Some(array) = ret.get_own(global_this, &interface_name)? {
                 // Add this interface entry to the existing array
                 let next_index: u32 =
                     u32::try_from(array.get_length(global_this)?).expect("int cast");
@@ -1313,7 +1315,7 @@ mod _impl {
                 // Add it as an array with this interface as an element
                 let array = JSValue::create_empty_array(global_this, 1)?;
                 array.put_index(global_this, 0, interface)?;
-                ret.put(global_this, interface_name, array);
+                ret.put(global_this, &interface_name, array);
             }
         }
 

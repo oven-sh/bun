@@ -2581,7 +2581,7 @@ impl QuicEndpoint {
             let key = keys.get_index(global, i)?;
             let host = bun_core::String::from_js(key, global)?.to_owned_slice();
             let value = entries
-                .get(global, host.as_slice())?
+                .get_own_by_value(global, key)?
                 .unwrap_or(JSValue::UNDEFINED);
             if !value.is_object() {
                 continue;

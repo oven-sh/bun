@@ -1112,6 +1112,10 @@ impl JSValue {
         property: impl AsRef<[u8]>,
     ) -> JsResult<Option<JSValue>> {
         let property = property.as_ref();
+        debug_assert!(
+            property.is_ascii(),
+            "byte-slice property keys must be ASCII; pass a bun_core::String for UTF-8 keys"
+        );
         // Never route a runtime key to `fast_get`: a runtime byte-slice match
         // here is wrong because
         // C++ `builtinNameMap` maps e.g. `asyncIterator` → `Symbol.asyncIterator`
@@ -1433,8 +1437,12 @@ impl JSValue {
         key: impl AsRef<[u8]>,
         value: JSValue,
     ) {
-        let key = bun_core::EncodedSlice::latin1(key.as_ref());
-        JSC__JSValue__putNonEnumerable(self, global, &key, value)
+        let key = key.as_ref();
+        debug_assert!(
+            key.is_ascii(),
+            "byte-slice property keys must be ASCII; pass a bun_core::String for UTF-8 keys"
+        );
+        JSC__JSValue__putNonEnumerable(self, global, &bun_core::EncodedSlice::latin1(key), value)
     }
     /// [`put`] only when `val` is `Some`; the property is *omitted* (not set to
     /// `undefined`) when `None`. Collapses the open-coded
@@ -1476,7 +1484,12 @@ impl JSValue {
     /// both "not deleted" and the C++ side's return on throw (a Proxy
     /// `deleteProperty` trap), so the exception state is checked explicitly.
     pub fn delete_property(self, global: &JSGlobalObject, key: impl AsRef<[u8]>) -> JsResult<bool> {
-        let key = bun_core::EncodedSlice::latin1(key.as_ref());
+        let key = key.as_ref();
+        debug_assert!(
+            key.is_ascii(),
+            "byte-slice property keys must be ASCII; pass a bun_core::String for UTF-8 keys"
+        );
+        let key = bun_core::EncodedSlice::latin1(key);
         crate::call_check_slow(global, || JSC__JSValue__deleteProperty(self, global, &key))
     }
     /// `JSValue.putMayBeIndex` — same as [`put`] but accepts
@@ -1868,6 +1881,10 @@ impl PutKey for bun_core::String {
 impl PutKey for &[u8] {
     #[inline]
     fn put(self, target: JSValue, global: &JSGlobalObject, value: JSValue) {
+        debug_assert!(
+            self.is_ascii(),
+            "byte-slice property keys must be ASCII; pass a bun_core::String for UTF-8 keys"
+        );
         bun_core::EncodedSlice::latin1(self).put(target, global, value)
     }
 }

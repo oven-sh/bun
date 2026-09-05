@@ -241,6 +241,7 @@ use bun_core::strings;
 use bun_http_types as HTTP;
 use bun_http_types::MimeType::MimeType;
 use bun_paths::PathBuffer;
+use std::borrow::Cow;
 use std::io::Write as _;
 #[allow(non_snake_case)]
 mod NativePromiseContext {
@@ -2584,9 +2585,9 @@ where
                         // doWriteHeaders() calls fastRemove(.TransferEncoding) and derefs the
                         // FetchHeaders, freeing that StringImpl before we write it. Clone so
                         // the bytes outlive renderMetadata().
-                        let transfer_encoding_str = transfer_encoding.to_utf8().into_owned();
+                        let transfer_encoding_latin1 = transfer_encoding.to_latin1().into_owned();
                         this.render_metadata();
-                        resp.write_header(b"transfer-encoding", transfer_encoding_str.slice());
+                        resp.write_header(b"transfer-encoding", &transfer_encoding_latin1);
                         this.end_without_body(this.should_close_connection());
                         return;
                     }
@@ -2594,9 +2595,7 @@ where
                 if let Some(content_length) = headers.fast_get(jsc::HTTPHeaderName::ContentLength) {
                     // Parse before renderMetadata(): doWriteHeaders() will fastRemove(.ContentLength)
                     // and deref the FetchHeaders, freeing the borrowed StringImpl.
-                    let content_length_str = content_length.to_utf8();
-                    let len: usize = HTTP::parse_content_length(content_length_str.slice());
-                    drop(content_length_str);
+                    let len: usize = HTTP::parse_content_length(&content_length.to_latin1());
 
                     this.render_metadata();
                     // SAFETY: FFI handle
@@ -3484,8 +3483,8 @@ where
                     let s = response
                         .get_init_headers_mut()?
                         .fast_get(jsc::HTTPHeaderName::ContentLength)?
-                        .to_utf8();
-                    bun_core::parse_int::<u64>(s.slice(), 10).ok()
+                        .to_latin1();
+                    bun_core::parse_int::<u64>(&s, 10).ok()
                 })
                 .flatten();
             (status, app_cl)
@@ -4798,16 +4797,13 @@ fn get_content_type(headers: Option<&mut FetchHeaders>, blob: &AnyBlob) -> (Mime
             if let Some(content) = headers_.fast_get(jsc::HTTPHeaderName::ContentType) {
                 needs_content_type = false;
 
-                let content_slice = content.to_utf8();
-                // Dupe only when the latin1/utf16 slice was heap-converted.
-                let dupe = content_slice.is_owned();
-                let mt = MimeType::init(
-                    content_slice.slice(),
+                let content_latin1 = content.to_latin1();
+                let dupe = matches!(content_latin1, Cow::Owned(_));
+                break 'brk MimeType::init(
+                    &content_latin1,
                     dupe,
                     Some(&mut content_type_needs_free),
                 );
-                drop(content_slice);
-                break 'brk mt;
             }
         }
 

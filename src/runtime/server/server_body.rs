@@ -1642,8 +1642,8 @@ where
         optional: Option<JSValue>,
     ) -> JsResult<JSValue> {
         use super::node_http_response::Flags as NodeHTTPResponseFlags;
-        use bun_core::Utf8Bytes;
         use bun_jsc::HTTPHeaderName;
+        use std::borrow::Cow;
 
         if self.config.websocket.is_none() {
             return Err(global.throw_invalid_arguments(format_args!(
@@ -1699,8 +1699,8 @@ where
 
             // Copied out of `options.headers` because `fast_remove` frees the
             // entry they would otherwise borrow.
-            let mut sec_websocket_protocol = Utf8Bytes::EMPTY;
-            let mut sec_websocket_extensions = Utf8Bytes::EMPTY;
+            let mut sec_websocket_protocol: Cow<[u8]> = Cow::Borrowed(b"");
+            let mut sec_websocket_extensions: Cow<[u8]> = Cow::Borrowed(b"");
 
             if let Some(opts) = optional {
                 'getter: {
@@ -1748,7 +1748,7 @@ where
                         if let Some(protocol) =
                             fetch_headers_to_use.fast_get(HTTPHeaderName::SecWebSocketProtocol)
                         {
-                            sec_websocket_protocol = protocol.to_utf8().into_owned();
+                            sec_websocket_protocol = Cow::Owned(protocol.to_latin1().into_owned());
                             // Remove from headers so it's not written twice (once here and once by upgrade())
                             fetch_headers_to_use.fast_remove(HTTPHeaderName::SecWebSocketProtocol);
                         }
@@ -1756,7 +1756,8 @@ where
                         if let Some(extensions) =
                             fetch_headers_to_use.fast_get(HTTPHeaderName::SecWebSocketExtensions)
                         {
-                            sec_websocket_extensions = extensions.to_utf8().into_owned();
+                            sec_websocket_extensions =
+                                Cow::Owned(extensions.to_latin1().into_owned());
                             // Remove from headers so it's not written twice (once here and once by upgrade())
                             fetch_headers_to_use
                                 .fast_remove(HTTPHeaderName::SecWebSocketExtensions);
@@ -1778,8 +1779,8 @@ where
             }
             return Ok(JSValue::from(node_http_response.upgrade(
                 data_value,
-                sec_websocket_protocol.slice(),
-                sec_websocket_extensions.slice(),
+                &sec_websocket_protocol,
+                &sec_websocket_extensions,
             )));
         }
 
@@ -1824,11 +1825,11 @@ where
             unsafe { (*p).deref() }
         });
 
-        let mut sec_websocket_key = Utf8Bytes::EMPTY;
-        let mut sec_websocket_protocol = Utf8Bytes::EMPTY;
-        let mut sec_websocket_extensions = Utf8Bytes::EMPTY;
-        let mut sec_websocket_version = Utf8Bytes::EMPTY;
-        let mut upgrade_header = Utf8Bytes::EMPTY;
+        let mut sec_websocket_key: Cow<[u8]> = Cow::Borrowed(b"");
+        let mut sec_websocket_protocol: Cow<[u8]> = Cow::Borrowed(b"");
+        let mut sec_websocket_extensions: Cow<[u8]> = Cow::Borrowed(b"");
+        let mut sec_websocket_version: Cow<[u8]> = Cow::Borrowed(b"");
+        let mut upgrade_header: Cow<[u8]> = Cow::Borrowed(b"");
 
         // NOTE: `FetchHeaders::fast_get` takes `&mut self` (FFI signature
         // is `*mut`), so go through the `BodyMixin` accessor which yields a
@@ -1840,19 +1841,19 @@ where
             // (S008) — safe `*mut → &mut` via `opaque_deref_mut`.
             let head = bun_opaque::opaque_deref_mut(head.as_ptr());
             if let Some(key) = head.fast_get(HTTPHeaderName::SecWebSocketKey) {
-                sec_websocket_key = key.to_utf8().into_owned();
+                sec_websocket_key = Cow::Owned(key.to_latin1().into_owned());
             }
             if let Some(proto) = head.fast_get(HTTPHeaderName::SecWebSocketProtocol) {
-                sec_websocket_protocol = proto.to_utf8().into_owned();
+                sec_websocket_protocol = Cow::Owned(proto.to_latin1().into_owned());
             }
             if let Some(ext) = head.fast_get(HTTPHeaderName::SecWebSocketExtensions) {
-                sec_websocket_extensions = ext.to_utf8().into_owned();
+                sec_websocket_extensions = Cow::Owned(ext.to_latin1().into_owned());
             }
             if let Some(ver) = head.fast_get(HTTPHeaderName::SecWebSocketVersion) {
-                sec_websocket_version = ver.to_utf8().into_owned();
+                sec_websocket_version = Cow::Owned(ver.to_latin1().into_owned());
             }
             if let Some(up) = head.fast_get(HTTPHeaderName::Upgrade) {
-                upgrade_header = up.to_utf8().into_owned();
+                upgrade_header = Cow::Owned(up.to_latin1().into_owned());
             }
         }
 
@@ -1875,7 +1876,7 @@ where
                 (&mut upgrade_header, b"upgrade"),
             ] {
                 if value.is_empty() {
-                    *value = Utf8Bytes::Borrowed(r.header(name).unwrap_or(b""));
+                    *value = Cow::Borrowed(r.header(name).unwrap_or(b""));
                 }
             }
         }
@@ -1884,18 +1885,18 @@ where
         // A request that does not name "websocket" in its |Upgrade| token list,
         // or whose |Sec-WebSocket-Key| is not base64 of 16 bytes, is not a
         // WebSocket handshake; fall through so the caller's fetch() can respond.
-        if !strings::split(upgrade_header.slice(), b",")
+        if !strings::split(&upgrade_header, b",")
             .any(|t| strings::eql_case_insensitive_ascii(t.trim_ascii(), b"websocket", true))
         {
             return Ok(JSValue::FALSE);
         }
-        if !is_valid_sec_websocket_key(sec_websocket_key.slice()) {
+        if !is_valid_sec_websocket_key(&sec_websocket_key) {
             return Ok(JSValue::FALSE);
         }
         // RFC 6455 §4.4: an unsupported |Sec-WebSocket-Version| MUST be
         // answered with an HTTP error and a |Sec-WebSocket-Version| header
         // listing the versions the server understands.
-        if sec_websocket_version.slice() != b"13" {
+        if *sec_websocket_version != *b"13" {
             resp.write_status(b"426 Upgrade Required");
             resp.write_header(b"Sec-WebSocket-Version", b"13");
             // SAFETY: upgrader_ptr is live (ref_() above)
@@ -1956,11 +1957,11 @@ where
                     let fh = bun_opaque::opaque_deref_mut(fh);
                     // Copied out because `fast_remove` frees the entry.
                     if let Some(p) = fh.fast_get(HTTPHeaderName::SecWebSocketProtocol) {
-                        sec_websocket_protocol = p.to_utf8().into_owned();
+                        sec_websocket_protocol = Cow::Owned(p.to_latin1().into_owned());
                         fh.fast_remove(HTTPHeaderName::SecWebSocketProtocol);
                     }
                     if let Some(e) = fh.fast_get(HTTPHeaderName::SecWebSocketExtensions) {
-                        sec_websocket_extensions = e.to_utf8().into_owned();
+                        sec_websocket_extensions = Cow::Owned(e.to_latin1().into_owned());
                         fh.fast_remove(HTTPHeaderName::SecWebSocketExtensions);
                     }
                 }
@@ -2050,9 +2051,9 @@ where
 
         resp.upgrade(
             ws,
-            sec_websocket_key.slice(),
-            sec_websocket_protocol.slice(),
-            sec_websocket_extensions.slice(),
+            &sec_websocket_key,
+            &sec_websocket_protocol,
+            &sec_websocket_extensions,
             // S008: `WebSocketUpgradeContext` is an `opaque_ffi!` ZST, safe
             // deref; `UpgradeState::Pending` documents who keeps it alive.
             Some(bun_opaque::opaque_deref_mut(upgrade_ctx.as_ptr())),

@@ -67,6 +67,34 @@ fn set_blob_content_type(blob: &Blob, mime_type: MimeType) {
         .set(blob::BlobContentType::from(mime_type));
 }
 
+fn set_blob_content_type_from_headers(blob: &Blob, fetch_headers: Option<NonNull<FetchHeaders>>) {
+    if let Some(fetch_headers) = fetch_headers {
+        // S008: `FetchHeaders` is an `opaque_ffi!` ZST — safe deref.
+        let fetch_headers = bun_opaque::opaque_deref_mut(fetch_headers.as_ptr());
+        if let Some(content_type) = fetch_headers.fast_get(HTTPHeaderName::ContentType) {
+            let content_type = content_type.to_latin1();
+            // https://fetch.spec.whatwg.org/#concept-body-mime-type: a Content-Type that
+            // cannot be parsed as a MIME type (non-ASCII or control bytes; HTAB is
+            // HTTP whitespace) yields `type === ""`.
+            let parseable = content_type
+                .iter()
+                .all(|&c| c == b'\t' || matches!(c, 0x20..=0x7E));
+            set_blob_content_type(
+                blob,
+                if parseable {
+                    MimeType::init(&content_type, true, None)
+                } else {
+                    bun_http_types::MimeType::NONE
+                },
+            );
+            return;
+        }
+    }
+    if !blob.content_type_was_set.get() && blob.store.get().is_some() {
+        set_blob_content_type(blob, bun_http_types::MimeType::TEXT);
+    }
+}
+
 // ────────────────────────────────────────────────────────────────────────────
 // Local shims for upstream-gated `JsClass` impls / `AnyPromise` methods.
 // These adapt call sites in this file without editing `bun_jsc` (orphan rule).
@@ -1138,22 +1166,7 @@ impl Value {
                         let blob_ptr = Blob::new(new.use_());
                         // SAFETY: `Blob::new` returns a freshly heap-allocated *mut Blob.
                         let blob = unsafe { &mut *blob_ptr };
-                        if let Some(fetch_headers) = headers {
-                            // `headers` is a live C++ FetchHeaders handle;
-                            // `FetchHeaders` is an opaque ZST FFI handle (S008) — safe deref.
-                            let fetch_headers =
-                                bun_opaque::opaque_deref_mut(fetch_headers.as_ptr());
-                            if let Some(content_type) =
-                                fetch_headers.fast_get(HTTPHeaderName::ContentType)
-                            {
-                                let content_slice = content_type.to_utf8();
-                                let mime_type = MimeType::init(content_slice.slice(), true, None);
-                                set_blob_content_type(blob, mime_type);
-                            }
-                        }
-                        if !blob.content_type_was_set.get() && blob.store.get().is_some() {
-                            set_blob_content_type(blob, bun_http_types::MimeType::TEXT);
-                        }
+                        set_blob_content_type_from_headers(blob, headers);
                         promise.resolve(global, blob.to_js(global))?;
                     }
                 }
@@ -2137,19 +2150,7 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
         // SAFETY: `Blob::new` returns a freshly heap-allocated, ref-counted Blob.
         let blob = unsafe { &mut *blob_ptr };
         if blob.content_type().is_empty() {
-            if let Some(fetch_headers) = BodyMixin::get_fetch_headers(self) {
-                // `fetch_headers` is a live C++ FetchHeaders handle;
-                // `FetchHeaders` is an opaque ZST FFI handle (S008) — safe deref.
-                let fetch_headers = bun_opaque::opaque_deref_mut(fetch_headers.as_ptr());
-                if let Some(content_type) = fetch_headers.fast_get(HTTPHeaderName::ContentType) {
-                    let content_slice = content_type.to_utf8();
-                    let mime_type = MimeType::init(content_slice.slice(), true, None);
-                    set_blob_content_type(blob, mime_type);
-                }
-            }
-            if !blob.content_type_was_set.get() && blob.store.get().is_some() {
-                set_blob_content_type(blob, bun_http_types::MimeType::TEXT);
-            }
+            set_blob_content_type_from_headers(blob, BodyMixin::get_fetch_headers(self));
         }
         Ok(JSPromise::resolved_promise_value(
             global_object,

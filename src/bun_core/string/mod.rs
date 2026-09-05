@@ -41,6 +41,7 @@ pub mod identifier;
 
 use core::marker::PhantomData;
 use core::sync::atomic::{AtomicUsize, Ordering};
+use std::borrow::Cow;
 pub use wtf::{WTFStringImpl, WTFStringImplExt, WTFStringImplStruct};
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -761,6 +762,23 @@ impl String {
             Tag::EncodedSlice => self.encoded().to_utf8(),
             Tag::StaticEncodedSlice => Utf8Bytes::Borrowed(self.static_bytes()),
             _ => Utf8Bytes::EMPTY,
+        }
+    }
+    /// Isomorphic encode (one byte per code unit): borrows 8-bit storage,
+    /// truncates each UTF-16 unit (or decoded UTF-8 code point) to its low byte.
+    pub fn to_latin1(&self) -> Cow<'_, [u8]> {
+        match self.tag {
+            Tag::WTFStringImpl if self.as_wtf().is_8bit() => {
+                Cow::Borrowed(self.as_wtf().latin1_slice())
+            }
+            Tag::WTFStringImpl => {
+                let utf16 = self.as_wtf().utf16_slice();
+                let mut out = vec![0u8; utf16.len()];
+                strings::copy_u16_into_u8(&mut out, utf16);
+                Cow::Owned(out)
+            }
+            Tag::EncodedSlice | Tag::StaticEncodedSlice => self.encoded().to_latin1(),
+            _ => Cow::Borrowed(&[]),
         }
     }
     /// Consuming [`to_utf8`] for storing the result: moves `self`'s ref into
@@ -1492,6 +1510,23 @@ impl<'a> EncodedSlice<'a> {
             }
         }
         Utf8Bytes::Borrowed(bytes)
+    }
+    /// Isomorphic encode (one byte per code unit): borrows 8-bit storage,
+    /// truncates each UTF-16 unit (or decoded UTF-8 code point) to its low byte.
+    pub fn to_latin1(self) -> Cow<'a, [u8]> {
+        if self.is_16bit() {
+            let mut out = vec![0u8; self.len];
+            strings::copy_u16_into_u8(&mut out, self.utf16_slice());
+            return Cow::Owned(out);
+        }
+        if self.is_utf8() && !strings::is_all_ascii(self.slice()) {
+            return Cow::Owned(
+                bstr::ByteSlice::chars(self.slice())
+                    .map(|c| c as u32 as u8)
+                    .collect(),
+            );
+        }
+        Cow::Borrowed(self.slice())
     }
 
     /// Allocate a fresh UTF-8 `Vec<u8>` regardless of the source encoding.

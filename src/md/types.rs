@@ -222,6 +222,7 @@ pub(crate) const BLOCK_REF_DEF_ONLY: u32 = 0x20;
 #[derive(Copy, Clone)]
 pub struct Flags {
     pub(crate) collapse_whitespace: bool,
+    pub(crate) hard_soft_breaks: bool,
     pub(crate) permissive_atx_headers: bool,
     pub(crate) permissive_url_autolinks: bool,
     pub(crate) permissive_www_autolinks: bool,

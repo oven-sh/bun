@@ -2733,6 +2733,24 @@ console.log(<div {...obj} key="after" />);`),
     expect(nodeTranspiler.transformSync("require('hi' + bar)")).toBe('require("hi" + bar);\n');
   });
 
+  // https://github.com/oven-sh/bun/issues/38202
+  it("typeof require is not folded when the output does not bind require", () => {
+    const input = `export const hasRequire = typeof require !== "undefined";`;
+    for (const target of ["browser", "node"]) {
+      const out = new Bun.Transpiler({ loader: "js", target }).transformSync(input);
+      expect(out).toBe(`export const hasRequire = typeof require !== "undefined";\n`);
+    }
+    // target bun binds `require` from import.meta, so the fold stays.
+    const bunOut = new Bun.Transpiler({ loader: "js", target: "bun" }).transformSync(input);
+    expect(bunOut).toBe(`var {require}=import.meta;export const hasRequire = !0;\n`);
+
+    // An unused `typeof require` statement never throws, so dead-code
+    // elimination drops it entirely; it must not leave a bare `require`.
+    const browser = new Bun.Transpiler({ loader: "js", target: "browser" });
+    expect(browser.transformSync(`typeof require;`)).toBe("");
+    expect(browser.transformSync(`typeof require !== "undefined";`)).toBe("");
+  });
+
   it("CommonJS", () => {
     var nodeTranspiler = new Bun.Transpiler({ platform: "node", minify: { syntax: false } });
 

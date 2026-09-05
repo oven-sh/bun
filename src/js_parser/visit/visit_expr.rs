@@ -1204,7 +1204,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     .join_with_comma(e_.value);
                 }
 
-                if matches!(e_.value.data, Data::ERequireCallTarget) {
+                // Fold only when the output will bind `require`, so that
+                // `typeof require !== "undefined"` guards survive when it
+                // won't (e.g. Bun.Transpiler with target browser).
+                if matches!(e_.value.data, Data::ERequireCallTarget)
+                    && (p.options.bundle || p.options.features.typeof_require_is_function)
+                {
                     p.ignore_usage_of_runtime_require();
                     *e = p.new_expr(
                         E::String {

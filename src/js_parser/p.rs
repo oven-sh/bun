@@ -6388,10 +6388,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 // checks are not yet handled correctly by bun or esbuild, so this possibility is
                 // currently ignored.
                 js_ast::op::Code::UnTypeof => {
-                    if matches!(ex.value.data, js_ast::ExprData::EIdentifier(_))
-                        && ex
-                            .flags
-                            .contains(E::UnaryFlags::WAS_ORIGINALLY_TYPEOF_IDENTIFIER)
+                    // `ERequireCallTarget` is the substituted `require` identifier.
+                    if matches!(
+                        ex.value.data,
+                        js_ast::ExprData::EIdentifier(_) | js_ast::ExprData::ERequireCallTarget
+                    ) && ex
+                        .flags
+                        .contains(E::UnaryFlags::WAS_ORIGINALLY_TYPEOF_IDENTIFIER)
                     {
                         return true;
                     }

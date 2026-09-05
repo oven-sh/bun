@@ -49,10 +49,15 @@ void us_socket_group_deinit(struct us_socket_group_t *group) {
     /* The owner is about to free the embedding storage. Every list head and the
      * low-prio count must be zero or some socket/listener/DNS request still
      * holds s->group / c->group / ls->accept_group into us — that's a UAF the
-     * caller must close_all() away first. iterator != NULL means we're inside
-     * a dispatch on this very group; the on_close that triggers deinit is fine
-     * (unlink_socket already advanced iterator), but a re-entrant deinit from
-     * inside on_timeout/on_data would tear the floor out from under the sweep. */
+     * caller must close_all() away first. close_all() leaves two kinds of
+     * socket linked: a connect that one of its handlers starts, and a socket
+     * whose SSL call is on the stack (the SSL driver closes that one when the
+     * call returns). So an owner must not free the group from inside such a
+     * call, or while a handler can still connect in it. iterator != NULL means
+     * we're inside a dispatch on this very group; the on_close that triggers
+     * deinit is fine (unlink_socket already advanced iterator), but a
+     * re-entrant deinit from inside on_timeout/on_data would tear the floor out
+     * from under the sweep. */
     US_ASSERT(group->head_sockets == NULL);
     US_ASSERT(group->head_connecting_sockets == NULL);
     US_ASSERT(group->head_listen_sockets == NULL);
@@ -103,7 +108,7 @@ void us_socket_group_close_all_ex(struct us_socket_group_t *group, int also_list
              * after drainClosedSockets(). Deliver the same on_connect_error
              * the natural failure path would have, which detaches the
              * wrapper. The handler then closes; if it doesn't, the
-             * force-drain below catches it. */
+             * close_raw below does. */
             us_dispatch_connect_error(s, ECONNABORTED);
             if (!us_socket_is_closed(s)) {
                 us_internal_socket_close_raw(s, LIBUS_SOCKET_CLOSE_CODE_CONNECTION_RESET, 0);
@@ -119,9 +124,27 @@ void us_socket_group_close_all_ex(struct us_socket_group_t *group, int also_list
      * open in head_sockets waiting for the peer's reply. Callers of close_all
      * (e.g. Listener.deinit) free the embedding storage immediately after, so
      * any survivor's s->group becomes a dangling pointer. The graceful walk
-     * already flushed close_notify; force-drain the rest synchronously now. */
-    while (group->head_sockets) {
-        us_internal_socket_close_raw(group->head_sockets, LIBUS_SOCKET_CLOSE_CODE_CONNECTION_RESET, 0);
+     * already flushed close_notify; force-drain the rest synchronously now.
+     *
+     * Skip a connecting socket. The walk did not reach it: a handler opened it
+     * behind the walk, or a handler ticked the loop and the timer sweep cleared
+     * group->iterator. close_raw sends no event for a SEMI_SOCKET, so the owner
+     * would keep a freed pointer. The socket stays open, like a
+     * us_connecting_socket_t that a handler opens. A group that takes connects
+     * (RareData, HTTPContext) is not freed while a client can connect in it.
+     *
+     * Skip a socket with an SSL call on the stack too. Its close is deferred,
+     * so it stays linked. Every other close_raw unlinks its socket, so rescan
+     * from the head after each close. */
+    for (;;) {
+        struct us_socket_t *s = group->head_sockets;
+        while (s && ((us_internal_poll_type(&s->p) & POLL_TYPE_SEMI_SOCKET) || (s->ssl && s->ssl_in_use))) {
+            s = s->next;
+        }
+        if (!s) {
+            break;
+        }
+        us_internal_socket_close_raw(s, LIBUS_SOCKET_CLOSE_CODE_CONNECTION_RESET, 0);
     }
 
     /* Sockets parked in the loop-wide low-prio queue aren't in head_sockets

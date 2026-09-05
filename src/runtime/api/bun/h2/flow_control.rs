@@ -67,11 +67,12 @@ impl SendWindow {
     }
 }
 
-/// Inbound (recv) window. We advertise `size` and track `consumed`; once enough is consumed we
-/// emit a WINDOW_UPDATE of the consumed amount and reset.
+/// Inbound (recv) window. The peer may send `size - consumed` more bytes.
 #[derive(Clone, Copy, Debug)]
 pub struct RecvWindow {
+    /// The window we want (nghttp2's `local_window_size`).
     pub size: i64,
+    /// Credit still to give back (`recv_window_size`). Negative after a `LocalWindow` decrease.
     pub consumed: i64,
 }
 
@@ -130,6 +131,75 @@ impl RecvWindow {
     pub fn grow(&mut self, delta: i64) {
         self.size += delta;
     }
+
+    #[inline]
+    pub fn apply(&mut self, change: RecvWindowChange) {
+        self.size += change.size;
+        self.consumed += change.consumed;
+    }
+}
+
+/// A move of a `RecvWindow` that the embedder makes (see `LocalWindow::resize`).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct RecvWindowChange {
+    pub size: i64,
+    pub consumed: i64,
+}
+
+impl RecvWindowChange {
+    /// The WINDOW_UPDATE increment for this change: the change in `size - consumed`.
+    #[inline]
+    pub fn increment(self) -> i64 {
+        self.size - self.consumed
+    }
+}
+
+impl core::ops::Add for RecvWindowChange {
+    type Output = RecvWindowChange;
+
+    fn add(self, other: RecvWindowChange) -> RecvWindowChange {
+        RecvWindowChange {
+            size: self.size + other.size,
+            consumed: self.consumed + other.consumed,
+        }
+    }
+}
+
+/// nghttp2's `local_window_size` and `recv_reduction`: the window asked for, and withheld credit.
+#[derive(Clone, Copy, Debug)]
+pub struct LocalWindow {
+    pub size: i64,
+    pub reduction: i64,
+}
+
+impl Default for LocalWindow {
+    fn default() -> Self {
+        LocalWindow {
+            size: DEFAULT_WINDOW_SIZE as i64,
+            reduction: 0,
+        }
+    }
+}
+
+impl LocalWindow {
+    /// nghttp2_session_set_local_window_size() for stream 0. A raise repays withheld credit first.
+    pub fn resize(&mut self, new_size: i64) -> RecvWindowChange {
+        let delta = new_size - self.size;
+        self.size = new_size;
+        if delta < 0 {
+            self.reduction -= delta;
+            return RecvWindowChange {
+                size: delta,
+                consumed: delta,
+            };
+        }
+        let repaid = self.reduction.min(delta);
+        self.reduction -= repaid;
+        RecvWindowChange {
+            size: delta,
+            consumed: repaid,
+        }
+    }
 }
 
 #[cfg(test)]
@@ -149,5 +219,41 @@ mod tests {
         assert!(w.needs_update());
         assert_eq!(w.take_update(), 60);
         assert_eq!(w.consumed, 0);
+    }
+
+    #[test]
+    fn local_window_decrease_withholds_credit() {
+        let mut local = LocalWindow::default();
+        let mut w = RecvWindow::default();
+
+        let shrink = local.resize(20);
+        assert_eq!(shrink.increment(), 0);
+        w.apply(shrink);
+        assert_eq!((w.size, w.consumed), (20, -65515));
+
+        // The peer fills the window it was told about. Only 20 bytes are granted back.
+        w.on_data(65535);
+        assert!(!w.is_overflowed());
+        assert_eq!(w.take_update(), 20);
+        w.on_data(21);
+        assert!(w.is_overflowed());
+    }
+
+    #[test]
+    fn local_window_raise_repays_the_reduction_first() {
+        let mut local = LocalWindow::default();
+        let mut w = RecvWindow::default();
+        w.apply(local.resize(20));
+
+        let raise = local.resize(1 << 20);
+        assert_eq!(raise.increment(), 983041);
+        w.apply(raise);
+        assert_eq!((w.size, w.consumed, local.reduction), (1 << 20, 0, 0));
+
+        // A raise that the reduction absorbs sends nothing.
+        let mut local = LocalWindow::default();
+        let change = local.resize(20) + local.resize(30000);
+        assert_eq!(change.increment(), 0);
+        assert_eq!(local.reduction, 35535);
     }
 }

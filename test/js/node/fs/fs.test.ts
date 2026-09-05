@@ -2387,6 +2387,19 @@ describe.concurrent("writev/readv with more than IOV_MAX buffers", () => {
     expect(readFileSync(file).equals(expectedBytes)).toBe(true);
   });
 
+  it.each([1023, 1024, 1025, 5000])("writevSync writes all %d buffers at the IOV_MAX boundary", count => {
+    using dir = tempDir(`writev-iovmax-${count}`, {});
+    const file = join(String(dir), "out");
+    const fd = openSync(file, "w");
+    const bufs = Array.from({ length: count }, (_, i) => Buffer.from([i & 0xff]));
+    try {
+      expect(writevSync(fd, bufs)).toBe(count);
+    } finally {
+      closeSync(fd);
+    }
+    expect(readFileSync(file).equals(Buffer.concat(bufs))).toBe(true);
+  });
+
   it("writevSync with position writes every buffer", () => {
     using dir = tempDir("pwritev-iovmax-sync", {});
     const file = join(String(dir), "out");
@@ -4496,6 +4509,113 @@ describe("createWriteStream", () => {
         done();
       }
     });
+  });
+
+  // https://github.com/oven-sh/bun/issues/31763
+  it("coalesces many small writes via _writev (issue #31763)", async () => {
+    const streamPath = join(tmpdirSync(), "writev-batching.bin");
+    const stream = createWriteStream(streamPath);
+
+    // fs.WriteStream exposes a working _writev; the regression disabled it.
+    expect(typeof stream._writev).toBe("function");
+
+    // Count how many chunks each drain path consumes.
+    const writevSpy = spyOn(stream, "_writev");
+
+    const CHUNK_COUNT = 5000; // comfortably past IOV_MAX so batching is forced
+    const chunk = Buffer.from("0123456789\n"); // 11 bytes
+    let written = 0;
+
+    const { promise: done, resolve, reject } = Promise.withResolvers<void>();
+    stream.on("error", reject);
+    stream.on("finish", resolve);
+
+    const pump = () => {
+      while (written < CHUNK_COUNT) {
+        written++;
+        if (!stream.write(chunk)) {
+          stream.once("drain", pump);
+          return;
+        }
+      }
+      stream.end();
+    };
+    pump();
+    await done;
+
+    // Output is byte-for-byte correct regardless of how it was batched.
+    expect(statSync(streamPath).size).toBe(CHUNK_COUNT * chunk.length);
+    expect(readFileSync(streamPath)).toEqual(Buffer.concat(new Array(CHUNK_COUNT).fill(chunk)));
+
+    // _writev must have been used, and it must have handled batches larger
+    // than IOV_MAX without erroring.
+    expect(writevSpy).toHaveBeenCalled();
+    const maxBatch = Math.max(...writevSpy.mock.calls.map(args => (args[0] as unknown[]).length));
+    expect(maxBatch).toBeGreaterThan(1024);
+  });
+
+  // https://github.com/oven-sh/bun/issues/31763
+  // With no `start` the retry position must stay undefined (not NaN); with
+  // `start` it must advance the captured `pos`, not `this.pos`, which
+  // `_writev` has already bumped past the unwritten tail.
+  it.each([
+    ["write", undefined],
+    ["write", 0],
+    ["writev", undefined],
+    ["writev", 0],
+  ] as const)("partial %s retry with start %p does not corrupt the file (issue #31763)", async (method, start) => {
+    const streamPath = join(tmpdirSync(), `partial-${method}-${start}.bin`);
+    const payload = Buffer.from("ABCDEFGHIJKLMNOPQRSTUVWXYZ");
+    const positions: unknown[] = [];
+    let first = true;
+
+    // Simulate a short write on the first syscall, then a clean retry,
+    // delegating to the real fs so bytes actually land on disk.
+    const customFs: any = {
+      open: fs.open,
+      close: fs.close,
+      write(fd, data, offset, length, position, cb) {
+        positions.push(position);
+        if (first) {
+          first = false;
+          const half = Math.floor(length / 2);
+          fs.write(fd, data, offset, half, position, (err, written) => cb(err, written, data));
+          return;
+        }
+        fs.write(fd, data, offset, length, position, cb);
+      },
+      writev(fd, chunks, position, cb) {
+        positions.push(position);
+        if (first) {
+          first = false;
+          // Write only the first chunk, report it as a partial write.
+          fs.writev(fd, [chunks[0]], position, (err, written) => cb(err, written, chunks));
+          return;
+        }
+        fs.writev(fd, chunks, position, cb);
+      },
+    };
+
+    const stream = createWriteStream(streamPath, { fs: customFs, start } as any);
+    const { promise: done, resolve, reject } = Promise.withResolvers<void>();
+    stream.on("error", reject);
+    stream.on("finish", resolve);
+    if (method === "writev") {
+      // Force the buffered writev path with a cork + multiple writes.
+      stream.cork();
+      stream.write(payload.subarray(0, 10));
+      stream.write(payload.subarray(10));
+      stream.uncork();
+      stream.end();
+    } else {
+      stream.end(payload);
+    }
+    await done;
+
+    // A NaN -> 0 retry offset would overwrite the head; the bytes must be intact.
+    expect(readFileSync(streamPath)).toEqual(payload);
+    // The retry must never pass NaN as the position.
+    expect(positions.some(p => typeof p === "number" && Number.isNaN(p))).toBe(false);
   });
 });
 

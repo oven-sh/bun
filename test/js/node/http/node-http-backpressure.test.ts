@@ -14,37 +14,146 @@ import net from "node:net";
 import path from "node:path";
 import nodeTls from "node:tls";
 
+const keysDir = path.join(import.meta.dirname, "..", "test", "fixtures", "keys");
+const tlsOptions = {
+  cert: readFileSync(path.join(keysDir, "agent1-cert.pem")),
+  key: readFileSync(path.join(keysDir, "agent1-key.pem")),
+};
+
+// Large enough that part of a single res.write() is still queued in the
+// native send buffer when the handler returns, on every platform's loopback.
+const BODY = 8 * 1024 * 1024;
+const payload = Buffer.alloc(BODY, "a");
+
+// Streaming decoder for a `Transfer-Encoding: chunked` body. It counts the
+// payload bytes, records the terminating zero-length chunk, and counts any
+// bytes that arrive after it. The 2 GiB tests read through this over a raw
+// socket because a fetch() body reader is several times slower than that on a
+// debug build, and only the server side is under test here.
+class ChunkedBodyCounter {
+  bytes = 0;
+  terminated = false;
+  trailing = 0;
+  private pending = 0;
+  private line = "";
+  private state: "size" | "data" | "crlf" | "end" = "size";
+
+  feed(buf: Buffer) {
+    let i = 0;
+    while (i < buf.length) {
+      if (this.terminated) {
+        this.trailing += buf.length - i;
+        return;
+      }
+      if (this.state === "data") {
+        const n = Math.min(this.pending, buf.length - i);
+        this.pending -= n;
+        this.bytes += n;
+        i += n;
+        if (this.pending === 0) this.state = "crlf";
+        continue;
+      }
+      this.line += String.fromCharCode(buf[i++]);
+      if (!this.line.endsWith("\r\n")) continue;
+      const line = this.line.slice(0, -2);
+      this.line = "";
+      if (this.state === "crlf") {
+        if (line !== "") throw new Error(`expected CRLF after chunk data, got ${JSON.stringify(line)}`);
+        this.state = "size";
+      } else if (this.state === "end") {
+        this.terminated = true;
+      } else {
+        const size = parseInt(line, 16);
+        if (!Number.isInteger(size) || size < 0) throw new Error(`bad chunk size line ${JSON.stringify(line)}`);
+        if (size === 0) this.state = "end";
+        else {
+          this.pending = size;
+          this.state = "data";
+        }
+      }
+    }
+  }
+}
+
+// Sends `request` on an already-connected raw socket (half-closing right
+// after it when `halfClose` is set) and collects the response until the server
+// closes the connection: the status line, the body byte count (chunk framing
+// decoded when the response is chunked), whether the body was complete (the
+// chunked terminator arrived with nothing after it, or the body matched
+// Content-Length), and whether a FIN ('end') arrived rather than a reset.
+async function readRawResponse(
+  socket: net.Socket,
+  request: string,
+  halfClose = false,
+): Promise<{ status: string; body: number; complete: boolean; ended: boolean }> {
+  let head = "";
+  let gotHead = false;
+  let ended = false;
+  let chunked: ChunkedBodyCounter | null = null;
+  let declared = -1;
+  let body = 0;
+  const feed = (buf: Buffer) => {
+    if (chunked) chunked.feed(buf);
+    else body += buf.length;
+  };
+  socket.on("data", chunk => {
+    if (gotHead) return feed(chunk);
+    head += chunk.toString("latin1");
+    const i = head.indexOf("\r\n\r\n");
+    if (i < 0) return;
+    gotHead = true;
+    const headers = head.slice(0, i).toLowerCase();
+    if (/^transfer-encoding:\s*chunked/m.test(headers)) chunked = new ChunkedBodyCounter();
+    else declared = Number(/^content-length:\s*(\d+)/m.exec(headers)?.[1] ?? -1);
+    feed(Buffer.from(head.slice(i + 4), "latin1"));
+  });
+  socket.on("end", () => (ended = true));
+  socket.on("error", () => {});
+  if (halfClose) socket.end(request);
+  else socket.write(request);
+  await once(socket, "close");
+  return {
+    status: head.slice(0, head.indexOf("\r\n")),
+    body: chunked ? chunked.bytes : body,
+    complete: chunked ? chunked.terminated && chunked.trailing === 0 : body === declared,
+    ended,
+  };
+}
+
+async function connectRaw(port: number): Promise<net.Socket> {
+  const sock = net.connect(port, "127.0.0.1");
+  sock.on("error", () => {});
+  await once(sock, "connect");
+  return sock;
+}
+
+async function connectTls(port: number): Promise<nodeTls.TLSSocket> {
+  const sock = nodeTls.connect({ port, host: "127.0.0.1", rejectUnauthorized: false });
+  sock.on("error", () => {});
+  await once(sock, "secureConnect");
+  return sock;
+}
+
 describe("backpressure", () => {
   // Writes `total` bytes to `res` in `chunk`-sized pieces, waiting for "drain"
   // whenever a write reports backpressure, then ends the response. Reusing one
   // chunk buffer keeps the test's peak memory small (the previous version held
   // a single 2 GB payload plus the server's queued copy, which pushed peak RSS
   // past 4.5 GB and intermittently got OOM-killed on 8 GB CI runners).
-  async function writeBytes(res: http.ServerResponse, total: number, chunk: Buffer) {
+  // Resolves with how many writes returned false (each one waited for 'drain').
+  async function writeBytes(res: http.ServerResponse, total: number, chunk: Buffer): Promise<number> {
     let remaining = total;
+    let pushedBack = 0;
     while (remaining > 0) {
       const slice = remaining >= chunk.byteLength ? chunk : chunk.subarray(0, remaining);
       remaining -= slice.byteLength;
       if (!res.write(slice)) {
+        pushedBack++;
         await once(res, "drain");
       }
     }
     res.end();
-  }
-
-  async function countResponseBytes(port: number): Promise<number> {
-    const response = await fetch(`http://localhost:${port}/`);
-    const reader = (response.body as ReadableStream<Uint8Array>).getReader();
-    let totalBytes = 0;
-    while (true) {
-      const { done, value } = await reader.read();
-
-      if (value) {
-        totalBytes += value.byteLength;
-      }
-      if (done) break;
-    }
-    return totalBytes;
+    return pushedBack;
   }
 
   it("should handle backpressure", async () => {
@@ -66,77 +175,55 @@ describe("backpressure", () => {
     await once(server.listen(0), "listening");
 
     const PORT = (server.address() as AddressInfo).port;
-    const bytes = await fetch(`http://localhost:${PORT}/`).then(res => res.arrayBuffer());
-    expect(bytes.byteLength).toBe(1024 * 1024 * 3);
+    const response = await fetch(`http://localhost:${PORT}/`);
+    const bytes = await response.arrayBuffer();
+    expect({
+      status: response.status,
+      contentType: response.headers.get("content-type"),
+      length: bytes.byteLength,
+    }).toEqual({ status: 200, contentType: "application/octet-stream", length: 1024 * 1024 * 3 });
   });
 
   // The closing FIN must be sequenced after the response bytes still sitting in
   // the native send buffer when end() returns, or the body is truncated. The
   // three variants cover client-requested close, server-set Connection: close,
   // and the one-shot res.end(body) framing path.
-  describe("Connection: close does not truncate a response that is still flushing", () => {
-    const BODY = 8 * 1024 * 1024;
-
-    async function rawRequestBytes(
-      server: http.Server,
-      requestHeaders: string,
-    ): Promise<{ received: number; ended: boolean }> {
-      const port = (server.address() as AddressInfo).port;
-      const socket = net.connect(port, "127.0.0.1");
-      let received = 0;
-      let ended = false;
-      socket.on("data", chunk => (received += chunk.length));
-      socket.on("end", () => (ended = true));
-      const closed = once(socket, "close");
-      const failed = new Promise((_, reject) => socket.on("error", reject));
-      await once(socket, "connect");
-      socket.write(requestHeaders);
-      await Promise.race([closed, failed]);
-      return { received, ended };
+  describe.concurrent("Connection: close does not truncate a response that is still flushing", () => {
+    async function rawRequest(server: http.Server, requestHeaders: string) {
+      const sock = await connectRaw((server.address() as AddressInfo).port);
+      return readRawResponse(sock, requestHeaders);
     }
 
     it("when the client requested the close", async () => {
       await using server = http.createServer((req, res) => {
         res.writeHead(200, { "Content-Type": "application/octet-stream" });
-        res.write(Buffer.alloc(BODY, "a"));
+        res.write(payload);
         res.end();
       });
       await once(server.listen(0), "listening");
-      const { received, ended } = await rawRequestBytes(
-        server,
-        "GET / HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n",
-      );
-      expect(ended).toBe(true);
-      expect(received).toBeGreaterThan(BODY);
+      const result = await rawRequest(server, "GET / HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n");
+      expect(result).toEqual({ status: "HTTP/1.1 200 OK", body: BODY, complete: true, ended: true });
     });
 
     it("when the server sets Connection: close on a keep-alive request", async () => {
       await using server = http.createServer((req, res) => {
         res.writeHead(200, { "Content-Type": "application/octet-stream", "Connection": "close" });
-        res.write(Buffer.alloc(BODY, "a"));
+        res.write(payload);
         res.end();
       });
       await once(server.listen(0), "listening");
-      const { received, ended } = await rawRequestBytes(
-        server,
-        "GET / HTTP/1.1\r\nHost: localhost\r\nConnection: keep-alive\r\n\r\n",
-      );
-      expect(ended).toBe(true);
-      expect(received).toBeGreaterThan(BODY);
+      const result = await rawRequest(server, "GET / HTTP/1.1\r\nHost: localhost\r\nConnection: keep-alive\r\n\r\n");
+      expect(result).toEqual({ status: "HTTP/1.1 200 OK", body: BODY, complete: true, ended: true });
     });
 
     it("when the whole body is passed to res.end()", async () => {
       await using server = http.createServer((req, res) => {
         res.writeHead(200, { "Content-Type": "application/octet-stream", "Connection": "close" });
-        res.end(Buffer.alloc(BODY, "a"));
+        res.end(payload);
       });
       await once(server.listen(0), "listening");
-      const { received, ended } = await rawRequestBytes(
-        server,
-        "GET / HTTP/1.1\r\nHost: localhost\r\nConnection: keep-alive\r\n\r\n",
-      );
-      expect(ended).toBe(true);
-      expect(received).toBeGreaterThan(BODY);
+      const result = await rawRequest(server, "GET / HTTP/1.1\r\nHost: localhost\r\nConnection: keep-alive\r\n\r\n");
+      expect(result).toEqual({ status: "HTTP/1.1 200 OK", body: BODY, complete: true, ended: true });
     });
   });
 
@@ -145,203 +232,145 @@ describe("backpressure", () => {
   // destroySoon()s. Either way, bytes already handed to the socket via
   // res.write() drain before the connection shuts down; the client half-closing
   // right after its request must not truncate them.
-  describe("a client FIN right after the request does not truncate a response that is still flushing", () => {
-    const BODY = 8 * 1024 * 1024;
-    const payload = Buffer.alloc(BODY, "a");
-
-    async function halfCloseRequestBodyBytes(server: http.Server): Promise<{ body: number; ended: boolean }> {
-      const port = (server.address() as AddressInfo).port;
-      const socket = net.connect(port, "127.0.0.1");
-      let body = 0;
-      let head = "";
-      let gotHead = false;
-      let ended = false;
-      socket.on("data", chunk => {
-        if (!gotHead) {
-          head += chunk.toString("latin1");
-          const i = head.indexOf("\r\n\r\n");
-          if (i >= 0) {
-            gotHead = true;
-            body = Buffer.byteLength(head.slice(i + 4), "latin1");
-          }
-        } else {
-          body += chunk.length;
-        }
-      });
-      socket.on("end", () => (ended = true));
-      socket.on("error", () => {});
-      await once(socket, "connect");
-      socket.end("GET / HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n");
-      await once(socket, "close");
-      return { body, ended };
-    }
-
-    it.each([
-      ["res.write() then res.end()", false, "sync"],
-      ["res.write() without res.end()", false, "never"],
-      // httpAllowHalfOpen: the close gate must wait for the handler's own
-      // res.end() after drain, not force-close on the !httpAllowHalfOpen term.
-      ["res.write() then res.end() after drain, httpAllowHalfOpen", true, "drain"],
-    ] as const)("%s", async (_name, halfOpen, endMode) => {
-      await using server = http.createServer((req, res) => {
-        res.writeHead(200, { "Content-Length": String(BODY) });
-        res.write(payload);
-        if (endMode === "sync") res.end();
-        else if (endMode === "drain") res.once("drain", () => res.end());
-      });
-      if (halfOpen) server.httpAllowHalfOpen = true;
-      await once(server.listen(0, "127.0.0.1"), "listening");
-      const { body, ended } = await halfCloseRequestBodyBytes(server);
-      expect({ body, ended }).toEqual({ body: BODY, ended: true });
-    });
-
-    // A 'drain' listener that writes again after the first chunk has flushed
-    // re-arms onWritable; the !httpAllowHalfOpen close gate must not fire over
-    // the freshly-pinned bytes (bufferedAmount does not count them). Node
-    // rejects the second write (socketOnEnd already called socket.end()); Bun
-    // currently accepts and drains it. Both are consistent: the client sees
-    // either the first write only, or both, never a torn second write.
-    it("res.write() from 'drain' after client FIN is not torn mid-write", async () => {
-      await using server = http.createServer((req, res) => {
-        res.writeHead(200, { "Content-Length": String(BODY * 2) });
-        res.write(payload);
-        res.once("drain", () => {
-          res.write(payload);
-          res.end();
-        });
-        res.on("error", () => {});
-      });
-      await once(server.listen(0, "127.0.0.1"), "listening");
-      const { body, ended } = await halfCloseRequestBodyBytes(server);
-      expect(ended).toBe(true);
-      expect([BODY, BODY * 2]).toContain(body);
-    });
-
-    // TLS variants of the it.each above: the server's TLS write-batch spill
-    // (up to one 128 KiB ciphertext batch the kernel did not fully accept) is
-    // reported as written by us_socket_write() while it sits in userspace, so
-    // the post-FIN close gate (hasFullyDrained()) must wait for it. Looped a
-    // few times so the on_writable drain cycle is exercised past the first
-    // kernel-accepted write. This is also the client-side regression test for
-    // the Windows eof-drain (a half-closed client must read out the kernel
-    // receive buffer when AFD DISCONNECT is mapped to eof).
-    describe("https", () => {
-      const keysDir = path.join(import.meta.dirname, "..", "test", "fixtures", "keys");
-      const tlsOptions = {
-        cert: readFileSync(path.join(keysDir, "agent1-cert.pem")),
-        key: readFileSync(path.join(keysDir, "agent1-key.pem")),
-      };
-
-      async function halfCloseTlsRequestBodyBytes(port: number): Promise<{ body: number; ended: boolean }> {
-        const socket = nodeTls.connect({ port, host: "127.0.0.1", rejectUnauthorized: false });
-        let body = 0;
-        let head = "";
-        let gotHead = false;
-        let ended = false;
-        socket.on("data", chunk => {
-          if (!gotHead) {
-            head += chunk.toString("latin1");
-            const i = head.indexOf("\r\n\r\n");
-            if (i >= 0) {
-              gotHead = true;
-              body = Buffer.byteLength(head.slice(i + 4), "latin1");
-            }
-          } else {
-            body += chunk.length;
-          }
-        });
-        socket.on("end", () => (ended = true));
-        socket.on("error", () => {});
-        await once(socket, "secureConnect");
-        socket.end("GET / HTTP/1.1\r\nHost: localhost\r\n\r\n");
-        await once(socket, "close");
-        return { body, ended };
+  describe.concurrent(
+    "a client FIN right after the request does not truncate a response that is still flushing",
+    () => {
+      async function halfCloseRequest(server: http.Server) {
+        const sock = await connectRaw((server.address() as AddressInfo).port);
+        return readRawResponse(sock, "GET / HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n", true);
       }
 
       it.each([
-        ["client half-close, res.write() then res.end()", "write-end"],
-        ["client half-close, res.end(payload)", "end"],
-        ["client half-close, httpAllowHalfOpen, res.end() after drain", "drain"],
-      ] as const)("%s", async (_name, endMode) => {
-        await using server = https.createServer(tlsOptions, (req, res) => {
+        ["res.write() then res.end()", false, "sync"],
+        ["res.write() without res.end()", false, "never"],
+        // httpAllowHalfOpen: the close gate must wait for the handler's own
+        // res.end() after drain, not force-close on the !httpAllowHalfOpen term.
+        ["res.write() then res.end() after drain, httpAllowHalfOpen", true, "drain"],
+      ] as const)("%s", async (_name, halfOpen, endMode) => {
+        await using server = http.createServer((req, res) => {
           res.writeHead(200, { "Content-Length": String(BODY) });
-          if (endMode === "end") {
-            res.end(payload);
-          } else {
-            res.write(payload);
-            if (endMode === "write-end") res.end();
-            else res.once("drain", () => res.end());
-          }
+          res.write(payload);
+          if (endMode === "sync") res.end();
+          else if (endMode === "drain") res.once("drain", () => res.end());
         });
-        if (endMode === "drain") server.httpAllowHalfOpen = true;
+        if (halfOpen) server.httpAllowHalfOpen = true;
         await once(server.listen(0, "127.0.0.1"), "listening");
-        const port = (server.address() as AddressInfo).port;
-        for (let i = 0; i < 5; i++) {
-          expect(await halfCloseTlsRequestBodyBytes(port)).toEqual({ body: BODY, ended: true });
-        }
+        expect(await halfCloseRequest(server)).toEqual({
+          status: "HTTP/1.1 200 OK",
+          body: BODY,
+          complete: true,
+          ended: true,
+        });
       });
 
-      // allow_half_open defers the close to the writable drain; a peer that
-      // FINs then resets must not wedge that drain on a spill send() that
-      // keeps failing (us_internal_ssl_on_writable releases a zero-progress
-      // spill after EOF so the dispatch reaches the close gate). A wedge
-      // would leave the server-side socket open past the test timeout.
-      it("closes promptly when the client half-closes then resets mid-drain", async () => {
-        const closed = Promise.withResolvers<void>();
-        await using server = https.createServer(tlsOptions, (req, res) => {
-          req.socket.on("close", () => closed.resolve());
-          res.writeHead(200, { "Content-Length": String(BODY) });
-          res.end(payload);
+      // A 'drain' listener that writes again after the first chunk has flushed
+      // re-arms onWritable; the !httpAllowHalfOpen close gate must not fire over
+      // the freshly-pinned bytes (bufferedAmount does not count them). Node
+      // rejects the second write (socketOnEnd already called socket.end()); Bun
+      // currently accepts and drains it. Both are consistent: the client sees
+      // either the first write only, or both, never a torn second write.
+      it("res.write() from 'drain' after client FIN is not torn mid-write", async () => {
+        await using server = http.createServer((req, res) => {
+          res.writeHead(200, { "Content-Length": String(BODY * 2) });
+          res.write(payload);
+          res.once("drain", () => {
+            res.write(payload);
+            res.end();
+          });
           res.on("error", () => {});
         });
-        server.requestTimeout = 0;
-        server.headersTimeout = 0;
         await once(server.listen(0, "127.0.0.1"), "listening");
-        const port = (server.address() as AddressInfo).port;
-        const sock = nodeTls.connect({ port, host: "127.0.0.1", rejectUnauthorized: false });
-        sock.on("error", () => {});
-        await once(sock, "secureConnect");
-        sock.end("GET / HTTP/1.1\r\nHost: localhost\r\n\r\n");
-        await once(sock, "data");
-        sock.destroy();
-        await closed.promise;
+        const { status, body, ended } = await halfCloseRequest(server);
+        expect({ status, ended }).toEqual({ status: "HTTP/1.1 200 OK", ended: true });
+        expect([BODY, BODY * 2]).toContain(body);
       });
-    });
-  });
+
+      // TLS variants of the it.each above: the server's TLS write-batch spill
+      // (up to one 128 KiB ciphertext batch the kernel did not fully accept) is
+      // reported as written by us_socket_write() while it sits in userspace, so
+      // the post-FIN close gate (hasFullyDrained()) must wait for it. Looped a
+      // few times so the on_writable drain cycle is exercised past the first
+      // kernel-accepted write. This is also the client-side regression test for
+      // the Windows eof-drain (a half-closed client must read out the kernel
+      // receive buffer when AFD DISCONNECT is mapped to eof).
+      describe.concurrent("https", () => {
+        async function halfCloseTlsRequest(port: number) {
+          const sock = await connectTls(port);
+          return readRawResponse(sock, "GET / HTTP/1.1\r\nHost: localhost\r\n\r\n", true);
+        }
+
+        it.each([
+          ["client half-close, res.write() then res.end()", "write-end"],
+          ["client half-close, res.end(payload)", "end"],
+          ["client half-close, httpAllowHalfOpen, res.end() after drain", "drain"],
+        ] as const)("%s", async (_name, endMode) => {
+          await using server = https.createServer(tlsOptions, (req, res) => {
+            res.writeHead(200, { "Content-Length": String(BODY) });
+            if (endMode === "end") {
+              res.end(payload);
+            } else {
+              res.write(payload);
+              if (endMode === "write-end") res.end();
+              else res.once("drain", () => res.end());
+            }
+          });
+          if (endMode === "drain") server.httpAllowHalfOpen = true;
+          await once(server.listen(0, "127.0.0.1"), "listening");
+          const port = (server.address() as AddressInfo).port;
+          for (let i = 0; i < 5; i++) {
+            expect(await halfCloseTlsRequest(port)).toEqual({
+              status: "HTTP/1.1 200 OK",
+              body: BODY,
+              complete: true,
+              ended: true,
+            });
+          }
+        });
+
+        // allow_half_open defers the close to the writable drain; a peer that
+        // FINs then resets must not wedge that drain on a spill send() that
+        // keeps failing (us_internal_ssl_on_writable releases a zero-progress
+        // spill after EOF so the dispatch reaches the close gate). A wedge
+        // would leave the server-side socket open past the test timeout.
+        it("closes promptly when the client half-closes then resets mid-drain", async () => {
+          const closed = Promise.withResolvers<void>();
+          await using server = https.createServer(tlsOptions, (req, res) => {
+            req.socket.on("close", () => closed.resolve());
+            res.writeHead(200, { "Content-Length": String(BODY) });
+            res.end(payload);
+            res.on("error", () => {});
+          });
+          server.requestTimeout = 0;
+          server.headersTimeout = 0;
+          await once(server.listen(0, "127.0.0.1"), "listening");
+          const sock = await connectTls((server.address() as AddressInfo).port);
+          sock.end("GET / HTTP/1.1\r\nHost: localhost\r\n\r\n");
+          await once(sock, "data");
+          sock.destroy();
+          await closed.promise;
+        });
+      });
+    },
+  );
 
   // Request-body direction: once the handler stops reading the body (req.pause(),
   // or nobody consuming the IncomingMessage), the connection's kernel reads must
   // stop too, so the upload stalls on TCP backpressure instead of the unread
   // body piling up in server memory (https://github.com/oven-sh/bun/issues/26332).
   // Node does this with readStop(socket); Bun pauses the underlying uWS socket.
-  describe("request body", () => {
+  describe.concurrent("request body", () => {
     const TOTAL = 32 * 1024 * 1024;
     const BLOCK = Buffer.alloc(256 * 1024, "b");
 
-    const keysDir = path.join(import.meta.dirname, "..", "test", "fixtures", "keys");
-    const tlsOptions = {
-      cert: readFileSync(path.join(keysDir, "agent1-cert.pem")),
-      key: readFileSync(path.join(keysDir, "agent1-key.pem")),
-    };
     type RequestListener = (req: http.IncomingMessage, res: http.ServerResponse) => void;
     const transports = {
       http: {
         createServer: (listener: RequestListener) => http.createServer(listener),
-        async connect(port: number) {
-          const sock = net.connect(port, "127.0.0.1");
-          sock.on("error", () => {});
-          await once(sock, "connect");
-          return sock;
-        },
+        connect: connectRaw,
       },
       https: {
         createServer: (listener: RequestListener) => https.createServer(tlsOptions, listener),
-        async connect(port: number) {
-          const sock = nodeTls.connect({ port, host: "127.0.0.1", rejectUnauthorized: false });
-          sock.on("error", () => {});
-          await once(sock, "secureConnect");
-          return sock;
-        },
+        connect: connectTls,
       },
     };
     type Transport = (typeof transports)[keyof typeof transports];
@@ -408,7 +437,7 @@ describe("backpressure", () => {
       return promise;
     }
 
-    describe.each(Object.keys(transports) as (keyof typeof transports)[])("%s", name => {
+    describe.concurrent.each(Object.keys(transports) as (keyof typeof transports)[])("%s", name => {
       const transport = transports[name];
 
       it("stalls the client while the handler has req.pause()d, and delivers the rest after req.resume()", async () => {
@@ -470,7 +499,7 @@ describe("backpressure", () => {
       });
       await once(server.listen(0, "127.0.0.1"), "listening");
 
-      const sock = await transports.http.connect((server.address() as AddressInfo).port);
+      const sock = await connectRaw((server.address() as AddressInfo).port);
       let response = "";
       sock.on("data", chunk => (response += chunk.toString("latin1")));
       const closed = once(sock, "close");
@@ -490,45 +519,62 @@ describe("backpressure", () => {
     });
   });
 
-  it("should handle backpressure with INT_MAX bytes", async () => {
-    const totalSize = 1024 * 1024 * 1024 * 2; // 2^31, one past INT_MAX
-    const chunk = Buffer.alloc(64 * 1024 * 1024, "a");
-    await using server = http.createServer((req, res) => {
-      res.writeHead(200, {
-        "Content-Type": "application/octet-stream",
-        "Transfer-Encoding": "chunked",
+  // 2^31 bytes, one past INT_MAX, written as 64 MiB chunks. Every chunk is
+  // larger than the loopback send buffer, so each write() must report
+  // backpressure (and writeBytes then waits for 'drain').
+  describe("past INT_MAX", () => {
+    const totalSize = 1024 * 1024 * 1024 * 2;
+    const CHUNK = 64 * 1024 * 1024;
+
+    it("should handle backpressure with INT_MAX bytes", async () => {
+      const chunk = Buffer.alloc(CHUNK, "a");
+      const pushedBack = Promise.withResolvers<number>();
+      await using server = http.createServer((req, res) => {
+        res.writeHead(200, {
+          "Content-Type": "application/octet-stream",
+          "Transfer-Encoding": "chunked",
+        });
+        writeBytes(res, totalSize, chunk).then(pushedBack.resolve, pushedBack.reject);
       });
 
-      writeBytes(res, totalSize, chunk);
-    });
+      await once(server.listen(0), "listening");
 
-    await once(server.listen(0), "listening");
-
-    const PORT = (server.address() as AddressInfo).port;
-    const totalBytes = await countResponseBytes(PORT);
-
-    expect(totalBytes).toBe(totalSize);
-  }, 30_000);
-
-  it("should handle backpressure with more than INT_MAX bytes", async () => {
-    // enough to fill the socket buffer
-    const smallPayloadSize = 1024 * 1024;
-    const totalSize = 1024 * 1024 * 1024 * 2; // 2^31, one past INT_MAX
-    const chunk = Buffer.alloc(64 * 1024 * 1024, "a");
-    await using server = http.createServer((req, res) => {
-      res.writeHead(200, {
-        "Content-Type": "application/octet-stream",
-        "Transfer-Encoding": "chunked",
+      const PORT = (server.address() as AddressInfo).port;
+      const sock = await connectRaw(PORT);
+      expect(await readRawResponse(sock, "GET / HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n")).toEqual({
+        status: "HTTP/1.1 200 OK",
+        body: totalSize,
+        complete: true,
+        ended: true,
       });
-      res.write(Buffer.alloc(smallPayloadSize, "a"));
-      writeBytes(res, totalSize, chunk);
-    });
+      expect(await pushedBack.promise).toBe(totalSize / CHUNK);
+    }, 30_000);
 
-    await once(server.listen(0), "listening");
+    it("should handle backpressure with more than INT_MAX bytes", async () => {
+      // enough to fill the socket buffer
+      const smallPayloadSize = 1024 * 1024;
+      const chunk = Buffer.alloc(CHUNK, "a");
+      const pushedBack = Promise.withResolvers<number>();
+      await using server = http.createServer((req, res) => {
+        res.writeHead(200, {
+          "Content-Type": "application/octet-stream",
+          "Transfer-Encoding": "chunked",
+        });
+        res.write(Buffer.alloc(smallPayloadSize, "a"));
+        writeBytes(res, totalSize, chunk).then(pushedBack.resolve, pushedBack.reject);
+      });
 
-    const PORT = (server.address() as AddressInfo).port;
-    const totalBytes = await countResponseBytes(PORT);
+      await once(server.listen(0), "listening");
 
-    expect(totalBytes).toBe(totalSize + smallPayloadSize);
-  }, 30_000);
+      const PORT = (server.address() as AddressInfo).port;
+      const sock = await connectRaw(PORT);
+      expect(await readRawResponse(sock, "GET / HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n")).toEqual({
+        status: "HTTP/1.1 200 OK",
+        body: totalSize + smallPayloadSize,
+        complete: true,
+        ended: true,
+      });
+      expect(await pushedBack.promise).toBe(totalSize / CHUNK);
+    }, 30_000);
+  });
 });

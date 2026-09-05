@@ -1,9 +1,8 @@
 // Drives the fuzzilli REPRL loop with in-process mocks for the control/data
 // FDs so the real src/js/eval/fuzzilli-reprl.ts source can be exercised in a
-// normal (non-fuzzilli) build. Feeds a payload that calls process.execve with
-// a nonexistent path: the real implementation prints an error and aborts the
-// process (SIGABRT) when exec fails, so the REPRL wrapper must stub it out
-// before running fuzzed scripts.
+// normal (non-fuzzilli) build. argv[2] selects the fuzzed payload to run first;
+// a second payload then proves the loop is still alive. Every 4-byte write the
+// wrapper makes to the control-write FD is reported on stdout.
 
 import fs from "node:fs";
 import path from "node:path";
@@ -12,8 +11,20 @@ const REPRL_CRFD = 100;
 const REPRL_CWFD = 101;
 const REPRL_DRFD = 102;
 
+const reprlPath = path.join(import.meta.dir, "..", "..", "..", "..", "src", "js", "eval", "fuzzilli-reprl.ts");
+
+const scenarios: Record<string, string> = {
+  // The real process.execve prints an error and aborts the process (SIGABRT)
+  // when exec fails, so the wrapper must stub it out before running payloads.
+  execve: `process.execve("fuzzilli-reprl-execve-does-not-exist", []);`,
+  // Evaluates the wrapper a second time on the main thread, like
+  // require(Bun.main + "?x") does under the fuzzer. The second copy must not
+  // send another HELO or read from the control FD.
+  reenter: `require(${JSON.stringify(reprlPath)});`,
+};
+
 const payloads = [
-  Buffer.from(`process.execve("fuzzilli-reprl-execve-does-not-exist", []);`, "utf8"),
+  Buffer.from(scenarios[process.argv[2]], "utf8"),
   Buffer.from(`globalThis.stillAlive = true;`, "utf8"),
 ];
 
@@ -31,7 +42,9 @@ let controlStream = Buffer.concat(controlChunks);
 // Data-read pipe (fd 102): the payload for each exec cycle.
 let dataStream = Buffer.concat(payloads);
 
-let statusWrites = 0;
+// Control-write pipe (fd 101): "HELO" for a handshake, otherwise the REPRL
+// status word (exit code << 8) written after each payload.
+const controlWrites: string[] = [];
 
 const realFstatSync = fs.fstatSync;
 const realReadSync = fs.readSync;
@@ -60,10 +73,9 @@ const realWriteSync = fs.writeSync;
 
 (fs as any).writeSync = function (fd: any, buffer: any, ...rest: any[]) {
   if (fd === REPRL_CWFD) {
-    if (Buffer.isBuffer(buffer) && buffer.length === 4 && buffer.toString() !== "HELO") {
-      statusWrites++;
-    }
-    return Buffer.isBuffer(buffer) ? buffer.length : String(buffer).length;
+    const bytes = Buffer.from(buffer);
+    controlWrites.push(bytes.toString() === "HELO" ? "HELO" : `status=${bytes.readUInt32LE(0)}`);
+    return bytes.length;
   }
   return (realWriteSync as any).call(fs, fd, buffer, ...rest);
 };
@@ -71,12 +83,11 @@ const realWriteSync = fs.writeSync;
 (globalThis as any).resetCoverage = () => {};
 (globalThis as any).require = require;
 
-const reprlSource = fs.readFileSync(
-  path.join(import.meta.dir, "..", "..", "..", "..", "src", "js", "eval", "fuzzilli-reprl.ts"),
-  "utf8",
-);
-(0, eval)(reprlSource);
+let thrown = "";
+try {
+  (0, eval)(fs.readFileSync(reprlPath, "utf8"));
+} catch (e) {
+  thrown = ` THREW=${(e as Error).message}`;
+}
 
-const liveAfterExecve = (globalThis as any).stillAlive === true;
-realWriteSync.call(fs, 1, `STATUS_WRITES=${statusWrites} LIVE=${liveAfterExecve}\n`);
-process.exit(statusWrites === 2 && liveAfterExecve ? 0 : 1);
+console.log(`CONTROL_WRITES=${controlWrites.join(",")} LIVE=${(globalThis as any).stillAlive === true}${thrown}`);

@@ -2,6 +2,7 @@
 
 // An agent that starts buildkite-agent and runs others services.
 
+import { spawn as nodeSpawn } from "node:child_process";
 import { copyFileSync, existsSync, readFileSync, realpathSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -151,7 +152,7 @@ async function doBuildkiteAgent(action, cliOptions = {}) {
       // Copy this script and its imports into homePath so the launchd plist
       // doesn't depend on the checkout that ran `install` sticking around.
       const srcDir = fileURLToPath(new URL(".", import.meta.url));
-      for (const f of ["agent.mjs", "utils.mjs"]) {
+      for (const f of ["agent.mjs", "utils.mjs", "agent-cleanup.sh"]) {
         copyFileSync(join(srcDir, f), join(homePath, f));
       }
       // Stable node path (the Homebrew/usr-local symlink, not a Cellar version
@@ -211,22 +212,22 @@ async function doBuildkiteAgent(action, cliOptions = {}) {
 `;
       writeFile(plistPath, plist, { mode: 0o644 });
 
-      // Matches the script already deployed on the fleet: covers both the
-      // Homebrew-agent layout (older x64 boxes) and the Library layout (this
-      // installer), fixes ownership, then reboots.
+      // Nightly wipe of builds/ and tmp, then a reboot. The script stops the
+      // agent and waits for its job first (see agent-cleanup.sh). It is
+      // embedded so that it stays root-owned, like the plist.
       const cleanupPlistPath = "/Library/LaunchDaemons/com.buildkite.cleanup.plist";
-      const cleanupScript =
-        `PATH=/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin; ` +
-        `BASE_PREFIX=$([ "$(uname -m)" = "arm64" ] && echo "/opt/homebrew" || echo "/usr/local"); ` +
-        `{ rm -rf $BASE_PREFIX/{var,etc}/buildkite-agent/{builds,cache}/* ${homePath}/{builds,cache}/* /tmp/* /var/tmp/* || true; } && ` +
-        `{ chown -R ${runAsUser}:admin $BASE_PREFIX/var/buildkite-agent $BASE_PREFIX/etc/buildkite-agent || true; } && ` +
-        `{ chmod -R 755 $BASE_PREFIX/var/buildkite-agent $BASE_PREFIX/etc/buildkite-agent || true; } && ` +
-        `{ shutdown -r now || reboot; }`;
+      const cleanupScript = readFileSync(join(srcDir, "agent-cleanup.sh"), "utf8");
+      const cleanupLogPath = join(logsPath, "cleanup.log");
       const cleanupPlist = `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
   <key>Label</key><string>com.buildkite.cleanup</string>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key><string>/usr/bin:/bin:/usr/sbin:/sbin</string>
+    <key>AGENT_HOME</key><string>${homePath}</string>
+  </dict>
   <key>ProgramArguments</key>
   <array>
     <string>/bin/sh</string><string>-c</string>
@@ -234,6 +235,8 @@ async function doBuildkiteAgent(action, cliOptions = {}) {
   </array>
   <key>StartCalendarInterval</key>
   <dict><key>Hour</key><integer>6</integer><key>Minute</key><integer>27</integer></dict>
+  <key>StandardOutPath</key><string>${cleanupLogPath}</string>
+  <key>StandardErrorPath</key><string>${cleanupLogPath}</string>
 </dict>
 </plist>
 `;
@@ -392,17 +395,27 @@ async function doBuildkiteAgent(action, cliOptions = {}) {
       .map(([key, value]) => `${key}=${value}`)
       .join(",");
 
-    await spawnSafe(
+    // launchd and systemd (KillMode=process) send SIGTERM to this process, not
+    // to the agent. On its first SIGTERM buildkite-agent finishes the job it
+    // is running and exits 0. Forward it so a stop is that graceful stop, and
+    // not node exiting at once with launchd then killing the process group.
+    const agent = nodeSpawn(
+      command,
       [
-        command,
         "start",
         ...flags.map(flag => `--${flag}`),
         ...Object.entries(options).map(([key, value]) => `--${key}=${value}`),
       ],
-      {
-        stdio: "inherit",
-      },
+      { stdio: "inherit" },
     );
+    process.on("SIGTERM", () => agent.kill("SIGTERM"));
+    const [exitCode, signalCode] = await new Promise((resolve, reject) => {
+      agent.on("error", reject);
+      agent.on("exit", (code, signal) => resolve([code, signal]));
+    });
+    if (exitCode !== 0) {
+      throw new Error(`buildkite-agent exited with ${signalCode ? `signal ${signalCode}` : `code ${exitCode}`}`);
+    }
   }
 
   if (action === "install") {

@@ -454,12 +454,9 @@ function WriteStream(this: FSStream, path: string | null, options?: any): void {
     this.pos = start;
   }
 
-  // A writer cannot be opened for every fd a caller may hand us: node's
-  // tty.WriteStream accepts a read-only descriptor, and the sink dup()s the fd,
-  // which fails with EMFILE at the fd limit. Fall back to synchronous writes
-  // there, like node's SyncWriteStream for stdio: a failure surfaces at write
-  // time rather than from the constructor, and bytes written right before
-  // process.exit() are not left in a thread-pool queue.
+  // The sink dup()s the fd. That fails for a read-only fd (node's
+  // tty.WriteStream accepts one) and with EMFILE at the fd limit. Write
+  // synchronously then, like node's SyncWriteStream.
   let fastWriter;
   if (fastPath && fd != null) {
     try {
@@ -468,10 +465,8 @@ function WriteStream(this: FSStream, path: string | null, options?: any): void {
       fastPath = false;
       this._write = underscoreWriteSync;
     }
-    // Already-open fd (stdio): skip the async _construct round-trip so the
-    // stream is born constructed, like node's stdio streams (net.Socket /
-    // tty.WriteStream), which never allocate construct TickObjects. A write
-    // before construction would sit in the buffer until the next tick.
+    // An already-open fd (stdio) is born constructed, like node's net.Socket.
+    // A deferred _construct would hold a write until the next tick.
     this._construct = undefined;
   }
 

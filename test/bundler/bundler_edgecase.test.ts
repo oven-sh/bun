@@ -2233,6 +2233,329 @@ describe("bundler", () => {
       stdout: `side-effect-ran`,
     },
   });
+  // A top-level `X.y = v` only changes an object that `X` owns. When `X` is a
+  // module-local class, function, or object literal that is never reassigned,
+  // and `v` has no side effects, the statement belongs to `X`: it is removed
+  // with `X` instead of pinning `X` (and everything `v` references) into the
+  // bundle. Patterns from three.js (`Track.prototype.ValueTypeName = ''`,
+  // `Texture.DEFAULT_IMAGE = null`, `ShaderLib.physical = {...}`), tiptap
+  // (`ExtensionManager.resolve = resolveExtensions`), tanstack
+  // (`includesString.autoRemove = ...`) and prosemirror
+  // (`Selection.prototype.visible = true`).
+  itBundled("edgecase/MemberAssignmentOwnedByUnusedBinding", {
+    files: {
+      "/entry.ts": `
+        import { used } from './lib';
+        console.log(used());
+      `,
+      "/lib.ts": `
+        function FnREMOVE() {}
+        FnREMOVE.prototype.bigREMOVE = "x";
+        FnREMOVE.resolveREMOVE = helperREMOVE;
+        FnREMOVE['indexedREMOVE'] = null;
+        function helperREMOVE() {}
+
+        HoistedREMOVE.beforeDeclarationREMOVE = 1;
+        function HoistedREMOVE() {}
+
+        class TrackREMOVE { get other() { return 1 } }
+        TrackREMOVE.prototype.ValueTypeNameREMOVE = '';
+        class NumberTrackREMOVE extends TrackREMOVE {}
+        NumberTrackREMOVE.prototype.ValueTypeNameREMOVE = 'number';
+        NumberTrackREMOVE.DEFAULT_IMAGE_REMOVE = null;
+        NumberTrackREMOVE.prototype.constructor = NumberTrackREMOVE;
+
+        const ShaderLibREMOVE = { basic: { uniforms: {} } };
+        ShaderLibREMOVE.physicalREMOVE = { uniforms: {}, vertexShader: 'vREMOVE' };
+        ShaderLibREMOVE.basic.fragmentShaderREMOVE = 'fREMOVE';
+
+        const includesStringREMOVE = (row: unknown) => row;
+        includesStringREMOVE.autoRemoveREMOVE = (val: unknown) => !val;
+
+        const ClassExprREMOVE = class {};
+        ClassExprREMOVE.staticREMOVE = true;
+
+        export { FnREMOVE, NumberTrackREMOVE, ShaderLibREMOVE };
+        export function used() { return 'used' }
+      `,
+    },
+    dce: true,
+    dceKeepMarkerCount: false,
+    run: {
+      stdout: "used",
+    },
+  });
+  // The same statements stay, in order, when the binding is read, re-exported,
+  // or reached through a namespace import.
+  itBundled("edgecase/MemberAssignmentKeptWithBinding", {
+    files: {
+      "/entry.js": `
+        import { Track, NumberTrack, ShaderLib, includesString, Fn } from './lib';
+        import * as ns from './lib';
+        console.log(
+          new Track().ValueTypeName,
+          new NumberTrack().ValueTypeName,
+          NumberTrack.DEFAULT_IMAGE,
+          ShaderLib.physical.vertexShader,
+          ShaderLib.basic.fragmentShader,
+          includesString.autoRemove(0),
+          Fn.prototype.big,
+          Fn.resolve === ns.helper,
+          ns.Selection.prototype.visible,
+        );
+      `,
+      "/lib.js": `
+        export class Track {}
+        Track.prototype.ValueTypeName = 'base';
+        export class NumberTrack extends Track {}
+        NumberTrack.prototype.ValueTypeName = 'number';
+        NumberTrack.DEFAULT_IMAGE = null;
+        export const ShaderLib = { basic: { uniforms: {} } };
+        ShaderLib.physical = { uniforms: {}, vertexShader: 'v' };
+        ShaderLib.basic.fragmentShader = 'f';
+        export const includesString = (row) => row;
+        includesString.autoRemove = (val) => !val;
+        export function Fn() {}
+        Fn.prototype.big = 'big';
+        Fn.resolve = helper;
+        export function helper() {}
+        export { Selection } from './selection';
+      `,
+      "/selection.js": `
+        export class Selection { get empty() { return true } }
+        Selection.prototype.visible = true;
+      `,
+    },
+    run: {
+      stdout: "base number null v f true big true true",
+    },
+  });
+  // An entry point's own exports pin the assignments on the exported binding.
+  itBundled("edgecase/MemberAssignmentKeptForEntryExport", {
+    files: {
+      "/entry.js": `
+        export class Selection { get empty() { return true } }
+        Selection.prototype.visible = true;
+        export default function Fn() {}
+        Fn.displayName = 'Fn';
+      `,
+    },
+    onAfterBundle(api) {
+      api.expectFile("/out.js").toContain("Selection.prototype.visible = true");
+      api.expectFile("/out.js").toContain('Fn.displayName = "Fn"');
+    },
+  });
+  // A setter that the class or literal declares (or inherits from a local
+  // parent class) runs user code, and a parent that is not a local class may
+  // declare one too. Each of these assignments must run.
+  itBundled("edgecase/MemberAssignmentSetterKept", {
+    files: {
+      "/entry.js": `
+        import './lib';
+        console.log(globalThis.hits.join(','));
+      `,
+      "/lib.js": `
+        globalThis.hits = [];
+        const hit = (name) => globalThis.hits.push(name);
+
+        class StaticSetter { static set y(v) { hit('static') } }
+        StaticSetter.y = 1;
+
+        class ProtoSetter { set y(v) { hit('proto') } }
+        ProtoSetter.prototype.y = 1;
+
+        class Parent { static set y(v) { hit('parent') } }
+        class Child extends Parent {}
+        Child.y = 1;
+
+        const key = 'y';
+        class Computed { static set [key](v) { hit('computed') } }
+        Computed.y = 1;
+
+        const literal = { set y(v) { hit('literal') } };
+        literal.y = 1;
+
+        globalThis.Base = class { static set y(v) { hit('unknown-parent') } };
+        class Unknown extends globalThis.Base {}
+        Unknown.y = 1;
+
+        const holder = { a: {} };
+        holder.a = { set b(v) { hit('rewritten-prefix') } };
+        holder.a.b = 1;
+
+        function Proto() {}
+        Proto.prototype = { set x(v) { hit('rewritten-prototype') } };
+        Proto.prototype.x = 1;
+
+        function Dunder() {}
+        Dunder.__proto__ = { set x(v) { hit('dunder-proto') } };
+        Dunder.x = 1;
+
+        class Defined {}
+        Object.defineProperty(Defined.prototype, 'x', { set(v) { hit('parent-defineProperty') } });
+        class DefinedChild extends Defined {}
+        DefinedChild.prototype.x = 1;
+
+        class Installer { static install() { Object.defineProperty(Installer.prototype, 'x', { set(v) { hit('parent-method') } }) } }
+        Installer.install();
+        class InstallerChild extends Installer {}
+        InstallerChild.prototype.x = 1;
+
+        class Blocky { static { Object.defineProperty(this, 'y', { set(v) { hit('static-block') } }) } }
+        Blocky.y = 1;
+
+        class Inited { static z = Object.defineProperty(this, 'y', { set(v) { hit('static-initializer') } }) }
+        Inited.y = 1;
+
+        class Reached {}
+        class Sibling extends Reached { static { Object.defineProperty(Object.getPrototypeOf(this.prototype), 'x', { set(v) { hit('sibling-static-block') } }) } }
+        class ReachedChild extends Reached {}
+        ReachedChild.prototype.x = 1;
+
+        class Armed { static set install(v) { Object.defineProperty(this.prototype, 'x', { set(w) { hit('parent-setter-write') } }) } }
+        Armed.install = 1;
+        class ArmedChild extends Armed {}
+        ArmedChild.prototype.x = 1;
+
+        class Stored { static { globalThis.stored = this } }
+        Object.defineProperty(globalThis.stored, 'y', { set(v) { hit('static-block-escape') } });
+        Stored.y = 1;
+
+        const register = (klass) => { globalThis.registered = klass; return klass };
+        class Registered { static self = register(this) }
+        Object.defineProperty(globalThis.registered, 'y', { set(v) { hit('static-initializer-escape') } });
+        Registered.y = 1;
+      `,
+    },
+    run: {
+      stdout: [
+        "static",
+        "proto",
+        "parent",
+        "computed",
+        "literal",
+        "unknown-parent",
+        "rewritten-prefix",
+        "rewritten-prototype",
+        "dunder-proto",
+        "parent-defineProperty",
+        "parent-method",
+        "static-block",
+        "static-initializer",
+        "sibling-static-block",
+        "parent-setter-write",
+        "static-block-escape",
+        "static-initializer-escape",
+      ].join(","),
+    },
+  });
+  // Decorators run arbitrary code against the class, and lowering reassigns
+  // the binding, so the write stays.
+  itBundled("edgecase/MemberAssignmentDecoratedClassKept", {
+    files: {
+      "/entry.ts": `
+        import './lib';
+        console.log(globalThis.hit);
+      `,
+      "/lib.ts": `
+        function installSetter(target: any) {
+          Object.defineProperty(target, 'y', { set(v: number) { globalThis.hit = 'decorator:' + v } });
+          return target;
+        }
+        @installSetter
+        class Decorated {}
+        Decorated.y = 1;
+      `,
+    },
+    run: {
+      stdout: "decorator:1",
+    },
+  });
+  // A write that can reach an object the binding does not own is not owned by
+  // the binding: a reassigned binding, a value with side effects, a compound
+  // assignment, a global or imported root, or a path whose prefix was aliased
+  // to another object.
+  itBundled("edgecase/MemberAssignmentNotOwnedKept", {
+    files: {
+      "/entry.js": `
+        import { other, shared, proto } from './lib';
+        import { imported } from './imported';
+        console.log(other.y, globalThis.counter, globalThis.fromGlobal, imported.y, shared.b, proto.x);
+      `,
+      "/lib.js": `
+        import { imported } from './imported';
+
+        let target = { a: 1 };
+        export const other = {};
+        target = other;
+        target.y = 'reassigned';
+
+        function Fn() {}
+        Fn.y = (globalThis.counter = (globalThis.counter ?? 0) + 1);
+
+        function Counter() {}
+        Counter.n = 0;
+        Counter.n += 1;
+
+        globalThis.fromGlobal = 'global';
+        imported.y = 'imported';
+
+        export const shared = {};
+        const holder = { a: {} };
+        holder.a = shared;
+        holder.a.b = 'aliased';
+
+        function F() {}
+        export const proto = {};
+        F.prototype = proto;
+        F.prototype.x = 'proto';
+      `,
+      "/imported.js": `
+        export const imported = {};
+      `,
+    },
+    onAfterBundle(api) {
+      api.expectFile("/out.js").toContain("Counter.n += 1");
+    },
+    run: {
+      stdout: "reassigned 1 global imported aliased proto",
+    },
+  });
+  itBundled("edgecase/MemberAssignmentSplitting", {
+    files: {
+      "/a.js": `
+        import { Track } from './shared';
+        console.log(new Track().ValueTypeName);
+      `,
+      "/b.js": `
+        import { used } from './shared';
+        console.log(used());
+      `,
+      "/shared.js": `
+        export class Track {}
+        Track.prototype.ValueTypeName = 'track';
+        export class UnusedREMOVE {}
+        UnusedREMOVE.prototype.ValueTypeNameREMOVE = 'unused';
+        export function used() { return 'used' }
+      `,
+    },
+    entryPoints: ["/a.js", "/b.js"],
+    splitting: true,
+    outdir: "/out",
+    onAfterBundle(api) {
+      // The `dce` scan only reads the entry outputs. The shared chunk is where
+      // `shared.js` lands, so check every emitted file.
+      const chunks = readdirSync(api.outdir).filter(file => file.endsWith(".js"));
+      expect(chunks).toHaveLength(3);
+      for (const chunk of chunks) {
+        expect(api.readFile(join("out", chunk))).not.toContain("REMOVE");
+      }
+    },
+    run: [
+      { file: "/out/a.js", stdout: "track" },
+      { file: "/out/b.js", stdout: "used" },
+    ],
+  });
   itBundled("edgecase/ImportMetaMain", {
     files: {
       "/entry.ts": /* js */ `

@@ -112,7 +112,7 @@ describe("bundler", () => {
       `,
       "/node_modules/effectful/src/effect.js": /* js */ `
         export const TABLE = {};
-        TABLE.marker = "THE_SIDE_EFFECT_RAN";
+        globalThis.marker = "THE_SIDE_EFFECT_RAN";
       `,
     },
     outdir: "/out",
@@ -141,7 +141,7 @@ describe("bundler", () => {
       `,
       "/node_modules/effectful/src/effect.js": /* js */ `
         export const TABLE = {};
-        TABLE.marker = "THE_SIDE_EFFECT_RAN";
+        globalThis.marker = "THE_SIDE_EFFECT_RAN";
       `,
     },
     outdir: "/out",
@@ -171,7 +171,7 @@ describe("bundler", () => {
       `,
       "/node_modules/effectful/src/effect.js": /* js */ `
         export const TABLE = {};
-        TABLE.marker = "THE_SIDE_EFFECT_RAN";
+        globalThis.marker = "THE_SIDE_EFFECT_RAN";
       `,
     },
     outdir: "/out",

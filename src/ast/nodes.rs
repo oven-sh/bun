@@ -1056,8 +1056,10 @@ pub struct Part {
     pub dependencies: DependencyList,
 
     /// If true, this part can be removed if none of the declared symbols are
-    /// used. If the file containing this part is imported, then all parts that
-    /// don't have this flag enabled must be included.
+    /// used, or, for a `X.y = v` part registered under `X` in
+    /// `top_level_symbols_to_parts`, if `X` is unused. If the file containing
+    /// this part is imported, then all parts that don't have this flag enabled
+    /// must be included.
     pub can_be_removed_if_unused: bool,
 
     /// This is used for generated parts that we don't want to be present if they

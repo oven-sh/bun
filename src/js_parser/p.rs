@@ -5802,7 +5802,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         self.stmts_can_be_removed_if_unused_without_dce_check(stmts)
     }
 
-    fn stmts_can_be_removed_if_unused_without_dce_check(&mut self, stmts: &[Stmt]) -> bool {
+    pub(crate) fn stmts_can_be_removed_if_unused_without_dce_check(
+        &mut self,
+        stmts: &[Stmt],
+    ) -> bool {
         for stmt in stmts {
             match &stmt.data {
                 // These never have side effects
@@ -6220,7 +6223,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         self.expr_can_be_removed_if_unused_without_dce_check(expr)
     }
 
-    fn expr_can_be_removed_if_unused_without_dce_check(&mut self, expr: &Expr) -> bool {
+    pub(crate) fn expr_can_be_removed_if_unused_without_dce_check(&mut self, expr: &Expr) -> bool {
         if !self.stack_check.is_safe_to_recurse() || self.reported_stack_overflow.get() {
             self.report_stack_overflow(expr.loc);
             return false;
@@ -9243,6 +9246,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 symbols: &'s [Symbol],
                 part_index: u32,
             }
+            // `X.y = v` parts belong to `X`; claimed once the map is complete.
+            let claim_member_assignments =
+                self.options.features.dead_code_elimination && self.options.tree_shaking;
+            let mut member_assignments = BumpVec::new_in(arena);
             for (part_index, part) in parts.iter_mut().enumerate() {
                 let mut ctx = Ctx {
                     top_level: &mut top_level_symbols_to_parts,
@@ -9269,7 +9276,18 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             .push(ctx.part_index);
                     },
                 );
+                if claim_member_assignments
+                    && let Some(candidate) =
+                        self.member_assignment_candidate(part, part_index as u32)
+                {
+                    member_assignments.push(candidate);
+                }
             }
+            self.claim_member_assignments(
+                parts.as_mut_slice(),
+                &mut top_level_symbols_to_parts,
+                &member_assignments,
+            );
 
             // Pulling in the exports of this module always pulls in the export part
             top_level_symbols_to_parts

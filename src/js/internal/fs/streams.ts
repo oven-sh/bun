@@ -596,12 +596,9 @@ function underscoreWriteSync(this: FSStream, data: Buffer, encoding: any, cb: an
         cb(err);
         return;
       }
-      written = 0;
-    }
-    if (written === 0) {
-      // A non-blocking fd with no room. Let the thread pool finish the rest.
-      _write.$call(this, offset === 0 ? data : data.subarray(offset), encoding, cb);
-      return;
+      // A non-blocking fd with no room: wait for the reader, as a blocking write would.
+      Bun.sleepSync(1);
+      continue;
     }
     this.bytesWritten += written;
     offset += written;

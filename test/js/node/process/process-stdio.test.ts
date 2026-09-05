@@ -212,5 +212,40 @@ describe.concurrent("process-stdio", () => {
       expect(await Bun.file(err).text()).toBe("E1 diagnostic on stderr\n");
       expect(exitCode).toBe(0);
     });
+
+    test("non-blocking pipe: a write larger than the pipe waits for the reader", async () => {
+      const size = 1 << 20;
+      // `Bun.file(1).writer()` puts O_NONBLOCK on the stdout description, so the
+      // fallback meets EAGAIN once the pipe is full. The parent starts reading
+      // only after the child has begun its write.
+      const nonblockingScript = /* js */ `
+        const fs = require("fs");
+        new fs.WriteStream(null, { fd: 1, autoClose: false });
+        Bun.file(1).writer().end();
+        const held = [];
+        try {
+          for (;;) held.push(fs.openSync("/dev/null", "r"));
+        } catch {}
+        fs.writeSync(2, "writing\\n");
+        process.stdout.write(Buffer.alloc(${size}, "x"));
+        process.exit(0);
+      `;
+      await using proc = spawn({
+        cmd: ["/bin/sh", "-c", `ulimit -n 32 && exec "$1" -e "$2"`, "sh", bunExe(), nonblockingScript],
+        env,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      let stderr = "";
+      for await (const chunk of proc.stderr) {
+        stderr += Buffer.from(chunk).toString();
+        if (stderr.includes("writing\n")) break;
+      }
+      const [stdout, exitCode] = await Promise.all([proc.stdout.bytes(), proc.exited]);
+      expect(stderr).toBe("writing\n");
+      expect(stdout.length).toBe(size);
+      expect(stdout.every(b => b === 0x78)).toBe(true);
+      expect(exitCode).toBe(0);
+    });
   });
 });

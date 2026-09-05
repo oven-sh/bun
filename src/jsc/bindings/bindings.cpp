@@ -6793,7 +6793,12 @@ extern "C" JSC::EncodedJSValue Bun__REPL__evaluate(
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
 
-    WTF::String source = WTF::String::fromUTF8(std::span { sourcePtr, sourceLen });
+    // Same decoder as the module loader: text the transpiler passes through
+    // verbatim (preserved comments) can be ill-formed UTF-8, which becomes U+FFFD
+    // here; WTF::String::fromUTF8 returned a null string that evaluated to nothing.
+    WTF::String source = sourceLen > 0
+        ? Zig::convertUTF8ToString(std::span { sourcePtr, sourceLen })
+        : WTF::emptyString();
     WTF::String filename = filenameLen > 0
         ? WTF::String::fromUTF8(std::span { filenamePtr, filenameLen })
         : "[repl]"_s;

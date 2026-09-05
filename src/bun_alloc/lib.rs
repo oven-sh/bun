@@ -1019,16 +1019,14 @@ pub mod allocators {
 // ──────────────────────────────────────────────────────────────────────────
 // Per-monomorphization singleton macros
 //
-// Each instantiation needs its own singleton. Rust forbids
-// generic statics, so the storage is emitted at the *declare site* instead:
+// Rust forbids generic statics, so each instantiation's storage is emitted at
+// the declare site:
 //
 //   bss_string_list! { pub dirname_store: 4096, 129 }
-//   // → static STORAGE: SyncUnsafeCell<MaybeUninit<BSSStringList<4096,129>>>
-//   //   pub fn dirname_store() -> *mut BSSStringList<4096,129>
+//   // → pub fn dirname_store() -> *mut BSSStringList<4096, 129, 1024>
 //
-// The accessor lazily field-initializes via `init_at` under `std::sync::Once`.
-// Returning `&'static mut` means callers must not hold overlapping unique
-// borrows.
+// The accessor runs `init_at` on first call and returns a raw `*mut`; callers
+// must not hold overlapping unique borrows.
 // ──────────────────────────────────────────────────────────────────────────
 
 /// Emit a process-lifetime singleton accessor for any type with an
@@ -1288,19 +1286,28 @@ macro_rules! bss_list {
     };
 }
 
-/// Declare a `BSSStringList<COUNT, ITEM_LENGTH>` singleton accessor.
+/// Declare a `BSSStringList` singleton accessor; the block size comes from `$count`.
 #[macro_export]
 macro_rules! bss_string_list {
     ($(#[$m:meta])* $vis:vis $name:ident : $count:expr, $item_len:expr) => {
-        $crate::bss_singleton!($(#[$m])* $vis fn $name() -> $crate::BSSStringList<{ $count }, { $item_len }>);
+        $crate::bss_singleton!($(#[$m])* $vis fn $name() -> $crate::BSSStringList<
+            { $count },
+            { $item_len },
+            { $crate::bss_overflow_block_size($count) },
+        >);
     };
 }
 
-/// Declare a `BSSMapInner<T, COUNT, RM_SLASH>` singleton accessor.
+/// Declare a `BSSMapInner` singleton accessor; the block size comes from `$count`.
 #[macro_export]
 macro_rules! bss_map_inner {
     ($(#[$m:meta])* $vis:vis $name:ident : $value_ty:ty, $count:expr, $rm_slash:expr) => {
-        $crate::bss_singleton!($(#[$m])* $vis fn $name() -> $crate::BSSMapInner<$value_ty, { $count }, { $rm_slash }>);
+        $crate::bss_singleton!($(#[$m])* $vis fn $name() -> $crate::BSSMapInner<
+            $value_ty,
+            { $count },
+            { $crate::bss_overflow_block_size($count) },
+            { $rm_slash },
+        >);
     };
 }
 
@@ -1506,6 +1513,7 @@ impl<ValueType, const COUNT: usize> OverflowList<ValueType, COUNT> {
     /// `bss_heap_init`/`bss_lazy_bytes`, NOT `mi_malloc`/stack `MaybeUninit`).
     #[inline]
     pub(crate) unsafe fn init_counters_at(slot: *mut Self) {
+        const { assert!(COUNT > 0, "an overflow block must hold at least one item") };
         // SAFETY: caller contract.
         unsafe {
             addr_of_mut!((*slot).list.used).write(0);
@@ -1599,9 +1607,13 @@ unsafe impl<ValueType: Send, const COUNT: usize> Sync for BSSList<ValueType, COU
 
 const BSS_LIST_CHUNK_SIZE: usize = 256;
 
-/// The per-store overflow-block size is `count / 4`; this shared constant must
-/// be >= the largest store's, i.e. the filename store's `8192 / 4`.
-const BSS_OVERFLOW_BLOCK_SIZE: usize = 2048;
+/// Overflow block capacity for a store with `count` inline entries. Each store
+/// takes it as its `OVERFLOW_BLOCK_SIZE` const generic because a field type
+/// cannot spell `COUNT / 4` (see the note above `OverflowListBlock`). A store
+/// needs `count >= 4`; a zero-capacity block fails to compile.
+pub const fn bss_overflow_block_size(count: usize) -> usize {
+    count / 4
+}
 
 /// `#[repr(C)]` with `prev` before `data` so the inline `BSSList::tail` block's
 /// scalar fields cluster at the front of the singleton mapping (see the layout
@@ -1790,7 +1802,7 @@ impl<ValueType, const COUNT: usize> Drop for BSSList<ValueType, COUNT> {
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// BSSStringList<_COUNT, _ITEM_LENGTH>
+// BSSStringList<COUNT, ITEM_LENGTH, OVERFLOW_BLOCK_SIZE>
 // ──────────────────────────────────────────────────────────────────────────
 
 /// Append-only list.
@@ -1799,8 +1811,9 @@ impl<ValueType, const COUNT: usize> Drop for BSSList<ValueType, COUNT> {
 ///
 /// Same const-generic-arithmetic and per-type-static caveats as `BSSList`.
 pub struct BSSStringList<
-    const COUNT: usize,       /* = _COUNT * 2 */
-    const ITEM_LENGTH: usize, /* = _ITEM_LENGTH + 1 */
+    const COUNT: usize,               /* = _COUNT * 2 */
+    const ITEM_LENGTH: usize,         /* = _ITEM_LENGTH + 1 */
+    const OVERFLOW_BLOCK_SIZE: usize, /* = bss_overflow_block_size(COUNT) */
 > {
     // Inline arrays would live in the same demand-faulted allocation
     // as the rest of the singleton with `init()` writing only the four scalar
@@ -1814,7 +1827,7 @@ pub struct BSSStringList<
     // `[..backing_buf_used]` / `[..slice_buf_used]` are ever read.
     pub(crate) backing_buf: NonNull<[MaybeUninit<u8>]>, // len == COUNT * ITEM_LENGTH
     pub(crate) backing_buf_used: u64,
-    pub(crate) overflow_list: OverflowList<&'static [u8], BSS_OVERFLOW_BLOCK_SIZE>,
+    pub(crate) overflow_list: OverflowList<&'static [u8], OVERFLOW_BLOCK_SIZE>,
     pub(crate) slice_buf: NonNull<[MaybeUninit<&'static [u8]>]>, // len == COUNT
     pub(crate) slice_buf_used: u16,
     pub(crate) mutex: Mutex,
@@ -1872,7 +1885,9 @@ impl BSSAppendable for &[&[u8]] {
     }
 }
 
-impl<const COUNT: usize, const ITEM_LENGTH: usize> BSSStringList<COUNT, ITEM_LENGTH> {
+impl<const COUNT: usize, const ITEM_LENGTH: usize, const OVERFLOW_BLOCK_SIZE: usize>
+    BSSStringList<COUNT, ITEM_LENGTH, OVERFLOW_BLOCK_SIZE>
+{
     const MAX_INDEX: usize = COUNT - 1;
 
     /// In-place field initialization into uninitialized storage.
@@ -2178,20 +2193,29 @@ impl<const COUNT: usize, const ITEM_LENGTH: usize> BSSStringList<COUNT, ITEM_LEN
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// BSSMapInner<ValueType, COUNT, REMOVE_TRAILING_SLASHES>
+// BSSMapInner<ValueType, COUNT, OVERFLOW_BLOCK_SIZE, REMOVE_TRAILING_SLASHES>
 // ──────────────────────────────────────────────────────────────────────────
 
-pub struct BSSMapInner<ValueType, const COUNT: usize, const REMOVE_TRAILING_SLASHES: bool> {
+pub struct BSSMapInner<
+    ValueType,
+    const COUNT: usize,
+    const OVERFLOW_BLOCK_SIZE: usize, /* = bss_overflow_block_size(COUNT) */
+    const REMOVE_TRAILING_SLASHES: bool,
+> {
     pub(crate) index: IndexMap,
-    pub overflow_list: OverflowList<ValueType, BSS_OVERFLOW_BLOCK_SIZE>,
+    pub overflow_list: OverflowList<ValueType, OVERFLOW_BLOCK_SIZE>,
     pub(crate) mutex: Mutex,
     // Only `[0..backing_buf_used]` is initialized.
     pub backing_buf: [MaybeUninit<ValueType>; COUNT],
     pub backing_buf_used: u16,
 }
 
-impl<ValueType, const COUNT: usize, const REMOVE_TRAILING_SLASHES: bool>
-    BSSMapInner<ValueType, COUNT, REMOVE_TRAILING_SLASHES>
+impl<
+    ValueType,
+    const COUNT: usize,
+    const OVERFLOW_BLOCK_SIZE: usize,
+    const REMOVE_TRAILING_SLASHES: bool,
+> BSSMapInner<ValueType, COUNT, OVERFLOW_BLOCK_SIZE, REMOVE_TRAILING_SLASHES>
 {
     const MAX_INDEX: usize = COUNT - 1;
 

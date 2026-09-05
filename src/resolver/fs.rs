@@ -28,8 +28,11 @@ mod preallocate {
     }
 }
 
-pub(crate) type FilenameStoreBacking =
-    allocators::BSSStringList<{ preallocate::counts::FILES * 2 }, { 64 + 1 }>;
+pub(crate) type FilenameStoreBacking = allocators::BSSStringList<
+    { preallocate::counts::FILES * 2 },
+    { 64 + 1 },
+    { allocators::bss_overflow_block_size(preallocate::counts::FILES * 2) },
+>;
 pub(crate) type EntryStoreBacking = allocators::BSSList<Entry, { preallocate::counts::FILES * 2 }>;
 
 // Per-monomorphization singleton storage, emitted at the declare site via

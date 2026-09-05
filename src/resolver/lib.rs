@@ -967,7 +967,12 @@ pub mod fs {
     /// Fixed-capacity (2048-entry) BSS-backed hash map for the directory-entry
     /// cache. Keys are not stored — only their hashes — so lookups cannot
     /// recover key bytes (`BSSMapInner` is the keyless inner shape).
-    type EntriesOptionMap = bun_alloc::BSSMapInner<EntriesOption, 2048, true>;
+    type EntriesOptionMap = bun_alloc::BSSMapInner<
+        EntriesOption,
+        2048,
+        { bun_alloc::bss_overflow_block_size(2048) },
+        true,
+    >;
 
     // Per-monomorphization singleton storage for `EntriesOption.Map`.
     bun_alloc::bss_map_inner! { pub entries_option_map : EntriesOption, 2048, true }

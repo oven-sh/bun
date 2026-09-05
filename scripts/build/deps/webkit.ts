@@ -1951,7 +1951,9 @@ interface JSCCompileFlags {
 }
 
 function jscCompileFlags(wk: WebKitBuild, flags: WebKitFlags): JSCCompileFlags {
-  const { B, JSC, WTF, DS } = wk;
+  const { cfg, B, JSC, WTF, DS } = wk;
+  // clang-cl only maps a subset of GNU -f options; the rest go through /clang:.
+  const clangOpt = (f: string) => (cfg.windows ? `/clang:${f}` : f);
   return {
     includes: [
       ...new Set([
@@ -1969,13 +1971,16 @@ function jscCompileFlags(wk: WebKitBuild, flags: WebKitFlags): JSCCompileFlags {
       ]),
     ],
     // What JSC's CMakeLists adds for every TU of the JavaScriptCore target,
-    // C and C++ alike: no FP contraction (results must not depend on whether
-    // the compiler fused a multiply-add), no SLP vectorizer (clang workaround
-    // WebKit carries), the static-link export-macro switches.
+    // C and C++ alike: no FP contraction (a*b+c must round twice, as the JIT
+    // and every other platform do, never fuse into an FMA), no SLP vectorizer
+    // (clang workaround WebKit carries), the static-link export-macro
+    // switches. Spelled through /clang: for clang-cl, which otherwise ignores
+    // both with a warning (cmake's flag probe dropped them there, so the
+    // Windows prebuilt never had them; on arm64 that meant FMA contraction).
     targetFlags: [
       ...flags.common,
-      "-ffp-contract=off",
-      "-fno-slp-vectorize",
+      clangOpt("-ffp-contract=off"),
+      clangOpt("-fno-slp-vectorize"),
       ...flags.commonDefines,
       "-DSTATICALLY_LINKED_WITH_WTF",
       "-DSTATICALLY_LINKED_WITH_bmalloc",

@@ -235,8 +235,7 @@ mod _impl {
                 .stream
                 .with_mut(|s| s.init(pledged_src_size, dictionary));
             if err.is_error() {
-                CompressionStream::<Self>::emit_error(self, global, this_value, err);
-                return Ok(JSValue::FALSE);
+                return Err(self.throw_initialization_failed(global, err));
             }
 
             let Some(mut params_) = init_params_array_value.as_array_buffer(global) else {
@@ -261,22 +260,24 @@ mod _impl {
                     .stream
                     .with_mut(|s| s.set_params(c_uint::try_from(i).expect("int cast"), x));
                 if err_.is_error() {
-                    self.stream.with_mut(|s| s.close());
-                    // The Context is torn down (`mode` is `NONE`); reject any
-                    // further operation the way `close()` does.
-                    self.closed.set(true);
-                    // SAFETY: is_error() ⇔ msg is non-null; it points at a NUL-terminated C string.
-                    let msg = unsafe { bun_core::ffi::cstr(err_.msg) }.to_bytes();
-                    return Err(global
-                        .err(
-                            jsc::ErrorCode::ZLIB_INITIALIZATION_FAILED,
-                            format_args!("{}", bstr::BStr::new(msg)),
-                        )
-                        .throw());
+                    return Err(self.throw_initialization_failed(global, err_));
                 }
             }
 
             Ok(JSValue::TRUE)
+        }
+
+        /// `zlib.ts` installs `onerror` only after `init()` returns, so init errors are thrown.
+        fn throw_initialization_failed(&self, global: &JSGlobalObject, err: Error) -> jsc::JsError {
+            CompressionStream::<Self>::close_internal(self);
+            // SAFETY: is_error() ⇔ msg is non-null; it points at a NUL-terminated C string.
+            let msg = unsafe { bun_core::ffi::cstr(err.msg) }.to_bytes();
+            global
+                .err(
+                    jsc::ErrorCode::ZLIB_INITIALIZATION_FAILED,
+                    format_args!("{}", bstr::BStr::new(msg)),
+                )
+                .throw()
         }
 
         #[bun_jsc::host_fn(method)]

@@ -761,7 +761,7 @@ impl<T: CompressionStreamImpl> CompressionStream<T> {
         Ok(JSValue::UNDEFINED)
     }
 
-    fn close_internal(this: &T) {
+    pub(crate) fn close_internal(this: &T) {
         if this.write_in_progress().get() {
             this.pending_close().set(true);
             return;

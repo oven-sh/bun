@@ -1,5 +1,5 @@
 import { deflateSync, gunzipSync, gzipSync, inflateSync } from "bun";
-import { describe, expect, it } from "bun:test";
+import { describe, expect, it, jest } from "bun:test";
 import { tmpdirSync } from "harness";
 import * as buffer from "node:buffer";
 import { randomFillSync } from "node:crypto";
@@ -577,6 +577,44 @@ describe("zlib.zstd", () => {
     const f1 = zlib.zstdCompressSync(Buffer.from("first\n"));
     const f2 = zlib.zstdCompressSync(Buffer.from("second\n"));
     expect(zlib.zstdDecompressSync(Buffer.concat([f1, f2])).toString()).toBe("first\nsecond\n");
+  });
+
+  describe("dictionary that fails to load", () => {
+    // Starts with the zstd dictionary magic (0xEC30A437) but carries no valid
+    // entropy tables, so ZSTD_DCtx_loadDictionary rejects it. A buffer without
+    // the magic is treated as a raw content dictionary and always loads.
+    const malformedDictionary = Buffer.from([0x37, 0xa4, 0x30, 0xec, 1, 2, 3, 4, 5, 6, 7, 8]);
+    const expectedError = {
+      name: "Error",
+      code: "ERR_ZLIB_INITIALIZATION_FAILED",
+      message: "Failed to load zstd dictionary",
+    };
+
+    it("zstdDecompressSync throws instead of returning an empty buffer", () => {
+      expect(() => zlib.zstdDecompressSync(compressedBuffer, { dictionary: malformedDictionary })).toThrow(
+        expect.objectContaining(expectedError),
+      );
+    });
+
+    it("zstdDecompress throws synchronously like node", () => {
+      const callback = jest.fn();
+      expect(() => zlib.zstdDecompress(compressedBuffer, { dictionary: malformedDictionary }, callback)).toThrow(
+        expect.objectContaining(expectedError),
+      );
+      expect(callback).not.toHaveBeenCalled();
+    });
+
+    it("createZstdDecompress throws from the constructor", () => {
+      expect(() => zlib.createZstdDecompress({ dictionary: malformedDictionary })).toThrow(
+        expect.objectContaining(expectedError),
+      );
+    });
+
+    it("a raw content dictionary still round-trips", () => {
+      const dictionary = Buffer.from(inputString.slice(0, 64));
+      const compressed = zlib.zstdCompressSync(inputString, { dictionary });
+      expect(zlib.zstdDecompressSync(compressed, { dictionary }).toString()).toBe(inputString);
+    });
   });
 
   it("can compress streaming", async () => {

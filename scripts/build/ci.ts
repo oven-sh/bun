@@ -442,23 +442,15 @@ export function packageAndUpload(cfg: Config, output: BunOutput): void {
   // having no symbol table, so without them that step has nothing to work from.
   files.push(...linkerMapOutputs(cfg).map(map => basename(map)));
   // The symbol ordering file this binary was linked with, next to the linker
-  // map. Skip the seeded placeholder — it has no functions in it.
-  const hasOrderFile = usesOrderFile(cfg) && orderFileFunctionCount(cfg) > 0;
-  if (hasOrderFile) {
+  // map. Skip the seeded placeholder — it has no functions in it. Only inside
+  // the zip: the standalone `.order` the next build inherits is the trace-order
+  // step's fresh trace of this binary (.buildkite/ci.mjs), and this copy is
+  // usually itself inherited, so publishing it under that name too would hand
+  // inheritOrderFile() a stale artifact racing the fresh one.
+  if (usesOrderFile(cfg) && orderFileFunctionCount(cfg) > 0) {
     files.push(basename(orderFilePath(cfg)));
   }
   zipPaths.push(makeZip(cfg, bunPath, files));
-
-  // Also upload it standalone, so the next build inherits it with a small
-  // download instead of pulling the whole profile zip. Only when this lane
-  // traced the file itself — a cross-compiled lane's fresh trace comes from the
-  // sibling trace-order step (.buildkite/ci.mjs), and re-uploading the inherited
-  // copy would give inheritOrderFile() two same-named artifacts to race over.
-  if (hasOrderFile && canTraceOrderFile(cfg)) {
-    const artifact = orderFileArtifact(cfg);
-    cpSync(orderFilePath(cfg), resolve(buildDir, artifact));
-    zipPaths.push(artifact);
-  }
 
   // ─── Stripped zip ───
   // Only for plain release (shouldStrip). Just the stripped `bun` binary.
@@ -682,11 +674,12 @@ async function waitForStepOutcome(stepKey: string): Promise<void> {
 // Symbol ordering file
 //
 // A build either generates one (trace its own binary, relink against the result)
-// or inherits an earlier build's and links once. Releases generate, canaries
-// inherit, PRs do neither; one that inherits nothing generates, seeding the chain.
+// or inherits one and links once. Releases generate; canaries inherit the file an
+// earlier build's trace-order step published (getTraceOrderStep in
+// .buildkite/ci.mjs, the only publisher); PRs do neither.
 // ═══════════════════════════════════════════════════════════════════════════
 
-/** Cap on builds we ask for an order file before giving up and generating one. */
+/** Cap on builds we ask for an order file before giving up and linking unordered. */
 const PREVIOUS_BUILDS_TO_TRY = 50;
 
 /** Bound on the number-probe fallback: a branch is sparse among build numbers. */
@@ -729,23 +722,21 @@ export function orderFileEligible(cfg: Config, ctx: OrderFileContext): boolean {
 }
 
 /** Tracing runs the binary we just linked, so the host must be able to execute it. */
-export function canTraceOrderFile(cfg: Config): boolean {
+function canTraceOrderFile(cfg: Config): boolean {
   return cfg.canRunOnHost;
 }
 
 /**
- * An eligible lane that cannot trace (cross-compiled) and inherited nothing is
- * shipping unordered. A sibling `-trace-order` step on a native-arch host seeds
- * the chain (see getTraceOrderStep in .buildkite/ci.mjs), so this fires once on
- * the first build and then the next build inherits that trace. If it persists,
- * the trace step is failing or missing for this target.
+ * An eligible build that inherited nothing ships unordered: a canary does not
+ * trace (a second link), and a cross-compiled release cannot. Every main build's
+ * trace-order step publishes a file, so this fires once while that step seeds
+ * the chain; on consecutive builds it means the step is failing or missing.
  */
-export function reportOrderFileCannotTrace(cfg: Config): void {
+export function reportOrderFileNotInherited(cfg: Config): void {
   const msg =
-    `${orderFileArtifact(cfg)}: nothing to inherit and this lane cross-compiles ` +
-    `(target ${cfg.crossTarget}), so the binary cannot be traced here. Shipping unordered. ` +
-    `Expected once while the native-arch trace-order step seeds the chain; if this ` +
-    `appears on every build, that step is failing or missing.`;
+    `${orderFileArtifact(cfg)}: no recent build on this branch published one, so this binary links ` +
+    `unordered. Every main build's ${traceOrderStepKey(cfg)} step publishes it, so expect this once, ` +
+    `while that step seeds the chain; on consecutive builds it means that step is failing or missing.`;
   console.log(`~ symbol order: ${msg}`);
   if (!isBuildkite) return;
   utils.reportAnnotationToBuildKite({
@@ -754,7 +745,7 @@ export function reportOrderFileCannotTrace(cfg: Config): void {
     label: "symbol order file",
     content: utils.formatAnnotationToHtml({
       filename: "scripts/build/ci.ts",
-      title: "symbol order file: cross-compiled lane cannot trace, shipping unordered",
+      title: "symbol order file: nothing to inherit, shipping unordered",
       content: msg,
       source: "build",
       level: "warning",
@@ -765,6 +756,11 @@ export function reportOrderFileCannotTrace(cfg: Config): void {
 /** Artifact name for the standalone order file: `bun-linux-x64.order`. */
 function orderFileArtifact(cfg: Config): string {
   return `${computeBunTriplet(cfg)}.order`;
+}
+
+/** The Buildkite step that publishes it, as getTraceOrderStep keys it: `linux-x64-trace-order`. */
+function traceOrderStepKey(cfg: Config): string {
+  return `${computeBunTriplet(cfg).replace(/^bun-/, "")}-trace-order`;
 }
 
 /** "1m4s" / "12s" — durations show up in every order-file log line. */
@@ -784,21 +780,13 @@ function orderFileFunctionCount(cfg: Config): number {
 
 /**
  * Releases always trace their own binary — it is the artifact people install.
- * A canary only does so on request, since it costs a second link.
+ * A canary only does so on request, since it costs a second link; otherwise it
+ * inherits, and the trace-order step traces it for the builds after it.
  */
 export function shouldGenerateOrderFile(cfg: Config, ctx: OrderFileContext): boolean {
   if (!orderFileEligible(cfg, ctx) || !canTraceOrderFile(cfg)) return false;
   if (!cfg.canary) return true;
   return /\[generate symbol order\]/i.test(ctx.commitMessage);
-}
-
-/**
- * A build that inherited nothing must generate: otherwise it publishes nothing,
- * the next build inherits nothing either, and the chain never recovers.
- */
-export function mustGenerateOrderFile(cfg: Config, ctx: OrderFileContext, inherited: boolean): boolean {
-  if (shouldGenerateOrderFile(cfg, ctx)) return true;
-  return orderFileEligible(cfg, ctx) && canTraceOrderFile(cfg) && !inherited;
 }
 
 /**
@@ -869,9 +857,8 @@ export async function inheritOrderFile(cfg: Config, ctx: OrderFileContext): Prom
 
   for await (const build of candidateBuilds(ctx)) {
     if (++tried > PREVIOUS_BUILDS_TO_TRY) break;
-    // No --step: exactly one step per build publishes the target-unique name —
-    // packageAndUpload() for a lane that traced its own binary, the sibling
-    // trace-order step (.buildkite/ci.mjs) for a cross-compiled one.
+    // No --step: the name is target-unique, and only that target's trace-order
+    // step (.buildkite/ci.mjs) publishes it.
     const result = spawnSync("buildkite-agent", ["artifact", "download", artifact, ".", "--build", build.id], {
       cwd: cfg.buildDir,
       stdio: "ignore",
@@ -884,7 +871,7 @@ export async function inheritOrderFile(cfg: Config, ctx: OrderFileContext): Prom
 
     cpSync(downloaded, orderFilePath(cfg));
     rmSync(downloaded, { force: true });
-    // An empty artifact would make us publish nothing, breaking the next build.
+    // An empty file is a no-op for the linker; an older build's is better than none.
     const functions = orderFileFunctionCount(cfg);
     if (functions === 0) {
       console.log(`  #${build.number ?? "?"}: ${artifact} is empty — looking further back`);
@@ -908,46 +895,16 @@ export async function inheritOrderFile(cfg: Config, ctx: OrderFileContext): Prom
  * ninja, which relinks and nothing else: `linkDepends()` lists the order file,
  * so it is the only edge whose input changed.
  */
-export function regenerateOrderFile(cfg: Config, ctx: OrderFileContext): void {
+export function regenerateOrderFile(cfg: Config): void {
   const start = Date.now();
   const exeName = bunExeName(cfg); // bun-profile, or bun-assertions on an assertions build
-  const why = !cfg.canary
-    ? "release build"
-    : shouldGenerateOrderFile(cfg, ctx)
-      ? "[generate symbol order] in the commit message"
-      : "nothing to inherit";
+  const why = cfg.canary ? "[generate symbol order] in the commit message" : "release build";
   console.log(`Tracing ${exeName} to build a fresh order file (${why})`);
   console.log("Each workload runs under an injected function-entry tracer, so it is slower than a normal run.\n");
 
   const { count } = generateOrderFile({ buildDir: cfg.buildDir, exeName, verbose: true });
 
   console.log(`\n+ symbol order: traced ${count} functions in ${since(start)} — relinking against them`);
-}
-
-/**
- * A canary found nothing to inherit and is paying a second link to seed the
- * chain. Expected once; on every build it means inheriting is broken.
- */
-export function reportOrderFileBootstrap(cfg: Config): void {
-  if (!cfg.canary) return; // a release always generates — nothing to report
-  const message =
-    `No earlier build published ${orderFileArtifact(cfg)}, so this build is tracing its own binary and ` +
-    `relinking (one extra link). Expected once, to seed the chain. If every build on this branch says ` +
-    `this, inheriting is broken — check the "Inherit symbol order file" step.`;
-  console.log(`~ symbol order: ${message}`);
-  if (!isBuildkite) return;
-  utils.reportAnnotationToBuildKite({
-    style: "warning",
-    priority: 5,
-    label: "symbol order file",
-    content: utils.formatAnnotationToHtml({
-      filename: "scripts/build/ci.ts",
-      title: "symbol order file: nothing to inherit, generating from scratch",
-      content: message,
-      source: "build",
-      level: "warning",
-    }),
-  });
 }
 
 /**

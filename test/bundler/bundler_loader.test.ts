@@ -1,5 +1,6 @@
 import { fileURLToPath, Loader } from "bun";
-import { describe, expect } from "bun:test";
+import { describe, expect, test } from "bun:test";
+import { bunEnv, bunExe, tempDir } from "harness";
 import fs, { readdirSync } from "node:fs";
 import { join } from "path";
 import { itBundled } from "./expectBundled";
@@ -699,6 +700,216 @@ describe("bundler", async () => {
         expect(api.readFile(join("/out", jsFile))).toContain('"entry.ts"');
         const cssFile = readdirSync(api.outdir).find(x => x.endsWith(".css"))!;
         expect(api.readFile(join("/out", cssFile))).toContain("color: red");
+      },
+    });
+  });
+
+  // The `json` loader must agree with `bun run`: the runtime exposes every
+  // top-level key as a named export and parses the file with `JSON.parse`.
+  describe("json loader matches the runtime", () => {
+    // Keys that are not identifiers, plus keywords, `default`, and a key that
+    // collides with the mangled name of another (`a b` becomes `a_b`).
+    const keysJson = `{
+      "a b": 1, "foo-bar": 2, "café": 3, "日本": 4, "🔥": 5, "": 6, "123": 7, "1e3": 8,
+      "let": 9, "class": 10, "if": 11, "default": 12, "a_b": 13
+    }`;
+    const keysEntry = /* js */ `
+      import * as ns from "./data.json";
+      import def from "./data.json";
+      import {
+        "a b" as ab, "foo-bar" as fooBar, "café" as cafe, "日本" as jp, "🔥" as fire, "" as empty,
+        "123" as n123, "1e3" as n1e3, "let" as let_, "class" as class_, "if" as if_, a_b,
+      } from "./data.json";
+      console.log(JSON.stringify([ab, fooBar, cafe, jp, fire, empty, n123, n1e3, let_, class_, if_, a_b]));
+      console.log(JSON.stringify([
+        ns["a b"], ns["foo-bar"], ns["café"], ns["日本"], ns["🔥"], ns[""], ns["123"], ns["1e3"],
+        ns.let, ns.class, ns.if, ns.a_b,
+      ]));
+      console.log(JSON.stringify(Object.keys(ns).sort()));
+      console.log(JSON.stringify(def), def.default, ns.default === def);
+    `;
+    const keysStdout = [
+      "[1,2,3,4,5,6,7,8,9,10,11,13]",
+      "[1,2,3,4,5,6,7,8,9,10,11,13]",
+      '["","123","1e3","a b","a_b","café","class","default","foo-bar","if","let","日本","🔥"]',
+      '{"123":7,"a b":1,"foo-bar":2,"café":3,"日本":4,"🔥":5,"":6,"1e3":8,"let":9,"class":10,"if":11,"default":12,"a_b":13} 12 true',
+    ].join("\n");
+
+    for (const format of ["esm", "cjs", "iife"] as const) {
+      for (const minify of [false, true]) {
+        itBundled(`bun/loader-json-non-identifier-keys-${format}${minify ? "-minify" : ""}`, {
+          target: "bun",
+          format,
+          minifyIdentifiers: minify,
+          minifySyntax: minify,
+          minifyWhitespace: minify,
+          files: {
+            "/entry.js": keysEntry,
+            "/data.json": keysJson,
+          },
+          run: { stdout: keysStdout },
+        });
+      }
+    }
+
+    // A JSON entry point exports every key, with a string alias where the key
+    // is not an identifier.
+    itBundled("bun/loader-json-non-identifier-keys-entry-point", {
+      target: "bun",
+      format: "esm",
+      entryPoints: ["/data.json"],
+      files: {
+        "/data.json": keysJson,
+      },
+      onAfterBundle(api) {
+        const code = api.readFile("/out.js");
+        expect(code).toContain('as "a b"');
+        expect(code).toContain('as "foo-bar"');
+        expect(code).toContain('as ""');
+        expect(code).toContain('as "123"');
+        // The emoji is written as escapes in ASCII-only output.
+        expect(code).toMatch(/as "(🔥|\\uD83D\\uDD25)"/);
+        expect(code).toContain("as if");
+        expect(code).toContain("as default");
+      },
+    });
+
+    // `export * from "./data.json"` and named re-exports see the same keys.
+    itBundled("bun/loader-json-non-identifier-keys-export-star", {
+      target: "bun",
+      files: {
+        "/entry.js": /* js */ `
+          import * as barrel from "./barrel.js";
+          import { "a b" as ab, "" as empty, renamed, "日本" as jp } from "./barrel.js";
+          console.log(JSON.stringify([barrel["a b"], barrel[""], barrel["foo-bar"], barrel.if, barrel.default, ab, empty, renamed, jp]));
+          console.log(JSON.stringify(Object.keys(barrel).sort()));
+        `,
+        "/barrel.js": /* js */ `
+          export * from "./data.json";
+          export { "a b" as renamed } from "./data.json";
+        `,
+        "/data.json": keysJson,
+      },
+      run: {
+        stdout: [
+          "[1,6,2,11,null,1,6,1,4]",
+          '["","123","1e3","a b","a_b","café","class","foo-bar","if","let","renamed","日本","🔥"]',
+        ].join("\n"),
+      },
+    });
+
+    // Plain `.json` accepts exactly the number forms `JSON.parse` accepts.
+    itBundled("bun/loader-json-rejects-javascript-number-syntax", {
+      target: "bun",
+      files: {
+        "/entry.js": /* js */ `
+          import hex from "./hex.json";
+          import octal from "./octal.json";
+          import binary from "./binary.json";
+          import leadingZero from "./leading-zero.json";
+          import leadingZeroDecimal from "./leading-zero-decimal.json";
+          import separator from "./separator.json";
+          import leadingDot from "./leading-dot.json";
+          import trailingDot from "./trailing-dot.json";
+          import minusGap from "./minus-gap.json";
+          console.log(hex, octal, binary, leadingZero, leadingZeroDecimal, separator, leadingDot, trailingDot, minusGap);
+        `,
+        "/hex.json": `{"a": 0x10}`,
+        "/octal.json": `{"a": 0o17}`,
+        "/binary.json": `{"a": 0b101}`,
+        "/leading-zero.json": `{"a": 0123}`,
+        "/leading-zero-decimal.json": `[018]`,
+        "/separator.json": `{"a": 1_000}`,
+        "/leading-dot.json": `{"a": .5}`,
+        "/trailing-dot.json": `{"a": 1.}`,
+        "/minus-gap.json": `{"a": - 1}`,
+      },
+      bundleErrors: {
+        "/hex.json": ["JSON does not support hexadecimal numbers"],
+        "/octal.json": ["JSON does not support octal numbers"],
+        "/binary.json": ["JSON does not support binary numbers"],
+        "/leading-zero.json": ["JSON does not support numbers with leading zeros"],
+        "/leading-zero-decimal.json": ["JSON does not support numbers with leading zeros"],
+        "/separator.json": ["JSON does not support numeric separators"],
+        "/leading-dot.json": ['JSON numbers must have a digit before "."'],
+        "/trailing-dot.json": ['JSON numbers must have a digit after "."'],
+        "/minus-gap.json": ['JSON numbers must have a digit after "-"'],
+      },
+    });
+
+    itBundled("bun/loader-json-accepts-json-numbers", {
+      target: "bun",
+      files: {
+        "/entry.js": /* js */ `
+          import data from "./numbers.json";
+          console.log(JSON.stringify(data));
+        `,
+        "/numbers.json": `[0, -0, 10, -10, 0.5, -0.5, 0e1, 0E+1, 1e5, 1E-5, 12.5e-1, 1.5E+2, 123456789012]`,
+      },
+      run: { stdout: "[0,0,10,-10,0.5,-0.5,0,0,100000,0.00001,1.25,150,123456789012]" },
+    });
+
+    // The same source prints the same values under `bun run` and after `bun build`,
+    // and a file that `JSON.parse` rejects fails both ways.
+    test("bun run and bun build agree on a JSON module", async () => {
+      using dir = tempDir("json-loader-runtime", {
+        "data.json": keysJson,
+        "entry.js": keysEntry,
+        "hex.json": `{"a": 0x10}`,
+        "hex.js": `import hex from "./hex.json"; console.log(hex);`,
+      });
+      const run = async (...args: string[]) => {
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), ...args],
+          env: bunEnv,
+          cwd: String(dir),
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        return { stdout, stderr, exitCode };
+      };
+
+      const runtime = await run("entry.js");
+      expect(runtime.stderr).toBe("");
+      expect(runtime.stdout).toBe(keysStdout + "\n");
+      expect(runtime.exitCode).toBe(0);
+
+      const build = await run("build", "entry.js", "--outfile=out.js");
+      expect(build.stderr).toBe("");
+      expect(build.exitCode).toBe(0);
+      const bundled = await run("out.js");
+      expect(bundled.stderr).toBe("");
+      expect(bundled.stdout).toBe(runtime.stdout);
+      expect(bundled.exitCode).toBe(0);
+
+      const runtimeHex = await run("hex.js");
+      expect(runtimeHex.stderr).toContain("JSON Parse error");
+      expect(runtimeHex.exitCode).toBe(1);
+      const buildHex = await run("build", "hex.js", "--outfile=out-hex.js");
+      expect(buildHex.stderr).toContain("JSON does not support hexadecimal numbers");
+      expect(buildHex.exitCode).toBe(1);
+    });
+
+    // JSONC and the config files keep the JavaScript number syntax.
+    itBundled("bun/loader-jsonc-accepts-javascript-number-syntax", {
+      target: "bun",
+      files: {
+        "/entry.js": /* js */ `
+          import jsonc from "./data.jsonc";
+          import pkg from "./package.json";
+          import tsconfig from "./tsconfig.json";
+          import viaLoader from "./data.notjson" with { type: "jsonc" };
+          console.log(JSON.stringify([jsonc, pkg, tsconfig, viaLoader]));
+        `,
+        "/data.jsonc": `{"a": 0x10, "b": 0o17, "c": 0b101, "d": 0123, "e": 1_000, "f": .5, "g": 1., "h": - 1, /* c */}`,
+        "/package.json": `{"name": "x", "a": 0x10, "b": .5,}`,
+        "/tsconfig.json": `{"compilerOptions": {"a": 1_000}, // c\n}`,
+        "/data.notjson": `{"a": 0x10}`,
+      },
+      run: {
+        stdout:
+          '[{"a":16,"b":15,"c":5,"d":83,"e":1000,"f":0.5,"g":1,"h":-1},{"name":"x","a":16,"b":0.5},{"compilerOptions":{"a":1000}},{"a":16}]',
       },
     });
   });

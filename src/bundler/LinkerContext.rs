@@ -5013,6 +5013,15 @@ impl<'a> LinkerContext<'a> {
                 ..Default::default()
             },
         )?;
+
+        // Export-star resolution reads the AST's named exports, so record the alias there too.
+        self.graph.ast.items_named_exports_mut()[source_index as usize].put(
+            alias,
+            bun_ast::NamedExport {
+                ref_: r#ref,
+                alias_loc: Loc::EMPTY,
+            },
+        )?;
         Ok((r#ref, part_index))
     }
 

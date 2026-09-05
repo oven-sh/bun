@@ -291,6 +291,32 @@ void us_internal_timer_sweep(struct us_loop_t *loop) {
         loop_data->iterator = group->next;
         outer_continue:;
     }
+
+    /* Sockets parked in the low-priority queue are unlinked from head_sockets
+     * (the queue reuses prev/next), so the walk above never visits them. On an
+     * idle loop the queue drains only as fast as loop iterations occur, so a
+     * burst of pre-handshake TLS accepts can still be parked when the single
+     * tick their s->timeout stamp matches passes, after which the exact-match
+     * test above can never fire again. Sweep the parked set here against each
+     * socket's own group's freshly-advanced timestamps. low_prio_iterator lets
+     * close_raw/detach advance iteration past a socket they unlink, same as
+     * group->iterator does for head_sockets. */
+    for (loop_data->low_prio_iterator = loop_data->low_prio_head; loop_data->low_prio_iterator; ) {
+        struct us_socket_t *s = loop_data->low_prio_iterator;
+        unsigned char stamp = s->group->timestamp;
+        unsigned char long_stamp = s->group->long_timestamp;
+        if (stamp == s->timeout) {
+            s->timeout = 255;
+            us_dispatch_timeout(s);
+            if (loop_data->low_prio_iterator != s) continue;
+        }
+        if (long_stamp == s->long_timeout) {
+            s->long_timeout = 255;
+            us_dispatch_long_timeout(s);
+            if (loop_data->low_prio_iterator != s) continue;
+        }
+        loop_data->low_prio_iterator = s->next;
+    }
 }
 
 /* We do not want to block the loop with tons and tons of CPU-intensive work for SSL handshakes.
@@ -306,6 +332,7 @@ void us_internal_handle_low_priority_sockets(struct us_loop_t *loop) {
 
     for (s = loop_data->low_prio_head; s && loop_data->low_prio_budget > 0; s = loop_data->low_prio_head, loop_data->low_prio_budget--) {
         /* Unlink this socket from the low-priority queue */
+        if (s == loop_data->low_prio_iterator) loop_data->low_prio_iterator = s->next;
         loop_data->low_prio_head = s->next;
         if (s->next) s->next->prev = 0;
         s->next = 0;

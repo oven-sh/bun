@@ -675,7 +675,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                             }
                         }
 
-                        if let Some(config) = SSLConfig::from_js(vm, global_this, tls)? {
+                        if let Some(config) = SSLConfig::from_js(vm, global_this, tls, false)? {
                             // Intern via `ssl_config::global_registry` for dedup and pointer equality
                             break 'extract_ssl_config Some(ssl_config_intern_for_http(config));
                         }

@@ -2685,3 +2685,53 @@ describe("pauseOnConnect", () => {
     }
   });
 });
+
+// https://github.com/oven-sh/bun/issues/35240
+it("tls.createServer keeps enforcing its rejectUnauthorized default under NODE_TLS_REJECT_UNAUTHORIZED=0", async () => {
+  // Node's Server default for an unset rejectUnauthorized is a hardcoded
+  // true; the env var only changes the tls.connect() (client) default. The
+  // env var is read when the server is built, so run in a subprocess.
+  const fixtures = join(import.meta.dir, "fixtures");
+  const script = `
+    const tls = require("node:tls");
+    const { readFileSync } = require("node:fs");
+    const key = readFileSync(${JSON.stringify(join(fixtures, "agent6-key.pem"))}, "utf8");
+    const certChain = readFileSync(${JSON.stringify(join(fixtures, "agent6-cert.pem"))}, "utf8");
+    // The server trusts no CA, so the client's certificate is unverifiable
+    // and must be rejected before 'secureConnection'.
+    let sawSecureConnection = false;
+    let tlsClientError = null;
+    const server = tls.createServer({ key, cert: certChain, requestCert: true }, s => s.end());
+    server.on("secureConnection", () => { sawSecureConnection = true; });
+    server.on("tlsClientError", err => { tlsClientError = err.code; });
+    server.listen(0, "127.0.0.1", () => {
+      const client = tls.connect({
+        port: server.address().port,
+        host: "127.0.0.1",
+        rejectUnauthorized: false,
+        key,
+        cert: certChain,
+      });
+      client.on("error", () => {}); // the server resets the connection
+      client.on("close", () => {
+        console.log(JSON.stringify({ sawSecureConnection, tlsClientError }));
+        server.close();
+      });
+    });
+  `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", script],
+    env: { ...bunEnv, NODE_TLS_REJECT_UNAUTHORIZED: "0" },
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  // stderr carries Node's one-time NODE_TLS_REJECT_UNAUTHORIZED warning.
+  expect(stderr).toContain("NODE_TLS_REJECT_UNAUTHORIZED");
+  // The teardown must be the certificate-verification rejection, not some
+  // unrelated handshake failure.
+  expect(JSON.parse(stdout)).toEqual({
+    sawSecureConnection: false,
+    tlsClientError: "UNABLE_TO_GET_ISSUER_CERT_LOCALLY",
+  });
+  expect(exitCode).toBe(0);
+});

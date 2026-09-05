@@ -167,9 +167,7 @@ function registerHoverProvider(context: vscode.ExtensionContext) {
         const { scripts } = extracted;
 
         return {
-          contents: scripts.map(script => {
-            if (!script?.range?.contains(position)) return null;
-
+          contents: scripts.filter(script => script?.range?.contains(position)).map(script => {
             const command = encodeURI(JSON.stringify({ script: script.command, name: script.name }));
 
             const markdownString = new vscode.MarkdownString(

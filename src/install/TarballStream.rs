@@ -155,6 +155,9 @@ pub struct TarballStream {
     /// `Content-Length` of the response, when the server sent one.
     pub(crate) content_length: Option<usize>,
     entry_count: u32,
+    /// Headers `read_next_header` has returned; compared against
+    /// `archive_file_count()` in `check_no_header_discarded`.
+    headers_read: c_int,
     fail: Option<crate::Error>,
     /// libarchive's error string for `fail == Some(Fail)`.
     fail_detail: Vec<u8>,
@@ -282,6 +285,7 @@ impl TarballStream {
             bytes_consumed: 0,
             content_length: None,
             entry_count: 0,
+            headers_read: 0,
             fail: None,
             fail_detail: Vec::new(),
             invalid_name: false,
@@ -561,9 +565,14 @@ impl TarballStream {
                     Phase::WantHeader => {
                         let mut entry: *mut lib::Entry = core::ptr::null_mut();
                         match archive.read_next_header(&mut entry) {
+                            // Either an out-of-input yield from the read callback
+                            // or a block libarchive discarded; the latter fails
+                            // the extraction in `check_no_header_discarded` once
+                            // the next header (or EOF) is reached.
                             lib::Result::Retry if (*this).archive_holds_reading => continue,
                             lib::Result::Retry => return Ok(()),
                             lib::Result::Eof => {
+                                Self::check_no_header_discarded(this, archive)?;
                                 #[cfg(unix)]
                                 {
                                     let dest = (*this).dest.unwrap();
@@ -576,6 +585,8 @@ impl TarballStream {
                                 return Ok(());
                             }
                             lib::Result::Ok | lib::Result::Warn => {
+                                (*this).headers_read += 1;
+                                Self::check_no_header_discarded(this, archive)?;
                                 // libarchive returned OK/WARN with a valid entry
                                 // pointer owned by `archive`; it stays valid until
                                 // the next `read_next_header`. No other Rust
@@ -612,6 +623,35 @@ impl TarballStream {
                 }
             }
         } // unsafe
+    }
+
+    /// Fail the extraction if libarchive started a header it never handed to
+    /// `step()`. The only way that happens is a block with a bad header
+    /// checksum: the tar reader discards it and reports `Retry`, the status
+    /// the read callback also uses for "out of input", so `step()` cannot
+    /// fail on the `Retry` itself. Reading on from there resyncs on the next
+    /// intact header and drops the damaged member from the package, which is
+    /// why the count is checked at every header and at EOF instead.
+    /// `Archiver::extract_to_dir` fails on the same tarball.
+    ///
+    /// # Safety
+    /// `this` must be live; raw-ptr field read only.
+    unsafe fn check_no_header_discarded(
+        this: *mut Self,
+        archive: &lib::Archive,
+    ) -> crate::Result<()> {
+        let started = archive.file_count();
+        // SAFETY: see fn-level # Safety.
+        let returned = unsafe { (*this).headers_read };
+        if started == returned {
+            return Ok(());
+        }
+        bun_output::scoped_log!(
+            TarballStream,
+            "libarchive discarded {} damaged header block(s)",
+            started - returned
+        );
+        Err(crate::Error::Fail)
     }
 
     /// # Safety

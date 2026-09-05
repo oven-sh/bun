@@ -19,26 +19,13 @@ use super::{
     All, CountdownOverflowBehavior, DateHeaderTimer, EventLoopTimer, EventLoopTimerState,
     EventLoopTimerTag, ImmediateObject, Kind, TimeoutObject, TimeoutWarning, TimerObjectInternals,
 };
-use crate::jsc_hooks::{timer_all, timer_all_mut};
+use crate::jsc_hooks::timer_all_mut;
 
 // ════════════════════════════════════════════════════════════════════════════
 // JS-facing surface on `super::All`
 // ════════════════════════════════════════════════════════════════════════════
 
 impl All {
-    #[unsafe(no_mangle)]
-    pub(crate) extern "C" fn Bun__Timer__getNextID() -> i32 {
-        let all = timer_all();
-        if all.is_null() {
-            return 0;
-        }
-        // SAFETY: `all` is the live per-thread `All`; single-threaded JS heap.
-        unsafe {
-            (*all).last_id = (*all).last_id.wrapping_add(1);
-            (*all).last_id
-        }
-    }
-
     /// # Safety
     /// `vm` must point to the live per-thread `VirtualMachine`.
     // Forwards `vm` to `DateHeaderTimer::enable` without dereferencing it here;

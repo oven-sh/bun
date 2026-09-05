@@ -60,10 +60,6 @@
 #include "wtf/Assertions.h"
 #include "wtf/Forward.h"
 #include <JavaScriptCore/JSBase.h>
-#if ENABLE(MEDIA_SOURCE)
-#include "BufferMediaSource.h"
-#include "JSMediaSource.h"
-#endif
 
 #if OS(WINDOWS)
 #include <windows.h>

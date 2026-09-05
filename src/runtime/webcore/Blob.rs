@@ -290,7 +290,6 @@ pub trait BlobExt {
     fn create(bytes_: &[u8], global_this: &JSGlobalObject, was_string: bool) -> Blob
     where
         Self: Sized;
-    fn transfer(&self);
     fn shared_view_raw(&self) -> *mut [u8];
     fn set_is_ascii_flag(&self, is_all_ascii: bool);
     /// # Safety
@@ -2407,17 +2406,6 @@ impl BlobExt for Blob {
 
     fn create(bytes_: &[u8], global_this: &JSGlobalObject, was_string: bool) -> Blob {
         Self::try_create(bytes_, global_this, was_string).expect("oom")
-    }
-
-    // Transferring doesn't change the reference count
-    // It is a move
-    #[inline]
-    fn transfer(&self) {
-        // No `.deref()` here: the receiver already
-        // holds the same `*Store`; leak our +1 into theirs.
-        if let Some(s) = self.take_store() {
-            let _ = s.into_raw();
-        }
     }
 
     // dupe / dupe_with_content_type / to_js: defined once below (top-level impl); duplicates removed (E0592).

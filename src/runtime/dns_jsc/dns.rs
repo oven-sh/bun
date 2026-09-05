@@ -3317,8 +3317,6 @@ pub mod internal {
     }
 }
 
-pub use internal::Request as InternalDNSRequest;
-
 // ──────────────────────────────────────────────────────────────────────────
 // Resolver — JSC-exposed `dns.Resolver` (m_ctx payload of JSDNSResolver)
 // ──────────────────────────────────────────────────────────────────────────

@@ -31,7 +31,6 @@ pub type HMODULE = *mut c_void;
 pub type HRESULT = c_long;
 pub type LPVOID = *mut c_void;
 pub type LPCVOID = *const c_void;
-pub type LPSTR = *mut CHAR;
 pub type LPCSTR = *const CHAR;
 pub type LPWSTR = *mut WCHAR;
 pub type LPCWSTR = *const WCHAR;
@@ -215,24 +214,6 @@ pub struct BY_HANDLE_FILE_INFORMATION {
     pub nFileIndexLow: DWORD,
 }
 
-/// `WIN32_FILE_ATTRIBUTE_DATA` — out-param of `GetFileAttributesExW` (fileapi.h).
-#[repr(C)]
-#[derive(Copy, Clone)]
-pub struct WIN32_FILE_ATTRIBUTE_DATA {
-    pub dwFileAttributes: DWORD,
-    pub ftCreationTime: FILETIME,
-    pub ftLastAccessTime: FILETIME,
-    pub ftLastWriteTime: FILETIME,
-    pub nFileSizeHigh: DWORD,
-    pub nFileSizeLow: DWORD,
-}
-
-/// `GET_FILEEX_INFO_LEVELS` — enum(u32) selecting `GetFileAttributesExW` payload.
-pub(crate) type GET_FILEEX_INFO_LEVELS = u32;
-
-/// `FILE_INFO_BY_HANDLE_CLASS` (`winbase.h`), as a bare `u32`.
-pub type FILE_INFO_BY_HANDLE_CLASS = u32;
-
 #[repr(C)]
 #[derive(Copy, Clone)]
 pub struct UNICODE_STRING {
@@ -267,8 +248,7 @@ pub struct IO_STATUS_BLOCK {
 pub const MAX_PATH: usize = 260;
 pub const PATH_MAX_WIDE: usize = 32767;
 
-// `SetFilePointer` move methods.
-pub const FILE_BEGIN: DWORD = 0;
+// `SetFilePointer` move method.
 pub const FILE_END: DWORD = 2;
 
 // `DuplicateHandle` options.
@@ -284,7 +264,6 @@ pub const FILE_ATTRIBUTE_READONLY: DWORD = 0x0000_0001;
 pub const FILE_ATTRIBUTE_HIDDEN: DWORD = 0x0000_0002;
 pub const FILE_ATTRIBUTE_DIRECTORY: DWORD = 0x0000_0010;
 pub const FILE_ATTRIBUTE_NORMAL: DWORD = 0x0000_0080;
-pub const FILE_ATTRIBUTE_TEMPORARY: DWORD = 0x0000_0100;
 pub const FILE_ATTRIBUTE_REPARSE_POINT: DWORD = 0x0000_0400;
 
 // `NtCreateFile` CreateDisposition (`ntifs.h`).
@@ -1743,8 +1722,6 @@ unsafe extern "system" {
 }
 
 unsafe extern "C" {
-    pub fn SetStdHandle(nStdHandle: u32, hHandle: *mut c_void) -> u32;
-
     /// No preconditions.
     pub safe fn GetConsoleOutputCP() -> u32;
 
@@ -1842,12 +1819,6 @@ unsafe extern "system" {
         Context: LPVOID,
         dwMilliseconds: ULONG,
         dwFlags: ULONG,
-    ) -> BOOL;
-
-    pub fn GetFileAttributesExW(
-        lpFileName: LPCWSTR,
-        fInfoLevelId: GET_FILEEX_INFO_LEVELS,
-        lpFileInformation: LPVOID,
     ) -> BOOL;
 }
 

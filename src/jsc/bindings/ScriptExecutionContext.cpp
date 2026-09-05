@@ -35,10 +35,6 @@ static ScriptExecutionContextIdentifier initialIdentifier()
 }
 #endif
 
-#if ENABLE(MALLOC_BREAKDOWN)
-DEFINE_ALLOCATOR_WITH_HEAP_IDENTIFIER(ScriptExecutionContext);
-#endif
-
 ScriptExecutionContext::ScriptExecutionContext(JSC::VM* vm, Zig::GlobalObject* globalObject)
     : m_vm(vm)
     , m_globalObject(globalObject)

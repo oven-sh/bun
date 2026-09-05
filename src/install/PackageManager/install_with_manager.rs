@@ -801,8 +801,7 @@ pub fn install_with_manager(
                 } else if !(manager
                     .lockfile
                     .has_meta_hash_changed(
-                        PackageManager::verbose_install()
-                            || manager.options.do_.print_meta_hash_string(),
+                        PackageManager::verbose_install(),
                         packages_len_before_install,
                     )
                     .unwrap_or(false))
@@ -933,7 +932,7 @@ pub fn install_with_manager(
                 )?
             } else {
                 manager.lockfile.has_meta_hash_changed(
-                    PackageManager::verbose_install() || manager.options.do_.print_meta_hash_string(),
+                    PackageManager::verbose_install(),
                     packages_len_before_install.min(manager.lockfile.packages.len()),
                 )?
             };
@@ -2197,7 +2196,7 @@ fn save_lockfile_only(
 
     // save the lockfile and exit. make sure metahash is generated for binary lockfile
     manager.lockfile.meta_hash = manager.lockfile.generate_meta_hash(
-        PackageManager::verbose_install() || manager.options.do_.print_meta_hash_string(),
+        PackageManager::verbose_install(),
         packages_len_before_install,
     )?;
 

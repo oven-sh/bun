@@ -550,18 +550,6 @@ pub fn JsClass(attr: TokenStream, item: TokenStream) -> TokenStream {
     expand_js_class_enum(&args, &enm).into()
 }
 
-/// `#[derive(JsClass)]` form — same expansion, for callers that prefer derive
-/// syntax. Field-level `#[js(...)]` attrs are accepted (and currently ignored;
-/// method/getter shims live on the `impl` via `#[host_fn]`).
-#[proc_macro_derive(JsClassDerive, attributes(js))]
-pub fn js_class_derive(item: TokenStream) -> TokenStream {
-    let strukt = parse_macro_input!(item as ItemStruct);
-    // Derive can't see the struct tokens to re-emit them, so only emit the
-    // hooks + trait impl.
-    let hooks = js_class_hooks(&JsClassArgs::default(), &strukt.ident);
-    hooks.into()
-}
-
 fn expand_js_class(args: &JsClassArgs, strukt: ItemStruct) -> syn::Result<TokenStream2> {
     // Strip any helper `#[js(...)]` attrs from fields so the struct compiles
     // (they are metadata for the macro, not real attributes).

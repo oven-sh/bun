@@ -231,8 +231,8 @@ and the narrow (`u8`) variant on POSIX.
 WHATWG-compliant, backed by WebKit's URL parser. `Parsed` owns the C++
 `WTF::URL` (freed on `Drop`) and derefs to `URL` for the getters; parsing
 returns `None` for invalid input. `bun_jsc::url` re-exports both; the
-JS-value entry points (`URL::from_js` → `Option<Parsed>`, `URL::href_from_js`)
-come from the `bun_jsc::URLJsc` trait.
+JS-value entry point (`URL::href_from_js`) comes from the `bun_jsc::URLJsc`
+trait.
 
 ```rust
 use bun_url::whatwg::Parsed;

@@ -13,7 +13,6 @@ use bun_event_loop::Task;
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{GlobalRef, JSGlobalObject, SysErrorJsc};
 use bun_paths::PathBuffer;
-#[cfg(windows)]
 use bun_sys::windows::libuv as uv;
 use bun_sys::{self, Error as SysError, Fd, SystemErrno};
 use bun_uws::{self as uws, us_bun_verify_error_t};
@@ -91,18 +90,8 @@ pub enum SocketType {
 fn socket_from_named_pipe<const SSL: bool>(
     pipe: *mut WindowsNamedPipe,
 ) -> uws::NewSocketHandler<SSL> {
-    #[cfg(windows)]
-    {
-        uws::NewSocketHandler {
-            socket: uws::InternalSocket::Pipe(pipe.cast()),
-        }
-    }
-    #[cfg(not(windows))]
-    {
-        let _ = pipe;
-        uws::NewSocketHandler {
-            socket: uws::InternalSocket::Pipe,
-        }
+    uws::NewSocketHandler {
+        socket: uws::InternalSocket::Pipe(pipe.cast()),
     }
 }
 
@@ -317,7 +306,6 @@ impl WindowsNamedPipeContext {
         unsafe { Self::deref(this) };
     }
 
-    #[cfg(windows)]
     /// # Safety
     /// `this` is the live queued pointer; the call may free it.
     pub(crate) unsafe fn run_event(this: *mut Self) {
@@ -392,57 +380,46 @@ impl WindowsNamedPipeContext {
             on_session: |p, d| Self::on_session(p.cast::<Self>(), d),
             on_keylog: |p, d| Self::on_keylog(p.cast::<Self>(), d),
         };
-        #[cfg(not(windows))]
-        {
-            // On POSIX `crate::socket::WindowsNamedPipeContext` is aliased to `()` (see mod.rs)
-            // so no caller can reach `create()`. This arm exists only so the module
-            // type-checks; matches the sibling `WindowsNamedPipe::open`/`connect` POSIX arms.
-            let _ = (vm, this, handlers, socket);
-            unreachable!("WindowsNamedPipeContext::create is windows-only")
+        let named_pipe = {
+            let pipe = Box::new(bun_core::ffi::zeroed::<uv::Pipe>());
+            WindowsNamedPipe::from(pipe, handlers, vm)
+        };
+        // SAFETY: `this` is freshly allocated uninit storage exclusively owned here; we write
+        // every field exactly once before any read.
+        unsafe {
+            ptr::write(
+                this,
+                WindowsNamedPipeContext {
+                    ref_count: Cell::new(1),
+                    socket,
+                    named_pipe,
+                    vm,
+                    global_this,
+                    task_event: EventState::None,
+                    is_open: false,
+                },
+            );
+            (*ptr::addr_of_mut!((*this).named_pipe))
+                .root
+                .set(ptr::addr_of_mut!((*this).named_pipe));
         }
-        #[cfg(windows)]
-        {
-            let named_pipe = {
-                let pipe = Box::new(bun_core::ffi::zeroed::<uv::Pipe>());
-                WindowsNamedPipe::from(pipe, handlers, vm)
-            };
-            // SAFETY: `this` is freshly allocated uninit storage exclusively owned here; we write
-            // every field exactly once before any read.
-            unsafe {
-                ptr::write(
-                    this,
-                    WindowsNamedPipeContext {
-                        ref_count: Cell::new(1),
-                        socket,
-                        named_pipe,
-                        vm,
-                        global_this,
-                        task_event: EventState::None,
-                        is_open: false,
-                    },
-                );
-                (*ptr::addr_of_mut!((*this).named_pipe))
-                    .root
-                    .set(ptr::addr_of_mut!((*this).named_pipe));
-            }
-            LIVE_COUNT.fetch_add(1, Ordering::Relaxed);
+        LIVE_COUNT.fetch_add(1, Ordering::Relaxed);
 
-            // Take a +1 intrusive ref so the wrapped JS socket outlives this context.
-            match_socket!(socket, |s: NewSocket<SSL>| {
-                s.ref_();
-                Ok(())
-            });
+        // Take a +1 intrusive ref so the wrapped JS socket outlives this context.
+        match_socket!(socket, |s: NewSocket<SSL>| {
+            s.ref_();
+            Ok(())
+        });
 
-            // A socket over a Windows named pipe is in no uSockets group: the VM's
-            // stop phase closes it through this owner (unregistered when freed).
-            // SAFETY: non-null, fully initialised above.
-            crate::jsc_hooks::ActiveHandle::WindowsNamedPipe(unsafe {
-                core::ptr::NonNull::new_unchecked(this)
-            })
-            .register();
+        // A socket over a Windows named pipe is in no uSockets group: the VM's
+        // stop phase closes it through this owner (unregistered when freed).
+        // SAFETY: non-null, fully initialised above.
+        crate::jsc_hooks::ActiveHandle::WindowsNamedPipe(unsafe {
+            core::ptr::NonNull::new_unchecked(this)
+        })
+        .register();
 
-            this
-        }
+        this
     }
 
     /// `owned_ctx` is moved into `named_pipe.open`. Prefer it over `ssl_config` so a
@@ -527,7 +504,6 @@ impl Drop for WindowsNamedPipeContext {
     }
 }
 
-#[cfg(windows)]
 impl bun_event_loop::Taskable for WindowsNamedPipeContext {
     const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::WindowsNamedPipeContext;
     /// A `Deinit` hop (refcount already zero) that will not run: `this` is the

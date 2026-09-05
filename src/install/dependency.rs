@@ -443,7 +443,7 @@ pub mod version {
     pub use super::Tag;
 }
 pub mod tarball {
-    pub use super::{TarballInfo, URI as Uri};
+    pub use super::URI as Uri;
 }
 
 /// Turns `foo@1.1.1` into `foo`, `1.1.1`, or `@foo/bar@1.1.1` into `@foo/bar`, `1.1.1`, or `foo` into `foo`, `null`.

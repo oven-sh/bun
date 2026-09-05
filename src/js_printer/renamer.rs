@@ -1,6 +1,5 @@
 use core::cmp::Ordering;
 use core::mem::ManuallyDrop;
-use std::io::Write as _;
 
 use bun_alloc::Arena as Bump;
 
@@ -1332,96 +1331,9 @@ impl ScopeUseIndex {
     }
 }
 
-pub struct ExportRenamer {
-    pub(crate) string_buffer: MutableString,
-    pub(crate) used: StringHashMap<u32>,
-    pub(crate) count: isize,
-    /// Backs renamed export-name slices returned to the caller.
-    pub(crate) arena: Bump,
-}
-
-impl ExportRenamer {
-    pub fn init() -> ExportRenamer {
-        ExportRenamer {
-            string_buffer: MutableString::init_empty(),
-            used: StringHashMap::default(),
-            count: 0,
-            arena: Bump::new(),
-        }
-    }
-
-    pub fn clear_retaining_capacity(&mut self) {
-        self.used.clear();
-        self.string_buffer.reset();
-        // Per-chunk in `computeCrossChunkDependencies`. The method *name* is
-        // already `clear_retaining_capacity`; honour that for the arena too.
-        self.arena.reset_retain_with_limit(8 * 1024 * 1024);
-    }
-
-    pub fn next_renamed_name(&mut self, input: &[u8]) -> &[u8] {
-        let entry = self.used.get_or_put(input).expect("unreachable");
-        if !entry.found_existing {
-            *entry.value_ptr = 1;
-            // `StringHashMap` does not expose a key pointer; allocate a copy in
-            // `self.arena` so the returned slice is tied to `&self`.
-            return self.arena.alloc_slice_copy(input);
-        }
-
-        // Resume from the last suffix handed out for this prefix so N collisions
-        // on the same name stay O(N) total (see `NumberScope::find_unused_name`).
-        let mut tries: u32 = *entry.value_ptr;
-        loop {
-            self.string_buffer.reset();
-            write!(
-                self.string_buffer.writer(),
-                "{}{}",
-                bstr::BStr::new(input),
-                tries
-            )
-            .expect("unreachable");
-            tries += 1;
-            let attempt: &[u8] = self.string_buffer.slice();
-            if self.used.contains_key(attempt) {
-                continue;
-            }
-            // `StringHashMap::put` boxes the key itself; the arena copy below is
-            // only for the caller's returned slice (`string_buffer` is reused).
-            self.used.put(attempt, 1).expect("unreachable");
-            *self.used.get_mut(input).expect("unreachable") = tries;
-            return self.arena.alloc_slice_copy(attempt);
-        }
-    }
-
-    pub fn next_minified_name(&mut self) -> Result<Vec<u8>, crate::Error> {
-        loop {
-            let name = js_ast::NameMinifier::default_number_to_minified_name(self.count)?;
-            self.count += 1;
-            if !self.used.contains_key(name.as_slice()) {
-                return Ok(name);
-            }
-        }
-    }
-
-    /// Mark `name` as taken so neither `next_renamed_name` nor
-    /// `next_minified_name` hands it out. Used for an entry point chunk's own
-    /// export names, which share the chunk's `export {}` namespace with the
-    /// cross-chunk exports.
-    pub fn reserve_name(&mut self, name: &[u8]) {
-        let entry = self.used.get_or_put(name).expect("unreachable");
-        if !entry.found_existing {
-            *entry.value_ptr = 1;
-        }
-    }
-}
-
 pub fn compute_initial_reserved_names(
     output_format: Format,
 ) -> Result<StringHashMap<u32>, bun_alloc::AllocError> {
-    #[cfg(target_arch = "wasm32")]
-    {
-        unreachable!();
-    }
-
     let mut names = StringHashMap::<u32>::default();
 
     const EXTRAS: [&[u8]; 2] = [b"Promise", b"Require"];

@@ -133,13 +133,8 @@ mod host {
 
     // `@embedFile("bun_shim_impl.exe")` — the shim PE is built as a separate
     // artifact by the Windows build before this crate is compiled, then embedded
-    // here. It is only ever consumed from `#[cfg(windows)]` code paths
-    // (`bin::Linker::create_windows_shim`), so on non-Windows hosts there is no
-    // artifact to embed and the data is never read.
-    #[cfg(windows)]
+    // here (this module is only mounted under `#[cfg(windows)]`).
     pub(crate) const EMBEDDED_EXECUTABLE_DATA: &[u8] = include_bytes!("bun_shim_impl.exe");
-    #[cfg(not(windows))]
-    pub(crate) const EMBEDDED_EXECUTABLE_DATA: &[u8] = &[];
 
     /// Guard against the placeholder/empty artifact slipping through: a 0-byte
     /// embed would silently make `bun install` write 0-byte `.exe` shims into

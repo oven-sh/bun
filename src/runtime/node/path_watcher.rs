@@ -32,7 +32,6 @@ use core::sync::atomic::{AtomicBool, Ordering};
 #[cfg(any(target_os = "linux", target_os = "android"))]
 use bun_collections::HashMap;
 use bun_collections::{ArrayHashMap, StringArrayHashMap};
-#[cfg(not(windows))]
 use bun_core::ZBox;
 #[cfg(any(target_os = "linux", target_os = "android"))]
 use bun_core::strings;
@@ -50,7 +49,6 @@ use bun_paths::resolve_path::join_z_buf_spill;
 use bun_sys::FdExt;
 use bun_sys::{self as sys, E, Fd, Tag};
 use bun_threading::Mutex;
-#[cfg(not(windows))]
 use bun_wyhash::hash;
 
 use bun_jsc::VirtualMachineRef as VirtualMachine;
@@ -193,9 +191,7 @@ pub struct PathWatcher {
     manager: Option<&'static PathWatcherManager>,
 
     /// Canonical absolute path (realpath of the user-supplied path). Owned.
-    #[cfg(not(windows))]
     path: ZBox,
-    #[cfg(not(windows))]
     recursive: bool,
     #[cfg(any(target_os = "linux", target_os = "android", target_os = "freebsd"))]
     is_file: bool,
@@ -208,7 +204,6 @@ pub struct PathWatcher {
     handlers: ArrayHashMap<*mut c_void, ChangeEvent>,
 
     /// Per-platform per-watch state (inotify wds, kqueue fds, or the FSEventsWatcher).
-    #[cfg(not(windows))]
     platform: PlatformWatch,
 }
 
@@ -224,15 +219,11 @@ pub struct PathWatcher {
 /// ever need shared access to a `PathWatcher`.
 #[derive(Default)]
 pub(crate) struct ChangeEvent {
-    #[cfg(not(windows))]
     hash: Cell<u64>,
-    #[cfg(not(windows))]
     event_type: Cell<WatchEventKind>,
-    #[cfg(not(windows))]
     timestamp: Cell<i64>,
 }
 
-#[cfg(not(windows))]
 impl ChangeEvent {
     fn should_emit(&self, hash: u64, timestamp: i64, event_type: WatchEventKind) -> bool {
         let time_diff = timestamp - self.timestamp.get();
@@ -263,7 +254,6 @@ impl PathWatcher {
     /// `rel_path` is borrowed — `onPathUpdatePosix` dupes it before enqueuing.
     /// `&self`: per-handler state is `Cell`-based, so the emit paths never
     /// need an exclusive `PathWatcher` borrow.
-    #[cfg(not(windows))]
     fn emit(&self, event_type: WatchEventKind, rel_path: &[u8], is_file: bool) {
         let timestamp = bun_core::time::milli_timestamp();
         let h = hash(rel_path);
@@ -304,7 +294,6 @@ impl PathWatcher {
         }
     }
 
-    #[cfg(not(windows))]
     fn emit_error(&self, err: &sys::Error, close: bool) {
         for &ctx in self.handlers.keys() {
             (FSWatcher::ON_PATH_UPDATE)(
@@ -320,7 +309,6 @@ impl PathWatcher {
 
     /// Signals end-of-batch so `FSWatcher` can flush its queued events to the JS thread.
     /// Caller holds `manager.mutex`.
-    #[cfg(not(windows))]
     fn flush(&self) {
         for &ctx in self.handlers.keys() {
             FSWatcher::on_update_end(Some(ctx));
@@ -492,14 +480,11 @@ pub(crate) fn watch(
     // New watcher: own the key and path.
     let watcher = PathWatcher::new(PathWatcher {
         manager: Some(manager),
-        #[cfg(not(windows))]
         path: ZBox::from_bytes(resolved.as_bytes()),
-        #[cfg(not(windows))]
         recursive,
         #[cfg(any(target_os = "linux", target_os = "android", target_os = "freebsd"))]
         is_file,
         handlers: ArrayHashMap::default(),
-        #[cfg(not(windows))]
         platform: PlatformWatch::default(),
     });
     // SAFETY: watcher just allocated; we hold the only reference.

@@ -83,13 +83,6 @@ impl core::ops::DerefMut for CookieMapRef {
     }
 }
 
-impl Clone for CookieMapRef {
-    #[inline]
-    fn clone(&self) -> Self {
-        Self::new_ref(self)
-    }
-}
-
 impl Drop for CookieMapRef {
     #[inline]
     fn drop(&mut self) {

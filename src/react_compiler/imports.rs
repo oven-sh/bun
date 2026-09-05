@@ -42,9 +42,6 @@ pub(crate) struct ProgramContext {
     pub(crate) instrument_gating_name: Option<String>,
     pub(crate) hook_guard_name: Option<String>,
 
-    // Variable renames from lowering, to be applied back to the Babel AST
-    pub(crate) renames: Vec<crate::hir::environment::BindingRename>,
-
     // Internal state
     known_referenced_names: IndexSet<String>,
     imports: IndexMap<&'static str, IndexMap<&'static str, NonLocalImportSpecifier>>,
@@ -68,7 +65,6 @@ impl ProgramContext {
             instrument_fn_name: None,
             instrument_gating_name: None,
             hook_guard_name: None,
-            renames: Vec::new(),
             known_referenced_names: IndexSet::new(),
             imports: IndexMap::new(),
         }

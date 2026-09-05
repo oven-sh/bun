@@ -204,11 +204,6 @@ impl fmt::Display for ErrorLocation {
 /// A printer error type.
 #[allow(non_camel_case_types)]
 pub enum PrinterErrorKind {
-    /// An ambiguous relative `url()` was encountered in a custom property declaration.
-    ambiguous_url_in_custom_property {
-        /// The ambiguous URL.
-        url: Str,
-    },
     /// A [std::fmt::Error](std::fmt::Error) was encountered in the underlying destination.
     fmt_error,
     /// The CSS modules `composes` property cannot be used within nested rules.
@@ -231,11 +226,6 @@ pub enum PrinterErrorKind {
 impl fmt::Display for PrinterErrorKind {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::ambiguous_url_in_custom_property { url } => write!(
-                f,
-                "Ambiguous relative URL '{}' in custom property declaration",
-                bs(*url)
-            ),
             Self::fmt_error => f.write_str("Formatting error occurred"),
             Self::invalid_composes_nesting => {
                 f.write_str("The 'composes' property cannot be used within nested rules")

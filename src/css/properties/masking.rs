@@ -108,9 +108,6 @@ pub enum MaskType {
 }
 
 /// A value for the [mask](https://www.w3.org/TR/css-masking-1/#the-mask) shorthand property.
-// Debug/Clone/PartialEq derives gated on `Image`/`Position`/
-// `BackgroundSize`/`BackgroundRepeat` gaining those derives upstream.
-#[cfg_attr(any(), derive(Debug, Clone, PartialEq))]
 #[derive(DeepClone, CssEql)]
 pub struct Mask {
     /// The mask image.
@@ -279,9 +276,6 @@ pub enum MaskBorderMode {
 }
 
 /// A value for the [mask-border](https://www.w3.org/TR/css-masking-1/#the-mask-border) shorthand property.
-// Debug/Clone/PartialEq derives gated on `Image`/`Rect<_>` gaining
-// those derives upstream.
-#[cfg_attr(any(), derive(Debug, Clone, PartialEq))]
 #[derive(DeepClone, CssEql)]
 pub struct MaskBorder {
     /// The mask image.

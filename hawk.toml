@@ -446,14 +446,6 @@ reason = "external code table: regular-expression flag bits shared with JSC"
 
 [[override]]
 lint = "hawk::dead_public"
-crate = "bun_jsc"
-item = "weak::WeakRefType::PostgreSQLQueryClient"
-kind = "enum_variant"
-level = "expect"
-reason = "external code table: weak-ref type numbering shared with JSC"
-
-[[override]]
-lint = "hawk::dead_public"
 crate = "bun_runtime"
 item = "bake::dev_server::serialized_failure::ErrorKind::JsError"
 kind = "enum_variant"

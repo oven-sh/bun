@@ -61,7 +61,6 @@ impl<'a, const TS: bool, const SCAN_ONLY: bool> bun_react_compiler::Host
             K::Jsxs => JSXImport::Jsxs,
             K::JsxDEV => JSXImport::JsxDEV,
             K::Fragment => JSXImport::Fragment,
-            K::CreateElement => JSXImport::CreateElement,
         };
         let p = &mut *self.p;
         match p.jsx_imports.get_with_tag(kind) {

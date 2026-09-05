@@ -61,36 +61,6 @@ mod ext {
 
     /// Inline of `Url::to_css`.
     pub(super) fn url_to_css(this: &Url, dest: &mut Printer) -> PrintResult<()> {
-        let dep: Option<dependencies::UrlDependency> = if dest.dependencies.is_some() {
-            // `get_import_records` borrows &mut *dest, so capture
-            // arena/filename first.
-            let arena = dest.arena;
-            // SAFETY: filename borrows the printer arena/options which outlive `dest`.
-            let filename: &[u8] = unsafe { &*std::ptr::from_ref::<[u8]>(dest.filename()) };
-            let records = dest.get_import_records()?;
-            Some(dependencies::UrlDependency::new(
-                arena, this, filename, records,
-            ))
-        } else {
-            None
-        };
-
-        // If adding dependencies, always write url() with quotes so that the placeholder can
-        // be replaced without escaping more easily. Quotes may be removed later during minification.
-        if let Some(d) = dep {
-            dest.write_str("url(")?;
-            // SAFETY: placeholder borrows the printer arena.
-            let placeholder = unsafe { crate::arena_str(d.placeholder) };
-            dest.serialize_string(placeholder)?;
-            dest.write_char(b')')?;
-
-            if let Some(dependencies) = &mut dest.dependencies {
-                dependencies.push(crate::Dependency::Url(d));
-            }
-
-            return Ok(());
-        }
-
         let import_record = dest.import_record(this.import_record_idx)?;
         let is_internal = import_record.tag.is_internal();
         // `get_import_record_url` reborrows &mut *dest, so capture
@@ -128,15 +98,10 @@ mod ext {
         Ok(())
     }
 
-    /// Forwarder to `DashedIdentReference::parse_with_options`. Honors
-    /// `options.css_modules.dashed_idents` and parses the
-    /// `from <specifier>` suffix when enabled.
+    /// Forwarder to `DashedIdentReference::parse`.
     #[inline]
-    pub(super) fn dashed_ident_ref_parse(
-        input: &mut Parser,
-        options: &ParserOptions,
-    ) -> Result<DashedIdentReference> {
-        DashedIdentReference::parse_with_options(input, options)
+    pub(super) fn dashed_ident_ref_parse(input: &mut Parser) -> Result<DashedIdentReference> {
+        DashedIdentReference::parse(input)
     }
 
     /// Forwarder to `DashedIdentReference::to_css`.
@@ -316,20 +281,6 @@ impl TokenList {
                     has_whitespace = false;
                 }
                 TokenOrValue::Url(url) => {
-                    if dest.dependencies.is_some()
-                        && is_custom_property
-                        && !url.is_absolute(dest.get_import_records()?)
-                    {
-                        let pretty = std::ptr::from_ref::<[u8]>(
-                            dest.get_import_records()?[url.import_record_idx as usize]
-                                .path
-                                .pretty,
-                        );
-                        return dest.new_error(
-                            css::PrinterErrorKind::ambiguous_url_in_custom_property { url: pretty },
-                            Some(url.loc),
-                        );
-                    }
                     ext::url_to_css(url, dest)?;
                     has_whitespace = false;
                 }
@@ -364,7 +315,7 @@ impl TokenList {
                     has_whitespace = false;
                 }
                 TokenOrValue::DashedIdent(v) => {
-                    dest.write_dashed_ident(v, true)?;
+                    dest.write_dashed_ident(v)?;
                     has_whitespace = false;
                 }
                 TokenOrValue::AnimationName(v) => {
@@ -1065,7 +1016,7 @@ impl Variable {
     // deinit(): body only freed owned `TokenList` field — handled by `Drop`.
 
     fn parse(input: &mut Parser, options: &ParserOptions, depth: usize) -> Result<Self> {
-        let name = ext::dashed_ident_ref_parse(input, options)?;
+        let name = ext::dashed_ident_ref_parse(input)?;
 
         let fallback = if input.try_parse(|i| i.expect_comma()).is_ok() {
             Some(TokenList::parse(input, options, depth)?)
@@ -1197,9 +1148,7 @@ impl EnvironmentVariableName {
             return Ok(EnvironmentVariableName::Ua(ua));
         }
 
-        if let Ok(dashed) =
-            input.try_parse(|i| ext::dashed_ident_ref_parse(i, &ParserOptions::default(None)))
-        {
+        if let Ok(dashed) = input.try_parse(ext::dashed_ident_ref_parse) {
             return Ok(EnvironmentVariableName::Custom(dashed));
         }
 
@@ -1565,11 +1514,7 @@ pub enum CustomPropertyName {
 impl CustomPropertyName {
     pub fn to_css(&self, dest: &mut Printer) -> PrintResult<()> {
         match self {
-            CustomPropertyName::Custom(custom) => {
-                // DashedIdent.toCss → dest.writeDashedIdent(ident, true),
-                // which applies CSS-Modules dashed-ident renaming.
-                dest.write_dashed_ident(custom, true)
-            }
+            CustomPropertyName::Custom(custom) => dest.write_dashed_ident(custom),
             CustomPropertyName::Unknown(unknown) => {
                 // SAFETY: arena-owned slice valid for printer lifetime.
                 let v = unsafe { crate::arena_str(unknown.v) };

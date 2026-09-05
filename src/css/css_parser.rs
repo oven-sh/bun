@@ -23,11 +23,8 @@ type SymbolList = Vec<bun_ast::Symbol>;
 use bun_ast::{ImportKind, ImportRecord};
 
 pub use crate::compat::{self, Feature};
-pub use crate::css_modules::{
-    self, Config as CssModuleConfig, CssModule, CssModuleExports, CssModuleReference,
-    CssModuleReferences,
-};
-pub use crate::dependencies::{self, Dependency};
+pub use crate::css_modules::{self, Config as CssModuleConfig, CssModule};
+pub use crate::dependencies;
 pub use crate::error::{
     self as errors_, BasicParseError, BasicParseErrorKind, Err, ErrorLocation, MinifyErr,
     MinifyError, MinifyErrorKind, ParseError, ParserError, PrinterError, PrinterErrorKind,
@@ -2483,43 +2480,17 @@ mod stylesheet_impl {
             }
 
             if let Some(config) = &self.options.css_modules {
-                let mut references = CssModuleReferences::default();
-                let references_ptr: *mut CssModuleReferences<'_> = &raw mut references;
-                // SAFETY: `'bump`-erasure — `Printer<'a>` stores `CssModule<'a>` which
-                // holds `&'a mut CssModuleReferences<'a>`; tying the borrow to `'a`
-                // (the printer's whole lifetime) makes the local `references`
-                // unmovable. Detach the borrow here and re-attach by clearing
-                // `printer.css_module` before moving `references` out below.
-                // Re-thread once `Printer<'a>` / `CssModule<'a>` split borrow vs.
-                // arena lifetimes (see rules/mod.rs `decl_block_static`).
-                let references_mut: &mut CssModuleReferences<'_> = unsafe { &mut *references_ptr };
                 printer.css_module = Some(CssModule::new(
                     printer.arena,
                     config,
                     &self.sources,
                     project_root,
-                    references_mut,
                 ));
-
-                // `css_module` holds a pointer-detached `&mut references`; clear
-                // it before any return out of the frame that owns `references`.
-                if let Err(e) = self.rules.to_css(printer) {
-                    printer.css_module = None;
-                    return Err(e);
-                }
-                if let Err(e) = printer.newline() {
-                    printer.css_module = None;
-                    return Err(e);
-                }
-
-                printer.css_module = None;
-
-                return Ok(());
-            } else {
-                self.rules.to_css(printer)?;
-                printer.newline()?;
-                return Ok(());
             }
+
+            self.rules.to_css(printer)?;
+            printer.newline()?;
+            Ok(())
         }
 
         pub fn to_css<'a>(

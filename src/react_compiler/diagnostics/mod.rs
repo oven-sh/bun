@@ -2,7 +2,6 @@
     clippy::disallowed_types,
     clippy::disallowed_methods,
     unreachable_pub,
-    dead_code,
     reason = "ported from facebook/react react_compiler_diagnostics; uses std collections by design"
 )]
 #![allow(
@@ -44,8 +43,6 @@ pub enum ErrorCategory {
     UnsupportedSyntax,
     Config,
     Gating,
-    Suppression,
-    FBT,
 }
 
 /// Error severity levels
@@ -73,26 +70,11 @@ impl ErrorCategory {
             _ => ErrorSeverity::Error,
         }
     }
-
-    /// The severity to use in logged output, matching the TS compiler's
-    /// `getRuleForCategory()`. This may differ from the internal `severity()`
-    /// used for panicThreshold logic. In particular, `PreserveManualMemo` is
-    /// `Warning` internally (so it doesn't trigger panicThreshold throws) but
-    /// `Error` in logged output (matching TS behavior).
-    pub fn logged_severity(&self) -> ErrorSeverity {
-        match self {
-            ErrorCategory::PreserveManualMemo => ErrorSeverity::Error,
-            _ => self.severity(),
-        }
-    }
 }
 
 /// Suggestion operations for auto-fixes
 #[derive(Debug, Clone)]
 pub enum CompilerSuggestionOperation {
-    InsertBefore,
-    InsertAfter,
-    Remove,
     Replace,
 }
 
@@ -102,7 +84,7 @@ pub struct CompilerSuggestion {
     pub op: CompilerSuggestionOperation,
     pub range: (usize, usize),
     pub description: String,
-    pub text: Option<String>, // None for Remove operations
+    pub text: Option<String>,
 }
 
 /// Source location (matches Babel's SourceLocation format)
@@ -168,10 +150,6 @@ impl CompilerDiagnostic {
 
     pub fn severity(&self) -> ErrorSeverity {
         self.category.severity()
-    }
-
-    pub fn logged_severity(&self) -> ErrorSeverity {
-        self.category.logged_severity()
     }
 
     pub fn with_detail(mut self, detail: CompilerDiagnosticDetail) -> Self {
@@ -247,10 +225,6 @@ impl CompilerErrorDetail {
     pub fn severity(&self) -> ErrorSeverity {
         self.category.severity()
     }
-
-    pub fn logged_severity(&self) -> ErrorSeverity {
-        self.category.logged_severity()
-    }
 }
 
 /// Aggregate compiler error - can contain multiple diagnostics.
@@ -279,13 +253,6 @@ impl CompilerErrorOrDiagnostic {
         match self {
             Self::Diagnostic(d) => d.severity(),
             Self::ErrorDetail(d) => d.severity(),
-        }
-    }
-
-    pub fn logged_severity(&self) -> ErrorSeverity {
-        match self {
-            Self::Diagnostic(d) => d.logged_severity(),
-            Self::ErrorDetail(d) => d.logged_severity(),
         }
     }
 
@@ -411,8 +378,6 @@ impl std::fmt::Display for CompilerError {
         Ok(())
     }
 }
-
-impl std::error::Error for CompilerError {}
 
 pub fn format_category_heading(category: ErrorCategory) -> &'static str {
     match category {

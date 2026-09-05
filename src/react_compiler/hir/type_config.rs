@@ -38,7 +38,6 @@ pub enum ValueReason {
     HookReturn,
     Global,
     JsxCaptured,
-    StoreLocal,
     ReactiveFunctionArgument,
     Other,
 }

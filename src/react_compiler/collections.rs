@@ -32,7 +32,6 @@ pub type FxHashSet<K> = std::collections::HashSet<K, rustc_hash::FxBuildHasher>;
 type Inner<K, V> = ArrayHashMap<K, V, AutoContext, AstAlloc>;
 
 pub(crate) type Entry<'a, K, V> = MapEntry<'a, K, V, AutoContext, AstAlloc>;
-pub use bun_collections::array_hash_map::{OccupiedEntry, VacantEntry};
 
 // ──────────────────────────────────────────────────────────────────────────
 // IndexMap
@@ -195,7 +194,6 @@ impl<K, V> Iterator for IntoIter<K, V> {
         self.keys.size_hint()
     }
 }
-impl<K, V> ExactSizeIterator for IntoIter<K, V> {}
 
 impl<K, V> IntoIterator for IndexMap<K, V> {
     type Item = (K, V);
@@ -216,13 +214,6 @@ impl<'a, K, V> IntoIterator for &'a IndexMap<K, V> {
         self.iter()
     }
 }
-
-impl<K: Hash + Eq, V: PartialEq> PartialEq for IndexMap<K, V> {
-    fn eq(&self, other: &Self) -> bool {
-        self.len() == other.len() && self.iter().all(|(k, v)| other.get(k) == Some(v))
-    }
-}
-impl<K: Hash + Eq, V: Eq> Eq for IndexMap<K, V> {}
 
 // ──────────────────────────────────────────────────────────────────────────
 // IndexSet
@@ -310,12 +301,6 @@ impl<K: Hash + Eq> FromIterator<K> for IndexSet<K> {
     }
 }
 
-impl<K: Hash + Eq, const N: usize> From<[K; N]> for IndexSet<K> {
-    fn from(arr: [K; N]) -> Self {
-        Self::from_iter(arr)
-    }
-}
-
 impl<K> IntoIterator for IndexSet<K> {
     type Item = K;
     type IntoIter = alloc::vec::IntoIter<K, AstAlloc>;
@@ -331,13 +316,6 @@ impl<'a, K> IntoIterator for &'a IndexSet<K> {
         self.iter()
     }
 }
-
-impl<K: Hash + Eq> PartialEq for IndexSet<K> {
-    fn eq(&self, other: &Self) -> bool {
-        self.len() == other.len() && self.iter().all(|k| other.contains(k))
-    }
-}
-impl<K: Hash + Eq> Eq for IndexSet<K> {}
 
 // ──────────────────────────────────────────────────────────────────────────
 // IdMap

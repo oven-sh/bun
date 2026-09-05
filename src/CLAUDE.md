@@ -138,7 +138,7 @@ ASCII literals / `&'static` ASCII tables, bytes already validated as ASCII,
 or bytes that really are Latin-1; `utf16(units)`.
 `String::to_encoded_slice()` borrows any `String` as one;
 `EncodedSlice::to_utf8() -> Utf8Bytes<'a>`; `bun_jsc::EncodedSliceJsc` adds
-`to_js`, `to_{,type_,range_,syntax_}error_instance`, `to_json_object`, and
+`to_js`, `to_{,syntax_}error_instance`, `to_json_object`, and
 `to_external_value` / `external` (hand a globally-allocated buffer to JSC).
 
 Bytes → JS string: `bun_string_jsc::create_utf8_for_js(global, bytes)?`

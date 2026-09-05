@@ -192,8 +192,6 @@ declare function $putInternalField<Fields extends any[], N extends keyof Fields>
  * - [WebKit - `emit_intrinsic_newArrayWithSize`](https://github.com/oven-sh/WebKit/blob/e1a802a2287edfe7f4046a9dd8307c8b59f5d816/Source/JavaScriptCore/bytecompiler/NodesCodegen.cpp#L2317)
  */
 declare function $newArrayWithSize<T>(size: number): T[];
-declare const $ModuleFetch: number;
-declare const $ModuleLink: number;
 declare const $proxyFieldTarget: TODO;
 declare const $proxyFieldHandler: TODO;
 declare const $processBindingConstants: {
@@ -206,56 +204,16 @@ declare const $asyncContext: InternalFieldObject<[ReadonlyArray<any> | undefined
 
 // We define our intrinsics in ./BunBuiltinNames.h. Some of those are globals.
 
-declare var $_events: TODO;
-declare function $addAbortAlgorithmToSignal(signal: AbortSignal, algorithm: () => void): TODO;
-declare function $autoAllocateChunkSize(): TODO;
-declare function $basename(): TODO;
-declare function $body(): TODO;
 declare function $bunNativePtr(): TODO;
-declare function $cancel(): TODO;
-declare function $close(): TODO;
-declare function $code(): TODO;
 declare function $createFIFO(): TODO;
-declare function $createUninitializedArrayBuffer(size: number): ArrayBuffer;
 declare function $data(): TODO;
-declare function $decode(): TODO;
-declare function $dirname(): TODO;
-declare function $encoding(): TODO;
-declare function $end(): TODO;
-declare function $errno(): TODO;
-declare function $extname(): TODO;
-declare function $fatal(): TODO;
-declare function $format(): TODO;
 declare function $esmNamespaceForCjs(key: string): any | undefined;
 declare function $esmRegistryDelete(key: string): boolean;
 declare function $esmRegistryEvaluatedKeys(): string[];
 declare function $esmLoadSync(key: string): any;
 declare function $get(): TODO;
-declare function $handleEvent(): TODO;
-declare function $headers(): TODO;
-declare function $highWaterMark(): TODO;
-declare function $host(): TODO;
-declare function $hostname(): TODO;
-declare function $ignoreBOM(): TODO;
-declare function $importer(): TODO;
 declare function $internalRequire(id: string, parent: JSCommonJSModule): TODO;
-declare function $isAbortSignal(signal: unknown): signal is AbortSignal;
-declare function $isAbsolute(): TODO;
-declare function $join(): TODO;
-declare function $main(): TODO;
-declare function $makeDOMException(): TODO;
-declare function $makeGetterTypeError(className: string, prop: string): Error;
-declare function $method(): TODO;
-declare function $normalize(): TODO;
-declare function $parse(): TODO;
-declare function $path(): TODO;
-declare function $port(): TODO;
 declare function $pull(): TODO;
-declare function $read(): TODO;
-declare function $readable(): TODO;
-declare function $removeAbortAlgorithmFromSignal(signal: AbortSignal, algorithmIdentifier: number): TODO;
-declare function $redirect(): TODO;
-declare function $relative(): TODO;
 declare function $require(): TODO;
 declare function $requireESM(path: string): any;
 declare const $requireMap: Map<string, JSCommonJSModule>;
@@ -270,18 +228,9 @@ declare function $resolveSync(
   parentModule?: JSCommonJSModule,
   resolveFilenameOptions?: unknown,
 ): string;
-declare function $self(): TODO;
 declare function $size(): TODO;
 declare function $start(): TODO;
-declare function $status(): TODO;
-declare function $stream(): TODO;
-declare function $syscall(): TODO;
-declare function $toNamespacedPath(): TODO;
-declare function $url(): TODO;
-declare function $writable(): TODO;
 declare function $write(): TODO;
-declare function $writer(): TODO;
-declare function $written(): TODO;
 
 declare function $createCommonJSModule(
   id: string,
@@ -300,7 +249,6 @@ declare function $overridableRequire(this: JSCommonJSModule, id: string): any;
 // The following I cannot find any definitions of, but they are functional.
 declare function $toLength(length: number): number;
 declare function $isTypedArrayView(obj: unknown): obj is ArrayBufferView | DataView | Uint8Array;
-declare function $setStateToMax(target: any, state: number): void;
 /** @deprecated, use new TypeError instead */
 declare function $makeTypeError(message: string): TypeError;
 
@@ -352,8 +300,6 @@ declare const $LoaderIdToLabel: Array<import("bun").Loader>;
 declare const $LoaderLabelToId: Record<import("bun").Loader, number>;
 
 // not a builtin, but a build-time macro of our own
-/** Returns a not implemented error that points to a github issue. */
-declare function notImplementedIssue(issueNumber: number, description: string): Error;
 /** Return a function that throws a not implemented error that points to a github issue */
 declare function notImplementedIssueFn(issueNumber: number, description: string): (...args: any[]) => never;
 

@@ -13,6 +13,23 @@ namespace Bun {
 
 using namespace JSC;
 
+GlobalScope::GlobalScope(JSC::VM& vm, JSC::Structure* structure)
+    : Base(vm, structure)
+{
+    WebCore::clientData(vm)->liveGlobalObjectCount++;
+}
+
+GlobalScope::GlobalScope(JSC::VM& vm, JSC::Structure* structure, const JSC::GlobalObjectMethodTable* methodTable)
+    : Base(vm, structure, methodTable)
+{
+    WebCore::clientData(vm)->liveGlobalObjectCount++;
+}
+
+GlobalScope::~GlobalScope()
+{
+    WebCore::clientData(vm())->liveGlobalObjectCount--;
+}
+
 void GlobalScope::finishCreation(JSC::VM& vm)
 {
     Base::finishCreation(vm);

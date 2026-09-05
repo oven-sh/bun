@@ -22,16 +22,10 @@ const kNativeReader = Symbol("nativeReader");
 const kNativeSource = Symbol("nativeSource");
 const kKeepAlive = Symbol("keepAlive");
 
-// Node's tty.ReadStream is a net.Socket: libuv waits for the fd to become
-// readable and never sees EAGAIN. Here it is an fs.ReadStream, whose reads
-// run on the thread pool and fail with EAGAIN on a non-blocking fd (node-pty
-// sets O_NONBLOCK on the pty master). The first EAGAIN switches the stream to
-// the pollable native reader, which reads only when the fd is readable.
-//
-// The switch waits for an EAGAIN instead of checking O_NONBLOCK up front
-// because a blocking tty fd must stay on the thread pool: Bun.file(fd) only
-// polls a non-stdio fd that is a FIFO, a socket, or non-blocking, and it
-// reads any other fd synchronously on the JS thread.
+// A thread pool read of a non-blocking fd (node-pty's pty master) fails with
+// EAGAIN. The first EAGAIN switches the stream to the pollable native reader,
+// which reads on readiness like Node's net.Socket based tty.ReadStream. A
+// blocking fd stays on the thread pool: Bun.file(fd) would read it on the JS thread.
 function ttyRead(stream, fd, buf, offset, length, position, cb) {
   const reader = stream[kNativeReader];
   if (reader !== undefined) {

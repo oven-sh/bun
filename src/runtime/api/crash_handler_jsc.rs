@@ -23,6 +23,7 @@ pub(crate) mod js_bindings {
             ("getFeatureData", __jsc_host_js_get_feature_data),
             ("segfault", __jsc_host_js_segfault),
             ("segfaultInDll", __jsc_host_js_segfault_in_dll),
+            ("segfaultAtPc", __jsc_host_js_segfault_at_pc),
             ("panic", __jsc_host_js_panic),
             ("rootError", __jsc_host_js_root_error),
             ("outOfMemory", __jsc_host_js_out_of_memory),
@@ -124,6 +125,31 @@ pub(crate) mod js_bindings {
         }
         #[allow(unreachable_code)]
         Ok(JSValue::UNDEFINED)
+    }
+
+    /// Reports a segfault whose frame 0 is the code address passed in, so a test
+    /// can put the fault inside any image without a real fault (which ASAN
+    /// builds do not route here). Windows has no fault `CONTEXT` to walk from.
+    #[bun_jsc::host_fn]
+    fn js_segfault_at_pc(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+        let pc = frame.argument(0).to_number(global)?;
+        // `usize::MAX as f64` rounds up to 2^64, hence `<`.
+        if !(pc >= 0.0 && pc < usize::MAX as f64 && pc.fract() == 0.0) {
+            return Err(global.throw_invalid_arguments(format_args!(
+                "segfaultAtPc: expected a code address, got {pc}"
+            )));
+        }
+        let pc = pc as usize;
+        crash_handler::suppress_core_dumps_if_necessary();
+        let fp = if cfg!(windows) {
+            0
+        } else {
+            bun_core::debug::frame_address()
+        };
+        crash_handler::crash_handler(
+            crash_handler::CrashReason::SegmentationFault(0),
+            crash_handler::TraceSeed::Fault { pc, fp },
+        );
     }
 
     #[bun_jsc::host_fn]

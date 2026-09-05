@@ -29,7 +29,7 @@ pub use bun_windows_sys::ws2_32;
 pub mod kernel32 {
     use super::{
         BOOL, CONDITION_VARIABLE, DWORD, FileNotifyChangeFilter, HANDLE, LPCWSTR, LPOVERLAPPED,
-        LPOVERLAPPED_COMPLETION_ROUTINE, OVERLAPPED, SRWLOCK, ULONG, ULONG_PTR,
+        LPOVERLAPPED_COMPLETION_ROUTINE, LPWSTR, OVERLAPPED, SRWLOCK, UINT, ULONG, ULONG_PTR,
     };
     pub use bun_windows_sys::externs::SetEndOfFile;
     pub use bun_windows_sys::externs::{GetConsoleMode, GetExitCodeProcess, SetConsoleMode};
@@ -89,7 +89,40 @@ pub mod kernel32 {
 
         /// No preconditions; reads the calling thread's ID.
         pub safe fn GetCurrentThreadId() -> DWORD;
+
+        /// Unlike `GetWindowsDirectoryW`, never a per-user (Terminal Services) directory.
+        pub fn GetSystemWindowsDirectoryW(lpBuffer: LPWSTR, uSize: UINT) -> UINT;
     }
+}
+
+/// `C:\Windows`, without a trailing separator.
+pub fn system_windows_directory_w(buf: &mut [u16]) -> Option<&[u16]> {
+    // SAFETY: `buf` is valid for `capacity` u16 writes.
+    well_known_directory_w(buf, |ptr, capacity| unsafe {
+        kernel32::GetSystemWindowsDirectoryW(ptr, capacity)
+    })
+}
+
+/// `C:\Windows\System32`, without a trailing separator.
+pub fn system_directory_w(buf: &mut [u16]) -> Option<&[u16]> {
+    // SAFETY: `buf` is valid for `capacity` u16 writes.
+    well_known_directory_w(buf, |ptr, capacity| unsafe {
+        kernel32::GetSystemDirectoryW(ptr, capacity)
+    })
+}
+
+fn well_known_directory_w(buf: &mut [u16], get: impl FnOnce(LPWSTR, u32) -> u32) -> Option<&[u16]> {
+    let capacity = u32::try_from(buf.len()).ok()?;
+    let len = get(buf.as_mut_ptr(), capacity) as usize;
+    // `len >= buf.len()` is the "buffer too small, this is the size needed" return.
+    if len == 0 || len >= buf.len() {
+        return None;
+    }
+    let mut end = len;
+    while end > 0 && (buf[end - 1] == u16::from(b'\\') || buf[end - 1] == u16::from(b'/')) {
+        end -= 1;
+    }
+    Some(&buf[..end])
 }
 
 pub use bun_windows_sys::BOOL;

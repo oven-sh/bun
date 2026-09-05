@@ -5,7 +5,7 @@ use bun_jsc::{
     ArrayBuffer, CallFrame, JSGlobalObject, JSValue, Job, JobContext, JsResult, JsThread, Strong,
 };
 
-use crate::node::{Flavor, StringObjects, StringOrBuffer, ThreadIsolated, ThreadIsolatedArg};
+use crate::node::{Flavor, StringOrBuffer, ThreadIsolated, ThreadIsolatedArg};
 
 use crate::crypto::evp::{self, Algorithm};
 
@@ -177,12 +177,7 @@ impl PBKDF2 {
             length: keylen,
             algorithm,
         };
-        out.salt = match StringOrBuffer::from_js_maybe_async(
-            global_this,
-            arg1,
-            flavor,
-            StringObjects::Allow,
-        )? {
+        out.salt = match StringOrBuffer::from_js(global_this, arg1)? {
             Some(v) => v,
             None => {
                 return Err(global_this.throw_invalid_argument_type_value(
@@ -197,12 +192,7 @@ impl PBKDF2 {
             return Err(global_this.throw_invalid_arguments(format_args!("salt is too long")));
         }
 
-        out.password = match StringOrBuffer::from_js_maybe_async(
-            global_this,
-            arg0,
-            flavor,
-            StringObjects::Allow,
-        )? {
+        out.password = match StringOrBuffer::from_js(global_this, arg0)? {
             Some(v) => v,
             None => {
                 return Err(global_this.throw_invalid_argument_type_value(
@@ -215,12 +205,6 @@ impl PBKDF2 {
 
         if out.password.slice().len() > i32::MAX as usize {
             return Err(global_this.throw_invalid_arguments(format_args!("password is too long")));
-        }
-
-        if flavor == Flavor::Sync {
-            if let StringOrBuffer::Buffer(buffer) = &mut out.salt {
-                buffer.buffer = ArrayBuffer::from_typed_array(global_this, buffer.buffer.value);
-            }
         }
 
         let callback = match flavor {
@@ -237,6 +221,19 @@ impl PBKDF2 {
             Flavor::Sync => JSValue::UNDEFINED,
         };
 
+        // A String-object password's `toString` may have changed the salt buffer.
+        match flavor {
+            Flavor::Sync => {
+                if let StringOrBuffer::Buffer(buffer) = &mut out.salt {
+                    buffer.buffer = ArrayBuffer::from_typed_array(global_this, buffer.buffer.value);
+                }
+            }
+            Flavor::Async => {
+                out.salt.make_thread_isolated_copy(global_this)?;
+                out.password.make_thread_isolated_copy(global_this)?;
+            }
+        }
+
         Ok((out, callback))
     }
 
@@ -246,7 +243,7 @@ impl PBKDF2 {
         call_frame: &CallFrame,
     ) -> JsResult<(ThreadIsolated<PBKDF2>, JSValue)> {
         let (data, callback) = Self::from_js(global_this, call_frame, Flavor::Async)?;
-        // SAFETY: parsed with `Flavor::Async`.
+        // SAFETY: `Flavor::Async` copied the buffers and thread-isolated the strings.
         Ok((unsafe { ThreadIsolated::new(data) }, callback))
     }
 }

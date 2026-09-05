@@ -49,6 +49,9 @@ const kJoinSeparator = " > ";
 // spawned child, so use node's variable and value rather than a bun-specific one.
 const kRunChildEnv = "NODE_TEST_CONTEXT";
 const kRunChildEnvValue = "child-v8";
+// node passes `--test-timeout` to the child process; bun's `bun test --timeout`
+// is the bun:test watchdog, so carry the node:test default via env instead.
+const kRunChildTimeoutEnv = "BUN_NODE_TEST_RUN_TIMEOUT";
 const kRunEventPrefix = "\0bun:test:run\0";
 
 // Created lazily on the first run() call so the common test()/describe()
@@ -313,9 +316,8 @@ function run(options: Record<string, unknown> = kEmptyObject) {
   }
 
   // Options whose semantics we cannot honor yet must fail loudly rather than be
-  // silently ignored. testTagFilters and timeout are the deliberate exceptions:
-  // validated for node's error contract but not yet forwarded (node's own
-  // test-runner-filetest-location.js passes timeout).
+  // silently ignored. testTagFilters is the deliberate exception: validated for
+  // node's error contract but not yet forwarded.
   if (opts.watch) throwNotImplemented("run({ watch: true })", 5090, "Use `bun:test --watch` in the interim.");
   if (opts.coverage) throwNotImplemented("run({ coverage: true })", 5090, "Use `bun:test --coverage` in the interim.");
   if (opts.shard) throwNotImplemented("run({ shard })", 5090);
@@ -473,10 +475,13 @@ async function runOneFile(
   reporter.enqueue({ __proto__: null, ...fileNode });
   reporter.dequeue({ __proto__: null, ...fileNode });
 
+  const childEnv = { ...(opts.env ?? process.env), BUN_TEST_DRAIN_EVENT_LOOP: "1", [kRunChildEnv]: kRunChildEnvValue };
+  const { timeout } = opts;
+  if (typeof timeout === "number" && Number.isFinite(timeout)) childEnv[kRunChildTimeoutEnv] = String(timeout);
   const proc = Bun.spawn({
     cmd: args,
     cwd: opts.cwd as string,
-    env: { ...(opts.env ?? process.env), BUN_TEST_DRAIN_EVENT_LOOP: "1", [kRunChildEnv]: kRunChildEnvValue },
+    env: childEnv,
     stdout: "pipe",
     stderr: "pipe",
     signal: opts.signal,
@@ -666,6 +671,15 @@ function republishChildEvent(
 // Child side: with kRunChildEnv set, stream one JSON event per line so the
 // spawning parent can rebuild node's event stream.
 const runChildReporterEnabled = process.env[kRunChildEnv] !== undefined;
+// Node's root-test timeout, set from run({ timeout }) in the parent. Tests
+// that don't specify their own timeout inherit this (node Test constructor:
+// this.timeout = parent.timeout).
+let runChildTimeout: number | undefined;
+{
+  const raw = process.env[kRunChildTimeoutEnv];
+  const parsed = raw !== undefined ? Number(raw) : NaN;
+  if (Number.isFinite(parsed) && parsed >= 0) runChildTimeout = parsed;
+}
 
 function emitRunChildEvent(type: string, data: unknown) {
   try {
@@ -1529,6 +1543,7 @@ class TestNode {
   isExecutionPhase: boolean;
   filePath: string | undefined;
   options: TestOptions;
+  timeout: number | undefined;
   ownTags: string[] | undefined;
   hooks: HookSets = { before: [], after: [], beforeEach: [], afterEach: [] };
   plan: TestPlan | null = null;
@@ -1568,9 +1583,17 @@ class TestNode {
     // (under `bun test` with multiple files, Bun.main is the file currently
     // being collected); nested tests inherit their parent's file.
     this.filePath = parent !== undefined && parent.parent !== undefined ? parent.filePath : Bun.main;
-    const { skip, todo } = options;
+    const { skip, todo, timeout } = options;
     this.skipped = !!skip;
     this.todoFlag = !!todo || (parent?.todoFlag ?? false);
+    // node Test constructor: only a finite number overrides; Infinity / null /
+    // undefined all inherit the parent's timeout (ultimately run({ timeout })).
+    this.timeout =
+      typeof timeout === "number" && Number.isFinite(timeout)
+        ? timeout
+        : parent !== undefined
+          ? parent.timeout
+          : runChildTimeout;
     if (typeof skip === "string") this.message = skip;
     else if (typeof todo === "string") this.message = todo;
     this.expectFailure = parseExpectFailure(options.expectFailure) || parent?.expectFailure || false;
@@ -2144,7 +2167,10 @@ function createStopController(timeout: number | undefined) {
   const promise = new Promise<never>((_, reject) => {
     // Not unref'd: dispose() always clears it, and on Windows an unref'd timer
     // alone under bun:test leaves the uws loop inactive so auto_tick busy-spins.
-    timer = realSetTimeout(() => reject(makeTestFailure(`test timed out after ${timeout}ms`)), timeout);
+    timer = realSetTimeout(
+      () => reject(makeTestFailure(`test timed out after ${timeout}ms`, "testTimeoutFailure")),
+      timeout,
+    );
   });
   // Swallow the rejection when nothing is racing it anymore.
   promise.catch(() => {});
@@ -2174,7 +2200,10 @@ async function raceWithTimeoutAndSignal(
     if (typeof timeout === "number" && Number.isFinite(timeout)) {
       racers.push(
         new Promise<never>((_, reject) => {
-          timer = realSetTimeout(() => reject(makeTestFailure(`test timed out after ${timeout}ms`)), timeout);
+          timer = realSetTimeout(
+            () => reject(makeTestFailure(`test timed out after ${timeout}ms`, "testTimeoutFailure")),
+            timeout,
+          );
         }),
       );
     }
@@ -2285,7 +2314,7 @@ async function executeTestNode(node: TestNode, fn: TestFn): Promise<unknown> {
     // Node arms one stopPromise (timeout + signal) and races both the body
     // AND the plan wait against it. Arm timeout once here so plan({wait:true})
     // is bounded by the same test timeout, not left unbounded.
-    const stop = createStopController(node.options.timeout);
+    const stop = createStopController(node.timeout);
     try {
       const runBody = async () => {
         await runWithNode(node, () => invokeTestFn(fn, ctx));
@@ -2499,20 +2528,21 @@ function bunTest() {
   return jest(Bun.main);
 }
 
-function bunTestOptions(options: TestOptions) {
+function bunTestOptions(node: TestNode) {
   // The node-style timeout is enforced by executeTestNode itself so that a
   // tiny timeout (e.g. 1ms) with a synchronous body still passes like in Node.
   // bun:test's own watchdog measures the whole wrapper, so it is only told
   // about timeouts that extend past its 5s default.
-  const { timeout } = options;
-  if (timeout === Infinity) {
-    // Node's "no timeout" must override bun:test's default (bun saturates it).
-    return { timeout };
-  }
+  const timeout = node.timeout;
   if (typeof timeout === "number" && Number.isFinite(timeout)) {
     // Keep bun:test's watchdog at or above both the node-style timeout and
     // bun's default so a lower `--timeout` cannot cut a node timeout short.
     return { timeout: Math.max(timeout, kBunTestDefaultTimeoutMs) };
+  }
+  if (node.options.timeout === Infinity) {
+    // No inherited node-style timeout and the user asked for none: let Infinity
+    // override bun:test's default (bun saturates it).
+    return { timeout: Infinity };
   }
   return undefined;
 }
@@ -2594,7 +2624,7 @@ function addTest(
   node.ownTags = ownTags;
 
   const { test } = bunTest();
-  const passOptions = bunTestOptions(options);
+  const passOptions = bunTestOptions(node);
 
   // Node merges .todo()/.skip() into the options and checks skip first, so
   // test.todo(name, { skip: true }, fn) is a skip.
@@ -2727,7 +2757,7 @@ function addSuite(
           return runWithNode(suiteNode, () => fn(suiteNode.getSuiteCtx()));
         };
 
-  const passOptions = bunTestOptions(options);
+  const passOptions = bunTestOptions(suiteNode);
 
   let register: Function = describe;
   if (effectiveMode === "skip") register = describe.skip;

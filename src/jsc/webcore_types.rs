@@ -366,7 +366,7 @@ impl Blob {
             content_type: JsCell::new(self.content_type.get().clone()),
             content_type_was_set: Cell::new(self.content_type_was_set.get()),
             charset: Cell::new(self.charset.get()),
-            is_jsdom_file: Cell::new(self.is_jsdom_file.get()),
+            is_jsdom_file: Cell::new(false),
             ref_count: bun_ptr::RawRefCount::init(0), // setNotHeapAllocated
             global_this: Cell::new(self.global_this.get()),
             last_modified: Cell::new(self.last_modified.get()),

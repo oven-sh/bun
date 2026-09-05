@@ -1161,3 +1161,51 @@ int posix_fadvise(int fd, off_t offset, off_t len, int advice) {
     expect(f.name).toBe(filePath);
   });
 });
+
+// Once fd 1 is O_NONBLOCK (process.stdout.write's FileSink sets it on the shared open file
+// description via a dup), a Bun.write that overflowed the pipe buffer used to wedge a
+// thread-pool worker at 100% CPU: the async WriteFile path's could_block stayed false for
+// stdio and its EAGAIN handler re-matched a cached write() result without re-issuing the
+// syscall. Runs outside describe.concurrent so an unfixed build's spin doesn't starve
+// neighbours into their default timeout.
+it.skipIf(isWindows)(
+  "Bun.write(Bun.stdout, ...) to a full nonblocking pipe completes",
+  async () => {
+    // Below 256 KiB exercises the sync fast path's EAGAIN -> needs_async fallback; at/above
+    // 256 KiB goes straight to the thread-pool WriteFile path.
+    const script = `
+    process.stdout.write("x"); // constructs the fd 1 FileSink, which flips the pipe O_NONBLOCK
+    const fdDir = process.platform === "darwin" ? "/dev/fd" : "/proc/self/fd";
+    const fdCount = () => require("fs").readdirSync(fdDir).length;
+    const small = Buffer.alloc(64 * 1024, 65).toString();
+    const large = Buffer.alloc(256 * 1024, 66).toString();
+    let wrote = 0, fdsBefore, fdsAfter;
+    for (let round = 0; round < 2; round++) {
+      fdsBefore = fdCount();
+      const ps = [];
+      for (let i = 0; i < 16; i++) ps.push(Bun.write(Bun.stdout, small));
+      for (let i = 0; i < 4; i++) ps.push(Bun.write(Bun.stdout, large));
+      for (const n of await Promise.all(ps)) wrote += n;
+      fdsAfter = fdCount();
+    }
+    process.stderr.write("wrote=" + wrote + " fdDelta=" + (fdsAfter - fdsBefore));
+  `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+      timeout: 20_000,
+      killSignal: "SIGKILL",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.bytes(), proc.stderr.text(), proc.exited]);
+    const expected = 1 + 2 * (16 * 64 * 1024 + 4 * 256 * 1024);
+    expect({ length: stdout.length, stderr, exitCode, signalCode: proc.signalCode }).toEqual({
+      length: expected,
+      stderr: "wrote=" + (expected - 1) + " fdDelta=0",
+      exitCode: 0,
+      signalCode: null,
+    });
+  },
+  30_000,
+);

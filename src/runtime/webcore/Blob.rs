@@ -5321,8 +5321,19 @@ fn write_string_to_file_fast<const NEEDS_OPEN: bool>(
                 bun_sys::Result::Err(err) => {
                     truncate.set(false);
                     if err.get_errno() == bun_sys::E::EAGAIN {
-                        *needs_async = true;
-                        return JSValue::ZERO;
+                        if written.get() == 0 {
+                            *needs_async = true;
+                            return JSValue::ZERO;
+                        }
+                        // The async path re-sends the whole input, so after a partial
+                        // write finish synchronously via poll(POLLOUT).
+                        let mut pfd = [bun_sys::posix::PollFd {
+                            fd: fd.native(),
+                            events: bun_sys::posix::POLL_OUT,
+                            revents: 0,
+                        }];
+                        let _ = bun_sys::posix::poll(&mut pfd, -1);
+                        continue;
                     }
                     let err_js = if !NEEDS_OPEN {
                         err.to_js(global_this)
@@ -5396,8 +5407,17 @@ fn write_bytes_to_file_fast<const NEEDS_OPEN: bool>(
             bun_sys::Result::Err(err) => {
                 #[cfg(not(windows))]
                 if err.get_errno() == bun_sys::E::EAGAIN {
-                    *_needs_async = true;
-                    return JSValue::ZERO;
+                    if written == 0 {
+                        *_needs_async = true;
+                        return JSValue::ZERO;
+                    }
+                    let mut pfd = [bun_sys::posix::PollFd {
+                        fd: fd.native(),
+                        events: bun_sys::posix::POLL_OUT,
+                        revents: 0,
+                    }];
+                    let _ = bun_sys::posix::poll(&mut pfd, -1);
+                    continue;
                 }
                 let err_js = if !NEEDS_OPEN {
                     err.to_js(global_this)

@@ -7766,10 +7766,9 @@ pub mod bv2_impl {
         fn default() -> Self {
             CompileResult::Javascript {
                 source_index: 0,
-                result: bun_js_printer::PrintResult::Result(bun_js_printer::PrintResultSuccess {
-                    code: Box::new([]),
-                    source_map: None,
-                }),
+                result: bun_js_printer::PrintResult::Result(
+                    bun_js_printer::PrintResultSuccess::default(),
+                ),
                 module_info: None,
             }
         }

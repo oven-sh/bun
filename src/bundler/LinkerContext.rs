@@ -2313,6 +2313,12 @@ impl<'a> LinkerContext<'a> {
         Ok(true)
     }
 
+    /// The one place that decides whether a chunk gets the `@bun-cjs` function wrapper.
+    pub(crate) fn chunk_has_bun_cjs_wrapper(&self, chunk: &Chunk) -> bool {
+        self.options.output_format == Format::Cjs
+            && self.graph.ast.items_target()[chunk.entry_point.source_index() as usize].is_bun()
+    }
+
     pub(crate) fn print_code_for_file_in_chunk_js(
         &mut self,
         r: renamer::Renamer,
@@ -2324,6 +2330,7 @@ impl<'a> LinkerContext<'a> {
         to_esm_ref: Ref,
         to_commonjs_ref: Ref,
         runtime_require_ref: Option<Ref>,
+        inside_bun_cjs_wrapper: bool,
         source_index: Index,
         source: &Source,
         module_info: Option<&mut crate::analyze_transpiled_module::ModuleInfo>,
@@ -2403,6 +2410,7 @@ impl<'a> LinkerContext<'a> {
                 Format::Cjs => None, // use unbounded global
                 _ => runtime_require_ref,
             },
+            inside_bun_cjs_wrapper,
             require_or_import_meta_for_source_callback:
                 js_printer::RequireOrImportMetaCallback::init(self),
             line_offset_tables: Some(line_offset_table),

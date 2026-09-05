@@ -3,7 +3,7 @@ use bun_collections::VecExt;
 use bun_core::feature_flags as FeatureFlags;
 
 use crate::p::P;
-use crate::parser::{self as js_parser, IdentifierOpts, RelocateVars, RelocateVarsMode};
+use crate::parser::{IdentifierOpts, RelocateVars, RelocateVarsMode};
 use bun_ast::ast_result::CommonJSNamedExport;
 use bun_ast::{self as js_ast, Binding, E, Expr, Flags, G, LocRef, S};
 
@@ -599,11 +599,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         });
                     }
 
-                    // Inline import.meta properties for Bake
-                    if p.options.framework.is_some()
-                        || (p.options.bundle
-                            && p.options.output_format == js_parser::options::Format::Cjs)
-                    {
+                    if p.options.inline_import_meta_paths {
                         if name == b"dir" || name == b"dirname" {
                             // Inline import.meta.dir
                             return Some(

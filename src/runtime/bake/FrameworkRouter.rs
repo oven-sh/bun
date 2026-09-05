@@ -585,14 +585,6 @@ impl<'a> Part<'a> {
     }
 }
 
-impl fmt::Display for Part<'_> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str("Part \"")?;
-        self.to_string_for_internal_use(f)?;
-        f.write_str("\"")
-    }
-}
-
 pub(crate) struct ParsedPattern<'a> {
     pub parts: &'a [Part<'a>],
     pub kind: ParsedPatternKind,

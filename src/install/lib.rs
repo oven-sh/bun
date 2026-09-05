@@ -111,6 +111,7 @@ pub use lockfile_real::{DEFAULT_TRUSTED_DEPENDENCIES_LIST, default_trusted_depen
 pub mod audit_fix;
 #[path = "bin.rs"]
 pub mod bin_real;
+pub mod cache_pack;
 pub mod dedupe;
 pub mod git_runner;
 pub mod hoisted_install;

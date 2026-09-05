@@ -749,6 +749,16 @@ _bun_prune_completion() {
         ret=0
 }
 
+_bun_login_completion() {
+    _arguments -s -C \
+        '1: :->cmd1' \
+        '--registry[Use this registry instead of the configured one]:url' \
+        '--scope[Use the registry configured for this scope (e.g. @myorg)]:scope' \
+        '-h[Print this help menu]' \
+        '--help[Print this help menu]' &&
+        ret=0
+}
+
 _bun_audit_completion() {
     _arguments -s -C \
         '1: :->cmd1' \
@@ -885,6 +895,8 @@ _bun() {
             'audit\:"Check installed packages for vulnerabilities" '
             'dedupe\:"Remove duplicate versions from the lockfile" '
             'prune\:"Remove packages that are not in the lockfile from node_modules" '
+            'login\:"Log in to an npm registry" '
+            'logout\:"Log out of an npm registry" '
             'outdated\:"Display the latest versions of outdated dependencies" '
             'link\:"Link an npm package globally" '
             'unlink\:"Globally unlink an npm package" '
@@ -976,6 +988,10 @@ _bun() {
             ;;
         prune)
             _bun_prune_completion
+
+            ;;
+        login|logout)
+            _bun_login_completion
 
             ;;
         'test')
@@ -1075,6 +1091,10 @@ _bun() {
                     ;;
                 prune)
                     _bun_prune_completion
+
+                    ;;
+                login|logout)
+                    _bun_login_completion
 
                     ;;
                 'test')

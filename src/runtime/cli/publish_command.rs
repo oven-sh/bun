@@ -31,24 +31,9 @@ use bun_install::dependency;
 use bun_install::{AuthType, LogLevel};
 use bun_sys::FdExt as _;
 
-// `json_mod::parse_utf8` returns `bun_ast::Expr` (the value-shaped
-// JSON-only `Expr`), not `bun_ast::Expr`, so `Expr::get_string_cloned`
-// can't be applied. Mirror the lookup as a free fn over the JSON `Expr` using
-// its own `as_property` / `as_string_cloned` surface.
-#[inline]
-fn json_get_string_cloned<'b>(
-    expr: &bun_ast::Expr,
-    bump: &'b bun_alloc::Arena,
-    name: &[u8],
-) -> Result<Option<&'b [u8]>, AllocError> {
-    match expr.as_property(name) {
-        Some(q) => q.expr.as_string_cloned(bump),
-        None => Ok(None),
-    }
-}
-
 use crate::Command;
 use crate::cli::pack_command::{self as pack};
+use crate::cli::web_login::{self, json_get_string_cloned};
 
 pub(crate) struct ReadmeInfo {
     pub filename: Vec<u8>,
@@ -80,7 +65,6 @@ fn is_readme_os_path(name: &[OSPathChar]) -> bool {
 }
 
 use crate::cli::init_command::InitCommand;
-use crate::cli::open;
 use crate::run_command::RunCommand as Run;
 
 type SHA1Digest = [u8; sha::SHA1::DIGEST];
@@ -1074,29 +1058,6 @@ impl PublishCommand {
         Ok(())
     }
 
-    fn press_enter_to_open_in_browser(auth_url: &ZStr) {
-        // unset `ENABLE_VIRTUAL_TERMINAL_INPUT` on windows. This prevents backspace from
-        // deleting the entire line
-        #[cfg(windows)]
-        let _stdin_mode =
-            bun_sys::windows::StdinModeGuard::set(bun_sys::windows::UpdateStdioModeFlagsOpts {
-                unset: bun_sys::windows::ENABLE_VIRTUAL_TERMINAL_INPUT,
-                ..Default::default()
-            });
-
-        loop {
-            // SAFETY: `buffered_stdin()` returns a process-global `*mut`; this
-            // loop is the only accessor while it runs (single-threaded CLI path).
-            match unsafe { (*Output::buffered_stdin()).reader().read_byte() } {
-                Ok(b'\n') => break,
-                Ok(_) => continue,
-                Err(_) => return,
-            }
-        }
-
-        let _ = bun_core::spawn_sync_inherit(&[open::OPENER, auth_url.as_bytes()]);
-    }
-
     fn get_otp<const DIRECTORY_PUBLISH: bool>(
         ctx: &Context<'_, DIRECTORY_PUBLISH>,
         registry: &Npm::Registry::Scope,
@@ -1124,21 +1085,8 @@ impl PublishCommand {
                 let Some(auth_url_str) = json_get_string_cloned(&json, &bump, b"authUrl")? else {
                     break 'try_web;
                 };
-                // Note: bump-owned `&[u8]` — dupe into the process-lifetime
-                // CLI arena so the spawned thread (which outlives `bump`) can
-                // borrow it `'static`.
-                let auth_url_str: &'static ZStr = {
-                    let len = auth_url_str.len();
-                    let buf: &'static mut [u8] =
-                        crate::cli::cli_arena().alloc_slice_fill_default(len + 1);
-                    buf[..len].copy_from_slice(auth_url_str);
-                    // SAFETY: `buf[len] == 0`; arena-backed `'static`.
-                    ZStr::from_buf(&buf[..], len)
-                };
-                let auth_url_is_web = {
-                    let auth_url = URL::parse(auth_url_str.as_bytes());
-                    auth_url.is_http() || auth_url.is_https()
-                };
+                // bump-owned `&[u8]`; the browser thread outlives `bump`.
+                let auth_url_str: &'static ZStr = web_login::dupe_static_z(auth_url_str);
 
                 // important to clone because it belongs to `response_buf`, and `response_buf` will be
                 // reused with the following requests
@@ -1157,88 +1105,7 @@ impl PublishCommand {
                     }
                 }
 
-                if auth_url_is_web {
-                    bun_core::prettyln!(
-                        "\nAuthenticate your account at (press <b>ENTER<r> to open in browser):\n",
-                    );
-                } else {
-                    bun_core::prettyln!("\nAuthenticate your account at:\n");
-                }
-
-                const PADDING: usize = 1;
-
-                let horizontal = if Output::enable_ansi_colors_stdout() {
-                    "─"
-                } else {
-                    "-"
-                };
-                let vertical = if Output::enable_ansi_colors_stdout() {
-                    "│"
-                } else {
-                    "|"
-                };
-                let top_left = if Output::enable_ansi_colors_stdout() {
-                    "┌"
-                } else {
-                    "|"
-                };
-                let top_right = if Output::enable_ansi_colors_stdout() {
-                    "┐"
-                } else {
-                    "|"
-                };
-                let bottom_left = if Output::enable_ansi_colors_stdout() {
-                    "└"
-                } else {
-                    "|"
-                };
-                let bottom_right = if Output::enable_ansi_colors_stdout() {
-                    "┘"
-                } else {
-                    "|"
-                };
-
-                let width: usize = (PADDING * 2) + auth_url_str.len();
-
-                Output::print(format_args!("{}", top_left));
-                for _ in 0..width {
-                    Output::print(format_args!("{}", horizontal));
-                }
-                Output::print(format_args!("{}\n", top_right));
-
-                Output::print(format_args!("{}", vertical));
-                for _ in 0..PADDING {
-                    Output::print(format_args!(" "));
-                }
-                bun_core::pretty!("<b>{}<r>", bstr::BStr::new(auth_url_str.as_bytes()));
-                for _ in 0..PADDING {
-                    Output::print(format_args!(" "));
-                }
-                Output::print(format_args!("{}\n", vertical));
-
-                Output::print(format_args!("{}", bottom_left));
-                for _ in 0..width {
-                    Output::print(format_args!("{}", horizontal));
-                }
-                Output::print(format_args!("{}\n", bottom_right));
-                Output::flush();
-
-                if auth_url_is_web {
-                    // on another thread because pressing enter is not required
-                    match std::thread::Builder::new()
-                        .spawn(move || Self::press_enter_to_open_in_browser(auth_url_str))
-                    {
-                        Ok(_t) => { /* JoinHandle dropped → detached */ }
-                        Err(_e) => {
-                            Output::err(
-                                "ThreadSpawn",
-                                "failed to spawn thread for opening auth url",
-                                (),
-                            );
-                            Global::crash();
-                        }
-                    }
-                }
+                web_login::print_auth_url(auth_url_str);
 
                 let auth_headers = Self::construct_publish_headers(
                     print_buf,
@@ -1249,110 +1116,24 @@ impl PublishCommand {
                     ctx.manager.options.publish_config.auth_type,
                 )?;
 
-                loop {
-                    response_buf.reset();
-
-                    // Note: `done_url`/`auth_headers.entries` move into
-                    // `init_sync`, so re-clone per iteration.
-                    let mut req = http::AsyncHTTP::init_sync(
-                        http::Method::GET,
-                        done_url.clone(),
-                        auth_headers.entries.clone()?,
-                        auth_headers.content.written_slice(),
-                        b"",
-                        None,
-                        http::FetchRedirect::Follow,
-                    );
-
-                    let res = match req.send_sync(response_buf) {
-                        Ok(r) => r,
-                        Err(e) => {
-                            if e == bun_http::Error::Alloc(bun_alloc::AllocError) {
-                                return Err(GetOTPError::OutOfMemory);
-                            }
-                            Output::err(e, "failed to send OTP request", ());
-                            Global::crash();
-                        }
-                    };
-
-                    match res.status_code() {
-                        202 => {
-                            // retry
-                            let nanoseconds: u64 = 'nanoseconds: {
-                                if let Some(retry) = res.header(b"retry-after") {
-                                    'default: {
-                                        let trimmed =
-                                            strings::trim(retry, &strings::WHITESPACE_CHARS);
-                                        // Header value is bytes, not UTF-8; use the byte-slice parser.
-                                        let Ok(seconds) = strings::parse_int::<u32>(trimmed, 10)
-                                        else {
-                                            break 'default;
-                                        };
-                                        break 'nanoseconds (seconds as u64) * 1_000_000_000;
-                                    }
-                                }
-
-                                break 'nanoseconds 500 * 1_000_000;
-                            };
-
-                            std::thread::sleep(std::time::Duration::from_nanos(nanoseconds));
-                            continue;
-                        }
-                        200 => {
-                            // login successful
-                            let done_bump = bun_alloc::Arena::new();
-                            let otp_done_source = bun_ast::Source::init_path_string(
-                                b"???",
-                                response_buf.list.as_slice(),
-                            );
-                            let otp_done_json = match json_mod::parse_utf8(
-                                &otp_done_source,
-                                manager_log,
-                                &done_bump,
-                            ) {
-                                Ok(j) => j,
-                                Err(e) => {
-                                    if e == bun_parsers::Error::Alloc(bun_alloc::AllocError) {
-                                        return Err(GetOTPError::OutOfMemory);
-                                    }
-                                    Output::err("WebLogin", "failed to parse response json", ());
-                                    Global::crash();
-                                }
-                            };
-
-                            let token =
-                                json_get_string_cloned(&otp_done_json, &done_bump, b"token")?
-                                    .unwrap_or_else(|| {
-                                        Output::err(
-                                            "WebLogin",
-                                            "missing `token` field in reponse json",
-                                            (),
-                                        );
-                                        Global::crash();
-                                    });
-
-                            // https://github.com/npm/cli/blob/534ad7789e5c61f579f44d782bdd18ea3ff1ee20/node_modules/npm-registry-fetch/lib/check-response.js#L14
-                            // ignore if x-local-cache exists
-                            if let Some(notice) =
-                                res.header_if_other_is_absent(b"npm-notice", b"x-local-cache")
-                            {
-                                Output::print_error(format_args!("\n"));
-                                bun_core::note!("{}", bstr::BStr::new(notice));
-                                Output::flush();
-                            }
-
-                            return Ok(token.into());
-                        }
-                        _ => {
-                            Npm::response_error::<false>(
-                                &req,
-                                &res,
-                                Some((&ctx.package_name, &ctx.package_version)),
-                                response_buf,
-                            )?;
-                        }
+                return match web_login::poll_done_url(
+                    &done_url,
+                    &auth_headers,
+                    response_buf,
+                    None,
+                    Some((&ctx.package_name, &ctx.package_version)),
+                ) {
+                    Ok(token) => Ok(token),
+                    Err(web_login::WebLoginError::OutOfMemory) => Err(GetOTPError::OutOfMemory),
+                    Err(web_login::WebLoginError::TimedOut) => {
+                        Output::err(
+                            "WebLogin",
+                            "timed out waiting for the login to complete",
+                            (),
+                        );
+                        Global::crash();
                     }
-                }
+                };
             }
         }
 
@@ -2087,7 +1868,7 @@ impl PublishError {
         match self {
             PublishError::OutOfMemory => bun_core::out_of_memory(),
             PublishError::NeedAuth => {
-                Output::err_generic("missing authentication (run <cyan>`bunx npm login`<r>)", ());
+                Output::err_generic("missing authentication (run <cyan>`bun login`<r>)", ());
                 Global::crash();
             }
         }

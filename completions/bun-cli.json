@@ -3054,6 +3054,90 @@
       "documentationUrl": "https://bun.com/docs/cli/publish.",
       "dynamicCompletions": {}
     },
+    "login": {
+      "name": "login",
+      "description": "Log in to an npm registry in the browser and save the token to your user-level .npmrc.",
+      "flags": [
+        {
+          "name": "registry",
+          "description": "Log in to this registry instead of the configured one",
+          "hasValue": true,
+          "valueType": "val",
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "scope",
+          "description": "Log in to the registry configured for this scope (e.g. @myorg)",
+          "hasValue": true,
+          "valueType": "val",
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "help",
+          "shortName": "h",
+          "description": "Print this help menu",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        }
+      ],
+      "positionalArgs": [
+        {
+          "name": "flags",
+          "required": false,
+          "multiple": false,
+          "type": "string"
+        }
+      ],
+      "examples": ["bun login", "bun login --registry https://npm.pkg.github.com", "bun login --scope @myorg"],
+      "usage": "Usage: bun login [flags]",
+      "documentationUrl": "https://bun.com/docs/pm/cli/login",
+      "dynamicCompletions": {}
+    },
+    "logout": {
+      "name": "logout",
+      "description": "Revoke the saved token for an npm registry and remove it from your user-level .npmrc.",
+      "flags": [
+        {
+          "name": "registry",
+          "description": "Log out of this registry instead of the configured one",
+          "hasValue": true,
+          "valueType": "val",
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "scope",
+          "description": "Log out of the registry configured for this scope (e.g. @myorg)",
+          "hasValue": true,
+          "valueType": "val",
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "help",
+          "shortName": "h",
+          "description": "Print this help menu",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        }
+      ],
+      "positionalArgs": [
+        {
+          "name": "flags",
+          "required": false,
+          "multiple": false,
+          "type": "string"
+        }
+      ],
+      "examples": ["bun logout", "bun logout --scope @myorg"],
+      "usage": "Usage: bun logout [flags]",
+      "documentationUrl": "https://bun.com/docs/pm/cli/login",
+      "dynamicCompletions": {}
+    },
     "patch": {
       "name": "patch",
       "description": "Prepare a package for patching, or generate and save a patch.",

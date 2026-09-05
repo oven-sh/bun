@@ -412,6 +412,36 @@ static PUBLISH_PARAMS: &[ParamType] = concat_params![
     ]
 ];
 
+static LOGIN_PARAMS: &[ParamType] = concat_params![
+    SHARED_PARAMS,
+    &[
+        clap::param!(
+            "--scope <STR>                          Log in to the registry configured for this scope (e.g. @myorg)"
+        ),
+        clap::param!("<POS> ...                              "),
+    ]
+];
+
+const LOGIN_HELP_PARAMS: &[ParamType] = &[
+    clap::param!(
+        "--registry <STR>                       Log in to this registry instead of the configured one"
+    ),
+    clap::param!(
+        "--scope <STR>                          Log in to the registry configured for this scope (e.g. @myorg)"
+    ),
+    clap::param!("-h, --help                             Print this help menu"),
+];
+
+const LOGOUT_HELP_PARAMS: &[ParamType] = &[
+    clap::param!(
+        "--registry <STR>                       Log out of this registry instead of the configured one"
+    ),
+    clap::param!(
+        "--scope <STR>                          Log out of the registry configured for this scope (e.g. @myorg)"
+    ),
+    clap::param!("-h, --help                             Print this help menu"),
+];
+
 static WHY_PARAMS: &[ParamType] = concat_params![
     SHARED_PARAMS,
     &[
@@ -552,7 +582,10 @@ pub struct CommandLineArguments {
 
     pub(crate) patch: PatchOpts,
 
-    pub(crate) registry: &'static [u8],
+    pub registry: &'static [u8],
+
+    // `bun login` / `bun logout` options
+    pub scope: &'static [u8],
 
     pub(crate) publish_config: Options::PublishConfig,
 
@@ -657,6 +690,8 @@ impl Default for CommandLineArguments {
             patch: PatchOpts::Nothing,
 
             registry: b"",
+
+            scope: b"",
 
             publish_config: Options::PublishConfig::default(),
 
@@ -1225,6 +1260,59 @@ Full documentation is available at <magenta>https://bun.com/docs/pm/cli/prune<r>
                 pretty_help(outro_text);
                 Output::flush();
             }
+            Subcommand::Login => {
+                let intro_text = r"
+<b>Usage<r>: <b><green>bun login<r> <cyan>[flags]<r>
+
+  Log in to an npm registry in the browser and save the token to your user-level .npmrc.
+
+<b>Flags:<r>";
+
+                let outro_text = r"
+
+<b>Examples:<r>
+  <d>Log in to the default registry<r>
+  <b><green>bun login<r>
+
+  <d>Log in to a different registry<r>
+  <b><green>bun login<r> <cyan>--registry https://npm.pkg.github.com<r>
+
+  <d>Log in to the registry configured for a scope<r>
+  <b><green>bun login<r> <cyan>--scope @myorg<r>
+
+Full documentation is available at <magenta>https://bun.com/docs/pm/cli/login<r>.
+";
+
+                pretty_help(intro_text);
+                clap::simple_help(LOGIN_HELP_PARAMS);
+                pretty_help(outro_text);
+                Output::flush();
+            }
+            Subcommand::Logout => {
+                let intro_text = r"
+<b>Usage<r>: <b><green>bun logout<r> <cyan>[flags]<r>
+
+  Revoke the saved token for an npm registry and remove it from your user-level .npmrc.
+
+<b>Flags:<r>";
+
+                let outro_text = r"
+
+<b>Examples:<r>
+  <d>Log out of the default registry<r>
+  <b><green>bun logout<r>
+
+  <d>Log out of the registry configured for a scope<r>
+  <b><green>bun logout<r> <cyan>--scope @myorg<r>
+
+Full documentation is available at <magenta>https://bun.com/docs/pm/cli/login<r>.
+";
+
+                pretty_help(intro_text);
+                clap::simple_help(LOGOUT_HELP_PARAMS);
+                pretty_help(outro_text);
+                Output::flush();
+            }
         }
     }
 
@@ -1247,6 +1335,7 @@ Full documentation is available at <magenta>https://bun.com/docs/pm/cli/prune<r>
             Subcommand::Why => WHY_PARAMS,
             Subcommand::Dedupe => DEDUPE_PARAMS,
             Subcommand::Prune => PRUNE_PARAMS,
+            Subcommand::Login | Subcommand::Logout => LOGIN_PARAMS,
 
             // TODO: we will probably want to do this for other *_params. this way extra params
             // are not included in the help text
@@ -1476,6 +1565,20 @@ Full documentation is available at <magenta>https://bun.com/docs/pm/cli/prune<r>
             }
 
             cli.tolerate_republish = args.flag(b"--tolerate-republish");
+        }
+
+        if matches!(subcommand, Subcommand::Login | Subcommand::Logout) {
+            if let Some(scope) = args.option(b"--scope") {
+                if !strings::starts_with_char(scope, b'@') || scope.len() < 2 {
+                    Output::err_generic(
+                        "invalid `--scope` value: {}, expected a scope like '@myorg'",
+                        (bun_core::fmt::quote(scope),),
+                    );
+                    Global::exit(1);
+                }
+                cli.scope = scope;
+            }
+            cli.no_project_ok = true;
         }
 
         // link and unlink default to not saving, all others default to

@@ -509,6 +509,8 @@ pub enum Subcommand {
     Why,
     Dedupe,
     Prune,
+    Login,
+    Logout,
     // bin,
     // hash,
     // @"hash-print",
@@ -1580,7 +1582,10 @@ pub fn init(
             //
             // probably wont matter as if package.json isn't writable, it's likely that
             // the underlying directory and node_modules isn't either.
-            let need_write = subcommand != Subcommand::Install || cli.positionals.len() > 1;
+            let need_write = !matches!(
+                subcommand,
+                Subcommand::Install | Subcommand::Login | Subcommand::Logout
+            ) || cli.positionals.len() > 1;
 
             loop {
                 let mut package_json_path_buf = PathBuffer::uninit();
@@ -1930,34 +1935,9 @@ pub fn init(
         let npmrc_local = ZBox::from_bytes(b".npmrc");
 
         let mut buf = PathBuffer::uninit();
-        let parts = [b"./.npmrc" as &[u8]];
 
-        // npm reads `$HOME/.npmrc` and ignores XDG_CONFIG_HOME; keep
-        // `$XDG_CONFIG_HOME/.npmrc` only when that file actually exists.
-        let mut global_len: usize = 0;
-        if let Some(xdg_dir) = bun_core::env_var::XDG_CONFIG_HOME.get_not_empty() {
-            let p =
-                resolve_path::join_abs_string_buf_z::<platform::Auto>(xdg_dir, &mut buf, &parts);
-            if bun_sys::exists_z(p) {
-                global_len = p.len();
-            }
-        }
-        if global_len == 0 {
-            if let Some(home_dir) = bun_core::env_var::HOME.get_not_empty() {
-                global_len = resolve_path::join_abs_string_buf_z::<platform::Auto>(
-                    home_dir, &mut buf, &parts,
-                )
-                .len();
-            }
-        }
-
-        let registry_auth = if global_len > 0 {
-            ini::load_npmrc_config(
-                &mut install,
-                env,
-                true,
-                &[ZStr::from_buf(&buf[..], global_len), &*npmrc_local],
-            )
+        let registry_auth = if let Some(user_npmrc) = crate::npmrc::user_npmrc_path(&mut buf) {
+            ini::load_npmrc_config(&mut install, env, true, &[user_npmrc, &*npmrc_local])
         } else {
             ini::load_npmrc_config(&mut install, env, true, &[&*npmrc_local])
         };

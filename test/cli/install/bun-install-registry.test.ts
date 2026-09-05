@@ -524,7 +524,7 @@ describe("whoami", async () => {
     const out = await stdout.text();
     expect(out).toBeEmpty();
     const err = await stderr.text();
-    expect(err).toBe("error: missing authentication (run `bunx npm login`)\n");
+    expect(err).toBe("error: missing authentication (run `bun login`)\n");
     expect(await exited).toBe(1);
   });
   test("invalid token", async () => {

@@ -344,6 +344,8 @@ pub mod filter_arg;
 pub mod filter_run;
 #[path = "link_command.rs"]
 pub mod link_command;
+#[path = "login_command.rs"]
+pub(crate) mod login_command;
 #[path = "multi_run.rs"]
 pub mod multi_run;
 #[path = "outdated_command.rs"]
@@ -387,6 +389,8 @@ pub mod unlink_command;
 pub(crate) mod update_command;
 #[path = "update_interactive_command.rs"]
 pub mod update_interactive_command;
+#[path = "web_login.rs"]
+pub(crate) mod web_login;
 #[path = "why_command.rs"]
 pub mod why_command;
 
@@ -659,6 +663,8 @@ pub mod help_command {
   <b><blue>link<r>      <d>[\\<package\\>]<r>          Register or link a local npm package
   <b><blue>unlink<r>                         Unregister a local npm package
   <b><blue>publish<r>                        Publish a package to the npm registry
+  <b><blue>login<r>                          Log in to an npm registry
+  <b><blue>logout<r>                         Log out of an npm registry
   <b><blue>patch <d>\\<pkg\\><r>                    Prepare a package for patching
   <b><blue>pm <d>\\<subcommand\\><r>                Additional package management utilities
   <b><blue>info<r>      <d>{:<16}<r>     Display package metadata from the registry
@@ -1052,14 +1058,18 @@ pub mod command {
         if x == RootCommandMatcher::case(b"prune") {
             return Tag::PruneCommand;
         }
+        if x == RootCommandMatcher::case(b"login") {
+            return Tag::LoginCommand;
+        }
+        if x == RootCommandMatcher::case(b"logout") {
+            return Tag::LogoutCommand;
+        }
         // reserved
         if x == RootCommandMatcher::case(b"deploy")
             || x == RootCommandMatcher::case(b"cloud")
             || x == RootCommandMatcher::case(b"config")
             || x == RootCommandMatcher::case(b"use")
             || x == RootCommandMatcher::case(b"auth")
-            || x == RootCommandMatcher::case(b"login")
-            || x == RootCommandMatcher::case(b"logout")
         {
             return Tag::ReservedCommand;
         }
@@ -1305,6 +1315,8 @@ pub mod command {
             Tag::AuditCommand => exec_audit(log),
             Tag::DedupeCommand => exec_dedupe(log),
             Tag::PruneCommand => exec_prune(log),
+            Tag::LoginCommand => exec_login(log),
+            Tag::LogoutCommand => exec_logout(log),
             Tag::WhyCommand => exec_why(log),
             Tag::BunxCommand => exec_bunx(log),
             Tag::ReplCommand => exec_repl(log),
@@ -1611,6 +1623,8 @@ pub mod command {
         exec_why                => (WhyCommand,            super::why_command::WhyCommand::exec),
         exec_dedupe             => (DedupeCommand,         super::dedupe_command::DedupeCommand::exec),
         exec_prune              => (PruneCommand,          super::prune_command::PruneCommand::exec),
+        exec_login              => (LoginCommand,          super::login_command::LoginCommand::exec),
+        exec_logout             => (LogoutCommand,         super::login_command::LogoutCommand::exec),
         exec_remove             => (RemoveCommand,         super::remove_command::RemoveCommand::exec),
         exec_link               => (LinkCommand,           super::link_command::LinkCommand::exec),
         exec_unlink             => (UnlinkCommand,         super::unlink_command::UnlinkCommand::exec),
@@ -2173,6 +2187,12 @@ Execute a shell script directly from Bun.
             }
             Tag::PruneCommand => {
                 pm_print_help(PmSubcommand::Prune);
+            }
+            Tag::LoginCommand => {
+                pm_print_help(PmSubcommand::Login);
+            }
+            Tag::LogoutCommand => {
+                pm_print_help(PmSubcommand::Logout);
             }
             Tag::InfoCommand => {
                 pretty!(

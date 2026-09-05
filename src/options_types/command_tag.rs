@@ -44,6 +44,8 @@ pub enum Tag {
     WhyCommand,
     DedupeCommand,
     PruneCommand,
+    LoginCommand,
+    LogoutCommand,
     FuzzilliCommand,
 }
 
@@ -86,6 +88,8 @@ impl Tag {
             Tag::WhyCommand => b'W',
             Tag::DedupeCommand => b'd',
             Tag::PruneCommand => b'N',
+            Tag::LoginCommand => b'L',
+            Tag::LogoutCommand => b'O',
             Tag::FuzzilliCommand => b'F',
         }
     }
@@ -106,6 +110,8 @@ impl Tag {
                 | Tag::AuditCommand
                 | Tag::DedupeCommand
                 | Tag::PruneCommand
+                | Tag::LoginCommand
+                | Tag::LogoutCommand
         )
     }
 
@@ -127,6 +133,8 @@ impl Tag {
                 | Tag::AuditCommand
                 | Tag::DedupeCommand
                 | Tag::PruneCommand
+                | Tag::LoginCommand
+                | Tag::LogoutCommand
         )
     }
 
@@ -171,6 +179,8 @@ impl Tag {
         Self::WhyCommand,
         Self::DedupeCommand,
         Self::PruneCommand,
+        Self::LoginCommand,
+        Self::LogoutCommand,
         Self::FuzzilliCommand,
     ];
 
@@ -230,6 +240,8 @@ pub static LOADS_CONFIG: TagTable<bool> = TagTable({
     a[Tag::AuditCommand as usize] = true;
     a[Tag::DedupeCommand as usize] = true;
     a[Tag::PruneCommand as usize] = true;
+    a[Tag::LoginCommand as usize] = true;
+    a[Tag::LogoutCommand as usize] = true;
     a
 });
 
@@ -251,6 +263,8 @@ pub static ALWAYS_LOADS_CONFIG: TagTable<bool> = TagTable({
     a[Tag::AuditCommand as usize] = true;
     a[Tag::DedupeCommand as usize] = true;
     a[Tag::PruneCommand as usize] = true;
+    a[Tag::LoginCommand as usize] = true;
+    a[Tag::LogoutCommand as usize] = true;
     a
 });
 
@@ -260,6 +274,8 @@ pub static USES_GLOBAL_OPTIONS: TagTable<bool> = TagTable({
     a[Tag::AuditCommand as usize] = false;
     a[Tag::DedupeCommand as usize] = false;
     a[Tag::PruneCommand as usize] = false;
+    a[Tag::LoginCommand as usize] = false;
+    a[Tag::LogoutCommand as usize] = false;
     a[Tag::BunxCommand as usize] = false;
     a[Tag::CreateCommand as usize] = false;
     a[Tag::InfoCommand as usize] = false;

@@ -1029,6 +1029,16 @@ extern "C"
     }
   }
 
+  void uws_res_mark_fixed_length_file_body(int ssl, uws_res_r res) {
+    if (ssl) {
+      uWS::HttpResponse<true> *uwsRes = (uWS::HttpResponse<true> *)res;
+      uwsRes->getHttpResponseData()->state |= uWS::HttpResponseData<true>::HTTP_FIXED_LENGTH_FILE_BODY;
+    } else {
+      uWS::HttpResponse<false> *uwsRes = (uWS::HttpResponse<false> *)res;
+      uwsRes->getHttpResponseData()->state |= uWS::HttpResponseData<false>::HTTP_FIXED_LENGTH_FILE_BODY;
+    }
+  }
+
   void uws_res_mark_wrote_date_header(int ssl, uws_res_r res) {
     if (ssl) {
       uWS::HttpResponse<true> *uwsRes = (uWS::HttpResponse<true> *)res;

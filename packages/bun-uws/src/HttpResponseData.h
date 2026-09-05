@@ -133,7 +133,8 @@ struct HttpResponseData : AsyncSocketData<SSL>, HttpParser {
          * 'upgrade' listener's socket. */
         HTTP_NODE_TUNNEL_AFTER_BODY = 1 << 14,
         /* The peer half-closed (FIN) while there was still something to flush
-         * before teardown: buffered/pinned response bytes, or (with
+         * before teardown: buffered/pinned response bytes, a file body still
+         * being delivered (HTTP_FIXED_LENGTH_FILE_BODY), or (with
          * httpAllowHalfOpen) an in-flight or queued pipelined response. The
          * connection is shut down from the shouldCloseConnection()/onWritable
          * gates once those have drained. Without httpAllowHalfOpen, onWritable
@@ -150,6 +151,17 @@ struct HttpResponseData : AsyncSocketData<SSL>, HttpParser {
          * shutdown sweep; the shouldCloseConnection() gates act on it once the
          * in-flight work completes. */
         HTTP_CLOSE_WHEN_IDLE = 1 << 17,
+        /* The response in flight is a file of known size whose Content-Length
+         * is already on the wire, delivered by the runtime itself
+         * (FileResponseStream: sendfile() from the fd, or read()+write()
+         * chunks) rather than handed to uWS up front. Unlike a tryEnd tail
+         * nothing else in this object shows that such a response is already
+         * fully determined, so onEnd<false> needs this bit to let it finish
+         * after a peer FIN instead of closing on it (which leaves the client a
+         * short body under that Content-Length). Per-response: cleared by
+         * resetResponseState(), moot once markDone() clears
+         * HTTP_RESPONSE_PENDING. */
+        HTTP_FIXED_LENGTH_FILE_BODY = 1 << 18,
 
         /* Bits that describe the connection rather than the response in flight.
          * There is one HttpResponseData per socket, reused by every request on a

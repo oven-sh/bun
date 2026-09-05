@@ -795,9 +795,17 @@ private:
                  * nothing in AsyncSocketData::buffer). A retry that moves zero bytes
                  * after the peer's FIN is EPIPE; close instead of spinning. Except
                  * on libuv, where the retry can stall while the TLS layer's spill
-                 * is still blocked on a healthy socket; there the kernel is asked. */
+                 * is still blocked on a healthy socket; there the kernel is asked.
+                 * HTTP_END_CALLED (with HTTP_RESPONSE_PENDING) is what identifies a
+                 * tryEnd tail; it is the only deferred shape whose progress shows
+                 * up in `offset`. A deferred file body (HTTP_FIXED_LENGTH_FILE_BODY)
+                 * moves bytes with sendfile()/write() without touching it and
+                 * would read as stalled here every time; it notices a dead peer on
+                 * its own (a failed sendfile force-closes, a failed write() lands
+                 * in the buffer and trips the flushed == 0 check above). */
                 if ((httpResponseData->state & HttpResponseData<SSL>::HTTP_NODE_RECEIVED_FIN)
                     && (httpResponseData->state & HttpResponseData<SSL>::HTTP_RESPONSE_PENDING)
+                    && (httpResponseData->state & HttpResponseData<SSL>::HTTP_END_CALLED)
                     && httpResponseData->offset == offsetBefore
                     && asyncSocket->hasFullyDrained()
                     && us_socket_stalled_write_means_peer_gone((us_socket_t *) asyncSocket)) {
@@ -912,22 +920,26 @@ private:
                 return s;
             }
         } else {
-            /* Bun.serve: response bytes already handed to uWS must drain before
-             * the connection shuts down (from the existing shouldCloseConnection()
-             * gates), not be discarded by the close() below. Only a response that
-             * is fully determined qualifies: a tryEnd tail (content-length path
-             * sets HTTP_END_CALLED while offset < total keeps HTTP_RESPONSE_PENDING)
-             * or a completed response that has not fully drained. A streaming body
-             * the application is still producing (HTTP_END_CALLED clear,
-             * HTTP_RESPONSE_PENDING set) closes here so onAborted / request.signal
-             * fires on client disconnect. */
+            /* Bun.serve: a response that is already fully determined must finish
+             * and drain before the connection shuts down (from the existing
+             * shouldCloseConnection() gates), not be cut off by the close() below.
+             * That is a tryEnd tail (the content-length path sets HTTP_END_CALLED
+             * while offset < total keeps HTTP_RESPONSE_PENDING), a file body the
+             * runtime is still delivering under a Content-Length that has already
+             * gone out (HTTP_FIXED_LENGTH_FILE_BODY), or a completed response that
+             * has not fully drained. A streaming body the application is still
+             * producing (neither bit, HTTP_RESPONSE_PENDING set) closes here so
+             * onAborted / request.signal fires on client disconnect. A deferred
+             * connection whose peer is really gone still closes: the kernel
+             * reports the reset, or the next write()/sendfile() fails (onWritable
+             * above, FileResponseStream). */
             HttpResponseData<SSL> *httpResponseData = (HttpResponseData<SSL> *) us_socket_ext(s);
             uint32_t state = httpResponseData->state;
-            bool tryEndTail = (state & HttpResponseData<SSL>::HTTP_END_CALLED)
+            bool determinedTail = (state & (HttpResponseData<SSL>::HTTP_END_CALLED | HttpResponseData<SSL>::HTTP_FIXED_LENGTH_FILE_BODY))
                 && (state & HttpResponseData<SSL>::HTTP_RESPONSE_PENDING);
             bool doneButBuffered = !(state & HttpResponseData<SSL>::HTTP_RESPONSE_PENDING)
                 && !asyncSocket->hasFullyDrained();
-            if (tryEndTail || doneButBuffered) {
+            if (determinedTail || doneButBuffered) {
                 httpResponseData->state |= HttpResponseData<SSL>::HTTP_NODE_RECEIVED_FIN;
                 return s;
             }

@@ -1555,8 +1555,17 @@ __attribute__((noinline)) static void forwardSignal(int signalNumber)
 static int watchModeStickySignal = 0;
 
 #if !OS(WINDOWS)
+#if OS(LINUX)
+// c-bindings.cpp: the seccomp SIGSYS handler forwards kill(2)-sent SIGSYS itself.
+extern "C" bool Bun__forwardSIGSYSToJS(bool enabled);
+#endif
+
 static void installForwardSignalHandler(int signalNumber)
 {
+#if OS(LINUX)
+    if (signalNumber == SIGSYS && Bun__forwardSIGSYSToJS(true))
+        return;
+#endif
     struct sigaction action;
     memset(&action, 0, sizeof(struct sigaction));
     action.sa_handler = forwardSignal;
@@ -1564,6 +1573,18 @@ static void installForwardSignalHandler(int signalNumber)
     sigaddset(&action.sa_mask, signalNumber);
     action.sa_flags = SA_RESTART;
     sigaction(signalNumber, &action, nullptr);
+}
+
+static void uninstallForwardSignalHandler(int signalNumber)
+{
+#if OS(LINUX)
+    if (signalNumber == SIGSYS && Bun__forwardSIGSYSToJS(false))
+        return;
+#endif
+    if (void (*oldHandler)(int) = signal(signalNumber, SIG_DFL); oldHandler != forwardSignal) {
+        // Don't uninstall the old handler if it's not the one we installed.
+        signal(signalNumber, oldHandler);
+    }
 }
 
 extern "C" void Bun__installWatchModeSignalHandler(int signalNumber)
@@ -1672,10 +1693,7 @@ static void onDidChangeListeners(EventEmitter& eventEmitter, const Identifier& e
                         // "has JS listeners" source of truth that e.g. self-kill flush consults.
                         if (signalNumber != watchModeStickySignal) {
 #if !OS(WINDOWS)
-                            if (void (*oldHandler)(int) = signal(signalNumber, SIG_DFL); oldHandler != forwardSignal) {
-                                // Don't uninstall the old handler if it's not the one we installed.
-                                signal(signalNumber, oldHandler);
-                            }
+                            uninstallForwardSignalHandler(signalNumber);
 #else
                             SignalHandleValue signal_handle = signalToContextIdsMap->get(signalNumber);
                             Bun__UVSignalHandle__close(signal_handle.handle);

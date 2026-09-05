@@ -280,6 +280,72 @@ extern "C" ssize_t bun_close_range(unsigned int start, unsigned int end, unsigne
 {
     return syscall(__NR_close_range, start, end, flags);
 }
+
+#if CPU(X86_64) || CPU(ARM64)
+#include <atomic>
+#include <ucontext.h>
+
+#ifndef SYS_SECCOMP
+#define SYS_SECCOMP 1
+#endif
+
+extern "C" void Bun__onPosixSignal(int signalNumber);
+
+static std::atomic<bool> forwardSIGSYSToJS { false };
+
+// A SECCOMP_RET_TRAP policy (Android) reports a blocked syscall with SIGSYS instead of an
+// errno. Turn it into the ENOSYS return that the callers (close_range, pidfd_open, ...) handle.
+static void onSIGSYS(int sig, siginfo_t* info, void* context)
+{
+    if (info->si_code == SYS_SECCOMP && context) {
+        ucontext_t* uc = static_cast<ucontext_t*>(context);
+#if CPU(X86_64)
+        uc->uc_mcontext.gregs[REG_RAX] = -ENOSYS;
+#else
+        uc->uc_mcontext.regs[0] = static_cast<unsigned long long>(-ENOSYS);
+#endif
+        return;
+    }
+
+    // Sent with kill(2).
+    if (forwardSIGSYSToJS.load(std::memory_order_relaxed)) {
+        Bun__onPosixSignal(sig);
+        return;
+    }
+    signal(sig, SIG_DFL);
+    raise(sig);
+}
+
+static void installSIGSYSHandler()
+{
+    struct sigaction sa;
+    memset(&sa, 0, sizeof(sa));
+    sa.sa_sigaction = onSIGSYS;
+    // SA_RESTART matches installForwardSignalHandler for the kill(2) path; a trap skips the syscall.
+    sa.sa_flags = SA_SIGINFO | SA_ONSTACK | SA_RESTART;
+    sigemptyset(&sa.sa_mask);
+    sigaction(SIGSYS, &sa, nullptr);
+}
+
+// BunProcess.cpp routes process.on("SIGSYS") through onSIGSYS instead of replacing it.
+// Returns false on targets without onSIGSYS; the caller then installs its own handler.
+extern "C" bool Bun__forwardSIGSYSToJS(bool enabled)
+{
+    forwardSIGSYSToJS.store(enabled, std::memory_order_relaxed);
+    if (enabled)
+        installSIGSYSHandler();
+    return true;
+}
+#else
+static void installSIGSYSHandler()
+{
+}
+
+extern "C" bool Bun__forwardSIGSYSToJS(bool)
+{
+    return false;
+}
+#endif // CPU(X86_64) || CPU(ARM64)
 #else // OS(FREEBSD)
 // FreeBSD 12.2+ libc has close_range; 14.0+ supports CLOSE_RANGE_CLOEXEC
 // (same value 1<<2 as Linux). Passing flags through means execveZ-failure
@@ -328,7 +394,7 @@ extern "C" void on_before_reload_process_posix()
     }
 
     // Reset caught dispositions so a SIGTERM arriving between here and execve isn't queued-then-
-    // lost. Inherited SIG_IGN is left alone. SIGSEGV/SIGBUS/RT/sigThreadSuspendResume are left
+    // lost. Inherited SIG_IGN is left alone. SIGSEGV/SIGBUS/SIGSYS/RT/sigThreadSuspendResume are left
     // for execve to reset atomically — resetting them here races JSC's sampler/GC threads fatally.
     struct sigaction sa {};
     sa.sa_handler = SIG_DFL;
@@ -337,7 +403,7 @@ extern "C" void on_before_reload_process_posix()
         if (s == SIGKILL || s == SIGSTOP || s == SIGSEGV || s == SIGBUS)
             continue;
 #if OS(LINUX)
-        if (s == g_wtfConfig.sigThreadSuspendResume)
+        if (s == g_wtfConfig.sigThreadSuspendResume || s == SIGSYS)
             continue;
 #endif
 #ifdef SIGRTMIN
@@ -699,6 +765,9 @@ extern "C" void bun_initialize_process()
     setvbuf(stderr, nullptr, _IONBF, 0);
 
 #if OS(LINUX)
+    // Before bun_close_range: a seccomp policy may trap it.
+    installSIGSYSHandler();
+
     // Prevent leaking inherited file descriptors on Linux
     // This is less of an issue for macOS due to posix_spawn
     // This is best effort, not all linux kernels support close_range or CLOSE_RANGE_CLOEXEC
@@ -1029,7 +1098,8 @@ extern "C" int64_t Bun__currentSyncPID = 0;
 static int Bun__pendingSignalToSend = 0;
 static struct sigaction previous_actions[NSIG];
 
-// npm's signal list minus SIGIOT/SIGPOLL (aliases of SIGABRT/SIGIO; listing both would overwrite previous_actions[N]).
+// npm's signal list minus SIGIOT/SIGPOLL (aliases of SIGABRT/SIGIO; listing both would overwrite previous_actions[N])
+// and minus SIGSYS (synchronous; on Linux owned by installSIGSYSHandler).
 // https://github.com/npm/cli/blob/fefd509992a05c2dfddbe7bc46931c42f1da69d7/workspaces/arborist/lib/signals.js#L26-L57
 #define FOR_EACH_POSIX_SIGNAL(M) \
     M(SIGABRT);                  \
@@ -1042,7 +1112,6 @@ static struct sigaction previous_actions[NSIG];
     M(SIGXFSZ);                  \
     M(SIGUSR2);                  \
     M(SIGTRAP);                  \
-    M(SIGSYS);                   \
     M(SIGQUIT);                  \
     M(SIGIO);
 

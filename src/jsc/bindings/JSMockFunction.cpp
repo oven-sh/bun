@@ -269,6 +269,7 @@ public:
     JSC::Weak<JSObject> spyTarget;
     JSC::Identifier spyIdentifier;
     unsigned spyAttributes = 0;
+    bool m_mockNameWasSet { false };
 
     static constexpr unsigned SpyAttributeESModuleNamespace = 1 << 30;
 
@@ -355,6 +356,7 @@ public:
         this->implementation.clear();
         this->fallbackImplmentation.clear();
         this->tail.clear();
+        this->m_mockNameWasSet = false;
     }
 
     // Puts the original value back on the spied-on object; that put can throw (a module namespace
@@ -1042,6 +1044,18 @@ JSC_DEFINE_CUSTOM_GETTER(jsMockFunctionGetter_protoImpl, (JSC::JSGlobalObject * 
     return JSValue::encode(jsUndefined());
 }
 
+extern "C" [[ZIG_EXPORT(nothrow)]] JSC::EncodedJSValue JSMockFunction__getName(EncodedJSValue encodedValue)
+{
+    JSValue value = JSValue::decode(encodedValue);
+    if (auto* mock = tryJSDynamicCast<JSMockFunction*>(value)) {
+        if (mock->m_mockNameWasSet) {
+            if (auto* name = mock->jsName())
+                return JSValue::encode(name);
+        }
+        return JSValue::encode(jsEmptyString(mock->vm()));
+    }
+    return encodedJSUndefined();
+}
 extern "C" [[ZIG_EXPORT(zero_is_throw)]] JSC::EncodedJSValue JSMockFunction__getCalls(JSC::JSGlobalObject* globalThis, EncodedJSValue encodedValue)
 {
     auto scope = DECLARE_THROW_SCOPE(globalThis->vm());
@@ -1174,6 +1188,7 @@ JSC_DEFINE_HOST_FUNCTION(jsMockFunctionMockName, (JSC::JSGlobalObject * globalOb
         WTF::String name = callframe->argument(0).toWTFString(globalObject);
         RETURN_IF_EXCEPTION(scope, {});
         thisObject->setName(name);
+        thisObject->m_mockNameWasSet = true;
     } else {
         RETURN_IF_EXCEPTION(scope, {});
     }

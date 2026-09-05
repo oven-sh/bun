@@ -2902,6 +2902,8 @@ pub mod mock {
         fn JSMockFunction__getCalls_raw(global: *mut JSGlobalObject, value: JSValue) -> JSValue;
         #[link_name = "JSMockFunction__getReturns"]
         fn JSMockFunction__getReturns_raw(global: *mut JSGlobalObject, value: JSValue) -> JSValue;
+        #[link_name = "JSMockFunction__getName"]
+        fn JSMockFunction__getName_raw(value: JSValue) -> JSValue;
     }
 
     /// `bun.cpp.JSMockFunction__getCalls` — returns the `mock.calls` array for a
@@ -2927,6 +2929,14 @@ pub mod mock {
         bun_jsc::call_zero_is_throw(global, || unsafe {
             JSMockFunction__getReturns_raw(global.as_ptr(), value)
         })
+    }
+
+    /// Name set via `.mockName()` (empty until then), or `undefined` when `value` is not a `JSMockFunction`.
+    #[allow(non_snake_case)]
+    #[inline]
+    pub(crate) fn JSMockFunction__getName(value: JSValue) -> JSValue {
+        // SAFETY: JSValue is repr(transparent) i64; the export is nothrow.
+        unsafe { JSMockFunction__getName_raw(value) }
     }
 
     /// Which mock-backed array a `toHave*` matcher inspects, plus which of the two

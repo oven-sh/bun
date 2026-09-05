@@ -167,7 +167,6 @@ struct IDLObject : IDLType<JSC::Strong<JSC::JSObject>> {
 template<typename T> struct IDLWrapper : IDLType<RefPtr<T>> {
     using RawType = T;
 
-
     using ParameterType = T&;
     using NullableParameterType = T*;
 

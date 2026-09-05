@@ -1211,6 +1211,10 @@ fn spawn_maybe_sync(
                 {
                     return Err(global_this.throw_value(c.target.blame(&err).to_js(global_this)));
                 }
+                // Stdio path open errors name their own path; the rewrite below is for exec.
+                if err.syscall == sys::Tag::open {
+                    return Err(global_this.throw_value(err.to_js(global_this)));
+                }
                 match err.get_errno() {
                     errno @ (sys::Errno::EACCES
                     | sys::Errno::ENOENT

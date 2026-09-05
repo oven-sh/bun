@@ -434,6 +434,27 @@ describe("Bun.serve() directory routes", () => {
     expect(exitCode).toBe(0);
   });
 
+  // Documented in docs/runtime/http/routing.mdx and serve.d.ts: there is no
+  // dotfile filter, only `.` and `..` segments are rejected.
+  it("serves dotfiles and files inside dot-directories", async () => {
+    using dir = tempDir("serve-dir-dotfiles", {
+      "public/.env": "KEY=value",
+      "public/.git/config": "[core]",
+    });
+
+    server = serve({
+      port: 0,
+      routes: { "/static/*": { dir: join(String(dir), "public") } },
+      fetch: () => new Response("fallback", { status: 404 }),
+    });
+
+    const env = await fetch(`${server.url}static/.env`);
+    expect({ status: env.status, body: await env.text() }).toEqual({ status: 200, body: "KEY=value" });
+
+    const config = await fetch(`${server.url}static/.git/config`);
+    expect({ status: config.status, body: await config.text() }).toEqual({ status: 200, body: "[core]" });
+  });
+
   it("percent-decodes file names", async () => {
     using dir = tempDir("serve-dir-pct", {
       "public/hello world.txt": "hi",

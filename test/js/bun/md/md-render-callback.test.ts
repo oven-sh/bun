@@ -375,6 +375,28 @@ describe("Bun.markdown.render", () => {
     expect(result).toContain("[www.example.com]");
   });
 
+  // https://github.com/oven-sh/bun/issues/31936
+  test("autolink href meta includes mailto:/http:// prefix", () => {
+    const hrefs: string[] = [];
+    Markdown.render(
+      "<email@example.com>\n\nemail@example.com\n\nwww.example.com\n\nhttps://example.com\n",
+      {
+        link: (children: string, { href }: any) => {
+          hrefs.push(href);
+          return children;
+        },
+        paragraph: (children: string) => children,
+      },
+      { autolinks: true },
+    );
+    expect(hrefs).toEqual([
+      "mailto:email@example.com",
+      "mailto:email@example.com",
+      "http://www.example.com",
+      "https://example.com",
+    ]);
+  });
+
   test("headings option provides id in heading meta", () => {
     const result = Markdown.render(
       "## Hello World\n",

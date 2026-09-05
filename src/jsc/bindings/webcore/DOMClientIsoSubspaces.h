@@ -115,7 +115,6 @@ public:
     GCClient::IsoSubspace* m_clientSubspaceForReadIntoRequest { nullptr };
     GCClient::IsoSubspace* m_clientSubspaceForPullIntoDescriptor { nullptr };
     GCClient::IsoSubspace* m_clientSubspaceForStreamTeeState { nullptr };
-    GCClient::IsoSubspace* m_clientSubspaceForCrossRealmTransformState { nullptr };
     GCClient::IsoSubspace* m_clientSubspaceForStreamFromIterableContext { nullptr };
     GCClient::IsoSubspace* m_clientSubspaceForDirectStreamController { nullptr };
     GCClient::IsoSubspace* m_clientSubspaceForNativeStreamSourceAdapter { nullptr };

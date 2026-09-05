@@ -118,7 +118,6 @@ static JSC::JSPromise* performByteControllerPullAlgorithm(JSC::VM& vm, JSC::JSGl
     case SourceKind::Transform:
     case SourceKind::TeeBranch:
     case SourceKind::FromIterable:
-    case SourceKind::CrossRealm:
     case SourceKind::Native:
     case SourceKind::TextDecode:
         break;
@@ -152,7 +151,6 @@ static JSC::JSPromise* performByteControllerCancelAlgorithm(JSC::VM& vm, JSC::JS
     case SourceKind::Transform:
     case SourceKind::TeeBranch:
     case SourceKind::FromIterable:
-    case SourceKind::CrossRealm:
     case SourceKind::Native:
     case SourceKind::TextDecode:
         break;

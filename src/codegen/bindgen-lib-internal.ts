@@ -171,8 +171,6 @@ export class TypeImpl<K extends TypeKind = TypeKind> {
         return "bun.String";
       case "boolean":
         return "bool";
-      case "strictBoolean":
-        return "bool";
       case "f64":
       case "i8":
       case "i16":
@@ -195,8 +193,6 @@ export class TypeImpl<K extends TypeKind = TypeKind> {
       case "record": // undecided how to lower records
       case "sequence": // []const T
         return null;
-      case "externalClass":
-        throw new Error("TODO");
       case "dictionary": {
         let existing = typeHashToStruct.get(this.hash());
         if (existing) return existing;
@@ -489,7 +485,7 @@ export class TypeImpl<K extends TypeKind = TypeKind> {
   }
 
   isObjectType() {
-    return this.kind === "externalClass" || this.kind === "dictionary";
+    return this.kind === "dictionary";
   }
 
   [Symbol.toStringTag] = "Type";

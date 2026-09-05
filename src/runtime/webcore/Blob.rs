@@ -3328,19 +3328,12 @@ impl BlobExt for Blob {
                                     if let Some(blob) = item.as_class_ref::<Blob>() {
                                         could_have_non_ascii = could_have_non_ascii
                                             || blob.charset.get() != strings::AsciiStatus::AllAscii;
-                                        // A later part may run user JS that drops the
-                                        // last ref to this Blob's Store before `done()`.
-                                        if parts_can_run_js {
-                                            joiner.push_cloned(blob.shared_view());
-                                        } else {
-                                            // SAFETY: the prescan above proved no
-                                            // remaining part can run user JS, so this
-                                            // Blob (rooted via `_keep`/`arg`) keeps its
-                                            // Store alive until `joiner.done()` below.
-                                            joiner.push(unsafe {
-                                                bun_ptr::detach_lifetime(blob.shared_view())
-                                            });
-                                        }
+                                        push_blob_part_bytes(
+                                            blob,
+                                            &mut joiner,
+                                            global,
+                                            !parts_can_run_js,
+                                        )?;
                                         continue;
                                     } else {
                                         let utf8 = item.to_utf8(global)?;
@@ -3366,8 +3359,8 @@ impl BlobExt for Blob {
                             || blob.charset.get() != strings::AsciiStatus::AllAscii;
                         // This arm only handles entries deferred onto the walk
                         // stack; other pending entries may still run user JS and
-                        // free this Blob's Store before `done()`, so always copy.
-                        joiner.push_cloned(blob.shared_view());
+                        // free this Blob's Store before `done()`, so never borrow.
+                        push_blob_part_bytes(blob, &mut joiner, global, false)?;
                     } else {
                         let utf8 = current.to_utf8(global)?;
                         could_have_non_ascii = could_have_non_ascii || utf8.is_owned();
@@ -3545,6 +3538,125 @@ impl BlobExt for Blob {
             strings::AsciiStatus::NonAscii => Some(false),
         }
     }
+}
+
+/// Push one Blob part's bytes into the multi-part joiner; reads file-backed stores synchronously.
+fn push_blob_part_bytes(
+    blob: &Blob,
+    joiner: &mut bun_core::string_joiner::StringJoiner,
+    global: &JSGlobalObject,
+    borrow_bytes: bool,
+) -> JsResult<()> {
+    let Some(store) = blob.store.get() else {
+        return Ok(());
+    };
+    match &store.data {
+        store::Data::Bytes(_) => {
+            if borrow_bytes {
+                // SAFETY: caller's prescan proved no remaining part runs user
+                // JS, so this Blob (rooted via the constructor's `_keep`/`arg`)
+                // keeps its Store alive until `joiner.done()`.
+                joiner.push(unsafe { bun_ptr::detach_lifetime(blob.shared_view()) });
+            } else {
+                joiner.push_cloned(blob.shared_view());
+            }
+        }
+        store::Data::File(file) => {
+            let size = blob.size.get();
+            let offset = blob.offset.get();
+            match &file.pathlike {
+                PathOrFileDescriptor::Path(_) => {
+                    let mut node_fs = crate::node::fs::NodeFS::default();
+                    let mut rf_args = crate::node::fs::args::ReadFile::default();
+                    rf_args.encoding = crate::node::types::Encoding::Buffer;
+                    rf_args.path = file.pathlike.clone();
+                    rf_args.offset = offset;
+                    rf_args.max_size = if size == MAX_SIZE { None } else { Some(size) };
+                    match node_fs.read_file(&rf_args, crate::node::fs::Flavor::Sync) {
+                        Err(err) => return Err(global.throw_value(err.to_js(global))),
+                        Ok(mut result) => {
+                            joiner.push_cloned(result.slice());
+                            if let crate::node::types::StringOrBuffer::Buffer(buf) = &mut result {
+                                buf.destroy();
+                            }
+                        }
+                    }
+                }
+                PathOrFileDescriptor::Fd(fd) => {
+                    // pread (not read_file): the fd's cursor must not decide what a repeated part reads.
+                    let stat = match bun_sys::fstat(*fd) {
+                        bun_sys::Result::Ok(s) => s,
+                        bun_sys::Result::Err(err) => {
+                            return Err(global.throw_value(err.with_fd(*fd).to_js(global)));
+                        }
+                    };
+                    let file_len = stat.st_size.max(0) as SizeType;
+                    // st_size==0 may be a virtual file (procfs): grow-until-EOF instead of capping at 0.
+                    let avail = if file_len > 0 {
+                        file_len.saturating_sub(offset) as usize
+                    } else {
+                        usize::MAX
+                    };
+                    let cap = if size != MAX_SIZE {
+                        (size as usize).min(avail)
+                    } else {
+                        avail
+                    };
+                    if cap == 0 {
+                        return Ok(());
+                    }
+                    let enomem = || {
+                        global.throw_value(
+                            bun_sys::Error::from_code(bun_sys::E::ENOMEM, bun_sys::Tag::read)
+                                .with_fd(*fd)
+                                .to_js(global),
+                        )
+                    };
+                    let initial = if file_len > 0 { cap } else { 8192.min(cap) };
+                    let mut buf: Vec<u8> = Vec::new();
+                    if buf.try_reserve_exact(initial.min(8 << 30)).is_err() {
+                        return Err(enomem());
+                    }
+                    buf.resize(initial.min(8 << 30), 0);
+                    let mut total = 0usize;
+                    loop {
+                        if total == buf.len() {
+                            if total == cap {
+                                break;
+                            }
+                            let new_len = buf.len().saturating_mul(2).min(cap);
+                            if buf.try_reserve(new_len - buf.len()).is_err() {
+                                return Err(enomem());
+                            }
+                            buf.resize(new_len, 0);
+                        }
+                        let n = match bun_sys::pread(
+                            *fd,
+                            &mut buf[total..],
+                            (offset as i64).saturating_add(total as i64),
+                        ) {
+                            bun_sys::Result::Ok(n) => n,
+                            bun_sys::Result::Err(err) => {
+                                return Err(global.throw_value(err.with_fd(*fd).to_js(global)));
+                            }
+                        };
+                        if n == 0 {
+                            break;
+                        }
+                        total += n;
+                    }
+                    buf.truncate(total);
+                    joiner.push_owned(buf.into_boxed_slice());
+                }
+            }
+        }
+        store::Data::S3(_) => {
+            return Err(global.throw_invalid_arguments(format_args!(
+                "Blob parts backed by S3 cannot be read synchronously; await .bytes() or .arrayBuffer() first"
+            )));
+        }
+    }
+    Ok(())
 }
 
 // ──────────────────────────────────────────────────────────────────────────

@@ -39,6 +39,10 @@ use bun_sys::Fd;
 
 pub(crate) struct YarnLock<'a> {
     pub(crate) entries: Vec<Entry<'a>>,
+    /// `(package name, version)` -> index into `entries`.
+    name_version_to_idx: HashMap<(&'a [u8], &'a [u8]), usize>,
+    /// spec -> lowest index of an entry whose `specs` contains it.
+    spec_to_idx: HashMap<&'a [u8], usize>,
 }
 
 pub struct Entry<'a> {
@@ -256,6 +260,8 @@ impl<'a> YarnLock<'a> {
     fn init() -> YarnLock<'a> {
         YarnLock {
             entries: Vec::new(),
+            name_version_to_idx: HashMap::new(),
+            spec_to_idx: HashMap::new(),
         }
     }
 
@@ -451,18 +457,20 @@ impl<'a> YarnLock<'a> {
         Ok(())
     }
 
-    fn find_entry_by_spec(&self, spec: &[u8]) -> Option<&Entry<'a>> {
-        // Every caller only reads `.workspace` / `.specs`, so `&self`
-        // suffices and avoids the borrowck conflict with the outer
-        // `entries.iter()` loops.
-        for entry in self.entries.iter() {
-            for entry_spec in entry.specs.iter() {
-                if *entry_spec == spec {
-                    return Some(entry);
-                }
+    fn find_entry_idx_by_spec(&self, spec: &[u8]) -> Option<usize> {
+        self.spec_to_idx.get(spec).copied()
+    }
+
+    /// Keeps the lowest index so lookups match what a front-to-back scan finds.
+    fn note_spec(&mut self, spec: &'a [u8], idx: usize) -> Result<(), Error> {
+        if let Some(existing) = self.spec_to_idx.get_mut(&spec) {
+            if *existing > idx {
+                *existing = idx;
             }
+        } else {
+            self.spec_to_idx.put(spec, idx)?;
         }
-        None
+        Ok(())
     }
 
     fn consolidate_and_append_entry(&mut self, new_entry: Entry<'a>) -> Result<(), Error> {
@@ -471,25 +479,26 @@ impl<'a> YarnLock<'a> {
         }
         let package_name = Entry::get_name_from_spec(new_entry.specs[0]);
 
-        for existing_entry in self.entries.iter_mut() {
-            if existing_entry.specs.is_empty() {
-                continue;
+        if let Some(&existing_idx) = self
+            .name_version_to_idx
+            .get(&(package_name, new_entry.version))
+        {
+            for spec in new_entry.specs.iter() {
+                self.note_spec(*spec, existing_idx)?;
             }
-            let existing_name = Entry::get_name_from_spec(existing_entry.specs[0]);
-
-            if package_name == existing_name && new_entry.version == existing_entry.version {
-                let old_len = existing_entry.specs.len();
-                let mut combined_specs: Vec<&'a [u8]> =
-                    Vec::with_capacity(old_len + new_entry.specs.len());
-                combined_specs.extend_from_slice(&existing_entry.specs);
-                combined_specs.extend_from_slice(&new_entry.specs);
-
-                existing_entry.specs = combined_specs;
-                // new_entry.specs dropped here
-                return Ok(());
-            }
+            self.entries[existing_idx]
+                .specs
+                .extend_from_slice(&new_entry.specs);
+            // new_entry dropped here
+            return Ok(());
         }
 
+        let idx = self.entries.len();
+        for spec in new_entry.specs.iter() {
+            self.note_spec(*spec, idx)?;
+        }
+        self.name_version_to_idx
+            .put((package_name, new_entry.version), idx)?;
         self.entries.push(new_entry);
         Ok(())
     }
@@ -529,8 +538,8 @@ fn process_deps(
         )
         .expect("unreachable");
 
-        if let Some(dep_entry) = yarn_lock_.find_entry_by_spec(&dep_spec) {
-            let dep_entry_workspace = dep_entry.workspace;
+        if let Some(dep_entry_idx) = yarn_lock_.find_entry_idx_by_spec(&dep_spec) {
+            let dep_entry_workspace = yarn_lock_.entries[dep_entry_idx].workspace;
             let dep_name_hash = string_hash(dep_name);
             let dep_name_str = string_buf_.append_with_hash(dep_name, dep_name_hash)?;
 
@@ -555,22 +564,12 @@ fn process_deps(
                 .unwrap_or_default(),
                 behavior: behavior_for(dep_type, dep_entry_workspace),
             };
-            let mut found_package_id: Option<PackageID> = None;
-            'outer: for (yarn_idx, entry_) in yarn_lock_.entries.iter().enumerate() {
-                for entry_spec in entry_.specs.iter() {
-                    if *entry_spec == dep_spec.as_slice() {
-                        found_package_id = Some(yarn_entry_to_package_id[yarn_idx]);
-                        break 'outer;
-                    }
-                }
-            }
+            let pkg_id = yarn_entry_to_package_id[dep_entry_idx];
 
-            if let Some(pkg_id) = found_package_id {
-                // SAFETY: `deps_buf` is uninitialized spare capacity; `ptr::write` skips Drop.
-                unsafe { core::ptr::write(deps_buf.as_mut_ptr().add(count), dep) };
-                res_buf[count] = pkg_id;
-                count += 1;
-            }
+            // SAFETY: `deps_buf` is uninitialized spare capacity; `ptr::write` skips Drop.
+            unsafe { core::ptr::write(deps_buf.as_mut_ptr().add(count), dep) };
+            res_buf[count] = pkg_id;
+            count += 1;
         }
     }
     Ok(count)
@@ -900,9 +899,6 @@ pub(crate) fn migrate_yarn_lockfile<'a>(
 
     let mut package_id_to_yarn_idx: Vec<usize> = vec![usize::MAX; next_package_id as usize];
 
-    let created_packages: StringHashMap<bool> = StringHashMap::new();
-    let _ = &created_packages; // never populated
-
     for (yarn_idx, entry) in yarn_lock.entries.iter().enumerate() {
         let mut is_npm_alias = false;
         for spec in entry.specs.iter() {
@@ -1132,20 +1128,7 @@ pub(crate) fn migrate_yarn_lockfile<'a>(
             )
             .expect("unreachable");
 
-            let mut found_idx: Option<usize> = None;
-            for (idx, entry) in yarn_lock.entries.iter().enumerate() {
-                for spec in entry.specs.iter() {
-                    if *spec == dep_spec.as_slice() {
-                        found_idx = Some(idx);
-                        break;
-                    }
-                }
-                if found_idx.is_some() {
-                    break;
-                }
-            }
-
-            if let Some(idx) = found_idx {
+            if let Some(idx) = yarn_lock.find_entry_idx_by_spec(&dep_spec) {
                 let name_hash = string_hash(&dep.name);
                 let dep_name_string = sbuf!().append_with_hash(&dep.name, name_hash)?;
                 let version_string = sbuf!().append(&dep.version)?;
@@ -1301,85 +1284,6 @@ pub(crate) fn migrate_yarn_lockfile<'a>(
         dependencies: lockfile::DependencyIDSlice::new(0, 0),
     });
 
-    let mut package_dependents: Vec<Vec<PackageID>> =
-        (0..next_package_id).map(|_| Vec::new()).collect();
-
-    for (yarn_idx, entry) in yarn_lock.entries.iter().enumerate() {
-        let parent_package_id = yarn_entry_to_package_id[yarn_idx];
-
-        let dep_maps: [Option<&StringHashMap<&[u8]>>; 4] = [
-            entry.dependencies.as_ref(),
-            entry.optional_dependencies.as_ref(),
-            entry.peer_dependencies.as_ref(),
-            entry.dev_dependencies.as_ref(),
-        ];
-
-        for deps in dep_maps.iter().flatten() {
-            for (dep_name_key, dep_version_ref) in deps.iter() {
-                let dep_name: &[u8] = dep_name_key.as_ref();
-                let dep_version: &[u8] = *dep_version_ref;
-                let mut dep_spec = Vec::new();
-                write!(
-                    &mut dep_spec,
-                    "{}@{}",
-                    bstr::BStr::new(dep_name),
-                    bstr::BStr::new(dep_version)
-                )
-                .expect("unreachable");
-
-                let found_entry_idx: Option<usize> = yarn_lock
-                    .entries
-                    .iter()
-                    .position(|e| e.specs.contains(&dep_spec.as_slice()));
-
-                if let Some(found_entry_idx) = found_entry_idx {
-                    let dep_entry_specs = &yarn_lock.entries[found_entry_idx].specs;
-                    for (idx, e) in yarn_lock.entries.iter().enumerate() {
-                        let mut found = false;
-                        for spec in e.specs.iter() {
-                            for dep_spec_item in dep_entry_specs.iter() {
-                                if *spec == *dep_spec_item {
-                                    found = true;
-                                    break;
-                                }
-                            }
-                            if found {
-                                break;
-                            }
-                        }
-
-                        if found {
-                            let dep_package_id = yarn_entry_to_package_id[idx];
-                            package_dependents[dep_package_id as usize].push(parent_package_id);
-                            break;
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    for dep in root_dependencies.iter() {
-        let mut dep_spec = Vec::new();
-        write!(
-            &mut dep_spec,
-            "{}@{}",
-            bstr::BStr::new(&dep.name),
-            bstr::BStr::new(&dep.version)
-        )
-        .expect("unreachable");
-
-        for (idx, entry) in yarn_lock.entries.iter().enumerate() {
-            for spec in entry.specs.iter() {
-                if *spec == dep_spec.as_slice() {
-                    let dep_package_id = yarn_entry_to_package_id[idx];
-                    package_dependents[dep_package_id as usize].push(0); // 0 is root package
-                    break;
-                }
-            }
-        }
-    }
-
     for (base_name, versions) in scoped_packages.iter_mut() {
         let base_name: &[u8] = base_name.as_ref();
 
@@ -1390,36 +1294,28 @@ pub(crate) fn migrate_yarn_lockfile<'a>(
         let _ = this.package_index.remove(&original_name_hash);
     }
 
+    // Ids currently present in `package_index`, kept in sync below.
+    let mut ids_in_package_index: HashMap<PackageID, ()> = HashMap::new();
+    for (_, index_value) in this.package_index.iter() {
+        match index_value {
+            lockfile::PackageIndexEntry::Id(id) => {
+                ids_in_package_index.put(*id, ())?;
+            }
+            lockfile::PackageIndexEntry::Ids(ids) => {
+                for id in ids.iter() {
+                    ids_in_package_index.put(*id, ())?;
+                }
+            }
+        }
+    }
+
     for (base_name, versions) in scoped_packages.iter() {
         let base_name: &[u8] = base_name.as_ref();
 
         for version_info in versions.iter() {
             let package_id = version_info.package_id;
 
-            let mut found_in_index = false;
-            for (_, index_value) in this.package_index.iter() {
-                match index_value {
-                    lockfile::PackageIndexEntry::Id(id) => {
-                        if *id == package_id {
-                            found_in_index = true;
-                            break;
-                        }
-                    }
-                    lockfile::PackageIndexEntry::Ids(ids) => {
-                        for id in ids.iter() {
-                            if *id == package_id {
-                                found_in_index = true;
-                                break;
-                            }
-                        }
-                        if found_in_index {
-                            break;
-                        }
-                    }
-                }
-            }
-
-            if !found_in_index {
+            if !ids_in_package_index.contains_key(&package_id) {
                 let mut fallback_name = Vec::new();
                 write!(
                     &mut fallback_name,
@@ -1431,6 +1327,7 @@ pub(crate) fn migrate_yarn_lockfile<'a>(
 
                 let fallback_hash = string_hash(&fallback_name);
                 this.get_or_put_id(package_id, fallback_hash)?;
+                ids_in_package_index.put(package_id, ())?;
             }
         }
     }
@@ -1446,26 +1343,6 @@ pub(crate) fn migrate_yarn_lockfile<'a>(
 
     let mut root_packages: StringHashMap<PackageID> = StringHashMap::new();
 
-    let mut usage_count: StringHashMap<u32> = StringHashMap::new();
-    for entry_idx in 0..yarn_lock.entries.len() {
-        let package_id = yarn_entry_to_package_id[entry_idx];
-        if package_id == install::INVALID_PACKAGE_ID {
-            continue;
-        }
-        let base_name = package_names[package_id as usize];
-
-        for dep_entry in yarn_lock.entries.iter() {
-            if let Some(deps) = &dep_entry.dependencies {
-                for (dep_name_key, _) in deps.iter() {
-                    if dep_name_key.as_ref() == base_name {
-                        let count = usage_count.get(base_name).copied().unwrap_or(0);
-                        usage_count.put(base_name, count + 1)?;
-                    }
-                }
-            }
-        }
-    }
-
     for entry_idx in 0..yarn_lock.entries.len() {
         let package_id = yarn_entry_to_package_id[entry_idx];
         if package_id == install::INVALID_PACKAGE_ID {
@@ -1480,8 +1357,23 @@ pub(crate) fn migrate_yarn_lockfile<'a>(
         }
     }
 
-    let mut scoped_names: HashMap<PackageID, Vec<u8>> = HashMap::new();
-    let mut scoped_count: u32 = 0;
+    // Entry indices, in entry order, with a production dependency on a name.
+    let mut dependents_by_dep_name: HashMap<&[u8], Vec<usize>> = HashMap::new();
+    for (dep_entry_idx, dep_entry) in yarn_lock.entries.iter().enumerate() {
+        if yarn_entry_to_package_id[dep_entry_idx] == install::INVALID_PACKAGE_ID {
+            continue;
+        }
+        if let Some(deps) = &dep_entry.dependencies {
+            for (dep_name_key, _) in deps.iter() {
+                dependents_by_dep_name
+                    .get_or_put(dep_name_key.as_ref())?
+                    .value_ptr
+                    .push(dep_entry_idx);
+            }
+        }
+    }
+
+    let mut used_scoped_names: StringHashMap<()> = StringHashMap::new();
     for entry_idx in 0..yarn_lock.entries.len() {
         let package_id = yarn_entry_to_package_id[entry_idx];
         if package_id == install::INVALID_PACKAGE_ID {
@@ -1498,46 +1390,28 @@ pub(crate) fn migrate_yarn_lockfile<'a>(
         }
 
         let mut scoped_name: Option<Vec<u8>> = None;
-        for (dep_entry_idx, dep_entry) in yarn_lock.entries.iter().enumerate() {
-            let dep_package_id = yarn_entry_to_package_id[dep_entry_idx];
-            if dep_package_id == install::INVALID_PACKAGE_ID {
-                continue;
-            }
-
-            if let Some(deps) = &dep_entry.dependencies {
-                for (dep_name_key, _) in deps.iter() {
-                    if dep_name_key.as_ref() == base_name {
-                        if dep_package_id != package_id {
-                            let parent_name = package_names[dep_package_id as usize];
-
-                            let mut potential_name = Vec::new();
-                            write!(
-                                &mut potential_name,
-                                "{}/{}",
-                                bstr::BStr::new(parent_name),
-                                bstr::BStr::new(base_name)
-                            )
-                            .expect("unreachable");
-
-                            let mut name_already_used = false;
-                            for existing_name in scoped_names.values() {
-                                if existing_name.as_slice() == potential_name.as_slice() {
-                                    name_already_used = true;
-                                    break;
-                                }
-                            }
-
-                            if !name_already_used {
-                                scoped_name = Some(potential_name);
-                                break;
-                            }
-                            // else: potential_name dropped
-                        }
-                    }
+        if let Some(dependent_idxs) = dependents_by_dep_name.get(&base_name) {
+            for &dep_entry_idx in dependent_idxs.iter() {
+                let dep_package_id = yarn_entry_to_package_id[dep_entry_idx];
+                if dep_package_id == package_id {
+                    continue;
                 }
-                if scoped_name.is_some() {
+                let parent_name = package_names[dep_package_id as usize];
+
+                let mut potential_name = Vec::new();
+                write!(
+                    &mut potential_name,
+                    "{}/{}",
+                    bstr::BStr::new(parent_name),
+                    bstr::BStr::new(base_name)
+                )
+                .expect("unreachable");
+
+                if used_scoped_names.get(potential_name.as_slice()).is_none() {
+                    scoped_name = Some(potential_name);
                     break;
                 }
+                // else: potential_name dropped
             }
         }
 
@@ -1572,11 +1446,9 @@ pub(crate) fn migrate_yarn_lockfile<'a>(
         if let Some(final_scoped_name) = scoped_name {
             let name_hash = string_hash(&final_scoped_name);
             this.get_or_put_id(package_id, name_hash)?;
-            scoped_names.put(package_id, final_scoped_name)?;
-            scoped_count += 1;
+            used_scoped_names.put(&final_scoped_name, ())?;
         }
     }
-    let _ = scoped_count;
 
     for (yarn_idx, entry) in yarn_lock.entries.iter().enumerate() {
         let package_id = yarn_entry_to_package_id[yarn_idx];

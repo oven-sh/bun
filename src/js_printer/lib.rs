@@ -1352,6 +1352,9 @@ pub struct Options<'a> {
     pub inline_require_and_import_errors: bool,
     pub has_run_symbol_renamer: bool,
 
+    /// Prints `EImportMetaMain` as this boolean literal. The bundler sets it per chunk.
+    pub import_meta_main_value: Option<bool>,
+
     pub require_or_import_meta_for_source_callback: RequireOrImportMetaCallback,
 
     /// Module type of the file being printed. `Esm` prints `__toESM(.., 1)`, which ignores `__esModule`.
@@ -1426,6 +1429,7 @@ impl<'a> Default for Options<'a> {
             print_dce_annotations: true,
             inline_require_and_import_errors: true,
             has_run_symbol_renamer: false,
+            import_meta_main_value: None,
             require_or_import_meta_for_source_callback: RequireOrImportMetaCallback::default(),
             input_module_type: bundle_opts::ModuleType::Unknown,
             module_type: bundle_opts::Format::Esm,
@@ -1807,6 +1811,14 @@ pub(crate) mod __gated_printer {
                         ExprData::EBoolean(_) | ExprData::EBranchBoolean(_) => {
                             // When minifying, booleans are printed as "!0 and "!1"
                             if self.options.minify_syntax {
+                                v.left_level = Level::Call;
+                            }
+                        }
+                        // With `import_meta_main_value`, this node prints as a boolean.
+                        ExprData::EImportMetaMain(_) => {
+                            if self.options.minify_syntax
+                                && self.options.import_meta_main_value.is_some()
+                            {
                                 v.left_level = Level::Call;
                             }
                         }
@@ -3310,7 +3322,18 @@ pub(crate) mod __gated_printer {
                     }
                 }
                 ExprData::EImportMetaMain(data) => {
-                    if self.options.module_type == bundle_opts::Format::Esm
+                    if let Some(value) = self.options.import_meta_main_value {
+                        self.print_expr(
+                            Expr {
+                                data: ExprData::EBoolean(E::Boolean {
+                                    value: value != data.inverted,
+                                }),
+                                loc: expr.loc,
+                            },
+                            level,
+                            in_flags,
+                        );
+                    } else if self.options.module_type == bundle_opts::Format::Esm
                         && self.options.target != bun_ast::Target::Node
                     {
                         // Node.js doesn't support import.meta.main

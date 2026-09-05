@@ -231,6 +231,19 @@ export const globalFlags: Flag[] = [
     desc: "Undefine _DLL (we link statically)",
   },
 
+  // ─── lsxpack struct ABI (all platforms) ───
+  {
+    // lsxpack_header.h (shared by lshpack/lsqpack/lsquic and bun's own
+    // quic.c/node_quic_shim.c/c-bindings.cpp) sizes lsxpack_strlen_t from
+    // this macro; the upstream default (UINT16_MAX) caps any single decoded
+    // HTTP/2/3 header at 64 KB and makes a ~44 KB H3 field section abort the
+    // whole connection with H3_QPACK_DECOMPRESSION_FAILED. The value is
+    // struct-layout ABI, so every TU that includes the header must agree
+    // (packages/h3blast/Makefile sets it too for the same reason).
+    flag: "-DLSXPACK_MAX_STRLEN=UINT32_MAX",
+    desc: "lshpack/lsqpack: 32-bit header lengths (struct ABI; must match across all consumers)",
+  },
+
   // ─── Optimization ───
   {
     // cmake's Release/RelWithDebInfo build types append this to

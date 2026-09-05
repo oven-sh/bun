@@ -25,10 +25,10 @@ import { createHash } from "node:crypto";
 import { createReadStream, existsSync, readFileSync } from "node:fs";
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { basename, join } from "node:path";
-import { formatElapsed } from "./tty.ts";
 import { downloadWithRetry, extractTarGz, fetchPrebuilt, gitArchive, parseGitArchiveUrl } from "./download.ts";
 import { BuildError, assert } from "./error.ts";
 import { writeIfChanged } from "./fs.ts";
+import { formatElapsed } from "./tty.ts";
 
 /**
  * Absolute path to this file. Ninja rules use this in their command strings.

@@ -291,6 +291,13 @@ pub struct TreeContext {
 
     /// Number of installed dependencies. Could be successful or failure.
     pub(crate) install_count: usize,
+
+    /// Dependencies whose folder in this tree is replaced by this install.
+    pub(crate) replaced: Vec<DependencyID>,
+
+    /// This tree is inside one of an ancestor's `replaced` folders, so what is
+    /// on disk here is going away (possibly after a download) and cannot be skipped.
+    pub(crate) inside_replaced_folder: bool,
 }
 
 type TreeContextId = lockfile::tree::Id;
@@ -887,8 +894,7 @@ impl<'a> PackageInstaller<'a> {
                     self.node_modules.path = context.path;
                     self.current_tree_id = context.tree_id;
 
-                    // Re-verify: a parent reinstall may have deleted a deferred entry.
-                    let needs_verify = true;
+                    let needs_verify = false;
                     let is_pending_package_install = true;
                     self.install_package_with_name_and_resolution(
                         // This id might be different from the id used to enqueue the task. Important
@@ -1022,6 +1028,38 @@ impl<'a> PackageInstaller<'a> {
         }
 
         true
+    }
+
+    /// Call before installing a tree's dependencies; relies on trees being
+    /// visited in id order, so the parent's `replaced` is already complete.
+    pub(crate) fn set_inside_replaced_folder(&mut self, tree_id: lockfile::tree::Id) {
+        let lockfile = self.lockfile();
+        let tree = lockfile.buffers.trees.as_slice()[tree_id as usize];
+        if tree.parent == lockfile::tree::INVALID_ID {
+            return;
+        }
+        debug_assert!(tree.parent < tree_id);
+
+        let parent = &self.trees[tree.parent as usize];
+        let inside = parent.inside_replaced_folder || {
+            let deps = lockfile.buffers.dependencies.as_slice();
+            let string_buf = lockfile.buffers.string_bytes.as_slice();
+            let folder = tree.folder_name(deps, string_buf);
+            parent
+                .replaced
+                .iter()
+                .any(|&dep_id| deps[dep_id as usize].name.slice(string_buf) == folder)
+        };
+        self.trees[tree_id as usize].inside_replaced_folder = inside;
+    }
+
+    /// `install_from_link` re-points one symlink; `PackageInstall::install` replaces
+    /// the folder, folder dependencies included (a directory of per-file symlinks).
+    fn install_replaces_folder(tag: resolution::Tag) -> bool {
+        !matches!(
+            tag,
+            resolution::Tag::Symlink | resolution::Tag::Workspace | resolution::Tag::Root
+        )
     }
 
     // `pub fn deinit` dropped. All owned fields (`pending_lifecycle_scripts: Vec`,
@@ -1570,11 +1608,26 @@ impl<'a> PackageInstaller<'a> {
             }
         }
 
-        let needs_install = self.force_install
-            || self.skip_verify_installed_version_number
-            || !needs_verify
+        let verifying =
+            needs_verify && !self.force_install && !self.skip_verify_installed_version_number;
+        let inside_replaced_folder =
+            self.trees[self.current_tree_id as usize].inside_replaced_folder;
+        let needs_install = !verifying
             || remove_patch
+            || inside_replaced_folder
             || !installer.verify(resolution, &self.root_node_modules_folder);
+        self.summary.skipped += (!needs_install) as u32;
+
+        // Not needed inside a replaced folder: child trees inherit the flag.
+        if verifying
+            && needs_install
+            && !inside_replaced_folder
+            && Self::install_replaces_folder(resolution.tag)
+        {
+            self.trees[self.current_tree_id as usize]
+                .replaced
+                .push(dependency_id);
+        }
 
         if needs_install {
             if resolution.tag.can_enqueue_install_task()
@@ -1824,8 +1877,8 @@ impl<'a> PackageInstaller<'a> {
                         || (resolution.tag == resolution::Tag::Folder
                             && !self.lockfile().is_workspace_tree_id(self.current_tree_id))
                     {
-                        // This is a transitive folder dependency. It is installed with a single symlink to the target folder/file,
-                        // and is not hoisted.
+                        // This is a transitive folder dependency. It is installed as a directory of symlinks
+                        // to the target's files (see `PackageInstall::install`), and is not hoisted.
                         //
                         // A transitive `Resolution::Folder` declared by a local `file:` package
                         // is relative to the top-level dir (`Package::parse` normalized it), so
@@ -2204,27 +2257,6 @@ impl<'a> PackageInstaller<'a> {
                 }
             }
         } else {
-            // Same gate as the `needs_install` branch: a pending parent's
-            // `uninstall_before_install` would delete this verified package.
-            if !is_pending_package_install
-                && !Self::can_install_package_for_tree(
-                    &self.completed_trees,
-                    self.lockfile().buffers.trees.as_slice(),
-                    self.current_tree_id,
-                )
-            {
-                self.trees[self.current_tree_id as usize]
-                    .pending_installs
-                    .push(DependencyInstallContext {
-                        dependency_id,
-                        tree_id: self.current_tree_id,
-                        path: self.node_modules.path.clone(),
-                    });
-                return;
-            }
-
-            self.summary.skipped += 1;
-
             if self.bins[package_id as usize].tag != bin::Tag::None {
                 self.trees[self.current_tree_id as usize]
                     .binaries

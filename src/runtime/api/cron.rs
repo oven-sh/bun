@@ -1885,10 +1885,6 @@ pub(crate) fn cron_parse(global: &JSGlobalObject, frame: &CallFrame) -> JsResult
     let Some(next_ms) = parsed.next(global, from_ms, tz)? else {
         return Ok(JSValue::NULL);
     };
-    // Return null (not Invalid Date) so callers can rely on `=== null` for "no future match".
-    if next_ms > jsc::wtf::MAX_ECMASCRIPT_TIME {
-        return Ok(JSValue::NULL);
-    }
     Ok(JSValue::from_date_number(global, next_ms))
 }
 

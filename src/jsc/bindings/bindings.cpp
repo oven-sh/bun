@@ -6062,6 +6062,8 @@ extern "C" [[ZIG_EXPORT(nothrow)]] double Bun__gregorianDateTimeToMSInZone(JSC::
     int year, int month, int day, int hour, int minute, int second, int millisecond, uint32_t tzID)
 {
     UNUSED_PARAM(globalObject);
+    if (!JSC::ISO8601::isYearWithinLimits(year))
+        return std::numeric_limits<double>::quiet_NaN();
     auto tz = JSC::TimeZone::fromID(tzID);
     JSC::ISO8601::PlainDate date { year, static_cast<unsigned>(month), static_cast<unsigned>(day) };
     JSC::ISO8601::PlainTime time { static_cast<unsigned>(hour), static_cast<unsigned>(minute),

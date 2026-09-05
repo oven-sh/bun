@@ -3319,10 +3319,9 @@ describe("bundler", () => {
     run: { stdout: '[true,true,null,"{\\"__proto__\\":{\\"x\\":1},\\"a\\":2}"]' },
   });
   // The macro module is transpiled by the macro VM, not by the bundler. That
-  // VM has to be created from the build's transform options, or the macro
-  // module does not see `--define` and `--loader`. The `Bun.build()` variant
-  // lives in transpiler/macro-test.test.ts: the macro VM of a worker thread
-  // outlives the build that created it, so that test needs its own process.
+  // VM takes the build's transform options, or the macro module does not see
+  // `--define` and `--loader`. `define` picks the CLI backend; the `Bun.build()`
+  // variants live in transpiler/macro-test.test.ts.
   itBundled("edgecase/MacroSeesBuildDefinesAndLoaders", {
     files: {
       "/entry.ts": /* js */ `
@@ -3340,7 +3339,6 @@ describe("bundler", () => {
       `,
       "/banner.dat": "hello from a text loader",
     },
-    backend: "cli",
     define: { "process.env.MODE": '"prod"' },
     loader: { ".dat": "text" },
     target: "bun",
@@ -3348,6 +3346,8 @@ describe("bundler", () => {
   });
   // `--external` and `--packages=external` describe the output bundle, not the
   // macro VM. A package the macro module imports has to resolve at build time.
+  // The API backend runs in this process, on worker VMs that earlier tests'
+  // builds created with other options.
   itBundled("edgecase/MacroImportsPackageMarkedExternal", {
     files: {
       "/entry.ts": /* js */ `
@@ -3364,7 +3364,6 @@ describe("bundler", () => {
       "/node_modules/foo/package.json": `{ "name": "foo", "version": "1.0.0", "main": "index.js" }`,
       "/node_modules/foo/index.js": `module.exports = "foo-value";`,
     },
-    backend: "cli",
     external: ["foo"],
     packages: "external",
     target: "bun",

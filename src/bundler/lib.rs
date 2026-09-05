@@ -251,6 +251,8 @@ pub mod options {
     /// `options.Format` — many ported call-sites spell this `OutputFormat`.
     pub use bun_options_types::Format as OutputFormat;
     pub use bun_options_types::schema::api::DotEnvBehavior as EnvBehavior;
+    /// The type behind `TransformOptions::target`.
+    pub use bun_options_types::schema::api::Target as TransformTarget;
     /// The type behind `BundleOptions::transform_options`.
     pub use bun_options_types::schema::api::TransformOptions;
 

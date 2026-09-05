@@ -30,7 +30,7 @@ import { BuildError } from "./error.ts";
 export type ProfileName = keyof typeof profiles;
 
 export const profiles = {
-  /** Default local dev: debug + prebuilt WebKit. ASAN defaults on for supported platforms. */
+  /** Default local dev: debug build; JSC compiled from the pinned WEBKIT_VERSION. ASAN defaults on for supported platforms. */
   debug: {
     buildType: "Debug",
   },
@@ -127,12 +127,11 @@ export const profiles = {
    * Bench-till-green profile. Mirrors the codegen the CI release build
    * actually ships (`ci-release` resolves `lto: true` for ci+release+linux),
    * so PORT-vs-SYS comparisons measure what we'd actually ship — no PGO, no
-   * symbol ordering, no special-case linker layout. lto=true selects the
-   * `-lto` WebKit prebuilt (LLVM bitcode, re-codegen'd `-fno-pic` under
-   * `-flto=thin -fwhole-program-vtables`) so cross-TU inlining runs; without
-   * it the non-LTO WebKit .a lands ~555 KB of C++ vtables in `.data.rel.ro`,
-   * keeps `.eh_frame` (+962 KB), and outlines JSC slow-paths — the bench then
-   * reports a ~6-8% time / ~1 MB RSS "regression" that is pure binary layout.
+   * symbol ordering, no special-case linker layout. lto=true compiles JSC
+   * as ThinLTO bitcode with the rest (`-flto=thin -fwhole-program-vtables`)
+   * so cross-TU inlining runs; a non-LTO build outlines JSC slow-paths and
+   * the bench then reports a ~6-8% time / ~1 MB RSS "regression" that is
+   * pure binary layout.
    */
   btg: {
     buildType: "Release",

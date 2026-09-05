@@ -2178,7 +2178,7 @@ pub fn percent_encode_write(
         remaining = &remaining[j..];
         let code_point_len: usize = wtf8_byte_sequence_length_with_invalid(remaining[0]) as usize;
         if remaining.len() < code_point_len {
-            crate::hint::cold();
+            core::hint::cold_path();
             return Err(PercentEncodeError::IncompleteUTF8);
         }
 

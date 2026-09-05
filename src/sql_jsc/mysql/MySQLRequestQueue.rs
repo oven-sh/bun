@@ -71,7 +71,7 @@ impl MySQLRequestQueue {
             .get()
             .unwrap_or(false)
         {
-            // @branchHint(.unlikely) — no stable Rust equivalent; left as plain branch.
+            core::hint::cold_path();
             return false;
         }
 

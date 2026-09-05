@@ -1827,8 +1827,7 @@ impl<'a> Resolver<'a> {
 
         if check_relative {
             if let Some(custom_paths) = self.custom_dir_paths {
-                // @branchHint(.unlikely)
-                bun_core::hint::cold();
+                core::hint::cold_path();
                 for custom_path in custom_paths {
                     let custom_utf8 = custom_path.to_utf8();
                     match self.check_relative_path(
@@ -1969,7 +1968,7 @@ impl<'a> Resolver<'a> {
             }
 
             if let Some(custom_paths) = self.custom_dir_paths {
-                bun_core::hint::cold();
+                core::hint::cold_path();
                 for custom_path in custom_paths {
                     let custom_utf8 = custom_path.to_utf8();
                     match self.check_package_path(

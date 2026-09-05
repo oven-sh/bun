@@ -1913,7 +1913,7 @@ impl Mask {
         *mask_buf = Self::generate(global_this);
         let skip_mask = u32::from_ne_bytes(*mask_buf) == 0;
         if input.is_empty() {
-            bun_core::hint::cold();
+            core::hint::cold_path();
             return;
         }
         bun_highway::fill_with_skip_mask(*mask_buf, &mut output[..input.len()], input, skip_mask);
@@ -1925,7 +1925,7 @@ impl Mask {
         *mask_buf = Self::generate(global_this);
         let skip_mask = u32::from_ne_bytes(*mask_buf) == 0;
         if buf.is_empty() {
-            bun_core::hint::cold();
+            core::hint::cold_path();
             return;
         }
         bun_highway::fill_with_skip_mask_inplace(*mask_buf, buf, skip_mask);

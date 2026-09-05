@@ -612,7 +612,7 @@ fn parse_array(
 
     // postgres dont really support arrays with more than 2^31 elements, 2ˆ32 is the max we support, but users should never reach this branch
     if !reached_end || array.len() > u32::MAX as usize {
-        bun_core::hint::cold();
+        core::hint::cold_path();
         return Err(AnyPostgresError::UnsupportedArrayFormat);
     }
 

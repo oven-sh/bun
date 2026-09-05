@@ -1316,9 +1316,9 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
     /// the per-transport `RequestContext` bounds.
     pub(super) fn notify_inspector_server_stopped(&mut self) {
         if self.inspector_server_id.get() != 0 {
-            bun_core::hint::cold();
+            core::hint::cold_path();
             if let Some(debugger) = &self.vm().as_mut().debugger {
-                bun_core::hint::cold();
+                core::hint::cold_path();
                 // NOTE (layering): the `HTTPServerAgent.notifyServerStopped`
                 // wrapper lives in
                 // `super::http_server_agent` so this crate-tier call doesn't
@@ -2524,7 +2524,7 @@ where
                     let addr = match SocketAddress::init(address_bytes, port) {
                         Ok(a) => a,
                         Err(_) => {
-                            bun_core::hint::cold();
+                            core::hint::cold_path();
                             return Ok(JSValue::NULL);
                         }
                     };
@@ -2542,7 +2542,7 @@ where
                         let addr = match SocketAddress::init(address_bytes, port) {
                             Ok(a) => a,
                             Err(_) => {
-                                bun_core::hint::cold();
+                                core::hint::cold_path();
                                 return Ok(JSValue::NULL);
                             }
                         };

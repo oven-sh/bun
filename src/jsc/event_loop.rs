@@ -1015,7 +1015,7 @@ impl EventLoop {
         // loop (the recursion check).
         if unsafe { (*this).next_immediate_tasks.capacity() } > 0 {
             // this would only occur if we were recursively running tickImmediateTasks.
-            bun_core::hint::cold();
+            core::hint::cold_path();
             // SAFETY: as above.
             let next = core::mem::take(unsafe { &mut (*this).next_immediate_tasks });
             // SAFETY: as above.

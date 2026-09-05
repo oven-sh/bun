@@ -2917,7 +2917,7 @@ impl VirtualMachine {
 
                 // Check if Module.runMain was patched.
                 if self.has_patched_run_main {
-                    bun_core::hint::cold();
+                    core::hint::cold_path();
                     self.pending_internal_promise = None;
                     self.pending_internal_promise_is_protected = false;
                     let global_ref = self.global();

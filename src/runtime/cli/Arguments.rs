@@ -1514,7 +1514,7 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
     ctx.bundler_options.ignore_dce_annotations = args.flag(b"--ignore-dce-annotations");
 
     if cmd == CommandTag::BuildCommand {
-        parse_build_command_options(cmd, &args, &mut opts, ctx, &mut diag);
+        parse_build_command_options(cmd, &args, &mut opts, ctx);
     }
 
     if opts.entry_points.is_empty() {
@@ -2029,7 +2029,6 @@ fn parse_build_command_options(
     args: &clap::Args<clap::Help>,
     opts: &mut api::TransformOptions,
     ctx: Context<'_>,
-    diag: &mut clap::Diagnostic,
 ) {
     ctx.bundler_options.transform_only = args.flag(b"--no-bundle");
     ctx.bundler_options.bytecode = args.flag(b"--bytecode");
@@ -2184,7 +2183,13 @@ fn parse_build_command_options(
                     }
                 }
                 b"bun" => api::Target::Bun,
-                _ => cli::invalid_target(diag, target),
+                _ => {
+                    Output::err_generic(
+                        "Invalid value for --target: {}. Must be 'browser', 'bun', or 'node'.",
+                        (bun_core::fmt::quote(target),),
+                    );
+                    Global::exit(1);
+                }
             }));
 
             if opts.target.unwrap() == api::Target::Bun {
@@ -2193,12 +2198,7 @@ fn parse_build_command_options(
                 if ctx.bundler_options.bytecode {
                     Output::err_generic(
                         "target must be 'bun' when bytecode is true. Received: {}",
-                        format_args!(
-                            "{:?}",
-                            <bun_ast::Target as bun_options_types::TargetExt>::from_api(
-                                opts.target
-                            )
-                        ),
+                        format_args!("{}", BStr::new(target)),
                     );
                     Global::exit(1);
                 }
@@ -2206,12 +2206,7 @@ fn parse_build_command_options(
                 if ctx.bundler_options.bake {
                     Output::err_generic(
                         "target must be 'bun' when using --app. Received: {}",
-                        format_args!(
-                            "{:?}",
-                            <bun_ast::Target as bun_options_types::TargetExt>::from_api(
-                                opts.target
-                            )
-                        ),
+                        format_args!("{}", BStr::new(target)),
                     );
                 }
             }
@@ -2604,15 +2599,11 @@ fn parse_build_command_options(
     if args.flag(b"--server-components") {
         ctx.bundler_options.server_components = true;
         if let Some(target) = opts.target {
-            if !<bun_ast::Target as bun_options_types::TargetExt>::from_api(Some(target))
-                .is_server_side()
-            {
+            let target = <bun_ast::Target as bun_options_types::TargetExt>::from_api(Some(target));
+            if !target.is_server_side() {
                 Output::err_generic(
                     "Cannot use client-side --target={} with --server-components",
-                    format_args!(
-                        "{:?}",
-                        <bun_ast::Target as bun_options_types::TargetExt>::from_api(Some(target))
-                    ),
+                    format_args!("{}", BStr::new(target.naming_placeholder())),
                 );
                 Global::crash();
             } else {

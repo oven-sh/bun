@@ -1,5 +1,5 @@
-import { expect, test } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { describe, expect, test } from "bun:test";
+import { bunEnv, bunExe, normalizeBunSnapshot, tempDir } from "harness";
 import path from "path";
 
 test("verify we print error messages passed to done callbacks", () => {
@@ -80,7 +80,6 @@ test("verify we print error messages passed to done callbacks", () => {
     ^
     error: you should see this(async)
     at <anonymous> (<dir>/test-error-done-callback-fixture.ts:42:14)
-    at <anonymous> (<dir>/test-error-done-callback-fixture.ts:37:3)
     (fail) error done callback (async)
     43 |   });
     44 | });
@@ -111,7 +110,6 @@ test("verify we print error messages passed to done callbacks", () => {
     ^
     error: you should see this(async, nextTick)
     at <anonymous> (<dir>/test-error-done-callback-fixture.ts:60:14)
-    at <anonymous> (<dir>/test-error-done-callback-fixture.ts:54:5)
     (fail) error done callback (async, nextTick)
     62 | });
     63 |
@@ -139,4 +137,167 @@ test("verify we print error messages passed to done callbacks", () => {
     Ran 9 tests across 1 file.
     "
   `);
+});
+
+describe("done(err) fails the test or hook whose done() received it", () => {
+  // Only the lines that show what each error was attributed to, plus the totals.
+  function resultLines(stderr: string) {
+    return normalizeBunSnapshot(stderr)
+      .split("\n")
+      .map(line => line.trim())
+      .filter(line => /^(\((pass|fail)\) |error: |# Unhandled error|\d+ (pass|fail|errors?)$)/.test(line))
+      .join("\n");
+  }
+
+  async function runFixture(source: string, args: string[] = []) {
+    using dir = tempDir("done-err", { "done-err.test.ts": source });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", ...args],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout: normalizeBunSnapshot(stdout), results: resultLines(stderr), exitCode };
+  }
+
+  // `suffix` is "" or ".concurrent". Everything up to the macrotask case completes while being
+  // started, so serial and concurrent runs report in the same order. The beforeAll case goes
+  // last so that the tests it skips cannot include any of the other cases.
+  const fixture = (suffix: string) => `
+    import { it, describe, beforeAll, beforeEach, afterEach, afterAll } from "bun:test";
+
+    it${suffix}("sync done(err)", done => {
+      done(new Error("sync boom"));
+    });
+    it${suffix}("microtask done(err)", async done => {
+      await 1;
+      done(new Error("microtask boom"));
+    });
+    it${suffix}("done() without an error", done => {
+      done();
+    });
+    it${suffix}.failing("failing test whose done() receives an error", done => {
+      done(new Error("expected boom"));
+    });
+    describe${suffix}("beforeEach", () => {
+      beforeEach(done => {
+        done(new Error("beforeEach boom"));
+      });
+      it("body is skipped", () => {
+        console.log("beforeEach > body ran");
+      });
+    });
+    describe${suffix}("afterEach", () => {
+      afterEach(async done => {
+        await 1;
+        done(new Error("afterEach boom"));
+      });
+      it("test fails", () => {
+        console.log("afterEach > body ran");
+      });
+    });
+    describe${suffix}("afterAll", () => {
+      afterAll(async done => {
+        await 1;
+        done(new Error("afterAll boom"));
+      });
+      it("test passes", () => {
+        console.log("afterAll > body ran");
+      });
+    });
+    it${suffix}("macrotask done(err)", done => {
+      setTimeout(() => done(new Error("macrotask boom")), 1);
+    });
+    describe${suffix}("beforeAll", () => {
+      beforeAll(done => {
+        done(new Error("beforeAll boom"));
+      });
+      it("body is skipped", () => {
+        console.log("beforeAll > body ran");
+      });
+    });
+  `;
+
+  const expected = {
+    exitCode: 1,
+    stdout: "bun test <version> (<revision>)\nafterEach > body ran\nafterAll > body ran",
+    results: [
+      "error: sync boom",
+      "(fail) sync done(err)",
+      "error: microtask boom",
+      "(fail) microtask done(err)",
+      "(pass) done() without an error",
+      "(pass) failing test whose done() receives an error",
+      "error: beforeEach boom",
+      "(fail) beforeEach > body is skipped",
+      "error: afterEach boom",
+      "(fail) afterEach > test fails",
+      "(pass) afterAll > test passes",
+      "error: afterAll boom",
+      "(fail) afterAll > (unnamed)",
+      "error: macrotask boom",
+      "(fail) macrotask done(err)",
+      "error: beforeAll boom",
+      "(fail) beforeAll > (unnamed)",
+      "3 pass",
+      "7 fail",
+    ].join("\n"),
+  };
+
+  test.concurrent.each([
+    { name: "serial", suffix: "", args: [] },
+    { name: "bun test --concurrent", suffix: "", args: ["--concurrent"] },
+    { name: "it.concurrent and describe.concurrent", suffix: ".concurrent", args: [] },
+  ])("$name", async ({ suffix, args }) => {
+    expect(await runFixture(fixture(suffix), args)).toEqual(expected);
+  });
+
+  // In each case the "stale" test is already over (timed out, or its body threw before the
+  // runner took charge of its pending done) when its done(err) fires during the second test.
+  test.concurrent.each([
+    {
+      name: "its test timed out",
+      staleTest: `it("stale", done => { fireLater(done, fn => setTimeout(fn, 20)); }, 1);`,
+      staleResult: ["(fail) stale"],
+    },
+    {
+      name: "its test threw after scheduling it on a macrotask",
+      staleTest: `it("stale", done => { fireLater(done, setImmediate); throw new Error("thrown boom"); });`,
+      staleResult: ["error: thrown boom", "(fail) stale"],
+    },
+    {
+      name: "its test threw after scheduling it on a microtask",
+      staleTest: `it("stale", done => { fireLater(done, queueMicrotask); throw new Error("thrown boom"); });`,
+      staleResult: ["error: thrown boom", "(fail) stale"],
+    },
+  ])("a late done(err) is not pinned on the running test when $name", async ({ staleTest, staleResult }) => {
+    const run = await runFixture(`
+      import { it } from "bun:test";
+      const fired = Promise.withResolvers();
+      const fireLater = (done, schedule) =>
+        schedule(() => {
+          done(new Error("late boom"));
+          fired.resolve();
+        });
+      ${staleTest}
+      it("is running when the late done(err) arrives", async () => {
+        await fired.promise;
+      });
+    `);
+    expect(run).toEqual({
+      exitCode: 1,
+      stdout: "bun test <version> (<revision>)",
+      results: [
+        ...staleResult,
+        "# Unhandled error between tests",
+        "error: late boom",
+        "(pass) is running when the late done(err) arrives",
+        "1 pass",
+        "1 fail",
+        "1 error",
+      ].join("\n"),
+    });
+  });
 });

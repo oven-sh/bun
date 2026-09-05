@@ -266,13 +266,25 @@ impl Algorithm {
 pub(crate) type HashError = crate::Error;
 
 impl PasswordObject {
+    /// Room for the longest encoded hash, an argon2 PHC string of about 133 bytes.
+    const OUTPUT_BUFFER_LEN: usize = 4096;
+
     // This is purposely simple because nobody asked to make it more complicated
     pub(crate) fn hash(password: &[u8], algorithm: AlgorithmValue) -> Result<Box<[u8]>, HashError> {
+        let mut outbuf = [0u8; Self::OUTPUT_BUFFER_LEN];
+        Self::hash_into(password, algorithm, &mut outbuf).map(Box::<[u8]>::from)
+    }
+
+    /// Writes the encoded hash into `outbuf` and returns the populated prefix.
+    fn hash_into<'a>(
+        password: &[u8],
+        algorithm: AlgorithmValue,
+        outbuf: &'a mut [u8],
+    ) -> Result<&'a [u8], HashError> {
         match algorithm {
             AlgorithmValue::Argon2i(argon)
             | AlgorithmValue::Argon2d(argon)
             | AlgorithmValue::Argon2id(argon) => {
-                let mut outbuf = [0u8; 4096];
                 let hash_options = pwhash::argon2::HashOptions {
                     params: argon.to_params(),
                     // allocator dropped — global mimalloc
@@ -288,26 +300,18 @@ impl PasswordObject {
                 // we don't expose this option
                 // but since it parses from phc format, it's possible that it will be set
                 // eventually we should do something that about that.
-                let out_bytes = pwhash::argon2::str_hash(password, hash_options, &mut outbuf)?;
-                Ok(Box::<[u8]>::from(out_bytes))
+                pwhash::argon2::str_hash(password, hash_options, outbuf)
             }
             AlgorithmValue::Bcrypt(cost) => {
-                let mut outbuf = [0u8; 4096];
                 // bcrypt silently truncates passwords longer than 72 bytes
                 // we use SHA512 to hash the password if it's longer than 72 bytes
-                // The digest gets its own 64-byte buffer
-                // (SHA512::final wants `&mut [u8; DIGEST]`).
                 let mut digest = [0u8; SHA512::DIGEST];
                 let mut password_to_use = password;
-                let outbuf_slice: &mut [u8];
                 if password.len() > 72 {
                     let mut sha_512 = SHA512::init();
                     sha_512.update(password);
                     sha_512.r#final(&mut digest);
                     password_to_use = &digest;
-                    outbuf_slice = &mut outbuf[SHA512::DIGEST..];
-                } else {
-                    outbuf_slice = &mut outbuf[..];
                 }
 
                 let hash_options = pwhash::bcrypt::HashOptions {
@@ -318,9 +322,7 @@ impl PasswordObject {
                     // allocator dropped
                     encoding: pwhash::Encoding::Crypt,
                 };
-                let out_bytes =
-                    pwhash::bcrypt::str_hash(password_to_use, hash_options, outbuf_slice)?;
-                Ok(Box::<[u8]>::from(out_bytes))
+                pwhash::bcrypt::str_hash(password_to_use, hash_options, outbuf)
             }
         }
     }
@@ -871,6 +873,45 @@ fn js_password_object_verify_sync(
         Box::<[u8]>::from(hash_.slice()),
         algorithm,
     )
+}
+
+/// `bun:internal-for-testing`: `Bun.password.hashSync` with a caller-sized output buffer.
+#[bun_jsc::host_fn]
+pub(crate) fn hash_password_into_buffer_for_testing(
+    global_object: &JSGlobalObject,
+    callframe: &CallFrame,
+) -> JsResult<JSValue> {
+    let [password_value, algorithm_value, length_value] = callframe.arguments_as_array::<3>();
+
+    let mut algorithm = AlgorithmValue::DEFAULT;
+    if !algorithm_value.is_empty_or_undefined_or_null() {
+        algorithm = AlgorithmValue::from_js(global_object, algorithm_value)?;
+    }
+
+    let Some(password) = StringOrBuffer::from_js(global_object, password_value)? else {
+        return Err(global_object.throw_invalid_argument_type(
+            "hash",
+            "password",
+            "string or TypedArray",
+        ));
+    };
+
+    if !length_value.is_number() {
+        return Err(global_object.throw_invalid_arguments(format_args!(
+            "hashPasswordIntoBufferForTesting expects a buffer length"
+        )));
+    }
+    let length = usize::try_from(length_value.coerce_to_int64(global_object)?.max(0))
+        .expect("non-negative i64 fits usize");
+    let mut outbuf = vec![0u8; length.min(PasswordObject::OUTPUT_BUFFER_LEN)];
+
+    match PasswordObject::hash_into(password.slice(), algorithm, &mut outbuf) {
+        Err(err) => {
+            let error_instance = password_error_instance(&err, HashOp::ERR_VERB, global_object);
+            Err(global_object.throw_value(error_instance))
+        }
+        Ok(bytes) => Ok(EncodedSlice::latin1(bytes).to_js(global_object)),
+    }
 }
 
 const UNKNOWN_PASSWORD_ALGORITHM_MESSAGE: &str = "unknown algorithm, expected one of: \"bcrypt\", \"argon2id\", \"argon2d\", \"argon2i\" (default is \"argon2id\")";

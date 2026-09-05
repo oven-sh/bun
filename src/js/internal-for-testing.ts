@@ -179,6 +179,13 @@ export const setMaxMarkdownBlockBytesForTesting: (limit: number) => number = $ne
   1,
 );
 
+// `Bun.password.hashSync` with a caller-sized output buffer (at most 4096 bytes).
+export const hashPasswordIntoBufferForTesting: (
+  password: string | ArrayBufferView,
+  algorithm: Parameters<typeof Bun.password.hashSync>[1],
+  bufferLength: number,
+) => string = $newRustFunction("PasswordObject.rs", "hashPasswordIntoBufferForTesting", 3);
+
 export const npm_manifest_test_helpers = $rust("npm.rs", "PackageManifest.bindings.generate") as {
   /**
    * Returns the parsed manifest file. Currently only returns an array of available versions.

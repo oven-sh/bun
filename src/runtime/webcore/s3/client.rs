@@ -350,7 +350,7 @@ pub(crate) fn list_objects(
             S3HttpSimpleTask::http_callback,
             S3HttpSimpleTask::release_at_shutdown,
         ),
-        bun_http::FetchRedirect::Follow,
+        bun_http::FetchRedirect::Manual,
         bun_http::async_http::Options {
             http_proxy,
             verbose: Some(vm.get_verbose_fetch()),
@@ -1260,7 +1260,7 @@ fn download_stream(
             S3HttpDownloadStreamingTask::http_callback,
             S3HttpDownloadStreamingTask::release_at_shutdown,
         ),
-        bun_http::FetchRedirect::Follow,
+        bun_http::FetchRedirect::Manual,
         bun_http::async_http::Options {
             http_proxy,
             verbose: Some(verbose),

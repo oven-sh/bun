@@ -682,7 +682,8 @@ pub(crate) fn execute_simple_s3_request(
             S3HttpSimpleTask::http_callback,
             S3HttpSimpleTask::release_at_shutdown,
         ),
-        FetchRedirect::Follow,
+        // Signed requests are only valid at the signed host; surface 3xx as an error.
+        FetchRedirect::Manual,
         HttpOptions {
             http_proxy,
             verbose: Some(verbose),

@@ -50,6 +50,16 @@ impl Resolution {
 
         false
     }
+
+    /// Which of a dependency's two names `trustedDependencies` entries match.
+    #[inline]
+    pub fn trusted_name<T>(&self, by_alias: T, by_pkg_name: T) -> T {
+        if self.tag == Tag::Npm {
+            by_pkg_name
+        } else {
+            by_alias
+        }
+    }
 }
 
 #[repr(C)]

@@ -476,11 +476,13 @@ impl Cmd {
         }
 
         // Resolve argv[0] via PATH (`bun_which::which`).
+        let mut fell_back_to_self_exe = false;
         let resolved: Option<Vec<u8>> = {
             let mut path_buf = bun_paths::path_buffer_pool::get();
             match bun_which::which(&mut *path_buf, spawn_args.path, spawn_args.cwd, &first_arg) {
                 Some(z) => Some(z.as_bytes().to_vec()),
                 None if &first_arg[..] == b"bun" || &first_arg[..] == b"bun-debug" => {
+                    fell_back_to_self_exe = true;
                     bun_core::self_exe_path()
                         .ok()
                         .map(|z| z.as_bytes().to_vec())
@@ -526,6 +528,15 @@ impl Cmd {
         // `execve`).
         resolved.push(0);
         interp.as_cmd_mut(this).args[0] = resolved;
+
+        // #14459: inside a `bun build --compile` binary, re-spawning ourselves
+        // without BUN_BE_BUN=1 re-enters the bundled entrypoint instead of the
+        // bun CLI.
+        if fell_back_to_self_exe && bun_standalone_graph::Graph::get().is_some() {
+            spawn_args
+                .env_array
+                .push(b"BUN_BE_BUN=1\0".as_ptr().cast::<core::ffi::c_char>());
+        }
 
         // Convert shell IO → subprocess stdio.
         let mut shellio = ShellIO::default();

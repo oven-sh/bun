@@ -41,6 +41,8 @@ unsafe extern "C" {
     );
     /// Plain by-value `c_int`; sets a global sampler interval, no pointer invariants.
     safe fn Bun__setSamplingInterval(interval_microseconds: c_int);
+    /// Writes a +1 ref into `out`; leaves it empty when the VM has no sampling profiler.
+    safe fn Bun__SamplingProfiler__report(vm: &mut VM, out: &mut BunString);
 }
 
 pub fn set_sampling_interval(interval: u32) {
@@ -52,6 +54,35 @@ pub fn set_sampling_interval(interval: u32) {
 
 pub fn start_cpu_profiler(vm: &mut VM) {
     Bun__startCPUProfiler(vm);
+}
+
+/// Writes `vm`'s sampling profiler report into `directory` (absolute UTF-8), creating it if missing.
+pub(crate) fn write_sampling_profiler_report(
+    vm: &mut VM,
+    directory: &[u8],
+) -> Result<(), ProfilerError> {
+    let mut report = BunString::EMPTY;
+    Bun__SamplingProfiler__report(vm, &mut report);
+    if report.is_empty() {
+        return Ok(());
+    }
+    let report = report.to_utf8();
+
+    let mut filename_buf = PathBuffer::uninit();
+    let filename = {
+        let mut cursor = std::io::Cursor::new(&mut filename_buf[..]);
+        write_diagnostic_filename(&mut cursor, "SamplingProfile", ".txt")
+            .map_err(|_| ProfilerError::FilenameTooLong)?;
+        let len = usize::try_from(cursor.position()).expect("int cast");
+        &filename_buf[..len]
+    };
+
+    let mut path_buf = AutoAbsPathChecked::init_top_level_dir();
+    path_buf
+        .join(&[directory, filename])
+        .map_err(|_| ProfilerError::FilenameTooLong)?;
+
+    write_file_creating_dir(&mut path_buf, directory, report.slice())
 }
 
 pub(crate) fn stop_and_write_profile(
@@ -93,30 +124,35 @@ fn write_profile_to_file(
 
     build_output_path(&mut path_buf, config, is_md_format)?;
 
+    write_file_creating_dir(&mut path_buf, config.dir, profile_slice.slice())
+}
+
+/// Writes `contents` to `path`; on ENOENT/EPERM/EACCES creates `dir` and retries once.
+fn write_file_creating_dir(
+    path: &mut AutoAbsPathChecked,
+    dir: &[u8],
+    contents: &[u8],
+) -> Result<(), ProfilerError> {
     // Convert to OS-specific path (UTF-16 on Windows, UTF-8 elsewhere)
     #[cfg(windows)]
     let mut path_buf_os = OSPathBuffer::uninit();
     #[cfg(windows)]
     let output_path_os =
-        bun_core::strings::convert_utf8_to_utf16_in_buffer_z(&mut path_buf_os, path_buf.slice_z());
+        bun_core::strings::convert_utf8_to_utf16_in_buffer_z(&mut path_buf_os, path.slice_z());
     #[cfg(not(windows))]
-    let output_path_os = path_buf.slice_z();
+    let output_path_os = path.slice_z();
 
     // Write the profile to disk using bun.sys.File.writeFile
-    let result =
-        bun_sys::File::write_file_os_path(Fd::cwd(), output_path_os, profile_slice.slice());
+    let result = bun_sys::File::write_file_os_path(Fd::cwd(), output_path_os, contents);
     if let Err(err) = result {
         // If we got ENOENT, PERM, or ACCES, try creating the directory and retry
         let errno = err.get_errno();
         if errno == Errno::ENOENT || errno == Errno::EPERM || errno == Errno::EACCES {
-            if !config.dir.is_empty() {
-                let _ = Fd::cwd().make_path(config.dir);
+            if !dir.is_empty() {
+                let _ = Fd::cwd().make_path(dir);
                 // Retry write
-                let retry_result = bun_sys::File::write_file_os_path(
-                    Fd::cwd(),
-                    output_path_os,
-                    profile_slice.slice(),
-                );
+                let retry_result =
+                    bun_sys::File::write_file_os_path(Fd::cwd(), output_path_os, contents);
                 if retry_result.is_err() {
                     return Err(ProfilerError::WriteFailed);
                 }

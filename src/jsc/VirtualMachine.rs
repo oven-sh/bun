@@ -207,6 +207,8 @@ pub struct VirtualMachine {
     pub dns_result_order: u8,
     pub cpu_profiler_config: Option<crate::bun_cpu_profiler::CPUProfilerConfig>,
     pub heap_profiler_config: Option<crate::bun_heap_profiler::HeapProfilerConfig>,
+    /// From `BUN_JSC_samplingProfilerPath` or `bun:jsc` `startSamplingProfiler()`; [`Self::write_profiles`] reads it.
+    pub sampling_profiler_directory: Option<Box<[u8]>>,
     pub counters: Counters,
 
     /// `--hot` / `--watch` mode this VM runs under.
@@ -590,27 +592,14 @@ impl VMHolder {
     }
 
     /// Node parity: `process.kill(self, sig)` with no JS handler for `sig`
-    /// flushes the CPU and heap profiles before sending the (likely fatal)
-    /// signal, mirroring node's `Kill` binding. Idempotent via `Option::take`.
+    /// flushes the profiles before sending the (likely fatal) signal,
+    /// mirroring node's `Kill` binding.
     #[unsafe(no_mangle)]
     pub(crate) extern "C" fn Bun__writeProfilesBeforeSelfKill() {
         let Some(vm_ptr) = VM.get() else { return };
         // SAFETY: called on the JS thread that owns this VM (process._kill).
         let vm = unsafe { &mut *vm_ptr };
-        if let Some(config) = vm.cpu_profiler_config.take() {
-            if let Err(e) =
-                crate::bun_cpu_profiler::stop_and_write_profile(vm.jsc_vm_mut(), &config)
-            {
-                bun_core::Output::err(<&'static str>::from(e), "Failed to write CPU profile", ());
-            }
-        }
-        if let Some(config) = vm.heap_profiler_config.take() {
-            if let Err(e) =
-                crate::bun_heap_profiler::generate_and_write_profile(vm.jsc_vm_mut(), &config)
-            {
-                bun_core::Output::err(e, "Failed to write heap profile", ());
-            }
-        }
+        vm.write_profiles();
         // Node runs RunAtExit (incl. compile cache) on self-directed fatal signals. Non-latching:
         // the signal may prove non-fatal, and latching here would no-op the real exit's persist.
         // https://github.com/nodejs/node/blob/main/src/env.cc (AtExit(FlushCompileCache))
@@ -1775,6 +1764,36 @@ impl VirtualMachine {
         }
     }
 
+    /// Writes each configured profile once, the sampling report first: `stopCPUProfiler` clears the traces it reads.
+    pub fn write_profiles(&mut self) {
+        if let Some(directory) = self.sampling_profiler_directory.take() {
+            if let Err(e) = crate::bun_cpu_profiler::write_sampling_profiler_report(
+                self.jsc_vm_mut(),
+                &directory,
+            ) {
+                bun_core::Output::err(
+                    <&'static str>::from(e),
+                    "Failed to write sampling profiler report",
+                    (),
+                );
+            }
+        }
+        if let Some(config) = self.cpu_profiler_config.take() {
+            if let Err(e) =
+                crate::bun_cpu_profiler::stop_and_write_profile(self.jsc_vm_mut(), &config)
+            {
+                bun_core::Output::err(<&'static str>::from(e), "Failed to write CPU profile", ());
+            }
+        }
+        if let Some(config) = self.heap_profiler_config.take() {
+            if let Err(e) =
+                crate::bun_heap_profiler::generate_and_write_profile(self.jsc_vm_mut(), &config)
+            {
+                bun_core::Output::err(e, "Failed to write heap profile", ());
+            }
+        }
+    }
+
     pub fn on_exit(&mut self) {
         // Decide once whether the exit sequence may run script. It can be
         // entered with an exception pending: `process.exit()` from inside a
@@ -1797,25 +1816,8 @@ impl VirtualMachine {
             }
         }
 
-        // Write CPU profile if profiling was enabled - do this FIRST before any
-        // shutdown begins. Grab the config and null it out to make this
-        // idempotent.
-        if let Some(config) = self.cpu_profiler_config.take() {
-            if let Err(e) =
-                crate::bun_cpu_profiler::stop_and_write_profile(self.jsc_vm_mut(), &config)
-            {
-                bun_core::Output::err(<&'static str>::from(e), "Failed to write CPU profile", ());
-            }
-        }
-        // Write heap profile if profiling was enabled - do this after CPU
-        // profile but before shutdown.
-        if let Some(config) = self.heap_profiler_config.take() {
-            if let Err(e) =
-                crate::bun_heap_profiler::generate_and_write_profile(self.jsc_vm_mut(), &config)
-            {
-                bun_core::Output::err(e, "Failed to write heap profile", ());
-            }
-        }
+        // Profiles go out first, before any shutdown begins.
+        self.write_profiles();
 
         ExitHandler::dispatch_on_exit(self);
 
@@ -4894,6 +4896,7 @@ impl VirtualMachine {
 
         drop(core::mem::take(&mut self.resolved_path_dups));
         drop(core::mem::take(&mut self.main_resolved_path));
+        drop(self.sampling_profiler_directory.take());
 
         self.overridden_main.deinit();
 

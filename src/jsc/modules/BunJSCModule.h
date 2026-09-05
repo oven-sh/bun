@@ -455,6 +455,7 @@ JSC_DEFINE_HOST_FUNCTION(functionNeverInlineFunction,
 }
 
 extern "C" bool Bun__mkdirp(JSC::JSGlobalObject*, const char*);
+extern "C" void Bun__VirtualMachine__setSamplingProfilerDirectory(void* bunVM, const BunString* directory);
 
 JSC_DECLARE_HOST_FUNCTION(functionStartSamplingProfiler);
 JSC_DEFINE_HOST_FUNCTION(functionStartSamplingProfiler,
@@ -472,7 +473,12 @@ JSC_DEFINE_HOST_FUNCTION(functionStartSamplingProfiler,
         auto path = directoryValue.toWTFString(globalObject);
         RETURN_IF_EXCEPTION(scope, {});
         if (!path.isEmpty()) {
-            StringPrintStream pathOut;
+            if (path.contains(static_cast<UChar>(0))) {
+                throwVMError(
+                    globalObject, scope,
+                    createTypeError(globalObject, "directory must not contain null bytes"_s));
+                return {};
+            }
             auto pathCString = toCString(String(path));
             if (!Bun__mkdirp(globalObject, pathCString.span().data())) {
                 throwVMError(
@@ -481,8 +487,9 @@ JSC_DEFINE_HOST_FUNCTION(functionStartSamplingProfiler,
                 return {};
             }
 
-            Options::samplingProfilerPath() = pathCString.span().data();
-            samplingProfiler.registerForReportAtExit();
+            // Options::samplingProfilerPath() has been read-only since Config::finalize; the VM holds the directory instead.
+            auto directory = Bun::toString(path);
+            Bun__VirtualMachine__setSamplingProfilerDirectory(bunVM(globalObject), &directory);
         }
     }
     if (sampleValue.isNumber()) {

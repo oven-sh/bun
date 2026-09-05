@@ -77,6 +77,8 @@ public:
         }
 
         VirtualModuleMap* _Nullable virtualModules = nullptr;
+        using RequireActualCache = WTF::UncheckedKeyHashMap<WTF::String, JSC::Strong<JSC::Unknown>>;
+        RequireActualCache* _Nullable requireActualCache = nullptr;
         bool mustDoExpensiveRelativeLookup = false;
         JSC::EncodedJSValue run(JSC::JSGlobalObject* globalObject, const BunString* namespaceString, const BunString* path);
 
@@ -91,14 +93,15 @@ public:
             Base::clear();
             delete virtualModules;
             virtualModules = nullptr;
+            delete requireActualCache;
+            requireActualCache = nullptr;
             mustDoExpensiveRelativeLookup = false;
         }
 
         ~OnLoad()
         {
-            if (virtualModules) {
-                delete virtualModules;
-            }
+            delete virtualModules;
+            delete requireActualCache;
         }
     };
 

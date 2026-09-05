@@ -92,6 +92,7 @@ declare module "bun:test" {
     function clearAllMocks(): void;
     function resetAllMocks(): void;
     function fn<T extends (...args: any[]) => any>(func?: T): Mock<T>;
+    function requireActual<TModule = unknown>(moduleName: string): TModule;
     function setSystemTime(now?: number | Date): void;
     function setTimeout(milliseconds: number): void;
     function useFakeTimers(options?: { now?: number | Date } | "modern" | "legacy"): typeof vi;

@@ -3,6 +3,17 @@ use bun_jsc::{JSGlobalObject, JSValue};
 
 use super::{Kind, TimerObjectInternals};
 
+/// Only the cached-property accessors — `callbackGetCached` / `callbackSetCached`
+/// etc. per `values` entry in the `Immediate` `.classes.ts` define — are declared
+/// here; the rest of the C++ JSCell wrapper is emitted by the `#[JsClass]` derive.
+pub mod js {
+    bun_jsc::codegen_cached_accessors!(
+        "Immediate";
+        arguments,
+        callback,
+    );
+}
+
 // `jsc.Codegen.JSImmediate` — the C++ JSCell wrapper stays generated; this
 // struct is the `m_ctx` payload. Struct + `RefCounted`/`Default` impls + the
 // forwarder host-fns (`to_primitive`/`do_ref`/`do_unref`/`has_ref`/
@@ -18,6 +29,27 @@ impl ImmediateObject {
         arguments: JSValue,
     ) -> JSValue {
         Self::init_with(global, id, Kind::SetImmediate, 0, callback, arguments)
+    }
+
+    // Cached-property getter/setter — codegen passes `this_value` (the JS
+    // wrapper) so the cached `WriteBarrier` slot on the C++ side can be read/written.
+    // Mirrors `Timeout::get_on_timeout`/`set_on_timeout` (see `TimeoutObject.rs`).
+
+    pub fn get_on_immediate(
+        _this: &Self,
+        this_value: JSValue,
+        _global: &JSGlobalObject,
+    ) -> JSValue {
+        js::callback_get_cached(this_value).unwrap()
+    }
+
+    pub fn set_on_immediate(
+        _this: &Self,
+        this_value: JSValue,
+        global: &JSGlobalObject,
+        value: JSValue,
+    ) {
+        js::callback_set_cached(this_value, global, value);
     }
 
     /// Thin forwarder to

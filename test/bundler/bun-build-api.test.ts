@@ -340,6 +340,17 @@ describe("Bun.build", () => {
       sourcemap: "external",
       external: ["@minecraft"],
     });
+    expect(y.success).toBe(false);
+    expect(y.outputs).toEqual([]);
+    expect(y.logs.map(log => [log.name, log.level, log.message])).toEqual([
+      ["BuildMessage", "error", expect.stringMatching(/^No matching export in ".*src[\\/]file1\.ts" for import "C"$/)],
+    ]);
+    expect(y.logs[0].position).toMatchObject({
+      line: 2,
+      column: 18,
+      lineText: `        import { C } from "../file1"; // error`,
+    });
+    expect(y.logs[0].position!.file.replaceAll("\\", "/")).toEndWith("/src/dir/file3.ts");
   });
 
   test("invalid options throws", async () => {
@@ -838,12 +849,11 @@ describe("Bun.build", () => {
       cmd: [bunExe(), join(import.meta.dir, "fixtures", "bundler-reloader-script.ts")],
       env: { ...bunEnv, BUNDLER_RELOADER_SCRIPT_TMP_DIR: tmpdir },
       stderr: "pipe",
-      stdout: "inherit",
+      stdout: "pipe",
     });
-    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
-    if (stderr.length > 0) {
-      throw new Error(stderr);
-    }
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toBe("OK\n");
     expect(exitCode).toBe(0);
     Bun.gc(true);
   });
@@ -886,7 +896,9 @@ describe("Bun.build", () => {
         stderr: "pipe",
       });
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-      expect(stdout + stderr).toContain("ALL_BUILDS_OK");
+      expect(stdout).toContain("ALL_BUILDS_OK");
+      expect(stderr).toContain(" 1 pass");
+      expect(stderr).toContain(" 0 fail");
       expect(exitCode).toBe(0);
     },
   );
@@ -945,12 +957,16 @@ describe("Bun.build", () => {
       outdir: tempDirWithFiles("warnings-do-not-fail-a-build", {}),
     });
     expect(x.success).toBe(true);
-    expect(x.logs).toHaveLength(1);
-    expect(x.logs[0].message).toBe(
-      '"key" prop after a {...spread} is deprecated in JSX. Falling back to classic runtime.',
-    );
-    expect(x.logs[0].name).toBe("BuildMessage");
-    expect(x.logs[0].position).toBeTruthy();
+    expect(x.outputs.map(output => output.kind)).toEqual(["entry-point"]);
+    expect(x.logs.map(log => [log.name, log.level, log.message])).toEqual([
+      ["BuildMessage", "warn", '"key" prop after a {...spread} is deprecated in JSX. Falling back to classic runtime.'],
+    ]);
+    expect(x.logs[0].position).toMatchObject({
+      line: 1,
+      column: 22,
+      lineText: `console.log(<div {...props} key={"123"} />);`,
+    });
+    expect(x.logs[0].position!.file.replaceAll("\\", "/")).toEndWith("/fixtures/jsx-warning/index.jsx");
   });
 
   test.concurrent("module() throws error", async () => {
@@ -1595,38 +1611,42 @@ export { greeting };`,
       `,
     });
 
-    let onEndCalled = false;
+    let onEndResult: Bun.BuildOutput | undefined;
     let onEndCalledBeforeReject = false;
     let promiseRejected = false;
 
-    try {
-      await Bun.build({
-        entrypoints: [join(dir, "index.ts")],
-        throw: true,
-        plugins: [
-          {
-            name: "test-plugin",
-            setup(builder) {
-              builder.onEnd(result => {
-                onEndCalled = true;
-                onEndCalledBeforeReject = !promiseRejected;
-                // Result should contain error information
-                expect(result.success).toBe(false);
-                expect(result.logs).toBeDefined();
-                expect(result.logs.length).toBeGreaterThan(0);
-              });
-            },
+    // Assertions live outside the callback: an onEnd callback that throws
+    // rejects the build promise, and the rejection handler below captures
+    // whatever the rejection is instead of failing the test.
+    const rejection = await Bun.build({
+      entrypoints: [join(dir, "index.ts")],
+      throw: true,
+      plugins: [
+        {
+          name: "test-plugin",
+          setup(builder) {
+            builder.onEnd(result => {
+              onEndResult = result;
+              onEndCalledBeforeReject = !promiseRejected;
+            });
           },
-        ],
-      });
-      // Should not reach here
-      expect(false).toBe(true);
-    } catch (error) {
-      promiseRejected = true;
-      // Verify onEnd was called before promise rejected
-      expect(onEndCalled).toBe(true);
-      expect(onEndCalledBeforeReject).toBe(true);
-    }
+        },
+      ],
+    }).then(
+      () => undefined,
+      (error: unknown) => {
+        promiseRejected = true;
+        return error;
+      },
+    );
+
+    expect(onEndCalledBeforeReject).toBe(true);
+    const expectedLogs = [["ResolveMessage", "error", 'Could not resolve: "./does-not-exist"']];
+    expect(onEndResult!.success).toBe(false);
+    expect(onEndResult!.outputs).toEqual([]);
+    expect(onEndResult!.logs.map(log => [log.name, log.level, log.message])).toEqual(expectedLogs);
+    expect(rejection).toBeInstanceOf(AggregateError);
+    expect((rejection as AggregateError).errors.map(log => [log.name, log.level, log.message])).toEqual(expectedLogs);
   });
 
   test("onEnd fires before promise resolves with throw: false", async () => {
@@ -1638,7 +1658,7 @@ export { greeting };`,
       `,
     });
 
-    let onEndCalled = false;
+    let onEndResult: Bun.BuildOutput | undefined;
     let onEndCalledBeforeResolve = false;
     let promiseResolved = false;
 
@@ -1650,12 +1670,8 @@ export { greeting };`,
           name: "test-plugin",
           setup(builder) {
             builder.onEnd(result => {
-              onEndCalled = true;
+              onEndResult = result;
               onEndCalledBeforeResolve = !promiseResolved;
-              // Result should contain error information
-              expect(result.success).toBe(false);
-              expect(result.logs).toBeDefined();
-              expect(result.logs.length).toBeGreaterThan(0);
             });
           },
         },
@@ -1664,11 +1680,14 @@ export { greeting };`,
 
     promiseResolved = true;
 
-    // Verify onEnd was called before promise resolved
-    expect(onEndCalled).toBe(true);
+    // onEnd receives the same BuildOutput the promise resolves with.
     expect(onEndCalledBeforeResolve).toBe(true);
+    expect(onEndResult).toBe(result);
     expect(result.success).toBe(false);
-    expect(result.logs.length).toBeGreaterThan(0);
+    expect(result.outputs).toEqual([]);
+    expect(result.logs.map(log => [log.name, log.level, log.message])).toEqual([
+      ["ResolveMessage", "error", 'Could not resolve: "./does-not-exist"'],
+    ]);
   });
 
   test("onEnd always fires on successful build", async () => {
@@ -1679,7 +1698,7 @@ export { greeting };`,
       `,
     });
 
-    let onEndCalled = false;
+    let onEndResult: Bun.BuildOutput | undefined;
     let onEndCalledBeforeResolve = false;
     let promiseResolved = false;
 
@@ -1691,12 +1710,8 @@ export { greeting };`,
           name: "test-plugin",
           setup(builder) {
             builder.onEnd(result => {
-              onEndCalled = true;
+              onEndResult = result;
               onEndCalledBeforeResolve = !promiseResolved;
-              // Result should indicate success
-              expect(result.success).toBe(true);
-              expect(result.outputs).toBeDefined();
-              expect(result.outputs.length).toBeGreaterThan(0);
             });
           },
         },
@@ -1705,10 +1720,11 @@ export { greeting };`,
 
     promiseResolved = true;
 
-    // Verify onEnd was called before promise resolved
-    expect(onEndCalled).toBe(true);
     expect(onEndCalledBeforeResolve).toBe(true);
+    expect(onEndResult).toBe(result);
     expect(result.success).toBe(true);
+    expect(result.logs).toEqual([]);
+    expect(result.outputs.map(output => output.kind)).toEqual(["entry-point"]);
     const output = await result.outputs[0].text();
     expect(output).toContain("Build successful");
   });
@@ -1762,17 +1778,24 @@ export { greeting };`,
 
     // All callbacks should have fired in order before promise resolved
     expect(callOrder).toEqual(["first", "second", "third"]);
-    // The build actually succeeds because the import is being resolved to nothing
-    // What matters is that callbacks fired before promise settled
-    expect(result.success).toBeDefined();
+    // The build succeeds: `missing` is never used, so the TypeScript loader
+    // drops the import before the missing file would be resolved.
+    expect(result.success).toBe(true);
+    expect(result.logs).toEqual([]);
+    expect(result.outputs.map(output => output.kind)).toEqual(["entry-point"]);
   });
 });
 
+// The tests from here to "does not wait for unrelated thread-pool work" are
+// concurrent. Most of them run a child process that performs many real
+// bundles, and the children overlap instead of running one after another.
+// The only in-process one among them is the single small sourcesContent build.
+//
 // On release builds mimalloc's large-allocation arenas make RSS growth too
 // non-deterministic to draw a clean line between "leaking" and "not leaking"
 // for this path. Under debug/ASAN the allocator behaviour is stable enough to
 // measure reliably, so we only assert there.
-test.skipIf(!isDebug && !isASAN)(
+test.concurrent.skipIf(!isDebug && !isASAN)(
   "Bun.build sourcemap: 'inline' with no outdir does not leak sourcemap JSON",
   async () => {
     // The in-memory build path used to leak the intermediate sourcemap JSON
@@ -1845,7 +1868,9 @@ test.skipIf(!isDebug && !isASAN)(
 // docs/ZIG_RUST_DIVERGENCE_AUDIT.md). Skipped instead of `.todo` because the
 // body never reaches its assertion before the 120s timeout, so `.todo` would
 // just burn two minutes of CI per run without exercising the check.
-test.skip("Bun.build NumberRenamer does not leak intermediate NumberScope.name_counts across builds", async () => {
+// `.concurrent.skip` rather than `.skip`: a serial entry, even a skipped one,
+// splits the concurrent group of child-process tests around it.
+test.concurrent.skip("Bun.build NumberRenamer does not leak NumberScope.name_counts across builds", async () => {
   // 8 independent linear chains, each 150 blocks deep, 80 `let` bindings per
   // block. Every block has exactly one child block → renamer takes the linear
   // fast-path and allocates a NumberScope per level; 149 of 150 are the
@@ -1906,69 +1931,79 @@ test.skip("Bun.build NumberRenamer does not leak intermediate NumberScope.name_c
   // ASAN/LSan metadata noise.
   expect(growth).toBeLessThan(48 * 1024 * 1024);
   expect(exitCode).toBe(0);
-}, 120_000);
+});
 
 // Regression: repeated in-process `Bun.build()` calls panicked with
-// `index out of bounds: the len is 4095 but the index is 4095` (SIGTRAP) after
-// a couple thousand builds. `Path.dupeAlloc` interns every module path into the
-// process-lifetime `FilenameStore`. The Rust port had dropped two things the
-// Zig original does: (1) the `isSliceInBuffer` short-circuit that returns an
-// already-interned path unchanged, and (2) routing the disjoint `text`/`pretty`
-// case (a freshly-relativized display path, recomputed every build) into the
-// per-build arena instead of the store. Without them, each build re-appended
-// every path, and once the store's overflow blocks filled
-// (`OVERFLOW_GROUP_MAX` = 4095 blocks), the next append indexed one past the
-// fixed-capacity pointer array and panicked.
+// `index out of bounds: the len is 4095 but the index is 4095` (SIGTRAP).
+// `Path.dupeAlloc` interns every module path into the process-lifetime
+// `FilenameStore`. The Rust port had dropped two things the Zig original does:
+// (1) the `isSliceInBuffer` short-circuit that returns an already-interned path
+// unchanged, and (2) routing the disjoint `text`/`pretty` case (a freshly
+// relativized display path, recomputed every build) into the per-build arena
+// instead of the store. Without them every build re-appended every path until
+// the store's overflow blocks ran out.
 //
-// Many modules per build reaches the cap in far fewer builds: with 500 modules
-// the broken binary panics roughly a third of the way through this loop, while
-// the fixed binary keeps the store bounded and exits cleanly after all 400.
-// (MODULES stays well under the ~550 where the unrelated recursive tree-shaker
-// overflows its thread stack.) Not gated to debug/ASAN — the panic reproduces
-// on release builds too.
+// The store holds 8192 inline slots plus 4095 overflow blocks of 2048 entries,
+// about 8.4M paths (#31504 restored the block size from 64 to 2048 and turned
+// running out into an allocation error instead of a panic). The unfixed port
+// appended two entries per module per build, so this graph needs roughly
+// 8,400 builds to get there: no affordable loop reaches the ceiling any more.
+// What the loop still pins down is that repeated in-process builds of a
+// 500-module graph complete, and that every build produces byte-identical
+// output, which resolver or graph state leaking across builds would break.
+// (MODULES stays well under the ~550 where the recursive tree-shaker overflows
+// its thread stack.)
 //
-// An explicit timeout is required (not optional): this runs hundreds of real
-// bundles, far past bun:test's 5s default. The sibling leak tests above do the
-// same. 180s matches the CI runner's own per-test ceiling.
-test("Bun.build can be called thousands of times in one process without crashing", async () => {
-  const MODULES = 500;
-  const BUILDS = 400;
-  const files: Record<string, string> = {};
-  for (let i = 0; i < MODULES; i++) {
-    files[`m${i}.js`] =
-      `import { f${(i + 1) % MODULES} } from "./m${(i + 1) % MODULES}.js";\n` +
-      `export const v${i} = ${i};\n` +
-      `export function f${i}() { return v${i}; }\n`;
-  }
-  files["entry.js"] = Array.from(
-    { length: MODULES },
-    (_, i) => `import { f${i} } from "./m${i}.js"; console.log(f${i}());`,
-  ).join("\n");
-  files["run.ts"] = `
+// An explicit timeout is required: dozens of real 500-module bundles take well
+// past bun:test's 5s default on a debug build.
+test.concurrent(
+  "repeated in-process Bun.build calls of a large graph produce identical output",
+  async () => {
+    const MODULES = 500;
+    const BUILDS = 40;
+    const files: Record<string, string> = {};
+    for (let i = 0; i < MODULES; i++) {
+      files[`m${i}.js`] =
+        `import { f${(i + 1) % MODULES} } from "./m${(i + 1) % MODULES}.js";\n` +
+        `export const v${i} = ${i};\n` +
+        `export function f${i}() { return v${i}; }\n`;
+    }
+    files["entry.js"] = Array.from(
+      { length: MODULES },
+      (_, i) => `import { f${i} } from "./m${i}.js"; console.log(f${i}());`,
+    ).join("\n");
+    files["run.ts"] = `
     const entry = process.argv[2];
     const BUILDS = ${BUILDS};
+    let first;
     for (let i = 1; i <= BUILDS; i++) {
       const res = await Bun.build({ entrypoints: [entry], minify: true, sourcemap: "external" });
       if (!res.success) throw new AggregateError(res.logs, "build failed");
-      for (const o of res.outputs) await o.arrayBuffer();
+      const outputs = [];
+      for (const o of res.outputs) outputs.push([o.kind, o.hash, Bun.hash(await o.arrayBuffer()).toString(16)]);
+      const signature = JSON.stringify(outputs);
+      first ??= signature;
+      if (signature !== first) throw new Error("build " + i + " differs from build 1:\\n" + first + "\\n" + signature);
     }
-    console.log("OK " + BUILDS);
+    console.log(JSON.stringify({ builds: BUILDS, kinds: JSON.parse(first).map(o => o[0]) }));
   `;
-  const dir = tempDirWithFiles("bun-build-filename-store-overflow", files);
+    const dir = tempDirWithFiles("bun-build-repeated-builds", files);
 
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), join(dir, "run.ts"), join(dir, "entry.js")],
-    env: bunEnv,
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  // A crash surfaces as a non-zero (signal) exit and a panic on stderr; assert
-  // the run completed cleanly instead.
-  expect(stderr).toBe("");
-  expect(stdout.trim()).toBe("OK 400");
-  expect(exitCode).toBe(0);
-}, 180_000);
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), join(dir, "run.ts"), join(dir, "entry.js")],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    // A crash surfaces as a non-zero (signal) exit and a panic on stderr; assert
+    // the run completed cleanly instead.
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual({ builds: BUILDS, kinds: ["entry-point", "sourcemap"] });
+    expect(exitCode).toBe(0);
+  },
+  60_000,
+);
 
 // A module shared by several entry points is printed once per chunk, and those
 // prints run in parallel on the thread pool against the same AST. The printer
@@ -1985,23 +2020,25 @@ test("Bun.build can be called thousands of times in one process without crashing
 //
 // Needs an explicit timeout: two real 64-entry bundles on a debug build take
 // well over bun:test's 5s default.
-test("Bun.build does not corrupt folded string ropes shared across chunks", async () => {
-  const ENTRIES = 64;
-  const ROPES = 400;
-  const ROUNDS = 2;
-  let shared = "export function helper(...a) { return a; }\n";
-  for (let i = 0; i < ROPES; i++) {
-    // The rope is a call argument inside an arrow body, the shape the printer
-    // crashed on in the field. It folds only with `minify.syntax`.
-    shared +=
-      `export const fn${i} = helper("first${i}", () => { const q = ${i}; ` +
-      `helper(q, "alpha-${i}-" + "beta-" + "gamma-" + "delta-${i}"); return q; });\n`;
-  }
-  const files: Record<string, string> = { "shared.js": shared };
-  for (let i = 0; i < ENTRIES; i++) {
-    files[`entry${i}.js`] = `import * as s from "./shared.js";\nconsole.log(s, ${i});\n`;
-  }
-  files["run.ts"] = `
+test.concurrent(
+  "Bun.build does not corrupt folded string ropes shared across chunks",
+  async () => {
+    const ENTRIES = 64;
+    const ROPES = 400;
+    const ROUNDS = 2;
+    let shared = "export function helper(...a) { return a; }\n";
+    for (let i = 0; i < ROPES; i++) {
+      // The rope is a call argument inside an arrow body, the shape the printer
+      // crashed on in the field. It folds only with `minify.syntax`.
+      shared +=
+        `export const fn${i} = helper("first${i}", () => { const q = ${i}; ` +
+        `helper(q, "alpha-${i}-" + "beta-" + "gamma-" + "delta-${i}"); return q; });\n`;
+    }
+    const files: Record<string, string> = { "shared.js": shared };
+    for (let i = 0; i < ENTRIES; i++) {
+      files[`entry${i}.js`] = `import * as s from "./shared.js";\nconsole.log(s, ${i});\n`;
+    }
+    files["run.ts"] = `
     import { join } from "node:path";
     const dir = process.argv[2];
     const entrypoints = Array.from({ length: ${ENTRIES} }, (_, i) => join(dir, "entry" + i + ".js"));
@@ -2025,19 +2062,21 @@ test("Bun.build does not corrupt folded string ropes shared across chunks", asyn
     }
     console.log("DONE " + bad);
   `;
-  const dir = tempDirWithFiles("bun-build-rope-print-race", files);
+    const dir = tempDirWithFiles("bun-build-rope-print-race", files);
 
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), join(dir, "run.ts"), dir],
-    env: bunEnv,
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect(stderr).toBe("");
-  expect(stdout.trim()).toBe("DONE 0");
-  expect(exitCode).toBe(0);
-}, 180_000);
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), join(dir, "run.ts"), dir],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout.trim()).toBe("DONE 0");
+    expect(exitCode).toBe(0);
+  },
+  180_000,
+);
 
 // A plugin module's namespace lives in the bundle's arena. The `BuildMessage`
 // objects in `result.logs` outlive the arena, so they must own a copy.
@@ -2090,7 +2129,7 @@ test.concurrent("a BuildMessage keeps the namespace of a plugin module after the
   expect(exitCode).toBe(0);
 });
 
-test("sourcemap sourcesContent is valid JSON when source contains C0 control chars", async () => {
+test.concurrent("sourcemap sourcesContent is valid JSON when source contains C0 control chars", async () => {
   // RFC 8259 only allows \" \\ \/ \b \f \n \r \t and six-char \u escapes; \v
   // and \xNN are JavaScript-only. A VT (0x0B) or BEL (0x07) in the input used
   // to leak through as \v / \x07 and break JSON.parse on the .map file.
@@ -2115,6 +2154,9 @@ test("sourcemap sourcesContent is valid JSON when source contains C0 control cha
 // Bun.build's link step waited for the shared thread pool to go *idle* rather than for its
 // own tasks, so any unrelated pool work extended the build by its full duration — a
 // node:fs read parked on a FIFO nobody writes made every later build hang forever.
+//
+// Serial on purpose: the child must finish its second build within the 5 s before the
+// FIFO reader is released, so it must not compete with the concurrent children above.
 test.skipIf(isWindows)(
   "Bun.build does not wait for unrelated thread-pool work",
   async () => {

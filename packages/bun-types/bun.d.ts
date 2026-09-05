@@ -8487,9 +8487,11 @@ declare module "bun" {
      * matching uses OR logic per [POSIX cron](https://pubs.opengroup.org/onlinepubs/9699919799/utilities/crontab.html):
      * a date matches if **either** field matches.
      *
-     * DST: spring-forward times shift forward by the gap; in the fall-back
-     * duplicated hour, fixed-time schedules fire once (first occurrence) while
-     * schedules with `*` minute or hour fire through both occurrences.
+     * DST: in the spring-forward gap, fixed-time schedules fire once, shifted
+     * forward by the gap, while schedules with `*` minute or hour fire at the
+     * first existing minute they match; in the fall-back duplicated hour,
+     * fixed-time schedules fire once (first occurrence) while schedules with
+     * `*` minute or hour fire through both occurrences.
      *
      * @param expression - A cron expression or nickname (e.g. `"0,15,30,45 * * * *"`, `"0 9 * * MON-FRI"`, `"@hourly"`)
      * @param relativeDate - Starting point for the search (defaults to `Date.now()`). Accepts a `Date` or milliseconds since epoch.

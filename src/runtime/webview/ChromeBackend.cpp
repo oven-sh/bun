@@ -760,6 +760,17 @@ void Transport::handleResponse(uint32_t id, std::span<const char> result, std::s
     JSWebView* view = viewFor(entry.viewId);
     if (!view) return; // user dropped both view and the awaited promise
 
+    // A reply for a navigation that timed out must not settle the retry's promise.
+    if (entry.navGen && entry.navGen != view->m_navGeneration) {
+        // The tab exists by now; close it rather than leak it.
+        if (entry.method == Method::TargetCreateTarget && error.empty()) {
+            auto tid = jsonString(jsonField(result, { "targetId", 8 }));
+            if (!tid.empty())
+                send(0, Command(nextId(), "Target.closeTarget"_s).str("targetId"_s, WTF::String::fromUTF8(tid)));
+        }
+        return;
+    }
+
     if (!error.empty()) {
         // {"code":-32000,"message":"..."}
         auto msgSlice = jsonString(jsonField(error, { "message", 7 }));
@@ -781,7 +792,7 @@ void Transport::handleResponse(uint32_t id, std::span<const char> result, std::s
         auto tid = jsonString(jsonField(result, { "targetId", 8 }));
         view->m_targetId = WTF::String::fromUTF8(tid);
         uint32_t cid = nextId();
-        m_pending.add(cid, Pending { Method::TargetAttachToTarget, entry.slot, entry.viewId });
+        m_pending.add(cid, Pending { Method::TargetAttachToTarget, entry.slot, entry.viewId, entry.navGen });
         send(cid, Command(cid, "Target.attachToTarget"_s).str("targetId"_s, view->m_targetId).boolean("flatten"_s, true));
         return;
     }
@@ -800,27 +811,29 @@ void Transport::handleResponse(uint32_t id, std::span<const char> result, std::s
         auto ss = view->m_sessionId.utf8();
         std::span<const char> sidSpan(ss.data(), ss.length());
         uint32_t cid = nextId();
-        m_pending.add(cid, Pending { Method::PageEnable, entry.slot, entry.viewId });
+        m_pending.add(cid, Pending { Method::PageEnable, entry.slot, entry.viewId, entry.navGen });
         send(cid, Command(cid, "Page.enable"_s, sidSpan));
+
+        // Per-session setup, fire-and-forget, sent here and not from the
+        // PageEnable reply handler: a navigate timeout makes the stale gate
+        // drop that reply, which must only cost the navigation, not the
+        // session's console and lifecycle events.
+        uint32_t rid = nextId();
+        send(0, Command(rid, "Runtime.enable"_s, sidSpan));
+        uint32_t lid = nextId();
+        send(0, Command(lid, "Page.setLifecycleEventsEnabled"_s, sidSpan).boolean("enabled"_s, true));
         return;
     }
     case Method::PageEnable: {
-        // Chain into Runtime.enable (for consoleAPICalled later) then
-        // Page.navigate to the stashed url.
         auto ss = view->m_sessionId.utf8();
         std::span<const char> sidSpan(ss.data(), ss.length());
-
-        // Runtime.enable — fire-and-forget, untracked. We don't need to
-        // wait for its reply before navigating.
-        uint32_t rid = nextId();
-        send(0, Command(rid, "Runtime.enable"_s, sidSpan));
 
         // Page.navigate with the url stashed by the first navigate() call.
         // The response confirms the navigation STARTED; Page.loadEventFired
         // confirms completion. We keep the pending entry alive for the
         // response so errorText rejects the right slot.
         uint32_t cid = nextId();
-        m_pending.add(cid, Pending { Method::PageNavigate, entry.slot, entry.viewId });
+        m_pending.add(cid, Pending { Method::PageNavigate, entry.slot, entry.viewId, entry.navGen });
         send(cid, Command(cid, "Page.navigate"_s, sidSpan).str("url"_s, view->m_pendingChromeNavigateUrl));
         view->m_pendingChromeNavigateUrl = WTF::String();
         return;
@@ -887,7 +900,7 @@ void Transport::handleResponse(uint32_t id, std::span<const char> result, std::s
         int32_t entryId = elem ? elem->getInteger("id"_s).value_or(0) : 0;
         // Chain into navigateToHistoryEntry. Page.loadEventFired settles.
         uint32_t cid = nextId();
-        m_pending.add(cid, Pending { Method::PageNavigateToHistoryEntry, entry.slot, entry.viewId });
+        m_pending.add(cid, Pending { Method::PageNavigateToHistoryEntry, entry.slot, entry.viewId, entry.navGen });
         send(cid, Command(cid, "Page.navigateToHistoryEntry"_s, sidSpan(view->m_sessionId)).num("entryId"_s, entryId));
         return;
     }
@@ -1138,14 +1151,27 @@ void Transport::handleEvent(std::span<const char> method, std::span<const char> 
         return;
     }
 
+    // One title fetch per committed document, also for page-initiated navigations; the PageTitle reply updates view.title and settles the navigate (a no-op when none is pending).
+    auto chainTitle = [&]() {
+        view->m_navTitleChained = true;
+        uint32_t tid = nextId();
+        m_pending.add(tid, Pending { Method::PageTitle, PendingSlot::Navigate, view->m_viewId, view->m_navGeneration });
+        send(tid, Command(tid, "Runtime.evaluate"_s, sidSpan(view->m_sessionId)).str("expression"_s, "document.title"_s).boolean("returnByValue"_s, true));
+    };
+
     // Page.frameNavigated — commit. Update m_url and fire onNavigated.
     // Same timing as WKWebView's NavDone (didFinishNavigation): the URL is
     // now the new document, resources may still be loading.
     if (method.size() == 19 && memcmp(method.data(), "Page.frameNavigated", 19) == 0) {
         auto frame = jsonField(params, { "frame", 5 });
+        if (!jsonField(frame, { "parentId", 8 }).empty()) return; // subframe
         auto url = jsonString(jsonField(frame, { "url", 3 }));
         auto urlStr = WTF::String::fromUTF8(url);
         view->m_url = urlStr;
+        // Page.lifecycleEvent below matches on these.
+        view->m_frameId = WTF::String::fromUTF8(jsonString(jsonField(frame, { "id", 2 })));
+        view->m_loaderId = WTF::String::fromUTF8(jsonString(jsonField(frame, { "loaderId", 8 })));
+        view->m_navTitleChained = false; // new document: allow one title fetch for it
         // m_loading stays true — loadEventFired flips it.
 
         if (JSObject* cb = view->m_onNavigated.get()) {
@@ -1155,19 +1181,32 @@ void Transport::handleEvent(std::span<const char> method, std::span<const char> 
         return;
     }
 
-    // Page.loadEventFired — load complete. Chain a document.title fetch
-    // so view.title is populated when navigate() resolves — matches
-    // WKWebView's NavDone which packs url+title in one reply. One extra
-    // roundtrip (~1ms), but the user-visible guarantee is worth it:
-    // `await view.navigate(); view.title` just works.
-    //
-    // If no navigate is pending (uninitiated navigation, redirect), the
-    // PageTitle handler settles a no-op and m_title still updates.
+    // Settles waitUntil:'domcontentloaded'. Chrome replays the prior document's lifecycle on enable and subframes emit their own, so only this navigation's frameId+loaderId count.
+    if (method.size() == 19 && memcmp(method.data(), "Page.lifecycleEvent", 19) == 0) {
+        if (!view->m_pendingNavigate || view->m_navWaitUntil != NavWaitUntil::DOMContentLoaded)
+            return;
+        auto name = jsonString(jsonField(params, { "name", 4 }));
+        // `load` implies DOMContentLoaded; Chrome skips DCL on some same-document navigations.
+        if (!(name.size() == 16 && memcmp(name.data(), "DOMContentLoaded", 16) == 0)
+            && !(name.size() == 4 && memcmp(name.data(), "load", 4) == 0))
+            return;
+        if (view->m_loaderId.isEmpty()) return; // this navigation has not committed yet
+        auto frameId = jsonString(jsonField(params, { "frameId", 7 }));
+        auto loaderId = jsonString(jsonField(params, { "loaderId", 8 }));
+        auto fUtf = view->m_frameId.utf8();
+        auto lUtf = view->m_loaderId.utf8();
+        if (frameId.size() != fUtf.length() || memcmp(frameId.data(), fUtf.data(), frameId.size()) != 0) return;
+        if (loaderId.size() != lUtf.length() || memcmp(loaderId.data(), lUtf.data(), loaderId.size()) != 0) return;
+        if (!view->m_navTitleChained) chainTitle();
+        return;
+    }
+
+    // Page.loadEventFired settles waitUntil:'load'.
     if (method.size() == 19 && memcmp(method.data(), "Page.loadEventFired", 19) == 0) {
+        if (view->m_loaderId.isEmpty()) return; // the previous document's load; a new navigation is in flight
         view->m_loading = false;
-        uint32_t tid = nextId();
-        m_pending.add(tid, Pending { Method::PageTitle, PendingSlot::Navigate, view->m_viewId });
-        send(tid, Command(tid, "Runtime.evaluate"_s, sidSpan(view->m_sessionId)).str("expression"_s, "document.title"_s).boolean("returnByValue"_s, true));
+        // Also with no pending navigate (a page-initiated navigation): the fetch keeps view.title fresh, and a later navigate()'s generation bump drops the reply if it races.
+        if (!view->m_navTitleChained) chainTitle();
         return;
     }
 
@@ -1421,7 +1460,8 @@ static JSPromise* sendChromeOp(JSGlobalObject* g, JSWebView* v,
     }
     v->m_pendingActivityCount.fetch_add(1, std::memory_order_release);
     slot.set(vm, v, promise);
-    t.m_pending.add(id, Pending { m, ps, v->m_viewId });
+    uint32_t gen = ps == PendingSlot::Navigate ? v->m_navGeneration : 0;
+    t.m_pending.add(id, Pending { m, ps, v->m_viewId, gen });
     t.send(id, WTF::move(cmd));
     t.updateKeepAlive();
     return promise;

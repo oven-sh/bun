@@ -36,6 +36,7 @@ for (const socketMode of ["tcp", "unix"] as const) {
       using dir = tempDir("issue-13696", {});
       const socketPath = socketMode === "unix" ? join(String(dir), "docker.sock") : undefined;
       const payload = JSON.stringify({ Detach: false, Tty: true });
+      const chunkedFrame = `${payload.length.toString(16)}\r\n${payload}\r\n`;
 
       const events: string[] = [];
       let request = "";
@@ -44,7 +45,7 @@ for (const socketMode of ["tcp", "unix"] as const) {
       await using server = net.createServer(async sock => {
         // The single write() must dispatch the headers and the body chunk
         // without req.end().
-        request = await readUntil(sock, payload);
+        request = await readUntil(sock, chunkedFrame);
         events.push("request-seen");
 
         // Docker's exec response has no Content-Length and no chunked encoding;
@@ -115,7 +116,7 @@ for (const socketMode of ["tcp", "unix"] as const) {
         });
         expect(request).toStartWith("POST /exec/abc/start HTTP/1.1\r\n");
         expect(request.toLowerCase()).toContain("transfer-encoding: chunked\r\n");
-        expect(request).toEndWith(`${payload.length.toString(16)}\r\n${payload}\r\n`);
+        expect(request).toEndWith(chunkedFrame);
       } finally {
         req.destroy();
       }

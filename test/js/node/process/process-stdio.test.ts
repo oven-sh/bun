@@ -177,11 +177,17 @@ describe.concurrent("process-stdio", () => {
       process.stdout.write("O1 line on stdout\\n");
       process.exit(ok ? 0 : 1);
     `;
+    // detect_leaks=0: LeakSanitizer needs an fd for /proc/<pid>/task at exit
+    // and prints its own failure on stderr when the table is full.
+    const env = {
+      ...bunEnv,
+      ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "detect_leaks=0"].filter(Boolean).join(":"),
+    };
 
     test("pipe: bytes written before process.exit() reach the reader", async () => {
       await using proc = spawn({
         cmd: ["/bin/sh", "-c", `ulimit -n 32 && exec "$1" -e "$2"`, "sh", bunExe(), script],
-        env: bunEnv,
+        env,
         stdout: "pipe",
         stderr: "pipe",
       });
@@ -197,7 +203,7 @@ describe.concurrent("process-stdio", () => {
       const err = path.join(String(dir), "err.txt");
       await using proc = spawn({
         cmd: ["/bin/sh", "-c", `ulimit -n 32 && exec "$1" -e "$2" >"$3" 2>"$4"`, "sh", bunExe(), script, out, err],
-        env: bunEnv,
+        env,
         stdout: "ignore",
         stderr: "ignore",
       });

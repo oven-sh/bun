@@ -294,6 +294,14 @@ struct us_bun_verify_error_t {
     const char* reason;
 };
 
+/* Verify results uSockets adds on top of BoringSSL's X509_V_ERR_* values (which
+ * end at 67): the peer's chain verified, but the end-entity (EE) certificate or
+ * one of the CA certificates above it has a public key below the minimum size
+ * (see us_internal_x509_verify_cert in crypto/openssl.c). The numbers are
+ * mirrored by get_cert_error_from_no in src/http/lib.rs. */
+#define US_X509_V_ERR_EE_KEY_TOO_SMALL 1001
+#define US_X509_V_ERR_CA_KEY_TOO_SMALL 1002
+
 /* Immutable callback table. ~20 instances total (one per kind), all static
  * const / .rodata. Nullable entries are skipped by dispatch. */
 struct us_socket_vtable_t {

@@ -1,4 +1,4 @@
-import { expect, it } from "bun:test";
+import { describe, expect, it } from "bun:test";
 import { readFileSync } from "fs";
 import { once } from "node:events";
 import tls from "node:tls";
@@ -274,6 +274,45 @@ it("Server sent their CA, wrongly, but its OK since we know the CA locally.", as
       key: server.key,
       cert: server.cert + "\n" + server.ca,
     },
+  });
+});
+
+// Same chains as the "weak public key" tests in node-tls-cert.test.ts (which
+// documents the fixtures): fetch names the failing certificate in its code where
+// node:tls mirrors node's UNSPECIFIED.
+describe("certificate chains containing a weak public key", () => {
+  const fixture = (name: string) => readFileSync(join(import.meta.dir, "fixtures", name), "utf8");
+  const root = fixture("weak-key-root-cert.pem");
+  const leafKey = fixture("weak-key-leaf-key.pem");
+
+  it("still fetches from a server whose chain is all RSA-2048", async () => {
+    await connect({
+      client: { ca: root },
+      server: { key: leafKey, cert: fixture("weak-key-ok-chain.pem") },
+    });
+  });
+
+  it.each([
+    [
+      "an RSA-512 intermediate CA",
+      { key: leafKey, cert: fixture("weak-key-ca512-chain.pem") },
+      root,
+      { code: "CA_KEY_TOO_SMALL", message: "CA certificate key too weak" },
+    ],
+    [
+      "an RSA-1024 end-entity certificate",
+      { key: fixture("weak-key-ee1024-key.pem"), cert: fixture("weak-key-ee1024-cert.pem") },
+      root,
+      { code: "EE_KEY_TOO_SMALL", message: "EE certificate key too weak" },
+    ],
+    [
+      "an RSA-1024 trust anchor",
+      { key: leafKey, cert: fixture("weak-key-under-root1024-cert.pem") },
+      fixture("weak-key-root1024-cert.pem"),
+      { code: "CA_KEY_TOO_SMALL", message: "CA certificate key too weak" },
+    ],
+  ])("rejects a server chain with %s", async (_, identity, ca, error) => {
+    await expect(connect({ client: { ca }, server: identity })).rejects.toMatchObject(error);
   });
 });
 

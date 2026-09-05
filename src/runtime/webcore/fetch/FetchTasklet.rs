@@ -1539,6 +1539,12 @@ impl FetchTasklet {
             http::Error::Cert(http::CertError::NAME_CONSTRAINTS_WITHOUT_SANS) => {
                 BunString::static_("Issuer has name constraints but leaf has no SANs")
             }
+            http::Error::Cert(http::CertError::EE_KEY_TOO_SMALL) => {
+                BunString::static_("EE certificate key too weak")
+            }
+            http::Error::Cert(http::CertError::CA_KEY_TOO_SMALL) => {
+                BunString::static_("CA certificate key too weak")
+            }
             http::Error::Cert(http::CertError::UNKNOWN_CERTIFICATE_VERIFICATION_ERROR) => {
                 BunString::static_("unknown certificate verification error")
             }

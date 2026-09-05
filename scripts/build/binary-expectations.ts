@@ -4,11 +4,15 @@
  * Everything here is derived from `Config` at configure time and serialized
  * into `<exe>.verify.json`; the checker itself never imports the build system.
  *
- * When one of these trips, the question is always "did we mean to change
- * this?": a new NEEDED library, a raised glibc floor, a new static initializer
- * or a lost hardening bit are exactly the changes that ship unnoticed and get
- * reported from the field. Update the expectation in the same change that
- * intends it.
+ * BEFORE EXTENDING A LIST HERE: these are not build settings, they are the
+ * shipped binary's contract with the machines it runs on and the addons that
+ * load into it. The check failing is the point at which a change that would
+ * otherwise ship unnoticed — a new shared-library dependency, a higher
+ * minimum glibc, a symbol leaking into the export table, a static initializer,
+ * a lost mitigation — gets decided on purpose. The usual right answer is to
+ * change the code (link statically, fix the declaration, make the global
+ * lazy), not the expectation. Extend a list only in the same change that
+ * deliberately takes on the new requirement, and say so in the commit.
  */
 
 import { readFileSync } from "node:fs";
@@ -35,6 +39,12 @@ export interface BinaryExpectations {
    * (a sysroot, the macOS SDK, the Windows SDK); a local Linux build against
    * the host's libc may only load a subset (newer glibc folds libdl/libpthread
    * into libc.so.6).
+   *
+   * Every entry is something the OS must provide, at that soname, or bun does
+   * not start. Sonames move between OS major versions (bun 1.4.0 acquired
+   * libutil.so.9 for one openpty() call and stopped launching on FreeBSD 15,
+   * oven-sh/bun#40530); the set is deliberately the libc/libSystem minimum.
+   * New code that wants another system library links it statically.
    */
   neededLibs: { names: string[]; exact: boolean };
   /**
@@ -42,6 +52,13 @@ export interface BinaryExpectations {
    * highest version any import may require (`GLIBC: "2.17"`). A prefix not
    * listed here may not appear at all. Undefined = not checked (a local build
    * against the host libc inherits whatever that libc's headers select).
+   *
+   * This *is* bun's minimum supported OS release on that platform: GLIBC_2.17
+   * = RHEL/CentOS 7, Amazon Linux 2, Debian 8 era. One import of a newer
+   * versioned symbol and the loader on those systems refuses the whole binary
+   * ("version `GLIBC_2.xx' not found"). Raising it is a release-notes-level
+   * decision; an accidental one is fixed with a local fallback or by binding
+   * the older symbol version, not here.
    */
   maxSymbolVersions?: Record<string, string>;
   /** Mach-O `minos`, PE subsystem version ("6.0"); exact. */
@@ -53,6 +70,10 @@ export interface BinaryExpectations {
    * .init_array / __init_offsets entry points at). Ours is a codebase with
    * none of its own; the runtime's (mimalloc, libstdc++'s locale tables,
    * crt) are listed. Undefined = not checkable on this format (PE).
+   *
+   * Not a list to grow: an initializer from bun/JSC/WTF code is a bug
+   * (startup cost on every invocation, init-order hazards). Make the global
+   * lazy instead — function-local static, LazyNeverDestroyed, constinit.
    */
   staticInitializers?: string[];
   elf?: {

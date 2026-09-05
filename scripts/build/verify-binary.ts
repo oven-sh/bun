@@ -73,13 +73,61 @@ function versionLeq(a: string, b: string): boolean {
   return true;
 }
 
+type CheckName = "exports" | "dynamic libraries" | "imports" | "static initializers" | "hardening" | "debug info";
+
+/**
+ * What a violation of each check means for the shipped binary and what the
+ * usual fix is — printed under the violations, because the tempting reaction
+ * to "unexpected X" is to add X to the expected list, and for most of these
+ * that is the one change that should be a deliberate product decision.
+ */
+const GUIDANCE: Record<CheckName, string[]> = {
+  "dynamic libraries": [
+    "A new NEEDED/dylib/DLL entry is a new runtime requirement on every machine that runs bun:",
+    "the binary will not start where that library (at that soname) is absent, and sonames",
+    "change across OS major versions — bun 1.4.0 stopped launching on FreeBSD 15 because it",
+    "had picked up libutil.so.9. Likewise a raised GLIBC_/FBSD_ version raises the minimum",
+    "OS release bun supports. Default fix: link that code statically or avoid the call;",
+    "only extend binary-expectations.ts if shipping the new requirement is the intent.",
+  ],
+  exports: [
+    "An exported symbol is ABI other binaries (native addons) can bind to, and it defeats",
+    "dead-stripping and internalization for everything reachable from it. Exports are meant",
+    "to come only from the lists in src/ (linker.lds, symbols.txt, symbols.def, NAPI_EXTERN /",
+    "BUN_EXPORT in code); a stray one is usually a vendored header's __declspec(dllexport)",
+    'or visibility("default"). Fix the declaration rather than extending the list.',
+  ],
+  imports: [
+    "These imports mean a toolchain feature bun builds without has crept into some object",
+    "(C++ exceptions / RTTI runtime, emulated TLS, libatomic calls). Find the object that",
+    "references the symbol (llvm-nm -A over the link inputs) and fix its compile flags.",
+  ],
+  "static initializers": [
+    "A static initializer runs before main() on every start of every bun process, in",
+    "unspecified order relative to the others, and its page is dirtied even if the feature",
+    "is never used. bun, JSC and WTF have none by policy: use a function-local static,",
+    "WTF::LazyNeverDestroyed / NeverDestroyed, or constinit. The symbol name says which",
+    "translation unit added it (_GLOBAL__sub_I_<file>).",
+  ],
+  hardening: [
+    "These bits are process-wide exploit mitigations / layout guarantees (non-executable",
+    "stack, no writable+executable mapping, ASLR flags). Losing one is almost always an",
+    "unintended side effect of a linker-flag or toolchain change; find that change.",
+  ],
+  "debug info": [
+    "The profile binary is what crash reports and profilers are symbolized against; it",
+    "must keep its symbol table and (compressed) debug sections. A missing piece usually",
+    "means a strip/objcopy step or a -g flag change applied to the wrong artifact.",
+  ],
+};
+
 interface CheckResult {
-  name: string;
+  name: CheckName;
   summary: string;
   violations: string[];
 }
 const results: CheckResult[] = [];
-function report(name: string, summary: string, violations: string[] = []): void {
+function report(name: CheckName, summary: string, violations: string[] = []): void {
   results.push({ name, summary, violations });
 }
 
@@ -598,10 +646,15 @@ function main(argv: string[]): number {
         `${spec.name} ${r.name}: ${r.summary}${r.violations.length ? ` — ${r.violations.length} violation(s)` : ""}`,
       );
       for (const v of r.violations) console.log(`    ${v}`);
-      if (r.violations.length > 0) failed++;
+      if (r.violations.length > 0) {
+        failed++;
+        for (const line of GUIDANCE[r.name]) console.log(`  ${line}`);
+      }
     }
     if (failed > 0)
-      console.log(`${spec.name}: ${failed} check(s) failed; expectations live in scripts/build/binary-expectations.ts`);
+      console.log(
+        `${spec.name}: ${failed} check(s) failed. Expectations: scripts/build/binary-expectations.ts (read the note on each list before extending it).`,
+      );
     return failed > 0 ? 1 : 0;
   }
   if (mode === "duplicates") {

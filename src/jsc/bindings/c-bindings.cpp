@@ -1023,11 +1023,14 @@ extern "C" int ffi_fileno(FILE* file)
 #if OS(LINUX) || OS(DARWIN) || OS(FREEBSD)
 #include <signal.h>
 #include <pthread.h>
+#include <wtf/Lock.h>
 
-// Note: We only ever use bun.spawnSync on the main thread.
+// Bun.openInEditor runs spawnSync on detached threads, so register/unregister can overlap.
 extern "C" int64_t Bun__currentSyncPID = 0;
 static int Bun__pendingSignalToSend = 0;
 static struct sigaction previous_actions[NSIG];
+static WTF::Lock signalForwardingLock;
+static int signalForwardingDepth = 0;
 
 // npm's signal list minus SIGIOT/SIGPOLL (aliases of SIGABRT/SIGIO; listing both would overwrite previous_actions[N]).
 // https://github.com/npm/cli/blob/fefd509992a05c2dfddbe7bc46931c42f1da69d7/workspaces/arborist/lib/signals.js#L26-L57
@@ -1090,6 +1093,10 @@ extern "C" void Bun__sendPendingSignalIfNecessary()
 
 extern "C" void Bun__registerSignalsForForwarding()
 {
+    WTF::Locker<WTF::Lock> locker(signalForwardingLock);
+    if (signalForwardingDepth++ != 0)
+        return;
+
     Bun__pendingSignalToSend = 0;
     struct sigaction sa;
     memset(&sa, 0, sizeof(sa));
@@ -1117,6 +1124,10 @@ extern "C" void Bun__registerSignalsForForwarding()
 extern "C" void Bun__unregisterSignalsForForwarding()
 {
     Bun__currentSyncPID = 0;
+
+    WTF::Locker<WTF::Lock> locker(signalForwardingLock);
+    if (--signalForwardingDepth != 0)
+        return;
 
 #define UNREGISTER_SIGNAL(SIG)                                \
     if (sigaction(SIG, &previous_actions[SIG], NULL) == -1) { \

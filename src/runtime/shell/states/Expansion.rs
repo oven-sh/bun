@@ -37,6 +37,9 @@ pub struct Expansion {
     /// and must not change the expansion structure or broaden the glob.
     pub(crate) meta_offsets: Vec<u32>,
     pub(crate) child_script: Option<NodeId>,
+    /// Consumed in argv order by [`ExpansionState::BraceWords`].
+    pub(crate) brace_words: Vec<BraceWord>,
+    pub(crate) brace_word_idx: u32,
     /// Whether the in-flight command substitution was `"$(...)"` (no IFS
     /// splitting on its result). Only meaningful while `state == CmdSubst`.
     pub(crate) cmd_subst_quoted: bool,
@@ -62,11 +65,24 @@ pub enum ExpansionState {
     CmdSubst,
     Glob,
     BraceExpand,
+    /// Globs `brace_words` one per re-entry; an empty list falls straight through to `Done`.
+    BraceWords,
     Done,
     /// The parent inspects this on
     /// `child_done(_, 1)` to print the message.
     Err(Box<ShellErr>),
 }
+
+/// A brace-expansion variant and the offsets of its literal `*` bytes.
+#[derive(Default)]
+pub struct BraceWord {
+    pub(crate) word: Vec<u8>,
+    pub(crate) meta_offsets: Vec<u32>,
+}
+
+/// Prefixed to each literal `*` because brace expansion invalidates `meta_offsets`;
+/// `decode_brace_word` rebuilds them. Doubled where it occurs as data.
+const META_TAG: u8 = 0x01;
 
 #[derive(Default)]
 pub struct ExpansionOut {
@@ -105,6 +121,8 @@ impl Expansion {
             out: ExpansionOut::default(),
             current_out: Vec::new(),
             meta_offsets: Vec::new(),
+            brace_words: Vec::new(),
+            brace_word_idx: 0,
             child_script: None,
             cmd_subst_quoted: false,
             assign_ctx,
@@ -144,12 +162,17 @@ impl Expansion {
                 }
                 ExpansionState::BraceExpand => {
                     Self::do_brace_expand(me);
-                    // brace + glob composes: after pushing the literal brace
-                    // variants, glob the original pattern. The normal glob path likewise calls
-                    // `transition_to_glob_state` directly (see below).
-                    if matches!(me.state, ExpansionState::Glob) {
+                    continue;
+                }
+                ExpansionState::BraceWords => {
+                    let Some(needs_glob) = Self::load_next_brace_word(me) else {
+                        me.state = ExpansionState::Done;
+                        continue;
+                    };
+                    if needs_glob {
                         return Self::transition_to_glob_state(interp, this);
                     }
+                    Self::push_current_out(me);
                     continue;
                 }
                 ExpansionState::Done | ExpansionState::Err(_) => break,
@@ -275,23 +298,29 @@ impl Expansion {
 
     /// Re-tokenize `current_out` (the
     /// fully-expanded word with `{`/`,`/`}` markers preserved by
-    /// `expand_simple_no_io`) and push each variant as a separate argv word.
+    /// `expand_simple_no_io`) into one word per variant: straight to `out`, or
+    /// to `brace_words` when a glob still has to run on each of them.
     fn do_brace_expand(me: &mut Expansion) {
         use bun_shell_parser::braces;
+        let glob_follows = me.node.get().has_glob_expansion();
         // Only the `{`/`,`/`}` bytes recorded in `meta_offsets` (written
         // by literal BraceBegin/Comma/BraceEnd atoms) are brace-expansion
         // metacharacters. Bytes from Text/Var/cmd-subst expansion — notably JS
         // `${...}` interpolations — are data: backslash-escape them so the
         // brace lexer cannot be steered into emitting extra argv words.
-        // (`meta_offsets` also records literal `*`/`**` positions for the glob
-        // path; those are inert here since `*` is not in the escape set.)
+        // Literal `*` bytes (also in `meta_offsets`) get a `META_TAG` instead.
         let mut escaped: Vec<u8> = Vec::with_capacity(me.current_out.len());
         let mut next_meta = 0usize;
         for (i, &b) in me.current_out.iter().enumerate() {
             if next_meta < me.meta_offsets.len() && me.meta_offsets[next_meta] as usize == i {
                 next_meta += 1;
+                if glob_follows && b == b'*' {
+                    escaped.push(META_TAG);
+                }
             } else if matches!(b, b'{' | b'}' | b',' | b'\\') {
                 escaped.push(b'\\');
+            } else if glob_follows && b == META_TAG {
+                escaped.push(META_TAG);
             }
             escaped.push(b);
         }
@@ -313,12 +342,22 @@ impl Expansion {
             return;
         }
         let count = count as usize;
-        let expanded: Vec<Vec<u8>> = if count == 0 {
-            // No `{...}` group formed an expansion (no top-level comma, or
-            // unbalanced); emit the word unchanged. `expand` would index
-            // `out[0]` of an empty slice here. Keep `current_out` for glob.
-            vec![me.current_out.clone()]
-        } else {
+        if count == 0 {
+            // `expand` needs `out[0]`; with nothing to expand, word and `meta_offsets` are final.
+            if glob_follows {
+                me.brace_words = vec![BraceWord {
+                    word: core::mem::take(&mut me.current_out),
+                    meta_offsets: core::mem::take(&mut me.meta_offsets),
+                }];
+                me.brace_word_idx = 0;
+                me.state = ExpansionState::BraceWords;
+            } else {
+                Self::push_current_out(me);
+                me.state = ExpansionState::Done;
+            }
+            return;
+        }
+        let expanded: Vec<Vec<u8>> = {
             let mut expanded: Vec<Vec<u8>> = (0..count).map(|_| Vec::new()).collect();
             let arena = bun_alloc::Arena::new();
             if let Err(e) = braces::expand(
@@ -340,6 +379,14 @@ impl Expansion {
             expanded
         };
 
+        me.current_out.clear();
+        me.meta_offsets.clear();
+        if glob_follows {
+            me.brace_words = expanded.into_iter().map(Self::decode_brace_word).collect();
+            me.brace_word_idx = 0;
+            me.state = ExpansionState::BraceWords;
+            return;
+        }
         // Push each variant as its own word; word boundaries are recorded
         // via `bounds`.
         for s in expanded {
@@ -348,19 +395,42 @@ impl Expansion {
             }
             me.out.buf.extend_from_slice(&s);
         }
+        me.state = ExpansionState::Done;
+    }
 
-        let node = me.node;
-        let atom = node.get();
-        if atom.has_glob_expansion() {
-            // brace + glob composes. Keep
-            // `current_out` (the original pattern, e.g. `src/*.{ts,tsx}`) so
-            // the glob walker brace-expands and globs it; its matches are
-            // appended after the literal brace variants already pushed above.
-            me.state = ExpansionState::Glob;
-        } else {
-            me.current_out.clear();
-            me.state = ExpansionState::Done;
+    /// Inverse of [`META_TAG`]; it only removes bytes, so it compacts in place.
+    fn decode_brace_word(mut word: Vec<u8>) -> BraceWord {
+        let mut meta_offsets: Vec<u32> = Vec::new();
+        let (mut read, mut write) = (0usize, 0usize);
+        while read < word.len() {
+            let b = word[read];
+            if b == META_TAG && read + 1 < word.len() && matches!(word[read + 1], b'*' | META_TAG) {
+                if word[read + 1] == b'*' {
+                    meta_offsets.push(write as u32);
+                }
+                word[write] = word[read + 1];
+                read += 2;
+            } else {
+                word[write] = b;
+                read += 1;
+            }
+            write += 1;
         }
+        word.truncate(write);
+        BraceWord { word, meta_offsets }
+    }
+
+    /// Stages the next variant; returns `Some(needs_glob)`, or `None` once all are consumed.
+    fn load_next_brace_word(me: &mut Expansion) -> Option<bool> {
+        let idx = me.brace_word_idx as usize;
+        if idx >= me.brace_words.len() {
+            return None;
+        }
+        me.brace_word_idx += 1;
+        let next = core::mem::take(&mut me.brace_words[idx]);
+        me.current_out = next.word;
+        me.meta_offsets = next.meta_offsets;
+        Some(!me.meta_offsets.is_empty())
     }
 
     /// Build the pattern handed to the glob walker from `current_out`,
@@ -680,7 +750,7 @@ impl Expansion {
             let me = interp.as_expansion_mut(this);
             if in_assign {
                 Self::push_current_out(me);
-                me.state = ExpansionState::Done;
+                me.state = ExpansionState::BraceWords;
             } else if let Some(err) = walk_err {
                 let shell_err = match err {
                     ShellGlobErr::Syscall(e) => ShellErr::new_sys(&e),
@@ -705,7 +775,9 @@ impl Expansion {
                 }
                 me.out.buf.extend_from_slice(&entry);
             }
-            me.state = ExpansionState::Done;
+            me.current_out.clear();
+            me.meta_offsets.clear();
+            me.state = ExpansionState::BraceWords;
         }
         Yield::Next(this).run(interp);
     }
@@ -733,6 +805,7 @@ impl Expansion {
         me.out.buf.clear();
         me.out.bounds.clear();
         me.current_out.clear();
+        me.brace_words.clear();
     }
 
     /// Take the expanded output (called by the parent after `child_done`).

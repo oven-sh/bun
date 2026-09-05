@@ -665,23 +665,22 @@ extern "C" void Bun__setCTRLHandler(BOOL add)
     SetConsoleCtrlHandler(Ctrlhandler, add);
 }
 
-// Held, never released, across ExitProcess: a WTF suspender it kills between
-// SuspendThread and ResumeThread of this thread would leave it suspended forever.
-extern "C" void Bun__lockThreadSuspensionForExit()
+// ExitProcess behind WTF's thread-suspend lock, held for good: a suspender killed
+// between SuspendThread and ResumeThread of this thread would leave it suspended forever.
+extern "C" [[noreturn]] void Bun__exitProcess(uint32_t code)
 {
     static std::atomic<DWORD> owner { 0 };
     DWORD self = GetCurrentThreadId();
     DWORD expected = 0;
-    if (!owner.compare_exchange_strong(expected, self, std::memory_order_acq_rel)) {
-        // Re-entered on the thread that already holds the lock.
-        if (expected == self)
-            return;
-        // Another thread's exit holds it and is about to terminate this thread.
+    if (owner.compare_exchange_strong(expected, self, std::memory_order_acq_rel)) {
+        alignas(WTF::ThreadSuspendLocker) static unsigned char storage[sizeof(WTF::ThreadSuspendLocker)];
+        new (storage) WTF::ThreadSuspendLocker();
+    } else if (expected != self) {
+        // Another thread's exit holds the lock and is about to terminate this thread.
         for (;;)
             SleepEx(INFINITE, FALSE);
     }
-    alignas(WTF::ThreadSuspendLocker) static unsigned char storage[sizeof(WTF::ThreadSuspendLocker)];
-    new (storage) WTF::ThreadSuspendLocker();
+    ExitProcess(code);
 }
 #endif
 

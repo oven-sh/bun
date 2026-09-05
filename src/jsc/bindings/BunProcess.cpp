@@ -149,6 +149,9 @@ extern "C" bool Bun__Node__ProcessThrowDeprecation;
 extern "C" bool Bun__Node__ProcessPendingDeprecation;
 extern "C" void Bun__writeProfilesBeforeSelfKill();
 extern "C" int32_t bun_stdio_tty[3];
+#if OS(WINDOWS)
+extern "C" [[noreturn]] void Bun__exitProcess(uint32_t code);
+#endif
 
 namespace Bun {
 
@@ -1860,8 +1863,9 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionAbort, (JSGlobalObject * globalObject, 
 {
 #if OS(WINDOWS)
     // Raising SIGABRT is handled in the CRT in windows, calling _exit() with ambiguous code "3" by default.
-    // This adjustment to the abort behavior gives a more sane exit code on abort, by calling _exit directly with code 134.
-    _exit(134);
+    // This adjustment to the abort behavior gives a more sane exit code on abort: exit directly with code 134,
+    // through the same locked ExitProcess as Global::exit.
+    Bun__exitProcess(134);
 #else
     // process.abort() is user-requested; bypass the crash handler so it does
     // not print "Bun has crashed" or upload a report.

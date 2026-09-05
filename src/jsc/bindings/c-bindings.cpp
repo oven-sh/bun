@@ -643,7 +643,30 @@ extern "C" void onExitSignal(int sig)
 {
     bun_restore_stdio();
     signal(sig, SIG_DFL);
+
+    // `sig` is blocked while its own handler runs; once unblocked, raise() kills us here.
+    sigset_t set;
+    sigemptyset(&set);
+    sigaddset(&set, sig);
+    pthread_sigmask(SIG_UNBLOCK, &set, nullptr);
     raise(sig);
+
+    // Only reached as PID 1 of a pid namespace: the kernel discards SIG_DFL signals aimed at init, the re-raise above included.
+    _exit(128 + sig);
+}
+
+// Leaves an inherited SIG_IGN (`nohup`, `trap '' INT`) in place.
+static void installExitSignalHandler(int sig)
+{
+    struct sigaction sa;
+    if (sigaction(sig, nullptr, &sa) != 0 || sa.sa_handler != SIG_DFL)
+        return;
+
+    memset(&sa, 0, sizeof(sa));
+    sigemptyset(&sa.sa_mask);
+    sa.sa_flags = SA_RESETHAND;
+    sa.sa_handler = onExitSignal;
+    sigaction(sig, &sa, nullptr);
 }
 #endif
 
@@ -763,17 +786,15 @@ extern "C" void bun_initialize_process()
         close(devNullFd_);
     }
 
-    // Restore TTY state on exit
-    if (anyTTYs) {
-        struct sigaction sa;
-        memset(&sa, 0, sizeof(sa));
-        sigemptyset(&sa.sa_mask);
-
-        sa.sa_flags = SA_RESETHAND;
-        sa.sa_handler = onExitSignal;
-
-        sigaction(SIGTERM, &sa, nullptr);
-        sigaction(SIGINT, &sa, nullptr);
+    // Restore TTY state on exit. PID 1 of a pid namespace needs the handler even without a TTY: the kernel drops signals init does not handle.
+    bool isPidNamespaceInit = false;
+#if OS(LINUX)
+    isPidNamespaceInit = getpid() == 1;
+#endif
+    if (anyTTYs || isPidNamespaceInit) {
+        installExitSignalHandler(SIGTERM);
+        installExitSignalHandler(SIGINT);
+        installExitSignalHandler(SIGHUP);
     }
 #elif OS(WINDOWS)
     for (int fd = 0; fd <= 2; ++fd) {

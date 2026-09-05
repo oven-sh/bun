@@ -2523,6 +2523,8 @@ it("Bun.listen({unix}) echoes to socket client", async () => {
   const unix = join(String(dir), "listen.sock");
   const { promise, resolve, reject } = Promise.withResolvers<string>();
   let received = "";
+  let request = "";
+  let responded = false;
   let settled = false;
   const fail = (err: unknown) => {
     if (!settled) {
@@ -2533,11 +2535,18 @@ it("Bun.listen({unix}) echoes to socket client", async () => {
   const listener = Bun.listen({
     unix,
     socket: {
-      data(sock, _data) {
-        try {
-          sock.write("pong\n");
-        } catch (e) {
-          fail(e);
+      data(sock, data) {
+        if (responded) {
+          return;
+        }
+        request += data.toString();
+        if (request.includes("ping")) {
+          responded = true;
+          try {
+            sock.write("pong\n");
+          } catch (e) {
+            fail(e);
+          }
         }
       },
       error(_sock, err) {
@@ -2551,7 +2560,7 @@ it("Bun.listen({unix}) echoes to socket client", async () => {
       socket: {
         data(_sock, data) {
           received += data.toString();
-          if (!settled && received === "pong\n") {
+          if (!settled && received.endsWith("pong\n")) {
             settled = true;
             resolve(received);
           }

@@ -3374,6 +3374,87 @@ fn escape_powershell_impl(str: &[u8], writer: &mut impl fmt::Write) -> fmt::Resu
     write_bytes(writer, remain)
 }
 
+// ───────────────────────────────────────────────────────────────────────────
+// escapeControlChars
+// ───────────────────────────────────────────────────────────────────────────
+
+/// Renders the wrapped `Display` with C0 controls, DEL and C1 controls
+/// spelled out (`\n`, `\r`, `\t`, `\x1b`, `\x7f`, `\u009b`) instead of
+/// written raw. For text somebody else authored (a registry manifest, a
+/// dependency's `package.json`): printed raw, an ESC/CR/C1 sequence can erase
+/// or repaint the line it is shown on and a newline can forge further lines
+/// of our output. Everything else passes through unchanged.
+pub struct EscapeControlChars<T>(pub T);
+
+/// [`EscapeControlChars`] for a value that is legitimately multi-line and is
+/// printed on its own (`bun pm view <pkg> readme`): `\t`, `\n` and `\r\n`
+/// pass through. A `\r` not followed by `\n` is still escaped; on a terminal
+/// it only overwrites the line printed so far.
+pub struct EscapeControlCharsMultiline<T>(pub T);
+
+/// [`EscapeControlChars`] over raw bytes; invalid UTF-8 renders as U+FFFD.
+pub fn escape_control_chars(text: &[u8]) -> EscapeControlChars<&bstr::BStr> {
+    EscapeControlChars(bstr::BStr::new(text))
+}
+
+/// [`EscapeControlCharsMultiline`] over raw bytes; invalid UTF-8 renders as U+FFFD.
+pub fn escape_control_chars_multiline(text: &[u8]) -> EscapeControlCharsMultiline<&bstr::BStr> {
+    EscapeControlCharsMultiline(bstr::BStr::new(text))
+}
+
+impl<T: Display> Display for EscapeControlChars<T> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        let mut writer = EscapeControlCharsWriter {
+            f,
+            keep_line_breaks: false,
+        };
+        write!(writer, "{}", self.0)
+    }
+}
+
+impl<T: Display> Display for EscapeControlCharsMultiline<T> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        let mut writer = EscapeControlCharsWriter {
+            f,
+            keep_line_breaks: true,
+        };
+        write!(writer, "{}", self.0)
+    }
+}
+
+struct EscapeControlCharsWriter<'a, 'f> {
+    f: &'a mut Formatter<'f>,
+    keep_line_breaks: bool,
+}
+
+impl fmt::Write for EscapeControlCharsWriter<'_, '_> {
+    fn write_str(&mut self, s: &str) -> fmt::Result {
+        let mut start = 0;
+        let mut chars = s.char_indices().peekable();
+        while let Some((i, c)) = chars.next() {
+            let pass_through = match c {
+                '\t' | '\n' => self.keep_line_breaks,
+                '\r' => self.keep_line_breaks && matches!(chars.peek(), Some((_, '\n'))),
+                '\0'..='\x1f' | '\x7f' | '\u{80}'..='\u{9f}' => false,
+                _ => true,
+            };
+            if pass_through {
+                continue;
+            }
+            self.f.write_str(&s[start..i])?;
+            match c {
+                '\n' => self.f.write_str("\\n")?,
+                '\r' => self.f.write_str("\\r")?,
+                '\t' => self.f.write_str("\\t")?,
+                c if c.is_ascii() => write!(self.f, "\\x{:02x}", c as u32)?,
+                c => write!(self.f, "\\u{:04x}", c as u32)?,
+            }
+            start = i + c.len_utf8();
+        }
+        self.f.write_str(&s[start..])
+    }
+}
+
 // js_bindings (fmtString for highlighter.test.ts) lives in src/jsc/fmt_jsc.rs
 // alongside fmt_jsc.bind.ts; bun_core/ stays JSC-free.
 

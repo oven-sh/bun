@@ -311,7 +311,10 @@ pub(crate) fn view(
                         bun_fmt::format_json_string_utf8(slice, Default::default())
                     ));
                 } else {
-                    Output::print(format_args!("{}\n", BStr::new(slice)));
+                    Output::print(format_args!(
+                        "{}\n",
+                        bun_fmt::escape_control_chars_multiline(slice)
+                    ));
                 }
                 Output::flush();
                 return Ok(());
@@ -411,21 +414,23 @@ pub(crate) fn view(
             .len_u32() as usize;
     }
 
+    // Every string printed below is registry-controlled: always go through
+    // `escape_control_chars`.
     prettyln!(
         "<b><blue><u>{}<r><d>@<r><blue><b><u>{}<r> <d>|<r> <cyan>{}<r> <d>|<r> deps<d>:<r> {} <d>|<r> versions<d>:<r> {}",
-        BStr::new(pkg_name),
-        BStr::new(pkg_version),
-        BStr::new(license),
+        bun_fmt::escape_control_chars(pkg_name),
+        bun_fmt::escape_control_chars(pkg_version),
+        bun_fmt::escape_control_chars(license),
         dep_count,
         versions_len,
     );
 
     // Get description and homepage from the top-level package manifest, not the version-specific one
     if let Some(desc) = json.get_string_cloned(&bump, b"description").ok().flatten() {
-        prettyln!("{}", BStr::new(desc));
+        prettyln!("{}", bun_fmt::escape_control_chars(desc));
     }
     if let Some(hp) = json.get_string_cloned(&bump, b"homepage").ok().flatten() {
-        prettyln!("<blue>{}<r>", BStr::new(hp));
+        prettyln!("<blue>{}<r>", bun_fmt::escape_control_chars(hp));
     }
 
     if let Some(mut iter) = json.get_array(b"keywords") {
@@ -442,7 +447,10 @@ pub(crate) fn view(
             }
         }
         if !keywords.list.is_empty() {
-            prettyln!("<d>keywords:<r> {}", BStr::new(keywords.list.as_slice()));
+            prettyln!(
+                "<d>keywords:<r> {}",
+                bun_fmt::escape_control_chars(keywords.list.as_slice())
+            );
         }
     }
 
@@ -476,8 +484,8 @@ pub(crate) fn view(
             };
             prettyln!(
                 "- <cyan>{}<r><d>:<r> {}",
-                BStr::new(dep_name),
-                BStr::new(dep_version),
+                bun_fmt::escape_control_chars(dep_name),
+                bun_fmt::escape_control_chars(dep_version),
             );
         }
     }
@@ -485,13 +493,22 @@ pub(crate) fn view(
     if let Some(dist) = manifest.get_object(b"dist") {
         prettyln!("\n<d><r><b>dist<r>");
         if let Some(t) = dist.get_string_cloned(&bump, b"tarball").ok().flatten() {
-            prettyln!(" <d>.<r>tarball<d>:<r> {}", BStr::new(t));
+            prettyln!(
+                " <d>.<r>tarball<d>:<r> {}",
+                bun_fmt::escape_control_chars(t)
+            );
         }
         if let Some(s) = dist.get_string_cloned(&bump, b"shasum").ok().flatten() {
-            prettyln!(" <d>.<r>shasum<r><d>:<r> <green>{}<r>", BStr::new(s));
+            prettyln!(
+                " <d>.<r>shasum<r><d>:<r> <green>{}<r>",
+                bun_fmt::escape_control_chars(s)
+            );
         }
         if let Some(i) = dist.get_string_cloned(&bump, b"integrity").ok().flatten() {
-            prettyln!(" <d>.<r>integrity<r><d>:<r> <green>{}<r>", BStr::new(i));
+            prettyln!(
+                " <d>.<r>integrity<r><d>:<r> <green>{}<r>",
+                bun_fmt::escape_control_chars(i)
+            );
         }
         if let Some(u) = dist.get_number(b"unpackedSize") {
             prettyln!(
@@ -517,12 +534,14 @@ pub(crate) fn view(
             let val_expr = prop.value.as_ref().expect("infallible: prop has value");
             if let Some(tag) = tagname_expr.as_string(&bump) {
                 if let Some(val) = val_expr.as_string(&bump) {
+                    let tag_fmt = bun_fmt::escape_control_chars(tag);
+                    let val_fmt = bun_fmt::escape_control_chars(val);
                     if tag == b"latest" {
-                        prettyln!("<cyan>{}<r><d>:<r> {}", BStr::new(tag), BStr::new(val));
+                        prettyln!("<cyan>{}<r><d>:<r> {}", tag_fmt, val_fmt);
                     } else if tag == b"beta" {
-                        prettyln!("<blue>{}<r><d>:<r> {}", BStr::new(tag), BStr::new(val));
+                        prettyln!("<blue>{}<r><d>:<r> {}", tag_fmt, val_fmt);
                     } else {
-                        prettyln!("<magenta>{}<r><d>:<r> {}", BStr::new(tag), BStr::new(val));
+                        prettyln!("<magenta>{}<r><d>:<r> {}", tag_fmt, val_fmt);
                     }
                 }
             }
@@ -543,9 +562,13 @@ pub(crate) fn view(
                 .flatten()
                 .unwrap_or(b"");
             if !em.is_empty() {
-                prettyln!("<d>-<r> {} <d>\\<{}\\><r>", BStr::new(nm), BStr::new(em));
+                prettyln!(
+                    "<d>-<r> {} <d>\\<{}\\><r>",
+                    bun_fmt::escape_control_chars(nm),
+                    bun_fmt::escape_control_chars(em)
+                );
             } else if !nm.is_empty() {
-                prettyln!("<d>-<r> {}", BStr::new(nm));
+                prettyln!("<d>-<r> {}", bun_fmt::escape_control_chars(nm));
             }
         }
     }
@@ -558,13 +581,19 @@ pub(crate) fn view(
             .ok()
             .flatten()
         {
-            prettyln!("\n<b>Published<r><d>:<r> {}", BStr::new(published_time));
+            prettyln!(
+                "\n<b>Published<r><d>:<r> {}",
+                bun_fmt::escape_control_chars(published_time)
+            );
         } else if let Some(modified_time) = time_obj
             .get_string_cloned(&bump, b"modified")
             .ok()
             .flatten()
         {
-            prettyln!("\n<b>Published<r><d>:<r> {}", BStr::new(modified_time));
+            prettyln!(
+                "\n<b>Published<r><d>:<r> {}",
+                bun_fmt::escape_control_chars(modified_time)
+            );
         }
     }
 

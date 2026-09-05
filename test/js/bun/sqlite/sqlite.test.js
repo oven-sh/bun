@@ -2462,29 +2462,138 @@ it("run() reports a closed database when a bound parameter's getter closes it", 
   });
 });
 
-// Several SQLITE_FCNTL_* opcodes (VFSNAME, MMAP_SIZE, FILE_POINTER, ...) write
-// a full pointer or int64 through the result argument, so the result buffer
-// must be at least 8 bytes. A 1-byte Uint8Array used to be passed through
-// as-is and overflowed.
-it("fileControl rejects result TypedArrays smaller than 8 bytes", () => {
-  using dir = tempDir("sqlite-fcntl-bounds", { "empty.txt": "" });
-  const db = new Database(path.join(dir, "my.db"));
+describe("fileControl", () => {
+  // null and plain objects used to fall through to sqlite3_file_control with
+  // pArg == nullptr. Any opcode that writes through pArg (LOCKSTATE,
+  // PERSIST_WAL, POWERSAFE_OVERWRITE, ...) then dereferenced it:
+  //   panic: Segmentation fault at address 0x0
+  it("does not crash on null or a plain-object argument", async () => {
+    using dir = tempDir("sqlite-fcntl-null", { "empty.txt": "" });
+    const srcs = {
+      null: `db.fileControl(c.SQLITE_FCNTL_PERSIST_WAL, null)`,
+      obj: `db.fileControl(c.SQLITE_FCNTL_LOCKSTATE, {})`,
+      date: `db.fileControl(c.SQLITE_FCNTL_SIZE_HINT, new Date())`,
+      view: `db.fileControl(c.SQLITE_FCNTL_PERSIST_WAL, new BigInt64Array(1))`,
+      three: `db.fileControl(c.SQLITE_FCNTL_LOCKSTATE, 1, {})`,
+    };
+    const cells = await Promise.all(
+      Object.entries(srcs).map(async ([tag, src]) => {
+        await using proc = Bun.spawn({
+          cmd: [
+            bunExe(),
+            "-e",
+            `const {Database, constants: c} = require("bun:sqlite");
+             const db = new Database(${JSON.stringify(path.join(String(dir), tag + ".db"))});
+             db.exec("CREATE TABLE t(v)");
+             try { var r = ${src}; console.log(JSON.stringify({ok: true, r})); }
+             catch (e) { console.log(JSON.stringify({ok: false, name: e?.name, msg: String(e?.message)})); }`,
+          ],
+          env: bunEnv,
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        return { tag, stdout: stdout.trim(), stderr, exitCode, signalCode: proc.signalCode };
+      }),
+    );
 
-  expect(() => db.fileControl(constants.SQLITE_FCNTL_PERSIST_WAL, new Uint8Array(1))).toThrow(
-    "TypedArray must be at least 8 bytes",
-  );
-  expect(() => db.fileControl(constants.SQLITE_FCNTL_PERSIST_WAL, new Uint8Array(7))).toThrow(
-    "TypedArray must be at least 8 bytes",
-  );
+    for (const { tag, stdout, stderr, exitCode, signalCode } of cells) {
+      expect({ tag, stderr }).toEqual({ tag, stderr: "" });
+      expect({ tag, signalCode }).toEqual({ tag, signalCode: null });
+      expect({ tag, exitCode }).toEqual({ tag, exitCode: 0 });
+      const out = JSON.parse(stdout);
+      if (tag === "null") {
+        // null arg on an int* in/out opcode means "query": must return a number.
+        expect({ tag, out }).toEqual({ tag, out: { ok: true, r: expect.any(Number) } });
+      } else if (tag === "three") {
+        // 3-arg misuse: the extra object is ignored, not shifted into pArg.
+        expect({ tag, out }).toEqual({ tag, out: { ok: true, r: expect.any(Number) } });
+      } else {
+        expect({ tag, out }).toEqual({
+          tag,
+          out: { ok: false, name: "TypeError", msg: expect.stringContaining("fileControl") },
+        });
+      }
+    }
+  });
 
-  // 8-byte buffers and plain numbers still work.
-  expect(db.fileControl(constants.SQLITE_FCNTL_PERSIST_WAL, new Uint8Array(8))).toBe(0);
-  expect(db.fileControl(constants.SQLITE_FCNTL_PERSIST_WAL, 0)).toBe(0);
-  // Pointer-returning opcodes get an 8-byte output slot even when JS passes a
-  // plain number for the result argument.
-  expect(db.fileControl(constants.SQLITE_FCNTL_VFSNAME, 0)).toBe(0);
+  it("pointer-returning opcodes are rejected instead of disclosing addresses", () => {
+    using dir = tempDir("sqlite-fcntl-ptr", { "empty.txt": "" });
+    const db = new Database(path.join(String(dir), "my.db"));
+    db.exec("CREATE TABLE t(v)");
+    for (const op of [
+      constants.SQLITE_FCNTL_FILE_POINTER,
+      constants.SQLITE_FCNTL_VFS_POINTER,
+      constants.SQLITE_FCNTL_JOURNAL_POINTER,
+      constants.SQLITE_FCNTL_BUSYHANDLER,
+      constants.SQLITE_FCNTL_PRAGMA,
+      99999,
+    ]) {
+      expect(() => db.fileControl(op)).toThrow(TypeError);
+      expect(() => db.fileControl(op)).toThrow("has no safe JavaScript mapping");
+    }
+    db.close();
+  });
 
-  db.close();
+  it("SQLITE_FCNTL_VFSNAME returns a string (and frees the sqlite3_malloc'd result)", () => {
+    using dir = tempDir("sqlite-fcntl-vfsname", { "empty.txt": "" });
+    const db = new Database(path.join(String(dir), "my.db"));
+    db.exec("CREATE TABLE t(v)");
+    const name = db.fileControl(constants.SQLITE_FCNTL_VFSNAME);
+    expect(typeof name).toBe("string");
+    expect(name.length).toBeGreaterThan(0);
+    const tmp = db.fileControl(constants.SQLITE_FCNTL_TEMPFILENAME);
+    expect(typeof tmp).toBe("string");
+    expect(tmp.length).toBeGreaterThan(0);
+    db.close();
+  });
+
+  it("int/int64 opcodes use internal scratch storage", () => {
+    using dir = tempDir("sqlite-fcntl-int", { "empty.txt": "" });
+    const db = new Database(path.join(String(dir), "my.db"));
+    db.exec("CREATE TABLE t(v)");
+
+    expect(db.fileControl(constants.SQLITE_FCNTL_PERSIST_WAL, 0)).toBe(0);
+    expect(db.fileControl(constants.SQLITE_FCNTL_PERSIST_WAL, 1)).toBe(1);
+    expect(db.fileControl(constants.SQLITE_FCNTL_PERSIST_WAL)).toBe(1);
+    expect(db.fileControl(constants.SQLITE_FCNTL_PERSIST_WAL, -1)).toBe(1);
+    expect(db.fileControl(constants.SQLITE_FCNTL_POWERSAFE_OVERWRITE)).toBeOneOf([0, 1]);
+    // SQLITE_LOCK_NONE..SQLITE_LOCK_EXCLUSIVE == 0..4
+    expect(db.fileControl(constants.SQLITE_FCNTL_LOCKSTATE)).toBeWithin(0, 5);
+    expect(db.fileControl(constants.SQLITE_FCNTL_LAST_ERRNO)).toBeNumber();
+    // winFileControl does not implement HAS_MOVED (unix-only).
+    expect(db.fileControl(constants.SQLITE_FCNTL_HAS_MOVED)).toBeOneOf(isWindows ? [undefined] : [0, 1]);
+    expect(db.fileControl(constants.SQLITE_FCNTL_DATA_VERSION)).toBeNumber();
+    expect(db.fileControl(constants.SQLITE_FCNTL_RESERVE_BYTES)).toBeNumber();
+    expect(db.fileControl(constants.SQLITE_FCNTL_MMAP_SIZE)).toBeNumber();
+    expect(db.fileControl(constants.SQLITE_FCNTL_CHUNK_SIZE, 4096)).toBe(0);
+    expect(db.fileControl(constants.SQLITE_FCNTL_SIZE_HINT, 65536)).toBe(0);
+    // RESET_CACHE is handled inside sqlite3_file_control (not the VFS) and only
+    // in SQLite >= 3.41.0; macOS dlopen()s Apple's libsqlite3, which may be older.
+    expect(db.fileControl(constants.SQLITE_FCNTL_RESET_CACHE)).toBeOneOf(isMacOS ? [0, 12] : [0]);
+
+    expect(() => db.fileControl(constants.SQLITE_FCNTL_CHUNK_SIZE)).toThrow(TypeError);
+    expect(() => db.fileControl(constants.SQLITE_FCNTL_SIZE_HINT)).toThrow(TypeError);
+    expect(() => db.fileControl(constants.SQLITE_FCNTL_LOCK_TIMEOUT)).toThrow(TypeError);
+
+    db.close();
+  });
+
+  it("3-arg (zDbName, op, arg) form works", () => {
+    using dir = tempDir("sqlite-fcntl-3arg", { "empty.txt": "" });
+    const db = new Database(path.join(String(dir), "my.db"));
+    db.exec("CREATE TABLE t(v)");
+    expect(db.fileControl("main", constants.SQLITE_FCNTL_PERSIST_WAL, 0)).toBe(0);
+    expect(typeof db.fileControl("main", constants.SQLITE_FCNTL_VFSNAME)).toBe("string");
+    db.close();
+  });
+
+  it("returns undefined when the VFS reports SQLITE_NOTFOUND", () => {
+    const db = new Database(":memory:");
+    expect(db.fileControl(constants.SQLITE_FCNTL_PERSIST_WAL, 0)).toBeUndefined();
+    expect(db.fileControl(constants.SQLITE_FCNTL_VFSNAME)).toBeUndefined();
+    db.close();
+  });
 });
 
 it("decodes non-UTF-8 TEXT leniently and consistently across the 64-byte boundary", () => {

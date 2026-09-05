@@ -3363,27 +3363,44 @@ describe("stdin redirect from a zero-length buffer delivers EOF to the spawned c
   });
 });
 
-test("output redirect buffer for an external command stays attached until the command finishes", async () => {
+test("output redirect buffer for an external command stays attached while the child's stdout is open", async () => {
   // `> ${buf}` for an external (non-builtin) command stores the buffer and
   // copies the child's stdout into it as chunks arrive across event-loop
-  // turns. The backing store must therefore stay attached for the whole
-  // duration of the command so those writes land in memory the caller still
-  // owns. (The builtin equivalent of this test is directly above; this one
-  // spawns a real subprocess so it goes through the subprocess output path.)
+  // turns. The backing store is pinned (a detach attempt copies instead) from
+  // the moment the command starts until the child's stdout reaches EOF, which
+  // is the last point at which the shell writes into it. (The builtin
+  // equivalent of this test is above; this one spawns a real subprocess so it
+  // goes through the subprocess output path.)
+  //
+  // The child blocks on an HTTP request that is answered only after the detach
+  // attempt below, so its stdout is guaranteed to still be open at that point.
+  // Without the gate, a child that exits before the parent's first read of the
+  // pipe delivers EOF synchronously inside `.then()`, the pin is already gone,
+  // and the detach succeeds.
   const buffer = new Uint8Array(new ArrayBuffer(1 << 16));
-  const childCode = "console.log('external-redirect-output')";
+  const gate = Promise.withResolvers<void>();
+  await using server = Bun.serve({
+    port: 0,
+    async fetch() {
+      await gate.promise;
+      return new Response("external-redirect-output");
+    },
+  });
+  const childCode = `console.log(await fetch(${JSON.stringify(String(server.url))}).then(r => r.text()))`;
   const promise = $`${BUN} -e ${childCode} > ${buffer}`.env(bunEnv).nothrow();
   // Calling .then() starts the interpreter synchronously, so the redirect
-  // slot already holds the buffer while the child process is still running.
+  // slot already holds the buffer while the child process is still starting.
   const running = promise.then(o => o);
 
-  // Attempting to detach the redirect target while the command is in flight
+  // Attempting to detach the redirect target while the child's stdout is open
   // must leave the buffer attached (refusing the detach by throwing is also
-  // acceptable).
+  // acceptable). Release the child before asserting so it always finishes.
   try {
     buffer.buffer.transfer();
   } catch {}
-  expect(buffer.buffer.detached).toBe(false);
+  const detachedWhileOpen = buffer.buffer.detached;
+  gate.resolve();
+  expect(detachedWhileOpen).toBe(false);
 
   const result = await running;
   expect(stringifyBuffer(buffer)).toEqual("external-redirect-output\n");

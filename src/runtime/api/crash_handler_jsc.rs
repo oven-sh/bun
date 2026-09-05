@@ -33,6 +33,10 @@ pub(crate) mod js_bindings {
                 "raiseIgnoringPanicHandler",
                 __jsc_host_js_raise_ignoring_panic_handler,
             ),
+            (
+                "getFaultSignalHandlers",
+                __jsc_host_js_get_fault_signal_handlers,
+            ),
         ];
         let obj = JSValue::create_empty_object(global, ENTRIES.len());
         for &(name, func) in ENTRIES {
@@ -215,6 +219,41 @@ pub(crate) mod js_bindings {
     ) -> JsResult<JSValue> {
         crash_handler::suppress_core_dumps_if_necessary();
         Global::raise_ignoring_panic_handler(bun_core::SignalCode::SIGSEGV);
+    }
+
+    /// Current `sa_sigaction` of each CPU-fault signal, as hex strings.
+    #[bun_jsc::host_fn]
+    fn js_get_fault_signal_handlers(
+        global: &JSGlobalObject,
+        _frame: &CallFrame,
+    ) -> JsResult<JSValue> {
+        #[cfg(unix)]
+        {
+            fn handler(sig: libc::c_int) -> usize {
+                let mut current: libc::sigaction = bun_core::ffi::zeroed();
+                // SAFETY: act=NULL only reads the disposition into the stack-local out-pointer.
+                if unsafe { libc::sigaction(sig, core::ptr::null(), &raw mut current) } != 0 {
+                    return 0;
+                }
+                current.sa_sigaction
+            }
+            let obj = JSValue::create_empty_object(global, 4);
+            for (name, sig) in [
+                ("SIGSEGV", libc::SIGSEGV),
+                ("SIGBUS", libc::SIGBUS),
+                ("SIGILL", libc::SIGILL),
+                ("SIGFPE", libc::SIGFPE),
+            ] {
+                let mut s = BunString::create_format(format_args!("{:x}", handler(sig)));
+                obj.put(global, name, s.transfer_to_js(global)?);
+            }
+            Ok(obj)
+        }
+        #[cfg(not(unix))]
+        {
+            let _ = global;
+            Ok(JSValue::UNDEFINED)
+        }
     }
 
     #[bun_jsc::host_fn]

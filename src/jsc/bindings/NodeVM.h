@@ -122,8 +122,7 @@ public:
     static constexpr JSC::DestructionMode needsDestruction = NeedsDestruction;
 
     template<typename, JSC::SubspaceAccess mode> static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm);
-    static NodeVMGlobalObject* create(JSC::VM& vm, JSC::Structure* structure, NodeVMContextOptions options, JSValue importer);
-    static Structure* createStructure(JSC::VM& vm, JSC::JSValue prototype);
+    static NodeVMGlobalObject* create(JSC::VM& vm, NodeVMContextOptions options, JSValue importer);
     static const JSC::GlobalObjectMethodTable& globalObjectMethodTable();
 
     DECLARE_INFO;
@@ -162,11 +161,11 @@ private:
     NodeVMContextOptions m_contextOptions {};
 
     NodeVMGlobalObject(VM& vm, Structure* structure, NodeVMContextOptions contextOptions, JSValue importer);
+    static Structure* createStructure(JSC::VM& vm);
 };
 
 // Helper functions to create vm contexts and run code
 JSC::JSValue createNodeVMBinding(Zig::GlobalObject*);
-Structure* createNodeVMGlobalObjectStructure(JSC::VM&);
 void configureNodeVM(JSC::VM&, Zig::GlobalObject*);
 
 // VM module functions

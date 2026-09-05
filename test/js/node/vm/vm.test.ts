@@ -1974,3 +1974,75 @@ describe("node:vm lineOffset/columnOffset at the edge of int32", () => {
     expect(position).toBeLessThanOrEqual(INT32_MAX);
   });
 });
+
+test.concurrent("a context nothing references is collected while it is still the newest context", async () => {
+  // Every NodeVMGlobalObject used to be created from one Structure cached on the main global.
+  // JSGlobalObject::finishCreation makes the new global the realm of its structure, and the GC marks
+  // a structure's realm, so the cached structure kept the context created last alive until the next
+  // one took its place. Each round below therefore checks a context while it is still the newest one.
+  const fixture = String.raw`
+    const vm = require("node:vm");
+    // Each case returns a WeakRef to the object the context's global holds (the sandbox, or the
+    // DONT_CONTEXTIFY stand-in for it), so that object can only be collected together with the global.
+    const cases = {
+      createContext() {
+        const sandbox = {};
+        vm.createContext(sandbox);
+        return new WeakRef(sandbox);
+      },
+      createContextDontContextify() {
+        return new WeakRef(vm.createContext(vm.constants.DONT_CONTEXTIFY));
+      },
+      runInNewContext() {
+        const sandbox = {};
+        vm.runInNewContext("1", sandbox);
+        return new WeakRef(sandbox);
+      },
+      scriptRunInNewContext() {
+        const sandbox = {};
+        new vm.Script("1").runInNewContext(sandbox);
+        return new WeakRef(sandbox);
+      },
+    };
+    // The collector scans the stack conservatively, and the call that creates a context leaves pointers
+    // to it in the stack memory that call used. So the context is created 1000 frames down: when the
+    // loop below calls Bun.gc(), all of that memory is below the stack pointer and is not scanned.
+    // A call inside a try block is never a tail call, so JSC cannot turn the recursion into a jump in
+    // strict code. Without the frames the output would look like the bug's, so the check below is loud.
+    function createDeep(makeRef, depth) {
+      try {
+        if (depth > 0) return createDeep(makeRef, depth - 1);
+        return makeRef();
+      } finally {
+      }
+    }
+    Error.stackTraceLimit = 2000;
+    const framesAtLeaf = createDeep(() => new Error().stack.split("\n").length - 1, 1000);
+    if (framesAtLeaf < 1000) throw new Error("createDeep is only " + framesAtLeaf + " frames deep");
+    // A case counts as collectable when any of its rounds collected the context. The shared structure
+    // kept the context alive in every round.
+    const collectedRounds = {};
+    for (const name in cases) {
+      collectedRounds[name] = 0;
+      for (let round = 0; round < 3; round++) {
+        const ref = createDeep(cases[name], 1000);
+        // Bun.gc() also ends this job's keep-alive of WeakRef targets before it collects.
+        Bun.gc(true);
+        if (ref.deref() === undefined) collectedRounds[name]++;
+      }
+    }
+    console.log(JSON.stringify(collectedRounds));
+  `;
+  await using proc = Bun.spawn({ cmd: [bunExe(), "-e", fixture], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  const collectedRounds: Record<string, number> = JSON.parse(stdout);
+  const collectable = Object.fromEntries(Object.entries(collectedRounds).map(([name, rounds]) => [name, rounds > 0]));
+  expect(collectable).toEqual({
+    createContext: true,
+    createContextDontContextify: true,
+    runInNewContext: true,
+    scriptRunInNewContext: true,
+  });
+  expect(exitCode).toBe(0);
+});

@@ -928,17 +928,19 @@ template<typename, JSC::SubspaceAccess mode> JSC::GCClient::IsoSubspace* NodeVMG
         [](auto& server) -> JSC::HeapCellType& { return server.m_heapCellTypeForNodeVMGlobalObject; });
 }
 
-NodeVMGlobalObject* NodeVMGlobalObject::create(JSC::VM& vm, JSC::Structure* structure, NodeVMContextOptions options, JSValue importer)
+NodeVMGlobalObject* NodeVMGlobalObject::create(JSC::VM& vm, NodeVMContextOptions options, JSValue importer)
 {
+    // One structure per context: JSGlobalObject::finishCreation makes the global the realm of its structure.
+    auto* structure = createStructure(vm);
     auto* cell = new (NotNull, JSC::allocateCell<NodeVMGlobalObject>(vm)) NodeVMGlobalObject(vm, structure, options, importer);
     cell->finishCreation(vm);
     return cell;
 }
 
-Structure* NodeVMGlobalObject::createStructure(JSC::VM& vm, JSC::JSValue prototype)
+Structure* NodeVMGlobalObject::createStructure(JSC::VM& vm)
 {
     // ~IsImmutablePrototypeExoticObject is necessary for JSDOM to work (it relies on __proto__ = on the GlobalObject).
-    return JSC::Structure::create(vm, nullptr, prototype, JSC::TypeInfo(JSC::GlobalObjectType, StructureFlags & ~IsImmutablePrototypeExoticObject), info());
+    return JSC::Structure::create(vm, nullptr, jsNull(), JSC::TypeInfo(JSC::GlobalObjectType, StructureFlags & ~IsImmutablePrototypeExoticObject), info());
 }
 
 void unsafeEvalNoop(JSGlobalObject*, const WTF::String&) {}
@@ -1527,11 +1529,6 @@ JSC_DEFINE_HOST_FUNCTION(vmModuleCompileFunction, (JSGlobalObject * globalObject
     return JSValue::encode(function);
 }
 
-Structure* createNodeVMGlobalObjectStructure(JSC::VM& vm)
-{
-    return NodeVMGlobalObject::createStructure(vm, jsNull());
-}
-
 JSC_DEFINE_HOST_FUNCTION(vmModule_createContext, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
     VM& vm = globalObject->vm();
@@ -1576,9 +1573,7 @@ JSC_DEFINE_HOST_FUNCTION(vmModule_createContext, (JSGlobalObject * globalObject,
 
     auto* zigGlobalObject = defaultGlobalObject(globalObject);
 
-    auto* targetContext = NodeVMGlobalObject::create(vm,
-        zigGlobalObject->NodeVMGlobalObjectStructure(),
-        contextOptions, importer);
+    auto* targetContext = NodeVMGlobalObject::create(vm, contextOptions, importer);
 
     RETURN_IF_EXCEPTION(scope, {});
 
@@ -1799,11 +1794,6 @@ void configureNodeVM(JSC::VM& vm, Zig::GlobalObject* globalObject)
             init.setPrototype(prototype);
             init.setStructure(structure);
             init.setConstructor(constructor);
-        });
-
-    globalObject->m_cachedNodeVMGlobalObjectStructure.initLater(
-        [](const JSC::LazyProperty<JSC::JSGlobalObject, Structure>::Initializer& init) {
-            init.set(createNodeVMGlobalObjectStructure(init.vm));
         });
 }
 

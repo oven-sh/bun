@@ -792,25 +792,36 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionRunMain, (JSGlobalObject * globalObject, JSC:
     return JSC::JSValue::encode(JSC::jsUndefined());
 }
 
+static JSValue currentModuleRunMain(Zig::GlobalObject* globalObject)
+{
+    if (JSValue replacement = globalObject->m_moduleRunMainOverride.get())
+        return replacement;
+    return globalObject->m_moduleRunMainFunction.getInitializedOnMainThread(globalObject);
+}
+
 JSC_DEFINE_CUSTOM_GETTER(moduleRunMain,
     (JSGlobalObject * lexicalGlobalObject,
         EncodedJSValue thisValue,
         PropertyName propertyName))
 {
-    auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
-
-    return JSValue::encode(
-        globalObject->m_moduleRunMainFunction.getInitializedOnMainThread(
-            globalObject));
+    return JSValue::encode(currentModuleRunMain(defaultGlobalObject(lexicalGlobalObject)));
 }
 
-extern "C" void Bun__VirtualMachine__setOverrideModuleRunMain(void* bunVM, bool isOriginal);
-extern "C" JSC::EncodedJSValue NodeModuleModule__callOverriddenRunMain(Zig::GlobalObject* global, JSValue argv1)
+extern "C" void Bun__VirtualMachine__setOverrideModuleRunMain(void* bunVM, bool isPatched);
+
+// Calls the runMain replacement set by a preload; returns zero if it is not callable or throws.
+extern "C" JSC::EncodedJSValue NodeModuleModule__callOverriddenRunMain(Zig::GlobalObject* global, JSC::EncodedJSValue encodedArgv1)
 {
-    auto overrideHandler = uncheckedDowncast<JSObject>(global->m_moduleRunMainFunction.get(global));
+    auto& vm = JSC::getVM(global);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
     MarkedArgumentBuffer args;
-    args.append(argv1);
-    return JSC::JSValue::encode(JSC::profiledCall(global, JSC::ProfilingReason::API, overrideHandler, JSC::getCallData(overrideHandler), global, args));
+    args.append(JSValue::decode(encodedArgv1));
+    // Node calls it as `Module.runMain(mainPath)`, so `this` is the Module object.
+    JSValue thisValue = global->m_nodeModuleConstructor.getInitializedOnMainThread(global);
+    JSValue result = JSC::call(global, currentModuleRunMain(global), thisValue, args, "Module.runMain is not a function"_s);
+    RETURN_IF_EXCEPTION(scope, {});
+    return JSValue::encode(result);
 }
 
 JSC_DEFINE_CUSTOM_SETTER(setModuleRunMain,
@@ -820,20 +831,14 @@ JSC_DEFINE_CUSTOM_SETTER(setModuleRunMain,
 {
     auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
     auto value = JSValue::decode(encodedValue);
-    if (value.isCell()) {
-        bool isOriginal = false;
-        if (value.isCallable()) {
-            JSC::CallData callData = JSC::getCallData(value);
-            if (callData.type == JSC::CallData::Type::Native) {
-                if (callData.native.function.untaggedPtr() == &jsFunctionRunMain) {
-                    isOriginal = true;
-                }
-            }
-        }
-        Bun__VirtualMachine__setOverrideModuleRunMain(globalObject->bunVM(), !isOriginal);
-        globalObject->m_moduleRunMainFunction.set(
-            lexicalGlobalObject->vm(), globalObject, value.asCell());
+    JSC::CallData callData = JSC::getCallData(value);
+    bool isOriginal = callData.type == JSC::CallData::Type::Native && callData.native.function.untaggedPtr() == &jsFunctionRunMain;
+    if (isOriginal) {
+        globalObject->m_moduleRunMainOverride.clear();
+    } else {
+        globalObject->m_moduleRunMainOverride.set(lexicalGlobalObject->vm(), globalObject, value);
     }
+    Bun__VirtualMachine__setOverrideModuleRunMain(globalObject->bunVM(), !isOriginal);
 
     return true;
 }
@@ -1125,7 +1130,7 @@ void addNodeModuleConstructorProperties(JSC::VM& vm,
         });
 
     globalObject->m_moduleRunMainFunction.initLater(
-        [](const Zig::GlobalObject::Initializer<JSCell>& init) {
+        [](const Zig::GlobalObject::Initializer<JSFunction>& init) {
             JSFunction* runMainFunction = JSFunction::create(
                 init.vm, init.owner, 2, "runMain"_s,
                 jsFunctionRunMain, JSC::ImplementationVisibility::Public,

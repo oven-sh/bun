@@ -68,9 +68,7 @@ pub type ExceptionList = Vec<crate::exception_list::JsException>;
 pub struct EntryPointResult {
     pub value: crate::strong::Optional, // jsc.Strong.Optional
     pub cjs_set_value: bool,
-    /// True when the entry module evaluated as CommonJS: Node reports a CJS
-    /// entry's top-level throw with origin `uncaughtException` but an ESM
-    /// entry rejection with `unhandledRejection`; the run command consults this.
+    /// CJS entry or throwing runMain override: reported with Node's `uncaughtException` origin, not `unhandledRejection`.
     pub evaluated_as_cjs: bool,
 }
 
@@ -2531,6 +2529,7 @@ unsafe extern "C" {
         ctx: *mut c_void,
         callback: extern "C" fn(ctx: *mut c_void),
     );
+    /// Returns zero iff it threw (override not callable, or threw).
     safe fn NodeModuleModule__callOverriddenRunMain(
         global: &JSGlobalObject,
         argv1: JSValue,
@@ -2923,24 +2922,35 @@ impl VirtualMachine {
                     let global_ref = self.global();
                     let argv1 = bun_string_jsc::create_utf8_for_js(global_ref, MAIN_FILE_NAME)
                         .map_err(|_| crate::CrateError::JSError)?;
-                    let ret = jsc::from_js_host_call_generic(global_ref, || {
+                    let result = jsc::from_js_host_call(global_ref, || {
                         NodeModuleModule__callOverriddenRunMain(global_ref, argv1)
-                    })
-                    .map_err(|_| crate::CrateError::JSError)?;
-                    // If the override stored a promise itself, use that; otherwise
-                    // wrap its return value.
-                    if let Some(stored) = self.pending_internal_promise {
-                        return Ok(stored);
-                    }
-                    // `Promise.resolve(ret)` reads `ret.constructor` / `ret.then`,
-                    // which may throw.
-                    let resolved = jsc::call_check_slow(global_ref, || {
-                        JSC__JSInternalPromise__resolvedPromise(global_ref, ret)
-                    })
-                    .map_err(|_| crate::CrateError::JSError)?;
-                    self.pending_internal_promise = Some(resolved);
+                    });
+                    let promise: *mut JSInternalPromise = match result {
+                        Ok(ret) => {
+                            // Calling the original runMain stores a promise; else wrap the return value.
+                            if let Some(stored) = self.pending_internal_promise {
+                                return Ok(stored);
+                            }
+                            // `Promise.resolve(ret)` reads `ret.constructor` / `ret.then`: may throw.
+                            jsc::call_check_slow(global_ref, || {
+                                JSC__JSInternalPromise__resolvedPromise(global_ref, ret)
+                            })
+                            .map_err(|_| crate::CrateError::JSError)?
+                        }
+                        Err(err) => {
+                            // Marked handled so only the caller reports the rejection.
+                            self.entry_point_result.evaluated_as_cjs = true;
+                            let promise = crate::JSPromise::create(global_ref);
+                            promise.set_handled();
+                            promise
+                                .reject(global_ref, Err(err))
+                                .map_err(|_| crate::CrateError::JSError)?;
+                            promise
+                        }
+                    };
+                    self.pending_internal_promise = Some(promise);
                     self.pending_internal_promise_is_protected = false;
-                    return Ok(resolved);
+                    return Ok(promise);
                 }
             }
 

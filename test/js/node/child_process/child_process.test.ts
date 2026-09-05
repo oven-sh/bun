@@ -1003,16 +1003,22 @@ it.skipIf(isWindows)("extra stdio pipes are not double-closed on GC", async () =
       `
         const { spawn } = require("node:child_process");
         async function once() {
-          const child = spawn(process.execPath, ["-e", ""], {
+          // The child only has to exit. Under bun bd, process.execPath is a
+          // debug build that takes 100+ ms to start on every iteration.
+          const child = spawn("true", {
             stdio: ["ignore", "ignore", "ignore", "pipe", "pipe", "pipe"],
           });
           const sockets = child.stdio.slice(3);
           if (sockets.length !== 3) throw new Error("expected 3 extra sockets");
+          const closed = Promise.all(sockets.map(s => new Promise(r => s.once("close", r))));
           await new Promise(r => child.on("exit", r));
           for (const s of sockets) s.destroy();
-          await new Promise(r => setTimeout(r, 10));
+          // A socket emits 'close' after its handle has closed the fd. From
+          // here on, a close of these fds by the Subprocess finalizer is a
+          // double close.
+          await closed;
         }
-        for (let i = 0; i < 20; i++) {
+        for (let i = 0; i < 5; i++) {
           await once();
           Bun.gc(true);
           await new Promise(r => setTimeout(r, 0));

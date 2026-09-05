@@ -1594,23 +1594,30 @@ function describeStalledProcessTree(rootPid, execPath, budgetMs = 60_000) {
   if (!root) {
     return `${out}${rootPid} is not running\n`;
   }
-  const tree = [{ ...root, depth: 0 }];
-  const walk = (pid, depth) => {
-    for (const proc of children.get(String(pid)) ?? []) {
-      tree.push({ ...proc, depth });
-      walk(proc.pid, depth + 1);
+  // A runaway fork storm could list thousands of processes. The first few dozen
+  // are the coordinator, its workers and their children, which is what matters.
+  const maxListed = 64;
+  const tree = [];
+  let truncated = false;
+  // Depth-first, in ps order, without recursion: a deep chain must not
+  // overflow the stack while we are trying to report a stall.
+  const pending = [{ ...root, depth: 0 }];
+  while (pending.length) {
+    if (tree.length === maxListed) {
+      truncated = true;
+      break;
     }
-  };
-  walk(rootPid, 1);
+    const proc = pending.pop();
+    tree.push(proc);
+    const kids = children.get(String(proc.pid)) ?? [];
+    for (let k = kids.length - 1; k >= 0; k--) pending.push({ ...kids[k], depth: proc.depth + 1 });
+  }
   const bunName = basename(execPath);
   const isBun = args => {
     const argv0 = args.split(" ", 1)[0];
     return argv0 === execPath || basename(argv0) === bunName;
   };
-  // A runaway fork storm could list thousands of processes. The first few dozen
-  // are the coordinator, its workers and their children, which is what matters.
-  const maxListed = 64;
-  for (const { pid, stat, etime, args, depth } of tree.slice(0, maxListed)) {
+  for (const { pid, stat, etime, args, depth } of tree) {
     out += `${"  ".repeat(depth)}${pid} ${stat} ${etime} ${args.length > 200 ? `${args.slice(0, 197)}...` : args}\n`;
     if (!isLinux) continue;
     // State names a zombie (Z), a stopped (T) or an uninterruptible (D) process.
@@ -1630,7 +1637,7 @@ function describeStalledProcessTree(rootPid, execPath, budgetMs = 60_000) {
       out += `${"  ".repeat(depth)}  /proc/${pid}/status: ${error?.message ?? error}\n`;
     }
   }
-  if (tree.length > maxListed) out += `... and ${tree.length - maxListed} more\n`;
+  if (truncated) out += `... list capped at ${maxListed} processes\n`;
   if (!isLinux) return out;
   const maxBacktraces = 8;
   const targets = tree.filter(({ args, stat }) => isBun(args) && !stat.startsWith("Z")).slice(0, maxBacktraces);

@@ -42,6 +42,9 @@ pub struct StandaloneModuleGraph {
     pub files: StringArrayHashMap<File>,
     /// Directory prefixes derived from `files` keys (no trailing `/`, always posix-separated).
     pub dirs: StringArrayHashMap<()>,
+    /// An entry point's source spelling (`/$bunfs/root/data.json`) -> the name of its module in `files`
+    /// (`/$bunfs/root/data.js`). Only module resolution consults it; the file system view does not.
+    pub entry_point_aliases: StringArrayHashMap<&'static [u8]>,
     pub entry_point_id: u32,
     pub compile_exec_argv: &'static [u8],
     pub flags: Flags,
@@ -329,6 +332,18 @@ impl bun_resolver::StandaloneModuleGraph for StandaloneModuleGraph {
     }
     fn find_assume_standalone_path(&self, name: &[u8]) -> Option<&'static [u8]> {
         self.lookup_file(name).map(|f| f.name)
+    }
+    fn find_entry_point_alias(&self, name: &[u8]) -> Option<&'static [u8]> {
+        #[cfg(windows)]
+        {
+            let mut buf = PathBuffer::uninit();
+            return self
+                .entry_point_aliases
+                .get(normalize_file_key(name, &mut buf))
+                .copied();
+        }
+        #[cfg(not(windows))]
+        self.entry_point_aliases.get(name).copied()
     }
 
     fn base_public_path_with_default_suffix(&self) -> &'static [u8] {
@@ -856,7 +871,13 @@ bitflags::bitflags! {
         /// Built with `--compile --bytecode --target=<a different os/arch/libc than the bun that built it>`: the embedded
         /// bytecode was written by another platform's JavaScriptCore. Reported with crash reports.
         const CROSS_COMPILED_BYTECODE       = 1 << 10;
-        // _padding: u21
+        /// After the module-info string-table pointer: `u32 count`, then `count` × `{ StringPointer name, u32 module }`:
+        /// an entry point's source spelling under the virtual root (`/$bunfs/root/data.json`) and the index in the
+        /// module table of the module it was bundled into (`/$bunfs/root/data.js`). Only module resolution reads it.
+        /// Written for an entry point whose chunk name differs from its source name, unless the chunk is a path stub
+        /// over an embedded asset (`file`, `wasm`, `napi`, `sqlite`) or two entry points share the spelling.
+        const HAS_ENTRY_POINT_ALIASES       = 1 << 11;
+        // _padding: u20
     }
 }
 
@@ -883,6 +904,7 @@ impl StandaloneModuleGraph {
                 bytes: core::ptr::slice_from_raw_parts(NonNull::<u8>::dangling().as_ptr(), 0),
                 files: StringArrayHashMap::new(),
                 dirs: StringArrayHashMap::new(),
+                entry_point_aliases: StringArrayHashMap::new(),
                 entry_point_id: 0,
                 compile_exec_argv: b"",
                 flags: Flags::default(),
@@ -994,6 +1016,7 @@ impl StandaloneModuleGraph {
                     offset: read_u32(record_at),
                     length: read_u32(record_at + 4),
                 };
+                record_at += 2 * size_of::<u32>();
                 if (ptr.offset as usize).saturating_add(ptr.length as usize) > raw_len {
                     &[]
                 } else {
@@ -1004,6 +1027,37 @@ impl StandaloneModuleGraph {
             } else {
                 &[]
             };
+
+        // `(name, module index)` pairs; the map is built once the module table below gives the names their targets.
+        let mut alias_records: Vec<(StringPointer, u32)> = Vec::new();
+        if offsets.flags.contains(Flags::HAS_ENTRY_POINT_ALIASES)
+            && record_at + size_of::<u32>() <= raw_len
+        {
+            let count = read_u32(record_at) as usize;
+            record_at += size_of::<u32>();
+            let record_size = 3 * size_of::<u32>();
+            let count = count.min(raw_len.saturating_sub(record_at) / record_size);
+            alias_records.reserve(count);
+            for _ in 0..count {
+                let name = StringPointer {
+                    offset: read_u32(record_at),
+                    length: read_u32(record_at + 4),
+                };
+                let module_index = read_u32(record_at + 8);
+                record_at += record_size;
+                // The NUL after the name must be inside the section too.
+                if (name.offset as usize).saturating_add(name.length as usize) < raw_len
+                    && (module_index as usize) < modules_list_count
+                {
+                    alias_records.push((name, module_index));
+                }
+            }
+        }
+        // The argv string follows the last record, so a graph this version wrote (no unknown flag bits) has been
+        // read exactly to it.
+        if offsets.flags.bits() & !Flags::all().bits() == 0 {
+            debug_assert_eq!(record_at, offsets.compile_exec_argv_ptr.offset as usize);
+        }
 
         let mut modules = StringArrayHashMap::<File>::new();
         modules.reserve(modules_list_count);
@@ -1094,12 +1148,37 @@ impl StandaloneModuleGraph {
         }
         dirs.lock_pointers();
 
+        let mut entry_point_aliases = StringArrayHashMap::<&'static [u8]>::new();
+        entry_point_aliases.reserve(alias_records.len());
+        for (alias, module_index) in alias_records {
+            // SAFETY: `module_index < modules_list_count` was checked when the record was read; same read as above.
+            let module: CompiledModuleGraphFile = unsafe {
+                core::ptr::read_unaligned(
+                    modules_list_base
+                        .add(module_index as usize * size_of::<CompiledModuleGraphFile>())
+                        .cast::<CompiledModuleGraphFile>(),
+                )
+            };
+            // SAFETY: both are read-only name subranges `to_bytes` wrote with a NUL; the alias was bounds checked
+            // when its record was read.
+            let (alias, target) = unsafe {
+                (
+                    slice_to_z(raw_const, raw_len, alias),
+                    slice_to_z(raw_const, raw_len, module.name),
+                )
+            };
+            if let Some(file) = modules.get(target.as_bytes()) {
+                let _ = entry_point_aliases.put(alias.as_bytes(), file.name);
+            }
+        }
+
         Ok(StandaloneModuleGraph {
             // Stored as a raw fat pointer — `byte_count` covers the writable
             // bytecode/module_info regions, so a `&'static [u8]` here would alias them.
             bytes: core::ptr::slice_from_raw_parts(raw_const, offsets.byte_count),
             files: modules,
             dirs,
+            entry_point_aliases,
             entry_point_id: offsets.entry_point_id,
             // SAFETY: read-only argv string subrange, disjoint from writable regions.
             compile_exec_argv: unsafe {
@@ -1284,7 +1363,15 @@ pub(crate) fn to_bytes(
             } else if output_file.output_kind == options::OutputKind::ModuleInfoStringTable {
                 string_builder.cap += bytes.len() + 2 * size_of::<u32>();
             } else {
-                has_entry_point |= is_entry_point(output_file);
+                if is_entry_point(output_file) {
+                    has_entry_point = true;
+                    // Its source-spelling alias: the prefix, the directory of `dest_path`, the source basename,
+                    // and a `{ StringPointer, u32 }` record.
+                    string_builder.count_z(prefix);
+                    string_builder.count_z(&output_file.dest_path);
+                    string_builder.count_z(path::basename(output_file.src_path.text));
+                    string_builder.cap += 3 * size_of::<u32>();
+                }
 
                 string_builder.count_z(bytes);
                 if is_stored_as_string(output_file) {
@@ -1303,7 +1390,7 @@ pub(crate) fn to_bytes(
     string_builder.cap +=
         (size_of::<CompiledModuleGraphFile>() + size_of::<u32>()) * output_files.len();
     string_builder.cap += TRAILER.len();
-    string_builder.cap += 16 + 2 * size_of::<u32>();
+    string_builder.cap += 16 + 3 * size_of::<u32>();
     string_builder.cap += size_of::<Offsets>();
     string_builder.count_z(compile_exec_argv);
 
@@ -1541,6 +1628,54 @@ pub(crate) fn to_bytes(
         }
     }
 
+    // `Flags::HAS_ENTRY_POINT_ALIASES`: an entry point whose chunk name differs from its source name
+    // (`data.json` -> `data.js`, `entry.ts` -> the outfile) is also resolvable by the source spelling, in the
+    // chunk's directory. Not when the chunk is a path stub over an embedded asset (`file`, `wasm`, `napi`,
+    // `sqlite`): `require.resolve("./yoga.wasm")` must not name the stub. A spelling two entry points share
+    // (`--entry-naming` without `[dir]`) is ambiguous and gets no alias; a file's own name always wins.
+    let mut alias_candidates: StringArrayHashMap<Option<u32>> = StringArrayHashMap::new();
+    let mut alias_rel_path: Vec<u8> = Vec::new();
+    for (module_index, output_file) in module_files.iter().enumerate() {
+        if !is_entry_point(output_file) || output_file.input_loader.should_copy_for_bundling() {
+            continue;
+        }
+        let dest_path = module_dest_path(output_file);
+        let dest_dir_len =
+            strings::last_index_of_char(dest_path, b'/').map_or(0, |i| i as usize + 1);
+        let src_basename = path::basename(output_file.src_path.text);
+        if src_basename.is_empty() || src_basename == &dest_path[dest_dir_len..] {
+            continue;
+        }
+        alias_rel_path.clear();
+        alias_rel_path.extend_from_slice(&dest_path[..dest_dir_len]);
+        alias_rel_path.extend_from_slice(src_basename);
+        let candidate = alias_candidates.get_or_put(&alias_rel_path)?;
+        *candidate.value_ptr = if candidate.found_existing {
+            None
+        } else {
+            Some(module_index as u32)
+        };
+    }
+    let mut alias_records: Vec<u8> = Vec::new();
+    let mut alias_count: u32 = 0;
+    for (alias_rel_path, module_index) in alias_candidates.iter() {
+        let Some(module_index) = *module_index else {
+            continue;
+        };
+        if seen_paths.contains_key(alias_rel_path) {
+            continue;
+        }
+        let alias = string_builder.fmt_append_count_z(format_args!(
+            "{}{}",
+            bstr::BStr::new(prefix),
+            bstr::BStr::new(&alias_rel_path[..])
+        ));
+        alias_records.extend_from_slice(&alias.offset.to_le_bytes());
+        alias_records.extend_from_slice(&alias.length.to_le_bytes());
+        alias_records.extend_from_slice(&module_index.to_le_bytes());
+        alias_count += 1;
+    }
+
     // SAFETY: `CompiledModuleGraphFile` is `#[repr(C)]` POD with no padding-dependent
     // invariants; reinterpreting its backing storage as bytes is sound.
     let modules_as_bytes: &[u8] = unsafe {
@@ -1576,6 +1711,11 @@ pub(crate) fn to_bytes(
         record[4..8].copy_from_slice(&module_info_string_table_ptr.length.to_le_bytes());
         let _ = string_builder.append_count(&record);
         flags |= Flags::HAS_MODULE_INFO_STRING_TABLE;
+    }
+    if alias_count != 0 {
+        let _ = string_builder.append_count(&alias_count.to_le_bytes());
+        let _ = string_builder.append_count(&alias_records);
+        flags |= Flags::HAS_ENTRY_POINT_ALIASES;
     }
     if !target.is_host_platform()
         && output_files
@@ -1619,6 +1759,7 @@ pub(crate) fn to_bytes(
             offsets,
         )?;
         debug_assert_eq!(graph.files.count(), modules.len());
+        debug_assert_eq!(graph.entry_point_aliases.count(), alias_count as usize);
         graph.files.unlock_pointers();
         graph.dirs.unlock_pointers();
 

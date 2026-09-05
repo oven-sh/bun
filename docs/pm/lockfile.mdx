@@ -59,9 +59,11 @@ For more on the format, see [the blog post](https://bun.com/blog/bun-lock-text-l
 When you run `bun install` in a project without a `bun.lock`, Bun automatically migrates existing lockfiles:
 
 - `yarn.lock` (v1)
-- `package-lock.json` (npm, `lockfileVersion` 2, 3 or 4)
+- `npm-shrinkwrap.json` and `package-lock.json` (npm, `lockfileVersion` 2, 3 or 4)
 - `pnpm-lock.yaml` (pnpm)
 
-Bun does not migrate a `package-lock.json` from npm 6 or older (`lockfileVersion` 1); it prints a warning and resolves from `package.json` instead.
+When a project has both npm lockfiles, Bun reads `npm-shrinkwrap.json` and ignores `package-lock.json`, as npm does.
+
+Bun does not migrate an npm lockfile from npm 6 or older (`lockfileVersion` 1); it prints a warning and resolves from `package.json` instead.
 
 Bun preserves the original lockfile. You can remove it manually after verification.

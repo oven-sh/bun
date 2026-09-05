@@ -33,39 +33,50 @@ pub fn detect_and_load_other_lockfile<'a>(
     manager: &mut PackageManager,
     log: &mut bun_ast::Log,
 ) -> LoadResult<'a> {
-    // check for package-lock.json, yarn.lock, etc...
+    // check for npm-shrinkwrap.json, package-lock.json, yarn.lock, etc...
     // if it exists, do an in-memory migration
 
-    'npm: {
+    // npm itself reads npm-shrinkwrap.json over package-lock.json; the two share a format.
+    for (lockfile_name, lockfile_name_z) in [
+        ("npm-shrinkwrap.json", zstr!("npm-shrinkwrap.json")),
+        ("package-lock.json", zstr!("package-lock.json")),
+    ] {
         let timer = std::time::Instant::now();
-        let Ok(lockfile) = File::openat(dir, b"package-lock.json", O::RDONLY, 0) else {
-            break 'npm;
+        let Ok(lockfile) = File::openat(dir, lockfile_name_z, O::RDONLY, 0) else {
+            continue;
         };
         // file closes on Drop
         let mut lockfile_path_buf = PathBuffer::uninit();
         let Ok(lockfile_path) = bun_sys::get_fd_path(lockfile.handle(), &mut lockfile_path_buf)
         else {
-            break 'npm;
+            continue;
         };
         let lockfile_path: &[u8] = &*lockfile_path;
         let Ok(data) = lockfile.read_to_end() else {
-            break 'npm;
+            continue;
         };
-        let migrate_result =
-            match migrate_npm_lockfile(this, manager, log, &data, lockfile_path, dir) {
-                Ok(r) => r,
-                Err(e) => {
-                    return LoadResult::Err(LoadResultErr {
-                        step: LoadStep::Migrating,
-                        value: e,
-                        lockfile_path: zstr!("package-lock.json"),
-                        format: LockfileFormat::Text,
-                    });
-                }
-            };
+        let migrate_result = match migrate_npm_lockfile(
+            this,
+            manager,
+            log,
+            &data,
+            lockfile_path,
+            dir,
+            lockfile_name,
+        ) {
+            Ok(r) => r,
+            Err(e) => {
+                return LoadResult::Err(LoadResultErr {
+                    step: LoadStep::Migrating,
+                    value: e,
+                    lockfile_path: lockfile_name_z,
+                    format: LockfileFormat::Text,
+                });
+            }
+        };
 
         if matches!(migrate_result, LoadResult::Ok { .. }) {
-            report_migrated(manager, log, &timer, "package-lock.json");
+            report_migrated(manager, log, &timer, lockfile_name);
         }
 
         return migrate_result;
@@ -251,6 +262,7 @@ fn migrate_npm_lockfile<'a>(
     data: &[u8],
     abs_path: &[u8],
     dir: Fd,
+    lockfile_name: &'static str,
 ) -> Result<LoadResult<'a>, Error> {
     debug!("begin lockfile migration");
 
@@ -271,7 +283,7 @@ fn migrate_npm_lockfile<'a>(
         Some(E::JsonValue::Number(n)) => {
             report_unsupported_lockfile_version(
                 manager,
-                "package-lock.json",
+                lockfile_name,
                 &(n.value() as i64),
                 "npm install --package-lock-only --lockfile-version=3",
             );
@@ -399,6 +411,7 @@ fn migrate_npm_lockfile<'a>(
         log,
         packages_properties,
         workspace_map.as_ref(),
+        lockfile_name,
     )?;
     clear_non_registry_platform_constraints(this);
     npm_lock::apply_root_overrides(this, manager, log, dir, workspace_map.as_ref(), abs_path)?;

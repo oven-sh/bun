@@ -6721,13 +6721,17 @@ pub mod bv2_impl {
                             >(
                                 self.transpiler.fs().top_level_dir, path.text
                             );
-                            if loader == Loader::Html && entry.kind == bake_types::CacheKind::Asset
+                            // A cached json or text module is an `Asset` with no asset URL.
+                            let asset_hash = if loader == Loader::Html
+                                && entry.kind == bake_types::CacheKind::Asset
                             {
+                                dev_server.asset_hash(path.text)
+                            } else {
+                                None
+                            };
+                            if let Some(hash) = asset_hash {
                                 // Overload `path.text` to point to the final URL
                                 // This information cannot be queried while printing because a lock wouldn't get held.
-                                let hash = dev_server
-                                    .asset_hash(path.text)
-                                    .expect("cached asset not found");
                                 import_record.path.text = path.text;
                                 import_record.path.namespace = b"file";
                                 // SAFETY: `alloc_str` returns into the bundler arena which

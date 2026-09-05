@@ -1028,9 +1028,13 @@ fn sleep_sync(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsResult
         )));
     }
 
-    std::thread::sleep(core::time::Duration::from_millis(
-        u64::try_from(milliseconds).expect("int cast"),
-    ));
+    // Not `thread::sleep`: that re-arms a relative nanosleep with the remaining
+    // time after every EINTR, so with a signal handler installed (process.on)
+    // each delivery adds its round trip to the sleep and a fast enough signal
+    // stream keeps it from ever returning. An absolute deadline is immune.
+    let duration =
+        core::time::Duration::from_millis(u64::try_from(milliseconds).expect("int cast"));
+    std::thread::sleep_until(std::time::Instant::now() + duration);
     Ok(JSValue::UNDEFINED)
 }
 

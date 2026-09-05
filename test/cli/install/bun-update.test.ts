@@ -1823,6 +1823,36 @@ describe("bun update <name> semantics", () => {
     });
   }
 
+  // https://github.com/oven-sh/bun/issues/38908
+  it.concurrent("bun update that only rewrites package.json reports the sync instead of (no changes)", async () => {
+    const dir = await setup({ "a-dep": "^1.0.1" });
+    // install already resolved the newest match, so update only moves the declared range
+    expect(await installedVersion(dir, "a-dep")).toBe("1.0.10");
+    const first = await update(dir);
+    expect(first.stdout).toContain("(up to date, package.json synced)");
+    expect(first.stdout).not.toContain("(no changes)");
+    await expectInSync(dir, { "a-dep": "^1.0.10" });
+    const second = await update(dir);
+    expect(second.stdout).toContain("(no changes)");
+    expect(second.stdout).not.toContain("package.json synced");
+  });
+
+  // https://github.com/oven-sh/bun/issues/38908
+  it.concurrent("bun update syncing a catalog range reports the package.json write", async () => {
+    const dir = await createDir({
+      "package.json": { name: "mono", private: true, workspaces: ["packages/*"], catalog: { "a-dep": "^1.0.1" } },
+      "packages/web/package.json": { name: "web", version: "1.0.0", dependencies: { "a-dep": "catalog:" } },
+    });
+    await install(dir);
+    const first = await update(dir);
+    expect(first.stdout).toContain("(up to date, package.json synced)");
+    expect(first.stdout).not.toContain("(no changes)");
+    expect((await packageJsonOf(dir)).catalog).toEqual({ "a-dep": "^1.0.10" });
+    const second = await update(dir);
+    expect(second.stdout).toContain("(no changes)");
+    expect(second.stdout).not.toContain("package.json synced");
+  });
+
   it.concurrent("bun update <name> keeps a dist-tag literal as written", async () => {
     const dir = await setup({ "dep-with-tags": "pre-2" });
     expect(await installedVersion(dir, "dep-with-tags")).toBe("2.0.1");

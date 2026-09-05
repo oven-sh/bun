@@ -67,7 +67,7 @@ declare module "buffer" {
 
 declare module "url" {
   interface URLSearchParams {
-    toJSON(): Record<string, string>;
+    toJSON(): Record<string, string | string[]>;
   }
 }
 

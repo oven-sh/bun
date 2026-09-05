@@ -1737,6 +1737,9 @@ fn stop_active_handles(vm: &mut VirtualMachine, reason: StopReason) -> SweepResu
         return SweepResult::Idle;
     }
     let mut result = SweepResult::Idle;
+    if reason == StopReason::VmTeardown {
+        crate::node::memory_pressure::stop_for_vm_teardown(vm.global());
+    }
     // Fake-timer state lives in the per-thread `timer::All`, not the JS
     // global, so a file that leaves it active routes every later file's
     // `setTimeout` into the never-driven fake heap. Leave the heap itself

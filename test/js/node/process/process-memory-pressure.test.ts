@@ -9,10 +9,10 @@ import { closeSync, constants, openSync, readFileSync, writeSync } from "node:fs
 // The one test that arms a real PSI trigger first checks that this process
 // is allowed to create one, and is skipped otherwise.
 
-async function run(src: string) {
+async function run(src: string, env: Record<string, string | undefined> = bunEnv) {
   await using proc = Bun.spawn({
     cmd: [bunExe(), "-e", src],
-    env: bunEnv,
+    env,
     stderr: "pipe",
     stdout: "pipe",
   });
@@ -182,6 +182,61 @@ describe.concurrent("process.on('memoryPressure')", () => {
       process.stdout.write("done ");
     `);
     expect(stdout).toBe("done exit");
+    expect(exitCode).toBe(0);
+  });
+});
+
+// BUN_FEATURE_FLAG_EXPERIMENTAL_MEMORY_PRESSURE_HANDLER makes Bun itself react
+// to the notification (sync GC + JSC shrinkFootprint + mi_collect) before the
+// JS event is emitted, and keeps the OS watch armed for the whole process.
+describe.concurrent("BUN_FEATURE_FLAG_EXPERIMENTAL_MEMORY_PRESSURE_HANDLER", () => {
+  const handlerEnv = { ...bunEnv, BUN_FEATURE_FLAG_EXPERIMENTAL_MEMORY_PRESSURE_HANDLER: "1" };
+
+  test("a notification collects garbage before listeners run", async () => {
+    // The WeakRef referent is the deterministic signal that a full
+    // synchronous collection ran inside emit(): by the time the listener is
+    // called it must already be gone. Heap-size deltas are too noisy to
+    // assert on. Don't deref() before the notification: per spec that would
+    // add the referent to [[KeptAlive]] for the rest of this job.
+    const { stdout, stderr, exitCode } = await run(
+      /* js */ `
+        const { emitMemoryPressure } = require("bun:internal-for-testing");
+        function makeRef() { return new WeakRef({ sentinel: true }); }
+        const ref = makeRef();
+        const seen = [];
+        process.on("memoryPressure", level => seen.push({ level, collected: ref.deref() === undefined }));
+        emitMemoryPressure("critical");
+        process.stdout.write(JSON.stringify(seen));
+      `,
+      handlerEnv,
+    );
+    expect({ stdout, stderr: stderr.trim() }).toEqual({
+      stdout: JSON.stringify([{ level: "critical", collected: true }]),
+      stderr: "",
+    });
+    expect(exitCode).toBe(0);
+  });
+
+  test("the watch is armed at startup and outlives the last listener", async () => {
+    // exitCode 0 with the watch still armed doubles as the keep-alive check:
+    // the child ends when the script does, so the watch is not ref'ing the loop.
+    const { stdout, stderr, exitCode } = await run(
+      /* js */ `
+        const { isMemoryPressureWatcherInstalled } = require("bun:internal-for-testing");
+        const installed = [isMemoryPressureWatcherInstalled()]; // armed by the flag, no listener needed
+        const h = () => {};
+        process.on("memoryPressure", h);
+        installed.push(isMemoryPressureWatcherInstalled());
+        process.off("memoryPressure", h);
+        installed.push(isMemoryPressureWatcherInstalled()); // removing the last listener must not disarm it
+        process.stdout.write(JSON.stringify(installed));
+      `,
+      handlerEnv,
+    );
+    expect({ stdout, stderr: stderr.trim() }).toEqual({
+      stdout: JSON.stringify([true, true, true]),
+      stderr: "",
+    });
     expect(exitCode).toBe(0);
   });
 });

@@ -2498,6 +2498,8 @@ unsafe extern "Rust" {
     /// `RuntimeHooks` is an immutable POD of fn-ptrs with a single definition;
     /// reading it has no precondition beyond the link succeeding → `safe static`.
     safe static __BUN_RUNTIME_HOOKS: RuntimeHooks;
+    /// Defined in `bun_runtime::node::memory_pressure`; no-op unless its feature flag is set.
+    safe fn __bun_memory_pressure_arm_handler(global: &JSGlobalObject);
 }
 
 #[inline]
@@ -2772,6 +2774,8 @@ impl VirtualMachine {
         if opts.is_main_thread {
             // SAFETY: `vm` is the freshly-initialised per-thread VM singleton.
             bun_io::ParentDeathWatchdog::install_on_event_loop(unsafe { Self::event_loop_ctx(vm) });
+            // Registers on the same loop, so the same ordering applies.
+            __bun_memory_pressure_arm_handler(JSGlobalObject::opaque_ref(global));
         }
 
         if opts.smol {

@@ -5,9 +5,21 @@ export function createBunShellTemplateFunction(createShellInterpreter_, createPa
     args: $ZigGeneratedClasses.ParsedShellScript,
   ) => $ZigGeneratedClasses.ShellInterpreter;
   const createParsedShellScript = createParsedShellScript_ as (
-    raw: string,
+    raw: readonly string[],
     args: string[],
   ) => $ZigGeneratedClasses.ParsedShellScript;
+
+  // `raw` runs unescaped; this is the shape of every template object, engine-made or downleveled (tsc's is not frozen).
+  function templateRawStrings(strings: any): readonly string[] {
+    if ($isArray(strings)) {
+      const descriptor = $Object.$getOwnPropertyDescriptor(strings, "raw");
+      if (descriptor !== undefined && !descriptor.enumerable && !descriptor.writable && !descriptor.configurable) {
+        const raw = descriptor.value;
+        if ($isArray(raw) && raw.length === strings.length) return raw;
+      }
+    }
+    throw new Error("Please use '$' as a tagged template function: $`cmd arg1 arg2`");
+  }
 
   function lazyBufferToHumanReadableString(this: Buffer) {
     return this.toString();
@@ -301,8 +313,7 @@ export function createBunShellTemplateFunction(createShellInterpreter_, createPa
   }
 
   var BunShell = function BunShell(first, ...rest) {
-    if (first?.raw === undefined) throw new Error("Please use '$' as a tagged template function: $`cmd arg1 arg2`");
-    const parsed_shell_script = createParsedShellScript(first.raw, rest);
+    const parsed_shell_script = createParsedShellScript(templateRawStrings(first), rest);
 
     const cwd = BunShell[cwdSymbol];
     const env = BunShell[envSymbol];
@@ -321,8 +332,7 @@ export function createBunShellTemplateFunction(createShellInterpreter_, createPa
     }
 
     var Shell = function Shell(first, ...rest) {
-      if (first?.raw === undefined) throw new Error("Please use '$' as a tagged template function: $`cmd arg1 arg2`");
-      const parsed_shell_script = createParsedShellScript(first.raw, rest);
+      const parsed_shell_script = createParsedShellScript(templateRawStrings(first), rest);
 
       const cwd = Shell[cwdSymbol];
       const env = Shell[envSymbol];

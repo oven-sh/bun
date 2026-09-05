@@ -2588,6 +2588,14 @@ pub mod bv2_impl {
             };
 
             if resolve_result.flags.is_external() {
+                let record: &mut ImportRecord = &mut self.graph.ast.items_import_records_mut()
+                    [import_record.importer_source_index as usize]
+                    .as_mut_slice()[import_record.import_record_index as usize];
+                record.flags.set(
+                    bun_ast::ImportRecordFlags::IS_EXTERNAL_WITHOUT_SIDE_EFFECTS,
+                    resolve_result.primary_side_effects_data
+                        != bun_ast::SideEffects::HasSideEffects,
+                );
                 return;
             }
 
@@ -3728,7 +3736,7 @@ pub mod bv2_impl {
             self.graph.input_files.append(crate::Graph::InputFile {
                 source: core::mem::take(source),
                 loader,
-                side_effects: loader.side_effects(),
+                side_effects: resolve_result.primary_side_effects_data,
                 ..Default::default()
             })?;
             // `ParseTask::init` takes `bun_ast::Index`; both Index newtypes

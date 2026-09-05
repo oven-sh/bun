@@ -170,9 +170,7 @@ export function createBunShellTemplateFunction(createShellInterpreter_, createPa
       if (!this.#hasRun) {
         this.#hasRun = true;
 
-        // A setup failure (the cwd does not exist, the stdio dup fails)
-        // throws before any command runs. `then()` calls this, so it has to
-        // settle the promise instead of throwing out of `then()`.
+        // `then()` calls this, so a setup failure must reject, not throw.
         try {
           let interp = createShellInterpreter(this.#resolve, this.#reject, this.#args!);
           this.#args = undefined;

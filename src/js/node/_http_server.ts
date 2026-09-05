@@ -50,7 +50,6 @@ const {
   noBodySymbol,
   kOutHeaders,
   onDataIncomingMessage,
-  validateMsecs,
 } = require("internal/http");
 const { FakeSocket } = require("internal/http/FakeSocket");
 const NumberIsNaN = Number.isNaN;
@@ -1474,6 +1473,7 @@ type NodeHTTPServerSocket = InstanceType<ReturnType<typeof getNodeHTTPServerSock
 function getNodeHTTPServerSocket() {
   if (NodeHTTPServerSocket) return NodeHTTPServerSocket;
   const { Socket: NetSocket } = require("node:net");
+  const { getTimerDuration } = require("internal/timers");
   NodeHTTPServerSocket = class Socket extends NetSocket {
     bytesRead = 0;
     connecting = false;
@@ -1906,7 +1906,8 @@ function getNodeHTTPServerSocket() {
         return this;
       }
 
-      msecs = validateMsecs(msecs, "msecs");
+      msecs = getTimerDuration(msecs, "msecs");
+      // Assigned after validation (unlike setStreamTimeout): onSocketTimeoutTimerExpired reads this.timeout.
       this.timeout = msecs;
 
       const existingTimer = this[kSocketTimeoutTimer];

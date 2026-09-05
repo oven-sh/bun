@@ -2415,6 +2415,16 @@ bun_io::link_impl_EventLoopCtx! {
             vm.after_event_loop_callback_ctx = ctx.map(|p| p.as_ptr());
         },
         pipe_read_scratch() => &raw const *(*vm_from_owner(this.cast()).rare_data_ptr()).pipe_read_scratch,
+        stdin_tty() => {
+            #[cfg(windows)]
+            {
+                &raw mut (*vm_from_owner(this.cast()).rare_data_ptr()).stdin_tty
+            }
+            #[cfg(not(windows))]
+            {
+                core::ptr::null_mut()
+            }
+        },
     }
 }
 

@@ -1,5 +1,5 @@
 import { describe, expect, it, test } from "bun:test";
-import { bunEnv, bunExe, isWindows } from "harness";
+import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { WriteStream } from "node:tty";
 
 describe("ReadStream.prototype.setRawMode", () => {
@@ -189,6 +189,120 @@ describe("ReadStream.prototype.setRawMode", () => {
       afterStdinCooked: false,
     });
     expect(await proc.exited).toBe(0);
+  });
+
+  // Windows keeps one uv_tty_t for fd 0 per VM (readers and setRawMode share
+  // it). It used to be one per process, on the loop of the first thread to touch
+  // stdin, so a Worker's exit closed it under the main thread (EBADF, EINVAL).
+  test("stdin still works on the main thread after a Worker used it first", async () => {
+    using dir = tempDir("tty-stdin-after-worker", {
+      "worker.js": `
+        const seen = {};
+        process.stdin.on("error", e => {
+          seen.err = String(e);
+          postMessage(seen);
+        });
+        seen.isTTY = process.stdin.isTTY;
+        process.stdin.setRawMode(true);
+        seen.rawOn = process.stdin.isRaw;
+        process.stdin.setRawMode(false);
+        seen.rawOff = process.stdin.isRaw;
+        // Leaves a read pending on the worker's handle when it is terminated.
+        process.stdin.once("data", d => {
+          seen.line = String(d).trim();
+          postMessage(seen);
+        });
+        console.log("WORKER_READING");
+      `,
+      "main.js": `
+        // The parent test reads the report and then kills this process, so
+        // nothing here exits: an exit could race the report out of the pty.
+        const report = result => console.log("RESULT_BEGIN" + JSON.stringify(result) + "RESULT_END");
+        const worker = new Worker(new URL("./worker.js", import.meta.url).href);
+        worker.onerror = e => report({ workerError: String(e.message) });
+        worker.onmessage = async ({ data: fromWorker }) => {
+          await worker.terminate();
+          const main = {};
+          process.stdin.on("error", e => {
+            main.err = String(e);
+            report({ worker: fromWorker, main });
+          });
+          main.isTTY = process.stdin.isTTY;
+          process.stdin.setRawMode(true);
+          main.rawOn = process.stdin.isRaw;
+          process.stdin.setRawMode(false);
+          main.rawOff = process.stdin.isRaw;
+          process.stdin.once("data", d => {
+            main.line = String(d).trim();
+            report({ worker: fromWorker, main });
+          });
+          console.log("MAIN_READING");
+        };
+      `,
+    });
+
+    const decoder = new TextDecoder();
+    // The terminal wraps long lines and moves the cursor around; match markers
+    // against the whole output with the escapes and line breaks removed (an
+    // escape sequence can be split across chunks, so strip the whole thing).
+    let raw = "";
+    let text = "";
+    const waiters: { marker: string; resolve: () => void }[] = [];
+    const proc = Bun.spawn({
+      cmd: [bunExe(), "main.js"],
+      env: bunEnv,
+      cwd: String(dir),
+      terminal: {
+        cols: 200,
+        rows: 24,
+        data(_t, chunk: Uint8Array) {
+          raw += decoder.decode(chunk, { stream: true });
+          text = Bun.stripANSI(raw).replace(/[\r\n]/g, "");
+          for (let i = waiters.length - 1; i >= 0; i--) {
+            if (text.includes(waiters[i].marker) || text.includes("RESULT_END")) {
+              waiters[i].resolve();
+              waiters.splice(i, 1);
+            }
+          }
+        },
+      },
+    });
+    const terminal = proc.terminal!;
+
+    const exited = proc.exited.then(code => {
+      throw new Error(`child exited with code ${code} before it reported; terminal output: ${JSON.stringify(text)}`);
+    });
+    exited.catch(() => {});
+    // Resolves on the marker, or on an early report (a failure the assertion
+    // below then shows); rejects if the child dies instead.
+    const phase = (marker: string) =>
+      Promise.race([
+        text.includes(marker) || text.includes("RESULT_END")
+          ? Promise.resolve()
+          : new Promise<void>(resolve => waiters.push({ marker, resolve })),
+        exited,
+      ]);
+
+    try {
+      await phase("WORKER_READING");
+      terminal.write("from-worker\r");
+      await phase("MAIN_READING");
+      terminal.write("from-main\r");
+      await phase("RESULT_END");
+    } finally {
+      proc.kill();
+      await proc.exited;
+      terminal.close();
+    }
+
+    const match = text.match(/RESULT_BEGIN(.*?)RESULT_END/);
+    if (!match) {
+      throw new Error("child did not report; terminal output was: " + JSON.stringify(text));
+    }
+    expect(JSON.parse(match[1])).toEqual({
+      worker: { isTTY: true, rawOn: true, rawOff: false, line: "from-worker" },
+      main: { isTTY: true, rawOn: true, rawOff: false, line: "from-main" },
+    });
   });
 });
 

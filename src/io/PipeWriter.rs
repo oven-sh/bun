@@ -1207,13 +1207,14 @@ pub trait BaseWindowsPipeWriter: Sized {
             }
             Source::Tty(tty) => {
                 let p = tty.as_ptr();
-                // SAFETY: tty is heap-allocated (via open_tty) or the
-                // process-static stdin tty; freed in on_tty_close (gated on is_stdin_tty).
+                // SAFETY: tty is heap-allocated (open_tty); freed in on_tty_close.
                 unsafe { (*p).uv.data = p.cast::<c_void>() };
                 // SAFETY: tty is a live uv handle; `Tty::close` keeps
                 // whole-struct provenance so on_tty_close may reclaim the Box.
                 unsafe { crate::source::Tty::close(p, on_tty_close) };
             }
+            // Not produced for a writer (`start` opens without a reader context).
+            Source::StdinTty(_) => {}
         }
         *self.source_mut() = None;
         self.on_close_source();
@@ -1292,7 +1293,7 @@ pub trait BaseWindowsPipeWriter: Sized {
         // This is critical for spawnSync to use its isolated loop
         // SAFETY: parent is BACKREF set via set_parent; valid while writer alive.
         let loop_ = unsafe { Self::Parent::loop_(self.parent_ptr()) };
-        let mut source = match Source::open(loop_, fd) {
+        let mut source = match Source::open(loop_, fd, None) {
             sys::Result::Ok(source) => source,
             sys::Result::Err(err) => return sys::Result::Err(err),
         };
@@ -1345,12 +1346,9 @@ extern "C" fn on_pipe_close(handle: *mut uv::Pipe) {
 extern "C" fn on_tty_close(handle: *mut uv::uv_tty_t) {
     // `close()` set `handle.data = handle` and then called `uv_close(handle)`;
     // libuv passes the same pointer back; `Tty::from_uv` recovers the owning
-    // `Tty`. The stdin tty (fd 0) lives in static storage; never free it.
-    let tty = crate::source::Tty::from_uv(handle);
-    if !crate::source::stdin_tty::is_stdin_tty(tty) {
-        // SAFETY: non-stdin tty is heap-allocated (open_tty).
-        drop(unsafe { bun_core::heap::take(tty) });
-    }
+    // `Tty`. Only a `Source::Tty` (heap, `open_tty`) is closed this way.
+    // SAFETY: heap-owned; sole owner after uv_close.
+    drop(unsafe { bun_core::heap::take(crate::source::Tty::from_uv(handle)) });
 }
 
 /// Common parent requirements for Windows writers (event loop access + ref counting).

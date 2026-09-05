@@ -1234,7 +1234,7 @@ impl WindowsBufferedReader {
         let size = limit.clamp_len(suggested_size);
         // Tty reads must not target `_buffer`: libuv can retain the pointer
         // past reader teardown (see `uv::Tty::read_scratch` for the contract).
-        if matches!(self.source, Some(Source::Tty(_))) {
+        if matches!(self.source, Some(Source::Tty(_) | Source::StdinTty(_))) {
             let scratch = self
                 .source
                 .as_mut()
@@ -1309,7 +1309,7 @@ impl WindowsBufferedReader {
         // Use the event loop from the parent, not the global one
         // This is critical for spawnSync to use its isolated loop
         let loop_ = self.vtable.loop_();
-        let source = match Source::open(loop_.cast(), fd) {
+        let source = match Source::open(loop_.cast(), fd, Some(self.vtable.event_loop())) {
             sys::Result::Err(err) => return sys::Result::Err(err),
             sys::Result::Ok(source) => source,
         };
@@ -1406,7 +1406,7 @@ impl WindowsBufferedReader {
                 let mut b = unsafe { *buf };
                 let slice = unsafe { b.slice_mut() };
                 let data = &mut slice[..len];
-                if matches!(this.source, Some(Source::Tty(_))) {
+                if matches!(this.source, Some(Source::Tty(_) | Source::StdinTty(_))) {
                     // Tty chunks arrive in the tty-owned scratch; stage them
                     // into `_buffer` so `on_read` commits them like a pipe chunk.
                     this._buffer.reserve(len);
@@ -1666,7 +1666,7 @@ impl WindowsBufferedReader {
                     return sys::Result::Err(err);
                 }
             }
-            Source::Pipe(_) | Source::Tty(_) => {
+            Source::Pipe(_) | Source::Tty(_) | Source::StdinTty(_) => {
                 // SAFETY: source is a live Pipe/Tty stream handle.
                 if let Some(err) = unsafe {
                     uv::uv_read_start(
@@ -1705,7 +1705,7 @@ impl WindowsBufferedReader {
             Source::File(file) | Source::SyncFile(file) => {
                 file.stop();
             }
-            Source::Pipe(_) | Source::Tty(_) => {
+            Source::Pipe(_) | Source::Tty(_) | Source::StdinTty(_) => {
                 // SAFETY: stream handle is live (just matched a stream source).
                 unsafe { uv::uv_read_stop(source.to_stream()) };
             }
@@ -1757,18 +1757,26 @@ impl WindowsBufferedReader {
                 #[cfg(windows)]
                 Source::Tty(tty) => {
                     let p = tty.as_ptr();
-                    if crate::source::stdin_tty::is_stdin_tty(p) {
-                        // Node only ever closes stdin on process exit.
-                    } else {
-                        // SAFETY: tty is a live heap-allocated Tty*;
-                        // `Tty::close` keeps whole-struct provenance so
-                        // on_tty_close may reclaim the Box.
-                        unsafe {
-                            (*p).uv.data = p.cast::<c_void>();
-                            crate::source::Tty::close(p, Self::on_tty_close);
+                    // SAFETY: tty is a live heap-allocated Tty*;
+                    // `Tty::close` keeps whole-struct provenance so
+                    // on_tty_close may reclaim the Box.
+                    unsafe {
+                        (*p).uv.data = p.cast::<c_void>();
+                        crate::source::Tty::close(p, Self::on_tty_close);
+                    }
+                    self.flags.insert(WindowsFlags::IS_PAUSED);
+                }
+                #[cfg(windows)]
+                Source::StdinTty(tty) => {
+                    // Stays open for the VM's next stdin reader.
+                    let p = tty.as_ptr();
+                    // SAFETY: the VM's shared tty outlives this reader.
+                    unsafe {
+                        if (*p).uv.data == core::ptr::from_mut(self).cast::<c_void>() {
+                            uv::uv_read_stop(p.cast());
+                            (*p).uv.data = core::ptr::null_mut();
                         }
                     }
-
                     self.flags.insert(WindowsFlags::IS_PAUSED);
                 }
                 #[cfg(not(windows))]
@@ -1843,12 +1851,10 @@ impl WindowsBufferedReader {
     extern "C" fn on_tty_close(handle: *mut uv::uv_tty_t) {
         // `close_impl` set `handle.data = handle` and called `uv_close(handle)`;
         // libuv passes the same pointer back; `Tty::from_uv` recovers the
-        // owning `Tty`. Caller gates on `!is_stdin_tty`, so it is heap-owned,
-        // and no request is pending once this runs (`uv::Tty::read_scratch`).
-        let tty = crate::source::Tty::from_uv(handle);
-        debug_assert!(!crate::source::stdin_tty::is_stdin_tty(tty));
-        // SAFETY: non-stdin tty is heap-allocated; sole owner after uv_close.
-        drop(unsafe { bun_core::heap::take(tty) });
+        // owning `Tty`. Only a `Source::Tty` (heap, `open_tty`) is closed this
+        // way, and no request is pending once this runs (`uv::Tty::read_scratch`).
+        // SAFETY: heap-owned; sole owner after uv_close.
+        drop(unsafe { bun_core::heap::take(crate::source::Tty::from_uv(handle)) });
     }
 
     fn on_read(&mut self, amount: sys::Result<usize>, slice: &mut [u8], has_more: ReadState) {

@@ -1740,6 +1740,12 @@ function getNodeHTTPServerSocket() {
     }
 
     _destroy(err, callback) {
+      // Match net.Socket._destroy: #onClose clears this too, but the native close is async and an already-due timer would fire first.
+      const timer = this[kSocketTimeoutTimer];
+      if (timer) {
+        clearTimeout(timer);
+        this[kSocketTimeoutTimer] = undefined;
+      }
       const handle = this[kHandle];
       if (!handle) {
         if ($isCallable(callback)) callback(err);

@@ -246,14 +246,18 @@ console.log(JSON.stringify({ exitCode: r.exitCode }));
 
 // A 4 MB blob on stdin is larger than the socket buffer, so the stdin writer
 // has to register its poll (the stdout/stderr readers register theirs right
-// after). Runs the command several times and reports the parent's open fd
-// count before and after: a spawn that fails part way through setup must not
-// leave a stdio end open. A command that never finishes shows up as a test
-// timeout. `argv[2]` selects the single-command or the pipeline form.
+// after). Runs the command several times and lists the parent's fds that were
+// not open before: a spawn that fails part way through setup must not leave a
+// stdio end open. An fd held by a registered poll is closed on the thread pool,
+// so the list is polled until it drains (bounded). A command that never
+// finishes shows up as a test timeout. `argv[2]` selects the single-command or
+// the pipeline form.
 const STDIN_BLOB_FIXTURE = /* js */ `
 import { $ } from "bun";
-import { readdirSync } from "node:fs";
-const fds = () => readdirSync("/proc/self/fd").length;
+import { readdirSync, readlinkSync } from "node:fs";
+const fds = () => new Set(readdirSync("/proc/self/fd").flatMap(fd => {
+  try { return [fd + ":" + readlinkSync("/proc/self/fd/" + fd)]; } catch { return []; }
+}));
 const blob = new Blob([Buffer.alloc(4 << 20, "a")]);
 const pipeline = process.argv[2] === "pipeline";
 const run = () => (pipeline ? $\`cat < \${blob} | cat\` : $\`cat < \${blob}\`).quiet().nothrow();
@@ -261,7 +265,13 @@ await run();
 const before = fds();
 let last;
 for (let i = 0; i < 5; i++) last = await run();
-console.log(JSON.stringify({ exitCode: last.exitCode, stderr: last.stderr.toString().trim(), fds: fds() - before }));
+const deadline = Date.now() + 2000;
+let leaked = [...fds()].filter(fd => !before.has(fd));
+while (leaked.length > 0 && Date.now() < deadline) {
+  await Bun.sleep(10);
+  leaked = [...fds()].filter(fd => !before.has(fd));
+}
+console.log(JSON.stringify({ exitCode: last.exitCode, stderr: last.stderr.toString().trim(), leaked }));
 `;
 
 let shimPath: string;
@@ -530,7 +540,7 @@ test.concurrent.skipIf(!isLinux || !cc)(
   "shell closes the un-started stdout/stderr pipes when the stdin writer fails to start",
   async () => {
     expect(await runStdinBlobFixture(["SHELL_FAIL_EPOLL"], "single")).toEqual({
-      parsed: { exitCode: 1, stderr: expect.stringContaining("Cannot allocate memory"), fds: 0 },
+      parsed: { exitCode: 1, stderr: expect.stringContaining("Cannot allocate memory"), leaked: [] },
       stderr: expect.any(String),
       exitCode: 0,
     });
@@ -546,7 +556,7 @@ test.concurrent.skipIf(!isLinux || !cc)(
   "shell finishes a command whose reader failed to register while stdin was still being written",
   async () => {
     expect(await runStdinBlobFixture(["SHELL_FAIL_EPOLL_IN"], "single")).toEqual({
-      parsed: { exitCode: ENOMEM, stderr: "", fds: 0 },
+      parsed: { exitCode: ENOMEM, stderr: "", leaked: [] },
       stderr: expect.any(String),
       exitCode: 0,
     });
@@ -560,7 +570,7 @@ test.concurrent.skipIf(!isLinux || !cc)(
   "shell finishes a pipeline whose first stage's reader failed to register while stdin was still being written",
   async () => {
     expect(await runStdinBlobFixture(["SHELL_FAIL_EPOLL_IN"], "pipeline")).toEqual({
-      parsed: { exitCode: ENOMEM, stderr: "", fds: 0 },
+      parsed: { exitCode: ENOMEM, stderr: "", leaked: [] },
       stderr: expect.any(String),
       exitCode: 0,
     });

@@ -67,7 +67,8 @@ impl DeferredBatchTask {
                 // SAFETY: `returned` is this struct's own node; `BundleV2` (and so `self`) is alive until
                 // the bundle thread runs this.
                 unsafe {
-                    mini.enqueue_task_concurrent_with_extra_ctx::<Self, BundleV2<'static>>(
+                    bun_event_loop::MiniEventLoop::MiniEventLoop::enqueue_task_concurrent_with_extra_ctx::<Self, BundleV2<'static>>(
+                        &raw const **mini,
                         this,
                         |_, bv2| (*bv2).decrement_scan_counter(),
                         core::mem::offset_of!(Self, returned),

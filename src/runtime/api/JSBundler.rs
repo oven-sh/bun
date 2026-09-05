@@ -1545,7 +1545,8 @@ pub mod js_bundler {
                         }
                     }
                     bun_event_loop::AnyEventLoop::Mini(mini) => {
-                        mini.enqueue_task_concurrent_with_extra_ctx::<Load, BundleV2<'static>>(
+                        bun_event_loop::MiniEventLoop::MiniEventLoop::enqueue_task_concurrent_with_extra_ctx::<Load, BundleV2<'static>>(
+                            &raw const **mini,
                             std::ptr::from_mut::<Load>(self),
                             on_notify_defer_mini_wrap,
                             core::mem::offset_of!(Load, defer_task),

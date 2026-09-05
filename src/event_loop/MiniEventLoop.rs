@@ -172,7 +172,7 @@ impl MiniEventLoop {
     /// returning accessor is intentionally **not** provided: `UwsLoop::tick()`
     /// fires FilePoll callbacks which re-enter this struct via the
     /// `EventLoopCtx` vtable (`platform_event_loop`) and via
-    /// `EventLoopHandle::Mini` (e.g. `enqueue_task_concurrent` → `wakeup()`),
+    /// `EventLoopHandle::Mini` (e.g. `enqueue_task_concurrent`, which wakes it),
     /// so a held `&mut UwsLoop` across `.tick()` would alias. The loop is also
     /// a C-owned handle whose internals are mutated by uSockets itself. All
     /// access goes through the raw pointer instead.
@@ -349,23 +349,43 @@ impl MiniEventLoop {
         }
     }
 
-    /// `task` must outlive the queued work item; ownership of the intrusive
-    /// node stays with the caller until the callback runs.
-    pub fn enqueue_task_concurrent(&mut self, task: NonNull<AnyTaskWithExtraContext>) {
-        self.concurrent_tasks.push(task);
-        // SAFETY: see `loop_ptr()` invariant.
-        unsafe { (*self.loop_ptr()).wakeup() };
-    }
-
-    /// The caller supplies `field_offset = core::mem::offset_of!(C, <field>)` of the
-    /// embedded `AnyTaskWithExtraContext`.
+    /// Post `task` to the thread that owns this loop and wake it. Any thread.
+    ///
+    /// Raw pointer, not a receiver: the owner may run the task and free the
+    /// loop as soon as it is queued (`Bun.build` boxes one loop per pass), i.e.
+    /// before this returns. A reference argument would assert `*this` for the
+    /// whole call; here nothing reads `*this` after the push.
     ///
     /// # Safety
+    /// `this` must point to a live `MiniEventLoop` when called; its owner may
+    /// free it once the task is queued. `task` must outlive the queued work
+    /// item; ownership of the intrusive node stays with the caller until the
+    /// callback runs.
+    pub unsafe fn enqueue_task_concurrent(
+        this: *const Self,
+        task: NonNull<AnyTaskWithExtraContext>,
+    ) {
+        // SAFETY: `*this` is live until `push_raw` publishes `task` (fn contract)
+        // and is not touched after; `loop_` outlives this struct (see `loop_ptr`)
+        // and `us_wakeup_loop` is thread-safe.
+        unsafe {
+            let loop_ = (*this).loop_;
+            ConcurrentTaskQueue::push_raw(&raw const (*this).concurrent_tasks, task);
+            bun_uws::us_wakeup_loop(loop_);
+        }
+    }
+
+    /// Initialize the `AnyTaskWithExtraContext` embedded in `*ctx` at
+    /// `field_offset = core::mem::offset_of!(C, <field>)`, then post it via
+    /// [`enqueue_task_concurrent`](Self::enqueue_task_concurrent).
+    ///
+    /// # Safety
+    /// `this` as for [`enqueue_task_concurrent`](Self::enqueue_task_concurrent).
     /// `field_offset == offset_of!(C, <field>)` where `<field>: AnyTaskWithExtraContext`,
     /// and `ctx` is non-null and outlives the queued task (intrusive node; ownership stays
     /// with caller).
     pub unsafe fn enqueue_task_concurrent_with_extra_ctx<C, P>(
-        &mut self,
+        this: *const Self,
         ctx: *mut C,
         callback: fn(*mut C, *mut P),
         field_offset: usize,
@@ -375,12 +395,9 @@ impl MiniEventLoop {
         // SAFETY: `task` points at a properly aligned `AnyTaskWithExtraContext` field of `*ctx`.
         unsafe { task.write(New::<C, P>::init(ctx, callback)) };
 
-        // SAFETY: `task` was just initialized above and is non-null (derived from `ctx`).
-        self.concurrent_tasks
-            .push(unsafe { NonNull::new_unchecked(task) });
-
-        // SAFETY: see `loop_ptr()` invariant.
-        unsafe { (*self.loop_ptr()).wakeup() };
+        // SAFETY: `task` was just initialized above and is non-null (derived from
+        // `ctx`); `this` is forwarded under the same contract.
+        unsafe { Self::enqueue_task_concurrent(this, NonNull::new_unchecked(task)) };
     }
 }
 

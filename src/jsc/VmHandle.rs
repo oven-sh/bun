@@ -42,6 +42,7 @@ use bun_threading::{Condvar, Guarded};
 use crate::event_loop::EventLoop;
 use crate::virtual_machine::VirtualMachine;
 use bun_event_loop::ConcurrentTask::ConcurrentTask as ConcurrentTaskItem;
+use bun_event_loop::MiniEventLoop::MiniEventLoop;
 
 pub use bun_event_loop::Posted;
 
@@ -784,7 +785,7 @@ const _: () = assert!(State::Open as u8 == 0);
 /// takes one more ticket.
 pub enum ConcurrentPoster {
     Js(Ticket),
-    Mini(bun_ptr::BackRef<bun_event_loop::MiniEventLoop::MiniEventLoop, bun_ptr::Mut>),
+    Mini(bun_ptr::BackRef<MiniEventLoop, bun_ptr::Mut>),
 }
 
 impl Clone for ConcurrentPoster {
@@ -832,11 +833,9 @@ impl ConcurrentPoster {
     ) {
         match self {
             ConcurrentPoster::Mini(mini) => {
-                let mut mini = *mini;
-                // SAFETY: per `EventLoopHandle::Mini` invariant — the mini loop is
-                // alive for as long as work it created runs; its concurrent queue
-                // push is thread-safe.
-                unsafe { mini.get_mut() }.enqueue_task_concurrent(task);
+                // SAFETY: `EventLoopHandle::Mini` invariant — the loop is alive while
+                // work it created runs, and this post is that work's last step.
+                unsafe { MiniEventLoop::enqueue_task_concurrent(mini.as_const_ptr(), task) };
             }
             ConcurrentPoster::Js(..) => debug_assert!(false, "post_mini on a Js poster"),
         }

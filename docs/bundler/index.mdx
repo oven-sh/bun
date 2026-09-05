@@ -832,6 +832,31 @@ A list of import paths to consider external. Defaults to `[]`.
 
 An external import is not included in the final bundle. Instead, the bundler leaves the import statement as-is, to be resolved at runtime.
 
+### internal
+
+A list of import paths to **never** externalize. Defaults to `[]`.
+
+`internal` takes precedence over both `external` and `packages: "external"`. This is the inverse of `external` — it's most useful combined with `packages: "external"` to keep specific dependencies inside the bundle while externalizing everything else.
+
+```ts title="build.ts" icon="/icons/typescript.svg"
+await Bun.build({
+  entrypoints: ['./index.tsx'],
+  outdir: './out',
+  packages: 'external',
+  internal: ['typeorm'], // bundle typeorm, externalize every other package
+});
+```
+
+```bash terminal icon="terminal"
+bun build ./index.tsx --outdir ./out --packages external --internal typeorm
+```
+
+Wildcards are supported:
+
+```bash terminal icon="terminal"
+bun build ./index.tsx --outdir ./out --packages external --internal 'aws-sdk/*'
+```
+
 For instance, consider the following entrypoint file:
 
 ```tsx index.tsx icon="/icons/typescript.svg"

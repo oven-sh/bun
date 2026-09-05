@@ -30,3 +30,37 @@ describe.concurrent("bunfig.toml type-mismatch error messages", () => {
     expect(exitCode).not.toBe(0);
   });
 });
+
+describe.concurrent("bunfig.toml [bundle] internal type-mismatch error messages", () => {
+  const cases: [config: string, expected: string][] = [
+    [
+      `[bundle]\ninternal = true`,
+      "bundle.internal must be a string or an array of strings, but received boolean",
+    ],
+    [
+      `[bundle]\ninternal = [1]`,
+      "bundle.internal must be a string or an array of strings, but received number",
+    ],
+  ];
+
+  test.each(cases)("%s -> %s", async (config, expected) => {
+    using dir = tempDir("bunfig-bundle-internal-type-mismatch", {
+      "entry.js": `console.log("hi");\n`,
+      "bunfig.toml": config + "\n",
+    });
+    await using proc = Bun.spawn({
+      // `[bundle]` is only parsed for `bun build` (not `bun -e`).
+      cmd: [bunExe(), "build", "entry.js"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    const errorLine = stderr.split("\n").find(l => l.startsWith("error:")) ?? stderr;
+    expect(errorLine).toBe(`error: ${expected}`);
+    expect(stderr).not.toMatch(/\be_(string|boolean|number|object|array|null)\b/);
+    expect(exitCode).not.toBe(0);
+  });
+});

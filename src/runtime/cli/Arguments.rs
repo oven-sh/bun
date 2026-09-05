@@ -482,6 +482,9 @@ pub(crate) const BUILD_ONLY_PARAMS: &[ParamType] = concat_params!(
             "-e, --external <STR>...          Exclude module from transpilation (can use * wildcards). ex: -e react"
         ),
         parse_param!(
+            "--internal <STR>...              Never externalize these modules (overrides --external and --packages external; can use * wildcards). ex: --internal react"
+        ),
+        parse_param!(
             "--allow-unresolved <STR>...      Allow unresolved dynamic import()/require() specifiers matching these glob patterns. Use '\\<empty\\>' for opaque specifiers. Default is '*' (allow all)."
         ),
         parse_param!(
@@ -2096,6 +2099,10 @@ fn parse_build_command_options(
 
     if !args.options(b"--external").is_empty() {
         opts.external = slice_to_owned(args.options(b"--external"));
+    }
+
+    if !args.options(b"--internal").is_empty() {
+        opts.internal = slice_to_owned(args.options(b"--internal"));
     }
 
     if args.flag(b"--reject-unresolved") && !args.options(b"--allow-unresolved").is_empty() {

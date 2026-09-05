@@ -129,6 +129,7 @@ pub mod js_bundler {
         pub(crate) tree_shaking: Option<bool>,
         pub(crate) names: Names,
         pub(crate) external: StringSet,
+        pub(crate) internal: StringSet,
         pub(crate) allow_unresolved: Option<StringSet>,
         pub(crate) source_map: options::SourceMapOption,
         pub(crate) public_path: OwnedString,
@@ -197,6 +198,7 @@ pub mod js_bundler {
                 tree_shaking: None,
                 names: Names::default(),
                 external: StringSet::default(),
+                internal: StringSet::default(),
                 allow_unresolved: None,
                 source_map: options::SourceMapOption::None,
                 public_path: OwnedString::default(),
@@ -977,6 +979,15 @@ pub mod js_bundler {
                 while let Some(entry_point) = iter.next()? {
                     let slice = entry_point.to_utf8(global_this)?;
                     this.external.insert(slice.slice())?;
+                    drop(slice);
+                }
+            }
+
+            if let Some(internals) = config.get_own_array(global_this, "internal")? {
+                let mut iter = internals.array_iterator(global_this)?;
+                while let Some(entry_point) = iter.next()? {
+                    let slice = entry_point.to_slice_or_null(global_this)?;
+                    this.internal.insert(slice.slice())?;
                     drop(slice);
                 }
             }

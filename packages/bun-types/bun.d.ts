@@ -3267,6 +3267,21 @@ declare module "bun" {
     // manifest?: boolean; // whether to return manifest
     external?: string[];
     /**
+     * Never externalize these import paths, even when `packages: "external"`
+     * or `external` would otherwise mark them external. Takes precedence over
+     * both. Supports `*` wildcards. Defaults to `[]`.
+     *
+     * @example
+     * ```ts
+     * await Bun.build({
+     *   entrypoints: ["./index.tsx"],
+     *   packages: "external",
+     *   internal: ["typeorm"], // bundle typeorm, externalize everything else
+     * });
+     * ```
+     */
+    internal?: string[];
+    /**
      * Control whether dynamic `import()`, `require()`, or `require.resolve()` specifiers (non-literal
      * arguments like `` `./locales/${lang}.json` ``) are allowed to pass through
      * to runtime without being bundled.

@@ -115,12 +115,16 @@ pub(crate) fn init_external_modules(
     fs: &mut Fs::Implementation,
     cwd: &[u8],
     externals: &[&[u8]],
+    internals: &[&[u8]],
     log: &mut bun_ast::Log,
     target: Target,
 ) -> ExternalModules {
     let mut result = ExternalModules {
         node_modules: StringSet::default(),
         abs_paths: StringSet::default(),
+        excludes: Vec::new(),
+        excludes_node_modules: StringSet::default(),
+        excludes_abs_paths: Vec::new(),
         patterns: default_wildcard_patterns(),
     };
 
@@ -139,15 +143,61 @@ pub(crate) fn init_external_modules(
         _ => {}
     }
 
-    if externals.is_empty() {
+    if externals.is_empty() && internals.is_empty() {
         return result;
     }
 
     let mut patterns: Vec<WildcardPattern> = Vec::with_capacity(DEFAULT_WILDCARD_PATTERNS.len());
     patterns.extend(default_wildcard_patterns());
 
+    // `--internal` entries are never external, taking precedence over both
+    // `packages: external` and positive `--external` patterns. They are
+    // passed as a separate slice (not `!`-prefixed encodings in `externals`)
+    // so a literal `--external` value starting with `!` — a valid filesystem
+    // path character — can never be misread as an internal exclusion.
+    for rest in internals {
+        let rest = *rest;
+
+        if let Some(i) = strings::index_of_char(rest, b'*') {
+            let i = i as usize;
+            if strings::index_of_char(&rest[i + 1..], b'*').is_some() {
+                log.add_error_fmt(
+                    None,
+                    bun_ast::Loc::EMPTY,
+                    format_args!(
+                        "Internal path \"{}\" must use at most one \"*\" wildcard",
+                        bstr::BStr::new(rest)
+                    ),
+                );
+                return result;
+            }
+            result.excludes.push(WildcardPattern {
+                prefix: Box::from(&rest[0..i]),
+                suffix: Box::from(&rest[i + 1..]),
+            });
+        } else if bun_paths::is_package_path(rest) {
+            result
+                .excludes_node_modules
+                .insert(rest)
+                .expect("unreachable");
+        } else {
+            // Filesystem specifiers (absolute or relative): normalize
+            // against cwd exactly like positive `--external` paths, so the
+            // stored path matches the normalized `abs_path` the resolver
+            // compares against. Kept separate from wildcard `excludes` so
+            // matching happens at path-component boundaries (exact path or
+            // a descendant beginning at a path separator), never an
+            // arbitrary string prefix.
+            let normalized = validate_path(log, fs, cwd, rest, b"internal path");
+            if !normalized.is_empty() {
+                result.excludes_abs_paths.push(normalized);
+            }
+        }
+    }
+
     for external in externals {
         let path = *external;
+
         if let Some(i) = strings::index_of_char(path, b'*') {
             let i = i as usize;
             if strings::index_of_char(&path[i + 1..], b'*').is_some() {
@@ -1899,14 +1949,17 @@ impl<'a> BundleOptions<'a> {
 
         // Reborrow the raw `*mut Log`
         // for the duration of this call only.
+        // `internal` entries are passed as a separate slice (no `!`-prefixed
+        // encoding) so `init_external_modules` can route them to `excludes`,
+        // which take precedence over `packages: external` and `--external`,
+        // without ambiguity with literal `!`-prefixed `--external` values.
+        let external_refs: Vec<&[u8]> = transform.external.iter().map(|s| s.as_ref()).collect();
+        let internal_refs: Vec<&[u8]> = transform.internal.iter().map(|s| s.as_ref()).collect();
         opts.external = init_external_modules(
             &mut fs.fs,
             fs.top_level_dir,
-            &transform
-                .external
-                .iter()
-                .map(|s| s.as_ref())
-                .collect::<Vec<&[u8]>>(),
+            &external_refs,
+            &internal_refs,
             // sole live `&mut` for this call (struct not yet returned).
             opts.log_mut(),
             opts.target,

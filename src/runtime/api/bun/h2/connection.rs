@@ -216,6 +216,11 @@ pub trait Sink {
     /// counter moves, while the connection is mutably borrowed — the embedder must only
     /// store the values.
     fn on_frame_counters(&self, _received: u64, _sent: u64) {}
+    /// Connection-level receive window update (node's session.state window fields): `size` is
+    /// what the peer has been told it may send, `consumed` what it has sent since the last
+    /// WINDOW_UPDATE. Called whenever either moves, while the connection is mutably borrowed —
+    /// the embedder must only store the values.
+    fn on_recv_window(&self, _size: i64, _consumed: i64) {}
     /// Transition shim while the outbound path still flows through the embedder's legacy encoder:
     /// returns true if `stream_id` was initiated locally (HEADERS already sent by the embedder), so
     /// inbound frames for it are not treated as frames on an idle stream.
@@ -420,6 +425,17 @@ impl Connection {
         );
     }
 
+    fn note_recv_window(&self, sink: &impl Sink) {
+        sink.on_recv_window(self.recv_window.size, self.recv_window.consumed);
+    }
+
+    /// The embedder advertised `delta` more connection-level receive window (a WINDOW_UPDATE on
+    /// stream 0 it wrote itself): accept that much more DATA before the §6.9.1 overflow check.
+    pub fn grow_recv_window(&mut self, sink: &impl Sink, delta: i64) {
+        self.recv_window.grow(delta);
+        self.note_recv_window(sink);
+    }
+
     fn send_rst_stream(&mut self, sink: &impl Sink, stream_id: u32, code: ErrorCode) {
         self.write_frame(
             sink,
@@ -571,6 +587,7 @@ impl Connection {
             let inc = self.recv_window.take_update();
             if inc > 0 {
                 self.send_window_update(sink, 0, inc);
+                self.note_recv_window(sink);
             }
         }
         let mut buf = std::mem::take(&mut self.replenish_buf);
@@ -1368,6 +1385,7 @@ impl Connection {
 
         // §6.9: the whole declared frame counts against the connection recv window on receipt.
         self.recv_window.on_data(hdr.length as i64);
+        self.note_recv_window(sink);
         if self.recv_window.is_overflowed() {
             self.send_go_away(
                 sink,
@@ -1486,6 +1504,7 @@ impl Connection {
 
         // §6.9: the whole frame counts against the connection recv window.
         self.recv_window.on_data(consumed);
+        self.note_recv_window(sink);
         if self.recv_window.is_overflowed() {
             self.send_go_away(
                 sink,

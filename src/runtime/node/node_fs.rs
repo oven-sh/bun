@@ -5433,6 +5433,43 @@ impl NodeFS {
         args: &args::Mkdir,
         ctx: &Ctx,
     ) -> Maybe<ret::Mkdir> {
+        // Node's Windows binding cwd-resolves the path (`ToNamespacedPath`)
+        // before the mkdirp walk, so the returned first-path-created is
+        // absolute even for relative input (oven-sh/bun#40535). POSIX Node
+        // returns the relative path, so only Windows resolves.
+        #[cfg(windows)]
+        if !args.always_return_none {
+            let mut cwd_join_scratch = paths::path_buffer_pool::get();
+            if let Some(joined) =
+                super::types::join_cwd_windows(args.path.slice(), &mut cwd_join_scratch)
+            {
+                // Root-clamping normalize (`ALLOW_ABOVE_ROOT = false`): the
+                // raw join can carry `..` segments that climb past the drive
+                // root, and Win32 does no dot processing under the `\\?\`
+                // prefix the slicer adds. `normalize_buf` would keep them
+                // (it passes `ALLOW_ABOVE_ROOT = is_absolute`).
+                let mut norm_buf = paths::path_buffer_pool::get();
+                let joined = paths::resolve_path::normalize_string_buf::<
+                    false,
+                    paths::platform::Windows,
+                    false,
+                >(joined, &mut norm_buf[..]);
+                let joined = PathLike::borrowed(joined);
+                let mut buf = paths::path_buffer_pool::get();
+                let path = match joined.os_path_kernel32(&mut *buf) {
+                    Ok(p) => p,
+                    Err(NameTooLong) => {
+                        return Err(sys::Error {
+                            errno: E::ENAMETOOLONG as _,
+                            syscall: sys::Tag::mkdir,
+                            path: args.path.slice().into(),
+                            ..Default::default()
+                        });
+                    }
+                };
+                return self.mkdir_recursive_os_path_impl::<Ctx, true>(ctx, path, args.mode);
+            }
+        }
         let mut buf = paths::path_buffer_pool::get();
         let path = match args.path.os_path_kernel32(&mut *buf) {
             Ok(p) => p,

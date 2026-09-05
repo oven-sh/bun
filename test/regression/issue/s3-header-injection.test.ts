@@ -1,8 +1,28 @@
 import { S3Client } from "bun";
-import { describe, expect, test } from "bun:test";
+import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 
 // Test that CRLF characters in S3 options are rejected to prevent header injection.
 // See: HTTP Header Injection via S3 Content-Disposition Value
+
+// The S3 client sends through an ambient HTTP_PROXY even for loopback endpoints,
+// so the requests below would never reach the stub servers in an environment
+// that sets one. Same approach as test/js/bun/http/proxy.test.ts: assign "" (a
+// delete does not reach the native env) for the duration of this file.
+const PROXY_ENV_KEYS = ["NO_PROXY", "no_proxy", "HTTP_PROXY", "http_proxy", "HTTPS_PROXY", "https_proxy"];
+const savedProxyEnv: Record<string, string | undefined> = {};
+
+beforeAll(() => {
+  for (const key of PROXY_ENV_KEYS) {
+    savedProxyEnv[key] = process.env[key];
+    process.env[key] = "";
+  }
+});
+
+afterAll(() => {
+  for (const key of PROXY_ENV_KEYS) {
+    process.env[key] = savedProxyEnv[key] ?? "";
+  }
+});
 
 describe("S3 header injection prevention", () => {
   test("contentDisposition with CRLF should throw", () => {
@@ -144,6 +164,131 @@ describe("S3 header injection prevention", () => {
 
     const receivedHeaders = await requestReceived;
     expect(receivedHeaders.get("content-disposition")).toBe('attachment; filename="report.pdf"');
+  });
+});
+
+// A raw TCP stub instead of Bun.serve: Bun.serve's parser would refuse a request
+// whose header carries a NUL byte before the fetch handler runs, so it could not
+// tell "the client never sent the request" apart from "the server dropped it".
+function rawEndpoint() {
+  const seen = { requests: [] as string[], errors: [] as string[] };
+  const server = Bun.listen<{ pending: string }>({
+    port: 0,
+    hostname: "127.0.0.1",
+    socket: {
+      open(socket) {
+        socket.data = { pending: "" };
+      },
+      data(socket, chunk) {
+        socket.data.pending += chunk.toString("latin1");
+        const end = socket.data.pending.indexOf("\r\n\r\n");
+        if (end === -1) {
+          return;
+        }
+        seen.requests.push(socket.data.pending.slice(0, end));
+        socket.end('HTTP/1.1 200 OK\r\nConnection: close\r\nContent-Length: 2\r\nETag: "stub"\r\n\r\nok');
+      },
+      close() {},
+      error(_socket, error) {
+        seen.errors.push(String(error));
+      },
+    },
+  });
+  return {
+    seen,
+    endpoint: `http://127.0.0.1:${server.port}`,
+    [Symbol.dispose]() {
+      server.stop(true);
+    },
+  };
+}
+
+const nulCredentials = [
+  ["sessionToken", { sessionToken: "FAKE\0TOKEN" }],
+  ["accessKeyId", { accessKeyId: "AKIA\0FAKE" }],
+  ["region", { region: "us-east-1\0" }],
+] as const;
+
+describe.concurrent("S3 NUL bytes in header values", () => {
+  // fetch() refuses a header value that contains NUL, CR or LF. The S3 client
+  // builds its headers itself, so it has to apply the same rule. CR/LF is
+  // covered above; these cover NUL, which used to reach the wire.
+  test.each([
+    ["contentDisposition", { contentDisposition: 'attachment; filename="a"\0b' }],
+    ["contentEncoding", { contentEncoding: "gzip\0identity" }],
+    ["type", { type: "text/plain\0x" }],
+  ])("upload option %s containing NUL is rejected before a request is made", (option, uploadOptions) => {
+    using stub = rawEndpoint();
+    const client = new S3Client({
+      accessKeyId: "test-key",
+      secretAccessKey: "test-secret",
+      endpoint: stub.endpoint,
+      bucket: "test-bucket",
+    });
+
+    expect(() => client.write("test-file.txt", "Hello", uploadOptions)).toThrow(
+      `${option} must not contain CR/LF or NUL characters`,
+    );
+    expect(stub.seen).toEqual({ requests: [], errors: [] });
+  });
+
+  // These values go into x-amz-security-token and Authorization, which are
+  // assembled while the request is signed. Nothing may be sent for them.
+  test.each(nulCredentials)(
+    "credential %s containing NUL fails to sign and sends nothing",
+    async (_name, credentials) => {
+      using stub = rawEndpoint();
+      const client = new S3Client({
+        accessKeyId: "test-key",
+        secretAccessKey: "test-secret",
+        endpoint: stub.endpoint,
+        bucket: "test-bucket",
+        ...credentials,
+      });
+
+      await expect(client.file("test-file.txt").text()).rejects.toMatchObject({ code: "ERR_S3_INVALID_SIGNATURE" });
+      await expect(client.write("test-file.txt", "Hello")).rejects.toMatchObject({ code: "ERR_S3_INVALID_SIGNATURE" });
+      expect(stub.seen).toEqual({ requests: [], errors: [] });
+    },
+  );
+
+  // A presigned URL carries the same values in its query string, so it is
+  // refused too instead of embedding the byte in X-Amz-Credential.
+  test.each([...nulCredentials, ["sessionToken (CR/LF)", { sessionToken: "FAKE\r\nTOKEN" }]])(
+    "presign with %s containing NUL or CR/LF throws",
+    (_name, credentials) => {
+      const client = new S3Client({
+        accessKeyId: "test-key",
+        secretAccessKey: "test-secret",
+        endpoint: "http://127.0.0.1:1",
+        bucket: "test-bucket",
+        ...credentials,
+      });
+
+      expect(() => client.presign("test-file.txt")).toThrow(
+        expect.objectContaining({ code: "ERR_S3_INVALID_SIGNATURE" }),
+      );
+    },
+  );
+
+  test("the same credentials without NUL are sent", async () => {
+    using stub = rawEndpoint();
+    const client = new S3Client({
+      accessKeyId: "test-key",
+      secretAccessKey: "test-secret",
+      endpoint: stub.endpoint,
+      bucket: "test-bucket",
+      sessionToken: "FAKETOKEN",
+    });
+
+    expect(await client.file("test-file.txt").text()).toBe("ok");
+
+    expect(stub.seen.errors).toEqual([]);
+    expect(stub.seen.requests).toHaveLength(1);
+    const headers = stub.seen.requests[0].split("\r\n").slice(1);
+    expect(headers).toContain("x-amz-security-token: FAKETOKEN");
+    expect(headers.some(line => line.startsWith("Authorization: AWS4-HMAC-SHA256 Credential=test-key/"))).toBe(true);
+    expect(client.presign("test-file.txt")).toContain("X-Amz-Credential=test-key%2F");
   });
 });
 

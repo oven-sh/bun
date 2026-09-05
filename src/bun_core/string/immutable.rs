@@ -1063,6 +1063,9 @@ pub fn eql_comptime_utf16(self_: &[u16], alt: &[u8]) -> bool {
             .all(|(&u, &b)| u == u16::from(b))
 }
 
+/// `eql_comptime` minus the length test: compares the first `alt.len()` bytes
+/// of `self_`, so a longer `self_` still matches and a shorter one is unequal
+/// rather than read past.
 pub fn eql_comptime_ignore_len(self_: &[u8], alt: &[u8]) -> bool {
     eql_comptime_check_len_with_type::<u8, false>(self_, alt)
 }
@@ -1098,17 +1101,10 @@ pub fn has_suffix_comptime(self_: &[u8], alt: &'static [u8]) -> bool {
 
 fn eql_comptime_check_len_u8(a: &[u8], b: &[u8], check_len: bool) -> bool {
     // Slice equality compiles to memcmp; for short literals LLVM emits
-    // unrolled fixed-size compares.
-    if check_len {
-        return a == b;
-    }
-    debug_assert!(a.len() >= b.len());
-    // SAFETY: when `check_len`, the early-return above gives `a.len()==b.len()`.
-    // When `!check_len`, callers guarantee `a.len() >= b.len()` (debug-asserted
-    // above). LLVM cannot prove the latter, so
-    // a checked slice would emit a real bounds check on this hot path
-    // (lexer keyword/prefix matching) — keep the unchecked index.
-    unsafe { a.get_unchecked(..b.len()) == b }
+    // unrolled fixed-size compares. `starts_with`'s length test folds away at
+    // callers that already sliced or matched the lengths, so an unchecked
+    // index here would save nothing.
+    if check_len { a == b } else { a.starts_with(b) }
 }
 
 fn eql_comptime_check_len_with_known_type<T: crate::NoUninit + Eq, const CHECK_LEN: bool>(
@@ -1199,8 +1195,12 @@ pub fn has_prefix_case_insensitive(str: &[u8], prefix: &[u8]) -> bool {
     has_prefix_case_insensitive_t(str, prefix)
 }
 
-// same rationale as `eql_case_insensitive_ascii` — `check_len` is a runtime
-// 3rd arg to match the dominant call shape (`eql_long(a, b, true)`).
+/// With `check_len`, `a_str == b_str`. Without it, whether `a_str` starts with
+/// `b_str`: a shorter `a_str` compares unequal instead of being read past, so
+/// callers that already matched the lengths skip only the equality test.
+///
+/// Same rationale as `eql_case_insensitive_ascii`: `check_len` is a runtime
+/// 3rd arg to match the dominant call shape (`eql_long(a, b, true)`).
 #[inline]
 pub fn eql_long(a_str: &[u8], b_str: &[u8], check_len: bool) -> bool {
     let len = b_str.len();
@@ -1212,13 +1212,13 @@ pub fn eql_long(a_str: &[u8], b_str: &[u8], check_len: bool) -> bool {
         if a_str.len() != len {
             return false;
         }
-    } else if cfg!(debug_assertions) {
-        debug_assert!(b_str.len() <= a_str.len());
+    } else if a_str.len() < len {
+        return false;
     }
 
-    // SAFETY: a_str.len() >= b_str.len() by contract above (checked when
-    // `check_len`, debug-asserted otherwise), so the word-chunked raw-pointer
-    // walk below never reads past either slice.
+    // SAFETY: both branches above return unless `a_str.len() >= len`, so the
+    // word-chunked raw-pointer walk over `len` bytes below stays inside both
+    // slices whatever the caller passed.
     unsafe {
         let end = b_str.as_ptr().add(len);
         let mut a = a_str.as_ptr();
@@ -2746,6 +2746,8 @@ pub fn glob_length_compare(key_a: &[u8], key_b: &[u8]) -> Ordering {
 
 #[cfg(test)]
 mod tests {
+    use super::{eql_comptime_ignore_len, eql_long};
+
     // Regression guard for 3e7f1dabc079: `crate::strings` is an alias of
     // *this* module, so wrappers here (e.g. `first_non_ascii`) must call
     // `crate::strings_impl::*`, never `crate::strings::*` (self-recursion).
@@ -2773,5 +2775,64 @@ mod tests {
         assert_eq!(out, &[0xD800][..]);
         let out = super::convert_utf8_to_utf16_in_buffer(&mut buf, b"\xC3\xA9\xF0\x9F\x98\x80");
         assert_eq!(out, &[0x00E9, 0xD83D, 0xDE00][..]);
+    }
+
+    // Every strict prefix of every length up to two 8-byte words, so a compare
+    // that walks `long.len()` bytes of `short` over-reads from each step of
+    // `eql_long`'s walk (word loop, 4-, 2- and 1-byte tails) and from the
+    // dangling pointer of an empty slice. `short` is its own exact-size
+    // allocation so that `cargo miri test -p bun_core` reports the over-read
+    // instead of comparing whatever follows the buffer.
+    fn for_each_strict_prefix(mut check: impl FnMut(&[u8], &[u8])) {
+        let bytes: Vec<u8> = (b'a'..=b'q').collect();
+        for long_len in 1..=bytes.len() {
+            let long = &bytes[..long_len];
+            for short_len in 0..long_len {
+                let short = long[..short_len].to_vec();
+                check(&short, long);
+            }
+        }
+    }
+
+    #[test]
+    fn eql_long_rejects_a_shorter_a_str_in_both_modes() {
+        for_each_strict_prefix(|short, long| {
+            assert!(!eql_long(short, long, false), "{short:?} vs {long:?}");
+            assert!(!eql_long(short, long, true), "{short:?} vs {long:?}");
+        });
+    }
+
+    #[test]
+    fn eql_long_without_check_len_compares_a_prefix_of_a_str() {
+        for_each_strict_prefix(|short, long| {
+            assert!(eql_long(long, short, false), "{long:?} vs {short:?}");
+            assert!(!eql_long(long, short, true), "{long:?} vs {short:?}");
+        });
+        let two_words = b"0123456789abcdef";
+        // A copy, so the compare cannot short-circuit on pointer equality.
+        let same_bytes = two_words.to_vec();
+        assert!(eql_long(&same_bytes, two_words, false));
+        assert!(eql_long(&same_bytes, two_words, true));
+        // A mismatch in the second word, then in the 4-, 2- and 1-byte tails.
+        assert!(!eql_long(two_words, b"0123456789abcdeX", false));
+        assert!(!eql_long(two_words, b"0123456789aX", false));
+        assert!(!eql_long(two_words, b"012345678X", false));
+        assert!(!eql_long(two_words, b"01234567X", false));
+    }
+
+    #[test]
+    fn eql_comptime_ignore_len_rejects_a_shorter_input() {
+        for_each_strict_prefix(|short, long| {
+            assert!(
+                !eql_comptime_ignore_len(short, long),
+                "{short:?} vs {long:?}"
+            );
+            assert!(
+                eql_comptime_ignore_len(long, short),
+                "{long:?} vs {short:?}"
+            );
+        });
+        assert!(eql_comptime_ignore_len(b"application", b"application"));
+        assert!(!eql_comptime_ignore_len(b"applicatioN", b"application"));
     }
 }

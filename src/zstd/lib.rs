@@ -2,6 +2,7 @@
 use core::ffi::{c_ulonglong, c_void};
 
 use bun_core::ZStr;
+use bun_core::ffi::FfiSlice;
 
 // ─── FFI bindings ─────────────────────────────────────────────────────────
 // Externs stay in this crate per PORTING.md §FFI: "If your file has externs
@@ -33,6 +34,7 @@ pub mod c {
 
     // ZSTD_EndDirective
     pub const ZSTD_e_continue: ZSTD_EndDirective = 0;
+    pub const ZSTD_e_end: ZSTD_EndDirective = 2;
 
     pub const ZSTD_reset_session_and_parameters: ZSTD_ResetDirective = 3;
 
@@ -775,4 +777,129 @@ pub fn inflate_embedded_nul(compressed: &'static [u8]) -> Box<[u8]> {
     inflated.reserve_exact(1);
     inflated.push(0);
     inflated.into_boxed_slice()
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// Owned streaming contexts — one codec call per `step`, output into a
+// `Vec`'s spare capacity with a caller-chosen limit.
+// ──────────────────────────────────────────────────────────────────────────
+
+/// What one [`CompressStream::step`] / [`DecompressStream::step`] call did.
+#[derive(Clone, Copy, Debug)]
+pub struct Step {
+    /// Bytes of `input` the codec consumed.
+    pub consumed: usize,
+    /// Bytes appended to `out`.
+    pub written: usize,
+    /// Size of the output window that was offered (`written <= offered`).
+    pub offered: usize,
+    /// The zstd return code (check with `ZSTD_isError`; otherwise a size hint,
+    /// `0` meaning the frame/flush is complete).
+    pub code: usize,
+}
+
+/// One zstd call over `input` into `out[len..]`, offering at most `out_limit` bytes.
+#[inline]
+fn stream_step(
+    input: FfiSlice<'_>,
+    out: &mut Vec<u8>,
+    out_limit: usize,
+    call: impl FnOnce(&mut c::ZSTD_outBuffer, &mut c::ZSTD_inBuffer) -> usize,
+) -> Step {
+    let spare = out.spare_capacity_mut();
+    let mut out_buf = c::ZSTD_outBuffer {
+        dst: spare.as_mut_ptr().cast::<c_void>(),
+        size: spare.len().min(out_limit),
+        pos: 0,
+    };
+    let mut in_buf = c::ZSTD_inBuffer {
+        src: input.as_ptr().cast::<c_void>(),
+        size: input.len(),
+        pos: 0,
+    };
+    let code = call(&mut out_buf, &mut in_buf);
+    // SAFETY: zstd wrote `pos <= size <= spare.len()` initialized bytes at the
+    // start of the spare capacity.
+    unsafe { bun_core::vec::commit_spare(out, out_buf.pos) };
+    Step {
+        consumed: in_buf.pos,
+        written: out_buf.pos,
+        offered: out_buf.size,
+        code,
+    }
+}
+
+/// An owned `ZSTD_CCtx` with default parameters; freed on drop.
+pub struct CompressStream(core::ptr::NonNull<c::ZSTD_CCtx>);
+
+// SAFETY: the context is private heap memory with no thread affinity; it is
+// only reached through `&mut self`.
+unsafe impl Send for CompressStream {}
+
+impl CompressStream {
+    pub fn new() -> Option<Self> {
+        core::ptr::NonNull::new(c::ZSTD_createCCtx()).map(Self)
+    }
+
+    /// One `ZSTD_compressStream2` call; `end` selects `ZSTD_e_end` over
+    /// `ZSTD_e_continue`.
+    pub fn step(
+        &mut self,
+        input: FfiSlice<'_>,
+        out: &mut Vec<u8>,
+        out_limit: usize,
+        end: bool,
+    ) -> Step {
+        let directive = if end {
+            c::ZSTD_e_end
+        } else {
+            c::ZSTD_e_continue
+        };
+        stream_step(input, out, out_limit, |out_buf, in_buf| {
+            // SAFETY: live CCtx; the buffers describe `input` (readable, FfiSlice
+            // invariant; zstd only reads it) and the spare window for this one call.
+            unsafe { c::ZSTD_compressStream2(self.0.as_ptr(), out_buf, in_buf, directive) }
+        })
+    }
+}
+
+impl Drop for CompressStream {
+    fn drop(&mut self) {
+        // SAFETY: created by `ZSTD_createCCtx`, freed exactly once.
+        unsafe { c::ZSTD_freeCCtx(self.0.as_ptr()) };
+    }
+}
+
+/// An owned `ZSTD_DCtx` with default parameters; freed on drop.
+pub struct DecompressStream(core::ptr::NonNull<c::ZSTD_DStream>);
+
+// SAFETY: as for `CompressStream`.
+unsafe impl Send for DecompressStream {}
+
+impl DecompressStream {
+    pub fn new() -> Option<Self> {
+        core::ptr::NonNull::new(c::ZSTD_createDCtx()).map(Self)
+    }
+
+    /// One `ZSTD_decompressStream` call.
+    pub fn step(&mut self, input: FfiSlice<'_>, out: &mut Vec<u8>, out_limit: usize) -> Step {
+        stream_step(input, out, out_limit, |out_buf, in_buf| {
+            // SAFETY: live DCtx; the buffers describe `input` (readable, FfiSlice
+            // invariant; zstd only reads it) and the spare window for this one call.
+            unsafe { c::ZSTD_decompressStream(self.0.as_ptr(), out_buf, in_buf) }
+        })
+    }
+
+    /// `ZSTD_DCtx_reset(ZSTD_reset_session_and_parameters)`: ready for a new frame.
+    pub fn reset(&mut self) {
+        // SAFETY: live DCtx.
+        unsafe { c::ZSTD_DCtx_reset(self.0.as_ptr(), c::ZSTD_reset_session_and_parameters) };
+    }
+}
+
+impl Drop for DecompressStream {
+    fn drop(&mut self) {
+        // SAFETY: created by `ZSTD_createDCtx`, freed exactly once.
+        unsafe { c::ZSTD_freeDCtx(self.0.as_ptr()) };
+    }
 }

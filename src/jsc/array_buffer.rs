@@ -162,7 +162,79 @@ impl ArrayBuffer {
     // require('buffer').kMaxLength.
     // keep in sync with Bun::Buffer::kMaxLength
     pub const MAX_SIZE: c_uint = c_uint::MAX;
+}
 
+/// A [`root`](PinnedArrayBuffer::root)ed `ArrayBuffer` (or view) handed to a
+/// pool [`Job`](crate::Job) without copying: being neither resizable nor
+/// shared it cannot move, shrink, or be written by another agent while pinned.
+/// JS on the owning thread can still store into it while the job runs, so the
+/// job never views it as a `&[u8]`: [`ffi_slice`](Self::ffi_slice) lends it as
+/// an [`FfiSlice`](bun_core::ffi::FfiSlice) for C code (a codec) to read,
+/// under the job's [`Ticket`](crate::Ticket). Made on the JS thread and
+/// released there when the job comes back.
+pub struct JobPinnedArrayBuffer {
+    buffer: PinnedArrayBuffer,
+    /// The VM whose heap owns `buffer`: the only thread that may unpin/unroot it.
+    owner: *const crate::virtual_machine::VirtualMachine,
+}
+
+// SAFETY: the only off-thread operation is `ffi_slice`, which demands a
+// `Ticket` (VM alive) and lends memory that is pinned in place and rooted for
+// as long as `self` lives, never as a `&[u8]`; `Drop` releases pin/root only
+// on the owning VM's thread (see there) and is a leak, not a race, anywhere else.
+unsafe impl Send for JobPinnedArrayBuffer {}
+
+impl JobPinnedArrayBuffer {
+    /// Pin and root `value` if it is a non-shared, non-resizable
+    /// `ArrayBuffer` or view; `None` otherwise (the caller copies instead).
+    pub fn root(global: &JSGlobalObject, value: JSValue) -> Option<Self> {
+        if !value.is_cell() {
+            return None;
+        }
+        let buffer = PinnedArrayBuffer::root(global, value)?;
+        if buffer.resizable || buffer.shared || buffer.ptr.is_null() {
+            return None;
+        }
+        Some(Self {
+            buffer,
+            owner: global.bun_vm_ptr().cast_const(),
+        })
+    }
+
+    pub fn byte_len(&self) -> usize {
+        self.buffer.byte_len
+    }
+
+    /// The bytes, for C code to read while both `self` and the job's ticket
+    /// are held. The owning JS thread may store into them concurrently; a
+    /// reader sees each byte's old or new value.
+    pub fn ffi_slice<'a>(
+        &'a self,
+        _vm_alive: &'a crate::Ticket,
+    ) -> bun_core::ffi::FfiSlice<'a, u8> {
+        // SAFETY: pinned (no detach/transfer, not resizable/shared) and rooted
+        // while `self` lives, and the heap is alive while the ticket is borrowed:
+        // the `byte_len` bytes at `ptr` stay allocated for `'a`, which both bound.
+        // May be concurrently written by JS; `FfiSlice` never forms a `&[u8]` over it.
+        unsafe {
+            bun_core::ffi::FfiSlice::from_raw(self.buffer.ptr.cast_const(), self.buffer.byte_len)
+        }
+    }
+}
+
+impl Drop for JobPinnedArrayBuffer {
+    fn drop(&mut self) {
+        // Pin count and the protected-values table belong to the owning VM's
+        // thread. A job always comes back there to drop this; any other thread
+        // (no VM, or another VM's) leaks the pin instead of racing.
+        let here = crate::virtual_machine::VirtualMachine::get_or_null();
+        if here.map(<*mut _>::cast_const) != Some(self.owner) {
+            self.buffer.defuse();
+        }
+    }
+}
+
+impl ArrayBuffer {
     // 4 MB or so is pretty good for mmap()
     const MMAP_THRESHOLD: usize = 1024 * 1024 * 4;
 

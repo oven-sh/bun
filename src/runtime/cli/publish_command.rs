@@ -19,7 +19,6 @@ use bun_paths::resolve_path::{join_abs_string_buf_z, normalize_buf, normalize_bu
 use bun_paths::{self as path, PathBuffer};
 use bun_resolver::fs::FileSystem;
 use bun_sha_hmac as sha;
-use bun_simdutf_sys::simdutf;
 use bun_sys::dir_iterator as DirIterator;
 use bun_sys::{self, Fd, File, FileKind};
 use bun_url::URL;
@@ -2054,16 +2053,7 @@ impl PublishCommand {
                 ),
             );
 
-            // SAFETY: `encode_raw` writes exactly `encoded_tarball_len`
-            // (= `base64::encode_len(tarball_bytes.len(), false)`) bytes into the
-            // reserved spare capacity; `fill_spare` commits exactly that count.
-            let count = unsafe {
-                bun_core::vec::fill_spare(&mut buf, encoded_tarball_len, |spare| {
-                    let n =
-                        simdutf::base64::encode_raw(&ctx.tarball_bytes, spare.as_mut_ptr(), false);
-                    (n, n)
-                })
-            };
+            let count = bun_base64::encode_append(&mut buf, &ctx.tarball_bytes);
             debug_assert!(count == encoded_tarball_len);
 
             let _ = write!(&mut buf, "\",\"length\":{}}}}}}}", ctx.tarball_bytes.len());

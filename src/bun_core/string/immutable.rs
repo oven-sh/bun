@@ -2,6 +2,7 @@
 //! SIMD-accelerated immutable string utilities operating on `&[u8]` (NOT `&str`).
 
 use core::cmp::Ordering;
+use core::mem::MaybeUninit;
 
 use crate::BoundedArray;
 use crate::CrateError as Error;
@@ -36,12 +37,12 @@ pub use crate::strings_impl::{
 // Transcoding helpers from `unicode_draft` — re-exported so downstream
 // `bun_core::strings::*` callers (e.g. runtime/webcore/encoding.rs) resolve.
 pub use unicode_draft::{
-    BOM, UTF16Replacement, allocate_latin1_into_utf8, copy_cp1252_into_utf16,
-    copy_latin1_into_ascii, copy_latin1_into_utf8_stop_on_non_ascii, copy_latin1_into_utf16,
-    copy_u8_into_u16, copy_u16_into_u8, copy_utf16_into_utf8_impl,
-    element_length_cp1252_into_utf16, element_length_utf8_into_utf16, to_utf8_list_with_type_bun,
-    to_utf16_alloc_maybe_buffered, u16_is_lead, u16_is_trail, utf16_codepoint,
-    utf16_codepoint_with_fffd, wtf8_sequence,
+    BOM, UTF16Replacement, allocate_latin1_into_utf8, append_latin1_as_utf16_bytes,
+    copy_cp1252_into_utf16, copy_latin1_into_ascii, copy_latin1_into_utf8_stop_on_non_ascii,
+    copy_latin1_into_utf16, copy_u8_into_u16, copy_u16_into_u8, copy_utf16_into_utf8_impl,
+    cp1252_to_utf16_alloc, element_length_cp1252_into_utf16, element_length_utf8_into_utf16,
+    to_utf8_list_with_type_bun, to_utf16_alloc_maybe_buffered, u16_is_lead, u16_is_trail,
+    utf16_codepoint, utf16_codepoint_with_fffd, wtf8_sequence,
 };
 
 /// `bun.strings.visible` — terminal-visible-width helpers. The implementation
@@ -1538,8 +1539,8 @@ pub trait HexChar: Copy {
 
     /// Decode up to `min(src.len() / 2, dst.len())` hex pairs with SIMD,
     /// stopping at the first pair containing a non-hex character.
-    /// Returns the number of bytes written.
-    fn decode_hex_highway(src: &[Self], dst: &mut [u8]) -> usize;
+    /// Returns the number of (leading) bytes written.
+    fn decode_hex_highway(src: &[Self], dst: &mut [MaybeUninit<u8>]) -> usize;
 }
 
 impl HexChar for u8 {
@@ -1549,7 +1550,7 @@ impl HexChar for u8 {
     }
 
     #[inline(always)]
-    fn decode_hex_highway(src: &[Self], dst: &mut [u8]) -> usize {
+    fn decode_hex_highway(src: &[Self], dst: &mut [MaybeUninit<u8>]) -> usize {
         highway::decode_hex(src, dst)
     }
 }
@@ -1561,28 +1562,57 @@ impl HexChar for u16 {
     }
 
     #[inline(always)]
-    fn decode_hex_highway(src: &[Self], dst: &mut [u8]) -> usize {
+    fn decode_hex_highway(src: &[Self], dst: &mut [MaybeUninit<u8>]) -> usize {
         highway::decode_hex_u16(src, dst)
     }
+}
+
+/// An initialized byte buffer viewed as write slots. Sound because `u8` has no
+/// invalid bit patterns and nothing here ever stores `MaybeUninit::uninit()`.
+#[inline]
+fn as_uninit_mut(bytes: &mut [u8]) -> &mut [MaybeUninit<u8>] {
+    // SAFETY: same layout; every slot starts (and, written only via `write`, stays) initialized.
+    unsafe { &mut *(core::ptr::from_mut(bytes) as *mut [MaybeUninit<u8>]) }
 }
 
 pub fn decode_hex_to_bytes<Char: HexChar>(
     destination: &mut [u8],
     source: &[Char],
 ) -> Result<usize, DecodeHexError> {
-    _decode_hex_to_bytes::<Char, false>(destination, source)
+    _decode_hex_to_bytes::<Char, false>(as_uninit_mut(destination), source)
 }
 
 pub fn decode_hex_to_bytes_truncate<Char: HexChar>(
     destination: &mut [u8],
     source: &[Char],
 ) -> usize {
-    _decode_hex_to_bytes::<Char, true>(destination, source).unwrap_or(0)
+    _decode_hex_to_bytes::<Char, true>(as_uninit_mut(destination), source).unwrap_or(0)
+}
+
+/// [`decode_hex_to_bytes`] into uninitialized storage; on `Ok(n)` the leading
+/// `n` slots of `destination` are initialized.
+pub fn decode_hex_to_uninit<Char: HexChar>(
+    destination: &mut [MaybeUninit<u8>],
+    source: &[Char],
+) -> Result<usize, DecodeHexError> {
+    _decode_hex_to_bytes::<Char, false>(destination, source)
+}
+
+/// [`decode_hex_to_bytes_truncate`] appended to `out` (reserving
+/// `source.len() / 2` itself, no zero-fill); returns the number of bytes appended.
+pub fn decode_hex_append<Char: HexChar>(out: &mut Vec<u8>, source: &[Char]) -> usize {
+    let n = source.len() / 2;
+    out.reserve(n);
+    let wrote =
+        _decode_hex_to_bytes::<Char, true>(&mut out.spare_capacity_mut()[..n], source).unwrap_or(0);
+    // SAFETY: the decoder initialized the first `wrote <= n` spare slots.
+    unsafe { out.set_len(out.len() + wrote) };
+    wrote
 }
 
 #[inline]
 fn _decode_hex_to_bytes<Char: HexChar, const TRUNCATE: bool>(
-    destination: &mut [u8],
+    destination: &mut [MaybeUninit<u8>],
     source: &[Char],
 ) -> Result<usize, DecodeHexError> {
     // Highway fast path: decode whole pairs in bulk, stopping at the first
@@ -1621,7 +1651,7 @@ fn _decode_hex_to_bytes<Char: HexChar, const TRUNCATE: bool>(
             }
             return Err(DecodeHexError::InvalidByteSequence);
         }
-        remain[0] = (a << 4) | b;
+        remain[0].write((a << 4) | b);
         remain = &mut remain[1..];
         input = &input[2..];
     }

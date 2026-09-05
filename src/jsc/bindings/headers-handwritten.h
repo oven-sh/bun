@@ -412,6 +412,8 @@ extern "C" const char* Bun__version_sha;
 
 extern "C" void EncodedSlice__freeGlobal(const unsigned char* ptr, size_t len);
 
+// `to[..other_len]` (ArrayBuffer storage) never overlaps `ptr[..len]` (a JS string's characters);
+// the Rust side copies with memcpy semantics.
 extern "C" size_t Bun__encoding__writeLatin1(const unsigned char* ptr, size_t len, unsigned char* to, size_t other_len, Encoding encoding);
 extern "C" size_t Bun__encoding__writeUTF16(const char16_t* ptr, size_t len, unsigned char* to, size_t other_len, Encoding encoding);
 

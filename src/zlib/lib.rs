@@ -22,6 +22,7 @@ unsafe extern "C" {
     ) -> c_int;
 }
 
+use bun_core::ffi::FfiSlice;
 pub use bun_zlib_sys::shared::{Bytef, uInt, uLong, uLongf};
 
 // typedef voidpf (*alloc_func) OF((voidpf opaque, uInt items, uInt size));
@@ -883,6 +884,11 @@ pub struct DeflateEncoder {
     strm: Box<zStream_struct>,
 }
 
+// SAFETY: the z_stream and the `deflate_state` it owns are plain heap memory
+// with no thread affinity; `next_in`/`next_out` only point at caller buffers
+// for the duration of a `step*` call.
+unsafe impl Send for DeflateEncoder {}
+
 impl DeflateEncoder {
     pub fn new(
         level: c_int,
@@ -938,7 +944,30 @@ impl DeflateEncoder {
         reserve: usize,
         flush: FlushValue,
     ) -> (usize, ReturnCode) {
-        step(&mut self.strm, input, out, reserve, flush, deflate)
+        if out.try_reserve(reserve).is_err() {
+            return (0, ReturnCode::MemError);
+        }
+        step_into_spare(
+            &mut self.strm,
+            input.into(),
+            out,
+            usize::MAX,
+            flush,
+            deflate,
+        )
+    }
+
+    /// [`step`](Self::step) without reserving: writes into whatever spare
+    /// capacity `out` already has, and at most `out_limit` bytes of it. With
+    /// no room to write, zlib returns `BufError` having done nothing.
+    pub fn step_into_spare(
+        &mut self,
+        input: FfiSlice<'_>,
+        out: &mut Vec<u8>,
+        out_limit: usize,
+        flush: FlushValue,
+    ) -> (usize, ReturnCode) {
+        step_into_spare(&mut self.strm, input, out, out_limit, flush, deflate)
     }
 }
 
@@ -963,6 +992,10 @@ pub struct InflateDecoder {
     /// members are all decoded instead of silently dropped after the first.
     multi_member: bool,
 }
+
+// SAFETY: as for `DeflateEncoder` — the z_stream and its `inflate_state` are
+// plain heap memory with no thread affinity.
+unsafe impl Send for InflateDecoder {}
 
 impl InflateDecoder {
     pub fn new(window_bits: c_int) -> Result<Self, ZlibError> {
@@ -1012,7 +1045,30 @@ impl InflateDecoder {
         reserve: usize,
         flush: FlushValue,
     ) -> (usize, ReturnCode) {
-        step(&mut self.strm, input, out, reserve, flush, inflate)
+        if out.try_reserve(reserve).is_err() {
+            return (0, ReturnCode::MemError);
+        }
+        step_into_spare(
+            &mut self.strm,
+            input.into(),
+            out,
+            usize::MAX,
+            flush,
+            inflate,
+        )
+    }
+
+    /// [`step`](Self::step) without reserving: writes into whatever spare
+    /// capacity `out` already has, and at most `out_limit` bytes of it. With
+    /// no room to write, zlib returns `BufError` having done nothing.
+    pub fn step_into_spare(
+        &mut self,
+        input: FfiSlice<'_>,
+        out: &mut Vec<u8>,
+        out_limit: usize,
+        flush: FlushValue,
+    ) -> (usize, ReturnCode) {
+        step_into_spare(&mut self.strm, input, out, out_limit, flush, inflate)
     }
 
     /// Consume all of `input`, appending decompressed output to `out`
@@ -1135,30 +1191,26 @@ fn new_zstream() -> zStream_struct {
     }
 }
 
-/// Shared body of [`DeflateEncoder::step`] / [`InflateDecoder::step`].
-fn step(
+/// Shared body of [`DeflateEncoder::step_into_spare`] / [`InflateDecoder::step_into_spare`].
+fn step_into_spare(
     strm: &mut zStream_struct,
-    input: &[u8],
+    input: FfiSlice<'_>,
     out: &mut Vec<u8>,
-    reserve: usize,
+    out_limit: usize,
     flush: FlushValue,
     op: unsafe extern "C" fn(*mut zStream_struct, FlushValue) -> ReturnCode,
 ) -> (usize, ReturnCode) {
-    if out.try_reserve(reserve).is_err() {
-        return (0, ReturnCode::MemError);
-    }
-
     let in_len = input.len().min(u32::MAX as usize);
     strm.next_in = input.as_ptr();
     strm.avail_in = in_len as uInt;
 
     let spare = out.spare_capacity_mut();
-    let out_len = spare.len().min(u32::MAX as usize);
+    let out_len = spare.len().min(out_limit).min(u32::MAX as usize);
     strm.next_out = spare.as_mut_ptr().cast::<u8>();
     strm.avail_out = out_len as uInt;
 
-    // SAFETY: strm was initialized by deflateInit2_/inflateInit2_; input is
-    // valid for `in_len` bytes; spare is valid write-only storage for
+    // SAFETY: strm was initialized by deflateInit2_/inflateInit2_; `input`
+    // is readable for `in_len` bytes (FfiSlice invariant; zlib only reads it); spare is valid write-only storage for
     // `out_len` bytes. zlib writes at most `out_len - avail_out` bytes.
     let rc = unsafe { op(&raw mut *strm, flush) };
 

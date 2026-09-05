@@ -8,8 +8,10 @@
 // CompressionStreamCoder.rs. Each transform call runs one bounded step; `more` means the coder
 // must be stepped again (with no input, it kept the tail) before the next chunk is fed.
 extern "C" void* CompressionStreamCoder__create(uint8_t format, bool decompress, size_t highWaterMark);
-// Releases the cell's reference (in-flight off-thread steps hold their own).
+// Frees the coder. An in-flight off-thread step owns the codec state itself and gives it back
+// through CompressionStreamCoder__restore (or drops it if the coder is gone by then).
 extern "C" void CompressionStreamCoder__destroy(void* coder);
+extern "C" void CompressionStreamCoder__restore(void* coder, void* codec);
 extern "C" JSC::EncodedJSValue CompressionStreamCoder__transform(void* coder, JSC::JSGlobalObject* global, const uint8_t* input, size_t input_len, bool finish, bool* more);
 extern "C" JSC::EncodedJSValue CompressionStreamCoder__transformInto(void* coder, JSC::JSGlobalObject* global, const uint8_t* input, size_t input_len, bool finish, uint8_t sinkId, void* sinkPtr, bool* more);
 // Off-thread step, completed by Bun__CompressionStream__deliverAsync.

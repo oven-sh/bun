@@ -1,5 +1,7 @@
 use core::ptr;
 
+use bun_core::ffi::FfiSlice;
+
 pub mod error;
 pub use error::{Error, Result};
 
@@ -264,4 +266,173 @@ pub fn encode_append(
     // SAFETY: brotli initialized the first `out_len` bytes of spare.
     unsafe { bun_core::vec::commit_spare(out, out_len) };
     Some(out_len)
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// Owned streaming encoder / decoder — one codec call per `step`, output
+// into a `Vec`'s spare capacity with a caller-chosen limit.
+// ──────────────────────────────────────────────────────────────────────────
+
+/// What one [`EncoderStream::step`] / [`DecoderStream::step`] call did.
+#[derive(Clone, Copy, Debug)]
+pub struct Step<R> {
+    /// Bytes of `input` the codec consumed.
+    pub consumed: usize,
+    /// Bytes appended to `out`.
+    pub written: usize,
+    /// Bytes of the offered output window left unused (`available_out` after the call).
+    pub avail_out: usize,
+    pub result: R,
+}
+
+/// One brotli call over `input` into `out[len..]`, offering at most `out_limit` bytes.
+#[inline]
+fn stream_step<R>(
+    input: FfiSlice<'_>,
+    out: &mut Vec<u8>,
+    out_limit: usize,
+    call: impl FnOnce(&mut usize, &mut *const u8, &mut usize, &mut *mut u8) -> R,
+) -> Step<R> {
+    let spare = out.spare_capacity_mut();
+    let offered = spare.len().min(out_limit);
+    let mut next_out: *mut u8 = spare.as_mut_ptr().cast::<u8>();
+    let mut avail_out = offered;
+    let mut next_in: *const u8 = input.as_ptr();
+    let mut avail_in = input.len();
+    let result = call(&mut avail_in, &mut next_in, &mut avail_out, &mut next_out);
+    let written = offered - avail_out;
+    // SAFETY: brotli wrote `written <= offered <= spare.len()` initialized
+    // bytes at the start of the spare capacity.
+    unsafe { bun_core::vec::commit_spare(out, written) };
+    Step {
+        consumed: input.len() - avail_in,
+        written,
+        avail_out,
+        result,
+    }
+}
+
+/// An owned `BrotliEncoderState` with default parameters; destroyed on drop.
+pub struct EncoderStream(ptr::NonNull<c::BrotliEncoder>);
+
+// SAFETY: the encoder state is private heap memory with no thread affinity;
+// it is only reached through `&mut self`.
+unsafe impl Send for EncoderStream {}
+
+impl EncoderStream {
+    pub fn new() -> Option<Self> {
+        // SAFETY: allocator hooks are valid `extern "C"` fns; `opaque` is unused by them.
+        ptr::NonNull::new(unsafe {
+            c::BrotliEncoderCreateInstance(
+                Some(BrotliAllocator::alloc),
+                Some(BrotliAllocator::free),
+                ptr::null_mut(),
+            )
+        })
+        .map(Self)
+    }
+
+    /// One `BrotliEncoderCompressStream(op)` call. `result` is `false` if the
+    /// encoder reported an error.
+    pub fn step(
+        &mut self,
+        op: c::BrotliEncoderOperation,
+        input: FfiSlice<'_>,
+        out: &mut Vec<u8>,
+        out_limit: usize,
+    ) -> Step<bool> {
+        stream_step(
+            input,
+            out,
+            out_limit,
+            |avail_in, next_in, avail_out, next_out| {
+                // SAFETY: live encoder; the four in/out params describe `input` and
+                // the spare window for this one call.
+                unsafe {
+                    c::BrotliEncoderCompressStream(
+                        self.0.as_ptr(),
+                        op,
+                        avail_in,
+                        next_in,
+                        avail_out,
+                        next_out,
+                        ptr::null_mut(),
+                    ) != 0
+                }
+            },
+        )
+    }
+}
+
+impl Drop for EncoderStream {
+    fn drop(&mut self) {
+        // SAFETY: created by `BrotliEncoderCreateInstance`, destroyed exactly once.
+        unsafe { c::BrotliEncoderDestroyInstance(self.0.as_ptr()) }
+    }
+}
+
+/// An owned `BrotliDecoderState` with default parameters; destroyed on drop.
+pub struct DecoderStream(ptr::NonNull<c::BrotliDecoder>);
+
+// SAFETY: as for `EncoderStream`.
+unsafe impl Send for DecoderStream {}
+
+impl DecoderStream {
+    pub fn new() -> Option<Self> {
+        // SAFETY: allocator hooks are valid `extern "C"` fns; `opaque` is unused by them.
+        ptr::NonNull::new(unsafe {
+            c::BrotliDecoderCreateInstance(
+                Some(BrotliAllocator::alloc),
+                Some(BrotliAllocator::free),
+                ptr::null_mut(),
+            )
+        })
+        .map(Self)
+    }
+
+    /// One `BrotliDecoderDecompressStream` call.
+    pub fn step(
+        &mut self,
+        input: FfiSlice<'_>,
+        out: &mut Vec<u8>,
+        out_limit: usize,
+    ) -> Step<c::BrotliDecoderResult> {
+        stream_step(
+            input,
+            out,
+            out_limit,
+            |avail_in, next_in, avail_out, next_out| {
+                // SAFETY: live decoder; the four in/out params describe `input` and
+                // the spare window for this one call.
+                unsafe {
+                    c::BrotliDecoderDecompressStream(
+                        self.0.as_ptr(),
+                        avail_in,
+                        next_in,
+                        avail_out,
+                        next_out,
+                        ptr::null_mut(),
+                    )
+                }
+            },
+        )
+    }
+
+    pub fn error_code(&self) -> c::BrotliDecoderErrorCode2 {
+        // SAFETY: live decoder.
+        c::BrotliDecoderGetErrorCode(unsafe { self.0.as_ref() })
+    }
+}
+
+impl Drop for DecoderStream {
+    fn drop(&mut self) {
+        // SAFETY: created by `BrotliDecoderCreateInstance`, destroyed exactly once.
+        unsafe { c::BrotliDecoderDestroyInstance(self.0.as_ptr()) }
+    }
+}
+
+/// `BrotliDecoderErrorString`: the `_ERROR_...` name of `code`.
+pub fn decoder_error_string(code: c::BrotliDecoderErrorCode2) -> &'static core::ffi::CStr {
+    // SAFETY: brotli returns a pointer to a static NUL-terminated string for every code.
+    unsafe { core::ffi::CStr::from_ptr(c::BrotliDecoderErrorString(code)) }
 }

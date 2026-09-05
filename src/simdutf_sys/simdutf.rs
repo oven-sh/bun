@@ -130,6 +130,31 @@ pub mod convert {
                             )
                         }
                     }
+
+                    /// [`le`] appended to `out`, reserving the room itself (`None`
+                    /// if that allocation fails). The bytes are kept only when
+                    /// all of `input` converted (`SUCCESS`, `count` = bytes
+                    /// appended); on any other status `out` is left unchanged.
+                    pub fn le_append(input: &[u16], out: &mut Vec<u8>) -> Option<SIMDUTFResult> {
+                        out.try_reserve(crate::simdutf::length::utf8::from::utf16::le(input))
+                            .ok()?;
+                        let spare = out.spare_capacity_mut();
+                        // SAFETY: `spare` holds `utf8_length_from_utf16le(input)`
+                        // bytes, simdutf's documented bound for this conversion.
+                        let r = unsafe {
+                            simdutf__convert_utf16le_to_utf8_with_errors(
+                                input.as_ptr(),
+                                input.len(),
+                                spare.as_mut_ptr().cast::<u8>(),
+                            )
+                        };
+                        if r.status == Status::SUCCESS {
+                            debug_assert!(r.count <= spare.len());
+                            // SAFETY: on success simdutf initialized the first `count` spare bytes.
+                            unsafe { out.set_len(out.len() + r.count) };
+                        }
+                        Some(r)
+                    }
                 }
 
                 pub fn le(input: &[u16], output: &mut [u8]) -> usize {
@@ -196,6 +221,7 @@ pub mod length {
 pub mod base64 {
     use super::SIMDUTFResult;
     use core::ffi::c_int;
+    use core::mem::MaybeUninit;
 
     unsafe extern "C" {
         fn simdutf__base64_encode(
@@ -227,6 +253,28 @@ pub mod base64 {
                 input.as_ptr(),
                 input.len(),
                 output.as_mut_ptr(),
+                is_urlsafe as c_int,
+            )
+        }
+    }
+
+    /// [`encode`] into uninitialized storage (e.g. `Vec::spare_capacity_mut`).
+    /// Initializes and returns exactly [`encode_len`]`(input.len(), is_urlsafe)`
+    /// leading slots of `output`; panics if `output` is shorter than that.
+    pub fn encode_into_uninit(
+        input: &[u8],
+        output: &mut [MaybeUninit<u8>],
+        is_urlsafe: bool,
+    ) -> usize {
+        let need = encode_len(input.len(), is_urlsafe);
+        assert!(output.len() >= need, "base64 output buffer too small");
+        // SAFETY: `output` is valid for writes of `need <= output.len()` bytes; a
+        // `&mut` slice cannot overlap the shared `input` borrow.
+        unsafe {
+            simdutf__base64_encode(
+                input.as_ptr(),
+                input.len(),
+                output.as_mut_ptr().cast::<u8>(),
                 is_urlsafe as c_int,
             )
         }
@@ -265,6 +313,25 @@ pub mod base64 {
         }
     }
 
+    /// [`decode`] into uninitialized storage. On success the leading `count`
+    /// slots of `output` are initialized.
+    pub fn decode_into_uninit(
+        input: &[u8],
+        output: &mut [MaybeUninit<u8>],
+        is_urlsafe: bool,
+    ) -> SIMDUTFResult {
+        // SAFETY: `output` is valid for writes of `output.len()` bytes; FFI honors that bound and only stores.
+        unsafe {
+            simdutf__base64_decode_from_binary(
+                input.as_ptr(),
+                input.len(),
+                output.as_mut_ptr().cast::<u8>(),
+                output.len(),
+                is_urlsafe as c_int,
+            )
+        }
+    }
+
     /// Lenient decode matching Node.js `Buffer` semantics
     /// (`simdutf::base64_default_or_url_accept_garbage` + loose last chunk):
     /// accepts both the standard and URL-safe alphabets, skips whitespace and
@@ -277,6 +344,23 @@ pub mod base64 {
                 input.as_ptr(),
                 input.len(),
                 output.as_mut_ptr(),
+                output.len(),
+            )
+        }
+    }
+
+    /// [`decode_lenient`] into uninitialized storage. On success the leading
+    /// `count` slots of `output` are initialized.
+    pub fn decode_lenient_into_uninit(
+        input: &[u8],
+        output: &mut [MaybeUninit<u8>],
+    ) -> SIMDUTFResult {
+        // SAFETY: `output` is valid for writes of `output.len()` bytes; FFI honors that bound and only stores.
+        unsafe {
+            simdutf__base64_decode_from_binary_lenient(
+                input.as_ptr(),
+                input.len(),
+                output.as_mut_ptr().cast::<u8>(),
                 output.len(),
             )
         }

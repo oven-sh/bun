@@ -653,6 +653,13 @@ impl JSValue {
     pub fn from_uint64_no_truncate(global: &JSGlobalObject, i: u64) -> JsResult<JSValue> {
         host_fn::from_js_host_call(global, || JSC__JSValue__fromUInt64NoTruncate(global, i))
     }
+    #[track_caller]
+    pub fn from_uint128_no_truncate(global: &JSGlobalObject, i: u128) -> JsResult<JSValue> {
+        let (low, high) = (i as u64, (i >> 64) as u64);
+        host_fn::from_js_host_call(global, || {
+            JSC__JSValue__fromUInt128NoTruncate(global, low, high)
+        })
+    }
     /// A BigInt from a decimal integer literal (optional `-`, then digits).
     /// Returns `Ok(None)` when `digits` is not such a literal.
     #[track_caller]
@@ -1976,6 +1983,11 @@ unsafe extern "C" {
     safe fn JSC__JSValue__dateInstanceFromNumber(global: &JSGlobalObject, n: f64) -> JSValue;
     safe fn JSC__JSValue__fromInt64NoTruncate(global: &JSGlobalObject, i: i64) -> JSValue;
     safe fn JSC__JSValue__fromUInt64NoTruncate(global: &JSGlobalObject, i: u64) -> JSValue;
+    safe fn JSC__JSValue__fromUInt128NoTruncate(
+        global: &JSGlobalObject,
+        low: u64,
+        high: u64,
+    ) -> JSValue;
     fn JSC__JSValue__bigIntFromLatin1(
         global: &JSGlobalObject,
         ptr: *const u8,

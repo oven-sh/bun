@@ -2,7 +2,7 @@
 // connect() through an endpoint; a later connect in the other mode must fail
 // loudly instead of silently reusing an engine that cannot frame it.
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, normalizeBunSnapshot, tempDir } from "harness";
+import { bunEnv, bunExe, isASAN, isLinux, normalizeBunSnapshot, tempDir } from "harness";
 import { createPrivateKey } from "node:crypto";
 import { createSocket } from "node:dgram";
 import { readFileSync } from "node:fs";
@@ -309,4 +309,89 @@ describe("endpoint.close() while a session is live", () => {
     await server.closed;
     expect({ announced, resolved }).toEqual({ announced: 1, resolved: true });
   });
+});
+
+// A stateless reset whose send fails waits on lsquic's packet request queue
+// for a retry. lsquic_prq_destroy() freed only the queue's free list, so an
+// endpoint that closed before the retry leaked the reset's connection object.
+// The endpoint socket has IP_RECVERR: on Linux, the ICMP port unreachable for
+// one reset fails the next send with ECONNREFUSED.
+//
+// On a debug build, LeakSanitizer takes more than the default 5 s to print its
+// report. With the default, a leak shows up as a timeout and not as the report.
+const LEAK_REPORT_TIMEOUT = 60_000;
+
+describe("endpoint.close() with an unsent stateless reset", () => {
+  test.skipIf(!isASAN || !isLinux)(
+    "frees the reset's connection object",
+    async () => {
+      const fixture = `
+        import { createPrivateKey } from "node:crypto";
+        import { readFileSync } from "node:fs";
+        import { listen } from "node:quic";
+
+        const key = createPrivateKey(readFileSync(${JSON.stringify(join(keysDir, "agent1-key.pem"))}));
+        const cert = readFileSync(${JSON.stringify(join(keysDir, "agent1-cert.pem"))});
+        const server = await listen(async s => {
+          await s.closed.catch(() => {});
+        }, {
+          sni: { "*": { keys: [key], certs: [cert] } },
+          transportParams: { maxIdleTimeout: 1 },
+        });
+        const { port } = server.address;
+
+        // A short header packet with a DCID that the server does not know.
+        // The server answers each one with a stateless reset.
+        const stray = fill => Buffer.alloc(64, fill);
+
+        // One reset that arrives. This also lets the server socket's first
+        // writable event pass, because that event retries unsent packets.
+        const answered = Promise.withResolvers();
+        const live = await Bun.udpSocket({ hostname: "127.0.0.1", socket: { data: () => answered.resolve() } });
+        live.send(stray(0x40), port, "127.0.0.1");
+        await answered.promise;
+        live.close();
+
+        // Two resets to ports that close before the server answers. The ICMP
+        // error for the first reset fails the send of the second one.
+        const fills = [0x41, 0x42];
+        const gone = await Promise.all(fills.map(() => Bun.udpSocket({ hostname: "127.0.0.1" })));
+        gone.forEach((socket, i) => socket.send(stray(fills[i]), port, "127.0.0.1"));
+        for (const socket of gone) socket.close();
+        while (server.stats.statelessResetCount < 3n) await new Promise(resolve => setImmediate(resolve));
+        console.log("resets=" + server.stats.statelessResetCount + " sent=" + server.stats.packetsSent);
+        await server.close();
+
+        // The loop's send buffer still points into the unsent reset. Send one
+        // more datagram, so that only the destroyed engine pointed at it.
+        const last = await Bun.udpSocket({ hostname: "127.0.0.1" });
+        last.send(Buffer.alloc(8), last.port, "127.0.0.1");
+        last.close();
+      `;
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", fixture],
+        env: {
+          ...bunEnv,
+          NODE_NO_WARNINGS: "1",
+          BUN_DESTRUCT_VM_ON_EXIT: "1",
+          ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "detect_leaks=1"].filter(Boolean).join(":"),
+          LSAN_OPTIONS: `print_suppressions=0:suppressions=${join(import.meta.dir, "..", "..", "..", "leaksan.supp")}`,
+        },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      // sent=2: the third reset did not go out, so it was on the returned list
+      // when the engine was destroyed. LeakSanitizer reports on stderr and
+      // fails the exit code.
+      expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+        stdout: "resets=3 sent=2",
+        stderr: "",
+        exitCode: 0,
+      });
+    },
+    LEAK_REPORT_TIMEOUT,
+  );
 });

@@ -1,0 +1,18 @@
+--- a/src/liblsquic/lsquic_pr_queue.c
++++ b/src/liblsquic/lsquic_pr_queue.c
+@@ -237,6 +237,15 @@ lsquic_prq_destroy (struct pr_queue *prq)
+         TAILQ_REMOVE(&prq->prq_free_conns, conn, cn_next_pr);
+         free(conn);
+     }
++    /* bun: a conn whose packet was not sent waits on the returned list for
++     * the next send_packets_out().  The queue still owns it, so an engine
++     * destroyed before that retry must free it here.  Its request is in
++     * prq_reqs_pool and is already out of the hash. */
++    while ((conn = TAILQ_FIRST(&prq->prq_returned_conns)))
++    {
++        TAILQ_REMOVE(&prq->prq_returned_conns, conn, cn_next_pr);
++        free(conn);
++    }
+     lsquic_hash_destroy(prq->prq_reqs_hash);
+     lsquic_malo_destroy(prq->prq_reqs_pool);
+     free(prq);

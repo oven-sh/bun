@@ -454,9 +454,7 @@ function WriteStream(this: FSStream, path: string | null, options?: any): void {
     this.pos = start;
   }
 
-  // The sink dup()s the fd. That fails for a read-only fd (node's
-  // tty.WriteStream accepts one) and with EMFILE at the fd limit. Write
-  // synchronously then, like node's SyncWriteStream.
+  // The sink dup()s the fd; on a read-only fd or EMFILE, write synchronously like node's SyncWriteStream.
   let fastWriter;
   if (fastPath && fd != null) {
     try {
@@ -465,8 +463,7 @@ function WriteStream(this: FSStream, path: string | null, options?: any): void {
       fastPath = false;
       this._write = underscoreWriteSync;
     }
-    // An already-open fd (stdio) is born constructed, like node's net.Socket.
-    // A deferred _construct would hold a write until the next tick.
+    // Born constructed, like node's stdio: a deferred _construct holds a write until the next tick.
     this._construct = undefined;
   }
 

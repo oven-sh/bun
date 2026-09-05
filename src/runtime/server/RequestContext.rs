@@ -3208,6 +3208,17 @@ where
                             return;
                         }
 
+                        // The arm below reads the handle, which no longer holds the whole body.
+                        readable_stream::Source::Bytes(_)
+                            if stream.is_native_source_consumed(global_this) =>
+                        {
+                            if let Some(resp) = this.resp.get() {
+                                let mut pair = StreamPair { stream, this };
+                                resp.run_corked_with_type(Self::do_render_stream, &raw mut pair);
+                            }
+                            return;
+                        }
+
                         readable_stream::Source::Bytes(byte_stream_ptr) => {
                             // BACKREF: `Source::Bytes` stores a live non-null
                             // `*mut ByteStream` (the JS wrapper's `m_ctx` heap

@@ -1007,7 +1007,9 @@ impl Value {
             }
 
             match readable.ptr {
-                webcore::readable_stream::Source::Blob(blob) => {
+                webcore::readable_stream::Source::Blob(blob)
+                    if !readable.is_native_source_consumed(global_this) =>
+                {
                     // SAFETY: `Source::Blob` holds a live *mut ByteBlobLoader for the
                     // lifetime of the ReadableStream JS wrapper.
                     let result = unsafe { (*blob).to_any_blob(global_this) }
@@ -1716,6 +1718,9 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
                 if readable.is_disturbed(global_object) {
                     return Ok(handle_body_already_used(global_object));
                 }
+                if readable.is_locked(global_object) {
+                    return Ok(handle_body_locked(global_object));
+                }
                 let value = self.get_body_value();
                 if let Value::Locked(locked) = value {
                     return locked.set_promise(global_object, Action::GetText, Some(readable));
@@ -1850,6 +1855,9 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
                 if readable.is_disturbed(global_object) {
                     return Ok(handle_body_already_used(global_object));
                 }
+                if readable.is_locked(global_object) {
+                    return Ok(handle_body_locked(global_object));
+                }
                 let value = self.get_body_value();
                 value.to_blob_if_possible();
                 if let Value::Locked(locked) = value {
@@ -1899,6 +1907,9 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
             if let Some(readable) = self.get_body_readable_stream() {
                 if readable.is_disturbed(global_object) {
                     return Ok(handle_body_already_used(global_object));
+                }
+                if readable.is_locked(global_object) {
+                    return Ok(handle_body_locked(global_object));
                 }
                 let value = self.get_body_value();
                 value.to_blob_if_possible();
@@ -1955,6 +1966,9 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
                 if readable.is_disturbed(global_object) {
                     return Ok(handle_body_already_used(global_object));
                 }
+                if readable.is_locked(global_object) {
+                    return Ok(handle_body_locked(global_object));
+                }
                 let value = self.get_body_value();
                 value.to_blob_if_possible();
                 if let Value::Locked(locked) = value {
@@ -2005,6 +2019,9 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
             if let Some(readable) = self.get_body_readable_stream() {
                 if readable.is_disturbed(global_object) {
                     return Ok(handle_body_already_used(global_object));
+                }
+                if readable.is_locked(global_object) {
+                    return Ok(handle_body_locked(global_object));
                 }
                 let value = self.get_body_value();
                 value.to_blob_if_possible();
@@ -2109,6 +2126,9 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
                 {
                     return Ok(handle_body_already_used(global_object));
                 }
+                if readable.is_locked(global_object) {
+                    return Ok(handle_body_locked(global_object));
+                }
                 value.to_blob_if_possible();
                 if let Value::Locked(locked) = value {
                     return locked.set_promise(global_object, Action::GetBlob, Some(readable));
@@ -2167,6 +2187,15 @@ fn handle_body_already_used(global_object: &JSGlobalObject) -> JSValue {
         .err(
             jsc::ErrorCode::BODY_ALREADY_USED,
             format_args!("Body already used"),
+        )
+        .reject()
+}
+
+fn handle_body_locked(global_object: &JSGlobalObject) -> JSValue {
+    global_object
+        .err(
+            jsc::ErrorCode::INVALID_STATE_TypeError,
+            format_args!("Invalid state: ReadableStream is locked"),
         )
         .reject()
 }

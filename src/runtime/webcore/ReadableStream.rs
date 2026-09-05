@@ -136,6 +136,10 @@ unsafe extern "C" {
         possible_readable_stream: JSValue,
         global_object: &JSGlobalObject,
     ) -> bool;
+    safe fn ReadableStream__isNativeSourceConsumed(
+        possible_readable_stream: JSValue,
+        global_object: &JSGlobalObject,
+    ) -> bool;
     safe fn ReadableStream__isLocked(
         possible_readable_stream: JSValue,
         global_object: &JSGlobalObject,
@@ -189,7 +193,7 @@ impl ReadableStream {
     }
 
     pub fn to_any_blob(&mut self, global_this: &JSGlobalObject) -> Option<webcore::blob::Any> {
-        if self.is_disturbed(global_this) {
+        if self.is_native_source_consumed(global_this) {
             return None;
         }
 
@@ -319,6 +323,11 @@ impl ReadableStream {
         use streams::{SourceHandle, Start, StreamError, StreamResult, Writable};
         use webcore::SinkHandle;
 
+        // Only the JS pump can reach bytes already queued on the controller.
+        if self.is_native_source_consumed(global) {
+            return NativeWireResult::NotNative;
+        }
+
         if let Some(byte_stream) = self.ptr.bytes() {
             if byte_stream.sink.get().is_none() {
                 set_source(SourceHandle::ByteStream(byte_stream));
@@ -395,6 +404,12 @@ impl ReadableStream {
 
     pub fn is_disturbed(&self, global_object: &JSGlobalObject) -> bool {
         is_disturbed_value(self.value, global_object)
+    }
+
+    /// See `JSReadableStream::nativeSourceConsumed()`.
+    pub fn is_native_source_consumed(&self, global_object: &JSGlobalObject) -> bool {
+        // SAFETY: FFI call; value is a valid ReadableStream JSValue.
+        ReadableStream__isNativeSourceConsumed(self.value, global_object)
     }
 
     pub fn is_locked(&self, global_object: &JSGlobalObject) -> bool {

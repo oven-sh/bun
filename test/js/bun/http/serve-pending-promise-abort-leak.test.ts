@@ -555,6 +555,7 @@ function describeRetainers(streams: WeakRef<ReadableStream>[], stash: WeakMap<Re
   // Shortest path from a root to `id`. Weak containers only reach an object
   // that is already alive, so they are skipped.
   const chainToRoot = (id: number): string => {
+    if (rootReason.has(id)) return `  ${fmt(id)}`;
     const prev: Map<number, Edge | null> = new Map([[id, null]]);
     const queue = [id];
     let found = -1;

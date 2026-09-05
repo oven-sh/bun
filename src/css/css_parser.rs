@@ -5956,11 +5956,11 @@ pub mod serializer {
 pub mod parse_utility {
     use super::*;
 
-    /// Parse a value from a string.
+    /// Parse a whole string as one value; anything left after it is a parse error.
     ///
     /// NOTE: `input` should live as long as the returned value. Otherwise,
     /// strings in the returned parsed value will point to undefined memory.
-    pub(crate) fn parse_string<T>(
+    pub fn parse_string<T>(
         arena: &Bump,
         input: &[u8],
         parse_one: fn(&mut Parser) -> CssResult<T>,

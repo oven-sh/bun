@@ -692,20 +692,8 @@ impl Stringifier {
                     }
 
                     let res = &pkg_resolutions[pkg_id as usize];
-                    match res.tag {
-                        ResolutionTag::Root
-                        | ResolutionTag::Npm
-                        | ResolutionTag::Folder
-                        | ResolutionTag::LocalTarball
-                        | ResolutionTag::Github
-                        | ResolutionTag::Git
-                        | ResolutionTag::Symlink
-                        | ResolutionTag::Workspace
-                        | ResolutionTag::RemoteTarball => {}
-                        ResolutionTag::Uninitialized => continue,
-                        // should not be possible, just being safe
-                        ResolutionTag::SingleFileModule => continue,
-                        _ => continue,
+                    if !res.tag.belongs_in_lockfile() {
+                        continue;
                     }
 
                     if first {

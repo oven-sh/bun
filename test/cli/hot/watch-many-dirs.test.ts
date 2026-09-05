@@ -1,7 +1,7 @@
 import { spawn } from "bun";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, forEachLine, isASAN, isCI, isLinux, tempDir } from "harness";
-import { mkdirSync, readdirSync, readlinkSync, realpathSync, writeFileSync } from "node:fs";
+import { bunEnv, bunExe, forEachLine, isASAN, isCI, isLinux, isWindows, tempDir, tempDirWithFiles } from "harness";
+import { mkdirSync, readdirSync, readlinkSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 describe("--hot with many directories", () => {
@@ -244,5 +244,64 @@ if (globalThis.reloaded++ >= ${maxCount}) process.exit(0);
     const leaks = stderr.split(/\n\s*\n/).filter(block => /^(?:Direct|Indirect) leak of /.test(block));
     expect(leaks).toEqual([]);
     expect({ exitCode, signalCode: proc.signalCode }).toEqual({ exitCode: 0, signalCode: null });
+  });
+
+  // The Windows watcher gets one record per deleted path and matches it against
+  // the deleted file and every watched ancestor directory. The modules below
+  // sit under up to 80 watched directories, so two records of the delete burst
+  // already overflow the 128-event batch, and a batch is dispatched while the
+  // burst is still being matched. Dispatching evicts the deleted files from the
+  // watchlist. The matching loop used to keep going with the old length, and
+  // the watcher thread died with `panic: index out of bounds`, taking the
+  // process with it.
+  test.skipIf(!isWindows)("survives a delete burst that spans more than one event batch", async () => {
+    const depth = 80;
+    const files: Record<string, string> = {};
+    const imports: string[] = [];
+    for (let level = 1; level <= depth; level++) {
+      const subdir = Array(level).fill("d").join("/");
+      files[`${subdir}/m.js`] = `export const level = ${level};`;
+      imports.push(`import "./${subdir}/m.js";`);
+    }
+    files["entry.js"] = `${imports.join("\n")}\nconsole.log("LOADED");`;
+    // Removed at the end instead of with `using`: if the child crashes, its
+    // crash reporter keeps the directory busy for a moment, and the removal
+    // error would hide the panic output inside a SuppressedError.
+    const dir = tempDirWithFiles("hot-delete-burst", files);
+
+    await using proc = spawn({
+      cmd: [bunExe(), "--hot", "entry.js"],
+      cwd: dir,
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    // Drained from the start: the reload that the burst itself queues reports
+    // the deleted imports on stderr.
+    const stderr = proc.stderr.text();
+
+    const iter = forEachLine(proc.stdout);
+    const waitForLine = async (expected: string) => {
+      while (true) {
+        const { value: line, done } = await iter.next();
+        if (done) {
+          throw new Error(`--hot exited (code ${await proc.exited}) before printing "${expected}"\n${await stderr}`);
+        }
+        if (line === expected) return;
+      }
+    };
+
+    await waitForLine("LOADED");
+    rmSync(join(dir, "d"), { recursive: true });
+    // Only events raised after the burst prove that the watcher thread is still
+    // running.
+    for (let i = 1; i <= 2; i++) {
+      writeFileSync(join(dir, "entry.js"), `console.log("RELOAD ${i}");`);
+      await waitForLine(`RELOAD ${i}`);
+    }
+
+    proc.kill();
+    await proc.exited;
+    rmSync(dir, { recursive: true, force: true });
   });
 });

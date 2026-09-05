@@ -54,7 +54,7 @@ impl PoolStorage for PathBuffer {
         // on pool cache miss (≤ once per slot per thread); `alloc_zeroed` for a
         // 64 KB heap block is typically satisfied by fresh OS-zeroed pages, so
         // there is no hot-path memset cost.
-        unsafe { Box::<Self>::new_zeroed().assume_init() }
+        lsan_ignore(unsafe { Box::<Self>::new_zeroed().assume_init() })
     }
 }
 impl PoolStorage for WPathBuffer {
@@ -67,8 +67,18 @@ impl PoolStorage for WPathBuffer {
         // `new_zeroed` writes every byte to `0`, which is a valid `u16`, so the
         // value is fully initialized before `assume_init`. See `PathBuffer`
         // impl above for rationale re: `new_uninit` UB and perf.
-        unsafe { Box::<Self>::new_zeroed().assume_init() }
+        lsan_ignore(unsafe { Box::<Self>::new_zeroed().assume_init() })
     }
+}
+
+/// A pooled buffer lives as long as its guard or its thread's pool. A guard
+/// that is still live when the process calls `exit` has no drop, and in an
+/// optimized build its stack slot can be dead by then, so LeakSanitizer would
+/// report the buffer. Scratch storage is never a leak worth reporting.
+#[inline]
+fn lsan_ignore<T>(buf: Box<T>) -> Box<T> {
+    crate::asan::ignore_object((&raw const *buf).cast());
+    buf
 }
 
 impl<T: PoolStorage> PathBufferPoolT<T> {

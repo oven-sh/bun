@@ -23,10 +23,12 @@ impl PosixSignalHandle {
         Box::new(init)
     }
 
-    /// Returns `false` if the ring is full. The caller wakes the loop on `true`.
+    /// Never loses a signal: a full ring coalesces it into a per-number
+    /// pending bit that `drain` delivers after the ring. The caller wakes the
+    /// loop in both cases.
     #[allow(dead_code)]
-    pub(crate) fn enqueue(&self, signal: u8) -> bool {
-        self.ring.enqueue(signal)
+    pub(crate) fn enqueue(&self, signal: u8) {
+        self.ring.enqueue(signal);
     }
 
     /// Drain as many signals as possible and enqueue them as tasks in the event loop.
@@ -76,11 +78,10 @@ extern "C" fn Bun__onPosixSignal(number: i32) {
             let Some(signal) = u8::try_from(number).ok().filter(|&s| s != 0) else {
                 return;
             };
-            if handler.enqueue(signal) {
-                // SAFETY: same process-lifetime event loop as above; `wakeup`
-                // is one async-signal-safe write to the loop's wakeup fd.
-                unsafe { (*(*vm).event_loop()).wakeup() };
-            }
+            handler.enqueue(signal);
+            // SAFETY: same process-lifetime event loop as above; `wakeup`
+            // is one async-signal-safe write to the loop's wakeup fd.
+            unsafe { (*(*vm).event_loop()).wakeup() };
         }
     }
     #[cfg(not(unix))]

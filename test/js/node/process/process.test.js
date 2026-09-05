@@ -2,6 +2,7 @@ import { spawnSync, which } from "bun";
 import { CString, dlopen, ptr } from "bun:ffi";
 import { describe, expect, it } from "bun:test";
 import { familySync } from "detect-libc";
+import { writeFileSync } from "fs";
 import { bunEnv, bunExe, isMacOS, isWindows, tempDir, tmpdirSync } from "harness";
 import { basename, join, resolve } from "path";
 
@@ -1334,6 +1335,59 @@ describe.concurrent(() => {
 
       expect(await child.exited).toBe(0);
       expect(await new Response(child.stdout).text()).toBe("PASS\n");
+    });
+
+    it.skipIf(isWindows)("a signal that arrives while the pending-signal ring is full is not lost", async () => {
+      using dir = tempDir("signal-ring", {});
+      const marker = join(String(dir), "sent");
+      // The child blocks its main thread until the parent has sent every
+      // signal, so nothing drains the ring (8192 slots) in the meantime.
+      await using child = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `
+          const fs = require("fs");
+          let usr1 = 0;
+          process.on("SIGUSR1", () => { usr1++; });
+          process.on("SIGTERM", () => {
+            console.log("SIGTERM after " + usr1 + " SIGUSR1");
+            process.exit(0);
+          });
+          console.log("ready");
+          while (!fs.existsSync(${JSON.stringify(marker)})) {}
+          // Only reached when SIGTERM was dropped: every queued signal is
+          // delivered on the first loop tick after the busy wait.
+          setTimeout(() => {
+            console.log("SIGTERM lost after " + usr1 + " SIGUSR1");
+            process.exit(1);
+          }, 3000);
+          `,
+        ],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "inherit",
+      });
+      const reader = child.stdout.getReader();
+      const decoder = new TextDecoder();
+      let out = "";
+      while (!out.includes("ready\n")) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        out += decoder.decode(value);
+      }
+      for (let i = 0; i < 20_000; i++) {
+        process.kill(child.pid, "SIGUSR1");
+      }
+      process.kill(child.pid, "SIGTERM");
+      writeFileSync(marker, "");
+      for (;;) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        out += decoder.decode(value);
+      }
+      expect(out).toMatch(/^ready\nSIGTERM after \d+ SIGUSR1\n$/);
+      expect(await child.exited).toBe(0);
     });
 
     it.serial("process.kill(2) works", async () => {

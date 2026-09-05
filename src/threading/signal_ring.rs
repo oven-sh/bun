@@ -1,16 +1,29 @@
 //! Lock-free ring of pending POSIX signal numbers.
 
-use core::sync::atomic::{AtomicU8, AtomicU32, Ordering};
+use core::sync::atomic::{AtomicU8, AtomicU32, AtomicU64, Ordering};
 
 /// Multi-producer, single-consumer ring of nonzero `u8` values. `enqueue` is
 /// atomics only, so signal handlers on any thread may run it at once or nested.
 /// `CAPACITY` is a power of two up to 32768: `u16` indices, `tail - head` fits.
+///
+/// A full ring never loses a signal: the number is recorded in `overflow`, one
+/// bit per value, and `dequeue` hands it out once the ring is empty. A storm of
+/// one signal can therefore delay a different one, but not drop it.
 pub struct SignalRing<const CAPACITY: usize> {
     /// 0 while free or claimed but not yet written (signal numbers start at 1).
     slots: [AtomicU8; CAPACITY],
     /// `head` (consumer) in the low half, `tail` (producer) in the high half,
     /// so one load reads a consistent pair and one CAS claims against it.
     state: AtomicU32,
+    /// Bit `n` set: signal `n` arrived while the ring was full. Producers set
+    /// bits only while the ring is full, so the consumer reads them only once
+    /// the ring is empty.
+    overflow: [AtomicU64; 4],
+}
+
+#[inline]
+const fn overflow_bit(signal: u8) -> (usize, u64) {
+    (signal as usize / 64, 1u64 << (signal % 64))
 }
 
 #[inline]
@@ -40,6 +53,7 @@ impl<const CAPACITY: usize> SignalRing<CAPACITY> {
         Self {
             slots: [const { AtomicU8::new(0) }; CAPACITY],
             state: AtomicU32::new(0),
+            overflow: [const { AtomicU64::new(0) }; 4],
         }
     }
 
@@ -48,13 +62,18 @@ impl<const CAPACITY: usize> SignalRing<CAPACITY> {
         &self.slots[index as usize % CAPACITY]
     }
 
-    /// Producer side, any thread. Returns `false` when full. `signal` is never 0.
+    /// Producer side, any thread. `signal` is never 0. Returns `true` when the
+    /// signal took a ring slot, `false` when the ring was full and the signal
+    /// was coalesced into `overflow` instead. The consumer must be woken in
+    /// both cases.
     pub fn enqueue(&self, signal: u8) -> bool {
         debug_assert_ne!(signal, 0, "0 is the empty-slot sentinel");
         let mut state = self.state.load(Ordering::Acquire);
         loop {
             let (head, tail) = unpack(state);
             if usize::from(tail.wrapping_sub(head)) >= CAPACITY {
+                let (word, bit) = overflow_bit(signal);
+                self.overflow[word].fetch_or(bit, Ordering::Release);
                 return false;
             }
             match self.state.compare_exchange_weak(
@@ -72,7 +91,8 @@ impl<const CAPACITY: usize> SignalRing<CAPACITY> {
         }
     }
 
-    /// Consumer side, one thread only. Returns the oldest published signal.
+    /// Consumer side, one thread only. Returns the oldest published signal,
+    /// then, once the ring is empty, each signal that overflowed it.
     /// `None` means empty, or that the oldest claimed slot is still 0 because
     /// its producer has not stored yet: come back after that producer's
     /// wakeup, nothing behind it is skipped.
@@ -80,7 +100,7 @@ impl<const CAPACITY: usize> SignalRing<CAPACITY> {
         let mut state = self.state.load(Ordering::Acquire);
         let (head, tail) = unpack(state);
         if head == tail {
-            return None;
+            return self.take_overflow();
         }
 
         let signal = self.slot(head).swap(0, Ordering::AcqRel);
@@ -103,6 +123,21 @@ impl<const CAPACITY: usize> SignalRing<CAPACITY> {
         }
     }
 
+    /// Clears and returns the lowest overflowed signal number, if any.
+    fn take_overflow(&self) -> Option<u8> {
+        for (index, word) in self.overflow.iter().enumerate() {
+            let bits = word.load(Ordering::Acquire);
+            if bits == 0 {
+                continue;
+            }
+            let bit = bits.trailing_zeros();
+            // Only this thread clears bits, so the bit is still set here.
+            word.fetch_and(!(1u64 << bit), Ordering::AcqRel);
+            return Some((index * 64 + bit as usize) as u8);
+        }
+        None
+    }
+
     /// Starts both indices at `index`, to put the `u16` wrap within reach.
     #[cfg(test)]
     fn starting_at(index: u16) -> Self {
@@ -115,7 +150,7 @@ impl<const CAPACITY: usize> SignalRing<CAPACITY> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::atomic::AtomicUsize;
+    use std::sync::atomic::{AtomicIsize, AtomicUsize};
 
     // Miri interprets every atomic op, so the stress stays short there.
     #[cfg(miri)]
@@ -129,8 +164,8 @@ mod tests {
 
     struct Stress {
         accepted: Vec<usize>,
+        coalesced: Vec<usize>,
         dequeued: Vec<usize>,
-        rejected: usize,
         zeros: usize,
         unknown: usize,
     }
@@ -138,21 +173,23 @@ mod tests {
     /// Producers wait while `outstanding_limit` accepted entries are in the ring.
     fn stress<const CAPACITY: usize>(
         ring: &SignalRing<CAPACITY>,
-        outstanding_limit: usize,
+        outstanding_limit: isize,
     ) -> Stress {
         let done = AtomicUsize::new(0);
-        let outstanding = AtomicUsize::new(0);
+        // Signed: an overflowed signal is counted out once by its producer and
+        // again by the consumer that later dequeues it from the overflow mask.
+        let outstanding = AtomicIsize::new(0);
         let mut dequeued = vec![0usize; usize::from(PRODUCERS)];
         let mut zeros = 0;
         let mut unknown = 0;
 
-        let (accepted, rejected) = std::thread::scope(|scope| {
+        let (accepted, coalesced) = std::thread::scope(|scope| {
             let workers: Vec<_> = (1..=PRODUCERS)
                 .map(|signal| {
                     let (done, outstanding) = (&done, &outstanding);
                     scope.spawn(move || {
                         let mut accepted = 0usize;
-                        let mut rejected = 0usize;
+                        let mut coalesced = 0usize;
                         while accepted < PER_PRODUCER {
                             if outstanding.load(Ordering::Acquire) >= outstanding_limit {
                                 std::thread::yield_now();
@@ -163,12 +200,12 @@ mod tests {
                                 accepted += 1;
                             } else {
                                 outstanding.fetch_sub(1, Ordering::AcqRel);
-                                rejected += 1;
+                                coalesced += 1;
                                 std::thread::yield_now();
                             }
                         }
                         done.fetch_add(1, Ordering::Release);
-                        (accepted, rejected)
+                        (accepted, coalesced)
                     })
                 })
                 .collect();
@@ -192,19 +229,19 @@ mod tests {
             }
 
             let mut accepted = Vec::new();
-            let mut rejected = 0;
+            let mut coalesced = Vec::new();
             for worker in workers {
-                let (a, r) = worker.join().unwrap();
+                let (a, c) = worker.join().unwrap();
                 accepted.push(a);
-                rejected += r;
+                coalesced.push(c);
             }
-            (accepted, rejected)
+            (accepted, coalesced)
         });
 
         Stress {
             accepted,
+            coalesced,
             dequeued,
-            rejected,
             zeros,
             unknown,
         }
@@ -213,9 +250,20 @@ mod tests {
     #[test]
     fn concurrent_producers_deliver_every_accepted_signal_once() {
         let ring = SignalRing::<64>::new();
-        let result = stress(&ring, usize::MAX);
+        let result = stress(&ring, isize::MAX);
         assert_eq!((result.zeros, result.unknown), (0, 0));
-        assert_eq!(result.dequeued, result.accepted);
+        for i in 0..usize::from(PRODUCERS) {
+            let (accepted, coalesced, dequeued) =
+                (result.accepted[i], result.coalesced[i], result.dequeued[i]);
+            // Every slot is delivered once. Overflows of one number are
+            // delivered at least once and at most once per overflow.
+            assert!(dequeued >= accepted, "{i}: {dequeued} < {accepted}");
+            assert!(
+                dequeued <= accepted + coalesced,
+                "{i}: {dequeued} > {accepted} + {coalesced}"
+            );
+            assert_eq!(dequeued > accepted, coalesced > 0, "{i}");
+        }
     }
 
     /// Fullness is judged on one consistent `(head, tail)` pair, never a stale one.
@@ -223,7 +271,8 @@ mod tests {
     fn never_rejects_below_capacity() {
         let ring = SignalRing::<64>::new();
         let result = stress(&ring, 32);
-        assert_eq!((result.zeros, result.unknown, result.rejected), (0, 0, 0));
+        assert_eq!((result.zeros, result.unknown), (0, 0));
+        assert_eq!(result.coalesced.iter().sum::<usize>(), 0);
         assert_eq!(result.dequeued, result.accepted);
     }
 
@@ -238,8 +287,40 @@ mod tests {
             for i in 0..4u8 {
                 assert_eq!(ring.dequeue(), Some(round * 4 + i + 1));
             }
+            assert_eq!(ring.dequeue(), Some(99), "overflow follows the ring");
             assert_eq!(ring.dequeue(), None);
         }
+    }
+
+    /// A storm of one signal that fills the ring delays a different signal
+    /// but never drops it, and the storm itself is coalesced to one delivery.
+    #[test]
+    fn full_ring_coalesces_each_signal_into_one_delivery() {
+        let ring = SignalRing::<4>::new();
+        for _ in 0..4 {
+            assert!(ring.enqueue(10));
+        }
+        for _ in 0..100 {
+            assert!(!ring.enqueue(10));
+        }
+        assert!(!ring.enqueue(15));
+        assert!(!ring.enqueue(255));
+        assert!(!ring.enqueue(64));
+        assert!(!ring.enqueue(15));
+
+        for _ in 0..4 {
+            assert_eq!(ring.dequeue(), Some(10));
+        }
+        assert_eq!(ring.dequeue(), Some(10));
+        assert_eq!(ring.dequeue(), Some(15));
+        assert_eq!(ring.dequeue(), Some(64));
+        assert_eq!(ring.dequeue(), Some(255));
+        assert_eq!(ring.dequeue(), None);
+
+        // Room again: the next one takes a slot.
+        assert!(ring.enqueue(15));
+        assert_eq!(ring.dequeue(), Some(15));
+        assert_eq!(ring.dequeue(), None);
     }
 
     #[test]

@@ -396,8 +396,12 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
   const shims = emitShims(n, cfg);
 
   // JSC's testFFI: linked here from the same dep objects, in every mode that
-  // compiles them (cpp-only uploads it for the test shards).
-  const testFFI = emitTestFFI(n, cfg, depsByName);
+  // compiles them (cpp-only uploads it for the test shards). Its object has
+  // its own main(), so it is reported (for directory creation) but never
+  // archived or linked into bun.
+  const testFFIEdge = emitTestFFI(n, cfg, depsByName);
+  const testFFI = testFFIEdge?.exe;
+  const sideObjects = testFFIEdge !== undefined ? [testFFIEdge.object] : [];
 
   // ─── Step 6: cpp-only / archive-link → archive (cpp-only returns here) ───
   // CI's build-cpp step: archive all .o into libbun.a, stop. The sibling
@@ -433,7 +437,7 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
     if (cfg.mode === "cpp-only") {
       n.phony("bun", [archive, ...depLibs, ...(testFFI !== undefined ? [testFFI] : []), ...uploadStamps]);
       n.default(["bun"]);
-      return { archive, deps, codegen, rustObjects, objects: allObjects };
+      return { archive, deps, codegen, rustObjects, objects: [...allObjects, ...sideObjects] };
     }
   }
 
@@ -477,7 +481,7 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
     deps,
     codegen,
     rustObjects,
-    objects: allObjects,
+    objects: [...allObjects, ...sideObjects],
     uploadStamps,
     ...(testFFI !== undefined && { testFFI }),
   };
@@ -772,7 +776,11 @@ export function emitPostLink(
  * link flags. Linking it also proves those resolve standalone before bun's
  * own link does.
  */
-function emitTestFFI(n: Ninja, cfg: Config, deps: ReadonlyMap<string, ResolvedDep>): string | undefined {
+function emitTestFFI(
+  n: Ninja,
+  cfg: Config,
+  deps: ReadonlyMap<string, ResolvedDep>,
+): { exe: string; object: string } | undefined {
   const webkit = deps.get("WebKit");
   if (cfg.webkit !== "source" || webkit === undefined) return undefined;
   const spec = jscTestFFI(cfg);
@@ -796,7 +804,7 @@ function emitTestFFI(n: Ninja, cfg: Config, deps: ReadonlyMap<string, ResolvedDe
   // testFFI` already names it (on Windows a `testFFI` alias would not clash,
   // but one spelling everywhere).
   if (cfg.windows) n.phony("testFFI", [exe]);
-  return exe;
+  return { exe, object: obj };
 }
 
 /**

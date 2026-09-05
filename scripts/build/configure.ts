@@ -139,12 +139,13 @@ export interface ConfigureResult {
  * an existing one to import it).
  *
  * Excludes scripts that only run as ninja subprocesses (ci.ts, stream.ts,
- * npm-ci.ts, fetch-cli.ts, download.ts) — changes to those don't affect the
- * build graph.
+ * npm-ci.ts) — changes to those don't affect the build graph. fetch-cli.ts
+ * and download.ts count: configure computes fetch URLs and checks source
+ * staleness through them.
  */
 function configureInputs(cwd: string): string[] {
   const buildDir = resolve(cwd, "scripts", "build");
-  const excluded = new Set(["fetch-cli.ts", "download.ts", "ci.ts", "stream.ts", "npm-ci.ts"]);
+  const excluded = new Set(["ci.ts", "stream.ts", "npm-ci.ts"]);
 
   const scripts = globSync("*.ts", { cwd: buildDir })
     .filter(f => !excluded.has(f))
@@ -350,6 +351,9 @@ export async function configure(input: ConfigureInput): Promise<ConfigureResult>
   // Emit ninja.
   const n = new Ninja({ buildDir: cfg.buildDir });
   registerAllRules(n, cfg);
+  // emitBun writes configure-time files into the build dir (dep `headers`,
+  // the Windows .rc); it exists before anything is emitted.
+  mkdirSync(cfg.buildDir, { recursive: true });
   const output = emitBun(n, cfg, sources);
   mark("emitBun");
   emitGeneratorRule(n, cfg, input);

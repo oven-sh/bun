@@ -1728,11 +1728,13 @@ impl<'a> ESModule<'a> {
                         let pattern_trailer = &expansion.key[star + 1..];
 
                         // If patternTrailer has zero length, or if matchKey ends with
-                        // patternTrailer and the length of matchKey is greater than or
-                        // equal to the length of expansionKey, then
-                        if pattern_trailer.is_empty()
-                            || (strings::ends_with(match_key, pattern_trailer)
-                                && match_key.len() >= expansion.key.len())
+                        // patternTrailer, and the length of matchKey is greater than or
+                        // equal to the length of expansionKey, and patternTrailer does
+                        // not contain "*" (the key must have exactly one "*"), then
+                        if (pattern_trailer.is_empty()
+                            || strings::ends_with(match_key, pattern_trailer))
+                            && match_key.len() >= expansion.key.len()
+                            && !strings::contains_char(pattern_trailer, b'*')
                         {
                             let target = &expansion.value;
                             let subpath = &match_key

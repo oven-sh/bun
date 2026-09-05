@@ -64,6 +64,9 @@ pub struct FileReader {
     /// path; `pull_into_sink` is the drain-ack resume.
     pub(crate) sink: JsCell<SinkHandle>,
     pub(crate) sink_paused: Cell<bool>,
+    /// A read error that arrived while no JS read was parked. The next `on_pull`
+    /// delivers it, after any bytes that were read before it.
+    pub(crate) read_error: JsCell<Option<sys::Error>>,
 }
 
 impl Default for FileReader {
@@ -87,6 +90,7 @@ impl Default for FileReader {
             flowing: Cell::new(true),
             sink: JsCell::new(SinkHandle::None),
             sink_paused: Cell::new(false),
+            read_error: JsCell::new(None),
         }
     }
 }
@@ -771,6 +775,10 @@ impl FileReader {
                 .with_mut(|p| p.clear_without_deallocation());
             self.pending_view.set(&mut []);
 
+            // A stored read error ends the stream on the pull after this one, so
+            // the bytes read before it are not reported as a clean EOF.
+            let reader_done = self.reader().is_done() && self.read_error.get().is_none();
+
             if buffer.len() >= drained.len() as usize {
                 let drained_len = drained.len();
                 buffer[0..drained_len as usize].copy_from_slice(drained.slice());
@@ -779,7 +787,7 @@ impl FileReader {
                 // `drained` here — freeing `self.buffered` would be a no-op.
                 drop(drained);
 
-                if self.reader().is_done() {
+                if reader_done {
                     return streams::Result::IntoArrayAndDone(streams::IntoArray {
                         value: array,
                         len: drained_len as u64,
@@ -792,11 +800,15 @@ impl FileReader {
                 }
             }
 
-            if self.reader().is_done() {
+            if reader_done {
                 return streams::Result::OwnedAndDone(drained);
             } else {
                 return streams::Result::Owned(drained);
             }
+        }
+
+        if let Some(err) = self.read_error.take() {
+            return streams::Result::Err(streams::StreamError::Error(err));
         }
 
         if self.reader().is_done() {
@@ -807,6 +819,10 @@ impl FileReader {
             // SAFETY: the reader cell is live for `self`'s lifetime; `read_into` is the raw re-entrancy-safe entry (EOF/error dispatch runs user JS).
             let (amount_read, state) = unsafe { IOReader::read_into(self.reader.get(), buffer) };
             bun_core::scoped_log!(FileReader, "onPull({}) = {}", buffer.len(), amount_read);
+            // No read is parked during `on_pull`, so a read error from `read_into` is stored.
+            if let Some(err) = self.read_error.take() {
+                return streams::Result::Err(streams::StreamError::Error(err));
+            }
             let done = state == ReadState::Eof || self.reader().is_done();
             if amount_read > 0 {
                 let into = streams::IntoArray {
@@ -929,10 +945,19 @@ impl FileReader {
     }
 
     pub(crate) fn on_reader_error(&self, err: sys::Error) {
-        self.consume_reader_buffer();
-        if self.buffered.get().capacity() > 0 && self.buffered.get().is_empty() {
-            self.buffered.set(Vec::new());
+        bun_core::scoped_log!(FileReader, "onReaderError({:?})", err);
+        // Keep every byte read before the error; `deinit` below frees the reader's buffer.
+        let tail = mem::take(self.reader().buffer());
+        if self.buffered.get().is_empty() {
+            self.buffered.set(tail);
+        } else if !tail.is_empty() {
+            self.buffered.with_mut(|b| b.extend_from_slice(&tail));
         }
+
+        // Release the fd and the poll the way EOF does, so a child that is
+        // still writing gets EPIPE instead of blocking forever. `deinit` does
+        // not report `on_reader_done`: the error ends the stream, not a close.
+        self.reader().deinit();
 
         let sink = *self.sink.get();
         if sink.is_some() {
@@ -948,9 +973,15 @@ impl FileReader {
             return;
         }
 
-        self.pending.with_mut(|p| {
-            p.result = streams::Result::Err(streams::StreamError::Error(err));
-        });
+        if self.pending.get().state == streams::PendingState::Pending {
+            self.pending.with_mut(|p| {
+                p.result = streams::Result::Err(streams::StreamError::Error(err));
+            });
+        } else {
+            // No JS read is parked. `on_pull` delivers the error after the bytes
+            // that were read before it.
+            self.read_error.set(Some(err));
+        }
         // Pin across `p.run()`: it runs user JS, and anything there that
         // reaches on_reader_done would drop the across-read ref and let a GC
         // free this box before the `waiting_for_on_reader_done` read below.

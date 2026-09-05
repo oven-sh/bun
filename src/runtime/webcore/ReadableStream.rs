@@ -604,6 +604,28 @@ impl ReadableStream {
         Ok(stream)
     }
 
+    /// A stream that delivers `bytes`, then errors with `err`: the output of a
+    /// subprocess pipe whose read failed before JS took the stream.
+    pub fn from_bytes_then_error(
+        global_this: &JSGlobalObject,
+        bytes: Vec<u8>,
+        err: syscall::Error,
+    ) -> JsResult<JSValue> {
+        let source = NewSource::<FileReader>::new_mut(NewSource {
+            global_this: Some(bun_ptr::BackRef::new(global_this)),
+            context: FileReader {
+                event_loop: core::cell::Cell::new(jsc::EventLoopHandle::init(
+                    global_this.bun_vm().as_mut().event_loop().cast(),
+                )),
+                buffered: bun_jsc::JsCell::new(bytes),
+                read_error: bun_jsc::JsCell::new(Some(err)),
+                ..Default::default()
+            },
+            ..Default::default()
+        });
+        source.to_readable_stream(global_this)
+    }
+
     pub fn empty(global_this: &JSGlobalObject) -> JsResult<JSValue> {
         bun_jsc::from_js_host_call(global_this, || {
             // SAFETY: FFI call into JSC bindings; global_this is a valid &JSGlobalObject.

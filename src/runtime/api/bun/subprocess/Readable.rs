@@ -1,7 +1,7 @@
 use core::mem;
 use core::ptr::NonNull;
 
-use bun_jsc::{JSGlobalObject, JSValue, JsResult, event_loop::EventLoop};
+use bun_jsc::{JSGlobalObject, JSValue, JsResult, SysErrorJsc as _, event_loop::EventLoop};
 use bun_sys::{self, Fd, FdExt as _};
 
 use crate::node::types::FdJsc as _;
@@ -33,6 +33,10 @@ pub enum Readable {
     /// the owning `Readable` will be converted into this variant and the pipe's
     /// buffer will be taken as an owned `CowString`.
     Buffer(CowString),
+    /// A buffered `pipe` whose read failed before JS took the stream: the
+    /// bytes read before the error, then the error, delivered when JS asks
+    /// for the output.
+    Errored(CowString, bun_sys::Error),
 }
 
 impl Readable {
@@ -52,7 +56,7 @@ impl Readable {
     pub(crate) fn memory_cost(&self) -> usize {
         match self {
             Readable::Pipe(pipe) => mem::size_of::<PipeReader>() + pipe.memory_cost(),
-            Readable::Buffer(buffer) => buffer.length(),
+            Readable::Buffer(buffer) | Readable::Errored(buffer, _) => buffer.length(),
             _ => 0,
         }
     }
@@ -237,6 +241,14 @@ impl Readable {
                 let own = buffer.take_slice()?;
                 ReadableStream::from_owned_slice(global, own.into_vec(), 0)
             }
+            Readable::Errored(..) => {
+                let Readable::Errored(mut buffer, err) = mem::replace(self, Readable::Closed)
+                else {
+                    unreachable!()
+                };
+                let own = buffer.take_slice()?;
+                ReadableStream::from_bytes_then_error(global, own.into_vec(), err)
+            }
             _ => Ok(JSValue::UNDEFINED),
         }
     }
@@ -275,6 +287,12 @@ impl Readable {
                 };
 
                 JSValue::create_buffer_from_box(global, own)
+            }
+            Readable::Errored(..) => {
+                let Readable::Errored(_, err) = mem::replace(self, Readable::Closed) else {
+                    unreachable!()
+                };
+                Err(err.throw(global))
             }
             _ => Ok(JSValue::UNDEFINED),
         }

@@ -2400,18 +2400,18 @@ pub fn err(error_name: impl ErrName, fmt: &str, args: impl FmtTuple) {
 fn err_with_body(error_name: &dyn ErrName, body: &dyn fmt::Display) {
     if let Some(e) = error_name.as_sys_err_info() {
         // MOVE_DOWN: bun_sys::coreutils_error_map → bun_core (move-in pass).
-        if let Some(label) = crate::coreutils_error_map::get(e.errno) {
+        if let Some(label) = crate::coreutils_error_map::get_by_name(e.tag_name) {
             pretty_errorln!(
                 "<r><red>{}<r><d>:<r> {}: {} <d>({})<r>",
-                bstr::BStr::new(e.tag_name),
-                bstr::BStr::new(label),
+                e.tag_name,
+                label,
                 body,
                 e.syscall,
             );
         } else {
             pretty_errorln!(
                 "<r><red>{}<r><d>:<r> {} <d>({})<r>",
-                bstr::BStr::new(e.tag_name),
+                e.tag_name,
                 body,
                 e.syscall,
             );
@@ -2446,13 +2446,20 @@ pub fn err_generic(fmt: &str, args: impl FmtTuple) {
     );
 }
 
-/// What `err()` needs from a `bun_sys::Error` without naming the type.
-/// Populated by bun_sys's `ErrName` impl (move-in pass).
+/// What `err()` needs from a failed syscall without naming `bun_sys::Error`.
 #[derive(Clone, Copy)]
 pub struct SysErrInfo {
-    pub tag_name: &'static [u8],
-    pub errno: i32,
+    pub tag_name: &'static str,
     pub syscall: &'static str,
+}
+
+impl ErrName for SysErrInfo {
+    fn name(&self) -> &[u8] {
+        self.tag_name.as_bytes()
+    }
+    fn as_sys_err_info(&self) -> Option<SysErrInfo> {
+        Some(*self)
+    }
 }
 
 /// Trait abstracting the error-name shapes accepted by `err()`.

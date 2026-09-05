@@ -4392,12 +4392,15 @@ pub fn reload_process(clear_terminal: bool, may_return: bool) {
         const WATCHER_RELOAD_EXIT: u32 = 0xC031_EF32;
         let rc = TerminateProcess(GetCurrentProcess(), WATCHER_RELOAD_EXIT);
         if rc == 0 {
-            let err = GetLastError();
+            let code = GetLastError();
+            let tag_name = crate::ErrnoNames::SYS.win32_name(code).unwrap_or("UNKNOWN");
             if may_return {
-                crate::output::err_generic("Failed to reload process: {}", (err,));
+                report_reload_failure(tag_name, "TerminateProcess");
                 return;
             }
-            panic!("Error while reloading process: {}", err);
+            panic!(
+                "Error while reloading process: {tag_name} (TerminateProcess, GetLastError {code})"
+            );
         } else {
             if may_return {
                 crate::output::err_generic("Failed to reload process", ());
@@ -4446,14 +4449,12 @@ pub fn reload_process(clear_terminal: bool, may_return: bool) {
         libc::execve(exec_path, newargv.as_ptr().cast(), envp.as_ptr().cast());
         // execve only returns on error.
         let errno = std::io::Error::last_os_error().raw_os_error().unwrap_or(-1);
+        let tag_name = crate::ErrnoNames::SYS.name(errno).unwrap_or("UNKNOWN");
         if may_return {
-            crate::output::pretty_errorln(format_args!(
-                "error: Failed to reload process: errno {}",
-                errno
-            ));
+            report_reload_failure(tag_name, "execve");
             return;
         }
-        panic!("Unexpected error while reloading: errno {}", errno);
+        panic!("Unexpected error while reloading: {tag_name} (execve, errno {errno})");
     }
 
     #[cfg(not(any(unix, windows)))]
@@ -4463,6 +4464,17 @@ pub fn reload_process(clear_terminal: bool, may_return: bool) {
         let _ = (clear_terminal, may_return);
         compile_error!("unsupported platform for reload_process");
     }
+}
+
+/// `EACCES: Permission denied: Failed to reload process (execve)`
+fn report_reload_failure(tag_name: &'static str, syscall: &'static str) {
+    crate::output::err(
+        crate::output::SysErrInfo { tag_name, syscall },
+        "Failed to reload process",
+        (),
+    );
+    // The crash handler re-raises the fatal signal right after this returns, without a flush.
+    crate::output::flush();
 }
 
 // ── spawn_sync_inherit ────────────────────────────────────────────────────

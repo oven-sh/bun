@@ -4015,7 +4015,10 @@ function addServerAbortSignalOption(self, options) {
   if (signal.aborted) {
     process.nextTick(onAborted);
   } else {
-    signal.addEventListener("abort", onAborted);
+    // Detached on 'close', otherwise a long-lived signal retains every server that ever listened with it.
+    addAbortListener ??= require("internal/abort_listener").addAbortListener;
+    const disposable = addAbortListener(signal, onAborted);
+    self.once("close", disposable[Symbol.dispose]);
   }
 }
 

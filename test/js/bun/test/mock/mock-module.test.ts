@@ -8,8 +8,42 @@
 // - Write test for import {foo} from "./foo"; export {foo}
 
 import { expect, mock, spyOn, test } from "bun:test";
+import { bunEnv, bunExe } from "harness";
 import { default as defaultValue, fn, iCallFn, rexported, rexportedAs, variable } from "./mock-module-fixture";
 import * as spyFixture from "./spymodule-fixture";
+
+// An already-settled factory promise is unwrapped and validated in
+// runVirtualModule, but a factory promise still pending at import time skips
+// every isObject() check and its resolved value reaches the module loader
+// directly. The unfixed runtime segfaults there, so these run in a subprocess.
+for (const [label, factory] of [
+  ["a number", `() => new Promise(resolve => setTimeout(() => resolve(42), 1))`],
+  ["null", `async () => { await Bun.sleep(1); return null; }`],
+  ["a string", `async () => { await Bun.sleep(1); return "str"; }`],
+] as const) {
+  test.concurrent(`mock.module async factory resolving to ${label} rejects cleanly`, async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `import { mock } from "bun:test";
+        mock.module("mm-async-non-object", ${factory});
+        try {
+          await import("mm-async-non-object");
+          console.log("imported");
+        } catch (e) {
+          console.log("rejected:", e?.message);
+        }`,
+      ],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout).toBe("rejected: mock(module, fn) requires a function that returns an object\n");
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+  });
+}
 
 test("mock.module async", async () => {
   mock.module("i-am-async-and-mocked", async () => {

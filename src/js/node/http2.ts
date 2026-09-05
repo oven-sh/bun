@@ -2806,9 +2806,8 @@ class Http2Stream extends Duplex {
     }
 
     if ((status & StreamState.EndedCalled) !== 0) {
-      typeof callback == "function" && callback();
-      // Writable#end always returns the stream (request(...).end() chains rely on it).
-      return this;
+      // Writable#end with kEnding already set only routes the callback; it cannot reach _final.
+      return super.end(undefined, undefined, callback);
     }
     this[bunHTTP2StreamStatus] = status | StreamState.EndedCalled;
     // Don't create an empty buffer for end() without data - let the Duplex stream

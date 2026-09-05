@@ -66,11 +66,14 @@ describe.concurrent("fetch-tls", () => {
     // whose certificate the callback has not approved. So a redirect chain
     // yields one observation per hop, in order. The hostname handed to the
     // callback is the URL host of that hop: a request-level Host header is an
-    // HTTP field only and never becomes the TLS identity.
+    // HTTP field only and never becomes the TLS identity. The two hops use
+    // different URL hosts, and the Host header names neither, so the second
+    // observation proves the identity is re-derived from the redirect target
+    // rather than inherited from the first hop or taken from the header.
     const verifiedHostnames: string[] = [];
-    const res = await fetch(`https://127.0.0.1:${origin.port}/`, {
+    const res = await fetch(`https://localhost:${origin.port}/`, {
       keepalive: false,
-      headers: { Host: "localhost" },
+      headers: { Host: "other.example" },
       tls: {
         ca: validTls.cert,
         checkServerIdentity(hostname: string) {
@@ -81,7 +84,7 @@ describe.concurrent("fetch-tls", () => {
     });
     expect(await res.text()).toBe("from-target");
 
-    expect(verifiedHostnames).toEqual(["127.0.0.1", "127.0.0.1"]);
+    expect(verifiedHostnames).toEqual(["localhost", "127.0.0.1"]);
     // The redirect target must see a Host header derived from its own URL,
     // not the override that was supplied for the previous origin.
     expect(receivedHostHeaders).toEqual([`127.0.0.1:${target.port}`]);

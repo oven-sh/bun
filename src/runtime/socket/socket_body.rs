@@ -2083,6 +2083,42 @@ impl<const SSL: bool> NewSocket<SSL> {
         Ok(())
     }
 
+    /// A fatal TLS error before the close. The third argument tells node:net that no handler threw it.
+    pub(crate) fn on_ssl_error(this: bun_ptr::ThisPtr<Self>, err_code: u32) -> JsResult<()> {
+        jsc::mark_binding!();
+        if !this.has_handlers() || this.flags.get().contains(Flags::FINALIZING) {
+            return Ok(());
+        }
+        if this.socket.get().is_detached() {
+            return Ok(());
+        }
+        let handlers = this.get_handlers();
+        if handlers.vm.script_execution_status() != jsc::ScriptExecutionStatus::Running {
+            return Ok(());
+        }
+        let callback = handlers.on_error();
+        if callback.is_empty() {
+            return Ok(());
+        }
+        let global = handlers.global_object;
+        if global.has_exception() {
+            return Err(jsc::JsError::Thrown);
+        }
+        let _scope = ScopeExit {
+            socket: this,
+            scope: Some(handlers.enter()),
+        };
+        let this_value = this.get_this_value(&global);
+        let err_value = boringssl_err_to_js(&global, err_code);
+        global.bun_vm().event_loop_mut().run_callback(
+            callback,
+            &global,
+            this_value,
+            &[this_value, err_value, JSValue::TRUE],
+        );
+        Ok(())
+    }
+
     /// Takes `ThisPtr<Self>` for the same re-entrancy reason as `on_writable`.
     pub fn on_close(
         this: bun_ptr::ThisPtr<Self>,

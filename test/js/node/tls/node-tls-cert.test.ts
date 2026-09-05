@@ -159,6 +159,47 @@ it("Request cert from TLS1.2 client that doesn't have one.", async () => {
   }
 });
 
+it("Request cert from TLS1.3 client that doesn't have one.", async () => {
+  // TLS 1.3 finishes the client's handshake before the server checks the
+  // certificate, so the alert arrives after 'secureConnect'. The code is the
+  // BoringSSL name. With OpenSSL it is ERR_SSL_TLSV13_ALERT_CERTIFICATE_REQUIRED.
+  const server = tls.createServer({
+    key: serverTls.key,
+    cert: serverTls.cert,
+    ca: clientTls.ca,
+    requestCert: true,
+  });
+  const serverError = once(server, "tlsClientError");
+  await once(server.listen(0, "127.0.0.1"), "listening");
+
+  try {
+    const events: string[] = [];
+    const { promise: closed, resolve: onClose } = Promise.withResolvers<void>();
+    const client = tls.connect({
+      host: "127.0.0.1",
+      port: (server.address() as AddressInfo).port,
+      minVersion: "TLSv1.3",
+      ca: serverTls.ca,
+      checkServerIdentity,
+    });
+    client.on("secureConnect", () => events.push("secureConnect"));
+    client.on("data", () => events.push("data"));
+    client.on("error", (err: any) => events.push(`error ${err.code}`));
+    client.on("end", () => events.push("end"));
+    client.on("close", (hadError: boolean) => {
+      events.push(`close ${hadError}`);
+      onClose();
+    });
+    await closed;
+
+    expect(events).toEqual(["secureConnect", "error ERR_SSL_TLSV1_ALERT_CERTIFICATE_REQUIRED", "end", "close false"]);
+    const [err] = await serverError;
+    expect(err.code).toBe("ERR_SSL_PEER_DID_NOT_RETURN_A_CERTIFICATE");
+  } finally {
+    server.close();
+  }
+});
+
 it("Typical configuration error, incomplete cert chains sent, we have to know the peer's subordinate CAs in order to verify the peer.", async () => {
   await connect({
     client: {

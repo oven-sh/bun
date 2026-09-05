@@ -1021,7 +1021,8 @@ const ServerHandlers: SocketHandler<NetSocket> = {
       reportError(err);
     }
   },
-  error(socket, error) {
+  // See SocketHandlers2.error for `tlsFatal`.
+  error(socket, error, tlsFatal?: boolean) {
     const data = this.data;
     if (!data) return;
 
@@ -1050,6 +1051,9 @@ const ServerHandlers: SocketHandler<NetSocket> = {
       ) {
         // Ignore server's authorization errors
         data.destroy();
+      } else if (tlsFatal && !callback) {
+        // The native close that follows ends the socket, so emit it the way Node does.
+        data._emitTLSError(error);
       } else {
         // Node emits through _emitTLSError and leaves the socket alive. Bun
         // still destroys here: its tls.Server completes the handshake for a
@@ -1396,7 +1400,8 @@ const SocketHandlers2: SocketHandler<NonNullable<import("node:net").Socket["_han
 
     onClientHandshakeComplete(self, socket, verifyError);
   },
-  error(socket, error) {
+  // `tlsFatal`: a fatal TLS error on the established session. The native close follows it.
+  error(socket, error, tlsFatal?: boolean) {
     $debug("Bun.Socket error");
     if (socket.data === undefined) return;
     const { self } = socket.data;
@@ -1407,6 +1412,10 @@ const SocketHandlers2: SocketHandler<NonNullable<import("node:net").Socket["_han
     if (callback) {
       self[kwriteCallback] = null;
       callback(error);
+    } else if (tlsFatal && self._secureEstablished) {
+      // No destroy, like https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L467-L498
+      self._emitTLSError(error);
+      return;
     }
 
     if (!self.destroyed) process.nextTick(destroyNT, self, error);

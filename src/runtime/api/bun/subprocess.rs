@@ -283,9 +283,12 @@ bitflags::bitflags! {
         const FINALIZED                    = 1 << 3;
         const DEREF_ON_STDIN_DESTROYED     = 1 << 4;
         const IS_STDIN_A_READABLE_STREAM   = 1 << 5;
-        /// Terminal was created inline by spawn (vs. an existing Terminal passed
-        /// by the caller). Owned terminals are closed when the subprocess exits
-        /// so the exit callback fires; borrowed terminals are left open for reuse.
+        /// This subprocess tears the terminal's pty slave down when it exits
+        /// (`drain_and_close_slave_fd`), so the reader reaches EOF/EIO and the
+        /// JS exit callback fires. Set for terminals created inline by spawn,
+        /// and on POSIX for a detached child attached to an existing Terminal
+        /// (a session leader whose exit already revokes the pty on macOS).
+        /// Other existing terminals are left open for reuse.
         const OWNS_TERMINAL                = 1 << 6;
         /// `handle_abort_signal` sent `kill_signal`; `on_process_exit` closes
         /// pipe readers instead of waiting on EOF a grandchild may never send.

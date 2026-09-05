@@ -438,6 +438,8 @@ When passing an existing `Terminal` object:
 - The `exit` callback fires when you call `terminal.close()`, not when each subprocess exits
 - Use `proc.exited` to detect individual subprocess exits
 
+Exception (POSIX): a child spawned with `detached: true` is a session leader, and the PTY is torn down when that child exits. Any remaining output is delivered to `data`, then the `exit` callback fires, and the terminal cannot be passed to another spawn afterward. ConPTY has no session-leader teardown, so on Windows a detached child behaves like a non-detached one.
+
 ### Platform differences
 
 `Bun.Terminal` uses `openpty()` on Linux and macOS, and ConPTY (`CreatePseudoConsole`) on Windows. The core behavior is the same on every platform: the child sees a TTY, `write()` reaches the child's stdin, child output reaches the `data` callback, and `resize()` updates the child's view. A few details differ:

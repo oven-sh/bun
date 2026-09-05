@@ -323,8 +323,9 @@ describe("Bun.Terminal platform behaviour", () => {
   });
 
   test("SAME: exit callback does NOT fire on child exit for existing terminal", async () => {
-    // Existing terminal: caller manages lifecycle and may reuse it, so child
-    // exit must not tear it down on either platform.
+    // Existing terminal, non-detached child: caller manages lifecycle and may
+    // reuse it, so child exit must not tear it down on either platform.
+    // (A detached child is different: see the tests below.)
     let fired = false;
     const terminal = new Bun.Terminal({
       exit() {
@@ -335,6 +336,51 @@ describe("Bun.Terminal platform behaviour", () => {
     await proc.exited;
     await Bun.sleep(100);
     expect(fired).toBe(false);
+    terminal.close();
+  });
+
+  // POSIX-only: `detached` makes the child a session leader. macOS revokes
+  // the pty when it exits; bun closes its slave copy on exit so Linux reaches
+  // EIO and behaves the same. ConPTY has no session-leader teardown.
+  test.skipIf(isWindows)("SAME: exit callback fires after a detached child exits (existing terminal)", async () => {
+    let output = "";
+    const ptyClosed = Promise.withResolvers<{ code: number; signal: string | null }>();
+    const terminal = new Bun.Terminal({
+      data(_t, chunk) {
+        output += Buffer.from(chunk).toString("latin1");
+      },
+      exit(_t, code, signal) {
+        ptyClosed.resolve({ code, signal });
+      },
+    });
+    const proc = Bun.spawn({
+      cmd: [bunExe(), "-e", "process.stdout.write('MARKER')"],
+      env: bunEnv,
+      terminal,
+      detached: true,
+    });
+    await proc.exited;
+    // Fires without terminal.close(); all pending output is delivered first.
+    // Clean-EOF status on both platforms: macOS reads EOF after the kernel
+    // revoke, Linux reads EIO after the last slave closes and normalizes it.
+    expect(await ptyClosed.promise).toEqual({ code: 0, signal: null });
+    expect(output).toContain("MARKER");
+    terminal.close();
+  });
+
+  test.skipIf(isWindows)("SAME: terminal cannot be respawned after a detached child exits", async () => {
+    const ptyClosed = Promise.withResolvers<void>();
+    const terminal = new Bun.Terminal({
+      exit() {
+        ptyClosed.resolve();
+      },
+    });
+    const p1 = Bun.spawn({ cmd: [bunExe(), "-e", ""], env: bunEnv, terminal, detached: true });
+    await p1.exited;
+    await ptyClosed.promise;
+    expect(() => Bun.spawn({ cmd: [bunExe(), "-e", ""], env: bunEnv, terminal })).toThrow(
+      "terminal's pty was closed after a previous child exited and cannot be reused",
+    );
     terminal.close();
   });
 

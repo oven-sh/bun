@@ -794,15 +794,19 @@ fn spawn_maybe_sync(
                             return Err(global_this
                                 .throw_invalid_arguments(format_args!("terminal is closed")));
                         }
-                        if term.is_inline_spawned() {
-                            return Err(global_this.throw_invalid_arguments(format_args!(
-                                "terminal was created inline by a previous spawn and cannot be reused",
-                            )));
-                        }
+                        // Checked before INLINE_SPAWNED: the slave also closes
+                        // when a detached child of a user-created terminal
+                        // exits, and that case should not report the terminal
+                        // as inline-created.
                         #[cfg(unix)]
                         if term.get_slave_fd() == Fd::INVALID {
                             return Err(global_this.throw_invalid_arguments(format_args!(
-                                "terminal slave fd is no longer valid"
+                                "terminal's pty was closed after a previous child exited and cannot be reused"
+                            )));
+                        }
+                        if term.is_inline_spawned() {
+                            return Err(global_this.throw_invalid_arguments(format_args!(
+                                "terminal was created inline by a previous spawn and cannot be reused",
                             )));
                         }
                         #[cfg(not(unix))]
@@ -1458,10 +1462,21 @@ fn spawn_maybe_sync(
             // and the reader observes EOF without us having to tear ConPTY
             // down from on_process_exit.
             info.terminal.release_pseudoconsole_reference();
+            subprocess.update_flags(|f| f.insert(Subprocess::Flags::OWNS_TERMINAL));
         }
+    }
+    // The child runs setsid() when spawn passed it the pty slave (inline
+    // terminal) or when `detached` is set (the predicate bun-spawn.cpp uses).
+    // A session leader's exit ends the pty session: macOS revokes the pty in
+    // the kernel, so the terminal is unusable there anyway. Tear the slave
+    // down on exit so Linux matches: the master only reaches EIO (and the
+    // exit callback only fires) once every slave fd is closed, including
+    // ours. Existing terminals with non-detached children keep slave_fd for
+    // reuse.
+    #[cfg(unix)]
+    if subprocess.terminal.get().is_some() && (detached || spawn_options.pty_slave_fd >= 0) {
         subprocess.update_flags(|f| f.insert(Subprocess::Flags::OWNS_TERMINAL));
     }
-    // existing_terminal: don't close slave_fd - user manages lifecycle and can reuse
 
     // SAFETY: `subprocess_ptr` is the live JSC-allocated Subprocess that owns
     // `process` and outlives it (handler ctx invariant).

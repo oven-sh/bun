@@ -92,6 +92,8 @@ pub struct ParseTask {
     pub(crate) secondary_path_for_commonjs_interop: Option<Fs::Path<'static>>,
     pub(crate) contents_or_fd: ContentsOrFd,
     pub(crate) external_free_function: ExternalFreeFunction,
+    /// A native `onBeforeParse` plugin replaced the source with its own buffer.
+    pub(crate) plugin_owns_source: bool,
     pub(crate) side_effects: bun_ast::SideEffects,
     pub(crate) loader: Option<Loader>,
     pub(crate) jsx: options::jsx::Pragma,
@@ -137,6 +139,8 @@ pub(crate) struct Result {
     /// a function pointer and context pointer to free the
     /// returned source code by the plugin.
     pub(crate) external: ExternalFreeFunction,
+    /// `source.contents` is the plugin's own buffer, which `external` frees.
+    pub(crate) plugin_owns_source: bool,
 }
 // `Result` lives in a bump arena (no Drop on free); boxing the large arm
 // would leak the heap allocation. The size diff is acceptable.
@@ -278,6 +282,7 @@ impl ParseTask {
             // defaults:
             secondary_path_for_commonjs_interop: None,
             external_free_function: ExternalFreeFunction::NONE,
+            plugin_owns_source: false,
             loader: None,
             task: ThreadPoolLib::Task {
                 node: ThreadPoolLib::Node::default(),
@@ -308,6 +313,7 @@ impl Default for ParseTask {
             secondary_path_for_commonjs_interop: None,
             contents_or_fd: ContentsOrFd::Contents(b""),
             external_free_function: ExternalFreeFunction::NONE,
+            plugin_owns_source: false,
             side_effects: bun_ast::SideEffects::HasSideEffects,
             loader: None,
             jsx: Default::default(),
@@ -592,6 +598,7 @@ pub mod parse_worker {
             // defaults:
             secondary_path_for_commonjs_interop: None,
             external_free_function: ExternalFreeFunction::NONE,
+            plugin_owns_source: false,
             task: ThreadPoolLib::Task {
                 node: ThreadPoolLib::Node::default(),
                 callback: task_callback,
@@ -2203,14 +2210,13 @@ pub mod parse_worker {
                                 .take()
                                 .expect("original_contents set alongside original_source")
                         } else {
+                            self.task.plugin_owns_source = true;
                             crate::cache::Contents::External {
                                 ptr,
                                 len: wrapper.result.source_len,
                             }
                         };
-                    // The plugin buffer has exactly one owner:
-                    // `self.task.external_free_function` (set above),
-                    // released via `BundleV2.finalizers`.
+                    // `self.task.external_free_function` (set above) is the plugin buffer's only owner.
                     return Ok(CacheEntry {
                         contents,
                         fd: wrapper.original_source_fd,
@@ -2861,6 +2867,7 @@ pub mod parse_worker {
             // `ExternalFreeFunction`
             // doesn't derive `Copy`, so move it out (task is consumed here).
             external: core::mem::take(&mut this.external_free_function),
+            plugin_owns_source: this.plugin_owns_source,
             watcher_data: match this.contents_or_fd {
                 ContentsOrFd::Fd { file, dir } => WatcherData {
                     fd: file,

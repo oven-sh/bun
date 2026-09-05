@@ -5,6 +5,7 @@ use crate::options::Loader;
 // the `options` module already defines them locally.
 use crate::Error;
 use crate::options::{OutputKind, Side};
+use bun_alloc::OwnedBytes;
 use bun_core::String as BunString;
 use bun_paths::PathBuffer;
 use bun_paths::fs;
@@ -102,11 +103,10 @@ pub struct FileOperation {
     pub pathname: Box<[u8]>,
 }
 
-#[derive(Clone)]
 pub enum Value {
     Copy(FileOperation),
     Noop,
-    Buffer { bytes: Box<[u8]> },
+    Buffer { bytes: OwnedBytes },
     Saved(SavedFile),
 }
 
@@ -153,10 +153,7 @@ impl Value {
 pub struct SavedFile {}
 
 pub enum OptionsData {
-    Buffer {
-        // arena dropped — global mimalloc.
-        data: Box<[u8]>,
-    },
+    Buffer { data: OwnedBytes },
     Saved(usize),
 }
 

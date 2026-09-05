@@ -619,10 +619,8 @@ pub(crate) fn write_output_files_to_disk(
             let bytes = if let OutputFileValue::Buffer { bytes } = &mut src.value {
                 core::mem::take(bytes)
             } else {
-                Box::default()
+                bun_alloc::OwnedBytes::new()
             };
-            // `defer src.value.buffer.arena.free(bytes)` — `bytes` is now an
-            // owned Box that drops at end of scope.
 
             let rel_parent = paths::resolve_path::dirname::<paths::platform::Auto>(&src.dest_path);
             if !rel_parent.is_empty() {

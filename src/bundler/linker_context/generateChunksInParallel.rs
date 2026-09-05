@@ -854,7 +854,7 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                     Some(output_files.insert_for_sourcemap_or_bytecode(
                         options::OutputFile::init(options::OutputFileInit {
                             data: options::OutputFileData::Buffer {
-                                data: output_source_map,
+                                data: output_source_map.into(),
                             },
                             hash: None,
                             loader: Loader::Json,
@@ -875,7 +875,7 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                 let _ = output_files.insert_for_chunk(options::OutputFile::init(
                     options::OutputFileInit {
                         data: options::OutputFileData::Buffer {
-                            data: Box::default(),
+                            data: bun_alloc::OwnedBytes::new(),
                         },
                         hash: None,
                         loader: chunks[chunk_index_in_chunks_list].content.loader(),
@@ -1002,7 +1002,7 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                     sourcemap_output_file =
                         Some(options::OutputFile::init(options::OutputFileInit {
                             data: options::OutputFileData::Buffer {
-                                data: output_source_map,
+                                data: output_source_map.into(),
                             },
                             hash: None,
                             loader: Loader::Json,
@@ -1118,7 +1118,9 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                                 loader: Loader::File,
                                 size: Some(bytecode.len()),
                                 display_size: bytecode.len() as u32,
-                                data: options::OutputFileData::Buffer { data: bytecode },
+                                data: options::OutputFileData::Buffer {
+                                    data: bytecode.into(),
+                                },
                                 side: Some(side),
                                 entry_point_index: None,
                                 is_executable: false,
@@ -1183,7 +1185,7 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                                         size: Some(module_info_bytes.len()),
                                         display_size: module_info_bytes.len() as u32,
                                         data: options::OutputFileData::Buffer {
-                                            data: module_info_bytes.clone(),
+                                            data: module_info_bytes.clone().into(),
                                         },
                                         side: Some(side),
                                         entry_point_index: None,
@@ -1221,7 +1223,7 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
             let chunk_index =
                 output_files.insert_for_chunk(options::OutputFile::init(options::OutputFileInit {
                     data: options::OutputFileData::Buffer {
-                        data: code_result.buffer,
+                        data: code_result.buffer.into(),
                     },
                     hash: chunk.template.placeholder.hash,
                     loader: chunk.content.loader(),
@@ -1366,9 +1368,7 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
             loader: Loader::File,
             size: Some(bytes.len()),
             display_size: bytes.len() as u32,
-            data: options::OutputFileData::Buffer {
-                data: bytes.into_boxed_slice(),
-            },
+            data: options::OutputFileData::Buffer { data: bytes.into() },
             side: None,
             entry_point_index: None,
             is_executable: false,
@@ -1387,7 +1387,7 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
             loader: Loader::File,
             size: Some(bytes.len()),
             display_size: bytes.len() as u32,
-            data: options::OutputFileData::Buffer { data: bytes },
+            data: options::OutputFileData::Buffer { data: bytes.into() },
             side: None,
             entry_point_index: None,
             is_executable: false,
@@ -1497,7 +1497,9 @@ fn append_internal_module_bytecode(
             loader: Loader::File,
             size: Some(bytecode.len()),
             display_size: bytecode.len() as u32,
-            data: options::OutputFileData::Buffer { data: bytecode },
+            data: options::OutputFileData::Buffer {
+                data: bytecode.into(),
+            },
             side: None,
             entry_point_index: None,
             is_executable: false,

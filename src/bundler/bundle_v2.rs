@@ -116,7 +116,10 @@ pub struct BundleV2<'a> {
     pub(crate) unique_key: u64,
     pub(crate) dynamic_import_entry_points: ArrayHashMap<IndexInt, ()>,
 
+    /// Native `onBeforeParse` buffers to free at teardown.
     pub(crate) finalizers: Vec<ExternalFreeFunction>,
+    /// Plugin-owned `source.contents` of copy-loader assets, by source index, for `process_files_to_copy`.
+    pub(crate) asset_free_functions: ArrayHashMap<IndexInt, ExternalFreeFunction>,
 
     pub(crate) drain_defer_task: DeferredBatchTask,
 
@@ -2958,6 +2961,7 @@ pub mod bv2_impl {
                 unique_key: 0,
                 dynamic_import_entry_points: ArrayHashMap::new(),
                 finalizers: Vec::new(),
+                asset_free_functions: ArrayHashMap::new(),
                 drain_defer_task: DeferredBatchTask::default(),
                 asynchronous: false,
                 has_any_top_level_await_modules: false,
@@ -4337,6 +4341,7 @@ pub mod bv2_impl {
                     )
                 };
                 let mut additional_output_files: Vec<options::OutputFile> = Vec::new();
+                let mut asset_free_functions = core::mem::take(&mut self.asset_free_functions);
 
                 for reachable_source in reachable_files {
                     let index = reachable_source.get() as usize;
@@ -4419,10 +4424,29 @@ pub mod bv2_impl {
                         // out instead of `to_vec()`-cloning,
                         // which is prohibitively expensive for large assets.
                         let contents_len = source.contents.len();
-                        let contents = match core::mem::take(&mut source.contents) {
-                            std::borrow::Cow::Owned(v) => v.into_boxed_slice(),
-                            std::borrow::Cow::Borrowed(b) => Box::<[u8]>::from(b),
-                        };
+                        let contents: bun_alloc::OwnedBytes =
+                            match core::mem::take(&mut source.contents) {
+                                std::borrow::Cow::Owned(v) => v.into(),
+                                std::borrow::Cow::Borrowed(b) => {
+                                    match asset_free_functions
+                                        .fetch_swap_remove(&(index as IndexInt))
+                                    {
+                                        Some((_, external)) => {
+                                            let ptr = core::ptr::NonNull::from(b).cast::<u8>();
+                                            // SAFETY: `b` is the plugin's `Contents::External`
+                                            // buffer and `external` is its only owner.
+                                            unsafe {
+                                                bun_alloc::OwnedBytes::from_raw_parts(
+                                                    ptr,
+                                                    b.len(),
+                                                    external.into_allocator(),
+                                                )
+                                            }
+                                        }
+                                        None => Box::<[u8]>::from(b).into(),
+                                    }
+                                }
+                            };
 
                         additional_output_files.push(options::OutputFile::init(
                             crate::output_file::Options {
@@ -4449,6 +4473,8 @@ pub mod bv2_impl {
                 }
 
                 self.graph.additional_output_files = additional_output_files;
+                // Plugin buffers of assets that were not emitted: freed at teardown.
+                self.asset_free_functions = asset_free_functions;
             }
             Ok(())
         }
@@ -5124,6 +5150,11 @@ pub mod bv2_impl {
                     finalizer.call();
                 }
                 drop(on_parse_finalizers);
+                let asset_free_functions = core::mem::take(&mut self.asset_free_functions);
+                for finalizer in asset_free_functions.values() {
+                    finalizer.call();
+                }
+                drop(asset_free_functions);
             }
 
             // Plugin file/asset-loader bytes that `process_files_to_copy` will
@@ -7168,13 +7199,22 @@ pub mod bv2_impl {
             // across the `this.*` method calls below (each takes
             // `&mut BundleV2`), so re-borrow `this.graph` at each use site instead.
             if parse_result.external.function.is_some() {
-                let source = parse_result.value.source_index();
-                let loader: Loader = this.graph.input_files.items_loader()[source as usize];
-                // `InputFile.arena` column dropped in the Rust port;
-                // stash the finalizer regardless so plugin-owned bytes are freed.
-                let _ = loader;
-                this.finalizers
-                    .push(core::mem::take(&mut parse_result.external));
+                let external = core::mem::take(&mut parse_result.external);
+                match &parse_result.value {
+                    // A plugin that kept the fetched (worker-arena) source does not own `source.contents`.
+                    parse_task::ResultValue::Success(result)
+                        if parse_result.plugin_owns_source
+                            && result.loader.should_copy_for_bundling() =>
+                    {
+                        if let Some(previous) = this
+                            .asset_free_functions
+                            .insert(parse_result.value.source_index(), external)
+                        {
+                            this.finalizers.push(previous);
+                        }
+                    }
+                    _ => this.finalizers.push(external),
+                }
             }
 
             let mut diff: i32 = -1;

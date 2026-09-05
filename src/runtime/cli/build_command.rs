@@ -1313,7 +1313,7 @@ pub(crate) fn collect_compile_assets(
                 size: bytes.len(),
                 size_without_sourcemap: bytes.len(),
                 value: options::OutputFileValue::Buffer {
-                    bytes: bytes.into_boxed_slice(),
+                    bytes: bytes.into(),
                 },
                 side: Some(options::Side::Client),
                 ..options::OutputFile::zero_value()

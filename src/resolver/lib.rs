@@ -2124,6 +2124,21 @@ pub mod cache {
                 unsafe { func(self.ctx) };
             }
         }
+
+        /// The callback as the `StdAllocator` that frees the buffer (see `bun_alloc::OwnedBytes`).
+        pub fn into_allocator(self) -> bun_alloc::StdAllocator {
+            debug_assert!(self.function.is_some());
+            unsafe fn free(ctx: *mut c_void, _: &mut [u8], _: bun_alloc::Alignment, _: usize) {
+                // SAFETY: `ctx` is the `Box<ExternalFreeFunction>` leaked by `into_allocator`.
+                let this: Box<ExternalFreeFunction> = unsafe { bun_core::heap::take(ctx.cast()) };
+                this.call();
+            }
+            static VTABLE: bun_alloc::AllocatorVTable = bun_alloc::AllocatorVTable::free_only(free);
+            bun_alloc::StdAllocator {
+                ptr: bun_core::heap::into_raw(Box::new(self)).cast(),
+                vtable: &VTABLE,
+            }
+        }
     }
 
     impl Default for ExternalFreeFunction {

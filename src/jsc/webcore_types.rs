@@ -664,6 +664,20 @@ pub mod store {
             }
         }
 
+        /// Adopt the buffer and the allocator that frees it (no copy).
+        pub fn from_owned_bytes(bytes: bun_alloc::OwnedBytes) -> Bytes {
+            match bytes.into_raw_parts() {
+                Some((ptr, len, allocator)) => Bytes {
+                    ptr: Some(ptr),
+                    len: len as SizeType,
+                    cap: len as SizeType,
+                    allocator,
+                    stored_name: Box::default(),
+                },
+                None => Bytes::default(),
+            }
+        }
+
         /// Takes ownership of a `Box<[u8]>` (global allocator, `cap == len`).
         /// Paired with [`Bytes::into_boxed_slice`] for round-tripping the
         /// `is_temporary` handoff in `read_file`.
@@ -898,8 +912,13 @@ pub mod store {
         /// Takes ownership of
         /// `bytes`. Returns a +1-ref heap `Store`.
         pub fn init(bytes: Vec<u8>) -> RefPtr<Store> {
+            Self::init_bytes(Bytes::init(bytes))
+        }
+
+        /// +1-ref heap `Store` over a byte store with any allocator.
+        pub fn init_bytes(bytes: Bytes) -> RefPtr<Store> {
             RefPtr::new(Store {
-                data: Data::Bytes(Bytes::init(bytes)),
+                data: Data::Bytes(bytes),
                 mime_type: bun_http_types::MimeType::NONE,
                 ref_count: bun_ptr::ThreadSafeRefCount::init(),
                 is_all_ascii: IsAllAscii::default(),

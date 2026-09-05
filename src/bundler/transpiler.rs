@@ -3030,7 +3030,7 @@ impl<'a> Transpiler<'a> {
                     )?,
                 };
                 output_file.value = crate::output_file::Value::Buffer {
-                    bytes: writer.ctx.written().to_vec().into_boxed_slice(),
+                    bytes: writer.ctx.written().to_vec().into(),
                 };
             }
             options::Loader::Dataurl | options::Loader::Base64 => {
@@ -3226,7 +3226,7 @@ impl<'a> Transpiler<'a> {
             }
         };
         Some(crate::output_file::Value::Buffer {
-            bytes: result.code.into_boxed_slice(),
+            bytes: result.code.into(),
         })
     }
 

@@ -8,6 +8,7 @@
 
 use bun_jsc::{JSGlobalObject, JSValue};
 
+use bun_alloc::OwnedBytes;
 use bun_bundler::options_impl::LoaderExt as _;
 use bun_bundler::output_file::{OutputFile, Value as OutputFileValue};
 use bun_core::Output;
@@ -16,8 +17,9 @@ use bun_http_types::MimeType::MimeType;
 use crate::api::js_bundler::BuildArtifact;
 use crate::node::types::{PathLike, PathOrFileDescriptor};
 use crate::webcore::Blob;
+use crate::webcore::blob::Store as BlobStore;
+use crate::webcore::blob::store::Bytes as BlobBytes;
 use crate::webcore::blob::store::StoreExt as _;
-use crate::webcore::blob::{SizeType as BlobSizeType, Store as BlobStore};
 
 #[inline]
 fn set_blob_mime(blob: &mut Blob, mime: MimeType) {
@@ -28,6 +30,17 @@ fn set_blob_mime(blob: &mut Blob, mime: MimeType) {
         // by `blob`; no other borrow exists yet.
         unsafe { (*store.as_ptr()).mime_type = mime };
     }
+}
+
+/// The bytes move into the blob's store with their allocator (no copy).
+fn blob_from_output_bytes(bytes: OwnedBytes, global_this: &JSGlobalObject) -> Blob {
+    if bytes.is_empty() {
+        return Blob::init_empty(global_this);
+    }
+    Blob::init_with_store(
+        BlobStore::init_bytes(BlobBytes::from_owned_bytes(bytes)),
+        global_this,
+    )
 }
 
 /// Extension trait wiring `to_js` / `to_blob` onto `OutputFile` from the
@@ -49,7 +62,7 @@ impl OutputFileJsc for OutputFile {
         let value = core::mem::replace(
             &mut self.value,
             OutputFileValue::Buffer {
-                bytes: Box::default(),
+                bytes: OwnedBytes::new(),
             },
         );
 
@@ -108,10 +121,8 @@ impl OutputFileJsc for OutputFile {
                 BuildArtifact::to_js_boxed(build_output, global_object)
             }
             OutputFileValue::Buffer { bytes } => {
-                let bytes_len = bytes.len();
-                let mut blob = Blob::init(bytes.into_vec(), global_object);
+                let mut blob = blob_from_output_bytes(bytes, global_object);
                 set_blob_mime(&mut blob, mime);
-                blob.size.set(bytes_len as BlobSizeType);
 
                 let path: Box<[u8]> = match owned_pathname {
                     Some(p) => Box::from(p),
@@ -144,7 +155,7 @@ impl OutputFileJsc for OutputFile {
         let value = core::mem::replace(
             &mut self.value,
             OutputFileValue::Buffer {
-                bytes: Box::default(),
+                bytes: OwnedBytes::new(),
             },
         );
 
@@ -168,10 +179,8 @@ impl OutputFileJsc for OutputFile {
                 Ok(Blob::init_with_store(file_blob, global_this))
             }
             OutputFileValue::Buffer { bytes } => {
-                let bytes_len = bytes.len();
-                let mut blob = Blob::init(bytes.into_vec(), global_this);
+                let mut blob = blob_from_output_bytes(bytes, global_this);
                 set_blob_mime(&mut blob, mime);
-                blob.size.set(bytes_len as BlobSizeType);
                 Ok(blob)
             }
             OutputFileValue::Noop => {

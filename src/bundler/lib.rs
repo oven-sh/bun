@@ -389,7 +389,7 @@ bun_dispatch::link_interface! {
 impl Default for output_file::OptionsData {
     fn default() -> Self {
         output_file::OptionsData::Buffer {
-            data: Box::default(),
+            data: bun_alloc::OwnedBytes::new(),
         }
     }
 }

@@ -744,6 +744,122 @@ console.log(JSON.stringify(json))
     expect(exitCode).toBe(0);
   });
 
+  it("hands a plugin-provided file-loader asset to the output without copying it", async () => {
+    // `.bin` has no default loader, so the import uses the `file` loader and the
+    // plugin-provided bytes become the asset. The plugin buffer is freed through
+    // the plugin's callback when the output that owns it is done with it: right
+    // after the asset is written to `outdir`, and not while an in-memory build
+    // artifact still holds the bytes.
+    await Bun.write(path.join(tempdir, "asset_needs_foo.bin"), "asset foo\n");
+    await Bun.write(
+      path.join(tempdir, "asset_entry.ts"),
+      `import asset from "./asset_needs_foo.bin";\nconsole.log(asset);\n`,
+    );
+
+    const buildScript = /* ts */ `
+      import * as path from "path";
+      const tempdir = process.env.BUN_TEST_TEMP_DIR!;
+      const napiModule = require(path.join(tempdir, "build/Release/xXx123_foo_counter_321xXx.node"));
+      const external = napiModule.createExternal();
+      const entrypoints = [path.join(tempdir, "asset_entry.ts")];
+      const plugins = [
+        {
+          name: "xXx123_foo_counter_321xXx",
+          setup(build) {
+            build.onBeforeParse({ filter: /\\.bin$/ }, { napiModule, symbol: "plugin_impl", external });
+          },
+        },
+      ];
+
+      const written = await Bun.build({ entrypoints, plugins, outdir: path.join(tempdir, "dist-plugin-asset") });
+      const writtenAsset = written.outputs.find(output => output.kind === "asset");
+      const onDisk = writtenAsset ? await writtenAsset.text() : null;
+      const freedAfterWrite = napiModule.getCompilationCtxFreedCount(external);
+
+      const inMemory = await Bun.build({ entrypoints, plugins });
+      const asset = inMemory.outputs.find(output => output.kind === "asset");
+      const text = asset ? await asset.text() : null;
+      const freedWhileAlive = napiModule.getCompilationCtxFreedCount(external);
+
+      console.log(JSON.stringify({ written: written.success, onDisk, freedAfterWrite, inMemory: inMemory.success, text, freedWhileAlive }));
+    `;
+    await Bun.write(path.join(tempdir, "asset_entry_build.ts"), buildScript);
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "run", path.join(tempdir, "asset_entry_build.ts")],
+      env: { ...bunEnv, BUN_TEST_TEMP_DIR: tempdir },
+      cwd: tempdir,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    const resultLine = stdout.split("\n").find(line => line.startsWith('{"written"'));
+    const parsed = resultLine ? JSON.parse(resultLine) : { stderr, stdout };
+    expect(parsed).toEqual({
+      written: true,
+      onDisk: "asset qoo\n",
+      freedAfterWrite: 1,
+      inMemory: true,
+      text: "asset qoo\n",
+      // The in-memory artifact owns the second buffer; the count would be 2 if
+      // the bundle had copied the asset and freed the plugin's buffer itself.
+      freedWhileAlive: 1,
+    });
+    expect(exitCode).toBe(0);
+  });
+
+  it("copies a file-loader asset the plugin fetched but did not replace", async () => {
+    // `plugin_impl_keep_source` returns Bun's own fetched buffer and only sets a
+    // context to free. That buffer is not the plugin's, so the asset must be
+    // copied as usual and the context freed when the build finishes, even
+    // though the artifact stays alive.
+    await Bun.write(path.join(tempdir, "asset_plain.bin"), "asset plain\n");
+    await Bun.write(
+      path.join(tempdir, "asset_plain_entry.ts"),
+      `import asset from "./asset_plain.bin";\nconsole.log(asset);\n`,
+    );
+
+    const buildScript = /* ts */ `
+      import * as path from "path";
+      const tempdir = process.env.BUN_TEST_TEMP_DIR!;
+      const napiModule = require(path.join(tempdir, "build/Release/xXx123_foo_counter_321xXx.node"));
+      const external = napiModule.createExternal();
+
+      const result = await Bun.build({
+        entrypoints: [path.join(tempdir, "asset_plain_entry.ts")],
+        plugins: [
+          {
+            name: "xXx123_foo_counter_321xXx",
+            setup(build) {
+              build.onBeforeParse({ filter: /\\.bin$/ }, { napiModule, symbol: "plugin_impl_keep_source", external });
+            },
+          },
+        ],
+      });
+      const asset = result.outputs.find(output => output.kind === "asset");
+      const text = asset ? await asset.text() : null;
+      console.log(JSON.stringify({ success: result.success, text, freed: napiModule.getCompilationCtxFreedCount(external) }));
+    `;
+    await Bun.write(path.join(tempdir, "asset_plain_build.ts"), buildScript);
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "run", path.join(tempdir, "asset_plain_build.ts")],
+      env: { ...bunEnv, BUN_TEST_TEMP_DIR: tempdir },
+      cwd: tempdir,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    const resultLine = stdout.split("\n").find(line => line.startsWith('{"success"'));
+    const parsed = resultLine ? JSON.parse(resultLine) : { stderr, stdout };
+    expect(parsed).toEqual({ success: true, text: "asset plain\n", freed: 1 });
+    expect(exitCode).toBe(0);
+  });
+
   type AdditionalFile = {
     name: string;
     contents: BunFile | string;

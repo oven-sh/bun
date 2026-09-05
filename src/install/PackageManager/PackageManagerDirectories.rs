@@ -881,7 +881,6 @@ pub fn path_for_cached_npm_path<'a>(
 
     #[cfg(windows)]
     {
-        let _ = cache_dir;
         let mut path_buf = PathBuffer::uninit();
         let cache_path = ZStr::from_buf(&cache_path_buf, cache_path_len);
         let joined = path::resolve_path::join_abs_string_buf_z::<path::platform::Windows>(
@@ -889,28 +888,49 @@ pub fn path_for_cached_npm_path<'a>(
             &mut path_buf,
             &[cache_path.as_bytes()],
         );
-        return match sys::readlink(joined, &mut buf.0[..]) {
-            Ok(n) => Ok(&mut buf.0[..n]),
+        match sys::readlink(joined, &mut buf.0[..]) {
+            Ok(n) => return Ok(&mut buf.0[..n]),
+            Err(err) if err.get_errno() == sys::E::ENOENT => {}
             Err(err) => {
                 let _ = sys::unlink(joined);
-                Err(err.into())
+                return Err(err.into());
             }
-        };
+        }
     }
 
     #[cfg(not(windows))]
     {
         let cache_path = ZStr::from_buf(&cache_path_buf, cache_path_len);
         match sys::readlinkat(cache_dir, cache_path, &mut buf.0[..]) {
-            Ok(n) => Ok(&mut buf.0[..n]),
+            Ok(n) => return Ok(&mut buf.0[..n]),
+            Err(err) if err.get_errno() == sys::E::ENOENT => {}
             Err(err) => {
                 // if we run into an error, delete the symlink
                 // so that we don't repeatedly try to read it
                 let _ = sys::unlinkat(cache_dir, cache_path);
-                Err(Error::from(err))
+                return Err(Error::from(err));
             }
         }
     }
+
+    // Index symlink absent. A concurrent writer renames the data folder into
+    // place before creating the symlink, so probe `<name>@<ver>...` directly.
+    cache_path_buf[package_name.len()] = b'@';
+    let folder_name = ZStr::from_buf(&cache_path_buf, cache_path_len);
+    if sys::directory_exists_at(cache_dir, folder_name).unwrap_or(false) {
+        let cache_dir_path = this.cache_directory_path.as_bytes();
+        let mut n = cache_dir_path.len();
+        buf.0[..n].copy_from_slice(cache_dir_path);
+        if n > 0 && buf.0[n - 1] != SEP {
+            buf.0[n] = SEP;
+            n += 1;
+        }
+        buf.0[n..n + cache_path_len].copy_from_slice(folder_name.as_bytes());
+        n += cache_path_len;
+        return Ok(&mut buf.0[..n]);
+    }
+
+    Err(Error::FileNotFound)
 }
 
 pub fn path_for_resolution<'a>(

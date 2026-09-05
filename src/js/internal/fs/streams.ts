@@ -454,12 +454,12 @@ function WriteStream(this: FSStream, path: string | null, options?: any): void {
     this.pos = start;
   }
 
-  // A writer cannot be opened for every fd a caller may hand us -- a read-only
-  // descriptor is the common case, and node's tty.WriteStream accepts one, and
-  // the sink dup()s the fd, which fails with EMFILE at the fd limit. Fall back
-  // to synchronous writes there, like node's SyncWriteStream for stdio: a
-  // failure surfaces at write time rather than from the constructor, and bytes
-  // written right before process.exit() are not left in a thread-pool queue.
+  // A writer cannot be opened for every fd a caller may hand us: node's
+  // tty.WriteStream accepts a read-only descriptor, and the sink dup()s the fd,
+  // which fails with EMFILE at the fd limit. Fall back to synchronous writes
+  // there, like node's SyncWriteStream for stdio: a failure surfaces at write
+  // time rather than from the constructor, and bytes written right before
+  // process.exit() are not left in a thread-pool queue.
   let fastWriter;
   if (fastPath && fd != null) {
     try {

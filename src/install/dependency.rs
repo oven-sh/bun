@@ -823,7 +823,11 @@ impl TagExt for Tag {
                                 }
                             }
                             b'+' => {
-                                if url.starts_with(b"+ssh:") || url.starts_with(b"+file:") {
+                                // bun.lock writes a `git://` resolution as `git+git://...`.
+                                if url.starts_with(b"+ssh:")
+                                    || url.starts_with(b"+file:")
+                                    || url.starts_with(b"+git:")
+                                {
                                     return Tag::Git;
                                 }
                                 if url.starts_with(b"+http") {

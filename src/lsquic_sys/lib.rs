@@ -210,7 +210,9 @@ unsafe extern "C" {
     pub fn us_nq_spec_iov(s: *const lsquic_out_spec, n: *mut usize) -> *const iovec;
     pub fn us_nq_spec_stride() -> usize;
     pub fn us_nq_stream_reset(s: *mut lsquic_stream, code: u64);
+    pub fn us_nq_stream_msg_error(s: *mut lsquic_stream, code: u64);
     pub fn us_nq_hset_pairs(hset: *mut c_void, len: *mut usize) -> *const c_char;
+    pub fn us_nq_hset_malformed(hset: *mut c_void) -> c_int;
     pub fn us_nq_hset_free(hset: *mut c_void);
     pub fn us_nq_stream_send_headers(
         s: *mut lsquic_stream,
@@ -556,6 +558,11 @@ impl Stream {
         // SAFETY: as above.
         unsafe { us_nq_stream_reset(self.0, code) }
     }
+    /// `lsquic_stream_msg_error`: per-stream RST+SS, synthesize RST_RECVD, fire on_reset(0).
+    pub fn msg_error(&self, code: u64) {
+        // SAFETY: as above.
+        unsafe { us_nq_stream_msg_error(self.0, code) }
+    }
     pub fn error_code(&self) -> u64 {
         unsafe extern "C" {
             fn lsquic_stream_get_error_code(s: *const lsquic_stream) -> u64;
@@ -660,6 +667,11 @@ impl Stream {
 pub struct HeaderSet(*mut c_void);
 
 impl HeaderSet {
+    /// RFC 9114 §4.1.2 malformed-message flag set by `nq_hsi_process_header`.
+    pub fn malformed(&self) -> bool {
+        // SAFETY: `self.0` is a live `nq_hset` until `Drop`.
+        unsafe { us_nq_hset_malformed(self.0) != 0 }
+    }
     /// h3 permits bytes that are not valid UTF-8, so the JS boundary picks the
     /// encoding (latin1, as node does for HTTP headers).
     pub fn pairs(&self) -> Vec<Vec<u8>> {

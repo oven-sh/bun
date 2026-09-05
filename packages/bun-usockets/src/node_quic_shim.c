@@ -197,6 +197,10 @@ struct nq_hset {
     unsigned max_bytes;
     unsigned n_pairs;
     size_t total_bytes;
+    /* RFC 9114 sec 4.1.2 malformed-message flag.  Set instead of returning -1
+     * so lsqpack keeps decoding and the application can RESET_STREAM the one
+     * stream rather than lsquic taking the whole connection down. */
+    int malformed;
 };
 
 #define NQ_HSI_CTX_PACK(pairs, bytes) \
@@ -247,10 +251,19 @@ static int nq_hsi_process_header(void *hset, struct lsxpack_header *hdr) {
     h->total_bytes += (size_t) hdr->name_len + hdr->val_len;
     const char *name = lsxpack_header_get_name(hdr);
     const char *val = lsxpack_header_get_value(hdr);
-    /* RFC 9114 4.1.2 makes such a field invalid. */
-    if ((hdr->name_len && memchr(name, 0, hdr->name_len))
-            || (hdr->val_len && memchr(val, 0, hdr->val_len)))
-        return -1;
+    /* RFC 9114 sec 4.1.2: NUL in a field name/value, and RFC 9110 sec 5.1: an
+     * empty field name, make the message malformed.  Returning -1 here makes
+     * lsqpack bubble LQRHS_ERROR up to qdh_header_read_results, which used to
+     * CONNECTION_CLOSE; with message-error-stream-reset.patch it now resets
+     * only this stream, but it still drops the rest of the field section on
+     * the floor.  Flagging and returning 0 lets the application see the whole
+     * header set and RESET_STREAM(H3_MESSAGE_ERROR) itself (stream.rs). */
+    if (hdr->name_len == 0
+            || memchr(name, 0, hdr->name_len)
+            || (hdr->val_len && memchr(val, 0, hdr->val_len))) {
+        h->malformed = 1;
+        return 0;
+    }
     size_t need = h->pairs_len + (size_t) hdr->name_len + 1
                 + (size_t) hdr->val_len + 1;
     if (need > h->pairs_cap) {
@@ -291,6 +304,10 @@ const char *us_nq_hset_pairs(void *hset, size_t *len) {
     struct nq_hset *h = hset;
     *len = h ? h->pairs_len : 0;
     return h ? h->pairs : NULL;
+}
+int us_nq_hset_malformed(void *hset) {
+    struct nq_hset *h = hset;
+    return h ? h->malformed : 0;
 }
 void us_nq_hset_free(void *hset) { nq_hsi_discard_header_set(hset); }
 
@@ -432,6 +449,14 @@ void us_nq_settings_init(struct lsquic_engine_settings *s, int is_server,
      * grant while that stream has unsent data (lsquic_qdh_arm_if_unsent). */
     s->es_qpack_enc_max_size = 0;
     s->es_qpack_enc_max_blocked = 0;
+    /* RFC 9114 sec 4.1.2: one malformed request is a stream error, not a
+     * CONNECTION_CLOSE that takes every concurrent request down with it
+     * (patches/lsquic/message-error-stream-reset.patch).  Advertising a zero
+     * QPACK dynamic table keeps the RFC 9204 sec 2.2.3 connection-error class
+     * unreachable, so a field-section decode failure is stream-local. */
+    s->es_qpack_dec_max_size = 0;
+    s->es_qpack_dec_max_blocked = 0;
+    s->es_message_error_is_stream = 1;
 }
 
 #define NQ_SET(field, ctype) \
@@ -536,6 +561,11 @@ size_t us_nq_spec_stride(void) { return sizeof(struct lsquic_out_spec); }
 void us_nq_stream_reset(lsquic_stream_t *s, uint64_t code) {
     /* RFC 9000 §3.1 allows RST in Data Sent state. */
     lsquic_stream_force_reset_ext(s, code);
+}
+
+extern void lsquic_stream_msg_error(lsquic_stream_t *, uint64_t);
+void us_nq_stream_msg_error(lsquic_stream_t *s, uint64_t code) {
+    lsquic_stream_msg_error(s, code);
 }
 
 /* ───── node:quic loop driver ─────

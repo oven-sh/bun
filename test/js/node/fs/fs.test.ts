@@ -5494,7 +5494,7 @@ describe("fs.read/readv/write/writev pass the buffer to the callback on error", 
   // mode, so a write that lands on a full pipe returns EAGAIN. writeAll retries
   // with the rest of the buffer it got back from the callback. Without it the
   // retry read `.slice` off `undefined` and the process died with a TypeError.
-  // Like Node, writeAll gives up after five EAGAINs in a row with a handled
+  // Like Node, writeAll gives up after five retries (six EAGAINs in a row) with a handled
   // "write failed" error, so a fast reader sees either outcome.
   it.skipIf(isWindows)("fs.WriteStream survives an EAGAIN write on a non-blocking pipe", async () => {
     const size = 4 * 1024 * 1024;

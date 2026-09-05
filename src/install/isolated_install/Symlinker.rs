@@ -75,10 +75,7 @@ impl Symlinker {
                                         _ => Err(symlink_err),
                                     },
                                 },
-                                // dest exists but isn't a symlink. A real directory
-                                // with a package.json is the `bun patch <pkg>`
-                                // workspace the user is editing before `--commit`:
-                                // keep it. Anything else is replaced.
+                                // A real directory with a package.json is a `bun patch` workspace: keep it.
                                 _ => {
                                     #[cfg(windows)]
                                     let is_dir = if let Some(a) =

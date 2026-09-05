@@ -2772,3 +2772,96 @@ it("exec/run with an embedded NUL byte in the SQL string does not hang", async (
     exitCode: 0,
   });
 });
+
+describe("column names that look like array indices", () => {
+  it("are reachable as own indexed properties", () => {
+    const db = new Database(":memory:");
+    db.run("CREATE TABLE sales (year INT, amt INT)");
+    db.run("INSERT INTO sales VALUES (2023, 5), (2024, 7)");
+
+    const row = db
+      .query(
+        `SELECT sum(CASE WHEN year=2023 THEN amt END) AS "2023",
+                sum(CASE WHEN year=2024 THEN amt END) AS "2024",
+                count(*) AS n FROM sales`,
+      )
+      .get();
+    expect(row["2023"]).toBe(5);
+    expect(row[2024]).toBe(7);
+    expect(row.n).toBe(2);
+    expect(JSON.parse(JSON.stringify(row))).toEqual({ "2023": 5, "2024": 7, n: 2 });
+
+    // writes go to the same property that reads and JSON see
+    row["2023"] = 99;
+    expect(row["2023"]).toBe(99);
+    expect(JSON.parse(JSON.stringify(row))).toEqual({ "2023": 99, "2024": 7, n: 2 });
+  });
+
+  it("support in, hasOwn, keys, and entries", () => {
+    const db = new Database(":memory:");
+    const s = db.query(`SELECT 10 AS "0", 'x' AS name`).get();
+    expect(Object.hasOwn(s, "0")).toBe(true);
+    expect("0" in s).toBe(true);
+    expect(0 in s).toBe(true);
+    expect(s[0]).toBe(10);
+    expect(s.name).toBe("x");
+    expect(Object.keys(s)).toEqual(["0", "name"]);
+    expect(Object.entries(s)).toEqual([
+      ["0", 10],
+      ["name", "x"],
+    ]);
+  });
+
+  it("treats non-index numeric-looking names as plain named properties", () => {
+    const db = new Database(":memory:");
+    // 4294967295 is not a valid array index; 4294967294 is the largest one
+    const t = db.query(`SELECT 1 AS "4294967295", 2 AS "01", 3 AS "-0", 4 AS "4294967294"`).get();
+    expect(t["4294967295"]).toBe(1);
+    expect(t["01"]).toBe(2);
+    expect(t["-0"]).toBe(3);
+    expect(t["4294967294"]).toBe(4);
+  });
+
+  it("work with all(), iterate(), and more than 64 columns", () => {
+    const db = new Database(":memory:");
+    const wide = Array.from({ length: 70 }, (_, i) => `${i + 100} AS "${i}"`).join(", ");
+    const rows = db.query(`SELECT ${wide}`).all();
+    expect(rows).toHaveLength(1);
+    for (let i = 0; i < 70; i++) {
+      expect(rows[0][i]).toBe(i + 100);
+    }
+
+    const [iterated] = Array.from(db.query(`SELECT 7 AS "3"`).iterate());
+    expect(iterated[3]).toBe(7);
+  });
+
+  it("keep last-wins semantics for duplicate names", () => {
+    const db = new Database(":memory:");
+    const r = db.query(`SELECT 1 AS "5", 2 AS "5"`).get();
+    expect(r[5]).toBe(2);
+    expect(Object.keys(r)).toEqual(["5"]);
+  });
+
+  it("keep column order for mixed named and index-like columns", () => {
+    const db = new Database(":memory:");
+    const r = db.query(`SELECT 1 AS a, 2 AS "0", 3 AS b`).get();
+    expect(r.a).toBe(1);
+    expect(r[0]).toBe(2);
+    expect(r.b).toBe(3);
+    // integer keys enumerate first, then named keys in column order
+    expect(Object.keys(r)).toEqual(["0", "a", "b"]);
+  });
+
+  it("are own properties on rows mapped with as(Class)", () => {
+    const db = new Database(":memory:");
+    class Row {
+      get 0() {
+        return "prototype getter";
+      }
+    }
+    const u = db.query(`SELECT 10 AS "0", 20 AS v`).as(Row).get();
+    expect(u).toBeInstanceOf(Row);
+    expect(u[0]).toBe(10);
+    expect(u.v).toBe(20);
+  });
+});

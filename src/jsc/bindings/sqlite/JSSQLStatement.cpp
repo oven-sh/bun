@@ -761,24 +761,35 @@ static void initializeColumnNames(JSC::JSGlobalObject* lexicalGlobalObject, JSSQ
         auto& globalObject = *lexicalGlobalObject;
 
         auto columnNames = castedThis->columnNames.get();
-        bool anyHoles = false;
+        bool needsSlowPath = false;
         for (int i = count - 1; i >= 0; i--) {
             const char* name = sqlite3_column_name(stmt, i);
 
             if (name == nullptr) {
-                anyHoles = true;
+                needsSlowPath = true;
                 break;
             }
 
             size_t len = strlen(name);
 
+            const auto identifier = len == 0
+                ? vm.propertyNames->emptyIdentifier
+                : Identifier::fromString(vm, WTF::String::fromUTF8ReplacingInvalidSequences({ reinterpret_cast<const unsigned char*>(name), len }));
+
+            // Structure::addPropertyTransition asserts !parseIndex() — a column
+            // aliased to "0", "2023", … must go through indexed storage or its
+            // value is unreachable by property access. Bail to the slow path,
+            // which stores it via putDirectMayBeIndex().
+            if (parseIndex(identifier)) {
+                needsSlowPath = true;
+                break;
+            }
+
             // When joining multiple tables, the same column names can appear multiple times
             // columnNames de-dupes property names internally
             // We can't have two properties with the same name, so we use validColumns to track this.
             auto preCount = columnNames->size();
-            columnNames->add(len == 0
-                    ? vm.propertyNames->emptyIdentifier
-                    : Identifier::fromString(vm, WTF::String::fromUTF8ReplacingInvalidSequences({ reinterpret_cast<const unsigned char*>(name), len })));
+            columnNames->add(identifier);
             auto curCount = columnNames->size();
 
             if (preCount != curCount) {
@@ -786,7 +797,7 @@ static void initializeColumnNames(JSC::JSGlobalObject* lexicalGlobalObject, JSSQ
             }
         }
 
-        if (!anyHoles) [[likely]] {
+        if (!needsSlowPath) [[likely]] {
             PropertyOffset offset;
             JSObject* prototype = castedThis->userPrototype ? castedThis->userPrototype.get() : globalObject.objectPrototype();
             Structure* structure = globalObject.structureCache().emptyObjectStructureForPrototype(&globalObject, prototype, columnNames->size());
@@ -804,7 +815,7 @@ static void initializeColumnNames(JSC::JSGlobalObject* lexicalGlobalObject, JSSQ
             // We are done.
             return;
         } else {
-            // If for any reason we do not have column names, disable the fast path.
+            // Missing or index-like column names: reset and use the slow path.
             columnNames->releaseData();
             castedThis->columnNames.reset(new PropertyNameArrayBuilder(
                 castedThis->columnNames->vm(),
@@ -830,36 +841,28 @@ static void initializeColumnNames(JSC::JSGlobalObject* lexicalGlobalObject, JSSQ
             ? vm.propertyNames->emptyIdentifier
             : Identifier::fromString(vm, WTF::String::fromUTF8ReplacingInvalidSequences({ reinterpret_cast<const unsigned char*>(name), len }));
 
-        JSC::JSValue primitive = JSC::jsUndefined();
-        auto decl = sqlite3_column_decltype(stmt, i);
-        if (decl != nullptr) {
-            switch (decl[0]) {
-            case 'F':
-            case 'D':
-            case 'I': {
-                primitive = jsNumber(0);
-                break;
-            }
-            case 'V':
-            case 'T': {
-                primitive = jsEmptyString(vm);
-                break;
-            }
-            }
-        }
-
         auto preCount = castedThis->columnNames->size();
         castedThis->columnNames->add(key);
         auto curCount = castedThis->columnNames->size();
 
-        // only put the property if it's not a duplicate
+        // only track the column if it's not a duplicate (the last occurrence wins)
         if (preCount != curCount) {
             castedThis->validColumns.set(i);
-            object->putDirect(vm, key, primitive, 0);
         }
     }
     // We iterated over the columns in reverse order so we need to reverse the columnNames here
     castedThis->columnNames->data()->propertyNameVector().reverse();
+
+    // Seed the template's named properties from the forward-ordered name list
+    // so rows enumerate in column order, matching the fast path. The template
+    // only donates its Structure to rows; every slot is rewritten per row in
+    // constructResultObject(). An index-like key ("0", "2023", …) cannot be a
+    // named Structure slot; constructResultObject() stores it per-row with
+    // putDirectMayBeIndex() instead.
+    for (const auto& propertyName : *castedThis->columnNames) {
+        if (!parseIndex(propertyName))
+            object->putDirect(vm, propertyName, JSC::jsUndefined(), 0);
+    }
     castedThis->_prototype.set(vm, castedThis, object);
 }
 
@@ -2063,7 +2066,8 @@ static inline JSC::JSValue constructResultObject(JSC::JSGlobalObject* lexicalGlo
             const auto& name = columnNames[j];
             auto value = toJS<useBigInt64>(vm, lexicalGlobalObject, stmt, i);
             RETURN_IF_EXCEPTION(scope, {});
-            result->putDirect(vm, name, value, 0);
+            result->putDirectMayBeIndex(lexicalGlobalObject, name, value);
+            RETURN_IF_EXCEPTION(scope, {});
         }
     }
 

@@ -29,6 +29,19 @@ use bun_jsc::js_error_to_write_error;
 
 
 
+/// True when more than one `test.concurrent` sequence is in flight, where
+/// per-sequence state (assertion counters, snapshot slots) can't be resolved
+/// across `await` boundaries (see https://github.com/oven-sh/bun/issues/29236).
+fn is_in_multi_sequence_concurrent_group(buntest: &bun_test::BunTest) -> bool {
+    if buntest.phase != bun_test::Phase::Execution {
+        return false;
+    }
+    let Some(active_group) = buntest.execution.active_group_ref() else {
+        return false;
+    };
+    active_group.sequences(&buntest.execution).len() > 1
+}
+
 /// https://jestjs.io/docs/expect
 // To support async tests, we need to track the test ID
 // R-2 (host-fn re-entrancy): every JS-exposed method takes `&self`; the only
@@ -623,6 +636,10 @@ impl Expect {
         let parent = self.parent.as_ref().ok_or(crate::Error::NoTest)?;
         let buntest_strong = parent.bun_test().ok_or(crate::Error::TestNotActive)?;
         let buntest = buntest_strong.get();
+        // Reject at call time rather than silently writing to the wrong snapshot slot.
+        if is_in_multi_sequence_concurrent_group(buntest) {
+            return Err(crate::Error::SnapshotInConcurrentGroup);
+        }
         let execution_entry = parent
             .phase
             .entry(buntest)
@@ -1609,12 +1626,19 @@ impl Expect {
         let _gc = global_this.bun_vm().as_mut().auto_gc_on_drop();
 
         let Some(buntest_strong) = bun_test::clone_active_strong() else {
-            return Err(global_this.throw(format_args!("expect.assertions() must be called within a test")));
+            return Err(global_this.throw(format_args!("expect.hasAssertions() must be called within a test")));
         };
         let buntest = buntest_strong.get();
+        if is_in_multi_sequence_concurrent_group(buntest) {
+            // Throw at call time; letting the per-sequence counter diverge
+            // across `await`s would fail the test with a wrong count instead.
+            return Err(global_this.throw(format_args!(
+                "expect.hasAssertions() is not supported in concurrent tests. Remove `.concurrent` from the test or use `test.serial` instead."
+            )));
+        }
         let state_data = buntest.get_current_state_data();
         let Some(execution) = state_data.sequence(buntest) else {
-            return Err(global_this.throw(format_args!("expect.assertions() is not supported in the describe phase, in concurrent tests, between tests, or after test execution has completed")));
+            return Err(global_this.throw(format_args!("expect.hasAssertions() is not supported in the describe phase, between tests, or after test execution has completed")));
         };
         if !matches!(execution.expect_assertions, ExpectAssertions::Exact(_)) {
             execution.expect_assertions = ExpectAssertions::AtLeastOne;
@@ -1664,9 +1688,15 @@ impl Expect {
             return Err(global_this.throw(format_args!("expect.assertions() must be called within a test")));
         };
         let buntest = buntest_strong.get();
+        if is_in_multi_sequence_concurrent_group(buntest) {
+            // Same limitation as `expect.hasAssertions`.
+            return Err(global_this.throw(format_args!(
+                "expect.assertions() is not supported in concurrent tests. Remove `.concurrent` from the test or use `test.serial` instead."
+            )));
+        }
         let state_data = buntest.get_current_state_data();
         let Some(execution) = state_data.sequence(buntest) else {
-            return Err(global_this.throw(format_args!("expect.assertions() is not supported in the describe phase, in concurrent tests, between tests, or after test execution has completed")));
+            return Err(global_this.throw(format_args!("expect.assertions() is not supported in the describe phase, between tests, or after test execution has completed")));
         };
         execution.expect_assertions = ExpectAssertions::Exact(unsigned_expected_assertions);
 

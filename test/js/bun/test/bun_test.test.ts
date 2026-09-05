@@ -10,7 +10,13 @@ test("describe/test", async () => {
   });
   const exitCode = await result.exited;
   const stdout = await result.stdout.text();
-  const stderr = await result.stderr.text();
+  // ASAN builds unconditionally print a "WARNING: ASAN interferes with JSC
+  // signal handlers..." banner to stderr from WebKit's Options.cpp; strip it
+  // so the inline snapshot stays portable across sanitizer and release lanes.
+  const stderr = (await result.stderr.text())
+    .split(/\r?\n/)
+    .filter(s => !s.startsWith("WARNING: ASAN interferes"))
+    .join("\n");
   expect({
     exitCode,
     stdout: normalizeBunSnapshot(stdout),

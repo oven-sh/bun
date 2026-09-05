@@ -1336,10 +1336,10 @@ describe.concurrent(() => {
       expect(await new Response(child.stdout).text()).toBe("PASS\n");
     });
 
-    it.skipIf(isWindows)("a signal that arrives while the pending-signal ring is full is not lost", async () => {
+    it.skipIf(isWindows)("a signal that arrives behind a storm of another signal is not lost", async () => {
       // kill(2) to our own pid delivers the signal to the calling thread before
-      // the syscall returns, so every call lands in the ring (8192 slots) with
-      // no kernel coalescing, and nothing drains it until the script finishes.
+      // the syscall returns, so there is no kernel coalescing, and nothing
+      // drains the pending signals until the script finishes.
       await using child = Bun.spawn({
         cmd: [
           bunExe(),
@@ -1366,10 +1366,8 @@ describe.concurrent(() => {
         stderr: "inherit",
       });
       const [stdout, exitCode] = await Promise.all([child.stdout.text(), child.exited]);
-      const match = stdout.match(/^SIGTERM after (\d+) SIGUSR1\n$/);
-      expect(match, stdout).not.toBeNull();
-      // The ring was full: every slot, plus the one coalesced overflow delivery.
-      expect(Number(match[1])).toBeGreaterThanOrEqual(8192);
+      // One loop tick runs at most 8192 listener calls per signal number.
+      expect(stdout).toBe("SIGTERM after 8192 SIGUSR1\n");
       expect(exitCode).toBe(0);
     });
 

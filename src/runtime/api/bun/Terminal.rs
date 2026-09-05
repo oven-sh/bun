@@ -1982,6 +1982,9 @@ impl Terminal {
 
         // Each chunk's `data` callback is its own top-level call: reported and
         // reading continues, as a stream 'data' listener that throws does.
+        // A `pause()` from inside the callback must stop the active dispatch
+        // immediately: report whether PAUSED is still clear so the reader
+        // does not deliver more chunks to a paused consumer.
         global_this.bun_vm().event_loop_mut().run_callback(
             callback,
             global_this,
@@ -1989,7 +1992,7 @@ impl Terminal {
             &[this_jsvalue, data],
         );
 
-        true // Continue reading
+        !self.flags.get().contains(Flags::PAUSED)
     }
 
     fn loop_(&self) -> *mut AsyncLoop {

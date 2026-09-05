@@ -77,31 +77,3 @@ export const allDeps: readonly Dependency[] = [
   // above might reference (via JavaScriptCore types in headers).
   webkit,
 ];
-
-// Re-export individuals for direct import when needed.
-export {
-  boringssl,
-  brotli,
-  cares,
-  hdrhistogram,
-  highway,
-  libarchive,
-  libdeflate,
-  libjpegTurbo,
-  libspng,
-  libuv,
-  libwebp,
-  lolhtml,
-  lshpack,
-  lsqpack,
-  lsquic,
-  mimalloc,
-  nodejsHeaders,
-  picohttpparser,
-  rustArgon2,
-  sqlite,
-  tinycc,
-  webkit,
-  zlib,
-  zstd,
-};

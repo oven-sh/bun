@@ -381,7 +381,7 @@ impl Scope {
     /// `Default::default()` chain — i.e. no temporary `Scope` is constructed
     /// and partially dropped, and `members`/`children`/`generated` come from a
     /// const-folded zero header rather than three out-of-line `default()`
-    /// calls. `AstAlloc::vec` and `StringHashMap::new_in` are both `const fn`.
+    /// calls. `AstAlloc::vec` is a `const fn` and `Members::EMPTY` is a `const`.
     pub const EMPTY: Self = Self {
         kind: Kind::Block,
         parent: None,

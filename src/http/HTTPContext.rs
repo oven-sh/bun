@@ -1273,9 +1273,7 @@ impl<const SSL: bool> Handler<SSL> {
 
                 return client.first_call::<SSL>(socket);
             } else {
-                // The handshake failed: `error_no` is an X509 verdict the
-                // server acted on, or a uSockets transport code (the peer
-                // closed mid-handshake, a fatal TLS protocol error).
+                // `error_no` is an X509 verdict or a uSockets transport code.
                 if client.flags.did_have_handshaking_error {
                     let err = client.handshake_failure_error(&ssl_error);
                     client.close_and_fail::<SSL>(err, socket);

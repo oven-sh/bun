@@ -47,9 +47,8 @@ pub struct InternalState<'a> {
     /// the post-redirect target). Captured on the HTTP thread at the failure
     /// so the JS side never dereferences the client's borrowed URL buffers.
     pub(crate) dns_hostname: Option<Box<[u8]>>,
-    /// OpenSSL error string of the fatal TLS protocol error when `fail` is
-    /// `EPROTO`. Copied in the handshake callback: uSockets hands it out as
-    /// a pointer into a stack buffer that dies when the callback returns.
+    /// OpenSSL reason when `fail` is `EPROTO`. Owned: uSockets' string
+    /// lives in a stack buffer that dies when the handshake callback returns.
     pub(crate) tls_handshake_reason: Option<Box<[u8]>>,
     pub(crate) request_stage: HTTPStage,
     pub(crate) response_stage: HTTPStage,

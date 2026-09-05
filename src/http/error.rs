@@ -97,10 +97,8 @@ pub enum Error {
     InvalidCRL,
     #[error("UnsupportedProxyProtocol")]
     UnsupportedProxyProtocol,
-    /// The TLS handshake ended with a fatal protocol error (the peer speaks
-    /// plain HTTP, sent a bad record, or is the client itself after a TCP
-    /// self-connect). Node's code for the same failure. The OpenSSL reason
-    /// travels in `HTTPClientResult::tls_handshake_reason`.
+    /// Fatal TLS protocol error in the handshake (a non-TLS peer, a bad
+    /// record). The OpenSSL reason is `HTTPClientResult::tls_handshake_reason`.
     #[error("EPROTO")]
     EPROTO,
     #[error(transparent)]

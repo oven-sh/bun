@@ -452,8 +452,7 @@ pub struct HTTPClientResult<'a> {
     /// JS side never dereferences the client's borrowed URL buffers, which
     /// the HTTP thread frees after the result callback returns.
     pub dns_hostname: Option<Box<[u8]>>,
-    /// OpenSSL error string when `fail` is `EPROTO` (a fatal TLS protocol
-    /// error in the handshake), for the error message.
+    /// OpenSSL reason when `fail` is `EPROTO`.
     pub tls_handshake_reason: Option<Box<[u8]>>,
 
     /// Owns the response metadata aka headers, url and status code
@@ -1549,13 +1548,9 @@ pub(crate) fn get_cert_error_from_no(error_no: i32) -> crate::Error {
 }
 
 impl HTTPClient<'_> {
-    /// The error for an `on_handshake` verdict with a non-zero `error_no`.
-    ///
-    /// A non-negative `error_no` is the `X509_V_ERR_*` verdict of the chain
-    /// check. A negative one is a uSockets transport code for a handshake
-    /// that ended before any verdict existed: `ECONNRESET` (the peer closed
-    /// mid-handshake) or `EPROTO` (a fatal TLS protocol error, `reason` is
-    /// the OpenSSL error string). Those are not certificate errors.
+    /// The error for a non-zero `on_handshake` `error_no`: an `X509_V_ERR_*`
+    /// verdict when non-negative, else a uSockets transport code
+    /// (`ECONNRESET`, or `EPROTO` with the OpenSSL reason).
     pub(crate) fn handshake_failure_error(
         &mut self,
         ssl_error: &uws::us_bun_verify_error_t,

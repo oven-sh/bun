@@ -1409,6 +1409,29 @@ function webkitSourceIncludes(cfg: Config): string[] {
 
 // ─── Flags ───
 
+/**
+ * WebKitCompilerFlags.cmake's warning set for clang (COMPILER_IS_GCC_OR_CLANG,
+ * clang-cl included): what it enables, what it turns off, and the two it
+ * makes errors. -Wno-character-conversion is upstream's answer to clang 21's
+ * new diagnostic pending https://bugs.webkit.org/show_bug.cgi?id=299689.
+ */
+const webkitWarningFlags: readonly string[] = [
+  "-Wcast-align",
+  "-Wformat-security",
+  "-Wmissing-format-attribute",
+  "-Wpointer-arith",
+  "-Wundef",
+  "-Qunused-arguments",
+  "-Wno-parentheses-equality",
+  "-Wno-misleading-indentation",
+  "-Wno-psabi",
+  "-Wno-nullability-completeness",
+  "-Wno-tautological-compare",
+  "-Werror=undefined-inline",
+  "-Werror=undefined-internal",
+  "-Wno-character-conversion",
+];
+
 function webkitFlags(wk: WebKitBuild): WebKitFlags {
   const { cfg, q, WTF } = wk;
   // WebKit's own additions on top of the dep-global flags
@@ -1436,9 +1459,18 @@ function webkitFlags(wk: WebKitBuild): WebKitFlags {
         "/utf-8",
         "/validate-charset",
         ...(cfg.release ? ["/Ob2"] : ["/Ob0", "/FS"]),
+        // OptionsMSVC.cmake: /W4 (before any -Wno-*), MS include-resolution notes.
+        "/W4",
+        "/Wmicrosoft-include",
+        ...webkitWarningFlags,
       ]
     : [
         "-fno-strict-aliasing",
+        // WebKitCompilerFlags.cmake's diagnostics for gcc/clang (-Wall -Wextra
+        // first: enables precede the -Wno-* that trim them).
+        "-Wall",
+        "-Wextra",
+        ...webkitWarningFlags,
         "-gsimple-template-names",
         "-mllvm",
         "-dwarf-linkage-names=Abstract",
@@ -1454,7 +1486,8 @@ function webkitFlags(wk: WebKitBuild): WebKitFlags {
   // Release: WebKit's <iostream> ban (an #error stub found before the real
   // header — OptionsJSCOnly.cmake), so no TU drags std::ios_base::Init in.
   const bannedIncludes = cfg.debug ? [] : [`-I${q(join(WTF, "wtf", "bun", "BannedIncludes"))}`];
-  const cxx = [...bannedIncludes, cfg.windows ? "/clang:-std=c++23" : "-std=c++23"];
+  // -Wno-noexcept-type: WebKitCompilerFlags.cmake, C++ only.
+  const cxx = [...bannedIncludes, cfg.windows ? "/clang:-std=c++23" : "-std=c++23", "-Wno-noexcept-type"];
   // ICU: ours (deps/icu.ts) everywhere but macOS; static, so consumers
   // define U_STATIC_IMPLEMENTATION like the prebuilt build does. macOS links
   // the SDK's libicucore, whose headers Apple does not ship: WebKit carries a

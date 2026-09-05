@@ -6,7 +6,6 @@
 //! `extern "Rust"` decls.
 
 use bun_alloc::Arena as ArenaAllocator;
-use bun_bundler::transpiler::PluginRunner;
 use bun_options_types::LoaderExt as _;
 
 use crate::virtual_machine::VirtualMachine;
@@ -237,6 +236,24 @@ extern "C" fn Bun__getDefaultLoader(
     loader
 }
 
+/// The `ns` of an `ns:path` key when `ns` has onLoad callbacks. A Windows drive path is never one.
+fn registered_on_load_namespace<'a>(global: &JSGlobalObject, key: &'a [u8]) -> Option<&'a [u8]> {
+    let colon = bun_core::strings::index_of_char_usize(key, b':')?;
+    let is_windows_drive = cfg!(windows)
+        && colon == 1
+        && bun_paths::resolve_path::is_drive_letter(key[0])
+        && key
+            .get(2)
+            .is_some_and(|&c| bun_paths::resolve_path::is_sep_any(c));
+    if colon == 0 || is_windows_drive {
+        return None;
+    }
+    let namespace = &key[..colon];
+    global
+        .has_on_load_namespace(&bun_core::String::from_bytes(namespace))
+        .then_some(namespace)
+}
+
 /// C++ entry point: runs the plugin for a virtual-module specifier, returning its exports (or zero when no plugin runner is set).
 #[unsafe(no_mangle)]
 unsafe extern "C" fn Bun__runVirtualModule(
@@ -244,7 +261,8 @@ unsafe extern "C" fn Bun__runVirtualModule(
     specifier_ptr: *const bun_core::String,
 ) -> JSValue {
     jsc::mark_binding();
-    if global.bun_vm().plugin_runner.is_none() {
+    let vm = global.bun_vm();
+    if vm.plugin_runner.is_none() {
         return JSValue::ZERO;
     }
 
@@ -252,16 +270,15 @@ unsafe extern "C" fn Bun__runVirtualModule(
     let specifier_slice = unsafe { &*specifier_ptr }.to_utf8();
     let specifier = specifier_slice.slice();
 
-    if !PluginRunner::could_be_plugin(specifier) {
-        return JSValue::ZERO;
-    }
-
-    let namespace = PluginRunner::extract_namespace(specifier);
-    let after_namespace = if namespace.is_empty() {
-        specifier
-    } else {
-        &specifier[(namespace.len() + 1).min(specifier.len())..]
-    };
+    // A registered namespace wins. Any other absolute path is a file on disk.
+    let (namespace, after_namespace): (&[u8], &[u8]) =
+        if let Some(namespace) = registered_on_load_namespace(global, specifier) {
+            (namespace, &specifier[namespace.len() + 1..])
+        } else if bun_paths::is_absolute(specifier) && !vm.is_eval_or_stdin_entry(specifier) {
+            (b"", specifier)
+        } else {
+            return JSValue::ZERO;
+        };
 
     match global.run_on_load_plugins(
         &bun_core::String::from_bytes(namespace),

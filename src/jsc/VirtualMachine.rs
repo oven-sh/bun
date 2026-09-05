@@ -4430,6 +4430,13 @@ impl VirtualMachine {
         result
     }
 
+    /// The in-memory `<cwd>/[eval]` or `<cwd>/[stdin]` entry of `bun -e` / `bun -`.
+    pub fn is_eval_or_stdin_entry(&self, specifier: &[u8]) -> bool {
+        self.module_loader.eval_source.is_some()
+            && (specifier.ends_with(bun_paths::path_literal!("/[eval]").as_bytes())
+                || specifier.ends_with(bun_paths::path_literal!("/[stdin]").as_bytes()))
+    }
+
     /// Dupe `s` into a VM-owned allocation for the `_resolve` fast-paths.
     fn dupe_resolved_path(&mut self, s: &[u8]) -> &'static [u8] {
         let boxed: Box<[u8]> = s.to_vec().into_boxed_slice();
@@ -4489,10 +4496,7 @@ impl VirtualMachine {
             ret.path = result.path.as_bytes();
             return Ok(());
         }
-        if self.module_loader.eval_source.is_some()
-            && (specifier.ends_with(bun_paths::path_literal!("/[eval]").as_bytes())
-                || specifier.ends_with(bun_paths::path_literal!("/[stdin]").as_bytes()))
-        {
+        if self.is_eval_or_stdin_entry(specifier) {
             ret.result = None;
             ret.path = self.dupe_resolved_path(specifier);
             return Ok(());

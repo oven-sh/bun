@@ -47,6 +47,9 @@
 #include <JavaScriptCore/LazyProperty.h>
 #include <JavaScriptCore/LazyPropertyInlines.h>
 #include <JavaScriptCore/VMTrapsInlines.h>
+#include <JavaScriptCore/JSModuleLoader.h>
+#include <JavaScriptCore/JSModuleNamespaceObject.h>
+#include <JavaScriptCore/ModuleRegistryEntry.h>
 #include "wtf-bindings.h"
 #include "EventLoopTask.h"
 #include "JSEventListener.h"
@@ -3205,6 +3208,63 @@ JSC_DEFINE_CUSTOM_SETTER(setProcessArgv, (JSGlobalObject * globalObject, Encoded
     JSValue value = JSValue::decode(encodedValue);
     process->setArgv(globalObject, value);
     return true;
+}
+
+static void repointOwnDataProperty(VM& vm, JSObject* object, const Identifier& name, JSValue value)
+{
+    unsigned attributes = 0;
+    PropertyOffset offset = object->structure()->get(vm, name, attributes);
+    if (!isValidOffset(offset) || (attributes & PropertyAttribute::AccessorOrCustomAccessorOrValue)) {
+        return;
+    }
+    object->putDirect(vm, name, value, attributes);
+}
+
+// process and Bun reify the property into an own value on first read; the node:process and bun modules bind it on first import.
+void repointProcessProperty(Zig::GlobalObject* globalObject, const Identifier& name, JSValue value)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    if (globalObject->hasProcessObject()) {
+        repointOwnDataProperty(vm, globalObject->processObject(), name, value);
+    }
+    if (globalObject->m_bunObject.isInitialized()) {
+        repointOwnDataProperty(vm, globalObject->bunObject(), name, value);
+    }
+
+    for (auto moduleKey : { "node:process"_s, "bun"_s }) {
+        auto* entry = globalObject->moduleLoader()->registryEntry(Identifier::fromString(vm, moduleKey));
+        if (!entry || !isModuleEvaluated(entry->record())) {
+            continue;
+        }
+        auto* moduleNamespace = entry->record()->getModuleNamespace(globalObject);
+        RETURN_IF_EXCEPTION(scope, void());
+        moduleNamespace->overrideExportValue(globalObject, name, value);
+        RETURN_IF_EXCEPTION(scope, void());
+    }
+}
+
+// argv[1] is the VM's entry point, which the test runner changes for every file.
+extern "C" void Bun__Process__resetArgv(Zig::GlobalObject* globalObject)
+{
+    if (!globalObject->hasProcessObject()) {
+        return;
+    }
+
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+    auto* process = globalObject->processObject();
+    process->clearArgv();
+
+    JSValue argv = process->getArgv(globalObject);
+    if (!scope.exception()) {
+        repointProcessProperty(globalObject, Identifier::fromString(vm, "argv"_s), argv);
+    }
+    if (auto* exception = scope.exception()) [[unlikely]] {
+        CLEAR_IF_EXCEPTION(scope);
+        Bun__reportError(globalObject, JSValue::encode(exception));
+    }
 }
 
 extern "C" EncodedJSValue Bun__Process__getExecArgv(JSGlobalObject* lexicalGlobalObject)

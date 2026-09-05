@@ -16,12 +16,16 @@ class GlobalObject;
 
 namespace JSC {
 class JSPromise;
+class AbstractModuleRecord;
 }
 
 namespace Bun {
 using namespace JSC;
 
 class JSCommonJSModule;
+
+// A cyclic module evaluated without error, or a synthetic module that has been linked.
+bool isModuleEvaluated(JSC::AbstractModuleRecord*);
 
 typedef uint8_t OnLoadResultType;
 const OnLoadResultType OnLoadResultTypeError = 0;

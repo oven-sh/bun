@@ -91,6 +91,7 @@ public:
 
     JSValue getArgv(JSGlobalObject* globalObject);
     void setArgv(JSGlobalObject* globalObject, JSValue argv);
+    void clearArgv() { m_argv.clear(); }
 
     JSValue getExecArgv(JSGlobalObject* globalObject);
     void setExecArgv(JSGlobalObject* globalObject, JSValue execArgv);
@@ -137,6 +138,9 @@ public:
     inline JSObject* bindingUV() { return m_bindingUV.getInitializedOnMainThread(this); }
     inline JSObject* bindingNatives() { return m_bindingNatives.getInitializedOnMainThread(this); }
 };
+
+// Points every existing copy of a process property (on process, on Bun, in node:process) at `value`.
+void repointProcessProperty(Zig::GlobalObject*, const JSC::Identifier& name, JSC::JSValue value);
 
 JSC_DECLARE_HOST_FUNCTION(Process_functionDlopen);
 

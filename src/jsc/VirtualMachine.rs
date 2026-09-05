@@ -405,6 +405,7 @@ unsafe extern "C" {
 
     safe fn Process__dispatchOnBeforeExit(global: &JSGlobalObject, code: u8);
     safe fn Process__dispatchOnExit(global: &JSGlobalObject, code: u8);
+    safe fn Bun__Process__resetArgv(global: &JSGlobalObject);
     safe fn Bun__closeAllSQLiteDatabasesForTermination(global: &JSGlobalObject);
     safe fn Bun__closeAllNodeSqliteDatabasesForTermination(global: &JSGlobalObject);
     safe fn Bun__WebView__closeAllForTermination();
@@ -4959,6 +4960,7 @@ impl VirtualMachine {
         self.main_resolved_path = bun_core::String::EMPTY;
         self.main_hash = bun_watcher::Watcher::get_hash(entry_path);
         self.overridden_main.deinit();
+        Bun__Process__resetArgv(self.global());
 
         self.event_loop_mut().ensure_waker();
 

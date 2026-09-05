@@ -1985,10 +1985,6 @@ pub mod dir_entry_accessor {
         /// Like statat but does not follow symlinks.
         fn lstatat(handle: DirEntryHandle, path_: &ZStr) -> Maybe<Stat> {
             let mut buf = PathBuffer::uninit();
-            if let Some(entry) = handle.value {
-                return Syscall::lstatat(entry.fd, path_);
-            }
-
             let path: &ZStr = if !Platform::AUTO.is_absolute(path_.as_bytes()) {
                 if let Some(entry) = handle.value {
                     let slice = resolve_path::join_string_buf::<bun_paths::platform::Auto>(

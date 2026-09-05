@@ -2132,6 +2132,19 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 
+    /// The renamer follows links before it reads the flag, so pin the whole chain.
+    pub(crate) fn set_must_not_be_renamed_through_links(&mut self, ref_: Ref) {
+        let mut ref_ = ref_;
+        loop {
+            let symbol = &mut self.symbols[ref_.inner_index() as usize];
+            symbol.set_must_not_be_renamed(true);
+            if !symbol.has_link() {
+                return;
+            }
+            ref_ = symbol.link.get();
+        }
+    }
+
     pub(crate) fn log_arrow_arg_errors(&mut self, errors: &mut DeferredArrowArgErrors) {
         if errors.invalid_expr_await.len > 0 {
             let r = errors.invalid_expr_await;
@@ -3536,6 +3549,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             // Check for collisions that would prevent to hoisting "var" symbols up to the enclosing function scope
             if let Some(scope_parent) = scope_ref.parent {
                 let scope_strict_mode = scope_ref.strict_mode;
+                let scope_is_with = scope_ref.kind == js_ast::scope::Kind::With;
                 // The loop below never inserts into `scope.members` itself (only ancestors), so
                 // snapshotting `(name_ptr, Member)` pairs up front preserves iteration semantics
                 // and lets us re-borrow `*scope` mutably inside the body.
@@ -3627,6 +3641,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         }
                     }
 
+                    // `with (obj) var t = 2` declares `t` in the "with" scope, which the walk below starts above.
+                    if scope_is_with {
+                        self.set_must_not_be_renamed_through_links(value.ref_);
+                    }
+
                     if hash.is_none() {
                         hash = Some(Scope::get_member_hash(name));
                     }
@@ -3648,7 +3667,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         //   assert(obj.foo === 2)
                         //
                         if scope_kind == js_ast::scope::Kind::With {
-                            self.symbols[symbol_idx].set_must_not_be_renamed(true);
+                            self.set_must_not_be_renamed_through_links(value.ref_);
                         }
 
                         if let Some(member_in_scope) =
@@ -3673,6 +3692,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             {
                                 // Silently merge this symbol into the existing symbol
                                 self.symbols[symbol_idx].link.set(member_in_scope.ref_);
+                                if self.symbols[symbol_idx].must_not_be_renamed() {
+                                    self.set_must_not_be_renamed_through_links(
+                                        member_in_scope.ref_,
+                                    );
+                                }
                                 // `StringHashMap` get_or_put already stores the key on insert and
                                 // cannot hand out `&mut K` (see StringHashMapGetOrPut docs), so
                                 // no key write is needed here.
@@ -3870,6 +3894,16 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             // "with" statements are not allowed in strict mode.
             if self.options.features.commonjs_at_runtime {
                 self.has_with_scope = true;
+            }
+
+            // Marked up the chain like contains_direct_eval, for compute_reserved_names_for_scope.
+            let mut scope_iter: Option<js_ast::StoreRef<Scope>> = Some(scope);
+            while let Some(mut s) = scope_iter {
+                if s.contains_with {
+                    break;
+                }
+                s.contains_with = true;
+                scope_iter = s.parent;
             }
         }
 

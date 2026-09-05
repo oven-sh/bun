@@ -1257,6 +1257,22 @@ impl EventLoop {
         }
     }
 
+    /// A poll of this thread's uv loop (`tick_possibly_forever`, `auto_tick`,
+    /// `auto_tick_active`) also ran whatever callbacks an addon put on that loop
+    /// through `napi_get_uv_event_loop` (`uv_queue_work`, `uv_async_t`, ...),
+    /// with no `enter()`/`exit()` around them. Each poll folds for them
+    /// afterwards, as `on_exit` does for cleanup hooks: an exception one left on
+    /// the VM is reported, else the checkpoint runs (deferred, like any fold,
+    /// while a blocking wait has an `enter()` open).
+    #[cfg(windows)]
+    pub fn fold_addon_uv_callbacks(global: &JSGlobalObject) {
+        if global.has_exception() {
+            let _ = crate::task::report_error_or_terminate(global, crate::JsError::Thrown);
+            return;
+        }
+        let _ = global.bun_vm().event_loop_mut().maybe_drain_microtasks();
+    }
+
     pub fn tick_possibly_forever(&mut self) {
         let loop_ptr = self.usockets_loop();
 
@@ -1289,6 +1305,8 @@ impl EventLoop {
             )
         };
 
+        #[cfg(windows)]
+        Self::fold_addon_uv_callbacks(self.global_ref());
         self.vm_ref().as_mut().on_after_event_loop();
         self.tick_concurrent();
         self.tick();

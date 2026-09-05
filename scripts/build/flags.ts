@@ -811,7 +811,8 @@ export const defines: Flag[] = [
     desc: "Use non-cancelable POSIX calls on Darwin",
   },
   {
-    flag: ["WIN32", "_WINDOWS", "WIN32_LEAN_AND_MEAN=1", "_CRT_SECURE_NO_WARNINGS", "BORINGSSL_NO_CXX=1"],
+    // BEXPORT=: see deps/webkit.ts — bun's TUs include bmalloc headers too.
+    flag: ["WIN32", "_WINDOWS", "WIN32_LEAN_AND_MEAN=1", "_CRT_SECURE_NO_WARNINGS", "BORINGSSL_NO_CXX=1", "BEXPORT="],
     when: c => c.windows,
     desc: "Standard Windows defines + disable CRT security warnings",
   },

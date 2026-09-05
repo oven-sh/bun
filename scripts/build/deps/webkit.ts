@@ -1506,6 +1506,11 @@ function webkitFlags(wk: WebKitBuild): WebKitFlags {
     "-DBUILDING_WITH_CMAKE",
     "-DHAVE_CONFIG_H",
     "-DPAS_BMALLOC=1",
+    // bmalloc's BEXPORT is __declspec(dllexport) on Windows even in a static
+    // build (BPlatform.h lacks the !USE(BUN_JSC_ADDITIONS) carve-out WTF's
+    // ExportMacros.h has), which leaked bmalloc::api::* and libpas' g_config
+    // out of bun.exe's export table. BExport.h honours a predefined BEXPORT.
+    ...(cfg.windows ? ["-DBEXPORT="] : []),
     // WebKit's USE_CXX_STDLIB_ASSERTIONS default: the standard library's own
     // hardening (libstdc++ on gnu/musl, libc++ on the other unixes).
     ...(cfg.windows

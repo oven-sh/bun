@@ -47,6 +47,7 @@ import {
   linkerMapOutputs,
   systemLibs,
 } from "./flags.ts";
+import { binaryExpectations } from "./binary-expectations.ts";
 import { writeIfChanged } from "./fs.ts";
 import type { BuildNode, Ninja } from "./ninja.ts";
 import { emitRust, rustLibPath } from "./rust.ts";
@@ -481,7 +482,7 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
   });
 
   // ─── Step 7: post-link (strip, dsymutil, smoke test) ───
-  const { strippedExe, dsym } = emitPostLink(n, cfg, exe, exeName, flags.stripflags);
+  const { strippedExe, dsym } = emitPostLink(n, cfg, exe, exeName, flags.stripflags, [...linkObjects, ...depLibs]);
 
   return {
     exe,
@@ -634,7 +635,7 @@ function emitLinkOnly(n: Ninja, cfg: Config): BunOutput {
   });
 
   // Strip + smoke test — same as full mode.
-  const { strippedExe, dsym } = emitPostLink(n, cfg, exe, exeName, flags.stripflags);
+  const { strippedExe, dsym } = emitPostLink(n, cfg, exe, exeName, flags.stripflags, [...linkObjects, ...depLibs]);
 
   return {
     exe,
@@ -711,7 +712,7 @@ function emitRustAndLink(n: Ninja, cfg: Config, sources: Sources): BunOutput {
     validations: postLinkChecks(cfg, exeName),
   });
 
-  const { strippedExe, dsym } = emitPostLink(n, cfg, exe, exeName, flags.stripflags);
+  const { strippedExe, dsym } = emitPostLink(n, cfg, exe, exeName, flags.stripflags, [...linkObjects, ...depLibs]);
 
   return {
     exe,
@@ -744,6 +745,7 @@ export function emitPostLink(
   exe: string,
   exeName: string,
   stripflags: string[],
+  linkInputs: string[],
 ): { strippedExe: string | undefined; dsym: string | undefined } {
   // Plain release only: produce stripped `bun` alongside `bun-profile`.
   // Debug/asan/valgrind/assertions keep symbols (you want them for
@@ -776,7 +778,12 @@ export function emitPostLink(
   // The smoke test plus the JSC ClassInfo canary: validations of the link
   // edge (they run whenever the executable is relinked, see postLinkChecks)
   // and, for running them by name, the `check` phony.
-  n.phony("check", [...emitSmokeTest(n, cfg, exe, exeName, strippedExe), ...emitClassInfoCheck(n, cfg, exe, exeName)]);
+  n.phony("check", [
+    ...emitSmokeTest(n, cfg, exe, exeName, strippedExe),
+    ...emitClassInfoCheck(n, cfg, exe, exeName),
+    ...emitBinaryVerify(n, cfg, exe, exeName),
+    ...emitDuplicateSymbolCheck(n, cfg, exeName, linkInputs),
+  ]);
 
   return { strippedExe, dsym };
 }
@@ -793,13 +800,85 @@ function classInfoStamp(cfg: Config, exeName: string): string | undefined {
     : undefined;
 }
 
+/** Stamp of verify-binary.ts' scans of the executable, when the LLVM readers are available. */
+function binaryVerifyStamp(cfg: Config, exeName: string): string | undefined {
+  return binaryVerifyTools(cfg) !== undefined ? resolve(cfg.buildDir, `${exeName}.binary-verified`) : undefined;
+}
+
+/** Report written by the duplicate-definition scan of the link inputs. */
+function duplicateSymbolsReport(cfg: Config, exeName: string): string | undefined {
+  return cfg.nm !== undefined ? resolve(cfg.buildDir, `${exeName}.duplicate-symbols.txt`) : undefined;
+}
+
+function binaryVerifyTools(cfg: Config): { nm: string; readobj: string; objdump: string; cxxfilt: string } | undefined {
+  const { nm, readobj, objdump, cxxfilt } = cfg;
+  return nm !== undefined && readobj !== undefined && objdump !== undefined && cxxfilt !== undefined
+    ? { nm, readobj, objdump, cxxfilt }
+    : undefined;
+}
+
 /**
  * The checks emitPostLink attaches to an executable, as the stamp paths the
  * link edge names as its ninja validations — so `ninja bun` (or anything
  * that relinks it) runs them, without making them inputs of anything.
  */
 export function postLinkChecks(cfg: Config, exeName: string): string[] {
-  return [smokeTestStamp(cfg, exeName), classInfoStamp(cfg, exeName)].filter((p): p is string => p !== undefined);
+  return [
+    smokeTestStamp(cfg, exeName),
+    classInfoStamp(cfg, exeName),
+    binaryVerifyStamp(cfg, exeName),
+    duplicateSymbolsReport(cfg, exeName),
+  ].filter((p): p is string => p !== undefined);
+}
+
+const verifyBinaryPath = resolve(import.meta.dirname, "verify-binary.ts");
+
+/**
+ * verify-binary.ts' static scans of the linked executable — exported
+ * symbols, dynamic libraries and symbol-version ceilings, forbidden imports,
+ * static initializers, hardening bits, debug info — against what
+ * binary-expectations.ts says this target should look like. The
+ * expectations are serialized now; the scan runs as a validation of the link.
+ */
+function emitBinaryVerify(n: Ninja, cfg: Config, exe: string, exeName: string): string[] {
+  const stamp = binaryVerifyStamp(cfg, exeName);
+  const tools = binaryVerifyTools(cfg);
+  if (stamp === undefined || tools === undefined) return [];
+  const spec = resolve(cfg.buildDir, `${exeName}.verify.json`);
+  writeIfChanged(spec, JSON.stringify({ name: exeName, exe, tools, expect: binaryExpectations(cfg) }, null, 2) + "\n");
+  const q = (p: string) => quote(p, cfg.windows);
+  n.rule("binary_verify", {
+    command: `${cfg.jsRuntime} ${q(streamPath)} check --stamp=$out ${cfg.jsRuntime} ${q(verifyBinaryPath)} binary $spec`,
+    description: `check ${exeName} exports, dynamic deps, initializers, hardening`,
+  });
+  n.build({
+    outputs: [stamp],
+    rule: "binary_verify",
+    inputs: [exe],
+    implicitInputs: [spec, verifyBinaryPath, resolve(import.meta.dirname, "binary-expectations.ts")],
+    vars: { spec: q(spec) },
+  });
+  return [stamp];
+}
+
+/**
+ * A symbol with two strong external definitions among the link inputs: the
+ * linker takes one silently when the other is an archive member it never
+ * loads. verify-binary.ts scans every object and archive on the link line;
+ * the report also lists weak definitions whose sizes differ (informational).
+ */
+function emitDuplicateSymbolCheck(n: Ninja, cfg: Config, exeName: string, linkInputs: string[]): string[] {
+  const report = duplicateSymbolsReport(cfg, exeName);
+  if (report === undefined || cfg.nm === undefined) return [];
+  const q = (p: string) => quote(p, cfg.windows);
+  n.rule("duplicate_symbols", {
+    command: `${cfg.jsRuntime} ${q(streamPath)} check ${cfg.jsRuntime} ${q(verifyBinaryPath)} duplicates ${q(cfg.nm)} $out.rsp $out`,
+    description: `check ${exeName} link inputs for duplicate definitions`,
+    rspfile: "$out.rsp",
+    rspfile_content: "$in_newline",
+  });
+  n.build({ outputs: [report], rule: "duplicate_symbols", inputs: linkInputs, implicitInputs: [verifyBinaryPath] });
+  return [report];
 }
 
 /**

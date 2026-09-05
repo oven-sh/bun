@@ -241,6 +241,10 @@ export interface Config {
   strip: string;
   /** llvm-nm, for `DirectBuild.forbidUndefined`; undefined skips those checks. */
   nm: string | undefined;
+  /** llvm-readobj / llvm-objdump / llvm-cxxfilt, for verify-binary.ts; any one missing skips those checks. */
+  readobj: string | undefined;
+  objdump: string | undefined;
+  cxxfilt: string | undefined;
   /** Set when the target is darwin. Undefined on non-darwin targets. */
   dsymutil: string | undefined;
   /** Self-host bun for codegen (bun install, bun build). */
@@ -449,6 +453,10 @@ export interface Toolchain {
   llvmStrip: string | undefined;
   /** llvm-nm; undefined skips the per-dep undefined-symbol checks (source.ts). */
   nm: string | undefined;
+  /** For the post-link binary checks (bun.ts / verify-binary.ts); undefined skips them. */
+  readobj: string | undefined;
+  objdump: string | undefined;
+  cxxfilt: string | undefined;
   dsymutil: string | undefined;
   bun: string;
   /** Found only when the build installs with npm. */
@@ -1234,6 +1242,9 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
           : (toolchain.llvmStrip ?? toolchain.strip)
         : toolchain.strip),
     nm: toolchain.nm,
+    readobj: toolchain.readobj,
+    objdump: toolchain.objdump,
+    cxxfilt: toolchain.cxxfilt,
     dsymutil: toolchain.dsymutil,
     bun: toolchain.bun,
     npm: packageManager === "npm" ? toolchain.npm : undefined,

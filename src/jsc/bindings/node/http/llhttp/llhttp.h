@@ -545,9 +545,9 @@ extern "C" {
 
 #if defined(__wasm__)
 #define LLHTTP_EXPORT __attribute__((visibility("default")))
-#elif defined(_WIN32)
-#define LLHTTP_EXPORT __declspec(dllexport)
 #else
+/* Upstream dllexports on _WIN32 (llhttp built as a DLL); inside bun that
+   only leaked llhttp_* out of bun.exe's export table. */
 #define LLHTTP_EXPORT
 #endif
 

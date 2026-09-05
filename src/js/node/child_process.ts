@@ -1127,20 +1127,6 @@ class ChildProcess extends EventEmitter {
       this.exitCode = exitCode;
     }
 
-    const stdinPumps = this.#stdinPumps;
-    if (stdinPumps !== undefined) {
-      this.#stdinPumps = undefined;
-      for (let j = 0; j < stdinPumps.length; j += 3) {
-        const source = stdinPumps[j];
-        const writable = stdinPumps[j + 1];
-        const onSourceDeath = stdinPumps[j + 2];
-        source.removeListener("error", onSourceDeath);
-        source.removeListener("close", onSourceDeath);
-        source.unpipe(writable);
-        writable.destroy();
-      }
-    }
-
     // Drain stdio streams
     {
       if (this.#stdin) {
@@ -1308,54 +1294,6 @@ class ChildProcess extends EventEmitter {
   #stderr;
   #stdioObject;
   #stdioOptions;
-  #stdinPumps;
-
-  // A stream stdio entry with no fd. Node only accepts a handle-backed stream
-  // here and hands its fd to the child, so the slot has no socket of its own
-  // (https://github.com/nodejs/node/blob/v26.3.0/lib/internal/child_process.js#L460-L470).
-  // Bun's native streams expose no fd, so the slot is a pipe and the data is
-  // pumped through it after the spawn. The pump's readable stands in for the
-  // socket that counts towards 'close'
-  // (https://github.com/nodejs/node/blob/v26.3.0/lib/internal/child_process.js#L472-L482).
-  #wireWrappedStdio(wrappedStdio) {
-    const handle = this.#handle;
-    for (let j = 0; j < wrappedStdio.length; j += 2) {
-      const i = wrappedStdio[j];
-      const stream = wrappedStdio[j + 1];
-      if (i === 0) {
-        const sink = handle.stdin;
-        if (sink) this.#pumpIntoChildStdin(sink, stream);
-      } else {
-        const source = handle[i === 1 ? "stdout" : "stderr"];
-        if (source) this.#pumpOutOfChild(source, stream);
-      }
-    }
-  }
-
-  #pumpIntoChildStdin(sink, source) {
-    const writable = require("internal/fs/streams").writableFromFileSink(sink);
-    writable.on("error", swallowStreamError);
-    if (source.destroyed) {
-      writable.end();
-      return;
-    }
-    source.pipe(writable);
-    const onSourceDeath = endWritableOnSourceDeath.bind(writable);
-    source.once("error", onSourceDeath);
-    source.once("close", onSourceDeath);
-    (this.#stdinPumps ??= []).push(source, writable, onSourceDeath);
-  }
-
-  #pumpOutOfChild(source, destination) {
-    const readable = require("internal/streams/native-readable").constructNativeReadable(source, {});
-    readable.on("error", swallowStreamError);
-    this.#closesNeeded++;
-    readable.once("close", this.#maybeClose.bind(this));
-    readable.pipe(destination, { end: false });
-    const onUnpipe = destroyReadableOnUnpipe.bind(null, readable);
-    destination.on("unpipe", onUnpipe);
-    readable.once("close", removeUnpipeListener.bind(null, destination, onUnpipe));
-  }
 
   #createStdioObject() {
     const opts = this.#stdioOptions;
@@ -1422,15 +1360,7 @@ class ChildProcess extends EventEmitter {
     const serialization = options.serialization || "json";
 
     const stdio = options.stdio || ["pipe", "pipe", "pipe"];
-    const bunStdio = getBunStdioFromOptions(stdio, true);
-    let wrappedStdio;
-    for (let i = 0; i < bunStdio.length; i++) {
-      const wrapped = bunStdio[i]?.[kWrappedStdioStream];
-      if (wrapped !== undefined) {
-        (wrappedStdio ??= []).push(i, wrapped);
-        bunStdio[i] = "pipe";
-      }
-    }
+    const bunStdio = getBunStdioFromOptions(stdio);
     // Extra "pipe" slots (i >= 3) are wrapped in a net.Socket by
     // #getBunSpawnIo, which hands the fd to usockets (usockets closes it on
     // socket close). Use Bun.spawn's "socket-fd" so the parent end is stored
@@ -1459,10 +1389,6 @@ class ChildProcess extends EventEmitter {
 
     const detachedOption = options.detached;
     this.#stdioOptions = bunStdio;
-    if (wrappedStdio !== undefined) {
-      this.#stdioOptions = bunStdio.slice();
-      for (let j = 0; j < wrappedStdio.length; j += 2) this.#stdioOptions[wrappedStdio[j]] = "wrapped";
-    }
     const stdioCount = stdio.length;
     const hasSocketsToEagerlyLoad = stdioCount >= 3;
 
@@ -1521,7 +1447,7 @@ class ChildProcess extends EventEmitter {
       });
       this.pid = this.#handle.pid;
 
-      if (wrappedStdio !== undefined) this.#wireWrappedStdio(wrappedStdio);
+      if ($isJSArray(stdio)) stopReadingSharedStdio(stdio);
 
       $debug("ChildProcess: spawn", this.pid, spawnargs);
 
@@ -1795,6 +1721,11 @@ function streamFdOf(item): number | undefined {
 
   if (item.destroyed) return undefined;
 
+  // A native readable (a ChildProcess stdout/stderr, a Bun.file() stream):
+  // the source reads a descriptor of its own.
+  const nativeFd = item.$bunNativePtr?.fd;
+  if (typeof nativeFd === "number" && nativeFd >= 0) return nativeFd;
+
   const sink = item[require("internal/fs/streams").kWriteStreamFastPath];
   if (sink && sink !== true) {
     const fd = sink._getFd();
@@ -1804,20 +1735,20 @@ function streamFdOf(item): number | undefined {
   return undefined;
 }
 
-const kWrappedStdioStream = Symbol("wrappedStdioStream");
-
-function isPumpableStdioStream(item): boolean {
-  if (item.$bunNativePtr) return true;
-  if (item._handle !== null && typeof item._handle === "object") return true;
-  const sink = item[require("internal/fs/streams").kWriteStreamFastPath];
-  return !!(sink && sink !== true);
+// The child now reads the descriptor behind each shared readable. Stop the
+// parent's reads so the two do not compete for the same bytes; the user
+// resumes the stream once the child is done with it.
+// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/child_process.js#L460-L470
+function stopReadingSharedStdio(stdio) {
+  for (let i = 0; i < stdio.length; i++) {
+    const item = stdio[i];
+    if (!isNodeStreamReadable(item) || !item.readable) continue;
+    item.$bunNativePtr?.setFlowing?.(false);
+    item.pause();
+  }
 }
 
-function nodeToBun(
-  item: string,
-  index: number,
-  allowStreamWrap?: boolean,
-): string | number | null | NodeJS.TypedArray | ArrayBufferView | { [kWrappedStdioStream]: unknown } {
+function nodeToBun(item: string, index: number): string | number | null | NodeJS.TypedArray | ArrayBufferView {
   // If not defined, use the default.
   // For stdin/stdout/stderr, it's pipe. For others, it's ignore.
   if (item == null) {
@@ -1831,7 +1762,6 @@ function nodeToBun(
   if (isNodeStreamReadable(item) || isNodeStreamWritable(item)) {
     const fd = streamFdOf(item);
     if (fd !== undefined) return fd;
-    if (allowStreamWrap && isPumpableStdioStream(item)) return { [kWrappedStdioStream]: item };
     throw $ERR_INVALID_ARG_VALUE("stdio", item);
   }
   if (typeof item === "object" && item !== null) {
@@ -1873,21 +1803,6 @@ function isNodeStreamWritable(item) {
   return true;
 }
 
-function swallowStreamError() {}
-
-// `this` is the writable over the child's stdin sink.
-function endWritableOnSourceDeath() {
-  if (!this.destroyed && !this.writableEnded) this.end();
-}
-
-function destroyReadableOnUnpipe(readable, src) {
-  if (src === readable) readable.destroy();
-}
-
-function removeUnpipeListener(destination, listener) {
-  destination.removeListener("unpipe", listener);
-}
-
 function fdToStdioName(fd: number) {
   switch (fd) {
     case 0:
@@ -1901,7 +1816,7 @@ function fdToStdioName(fd: number) {
   }
 }
 
-function getBunStdioFromOptions(stdio, allowStreamWrap?: boolean) {
+function getBunStdioFromOptions(stdio) {
   const normalizedStdio = normalizeStdio(stdio);
   if (normalizedStdio.filter(v => v === "ipc").length > 1) throw $ERR_IPC_ONE_PIPE();
   // Node options:
@@ -1929,7 +1844,7 @@ function getBunStdioFromOptions(stdio, allowStreamWrap?: boolean) {
   const length = normalizedStdio.length;
   const bunStdio = new Array(length);
   for (let i = 0; i < length; i++) {
-    bunStdio[i] = nodeToBun(normalizedStdio[i], i, allowStreamWrap === true && i <= 2);
+    bunStdio[i] = nodeToBun(normalizedStdio[i], i);
   }
   return bunStdio;
 }

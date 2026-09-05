@@ -1,8 +1,9 @@
 import { describe, expect, it } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, bunRun, isWindows } from "harness";
 import { execSync, spawn } from "node:child_process";
 import { once } from "node:events";
-import { Readable, Writable } from "node:stream";
+import path from "node:path";
+import { Readable } from "node:stream";
 
 const CHILD_PROCESS_FILE = import.meta.dir + "/spawned-child.js";
 const OUT_FILE = import.meta.dir + "/stdio-test-out.txt";
@@ -168,58 +169,22 @@ describe("child.stdin", () => {
   });
 });
 
-describe("stream stdio entries without an fd (post-spawn pump)", () => {
-  it("emits 'close' when the wrapped stdout destination dies mid-flow", async () => {
-    const { promise: firstChunk, resolve: gotFirstChunk } = Promise.withResolvers();
-    const dest = new Writable({
-      write(chunk, encoding, cb) {
-        gotFirstChunk();
-        cb();
-      },
-    });
-    dest._handle = {}; // no fd: forces the post-spawn pump path
-    dest.on("error", () => {}); // destroy(err) with no listener is an uncaught error
-    const child = spawn(
-      bunExe(),
-      [
-        "-e",
-        `process.stdout.on("error", () => process.exit(21));
-         process.stdout.write("x");
-         setInterval(() => process.stdout.write("y".repeat(4096)), 10);
-         setTimeout(() => process.exit(7), 3000);`,
-      ],
-      { env: bunEnv, stdio: ["ignore", dest, "ignore"] },
-    );
-    await firstChunk;
-    dest.destroy(new Error("boom"));
-    const [code, signal] = await once(child, "close");
-    expect({ code, signal }).toEqual({ code: 21, signal: null });
-  });
-
-  it("EOFs the child's stdin when the wrapped source dies without ending", async () => {
-    const source = new Readable({ read() {}, autoDestroy: false, emitClose: false });
-    source._handle = {}; // no fd: forces the post-spawn pump path
-    source.on("error", () => {});
-    const child = spawn(bunExe(), ["-e", `process.stdin.resume(); process.stdin.on("end", () => process.exit(42));`], {
-      env: bunEnv,
-      stdio: [source, "ignore", "ignore"],
-    });
-    source.push("data with no end() to follow");
-    source.destroy(new Error("boom"));
-    const [code] = await once(child, "close");
-    expect(code).toBe(42);
-  });
-
-  it("removes its listeners from a wrapped stdin source once the child exits", async () => {
+describe("stream stdio entries", () => {
+  it("rejects a stream with no underlying descriptor like node", () => {
     const source = new Readable({ read() {} });
-    source._handle = {}; // no fd: forces the post-spawn pump path
-    const listenerCounts = () => ({ error: source.listenerCount("error"), close: source.listenerCount("close") });
-    const before = listenerCounts();
-    for (let i = 0; i < 3; i++) {
-      const child = spawn(bunExe(), ["-e", ""], { env: bunEnv, stdio: [source, "ignore", "ignore"] });
-      const [code] = await once(child, "close");
-      expect(code).toBe(0);
-    }
-    expect(listenerCounts()).toEqual(before);
+    expect(() => spawn(bunExe(), ["-e", ""], { env: bunEnv, stdio: [source, "ignore", "ignore"] })).toThrow(
+      expect.objectContaining({ code: "ERR_INVALID_ARG_VALUE" }),
+    );
+  });
+
+  it.skipIf(isWindows)("shares a child's stdout descriptor with another child's stdin", async () => {
+    const { stdout, stderr, exitCode } = await bunRun(
+      path.join(import.meta.dir, "fixtures", "child-process-stdio-share-stdout.js"),
+    );
+    expect({ result: JSON.parse(stdout), stderr, exitCode }).toEqual({
+      result: { pausedWhileShared: true, consumerGot: "hello\n", parentGot: "world\n" },
+      stderr: "",
+      exitCode: 0,
+    });
   });
 });

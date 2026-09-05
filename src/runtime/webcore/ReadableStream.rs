@@ -813,6 +813,11 @@ pub trait SourceContext: Sized {
 
     /// Default no-op.
     fn set_flowing(&mut self, _flag: bool) {}
+
+    /// The descriptor the source reads from. `Fd::INVALID` when it has none.
+    fn fd(&self) -> bun_core::Fd {
+        bun_core::Fd::INVALID
+    }
 }
 
 // Hand-wired JSC class (the `#[bun_jsc::JsClass]` derive cannot be used on a
@@ -1341,6 +1346,17 @@ impl<C: SourceContext> NewSource<C> {
 
     pub fn get_is_closed_from_js(&mut self, _global_object: &JSGlobalObject) -> JSValue {
         JSValue::from(self.is_closed.get())
+    }
+
+    /// The descriptor the source reads, or -1 when it has none (not opened
+    /// yet, or closed). node:child_process shares it with a child as stdio.
+    pub fn get_fd_from_js(&mut self, _global_object: &JSGlobalObject) -> JSValue {
+        use bun_sys_jsc::FdJsc as _;
+        let fd = self.context.fd();
+        if self.is_closed.get() || !fd.is_valid() {
+            return JSValue::js_number(-1.0);
+        }
+        fd.to_js_without_making_lib_uv_owned()
     }
 
     fn process_result(

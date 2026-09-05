@@ -1362,4 +1362,36 @@ describe("bundler", () => {
       },
     });
   });
+
+  // A solution-style root tsconfig ("files": [] + "references") takes jsx
+  // settings from the referenced project covering the file. Bundler only:
+  // `bun run` takes jsx from the cwd config.
+  itBundled("jsx/SolutionTsconfigReferences", {
+    files: {
+      "/tsconfig.json": /* json */ `{
+        "files": [],
+        "references": [{ "path": "./tsconfig.app.json" }]
+      }`,
+      "/tsconfig.app.json": /* json */ `{
+        "include": ["src"],
+        "compilerOptions": {
+          "jsx": "react",
+          "jsxFactory": "h",
+          "jsxFragmentFactory": "hFrag"
+        }
+      }`,
+      "/src/index.jsx": /* jsx */ `
+        function h(tag, props) { return { tag, props }; }
+        const hFrag = "fragment";
+        console.log(<a></a>);
+      `,
+    },
+    entryPoints: ["/src/index.jsx"],
+    target: "bun",
+    onAfterBundle(api) {
+      const file = api.readFile("out.js");
+      expect(file).toContain('h("a"');
+      expect(file).not.toContain("jsx-dev-runtime");
+    },
+  });
 });

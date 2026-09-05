@@ -1675,10 +1675,10 @@ pub fn prettyln(payload: impl PrettyFmtInput) {
 /// tested against it).
 pub use bun_core_macros::pretty_fmt;
 
-/// Input accepted by [`pretty_fmt`]: either a `&str`/`&[u8]` template or a
+/// Input accepted by [`pretty_fmt`]: either a `&str` template or a
 /// pre-formatted `&fmt::Arguments<'_>` (which is first rendered to a string
 /// then `<tag>`-rewritten — used by `Custom Inspect`-style call sites that
-/// build the template via `format_args!`).
+/// build the template via `format_args!`). Both are UTF-8; [`PrettyBuf`] relies on that.
 pub trait PrettyFmtInput {
     fn into_pretty_buf(self, is_enabled: bool) -> PrettyBuf;
 }
@@ -1686,12 +1686,6 @@ impl PrettyFmtInput for &str {
     #[inline]
     fn into_pretty_buf(self, is_enabled: bool) -> PrettyBuf {
         PrettyBuf(pretty_fmt_runtime(self.as_bytes(), is_enabled))
-    }
-}
-impl PrettyFmtInput for &[u8] {
-    #[inline]
-    fn into_pretty_buf(self, is_enabled: bool) -> PrettyBuf {
-        PrettyBuf(pretty_fmt_runtime(self, is_enabled))
     }
 }
 impl PrettyFmtInput for &fmt::Arguments<'_> {
@@ -1729,9 +1723,9 @@ pub fn pretty_fmt_rt(input: impl PrettyFmtInput, is_enabled: bool) -> PrettyBuf 
 
 /// Owned ANSI-rewritten buffer; derefs to `[u8]` so it can be passed to
 /// `write_all(&buf)` directly, and implements `Display` so it can be used in
-/// `write!(w, "{}", pretty_fmt::<true>("…"))`.
+/// `write!(w, "{}", pretty_fmt::<true>("…"))`. UTF-8 by construction: see [`PrettyFmtInput`].
 #[repr(transparent)]
-pub struct PrettyBuf(pub Vec<u8>);
+pub struct PrettyBuf(Vec<u8>);
 impl core::ops::Deref for PrettyBuf {
     type Target = [u8];
     #[inline]
@@ -1748,9 +1742,7 @@ impl AsRef<[u8]> for PrettyBuf {
 impl AsRef<str> for PrettyBuf {
     #[inline]
     fn as_ref(&self) -> &str {
-        // SAFETY: contents are ANSI escape bytes (pure ASCII) interleaved with
-        // verbatim runs of a `&'static str` template — both UTF-8 by
-        // construction.
+        // SAFETY: the field is private and every `PrettyFmtInput` is UTF-8.
         unsafe { core::str::from_utf8_unchecked(&self.0) }
     }
 }

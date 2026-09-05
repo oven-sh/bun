@@ -376,8 +376,12 @@ pub struct CacheDir {
     pub path: Vec<u8>,
 }
 
+/// An empty variable counts as unset: `abs(&[b""])` is the project directory.
 pub fn fetch_cache_directory_path(env: &mut DotEnvLoader, options: Option<&Options>) -> CacheDir {
-    if let Some(dir) = env.get(b"BUN_INSTALL_CACHE_DIR") {
+    if let Some(dir) = env
+        .get(b"BUN_INSTALL_CACHE_DIR")
+        .filter(|dir| !dir.is_empty())
+    {
         return CacheDir {
             path: FileSystem::instance().abs(&[dir]).to_vec(),
         };
@@ -391,21 +395,21 @@ pub fn fetch_cache_directory_path(env: &mut DotEnvLoader, options: Option<&Optio
         }
     }
 
-    if let Some(dir) = env.get(b"BUN_INSTALL") {
+    if let Some(dir) = env.get(b"BUN_INSTALL").filter(|dir| !dir.is_empty()) {
         let parts: [&[u8]; 3] = [dir, b"install/", b"cache/"];
         return CacheDir {
             path: FileSystem::instance().abs(&parts).to_vec(),
         };
     }
 
-    if let Some(dir) = env_var::XDG_CACHE_HOME.get() {
+    if let Some(dir) = env_var::XDG_CACHE_HOME.get_not_empty() {
         let parts: [&[u8]; 4] = [dir, b".bun/", b"install/", b"cache/"];
         return CacheDir {
             path: FileSystem::instance().abs(&parts).to_vec(),
         };
     }
 
-    if let Some(dir) = env_var::HOME.get() {
+    if let Some(dir) = env_var::HOME.get_not_empty() {
         let parts: [&[u8]; 4] = [dir, b".bun/", b"install/", b"cache/"];
         return CacheDir {
             path: FileSystem::instance().abs(&parts).to_vec(),
@@ -415,6 +419,124 @@ pub fn fetch_cache_directory_path(env: &mut DotEnvLoader, options: Option<&Optio
     let fallback_parts: [&[u8]; 1] = [b"node_modules/.bun-cache"];
     CacheDir {
         path: FileSystem::instance().abs(&fallback_parts).to_vec(),
+    }
+}
+
+// ───────────────────────────── bun pm cache rm ────────────────────────────────
+
+pub enum ClearCacheDirectoryError {
+    FilesystemRoot {
+        cache_dir: Box<[u8]>,
+    },
+    /// `cache_dir` is (`is_same_dir`) or contains `protected`, which `what` names.
+    Protected {
+        cache_dir: Box<[u8]>,
+        what: &'static str,
+        protected: Box<[u8]>,
+        is_same_dir: bool,
+    },
+    Io {
+        cache_dir: Box<[u8]>,
+        err: sys::Error,
+    },
+}
+
+/// `bun pm cache rm`. Empties rather than removes: a symlinked or mounted cache must survive.
+pub fn clear_cache_directory(
+    env: &mut DotEnvLoader,
+    original_cwd: &[u8],
+) -> Result<(), ClearCacheDirectoryError> {
+    let configured = fetch_cache_directory_path(env, None).path;
+    let dir = match Dir::open(&configured) {
+        Ok(dir) => dir,
+        Err(err) if err.get_errno() == sys::E::ENOENT => return Ok(()),
+        Err(err) => {
+            return Err(ClearCacheDirectoryError::Io {
+                cache_dir: configured.into_boxed_slice(),
+                err,
+            });
+        }
+    };
+
+    // The opened directory, not the setting: a symlink to `$HOME` must compare as `$HOME`.
+    let mut cache_dir_buf = path::path_buffer_pool::get();
+    let cache_dir: &[u8] = match dir.get_fd_path(&mut cache_dir_buf) {
+        Ok(real) => real,
+        Err(err) => {
+            return Err(ClearCacheDirectoryError::Io {
+                cache_dir: configured.into_boxed_slice(),
+                err,
+            });
+        }
+    };
+
+    if path::basename(cache_dir).is_empty() {
+        return Err(ClearCacheDirectoryError::FilesystemRoot {
+            cache_dir: cache_dir.into(),
+        });
+    }
+
+    // The setting says where the cache is, not that the directory holds only a cache.
+    let protected_dirs: [(&'static str, Option<&[u8]>); 5] = [
+        ("the home directory", env_var::HOME.get_not_empty()),
+        (
+            "the bun executable",
+            bun_core::self_exe_path().ok().map(ZStr::as_bytes),
+        ),
+        (
+            "$BUN_INSTALL",
+            env.get(b"BUN_INSTALL").filter(|dir| !dir.is_empty()),
+        ),
+        (
+            "the project directory",
+            Some(FileSystem::instance().top_level_dir()),
+        ),
+        ("the current directory", Some(original_cwd)),
+    ];
+    for (what, protected) in protected_dirs {
+        let Some(protected) = protected else {
+            continue;
+        };
+        let mut protected_buf = path::path_buffer_pool::get();
+        let protected = canonical_dir_path(protected, &mut protected_buf);
+        let is_same_dir = match path::resolve_path::is_parent_or_equal(cache_dir, protected) {
+            path::resolve_path::ParentEqual::Unrelated => continue,
+            path::resolve_path::ParentEqual::Equal => true,
+            path::resolve_path::ParentEqual::Parent => false,
+        };
+        return Err(ClearCacheDirectoryError::Protected {
+            cache_dir: cache_dir.into(),
+            what,
+            protected: protected.into(),
+            is_same_dir,
+        });
+    }
+
+    let io = |err: sys::Error| ClearCacheDirectoryError::Io {
+        cache_dir: cache_dir.into(),
+        err,
+    };
+
+    // Collect first: readdir may skip entries while the directory is being emptied.
+    let mut entries: Vec<Box<[u8]>> = Vec::new();
+    let mut iter = sys::iterate_dir(dir.fd());
+    while let Some(entry) = iter.next().map_err(io)? {
+        entries.push(Box::from(entry.name.slice_u8()));
+    }
+    for entry in &entries {
+        dir.delete_tree(entry).map_err(io)?;
+    }
+    Ok(())
+}
+
+/// The real path of the directory at `path`, or `path` itself when it cannot be opened.
+fn canonical_dir_path<'a>(path: &'a [u8], buf: &'a mut PathBuffer) -> &'a [u8] {
+    match Dir::open(path) {
+        Ok(dir) => match dir.get_fd_path(buf) {
+            Ok(real) => real,
+            Err(_) => path,
+        },
+        Err(_) => path,
     }
 }
 

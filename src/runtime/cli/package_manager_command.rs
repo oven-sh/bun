@@ -9,8 +9,8 @@ use bun_install::dependency::Dependency;
 use bun_install::lockfile::{LoadResult, LoadStep, Lockfile, package::PackageColumns as _, tree};
 use bun_install::npm as Npm;
 use bun_install::package_manager_real::{
-    CommandLineArguments, Subcommand, fetch_cache_directory_path, get_cache_directory,
-    package_manager_options::LogLevel, setup_global_dir,
+    ClearCacheDirectoryError, CommandLineArguments, Subcommand, clear_cache_directory,
+    get_cache_directory, package_manager_options::LogLevel, setup_global_dir,
 };
 use bun_install::{DependencyID, PackageID, PackageManager, migration};
 use bun_paths::{self as Path, PathBuffer};
@@ -139,6 +139,12 @@ impl PackageManagerCommand {
         Output::writer().print(format_args!("{}", pm.lockfile.fmt_meta_hash()))?;
         Output::enable_buffering();
         Global::exit(0);
+    }
+
+    fn note_cache_directory_setting() {
+        bun_core::note!(
+            "the cache directory comes from <b>$BUN_INSTALL_CACHE_DIR<r> or <b>$BUN_INSTALL<r>. Point it at a directory that holds nothing but the bun install cache."
+        );
     }
 
     fn get_subcommand(args_ptr: &mut &'static [&'static [u8]]) -> &'static [u8] {
@@ -437,37 +443,42 @@ Learn more about these at <magenta>https://bun.com/docs/cli/pm<r>.\n";
             {
                 let mut had_err = false;
 
+                // Not `pm.env`: a committed .env or .npmrc must not pick what gets deleted.
                 let mut process_env = bun_dotenv::Loader::init();
                 process_env.load_process()?;
-                let cache_dir = fetch_cache_directory_path(&mut process_env, None);
-                let mut rm_buf = PathBuffer::uninit();
-                let rm_dir = match Dir::cwd().make_open_path(&cache_dir.path, Default::default()) {
-                    Ok(d) => d,
-                    Err(err) => {
-                        bun_core::pretty_errorln!(
-                            "{} getting cache directory",
-                            crate::Error::from(err).name(),
+                match clear_cache_directory(&mut process_env, &cwd) {
+                    Ok(()) => bun_core::prettyln!("Cleared 'bun install' cache"),
+                    Err(ClearCacheDirectoryError::FilesystemRoot { cache_dir }) => {
+                        Output::err_generic(
+                            "refusing to clear {}: it is the root of a filesystem",
+                            (bun_fmt::quote(&cache_dir),),
                         );
-                        Global::crash();
+                        Self::note_cache_directory_setting();
+                        had_err = true;
                     }
-                };
-                let rm_path = match rm_dir.get_fd_path(&mut rm_buf) {
-                    Ok(p) => &p[..],
-                    Err(err) => {
-                        bun_core::pretty_errorln!(
-                            "{} getting cache directory",
-                            crate::Error::from(err).name(),
+                    Err(ClearCacheDirectoryError::Protected {
+                        cache_dir,
+                        what,
+                        protected,
+                        is_same_dir,
+                    }) => {
+                        Output::err_generic(
+                            "refusing to clear {}: it {} {} ({})",
+                            (
+                                bun_fmt::quote(&cache_dir),
+                                if is_same_dir { "is" } else { "contains" },
+                                what,
+                                bun_fmt::quote(&protected),
+                            ),
                         );
-                        Global::crash();
+                        Self::note_cache_directory_setting();
+                        had_err = true;
                     }
-                };
-                rm_dir.close();
-
-                if let Err(err) = bun_sys::delete_tree_absolute(rm_path) {
-                    Output::err(err, "Could not delete {s}", (bstr::BStr::new(rm_path),));
-                    had_err = true;
+                    Err(ClearCacheDirectoryError::Io { cache_dir, err }) => {
+                        Output::err(err, "could not clear {}", (bun_fmt::quote(&cache_dir),));
+                        had_err = true;
+                    }
                 }
-                bun_core::prettyln!("Cleared 'bun install' cache");
 
                 'bunx: {
                     let tmp = Fs::RealFS::platform_temp_dir();

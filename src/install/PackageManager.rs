@@ -536,6 +536,7 @@ impl Subcommand {
                 | Self::Remove
                 | Self::Prune
                 | Self::Pm
+                | Self::Publish
         )
     }
 

@@ -57,6 +57,27 @@ bun publish --dry-run
   `bun publish` exits with code 0 instead of 1 when the version being published already exists in the registry.
 </ParamField>
 
+<ParamField path="-r, --recursive" type="boolean">
+  Pack every workspace package, then publish them dependencies first. A private package and a version that is already
+  on the registry are skipped. If one pack fails, nothing is published. A rejected package is reported and the run
+  continues, then `bun publish` exits with code 1. Needs a `bun.lock`.
+
+```sh terminal icon="terminal"
+bun publish --recursive
+```
+
+</ParamField>
+
+<ParamField path="-F, --filter" type="string">
+  Publish only the workspace packages that match the pattern (a name glob, a `./path` glob, or a `!` negation). Can be
+  repeated. Uses the same order and skip rules as `--recursive`.
+
+```sh terminal icon="terminal"
+bun publish --filter '@scope/*'
+```
+
+</ParamField>
+
 <ParamField path="--gzip-level" type="string" default="9">
   Specify the level of gzip compression to use when packing the package. Only applies to `bun publish` without a tarball
   path argument. Values range from `0` to `9` (default is `9`).

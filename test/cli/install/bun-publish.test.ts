@@ -1384,6 +1384,7 @@ describe("--tolerate-republish", async () => {
     const pkgJson = {
       name: "republish-test-2",
       version: "1.0.0",
+      scripts: { postpublish: "echo postpublish ran" },
     };
 
     await Promise.all([
@@ -1396,12 +1397,14 @@ describe("--tolerate-republish", async () => {
     let { out, err, exitCode } = await publish(env, packageDir);
     expect(exitCode).toBe(0);
     expect(out).toContain("+ republish-test-2@1.0.0");
+    expect(out).toContain("postpublish ran");
 
-    // Second publish with --tolerate-republish should skip
+    // Second publish with --tolerate-republish should skip: no success line, no publish scripts
     ({ out, err, exitCode } = await publish(env, packageDir, "--tolerate-republish"));
     expect(exitCode).toBe(0);
     expect(err).toBe("warn: Registry already knows about version 1.0.0; skipping.\n");
-    expect(err).not.toContain("error:");
+    expect(out).not.toContain("+ republish-test-2@1.0.0");
+    expect(out).not.toContain("postpublish ran");
   });
 
   test("republishing tarball with --tolerate-republish skips when version exists", async () => {
@@ -1430,6 +1433,442 @@ describe("--tolerate-republish", async () => {
     ({ out, err, exitCode } = await publish(env, packageDir, "./republish-test-3-1.0.0.tgz", "--tolerate-republish"));
     expect(exitCode).toBe(0);
     expect(err).toBe("warn: Registry already knows about version 1.0.0; skipping.\n");
+    expect(out).not.toContain("+ republish-test-3@1.0.0");
+  });
+});
+
+describe("--recursive", () => {
+  // A registry that records every PUT. `known` lists name@version pairs it already has,
+  // `reject` lists names it answers with 403, `unauthorized` lists names it answers with a
+  // 401 that asks for a bearer token (not an OTP).
+  function mockRegistry(opts: { known?: string[]; reject?: string[]; unauthorized?: string[] } = {}) {
+    const puts: string[] = [];
+    const server = Bun.serve({
+      port: 0,
+      async fetch(req) {
+        const name = decodeURIComponent(new URL(req.url).pathname.slice(1));
+        if (req.method === "GET") {
+          const versions: Record<string, object> = {};
+          for (const known of opts.known ?? []) {
+            const [knownName, version] = known.split("@");
+            if (knownName === name) versions[version] = {};
+          }
+          if (Object.keys(versions).length === 0) return new Response("not found", { status: 404 });
+          return Response.json({ name, versions });
+        }
+        if (req.method === "PUT") {
+          const body = await req.json();
+          const version = Object.keys(body.versions)[0];
+          puts.push(`${name}@${version}`);
+          if (opts.reject?.includes(name)) {
+            return Response.json({ error: `${name} is not yours` }, { status: 403 });
+          }
+          if (opts.unauthorized?.includes(name)) {
+            return new Response("unauthorized", {
+              status: 401,
+              headers: { "www-authenticate": 'Bearer realm="mock"' },
+            });
+          }
+          return new Response("OK");
+        }
+        return new Response("unexpected", { status: 500 });
+      },
+    });
+    return {
+      server,
+      puts,
+      [Symbol.dispose]() {
+        server.stop(true);
+      },
+    };
+  }
+
+  // Root plus three members: `b` depends on `a`, `c` depends on `b`, `hidden` is private.
+  // Every member has `prepublishOnly` and `postpublish` scripts that print `<script> <name>`.
+  // `scripts` overrides them per member.
+  async function workspace(
+    prefix: string,
+    registryUrl: string,
+    extra: Record<string, object> = {},
+    scripts: Record<string, Record<string, string>> = {},
+  ) {
+    const { packageDir } = await registry.createTestDir();
+    const pkg = (name: string, dependencies?: Record<string, string>) =>
+      JSON.stringify({
+        name: `${prefix}-${name}`,
+        version: "1.0.0",
+        dependencies,
+        scripts: {
+          prepublishOnly: `echo prepublishOnly ${prefix}-${name}`,
+          postpublish: `echo postpublish ${prefix}-${name}`,
+          ...scripts[name],
+        },
+      });
+    await Promise.all([
+      write(
+        join(packageDir, "bunfig.toml"),
+        Bun.TOML.stringify({ install: { cache: false, registry: { url: registryUrl, token: "token" } } }),
+      ),
+      write(
+        join(packageDir, "package.json"),
+        JSON.stringify({ name: "root", private: true, workspaces: ["packages/*"] }),
+      ),
+      write(join(packageDir, "packages", "a", "package.json"), pkg("a")),
+      write(join(packageDir, "packages", "b", "package.json"), pkg("b", { [`${prefix}-a`]: "workspace:*" })),
+      write(join(packageDir, "packages", "c", "package.json"), pkg("c", { [`${prefix}-b`]: "workspace:^" })),
+      write(
+        join(packageDir, "packages", "hidden", "package.json"),
+        JSON.stringify({ name: `${prefix}-hidden`, version: "1.0.0", private: true }),
+      ),
+      ...Object.entries(extra).map(([dir, json]) => write(join(packageDir, dir, "package.json"), JSON.stringify(json))),
+    ]);
+    await runBunInstall(env, packageDir);
+    return packageDir;
+  }
+
+  test("publishes dependencies before dependents and skips private packages", async () => {
+    using mock = mockRegistry();
+    const packageDir = await workspace("rec-order", `http://localhost:${mock.server.port}/`);
+
+    const { out, err, exitCode } = await publish(env, packageDir, "--recursive");
     expect(err).not.toContain("error:");
+    expect(out).toContain("skipping private package");
+    expect(mock.puts).toEqual(["rec-order-a@1.0.0", "rec-order-b@1.0.0", "rec-order-c@1.0.0"]);
+    expect(out.match(/ \+ rec-order-\w+@1\.0\.0/g)).toEqual([
+      " + rec-order-a@1.0.0",
+      " + rec-order-b@1.0.0",
+      " + rec-order-c@1.0.0",
+    ]);
+    expect(exitCode).toBe(0);
+  });
+
+  test("skips versions the registry already has", async () => {
+    using mock = mockRegistry({ known: ["rec-skip-a@1.0.0", "rec-skip-c@1.0.0"] });
+    const packageDir = await workspace("rec-skip", `http://localhost:${mock.server.port}/`);
+
+    const { out, err, exitCode } = await publish(env, packageDir, "-r");
+    expect(err).not.toContain("error:");
+    expect(err.match(/warn: Registry already knows about version 1\.0\.0; skipping\./g)).toHaveLength(2);
+    expect(mock.puts).toEqual(["rec-skip-b@1.0.0"]);
+    // A skipped package gets no success line and runs no publish scripts.
+    expect(out.match(/ \+ rec-skip-\w+@1\.0\.0/g)).toEqual([" + rec-skip-b@1.0.0"]);
+    expect(err.match(/\$ echo prepublishOnly rec-skip-\w+/g)).toEqual(["$ echo prepublishOnly rec-skip-b"]);
+    expect(err.match(/\$ echo postpublish rec-skip-\w+/g)).toEqual(["$ echo postpublish rec-skip-b"]);
+    expect(exitCode).toBe(0);
+  });
+
+  test("a dependent of a dependency cycle comes after the cycle", async () => {
+    using mock = mockRegistry();
+    // `x` and `y` depend on each other, `after` depends on `x`. Lockfile ids follow name
+    // order, so `after` has the lowest id of the three.
+    const packageDir = await workspace("rec-cycle", `http://localhost:${mock.server.port}/`, {
+      "packages/x": { name: "rec-cycle-x", version: "1.0.0", dependencies: { "rec-cycle-y": "workspace:*" } },
+      "packages/y": { name: "rec-cycle-y", version: "1.0.0", dependencies: { "rec-cycle-x": "workspace:*" } },
+      "packages/after": { name: "rec-cycle-after", version: "1.0.0", dependencies: { "rec-cycle-x": "workspace:*" } },
+    });
+
+    const { err, exitCode } = await publish(
+      env,
+      packageDir,
+      "--filter",
+      "rec-cycle-x",
+      "--filter",
+      "rec-cycle-y",
+      "--filter",
+      "rec-cycle-after",
+    );
+    expect(err).not.toContain("error:");
+    expect(mock.puts).toHaveLength(3);
+    expect(mock.puts.indexOf("rec-cycle-after@1.0.0")).toBeGreaterThan(mock.puts.indexOf("rec-cycle-x@1.0.0"));
+    expect(exitCode).toBe(0);
+  });
+
+  test("packs everything before it publishes anything", async () => {
+    using mock = mockRegistry();
+    // `c` is packed last. Its failing prepublishOnly must keep `a` and `b` off the registry.
+    const packageDir = await workspace(
+      "rec-packfail",
+      `http://localhost:${mock.server.port}/`,
+      {},
+      { c: { prepublishOnly: "exit 3" } },
+    );
+
+    const { out, err, exitCode } = await publish(env, packageDir, "-r");
+    expect(err).toContain('script "prepublishOnly" exited with code 3');
+    expect(err).toContain("error: failed to pack rec-packfail-c, nothing was published");
+    expect(err).toMatch(/\$ echo prepublishOnly rec-packfail-a[\s\S]*\$ echo prepublishOnly rec-packfail-b/);
+    expect(mock.puts).toEqual([]);
+    expect(out).not.toContain(" + rec-packfail-");
+    expect(exitCode).toBe(3);
+  });
+
+  test("continues after a failing postpublish script", async () => {
+    using mock = mockRegistry();
+    const packageDir = await workspace(
+      "rec-script",
+      `http://localhost:${mock.server.port}/`,
+      {},
+      { b: { postpublish: "exit 4" } },
+    );
+
+    const { out, err, exitCode } = await publish(env, packageDir, "-r");
+    expect(err).toContain('script "postpublish" exited with code 4');
+    expect(err).toContain("error: failed to publish 1 of 3 packages: rec-script-b");
+    expect(mock.puts).toEqual(["rec-script-a@1.0.0", "rec-script-b@1.0.0", "rec-script-c@1.0.0"]);
+    expect(out.match(/ \+ rec-script-\w+@1\.0\.0/g)).toEqual([
+      " + rec-script-a@1.0.0",
+      " + rec-script-b@1.0.0",
+      " + rec-script-c@1.0.0",
+    ]);
+    expect(exitCode).toBe(1);
+  });
+
+  test.skipIf(isWindows)("a lifecycle script that was killed publishes nothing", async () => {
+    using mock = mockRegistry();
+    // SIGKILL, not SIGSEGV: a core file from the shell would fail the CI job.
+    const packageDir = await workspace(
+      "rec-signal",
+      `http://localhost:${mock.server.port}/`,
+      {},
+      { a: { prepack: "kill -KILL $$" } },
+    );
+
+    const { out, err, exitCode } = await publish(env, packageDir, "-r");
+    expect(err).toContain('script "prepack" was terminated by signal');
+    expect(err).toContain("error: failed to pack rec-signal-a, nothing was published");
+    expect(mock.puts).toEqual([]);
+    expect(out).not.toContain(" + rec-signal-");
+    expect(exitCode).toBe(137);
+  });
+
+  test.skipIf(isWindows)("stops the run when a lifecycle script is told to stop", async () => {
+    using mock = mockRegistry();
+    const packageDir = await workspace(
+      "rec-term",
+      `http://localhost:${mock.server.port}/`,
+      {},
+      { a: { prepack: "kill -TERM $$" } },
+    );
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "publish", "-r"],
+      cwd: packageDir,
+      env,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [, err] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(err).toContain('script "prepack" was terminated by signal SIGTERM');
+    expect(err).not.toContain("failed to publish");
+    expect(mock.puts).toEqual([]);
+    expect(proc.signalCode).toBe("SIGTERM");
+  });
+
+  test("continues after a package whose scope has no credentials", async () => {
+    using mock = mockRegistry();
+    const packageDir = await workspace("rec-noauth", `http://localhost:${mock.server.port}/`, {
+      "packages/scoped": { name: "@rec-noauth/scoped", version: "1.0.0" },
+    });
+    await write(
+      join(packageDir, "bunfig.toml"),
+      Bun.TOML.stringify({
+        install: {
+          cache: false,
+          registry: { url: `http://localhost:${mock.server.port}/`, token: "token" },
+          scopes: { "@rec-noauth": { url: `http://localhost:${mock.server.port}/` } },
+        },
+      }),
+    );
+
+    const { err, exitCode } = await publish(env, packageDir, "-r");
+    expect(err).toContain("error: missing authentication");
+    expect(err).toContain("error: failed to publish 1 of 4 packages: @rec-noauth/scoped");
+    expect(mock.puts).toEqual(["rec-noauth-a@1.0.0", "rec-noauth-b@1.0.0", "rec-noauth-c@1.0.0"]);
+    expect(exitCode).toBe(1);
+  });
+
+  test("rejects a tarball path", async () => {
+    using mock = mockRegistry();
+    const packageDir = await workspace("rec-tarball", `http://localhost:${mock.server.port}/`);
+
+    const { err, exitCode } = await publish(env, packageDir, "-r", "./some.tgz");
+    expect(err).toContain("error: --recursive and --filter cannot be used with a tarball path");
+    expect(mock.puts).toEqual([]);
+    expect(exitCode).toBe(1);
+  });
+
+  test("continues after a 401 that does not ask for an OTP", async () => {
+    using mock = mockRegistry({ unauthorized: ["rec-auth-a"] });
+    const packageDir = await workspace("rec-auth", `http://localhost:${mock.server.port}/`);
+
+    const { out, err, exitCode } = await publish(env, packageDir, "-r");
+    expect(err).toContain('error: unable to authenticate, need: Bearer realm="mock"');
+    expect(err).toContain("error: failed to publish 1 of 3 packages: rec-auth-a");
+    expect(out.match(/ \+ rec-auth-\w+@1\.0\.0/g)).toEqual([" + rec-auth-b@1.0.0", " + rec-auth-c@1.0.0"]);
+    expect(mock.puts).toEqual(["rec-auth-a@1.0.0", "rec-auth-b@1.0.0", "rec-auth-c@1.0.0"]);
+    expect(exitCode).toBe(1);
+  });
+
+  test("--filter publishes only the matching packages", async () => {
+    using mock = mockRegistry();
+    const packageDir = await workspace("rec-filter", `http://localhost:${mock.server.port}/`);
+
+    const { err, exitCode } = await publish(env, packageDir, "--filter", "rec-filter-b", "--filter", "./packages/a");
+    expect(err).not.toContain("error:");
+    expect(mock.puts).toEqual(["rec-filter-a@1.0.0", "rec-filter-b@1.0.0"]);
+    expect(exitCode).toBe(0);
+  });
+
+  test("--filter that matches nothing exits 1", async () => {
+    using mock = mockRegistry();
+    const packageDir = await workspace("rec-nomatch", `http://localhost:${mock.server.port}/`);
+
+    const { err, exitCode } = await publish(env, packageDir, "--filter", "does-not-exist");
+    expect(err).toContain('No workspace packages matched the filter "does-not-exist"');
+    expect(mock.puts).toEqual([]);
+    expect(exitCode).toBe(1);
+  });
+
+  test("--dry-run publishes nothing", async () => {
+    using mock = mockRegistry();
+    const packageDir = await workspace("rec-dry", `http://localhost:${mock.server.port}/`);
+
+    const { out, err, exitCode } = await publish(env, packageDir, "-r", "--dry-run");
+    expect(err).not.toContain("error:");
+    expect(out.match(/ \+ rec-dry-\w+@1\.0\.0 \(dry-run\)/g)).toHaveLength(3);
+    expect(mock.puts).toEqual([]);
+    expect(exitCode).toBe(0);
+  });
+
+  test("continues after a rejected package and exits 1", async () => {
+    using mock = mockRegistry({ reject: ["rec-fail-b"] });
+    const packageDir = await workspace("rec-fail", `http://localhost:${mock.server.port}/`);
+
+    const { out, err, exitCode } = await publish(env, packageDir, "-r");
+    expect(err).toContain("rec-fail-b is not yours");
+    expect(err).toContain("error: failed to publish 1 of 3 packages: rec-fail-b");
+    expect(out).toContain(" + rec-fail-a@1.0.0");
+    expect(out).toContain(" + rec-fail-c@1.0.0");
+    expect(out).not.toContain(" + rec-fail-b@1.0.0");
+    expect(mock.puts).toEqual(["rec-fail-a@1.0.0", "rec-fail-b@1.0.0", "rec-fail-c@1.0.0"]);
+    expect(exitCode).toBe(1);
+  });
+
+  test("each package uses its own publishConfig", async () => {
+    const tags: Record<string, string> = {};
+    using tagRegistry = Bun.serve({
+      port: 0,
+      async fetch(req) {
+        if (req.method === "GET") return new Response("not found", { status: 404 });
+        const body = await req.json();
+        tags[body.name] = Object.keys(body["dist-tags"])[0];
+        return new Response("OK");
+      },
+    });
+    const packageDir = await workspace("rec-tag", `http://localhost:${tagRegistry.port}/`, {
+      "packages/next": { name: "rec-tag-next", version: "1.0.0", publishConfig: { tag: "next" } },
+    });
+
+    const { err, exitCode } = await publish(env, packageDir, "-r");
+    expect(err).not.toContain("error:");
+    expect(tags).toEqual({
+      "rec-tag-a": "latest",
+      "rec-tag-b": "latest",
+      "rec-tag-c": "latest",
+      "rec-tag-next": "next",
+    });
+    expect(exitCode).toBe(0);
+  });
+
+  test("bin entries resolve against the member directory", async () => {
+    const bins: Record<string, unknown> = {};
+    using binRegistry = Bun.serve({
+      port: 0,
+      async fetch(req) {
+        if (req.method === "GET") return new Response("not found", { status: 404 });
+        const body = await req.json();
+        bins[body.name] = body.versions["1.0.0"].bin;
+        return new Response("OK");
+      },
+    });
+    const packageDir = await workspace("rec-bin", `http://localhost:${binRegistry.port}/`, {
+      "packages/tool": { name: "rec-bin-tool", version: "1.0.0", directories: { bin: "bins" } },
+      "packages/cli": { name: "rec-bin-cli", version: "1.0.0", bin: "cli.js" },
+    });
+    // The root has a `bins` directory too. It must not leak into the member's manifest.
+    await Promise.all([
+      write(join(packageDir, "bins", "root.js"), "#!/usr/bin/env bun\n"),
+      write(join(packageDir, "packages", "tool", "bins", "tool.js"), "#!/usr/bin/env bun\n"),
+      write(join(packageDir, "packages", "cli", "cli.js"), "#!/usr/bin/env bun\n"),
+    ]);
+
+    const { err, exitCode } = await publish(env, packageDir, "--filter", "rec-bin-tool", "--filter", "rec-bin-cli");
+    expect(err).not.toContain("error:");
+    expect(err).not.toContain("does not exist");
+    expect(bins).toEqual({
+      "rec-bin-tool": { "tool.js": "bins/tool.js" },
+      "rec-bin-cli": { "rec-bin-cli": "cli.js" },
+    });
+    expect(exitCode).toBe(0);
+  });
+
+  test("without a lockfile asks for bun install", async () => {
+    using mock = mockRegistry();
+    using dir = tempDir("rec-nolock", {
+      "bunfig.toml": Bun.TOML.stringify({
+        install: { cache: false, registry: { url: `http://localhost:${mock.server.port}/`, token: "token" } },
+      }),
+      "package.json": JSON.stringify({ name: "root", private: true, workspaces: ["packages/*"] }),
+      "packages/a/package.json": JSON.stringify({ name: "rec-nolock-a", version: "1.0.0" }),
+    });
+
+    const { err, exitCode } = await publish(env, String(dir), "-r");
+    expect(err).toContain("error: missing lockfile, nothing to publish");
+    expect(mock.puts).toEqual([]);
+    expect(exitCode).toBe(1);
+  });
+
+  test("published workspace dependencies resolve after install", async () => {
+    const { packageDir } = await registry.createTestDir();
+    const bunfig = await registry.authBunfig("recursive");
+    await Promise.all([
+      rm(join(registry.packagesPath, "publish-pkg-recursive-a"), { recursive: true, force: true }),
+      rm(join(registry.packagesPath, "publish-pkg-recursive-b"), { recursive: true, force: true }),
+      write(join(packageDir, "bunfig.toml"), bunfig),
+      write(
+        join(packageDir, "package.json"),
+        JSON.stringify({ name: "root", private: true, workspaces: ["packages/*"] }),
+      ),
+      write(
+        join(packageDir, "packages", "a", "package.json"),
+        JSON.stringify({ name: "publish-pkg-recursive-a", version: "1.0.0" }),
+      ),
+      write(
+        join(packageDir, "packages", "b", "package.json"),
+        JSON.stringify({
+          name: "publish-pkg-recursive-b",
+          version: "1.0.0",
+          dependencies: { "publish-pkg-recursive-a": "workspace:*" },
+        }),
+      ),
+    ]);
+    await runBunInstall(env, packageDir);
+
+    const { err, exitCode } = await publish(env, packageDir, "-r");
+    expect(err).not.toContain("error:");
+    expect(exitCode).toBe(0);
+
+    using consumer = tempDir("recursive-consumer", {
+      "bunfig.toml": bunfig,
+      "package.json": JSON.stringify({ name: "consumer", dependencies: { "publish-pkg-recursive-b": "1.0.0" } }),
+    });
+    const consumerDir = String(consumer);
+    await runBunInstall(env, consumerDir);
+    expect(await file(join(consumerDir, "node_modules", "publish-pkg-recursive-b", "package.json")).json()).toEqual({
+      name: "publish-pkg-recursive-b",
+      version: "1.0.0",
+      dependencies: { "publish-pkg-recursive-a": "1.0.0" },
+    });
+    expect(await exists(join(consumerDir, "node_modules", "publish-pkg-recursive-a", "package.json"))).toBeTrue();
   });
 });

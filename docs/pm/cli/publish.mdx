@@ -97,6 +97,30 @@ Exit with code 0 instead of 1 if the package version already exists. Useful in C
 bun publish --tolerate-republish
 ```
 
+### `--recursive`
+
+In a workspace, `--recursive` (`-r`) publishes every workspace package. The run has two phases. First every package is packed, with its `prepublishOnly`, `prepack` and `prepare` scripts. If one pack fails, nothing is published. Then the tarballs are published in dependency order: a package comes after the workspace packages it depends on. `workspace:` and `catalog:` versions are rewritten in each published `package.json`, as with a single `bun publish`.
+
+```sh terminal icon="terminal"
+bun publish --recursive
+```
+
+Some packages are skipped:
+
+- A package with `"private": true` in its `package.json`.
+- A package whose `name@version` is already on the registry. This makes a re-run after a partial failure safe.
+
+If the registry rejects a package, or its `publish` or `postpublish` script fails, `bun publish` reports the error, continues with the next package, and exits with code 1 at the end. `--dry-run`, `--tag`, `--access` and `--otp` apply to every package in the run. A `publishConfig` in a package's `package.json` applies to that package only. `--recursive` reads the workspace from `bun.lock`, so run `bun install` first.
+
+### `--filter`
+
+Publish only the workspace packages that match a pattern. `--filter` accepts the same patterns as `bun install --filter`: a package name glob, a path glob starting with `./`, or a negation starting with `!`. It can be repeated. Packages are published in dependency order, and the skip rules of `--recursive` apply.
+
+```sh terminal icon="terminal"
+bun publish --filter '@scope/*'
+bun publish --filter ./packages/core --filter ./packages/cli
+```
+
 ### `--gzip-level`
 
 Set the gzip compression level used when packing the package, from `0` to `9` (default `9`). Only applies to `bun publish` without a tarball path argument.

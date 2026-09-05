@@ -3941,6 +3941,15 @@ JSC::JSObject* GlobalObject::moduleLoaderCreateImportMetaProperties(JSGlobalObje
     JSModuleRecord* record,
     RefPtr<JSC::ScriptFetcher>)
 {
+    // vm.SourceTextModule: Node leaves import.meta empty unless options.initializeImportMeta fills it.
+    if (record) {
+        if (auto* provider = record->sourceCode().provider()) {
+            auto* fetcher = provider->sourceOrigin().fetcher();
+            if (fetcher && fetcher->fetcherType() == JSC::ScriptFetcher::Type::NodeVM)
+                return JSC::constructEmptyObject(globalObject->vm(), globalObject->nullPrototypeObjectStructure());
+        }
+    }
+
     return Zig::ImportMetaObject::create(globalObject, key);
 }
 

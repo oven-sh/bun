@@ -671,6 +671,26 @@ describe("pathological bracket inputs", () => {
     expect(Markdown.html(`[${label1000}]: /url\n\n[${label1000}]\n`)).not.toContain("<a href=");
   });
 
+  // Emphasis delimiters inside a wiki link target used to pair with
+  // delimiters outside the construct; the emit walk renders the wiki link as
+  // a unit, so one half of each pair was never emitted, producing unbalanced
+  // HTML (issue #39492). Bracket constructs resolve before emphasis, so the
+  // delimiters stay literal.
+  test("delimiters inside a wiki link target do not pair with delimiters outside", () => {
+    const o = { wikiLinks: true };
+    expect(Markdown.html("*a [[b*|c]] d\n", o)).toBe('<p>*a <x-wikilink data-target="b*">c</x-wikilink> d</p>\n');
+    expect(Markdown.html("[[a *b|c]] d* e\n", o)).toBe('<p><x-wikilink data-target="a *b">c</x-wikilink> d* e</p>\n');
+    expect(Markdown.html("**a [[b**|c]]\n", o)).toBe('<p>**a <x-wikilink data-target="b**">c</x-wikilink></p>\n');
+    expect(Markdown.html("_a [[b_|c]] d\n", o)).toBe('<p>_a <x-wikilink data-target="b_">c</x-wikilink> d</p>\n');
+    expect(Markdown.html("~a [[b~|c]] d\n", { wikiLinks: true, strikethrough: true })).toBe(
+      '<p>~a <x-wikilink data-target="b~">c</x-wikilink> d</p>\n',
+    );
+    // Emphasis fully inside the label, or fully outside the construct,
+    // still resolves.
+    expect(Markdown.html("[[a|*b* c]]\n", o)).toBe('<p><x-wikilink data-target="a"><em>b</em> c</x-wikilink></p>\n');
+    expect(Markdown.html("*x [[a]] y*\n", o)).toBe('<p><em>x <x-wikilink data-target="a">a</x-wikilink> y</em></p>\n');
+  });
+
   test("wiki link bracket nesting is capped", () => {
     const wiki = (depth: number) => "[[t|" + "[".repeat(depth) + "x" + "]".repeat(depth) + "]]\n";
     // Within the cap the whole construct is one wiki link targeting "t".

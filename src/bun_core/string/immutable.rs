@@ -5,7 +5,7 @@ use core::cmp::Ordering;
 
 use crate::BoundedArray;
 use crate::CrateError as Error;
-use bun_alloc::AllocError;
+use bun_alloc::{AllocError, Arena, ArenaVec, ArenaVecExt as _};
 use bun_highway as highway;
 use bun_simdutf_sys::simdutf;
 
@@ -2622,6 +2622,29 @@ pub fn to_utf16_alloc(
     Ok(Some(out))
 }
 
+/// U+FFFD placement matches `TextDecoder`; `None` means `bytes` is already well-formed (no copy).
+pub fn to_well_formed_utf8_in<'a>(bytes: &[u8], arena: &'a Arena) -> Option<&'a [u8]> {
+    if is_valid_utf8(bytes) {
+        return None;
+    }
+    let mut out = ArenaVec::<u8>::with_capacity_in(bytes.len(), arena);
+    let mut remaining = bytes;
+    while let Some(i) = first_non_ascii_usize(remaining) {
+        out.extend_from_slice(&remaining[..i]);
+        remaining = &remaining[i..];
+        let replacement = unicode_draft::convert_utf8_bytes_into_utf16(remaining);
+        let len = (replacement.len as usize).max(1);
+        if replacement.fail {
+            out.extend_from_slice(b"\xEF\xBF\xBD");
+        } else {
+            out.extend_from_slice(&remaining[..len]);
+        }
+        remaining = &remaining[len..];
+    }
+    out.extend_from_slice(remaining);
+    Some(out.into_bump_slice())
+}
+
 /// WTF-8 → UTF-16LE iff `bytes` contains any non-ASCII byte; pure-ASCII inputs return `None`.
 pub fn wtf8_to_utf16_alloc(bytes: &[u8]) -> Option<Vec<u16>> {
     let first_non_ascii = first_non_ascii_usize(bytes)?;
@@ -2773,5 +2796,49 @@ mod tests {
         assert_eq!(out, &[0xD800][..]);
         let out = super::convert_utf8_to_utf16_in_buffer(&mut buf, b"\xC3\xA9\xF0\x9F\x98\x80");
         assert_eq!(out, &[0x00E9, 0xD83D, 0xDE00][..]);
+    }
+
+    #[test]
+    fn to_well_formed_utf8_in_keeps_well_formed_input() {
+        let arena = bun_alloc::Arena::new();
+        let fixed = |input: &[u8]| super::to_well_formed_utf8_in(input, &arena);
+        assert_eq!(fixed(b""), None);
+        assert_eq!(fixed(b"plain ascii\r\n\0"), None);
+        assert_eq!(
+            fixed(b"\xC3\xA9\xE2\x82\xAC\xF0\x9F\x98\x80\xEF\xBF\xBD"),
+            None
+        );
+    }
+
+    #[test]
+    fn to_well_formed_utf8_in_replaces_each_maximal_subpart() {
+        const R: &[u8] = b"\xEF\xBF\xBD";
+        let arena = bun_alloc::Arena::new();
+        let fixed = |input: &[u8]| super::to_well_formed_utf8_in(input, &arena).unwrap();
+        let cat = |parts: &[&[u8]]| parts.concat();
+
+        // bad lead byte, then ASCII
+        assert_eq!(fixed(b"\xE2AB"), cat(&[R, b"AB"]));
+        assert_eq!(fixed(b"\xF5A\xFFB"), cat(&[R, b"A", R, b"B"]));
+        // lone continuation byte, invalid lead bytes
+        assert_eq!(fixed(b"\x80A"), cat(&[R, b"A"]));
+        assert_eq!(fixed(b"\xC0\xAFA"), cat(&[R, R, b"A"]));
+        assert_eq!(fixed(b"\xC1\xBFA"), cat(&[R, R, b"A"]));
+        // surrogate, overlong, above U+10FFFF: every byte replaced separately
+        assert_eq!(fixed(b"\xED\xA0\x80A"), cat(&[R, R, R, b"A"]));
+        assert_eq!(fixed(b"\xE0\x80\x80A"), cat(&[R, R, R, b"A"]));
+        assert_eq!(fixed(b"\xF0\x80\x80\x80A"), cat(&[R, R, R, R, b"A"]));
+        assert_eq!(fixed(b"\xF4\x90\x80\x80A"), cat(&[R, R, R, R, b"A"]));
+        // truncated sequence: one replacement for the whole prefix
+        assert_eq!(fixed(b"\xE2\x82A"), cat(&[R, b"A"]));
+        assert_eq!(fixed(b"\xF0\x9FA"), cat(&[R, b"A"]));
+        assert_eq!(fixed(b"\xF0\x9F\x98A"), cat(&[R, b"A"]));
+        assert_eq!(fixed(b"A\xE2"), cat(&[b"A", R]));
+        assert_eq!(fixed(b"A\xE2\x82"), cat(&[b"A", R]));
+        // well-formed neighbours are copied through
+        assert_eq!(
+            fixed(b"a\xC3\xA9\xFF\xF0\x9F\x98\x80z"),
+            cat(&[b"a\xC3\xA9", R, b"\xF0\x9F\x98\x80z"])
+        );
     }
 }

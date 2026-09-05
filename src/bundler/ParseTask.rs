@@ -34,7 +34,7 @@ use crate::bundle_v2::{self as bundler, BundleV2};
 use crate::cache::{Entry as CacheEntry, ExternalFreeFunction};
 use crate::html_scanner::HTMLScanner;
 use crate::options::{self, Loader};
-use crate::transpiler::Transpiler;
+use crate::transpiler::{Transpiler, decode_utf8_file_contents};
 use crate::{ContentHasher, UseDirective, perf, target_from_hashbang};
 use bun_resolver::fs::PathResolverExt as _;
 use bun_resolver::{self as _resolver, Resolver};
@@ -985,7 +985,7 @@ pub mod parse_worker {
                 } else {
                     Expr::init(
                         E::String {
-                            data: source.contents().into(),
+                            data: decode_utf8_file_contents(source.contents(), bump).into(),
                             ..Default::default()
                         },
                         Loc { start: 0 },
@@ -1013,7 +1013,8 @@ pub mod parse_worker {
                 return Ok(ast);
             }
             Loader::Md => {
-                let html = match bun_md::root::render_to_html(&source.contents) {
+                let markdown = decode_utf8_file_contents(source.contents(), bump);
+                let html = match bun_md::root::render_to_html(markdown) {
                     Ok(h) => h,
                     Err(_) => {
                         let _ = log.add_error(

@@ -510,7 +510,7 @@ spawnSync echo hi    1.47 ms/iter     (1.14 ms … 2.64 ms)   1.57 ms   2.37 ms 
 
 The following is a reference of the Spawn API and types. The real types have complex generics to strongly type the `Subprocess` streams with the options passed to `Bun.spawn` and `Bun.spawnSync`. For full details, see [bun.d.ts](https://github.com/oven-sh/bun/blob/main/packages/bun-types/bun.d.ts).
 
-```ts See Typescript Definitions expandable
+```ts See TypeScript Definitions expandable
 interface Bun {
   spawn(command: string[], options?: SpawnOptions.OptionsObject): Subprocess;
   spawnSync(command: string[], options?: SpawnOptions.OptionsObject): SyncSubprocess;

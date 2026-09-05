@@ -754,16 +754,12 @@ impl FileReader {
         self.pending_value
             .with_mut(|p| p.clear_without_deallocation());
         self.pending_view.set(&mut []);
-        // Pin across `run()`: a re-entrant cancel() reaches on_reader_done, which drops the across-read ref and lets a GC free this box while the io caller still holds `&mut` into it.
-        let parent = self.parent();
+        // A re-entrant cancel() inside `run()` reaches on_reader_done, which drops the across-read ref and lets a GC free this box while the io caller still holds `&mut` into it.
         // SAFETY: see `parent()`.
-        unsafe { (*parent).increment_count() };
+        let _pin = unsafe { SourcePin::new(self.parent()) };
         self.pending.with_mut(|p| p.run());
         // Re-entrant cancel or a nested pull that read to EOF closed the reader; tell the io caller to stop so it does not re-read the captured fd.
-        let ret = ret && !self.done.get() && !self.reader().is_done();
-        // SAFETY: see `parent()`; the pin keeps the count >= 1, so this never frees. `self` is not accessed after.
-        let _ = unsafe { Source::decrement_count(parent) };
-        ret
+        ret && !self.done.get() && !self.reader().is_done()
     }
 
     pub(crate) fn on_pull(&self, buffer: &'static mut [u8], array: JSValue) -> streams::Result {
@@ -884,12 +880,11 @@ impl FileReader {
 
     pub(crate) fn on_reader_done(&self) {
         bun_core::scoped_log!(FileReader, "onReaderDone()");
-        // Pin across `p.run()` and `on_close()`: both can run user JS, and the
-        // `self.buffered` / `waiting_for_on_reader_done` reads below must not
-        // land on a freed box. Same bracket as on_read_chunk / on_reader_error.
+        // `p.run()` and `on_close()` can run user JS, and the `self.buffered` /
+        // `waiting_for_on_reader_done` reads below must not land on a freed box.
         let parent = self.parent();
         // SAFETY: see `parent()`.
-        unsafe { (*parent).increment_count() };
+        let _pin = unsafe { SourcePin::new(parent) };
         let sink = *self.sink.get();
         if sink.is_some() {
             self.consume_reader_buffer();
@@ -927,13 +922,9 @@ impl FileReader {
         }
         if self.waiting_for_on_reader_done.get() {
             self.waiting_for_on_reader_done.set(false);
-            // SAFETY: see `parent()`; the pin above keeps the count > 0.
+            // SAFETY: see `parent()`; `_pin` keeps the count > 0.
             let _ = unsafe { Source::decrement_count(parent) };
         }
-        // SAFETY: see `parent()`; releases the pin. Tail position — `self` (a
-        // field of `*parent`) is not accessed after this call, which may free
-        // the allocation when the refcount hits zero.
-        let _ = unsafe { Source::decrement_count(parent) };
     }
 
     pub(crate) fn on_reader_error(&self, err: sys::Error) {
@@ -942,12 +933,11 @@ impl FileReader {
             self.buffered.set(Vec::new());
         }
 
-        // Pin across `sink.end()` / `p.run()`: they run user JS, which can
-        // reach on_reader_done and drop the across-read ref before the
-        // `waiting_for_on_reader_done` read below.
+        // `sink.end()` and `p.run()` run user JS, which can reach on_reader_done
+        // and drop the across-read ref before the read of it below.
         let parent = self.parent();
         // SAFETY: see `parent()`.
-        unsafe { (*parent).increment_count() };
+        let _pin = unsafe { SourcePin::new(parent) };
 
         let sink = *self.sink.get();
         if sink.is_some() {
@@ -966,13 +956,10 @@ impl FileReader {
 
         if self.waiting_for_on_reader_done.get() && !self.done.get() {
             self.waiting_for_on_reader_done.set(false);
-            // SAFETY: see `parent()`; the pin above keeps the count > 0.
+            // SAFETY: see `parent()`; `_pin` keeps the count > 0.
             let _ = unsafe { Source::decrement_count(parent) };
         }
         self.close_after_error();
-        // SAFETY: see `parent()`; the pin keeps the count >= 1, so this never
-        // frees. Tail call, `self` is not accessed after.
-        let _ = unsafe { Source::decrement_count(parent) };
     }
 
     /// An errored stream is never cancelled, so release the poll and the fd here.
@@ -1046,6 +1033,28 @@ impl FileReader {
 }
 
 pub type Source = readable_stream::NewSource<FileReader>;
+
+/// Holds a ref on the `Source` that embeds a `FileReader` while a dispatch runs
+/// user JS. Dropping it releases the ref and can free the source, so a pin must
+/// outlive every use of the reader it protects.
+struct SourcePin(*mut Source);
+
+impl SourcePin {
+    /// # Safety
+    /// `parent` is the live `Source` that embeds the caller.
+    unsafe fn new(parent: *mut Source) -> Self {
+        // SAFETY: fn contract.
+        unsafe { (*parent).increment_count() };
+        Self(parent)
+    }
+}
+
+impl Drop for SourcePin {
+    fn drop(&mut self) {
+        // SAFETY: balances the ref taken in `new`.
+        let _ = unsafe { Source::decrement_count(self.0) };
+    }
+}
 
 // SAFETY: `FileReader` is always the `context` field of a heap-allocated
 // `Source`. `parent` is the `raw` arm because the ref-count pin

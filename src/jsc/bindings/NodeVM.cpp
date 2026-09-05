@@ -1133,13 +1133,18 @@ bool NodeVMGlobalObject::put(JSCell* cell, JSGlobalObject* globalObject, Propert
     auto* sandbox = thisObject->m_sandbox.get();
 
     VM& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     JSValue thisValue = slot.thisValue();
     bool isContextualStore = thisValue != JSValue(globalObject);
     if (auto* proxy = dynamicDowncast<JSGlobalProxy>(thisValue); proxy && proxy->target() == globalObject) {
         isContextualStore = false;
     }
-    bool isDeclaredOnGlobalObject = slot.type() == JSC::PutPropertySlot::NewProperty;
-    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    // Qualified call: skip this class' sandbox interception.
+    PropertySlot globalSlot(thisObject, PropertySlot::InternalMethodType::GetOwnProperty, nullptr);
+    bool isDeclaredOnGlobalObject = thisObject->JSC::JSGlobalObject::getOwnPropertySlot(thisObject, globalObject, propertyName, globalSlot);
+    RETURN_IF_EXCEPTION(scope, false);
+
     PropertySlot getter(sandbox, PropertySlot::InternalMethodType::Get, nullptr);
     bool isDeclaredOnSandbox = sandbox->getPropertySlot(globalObject, propertyName, getter);
     RETURN_IF_EXCEPTION(scope, false);
@@ -1151,7 +1156,7 @@ bool NodeVMGlobalObject::put(JSCell* cell, JSGlobalObject* globalObject, Propert
         RELEASE_AND_RETURN(scope, Base::put(cell, globalObject, propertyName, value, slot));
     }
 
-    if (!isDeclared && value.isSymbol()) {
+    if (!isDeclared && propertyName.isSymbol()) {
         RELEASE_AND_RETURN(scope, Base::put(cell, globalObject, propertyName, value, slot));
     }
 
@@ -1168,6 +1173,11 @@ bool NodeVMGlobalObject::put(JSCell* cell, JSGlobalObject* globalObject, Propert
     if (!result) return false;
 
     if (isDeclaredOnSandbox && getter.isAccessor() and (getter.attributes() & PropertyAttribute::DontEnum) == 0) {
+        return true;
+    }
+
+    // Only mirror onto the global object when it already declares the property.
+    if (!isDeclaredOnGlobalObject) {
         return true;
     }
 
@@ -1372,31 +1382,8 @@ bool NodeVMGlobalObject::defineOwnProperty(JSObject* cell, JSGlobalObject* globa
         RELEASE_AND_RETURN(scope, Base::defineOwnProperty(cell, globalObject, propertyName, descriptor, shouldThrow));
     }
 
-    // Dispatch through the method table so exotic sandboxes (e.g. Proxy objects)
-    // observe the [[DefineOwnProperty]] exactly once, like V8's contextify
-    // PropertyDefinerCallback.
-    if (descriptor.isAccessorDescriptor()) {
-        RELEASE_AND_RETURN(scope, contextifiedObject->methodTable()->defineOwnProperty(contextifiedObject, contextifiedObject->globalObject(), propertyName, descriptor, shouldThrow));
-    }
-
-    // The lookup above may have filled `slot` as cacheable (e.g. a lazy global
-    // stored as a CustomGetterSetter on a non-dictionary structure). Reusing it
-    // here would trip PropertySlot's CachingDisallowed asserts if the sandbox
-    // resolves the same name via setGetterSlot/setCustom/setValue(3-arg), which
-    // happens once the sandbox has transitioned to an uncacheable dictionary.
-    PropertySlot sandboxSlot(globalObject, PropertySlot::InternalMethodType::GetOwnProperty, nullptr);
-    bool isDeclaredOnSandbox = contextifiedObject->getPropertySlot(globalObject, propertyName, sandboxSlot);
-    RETURN_IF_EXCEPTION(scope, false);
-
-    if (isDeclaredOnSandbox && !isDeclaredOnGlobalProxy) {
-        RELEASE_AND_RETURN(scope, contextifiedObject->methodTable()->defineOwnProperty(contextifiedObject, contextifiedObject->globalObject(), propertyName, descriptor, shouldThrow));
-    }
-
-    auto did = contextifiedObject->methodTable()->defineOwnProperty(contextifiedObject, contextifiedObject->globalObject(), propertyName, descriptor, shouldThrow);
-    RETURN_IF_EXCEPTION(scope, false);
-    if (!did) return false;
-
-    RELEASE_AND_RETURN(scope, Base::defineOwnProperty(cell, globalObject, propertyName, descriptor, shouldThrow));
+    // Define on the sandbox only, via the method table so a Proxy sandbox sees it once.
+    RELEASE_AND_RETURN(scope, contextifiedObject->methodTable()->defineOwnProperty(contextifiedObject, contextifiedObject->globalObject(), propertyName, descriptor, shouldThrow));
 }
 
 DEFINE_VISIT_CHILDREN(NodeVMGlobalObject);

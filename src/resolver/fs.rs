@@ -144,7 +144,11 @@ pub struct Entry {
     pub mutex: Mutex,
     pub need_stat: AtomicBool,
 
-    pub abs_path: Interned,
+    // Lazily filled under `mutex` and published through `has_abs_path`
+    // (Release/Acquire), so `abs_path()` is lock-free and never sees a torn
+    // two-word `Interned`. Same scheme as `need_stat` / `cache`.
+    abs_path: core::cell::Cell<Interned>,
+    has_abs_path: AtomicBool,
 }
 
 impl Entry {
@@ -188,15 +192,39 @@ impl Entry {
         self.dir
     }
 
-    /// `Interned` is `Copy`.
+    /// Lock-free. `Interned::EMPTY` until a fill has been published.
     #[inline]
     pub fn abs_path(&self) -> Interned {
-        self.abs_path
+        if self.has_abs_path.load(Ordering::Acquire) {
+            self.abs_path.get()
+        } else {
+            Interned::EMPTY
+        }
     }
 
+    /// Caller holds `self.mutex` and has seen `abs_path()` empty under it.
+    /// A published value is never rewritten.
     #[inline]
-    pub fn set_abs_path(&mut self, p: Interned) {
-        self.abs_path = p;
+    pub fn set_abs_path(&self, p: Interned) {
+        debug_assert!(!self.has_abs_path.load(Ordering::Relaxed));
+        self.abs_path.set(p);
+        self.has_abs_path.store(true, Ordering::Release);
+    }
+
+    /// Double-checked lazy fill under `self.mutex`, like [`kind`](Self::kind).
+    /// `fill` must not lock this entry's `mutex`.
+    pub fn abs_path_or_fill(&self, fill: impl FnOnce() -> Interned) -> Interned {
+        if self.has_abs_path.load(Ordering::Acquire) {
+            return self.abs_path.get();
+        }
+        let _guard = self.mutex.lock_guard();
+        // Relaxed: every write happens under `mutex`, which we hold.
+        if self.has_abs_path.load(Ordering::Relaxed) {
+            return self.abs_path.get();
+        }
+        let p = fill();
+        self.set_abs_path(p);
+        p
     }
 
     /// Stat-on-first-use.
@@ -545,7 +573,8 @@ impl DirEntry {
                     kind: found_kind.unwrap_or(EntryKind::File),
                     fd: Fd::INVALID,
                 }));
-                addr_of_mut!((*p).abs_path).write(Interned::EMPTY);
+                addr_of_mut!((*p).abs_path).write(core::cell::Cell::new(Interned::EMPTY));
+                addr_of_mut!((*p).has_abs_path).write(AtomicBool::new(false));
                 p
             }
         };

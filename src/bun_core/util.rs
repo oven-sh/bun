@@ -3568,9 +3568,9 @@ pub mod hash {
 }
 
 // ── base64 ────────────────────────────────────────────────────────────────
-// Thin simdutf-backed encoders + scalar decoder — the subset
-// tier-0/1 callers need (npm auth, sourcemaps,
-// ansi_renderer). Full URL-safe / streaming variants stay in bun_base64.
+// Thin simdutf-backed encoders — the subset tier-0/1 callers need (npm auth,
+// ansi_renderer). Decoding and the URL-safe / streaming variants live in
+// bun_base64.
 pub mod base64 {
     use bun_simdutf_sys::simdutf;
 
@@ -3600,71 +3600,6 @@ pub mod base64 {
         &dest[..n]
     }
 
-    /// Result of a decode-into-buffer call.
-    #[derive(Clone, Copy, Debug)]
-    pub struct DecodeResult {
-        pub written: usize,
-        pub fail: bool,
-    }
-
-    /// Scalar fallback base64 decode (the SIMD path lives in
-    /// bun_base64). Tolerates missing padding; stops at first invalid char.
-    pub fn decode(dest: &mut [u8], source: &[u8]) -> DecodeResult {
-        const INV: u8 = 0xFF;
-        static LUT: [u8; 256] = {
-            let mut t = [INV; 256];
-            let mut i = 0u8;
-            while i < 26 {
-                t[(b'A' + i) as usize] = i;
-                i += 1;
-            }
-            let mut i = 0u8;
-            while i < 26 {
-                t[(b'a' + i) as usize] = 26 + i;
-                i += 1;
-            }
-            let mut i = 0u8;
-            while i < 10 {
-                t[(b'0' + i) as usize] = 52 + i;
-                i += 1;
-            }
-            t[b'+' as usize] = 62;
-            t[b'/' as usize] = 63;
-            t
-        };
-        let mut w = 0usize;
-        let mut acc: u32 = 0;
-        let mut bits: u32 = 0;
-        for &c in source {
-            if c == b'=' || c == b'\n' || c == b'\r' {
-                continue;
-            }
-            let v = LUT[c as usize];
-            if v == INV {
-                return DecodeResult {
-                    written: w,
-                    fail: true,
-                };
-            }
-            acc = (acc << 6) | v as u32;
-            bits += 6;
-            if bits >= 8 {
-                bits -= 8;
-                if w >= dest.len() {
-                    return DecodeResult {
-                        written: w,
-                        fail: true,
-                    };
-                }
-                dest[w] = (acc >> bits) as u8;
-                w += 1;
-            }
-        }
-        DecodeResult {
-            written: w,
-            fail: false,
-        }
-    }
 }
 
 // ── dupe_z / free_sensitive ───────────────────────────────────────────────

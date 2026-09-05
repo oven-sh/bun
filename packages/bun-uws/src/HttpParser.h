@@ -303,6 +303,11 @@ struct HttpResponseData;
              * field values are all empty or whitespace-only as if the header
              * were absent (no error, Content-Length framing applies). */
             bool nonEmptyValue: 1 = false;
+            /* A Transfer-Encoding field follows a Content-Length field. llhttp
+             * rejects that field when its name completes, before it reads the
+             * value, so node:http rejects it even when the value is empty (the
+             * nonEmptyValue leniency above does not apply). */
+            bool afterContentLength: 1 = false;
         };
 
         TransferEncoding getTransferEncoding()
@@ -314,8 +319,17 @@ struct HttpResponseData;
             }
 
             bool seenAnyCoding = false;
+            bool seenContentLength = false;
             for (Header *h = headers; (++h)->key.length();) {
+                if (!seenContentLength && h->key.length() == 14 && !strncasecmp(h->key.data(), "content-length", 14)) {
+                    seenContentLength = true;
+                    continue;
+                }
                 if (h->key.length() == 17 && !strncasecmp(h->key.data(), "transfer-encoding", 17)) {
+                    if (seenContentLength) {
+                        te.afterContentLength = true;
+                    }
+
                     /* An earlier Transfer-Encoding field already named "chunked": any
                      * later TE field (even one with an empty value) is invalid. The
                      * per-token guard below handles the non-empty case too; this catches
@@ -1219,8 +1233,16 @@ struct HttpResponseData;
              * length) and no error is raised. Bun.serve keeps treating it as
              * present and rejects below; treating it as absent is the
              * Content-Length fallback that getTransferEncoding() guards
-             * against. */
-            if (IsNodeHttp && transferEncoding.has && !transferEncoding.nonEmptyValue) {
+             * against.
+             *
+             * The exception is a TE field that follows a Content-Length field:
+             * llhttp fails that field by name, before it reads the value
+             * (HPE_INVALID_TRANSFER_ENCODING), so the empty value never gets
+             * the chance to be ignored. LENIENT_CHUNKED_LENGTH skips that name
+             * check; node sets it only as part of kLenientAll, which is what
+             * useLenientTransferEncoding tracks. */
+            if (IsNodeHttp && transferEncoding.has && !transferEncoding.nonEmptyValue
+                && (!transferEncoding.afterContentLength || useLenientTransferEncoding)) {
                 transferEncoding = {};
             }
 

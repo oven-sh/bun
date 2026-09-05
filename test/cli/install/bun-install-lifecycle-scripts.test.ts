@@ -299,6 +299,63 @@ test.concurrent("node-gyp shim directory added to lifecycle script PATH gets a r
   expect(distance > 21_600_000_000_000n).toBe(true);
 });
 
+test.concurrent("lifecycle scripts get the npm_package_* env vars from the root package.json", async () => {
+  using ctx = await setupTest();
+  const { packageDir, packageJson } = ctx;
+
+  // A test runner started through `bun run` already has npm_package_* set.
+  // Existing values are kept, so drop them to test the seeding itself.
+  const env = Object.fromEntries(Object.entries(ctx.env).filter(([key]) => !key.startsWith("npm_")));
+
+  const keys = [
+    "npm_package_name",
+    "npm_package_version",
+    "npm_package_json",
+    "npm_config_local_prefix",
+    "npm_package_config_foo",
+  ];
+  const script = `await Bun.write("env.json", JSON.stringify(Object.fromEntries(${JSON.stringify(keys)}.map(k => [k, process.env[k]]))))`;
+
+  await writeFile(
+    packageJson,
+    JSON.stringify({
+      name: "npm-env-root",
+      version: "1.2.3",
+      config: {
+        foo: "bar",
+      },
+      dependencies: {
+        "no-deps": "1.0.0",
+      },
+      scripts: {
+        postinstall: `${bunExe()} -e '${script}'`,
+      },
+    }),
+  );
+
+  const { stdout, stderr, exited } = spawn({
+    cmd: [bunExe(), "install"],
+    cwd: packageDir,
+    stdout: "pipe",
+    stdin: "ignore",
+    stderr: "pipe",
+    env,
+  });
+
+  const [out, err, exitCode] = await Promise.all([stdout.text(), stderr.text(), exited]);
+  expect(err).not.toContain("error:");
+  expect(out).toContain("1 package installed");
+  expect(exitCode).toBe(0);
+
+  expect(await file(join(packageDir, "env.json")).json()).toEqual({
+    npm_package_name: "npm-env-root",
+    npm_package_version: "1.2.3",
+    npm_package_json: join(packageDir, "package.json"),
+    npm_config_local_prefix: packageDir,
+    npm_package_config_foo: "bar",
+  });
+});
+
 test.concurrent("default trusted dependencies require the canonical registry tarball URL", async () => {
   using ctx = await setupTest();
   const { packageDir, packageJson, env } = ctx;

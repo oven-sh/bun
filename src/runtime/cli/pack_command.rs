@@ -2123,7 +2123,10 @@ pub(crate) fn pack<const FOR_PUBLISH: bool>(
             store_root_fd: false,
         },
     ) {
-        if matches!(err, crate::Error::Alloc(_)) {
+        if matches!(
+            err,
+            crate::Error::Alloc(_) | crate::Error::Install(bun_install::Error::Alloc(_))
+        ) {
             return Err(PackError::OutOfMemory);
         }
         Output::err_generic(

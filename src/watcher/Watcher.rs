@@ -419,13 +419,9 @@ impl Watcher {
                 continue;
             }
 
-            #[cfg(not(windows))]
-            {
-                // on mac and linux we can just close the file descriptor
-                // we don't need to call inotify_rm_watch on linux because it gets removed when the file descriptor is closed
-                if fds[item as usize].is_valid() {
-                    let _ = bun_sys::close(fds[item as usize]);
-                }
+            // Same rule as the shutdown sweep: a stored descriptor goes with its entry.
+            if fds[item as usize].is_valid() {
+                let _ = bun_sys::close(fds[item as usize]);
             }
             last_item = item;
         }

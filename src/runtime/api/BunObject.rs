@@ -1512,13 +1512,14 @@ fn serve(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSVa
                 // SAFETY: same VM pointer; re-borrow after the earlier `vm` mut
                 // borrow was released by the `hot_map()` arm above.
                 if let Some(hot) = global_object.bun_vm().as_mut().hot_map() {
-                    hot.insert_raw(
-                        &server_ref.config.id,
-                        HotMapEntry {
-                            tag: $tag as u8,
-                            ptr: server.cast::<()>(),
-                        },
-                    );
+                    let entry = HotMapEntry {
+                        tag: $tag as u8,
+                        ptr: server.cast::<()>(),
+                    };
+                    // Key held by a `Bun.listen` entry: stay unregistered so `stop()` leaves it alone.
+                    if !hot.insert_raw(&server_ref.config.id, entry) {
+                        server_ref.config.allow_hot = false;
+                    }
                 }
             }
 

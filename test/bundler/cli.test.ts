@@ -466,6 +466,69 @@ test("multi-entry build writes each entry point into the output directory", asyn
   expect(b).toContain('"B"');
 });
 
+// https://github.com/oven-sh/bun/pull/39855
+// Whether a task is still on the pool when the build fails is a race, so each
+// build is repeated and every run has to exit with only the build error.
+describe("a failing build exits cleanly while it still has tasks on the pool", () => {
+  // Exit code plus normalized stderr: a crash report fails the comparison even
+  // when the process still exits with 1 (ASAN does).
+  async function build(dir: string, args: string[], env: Record<string, string | undefined>): Promise<string> {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build", ...args],
+      env,
+      cwd: dir,
+      stdout: "ignore",
+      stderr: "pipe",
+    });
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    return `exit ${exitCode}\n${normalizeBunSnapshot(stderr, dir)}`;
+  }
+
+  // The source map tasks `link` scheduled are still starting on the pool
+  // threads when the import fails the build. Sequential: the threads have to
+  // get the CPU before that happens.
+  test("link error with --sourcemap", async () => {
+    using dir = tempDir("build-sourcemap-link-error", {
+      "entry.js": `import { nope } from "./lib.js";\nconsole.log(nope);\n`,
+      "lib.js": `export const yes = 1;\n`,
+    });
+
+    const runs: string[] = [];
+    for (let i = 0; i < 8; i++) {
+      runs.push(await build(String(dir), ["./entry.js", "--sourcemap", "--outdir", "dist"], bunEnv));
+    }
+
+    expect(runs).toEqual(
+      Array(8).fill(
+        [
+          "exit 1",
+          '1 | import { nope } from "./lib.js";',
+          "             ^",
+          'error: No matching export in "lib.js" for import "nope"',
+          "    at <dir>/entry.js:1:10",
+        ].join("\n"),
+      ),
+    );
+  });
+
+  // The IO pool (the default on macOS and Windows) is still reading the other
+  // entry points when the missing one fails the build. Concurrent: the reads
+  // only outlast the teardown on a busy machine.
+  test("unresolvable entry point beside entry points that are still being read", async () => {
+    const files: Record<string, string> = {};
+    for (let i = 0; i < 200; i++) {
+      files[`f${i}.ts`] = `export const v${i} = ${i};\n`;
+    }
+    using dir = tempDir("build-missing-entry-io-pool", files);
+    const args = ["./missing.ts", ...Object.keys(files).map(name => `./${name}`), "--outdir", "out"];
+    const env = { ...bunEnv, BUN_FEATURE_FLAG_FORCE_IO_POOL: "1" };
+
+    const runs = await Promise.all(Array.from({ length: 16 }, () => build(String(dir), args, env)));
+
+    expect(runs).toEqual(Array(16).fill('exit 1\nerror: ModuleNotFound resolving "./missing.ts" (entry point)'));
+  });
+});
+
 // https://github.com/oven-sh/bun/issues/9859
 describe.concurrent("--no-bundle with --outdir", () => {
   test("writes a single entry point", async () => {

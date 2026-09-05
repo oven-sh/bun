@@ -345,8 +345,8 @@ pub struct DevServer {
     // in `thread_main` once `running` flips false). Auto-dropping a
     // `Box<Watcher>` here would free the heap block while the watcher thread
     // is still blocked in `GetQueuedCompletionStatus`/`read()` holding a
-    // `*mut Watcher` into it (and on Windows the kernel still has a pending
-    // `ReadDirectoryChangesW` against the inline `DirWatcher.buf`/`overlapped`).
+    // `*mut Watcher` into it (and on Windows the kernel still has pending
+    // `ReadDirectoryChangesW` I/O against the per-root `DirWatcher` buffers).
     // `ManuallyDrop` so `Drop for DevServer` can hand the raw pointer to
     // `Watcher::shutdown` instead.
     pub(crate) bun_watcher: ::core::mem::ManuallyDrop<Box<Watcher>>,
@@ -1077,10 +1077,9 @@ impl Drop for DevServer {
         // Hand ownership of the heap allocation to the watcher thread (which frees it in
         // `thread_main` once `running` flips false). Auto-dropping the `Box`
         // here would free the allocation out from under the still-running
-        // thread; on Windows the kernel additionally retains a pending
-        // `ReadDirectoryChangesW` against the inline 64 KiB `DirWatcher.buf` +
-        // `overlapped`, so the freed block being recycled by mimalloc for a
-        // later allocation is a kernel write into live unrelated heap data.
+        // thread; on Windows the kernel additionally retains pending
+        // `ReadDirectoryChangesW` I/O against the per-root `DirWatcher`
+        // buffers until `stop()` cancels and drains it.
         // SAFETY: `bun_watcher` was written exactly once in `init()` and is
         // never taken elsewhere; this is `Drop`, so the field is not read again.
         let watcher = unsafe { ::core::mem::ManuallyDrop::take(&mut self.bun_watcher) };

@@ -129,6 +129,16 @@ pub struct Watcher {
     #[cfg(any(target_os = "linux", target_os = "android"))]
     pub(crate) eventlist_index_scratch: Vec<platform::EventListIndex>,
 
+    /// Scratch snapshot of `watchlist.file_path` taken under `mutex` in
+    /// `watch_loop_cycle`; owned by the watcher thread.
+    #[cfg(windows)]
+    pub(crate) platform_scratch: Vec<bun_ptr::RawSlice<u8>>,
+
+    /// Watch roots whose `add_root` failed, so the warning prints once per
+    /// root rather than once per file per reload.
+    #[cfg(windows)]
+    pub(crate) unwatchable_roots: Vec<Box<[u8]>>,
+
     pub(crate) ctx: *mut (),
     pub(crate) on_file_update: fn(*mut (), &mut [WatchEvent], &[ChangedFilePath], &WatchList),
     pub(crate) on_error: fn(*mut (), sys::Error),
@@ -205,6 +215,10 @@ impl Watcher {
             evict_list_i: 0,
             #[cfg(any(target_os = "linux", target_os = "android"))]
             eventlist_index_scratch: Vec::new(),
+            #[cfg(windows)]
+            platform_scratch: Vec::new(),
+            #[cfg(windows)]
+            unwatchable_roots: Vec::new(),
             thread_lock: ThreadLock::init_unlocked(),
         });
 
@@ -353,10 +367,18 @@ impl Watcher {
 
         log!("Watcher started");
 
-        let owner_still_alive = match self.watch_loop() {
+        let loop_result = self.watch_loop();
+        // Both exits must stop the platform before the Box can drop: on
+        // Windows every root still has a pending ReadDirectoryChangesW aimed
+        // at its buffer. Locked to serialise against `add_root` on other
+        // threads.
+        {
+            let _guard = self.mutex.lock_guard();
+            self.platform.stop();
+        }
+        let owner_still_alive = match loop_result {
             Err(err) => {
                 self.watchloop_handle.store(false);
-                self.platform.stop();
                 let running = self.running.load();
                 if running {
                     (self.on_error)(self.ctx, err);
@@ -521,13 +543,8 @@ impl Watcher {
     ) -> sys::Result<FdOwnership> {
         #[cfg(windows)]
         {
-            // on windows we can only watch items that are in the directory tree of the top level dir
-            let rel = bun_paths::resolve_path::is_parent_or_equal(self.top_level_dir(), file_path);
-            if rel == bun_paths::resolve_path::ParentEqual::Unrelated {
-                bun_core::warn!(
-                    "File {} is not in the project directory and will not be watched\n",
-                    bstr::BStr::new(file_path)
-                );
+            let pathname = bun_paths::fs::PathName::init(file_path);
+            if !self.ensure_watch_root_covers(pathname.dir_with_trailing_slash()) {
                 return Ok(FdOwnership::Caller);
             }
         }
@@ -591,12 +608,7 @@ impl Watcher {
     ) -> sys::Result<WatchItemIndex> {
         #[cfg(windows)]
         {
-            let rel = bun_paths::resolve_path::is_parent_or_equal(self.top_level_dir(), file_path);
-            if rel == bun_paths::resolve_path::ParentEqual::Unrelated {
-                bun_core::warn!(
-                    "Directory {} is not in the project directory and will not be watched\n",
-                    bstr::BStr::new(file_path)
-                );
+            if !self.ensure_watch_root_covers(file_path) {
                 return Ok(NO_WATCH_ITEM);
             }
         }
@@ -743,8 +755,8 @@ impl Watcher {
             Err(err) => {
                 return Err(err.with_path(file_path));
             }
-            // Not appended (e.g. outside the project root on Windows); the
-            // caller keeps the descriptor.
+            // Not appended (on Windows: its watch root could not be opened);
+            // the caller keeps the descriptor.
             Ok(FdOwnership::Caller) => return Ok(FdOwnership::Caller),
             Ok(FdOwnership::Watcher) => {}
         }
@@ -776,6 +788,34 @@ impl Watcher {
     #[inline]
     fn top_level_dir(&self) -> &[u8] {
         self.cwd
+    }
+
+    /// Ensure `dir` (absolute, trailing separator) is inside a Windows watch
+    /// root, registering a new recursive `ReadDirectoryChangesW` root if not.
+    /// Returns false only when opening the root failed (the file is then
+    /// skipped, as before). Caller holds `self.mutex`.
+    #[cfg(windows)]
+    fn ensure_watch_root_covers(&mut self, dir: &[u8]) -> bool {
+        if self.platform.covers(dir) {
+            return true;
+        }
+        let root = platform::pick_watch_root(dir);
+        if self.unwatchable_roots.iter().any(|r| r.as_ref() == root) {
+            return false;
+        }
+        match self.platform.add_root(root) {
+            Ok(()) => true,
+            Err(err) => {
+                bun_core::warn!(
+                    "Directory {} could not be opened for watching ({}); changes under it will not be watched\n",
+                    bstr::BStr::new(root),
+                    err.name()
+                );
+                self.unwatchable_roots
+                    .push(root.to_vec().into_boxed_slice());
+                false
+            }
+        }
     }
 
     pub fn add_directory<const CLONE_FILE_PATH: bool>(
@@ -1068,9 +1108,9 @@ pub enum FdOwnership {
     /// close it. The caller must not use or close it afterwards.
     Watcher,
     /// The watchlist did not take the descriptor: the file was already
-    /// watched with a valid stored one, or the path is not watchable (e.g.
-    /// outside the project root on Windows). The caller still owns `fd` and
-    /// must close it (or keep using it).
+    /// watched with a valid stored one, or (on Windows) its watch root could
+    /// not be opened. The caller still owns `fd` and must close it (or keep
+    /// using it).
     Caller,
 }
 

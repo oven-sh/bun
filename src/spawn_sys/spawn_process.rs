@@ -735,6 +735,38 @@ pub unsafe fn spawn_process_posix(
     // index spawned.{stdin,stdout,stderr} via a helper closure.
     let mut dup_stdout_to_stderr: bool = false;
 
+    // stdio: [2,0,0] would dup2(2,0) then dup2(0,1), reading the clobbered
+    // fd 0. Save any source fd < stdio_count aside first (same as uv__process_child_init).
+    let stdio_count = 3 + options.extra_fds.len();
+    let mut saved_stdio_src: Vec<Option<Fd>> = vec![None; stdio_count];
+    for (i, stdio) in stdio_options
+        .iter()
+        .copied()
+        .chain(options.extra_fds.iter())
+        .enumerate()
+    {
+        let PosixStdio::Pipe(fd) = *stdio else {
+            continue;
+        };
+        let src = fd.native();
+        if src < 0 || src as usize >= stdio_count || src as usize == i {
+            continue;
+        }
+        // SAFETY: `fd` is a live descriptor; F_DUPFD_CLOEXEC takes an
+        // integer lower bound and no pointer arguments.
+        let tmp = unsafe { libc::fcntl(src, libc::F_DUPFD_CLOEXEC, stdio_count as libc::c_int) };
+        if tmp < 0 {
+            return Ok(Err(bun_sys::Error::from_code_int(
+                bun_sys::last_errno(),
+                bun_sys::Tag::dup,
+            )
+            .with_fd(fd)));
+        }
+        let tmp = Fd::from_native(tmp);
+        cleanup.to_close_at_end.push(tmp);
+        saved_stdio_src[i] = Some(tmp);
+    }
+
     // The label is only referenced from the Linux memfd fast-path below.
     #[cfg_attr(
         not(any(target_os = "linux", target_os = "android")),
@@ -886,7 +918,7 @@ pub unsafe fn spawn_process_posix(
                 set_spawned_stdio(&mut spawned, i, fds[0]);
             }
             PosixStdio::Pipe(fd) => {
-                actions.dup2(*fd, fileno)?;
+                actions.dup2(saved_stdio_src[i].unwrap_or(*fd), fileno)?;
                 set_spawned_stdio(&mut spawned, i, *fd);
             }
             PosixStdio::SocketFd => {
@@ -958,7 +990,7 @@ pub unsafe fn spawn_process_posix(
                 extra_fds.push(ExtraPipe::OwnedFd(fds[0]));
             }
             PosixStdio::Pipe(fd) => {
-                actions.dup2(*fd, fileno)?;
+                actions.dup2(saved_stdio_src[3 + i].unwrap_or(*fd), fileno)?;
                 // The fd was supplied by the caller (a number in the stdio array) and is
                 // not owned by us. Record it so `stdio[N]` returns the caller's fd, but
                 // mark it unowned so finalizeStreams leaves it open.

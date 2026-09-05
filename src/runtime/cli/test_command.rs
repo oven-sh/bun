@@ -1400,16 +1400,7 @@ impl CommandLineReporter {
                 this.summary().fail += 1;
 
                 if this.summary().fail == this.jest.bail {
-                    this.print_summary();
-                    pretty_error!(
-                        "\nBailed out after {} failure{}<r>\n",
-                        this.jest.bail,
-                        if this.jest.bail == 1 { "" } else { "s" }
-                    );
-                    Output::flush();
-                    this.write_junit_report_if_needed();
-                    this.write_timings_if_needed();
-                    Global::exit(1);
+                    this.bail_out(VirtualMachine::get().as_mut());
                 }
             }
         }
@@ -1433,6 +1424,42 @@ impl CommandLineReporter {
         );
 
         Output::print_start_end(bun::start_time(), bun::time::nano_timestamp());
+    }
+
+    /// `--bail` reached its failure count: report, then exit 1 through the
+    /// same VM teardown as the end of a normal run (`exec`). A bare
+    /// `Global::exit` would skip the `BUN_DESTRUCT_VM_ON_EXIT` teardown and
+    /// leave every JSC-finalizer-owned wrapper box for the leak checker.
+    pub(crate) fn bail_out(&mut self, vm: &mut VirtualMachine) -> ! {
+        self.print_summary();
+        pretty_error!(
+            "\nBailed out after {} failure{}<r>\n",
+            self.jest.bail,
+            if self.jest.bail == 1 { "" } else { "s" }
+        );
+        Output::flush();
+        self.write_junit_report_if_needed();
+        self.write_timings_if_needed();
+
+        vm.exit_handler.exit_code = 1;
+        vm.exit_handler.skip_exit_listeners = skip_exit_listeners(self);
+        let vm_ptr: *mut VirtualMachine = vm;
+        // SAFETY: `vm_ptr` reborrows the live `&mut VirtualMachine`;
+        // `run_with_api_lock` takes `&self` only, so the closure holds the
+        // unique mutable access on this single-threaded path.
+        vm.run_with_api_lock(|| unsafe { (*vm_ptr).on_exit() });
+        // Exit listeners (user JS) ran above while the runner was intact; now
+        // release the `bun:test` GC roots so the teardown GC can't observe a
+        // half-torn-down `TestRunner`.
+        self.jest.bun_test_root.deinit_for_exit();
+        // SAFETY: `RUNNER` is a `RacyCell` touched only from the single JS
+        // thread; no concurrent reader exists on this shutdown path.
+        unsafe {
+            jest::Jest::RUNNER.write(None);
+        }
+        // SAFETY: as above; `global_exit()` diverges, so the closure is the
+        // sole mutator.
+        vm.run_with_api_lock(|| unsafe { (*vm_ptr).global_exit() })
     }
 
     /// Like the JUnit report, called before every exit path (including bail) so measured durations aren't lost.
@@ -2929,33 +2956,9 @@ impl TestCommand {
                     reporter.summary().fail += 1;
 
                     if reporter.jest.bail == reporter.summary().fail {
-                        reporter.print_summary();
-                        pretty_error!(
-                            "\nBailed out after {} failure{}<r>\n",
-                            reporter.jest.bail,
-                            if reporter.jest.bail == 1 { "" } else { "s" }
-                        );
-                        reporter.write_junit_report_if_needed();
-                        reporter.write_timings_if_needed();
-
-                        vm.exit_handler.exit_code = 1;
-                        vm.is_shutting_down = true;
-                        // `global_exit()` diverges, so the `exit_file()` defer
-                        // above never fires. Release the active file's
-                        // `Strong`s and the preload-hook scope here so
-                        // `Zig__GlobalObject__destructOnExit()`'s `collectNow()` can reclaim them,
-                        // then clear `RUNNER` so finalizers can't observe a
-                        // partially-torn-down `TestRunner`.
-                        // SAFETY: single-threaded; raw-ptr reborrow mirrors the
-                        // defer's escape.
-                        unsafe {
-                            (*bun_test_root_ptr).deinit_for_exit();
-                            jest::Jest::RUNNER.write(None);
-                        }
-                        let vm_ptr = std::ptr::from_mut::<VirtualMachine>(vm);
-                        // SAFETY: global_exit diverges; `vm_ptr` is a fresh
-                        // raw-ptr reborrow of the exclusive `vm` borrow.
-                        unsafe { (*vm_ptr).run_with_api_lock(|| (&mut *vm_ptr).global_exit()) };
+                        // Diverges, so the `exit_file()` defer above never
+                        // fires; `bail_out` releases the active file itself.
+                        reporter.bail_out(vm);
                     }
 
                     return Ok(());

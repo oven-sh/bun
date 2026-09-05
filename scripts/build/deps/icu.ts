@@ -6,8 +6,9 @@
  * Built directly in our graph from the ICU release tarball (which, unlike the
  * git repo, ships the prebuilt data package):
  *
- *   common/, i18n/          file lists from ICU's own sources.txt, compiled
- *                           with dep flags straight onto bun's link line
+ *   common/, i18n/          icu-sources.ts (ICU's sources.txt lists, kept by
+ *                           generate-dep-sources.ts), compiled with dep flags
+ *                           straight onto bun's link line
  *   icupkg (host)           common + i18n + toolutil + stubdata for the BUILD
  *                           machine — reads/filters the data package
  *   data                    icu-data.ts: filter items bun never loads, guard
@@ -18,11 +19,16 @@
  * is a weak symbol bun defines in src/jsc/bindings/bun_icu_decompress.cpp.
  */
 
-import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { Config } from "../config.ts";
-import { BuildError } from "../error.ts";
 import { type Dependency, type DirectSource, depBuildDir, depSourceDir } from "../source.ts";
+import {
+  icuCommonSources,
+  icuI18nSources,
+  icuIcupkgSources,
+  icuStubdataSources,
+  icuToolutilSources,
+} from "./icu-sources.ts";
 
 const ICU_VERSION = "78.3";
 const ICU_MAJOR = ICU_VERSION.split(".")[0]!;
@@ -38,15 +44,6 @@ export function buildsIcu(cfg: Config): boolean {
 export function icuIncludes(cfg: Config): string[] {
   const S = join(depSourceDir(cfg, "icu"), "source");
   return [join(S, "common"), join(S, "i18n")];
-}
-
-/** ICU's per-directory `sources.txt`: one file name per line. */
-function sourcesTxt(dir: string): string[] {
-  return readFileSync(join(dir, "sources.txt"), "utf8")
-    .split(/\r?\n/)
-    .map(s => s.trim())
-    .filter(s => s.length > 0)
-    .map(s => join(dir, s));
 }
 
 /**
@@ -67,7 +64,6 @@ export const icu: Dependency = {
   name: "icu",
   versionMacro: "ICU",
   enabled: buildsIcu,
-  configureReadsSource: true,
 
   source: () => ({ kind: "tarball", url: ICU_URL, sha256: ICU_SHA256, version: ICU_VERSION }),
   patches: ["patches/icu/udata-decompress-hook.patch"],
@@ -77,14 +73,7 @@ export const icu: Dependency = {
     const S = join(depSourceDir(cfg, "icu"), "source");
     const common = join(S, "common");
     const i18n = join(S, "i18n");
-    // The data below is zstd-repacked per item; loading it needs the
-    // decompress hook that patches/icu adds to udata.cpp. A --local-deps tree
-    // is used as-is (no patches applied), so it must already carry it.
-    if (!readFileSync(join(common, "udata.cpp"), "utf8").includes("bun_icu_maybe_decompress")) {
-      throw new BuildError(`ICU source at ${S} lacks the udata decompress hook`, {
-        hint: "apply patches/icu/*.patch to that tree (git apply), or drop icu from --local-deps",
-      });
-    }
+    const inS = (list: readonly string[]) => list.map(f => join(S, f));
 
     // ICU needs RTTI (dynamic_cast in i18n). Optimization level is the one
     // the fork's ICU stage used regardless of WebKit build type — -Os on
@@ -101,11 +90,11 @@ export const icu: Dependency = {
     // common links without real data. ICU's sources insist on their own
     // library's *_IMPLEMENTATION define.
     const hostSources: DirectSource[] = [
-      ...sourcesTxt(common).map(path => ({ path, cflags: ["-DU_COMMON_IMPLEMENTATION"] })),
-      ...sourcesTxt(i18n).map(path => ({ path, cflags: ["-DU_I18N_IMPLEMENTATION"] })),
-      ...sourcesTxt(join(S, "stubdata")).map(path => ({ path })),
-      ...sourcesTxt(join(S, "tools", "toolutil")).map(path => ({ path })),
-      ...sourcesTxt(join(S, "tools", "icupkg")).map(path => ({ path })),
+      ...inS(icuCommonSources).map(path => ({ path, cflags: ["-DU_COMMON_IMPLEMENTATION"] })),
+      ...inS(icuI18nSources).map(path => ({ path, cflags: ["-DU_I18N_IMPLEMENTATION"] })),
+      ...inS(icuStubdataSources).map(path => ({ path })),
+      ...inS(icuToolutilSources).map(path => ({ path })),
+      ...inS(icuIcupkgSources).map(path => ({ path })),
     ];
     const icupkg = join(B, `icupkg${cfg.host.exeSuffix}`);
 
@@ -130,13 +119,13 @@ export const icu: Dependency = {
       groups: [
         {
           name: "icuuc",
-          sources: sourcesTxt(common),
+          sources: inS(icuCommonSources),
           includes: [common],
           cxxflags: [...libFlags, "-DU_COMMON_IMPLEMENTATION"],
         },
         {
           name: "icui18n",
-          sources: sourcesTxt(i18n),
+          sources: inS(icuI18nSources),
           includes: [i18n, common],
           cxxflags: [...libFlags, "-DU_I18N_IMPLEMENTATION"],
         },
@@ -186,7 +175,6 @@ export const icu: Dependency = {
         },
       ],
       linkObjects: [dataObj],
-      configureInputs: [join(common, "sources.txt"), join(i18n, "sources.txt")],
     };
   },
 

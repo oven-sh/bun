@@ -19,10 +19,8 @@ import {
   type Toolchain,
   detectHost,
   findRepoRoot,
-  modeCompilesCpp,
   resolveConfig,
 } from "./config.ts";
-import { allDeps } from "./deps/index.ts";
 import { BuildError } from "./error.ts";
 import { orderFilePath, usesOrderFile } from "./flags.ts";
 import { mkdirAll, writeIfChanged } from "./fs.ts";
@@ -31,7 +29,6 @@ import { Ninja } from "./ninja.ts";
 import { getProfile } from "./profiles.ts";
 import { registerAllRules } from "./rules.ts";
 import { quote, quoteArgs } from "./shell.ts";
-import { prefetchConfigureSources } from "./source.ts";
 import { findBun, findCargo, findMsvcLinker, findNpm, findSystemTool, resolveLlvmToolchain } from "./tools.ts";
 import { ensureWindowsSysroot } from "./winsysroot.ts";
 import { checkWorkarounds } from "./workarounds.ts";
@@ -142,12 +139,12 @@ export interface ConfigureResult {
  * an existing one to import it).
  *
  * Excludes scripts that only run as ninja subprocesses (ci.ts, stream.ts,
- * npm-ci.ts) — changes to those don't affect the build graph. fetch-cli.ts
- * and download.ts count: configure fetches `configureReadsSource` deps' sources itself.
+ * npm-ci.ts, fetch-cli.ts, download.ts) — changes to those don't affect the
+ * build graph.
  */
 function configureInputs(cwd: string): string[] {
   const buildDir = resolve(cwd, "scripts", "build");
-  const excluded = new Set(["ci.ts", "stream.ts", "npm-ci.ts"]);
+  const excluded = new Set(["fetch-cli.ts", "download.ts", "ci.ts", "stream.ts", "npm-ci.ts"]);
 
   const scripts = globSync("*.ts", { cwd: buildDir })
     .filter(f => !excluded.has(f))
@@ -185,7 +182,7 @@ export interface ConfigureInput {
  * profiles.ts. Edits to a profile therefore take effect on the next
  * `ninja` in an existing build dir without `rm -rf`.
  */
-function emitGeneratorRule(n: Ninja, cfg: Config, input: ConfigureInput, depInputs: string[]): void {
+function emitGeneratorRule(n: Ninja, cfg: Config, input: ConfigureInput): void {
   const configFile = resolve(cfg.buildDir, "configure.json");
   const buildScript = resolve(cfg.cwd, "scripts", "build.ts");
 
@@ -213,7 +210,7 @@ function emitGeneratorRule(n: Ninja, cfg: Config, input: ConfigureInput, depInpu
     outputs: [resolve(cfg.buildDir, "build.ninja")],
     rule: "regen",
     inputs: [configFile],
-    implicitInputs: [...configureInputs(cfg.cwd), ...depInputs],
+    implicitInputs: configureInputs(cfg.cwd),
   });
 }
 
@@ -351,17 +348,9 @@ export async function configure(input: ConfigureInput): Promise<ConfigureResult>
   // Emit ninja.
   const n = new Ninja({ buildDir: cfg.buildDir });
   registerAllRules(n, cfg);
-  // Deps whose graph is described from their own tree (WebKit's file lists)
-  // need that tree before emitBun can enumerate edges. No-op once fetched;
-  // skipped in the split modes that compile no C++.
-  if (modeCompilesCpp(cfg.mode)) {
-    await prefetchConfigureSources(cfg, allDeps);
-    mark("prefetchConfigureSources");
-  }
-
   const output = emitBun(n, cfg, sources);
   mark("emitBun");
-  emitGeneratorRule(n, cfg, input, output.deps.flatMap(d => d.configureInputs).sort());
+  emitGeneratorRule(n, cfg, input);
 
   // Default targets. cpp-only sets its own default inside emitBun (archive,
   // no smoke test). Full/link-only: `bun` phony (or stripped file) + `check`.

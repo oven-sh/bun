@@ -17,21 +17,19 @@
  * re-extraction after a failed patch doesn't re-download.
  */
 
-import { AsyncLocalStorage } from "node:async_hooks";
 import { existsSync, lstatSync, mkdirSync, rmSync } from "node:fs";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { ar, cc, cxx, link, nasm, pch } from "./compile.ts";
 import type { Config } from "./config.ts";
 import { gitArchiveUrl, githubArchiveUrl } from "./download.ts";
 import { assert } from "./error.ts";
-import { assertManagedSource, fetchCliPath, fetchDep, sourceIsCurrent } from "./fetch-cli.ts";
+import { assertManagedSource, fetchCliPath, sourceIsCurrent } from "./fetch-cli.ts";
 import { computeDepFlags, computeTargetLinkFlags } from "./flags.ts";
 import { writeIfChanged } from "./fs.ts";
 import type { Ninja } from "./ninja.ts";
 import { quote, quoteArgs } from "./shell.ts";
 import { machoPostlinkImplicitInputs } from "./shims.ts";
 import { streamPath } from "./stream.ts";
-import { nameColor } from "./tty.ts";
 
 /**
  * If the source dir exists with a stale (or missing) identity stamp,
@@ -365,8 +363,8 @@ export interface DirectBuild {
   consumerOutputs?: string[];
   /** Object files produced by `steps` that join the link as they are (ICU's data object, assembled by a step because clang-cl does not take `.S`). Relative to the dep's build dir, or absolute. */
   linkObjects?: string[];
-  /** See ResolvedDep.configureInputs. */
-  configureInputs?: string[];
+  /** Files in the source tree that edges OUTSIDE this dep read (declared as outputs of the fetch so ninja knows where they come from). Relative to srcDir. */
+  treeFiles?: string[];
   /**
    * Fail the build if any object of this dep still has an undefined
    * reference to one of `symbols` (llvm-nm over the objects, once they
@@ -473,13 +471,6 @@ export interface Provides {
  */
 export interface Dependency {
   name: string;
-  /**
-   * `build()`/`provides()` read the source tree (file lists, globbed dirs) to
-   * describe the graph, so configure fetches it first — see
-   * prefetchConfigureSources. WebKit (Sources.txt, header dirs) and ICU
-   * (sources.txt).
-   */
-  configureReadsSource?: boolean;
 
   /** Where source comes from. Evaluated per-config (e.g. WebKit: prebuilt tarball or github tree by cfg.webkit). */
   source: (cfg: Config) => Source;
@@ -580,13 +571,6 @@ export interface ResolvedDep {
    * suite). Added to the default targets so a plain build produces them.
    */
   extras: string[];
-  /**
-   * Files and directories in the dep's source tree that configure read to
-   * describe the graph (WebKit's Sources.txt, the header dirs it globs).
-   * They are inputs of the reconfigure edge, so editing them in a
-   * `--local-deps` clone and running bare `ninja` re-runs configure.
-   */
-  configureInputs: string[];
 }
 
 // ───────────────────────────────────────────────────────────────────────────
@@ -766,8 +750,17 @@ export function depSourceDir(cfg: Config, name: string): string {
 }
 
 /**
- * Path to a dep's cmake build output. Separate from source so multiple
- * profiles (debug/release) don't clash.
+ * The stamp a dep's fetch edge writes (vendor/<name>/.ref), for an edge in
+ * another dep that reads this dep's TREE rather than its build outputs.
+ * undefined for a --local-deps checkout: it is on disk before ninja starts.
+ */
+export function depSourceStamp(cfg: Config, name: string): string | undefined {
+  return cfg.localDeps[name] !== undefined ? undefined : resolve(depSourceDir(cfg, name), ".ref");
+}
+
+/**
+ * Path to a dep's build output. Separate from source so multiple profiles
+ * (debug/release) don't clash.
  */
 export function depBuildDir(cfg: Config, name: string): string {
   return resolve(cfg.buildDir, "deps", name);
@@ -813,48 +806,6 @@ function fetchSpec(source: Extract<Source, { kind: "github" | "tarball" }>): {
     ref: source.commit,
     sparse,
   };
-}
-
-/**
- * Fetch, at configure time, the source of every dep whose graph can only be
- * described with the tree on disk (`configureReadsSource` — WebKit's file
- * lists live in its own Sources.txt, ICU's in sources.txt). Same fetch,
- * same identity stamp as the ninja `dep_fetch` edge, which is still emitted
- * and is then a no-op; this just runs it early. A no-op itself when the stamp
- * already matches, so the always-configure cost stays a stat.
- */
-export async function prefetchConfigureSources(cfg: Config, deps: readonly Dependency[]): Promise<void> {
-  const stale: Array<{ name: string; run: () => Promise<void> }> = [];
-  for (const dep of deps) {
-    if (dep.enabled && !dep.enabled(cfg)) continue;
-    const source = depSource(cfg, dep);
-    if (source.kind !== "github" && source.kind !== "tarball") continue;
-    if (!dep.configureReadsSource) continue;
-    const srcDir = depSourceDir(cfg, dep.name);
-    const patches = dep.patches === undefined ? [] : typeof dep.patches === "function" ? dep.patches(cfg) : dep.patches;
-    const patchPaths = patches.map(p => resolve(cfg.cwd, p));
-    const { url, ref, sparse } = fetchSpec(source);
-    if (sourceIsCurrent(srcDir, ref, sparse, patchPaths)) continue;
-    stale.push({
-      name: dep.name,
-      run: () => fetchDep(dep.name, url, ref, srcDir, resolve(cfg.cacheDir, "tarballs"), patchPaths),
-    });
-  }
-  if (stale.length === 0) return;
-  // Same `[name] …` lines the ninja-time fetches print through stream.ts;
-  // these run inside this process, concurrently, so prefix console output
-  // for the duration.
-  const plainLog = console.log;
-  const names = new AsyncLocalStorage<string>();
-  console.log = (...args: unknown[]) => {
-    const name = names.getStore();
-    plainLog(...(name === undefined ? args : [nameColor(name, `[${name}]`), ...args]));
-  };
-  try {
-    await Promise.all(stale.map(f => names.run(f.name, f.run)));
-  } finally {
-    console.log = plainLog;
-  }
 }
 
 /**
@@ -910,21 +861,24 @@ export function resolveDep(
   // the same implicit-output-of-fetch treatment. Include the codegen tool
   // source, its input, and any HeaderSubst templates — all read at build
   // time from the fetched tree.
-  // A dep configure already fetched (configureReadsSource) has its
-  // files on disk before ninja starts, so they are plain source files to it.
   const directSources: string[] = [];
-  if (buildSpec.kind === "direct" && !dep.configureReadsSource) {
-    // Everything but this dep's own build-dir products (generated sources,
-    // step outputs) comes out of a fetched tree.
-    const ownBuildDir = depBuildDir(cfg, dep.name);
+  if (buildSpec.kind === "direct") {
+    // Files under this dep's tree — or another dep's (lsquic compiles a file
+    // out of lsqpack's) — come out of a fetch; build-dir products and repo
+    // files do not.
     const inSrcTree = (p: string): string[] => {
       const abs = isAbsolute(p) ? p : resolve(srcDir, p);
-      return abs.startsWith(ownBuildDir + sep) || abs.startsWith(cfg.buildDir + sep) ? [] : [abs];
+      const fetched =
+        abs.startsWith(srcDir + sep) || (abs.startsWith(cfg.vendorDir + sep) && !abs.startsWith(cfg.buildDir + sep));
+      return fetched ? [abs] : [];
     };
     const groupSources = (list: ReadonlyArray<string | DirectSource>) =>
       list.flatMap(s => inSrcTree(typeof s === "string" ? s : s.path));
     directSources.push(...groupSources(buildSpec.sources));
-    for (const g of buildSpec.groups ?? []) directSources.push(...groupSources(g.sources));
+    for (const g of buildSpec.groups ?? []) {
+      directSources.push(...groupSources(g.sources));
+      if (g.pch !== undefined) directSources.push(...inSrcTree(g.pch));
+    }
     for (const h of Object.values(buildSpec.headers ?? {})) {
       if (typeof h !== "string") directSources.push(resolve(srcDir, h.from));
     }
@@ -933,6 +887,7 @@ export function resolveDep(
         directSources.push(...groupSources((st as ExeStep).sources ?? []));
       else directSources.push(...((st as GenStep).inputs ?? []).flatMap(inSrcTree));
     }
+    directSources.push(...(buildSpec.treeFiles ?? []).flatMap(inSrcTree));
   }
 
   // ─── Step 1: source acquisition ───
@@ -992,7 +947,6 @@ export function resolveDep(
   let outputs: string[];
   let checks: string[] = [];
   let extras: string[] = [];
-  let depConfigureInputs: string[] = [];
 
   if (buildSpec.kind === "cargo") {
     const result = emitCargo(n, cfg, dep.name, buildSpec, { srcDir, sourceStamp: sourceStamp! }); // .ref or Cargo.toml
@@ -1004,7 +958,6 @@ export function resolveDep(
     objects = result.objects;
     checks = result.checks;
     extras = result.extras;
-    depConfigureInputs = buildSpec.configureInputs ?? [];
     // outputs is the "downstream needs me built" signal — for direct deps
     // that's the generated headers + source stamp, NOT the .o files (those
     // are link inputs, not include-order dependencies).
@@ -1040,7 +993,6 @@ export function resolveDep(
     outputs,
     checks,
     extras,
-    configureInputs: depConfigureInputs,
   };
 }
 
@@ -1070,12 +1022,9 @@ export function computeDepLibs(cfg: Config, dep: Dependency): string[] {
     return dep.provides(cfg).libs.map(lib => resolve(destDir, lib));
   }
 
-  // A dep whose spec is read off its source tree is a direct build; the tree
-  // is not on a link-only agent, so don't evaluate the spec here.
-  const kind = dep.configureReadsSource ? "direct" : dep.build(cfg).kind;
+  const buildSpec = dep.build(cfg);
 
-  if (kind === "cargo") {
-    const buildSpec = dep.build(cfg) as CargoBuild;
+  if (buildSpec.kind === "cargo") {
     const targetDir = depBuildDir(cfg, dep.name);
     const profile = cfg.release ? "release" : "debug";
     const outSubdir = buildSpec.rustTarget ? join(buildSpec.rustTarget, profile) : profile;
@@ -1085,7 +1034,7 @@ export function computeDepLibs(cfg: Config, dep: Dependency): string[] {
   // direct: single lib<name>.a when archiveDeps; otherwise the dep's .o
   // files are folded into libbun.a in cpp-only and there's no separate
   // artifact for link-only to fetch.
-  if (kind === "direct") {
+  if (buildSpec.kind === "direct") {
     if (!cfg.archiveDeps) return [];
     const buildDir = depBuildDir(cfg, dep.name);
     return [resolve(buildDir, `${cfg.libPrefix}${dep.name}${cfg.libSuffix}`)];
@@ -1136,7 +1085,7 @@ function emitFetch(
     // Source files bun compiles directly (picohttpparser.c). Declaring
     // them as outputs tells ninja "fetch creates these" — otherwise ninja
     // errors "missing and no known rule to make it" on fresh checkouts.
-    ...(compiledSources.length > 0 && { implicitOutputs: compiledSources }),
+    ...(compiledSources.length > 0 && { implicitOutputs: [...new Set(compiledSources)] }),
     rule: "dep_fetch",
     inputs: [],
     // fetch-cli.ts (which has fetchDep) + patch files. Not this file —
@@ -1221,7 +1170,6 @@ function emitPrebuilt(
     objects: [],
     checks: [],
     extras: [],
-    configureInputs: [],
     includes,
     defines: provides.defines ?? [],
     sources: [],

@@ -11,7 +11,7 @@
 
 import { join } from "node:path";
 import type { Config } from "../config.ts";
-import { type Dependency, depBuildDir, depSourceDir } from "../source.ts";
+import { type Dependency, depBuildDir, depSourceDir, depSourceStamp } from "../source.ts";
 
 /** apple-oss-distributions/bootstrap_cmds tag bootstrap_cmds-138 (what the fork's Dockerfile.macos pins). */
 const BOOTSTRAP_CMDS_COMMIT = "c71d2d72f48995baaea76148f61002e5299841de";
@@ -29,9 +29,10 @@ export const bootstrapCmds: Dependency = {
   build: cfg => {
     const B = depBuildDir(cfg, "bootstrap_cmds");
     const src = join(depSourceDir(cfg, "bootstrap_cmds"), "migcom.tproj");
-    // The stub <mach/*.h> for the host come from the WebKit tree (fetched at
-    // configure time — or a --local-deps clone — so on disk before ninja runs).
+    // The stub <mach/*.h> for the host come from the WebKit tree, so the
+    // compile waits for WebKit's fetch.
     const machStubs = join(depSourceDir(cfg, "WebKit"), "macos-cross");
+    const webkitTree = depSourceStamp(cfg, "WebKit");
     return {
       kind: "direct",
       sources: [],
@@ -66,7 +67,7 @@ export const bootstrapCmds: Dependency = {
             join(B, "lexxer.c"),
             join(B, "parser.c"),
           ],
-          implicitInputs: ["y.tab.h"],
+          implicitInputs: ["y.tab.h", ...(webkitTree !== undefined ? [webkitTree] : [])],
           flags: [
             "-O2",
             "-w",

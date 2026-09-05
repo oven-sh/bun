@@ -11,7 +11,7 @@ export const WEBKIT_VERSION = "2e2aa2290fac856d6f451ceacb58f7f5b44dd057";
  * Two modes via `cfg.webkit`:
  *
  * **source** (the default, and what CI ships on every target): built like
- *   every other dep. The build fetches WEBKIT_VERSION
+ *   every other dep. The fetch edge downloads WEBKIT_VERSION
  *   into `vendor/WebKit/` — a sparse git fetch of just
  *   Source/{bmalloc,WTF,JavaScriptCore} (~35 MB over the wire instead of a
  *   12 GB clone) — and compiles it in our own ninja graph, no cmake ("Source
@@ -28,11 +28,10 @@ export const WEBKIT_VERSION = "2e2aa2290fac856d6f451ceacb58f7f5b44dd057";
  *   corruption.
  */
 
-import { spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, readdirSync, rmSync } from "node:fs";
-import { basename, isAbsolute, join, relative, resolve } from "node:path";
+import { mkdirSync, rmSync } from "node:fs";
+import { basename, join, relative, resolve } from "node:path";
 import { modeCompilesCpp, type Config } from "../config.ts";
-import { BuildError, assert } from "../error.ts";
+import { assert } from "../error.ts";
 import { systemLibs } from "../flags.ts";
 import { writeIfChanged } from "../fs.ts";
 import { quote } from "../shell.ts";
@@ -47,6 +46,17 @@ import {
 } from "../source.ts";
 import { migcomPath } from "./bootstrap-cmds.ts";
 import { buildsIcu, icuIncludes } from "./icu.ts";
+import {
+  bmallocFrameworkHeaders,
+  jscBuiltinsScripts,
+  jscGeneratorRuby,
+  jscInspectorScripts,
+  jscNonUnifiedSources,
+  jscOfflineasmRuby,
+  jscPrivateHeaders,
+  jscUcdFiles,
+  jscUnifiedBundles,
+} from "./webkit-sources.ts";
 
 // ───────────────────────────────────────────────────────────────────────────
 // Prebuilt URL computation
@@ -117,7 +127,7 @@ function prebuiltDestDir(cfg: Config): string {
  */
 export function webkitClassInfoCheckScript(cfg: Config): string | undefined {
   // ELF/Mach-O symbol tables only (a PE keeps its symbols in the PDB), and
-  // only where the WebKit tree is on disk (the modes that compile it).
+  // only in the modes that fetch and compile WebKit (the script is in its tree).
   if (cfg.webkit !== "source" || cfg.windows || !modeCompilesCpp(cfg.mode)) return undefined;
   return join(depSourceDir(cfg, "WebKit"), "Tools", "Scripts", "check-classinfo-uniqueness.py");
 }
@@ -472,12 +482,12 @@ function inspectorFeatureDefines(cfg: Config): string {
 // Source mode: file lists
 //
 // Everything WebKit's cmake would compile/generate for the JSCOnly port with
-// bun's options, written out. JSC's own translation units are NOT here — they
-// come from JavaScriptCore/Sources.txt (+ SourcesSocket.txt) through WebKit's
-// unified-source bundler — and header/offlineasm directories are globbed.
-// What is here is what only exists inside WebKit's CMakeLists.txt:
-// WTF/bmalloc sources, the JSC files that get a .lut.h, builtins, inspector
-// domains, include dirs.
+// bun's options, written out. This section holds what WebKit's CMakeLists.txt
+// spell out (WTF/bmalloc sources, the JSC files that get a .lut.h, builtins,
+// inspector domains, include dirs, per-platform choices); webkit-sources.ts
+// holds what cmake derives from the tree (JSC's unified bundles out of
+// Sources.txt, the framework header names, generator script inputs) and is
+// regenerated mechanically by generate-dep-sources.ts on a WebKit bump.
 //
 // On a WebKit upgrade a file added/removed/renamed upstream shows up as a
 // hard "no such file" or an undefined/duplicate symbol at link; fix the list.
@@ -971,7 +981,7 @@ const jscIncludeDirs: readonly string[] = [
 ];
 
 /** Directories whose headers are exposed flat as <JavaScriptCore/X.h> (JavaScriptCore_PRIVATE_FRAMEWORK_HEADERS lists files from exactly these; every *.h in them is forwarded). */
-const jscHeaderDirs: readonly string[] = [
+export const jscHeaderDirs: readonly string[] = [
   "API",
   "assembler",
   "b3/air",
@@ -1189,9 +1199,6 @@ const jscInspectorDomains: readonly string[] = [
   "inspector/protocol/Process.json",
 ];
 
-/** JavaScriptCore_UNIFIED_SOURCE_LIST_FILES: the Sources.txt files fed to the unified bundler. */
-const jscUnifiedSourceLists: readonly string[] = ["Sources.txt", "inspector/remote/SourcesSocket.txt"];
-
 /** JavaScriptCore_SOURCES: compiled outside the unified bundles (the generated JSCBuiltins.cpp is added by the emitter). */
 function jscExtraSourcesFor(cfg: Config): string[] {
   return [
@@ -1218,23 +1225,25 @@ const llintAsm: readonly string[] = [
 // What WebKit's cmake does, and where it lives here:
 //
 //   source lists            the "file lists" section above (WTF/bmalloc, JSC
-//                           codegen inputs); JSC's TUs from its own Sources.txt
-//   cmakeconfig.h           cmakeConfigHeader table (writeIfChanged)
-//   framework headers       forwarding stubs written at configure time:
+//                           codegen inputs) and webkit-sources.ts (JSC's
+//                           unified bundles and @no-unify TUs, the framework
+//                           header names, generator script inputs —
+//                           regenerated from a WebKit tree by
+//                           generate-dep-sources.ts on a bump)
+//   cmakeconfig.h           cmakeConfigHeader table, a `headers` entry
+//   framework headers       forwarding stubs as `headers` entries:
 //                           <bmalloc/X.h>, <JavaScriptCore/X.h> flattened dirs
-//   DerivedSources codegen  ~17 ruby/python/perl edges + one per .lut.h
-//   unified bundles         WebKit's generate-unified-source-bundles.py, run at
-//                           configure time (it only writes #include lists)
+//   unified bundles         `headers` entries too: each bundle file is the
+//                           #include list webkit-sources.ts records
+//   DerivedSources codegen  ~17 ruby/python/perl steps + one per .lut.h
 //   LLInt                   settings extractor exe → offsets extractor exe →
 //                           LLIntAssembly.h, each parsed by offlineasm (ruby)
-//   compile                 cc/cxx/pch from compile.ts with dep flags, so
-//                           target/cpu/lto/asan come from flags.ts like every
-//                           dep; the objects go straight onto bun's link line
+//   compile                 source groups with dep flags, so target/cpu/lto/
+//                           asan come from flags.ts like every dep; the objects
+//                           go straight onto bun's link line
 //
-// Configure needs the WebKit tree on disk (it reads Sources.txt, globs header
-// and offlineasm dirs, runs the bundler), so the fetch for this dep runs at
-// configure time when the tree is missing or stale (source.ts
-// prefetchConfigureSources) instead of as the first ninja edge.
+// Nothing here reads the WebKit tree: it is fetched by its ninja edge like
+// every other dep's.
 // ───────────────────────────────────────────────────────────────────────────
 
 // ───────────────────────────────────────────────────────────────────────────
@@ -1297,11 +1306,6 @@ const ruby = "ruby";
 const perl = "perl";
 
 const inTree = (base: string, rel: readonly string[]): string[] => rel.map(p => join(base, p));
-/** Files directly in `dir` with one of the extensions, as absolute paths. */
-const filesIn = (dir: string, ...exts: string[]): string[] =>
-  readdirSync(dir)
-    .filter(f => exts.length === 0 || exts.some(e => f.endsWith(e)))
-    .map(f => join(dir, f));
 
 /** One generator step; cwd defaults to DerivedSources (several generators write there implicitly). */
 function gen(
@@ -1349,11 +1353,6 @@ function webkitLayout(cfg: Config): WebKitBuild {
 
 function webkitBuildSpec(cfg: Config): DirectBuild {
   const wk = webkitLayout(cfg);
-  const { JSC } = wk;
-  assert(existsSync(join(JSC, "Sources.txt")), `WebKit source tree not present at ${wk.W}`, {
-    hint: "configure fetches it before describing the graph — this is a bug in prefetchConfigureSources",
-  });
-
   const flags = webkitFlags(wk);
   const codegen = jscCodegenSteps(wk);
   // All codegen must exist before any JSC TU compiles; after that the
@@ -1367,7 +1366,7 @@ function webkitBuildSpec(cfg: Config): DirectBuild {
   return {
     kind: "direct",
     sources: [],
-    headers: { "cmakeconfig.h": cmakeConfigHeader(cfg), ...frameworkHeaders(wk, flags) },
+    headers: { "cmakeconfig.h": cmakeConfigHeader(cfg), ...frameworkHeaders(wk, flags), ...jscSources.bundles },
     groups: [
       bmallocGroup(wk, flags),
       wtf.group,
@@ -1379,23 +1378,8 @@ function webkitBuildSpec(cfg: Config): DirectBuild {
     // What a consumer's compile waits for: JSC's generated headers (bun
     // includes them through the PrivateHeaders stubs) and WTF's MIG stubs.
     consumerOutputs: [...codegen.headers, ...wtf.migHeaders],
-    // What configure read from the tree to lay out this graph: the unified
-    // source lists (run through the bundler) and the directories it globbed
-    // (forwarding headers, generator script deps, offlineasm). A directory's
-    // mtime moves when a file is added or removed in it.
-    configureInputs: [
-      ...jscSources.unifiedListFiles,
-      ...jscHeaderDirs.map(d => join(JSC, d)),
-      join(wk.BM, "bmalloc"),
-      join(wk.BM, "libpas", "src", "libpas"),
-      join(JSC, "generator"),
-      join(JSC, "ucd"),
-      join(JSC, "Scripts"),
-      join(JSC, "Scripts", "wkbuiltins"),
-      join(JSC, "inspector", "scripts"),
-      join(JSC, "inspector", "scripts", "codegen"),
-      join(JSC, "offlineasm"),
-    ],
+    // Read by bun.ts's ClassInfo check straight out of the source tree.
+    treeFiles: ["Tools/Scripts/check-classinfo-uniqueness.py"],
   };
 }
 
@@ -1550,13 +1534,12 @@ function frameworkHeaders(wk: WebKitBuild, flags: WebKitFlags): Record<string, s
     for (const h of headers) entries[relative(B, join(dir, basename(h)))] = `#include "${h.replaceAll("\\", "/")}"\n`;
   };
   forward(join(wk.bmallocHeaders, "bmalloc"), [
-    ...filesIn(join(BM, "bmalloc"), ".h", ".def"),
-    ...filesIn(join(BM, "libpas", "src", "libpas"), ".h", ".def"),
+    ...inTree(BM, bmallocFrameworkHeaders),
     ...(flags.useMimalloc ? [join(flags.mimallocInclude, "mimalloc.h")] : []),
   ]);
   forward(join(wk.jscHeaders, "JavaScriptCore"), inTree(JSC, jscPublicHeaders));
   forward(join(wk.jscPrivateHeaders, "JavaScriptCore"), [
-    ...jscHeaderDirs.flatMap(d => filesIn(join(JSC, d), ".h", ".def")),
+    ...inTree(JSC, jscPrivateHeaders),
     join(DS, "Bytecodes.h"),
     join(DS, "JSCBuiltins.h"),
     join(DS, "JSCWebPreferenceOptions.h"),
@@ -1751,7 +1734,7 @@ function jscCodegenSteps(wk: WebKitBuild): { headers: string[]; sources: string[
     inputs: [
       join(JSC, "bytecode", "BytecodeList.rb"),
       join(JSC, "wasm", "wasm.json"),
-      ...filesIn(join(JSC, "generator"), ".rb"),
+      ...inTree(JSC, jscGeneratorRuby),
     ],
     desc: "Bytecodes",
   });
@@ -1801,7 +1784,7 @@ function jscCodegenSteps(wk: WebKitBuild): { headers: string[]; sources: string[
     gen(wk, {
       outputs: [out],
       cmd: [python, script, ucd, out],
-      inputs: [script, join(JSC, "yarr", "hasher.py"), ...filesIn(ucd)],
+      inputs: [script, join(JSC, "yarr", "hasher.py"), ...inTree(JSC, jscUcdFiles)],
       desc: "UnicodePatternTables.h",
     });
     headers.push(out);
@@ -1850,7 +1833,7 @@ function jscCodegenSteps(wk: WebKitBuild): { headers: string[]; sources: string[
         "--combined",
         ...builtins,
       ],
-      inputs: [...builtins, ...filesIn(scriptsDir, ".py"), ...filesIn(join(scriptsDir, "wkbuiltins"), ".py")],
+      inputs: [...builtins, ...inTree(JSC, jscBuiltinsScripts)],
       desc: "JSCBuiltins",
     });
     headers.push(join(DS, "JSCBuiltins.h"));
@@ -1898,7 +1881,7 @@ function jscCodegenSteps(wk: WebKitBuild): { headers: string[]; sources: string[
         "JavaScriptCore",
         combined,
       ],
-      inputs: [combined, ...filesIn(inspectorScripts, ".py"), ...filesIn(join(inspectorScripts, "codegen"), ".py")],
+      inputs: [combined, ...inTree(JSC, jscInspectorScripts)],
       desc: "InspectorProtocolBindings",
     });
     headers.push(...outputs.filter(f => f.endsWith(".h")));
@@ -2013,7 +1996,7 @@ function llintSteps(
   const { cfg, JSC, DS, binDir } = wk;
   const offlineasm = join(JSC, "offlineasm");
   const llintAsmFiles = inTree(JSC, llintAsm);
-  const offlineAsmRb = filesIn(offlineasm, ".rb");
+  const offlineAsmRb = inTree(JSC, jscOfflineasmRuby);
   const lowLevelInterpreterAsm = join(JSC, "llint", "LowLevelInterpreter.asm");
   const backend = offlineAsmBackend(cfg);
   // asm.rb only (OFFLINE_ASM_FORMAT_ARGS); the two extractor generators take
@@ -2124,49 +2107,28 @@ function llintSteps(
 // ─── JavaScriptCore: sources ───
 
 /**
- * JSC's translation units: WebKit's unified-source bundler run over the
- * Sources.txt lists (at configure time — it only writes #include lists),
- * plus JavaScriptCore_SOURCES.
+ * JSC's translation units: the unified bundles (each a generated file that
+ * #includes up to eight Sources.txt entries — webkit-sources.ts lists them,
+ * as WebKit's bundler formed them), the @no-unify entries, and
+ * JavaScriptCore_SOURCES. The bundle files themselves are `headers` entries
+ * written at configure.
  */
-function jscSourceList(wk: WebKitBuild): { sources: string[]; unifiedListFiles: string[] } {
-  const { cfg, JSC, WTF, DS, python } = wk;
-  const unifiedListFiles = inTree(JSC, jscUnifiedSourceLists);
-  const bundleScript = join(WTF, "Scripts", "generate-unified-source-bundles.py");
-  const bundled = spawnSync(
-    python,
-    [
-      bundleScript,
-      "--derived-sources-path",
-      DS,
-      "--source-tree-path",
-      JSC,
-      "--ignore-header-groups",
-      ...unifiedListFiles,
-    ],
-    { encoding: "utf8", maxBuffer: 1 << 26 },
-  );
-  if (bundled.error)
-    throw new BuildError("Failed to run python for WebKit unified source bundling", {
-      cause: bundled.error,
-      hint: `Is ${python} in PATH?`,
-    });
-  if (bundled.status !== 0) {
-    throw new BuildError(`generate-unified-source-bundles.py failed:\n${bundled.stderr}`, { file: bundleScript });
+function jscSourceList(wk: WebKitBuild): { sources: string[]; bundles: Record<string, string> } {
+  const { cfg, JSC, DS, B } = wk;
+  const bundleDir = join(DS, "unified-sources");
+  const bundles: Record<string, string> = {};
+  for (const [bundle, members] of jscUnifiedBundles) {
+    bundles[relative(B, join(bundleDir, bundle))] = members.map(m => `#include "${m}"\n`).join("");
   }
-  // Output is a cmake list: bundle files (absolute) plus the @no-unify
-  // members (relative to the source tree, or bare names of generated sources
-  // in DerivedSources), headers included — same disambiguation as
-  // WEBKIT_COMPUTE_SOURCES.
   const sources = [
-    ...bundled.stdout
-      .split(/[;\r\n]+/)
-      .map(s => s.trim())
-      .filter(s => /\.(cpp|c|cc)$/.test(s))
-      .map(s => (isAbsolute(s) ? s : !/[\\/]/.test(s) && !existsSync(join(JSC, s)) ? join(DS, s) : join(JSC, s))),
+    ...jscUnifiedBundles.map(([bundle]) => join(bundleDir, bundle)),
+    ...jscNonUnifiedSources.map(s =>
+      s.startsWith("DerivedSources/") ? join(DS, s.slice("DerivedSources/".length)) : join(JSC, s),
+    ),
     join(DS, "JSCBuiltins.cpp"),
     ...inTree(JSC, jscExtraSourcesFor(cfg)),
   ];
-  return { sources, unifiedListFiles };
+  return { sources, bundles };
 }
 
 function jscGroup(
@@ -2255,7 +2217,6 @@ function testFFIExe(cfg: Config): DirectStep {
 export const webkit: Dependency = {
   name: "WebKit",
   versionMacro: "WEBKIT",
-  configureReadsSource: true,
   // The direct build compiles against the mimalloc bun links
   // (USE_EXTERNAL_MIMALLOC) and, off macOS, the ICU built by deps/icu.ts.
   fetchDeps: cfg =>

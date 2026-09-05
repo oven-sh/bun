@@ -22,7 +22,7 @@ This directory generates `build.ninja`. The scripts **describe** the build; ninj
 
 **Deps compile in our graph.** `BuildSpec` variants:
 
-- `direct` — the dep's sources, in one or more groups (each its own flags/includes/PCH), become first-class `cc`/`cxx` edges in our graph and the `.o`s go straight into bun's link; `steps` add generators (ruby/python/perl scripts, a host tool the dep built), host tools and target executables; `headers` writes config headers at configure. Every C/C++ dep, from zlib (one list) to WebKit (`deps/webkit.ts`: bmalloc/WTF/JSC groups, JSC's TUs from its `Sources.txt`, the DerivedSources generators, the LLInt extractor chain, testFFI) and ICU (`deps/icu.ts`: host `icupkg`, data filter/repack). No sub-process configure, and LTO sees across the dep boundary. A dep whose spec is read off its tree (`configureReadsSource`: WebKit, ICU) is fetched at configure time.
+- `direct` — the dep's sources, in one or more groups (each its own flags/includes/PCH), become first-class `cc`/`cxx` edges in our graph and the `.o`s go straight into bun's link; `steps` add generators (ruby/python/perl scripts, a host tool the dep built), host tools and target executables; `headers` writes config headers at configure. Every C/C++ dep, from zlib (one list) to WebKit (`deps/webkit.ts`: bmalloc/WTF/JSC groups, JSC's unified bundles from the checked-in `deps/webkit-sources.ts`, the DerivedSources generators, the LLInt extractor chain, testFFI) and ICU (`deps/icu.ts`: host `icupkg`, data filter/repack). No sub-process configure, no tree read at configure, and LTO sees across the dep boundary.
 - `cargo` — invoke cargo build (lolhtml, rust-argon2). Cargo's incremental build is reliable; `restat = 1` keeps our downstream no-ops fast.
 - `prebuilt` — skip build entirely, download compiled `.a`/`.lib` (nodejs-headers; WebKit only with an explicit `--webkit=prebuilt`).
 
@@ -36,7 +36,7 @@ Configure time is Phase 1 below — resolve tools, compute flags, glob sources, 
 
 **The smell:** if configure code calls `spawnSync` to compile something, or compares mtimes with `statSync`, it's doing ninja's job. Make it a build edge — `n.rule()` + `n.build()`. Size doesn't matter; a 1-file compile is still a build edge.
 
-**Legitimate `spawnSync` at configure time:** tool detection (`clang --version`), git revision, `xcrun --show-sdk-path` — these probe the environment; and, for `configureReadsSource` deps whose graph is read from their tree, the source fetch (`prefetchConfigureSources`) plus WebKit's unified-source bundler (a python script that only writes `#include` lists). None of these compile anything.
+**Legitimate `spawnSync` at configure time:** tool detection (`clang --version`), git revision, `xcrun --show-sdk-path` — these probe the environment. None of these compile or fetch anything.
 
 ## Ninja primer
 
@@ -146,11 +146,10 @@ Tables: `cpuTargetFlags` (`-march`/`-mcpu`/`-mtune` — also translated for rust
    - `generateCargoConfig(cfg)` — write the repo-root `.cargo/config.toml` (git-ignored) with the per-target `linker = ` from the discovered `cfg.hostCxx`. Advisory only for `bun bd` (the ninja cargo edge sets the linker via env); it's there for `cargo build`/`cargo check`/rust-analyzer run directly.
 4. `globAllSources()` — one filesystem snapshot of all `.cpp`/`.c`/`.rs`/codegen-input globs.
 5. `new Ninja({buildDir})` + `registerAllRules(n, cfg)` — register every rule template.
-6. `prefetchConfigureSources(cfg, allDeps)` — fetch the trees of `configureReadsSource` deps (WebKit, ICU) if missing or stale; their specs read file lists out of them.
-7. `emitBun(n, cfg, sources)` — assemble the build graph (see Phase 2).
-8. `emitGeneratorRule(n, cfg, partial, depInputs)` — persist `configure.json`, emit `regen` rule so editing any build script (or a dep-tree file configure read, e.g. WebKit's Sources.txt) triggers reconfigure.
-9. `n.default([...])` + `n.write()` — set default targets, write `build.ninja` + `compile_commands.json`.
-10. `mkdirAll(...)` — pre-create all object output dirs.
+6. `emitBun(n, cfg, sources)` — assemble the build graph (see Phase 2).
+7. `emitGeneratorRule(n, cfg, partial)` — persist `configure.json`, emit `regen` rule so editing any build script triggers reconfigure.
+8. `n.default([...])` + `n.write()` — set default targets, write `build.ninja` + `compile_commands.json`.
+9. `mkdirAll(...)` — pre-create all object output dirs.
 
 ### Phase 2 — emitBun (`bun.ts::emitBun`)
 

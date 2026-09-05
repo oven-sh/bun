@@ -12,7 +12,8 @@ use bun_install::lockfile::{
     tree,
 };
 use bun_install::package_manager_real::{
-    PackageJSONEditor, ProgressStrings, ROOT_PACKAGE_JSON_PATH, update_lockfile_if_needed,
+    PackageJSONEditor, ProgressStrings, ROOT_PACKAGE_JSON_PATH, package_json_write_back,
+    update_lockfile_if_needed,
 };
 use bun_install::{
     self as install, DEFAULT_TRUSTED_DEPENDENCIES_LIST, DependencyID, LifecycleScriptSubprocess,
@@ -532,6 +533,12 @@ impl TrustCommand {
                 (*pm_raw).scripts_node = None;
             }
         }
+
+        // The `trustedDependencies` edit below re-reads package.json from disk, so the edits a pnpm
+        // migration made to it have to be written first (the migrated lockfile is saved below).
+        // SAFETY: `pm_raw` singleton; `load_lockfile` only borrows the boxed lockfile, which this
+        // does not touch.
+        unsafe { package_json_write_back::write_migrated_root(&mut *pm_raw) };
 
         // SAFETY: `pm_raw` singleton; this scope takes over the descriptor
         // (the original `pm.root_package_json_file` is replaced with INVALID so

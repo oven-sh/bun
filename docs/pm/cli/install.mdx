@@ -174,6 +174,8 @@ bun install --frozen-lockfile
 
 Bun does not enable `--frozen-lockfile` automatically in CI; pass the flag or use `bun ci`. If there is no lockfile at all, `--frozen-lockfile` installs from `package.json` without writing one.
 
+If the project has a `package-lock.json`, `yarn.lock`, or `pnpm-lock.yaml` but no `bun.lock`, `--frozen-lockfile` migrates that lockfile in memory and installs from it. The install fails if the migrated lockfile does not match `package.json`. Bun writes nothing in this case: no `bun.lock`, and none of the `package.json` edits a [pnpm migration](#pnpm-migration) makes. It prints a `note:` instead. To finish the migration, run `bun install` without the flag and commit the files it writes. The `bun.lockb` to `bun.lock` conversion described in [lockfile](/pm/lockfile) is the one write `--frozen-lockfile` still performs.
+
 `--frozen-lockfile` works on a pruned monorepo checkout (e.g. `turbo prune` output, or a Docker context with only some workspace folders copied in). If a workspace listed in `bun.lock` is missing its `package.json` on disk, Bun skips it with a `note:` and does not install its exclusive dependencies. If a remaining workspace depends on a skipped one, the install fails.
 
 To validate the lockfile without installing, use `bun install --frozen-lockfile --dry-run`.
@@ -529,6 +531,8 @@ bun install
 ```
 
 Migration only runs when `bun.lock` is absent. There is currently no opt-out flag for pnpm migration.
+
+Bun writes the migrated `bun.lock` and the `package.json` edits described below together, and only when the command saves a lockfile. `bun install`, `bun add`, `bun remove`, `bun update`, `bun pm migrate`, and `bun pm trust` write both files. `bun install --frozen-lockfile` (and `bun ci`), `bun install --dry-run`, `bun install --no-save`, and commands that only read the lockfile, such as `bun outdated` and `bun pm why`, migrate in memory and leave both files untouched.
 
 The migration process handles:
 

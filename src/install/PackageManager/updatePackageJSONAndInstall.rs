@@ -483,12 +483,12 @@ fn update_package_json_and_install_with_manager_with_updates(
     // The Smarter™ approach is you resolve ahead of time and write to disk once!
     // But, turns out that's slower in any case where more than one package has to be resolved (most of the time!)
     // Concurrent network requests are faster than doing one and then waiting until the next batch
-    let new_package_json_source: Vec<u8> = package_json_writer
-        .ctx
-        .written_without_trailing_zero()
-        .to_vec();
-    // The cache entry (`Cow<'static, [u8]>`) outlives this stack frame, so it needs its own copy.
-    current_package_json.source.contents = Cow::Owned(new_package_json_source.clone());
+    current_package_json.source.contents = Cow::Owned(
+        package_json_writer
+            .ctx
+            .written_without_trailing_zero()
+            .to_vec(),
+    );
     // The edits above went into a promoted copy
     // (`current_package_json_root`), so re-parse the
     // printed source so the cached AST (consumed by `FolderResolver` for workspace
@@ -661,40 +661,34 @@ fn update_package_json_and_install_with_manager_with_updates(
     }
 
     if manager.options.do_.contains(Do::WRITE_PACKAGE_JSON) {
-        let (source, path): (&[u8], &ZStr) =
-            if matches!(manager.options.patch_features, PatchFeatures::Commit { .. }) {
-                'source_and_path: {
-                    let root_package_json_entry = match manager
-                        .workspace_package_json_cache
-                        .get_with_path(
-                            manager.log_mut(),
-                            root_package_json_path.as_bytes(),
-                            GetJSONOptions::default(),
-                        )
-                        .unwrap()
-                    {
-                        Ok(e) => e,
-                        Err(err) => {
-                            Output::err(
-                                err,
-                                "failed to read/parse package.json at '{s}'",
-                                (BStr::new(root_package_json_path.as_bytes()),),
-                            );
-                            Global::exit(1);
-                        }
-                    };
-
-                    break 'source_and_path (
-                        &root_package_json_entry.source.contents,
-                        root_package_json_path,
-                    );
-                }
-            } else {
-                (
-                    &new_package_json_source,
-                    manager.original_package_json_path.as_zstr(),
-                )
-            };
+        let path: &ZStr = if matches!(manager.options.patch_features, PatchFeatures::Commit { .. })
+        {
+            root_package_json_path
+        } else {
+            manager.original_package_json_path.as_zstr()
+        };
+        // The cache entry, not the source printed above: a lockfile migration during the install edits the
+        // root entry too (`pnpm::update_package_json_after_migration`).
+        let entry = match manager
+            .workspace_package_json_cache
+            .get_with_path(
+                manager.log_mut(),
+                path.as_bytes(),
+                GetJSONOptions::default(),
+            )
+            .unwrap()
+        {
+            Ok(e) => e,
+            Err(err) => {
+                Output::err(
+                    err,
+                    "failed to read/parse package.json at '{s}'",
+                    (BStr::new(path.as_bytes()),),
+                );
+                Global::exit(1);
+            }
+        };
+        let source: &[u8] = &entry.source.contents;
 
         // Now that we've run the install step
         // We can save our in-memory package.json to disk

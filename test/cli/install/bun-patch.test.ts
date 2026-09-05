@@ -1,6 +1,6 @@
 import { $, ShellOutput } from "bun";
 import { afterAll, beforeAll, describe, expect, setDefaultTimeout, test } from "bun:test";
-import { lstatSync, readFileSync } from "fs";
+import { appendFileSync, lstatSync, readdirSync, readFileSync } from "fs";
 import { bunEnv, bunExe, isASAN, tempDir, VerdaccioRegistry } from "harness";
 import { isAbsolute, join, sep } from "path";
 
@@ -735,6 +735,51 @@ module.exports = function isOdd(i) {
     await $`${bunExe()} i`.env(bunEnv).cwd(tempdir).throws(false);
     const { stdout } = await $`${bunExe()} run index.ts`.env(bunEnv).cwd(tempdir).throws(false);
     expect(stdout.toString()).toContain("hi\nhello\n");
+  });
+
+  describe(".bun-tag sentinel leak test", () => {
+    const registry = new VerdaccioRegistry();
+
+    beforeAll(async () => {
+      await registry.start();
+    });
+
+    afterAll(() => {
+      registry.stop();
+    });
+
+    // https://github.com/oven-sh/bun/issues/19327
+    test("should not leak .bun-tag sentinel or accumulate tags across patch cycles", async () => {
+      await using tempdir = tempDir("buntag", {
+        "package.json": JSON.stringify({
+          "name": "bun-patch-test",
+          "version": "1.0.0",
+          "dependencies": { "basic-1": "1.0.0" },
+        }),
+      });
+
+      const env = {
+        ...bunEnv,
+        BUN_INSTALL_CACHE_DIR: join(String(tempdir), ".bun-cache"),
+        BUN_CONFIG_REGISTRY: registry.registryUrl(),
+      };
+      await $`${bunExe()} i`.env(env).cwd(tempdir);
+
+      const pkgDir = join(String(tempdir), "node_modules/basic-1");
+      const patchfilePath = join(String(tempdir), "patches/basic-1@1.0.0.patch");
+      const sentinels = () => readdirSync(pkgDir).filter(name => name.startsWith(".bun-tag-"));
+
+      for (const cycle of [0, 1]) {
+        expectNoError(await $`${bunExe()} patch basic-1@1.0.0`.env(env).cwd(tempdir));
+        appendFileSync(join(pkgDir, "index.js"), `console.log(${cycle})\n`);
+        expectNoError(await $`${bunExe()} patch --commit ${pkgDir}`.env(env).cwd(tempdir));
+
+        expect(readFileSync(patchfilePath, "utf8")).not.toMatch(/\.bun-tag-[0-9a-f]+/);
+
+        await $`${bunExe()} i`.env(env).cwd(tempdir);
+        expect(sentinels()).toHaveLength(1);
+      }
+    });
   });
 
   test("bad patch arg", async () => {

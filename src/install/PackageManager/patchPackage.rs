@@ -288,6 +288,7 @@ pub fn do_patch_commit(
     )
     .expect("formatting into a Vec is infallible");
 
+    let mut bun_patch_tag_owned: Option<Box<[u8]>> = None;
     let patchfile_contents: Vec<u8> = 'brk: {
         let new_folder = changes_dir;
         let mut buf2 = PathBuffer::uninit();
@@ -367,14 +368,13 @@ pub fn do_patch_commit(
         };
 
         let mut bunpatchtagbuf: BuntagHashBuf = BuntagHashBuf::default();
-        // If the package was already patched then it might have a ".bun-tag-XXXXXXXX"
-        // we need to rename this out and back too.
         let bun_patch_tag: Option<&[u8]> = 'has_bun_patch_tag: {
             let name_and_version_hash = string_hash(&patch_key);
             let patch_tag: &[u8] = 'patch_tag: {
                 if let Some(patchdep) = lockfile.patched_dependencies.get(&name_and_version_hash) {
                     if let Some(hash) = patchdep.patchfile_hash() {
-                        break 'patch_tag &*buntaghashbuf_make(&mut bunpatchtagbuf, hash);
+                        let tag = buntaghashbuf_make(&mut bunpatchtagbuf, hash);
+                        break 'patch_tag &*tag;
                     }
                 }
                 break 'has_bun_patch_tag None;
@@ -407,10 +407,9 @@ pub fn do_patch_commit(
                 );
                 break 'has_bun_patch_tag None;
             }
+            bun_patch_tag_owned = Some(Box::from(patch_tag));
             break 'has_bun_patch_tag Some(patch_tag);
         };
-        // deferred restore — one-off rename-back logic on every exit
-        // path of `'brk`. Captures borrow into stack buffers.
         scopeguard::defer! {
             if has_nested_node_modules || bun_patch_tag.is_some() {
                 let new_folder_handle = match Dir::cwd().open_dir(new_folder, sys::OpenDirOptions::default()) {
@@ -595,10 +594,17 @@ pub fn do_patch_commit(
     }
 
     let patchfile_path: Box<[u8]> = Box::<[u8]>::from(path_in_patches_dir.as_bytes());
-    let _ = sys::unlink(resolve_path::join_z::<platform::Auto>(&[
-        changes_dir,
-        b".bun-patch-tag",
-    ]));
+    if let Some(patch_tag) = bun_patch_tag_owned {
+        if let Err(e) = sys::unlink(resolve_path::join_z::<platform::Auto>(&[
+            changes_dir,
+            &patch_tag[..],
+        ])) {
+            if e.get_errno() != sys::E::ENOENT {
+                Output::err(e, "failed to remove patch tag sentinel", ());
+                Global::crash();
+            }
+        }
+    }
 
     Ok(Some(PatchCommitResult {
         patch_key: patch_key.into_boxed_slice(),

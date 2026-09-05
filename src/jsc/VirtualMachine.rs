@@ -6771,27 +6771,24 @@ impl VirtualMachine {
         if !message.is_empty() {
             let message_slice = message.to_utf8();
             let msg = message_slice.slice();
-            let mut cursor: u32 = 0;
-            if let Some(i) = bun_core::strings::index_of_char(msg, b'\n') {
-                cursor = i + 1;
-                let _ = write!(
-                    writer,
-                    ": {}::",
-                    bun_core::fmt::github_action_property(&msg[..i as usize])
-                );
-            } else {
-                let _ = write!(writer, ": {}::", bun_core::fmt::github_action_property(msg));
-            }
-            // Skip past the next newline.
-            if let Some(i) = bun_core::strings::index_of_char(&msg[cursor as usize..], b'\n') {
-                cursor += i + 1;
-            }
-            if cursor > 0 {
-                let _ = write!(
-                    writer,
-                    "{}",
-                    bun_core::fmt::github_action(&msg[cursor as usize..])
-                );
+            match bun_core::strings::split_once_char(msg, b'\n') {
+                Some((title, rest)) => {
+                    let title = title.strip_suffix(b"\r").unwrap_or(title);
+                    let _ = write!(
+                        writer,
+                        ": {}::",
+                        bun_core::fmt::github_action_property(title)
+                    );
+                    // expect() separates its header line from the body with one blank line.
+                    let body = rest
+                        .strip_prefix(b"\n")
+                        .or_else(|| rest.strip_prefix(b"\r\n"))
+                        .unwrap_or(rest);
+                    let _ = write!(writer, "{}", bun_core::fmt::github_action(body));
+                }
+                None => {
+                    let _ = write!(writer, ": {}::", bun_core::fmt::github_action_property(msg));
+                }
             }
         } else {
             let _ = writer.write_all(b"::");

@@ -391,7 +391,7 @@ fn use_fake_timers(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSVal
     // This is used by testing-library/react to detect if jest.advanceTimersByTime should be called.
     set_fake_timer_marker(global, true)?;
 
-    Ok(frame.this())
+    Ok(frame.this().to_this_strict(global))
 }
 
 #[bun_jsc::host_fn]
@@ -403,7 +403,7 @@ fn use_real_timers(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSVal
     // Remove the setTimeout.clock marker when switching back to real timers.
     set_fake_timer_marker(global, false)?;
 
-    Ok(frame.this())
+    Ok(frame.this().to_this_strict(global))
 }
 
 #[bun_jsc::host_fn]
@@ -412,7 +412,7 @@ fn advance_timers_to_next_timer(global: &JSGlobalObject, frame: &CallFrame) -> J
 
     FakeTimers::execute_next(global)?;
 
-    Ok(frame.this())
+    Ok(frame.this().to_this_strict(global))
 }
 
 #[bun_jsc::host_fn]
@@ -448,7 +448,7 @@ fn advance_timers_by_time(global: &JSGlobalObject, frame: &CallFrame) -> JsResul
     CURRENT_TIME.set(global, &target, None);
     advanced?;
 
-    Ok(frame.this())
+    Ok(frame.this().to_this_strict(global))
 }
 
 #[bun_jsc::host_fn]
@@ -457,7 +457,7 @@ fn run_only_pending_timers(global: &JSGlobalObject, frame: &CallFrame) -> JsResu
 
     FakeTimers::execute_only_pending_timers(global)?;
 
-    Ok(frame.this())
+    Ok(frame.this().to_this_strict(global))
 }
 
 #[bun_jsc::host_fn]
@@ -466,7 +466,7 @@ fn run_all_timers(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValu
 
     FakeTimers::execute_all_timers(global)?;
 
-    Ok(frame.this())
+    Ok(frame.this().to_this_strict(global))
 }
 
 #[bun_jsc::host_fn]
@@ -487,7 +487,7 @@ fn clear_all_timers(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSVa
     let cleared = unsafe { (*timer_all()).fake_timers.clear() };
     cleared.release(global.bun_vm_ptr());
 
-    Ok(frame.this())
+    Ok(frame.this().to_this_strict(global))
 }
 
 #[bun_jsc::host_fn]

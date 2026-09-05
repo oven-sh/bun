@@ -456,6 +456,42 @@ pub(crate) fn normalize_specifier<'a>(
     (slice, specifier, query)
 }
 
+/// Loader for a `data:` specifier, derived from its MIME type.
+///
+/// The MIME essence is trimmed of ASCII whitespace and matched
+/// case-insensitively, per the WHATWG data: URL processor and RFC 2045 (Node
+/// loads `data: TEXT/JAVASCRIPT ,...` as a JavaScript module).
+/// `Category::init` classifies both `text/javascript` and
+/// `application/javascript` as JavaScript (matching Node), unlike
+/// `decode_mime_type().category`, which files the latter under `Application`.
+/// Unknown and absent MIME types get the maximally permissive tsx default
+/// used for extensionless files; invalid data URLs do too, and the transpile
+/// path reports the parse error.
+pub fn loader_from_data_url(path_text: &[u8]) -> Loader {
+    use bun_http_types::MimeType::Category;
+    let Ok(data_url) = bun_resolver::data_url::DataURL::parse_without_check(path_text) else {
+        return Loader::Tsx;
+    };
+    let essence = match strings::index_of_char(data_url.mime_type, b';') {
+        Some(i) => &data_url.mime_type[..i as usize],
+        None => data_url.mime_type,
+    };
+    let essence = essence.trim_ascii();
+    let mut lowered = [0u8; 64];
+    let Some(lowered) = lowered.get_mut(..essence.len()) else {
+        // Longer than any MIME essence `Category::init` recognizes.
+        return Loader::Tsx;
+    };
+    lowered.copy_from_slice(essence);
+    lowered.make_ascii_lowercase();
+    match Category::init(lowered) {
+        Category::Javascript => Loader::Js,
+        Category::Json => Loader::Json,
+        Category::Css => Loader::Css,
+        _ => Loader::Tsx,
+    }
+}
+
 #[derive(Debug, thiserror::Error, strum::IntoStaticStr)]
 pub enum GetLoaderAndVirtualSourceErr {
     #[error("BlobNotFound")]
@@ -487,6 +523,12 @@ pub fn get_loader_and_virtual_source<'a>(
     // SAFETY: loaders() returns a borrow tied to jsc_vm.owner
     let mut loader: Option<Loader> = path.loader(unsafe { &*jsc_vm.loaders() });
     let mut virtual_source: Option<&'a bun_ast::Source> = None;
+
+    // A `data:` specifier is not a file path; the extension lookup above
+    // would sniff a fake extension out of the URL body.
+    if strings::has_prefix_comptime(path.text, b"data:") {
+        loader = Some(loader_from_data_url(path.text));
+    }
 
     if let Some(eval_source) = jsc_vm.eval_source() {
         // SAFETY: eval_source outlives jsc_vm

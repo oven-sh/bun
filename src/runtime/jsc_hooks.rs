@@ -3966,6 +3966,12 @@ unsafe fn get_loader_and_virtual_source<'a>(
         loader_for_path(&path, unsafe { &(*jsc_vm).transpiler.options.loaders });
     let mut virtual_source: Option<&'a bun_ast::Source> = None;
 
+    // A `data:` specifier is not a file path; the extension lookup above
+    // would sniff a fake extension out of the URL body.
+    if bun_core::strings::has_prefix_comptime(path.text, b"data:") {
+        loader = Some(options::loader_from_data_url(path.text));
+    }
+
     // Synthetic `[eval]`/`[stdin]` source.
     // SAFETY: per fn contract.
     if let Some(eval_source) = unsafe { &*jsc_vm }.module_loader.eval_source.as_deref() {

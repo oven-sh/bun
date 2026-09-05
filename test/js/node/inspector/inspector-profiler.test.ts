@@ -689,6 +689,64 @@ console.log(JSON.stringify({ count: fn?.ranges[0].count }));
       expect(functionCounts).toContain(0);
     });
 
+    // JSC records the constructor it synthesizes for a class without one as a function of the
+    // file that defines the class, with offsets into its own template string ([1, 15] for a base
+    // class, [1, 38] for a derived one), and never marks it executed. Reported as is, every such
+    // class adds one count-0 function over the first characters of the file (#7025).
+    test.concurrent("does not report synthesized default constructors as uncovered functions", async () => {
+      using dir = tempDir("inspector-coverage-class", {
+        "fixture.mjs": `
+import { Session } from "node:inspector/promises";
+
+const session = new Session();
+session.connect();
+await session.post("Profiler.enable");
+await session.post("Profiler.startPreciseCoverage", { callCount: true, detailed: true });
+
+const { Derived } = await import("./classes.mjs");
+new Derived().x;
+
+const coverage = await session.post("Profiler.takePreciseCoverage");
+await session.post("Profiler.stopPreciseCoverage");
+session.disconnect();
+
+const entry = coverage.result.find(s => s.url.endsWith("classes.mjs"));
+const source = await Bun.file(new URL("./classes.mjs", import.meta.url)).text();
+console.log(
+  JSON.stringify({
+    unusedBody: source.indexOf("return 2"),
+    functions: entry.functions.map(f => ({ ...f.ranges[0] })),
+  }),
+);
+`,
+        "classes.mjs": `
+export class Base {
+  get x() { return 1; }
+  unused() { return 2; }
+}
+export class Derived extends Base {}
+`,
+      });
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "fixture.mjs"],
+        env: bunEnv,
+        cwd: String(dir),
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      expect({ stderrIfFailed: exitCode === 0 ? "" : stderr, exitCode }).toEqual({ stderrIfFailed: "", exitCode: 0 });
+      const { unusedBody, functions } = JSON.parse(stdout);
+      // The only function that did not run is `unused`. Before the fix the two template ranges,
+      // [1, 15] and [1, 38], were reported with count 0 as well.
+      const uncovered = functions.filter((range: { count: number }) => range.count === 0);
+      expect(uncovered).toHaveLength(1);
+      expect(uncovered[0].startOffset).toBeLessThanOrEqual(unusedBody);
+      expect(uncovered[0].endOffset).toBeGreaterThan(unusedBody);
+      expect(functions.length).toBeGreaterThanOrEqual(3);
+    });
+
     // V8 never emits startOffset === endOffset; @bcoe/v8-coverage (vitest/c8
     // --coverage) recurses forever on a zero-width range (issue #39821).
     test.concurrent("never emits zero-width ranges", async () => {

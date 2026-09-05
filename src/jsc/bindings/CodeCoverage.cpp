@@ -1,8 +1,33 @@
 #include "root.h"
+#include "CodeCoverage.h"
 #include "ZigSourceProvider.h"
 #include <JavaScriptCore/ControlFlowProfiler.h>
 
 using namespace JSC;
+
+namespace Bun {
+
+void appendFunctionRangesForCoverage(Vector<BasicBlockRange>& basicBlocks, VM& vm, SourceID sourceID)
+{
+    const Vector<std::tuple<bool, unsigned, unsigned>>& functionRanges = vm.functionHasExecutedCache()->getFunctionRanges(sourceID);
+
+    basicBlocks.reserveCapacity(functionRanges.size() + basicBlocks.size());
+
+    for (const auto& functionRange : functionRanges) {
+        BasicBlockRange range;
+        range.m_hasExecuted = std::get<0>(functionRange);
+        range.m_startOffset = static_cast<int>(std::get<1>(functionRange));
+        range.m_endOffset = static_cast<int>(std::get<2>(functionRange));
+        range.m_executionCount = range.m_hasExecuted
+            ? 1
+            : 0; // This is a hack. We don't actually count this.
+        if (isSynthesizedDefaultConstructorRange(range.m_hasExecuted, range.m_startOffset, range.m_endOffset))
+            continue;
+        basicBlocks.append(range);
+    }
+}
+
+}
 
 extern "C" bool CodeCoverage__withBlocksAndFunctions(
     JSC::VM* vmPtr,
@@ -24,20 +49,7 @@ extern "C" bool CodeCoverage__withBlocksAndFunctions(
 
     size_t functionStartOffset = basicBlocks.size();
 
-    const Vector<std::tuple<bool, unsigned, unsigned>>& functionRanges = vm.functionHasExecutedCache()->getFunctionRanges(sourceID);
-
-    basicBlocks.reserveCapacity(functionRanges.size() + basicBlocks.size());
-
-    for (const auto& functionRange : functionRanges) {
-        BasicBlockRange range;
-        range.m_hasExecuted = std::get<0>(functionRange);
-        range.m_startOffset = static_cast<int>(std::get<1>(functionRange));
-        range.m_endOffset = static_cast<int>(std::get<2>(functionRange));
-        range.m_executionCount = range.m_hasExecuted
-            ? 1
-            : 0; // This is a hack. We don't actually count this.
-        basicBlocks.append(range);
-    }
+    Bun::appendFunctionRangesForCoverage(basicBlocks, vm, sourceID);
 
     blockCallback(ctx, basicBlocks.begin(), basicBlocks.size(), functionStartOffset, ignoreSourceMap);
     return true;

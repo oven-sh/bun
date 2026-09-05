@@ -123,6 +123,8 @@ self.onmessage = (event: MessageEvent) => {
 const config = await loadConfig();
 ```
 
+A top-level `await` in a statically imported module counts too. Static imports are evaluated before the worker's own code, so if any module in the import graph awaits at its top level, delivery starts before the first line of the worker runs and installing the handler on that first line is already too late. Load such modules with a dynamic `import()` after installing the handler, or use `node:worker_threads`.
+
 [`node:worker_threads`](https://nodejs.org/api/worker_threads.html) differs here, in Bun as in Node.js: `parentPort` keeps messages queued until a `"message"` listener is attached (and again whenever the last one is removed), so a worker that runs `await init()` before `parentPort.on("message", ...)` still receives everything in order.
 
 ## Messages with `postMessage`

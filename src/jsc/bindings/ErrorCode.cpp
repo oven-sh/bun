@@ -137,6 +137,9 @@ static JSC::JSObject* createErrorPrototype(JSC::VM& vm, JSC::JSGlobalObject* glo
 
     prototype->putDirect(vm, vm.propertyNames->name, jsString(vm, String(name)), 0);
     prototype->putDirect(vm, WebCore::builtinNames(vm).codePublicName(), jsString(vm, String(code)), 0);
+    // Private marker read by nodeErrorCodeForStackHeader to emit `name [code]: message` in .stack; only ERR_* codes carry Node's kIsNodeError.
+    if (StringView(code).startsWith("ERR_"_s))
+        prototype->putDirect(vm, WebCore::builtinNames(vm).codePrivateName(), jsString(vm, String(code)), JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::ReadOnly | 0);
     prototype->putDirect(vm, vm.propertyNames->toString, JSC::JSFunction::create(vm, globalObject, 0, "toString"_s, NodeError_proto_toString, JSC::ImplementationVisibility::Private), 0);
 
     return prototype;

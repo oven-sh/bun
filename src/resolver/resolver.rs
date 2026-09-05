@@ -5199,10 +5199,12 @@ impl<'a> Resolver<'a> {
                             dec_ret!(MatchStatus::Success);
                         }
 
-                        // `remap` is relative to the package that owns the browser map.
-                        field_abs_path = self
-                            .fs_ref()
-                            .abs_buf(&[browser_scope.abs_path, remap], bufs!(field_abs_path));
+                        // Bare-specifier remaps are handled by the post-resolution browser check.
+                        if !is_package_path(remap) {
+                            field_abs_path = self
+                                .fs_ref()
+                                .abs_buf(&[browser_scope.abs_path, remap], bufs!(field_abs_path));
+                        }
                     }
                 }
             }
@@ -5450,35 +5452,38 @@ impl<'a> Resolver<'a> {
                             return MatchStatus::Success;
                         }
 
-                        // `remap` is relative to the browser scope, which may be an ancestor of `path`.
-                        let new_paths = [browser_scope.abs_path, remap];
-                        let remapped_abs = self.fs_ref().abs_buf(&new_paths, bufs!(remap_path));
+                        // Bare-specifier remaps are handled by the post-resolution browser check.
+                        if !is_package_path(remap) {
+                            let new_paths = [browser_scope.abs_path, remap];
+                            let remapped_abs = self.fs_ref().abs_buf(&new_paths, bufs!(remap_path));
 
-                        // Is this a file
-                        if let Some(file_result) = self.load_as_file(remapped_abs, extension_order)
-                        {
-                            *out = MatchResult {
-                                dirname_fd: file_result.dirname_fd,
-                                path_pair: PathPair {
-                                    primary: Path::init(file_result.path),
-                                    secondary: None,
-                                },
-                                ..Default::default()
-                            };
-                            return MatchStatus::Success;
-                        }
-
-                        // Is it a directory with an index?
-                        if let Ok(Some(new_dir)) = self.dir_info_cached(remapped_abs) {
-                            if self
-                                .load_as_index(new_dir, extension_order, out)
-                                .is_success()
+                            // Is this a file
+                            if let Some(file_result) =
+                                self.load_as_file(remapped_abs, extension_order)
                             {
+                                *out = MatchResult {
+                                    dirname_fd: file_result.dirname_fd,
+                                    path_pair: PathPair {
+                                        primary: Path::init(file_result.path),
+                                        secondary: None,
+                                    },
+                                    ..Default::default()
+                                };
                                 return MatchStatus::Success;
                             }
-                        }
 
-                        return MatchStatus::NotFound;
+                            // Is it a directory with an index?
+                            if let Ok(Some(new_dir)) = self.dir_info_cached(remapped_abs) {
+                                if self
+                                    .load_as_index(new_dir, extension_order, out)
+                                    .is_success()
+                                {
+                                    return MatchStatus::Success;
+                                }
+                            }
+
+                            return MatchStatus::NotFound;
+                        }
                     }
                 }
             }

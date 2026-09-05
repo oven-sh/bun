@@ -227,17 +227,6 @@ impl Snapshots {
             return Ok(());
         }
 
-        // SAFETY: VM is thread-local singleton installed before any test runs; lives for the
-        // duration of the runner. Per `VirtualMachine::get` doc, callers form a short-lived borrow.
-        let vm = VirtualMachine::get().as_mut();
-        let opts = js_parser::ParserOptions::init(
-            vm.transpiler.options.jsx.clone(),
-            bun_ast::Loader::Js,
-        );
-        // Thread a per-call arena — js_parser is bump-allocated.
-        let arena = bun_alloc::Arena::new();
-        let mut temp_log = bun_ast::Log::init();
-
         // do NOT call `Jest::runner()` here — it hands out an exclusive ref to the global TestRunner,
         // and `self: &mut Snapshots` is a live borrow of that same TestRunner's `.snapshots`
         // field. Retagging the whole TestRunner would invalidate `self` under Stacked Borrows.
@@ -268,96 +257,139 @@ impl Snapshots {
         // SAFETY: buf[pos] == 0 written above
         let snapshot_file_path = ZStr::from_buf(&buf[..], pos);
 
+        // `source` aliases `file_buf` (lifetime erased); `load_entries` writes to `values` only.
         let source = bun_ast::Source::init_path_string(
             snapshot_file_path.as_bytes(),
             self.file_buf.as_slice(),
         );
 
-        let parser = js_parser::Parser::init(
-            opts,
-            &mut temp_log,
-            &source,
-            &vm.transpiler.options.define,
-            &arena,
-        )?;
+        let mut temp_log = bun_ast::Log::init();
+        let result = Self::load_entries(&mut self.values, &source, &mut temp_log);
+        if temp_log.errors > 0 {
+            let _ = temp_log.print(std::ptr::from_mut::<bun_core::io::Writer>(
+                bun_output::error_writer(),
+            ));
+            bun_output::flush();
+        }
+        result
+    }
 
-        let parse_result = parser.parse()?;
-        let mut ast = match parse_result {
+    /// Loads the entries of a `.snap` file into `values`. Any other statement is an error.
+    fn load_entries(
+        values: &mut HashMap<u64, Box<[u8]>>,
+        source: &bun_ast::Source,
+        temp_log: &mut bun_ast::Log,
+    ) -> Result<(), Error> {
+        // SAFETY: VM is thread-local singleton installed before any test runs; lives for the
+        // duration of the runner. Per `VirtualMachine::get` doc, callers form a short-lived borrow.
+        let vm = VirtualMachine::get().as_mut();
+        let opts = js_parser::ParserOptions::init(
+            vm.transpiler.options.jsx.clone(),
+            bun_ast::Loader::Js,
+        );
+        // Thread a per-call arena — js_parser is bump-allocated.
+        let arena = bun_alloc::Arena::new();
+
+        let parser =
+            js_parser::Parser::init(opts, temp_log, source, &vm.transpiler.options.define, &arena)
+                .map_err(|_| crate::Error::ParseError)?;
+        let mut ast = match parser.parse().map_err(|_| crate::Error::ParseError)? {
             bun_js_parser::Result::Ast(ast) => ast,
             _ => return Err(crate::Error::ParseError),
         };
-
-        if ast.exports_ref.is_empty() {
-            return Ok(());
-        }
         let exports_ref = ast.exports_ref;
-
-        // TODO: when common js transform changes, keep this updated or add flag to support this version
 
         for part in ast.parts.as_mut_slice() {
             // `part.stmts` is an arena-owned `StoreSlice<Stmt>`; arena outlives this
             // loop and `ast` is owned here, so unique access is upheld.
             for stmt in part.stmts.slice_mut() {
-                match &mut stmt.data {
-                    bun_ast::StmtData::SExpr(expr) => {
-                        if let bun_ast::ExprData::EBinary(e_binary) = &mut expr.value.data {
-                            // deref `StoreRef` once to a plain `&mut E::Binary`
-                            // so the borrow checker can see `.left`/`.right` as disjoint
-                            // field projections (custom `DerefMut` blocks split-borrows
-                            // otherwise).
-                            let e_binary = &mut **e_binary;
-                            if e_binary.op == bun_ast::Op::Code::BinAssign {
-                                let (left, right) = (&mut e_binary.left, &mut e_binary.right);
-                                if let bun_ast::ExprData::EIndex(e_index) = &mut left.data {
-                                    // split-borrow `index`/`target` so we can take
-                                    // `&mut` on `index` (EString::slice needs &mut) while reading
-                                    // `target` immutably.
-                                    let target_is_exports = matches!(
-                                        &e_index.target.data,
-                                        bun_ast::ExprData::EIdentifier(target) if target.ref_.eql(exports_ref)
-                                    );
-                                    if target_is_exports {
-                                        if let bun_ast::ExprData::EString(index) =
-                                            &mut e_index.index.data
-                                        {
-                                            if let bun_ast::ExprData::EString(value_string) =
-                                                &mut right.data
-                                            {
-                                                let key = index.slice(&arena);
-                                                let value = value_string.slice(&arena);
-                                                let value_clone: Box<[u8]> =
-                                                    Box::<[u8]>::from(value);
-                                                let name_hash: u64 = hash(key);
-                                                self.values.insert(name_hash, value_clone);
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                    _ => {}
+                if matches!(
+                    stmt.data,
+                    bun_ast::StmtData::SComment(_)
+                        | bun_ast::StmtData::SDirective(_)
+                        | bun_ast::StmtData::SEmpty(_)
+                ) {
+                    continue;
                 }
+                let Some((name, value)) = Self::exports_assignment(&mut stmt.data, exports_ref)
+                else {
+                    temp_log.add_error(
+                        Some(source),
+                        stmt.loc,
+                        "Expected a snapshot entry: exports[`name`] = `value`;",
+                    );
+                    continue;
+                };
+                let bun_ast::ExprData::EString(name_string) = &mut name.data else {
+                    temp_log.add_error(
+                        Some(source),
+                        name.loc,
+                        "The snapshot name must be a template literal without substitutions",
+                    );
+                    continue;
+                };
+                let bun_ast::ExprData::EString(value_string) = &mut value.data else {
+                    temp_log.add_error(
+                        Some(source),
+                        value.loc,
+                        "The snapshot value must be a template literal without substitutions",
+                    );
+                    continue;
+                };
+                let name_hash: u64 = hash(name_string.slice(&arena));
+                values.insert(name_hash, Box::<[u8]>::from(value_string.slice(&arena)));
             }
         }
 
-        let _ = &mut ast;
+        if temp_log.errors > 0 {
+            return Err(crate::Error::ParseError);
+        }
         Ok(())
     }
 
-    pub(crate) fn write_snapshot_file(&mut self) -> Result<(), Error> {
-        if let Some(file) = self._current_file.take() {
-            file.file
-                .write_all(&self.file_buf)
-                .map_err(|_| crate::Error::FailedToWriteSnapshotFile)?;
-            let _ = file.file.close();
-            self.file_buf.clear();
-            self.file_buf.shrink_to_fit();
-
-            self.values.clear();
-
-            self.counts.clear();
+    /// The `name` and `value` expressions of a `exports[name] = value;` statement.
+    fn exports_assignment(
+        stmt: &mut bun_ast::StmtData,
+        exports_ref: bun_ast::Ref,
+    ) -> Option<(&mut bun_ast::Expr, &mut bun_ast::Expr)> {
+        let bun_ast::StmtData::SExpr(s_expr) = stmt else {
+            return None;
+        };
+        let bun_ast::ExprData::EBinary(e_binary) = &mut s_expr.value.data else {
+            return None;
+        };
+        // Plain `&mut` structs, so `.left`/`.right` and `.target`/`.index` split-borrow.
+        let e_binary = &mut **e_binary;
+        if e_binary.op != bun_ast::Op::Code::BinAssign {
+            return None;
         }
+        let bun_ast::ExprData::EIndex(e_index) = &mut e_binary.left.data else {
+            return None;
+        };
+        let e_index = &mut **e_index;
+        match &e_index.target.data {
+            bun_ast::ExprData::EIdentifier(target) if target.ref_.eql(exports_ref) => {}
+            _ => return None,
+        }
+        Some((&mut e_index.index, &mut e_binary.right))
+    }
+
+    /// Empties the per-file state: the next `.snap` file is read into the same buffer.
+    fn take_file_buf(&mut self) -> Vec<u8> {
+        self.values.clear();
+        self.counts.clear();
+        core::mem::take(&mut self.file_buf)
+    }
+
+    pub(crate) fn write_snapshot_file(&mut self) -> Result<(), Error> {
+        let Some(file) = self._current_file.take() else {
+            return Ok(());
+        };
+        let contents = self.take_file_buf();
+        file.file
+            .write_all(&contents)
+            .map_err(|_| crate::Error::FailedToWriteSnapshotFile)?;
+        let _ = file.file.close();
         Ok(())
     }
 
@@ -911,7 +943,10 @@ impl Snapshots {
                 }
             }
 
-            self.parse_file(&file)?;
+            if let Err(err) = self.parse_file(&file) {
+                drop(self.take_file_buf());
+                return Err(err);
+            }
             self._current_file = Some(file);
         }
 

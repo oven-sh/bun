@@ -195,6 +195,34 @@ impl Task {
     }
 }
 
+/// `impl Taskable` for a payload that is queued as an owned `Box` (via
+/// [`Task::from_boxed`]) and whose dispatch arm reclaims that box: an unrun
+/// task is released by dropping it. Forms:
+///
+/// ```ignore
+/// boxed_taskable!(MyTask => task_tag::MyTask);
+/// boxed_taskable!([const B: bool] MyTask<B> => if B { task_tag::A } else { task_tag::C });
+/// boxed_taskable!([R, A] MyReq<R, A> where [R: X, A: Y] => task_tag::Z);
+/// ```
+#[macro_export]
+macro_rules! boxed_taskable {
+    ([$($gen:tt)*] $ty:ty where [$($bounds:tt)*] => $tag:expr) => {
+        impl<$($gen)*> $crate::Taskable for $ty where $($bounds)* {
+            const TAG: $crate::TaskTag = $tag;
+            unsafe fn release_unrun(this: *mut Self) {
+                // SAFETY: fn contract — `this` is the box queued under `TAG`.
+                drop(unsafe { ::bun_core::heap::take(this) });
+            }
+        }
+    };
+    ([$($gen:tt)*] $ty:ty => $tag:expr) => {
+        $crate::boxed_taskable!([$($gen)*] $ty where [] => $tag);
+    };
+    ($ty:ty => $tag:expr) => {
+        $crate::boxed_taskable!([] $ty where [] => $tag);
+    };
+}
+
 // Taskable impls for the low-tier task wrappers defined in this crate.
 impl Taskable for crate::ManagedTask::ManagedTask {
     const TAG: TaskTag = task_tag::ManagedTask;

@@ -1561,7 +1561,7 @@ pub(crate) const MAX_COUNT: usize = u32::MAX as usize;
 // them locally as `safe fn` (instead of routing through the `libc` crate's
 // `unsafe extern fn` items) drops the per-call-site `unsafe { }` block.
 #[cfg(unix)]
-mod safe_libc {
+pub mod safe_libc {
     use core::ffi::c_int;
     // `close` is a libc symbol std relies on; this is an FFI import (not a
     // competing definition) with the canonical signature.
@@ -1571,7 +1571,9 @@ mod safe_libc {
         pub(crate) safe fn close(fd: c_int) -> c_int;
         pub(crate) safe fn dup2(old: c_int, new: c_int) -> c_int;
         pub(crate) safe fn isatty(fd: c_int) -> c_int;
-        pub(crate) safe fn fsync(fd: c_int) -> c_int;
+        pub safe fn fsync(fd: c_int) -> c_int;
+        // `libc` omits the Darwin binding (fdatasync exists since 10.7).
+        pub safe fn fdatasync(fd: c_int) -> c_int;
         pub(crate) safe fn fchdir(fd: c_int) -> c_int;
         pub(crate) safe fn umask(mode: libc::mode_t) -> libc::mode_t;
         pub(crate) safe fn fchmod(fd: c_int, mode: libc::mode_t) -> c_int;
@@ -2586,6 +2588,52 @@ mod posix_impl {
             link
         );
         Ok(())
+    }
+    /// `link(2)`; no EINTR retry. The error carries both paths.
+    pub fn link(from: &ZStr, to: &ZStr) -> Maybe<()> {
+        // SAFETY: both `ZStr`s are valid NUL-terminated C strings.
+        let rc = unsafe { libc::link(from.as_ptr(), to.as_ptr()) };
+        if rc < 0 {
+            return Err(Error::from_code_int(last_errno(), Tag::link)
+                .with_path_dest(from.as_bytes(), to.as_bytes()));
+        }
+        Ok(())
+    }
+    /// `truncate(2)`; no EINTR retry.
+    pub fn truncate(path: &ZStr, len: i64) -> Maybe<()> {
+        // SAFETY: `path` is a valid NUL-terminated C string.
+        let rc = unsafe { libc::truncate(path.as_ptr(), len as libc::off_t) };
+        if rc < 0 {
+            return Err(
+                Error::from_code_int(last_errno(), Tag::truncate).with_path(path.as_bytes())
+            );
+        }
+        Ok(())
+    }
+    /// `mkdtemp(3)`: `template` holds a NUL-terminated `...XXXXXX` pattern that
+    /// is rewritten in place; returns the length of the resulting path (the
+    /// bytes before the NUL). The error carries no path.
+    pub fn mkdtemp(template: &mut [u8]) -> Maybe<usize> {
+        let nul = bun_core::strings::index_of_char_usize(template, 0)
+            .expect("mkdtemp template must be NUL-terminated");
+        // SAFETY: `template[..=nul]` is a writable NUL-terminated C string;
+        // mkdtemp(3) rewrites the `XXXXXX` suffix in place and never grows it.
+        let rc = unsafe { libc::mkdtemp(template.as_mut_ptr().cast::<core::ffi::c_char>()) };
+        if rc.is_null() {
+            return Err(Error::from_code_int(last_errno(), Tag::mkdtemp));
+        }
+        Ok(nul)
+    }
+    /// `posix_fadvise(2)`; advisory, so the return code is handed back raw.
+    #[cfg(any(target_os = "linux", target_os = "android", target_os = "freebsd"))]
+    pub fn posix_fadvise(
+        fd: Fd,
+        offset: i64,
+        len: i64,
+        advice: core::ffi::c_int,
+    ) -> core::ffi::c_int {
+        // SAFETY: no memory arguments; the kernel validates `fd`.
+        unsafe { libc::posix_fadvise(fd.native(), offset as _, len as _, advice) }
     }
     pub fn readlink(path: &ZStr, buf: &mut [u8]) -> Maybe<usize> {
         let n = check_p!(
@@ -4259,6 +4307,11 @@ mod windows_impl {
         // negative LARGE_INTEGER never becomes ~18 EB after the i64→u64 cast.
         Ok(size.max(0) as u64)
     }
+    /// See [`sys_uv::mkdtemp`]; same shape as the POSIX `mkdtemp`.
+    #[inline]
+    pub fn mkdtemp(template: &mut [u8]) -> Maybe<usize> {
+        sys_uv::mkdtemp(template)
+    }
     pub fn realpath<'a>(path: &ZStr, buf: &'a mut bun_core::PathBuffer) -> Maybe<&'a [u8]> {
         // sys_uv.rs:216 — open + GetFinalPathNameByHandle (uv_fs_realpath edge cases).
         let fd = open(path, O::RDONLY, 0)?;
@@ -4415,6 +4468,29 @@ fn read_fill_vec(
     }
 }
 
+/// `read` into uninitialized storage; returns the prefix the kernel filled.
+pub fn read_uninit(fd: Fd, buf: &mut [core::mem::MaybeUninit<u8>]) -> Maybe<&mut [u8]> {
+    // SAFETY: `u8` has no validity invariant and `read` only stores into the
+    // slice; only the kernel-written prefix `[..n]` is handed back as initialized.
+    let bytes: &mut [u8] = unsafe { &mut *(core::ptr::from_mut(buf) as *mut [u8]) };
+    let n = read(fd, bytes)?;
+    Ok(&mut bytes[..n])
+}
+
+/// `read` into `vec`'s spare capacity (at most `max` bytes), growing its
+/// length by the number of bytes read. Never reallocates.
+pub fn read_into_vec(fd: Fd, vec: &mut Vec<u8>, max: usize) -> Maybe<usize> {
+    // SAFETY: `read` only stores into the spare slice; exactly the `n` bytes it
+    // wrote are committed.
+    unsafe {
+        let spare = bun_core::vec::spare_bytes_mut(vec);
+        let len = spare.len().min(max);
+        let n = read(fd, &mut spare[..len])?;
+        bun_core::vec::commit_spare(vec, n);
+        Ok(n)
+    }
+}
+
 // ──────────────────────────────────────────────────────────────────────────
 // `bun.PlatformIOVecConst` / `bun.platformIOVecConstCreate` — POSIX
 // `iovec_const` (= `struct iovec` with the writev contract that `base` is
@@ -4438,6 +4514,20 @@ const _: () = assert!(
     core::mem::size_of::<PlatformIoVecConst>() == core::mem::size_of::<libc::iovec>()
         && core::mem::align_of::<PlatformIoVecConst>() == core::mem::align_of::<libc::iovec>()
 );
+
+/// View mutable iovecs as the const form `pwritev`/`writev` take (identical
+/// layout on every platform; the kernel never writes through `base` there).
+#[inline]
+pub fn iovecs_as_const(vecs: &[PlatformIoVec]) -> &[PlatformIoVecConst] {
+    const _: () = assert!(
+        core::mem::size_of::<PlatformIoVecConst>() == core::mem::size_of::<PlatformIoVec>()
+            && core::mem::align_of::<PlatformIoVecConst>()
+                == core::mem::align_of::<PlatformIoVec>()
+    );
+    // SAFETY: layout identity asserted above; `{ *const u8, usize }` admits every
+    // `{ *mut u8, usize }` bit pattern.
+    unsafe { core::slice::from_raw_parts(vecs.as_ptr().cast::<PlatformIoVecConst>(), vecs.len()) }
+}
 
 #[cfg(unix)]
 #[inline]
@@ -5462,6 +5552,32 @@ pub mod linux {
     ) -> isize {
         // SAFETY: raw `copy_file_range(2)`; caller owns fds, offset ptrs may be null.
         unsafe { super::linux_syscall::copy_file_range(in_, off_in, out, off_out, len, flags) }
+    }
+
+    /// `copy_file_range(2)` with borrowed offsets (`None` = use and advance the
+    /// file position). Returns the raw result for `get_errno`.
+    #[inline]
+    pub fn copy_file_range_fd(
+        in_: super::Fd,
+        off_in: Option<&mut i64>,
+        out: super::Fd,
+        off_out: Option<&mut i64>,
+        len: usize,
+        flags: u32,
+    ) -> isize {
+        let off_in = off_in.map_or(core::ptr::null_mut(), core::ptr::from_mut);
+        let off_out = off_out.map_or(core::ptr::null_mut(), core::ptr::from_mut);
+        // SAFETY: the offset pointers are null or exclusive borrows live for the call.
+        unsafe {
+            super::linux_syscall::copy_file_range(
+                in_.native(),
+                off_in,
+                out.native(),
+                off_out,
+                len,
+                flags,
+            )
+        }
     }
 
     // sendfile — use the existing `linux::sendfile` (libc
@@ -8549,6 +8665,23 @@ pub mod freebsd {
     ) -> libc::ssize_t {
         unsafe { libc::copy_file_range(in_, off_in, out, off_out, len, flags) }
     }
+
+    /// `copy_file_range(2)` with borrowed offsets (`None` = use and advance the
+    /// file position). Returns the raw result for `get_errno`.
+    #[inline]
+    pub fn copy_file_range_fd(
+        in_: super::Fd,
+        off_in: Option<&mut libc::off_t>,
+        out: super::Fd,
+        off_out: Option<&mut libc::off_t>,
+        len: usize,
+        flags: u32,
+    ) -> libc::ssize_t {
+        let off_in = off_in.map_or(core::ptr::null_mut(), core::ptr::from_mut);
+        let off_out = off_out.map_or(core::ptr::null_mut(), core::ptr::from_mut);
+        // SAFETY: the offset pointers are null or exclusive borrows live for the call.
+        unsafe { libc::copy_file_range(in_.native(), off_in, out.native(), off_out, len, flags) }
+    }
 }
 #[cfg(not(target_os = "freebsd"))]
 pub mod freebsd {}
@@ -8788,6 +8921,17 @@ pub fn link_w(src: &bun_core::WStr, dest: &bun_core::WStr) -> Maybe<()> {
 #[inline]
 pub fn rmdir(to: &ZStr) -> Maybe<()> {
     rmdirat(Fd::cwd(), to)
+}
+
+/// Plain `rmdir(2)` (tag `rmdir`, no EINTR retry) — what node:fs reports.
+#[cfg(not(windows))]
+pub fn posix_rmdir(to: &ZStr) -> Maybe<()> {
+    // SAFETY: `to` is a valid NUL-terminated C string.
+    let rc = unsafe { libc::rmdir(to.as_ptr()) };
+    if rc < 0 {
+        return Err(Error::from_code_int(last_errno(), Tag::rmdir).with_path(to.as_bytes()));
+    }
+    Ok(())
 }
 
 /// Type-style alias so callers can write `bun_sys::MakePath::make_path::<T>(..)`

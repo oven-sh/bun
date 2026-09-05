@@ -1752,10 +1752,7 @@ impl<'a> CopyFileWindows<'a> {
     fn mkdirp(&mut self) {
         bun_sys::syslog!("mkdirp");
         self.mkdirp_if_not_exists = false;
-        // Borrowck: compute the raw path slice pointer up-front so the
-        // immutable borrow of `self.destination_file_store` ends before we take
-        // `core::ptr::from_mut(self)` for `completion_ctx` below.
-        let path: *const [u8] = {
+        let path: Box<[u8]> = {
             let destination = &self.destination_file_store.data.as_file();
             if !matches!(destination.pathlike, PathOrFileDescriptor::Path(_)) {
                 self.throw(bun_sys::Error {
@@ -1766,12 +1763,10 @@ impl<'a> CopyFileWindows<'a> {
                 return;
             }
             let path_slice = destination.pathlike.path().slice();
-            // BORROW: not owned — `destination_file_store` (and thus its path) is held in
-            // `self`, which outlives the workpool task (completion runs `copyfile`/`throw`
-            // on `self` before any `destroy`).
             bun_paths::dirname(path_slice)
                 // this shouldn't happen
-                .unwrap_or(path_slice) as *const [u8]
+                .unwrap_or(path_slice)
+                .into()
         };
 
         self.event_loop.ref_keep_alive();

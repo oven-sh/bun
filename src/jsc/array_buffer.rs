@@ -439,7 +439,7 @@ impl ArrayBuffer {
                 return Self::create::<{ JSType::Uint8Array }>(ctx, b"");
             }
 
-            // TODO: others
+            return create_typed_array_copy(ctx, self.typed_array_type.to_typed_array_type(), b"");
         }
 
         if self.typed_array_type == JSType::ArrayBuffer {
@@ -849,18 +849,7 @@ impl BinaryType {
             | BinaryType::Float64Array
             | BinaryType::BigInt64Array
             | BinaryType::BigUint64Array => {
-                crate::host_fn::from_js_host_call(global, || {
-                    // SAFETY: `global` is a live opaque ZST handle; `bytes` is a
-                    // valid slice whose pointer/len are only read (copied) by C++.
-                    unsafe {
-                        Bun__createTypedArrayForCopy(
-                            global,
-                            self.to_typed_array_type(),
-                            bytes.as_ptr().cast(),
-                            bytes.len(),
-                        )
-                    }
-                })
+                create_typed_array_copy(global, self.to_typed_array_type(), bytes)
             }
         }
     }
@@ -960,6 +949,24 @@ impl MarkedArrayBuffer {
         }
     }
 
+    /// Take ownership of heap bytes (freed by `destroy`/`Drop`, or handed to
+    /// JSC by `to_node_buffer`/`to_js`). An empty slice yields [`Self::EMPTY`].
+    pub fn from_owned_bytes(bytes: Box<[u8]>, typed_array_type: JSType) -> MarkedArrayBuffer {
+        if bytes.is_empty() {
+            return MarkedArrayBuffer {
+                buffer: ArrayBuffer {
+                    typed_array_type,
+                    ..ArrayBuffer::EMPTY
+                },
+                owns_buffer: false,
+            };
+        }
+        MarkedArrayBuffer {
+            buffer: ArrayBuffer::from_owned_bytes(bytes, typed_array_type),
+            owns_buffer: true,
+        }
+    }
+
     pub const EMPTY: MarkedArrayBuffer = MarkedArrayBuffer {
         owns_buffer: false,
         buffer: ArrayBuffer::EMPTY,
@@ -1036,6 +1043,21 @@ pub(crate) unsafe fn make_array_buffer_with_bytes_no_copy(
         // contract (`ptr` valid for `len` bytes until `deallocator` runs).
         unsafe {
             Bun__makeArrayBufferWithBytesNoCopy(global, ptr, len, deallocator, deallocator_context)
+        }
+    })
+}
+
+/// A new typed array of `array_type` over a fresh JSC-owned copy of `bytes`
+/// (a real 1-byte backing store when empty, so the result is never detached).
+pub(crate) fn create_typed_array_copy(
+    global: &JSGlobalObject,
+    array_type: TypedArrayType,
+    bytes: &[u8],
+) -> JsResult<JSValue> {
+    crate::host_fn::from_js_host_call(global, || {
+        // SAFETY: `bytes` is a live slice; C++ only reads `len` bytes from it.
+        unsafe {
+            Bun__createTypedArrayForCopy(global, array_type, bytes.as_ptr().cast(), bytes.len())
         }
     })
 }

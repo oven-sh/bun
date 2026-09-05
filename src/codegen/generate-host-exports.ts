@@ -144,6 +144,14 @@ function ptrify(ty: string): { cTy: string; deref: (n: string) => string; extraL
         `{\n        // SAFETY: C++ caller passes \`${n}_len\` live elements at \`${n}\` (or 0).\n        unsafe { ::bun_core::ffi::slice(${n}, ${n}_len) }\n    }`,
     };
   }
+  // `Option<&CStr>` — C passes a nullable `const char*`.
+  if (/^Option\s*<\s*&\s*(?:(?:core|std)::ffi::)?CStr\s*>$/.test(ty)) {
+    return {
+      cTy: `*const c_char`,
+      deref: n =>
+        `{\n        // SAFETY: C++ caller passes null or a NUL-terminated string live for the call.\n        if ${n}.is_null() { None } else { Some(unsafe { ::core::ffi::CStr::from_ptr(${n}) }) }\n    }`,
+    };
+  }
   // Other slice shapes (`&mut [T]`, `&'a [T]`) and `&str` are NOT FFI-safe; reject.
   if (/^&[^\[]*\[/.test(ty) || /^&\s*str\b/.test(ty)) {
     throw new Error(`slice/str param \`${ty}\` is not FFI-safe; use \`&[T]\` (const) or (ptr, len)`);

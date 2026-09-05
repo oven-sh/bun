@@ -30,7 +30,6 @@ import {
 import { readFile } from "node:fs/promises";
 import { availableParallelism, userInfo } from "node:os";
 import { basename, dirname, extname, join, relative, sep } from "node:path";
-import { createInterface } from "node:readline";
 import { setTimeout as setTimeoutPromise } from "node:timers/promises";
 import { parseArgs } from "node:util";
 import { prestartMap as dockerPrestartMap } from "../test/docker/prestart-map.mjs";
@@ -67,6 +66,7 @@ import {
   parseJunitFileSuites,
   printEnvironment,
   reportAnnotationToBuildKite,
+  spawnBackgroundServer,
   startGroup,
   tmpdir,
   unzip,
@@ -88,6 +88,12 @@ const spawnTimeout = 5_000;
 const spawnBunTimeout = 20_000; // when running with ASAN/LSAN bun can take a bit longer to exit, not a bug.
 const testTimeout = 3 * 60_000;
 const integrationTimeout = 5 * 60_000;
+// How long the first test waits for the crash report remap server. It counts from
+// the moment the server is needed, not from its start: the server is started
+// before the root and test/ installs and is normally listening once they are done.
+// A fresh CI agent takes 3.5s to well over 5s to start it (a 5s budget counted
+// from its start lost the server on 3 of 4 shards), so keep this far above that.
+const ciRemapServerTimeout = 30_000;
 
 const resolutionGatingFlags = new Set([
   "--expose-internals",
@@ -565,6 +571,11 @@ async function runTests() {
   const tests = getRelevantTests(testsPath, modifiers, expectations);
   !isQuiet && console.log("Running tests:", tests.length);
 
+  // The crash report remap server installs and starts in the background while
+  // the rest of the setup below runs. Its port is awaited right before the first
+  // test, the first thing that needs it.
+  const ciRemapServer = isCI && !isWindows ? startCiRemapServer(execPath) : undefined;
+
   // Start the docker-service coordinator (test/docker/coordinator.ts). It
   // owns every `docker compose` invocation for this shard — `compose up` is
   // not concurrency-safe, so exactly one process runs it — and prestarts the
@@ -827,44 +838,7 @@ async function runTests() {
   };
 
   if (!failedResults.length) {
-    // TODO: remove windows exclusion here
-    if (isCI && !isWindows && (await installCiRemapServer(execPath))) {
-      const { promise: portPromise, resolve: portResolve } = Promise.withResolvers();
-      const { promise: errorPromise, resolve: errorResolve } = Promise.withResolvers();
-      let exiting = false;
-
-      const server = spawn(execPath, ["run", "--silent", "ci-remap-server", execPath, cwd, getCommit()], {
-        stdio: ["ignore", "pipe", "inherit"],
-        cwd: ciRemapServerPath,
-        env: { ...process.env, BUN_DEBUG_QUIET_LOGS: "1", NO_COLOR: "1" },
-      });
-      server.unref();
-      server.on("error", errorResolve);
-      server.on("exit", (code, signal) => {
-        if (!exiting && (code !== 0 || signal !== null)) errorResolve(signal ? signal : "code " + code);
-      });
-      function onBeforeExit() {
-        exiting = true;
-        server.off("error");
-        server.off("exit");
-        server.kill?.();
-      }
-      process.once("beforeExit", onBeforeExit);
-      const lines = createInterface(server.stdout);
-      lines.on("line", line => {
-        portResolve({ port: parseInt(line) });
-      });
-
-      const result = await Promise.race([portPromise, errorPromise.catch(e => e), setTimeoutPromise(5000, "timeout")]);
-      if (typeof result?.port != "number") {
-        process.off("beforeExit", onBeforeExit);
-        server.kill?.();
-        console.warn("ci-remap server did not start:", result);
-      } else {
-        console.log("crash reports parsed on port", result.port);
-        remapPort = result.port;
-      }
-    }
+    if (ciRemapServer) remapPort = await ciRemapServer.port();
 
     const runOneTest = async (testPath, concurrent, priorFailure = undefined) => {
       await awaitNapiPrebuild(testPath);
@@ -2377,20 +2351,66 @@ async function spawnBunInstall(execPath, options) {
 }
 
 /**
- * Installs `ci-remap-server`, the bin of bun-tracestrings (github:oven-sh/bun.report).
- * It is pinned in scripts/ci-remap-server/package.json rather than the root
- * package.json because this runner is its only user, and as a github: dependency
- * it would otherwise put GitHub on the critical path of the root `bun install`
- * every GitHub Actions workflow and every build runs. Best-effort, like starting
- * the server itself: without it crash reports are not remapped, the tests still run.
+ * Installs and starts `ci-remap-server`, the bin of bun-tracestrings
+ * (github:oven-sh/bun.report), which remaps the crash reports of the tests
+ * (spawnBun points them at it with BUN_CRASH_REPORT_URL). It is pinned in
+ * scripts/ci-remap-server/package.json rather than the root package.json because
+ * this runner is its only user, and as a github: dependency it would otherwise put
+ * GitHub on the critical path of the root `bun install` every GitHub Actions
+ * workflow and every build runs.
+ *
+ * Nothing is awaited here. The install and the server's startup (it loads octokit
+ * and opens a sqlite database) take seconds each on a fresh CI agent, so they run
+ * while the runner does the rest of its setup, and `port()` is called right before
+ * the first test. `port()` prints the install output and the outcome as one group.
+ * Best-effort throughout: without the server crash reports are not remapped, the
+ * tests still run.
  * @param {string} execPath
- * @returns {Promise<boolean>}
+ * @returns {{ port: () => Promise<number | undefined> }}
  */
-async function installCiRemapServer(execPath) {
+function startCiRemapServer(execPath) {
   const title = relative(cwd, join(ciRemapServerPath, "package.json")).replaceAll(sep, "/");
-  const { ok, error } = await startGroup(title, () => spawnBunInstall(execPath, { cwd: ciRemapServerPath }));
-  if (!ok) console.warn(`ci-remap server not installed (${title}: ${error}), crash reports will not be remapped`);
-  return ok;
+  const startedAt = Date.now();
+  let installOutput = "";
+  /** @type {Promise<import("./utils.mjs").BackgroundServer | { error: string }>} */
+  const server = (async () => {
+    const { ok, error } = await spawnBunInstall(execPath, {
+      cwd: ciRemapServerPath,
+      stdout: chunk => (installOutput += chunk),
+      stderr: chunk => (installOutput += chunk),
+    });
+    if (!ok) return { error: `not installed (${error})` };
+    return spawnBackgroundServer([execPath, "run", "--silent", "ci-remap-server", execPath, cwd, getCommit()], {
+      cwd: ciRemapServerPath,
+      env: {
+        ...process.env,
+        BUN_DEBUG_QUIET_LOGS: "1",
+        NO_COLOR: "1",
+        // The server is killed when this process exits. This also takes it down
+        // when this process is killed instead, which runs no exit handlers.
+        BUN_FEATURE_FLAG_NO_ORPHANS: "1",
+      },
+    });
+  })().catch(error => ({ error: String(error) }));
+
+  return {
+    async port() {
+      const neededAt = Date.now();
+      const seconds = since => `${((Date.now() - since) / 1000).toFixed(1)}s`;
+      const started = await server;
+      startGroup(title);
+      process.stdout.write(installOutput);
+      const result = "port" in started ? await started.port(ciRemapServerTimeout) : started;
+      if ("error" in result) {
+        console.warn(
+          `ci-remap server did not start: ${result.error}, crash reports will not be remapped (${seconds(startedAt)} after it was started)`,
+        );
+        return;
+      }
+      console.log(`crash reports parsed on port ${result.port} (waited ${seconds(neededAt)} for it)`);
+      return result.port;
+    },
+  };
 }
 
 /**

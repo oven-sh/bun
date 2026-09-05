@@ -18,6 +18,7 @@ import { connect } from "node:net";
 import { hostname, homedir as nodeHomedir, tmpdir as nodeTmpdir, release, userInfo } from "node:os";
 import { basename, dirname, join, relative, resolve } from "node:path";
 import { normalize as normalizeWindows } from "node:path/win32";
+import { createInterface } from "node:readline";
 
 export const isWindows = process.platform === "win32";
 export const isMacOS = process.platform === "darwin";
@@ -437,6 +438,78 @@ export function spawnSync(command, options = {}) {
  */
 export function spawnSyncSafe(command, options = {}) {
   return spawnSync(command, { throwOnError: true, ...options });
+}
+
+/**
+ * @typedef {object} BackgroundServer
+ * @property {import("node:child_process").ChildProcess} subprocess
+ * @property {(timeout: number) => Promise<{ port: number } | { error: string }>} port
+ */
+
+/**
+ * Starts a server without waiting for it. The server prints the port it listens
+ * on as its first line of stdout (the ci-remap server does), then keeps running
+ * until this process exits, which kills it. Start it as early as possible and call
+ * `port()` right before the server is needed, so that its startup overlaps with
+ * the work in between.
+ *
+ * `port(timeout)` resolves with the port, also when it was printed before the
+ * call. It resolves with an error as soon as the server fails to spawn or ends
+ * without printing a line, whatever its exit code, when its first line is not a
+ * port, or when `timeout` ms pass after the call. In the last two cases the server
+ * is killed as well. It never rejects. The server does not keep this process
+ * alive, and it inherits this process's stderr.
+ * @param {string[]} command
+ * @param {{ cwd?: string, env?: Record<string, string | undefined> }} [options]
+ * @returns {BackgroundServer}
+ */
+export function spawnBackgroundServer(command, options = {}) {
+  const [cmd, ...args] = command;
+  debugLog("$", cmd, ...args);
+
+  const { promise: firstLine, resolve: settle } = Promise.withResolvers();
+  const subprocess = nodeSpawn(cmd, args, {
+    cwd: options["cwd"],
+    env: options["env"],
+    stdio: ["ignore", "pipe", "inherit"],
+  });
+  // kill() sends SIGTERM, on purpose. `bun run <bin>` stays alive as the parent of
+  // the script it runs and forwards SIGTERM to it. SIGKILL would end the wrapper
+  // alone and leave the script running, holding this process's stderr open.
+  const kill = () => subprocess.kill();
+  process.once("exit", kill);
+  subprocess.on("error", error => settle({ error: error.message }));
+  // "close" and not "exit": a server that prints its line and exits at once can
+  // emit "exit" before its stdout was read. "close" comes after the end of stdout,
+  // and readline emits the line before that.
+  subprocess.on("close", (exitCode, signalCode) => settle({ error: signalCode ?? `code ${exitCode}` }));
+  createInterface(subprocess.stdout).once("line", line => settle({ line }));
+  subprocess.unref();
+  subprocess.stdout.unref?.();
+
+  return {
+    subprocess,
+    async port(timeout) {
+      const timer = setTimeout(() => {
+        settle({ error: "timeout" });
+        kill();
+      }, timeout);
+      let result;
+      try {
+        result = await firstLine;
+      } finally {
+        clearTimeout(timer);
+      }
+      if ("error" in result) {
+        return result;
+      }
+      if (!/^\d+$/.test(result.line)) {
+        kill();
+        return { error: `printed ${JSON.stringify(result.line)} instead of a port` };
+      }
+      return { port: parseInt(result.line) };
+    },
+  };
 }
 
 /**

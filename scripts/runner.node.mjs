@@ -2867,6 +2867,9 @@ async function getExecPathFromBuildKite(target, buildId) {
   const releasePath = join(cwd, "release");
   mkdirSync(releasePath, { recursive: true });
 
+  const downloadTimeout = 120_000;
+  const maxDownloadTimeouts = 3;
+  let downloadTimeouts = 0;
   let zipPath;
   downloadLoop: for (let i = 0; i < 10; i++) {
     // build-bun also uploads libbun-*.a / libbun_runtime.a / dep libs; only the zips are wanted here.
@@ -2878,13 +2881,26 @@ async function getExecPathFromBuildKite(target, buildId) {
     const { error } = await spawnSafe({
       command: "buildkite-agent",
       args,
-      timeout: 120000,
+      timeout: downloadTimeout,
     });
     if (error === "timeout") {
-      throw new Error(
-        `buildkite-agent artifact download timed out after 120s for step '${target}'. ` +
-          `Refusing to continue with a partial download (would silently fall back to the wrong binary).`,
+      // The zip the timeout interrupted is truncated. If it stayed on disk, the
+      // readdir below would pick it (or the smaller release zip that did finish)
+      // and the tests would run against the wrong binary.
+      rmSync(releasePath, { recursive: true, force: true });
+      mkdirSync(releasePath, { recursive: true });
+      if (++downloadTimeouts >= maxDownloadTimeouts) {
+        throw new Error(
+          `buildkite-agent artifact download timed out after ${downloadTimeout / 1000}s for step '${target}' ` +
+            `(${downloadTimeouts} attempts). Refusing to continue with a partial download ` +
+            `(would silently fall back to the wrong binary).`,
+        );
+      }
+      console.warn(
+        `buildkite-agent artifact download timed out after ${downloadTimeout / 1000}s for step '${target}' ` +
+          `(attempt ${downloadTimeouts}/${maxDownloadTimeouts}), retrying...`,
       );
+      continue;
     }
 
     zipPath = readdirSync(releasePath, { recursive: true, encoding: "utf-8" })

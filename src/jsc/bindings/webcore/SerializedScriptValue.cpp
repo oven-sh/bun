@@ -4227,6 +4227,14 @@ SerializedScriptValue::SerializedScriptValue(WTF::FixedVector<SimpleCloneableVal
     m_memoryCost = computeMemoryCost();
 }
 
+SerializedScriptValue::SerializedScriptValue(JSC::JSValue fastPathPrimitive)
+    : m_fastPathPrimitive(fastPathPrimitive)
+    , m_fastPath(FastPath::Primitive)
+{
+    ASSERT(!fastPathPrimitive.isCell());
+    m_memoryCost = computeMemoryCost();
+}
+
 SerializedScriptValue::SerializedScriptValue(const String& fastPathString)
     : m_fastPathString(fastPathString)
     , m_fastPath(FastPath::String)
@@ -4279,6 +4287,8 @@ size_t SerializedScriptValue::computeMemoryCost() const
 
     // Account for fast path string memory usage
     switch (m_fastPath) {
+    case FastPath::Primitive:
+        break;
     case FastPath::String:
         ASSERT(m_simpleInMemoryPropertyTable.isEmpty());
         cost += m_fastPathString.sizeInBytes();
@@ -4488,26 +4498,29 @@ ExceptionOr<Ref<SerializedScriptValue>> SerializedScriptValue::create(JSGlobalOb
         && messagePorts.isEmpty();
 
     if (canUseFastPath) {
+        // Not isPrimitive(): on JSVALUE64 the empty JSValue has isCell()==true and must keep
+        // falling through to the full serializer below.
+        if (!value.isCell())
+            return SerializedScriptValue::createPrimitiveFastPath(value);
+
         bool canUseStringFastPath = false;
         bool canUseObjectFastPath = false;
         bool canUseArrayFastPath = false;
         JSObject* object = nullptr;
         JSArray* array = nullptr;
         Structure* structure = nullptr;
-        if (value.isCell()) {
-            auto* cell = value.asCell();
-            if (cell->isString()) {
-                canUseStringFastPath = true;
-            } else if (cell->isObject()) {
-                object = cell->getObject();
-                structure = object->structure();
+        auto* cell = value.asCell();
+        if (cell->isString()) {
+            canUseStringFastPath = true;
+        } else if (cell->isObject()) {
+            object = cell->getObject();
+            structure = object->structure();
 
-                if (auto* jsArray = dynamicDowncast<JSArray>(object)) {
-                    canUseArrayFastPath = true;
-                    array = jsArray;
-                } else if (isObjectFastPathCandidate(structure)) {
-                    canUseObjectFastPath = true;
-                }
+            if (auto* jsArray = dynamicDowncast<JSArray>(object)) {
+                canUseArrayFastPath = true;
+                array = jsArray;
+            } else if (isObjectFastPathCandidate(structure)) {
+                canUseObjectFastPath = true;
             }
         }
 
@@ -4802,6 +4815,11 @@ ExceptionOr<Ref<SerializedScriptValue>> SerializedScriptValue::create(JSGlobalOb
     return result;
 }
 
+Ref<SerializedScriptValue> SerializedScriptValue::createPrimitiveFastPath(JSC::JSValue value)
+{
+    return adoptRef(*new SerializedScriptValue(value));
+}
+
 Ref<SerializedScriptValue> SerializedScriptValue::createStringFastPath(const String& string)
 {
     return adoptRef(*new SerializedScriptValue(Bun::toCrossThreadShareable(string)));
@@ -4915,6 +4933,10 @@ JSValue SerializedScriptValue::deserialize(JSGlobalObject& lexicalGlobalObject, 
     VM& vm = lexicalGlobalObject.vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     switch (m_fastPath) {
+    case FastPath::Primitive:
+        if (didFail)
+            *didFail = false;
+        return m_fastPathPrimitive;
     case FastPath::String:
         if (didFail)
             *didFail = false;

@@ -4083,6 +4083,19 @@ declare module "bun" {
        * address or URL) that identifies the credential within the service.
        */
       name: string;
+
+      /**
+       * How long to wait for the operating system's credential store, in
+       * milliseconds. When the deadline passes, the promise rejects with an
+       * error whose `code` is `"ERR_SECRETS_TIMEOUT"`, and the process does
+       * not wait for the credential store any longer. On Linux the pending
+       * libsecret call is cancelled, which also dismisses an unlock prompt.
+       *
+       * `0`, `Infinity` or `null` waits until the credential store answers.
+       *
+       * @default 30000
+       */
+      timeout?: number | null;
     }): Promise<string | null>;
 
     /**
@@ -4184,6 +4197,19 @@ declare module "bun" {
        * @platform macOS - Only affects macOS keychain behavior. Ignored on other platforms.
        */
       allowUnrestrictedAccess?: boolean;
+
+      /**
+       * How long to wait for the operating system's credential store, in
+       * milliseconds. When the deadline passes, the promise rejects with an
+       * error whose `code` is `"ERR_SECRETS_TIMEOUT"`, and the process does
+       * not wait for the credential store any longer. On Linux the pending
+       * libsecret call is cancelled, which also dismisses an unlock prompt.
+       *
+       * `0`, `Infinity` or `null` waits until the credential store answers.
+       *
+       * @default 30000
+       */
+      timeout?: number | null;
     }): Promise<void>;
 
     /**
@@ -4246,6 +4272,19 @@ declare module "bun" {
        * address or URL) that identifies the credential within the service.
        */
       name: string;
+
+      /**
+       * How long to wait for the operating system's credential store, in
+       * milliseconds. When the deadline passes, the promise rejects with an
+       * error whose `code` is `"ERR_SECRETS_TIMEOUT"`, and the process does
+       * not wait for the credential store any longer. On Linux the pending
+       * libsecret call is cancelled, which also dismisses an unlock prompt.
+       *
+       * `0`, `Infinity` or `null` waits until the credential store answers.
+       *
+       * @default 30000
+       */
+      timeout?: number | null;
     }): Promise<boolean>;
   };
 

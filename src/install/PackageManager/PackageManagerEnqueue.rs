@@ -1145,7 +1145,7 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                                 dependency.behavior.is_required(),
                             ) {
                                 let needs_extended_manifest =
-                                    this.options.minimum_release_age_ms.is_some();
+                                    this.options.minimum_release_age_gate_ms().is_some();
                                 if this.options.enable.manifest_cache() {
                                     let mut expired = false;
                                     // SAFETY: `this_ptr` is the live exclusive
@@ -1188,7 +1188,7 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                                                 )
                                             {
                                                 if let Some(min_age_ms) =
-                                                    this.options.minimum_release_age_ms
+                                                    this.options.minimum_release_age_gate_ms()
                                                 {
                                                     if !loaded_manifest
                                                         .as_ref()
@@ -2671,7 +2671,7 @@ fn get_or_put_resolved_package(
             // materializing `&mut *this_ptr` after `name_str`/`scope` are
             // derived from it would pop their borrow-stack tags under SB.
             let cache_ctx = this.manifest_disk_cache_ctx();
-            let needs_ext = this.options.minimum_release_age_ms.is_some();
+            let needs_ext = this.options.minimum_release_age_gate_ms().is_some();
             let this_ptr: *mut PackageManager = this;
             // SAFETY: `string_bytes` is not resized between here and the
             // `find_result` lookup; `manifest` lives in `this.manifests` and
@@ -2719,19 +2719,19 @@ fn get_or_put_resolved_package(
             let version_result: Npm::FindVersionResult = match version.tag {
                 _ if latest_for_target => manifest.find_by_dist_tag_with_filter(
                     b"latest",
-                    this.options.minimum_release_age_ms,
+                    this.options.minimum_release_age_gate_ms(),
                     this.options.minimum_release_age_excludes,
                 ),
                 // SAFETY: `version.tag` discriminates the union arm.
                 dependency::version::Tag::DistTag => manifest.find_by_dist_tag_with_filter(
                     this.lockfile.str(&version.dist_tag().tag),
-                    this.options.minimum_release_age_ms,
+                    this.options.minimum_release_age_gate_ms(),
                     this.options.minimum_release_age_excludes,
                 ),
                 dependency::version::Tag::Npm => manifest.find_best_version_with_filter(
                     &version.npm().version,
                     this.lockfile.buffers.string_bytes.as_slice(),
-                    this.options.minimum_release_age_ms,
+                    this.options.minimum_release_age_gate_ms(),
                     this.options.minimum_release_age_excludes,
                 ),
                 _ => unreachable!(),

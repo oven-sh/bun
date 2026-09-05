@@ -101,8 +101,7 @@ pub struct Options {
     // Security scanner module path
     pub security_scanner: Option<&'static [u8]>,
 
-    // Minimum release age in ms (security feature)
-    // Only install packages published at least N ms ago
+    // `Some(0.0)` is "explicitly disabled"; consumers use `minimum_release_age_gate_ms()`.
     pub minimum_release_age_ms: Option<f64>,
     // Packages to exclude from minimum release age checking
     pub minimum_release_age_excludes: Option<&'static [&'static [u8]]>,
@@ -256,6 +255,11 @@ impl AuthType {
 impl Options {
     pub fn should_print_command_name(&self) -> bool {
         self.log_level != LogLevel::Silent && self.do_.contains(Do::SUMMARY)
+    }
+
+    /// `None` when unset or `0`: nothing to filter, so no extended (`time`-bearing) manifest either.
+    pub fn minimum_release_age_gate_ms(&self) -> Option<f64> {
+        self.minimum_release_age_ms.filter(|&ms| ms > 0.0)
     }
 
     /// Resolve the registry scope for a (possibly @-scoped) package name.

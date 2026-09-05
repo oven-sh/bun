@@ -123,7 +123,7 @@ const SHARED_TAIL_PARAMS: &[ParamType] = &[
         "--linker <STR>                        Linker strategy (one of \"isolated\" or \"hoisted\")"
     ),
     clap::param!(
-        "--minimum-release-age <NUM>           Only install packages published at least N seconds ago (security feature)"
+        "--minimum-release-age <STR>           Skip package versions published within this period (e.g. \"2d\", \"1 week\", or a number of seconds)"
     ),
     clap::param!(
         "--cpu <STR>...                        Override CPU architecture for optional dependencies (e.g., x64, arm64, * for all)"
@@ -1357,26 +1357,15 @@ Full documentation is available at <magenta>https://bun.com/docs/pm/cli/prune<r>
             cli.save_text_lockfile = Some(true);
         }
 
-        if let Some(min_age_secs) = args.option(b"--minimum-release-age") {
-            let secs: f64 = match bun_core::parse_double(min_age_secs) {
-                Ok(s) => s,
-                Err(_) => {
-                    Output::err_generic(
-                        "Expected --minimum-release-age to be a positive number: {}",
-                        (bstr::BStr::new(min_age_secs),),
-                    );
-                    Global::crash();
-                }
-            };
-            if secs < 0.0 {
+        if let Some(min_age) = args.option(b"--minimum-release-age") {
+            let Some(ms) = bun_core::fmt::parse_seconds_or_duration_ms(min_age) else {
                 Output::err_generic(
-                    "Expected --minimum-release-age to be a positive number: {}",
-                    (bstr::BStr::new(min_age_secs),),
+                    "Expected --minimum-release-age to be a non-negative number of seconds or a duration like \"2d\": {}",
+                    (bstr::BStr::new(min_age),),
                 );
                 Global::crash();
-            }
-            const MS_PER_S: f64 = bun_core::time::MS_PER_S as f64;
-            cli.minimum_release_age_ms = Some(secs * MS_PER_S);
+            };
+            cli.minimum_release_age_ms = Some(ms);
         }
 
         let omit_values = args.options(b"--omit");

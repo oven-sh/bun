@@ -1092,6 +1092,86 @@ pub fn parse_ascii<T: core::str::FromStr>(s: &[u8]) -> Option<T> {
         .ok()
 }
 
+/// npm `ms`-style duration (`"2d"`, `"1.5 hours"`, bare `"250"` = ms) to milliseconds.
+pub fn parse_ms(input: &[u8]) -> Option<f64> {
+    const MS_PER_S: f64 = crate::time::MS_PER_S as f64;
+    const MS_PER_MIN: f64 = 60.0 * MS_PER_S;
+    const MS_PER_HOUR: f64 = 60.0 * MS_PER_MIN;
+    const MS_PER_DAY: f64 = crate::time::MS_PER_DAY as f64;
+    const MS_PER_WEEK: f64 = 7.0 * MS_PER_DAY;
+    const MS_PER_YEAR: f64 = 365.25 * MS_PER_DAY;
+
+    let remaining = input.trim_ascii();
+    if remaining.is_empty() {
+        return None;
+    }
+    // The npm `ms` package caps input at 100 characters.
+    if remaining.len() > 100 {
+        return None;
+    }
+
+    let mut i: usize = 0;
+    if matches!(remaining[0], b'+' | b'-') {
+        i += 1;
+    }
+    let mut saw_digit = false;
+    while i < remaining.len() && remaining[i].is_ascii_digit() {
+        saw_digit = true;
+        i += 1;
+    }
+    if i < remaining.len() && remaining[i] == b'.' {
+        i += 1;
+        while i < remaining.len() && remaining[i].is_ascii_digit() {
+            saw_digit = true;
+            i += 1;
+        }
+    }
+    if !saw_digit {
+        return None;
+    }
+
+    let value = parse_f64(&remaining[..i])?;
+
+    let rest = remaining[i..].trim_ascii();
+
+    let mut unit_buf = [0u8; 16];
+    if rest.len() > unit_buf.len() {
+        return None;
+    }
+    for (j, &c) in rest.iter().enumerate() {
+        unit_buf[j] = match c {
+            b'A'..=b'Z' => c | 0x20,
+            b'a'..=b'z' => c,
+            _ => return None,
+        };
+    }
+    let unit = &unit_buf[..rest.len()];
+
+    let multiplier: f64 = match unit {
+        b"" => 1.0,
+        b"ms" | b"msec" | b"msecs" | b"millisecond" | b"milliseconds" => 1.0,
+        b"s" | b"sec" | b"secs" | b"second" | b"seconds" => MS_PER_S,
+        b"m" | b"min" | b"mins" | b"minute" | b"minutes" => MS_PER_MIN,
+        b"h" | b"hr" | b"hrs" | b"hour" | b"hours" => MS_PER_HOUR,
+        b"d" | b"day" | b"days" => MS_PER_DAY,
+        b"w" | b"week" | b"weeks" => MS_PER_WEEK,
+        b"y" | b"yr" | b"yrs" | b"year" | b"years" => MS_PER_YEAR,
+        _ => return None,
+    };
+
+    Some(value * multiplier)
+}
+
+/// [`parse_ms`] but a bare number means seconds; `None` if unparseable, non-finite or negative.
+pub fn parse_seconds_or_duration_ms(input: &[u8]) -> Option<f64> {
+    let input = input.trim_ascii();
+    let ms = match parse_f64(input) {
+        Some(secs) => secs * crate::time::MS_PER_S as f64,
+        None => parse_ms(input)?,
+    };
+    (ms.is_finite() && ms >= 0.0).then_some(ms)
+}
+
 // ───────────────────────────────────────────────────────────────────────────
 // Latin-1 formatting
 // ───────────────────────────────────────────────────────────────────────────

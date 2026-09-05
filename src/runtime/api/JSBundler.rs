@@ -2006,6 +2006,14 @@ impl BuildArtifact {
         bun_string_jsc::create_utf8_for_js(global_this, &buf[..written])
     }
 
+    pub(crate) fn etag_bytes(&self) -> Option<[u8; 10]> {
+        if self.hash == 0 {
+            return None;
+        }
+        let h = bun_core::fmt::truncated_hash32_bytes(self.hash);
+        Some([b'"', h[0], h[1], h[2], h[3], h[4], h[5], h[6], h[7], b'"'])
+    }
+
     #[bun_jsc::host_fn(getter)]
     pub(crate) fn get_size(this: &Self, global_object: &JSGlobalObject) -> JSValue {
         // `Blob::get_size` is `&self` post-R-2 (lazy size caches are

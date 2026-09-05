@@ -762,14 +762,64 @@ describe("Bun.build", () => {
     expect(await response.text()).toMatchSnapshot("response text");
   });
 
-  test.todo("new Response(BuildArtifact) sets etag", async () => {
+  // https://github.com/oven-sh/bun/issues/3011
+  test("new Response(BuildArtifact) sets etag", async () => {
     const x = await Bun.build({
       entrypoints: [join(import.meta.dir, "./fixtures/trivial/index.js")],
       outdir: tempDirWithFiles("response-buildartifact-etag", {}),
     });
-    const response = new Response(x.outputs[0]);
-    expect(response.headers.get("etag")).toBeTruthy();
-    expect(response.headers.get("etag")).toMatchSnapshot("content-etag");
+    const artifact = x.outputs[0];
+    expect(artifact.hash).toBeTruthy();
+    const expectedEtag = `"${artifact.hash}"`;
+
+    const response = new Response(artifact);
+    expect(response.headers.get("etag")).toBe(expectedEtag);
+    expect(response.headers.get("content-type")).toBe("text/javascript;charset=utf-8");
+
+    // User-provided headers must take precedence.
+    const overridden = new Response(artifact, {
+      headers: { etag: '"custom"', "content-type": "text/plain" },
+    });
+    expect({
+      etag: overridden.headers.get("etag"),
+      "content-type": overridden.headers.get("content-type"),
+    }).toEqual({ etag: '"custom"', "content-type": "text/plain" });
+
+    // A plain Blob must not pick up an ETag.
+    expect(new Response(new Blob(["hi"])).headers.get("etag")).toBeNull();
+  });
+
+  // https://github.com/oven-sh/bun/issues/3011
+  test("Bun.serve sends BuildArtifact etag and content-type", async () => {
+    const x = await Bun.build({
+      entrypoints: [join(import.meta.dir, "./fixtures/trivial/index.js")],
+    });
+    const artifact = x.outputs[0];
+    const expectedEtag = `"${artifact.hash}"`;
+
+    await using server = Bun.serve({
+      port: 0,
+      static: { "/static": new Response(artifact) },
+      fetch: () => new Response(artifact),
+    });
+
+    const [dynamic, staticRes, notModified] = await Promise.all([
+      fetch(`${server.url}dynamic`),
+      fetch(`${server.url}static`),
+      fetch(`${server.url}static`, { headers: { "if-none-match": expectedEtag } }),
+    ]);
+
+    expect({
+      etag: dynamic.headers.get("etag"),
+      "content-type": dynamic.headers.get("content-type"),
+    }).toEqual({ etag: expectedEtag, "content-type": "text/javascript;charset=utf-8" });
+
+    expect({
+      etag: staticRes.headers.get("etag"),
+      "content-type": staticRes.headers.get("content-type"),
+    }).toEqual({ etag: expectedEtag, "content-type": "text/javascript;charset=utf-8" });
+
+    expect(notModified.status).toBe(304);
   });
 
   // test("BuildArtifact with assets", async () => {

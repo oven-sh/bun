@@ -2236,6 +2236,7 @@ pub(crate) fn install_isolated_packages(
                                     .ok()
                                     .unwrap_or(false);
                             }
+                            // Likewise, the package directory appears here only once fully linked.
                             installer.append_real_store_path(&mut store_path, entry_id, installer::Which::Final);
                             // Capture the length instead of a `ResetScope` so
                             // `store_path` stays unborrowed.

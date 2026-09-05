@@ -234,6 +234,7 @@ pub enum Step {
     OpeningCacheDir,
     OpeningDestDir,
     CopyingFiles,
+    MovingIntoPlace,
     LinkingDependency,
 }
 
@@ -244,9 +245,56 @@ impl Step {
             Step::CopyingFiles => b"copying files from cache to destination",
             Step::OpeningCacheDir => b"opening cache/package/version dir",
             Step::OpeningDestDir => b"opening node_modules/package dir",
+            Step::MovingIntoPlace => b"moving copied files into node_modules/package dir",
             Step::LinkingDependency => b"linking dependency/workspace to node_modules",
         }
     }
+}
+
+/// Where a package is linked to before being renamed onto its real path, which
+/// later installs take as proof that it is installed: `@scope/name` becomes
+/// `@scope/.bun-tmp-<hash>`. Hashed because a name may already be NAME_MAX long,
+/// deterministic so the next install of the package removes a stale one.
+pub(crate) struct StagingPath<'a>(pub(crate) &'a [u8]);
+
+impl core::fmt::Display for StagingPath<'_> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        let name_start = strings::last_index_of_char(self.0, b'/').map_or(0, |slash| slash + 1);
+        let scope = &self.0[..name_start];
+        write!(
+            f,
+            "{}.bun-tmp-{:016x}",
+            bstr::BStr::new(scope),
+            bun_wyhash::hash(self.0)
+        )
+    }
+}
+
+/// Renames a fully linked `StagingPath` (relative to `dir`) onto `dest`. Fails if
+/// `dest` is occupied.
+pub(crate) fn rename_staging_into_place(dir: Fd, staging: &ZStr, dest: &ZStr) -> sys::Maybe<()> {
+    #[cfg(windows)]
+    {
+        // A scanner still holding a just-written file open fails the rename for a
+        // few milliseconds (#11250 is the same failure for the cache). An occupied
+        // `dest` fails with the same errors and is not worth waiting on.
+        const RETRIES: u32 = 6;
+        for attempt in 0..RETRIES {
+            match sys::renameat(dir, staging, dir, dest) {
+                Err(err)
+                    if matches!(
+                        err.get_errno(),
+                        sys::E::EPERM | sys::E::EACCES | sys::E::EBUSY
+                    ) && !sys::directory_exists_at(dir, dest).unwrap_or(false) =>
+                {
+                    // 10ms, 20ms, ... 320ms: 630ms in total.
+                    std::thread::sleep(std::time::Duration::from_millis(10u64 << attempt));
+                }
+                result => return result,
+            }
+        }
+    }
+    sys::renameat(dir, staging, dir, dest)
 }
 
 // PORTING.md §Global mutable state: install-main-thread enum. `RacyCell`
@@ -1010,6 +1058,7 @@ impl<'a> PackageInstall<'a> {
     fn install_with_clonefile_each_dir(
         &mut self,
         destination_dir: &Dir,
+        dest_subpath: &ZStr,
     ) -> crate::Result<InstallResult> {
         let cached_package_dir = match open_dir(self.cache_dir, self.cache_dir_subpath) {
             Ok(d) => d,
@@ -1072,12 +1121,13 @@ impl<'a> PackageInstall<'a> {
             Ok(())
         }
 
-        let subdir = match destination_dir.make_open_path(
-            self.destination_dir_subpath.as_bytes(),
-            OpenDirOptions::default(),
-        ) {
+        let subdir = match destination_dir
+            .make_open_path(dest_subpath.as_bytes(), OpenDirOptions::default())
+        {
             Ok(d) => d,
-            Err(err) => return Ok(InstallResult::fail(err.into(), Step::OpeningDestDir, None)),
+            Err(err) => {
+                return Ok(InstallResult::fail(err.into(), Step::OpeningDestDir, None));
+            }
         };
         if let Err(err) = copy(&subdir, &mut walker_) {
             return Ok(InstallResult::fail(err, Step::CopyingFiles, None));
@@ -1088,15 +1138,14 @@ impl<'a> PackageInstall<'a> {
 
     // https://www.unix.com/man-page/mojave/2/fclonefileat/
     #[cfg(target_os = "macos")]
-    fn install_with_clonefile(&mut self, destination_dir: &Dir) -> crate::Result<InstallResult> {
-        if self.destination_dir_subpath.as_bytes()[0] == b'@' {
-            if let Some(slash) = strings::index_of_char_z(self.destination_dir_subpath, SEP) {
-                let slash = slash as usize;
-                self.destination_dir_subpath_buf[slash] = 0;
-                // SAFETY: NUL written above.
-                let subdir = ZStr::from_buf(self.destination_dir_subpath_buf, slash);
-                let _ = sys::mkdirat(destination_dir, subdir, 0o755);
-                self.destination_dir_subpath_buf[slash] = SEP;
+    fn install_with_clonefile(
+        &mut self,
+        destination_dir: &Dir,
+        dest_subpath: &ZStr,
+    ) -> crate::Result<InstallResult> {
+        if dest_subpath.as_bytes()[0] == b'@' {
+            if let Some(slash) = strings::index_of_char_usize(dest_subpath.as_bytes(), SEP) {
+                let _ = destination_dir.make_dir(&dest_subpath.as_bytes()[..slash]);
             }
         }
 
@@ -1104,7 +1153,7 @@ impl<'a> PackageInstall<'a> {
             self.cache_dir,
             self.cache_dir_subpath,
             destination_dir.fd(),
-            self.destination_dir_subpath,
+            dest_subpath,
         ) {
             Ok(()) => Ok(InstallResult::Success),
             Err(e) => match e.get_errno() {
@@ -1115,7 +1164,9 @@ impl<'a> PackageInstall<'a> {
                 // But, this can happen if this package contains a node_modules folder
                 // We want to continue installing as many packages as we can, so we shouldn't block while downloading
                 // We use the slow path in this case
-                sys::Errno::EEXIST => self.install_with_clonefile_each_dir(destination_dir),
+                sys::Errno::EEXIST => {
+                    self.install_with_clonefile_each_dir(destination_dir, dest_subpath)
+                }
                 sys::Errno::EACCES => Err(crate::Error::Sys(bun_errno::SystemErrno::EACCES)),
                 _ => Err(crate::Error::Unexpected),
             },
@@ -1125,10 +1176,10 @@ impl<'a> PackageInstall<'a> {
     fn init_install_dir(
         &mut self,
         destination_dir: &Dir,
+        destpath: &ZStr,
         method: Method,
     ) -> Result<InstallDirState, Box<Failure>> {
         let destbase = destination_dir;
-        let destpath = self.destination_dir_subpath;
 
         let cached_package_dir = match {
             #[cfg(windows)]
@@ -1279,8 +1330,13 @@ impl<'a> PackageInstall<'a> {
         }
     }
 
-    fn install_with_copyfile(&mut self, destination_dir: &Dir) -> InstallResult {
-        let mut state = match self.init_install_dir(destination_dir, Method::Copyfile) {
+    fn install_with_copyfile(
+        &mut self,
+        destination_dir: &Dir,
+        dest_subpath: &ZStr,
+    ) -> InstallResult {
+        let mut state = match self.init_install_dir(destination_dir, dest_subpath, Method::Copyfile)
+        {
             Ok(state) => state,
             Err(failure) => return InstallResult::Failure(failure),
         };
@@ -1537,8 +1593,12 @@ impl<'a> PackageInstall<'a> {
         InstallResult::Success
     }
 
-    fn install_with_hardlink(&mut self, dest_dir: &Dir) -> crate::Result<InstallResult> {
-        let mut state = match self.init_install_dir(dest_dir, Method::Hardlink) {
+    fn install_with_hardlink(
+        &mut self,
+        dest_dir: &Dir,
+        dest_subpath: &ZStr,
+    ) -> crate::Result<InstallResult> {
+        let mut state = match self.init_install_dir(dest_dir, dest_subpath, Method::Hardlink) {
             Ok(state) => state,
             Err(failure) => return Ok(InstallResult::Failure(failure)),
         };
@@ -1725,8 +1785,12 @@ impl<'a> PackageInstall<'a> {
         Ok(InstallResult::Success)
     }
 
-    fn install_with_symlink(&mut self, dest_dir: &Dir) -> crate::Result<InstallResult> {
-        let mut state = match self.init_install_dir(dest_dir, Method::Symlink) {
+    fn install_with_symlink(
+        &mut self,
+        dest_dir: &Dir,
+        dest_subpath: &ZStr,
+    ) -> crate::Result<InstallResult> {
+        let mut state = match self.init_install_dir(dest_dir, dest_subpath, Method::Symlink) {
             Ok(state) => state,
             Err(failure) => return Ok(InstallResult::Failure(failure)),
         };
@@ -2300,7 +2364,7 @@ impl<'a> PackageInstall<'a> {
         &mut self,
         skip_delete: bool,
         destination_dir: &Dir,
-        method_: Method,
+        method: Method,
         resolution_tag: resolution::Tag,
     ) -> InstallResult {
         let _tracer = bun_core::perf::trace("PackageInstaller.install");
@@ -2311,7 +2375,54 @@ impl<'a> PackageInstall<'a> {
             self.uninstall_before_install(destination_dir);
         }
 
-        let mut supported_method_to_use = method_;
+        let mut staging_buf = path::path_buffer_pool::get();
+        let Ok(staging) = bun_core::fmt::buf_print_z(
+            &mut staging_buf[..],
+            format_args!("{}", StagingPath(self.destination_dir_subpath.as_bytes())),
+        ) else {
+            return InstallResult::fail(
+                crate::Error::Sys(bun_errno::SystemErrno::ENAMETOOLONG),
+                Step::OpeningDestDir,
+                None,
+            );
+        };
+        // A stale one may hold files of another version, which the backends would keep.
+        if let Err(err) = destination_dir.delete_tree(staging.as_bytes()) {
+            return InstallResult::fail(err.into(), Step::OpeningDestDir, None);
+        }
+
+        if let failure @ InstallResult::Failure(_) =
+            self.install_into(destination_dir, staging, method, resolution_tag)
+        {
+            let _ = destination_dir.delete_tree(staging.as_bytes());
+            return failure;
+        }
+
+        let dest = self.destination_dir_subpath;
+        let mut renamed = rename_staging_into_place(destination_dir.fd(), staging, dest);
+        if renamed.is_err() && dest.as_bytes() != b"." {
+            // Occupied: a workspace depended on under two names is walked as two trees,
+            // so the packages inside it are installed twice. The later one replaces it.
+            self.uninstall_before_install(destination_dir);
+            renamed = rename_staging_into_place(destination_dir.fd(), staging, dest);
+        }
+        match renamed {
+            Ok(()) => InstallResult::Success,
+            Err(err) => {
+                let _ = destination_dir.delete_tree(staging.as_bytes());
+                InstallResult::fail(err.into(), Step::MovingIntoPlace, None)
+            }
+        }
+    }
+
+    fn install_into(
+        &mut self,
+        destination_dir: &Dir,
+        dest_subpath: &ZStr,
+        method: Method,
+        resolution_tag: resolution::Tag,
+    ) -> InstallResult {
+        let mut supported_method_to_use = method;
 
         if resolution_tag == resolution::Tag::Folder
             && !self
@@ -2327,7 +2438,7 @@ impl<'a> PackageInstall<'a> {
                 {
                     // First, attempt to use clonefile
                     // if that fails due to ENOTSUP, mark it as unsupported and then fall back to copyfile
-                    match self.install_with_clonefile(destination_dir) {
+                    match self.install_with_clonefile(destination_dir, dest_subpath) {
                         Ok(result) => return result,
                         Err(err) => {
                             if err == crate::Error::NotSupported {
@@ -2349,7 +2460,7 @@ impl<'a> PackageInstall<'a> {
             Method::ClonefileEachDir => {
                 #[cfg(target_os = "macos")]
                 {
-                    match self.install_with_clonefile_each_dir(destination_dir) {
+                    match self.install_with_clonefile_each_dir(destination_dir, dest_subpath) {
                         Ok(result) => return result,
                         Err(err) => {
                             if err == crate::Error::NotSupported {
@@ -2370,7 +2481,7 @@ impl<'a> PackageInstall<'a> {
             }
             #[allow(unused_labels)]
             Method::Hardlink => 'outer: {
-                match self.install_with_hardlink(destination_dir) {
+                match self.install_with_hardlink(destination_dir, dest_subpath) {
                     Ok(result) => return result,
                     Err(err) => {
                         #[cfg(not(windows))]
@@ -2395,7 +2506,7 @@ impl<'a> PackageInstall<'a> {
                 }
             }
             Method::Symlink => {
-                return match self.install_with_symlink(destination_dir) {
+                return match self.install_with_symlink(destination_dir, dest_subpath) {
                     Ok(result) => result,
                     Err(err) => {
                         if err == crate::Error::Sys(bun_errno::SystemErrno::ENOENT) {
@@ -2414,7 +2525,7 @@ impl<'a> PackageInstall<'a> {
         }
 
         // TODO: linux io_uring
-        self.install_with_copyfile(destination_dir)
+        self.install_with_copyfile(destination_dir, dest_subpath)
     }
 }
 

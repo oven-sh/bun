@@ -276,6 +276,26 @@ pub struct S3Endpoint {
     pub is_http: bool,
 }
 
+impl S3Endpoint {
+    /// `None` when `url` has no host: WTF::URL reads `localhost:9000` as the scheme `localhost`.
+    fn from_whatwg(url: &whatwg::URL) -> Option<Self> {
+        // `whatwg::URL::hostname` is the host with its port.
+        let host = url.hostname();
+        if host.is_empty() {
+            return None;
+        }
+        let is_http = url.protocol().eq_ascii(b"http");
+        let mut host_with_path = host.to_owned_slice();
+        let pathname = url.pathname();
+        let path = pathname.to_utf8();
+        host_with_path.extend_from_slice(strings::without_suffix_comptime(path.slice(), b"/"));
+        Some(Self {
+            host_with_path: host_with_path.into_boxed_slice(),
+            is_http,
+        })
+    }
+}
+
 impl<'a> URL<'a> {
     /// Detach the borrow-checker lifetime from a `URL`.
     ///
@@ -371,31 +391,26 @@ impl<'a> URL<'a> {
 
     /// `input` is `[scheme://]host[:port][/prefix]`, `https` by default. `None` when it has no host.
     pub fn parse_s3_endpoint(input: &[u8]) -> Option<S3Endpoint> {
+        // With a scheme, the endpoint is whatever `new URL(endpoint)` reads.
+        if let Some(endpoint) =
+            whatwg::Parsed::from_utf8(input).and_then(|url| S3Endpoint::from_whatwg(&url))
+        {
+            return Some(endpoint);
+        }
         let as_written = URL::parse(input);
         if as_written.host_with_path().is_empty() {
             return None;
         }
-        let normalized = if as_written.protocol.is_empty() {
+        let with_default_scheme = if as_written.protocol.is_empty() {
             whatwg::Parsed::from_utf8(&[b"https://".as_slice(), input].concat())
+                .and_then(|url| S3Endpoint::from_whatwg(&url))
         } else {
-            whatwg::Parsed::from_utf8(input)
+            None
         };
-        let Some(url) = normalized else {
-            return Some(S3Endpoint {
-                host_with_path: Box::from(as_written.host_with_path()),
-                is_http: as_written.is_http(),
-            });
-        };
-        let is_http = url.protocol().eq_ascii(b"http");
-        // `whatwg::URL::hostname` is the host with its port.
-        let mut host_with_path = url.hostname().to_owned_slice();
-        let pathname = url.pathname();
-        let path = pathname.to_utf8();
-        host_with_path.extend_from_slice(strings::without_suffix_comptime(path.slice(), b"/"));
-        Some(S3Endpoint {
-            host_with_path: host_with_path.into_boxed_slice(),
-            is_http,
-        })
+        Some(with_default_scheme.unwrap_or_else(|| S3Endpoint {
+            host_with_path: Box::from(as_written.host_with_path()),
+            is_http: as_written.is_http(),
+        }))
     }
 
     pub fn display_protocol(&self) -> &[u8] {

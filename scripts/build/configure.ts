@@ -263,22 +263,25 @@ export async function configure(input: ConfigureInput): Promise<ConfigureResult>
   };
 
   // Expand profile → PartialConfig. Overrides win — except localDeps, which
-  // is a list and accumulates (a `*-local` profile redirects WebKit; a CLI
+  // is a list and accumulates (a profile may redirect a dep; a CLI
   // `--local-deps=zstd=…` on top must add to that, not replace it; a repeated
   // name still takes the CLI's path since later entries win).
   const profile = input.profile !== undefined ? getProfile(input.profile) : {};
   const overrides = (input.overrides ??= {});
-  // $BUN_WEBKIT_PATH relocates a *-local profile's WebKit clone. It is folded
-  // into the persisted overrides here, once, so ninja-driven reconfigures use
-  // the path this build dir was configured with regardless of the environment
-  // they run in.
-  const webkitPathEnv = process.env.BUN_WEBKIT_PATH;
-  if (
-    webkitPathEnv &&
-    /(^|,)WebKit=/.test(profile.localDeps ?? "") &&
-    !/(^|,)WebKit=/.test(overrides.localDeps ?? "")
-  ) {
-    overrides.localDeps = [overrides.localDeps, `WebKit=${webkitPathEnv}`].filter(Boolean).join(",");
+  // A bare `--local-deps=NAME` means the conventional clone location:
+  // vendor/NAME — for WebKit, $BUN_WEBKIT_PATH if set (`bun run build:local`).
+  // Resolved into the persisted overrides here, once, so ninja-driven
+  // reconfigures use the path this build dir was configured with regardless
+  // of the environment they run in.
+  if (overrides.localDeps !== undefined) {
+    overrides.localDeps = overrides.localDeps
+      .split(",")
+      .map(entry =>
+        entry === "" || entry.includes("=")
+          ? entry
+          : `${entry}=${(entry === "WebKit" && process.env.BUN_WEBKIT_PATH) || `vendor/${entry}`}`,
+      )
+      .join(",");
   }
   const partial: PartialConfig = { ...profile, ...overrides };
   if (profile.localDeps !== undefined && overrides.localDeps !== undefined) {

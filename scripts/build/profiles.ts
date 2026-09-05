@@ -9,14 +9,13 @@
  *
  * ## Naming convention
  *
- * `<buildtype>[-local][-<feature>]`
+ * `<buildtype>[-<feature>]`
  *
  *   debug              → Debug build (the default). JSC is compiled from the
  *                        pinned WEBKIT_VERSION like every other dep.
- *   debug-local        → Debug build, WebKit compiled from your own clone
- *                        ($BUN_WEBKIT_PATH, default vendor/WebKit/)
  *   release            → Release build, no LTO
- *   release-local      → Release build, WebKit compiled from your own clone
+ *                        (your own WebKit clone: either profile plus
+ *                        `--local-deps=WebKit`, which is `bun run build:local`)
  *   release-assertions → Release + runtime assertions enabled
  *   release-asan       → Release + address sanitizer
  *   ci-*               → CI-specific modes (cpp-only/link-only/full)
@@ -33,12 +32,6 @@ export const profiles = {
   /** Default local dev: debug build; JSC compiled from the pinned WEBKIT_VERSION. ASAN defaults on for supported platforms. */
   debug: {
     buildType: "Debug",
-  },
-
-  /** Debug, WebKit compiled from your clone (vendor/WebKit/, or $BUN_WEBKIT_PATH — see configure()). */
-  "debug-local": {
-    buildType: "Debug",
-    localDeps: "WebKit=vendor/WebKit",
   },
 
   /** Debug without ASAN — faster builds, less safety. */
@@ -140,13 +133,6 @@ export const profiles = {
     // be confused with `--profile=release --build-dir=build/btg` (which
     // would persist lto:false and silently de-LTO the bench binary).
     buildDir: "build/btg",
-  },
-
-  /** Release, WebKit compiled from your clone. */
-  "release-local": {
-    buildType: "Release",
-    localDeps: "WebKit=vendor/WebKit",
-    lto: false,
   },
 
   /**

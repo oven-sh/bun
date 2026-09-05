@@ -29,8 +29,8 @@ if (args.includes("--help") || args.includes("-h")) {
 presets:
   debug (default)  build/debug/
   release          build/release/
-  debug-local      build/debug-local/
-  release-local    build/release-local/
+  debug-local      build/debug-local/   (bun run build:local)
+  release-local    build/release-local/ (bun run build:release:local)
   rust             cargo target dirs across all profiles + ~/.bun/build-cache/cargo
   cpp              C++ obj/ + pch/ across all profiles
   cache            machine-shared build cache (~/.bun/build-cache: ccache, cargo,

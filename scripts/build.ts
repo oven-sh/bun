@@ -580,8 +580,8 @@ Usage: bun scripts/build.ts [options] [exec-args...]
 
 Options:
   --profile=<name>        Build profile (default: debug)
-                          Profiles: debug, debug-local, debug-no-asan,
-                                    release, release-local, release-asan,
+                          Profiles: debug, debug-no-asan,
+                                    release, release-asan,
                                     release-assertions, ci-*,
                                     windows-{x64,arm64}[-release] (cross-compile
                                     from a non-Windows host)
@@ -589,8 +589,10 @@ Options:
                           on/off/true/false/yes/no/1/0.
                           Fields: asan, lto, assertions, logs, baseline,
                                   canary, valgrind, webkit (prebuilt|source),
-                                  local-deps (name=path[,name=path] — build a
-                                  vendored dep from a local checkout),
+                                  local-deps (name[=path][,…] — build a
+                                  vendored dep from a local checkout;
+                                  a bare name means vendor/<name>,
+                                  WebKit also honours $BUN_WEBKIT_PATH),
                                   package-manager (bun|npm, installs the
                                   package.json files the build needs),
                                   buildDir, mode (full|cpp-only|link-only),
@@ -609,7 +611,7 @@ Examples:
   bun scripts/build.ts --profile=debug
   bun scripts/build.ts --profile=release --lto=off
   bun scripts/build.ts test foo.test.ts
-  bun scripts/build.ts --profile=debug-local run script.ts
+  bun scripts/build.ts --local-deps=WebKit run script.ts
   bun scripts/build.ts --local-deps=mimalloc=~/code/mimalloc test foo.test.ts
   bun scripts/build.ts --target=bun-rust
   bun scripts/build.ts --configure-only

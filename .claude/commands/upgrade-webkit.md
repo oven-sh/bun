@@ -19,7 +19,7 @@ To do that:
 - Fix the merge conflicts (preserve the fork's Bun-specific changes)
 - bun run jsc:build:debug — from the bun repo root, builds just JSC
 - While it compiles, in another task review the JSC commits between $OLD_BASE and upstream/main (Source/JavaScriptCore, Source/WTF, Source/bmalloc). Write up a summary in a file called "webkit-changes.md"
-- bun run build:local — full Bun build with JSC compiled from vendor/WebKit (or $BUN_WEBKIT_PATH), same graph as the JSC build above
+- bun run build:local — full Bun build with JSC compiled from vendor/WebKit (or $BUN_WEBKIT_PATH) — `--local-deps=WebKit` on the debug profile; same graph as the JSC build above
 - After it compiles, run some code to make sure things work: `bun run build:local -p '42'`
 - Publish the new WebKit:
   - Direct: cd vendor/WebKit, commit, `git push origin main`. The push triggers a release tagged `autobuild-<full-sha>`.

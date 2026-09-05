@@ -3,12 +3,12 @@ use bun_io::Write;
 use bun_semver as semver;
 
 use crate::lockfile_real::package::PackageColumns as _;
-use crate::package_manager_real::TrackInstalledBin;
+use crate::package_manager_real::{CatalogUpdateInfo, TrackInstalledBin};
 use bun_core::fmt::PathSep;
 use bun_install::lockfile::{Printer, package::Meta as PackageMeta};
 use bun_install::{
-    self as install, Bin, Dependency, DependencyID, INVALID_PACKAGE_ID, PackageID, PackageManager,
-    PackageNameHash, Resolution, Subcommand, bin, resolution,
+    self as install, Bin, Dependency, DependencyID, DependencyVersionTag, INVALID_PACKAGE_ID,
+    PackageID, PackageManager, PackageNameHash, Resolution, Subcommand, bin, resolution,
 };
 use bun_sys::Fd;
 
@@ -27,6 +27,8 @@ fn print_installed_workspace_section<
     printed_new_install: &mut bool,
     id_map: Option<&mut [DependencyID]>,
     update_owners: &[PackageID],
+    // The summary has no other sections, so `print_catalog_entry_updates` runs here.
+    sole_section: bool,
 ) -> Result<(), crate::Error>
 where
     W: Write,
@@ -50,8 +52,7 @@ where
     // It's possible to have duplicate dependencies with the same version and resolution.
     // While both are technically installed, only one was chosen and should be printed.
     let mut dep_dedupe: HashMap<PackageNameHash, ()> = HashMap::new();
-    // `updating_packages` holds one original per name, so a name declared by several owners (or groups) is one row.
-    let mut update_dedupe: HashMap<PackageNameHash, ()> = HashMap::new();
+    let mut update_dedupe = UpdateRowDedupe::new();
 
     // Reshaped for borrowck — `id_map` is reborrowed per call below.
     let mut id_map = id_map;
@@ -79,9 +80,8 @@ where
                 | ShouldPrintPackageInstallResult::No
                 | ShouldPrintPackageInstallResult::Return => {}
                 ShouldPrintPackageInstallResult::Update(update_info) => {
-                    if update_dedupe
-                        .get_or_put(dependencies[dep_id as usize].name_hash)?
-                        .found_existing
+                    if !update_dedupe
+                        .first_sighting(&dependencies[dep_id as usize], &update_info)?
                     {
                         continue;
                     }
@@ -114,6 +114,19 @@ where
     }
 
     if !PRINT_SECTION_HEADER {
+        if sole_section
+            && print_catalog_entry_updates::<W, ENABLE_ANSI_COLORS>(
+                this,
+                manager,
+                installed,
+                pkg_metas,
+                &mut update_dedupe,
+                writer,
+            )?
+        {
+            *printed_new_install = true;
+            printed_update = true;
+        }
         if print_transitive_updates::<W, ENABLE_ANSI_COLORS>(
             this,
             manager,
@@ -185,10 +198,50 @@ where
 }
 
 struct PackageUpdatePrintInfo {
+    /// The version the row was locked to; its tag strings live in `version_buf`.
     version: semver::Version,
+    version_buf: Box<[u8]>,
     resolution: Resolution,
     dependency_id: DependencyID,
     package_id: PackageID,
+}
+
+/// The `^` rows of one section. A dependency list's rows print once per name (`updating_packages` holds one original per name); a `catalog:` row prints once per move, so two catalog entries for one name each get a row, while a move already printed (same name, from and to) is not repeated.
+struct UpdateRowDedupe {
+    names: HashMap<PackageNameHash, ()>,
+    printed: Vec<(PackageNameHash, PackageID, semver::Version)>,
+}
+
+impl UpdateRowDedupe {
+    fn new() -> UpdateRowDedupe {
+        UpdateRowDedupe {
+            names: HashMap::new(),
+            printed: Vec::new(),
+        }
+    }
+
+    fn first_sighting(
+        &mut self,
+        dependency: &Dependency,
+        update: &PackageUpdatePrintInfo,
+    ) -> Result<bool, crate::Error> {
+        if dependency.version.tag != DependencyVersionTag::Catalog
+            && self.names.get_or_put(dependency.name_hash)?.found_existing
+        {
+            return Ok(false);
+        }
+        let repeated = self.printed.iter().any(|&(name_hash, package_id, from)| {
+            name_hash == dependency.name_hash
+                && package_id == update.package_id
+                && from.eql(update.version)
+        });
+        if repeated {
+            return Ok(false);
+        }
+        self.printed
+            .push((dependency.name_hash, update.package_id, update.version));
+        Ok(true)
+    }
 }
 
 enum ShouldPrintPackageInstallResult {
@@ -256,15 +309,21 @@ fn should_print_package_install(
     let resolution = this.lockfile.packages.items_resolution()[package_id as usize];
     if resolution.tag == resolution::Tag::Npm {
         let npm_version = resolution.npm().version;
-        let name = dependency
-            .name
-            .slice(this.lockfile.buffers.string_bytes.as_slice());
+        let string_buf = this.lockfile.buffers.string_bytes.as_slice();
+        let name = dependency.name.slice(string_buf);
         if let Some(entry) = manager.updating_packages.get(name) {
-            if let Some(original_version) = entry.original_version {
+            // A `catalog:` row moves with its entry, which keeps its own locked version; other rows share the name's.
+            let original = catalog_original(manager, dependency, string_buf).or_else(|| {
+                entry
+                    .original_version
+                    .map(|version| (version, &entry.original_version_string_buf[..]))
+            });
+            if let Some((original_version, original_buf)) = original {
                 if !original_version.eql(npm_version) {
                     return ShouldPrintPackageInstallResult::Update(Box::new(
                         PackageUpdatePrintInfo {
                             version: original_version,
+                            version_buf: Box::from(original_buf),
                             resolution,
                             dependency_id: dep_id,
                             package_id,
@@ -280,6 +339,25 @@ fn should_print_package_install(
     }
 
     ShouldPrintPackageInstallResult::Yes
+}
+
+/// What a `catalog:` row resolved to before the update, as `record_catalog_originals` recorded it on the row's catalog entry.
+fn catalog_original<'a>(
+    manager: &'a PackageManager,
+    dependency: &Dependency,
+    string_buf: &[u8],
+) -> Option<(semver::Version, &'a [u8])> {
+    if dependency.version.tag != DependencyVersionTag::Catalog {
+        return None;
+    }
+    let infos = &manager.updating_catalogs;
+    let index = CatalogUpdateInfo::position(
+        infos,
+        dependency.version.catalog().slice(string_buf),
+        dependency.name.slice(string_buf),
+    )?;
+    let original = infos[index].original.as_ref()?;
+    Some((original.version, &original.buf))
 }
 
 fn print_updated_package<W, const ENABLE_ANSI_COLORS: bool>(
@@ -303,14 +381,11 @@ where
         packages_slice.items_name_hash()[package_id],
         &update_info.resolution,
     )?;
-    let Some(entry) = manager.updating_packages.get(dep_name) else {
-        return Ok(());
-    };
     write_updated_row::<W, ENABLE_ANSI_COLORS>(
         writer,
         dep_name,
         update_info.version,
-        &entry.original_version_string_buf,
+        &update_info.version_buf,
         update_info.resolution.npm().version,
         string_buf,
         later.as_deref(),
@@ -373,6 +448,53 @@ where
     writer.write_str("\n")?;
 
     Ok(())
+}
+
+/// A bare `bun update` moves the root's catalog entries for every importer at once, but the summary's one section only walks the rows of `update_owners` (above, hence the shared `update_dedupe`), so the entries consumed elsewhere are reported through whichever `catalog:` row names them. The verbose summary prints a section per importer, each reporting its own `catalog:` rows, and skips this. Like a direct dependency's row, a row prints whether or not its new version had to be installed.
+fn print_catalog_entry_updates<W, const ENABLE_ANSI_COLORS: bool>(
+    this: &Printer,
+    manager: &mut PackageManager,
+    installed: &Bitset,
+    pkg_metas: &[PackageMeta],
+    update_dedupe: &mut UpdateRowDedupe,
+    writer: &mut W,
+) -> Result<bool, crate::Error>
+where
+    W: Write,
+{
+    if !manager
+        .updating_packages
+        .values()
+        .iter()
+        .any(|info| info.catalog_entry)
+    {
+        return Ok(false);
+    }
+    let string_buf = this.lockfile.buffers.string_bytes.as_slice();
+    let dependencies = this.lockfile.buffers.dependencies.as_slice();
+    let mut printed = false;
+    for (dep_id, dep) in dependencies.iter().enumerate() {
+        if dep.version.tag != DependencyVersionTag::Catalog
+            || !manager
+                .updating_packages
+                .get(dep.name.slice(string_buf))
+                .is_some_and(|info| info.catalog_entry)
+        {
+            continue;
+        }
+        let dep_id = DependencyID::try_from(dep_id).expect("int cast");
+        let ShouldPrintPackageInstallResult::Update(update_info) =
+            should_print_package_install(this, manager, dep_id, installed, None, pkg_metas)
+        else {
+            continue;
+        };
+        if !update_dedupe.first_sighting(dep, &update_info)? {
+            continue;
+        }
+        print_updated_package::<W, ENABLE_ANSI_COLORS>(this, manager, &update_info, writer)?;
+        printed = true;
+    }
+    Ok(printed)
 }
 
 /// Packages registered by the transitive half of `bun update` are not rows of the walked workspaces, so the walk above never reaches them; the walked workspaces' own targets stay with them.
@@ -629,6 +751,7 @@ where
                 &mut had_printed_new_install,
                 None,
                 &[0],
+                false,
             )?;
 
             for &workspace_dep_id in &workspaces_to_print {
@@ -642,6 +765,7 @@ where
                     &mut had_printed_new_install,
                     None,
                     &[workspace_package_id],
+                    false,
                 )?;
             }
         } else {
@@ -693,6 +817,7 @@ where
                 &mut had_printed_new_install,
                 Some(&mut id_map),
                 &update_owners,
+                true,
             )?;
         }
     } else {

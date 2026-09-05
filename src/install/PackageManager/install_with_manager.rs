@@ -24,7 +24,7 @@ use crate::{
 };
 // Bring the typed `items_<field>()` column accessors into scope for
 // `MultiArrayList<Package>` / `Slice<Package>`.
-use super::Command;
+use super::{Command, PackageJSONEditor};
 use crate::PackageManager;
 use crate::config_version::ConfigVersion;
 use crate::hoisted_install::install_hoisted_packages;
@@ -1845,23 +1845,13 @@ fn record_updating_package_versions(manager: &mut PackageManager) {
             if original_resolution.tag != ResolutionTag::Npm {
                 continue;
             }
-
-            let mut original = original_resolution.npm().version;
-            let tag_total = original.tag.pre.len() + original.tag.build.len();
-            if tag_total > 0 {
-                let mut tag_buf = vec![0u8; tag_total].into_boxed_slice();
-                original.tag = original_resolution.npm().version.tag.clone_into(
-                    &lockfile.buffers.string_bytes,
-                    &mut tag_buf,
-                    &mut 0,
-                );
-
-                entry_ptr.original_version_string_buf = tag_buf;
-            }
-
-            entry_ptr.original_version = Some(original);
+            entry_ptr.set_original_version(
+                original_resolution.npm().version,
+                &lockfile.buffers.string_bytes,
+            );
         }
     }
+    PackageJSONEditor::record_catalog_originals(manager).unwrap_or_oom();
 }
 
 fn root_package_json_source(

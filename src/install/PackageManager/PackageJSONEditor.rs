@@ -13,7 +13,10 @@ use bun_install::{Dependency, INVALID_PACKAGE_ID, Lockfile, resolution};
 use bun_install_types::{DependencyGroup, PackageNameHash};
 
 use super::package_manager_options::Do;
-use super::{CatalogUpdateInfo, PackageManager, PackageUpdateInfo, Subcommand, UpdateRequest};
+use super::{
+    CatalogUpdateInfo, DetachedVersion, PackageManager, PackageUpdateInfo, Subcommand,
+    UpdateRequest,
+};
 
 type ExprDisabler = bun_ast::expr::Disabler;
 
@@ -507,9 +510,7 @@ fn edit_update_entries(
 
                         *entry.value_ptr = PackageUpdateInfo {
                             original_version_literal: version_literal_owned,
-                            written_back: false,
-                            original_version_string_buf: Box::default(),
-                            original_version: None,
+                            ..Default::default()
                         };
 
                         if update_to_latest {
@@ -734,6 +735,7 @@ pub(crate) fn edit_catalogs_before_update(
                 dep_name: Box::from(key_str),
                 original_version_literal: Box::from(version_literal),
                 new_version_literal: None,
+                original: None,
             });
 
             if update_to_latest {
@@ -749,6 +751,61 @@ pub(crate) fn edit_catalogs_before_update(
     })?;
 
     Ok(!manager.updating_catalogs.is_empty())
+}
+
+/// Runs on the loaded lockfile, before the differ: every `catalog:` row of an entry recorded by `edit_catalogs_before_update` gives the entry the version it was locked to (the first row of the entry wins) and registers its name in `updating_packages` the way the cwd's own dependency lists register theirs, so the install summary prints the entry's move as an update row; a name those lists already registered keeps their original.
+pub(crate) fn record_catalog_originals(
+    manager: &mut PackageManager,
+) -> Result<(), bun_alloc::AllocError> {
+    if manager.updating_catalogs.is_empty() {
+        return Ok(());
+    }
+    let lockfile: &Lockfile = &manager.lockfile;
+    let infos: &mut [CatalogUpdateInfo] = &mut manager.updating_catalogs;
+    let updating_packages = &mut manager.updating_packages;
+    let string_buf = lockfile.buffers.string_bytes.as_slice();
+    let package_resolutions = lockfile.packages.items_resolution();
+
+    for (dep, &package_id) in lockfile
+        .buffers
+        .dependencies
+        .iter()
+        .zip(lockfile.buffers.resolutions.iter())
+    {
+        if dep.version.tag != dependency::Tag::Catalog
+            || (package_id as usize) >= package_resolutions.len()
+        {
+            continue;
+        }
+        let resolution = &package_resolutions[package_id as usize];
+        if resolution.tag != resolution::Tag::Npm {
+            continue;
+        }
+        let dep_name = dep.name.slice(string_buf);
+        let catalog_name = dep.version.catalog().slice(string_buf);
+        let Some(info) =
+            CatalogUpdateInfo::position(infos, catalog_name, dep_name).map(|i| &mut infos[i])
+        else {
+            continue;
+        };
+        let version = resolution.npm().version;
+        if info.original.is_none() {
+            info.original = Some(DetachedVersion::new(version, string_buf));
+        }
+        let entry = updating_packages.get_or_put(dep_name)?;
+        if entry.found_existing {
+            continue;
+        }
+        *entry.value_ptr = PackageUpdateInfo {
+            original_version_literal: info.original_version_literal.clone(),
+            // The entry is written by `edit_catalogs_after_update`; `edit_update_entries` has nothing of it to write into the cwd's dependency lists.
+            written_back: true,
+            catalog_entry: true,
+            ..Default::default()
+        };
+        entry.value_ptr.set_original_version(version, string_buf);
+    }
+    Ok(())
 }
 
 /// Writes each recorded catalog entry's resolved literal (unresolved ones are restored) into the root AST; returns `changed`.
@@ -819,6 +876,8 @@ pub(crate) fn edit_catalogs_after_update(
         Ok(())
     })?;
 
+    // The install summary still reads the entries' originals.
+    manager.updating_catalogs = infos;
     Ok(changed)
 }
 
@@ -1041,9 +1100,7 @@ pub(crate) fn edit(
 
                                                 *entry.value_ptr = PackageUpdateInfo {
                                                     original_version_literal: version_literal_owned,
-                                                    written_back: false,
-                                                    original_version_string_buf: Box::default(),
-                                                    original_version: None,
+                                                    ..Default::default()
                                                 };
                                             }
                                         }

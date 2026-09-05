@@ -4918,6 +4918,15 @@ console.log("boop");
     expectCapturePrintedSnapshot(`for await (await using a of b) { c(a); a(c) }`);
   });
 
+  it("using in a C-style for loop head is lowered around the whole loop", () => {
+    // The bindings are constant and the resources are disposed once, when the loop exits.
+    expectCapturePrintedSnapshot(`for (using a = b;;) c(a)`);
+    expectCapturePrintedSnapshot(`for (await using a = b;;) c(a)`);
+    expectCapturePrintedSnapshot(`for (using a = b, c = d; e(a); f(c)) { g(a); }`);
+    // The label stays on the loop so that "continue x" remains valid.
+    expectCapturePrintedSnapshot(`x: for (using a = b;;) { if (c) continue x; break x; }`);
+  });
+
   it("await of the identifier 'using' is not an await using declaration", () => {
     // "await using" only starts a declaration when followed by an identifier on
     // the same line. Otherwise it's an "await" expression of the identifier "using".

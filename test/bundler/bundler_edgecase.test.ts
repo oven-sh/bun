@@ -2517,6 +2517,145 @@ describe("bundler", () => {
     },
   });
 
+  // `using` in the head of a C-style for loop: the bindings are constant (no per-iteration
+  // copies) and every resource is disposed once, in reverse order, when the loop exits.
+  const usingInForHeadPrelude = `
+    const out: string[] = [];
+    function mk(name: string) {
+      return { name, [Symbol.dispose]() { out.push("dispose " + name); } };
+    }
+  `;
+
+  itBundled("edgecase/UsingInForLoopHead", {
+    files: {
+      "/entry.ts": `
+        ${usingInForHeadPrelude}
+        const fns: (() => string)[] = [];
+        for (using a = mk("a"), b = mk("b"); fns.length < 2; ) {
+          fns.push(() => a.name + b.name);
+          out.push("body " + fns.length);
+        }
+        out.push("after " + fns.map(f => f()).join(","));
+        for (using c = mk("c"); false; ) {}
+        console.log(out.join("\\n"));
+      `,
+    },
+    onAfterBundle(api) {
+      expect(api.readFile("/out.js")).not.toMatch(/\busing\s/);
+    },
+    run: {
+      stdout: "body 1\nbody 2\ndispose b\ndispose a\nafter ab,ab\ndispose c",
+    },
+  });
+
+  itBundled("edgecase/UsingInForLoopHeadLabel", {
+    files: {
+      "/entry.ts": `
+        ${usingInForHeadPrelude}
+        let i = 0;
+        outer: for (using a = mk("a"); i < 3; i++) {
+          for (;;) {
+            out.push("inner " + i + " " + a.name);
+            if (i < 1) continue outer;
+            break outer;
+          }
+        }
+        out.push("after");
+        let j = 0;
+        x: y: for (using b = mk("b"); j < 3; j++) {
+          if (j == 1) continue y;
+          if (j == 2) break x;
+          out.push("nested " + j + " " + b.name);
+        }
+        out.push("after nested");
+        console.log(out.join("\\n"));
+      `,
+    },
+    onAfterBundle(api) {
+      expect(api.readFile("/out.js")).not.toMatch(/\busing\s/);
+    },
+    run: {
+      stdout: "inner 0 a\ninner 1 a\ndispose a\nafter\nnested 0 b\ndispose b\nafter nested",
+    },
+  });
+
+  itBundled("edgecase/UsingInForLoopHeadThrows", {
+    files: {
+      "/entry.ts": `
+        ${usingInForHeadPrelude}
+        function boom(): never { throw new Error("boom"); }
+        try {
+          for (using a = mk("a"), b = boom(); ; ) {}
+        } catch (e: any) {
+          out.push("caught " + e.message);
+        }
+        try {
+          for (using c = { [Symbol.dispose]() { throw new Error("dispose-err"); } }; ; ) {
+            throw new Error("body-err");
+          }
+        } catch (e: any) {
+          out.push(e.constructor.name + " " + e.error.message + " " + e.suppressed.message);
+        }
+        console.log(out.join("\\n"));
+      `,
+    },
+    onAfterBundle(api) {
+      expect(api.readFile("/out.js")).not.toMatch(/\busing\s/);
+    },
+    run: {
+      stdout: "dispose a\ncaught boom\nSuppressedError dispose-err body-err",
+    },
+  });
+
+  itBundled("edgecase/AwaitUsingInForLoopHead", {
+    files: {
+      "/entry.ts": `
+        ${usingInForHeadPrelude}
+        function amk(name: string) {
+          return { name, async [Symbol.asyncDispose]() { out.push("async dispose " + name); } };
+        }
+        async function main() {
+          for (await using a = amk("a"), b = mk("b"); ; ) {
+            out.push("body " + a.name + b.name);
+            break;
+          }
+          out.push("after");
+        }
+        await main();
+        console.log(out.join("\\n"));
+      `,
+    },
+    onAfterBundle(api) {
+      expect(api.readFile("/out.js")).not.toMatch(/\busing\s/);
+    },
+    run: {
+      stdout: "body ab\ndispose b\nasync dispose a\nafter",
+    },
+  });
+
+  // A top-level `using` makes the module body a try/finally with `var` declarations. The
+  // loop head must still become `const`, scoped to the loop, and not a second `var a`.
+  itBundled("edgecase/UsingInForLoopHeadShadowsTopLevelUsing", {
+    files: {
+      "/entry.ts": `
+        ${usingInForHeadPrelude}
+        using a = mk("outer");
+        for (using a = mk("loop"); ; ) {
+          out.push("body " + a.name);
+          break;
+        }
+        out.push("after " + a.name);
+        console.log(out.join("\\n"));
+      `,
+    },
+    onAfterBundle(api) {
+      expect(api.readFile("/out.js")).not.toMatch(/\busing\s/);
+    },
+    run: {
+      stdout: "body loop\ndispose loop\nafter outer",
+    },
+  });
+
   itBundled("edgecase/NoOutWithTwoFiles", {
     files: {
       "/entry.ts": `

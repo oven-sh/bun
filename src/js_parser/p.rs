@@ -703,6 +703,12 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     // If this is true, then all top-level statements are wrapped in a try/catch
     pub(crate) will_wrap_module_in_try_catch_for_using: bool,
 
+    /// Set by `s_label` while it visits `label: for (using x = y;;) body`. The label has to
+    /// stay on the loop for `continue label` to remain valid, so the try/finally of the
+    /// lowering goes around the outermost label statement. Labels nested inside it and
+    /// `s_for` leave the head alone.
+    pub(crate) label_lowers_for_head_using: bool,
+
     /// Used for react refresh, it must be able to insert `const _s = $RefreshSig$();`
     pub(crate) nearest_stmt_list: Option<NonNull<ListManaged<'a, Stmt>>>,
     // Lifetime caution: points at a stack local saved/restored across calls.
@@ -9829,6 +9835,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             top_level_enums: BumpVec::new_in(arena),
             scopes_in_order_for_enum: Default::default(),
             will_wrap_module_in_try_catch_for_using: false,
+            label_lowers_for_head_using: false,
             nearest_stmt_list: None,
             decorator_class_name: None,
 

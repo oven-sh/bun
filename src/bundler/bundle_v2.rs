@@ -47,6 +47,7 @@ pub use api::JSBundler::Plugin as JSBundlerPlugin;
 
 /// `BundleV2.JSBundleCompletionTask` — re-exported from the canonical def below.
 pub use bv2_impl::JSBundleCompletionTask;
+pub use bv2_impl::{PluginLoadDeferred, PluginLoadSettled, PluginResolveSettled};
 
 /// `jsc::api::JSBundler::FileMap` — re-exported from the canonical def below.
 pub use api::JSBundler::FileMap;
@@ -169,16 +170,6 @@ impl<'a> BundleV2<'a> {
     #[inline]
     pub fn r#loop(&mut self) -> &mut EventLoop {
         &mut self.linker.r#loop
-    }
-
-    /// `switch (this.loop().*)` — `linker.loop` is a non-owning backref to the
-    /// `AnyEventLoop` that owns this bundle pass and outlives it.
-    #[inline]
-    pub(crate) fn any_loop_mut(&mut self) -> &mut bun_event_loop::AnyEventLoop {
-        // BACKREF deref centralised in `LinkerContext::any_loop_mut`.
-        self.linker
-            .any_loop_mut()
-            .expect("BundleV2.linker.loop must be set before plugins run")
     }
 
     #[inline]
@@ -1120,7 +1111,7 @@ pub mod bv2_impl {
                 pub bv2: *mut BundleV2<'static>,
                 pub import_record: MiniImportRecord,
                 pub value: ResolveValue,
-                /// `jsc.AnyEventLoop.Task` — intrusive node for the Mini-loop queue.
+                /// Mini-loop queue node for `crate::post` (see `post::Event::NODE`).
                 pub(crate) task: bun_event_loop::AnyTaskWithExtraContext::AnyTaskWithExtraContext,
             }
             impl Default for Resolve {
@@ -1179,8 +1170,9 @@ pub mod bv2_impl {
                 /// holds it, through the bundle thread's queue like every other answer.
                 pub fn answer_cancelled(&mut self) {
                     self.value = ResolveValue::Err(cancelled_msg(&self.import_record.source_file));
-                    // SAFETY: `bv2` outlives every request of its pass (it cannot finish before this answer).
-                    unsafe { &mut *self.bv2 }.on_resolve_async(self);
+                    // SAFETY: the pass outlives every request of its own (it cannot finish before this
+                    // answer), and `self` stays where it is until `on_resolve` consumes it.
+                    unsafe { crate::post::post::<crate::bundle_v2::PluginResolveSettled>(self) };
                 }
                 pub fn run_on_js_thread(&mut self) {
                     let kind = self.import_record.kind;
@@ -1242,11 +1234,11 @@ pub mod bv2_impl {
                 /// this load's answer arrives first) its scan-counter unit sits in
                 /// `Graph::deferred_pending`. Bundle thread only.
                 pub(crate) deferred_in: Option<u32>,
-                /// Intrusive node for the Mini-loop queue: carries this load's answer back to the bundle
-                /// thread (`on_load_async`).
+                /// Mini-loop queue node for `crate::post` (see `post::Event::NODE`): carries this
+                /// load's answer back to the bundle thread (`PluginLoadSettled`).
                 pub task: bun_event_loop::AnyTaskWithExtraContext::AnyTaskWithExtraContext,
-                /// A second node for `.defer()`'s notification: it can still be queued when the plugin
-                /// answers, and one node cannot sit in the queue twice.
+                /// A second node for `.defer()`'s notification (`PluginLoadDeferred`): it can still be
+                /// queued when the plugin answers, and one node cannot sit in the queue twice.
                 pub defer_task: bun_event_loop::AnyTaskWithExtraContext::AnyTaskWithExtraContext,
             }
             impl Load {
@@ -1316,7 +1308,7 @@ pub mod bv2_impl {
                 pub fn answer_cancelled(&mut self) {
                     self.value = LoadValue::Err(cancelled_msg(&self.path));
                     // SAFETY: as `Resolve::answer_cancelled`.
-                    unsafe { &mut *self.bv2 }.on_load_async(self);
+                    unsafe { crate::post::post::<crate::bundle_v2::PluginLoadSettled>(self) };
                 }
                 pub fn run_on_js_thread(&mut self) {
                     let is_server_side = self.bake_graph() != crate::bake_types::Graph::Client;
@@ -1672,7 +1664,6 @@ pub mod bv2_impl {
             }
             // From bake where the loop running the bundle is also the loop running
             // the plugins.
-            // `any_loop_mut` centralises the BACKREF deref of `linker.r#loop`.
             let poster = self
                 .js_poster
                 .as_ref()
@@ -3891,13 +3882,13 @@ pub mod bv2_impl {
             })?;
             let _ = self.graph.ast.append(JSAst::empty_in(self.graph.heap)); // OOM/capacity: fire-and-forget
 
-            // `bun.new(ServerComponentParseTask, …)` — heap-owned by the
-            // worker pool; freed via `bun.destroy` in `on_complete` after the
-            // result posts back to the bundle thread.
+            // Heap-allocated; the worker recovers it from its `task` link
+            // (`task_callback_wrap`) and posts a `parse_task::Result` back to
+            // the bundle thread.
             let task = bun_core::heap::into_raw(Box::new(ServerComponentParseTask {
                 data,
                 // SAFETY: `from_mut(self)` is the live bundle (write provenance for
-                // `on_complete`'s `assume_mut`) and outlives the task; `'a` erased to
+                // `ParseComplete::run`) and outlives the task; `'a` erased to
                 // `'static` for the BACKREF.
                 ctx: Some(unsafe {
                     bun_ptr::ParentRef::from_raw_mut(
@@ -4483,103 +4474,63 @@ pub mod bv2_impl {
             }
             Ok(())
         }
+    }
 
-        pub fn on_load_async(&mut self, load: &mut jsc_api::JSBundler::Load) {
-            // Dispatch to the loop that *owns* `BundleV2`.
-            // For `Bun.build` this is a Mini loop running on the bundler thread, so
-            // `on_load` must land there — not on the JS plugin loop — or it will
-            // mutate `graph` / allocate from `graph.heap` off-thread.
-            match self.any_loop_mut() {
-                bun_event_loop::AnyEventLoop::Js { .. } => {
-                    let ct = bun_event_loop::ConcurrentTask::ConcurrentTask::from_callback(
-                        std::ptr::from_mut(load),
-                        on_load_from_js_loop_raw,
-                    );
-                    let poster = self
-                        .js_poster
-                        .as_ref()
-                        .expect("JS-owned bundle has a poster");
-                    if let bun_event_loop::Posted::Refused(ct) = poster.post(ct) {
-                        // Owning JS VM torn down mid-bundle: the hop never runs.
-                        // SAFETY: refused ⇒ we own the task.
-                        unsafe {
-                            bun_event_loop::ConcurrentTask::ConcurrentTask::release_refused(ct)
-                        };
-                    }
-                }
-                bun_event_loop::AnyEventLoop::Mini(mini) => {
-                    // SAFETY: `load` is a valid &mut for the duration of the enqueue;
-                    // the mini loop dispatches `on_load_mini` on the bundler thread.
-                    unsafe {
-                        mini.enqueue_task_concurrent_with_extra_ctx::<jsc_api::JSBundler::Load, BundleV2<'static>>(
-                            std::ptr::from_mut(load),
-                            on_load_mini,
-                            core::mem::offset_of!(jsc_api::JSBundler::Load, task),
-                        );
-                    }
-                }
-            }
+    /// A plugin settled `load` (or an `onLoad` callback returned).
+    pub struct PluginLoadSettled;
+
+    impl crate::post::Event for PluginLoadSettled {
+        type Item = jsc_api::JSBundler::Load;
+        const NODE: usize = core::mem::offset_of!(jsc_api::JSBundler::Load, task);
+
+        unsafe fn bundle(load: *mut Self::Item) -> *mut BundleV2<'static> {
+            // SAFETY: caller contract; `bv2` is set in `Load::init`.
+            unsafe { (*load).bv2 }
         }
 
-        pub fn on_resolve_async(&mut self, resolve: &mut jsc_api::JSBundler::Resolve) {
-            // See `on_load_async` — must dispatch on the bundler's own loop.
-            match self.any_loop_mut() {
-                bun_event_loop::AnyEventLoop::Js { .. } => {
-                    let ct = bun_event_loop::ConcurrentTask::ConcurrentTask::from_callback(
-                        std::ptr::from_mut(resolve),
-                        on_resolve_from_js_loop_raw,
-                    );
-                    let poster = self
-                        .js_poster
-                        .as_ref()
-                        .expect("JS-owned bundle has a poster");
-                    if let bun_event_loop::Posted::Refused(ct) = poster.post(ct) {
-                        // Owning JS VM torn down mid-bundle: the hop never runs.
-                        // SAFETY: refused ⇒ we own the task.
-                        unsafe {
-                            bun_event_loop::ConcurrentTask::ConcurrentTask::release_refused(ct)
-                        };
-                    }
-                }
-                bun_event_loop::AnyEventLoop::Mini(mini) => {
-                    // SAFETY: `resolve` is a valid &mut for the duration of the enqueue;
-                    // the mini loop dispatches `on_resolve_mini` on the bundler thread.
-                    unsafe {
-                        mini.enqueue_task_concurrent_with_extra_ctx::<jsc_api::JSBundler::Resolve, BundleV2<'static>>(
-                            std::ptr::from_mut(resolve),
-                            on_resolve_mini,
-                            core::mem::offset_of!(jsc_api::JSBundler::Resolve, task),
-                        );
-                    }
-                }
-            }
+        unsafe fn run(load: *mut Self::Item, this: &mut BundleV2<'static>) {
+            // SAFETY: `post`'s contract; `Load` lives in the graph arena, disjoint from `*this`.
+            BundleV2::on_load(unsafe { &mut *load }, this);
         }
     }
 
-    fn on_load_mini(load: *mut jsc_api::JSBundler::Load, this: *mut BundleV2<'static>) {
-        // SAFETY: callback contract — `load` is the ctx passed to
-        // `enqueue_task_concurrent_with_extra_ctx`; `this` is the BundleV2 the
-        // mini loop's `tick` supplies as ParentContext.
-        BundleV2::on_load(unsafe { &mut *load }, unsafe { &mut *this });
+    /// A plugin settled `resolve` (or an `onResolve` callback returned).
+    pub struct PluginResolveSettled;
+
+    impl crate::post::Event for PluginResolveSettled {
+        type Item = jsc_api::JSBundler::Resolve;
+        const NODE: usize = core::mem::offset_of!(jsc_api::JSBundler::Resolve, task);
+
+        unsafe fn bundle(resolve: *mut Self::Item) -> *mut BundleV2<'static> {
+            // SAFETY: caller contract; `bv2` is set in `Resolve::init`.
+            unsafe { (*resolve).bv2 }
+        }
+
+        unsafe fn run(resolve: *mut Self::Item, this: &mut BundleV2<'static>) {
+            // SAFETY: as for `PluginLoadSettled`.
+            BundleV2::on_resolve(unsafe { &mut *resolve }, this);
+        }
     }
 
-    fn on_resolve_mini(resolve: *mut jsc_api::JSBundler::Resolve, this: *mut BundleV2<'static>) {
-        // SAFETY: see `on_load_mini`.
-        BundleV2::on_resolve(unsafe { &mut *resolve }, unsafe { &mut *this });
-    }
+    /// An `onLoad` callback called `defer()`: park this load's scan-counter
+    /// unit in `Graph::deferred_pending` until everything else has loaded.
+    /// The plugins still hold the `Load` (its answer comes later, through
+    /// `PluginLoadSettled` on its own node), so it is only borrowed here.
+    pub struct PluginLoadDeferred;
 
-    fn on_load_from_js_loop(load: &mut jsc_api::JSBundler::Load) {
-        // SAFETY: `bv2` is a live backref set in `Load::init`.
-        let bv2 = unsafe { &mut *load.bv2 };
-        BundleV2::on_load(load, bv2);
-    }
+    impl crate::post::Event for PluginLoadDeferred {
+        type Item = jsc_api::JSBundler::Load;
+        const NODE: usize = core::mem::offset_of!(jsc_api::JSBundler::Load, defer_task);
 
-    fn on_load_from_js_loop_raw(
-        load: *mut jsc_api::JSBundler::Load,
-    ) -> bun_event_loop::JsResult<()> {
-        // SAFETY: `load` is a valid pointer set up by `from_callback`.
-        on_load_from_js_loop(unsafe { &mut *load });
-        Ok(())
+        unsafe fn bundle(load: *mut Self::Item) -> *mut BundleV2<'static> {
+            // SAFETY: same contract.
+            unsafe { PluginLoadSettled::bundle(load) }
+        }
+
+        unsafe fn run(load: *mut Self::Item, this: &mut BundleV2<'static>) {
+            // SAFETY: as for `PluginLoadSettled`.
+            BundleV2::on_notify_defer(unsafe { &mut *load }, this);
+        }
     }
 
     impl<'a> BundleV2<'a> {
@@ -4767,20 +4718,6 @@ pub mod bv2_impl {
                 | jsc_api::JSBundler::LoadValue::Consumed => unreachable!(),
             }
         }
-    }
-
-    fn on_resolve_from_js_loop(resolve: &mut jsc_api::JSBundler::Resolve) {
-        // SAFETY: `bv2` is a live backref set in `Resolve::init`.
-        let bv2 = unsafe { &mut *resolve.bv2 };
-        BundleV2::on_resolve(resolve, bv2);
-    }
-
-    fn on_resolve_from_js_loop_raw(
-        resolve: *mut jsc_api::JSBundler::Resolve,
-    ) -> bun_event_loop::JsResult<()> {
-        // SAFETY: `resolve` is a valid pointer set up by `from_callback`.
-        on_resolve_from_js_loop(unsafe { &mut *resolve });
-        Ok(())
     }
 
     impl<'a> BundleV2<'a> {
@@ -7293,8 +7230,8 @@ pub mod bv2_impl {
                     // `on_load` (copy-for-bundling path) parks plugin asset bytes
                     // as `Cow::Owned` directly in this slot and gives the ParseTask
                     // a borrowed alias. The full-Source swap just moved that owner
-                    // into `result.source`; move it back so `parse_worker::on_complete`'s
-                    // `drop(heap::take(result))` doesn't free the buffer
+                    // into `result.source`; move it back so the graph, not the
+                    // `Result` that `ParseComplete::run` frees, owns the buffer
                     // `process_files_to_copy` will later `mem::take`.
                     if matches!(result.source.contents, std::borrow::Cow::Owned(_)) {
                         core::mem::swap(

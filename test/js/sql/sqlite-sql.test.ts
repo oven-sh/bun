@@ -872,6 +872,162 @@ describe("Query Execution", () => {
     expect(result.command).toBe("DELETE");
   });
 
+  test("affectedRows reports rows changed by writes", async () => {
+    const result = await sql`CREATE TABLE gadgets (id INTEGER PRIMARY KEY, price REAL)`;
+    expect(result.affectedRows).toBe(0);
+
+    const inserted = await sql`INSERT INTO gadgets VALUES (1, 10.0), (2, 20.0), (3, 30.0)`;
+    expect(inserted.affectedRows).toBe(3);
+
+    const updated = await sql`UPDATE gadgets SET price = price * 1.1 WHERE price < 25`;
+    expect(updated.affectedRows).toBe(2);
+
+    const returning = await sql`UPDATE gadgets SET price = 0 WHERE id IN (1, 2) RETURNING id`;
+    expect(returning).toHaveLength(2);
+    expect(returning.affectedRows).toBe(2);
+
+    const selected = await sql`SELECT * FROM gadgets`;
+    expect(selected.affectedRows).toBe(0);
+
+    const deleted = await sql`DELETE FROM gadgets WHERE id > 1`;
+    expect(deleted.affectedRows).toBe(2);
+
+    // CREATE does not inherit the previous write's sqlite3_changes()
+    const create = await sql`CREATE TABLE gadgets2 (id INTEGER)`;
+    expect(create.affectedRows).toBe(0);
+
+    // EXPLAIN of a write returns plan rows and changes nothing
+    const explained = await sql`EXPLAIN UPDATE gadgets SET price = 1`;
+    expect(explained.length).toBeGreaterThan(0);
+    expect(explained.affectedRows).toBe(0);
+
+    // leading comments do not hide the write command
+    const lineComment = await sql`
+      -- remove the remaining row
+      DELETE FROM gadgets WHERE id = 1`;
+    expect(lineComment.command).toBe("DELETE");
+    expect(lineComment.affectedRows).toBe(1);
+
+    const blockComment = await sql`/* seed */ INSERT INTO gadgets2 VALUES (1), (2)`;
+    expect(blockComment.command).toBe("INSERT");
+    expect(blockComment.affectedRows).toBe(2);
+
+    // a CTE-wrapped write without RETURNING returns no rows, so the count is unknown
+    const cteWrite = await sql`WITH bump AS (SELECT 1) UPDATE gadgets2 SET id = id + 10 WHERE id > 0`;
+    expect(cteWrite.command).toBe("UPDATE");
+    expect(cteWrite.affectedRows).toBeNull();
+
+    const cteReturning = await sql`WITH bump AS (SELECT 1) UPDATE gadgets2 SET id = id - 10 WHERE id > 10 RETURNING id`;
+    expect(cteReturning).toHaveLength(2);
+    expect(cteReturning.affectedRows).toBe(2);
+
+    // a CTE DELETE: the write verb is not the statement's first token
+    const cteDelete = await sql`WITH pick AS (SELECT 1 AS id) DELETE FROM gadgets2 WHERE id IN (SELECT id FROM pick)`;
+    expect(cteDelete.command).toBe("DELETE");
+    expect(cteDelete.affectedRows).toBeNull();
+
+    const cteDeleteReturning =
+      await sql`WITH pick AS (SELECT 2 AS id) DELETE FROM gadgets2 WHERE id IN (SELECT id FROM pick) RETURNING id`;
+    expect(cteDeleteReturning).toHaveLength(1);
+    expect(cteDeleteReturning.affectedRows).toBe(1);
+
+    // a RETURNING keyword inside a comment is not a RETURNING clause
+    const commentedReturning = await sql`INSERT INTO gadgets2 VALUES (3) /* no RETURNING here */`;
+    expect(commentedReturning.command).toBe("INSERT");
+    expect(commentedReturning.affectedRows).toBe(1);
+
+    // REPLACE as a function call inside a CTE body is not the REPLACE command
+    const replaceFn = await sql`WITH names AS (SELECT REPLACE ('aaa', 'a', 'b') AS n) SELECT * FROM names`;
+    expect(replaceFn).toEqual([{ n: "bbb" }]);
+    expect(replaceFn.affectedRows).toBe(0);
+
+    // a multi-statement string reports the first command and the batch's total changes
+    const multi = await sql.unsafe(
+      "INSERT INTO gadgets2 VALUES (100), (101); UPDATE gadgets2 SET id = id + 1 WHERE id >= 100",
+    );
+    expect(multi.command).toBe("INSERT");
+    expect(multi.affectedRows).toBe(4);
+
+    // the write verb can sit flush against the CTE's closing paren
+    const glued = await sql`WITH c AS (SELECT 1)DELETE FROM gadgets2 WHERE id = 102`;
+    expect(glued.command).toBe("DELETE");
+    expect(glued.affectedRows).toBeNull();
+
+    // REPLACE as a function in the outer SELECT is not the REPLACE command
+    const outerReplaceFn = await sql`WITH c AS (SELECT 'aaa' AS n) SELECT REPLACE (n, 'a', 'b') AS r FROM c`;
+    expect(outerReplaceFn).toEqual([{ r: "bbb" }]);
+    expect(outerReplaceFn.affectedRows).toBe(0);
+
+    // upsert reports the statement's verb, matching PostgreSQL's command tag
+    await sql`INSERT INTO gadgets VALUES (7, 1)`;
+    const upsert = await sql`INSERT INTO gadgets VALUES (7, 2) ON CONFLICT (id) DO UPDATE SET price = 2`;
+    expect(upsert.command).toBe("INSERT");
+    expect(upsert.affectedRows).toBe(1);
+
+    // REPLACE as a bare identifier (a non-reserved keyword) is not the REPLACE command
+    const replaceAlias = await sql`WITH c AS (SELECT 1 AS x) SELECT x AS replace FROM c`;
+    expect(replaceAlias).toEqual([{ replace: 1 }]);
+    expect(replaceAlias.affectedRows).toBe(0);
+
+    // a later statement's RETURNING does not leak across a statement boundary
+    const firstOfBatch = await sql.unsafe(
+      "WITH c AS (SELECT 1 AS x) SELECT x FROM c; DELETE FROM gadgets RETURNING id",
+    );
+    expect(firstOfBatch.command).toBe("WITH");
+    expect(firstOfBatch.affectedRows).toBe(0);
+
+    // a later statement's command does not leak across a statement boundary
+    const readFirst = await sql.unsafe("SELECT 1 AS x; INSERT INTO gadgets2 VALUES (9)");
+    expect(readFirst.command).toBe("SELECT");
+    expect(readFirst.affectedRows).toBe(0);
+
+    // a semicolon inside a bracket-quoted identifier is not a statement boundary
+    await sql.unsafe("CREATE TABLE weird ([a;b] INTEGER)");
+    await sql.unsafe("INSERT INTO weird VALUES (1)");
+    const quotedIdent = await sql.unsafe("UPDATE weird SET [a;b] = 2 WHERE [a;b] = 1 RETURNING [a;b] AS v");
+    expect(quotedIdent).toEqual([{ v: 2 }]);
+    expect(quotedIdent.affectedRows).toBe(1);
+
+    // a write-first batch runs through db.run even when a later statement reads
+    const writeFirst = await sql.unsafe("INSERT INTO weird VALUES (3); SELECT * FROM weird");
+    expect(writeFirst.command).toBe("INSERT");
+    expect(writeFirst.affectedRows).toBe(1);
+
+    // a quoted identifier is a token boundary even with no surrounding spaces
+    const noSpaces = await sql.unsafe('UPDATE"weird"SET [a;b] = 4 WHERE [a;b] = 2');
+    expect(noSpaces.command).toBe("UPDATE");
+    expect(noSpaces.affectedRows).toBe(1);
+
+    // a keyword flush against a quoted span keeps its meaning
+    const afterQuote = await sql.unsafe("DELETE FROM weird WHERE [a;b] = 4 AND 'x' = 'x'RETURNING [a;b] AS v");
+    expect(afterQuote).toEqual([{ v: 4 }]);
+    expect(afterQuote.affectedRows).toBe(1);
+
+    // a keyword flush against a closing paren keeps its meaning
+    const parenReturning = await sql.unsafe("INSERT INTO weird VALUES (7)RETURNING [a;b] AS v");
+    expect(parenReturning).toEqual([{ v: 7 }]);
+    expect(parenReturning.affectedRows).toBe(1);
+
+    // a single-quoted table name can follow INTO with no space
+    const quotedInto = await sql.unsafe("WITH c AS (SELECT 1) REPLACE INTO'weird' ([a;b]) VALUES (9)");
+    expect(quotedInto.command).toBe("REPLACE");
+    expect(quotedInto.affectedRows).toBeNull();
+
+    // a keyword flush against an opening paren keeps its meaning
+    const parenLeft = await sql.unsafe("DELETE FROM weird WHERE [a;b] = 9 RETURNING([a;b]) AS v");
+    expect(parenLeft).toEqual([{ v: 9 }]);
+    expect(parenLeft.affectedRows).toBe(1);
+
+    // a spaced subquery does not route the write through the row-returning path
+    const spacedSubquery = await sql.unsafe("UPDATE weird SET [a;b] = ( SELECT 21 ) WHERE [a;b] = 7");
+    expect(spacedSubquery.command).toBe("UPDATE");
+    expect(spacedSubquery.affectedRows).toBe(1);
+
+    const spacedIn = await sql.unsafe("DELETE FROM weird WHERE [a;b] IN ( SELECT 21 )");
+    expect(spacedIn.command).toBe("DELETE");
+    expect(spacedIn.affectedRows).toBe(1);
+  });
+
   test("SELECT with various clauses", async () => {
     await sql`CREATE TABLE scores (id INTEGER, player TEXT, score INTEGER, team TEXT)`;
     await sql`INSERT INTO scores VALUES

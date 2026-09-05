@@ -274,6 +274,18 @@ initPostgres(
     }
 
     result.count = count || 0;
+    // For writes the tag count is rows changed; affectedRows is the adapter-portable field.
+    switch (result.command) {
+      case "INSERT":
+      case "UPDATE":
+      case "DELETE":
+      case "MERGE":
+        result.affectedRows = result.count;
+        break;
+      default:
+        result.affectedRows = 0;
+        break;
+    }
     const last_result = query[_results];
 
     if (!last_result) {

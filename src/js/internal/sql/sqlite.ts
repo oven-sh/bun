@@ -34,6 +34,9 @@ interface SQLParsedInfo {
   command: SQLCommand;
   lastToken?: string;
   canReturnRows: boolean;
+  hasReturning: boolean;
+  /** The statement's write verb (INSERT/UPDATE/DELETE/REPLACE), or null for non-writes. */
+  writeCommand: string | null;
 }
 
 function commandToString(command: SQLCommand, lastToken?: string): string {
@@ -53,6 +56,112 @@ function commandToString(command: SQLCommand, lastToken?: string): string {
   }
 }
 
+/** True when the next whitespace-delimited token at or after index is exactly `word`. */
+function nextTokenIs(text: string, index: number, word: string): boolean {
+  let i = index;
+  const len = text.length;
+  while (i < len) {
+    switch (text[i]) {
+      case " ":
+      case "\n":
+      case "\t":
+      case "\r":
+      case "\f":
+      case "\v":
+        i++;
+        continue;
+    }
+    break;
+  }
+  const end = i + word.length;
+  if (end > len) {
+    return false;
+  }
+  for (let j = 0; j < word.length; j++) {
+    if (text[i + j] !== word[j]) {
+      return false;
+    }
+  }
+  if (end === len) {
+    return true;
+  }
+  switch (text[end]) {
+    case " ":
+    case "\n":
+    case "\t":
+    case "\r":
+    case "\f":
+    case "\v":
+    // a quoted identifier can follow with no space: INTO"t", INTO`t`, INTO[t], INTO't'
+    case '"':
+    case "`":
+    case "[":
+    case "'":
+      return true;
+    default:
+      return false;
+  }
+}
+
+function isWriteCommand(commandString: string): boolean {
+  switch (commandString) {
+    case "INSERT":
+    case "UPDATE":
+    case "DELETE":
+    case "REPLACE":
+      return true;
+    default:
+      return false;
+  }
+}
+
+/** Removes -- and slash-star comments (outside strings and quoted identifiers) so the token scan sees only real SQL. */
+function stripComments(text: string): string {
+  if (!text.includes("--") && !text.includes("/*")) {
+    return text;
+  }
+  let out = "";
+  let quote: false | "'" | '"' | "`" | "]" = false;
+  const len = text.length;
+  for (let i = 0; i < len; i++) {
+    const char = text[i];
+    if (quote) {
+      if (char === quote) {
+        quote = false;
+      }
+      out += char;
+      continue;
+    }
+    if (char === "'" || char === '"' || char === "`") {
+      quote = char;
+      out += char;
+      continue;
+    }
+    if (char === "[") {
+      // bracket-quoted identifier, closed by "]"
+      quote = "]";
+      out += char;
+      continue;
+    }
+    if (char === "-" && text[i + 1] === "-") {
+      out += " ";
+      const newline = text.indexOf("\n", i + 2);
+      if (newline === -1) break;
+      i = newline;
+      continue;
+    }
+    if (char === "/" && text[i + 1] === "*") {
+      out += " ";
+      const end = text.indexOf("*/", i + 2);
+      if (end === -1) break;
+      i = end + 1;
+      continue;
+    }
+    out += char;
+  }
+  return out;
+}
+
 /**
  * Parse the SQL query and return the command and the last token
  * @param query - The SQL query to parse
@@ -60,14 +169,122 @@ function commandToString(command: SQLCommand, lastToken?: string): string {
  * @returns The command, the last token, and whether it can return rows
  */
 function parseSQLQuery(query: string, partial: boolean = false): SQLParsedInfo {
-  const text = query.toUpperCase().trim();
+  // the scan relies on a trimmed input: a leading comment leaves whitespace behind
+  const text = stripComments(query.toUpperCase().trim()).trim();
   const text_len = text.length;
 
   let token = "";
   let command = SQLCommand.none;
   let lastToken = "";
   let canReturnRows = false;
-  let quoted: false | "'" | '"' = false;
+  let hasReturning = false;
+  let writeVerb: string | null = null;
+  // parentheses seen so far in the reverse scan; a statement-level write verb sits at depth 0
+  let parenDepth = 0;
+  let quoted: false | "'" | '"' | "`" | "]" = false;
+
+  /** Classifies and clears the pending token at a boundary (i = the boundary char's index). */
+  function classifyToken(i: number): SQLParsedInfo | null {
+    switch (token) {
+      case "INSERT": {
+        if (command === SQLCommand.none) {
+          command = SQLCommand.insert;
+        }
+        if (parenDepth === 0) {
+          writeVerb = token;
+        }
+        lastToken = token;
+        token = "";
+        if (partial) {
+          return { command: SQLCommand.insert, lastToken, canReturnRows, hasReturning, writeCommand: null };
+        }
+        return null;
+      }
+      case "UPDATE": {
+        if (command === SQLCommand.none) {
+          command = SQLCommand.update;
+        }
+        if (parenDepth === 0) {
+          writeVerb = token;
+        }
+        lastToken = token;
+        token = "";
+        if (partial) {
+          return { command: SQLCommand.update, lastToken, canReturnRows, hasReturning, writeCommand: null };
+        }
+        return null;
+      }
+      case "DELETE":
+      case "REPLACE": {
+        // REPLACE is also a function and a legal bare identifier; the statement form is REPLACE INTO
+        if (parenDepth === 0 && (token !== "REPLACE" || nextTokenIs(text, i + 1 + token.length, "INTO"))) {
+          writeVerb = token;
+        }
+        lastToken = token;
+        token = "";
+        return null;
+      }
+      case "WHERE": {
+        if (command === SQLCommand.none) {
+          command = SQLCommand.where;
+        }
+        lastToken = token;
+        token = "";
+        if (partial) {
+          return { command: SQLCommand.where, lastToken, canReturnRows, hasReturning, writeCommand: null };
+        }
+        return null;
+      }
+      case "SET": {
+        if (command === SQLCommand.none) {
+          command = SQLCommand.updateSet;
+        }
+        lastToken = token;
+        token = "";
+        if (partial) {
+          return { command: SQLCommand.updateSet, lastToken, canReturnRows, hasReturning, writeCommand: null };
+        }
+        return null;
+      }
+      case "IN": {
+        if (command === SQLCommand.none) {
+          command = SQLCommand.in;
+        }
+        lastToken = token;
+        token = "";
+        if (partial) {
+          return { command: SQLCommand.in, lastToken, canReturnRows, hasReturning, writeCommand: null };
+        }
+        return null;
+      }
+      case "RETURNING": {
+        // RETURNING cannot appear inside parens, so no depth gate
+        hasReturning = true;
+        lastToken = token;
+        canReturnRows = true;
+        token = "";
+        return null;
+      }
+      case "SELECT":
+      case "PRAGMA":
+      case "WITH":
+      case "EXPLAIN": {
+        lastToken = token;
+        // a subquery's SELECT must not route the outer write through the row-returning path
+        if (parenDepth === 0) {
+          canReturnRows = true;
+        }
+        token = "";
+        return null;
+      }
+      default: {
+        lastToken = token;
+        token = "";
+        return null;
+      }
+    }
+  }
+
   // we need to reverse search so we find the closest command to the parameter
   for (let i = text_len - 1; i >= 0; i--) {
     const char = text[i];
@@ -78,90 +295,67 @@ function parseSQLQuery(query: string, partial: boolean = false): SQLParsedInfo {
       case "\r":
       case "\f":
       case "\v": {
-        switch (token) {
-          case "INSERT": {
-            if (command === SQLCommand.none) {
-              command = SQLCommand.insert;
-            }
-            lastToken = token;
-            token = "";
-            if (partial) {
-              return { command: SQLCommand.insert, lastToken, canReturnRows };
-            }
-            continue;
-          }
-          case "UPDATE": {
-            if (command === SQLCommand.none) {
-              command = SQLCommand.update;
-            }
-            lastToken = token;
-            token = "";
-            if (partial) {
-              return { command: SQLCommand.update, lastToken, canReturnRows };
-            }
-            continue;
-          }
-          case "WHERE": {
-            if (command === SQLCommand.none) {
-              command = SQLCommand.where;
-            }
-            lastToken = token;
-            token = "";
-            if (partial) {
-              return { command: SQLCommand.where, lastToken, canReturnRows };
-            }
-            continue;
-          }
-          case "SET": {
-            if (command === SQLCommand.none) {
-              command = SQLCommand.updateSet;
-            }
-            lastToken = token;
-            token = "";
-            if (partial) {
-              return { command: SQLCommand.updateSet, lastToken, canReturnRows };
-            }
-            continue;
-          }
-          case "IN": {
-            if (command === SQLCommand.none) {
-              command = SQLCommand.in;
-            }
-            lastToken = token;
-            token = "";
-            if (partial) {
-              return { command: SQLCommand.in, lastToken, canReturnRows };
-            }
-            continue;
-          }
-          case "SELECT":
-          case "PRAGMA":
-          case "WITH":
-          case "EXPLAIN":
-          case "RETURNING": {
-            lastToken = token;
-            canReturnRows = true;
-            token = "";
-            continue;
-          }
-          default: {
-            lastToken = token;
-            token = "";
-            continue;
-          }
+        const early = classifyToken(i);
+        if (early) {
+          return early;
         }
+        continue;
       }
       default: {
-        // skip quoted commands
-        if (char === '"' || char === "'") {
+        // a quoted span is skipped and its opener is a token boundary: UPDATE"t"SET is three tokens
+        if (char === '"' || char === "'" || char === "`") {
           if (quoted === char) {
             quoted = false;
-          } else {
+          } else if (!quoted) {
+            if (token) {
+              const early = classifyToken(i);
+              if (early) {
+                return early;
+              }
+            }
             quoted = char;
           }
           continue;
         }
+        if (quoted === "]") {
+          if (char === "[") {
+            quoted = false;
+          }
+          continue;
+        }
         if (!quoted) {
+          if (char === "]") {
+            // the reverse scan sees "]" first: it opens a bracket-quoted identifier, "[" closes it
+            if (token) {
+              const early = classifyToken(i);
+              if (early) {
+                return early;
+              }
+            }
+            quoted = "]";
+            continue;
+          }
+          if (char === ")") {
+            // a token can sit flush against the closing paren: "(SELECT 1)DELETE", "VALUES(1)RETURNING"
+            if (token) {
+              const early = classifyToken(i);
+              if (early) {
+                return early;
+              }
+            }
+            parenDepth++;
+          } else if (char === "(" && parenDepth > 0) {
+            // discard unclassified paren content: "RETURNING(id)" classifies, a subquery's SELECT does not route
+            parenDepth--;
+            token = "";
+            continue;
+          } else if (char === ";" && parenDepth === 0) {
+            // the reverse scan crosses statement boundaries; later statements' state must not leak into the first
+            writeVerb = null;
+            hasReturning = false;
+            command = SQLCommand.none;
+            canReturnRows = false;
+          }
           token = char + token;
         }
       }
@@ -193,11 +387,13 @@ function parseSQLQuery(query: string, partial: boolean = false): SQLParsedInfo {
           command = SQLCommand.in;
         }
         break;
+      case "RETURNING":
+        hasReturning = true;
+      // fallthrough
       case "SELECT":
       case "PRAGMA":
       case "WITH":
-      case "EXPLAIN":
-      case "RETURNING": {
+      case "EXPLAIN": {
         canReturnRows = true;
         break;
       }
@@ -206,7 +402,14 @@ function parseSQLQuery(query: string, partial: boolean = false): SQLParsedInfo {
         break;
     }
   }
-  return { command, lastToken, canReturnRows };
+  // lastToken = first keyword; SQLite CTE bodies are SELECT-only, so any write verb seen is the statement's
+  let writeCommand: string | null = null;
+  if (isWriteCommand(lastToken)) {
+    writeCommand = lastToken;
+  } else if (lastToken === "WITH") {
+    writeCommand = writeVerb;
+  }
+  return { command, lastToken, canReturnRows, hasReturning, writeCommand };
 }
 
 class SQLiteQueryHandle implements BaseQueryHandle<BunSQLiteModule.Database> {
@@ -260,8 +463,16 @@ class SQLiteQueryHandle implements BaseQueryHandle<BunSQLiteModule.Database> {
 
         const sqlResult = $isArray(result) ? new SQLResultArray(result) : new SQLResultArray([result]);
 
-        sqlResult.command = commandToString(command, parsedInfo.lastToken);
-        sqlResult.count = $isArray(result) ? result.length : 1;
+        const count = $isArray(result) ? result.length : 1;
+        sqlResult.command = parsedInfo.writeCommand ?? commandToString(command, parsedInfo.lastToken);
+        sqlResult.count = count;
+        if (parsedInfo.writeCommand) {
+          // RETURNING emits one row per affected row; a CTE-wrapped write without it returns no rows (count unknown).
+          sqlResult.affectedRows = parsedInfo.hasReturning ? count : null;
+        } else {
+          // reads and EXPLAIN change nothing
+          sqlResult.affectedRows = 0;
+        }
 
         query.resolve(sqlResult);
       } else {
@@ -269,9 +480,11 @@ class SQLiteQueryHandle implements BaseQueryHandle<BunSQLiteModule.Database> {
         const changes = db.run.$call(db, sql, values);
         const sqlResult = new SQLResultArray();
 
-        sqlResult.command = commandToString(command, parsedInfo.lastToken);
+        sqlResult.command = parsedInfo.writeCommand ?? commandToString(command, parsedInfo.lastToken);
         sqlResult.count = changes.changes;
         sqlResult.lastInsertRowid = changes.lastInsertRowid;
+        // a batch whose first statement is a non-write reports 0 even when a later statement wrote
+        sqlResult.affectedRows = parsedInfo.writeCommand ? changes.changes : 0;
 
         query.resolve(sqlResult);
       }

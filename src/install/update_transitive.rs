@@ -710,13 +710,13 @@ pub(crate) fn print_kept_patched(manager: &mut PackageManager) {
     manager.kept_patched_text = render_kept_rows(&rows);
 }
 
-/// After `bun update` cleaned the lockfile: one warning per root `patchedDependencies` key whose `name@version` no longer names an installed npm package.
-pub(crate) fn warn_orphaned_patches(manager: &mut PackageManager) {
-    if manager.lockfile.patched_dependencies.count() == 0
-        || manager.options.log_level == LogLevel::Silent
-    {
-        return;
+/// After the lockfile is cleaned: one warning per root `patchedDependencies` key whose `name@version` no longer names an installed npm package. Returns true when any such key exists, even when the output stays quiet.
+pub(crate) fn warn_orphaned_patches(manager: &mut PackageManager) -> bool {
+    if manager.lockfile.patched_dependencies.count() == 0 {
+        return false;
     }
+    // A dry run can hold resolutions it will not commit, so it detects orphans without the warning.
+    let quiet = manager.options.log_level == LogLevel::Silent || manager.options.dry_run;
     let keys: Vec<Box<[u8]>> = {
         let log = manager.log_mut();
         // SAFETY: written once inside `PackageManager::init` on this thread; only read afterwards.
@@ -729,10 +729,10 @@ pub(crate) fn warn_orphaned_patches(manager: &mut PackageManager) {
             .workspace_package_json_cache
             .get_with_path(log, path, opts)
         else {
-            return;
+            return false;
         };
         let Some(patched) = entry.root.get_object(b"patchedDependencies") else {
-            return;
+            return false;
         };
         let mut keys: Vec<Box<[u8]>> = Vec::with_capacity(patched.property_count());
         patched.for_each_property(|key, _, _| keys.push(Box::from(key)));
@@ -742,6 +742,7 @@ pub(crate) fn warn_orphaned_patches(manager: &mut PackageManager) {
     let lockfile: &Lockfile = &manager.lockfile;
     let buf = lockfile.buffers.string_bytes.as_slice();
     let pkg_res = lockfile.packages.items_resolution();
+    let mut any_orphaned = false;
     for key in keys {
         let Some(at) = strings::last_index_of_char(&key, b'@').filter(|&at| at > 0) else {
             continue;
@@ -779,6 +780,10 @@ pub(crate) fn warn_orphaned_patches(manager: &mut PackageManager) {
         if still_applies {
             continue;
         }
+        any_orphaned = true;
+        if quiet {
+            continue;
+        }
         if now.is_empty() {
             bun_core::warn!(
                 "{} no longer applies ({} is no longer installed)",
@@ -794,7 +799,10 @@ pub(crate) fn warn_orphaned_patches(manager: &mut PackageManager) {
             );
         }
     }
-    Output::flush();
+    if !quiet {
+        Output::flush();
+    }
+    any_orphaned
 }
 
 /// Newest release the rows still resolving to `pkg_id` allow, when it is newer than the installed one.

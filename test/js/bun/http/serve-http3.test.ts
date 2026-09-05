@@ -1534,3 +1534,180 @@ describe("Bun.serve HTTP/3 request handlers run to completion before the callbac
     });
   });
 });
+
+// The rest of the RFC 9114 §4.1.2 / §4.3 field-section rules, checked in
+// quic.c (us_quic_hsi_process) next to the CR/LF/NUL check covered above: the
+// other control bytes, which pseudo-headers a request may carry and how many,
+// the CONNECT shape, and trailers. The native client derives its
+// pseudo-headers from a URL and validates values, so these use a node:quic
+// client, which sends whatever field lines it is given. A rejected block fails
+// with H3_MESSAGE_ERROR; lsquic currently reports that on the connection
+// rather than the stream, so the code is accepted from either.
+describe("Bun.serve HTTP/3 malformed request field sections", () => {
+  const H3_MESSAGE_ERROR = 0x10en;
+
+  type Seen = { method: string; url: string; headers: Record<string, string>; body: string };
+
+  function serveRecording(seen: Seen[]) {
+    return Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      tls,
+      http3: true,
+      async fetch(req) {
+        const headers: Record<string, string> = {};
+        for (const [name, value] of req.headers) headers[name] = value;
+        seen.push({ method: req.method, url: req.url, headers, body: await req.text() });
+        return new Response("served");
+      },
+    });
+  }
+
+  function wellFormed(port: number): Record<string, string> {
+    return { ":method": "GET", ":scheme": "https", ":authority": `127.0.0.1:${port}`, ":path": "/x" };
+  }
+
+  async function rawH3(
+    port: number,
+    headers: Record<string, string | string[]>,
+    options: { body?: Uint8Array; trailers?: Record<string, string> } = {},
+  ) {
+    const client = await connect(
+      { address: "127.0.0.1", port, family: "ipv4" },
+      { servername: "localhost", verifyPeer: "manual" },
+    );
+    const sessionError = client.closed.then(
+      () => undefined,
+      (e: any) => e,
+    );
+    let status: string | undefined;
+    let fromStream: any;
+    try {
+      await client.opened;
+      const stream = await client.createBidirectionalStream();
+      stream.onheaders = (received: Record<string, string>) => {
+        status = received[":status"];
+      };
+      const streamError = stream.closed.then(
+        () => undefined,
+        (e: any) => e,
+      );
+      const { body, trailers } = options;
+      if (body === undefined && trailers === undefined) {
+        stream.sendHeaders(headers, { terminal: true });
+      } else {
+        stream.sendHeaders(headers, { terminal: false });
+        if (trailers) stream.onwanttrailers = () => void stream.sendTrailers(trailers);
+        if (body) stream.writer.writeSync(body);
+        stream.writer.endSync();
+      }
+      try {
+        for await (const _ of stream) {
+        }
+      } catch {}
+      fromStream = await streamError;
+    } finally {
+      client.close();
+    }
+    const fromSession = await sessionError;
+    return { status, errorCode: fromStream?.errorCode ?? fromSession?.errorCode };
+  }
+
+  const rejected: Array<[string, (port: number) => Record<string, string>]> = [
+    ["a field value carrying a control byte", port => ({ ...wellFormed(port), "x-forwarded": "a\x01b" })],
+    ["a field value carrying DEL", port => ({ ...wellFormed(port), "x-forwarded": "a\x7fb" })],
+    [":status in a request", port => ({ ...wellFormed(port), ":status": "200" })],
+    [":protocol (extended CONNECT is not advertised)", port => ({ ...wellFormed(port), ":protocol": "websocket" })],
+    ["a request without :method", port => withoutField(wellFormed(port), ":method")],
+    ["a request without :scheme", port => withoutField(wellFormed(port), ":scheme")],
+    ["a request without :path", port => withoutField(wellFormed(port), ":path")],
+    ["CONNECT carrying :scheme and :path", port => ({ ...wellFormed(port), ":method": "CONNECT" })],
+    ["CONNECT without :authority", () => ({ ":method": "CONNECT" })],
+  ];
+
+  function withoutField(headers: Record<string, string>, name: string) {
+    const { [name]: _, ...rest } = headers;
+    return rest;
+  }
+
+  test.each(rejected)("%s is rejected before it reaches the handler", async (_name, build) => {
+    const seen: Seen[] = [];
+    using server = serveRecording(seen);
+    const res = await rawH3(server.port, build(server.port));
+    expect(res).toEqual({ status: undefined, errorCode: H3_MESSAGE_ERROR });
+    expect(seen).toEqual([]);
+  });
+
+  test("the server keeps serving after rejecting a malformed request", async () => {
+    const seen: Seen[] = [];
+    using server = serveRecording(seen);
+    const bad = await rawH3(server.port, withoutField(wellFormed(server.port), ":scheme"));
+    expect(bad).toEqual({ status: undefined, errorCode: H3_MESSAGE_ERROR });
+    const good = await rawH3(server.port, { ...wellFormed(server.port), "x-forwarded": "a" });
+    expect(good).toEqual({ status: "200", errorCode: undefined });
+    expect(seen).toEqual([
+      {
+        method: "GET",
+        url: `https://127.0.0.1:${server.port}/x`,
+        headers: { host: `127.0.0.1:${server.port}`, "x-forwarded": "a" },
+        body: "",
+      },
+    ]);
+  });
+
+  // RFC 9110 field-value: HTAB and obs-text (bytes >= 0x80) are legal, and a
+  // signed-char comparison would wrongly reject the latter. node:quic sends
+  // the value as latin1, so U+00E9 goes on the wire as the single byte 0xE9.
+  test("HTAB and bytes above 0x7f in a field value are delivered", async () => {
+    const seen: Seen[] = [];
+    using server = serveRecording(seen);
+    const res = await rawH3(server.port, { ...wellFormed(server.port), "x-tab": "a\tb", "x-high": "caf\u00e9" });
+    expect(res).toEqual({ status: "200", errorCode: undefined });
+    expect(seen.map(s => s.headers)).toEqual([
+      { host: `127.0.0.1:${server.port}`, "x-tab": "a\tb", "x-high": "caf\u00e9" },
+    ]);
+  });
+
+  // Only pseudo-headers are single-valued; a repeated regular field is two
+  // field lines and combines as usual.
+  test("a repeated regular field is delivered", async () => {
+    const seen: Seen[] = [];
+    using server = serveRecording(seen);
+    const res = await rawH3(server.port, { ...wellFormed(server.port), "x-repeated": ["a", "b"] });
+    expect(res).toEqual({ status: "200", errorCode: undefined });
+    expect(seen.map(s => s.headers)).toEqual([{ host: `127.0.0.1:${server.port}`, "x-repeated": "a, b" }]);
+  });
+
+  // Request trailers are a second header block on the stream with no
+  // pseudo-headers at all; they must not be held to the request rules.
+  test("request trailers are accepted", async () => {
+    const seen: Seen[] = [];
+    using server = serveRecording(seen);
+    const res = await rawH3(
+      server.port,
+      { ...wellFormed(server.port), ":method": "POST" },
+      { body: new TextEncoder().encode("payload"), trailers: { "x-checksum": "abc" } },
+    );
+    expect(res).toEqual({ status: "200", errorCode: undefined });
+    expect(seen).toEqual([
+      {
+        method: "POST",
+        url: `https://127.0.0.1:${server.port}/x`,
+        headers: { host: `127.0.0.1:${server.port}` },
+        body: "payload",
+      },
+    ]);
+  });
+
+  // RFC 9114 §4.4: CONNECT carries :method and :authority only. It passes the
+  // field-section rules and is answered on the stream by the HTTP layer, which
+  // has no CONNECT support: with no :path the router matches nothing and
+  // answers 404 itself (#37600 turns that into a 400).
+  test("a conformant CONNECT reaches the HTTP layer", async () => {
+    const seen: Seen[] = [];
+    using server = serveRecording(seen);
+    const res = await rawH3(server.port, { ":method": "CONNECT", ":authority": `127.0.0.1:${server.port}` });
+    expect(res).toEqual({ status: "404", errorCode: undefined });
+    expect(seen).toEqual([]);
+  });
+});

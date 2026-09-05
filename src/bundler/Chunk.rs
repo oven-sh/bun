@@ -288,10 +288,11 @@ impl Chunk {
     }
 
     /// Stable short name for this chunk in generated code: its final content hash, as `[hash]` prints it.
-    pub(crate) fn id(&self) -> [u8; CHUNK_ID_LEN] {
-        bun_core::fmt::truncated_hash32_bytes(
-            self.template.placeholder.hash.unwrap_or(self.isolated_hash),
-        )
+    pub(crate) fn id(&self) -> bun_core::fmt::ContentHash {
+        self.template
+            .placeholder
+            .hash
+            .unwrap_or_else(|| bun_core::fmt::ContentHash::short(self.isolated_hash))
     }
 
     /// The chunks reachable from chunk `start` through cross-chunk imports of the given kinds, `start` first.
@@ -779,7 +780,9 @@ impl IntermediateOutput {
                     count += piece.data.len();
 
                     match piece.query.kind() {
-                        QueryKind::ChunkId => count += CHUNK_ID_LEN,
+                        QueryKind::ChunkId => {
+                            count += chunks[piece.query.index() as usize].id().len()
+                        }
                         QueryKind::Chunk
                         | QueryKind::Asset
                         | QueryKind::Scb
@@ -910,13 +913,14 @@ impl IntermediateOutput {
                     match piece.query.kind() {
                         QueryKind::ChunkId => {
                             let id = chunks[piece.query.index() as usize].id();
-                            remain[..CHUNK_ID_LEN].copy_from_slice(&id);
+                            let (bytes, len) = (id.bytes(), id.len());
+                            remain[..len].copy_from_slice(&bytes[..len]);
                             if ENABLE_SOURCE_MAP_SHIFTS {
                                 shift.before.advance(chunk.unique_key);
-                                shift.after.advance(&id);
+                                shift.after.advance(&bytes[..len]);
                                 shifts.push(shift);
                             }
-                            remain = &mut remain[CHUNK_ID_LEN..];
+                            remain = &mut remain[len..];
                         }
                         QueryKind::Asset
                         | QueryKind::Chunk
@@ -1247,7 +1251,7 @@ pub enum QueryKind {
     Scb = 3,
     /// Given an HTML import index, print the manifest
     HtmlImport = 4,
-    /// Given a chunk index, print the chunk's 8-character content hash
+    /// Given a chunk index, print the chunk's content hash as `[hash]` prints it
     ChunkId = 5,
 }
 
@@ -1279,8 +1283,6 @@ impl QueryKind {
         }
     }
 }
-
-pub(crate) const CHUNK_ID_LEN: usize = 8;
 
 /// Length of the lowercase-hex `unique_key` prefix (16 nibbles of a `u64`).
 pub(crate) const UNIQUE_KEY_PREFIX_LEN: usize = 16;

@@ -123,6 +123,7 @@ private:
     void finishCreation(JSC::VM& vm, JSC::JSObject* prototype)
     {
         Base::finishCreation(vm, 2, "Hash"_s, PropertyAdditionMode::WithStructureTransition);
+        putDirectWithoutTransition(vm, vm.propertyNames->prototype, prototype, JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly);
     }
 };
 

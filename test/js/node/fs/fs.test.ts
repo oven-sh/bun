@@ -5447,7 +5447,8 @@ describe("fs.read/readv/write/writev pass the buffer to the callback on error", 
     fs.read(closedFd(), buffer, 0, 8, null, (...args) => resolve(args));
     const [err, bytesRead, buf] = await promise;
     expect(err.code).toBe("EBADF");
-    expect([bytesRead, buf]).toEqual([0, buffer]);
+    expect(bytesRead).toBe(0);
+    expect(buf).toBe(buffer);
   });
 
   it("fs.readv", async () => {
@@ -5456,7 +5457,8 @@ describe("fs.read/readv/write/writev pass the buffer to the callback on error", 
     fs.readv(closedFd(), buffers, (...args) => resolve(args));
     const [err, bytesRead, bufs] = await promise;
     expect(err.code).toBe("EBADF");
-    expect([bytesRead, bufs]).toEqual([0, buffers]);
+    expect(bytesRead).toBe(0);
+    expect(bufs).toBe(buffers);
   });
 
   it("fs.write with a buffer", async () => {
@@ -5465,7 +5467,8 @@ describe("fs.read/readv/write/writev pass the buffer to the callback on error", 
     fs.write(closedFd(), buffer, 0, 3, null, (...args) => resolve(args));
     const [err, bytesWritten, buf] = await promise;
     expect(err.code).toBe("EBADF");
-    expect([bytesWritten, buf]).toEqual([0, buffer]);
+    expect(bytesWritten).toBe(0);
+    expect(buf).toBe(buffer);
   });
 
   it("fs.write with a string", async () => {
@@ -5473,7 +5476,8 @@ describe("fs.read/readv/write/writev pass the buffer to the callback on error", 
     fs.write(closedFd(), "bun", (...args) => resolve(args));
     const [err, bytesWritten, str] = await promise;
     expect(err.code).toBe("EBADF");
-    expect([bytesWritten, str]).toEqual([0, "bun"]);
+    expect(bytesWritten).toBe(0);
+    expect(str).toBe("bun");
   });
 
   it("fs.writev", async () => {
@@ -5482,7 +5486,8 @@ describe("fs.read/readv/write/writev pass the buffer to the callback on error", 
     fs.writev(closedFd(), buffers, (...args) => resolve(args));
     const [err, bytesWritten, bufs] = await promise;
     expect(err.code).toBe("EBADF");
-    expect([bytesWritten, bufs]).toEqual([0, buffers]);
+    expect(bytesWritten).toBe(0);
+    expect(bufs).toBe(buffers);
   });
 
   // A pipe that bun has already used through process.stdout is in non-blocking

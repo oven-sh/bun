@@ -503,7 +503,10 @@ pub(crate) const BUILD_ONLY_PARAMS: &[ParamType] = concat_params!(
             "--react-fast-refresh             Enable React Fast Refresh transform (does not emit hot-module code, use this for testing)"
         ),
         parse_param!(
-            "--react-compiler                 Enable the React Compiler optimizing transform"
+            "--react-compiler                 Enable the React Compiler optimizing transform. The output mode is derived from --target unless --react-compiler-output-mode is set"
+        ),
+        parse_param!(
+            "--react-compiler-output-mode <STR> Output mode for the React Compiler: \"client\" or \"ssr\". Defaults to \"client\" for --target=browser and \"ssr\" for --target=bun or --target=node"
         ),
         parse_param!("--no-bundle                      Transpile file only, do not bundle"),
         parse_param!(
@@ -2627,6 +2630,22 @@ fn parse_build_command_options(
 
     if args.flag(b"--react-compiler") {
         ctx.bundler_options.react_compiler = true;
+    }
+
+    if let Some(mode) = args.option(b"--react-compiler-output-mode") {
+        if mode == b"client" {
+            ctx.bundler_options.react_compiler_output_mode =
+                Some(bun_ast::runtime::ReactCompilerMode::Client);
+        } else if mode == b"ssr" {
+            ctx.bundler_options.react_compiler_output_mode =
+                Some(bun_ast::runtime::ReactCompilerMode::Ssr);
+        } else {
+            bun_core::pretty_errorln!(
+                "<r><red>error<r>: Invalid react compiler output mode: \"{}\". Expected \"client\" or \"ssr\"",
+                BStr::new(mode)
+            );
+            Global::crash();
+        }
     }
 
     if let Some(setting) = args.option(b"--sourcemap") {

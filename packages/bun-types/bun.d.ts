@@ -3530,8 +3530,17 @@ declare module "bun" {
     reactCompiler?: boolean;
 
     /**
-     * Output mode for the React Compiler. `"ssr"` skips memoization (the
-     * `useMemoCache` runtime) for server-rendered output.
+     * Output mode for the React Compiler.
+     *
+     * `"client"` memoizes components and hooks through the
+     * `react/compiler-runtime` memo cache.
+     *
+     * `"ssr"` optimizes for a single server render: it skips memoization,
+     * inlines `useState`/`useReducer` to their initial values, removes
+     * effects, and strips event handler and `ref` props from built-in JSX
+     * elements. Do not use `"ssr"` output in a browser: the components never
+     * update or handle events. Set `"client"` explicitly to bundle
+     * interactive components with a server-side {@link target}.
      *
      * Only applies when {@link reactCompiler} is `true`.
      *

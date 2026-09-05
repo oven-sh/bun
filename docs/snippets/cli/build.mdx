@@ -176,7 +176,15 @@ bun build <entry points>
 
 <ParamField path="--react-compiler" type="boolean">
   Run the React Compiler over `.jsx`/`.tsx` files, automatically memoizing components and hooks. The bundler derives the
-  output mode from `--target` (`browser` → client, `bun`/`node` → ssr). Experimental.
+  output mode from `--target` (`browser` → client, `bun`/`node` → ssr) unless `--react-compiler-output-mode` is set.
+  Experimental.
+</ParamField>
+
+<ParamField path="--react-compiler-output-mode" type="string">
+  Output mode for the React Compiler: `client` or `ssr`. `client` memoizes components and hooks. `ssr` optimizes for a
+  single server render: it skips memoization, inlines `useState`/`useReducer` to their initial values, removes effects,
+  and strips event handler and `ref` props from built-in JSX elements. SSR output is not interactive in a browser. Pass
+  `client` to bundle interactive components with `--target=bun` or `--target=node`. Experimental.
 </ParamField>
 
 ### Standalone Executables

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { isASAN, isDebug, tempDir } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, tempDir } from "harness";
 import { readdirSync } from "node:fs";
 import { join } from "node:path";
 import { itBundled } from "../expectBundled";
@@ -211,6 +211,76 @@ describe("bundler", () => {
       // survive, but no call remains).
       expect(out).not.toContain("useState(");
     },
+  });
+
+  // https://github.com/oven-sh/bun/issues/40442
+  // The CLI had no equivalent of the JS API's reactCompilerOutputMode, so a
+  // server-side --target always selected the SSR pass (which inlines useState
+  // and strips event handler props) with no escape hatch.
+  itBundled("react-compiler/CliOutputModeClientOverridesServerTarget", {
+    files: {
+      "/entry.jsx": /* jsx */ `
+        import { useState } from "react";
+        export function Counter() {
+          const [count, setCount] = useState(0);
+          return <button onClick={() => setCount(count + 1)}>Count: {count}</button>;
+        }
+      `,
+    },
+    reactCompiler: true,
+    reactCompilerOutputMode: "client",
+    target: "bun",
+    backend: "cli",
+    external: ["react", "react/compiler-runtime", "react/jsx-runtime", "react/jsx-dev-runtime"],
+    onAfterBundle(api) {
+      const out = api.readFile("/out.js");
+      // --react-compiler-output-mode=client overrides the target-derived
+      // default (bun → ssr): the hook and the handler prop survive.
+      expect(out).toContain("react/compiler-runtime");
+      expect(out).toMatch(/\b_c\(\d+\)/);
+      expect(out).toMatch(/\[count,\s*setCount\]/);
+      expect(out).toContain("onClick");
+    },
+  });
+
+  itBundled("react-compiler/CliOutputModeSsrOverridesBrowserTarget", {
+    files: {
+      "/entry.jsx": /* jsx */ `
+        import { useState } from "react";
+        export function Counter() {
+          const [n] = useState(0);
+          return <div>{n}</div>;
+        }
+      `,
+    },
+    reactCompiler: true,
+    reactCompilerOutputMode: "ssr",
+    target: "browser",
+    backend: "cli",
+    external: ["react", "react/compiler-runtime", "react/jsx-runtime", "react/jsx-dev-runtime"],
+    onAfterBundle(api) {
+      const out = api.readFile("/out.js");
+      // --react-compiler-output-mode=ssr overrides browser → client.
+      expect(out).not.toContain("react/compiler-runtime");
+      expect(out).not.toMatch(/\b_c\(\d+\)/);
+      expect(out).not.toContain("useState(");
+    },
+  });
+
+  test.concurrent("CLI rejects an invalid --react-compiler-output-mode value", async () => {
+    using dir = tempDir("react-compiler-output-mode", {
+      "entry.jsx": `export function Hello() { return <div>hi</div>; }`,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build", "--react-compiler", "--react-compiler-output-mode=bogus", "--target=bun", "./entry.jsx"],
+      env: bunEnv,
+      cwd: String(dir),
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toContain('Invalid react compiler output mode: "bogus". Expected "client" or "ssr"');
+    expect(stdout).toBe("");
+    expect(exitCode).toBe(1);
   });
 
   // https://github.com/oven-sh/bun/pull/32504#discussion_r3447488111

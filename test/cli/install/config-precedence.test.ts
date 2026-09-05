@@ -21,6 +21,7 @@ let authToken: string;
 beforeAll(async () => {
   await registry.start();
   authToken = await registry.generateUser("config-precedence", "verysecure");
+  await registry.generateUser("percent-user", "p@ss:w%rd");
 });
 
 afterAll(() => {
@@ -740,6 +741,56 @@ describe.concurrent("bun install config precedence", () => {
     });
     expect(stderr).not.toContain("error:");
     expect(new Set(capture.authorizations)).toStrictEqual(new Set([basicAuth]));
+    expect(installed(String(dir), "@needs-auth", "test-pkg")).toBe(true);
+    expect(exitCode).toBe(0);
+  });
+
+  // Credentials written into a URL are percent-encoded like the rest of it: the
+  // password `p@ss:w%rd` of `percent-user` can only be written as below. Every
+  // way a registry URL reaches bun decodes them before building the header.
+  // (A tarball dependency URL is covered in bun-install.test.ts.)
+  const encodedUserinfo = "percent%2Duser:p%40ss%3Aw%25rd";
+  const percentUserBasicAuth = `Basic ${Buffer.from("percent-user:p@ss:w%rd").toString("base64")}`;
+  type RegistrySetup = { files?: Record<string, string>; args?: string[]; env?: Record<string, string> };
+  const registryEntryPoints: [name: string, setup: (url: string, fallback: string) => RegistrySetup][] = [
+    ["bunfig registry string", url => ({ files: { "project/bunfig.toml": bunfig({ registry: url }) } })],
+    [
+      "bunfig scoped registry object",
+      (url, fallback) => ({
+        files: { "project/bunfig.toml": bunfig({ registry: fallback, scopes: { "needs-auth": { url } } }) },
+      }),
+    ],
+    ["project .npmrc registry=", url => ({ files: { "project/.npmrc": `registry=${url}\n` } })],
+    ["--registry", url => ({ args: ["--registry", url] })],
+    ["BUN_CONFIG_REGISTRY", url => ({ env: { BUN_CONFIG_REGISTRY: url } })],
+  ];
+
+  test.each(registryEntryPoints)("%s percent-decodes the user:password written into the URL", async (_, setup) => {
+    using dead = deadRegistry();
+    using capture = capturingRegistry();
+    const { files, args, env } = setup(withUserinfo(capture, encodedUserinfo), dead.url);
+    using dir = tempDir("config-precedence", {
+      ...files,
+      "project/package.json": packageJson({ "@needs-auth/test-pkg": "1.0.0" }),
+    });
+    const { stderr, exitCode } = await install(String(dir), args, env);
+    expect(stderr).not.toContain("error:");
+    expect(dead.hits).toBe(0);
+    expect(new Set(capture.authorizations)).toStrictEqual(new Set([percentUserBasicAuth]));
+    expect(installed(String(dir), "@needs-auth", "test-pkg")).toBe(true);
+    expect(exitCode).toBe(0);
+  });
+
+  test("bunfig registry percent-decodes the :token written into its URL", async () => {
+    using capture = capturingRegistry();
+    const encodedToken = Array.from(Buffer.from(authToken), byte => `%${byte.toString(16).padStart(2, "0")}`).join("");
+    using dir = tempDir("config-precedence", {
+      "project/bunfig.toml": bunfig({ registry: withUserinfo(capture, `:${encodedToken}`) }),
+      "project/package.json": packageJson({ "@needs-auth/test-pkg": "1.0.0" }),
+    });
+    const { stderr, exitCode } = await install(String(dir));
+    expect(stderr).not.toContain("error:");
+    expect(new Set(capture.authorizations)).toStrictEqual(new Set([`Bearer ${authToken}`]));
     expect(installed(String(dir), "@needs-auth", "test-pkg")).toBe(true);
     expect(exitCode).toBe(0);
   });

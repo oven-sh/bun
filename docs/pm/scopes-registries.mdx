@@ -30,6 +30,8 @@ To configure a private registry scoped to a particular organization:
 "@myorg3" = { token = "$npm_token", url = "https://registry.myorg.com/" }
 ```
 
+Credentials written into a URL are percent-encoded, like the rest of the URL: the password `p@ss` is written `p%40ss`. Bun decodes them before it sends them. The `username`, `password` and `token` fields are sent as written.
+
 ### `.npmrc`
 
 Bun also reads [`.npmrc`](/pm/npmrc) files.

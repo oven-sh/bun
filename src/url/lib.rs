@@ -1431,6 +1431,29 @@ impl PercentEncoding {
         Self::decode(&mut w, input)
     }
 
+    /// Decodes each `%XX` and keeps every other byte as written, a `%` that no two
+    /// hex digits follow included (the WHATWG percent-decode algorithm; curl
+    /// reads the userinfo of a URL the same way).
+    pub fn decode_lenient_alloc(input: &[u8]) -> Box<[u8]> {
+        let mut out: Vec<u8> = Vec::with_capacity(input.len());
+        let mut rest = input;
+        while let Some(percent) = strings::index_of_char_usize(rest, b'%') {
+            out.extend_from_slice(&rest[..percent]);
+            rest = &rest[percent..];
+            if let [b'%', hi, lo, ..] = rest
+                && let Some(byte) = bun_fmt::hex_pair_value(*hi, *lo)
+            {
+                out.push(byte);
+                rest = &rest[3..];
+            } else {
+                out.push(b'%');
+                rest = &rest[1..];
+            }
+        }
+        out.extend_from_slice(rest);
+        out.into_boxed_slice()
+    }
+
     pub fn decode_fault_tolerant<W: bun_core::io::Write, const FAULT_TOLERANT: bool>(
         writer: &mut W,
         input: &[u8],

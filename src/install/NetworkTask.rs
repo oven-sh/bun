@@ -11,7 +11,7 @@ use bun_http::{
     HeaderBuilder, async_http::Options as AsyncHTTPOptions,
 };
 use bun_threading::thread_pool::Batch;
-use bun_url::URL;
+use bun_url::{PercentEncoding, URL};
 
 use crate::extract_tarball;
 use crate::npm::{self as npm, PackageManifest};
@@ -426,11 +426,11 @@ fn split_url_userinfo(url: &[u8]) -> Option<(&[u8], Box<[u8]>)> {
     Some((&rest[..at], without_userinfo.into_boxed_slice()))
 }
 
-/// `Basic base64(userinfo)` as written (no percent-decoding, `user` means `user:`), matching what npm sends via node's `auth` option.
+/// `Basic base64(user:pass)` with the userinfo percent-decoded, as curl and node's `http.get` send it: the URL
+/// spelling of a password `p@ss` is `p%40ss` (RFC 3986 section 3.2.1). `user` alone means `user:`.
 fn basic_authorization_from_userinfo(userinfo: &[u8]) -> Vec<u8> {
     const SCHEME: &[u8] = b"Basic ";
-    let mut user_pass = Vec::with_capacity(userinfo.len() + 1);
-    user_pass.extend_from_slice(userinfo);
+    let mut user_pass = PercentEncoding::decode_lenient_alloc(userinfo).into_vec();
     if !strings::contains_char(userinfo, b':') {
         user_pass.push(b':');
     }

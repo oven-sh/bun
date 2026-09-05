@@ -460,6 +460,7 @@ struct us_listen_socket_t {
   unsigned int socket_ext_size;
   /* kind to stamp on accepted sockets. */
   unsigned char accept_kind;
+  unsigned char keylog_enabled;
   /* Set when TCP_DEFER_ACCEPT/SO_ACCEPTFILTER was successfully applied. */
   unsigned char deferred_accept;
   /* LIBUS_SOCKET_OPEN_PAUSED: accepted sockets start without read interest. */

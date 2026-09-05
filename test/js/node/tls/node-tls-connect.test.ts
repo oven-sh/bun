@@ -1942,3 +1942,33 @@ it.skipIf(!nodeExe())(
     }
   },
 );
+
+describe("a peer reset with a queued write", () => {
+  // Node completes the queued write with errnoException(UV_ECANCELED, 'write')
+  // when the SSL engine is torn down, instead of dropping the callback.
+  // https://github.com/nodejs/node/blob/v26.3.0/src/crypto/crypto_tls.cc#L339
+  it("completes the write callback with ECANCELED", async () => {
+    const server = net.createServer(c => {
+      c.on("data", () => c.resetAndDestroy());
+    });
+    try {
+      server.listen(0, "127.0.0.1");
+      await once(server, "listening");
+
+      const { promise, resolve, reject } = Promise.withResolvers<any>();
+      const client = tls.connect({
+        port: (server.address() as AddressInfo).port,
+        host: "127.0.0.1",
+        rejectUnauthorized: false,
+      });
+      client.on("error", () => {});
+      client.on("close", () => reject(new Error("socket closed without running the write callback")));
+      client.write("hello", err => resolve(err));
+
+      const err = await promise;
+      expect({ code: err?.code, syscall: err?.syscall }).toEqual({ code: "ECANCELED", syscall: "write" });
+    } finally {
+      server.close();
+    }
+  });
+});

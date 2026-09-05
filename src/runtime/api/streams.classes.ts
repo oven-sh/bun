@@ -88,6 +88,9 @@ function source(name) {
               fn: "setFlowingFromJS",
               length: 1,
             },
+            fd: {
+              getter: "getFdFromJS",
+            },
           }
         : {}),
     },

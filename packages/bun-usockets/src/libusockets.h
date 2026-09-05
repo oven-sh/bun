@@ -411,6 +411,8 @@ void *us_listen_socket_find_server_name_userdata(struct us_listen_socket_t *ls,
 /* Returns an owned reference; the caller must release it. */
 struct ssl_ctx_st *us_listen_socket_find_server_name_ctx(struct us_listen_socket_t *ls,
     const char *hostname_pattern) nonnull_fn_decl;
+void us_listen_socket_set_default_ssl_ctx(struct us_listen_socket_t *ls,
+    struct ssl_ctx_st *ctx) __attribute__((nonnull(1, 2)));
 /* Parses a PKCS#12 blob into malloc'd PEM key/cert/ca strings (caller frees);
  * returns 0 with a static *err_reason tag on failure. */
 int us_ssl_parse_pkcs12(const char *data, size_t len, const char *pass,
@@ -559,6 +561,9 @@ long us_ssl_ctx_live_count(void);
 /* Appends the certificates in the PEM `content` to `ctx`'s trust store;
  * returns 0 when nothing could be added. */
 int us_ssl_ctx_add_ca_cert(struct ssl_ctx_st *ctx, const char *content);
+/* Replaces `ctx`'s trust store with an empty one that the default roots never
+ * seed (tls.setDefaultCACertificates([])); returns 0 on allocation failure. */
+int us_ssl_ctx_use_empty_ca_store(struct ssl_ctx_st *ctx);
 /* TLS-over-duplex / named-pipe SSL owners (no us_socket_t): opt an SSL into
  * the parked new-session/keylog queues, then drain them with the pop calls
  * after each SSL_read/SSL_do_handshake stack unwinds. Pop returns the entry
@@ -567,6 +572,8 @@ int us_ssl_ctx_add_ca_cert(struct ssl_ctx_st *ctx, const char *content);
 void us_ssl_enable_pending_events(struct ssl_st *ssl);
 int us_ssl_pop_pending_session(struct ssl_st *ssl, unsigned char *out, int out_cap);
 int us_ssl_pop_pending_keylog(struct ssl_st *ssl, unsigned char *out, int out_cap);
+void us_listen_socket_enable_keylog(struct us_listen_socket_t *ls) nonnull_fn_decl;
+int us_socket_pop_keylog(us_socket_r s, unsigned char *out, int out_cap);
 /* The resumable session most recently delivered via the new-session callback,
  * or NULL if none. Borrowed; valid until the next NewSessionTicket or SSL_free. */
 struct ssl_session_st *us_ssl_get_new_session(struct ssl_st *ssl);

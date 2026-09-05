@@ -1271,7 +1271,7 @@ if (cluster.isPrimary) {
     });
   });
 } else if (process.env.ROLE === "die") {
-  process.on("internalMessage", m => { if (m.act === "newconn") process.exit(0); });
+  process.prependListener("internalMessage", m => { if (m.act === "newconn") process.exit(0); });
   net.createServer(() => {}).listen(+process.env.PORT, "127.0.0.1");
 } else {
   const server = net.createServer(sock => sock.on("data", d => { process.send("live got: " + d); sock.destroy(); }));
@@ -1370,4 +1370,208 @@ if (cluster.isPrimary) {
     stderr: expect.any(String),
   });
   expect(exitCode).toBe(0);
+}, 30_000);
+
+test("a malformed external ack from a worker does not crash the primary", async () => {
+  const dir = tempDirWithFiles("bun-test", {
+    "main.ts": `
+const cluster = require("node:cluster");
+if (cluster.isPrimary) {
+  const worker = cluster.fork();
+  worker.on("message", m => {
+    if (m !== "sent") return;
+    setTimeout(() => { console.log("primary alive"); worker.kill(); process.exit(0); }, 100);
+  });
+} else {
+  process.send({ cmd: "NODE_CLUSTER", ack: null });
+  process.send({ cmd: "NODE_CLUSTER", ack: "not-a-number" });
+  process.send({ cmd: "NODE_CLUSTER", ack: {} });
+  process.send({ cmd: "NODE_CLUSTER", ack: 0.5 });
+  const server = require("node:net").createServer();
+  server.listen(0, "127.0.0.1", () => { server.close(); process.send("sent"); });
+}
+`,
+  });
+  const { stdout, stderr, exitCode } = await bunRun(joinP(dir, "main.ts"), bunEnv);
+  expect(stdout).toContain("primary alive");
+  expect({ stderr, exitCode }).toEqual({ stderr: expect.any(String), exitCode: 0 });
+});
+
+test("an out-of-range worker port throws in the worker and leaves the primary alive", async () => {
+  const dir = tempDirWithFiles("bun-test", {
+    "main.ts": `
+const cluster = require("node:cluster");
+if (cluster.isPrimary) {
+  const worker = cluster.fork();
+  worker.on("message", m => {
+    console.log("sync code:", m.sync);
+    console.log("probe errno truthy:", !!m.probeErrno);
+    setTimeout(() => { console.log("primary alive"); worker.kill(); process.exit(0); }, 50);
+  });
+} else {
+  const http = require("node:http");
+  let sync = "no-throw";
+  try {
+    http.createServer().listen(70000);
+  } catch (e) {
+    sync = e.code;
+  }
+  cluster._sendInternal({ act: "probePort", address: null, port: 70000, addressType: 4 }, reply => {
+    process.send({ sync, probeErrno: reply.errno });
+  });
+}
+`,
+  });
+  const { stdout, stderr, exitCode } = await bunRun(joinP(dir, "main.ts"), bunEnv);
+  expect(stdout).toContain("sync code: ERR_SOCKET_BAD_PORT");
+  expect(stdout).toContain("probe errno truthy: true");
+  expect(stdout).toContain("primary alive");
+  expect({ stderr, exitCode }).toEqual({ stderr: expect.any(String), exitCode: 0 });
+});
+
+test("closing a worker http server releases the primary's port claim", async () => {
+  const dir = tempDirWithFiles("bun-test", {
+    "main.ts": `
+const cluster = require("node:cluster");
+const net = require("node:net");
+if (cluster.isPrimary) {
+  const probe = net.createServer();
+  probe.listen(0, "127.0.0.1", () => {
+    const port = probe.address().port;
+    probe.close(() => {
+      const worker = cluster.fork({ TEST_PORT: String(port) });
+      let blocker;
+      worker.on("message", m => {
+        if (m.step === "closed") {
+          blocker = net.createServer(c => c.destroy());
+          blocker.listen(port, "127.0.0.1", () => worker.send("relisten"));
+        } else if (m.step === "relisten-error") {
+          console.log("relisten code:", m.code, "syscall:", m.syscall);
+          worker.kill();
+          process.exit(0);
+        } else if (m.step === "relisten-ok") {
+          console.log("relisten wrongly succeeded");
+          worker.kill();
+          process.exit(1);
+        }
+      });
+    });
+  });
+} else {
+  const http = require("node:http");
+  const port = Number(process.env.TEST_PORT);
+  const first = http.createServer();
+  first.listen(port, "127.0.0.1", () => {
+    first.close(() => process.send({ step: "closed" }));
+  });
+  process.on("message", m => {
+    if (m !== "relisten") return;
+    const second = http.createServer();
+    second.on("error", e => process.send({ step: "relisten-error", code: e.code, syscall: e.syscall }));
+    second.listen(port, "127.0.0.1", () => process.send({ step: "relisten-ok" }));
+  });
+}
+`,
+  });
+  const { stdout, stderr, exitCode } = await bunRun(joinP(dir, "main.ts"), bunEnv);
+  expect(stdout).toContain("relisten code: EADDRINUSE syscall: bind");
+  expect({ stderr, exitCode }).toEqual({ stderr: expect.any(String), exitCode: 0 });
+});
+
+test("a worker http server closed before the primary replies ignores the reply", async () => {
+  using dir = tempDir("cluster-stale-probe", {
+    "main.ts": `
+const cluster = require("node:cluster");
+if (cluster.isPrimary) {
+  const net = require("node:net");
+  const blocker = net.createServer();
+  blocker.listen(0, "127.0.0.1", () => {
+    const worker = cluster.fork({ TEST_PORT: String(blocker.address().port) });
+    worker.on("message", m => {
+      console.log(JSON.stringify(m));
+      worker.kill();
+      process.exit(0);
+    });
+  });
+} else {
+  const http = require("node:http");
+  const port = Number(process.env.TEST_PORT);
+  const events = [];
+  const closed = http.createServer();
+  closed.on("error", e => events.push("error:" + e.code));
+  closed.on("listening", () => events.push("listening"));
+  closed.listen(port, "127.0.0.1");
+  closed.close();
+  const witness = http.createServer();
+  const report = () => process.send({ closedServerEvents: events, closedServerListening: closed.listening });
+  witness.on("error", report);
+  witness.on("listening", report);
+  witness.listen(port, "127.0.0.1");
+}
+`,
+  });
+  const { stdout, stderr, exitCode } = await bunRun(joinP(String(dir), "main.ts"), bunEnv);
+  expect({ report: JSON.parse(stdout), stderr, exitCode }).toEqual({
+    report: { closedServerEvents: [], closedServerListening: false },
+    stderr: expect.any(String),
+    exitCode: 0,
+  });
+}, 30_000);
+
+test("externally-framed cluster acks settle the primary's parked reply callbacks", async () => {
+  using dir = tempDir("cluster-external-ack", {
+    "main.ts": `
+const cluster = require("node:cluster");
+const net = require("node:net");
+if (cluster.isPrimary) {
+  cluster.schedulingPolicy = cluster.SCHED_RR;
+  const worker = cluster.fork();
+  worker.on("message", async (m) => {
+    if (!m || !m.port) return;
+    const roundTrip = () =>
+      new Promise((resolve, reject) => {
+        const c = net.connect(m.port, "127.0.0.1");
+        c.on("close", resolve);
+        c.on("error", reject);
+        setTimeout(() => reject(new Error("connection never settled")), 5000).unref();
+      });
+    await roundTrip();
+    await roundTrip();
+    console.log("OK");
+    worker.kill();
+    process.exit(0);
+  });
+  worker.on("error", (e) => { console.error(e); process.exit(1); });
+} else {
+  const server = net.createServer(() => {});
+  server.listen(0, "127.0.0.1", () => {
+    const port = server.address().port;
+    process.removeAllListeners("internalMessage");
+    process.on("internalMessage", (m, handle) => {
+      if (m && m.cmd === "NODE_CLUSTER" && m.act === "newconn") {
+        process.send({ cmd: "NODE_CLUSTER", ack: m.seq, accepted: true });
+        if (handle) {
+          if (typeof handle.destroy === "function") handle.destroy();
+          else if (typeof handle.close === "function") handle.close();
+        }
+      }
+    });
+    process.send({ port });
+  });
+}
+`,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "main.ts"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+    stdout: "OK",
+    stderr: expect.any(String),
+    exitCode: 0,
+  });
 }, 30_000);

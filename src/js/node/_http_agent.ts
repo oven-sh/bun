@@ -205,6 +205,29 @@ function handleSocketAfterProxy(err, req) {
   }
 }
 
+let kTunneledTLSOptions: string[] | undefined;
+function tunneledTLSOptions(connectOpts) {
+  if (connectOpts == null) return undefined;
+  kTunneledTLSOptions ??= [
+    "ca",
+    "cert",
+    "key",
+    "pfx",
+    "passphrase",
+    "rejectUnauthorized",
+    "ciphers",
+    "secureOptions",
+    "checkServerIdentity",
+  ];
+  let picked;
+  for (let i = 0; i < kTunneledTLSOptions.length; i++) {
+    const key = kTunneledTLSOptions[i];
+    const value = connectOpts[key];
+    if (value !== undefined) (picked ??= { __proto__: null })[key] = value;
+  }
+  return picked;
+}
+
 Agent.prototype.addRequest = function addRequest(req, options, port /* legacy */, localAddress /* legacy */) {
   // Legacy API: addRequest(req, host, port, localAddress)
   if (typeof options === "string") {
@@ -217,7 +240,7 @@ Agent.prototype.addRequest = function addRequest(req, options, port /* legacy */
   }
 
   // Here the agent options will override per-request options.
-  options = { __proto__: null, ...options, ...this.options };
+  options = { __proto__: null, ...tunneledTLSOptions(this.connectOpts), ...options, ...this.options };
   const socketPath = options.socketPath;
   if (socketPath) options.path = socketPath;
 

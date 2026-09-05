@@ -1447,6 +1447,8 @@ class ChildProcess extends EventEmitter {
       });
       this.pid = this.#handle.pid;
 
+      if ($isJSArray(stdio)) stopReadingSharedStdio(stdio);
+
       $debug("ChildProcess: spawn", this.pid, spawnargs);
 
       process.nextTick(() => {
@@ -1455,8 +1457,10 @@ class ChildProcess extends EventEmitter {
 
       if (has_ipc) {
         this.send = this.#send;
+        this._send = this.#_send;
         this.disconnect = this.#disconnect;
         this.channel = new Control();
+        require("internal/socket_list").setChannelOwner(this.#handle, this);
         Object.defineProperty(this, "_channel", {
           get() {
             return this.channel;
@@ -1524,6 +1528,20 @@ class ChildProcess extends EventEmitter {
         throw $ERR_INVALID_ARG_TYPE("options", "object", options);
       }
     }
+    return this.#_send(message, handle, options, callback);
+  }
+
+  // The internal entry point cluster and socket_list use. A boolean `options`
+  // is the legacy `swallowErrors` form.
+  // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/child_process.js#L770-L793
+  #_send(message, handle, options, callback) {
+    if (typeof options === "boolean") {
+      options = { swallowErrors: options };
+    }
+
+    if (handle !== undefined && handle !== null) {
+      options = { ...options, "$target": this };
+    }
 
     if (!this.#handle) {
       if (callback) {
@@ -1534,13 +1552,13 @@ class ChildProcess extends EventEmitter {
       return false;
     }
 
-    // We still need this send function because
+    const swallowErrors = options !== undefined && options.swallowErrors === true;
     return this.#handle.send(message, handle, options, err => {
       // node does process.nextTick() to emit or call the callback
       // we don't need to because the native IPC layer calls the send callback on nextTick
       if (callback) {
         callback(err);
-      } else if (err) {
+      } else if (err && !swallowErrors) {
         this.emit("error", err);
       }
     });
@@ -1695,13 +1713,18 @@ function isInternalIpcMessage(message) {
 
 function streamFdOf(item): number | undefined {
   const itemFd = ObjectHasOwn(item, "fd") ? item.fd : undefined;
-  if (typeof itemFd === "number") return itemFd;
+  if (typeof itemFd === "number" && itemFd >= 0) return itemFd;
 
   const handle = item._handle;
   const handleFd = handle ? handle.fd : undefined;
-  if (typeof handleFd === "number") return handleFd;
+  if (typeof handleFd === "number" && handleFd >= 0) return handleFd;
 
   if (item.destroyed) return undefined;
+
+  // A native readable (a ChildProcess stdout/stderr, a Bun.file() stream):
+  // the source reads a descriptor of its own.
+  const nativeFd = item.$bunNativePtr?.fd;
+  if (typeof nativeFd === "number" && nativeFd >= 0) return nativeFd;
 
   const sink = item[require("internal/fs/streams").kWriteStreamFastPath];
   if (sink && sink !== true) {
@@ -1710,6 +1733,19 @@ function streamFdOf(item): number | undefined {
   }
 
   return undefined;
+}
+
+// The child now reads the descriptor behind each shared readable. Stop the
+// parent's reads so the two do not compete for the same bytes; the user
+// resumes the stream once the child is done with it.
+// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/child_process.js#L460-L470
+function stopReadingSharedStdio(stdio) {
+  for (let i = 0; i < stdio.length; i++) {
+    const item = stdio[i];
+    if (!isNodeStreamReadable(item) || !item.readable) continue;
+    item.$bunNativePtr?.setFlowing?.(false);
+    item.pause();
+  }
 }
 
 function nodeToBun(item: string, index: number): string | number | null | NodeJS.TypedArray | ArrayBufferView {
@@ -1726,10 +1762,11 @@ function nodeToBun(item: string, index: number): string | number | null | NodeJS
   if (isNodeStreamReadable(item) || isNodeStreamWritable(item)) {
     const fd = streamFdOf(item);
     if (fd !== undefined) return fd;
-    const kind = isNodeStreamReadable(item) ? "Readable" : "Writable";
-    throw new Error(
-      `Passing a stream.${kind} without an underlying file descriptor as stdio[${index}] is not yet implemented in Bun`,
-    );
+    throw $ERR_INVALID_ARG_VALUE("stdio", item);
+  }
+  if (typeof item === "object" && item !== null) {
+    const fd = typeof item.fd === "number" ? item.fd : item._handle?.fd;
+    if (typeof fd === "number" && fd >= 0) return fd;
   }
   const result = nodeToBunLookup[item];
   if (result === undefined) {
@@ -1804,7 +1841,11 @@ function getBunStdioFromOptions(stdio) {
   // ignore -> null
   // inherit -> inherit (stdin/stdout/stderr)
   // Stream -> throw err for now
-  const bunStdio = normalizedStdio.map(nodeToBun);
+  const length = normalizedStdio.length;
+  const bunStdio = new Array(length);
+  for (let i = 0; i < length; i++) {
+    bunStdio[i] = nodeToBun(normalizedStdio[i], i);
+  }
   return bunStdio;
 }
 

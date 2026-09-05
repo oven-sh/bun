@@ -885,6 +885,8 @@ unsafe extern "C" {
     pub fn SSL_is_init_finished(ssl: *const SSL) -> c_int;
     pub fn SSL_set_verify(ssl: *mut SSL, mode: c_int, callback: SSL_verify_cb);
     pub fn SSL_set0_verify_cert_store(ssl: *mut SSL, store: *mut X509_STORE) -> c_int;
+    pub fn X509_STORE_new() -> *mut X509_STORE;
+    pub fn SSL_CTX_set_cert_store(ctx: *mut SSL_CTX, store: *mut X509_STORE);
     pub fn SSL_set_renegotiate_mode(ssl: *mut SSL, mode: ssl_renegotiate_mode_t);
     pub fn SSL_renegotiate(ssl: *mut SSL) -> c_int;
     pub fn SSL_get_servername(ssl: *const SSL, ty: c_int) -> *const c_char;

@@ -1128,6 +1128,10 @@ impl Connection {
         let mut saw_connect = false;
         let mut saw_host = false;
         let mut informational = false;
+        let mut path_regular = false;
+        let mut path_asterisk = false;
+        let mut scheme_http = false;
+        let mut meth_options = false;
         let mut content_length: Option<u64> = None;
         while off < block.len() {
             match self.hpack.decode(&block[off..]) {
@@ -1172,7 +1176,11 @@ impl Connection {
                             // a malformed block. (The client direction also constrains pseudo
                             // headers, but inbound PUSH_PROMISE blocks legitimately carry request
                             // pseudo-headers, so that check needs the push context first.)
-                            let wrong_direction = self.is_server && rest == b"status";
+                            let wrong_direction = if is_request {
+                                bit == pseudo::STATUS
+                            } else {
+                                bit != pseudo::STATUS && bit != pseudo::UNKNOWN
+                            };
                             // RFC 8441 §4: :protocol is only valid when SETTINGS_ENABLE_CONNECT_PROTOCOL
                             // has been enabled by this endpoint. nghttp2 (and so node) checks the
                             // submitted local value here, not the ACKed one — so a request that arrives
@@ -1199,15 +1207,37 @@ impl Connection {
                                 informational = true;
                             }
                             seen_pseudo |= bit;
-                            if rest == b"method" && value_b == b"CONNECT" {
-                                saw_connect = true;
+                            match rest {
+                                b"method" => {
+                                    if value_b == b"CONNECT" {
+                                        if push_parent.is_some() {
+                                            malformed = true;
+                                        }
+                                        saw_connect = true;
+                                    }
+                                    meth_options |= value_b == b"OPTIONS";
+                                }
+                                b"path" => {
+                                    path_regular |= value_b.first() == Some(&b'/');
+                                    path_asterisk |= value_b == b"*";
+                                }
+                                b"scheme" => {
+                                    scheme_http |= value_b.eq_ignore_ascii_case(b"http")
+                                        || value_b.eq_ignore_ascii_case(b"https");
+                                }
+                                _ => {}
                             }
                         } else {
                             seen_regular = true;
                             match name_b {
                                 b"connection" | b"keep-alive" | b"proxy-connection"
                                 | b"transfer-encoding" | b"upgrade" => malformed = true,
-                                b"host" if is_request => saw_host = true,
+                                b"host" if self.is_server || is_request => {
+                                    if value_b.is_empty() || saw_host {
+                                        malformed = true;
+                                    }
+                                    saw_host = true;
+                                }
                                 b"te" => {
                                     // RFC 9110 10.1.4: field values are case-insensitive.
                                     if !value_b.eq_ignore_ascii_case(b"trailers") {
@@ -1278,7 +1308,10 @@ impl Connection {
                 (seen_pseudo & (METHOD | SCHEME | PATH)) != (METHOD | SCHEME | PATH)
                     || ((seen_pseudo & AUTHORITY) == 0 && !saw_host)
                     || (extended_connect && (!saw_connect || (seen_pseudo & AUTHORITY) == 0))
+                    || (scheme_http && !(path_regular || (meth_options && path_asterisk)))
             };
+        } else if !is_trailer && !rejected && !malformed && !informational {
+            malformed = (seen_pseudo & pseudo::STATUS) == 0;
         }
         if push_parent.is_none() && self.is_server && !malformed && !rejected {
             if let Some(s) = self.streams.get_mut(&target) {

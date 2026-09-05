@@ -10,6 +10,7 @@ const {
   tlsStringToProtocolVersion,
   secureProtocolToVersionRange,
   processPfxOptions,
+  normalizeRejectUnauthorized,
   validateSecureProtocol,
 } = require("internal/tls");
 const {
@@ -579,7 +580,7 @@ function newNativeSecureContext(options, cached = false) {
     }
     const rejectUnauthorized = options.rejectUnauthorized;
     if (rejectUnauthorized !== undefined && typeof rejectUnauthorized !== "boolean") {
-      options = { ...options, rejectUnauthorized: true };
+      options = { ...options, rejectUnauthorized: normalizeRejectUnauthorized(rejectUnauthorized) };
     }
     const allowPartialTrustChain = options.allowPartialTrustChain;
     if (allowPartialTrustChain !== undefined && typeof allowPartialTrustChain !== "boolean") {
@@ -1594,6 +1595,11 @@ function connect(...args) {
     validateFunction(options.checkServerIdentity, "options.checkServerIdentity");
   }
 
+  // Node spreads the default so an explicit `undefined` throws. BoringSSL negotiates no FFDHE
+  // suites, so the option is vacuous. https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L1731-L1745
+  const minDHSize = ObjectPrototypeHasOwnProperty.$call(options, "minDHSize") ? options.minDHSize : 1024;
+  validateNumber(minDHSize, "options.minDHSize", 1);
+
   if (servername && net.isIP(servername)) {
     throw $ERR_INVALID_ARG_VALUE(
       "options.servername",
@@ -1615,6 +1621,14 @@ function connect(...args) {
 
   if (ALPNProtocols) {
     convertALPNProtocols(ALPNProtocols, connectOptions);
+  }
+
+  // Node calls `tls.createSecureContext` off the module object so overriding the export (proxy/MITM
+  // libs) affects tls.connect(). Skip when unchanged: TLSSocket reaches the same memoised SSL_CTX.
+  // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L1746
+  const createContext = tlsExports.createSecureContext;
+  if (createContext !== createSecureContext && connectOptions.secureContext === undefined) {
+    connectOptions.secureContext = createContext(connectOptions);
   }
 
   const tlssock = new TLSSocket(connectOptions);
@@ -1691,6 +1705,7 @@ function cacheBundledRootCertificates(): string[] {
   return bundledRootCertificates;
 }
 const getUseSystemCA = $newRustFunction("bun.rs", "getUseSystemCA", 0);
+const setDefaultCACertificatesNative = $newRustFunction("bun.rs", "setDefaultCACertificates", 1);
 
 let defaultCACertificates: string[] | undefined;
 function cacheDefaultCACertificates() {
@@ -1800,6 +1815,9 @@ function setDefaultCACertificates(certs: ReadonlyArray<CACertInput>): void {
   if (normalized.length === 0 && snapshot.length > 0) {
     throw $ERR_CRYPTO_OPERATION_FAILED("No valid certificates found in the provided array");
   }
+  // The native call throws for a certificate BoringSSL rejects; keep the JS
+  // override and the fetch() override in step by storing only after it returns.
+  setDefaultCACertificatesNative(normalized);
   _defaultCACertificatesOverride = normalized;
 }
 
@@ -1845,7 +1863,7 @@ function getDefaultCiphers() {
   return `TLS_AES_256_GCM_SHA384:TLS_CHACHA20_POLY1305_SHA256:TLS_AES_128_GCM_SHA256${ciphers ? ":" + ciphers : ""}`;
 }
 
-export default {
+const tlsExports = {
   CLIENT_RENEG_LIMIT,
   CLIENT_RENEG_WINDOW,
   connect,
@@ -1896,3 +1914,5 @@ export default {
   },
   getCACertificates,
 } as any as typeof import("node:tls");
+
+export default tlsExports;

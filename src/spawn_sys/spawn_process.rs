@@ -886,6 +886,12 @@ pub unsafe fn spawn_process_posix(
                 set_spawned_stdio(&mut spawned, i, fds[0]);
             }
             PosixStdio::Pipe(fd) => {
+                // A caller-supplied descriptor becomes the child's stdio. The
+                // child expects blocking reads and writes on 0-2, so clear
+                // O_NONBLOCK like libuv's uv__process_child_init does. The flag
+                // lives on the shared open file description, so the parent's
+                // copy changes too; the parent's pipe reads never depend on it.
+                let _ = bun_sys::update_nonblocking(*fd, false);
                 actions.dup2(*fd, fileno)?;
                 set_spawned_stdio(&mut spawned, i, *fd);
             }

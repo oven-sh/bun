@@ -348,6 +348,9 @@ static void ssl_flush_pending_keylog(struct us_socket_t *s) {
   if (!s->ssl || us_socket_is_closed(s)) {
     return;
   }
+  if (us_socket_kind(s) == BUN_SOCKET_KIND_UWS_HTTP_TLS) {
+    return;
+  }
   struct us_ssl_pending_session_t *pending =
       SSL_get_ex_data(s->ssl, us_ssl_pending_keylog_idx);
   if (!pending) {
@@ -554,6 +557,15 @@ int us_ssl_pop_pending_session(SSL *ssl, unsigned char *out, int out_cap) {
 
 int us_ssl_pop_pending_keylog(SSL *ssl, unsigned char *out, int out_cap) {
   return us_ssl_pop_pending(ssl, us_ssl_pending_keylog_idx, out, out_cap);
+}
+
+void us_listen_socket_enable_keylog(struct us_listen_socket_t *ls) {
+  ls->keylog_enabled = 1;
+}
+
+int us_socket_pop_keylog(struct us_socket_t *s, unsigned char *out, int out_cap) {
+  if (!s->ssl) return 0;
+  return us_ssl_pop_pending_keylog((SSL *)s->ssl, out, out_cap);
 }
 
 /* The resumable session most recently delivered via the new-session callback,
@@ -1561,6 +1573,24 @@ int us_ssl_ctx_add_ca_cert(SSL_CTX *ctx, const char *content) {
   return add_ca_cert_to_ctx_store(ctx, content, store);
 }
 
+/* `tls.setDefaultCACertificates([])`: a trust store with no roots. The
+ * context is marked as user-configured so neither the per-socket attach nor
+ * the own-store helper seeds the default roots back in. Returns 0 when the
+ * store could not be allocated. */
+int us_ssl_ctx_use_empty_ca_store(SSL_CTX *ctx) {
+  if (!ctx) {
+    return 0;
+  }
+  X509_STORE *store = X509_STORE_new();
+  if (!store) {
+    return 0;
+  }
+  SSL_CTX_set_cert_store(ctx, store);
+  us_ex_idx_ensure();
+  SSL_CTX_set_ex_data(ctx, us_ctx_user_ca_ex_idx, (void *)1);
+  return 1;
+}
+
 /* node:tls `pfx` support: parse a PKCS#12 blob and hand back PEM-encoded
  * key / certificate / extra-chain strings the regular key/cert/ca options can
  * consume. Returns 1 on success; the three out-strings are libc malloc'd (not
@@ -1757,7 +1787,8 @@ void us_internal_ssl_attach(struct us_socket_t *s, SSL_CTX *ctx,
    * sockets lives in accept_kind and may not have been copied onto `s` yet
    * when its SSL is initialized. */
   if (ssl && (us_socket_kind(s) == BUN_SOCKET_KIND_BUN_SOCKET_TLS ||
-              (listener && listener->accept_kind == BUN_SOCKET_KIND_BUN_SOCKET_TLS))) {
+              (listener && (listener->accept_kind == BUN_SOCKET_KIND_BUN_SOCKET_TLS ||
+                            listener->keylog_enabled)))) {
     /* The very first TLS attach in a process can be a client connection, and
      * nothing on that path has registered the ex_data indices yet - using the
      * still--1 index would make CRYPTO_set_ex_data grow its slot array toward
@@ -3334,6 +3365,22 @@ struct ssl_ctx_st *us_listen_socket_find_server_name_ctx(struct us_listen_socket
   if (!node || !node->ctx) return NULL;
   SSL_CTX_up_ref(node->ctx);
   return node->ctx;
+}
+
+void us_listen_socket_set_default_ssl_ctx(struct us_listen_socket_t *ls,
+                                          SSL_CTX *ctx) {
+  if (ls->ssl_ctx == ctx) return;
+  SSL_CTX_up_ref(ctx);
+  if (ls->sni) {
+    SSL_CTX_set_tlsext_servername_callback(ctx, sni_cb);
+  }
+  if (ls->on_server_name) {
+    SSL_CTX_set_select_certificate_cb(ctx, us_select_cert_cb);
+  }
+  if (ls->ssl_ctx) {
+    us_internal_ssl_ctx_unref(ls->ssl_ctx);
+  }
+  ls->ssl_ctx = ctx;
 }
 
 void us_listen_socket_on_server_name(struct us_listen_socket_t *ls,

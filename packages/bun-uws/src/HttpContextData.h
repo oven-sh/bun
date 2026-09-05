@@ -29,7 +29,6 @@ struct HttpRequest;
 struct Http2Context;
 
 struct HttpFlags {
-    bool isParsingHttp: 1 = false;
     bool rejectUnauthorized: 1 = false;
     bool usingCustomExpectHandler: 1 = false;
     bool requireHostHeader: 1 = true;

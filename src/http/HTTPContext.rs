@@ -583,6 +583,38 @@ impl<const SSL: bool> HTTPContext<SSL> {
         self.init_with_opts(&opts)
     }
 
+    /// Swap this context's `SSL_CTX` for one trusting exactly `certs`
+    /// (`tls.setDefaultCACertificates()`); only new connects see it, empty ⇒
+    /// empty trust store. <https://github.com/nodejs/node/blob/main/lib/tls.js>
+    pub(crate) fn replace_ssl_ctx_with_default_ca(&mut self, certs: &[std::ffi::CString]) {
+        debug_assert!(SSL, "ssl only");
+        let ptrs: Vec<*const core::ffi::c_char> = certs.iter().map(|c| c.as_ptr()).collect();
+        let mut err = uws::create_bun_socket_error_t::none;
+        let opts = uws::SocketContext::BunSocketContextOptions {
+            ca: if ptrs.is_empty() {
+                core::ptr::null()
+            } else {
+                ptrs.as_ptr().cast()
+            },
+            ca_count: u32::try_from(ptrs.len()).expect("int cast"),
+            request_cert: 1,
+            ..Default::default()
+        };
+        let Some(ctx) = opts.create_ssl_context(&mut err) else {
+            return;
+        };
+        if ptrs.is_empty() {
+            // SAFETY: ctx is a live SSL_CTX owned by this function.
+            let ok = unsafe { uws::SocketContext::c::us_ssl_ctx_use_empty_ca_store(ctx.as_ptr()) };
+            if ok == 0 {
+                return;
+            }
+        }
+        // SAFETY: ctx is a live SSL_CTX owned by this function.
+        unsafe { ssl_ctx_setup(ctx.as_ptr()) };
+        self.secure = Some(ctx);
+    }
+
     pub(crate) fn init(&mut self) {
         let owner_ptr = std::ptr::from_mut::<Self>(self).cast::<c_void>();
         self.group

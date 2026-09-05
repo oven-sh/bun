@@ -35,3 +35,12 @@
 # only hold on the distributing model. Passes on macOS and Windows.
 # (Verified still failing on every Linux lane, build 87834.)
 [ LINUX ] test/js/node/test/sequential/test-net-listen-shared-ports.js [ FAIL ] # SO_REUSEPORT shared-listener semantics on Linux
+
+# A stream passed as a child's stdio shares its descriptor with the child
+# (node's 'wrap' stdio). On Windows a net.Socket over a named pipe and a
+# ChildProcess stdin/stdout are libuv pipe handles with no descriptor to
+# share, so spawn() rejects them with ERR_INVALID_ARG_VALUE there. Passes on
+# Linux and macOS. (Verified failing on Windows x64, build 110309.)
+[ WINDOWS ] test/js/node/test/parallel/test-child-process-server-close.js [ FAIL ] # net.Socket as child stdio: no descriptor behind a named-pipe handle
+[ WINDOWS ] test/js/node/test/parallel/test-child-process-stdio-merge-stdouts-into-cat.js [ FAIL ] # ChildProcess stdin as another child's stdout: no descriptor behind a pipe handle
+[ WINDOWS ] test/js/node/test/parallel/test-stdio-pipe-redirect.js [ FAIL ] # ChildProcess stdin as another child's stdout: no descriptor behind a pipe handle

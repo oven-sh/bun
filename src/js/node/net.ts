@@ -141,6 +141,7 @@ const kReinitializeHandle = Symbol("kReinitializeHandle");
 
 const kRealListen = Symbol("kRealListen");
 const kSetNoDelay = Symbol("kSetNoDelay");
+const kAdoptedFd = Symbol("kAdoptedFd");
 const kSetTOS = Symbol("kSetTOS");
 const kSetKeepAlive = Symbol("kSetKeepAlive");
 const kSyncWriteFd = Symbol("kSyncWriteFd");
@@ -621,6 +622,37 @@ function deferEndForOnreadTail(self) {
   return true;
 }
 
+function destroyWithReadError(self, _err) {
+  // A codeless close error that still carries the errno (Windows IOCP
+  // delivers some this way): derive the proper code from it, like Node's
+  // errnoException(nread, 'read'). Raw WSA values (-10054, ...) that the
+  // errno table cannot name fall through to the reset shape below instead
+  // of surfacing "Unknown system error N".
+  let errErrno;
+  if (_err.code === undefined && typeof (errErrno = _err.errno) === "number" && errErrno !== 0) {
+    const er = new ErrnoException(errErrno, "read") as Error & { code?: string };
+    if (typeof er.code === "string" && /^E[A-Z0-9]+$/.test(er.code)) {
+      self.destroy(er);
+      return;
+    }
+  }
+  if (_err.code === undefined || _err.code === "ECONNRESET") {
+    // Shape a reset (or a fully bare close error) like Node's
+    // errnoException(UV_ECONNRESET, 'read').
+    const er = new ConnResetException("read ECONNRESET") as Error & {
+      code: string;
+      errno?: number;
+      syscall?: string;
+    };
+    er.errno = _err.errno ?? (process.platform === "win32" ? -4077 : process.platform === "linux" ? -104 : -54);
+    er.syscall = "read";
+    self.destroy(er);
+  } else {
+    // Any other coded error (ETIMEDOUT, EPIPE, ...) keeps its identity.
+    self.destroy(_err);
+  }
+}
+
 function SocketEmitEndNT(self, _err?) {
   // A read error delivered with the close (e.g. a received RST surfacing as
   // ECONNRESET) is not a clean EOF — Node destroys the socket with the error
@@ -654,37 +686,8 @@ function SocketEmitEndNT(self, _err?) {
     // that race from surfacing as an uncaught exception - the no-listener
     // case is already a documented silent close.
     self.once("error", () => {});
-    let errErrno;
-    if (_err.code === undefined && typeof (errErrno = _err.errno) === "number" && errErrno !== 0) {
-      // A codeless close error that still carries the errno (Windows IOCP
-      // delivers some this way): derive the proper code from it, like Node's
-      // errnoException(nread, 'read'). Raw WSA values (-10054, ...) that the
-      // errno table cannot name fall through to the reset shape below instead
-      // of surfacing "Unknown system error N".
-      const er = new ErrnoException(errErrno, "read") as Error & { code?: string };
-      if (typeof er.code === "string" && /^E[A-Z0-9]+$/.test(er.code)) {
-        self.destroy(er);
-        return;
-      }
-    }
-    if (_err.code === undefined || _err.code === "ECONNRESET") {
-      // Shape a reset (or a fully bare close error) like Node's
-      // errnoException(UV_ECONNRESET, 'read').
-      const er = new ConnResetException("read ECONNRESET") as Error & {
-        code: string;
-        errno?: number;
-        syscall?: string;
-      };
-      er.errno = _err.errno ?? (process.platform === "win32" ? -4077 : process.platform === "linux" ? -104 : -54);
-      er.syscall = "read";
-      self.destroy(er);
-    } else {
-      // Any other coded error (ETIMEDOUT, EPIPE, ...) keeps its identity.
-      self.destroy(_err);
-    }
-    return;
-  }
-  if (!self[kended]) {
+    destroyWithReadError(self, _err);
+  } else if (!self[kended]) {
     finishSocketEnd(self);
   } else if (_err && !self.destroyed) {
     // An error excluded from the synthesis above (teardown noise, or no
@@ -1045,7 +1048,7 @@ const ServerHandlers: SocketHandler<NetSocket> = {
         data.destroy(error);
       } else if (
         data.isServer &&
-        data._rejectUnauthorized &&
+        data._rejectUnauthorized !== false &&
         /peer did not return a certificate/.test(error?.message)
       ) {
         // Ignore server's authorization errors
@@ -1354,16 +1357,23 @@ const SocketHandlers2: SocketHandler<NonNullable<import("node:net").Socket["_han
         // enum values are filtered out in NewSocket::on_close).
         self.destroy(err);
       }
-      return;
+    } else if (!deferEndForOnreadTail(self)) {
+      finishSocketEnd(self);
     }
-    if (!deferEndForOnreadTail(self)) finishSocketEnd(self);
     // A write that was waiting on the native drain can never complete once the
     // socket is gone - fail it so 'finish'/destroy are not stuck behind it
     // (mirrors SocketEmitEndNT).
     const pendingWrite = self[kwriteCallback];
     if (pendingWrite) {
       self[kwriteCallback] = null;
-      pendingWrite($ERR_SOCKET_CLOSED());
+      // Tearing down the SSL engine cancels its queued writes, and node reports
+      // that as errnoException(UV_ECANCELED, 'write', ...) rather than a socket
+      // error. https://github.com/nodejs/node/blob/v26.3.0/src/crypto/crypto_tls.cc#L339
+      pendingWrite(
+        self.encrypted
+          ? new ErrnoException(uv().UV_ECANCELED, "write", "Canceled because of SSL destruction")
+          : $ERR_SOCKET_CLOSED(),
+      );
     }
   },
   handshake(socket, success, verifyError) {
@@ -1619,6 +1629,7 @@ function Socket(options?) {
   // Shut down the socket when we're finished with it.
   this.on("end", onSocketEnd);
 
+  let adoptFd = -1;
   if (options?.fd !== undefined) {
     const { fd } = options;
     validateInt32(fd, "fd", 0);
@@ -1659,6 +1670,16 @@ function Socket(options?) {
           this.read(0);
         }
       }
+    } else if (options.readable === undefined && options.writable === undefined && fd > 0) {
+      // Bare `new net.Socket({ fd })`: adopt pipes/sockets like Node's createHandle.
+      // https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L424-L441
+      let stats;
+      try {
+        stats = require("node:fs").fstatSync(fd);
+      } catch {
+        stats = undefined;
+      }
+      if (stats !== undefined && (stats.isFIFO() || stats.isSocket())) adoptFd = fd;
     }
   }
 
@@ -1789,6 +1810,10 @@ function Socket(options?) {
     }
     this.blockList = optsBlockList;
   }
+
+  if (adoptFd !== -1) {
+    Socket.prototype.connect.$call(this, { fd: adoptFd, pauseOnConnect: this.pauseOnConnect });
+  }
 }
 $toClass(Socket, "Socket", Duplex);
 
@@ -1906,7 +1931,8 @@ Socket.prototype.connect = function connect(...args) {
     if (socket) {
       connection = socket;
     }
-    if (fd != null) {
+    if (fd != null && this[kAdoptedFd] !== fd) {
+      this[kAdoptedFd] = fd;
       doConnect(this._handle, {
         data: this,
         fd: fd,
@@ -1916,6 +1942,7 @@ Socket.prototype.connect = function connect(...args) {
         allowHalfOpen: true,
         pauseOnConnect,
       }).catch(error => {
+        this[kAdoptedFd] = undefined;
         if (!this.destroyed) {
           this.emit("error", error);
           this.emit("close", true);
@@ -2164,6 +2191,7 @@ Socket.prototype._destroy = function _destroy(err, callback) {
   $debug("Socket.prototype._destroy");
 
   this.connecting = false;
+  this[kAdoptedFd] = undefined;
   // Tear down a wrapped generic duplex with this socket: the native handle's
   // close only flushes close_notify and lets the wrapper drain; without an
   // explicit destroy here a late RST on the underlying transport can surface
@@ -3514,8 +3542,9 @@ function Server(options?, connectionListener?) {
 
   this._handle = null as MaybeListener;
   this._usingWorkers = false;
-  this.workers = [];
+  this._workers = [];
   this._unref = false;
+  this._listeningId = 1;
 
   this[bunSocketServerOptions] = undefined;
   // Server option coercion matches Node's Server constructor:
@@ -3565,7 +3594,7 @@ Server.prototype.unref = function unref() {
 };
 
 Server.prototype.close = function close(callback) {
-  this[kClusterListeningId] = (this[kClusterListeningId] || 0) + 1;
+  this._listeningId++;
   if (typeof callback === "function") {
     if (!this._handle) {
       this.once("close", function close() {
@@ -3594,10 +3623,29 @@ Server.prototype.close = function close(callback) {
     this._handle = null;
   }
 
-  this._emitCloseIfDrained();
+  const liveWorkers = this._workers.length;
+  if (this._usingWorkers && liveWorkers > 0) {
+    const onWorkerClose = onWorkerCloseForServer.bind(null, { server: this, left: liveWorkers });
+
+    this._connections++;
+
+    for (let n = 0; n < this._workers.length; n++) {
+      this._workers[n].close(onWorkerClose);
+    }
+  } else {
+    this._emitCloseIfDrained();
+  }
 
   return this;
 };
+
+function onWorkerCloseForServer(state) {
+  if (--state.left !== 0) return;
+
+  const server = state.server;
+  server._connections = 0;
+  server._emitCloseIfDrained();
+}
 
 Server.prototype[Symbol.asyncDispose] = function () {
   // Node resolves immediately when the server is not listening (lib/net.js
@@ -3638,14 +3686,47 @@ Server.prototype.address = function address() {
 };
 
 Server.prototype.getConnections = function getConnections(callback) {
-  if (typeof callback === "function") {
+  if (typeof callback !== "function") return this;
+  // Both paths settle on nextTick like node's end() helper:
+  // https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L2384-L2398
+  if (!this._usingWorkers || this._workers.length === 0) {
     //in Bun case we will never error on getConnections
     //node only errors if in the middle of the couting the server got disconnected, what never happens in Bun
     //if disconnected will only pass null as well and 0 connected
-    callback(null, this._handle ? this._connections : 0);
+    process.nextTick(callback, null, this._handle ? this._connections : 0);
+    return this;
+  }
+  const oncount = onWorkerConnectionCount.bind(null, {
+    callback,
+    left: this._workers.length,
+    total: this._connections,
+  });
+  for (let n = 0; n < this._workers.length; n++) {
+    this._workers[n].getConnections(oncount);
   }
   return this;
 };
+
+function onWorkerConnectionCount(state, err, count) {
+  if (err) {
+    state.left = -1;
+    process.nextTick(state.callback, err);
+    return;
+  }
+  state.total += count;
+  if (--state.left === 0) process.nextTick(state.callback, null, state.total);
+}
+
+Server.prototype._setupWorker = function _setupWorker(socketList) {
+  this._usingWorkers = true;
+  this._workers.push(socketList);
+  socketList.once("exit", onSocketListExit.bind(this));
+};
+
+function onSocketListExit(socketList) {
+  const index = this._workers.indexOf(socketList);
+  this._workers.splice(index, 1);
+}
 
 Server.prototype.listen = function listen(port, hostname, onListen) {
   const argsLength = arguments.length;
@@ -3805,6 +3886,8 @@ Server.prototype.listen = function listen(port, hostname, onListen) {
     throw $ERR_SERVER_ALREADY_LISTEN();
   }
 
+  this._listeningId++;
+
   if (onListen != null) {
     this.once("listening", onListen);
   }
@@ -3963,6 +4046,9 @@ Server.prototype[kRealListen] = function (
   if (addr && typeof addr === "object") {
     const familyLast = String(addr.family).slice(-1);
     this._connectionKey = `${familyLast}:${addr.address}:${port}`;
+  } else if (typeof addr === "string") {
+    // https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L2029
+    this._connectionKey = `-1:${addr}:-1`;
   }
 
   if (contexts) {
@@ -4061,10 +4147,10 @@ function listenInCluster(
     port >= 0 &&
     isIP(address) === 0
   ) {
-    const lookupListeningId = (server[kClusterListeningId] = (server[kClusterListeningId] || 0) + 1);
     // https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L2259-L2278
+    const lookupListeningId = server._listeningId;
     require("node:dns").lookup(address, (err, ip, family) => {
-      if (lookupListeningId !== server[kClusterListeningId]) return;
+      if (lookupListeningId !== server._listeningId) return;
       if (err) {
         // https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L2268-L2269
         server.emit("error", err);
@@ -4124,11 +4210,11 @@ function listenInCluster(
     ...options,
     sharedOnly: tls ? true : undefined,
   };
-  const listeningId = (server[kClusterListeningId] = (server[kClusterListeningId] || 0) + 1);
   // https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L2080-L2102
+  const listeningId = server._listeningId;
   cluster._getServer(server, serverQuery, function listenOnPrimaryHandle(err, handle, _reply) {
-    if (listeningId !== server[kClusterListeningId]) {
-      handle?.close();
+    if (listeningId !== server._listeningId) {
+      handle?.close?.();
       return;
     }
     err = checkBindError(err, port, handle);
@@ -4138,6 +4224,8 @@ function listenInCluster(
       server.emit("error", ex);
       return;
     }
+    // https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L2029
+    server._connectionKey = `${addressType}:${address}:${port}`;
     const sharedFd = handle?.sharedFd;
     if (handle && typeof sharedFd === "number") {
       server[kClusterHandle] = handle;
@@ -4173,7 +4261,6 @@ function listenInCluster(
   });
 }
 
-const kClusterListeningId = Symbol("kClusterListeningId");
 const kClusterHandle = Symbol("kClusterHandle");
 const kClusterUnixPath = Symbol("kClusterUnixPath");
 const kClusterFauxListen = Symbol("kClusterFauxListen");

@@ -12,7 +12,7 @@ use core::ptr::NonNull;
 use std::borrow::Cow;
 
 use crate::api::socket::{TCPSocket, TLSSocket};
-use crate::node::{Encoding, StringOrBuffer};
+use crate::node::{Encoding, Flavor, StringObjects, StringOrBuffer};
 use crate::socket::NativeCallbacks;
 use crate::webcore::AutoFlusher;
 use bstr::BStr;
@@ -6033,8 +6033,18 @@ impl H2FrameParser {
             }
         };
 
-        let buffer = match StringOrBuffer::from_js_with_encoding(global_object, data_arg, encoding)?
-        {
+        let pin_payload = if data_arg.is_cell() && data_arg.js_type().is_array_buffer_like() {
+            Flavor::Async
+        } else {
+            Flavor::Sync
+        };
+        let buffer = match StringOrBuffer::from_js_with_encoding_maybe_async(
+            global_object,
+            data_arg,
+            encoding,
+            pin_payload,
+            StringObjects::Allow,
+        )? {
             Some(b) => b,
             None => {
                 return Err(global_object.throw_invalid_argument_type_value(
@@ -6481,6 +6491,7 @@ impl H2FrameParser {
         };
         let mut _count: u32 = 0;
         let mut it = StreamResumableIterator::init(this);
+        let _dispatch = this.enter_dispatch();
         while let Some(stream) = it.next() {
             // SAFETY: stream is *mut Stream from self.streams; valid while the map entry exists
             let Some(value) = (unsafe { (*stream).js_context.get() }) else {

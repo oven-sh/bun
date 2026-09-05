@@ -1,4 +1,6 @@
 import { describe, expect, test } from "bun:test";
+import { bunRun } from "harness";
+import * as path from "node:path";
 const { HTTPParser, ConnectionsList, methods, allMethods } = process.binding("http_parser");
 const { parsers } = require("node:_http_common");
 
@@ -336,6 +338,12 @@ describe("ConnectionsList", () => {
     // frees the implementation causing remove to not be able
     // to remove it.
     expect(list.all()).toEqual([p1, p4, p3]);
+  });
+
+  test("idle() and expired() skip a closed parser still in the list", async () => {
+    const { stdout, exitCode } = await bunRun(path.join(import.meta.dir, "fixtures", "http-parser-closed-in-list.js"));
+    expect(stdout).toBe("OK");
+    expect(exitCode).toBe(0);
   });
 });
 

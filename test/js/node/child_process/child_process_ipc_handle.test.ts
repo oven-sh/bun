@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isWindows, nodeExe, tempDir, tls } from "harness";
+import { bunEnv, bunExe, bunRun, isWindows, nodeExe, tempDir, tls } from "harness";
+import path from "node:path";
 
 const node = nodeExe();
 
@@ -779,5 +780,38 @@ const server = net.createServer().listen(0, '127.0.0.1', () => {
       stderr: "",
     });
     expect(exitCode).toBe(0);
+  });
+});
+
+describe("NODE_-prefixed user messages", () => {
+  test.concurrent(
+    "a user send with cmd NODE_CLUSTER reaches a plain-fork parent as internalMessage, like node",
+    async () => {
+      const { stdout, stderr, exitCode } = await bunRun(
+        path.join(import.meta.dir, "fixtures", "child-process-ipc-node-cluster-parent.js"),
+      );
+      expect({ got: JSON.parse(stdout), stderr, exitCode }).toEqual({
+        got: [
+          ["internalMessage", { cmd: "NODE_CLUSTER", x: 1 }],
+          ["message", { cmd: "OTHER", y: 2 }],
+        ],
+        stderr: "",
+        exitCode: 0,
+      });
+    },
+  );
+});
+
+describe.skipIf(isWindows)("http listen({ fd })", () => {
+  test.concurrent("adopts fd 0 (inetd-style) and stays alive with nothing else pending", async () => {
+    const { stdout, stderr, exitCode } = await bunRun(
+      path.join(import.meta.dir, "fixtures", "child-process-http-listen-fd0-parent.js"),
+    );
+    expect({ stdout, stderr, exitCode }).toEqual({
+      stdout: expect.stringContaining("child alive: true"),
+      stderr: "",
+      exitCode: 0,
+    });
+    expect(stdout).toContain("response: hello-fd0");
   });
 });

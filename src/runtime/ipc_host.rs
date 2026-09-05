@@ -60,14 +60,33 @@ fn emit_process_error_event(
     Ok(JSValue::UNDEFINED)
 }
 
+fn is_invalid_handle_type(global_object: &JSGlobalObject, ex: JSValue) -> JsResult<bool> {
+    if !ex.is_object() {
+        return Ok(false);
+    }
+    let Some(code) = ex.get(global_object, "code")? else {
+        return Ok(false);
+    };
+    if !code.is_string() {
+        return Ok(false);
+    }
+    Ok(code
+        .to_bun_string(global_object)?
+        .eq_ascii(b"ERR_INVALID_HANDLE_TYPE"))
+}
+
 fn do_send_err(
     global_object: &JSGlobalObject,
     callback: JSValue,
     ex: JSValue,
     from: FromEnum,
+    swallow_errors: bool,
 ) -> JsResult<JSValue> {
     if callback.is_callable() {
         JSValue::call_next_tick_1(callback, global_object, ex)?;
+        return Ok(JSValue::FALSE);
+    }
+    if swallow_errors {
         return Ok(JSValue::FALSE);
     }
     if from == FromEnum::Process {
@@ -94,16 +113,35 @@ pub(crate) fn do_send(
     from: FromEnum,
     peer_pid: u32,
 ) -> JsResult<JSValue> {
-    let [mut message, mut handle, options_, mut callback] = call_frame.arguments_as_array::<4>();
+    do_send_with(ipc, global_object, call_frame, from, peer_pid, false)
+}
+
+/// `legacy_options`: the internal `_send(message, handle, swallowErrors)`
+/// form, where a boolean third argument means `{ swallowErrors }`.
+/// <https://github.com/nodejs/node/blob/v26.3.0/lib/internal/child_process.js#L770-L793>
+fn do_send_with(
+    ipc: Option<&SendQueue>,
+    global_object: &JSGlobalObject,
+    call_frame: &CallFrame,
+    from: FromEnum,
+    peer_pid: u32,
+    legacy_options: bool,
+) -> JsResult<JSValue> {
+    let [mut message, mut handle, mut options_, mut callback] =
+        call_frame.arguments_as_array::<4>();
     #[cfg(not(windows))]
     let _ = peer_pid;
 
     let mut is_internal = IsInternal::External;
+    let mut swallow_errors = false;
     if handle.is_callable() {
         callback = handle;
         handle = JSValue::UNDEFINED;
     } else if options_.is_callable() {
         callback = options_;
+    } else if legacy_options && options_.is_boolean() {
+        swallow_errors = options_.to_boolean();
+        options_ = JSValue::UNDEFINED;
     } else if !options_.is_undefined() {
         global_object.validate_object("options", options_, Default::default())?;
         if options_
@@ -112,6 +150,9 @@ pub(crate) fn do_send(
         {
             is_internal = IsInternal::Internal;
         }
+        swallow_errors = options_
+            .get(global_object, "swallowErrors")?
+            .is_some_and(|v| v.to_boolean());
     }
 
     let connected = ipc.as_ref().is_some_and(|i| i.is_connected());
@@ -129,7 +170,7 @@ pub(crate) fn do_send(
                 format_args!("{}", msg),
             )
             .to_js();
-        return do_send_err(global_object, callback, ex, from);
+        return do_send_err(global_object, callback, ex, from, swallow_errors);
     }
 
     let ipc_data = ipc.unwrap();
@@ -150,10 +191,27 @@ pub(crate) fn do_send(
         ));
     }
 
-    let original_message = message;
     if !handle.is_undefined_or_null() {
+        let target = match from {
+            FromEnum::Process => JSValue::NULL,
+            _ => options_
+                .get(global_object, "$target")?
+                .unwrap_or(JSValue::UNDEFINED),
+        };
         let serialized_array: JSValue =
-            IPC::ipc_serialize(global_object, message, handle, options_)?;
+            match IPC::ipc_serialize(global_object, message, handle, options_, target) {
+                Ok(v) => v,
+                Err(e) => {
+                    if global_object.has_pending_termination_exception() {
+                        return Err(e);
+                    }
+                    let ex = global_object.take_error(e);
+                    if is_invalid_handle_type(global_object, ex)? {
+                        return Err(global_object.throw_value(ex));
+                    }
+                    return do_send_err(global_object, callback, ex, from, swallow_errors);
+                }
+            };
         if serialized_array.is_undefined_or_null() {
             handle = JSValue::UNDEFINED;
         } else {
@@ -169,6 +227,10 @@ pub(crate) fn do_send(
     #[cfg_attr(windows, allow(unused_mut, unused_variables))]
     let mut dup_err: Option<bun_sys::Error> = None;
     if !handle.is_undefined_or_null() {
+        let keep_open = !options_.is_undefined_or_null()
+            && options_
+                .get(global_object, "keepOpen")?
+                .is_some_and(|v| v.to_boolean());
         if let Some(listener) = Listener::from_js(handle) {
             log!("got listener");
             // SAFETY: from_js returned a non-null `*mut Listener`; the JS
@@ -198,10 +260,6 @@ pub(crate) fn do_send(
             let fd = unsafe { (*socket).socket.get().fd() };
             if fd != bun_sys::Fd::INVALID {
                 log!("got tcp socket fd");
-                let keep_open = !options_.is_undefined_or_null()
-                    && options_
-                        .get(global_object, "keepOpen")?
-                        .is_some_and(|v| v.to_boolean());
                 if !keep_open {
                     pause_target = handle;
                 }
@@ -232,6 +290,28 @@ pub(crate) fn do_send(
                     zig_handle = Some(Handle::init(fd, handle));
                 }
             }
+        } else {
+            let raw = bun_jsc::cpp::NodeHTTP__getServerSocketFd(handle);
+            if raw >= 0 {
+                log!("got node:http server socket fd");
+                if !keep_open {
+                    pause_target = handle;
+                }
+                #[cfg(not(windows))]
+                match Handle::init_dup(bun_sys::Fd::from_native(raw as i32), handle, !keep_open) {
+                    Ok(h) => zig_handle = Some(h),
+                    Err(e) => dup_err = Some(e),
+                }
+                #[cfg(windows)]
+                {
+                    let fd = bun_sys::Fd::from_system(raw as usize as *mut core::ffi::c_void);
+                    zig_handle = Some(if keep_open {
+                        Handle::init(fd, handle)
+                    } else {
+                        Handle::init_close_on_complete(fd, handle)
+                    });
+                }
+            }
         }
     }
     // serialize() already detached a non-keepOpen net.Socket; if it is not sent after all, close it
@@ -257,7 +337,13 @@ pub(crate) fn do_send(
     if let Some(e) = dup_err {
         use bun_jsc::SysErrorJsc as _;
         close_detached(global_object, pause_target)?;
-        return do_send_err(global_object, callback, e.to_js(global_object), from);
+        return do_send_err(
+            global_object,
+            callback,
+            e.to_js(global_object),
+            from,
+            swallow_errors,
+        );
     }
 
     #[cfg(windows)]
@@ -270,17 +356,29 @@ pub(crate) fn do_send(
             None => zig_handle = None,
         }
     }
-    if zig_handle.is_none() {
-        message = original_message;
+    if zig_handle.is_none() && !handle.is_undefined_or_null() {
+        use bun_jsc::SysErrorJsc as _;
         close_detached(global_object, pause_target)?;
-        pause_target = JSValue::UNDEFINED;
+        let e = bun_sys::Error::new(bun_sys::E::EBADF, bun_sys::Tag::send);
+        return do_send_err(
+            global_object,
+            callback,
+            e.to_js(global_object),
+            from,
+            swallow_errors,
+        );
     }
 
     let status =
         ipc_data.serialize_and_send(global_object, message, is_internal, callback, zig_handle);
 
-    if status != SerializeAndSendResult::Failure {
-        call_handle_method(global_object, pause_target, "pause")?;
+    if status != SerializeAndSendResult::Failure && pause_target.is_object() {
+        match pause_target.get(global_object, "pause")? {
+            Some(f) if f.is_callable() => {
+                crate::dispatch::fold(f.call(global_object, pause_target, &[]).map(drop));
+            }
+            _ => bun_jsc::cpp::NodeHTTP__pauseServerSocket(pause_target),
+        }
     }
 
     if status == SerializeAndSendResult::Failure {
@@ -291,7 +389,7 @@ pub(crate) fn do_send(
             b"syscall",
             BunString::static_("write").to_js(global_object)?,
         );
-        return do_send_err(global_object, callback, ex, from);
+        return do_send_err(global_object, callback, ex, from, swallow_errors);
     }
 
     // in the success or backoff case, serializeAndSend will handle calling the callback
@@ -360,6 +458,22 @@ pub(crate) fn emit_handle_ipc_message(
 #[bun_jsc::host_fn(export = "Bun__Process__send")]
 fn Bun__Process__send(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     bun_jsc::mark_binding!();
+    process_send(global, frame, false)
+}
+
+/// `process._send`: the internal entry point node's cluster and socket_list
+/// code calls with a boolean `swallowErrors` third argument.
+#[bun_jsc::host_fn(export = "Bun__Process__internalSend")]
+fn Bun__Process__internalSend(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+    bun_jsc::mark_binding!();
+    process_send(global, frame, true)
+}
+
+fn process_send(
+    global: &JSGlobalObject,
+    frame: &CallFrame,
+    legacy_options: bool,
+) -> JsResult<JSValue> {
     let vm = global.bun_vm().as_mut();
     // SAFETY: `get_ipc_instance` returns the live boxed `IPCInstance` (or
     // `None`); the instance is heap-allocated, not embedded in `vm`.
@@ -376,7 +490,14 @@ fn Bun__Process__send(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JS
     };
     #[cfg(not(windows))]
     let peer_pid = 0;
-    do_send(ipc, global, frame, FromEnum::Process, peer_pid)
+    do_send_with(
+        ipc,
+        global,
+        frame,
+        FromEnum::Process,
+        peer_pid,
+        legacy_options,
+    )
 }
 
 // `JSGlobalObject` is an opaque `UnsafeCell`-backed ZST handle, so

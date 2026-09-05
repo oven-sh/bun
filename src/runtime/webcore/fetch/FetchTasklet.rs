@@ -1557,6 +1557,17 @@ impl FetchTasklet {
             ..Default::default()
         };
 
+        if matches!(fail, http::Error::Cert(_)) {
+            // Node/undici attaches the TLS error as `.cause` on the rejected
+            // TypeError; mirror that so ported `err.cause.code` checks work.
+            // https://github.com/nodejs/node/blob/main/lib/internal/deps/undici/undici.js
+            let global = &self.global_this;
+            let cause = fetch_error.clone().to_error_instance(global);
+            let err_js = fetch_error.to_type_error_instance(global);
+            err_js.put(global, b"cause", cause);
+            return BodyValueError::JSValue(StrongOptional::create(err_js, global));
+        }
+
         BodyValueError::SystemTypeError(fetch_error)
     }
 

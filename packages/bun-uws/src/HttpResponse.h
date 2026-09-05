@@ -443,7 +443,7 @@ public:
         }
 
         /* We should only mark this if inside the parser; if upgrading "async" we cannot set this */
-        if (httpContextData->flags.isParsingHttp) {
+        if (httpContextData->parsingSocket == (us_socket_t *) this) {
             /* We need to tell the Http parser that we changed socket */
             httpContextData->upgradedWebSocket = webSocket;
         }

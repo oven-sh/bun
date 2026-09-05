@@ -2167,6 +2167,17 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
         }
 
+        // `Symbol.for(x)` runs ToString(x), which can run user code or throw, unless `x` is a primitive.
+        if e_.can_be_unwrapped_if_unused == E::CallUnwrap::IfUnusedAndToStringSafe
+            && !e_
+                .args
+                .slice()
+                .iter()
+                .all(|arg| arg.unwrap_inlined().is_primitive_literal())
+        {
+            e_.can_be_unwrapped_if_unused = E::CallUnwrap::Never;
+        }
+
         // Handle `feature("FLAG_NAME")` calls from `import { feature } from "bun:bundle"`
         // Check if the bundler_feature_flag_ref is set before calling the function
         // to avoid stack memory usage from copying values back and forth.

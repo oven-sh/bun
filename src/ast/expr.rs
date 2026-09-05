@@ -2385,22 +2385,6 @@ impl Data {
         }
     }
 
-    pub fn is_safe_to_string(&self) -> bool {
-        match self {
-            // rope strings can throw when toString is called.
-            Data::EString(str) => str.next.is_none(),
-
-            Data::ENumber(_)
-            | Data::EBoolean(_)
-            | Data::EBranchBoolean(_)
-            | Data::EUndefined(_)
-            | Data::ENull(_) => true,
-            // BigInt is deliberately excluded as a large enough BigInt could throw an out of memory error.
-            //
-            _ => false,
-        }
-    }
-
     pub fn known_primitive(&self) -> PrimitiveType {
         self.known_primitive_with_check(bun_core::StackCheck::init())
     }

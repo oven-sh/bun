@@ -6343,11 +6343,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 // can be removed. The annotation causes us to ignore the target.
                 if ex.can_be_unwrapped_if_unused != js_ast::CanBeUnwrapped::Never {
                     for arg in ex.args.slice() {
-                        if !(self.expr_can_be_removed_if_unused_without_dce_check(arg)
-                            || (ex.can_be_unwrapped_if_unused
-                                == js_ast::CanBeUnwrapped::IfUnusedAndToStringSafe
-                                && arg.data.is_safe_to_string()))
-                        {
+                        if !self.expr_can_be_removed_if_unused_without_dce_check(arg) {
                             return false;
                         }
                     }
@@ -6359,11 +6355,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 // can be removed. The annotation causes us to ignore the target.
                 if ex.can_be_unwrapped_if_unused != js_ast::CanBeUnwrapped::Never {
                     for arg in ex.args.slice() {
-                        if !(self.expr_can_be_removed_if_unused_without_dce_check(arg)
-                            || (ex.can_be_unwrapped_if_unused
-                                == js_ast::CanBeUnwrapped::IfUnusedAndToStringSafe
-                                && arg.data.is_safe_to_string()))
-                        {
+                        if !self.expr_can_be_removed_if_unused_without_dce_check(arg) {
                             return false;
                         }
                     }

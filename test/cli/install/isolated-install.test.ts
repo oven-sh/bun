@@ -3566,6 +3566,92 @@ describe("global virtual store", () => {
     expect(lstatSync(workspace).isSymbolicLink()).toBe(false);
     expect(await file(edited).text()).toBe("module.exports = 'USER_EDITS';\n");
   });
+
+  test("--omit=peer still links a peer that an ancestor provides", async () => {
+    // `peer-deps-lvl0` depends on `no-deps` and `peer-deps-lvl1`. `peer-deps-lvl1`
+    // depends on `peer-deps-lvl2`. Both lvl1 and lvl2 declare `no-deps` as a peer.
+    // The global store has no hoisted fallback layer, so lvl2 can only reach
+    // `no-deps` through its own store entry.
+    const { packageJson, packageDir } = await registry.createTestDir({ bunfigOpts: gvsBunfigOpts });
+
+    await write(
+      packageJson,
+      JSON.stringify({
+        name: "test-pkg-global-store-omit-peer",
+        dependencies: { "peer-deps-lvl0": "1.0.0" },
+      }),
+    );
+
+    await using proc = spawn({
+      cmd: [bunExe(), "install", "--omit=peer"],
+      cwd: packageDir,
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).not.toContain("error");
+    expect(stdout).toContain("peer-deps-lvl0");
+    expect(exitCode).toBe(0);
+
+    const bunDir = join(packageDir, "node_modules", ".bun");
+    const storeEntries = (await readdirSorted(bunDir)).filter(e => e !== "node_modules");
+    const lvl2 = storeEntries.find(e => e.startsWith("peer-deps-lvl2@1.0.0"));
+    expect(lvl2).toBeDefined();
+    expect(await file(join(bunDir, lvl2!, "node_modules", "no-deps", "package.json")).json()).toMatchObject({
+      name: "no-deps",
+      version: "1.0.0",
+    });
+
+    // Every fixture `index.js` requires each of its dependencies and peers, so
+    // this walks lvl0 -> lvl1 -> lvl2 -> no-deps.
+    await using run = spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `console.log(require("peer-deps-lvl0").dependencies["peer-deps-lvl1"].dependencies["peer-deps-lvl2"].peerDependencies["no-deps"].name)`,
+      ],
+      cwd: packageDir,
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [runStdout, runStderr, runExitCode] = await Promise.all([run.stdout.text(), run.stderr.text(), run.exited]);
+    expect(runStderr).toBe("");
+    expect(runStdout).toBe("no-deps\n");
+    expect(runExitCode).toBe(0);
+  });
+
+  test("--omit=peer does not auto-install a peer that no ancestor provides", async () => {
+    // `peer-deps` declares `no-deps` as a peer and nothing else in the tree
+    // provides it.
+    const { packageJson, packageDir } = await registry.createTestDir({ bunfigOpts: gvsBunfigOpts });
+
+    await write(
+      packageJson,
+      JSON.stringify({
+        name: "test-pkg-global-store-omit-peer-unprovided",
+        dependencies: { "peer-deps": "1.0.0" },
+      }),
+    );
+
+    await using proc = spawn({
+      cmd: [bunExe(), "install", "--omit=peer"],
+      cwd: packageDir,
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).not.toContain("error");
+    expect(stdout).toContain("peer-deps");
+    expect(exitCode).toBe(0);
+
+    const bunDir = join(packageDir, "node_modules", ".bun");
+    const storeEntries = (await readdirSorted(bunDir)).filter(e => e !== "node_modules");
+    expect(storeEntries).toEqual(["peer-deps@1.0.0"]);
+    expect(existsSync(join(bunDir, "peer-deps@1.0.0", "node_modules", "no-deps"))).toBe(false);
+  });
 });
 
 test("rejects dependency aliases that traverse outside node_modules", async () => {

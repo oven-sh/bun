@@ -1037,8 +1037,9 @@ JSC_DEFINE_HOST_FUNCTION(jsMockFunctionCall, (JSGlobalObject * lexicalGlobalObje
     RELEASE_AND_RETURN(scope, invokeMock(globalObject, fn, thisValue, JSC::ArgList(callframe), nullptr));
 }
 
-// `new mockFn(...)`: construct an instance from mockFn.prototype (or newTarget's for subclasses),
-// run the implementation with it as `this`, and return it unless the implementation returned an object.
+// `new mockFn(...)`: construct an instance whose prototype comes from newTarget (mockFn.prototype for
+// a direct `new`), run the implementation with it as `this`, and return it unless the implementation
+// returned an object.
 JSC_DEFINE_HOST_FUNCTION(jsMockFunctionConstruct, (JSGlobalObject * lexicalGlobalObject, CallFrame* callframe))
 {
     Zig::GlobalObject* globalObject = uncheckedDowncast<Zig::GlobalObject>(lexicalGlobalObject);
@@ -1050,15 +1051,15 @@ JSC_DEFINE_HOST_FUNCTION(jsMockFunctionConstruct, (JSGlobalObject * lexicalGloba
         return {};
     }
 
-    JSValue newTarget = callframe->newTarget();
-    JSObject* prototype = globalObject->objectPrototype();
-    if (newTarget.isObject()) {
-        JSValue prototypeValue = asObject(newTarget)->get(globalObject, vm.propertyNames->prototype);
-        RETURN_IF_EXCEPTION(scope, {});
-        if (prototypeValue.isObject())
-            prototype = asObject(prototypeValue);
-    }
-    JSObject* instance = JSC::constructEmptyObject(globalObject, prototype);
+    // GetPrototypeFromConstructor: when newTarget.prototype is not an object, fall back to
+    // Object.prototype of newTarget's realm, not the mock's. createSubclassStructure also caches
+    // the resulting structure on newTarget.
+    JSObject* newTarget = asObject(callframe->newTarget());
+    JSGlobalObject* functionGlobalObject = getFunctionRealm(globalObject, newTarget);
+    RETURN_IF_EXCEPTION(scope, {});
+    Structure* structure = InternalFunction::createSubclassStructure(globalObject, newTarget, functionGlobalObject->objectStructureForObjectConstructor());
+    RETURN_IF_EXCEPTION(scope, {});
+    JSObject* instance = JSC::constructEmptyObject(vm, structure);
     RELEASE_AND_RETURN(scope, invokeMock(globalObject, fn, instance, JSC::ArgList(callframe), instance));
 }
 

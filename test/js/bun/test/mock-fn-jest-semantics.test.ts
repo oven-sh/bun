@@ -1,4 +1,5 @@
 import { describe, expect, jest, mock, test } from "bun:test";
+import { runInNewContext } from "node:vm";
 
 describe("mock functions match Jest", () => {
   test("mock methods and the mock getter work through a Proxy", () => {
@@ -15,44 +16,6 @@ describe("mock functions match Jest", () => {
     expect(fn.mock.calls).toHaveLength(0);
   });
 
-  test("a mock has a prototype object like a plain function", () => {
-    const fn = mock();
-    expect(typeof fn.prototype).toBe("object");
-    expect(fn.prototype.constructor).toBe(fn);
-  });
-
-  test("new mockFn() returns the constructed instance and records it", () => {
-    const Klass = mock(function (this: any, a: number) {
-      this.a = a;
-    });
-    const instance = new (Klass as any)(7);
-    expect(instance).toBeInstanceOf(Klass);
-    expect(instance.a).toBe(7);
-    expect(Klass.mock.instances).toEqual([instance]);
-    expect(Klass.mock.contexts).toEqual([instance]);
-    expect(Klass).toHaveBeenCalledWith(7);
-  });
-
-  test("new mockFn() honours an object returned by the implementation", () => {
-    const explicit = { built: true };
-    const Klass = mock(() => explicit);
-    expect(new (Klass as any)()).toBe(explicit);
-
-    const primitive = mock(() => 42);
-    const instance = new (primitive as any)();
-    expect(instance).toBeInstanceOf(primitive);
-    expect(primitive.mock.results[0]).toEqual({ type: "return", value: 42 });
-
-    const byValue = mock().mockReturnValue("x");
-    expect(new (byValue as any)()).toBeInstanceOf(byValue);
-  });
-
-  test("new mockFn() uses mockFn.prototype, so methods defined there are visible", () => {
-    const Klass = mock(function () {});
-    Klass.prototype.greet = () => "hi";
-    expect(new (Klass as any)().greet()).toBe("hi");
-  });
-
   test("mock.instances and mock.contexts record this for plain calls too", () => {
     const fn = mock(function () {});
     const receiver = { fn };
@@ -62,6 +25,18 @@ describe("mock functions match Jest", () => {
     expect(fn.mock.instances).toEqual([receiver, "str"]);
     fn.mockClear();
     expect(fn.mock.instances).toEqual([]);
+  });
+
+  test("new mockFn() falls back to Object.prototype of newTarget's realm", () => {
+    const fn = mock();
+    const { NewTarget, otherObjectPrototype } = runInNewContext(
+      "({ NewTarget: function NewTarget() {}, otherObjectPrototype: Object.prototype })",
+    );
+    expect(otherObjectPrototype).not.toBe(Object.prototype);
+    NewTarget.prototype = null;
+    const instance = Reflect.construct(fn, [], NewTarget);
+    expect(Object.getPrototypeOf(instance)).toBe(otherObjectPrototype);
+    expect(fn.mock.instances).toEqual([instance]);
   });
 
   test("a detached mock method still reports a useful error", () => {

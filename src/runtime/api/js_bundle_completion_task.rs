@@ -904,9 +904,6 @@ impl CompletionStruct for JSBundleCompletionTask {
 
         transpiler.options.env.behavior = config.env_behavior;
         transpiler.options.env.prefix = Box::from(config.env_prefix.list.as_slice());
-        // `BundleOptions.bundler_feature_flags: Option<Box<StringSet>>` owns
-        // its set, so clone rather than alias `config.features`.
-        transpiler.options.bundler_feature_flags = Some(Box::new(config.features.clone()?));
         if config.force_node_env != options::ForceNodeEnv::Unspecified {
             transpiler.options.force_node_env = config.force_node_env;
         }
@@ -1196,6 +1193,9 @@ impl CompletionStruct for JSBundleCompletionTask {
             conditions: config.conditions.keys().to_vec(),
             // Use the config value, which `configure_bundler` reapplies anyway.
             ignore_dce_annotations: config.ignore_dce_annotations,
+            // Flows into `BundleOptions.bundler_feature_flags` via `from_api`,
+            // and into the macro VM's transpiler through `Macro::init`.
+            feature_flags: config.features.keys().to_vec(),
             drop: config.drop.keys().to_vec(),
             bunfig_path: Box::default(),
             jsx: Some(config.jsx.clone()),

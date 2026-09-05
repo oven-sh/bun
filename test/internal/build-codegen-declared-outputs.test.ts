@@ -27,9 +27,10 @@ import { emitBindgen, emitBindgenV2, registerCodegenRules, type CodegenOutputs }
 import { registerDirStamps } from "../../scripts/build/compile.ts";
 import { resolveConfig, type Config, type Toolchain } from "../../scripts/build/config.ts";
 import { Ninja } from "../../scripts/build/ninja.ts";
+import { quote } from "../../scripts/build/shell.ts";
 import type { Sources } from "../../scripts/glob-sources.ts";
 
-/** A fully-populated fake toolchain; `bun` is the one entry that gets spawned (bindgenv2 list-outputs). */
+/** A fully-populated fake toolchain; `jsRuntime` is the one entry that gets spawned (bindgenv2 list-outputs). */
 function mockToolchain(): Toolchain {
   return {
     cc: "/fake/llvm/bin/clang",
@@ -48,7 +49,8 @@ function mockToolchain(): Toolchain {
     nm: "/fake/llvm/bin/llvm-nm",
     dsymutil: "/fake/llvm/bin/dsymutil",
     bun: bunExe(),
-    jsRuntime: bunExe(),
+    // A shell command prefix, quoted like the one configure makes.
+    jsRuntime: quote(bunExe(), process.platform === "win32"),
     esbuild: "/fake/bin/esbuild",
     ccache: undefined,
     cmake: "/fake/bin/cmake",
@@ -150,8 +152,7 @@ function repoBindFiles(cfg: Config): string[] {
 
 /** Writes the probe .bindv2.ts into `dir` and returns its path. */
 function writeProbe(dir: string, cfg: Config): string {
-  // The "bindgenv2" specifier the real files import is a path mapping in
-  // src/tsconfig.json, which a file outside src/ does not get.
+  // The probe is outside src/, so it imports lib.ts by its absolute path.
   const lib = resolve(cfg.cwd, "src", "codegen", "bindgenv2", "lib.ts");
   const probe = resolve(dir, "probe.bindv2.ts");
   writeFileSync(

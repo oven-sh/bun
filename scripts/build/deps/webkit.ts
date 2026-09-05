@@ -3,7 +3,7 @@
  * tarball's release tag. Override via `--webkit-version=<hash>` to test a
  * branch. From https://github.com/oven-sh/WebKit releases.
  */
-export const WEBKIT_VERSION = "40e43a82a755af3cc9eb4a4e025e4e020a7a3cfd";
+export const WEBKIT_VERSION = "2e2aa2290fac856d6f451ceacb58f7f5b44dd057";
 
 /**
  * WebKit (JavaScriptCore) — the JS engine, with WTF and bmalloc.
@@ -1742,9 +1742,11 @@ function emitWTF(wk: WebKitBuild, flags: WebKitFlags): { objects: string[]; migH
   ];
   const wtfFlags = [...flags.webkitCxx, ...wtfTargetFlags];
   const wtfReady = [...treeReady, ...migOutputs];
+  // Per-file COMPILE_OPTIONS from WTF's CMakeLists: the os_log stream is ARC.
+  const wtfFileFlags = (src: string): string[] => (basename(src) === "OSLogPrintStream.mm" ? ["-fobjc-arc"] : []);
   const objects = [
     ...inTree(join(WTF, "wtf"), [...wtfSourcesCommon, ...wtfSourcesFor(cfg)]).map(src =>
-      cxx(n, cfg, src, { flags: wtfFlags, orderOnlyInputs: wtfReady }),
+      cxx(n, cfg, src, { flags: [...wtfFlags, ...wtfFileFlags(src)], orderOnlyInputs: wtfReady }),
     ),
     ...migSources.map(src =>
       cc(n, cfg, src, { flags: [...flags.webkitC, ...wtfTargetFlags], orderOnlyInputs: wtfReady }),

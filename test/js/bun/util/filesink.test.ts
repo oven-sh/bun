@@ -663,6 +663,100 @@ it("Bun.file(fd).writer() write/end under GC pressure does not crash", async () 
   expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({ stdout: "ok", stderr: "", exitCode: 0 });
 });
 
+// Bun.file(fd).writer() dups the fd and registers the dup with the event loop.
+// When that registration fails, FileSink::setup closed the dup, but the writer
+// still held it in its poll, so tearing the sink down queued a second close of
+// the same fd number on the thread pool. By the time it ran the number usually
+// belonged to someone else (here: the /dev/null fd opened right after), and in
+// debug builds it tripped the EBADF assertion in Closer.
+//
+// Linux-only: the registration failure is provoked through epoll keying its
+// entries on (open file, fd number), so a registration whose fd number is
+// closed from under it survives as long as the file does and the next dup that
+// lands on that number fails with EEXIST. kqueue drops the registration with
+// the fd, so this cannot be set up on macOS.
+it.skipIf(!isLinux)("Bun.file(fd).writer() whose registration fails closes the dup exactly once", async () => {
+  const fifoPath = join(tmpdirSync(), "parking.fifo");
+  mkfifo(fifoPath, 0o666);
+  const src = `
+    const { createSocketPair } = require("bun:internal-for-testing");
+    const fs = require("node:fs");
+    const fifoPath = ${JSON.stringify(fifoPath)};
+    const [sock] = createSocketPair();
+
+    function fdsOf(target) {
+      const { dev, ino } = typeof target === "number" ? fs.fstatSync(target) : fs.statSync(target);
+      const out = [];
+      for (let fd = 0; fd < 64; fd++) {
+        try {
+          const st = fs.fstatSync(fd);
+          if (st.dev === dev && st.ino === ino) out.push(fd);
+        } catch {}
+      }
+      return out;
+    }
+
+    // Park both thread-pool threads (UV_THREADPOOL_SIZE=2): each readFile opens
+    // the FIFO and blocks in read() until the write side is closed below, so a
+    // close queued on the pool by the failing writer() cannot run before we
+    // have reused its fd number. Holding the FIFO open read-write keeps the
+    // opens themselves from blocking; the loop waits for both to have opened.
+    const fifoWriter = fs.openSync(fifoPath, "r+");
+    const parked = [1, 2].map(() => fs.promises.readFile(fifoPath));
+    const parkedBy = performance.now() + 2000;
+    while (fdsOf(fifoPath).length < 3) {
+      if (performance.now() > parkedBy) throw new Error("the two readFile() calls never opened the FIFO");
+      await Bun.sleep(1);
+    }
+
+    const before = fdsOf(sock);
+    const first = Bun.file(sock).writer();
+    const [n, ...extra] = fdsOf(sock).filter(fd => !before.includes(fd));
+    if (n === undefined || extra.length) throw new Error("expected exactly one new dup of the socket");
+
+    // Close the first sink's dup behind its back. sock keeps the socket alive,
+    // so its epoll registration for n outlives the fd number and the next dup
+    // to land on n fails to register.
+    fs.closeSync(n);
+
+    let code;
+    try {
+      Bun.file(sock).writer();
+    } catch (e) {
+      code = e.code;
+    }
+    // The failed writer() closed n; this unrelated fd gets the number back.
+    const reused = fs.openSync("/dev/null", "r");
+
+    fs.closeSync(fifoWriter);
+    const parkedBytes = (await Promise.all(parked)).map(buf => buf.length);
+    // One more round trip through the now-free pool: whatever the failed
+    // writer() queued there has run by the time this resolves.
+    await fs.promises.stat("/dev/null");
+
+    let reusedStillOpen = true;
+    try {
+      fs.fstatSync(reused);
+    } catch {
+      reusedStillOpen = false;
+    }
+    console.log(JSON.stringify({ code, reusedIsN: reused === n, parkedBytes, reusedStillOpen }));
+    // first must outlive the check: ending or collecting it closes n as well.
+    first.unref();
+  `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", src],
+    env: { ...bunEnv, UV_THREADPOOL_SIZE: "2" },
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+    stdout: JSON.stringify({ code: "EEXIST", reusedIsN: true, parkedBytes: [0, 0], reusedStillOpen: true }),
+    stderr: "",
+    exitCode: 0,
+  });
+});
+
 // Skipped on Windows: the Windows FileSink writer hands bytes to uv_fs_write on
 // the libuv threadpool and never registers an AutoFlusher synchronously, so the
 // on_exit drain this suite exercises is a no-op there and every process.exit()

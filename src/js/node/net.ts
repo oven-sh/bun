@@ -3639,10 +3639,7 @@ Server.prototype.address = function address() {
 
 Server.prototype.getConnections = function getConnections(callback) {
   if (typeof callback === "function") {
-    //in Bun case we will never error on getConnections
-    //node only errors if in the middle of the couting the server got disconnected, what never happens in Bun
-    //if disconnected will only pass null as well and 0 connected
-    callback(null, this._handle ? this._connections : 0);
+    process.nextTick(callback, null, this._connections);
   }
   return this;
 };

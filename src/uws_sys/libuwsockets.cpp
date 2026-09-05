@@ -1455,6 +1455,25 @@ size_t uws_req_get_header(uws_req_t *res, const char *lower_case_header,
     return value.length();
   }
 
+  // Header byte length for socket.bytesRead, reconstructed assuming canonical
+  // "Name: Value\r\n" framing (uWS does not expose the parser's consumed offset).
+  size_t uws_req_get_headers_byte_length(uws_req_t *res)
+  {
+    uWS::HttpRequest *uwsReq = (uWS::HttpRequest *)res;
+    // "METHOD URL HTTP/1.x\r\n" = method + 1 + url + 9 + 2
+    auto method = uwsReq->getMethod();
+    auto url = uwsReq->getFullUrl();
+    size_t size = method.length() + 1 + url.length() + 9 + 2;
+    for (auto header : *uwsReq)
+    {
+      // "Name: Value\r\n"
+      size += header.first.length() + 2 + header.second.length() + 2;
+    }
+    // Trailing "\r\n"
+    size += 2;
+    return size;
+  }
+
   size_t uws_req_get_parameter(uws_req_t *res, unsigned short index,
                                const char **dest)
   {

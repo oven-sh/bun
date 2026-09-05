@@ -182,7 +182,7 @@ public:
     // host spawn failed (caller throws).
     static JSWebView* createAndSend(JSC::JSGlobalObject*, JSC::Structure*,
         uint32_t width, uint32_t height, const WTF::String& persistDir,
-        bool stdoutInherit, bool stderrInherit);
+        bool stdoutInherit, bool stderrInherit, bool detached);
 #endif
 
     // Chrome constructor. Lazy-spawns Chrome; stores width/height for the
@@ -195,8 +195,8 @@ public:
     static JSWebView* createChrome(JSC::JSGlobalObject*, JSC::Structure*,
         uint32_t width, uint32_t height, const WTF::String& userDataDir,
         const WTF::String& path, const WTF::Vector<WTF::String>& extraArgv,
-        bool stdoutInherit, bool stderrInherit, const WTF::String& wsUrl = {},
-        bool skipAutoDetect = false);
+        bool stdoutInherit, bool stderrInherit, bool detached,
+        const WTF::String& wsUrl = {}, bool skipAutoDetect = false);
 
     void finishCreation(JSC::VM&);
     static JSC::Structure* createStructure(JSC::VM&, JSC::JSGlobalObject*, JSC::JSValue prototype);

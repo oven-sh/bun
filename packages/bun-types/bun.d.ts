@@ -9339,6 +9339,17 @@ declare module "bun" {
            * — the crash report lands here. @default "ignore"
            */
           stderr?: "inherit" | "ignore";
+          /**
+           * Run the subprocess in its own session (`setsid()`; on Windows a
+           * detached process with no console, as with `Bun.spawn`), so it
+           * has no controlling terminal. Some endpoint-protection / antivirus
+           * hooks write their rejection banner directly to `/dev/tty`,
+           * bypassing stdio redirection — detaching keeps that output off
+           * the parent's terminal. Only affects the first `Bun.WebView` in
+           * the process (subsequent views share the same subprocess).
+           * @default false
+           */
+          detached?: boolean;
         }
       | {
           type: "webkit";
@@ -9351,6 +9362,13 @@ declare module "bun" {
            * Route the host process's stderr to Bun's. @default "ignore"
            */
           stderr?: "inherit" | "ignore";
+          /**
+           * Run the host subprocess in its own session (via `setsid()`), so
+           * it has no controlling terminal. Only affects the first
+           * `Bun.WebView` in the process (subsequent views share the same
+           * subprocess). @default false
+           */
+          detached?: boolean;
         };
 
     /**

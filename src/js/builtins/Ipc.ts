@@ -22,16 +22,9 @@ export function serialize(message, handle, options) {
   if (handle instanceof net.Socket) {
     // Only plain TCP sockets cross processes; a TLS session cannot (node: ERR_INVALID_HANDLE_TYPE).
     if (typeof handle[Symbol.for("::buntls::")] === "function") throw $ERR_INVALID_HANDLE_TYPE();
-    const native = handle._handle;
+    const { kDetachHandle } = require("internal/net/symbols");
+    const native = options?.keepOpen ? handle._handle : handle[kDetachHandle]();
     if (!native) return null;
-    if (!options?.keepOpen) {
-      // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/child_process.js#L120-L148
-      const { server } = handle;
-      if (server) server._connections--;
-      handle.setTimeout(0);
-      native.data = undefined;
-      handle._handle = null;
-    }
     return [native, { cmd: "NODE_HANDLE", msg: message, type: "net.Socket" }];
   }
   if (handle instanceof require("node:dgram").Socket) {

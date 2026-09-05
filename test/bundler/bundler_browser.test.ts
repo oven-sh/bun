@@ -166,6 +166,84 @@ describe("bundler", () => {
       assert(!out.includes("$newPromiseCapability"), "events polyfill must not reference a JSC builtin intrinsic");
     },
   });
+  // The util polyfill is a hand conversion of the npm `util` package. Each of
+  // these exports had a bug from that conversion: an undeclared identifier, a
+  // spread into Function#apply, or a dependency on a Node-only global.
+  itBundled("browser/NodeUtilPolyfill", {
+    files: {
+      "/entry.js": /* js */ `
+        import util, { promisify, callbackify, deprecate, isBuffer, debuglog } from "node:util";
+        import * as utilNamespace from "node:util";
+        import { Buffer } from "node:buffer";
+        import { resolve as resolvePath } from "node:path";
+
+        // A browser has none of these globals. The test runner has them all, so
+        // drop them before the polyfills run. Exit on an unhandled rejection so
+        // that a polyfill reaching for one of them fails fast instead of hanging.
+        const proc = globalThis.process;
+        proc.on("unhandledRejection", err => {
+          console.log("unhandledRejection: " + err.message);
+          proc.exit(1);
+        });
+        delete globalThis.process;
+        delete globalThis.Buffer;
+        delete globalThis.setImmediate;
+        const results = [];
+
+        results.push(await promisify((a, b, cb) => cb(null, a + b))(40, 2));
+        results.push(await promisify(cb => cb(new Error("cb failed")))().then(() => "resolved", e => e.message));
+        const withCustom = () => {};
+        withCustom[promisify.custom] = () => Promise.resolve("custom");
+        results.push(promisify(withCustom) === withCustom[promisify.custom] ? await promisify(withCustom)() : "custom ignored");
+
+        results.push(await new Promise(resolve => callbackify(async x => x * 2)(21, (err, value) => resolve(err + "," + value))));
+        results.push(await new Promise(resolve => callbackify(async () => { throw new Error("rejected"); })(err => resolve(err.message))));
+        results.push(await new Promise(resolve => callbackify(() => Promise.reject(null))(err => resolve(err.message + "," + err.reason))));
+        // As in node, a throw inside the callback is an uncaught exception, not a rejection.
+        const uncaught = new Promise(resolve => proc.once("uncaughtException", err => resolve("uncaughtException: " + err.message)));
+        callbackify(async () => 1)(() => { throw new Error("in callback"); });
+        results.push(await uncaught);
+
+        // Without a process there is no deprecation config: the function comes back as is.
+        const plain = () => {};
+        results.push(deprecate(plain, "old") === plain);
+        // With one, the wrapper warns once and forwards this and the arguments.
+        globalThis.process = proc;
+        const warnings = [];
+        const consoleError = console.error;
+        console.error = msg => warnings.push(msg);
+        const target = { base: 1, old: deprecate(function (a, b) { return this.base + a + b; }, "old is deprecated") };
+        results.push(target.old(2, 3) + "," + target.old(4, 5) + "," + warnings.join("|"));
+        console.error = consoleError;
+        delete globalThis.process;
+
+        results.push([isBuffer(Buffer.from("x")), isBuffer(new Uint8Array(1)), isBuffer(null), isBuffer("str")].join(","));
+        results.push(typeof debuglog("anything"));
+        results.push(resolvePath("relative/x"));
+        const missing = Object.keys(utilNamespace).filter(name => name !== "default" && util[name] !== utilNamespace[name]);
+        results.push("missing from default export: " + missing.join(","));
+        console.log(results.join("\\n"));
+      `,
+    },
+    target: "browser",
+    run: {
+      stdout: [
+        "42",
+        "cb failed",
+        "custom",
+        "null,42",
+        "rejected",
+        "Promise was rejected with a falsy value,null",
+        "uncaughtException: in callback",
+        "true",
+        "6,10,old is deprecated",
+        "true,false,false,false",
+        "function",
+        "/relative/x",
+        "missing from default export: ",
+      ].join("\n"),
+    },
+  });
   itBundled("browser/NodeUrlProtocolTablesIgnorePrototype", {
     files: {
       "/entry.js": /* js */ `

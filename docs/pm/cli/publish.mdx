@@ -7,6 +7,12 @@ import Publish from "/snippets/cli/publish.mdx";
 
 `bun publish` packs your package into a tarball and strips catalog and workspace protocols from the `package.json`, resolving versions if necessary. It then publishes to the registry specified in your configuration files. Both `bunfig.toml` and `.npmrc` files are supported.
 
+<Note>
+  `workspace:*`, `workspace:^`, and `workspace:~` dependencies are replaced with the version of the referenced workspace
+  package, so each workspace package referenced this way needs a `version` field in its `package.json`. Without one,
+  both `bun publish` and `bun pm pack` fail with `Failed to resolve workspace version`.
+</Note>
+
 ```sh terminal icon="terminal"
 ## Publishing the package from the current working directory
 bun publish

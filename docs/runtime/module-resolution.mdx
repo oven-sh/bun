@@ -309,6 +309,12 @@ Bun supports import path re-mapping through TypeScript's [`compilerOptions.paths
 }
 ```
 
+To use a different file instead of your project's `tsconfig.json`, pass `--tsconfig-override`:
+
+```bash terminal icon="terminal"
+bun --tsconfig-override ./tsconfig.custom.json index.ts
+```
+
 Bun also supports [Node.js-style subpath imports](https://nodejs.org/api/packages.html#subpath-imports) in `package.json`, where mapped paths must start with `#`. TypeScript and editors resolve these too, and you can use both mechanisms together.
 
 ```json package.json icon="file-json"

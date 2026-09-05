@@ -1364,6 +1364,43 @@ describe("HTMLRewriter", () => {
     expect(await output.text()).toBe("<div><blink>it worked!</blink></div>");
   });
 
+  it("(from Bun.file().stream()) supports element handlers", async () => {
+    const filePath = join(tmpdirSync(), "html-rewriter-file-stream.html");
+    await Bun.write(filePath, "<p>a</p><p>b</p>");
+    const src = `
+      const out = new HTMLRewriter()
+        .on("p", { element(el) { el.setAttribute("v", "1"); } })
+        .transform(new Response(Bun.file(${JSON.stringify(filePath)}).stream()));
+      process.stdout.write(await out.text());
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", src],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toBe('<p v="1">a</p><p v="1">b</p>');
+    expect(exitCode).toBe(0);
+  });
+
+  it.each([
+    ["Blob", () => new Blob(["<p>a</p><p>b</p>"])],
+    ["Bun.file", () => Bun.file(join(tmpdirSync(), "html-rewriter-disturbed.html"))],
+  ])("throws on a disturbed Response body (%s)", async (name, body) => {
+    const data = body();
+    if (name === "Bun.file") await Bun.write(data, "<p>a</p><p>b</p>");
+    const resp = new Response(data);
+    const rd = resp.body.getReader();
+    await rd.read();
+    rd.releaseLock();
+    expect(resp.bodyUsed).toBe(true);
+    expect(() => new HTMLRewriter().on("p", { element() {} }).transform(resp)).toThrow(
+      expect.objectContaining({ name: "TypeError", message: "Response body already used" }),
+    );
+  });
+
   it("supports attribute iterator", async () => {
     var rewriter = new HTMLRewriter();
     var expected = [

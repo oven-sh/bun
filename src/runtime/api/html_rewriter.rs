@@ -430,6 +430,14 @@ impl HTMLRewriter {
                     global.throw_invalid_arguments(format_args!("Response body already used"))
                 );
             }
+            if matches!(*body_value, webcore::body::Value::Locked(_)) {
+                if let Some(readable) = response.get_body_readable_stream(global) {
+                    if readable.is_disturbed(global) {
+                        return Err(global
+                            .throw_invalid_arguments(format_args!("Response body already used")));
+                    }
+                }
+            }
             let out = self.begin_transform(global, &response, None)?;
             // Check if the returned value is an error and throw it properly
             if let Some(err) = out.to_error() {

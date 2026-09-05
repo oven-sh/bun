@@ -1139,6 +1139,16 @@ export function isDockerEnabled(): boolean {
     return false;
   }
 
+  // The CI runner sets this once test/docker/coordinator.ts is up; it owns the
+  // daemon from then on and waits for it if the agent started the shard before
+  // dockerd finished coming up (routine on the openrc images). Probing the
+  // daemon here as well would fail the whole file at import time during that
+  // window, and costs a `docker info` per file. describeWithContainer() and
+  // test/js/valkey/test-utils.ts already trust the coordinator the same way.
+  if (process.env.BUN_DOCKER_COORDINATOR) {
+    return true;
+  }
+
   try {
     const info = execSync(`"${dockerCLI}" info`, { stdio: ["ignore", "pipe", "inherit"] });
     return info.toString().indexOf("Server Version:") !== -1;

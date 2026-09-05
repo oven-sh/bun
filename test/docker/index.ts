@@ -125,6 +125,104 @@ function serviceFromEnv(service: ServiceName): ServiceInfo | null {
   return info;
 }
 
+/**
+ * One `docker version` round trip. The CLI exits non-zero until the daemon
+ * accepts connections on its socket, so this is the daemon readiness signal.
+ * (`docker compose version` is not: compose is a CLI plugin and succeeds with
+ * no daemon at all, which is why scripts/runner.node.mjs can use it to decide
+ * whether to start the coordinator before the daemon is up.) A daemon that
+ * accepts the connection but never answers would otherwise hang the CLI, and
+ * with it every wait built on this probe, so the CLI is killed after
+ * `timeoutMs` and counted as unreachable; a healthy round trip takes well
+ * under a second.
+ */
+export async function isDockerDaemonReachable(timeoutMs = 10_000): Promise<boolean> {
+  const proc = spawn({
+    cmd: ["docker", "version"],
+    stdout: "ignore",
+    stderr: "ignore",
+    timeout: timeoutMs,
+  });
+  return (await proc.exited) === 0;
+}
+
+export interface DockerDaemonWaitOptions {
+  /** Stop polling, and fail every waiter, once the daemon has stayed unreachable this long. */
+  windowMs: number;
+  /** Delay between probes. */
+  pollMs: number;
+  /** Replaces the `docker version` probe; tests script it. */
+  probe?: () => Promise<boolean>;
+  /** Where the "waiting" / "reachable after Ns" / "giving up" lines go. */
+  log?: (message: string) => void;
+}
+
+/**
+ * Starts polling for the docker daemon and returns `waitFor(capMs)`, which
+ * resolves once a probe has succeeded and rejects if the daemon is still
+ * unreachable after `capMs`, or once `windowMs` has passed in total. Every
+ * caller shares the one poll loop: a rejected `waitFor` does not stop it, so a
+ * caller that retries later gets the daemon as soon as it is up, and callers
+ * arriving after the window has closed fail immediately.
+ *
+ * Linux CI agents can pick up a job before dockerd has finished starting. The
+ * openrc (alpine) images published before scripts/agent.mjs ordered the agent
+ * service after docker routinely start a shard with no /var/run/docker.sock
+ * yet; the daemon usually appears within ~10s, but in builds 97891, 98647,
+ * 98707 and 98746 it was still down 3-4.5 minutes into the job and up by 5-7
+ * minutes, and the coordinator's one-shot probe failed every container-backed
+ * test file in those shards (all in-shard retries included, since they run
+ * within seconds of each other). The boot-ordering fix in agent.mjs is the
+ * primary fix once images are republished; this keeps shards green on the
+ * current images and covers whatever dockerd start-up time is left after it
+ * (the runner's `--- Docker` job section records how often that still
+ * happens). When a probe succeeds on the first try, which is the case on every
+ * systemd image, nothing is logged and `waitFor` costs nothing beyond that
+ * probe.
+ */
+export function waitForDockerDaemon({
+  windowMs,
+  pollMs,
+  probe = isDockerDaemonReachable,
+  log = console.log,
+}: DockerDaemonWaitOptions): (capMs: number) => Promise<void> {
+  const startedAt = Date.now();
+  const unreachableFor = () => `${Math.round((Date.now() - startedAt) / 1000)}s`;
+
+  const ready: Promise<void> = (async () => {
+    if (await probe()) return;
+    log(`docker daemon is not reachable yet; waiting up to ${Math.round(windowMs / 1000)}s for it to come up`);
+    while (Date.now() - startedAt < windowMs) {
+      await Bun.sleep(pollMs);
+      if (await probe()) {
+        log(`docker daemon became reachable after ${unreachableFor()}`);
+        return;
+      }
+    }
+    const message = `Docker daemon still unreachable after ${unreachableFor()} (\`docker version\` kept failing); not waiting for it any longer`;
+    log(message);
+    throw new Error(message);
+  })();
+  // The window can close while no request is waiting; each waiter gets the
+  // rejection through the race below, so it must not also be reported as an
+  // unhandled rejection here.
+  ready.catch(() => {});
+
+  return function waitFor(capMs: number): Promise<void> {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const cap = new Promise<never>((_, reject) => {
+      timer = setTimeout(() => {
+        reject(
+          new Error(
+            `Docker daemon not reachable (unreachable for ${unreachableFor()} so far); gave up waiting for it after ${Math.round(capMs / 1000)}s for this request`,
+          ),
+        );
+      }, capMs);
+    });
+    return Promise.race([ready, cap]).finally(() => clearTimeout(timer));
+  };
+}
+
 interface DockerComposeOptions {
   projectName?: string;
   composeFile?: string;
@@ -174,15 +272,7 @@ class DockerComposeHelper {
   }
 
   async ensureDocker(): Promise<void> {
-    // Check Docker is available
-    const dockerCheck = spawn({
-      cmd: ["docker", "version"],
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-
-    const exitCode = await dockerCheck.exited;
-    if (exitCode !== 0) {
+    if (!(await isDockerDaemonReachable())) {
       throw new Error("Docker is not available. Please ensure Docker is installed and running.");
     }
 

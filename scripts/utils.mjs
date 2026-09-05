@@ -2923,7 +2923,29 @@ export function printEnvironment() {
       startGroup("Docker", () => {
         const shell = which(["sh", "bash"]);
         if (shell) {
-          spawnSync([shell, "-c", "docker ps"], { stdio: "inherit" });
+          const { exitCode } = spawnSync([shell, "-c", "docker ps"], { stdio: "inherit" });
+          if (exitCode !== 0) {
+            // The agent can start the job before the boot has brought dockerd
+            // up (scripts/agent.mjs orders and waits for it on images published
+            // after that change; test/docker/coordinator.ts waits for it on
+            // every image, so this is not fatal). On openrc the service table
+            // shows which boot step the daemon was still behind.
+            if (which("rc-status")) {
+              spawnSync([shell, "-c", "rc-status"], { stdio: "inherit" });
+            }
+            // One line per affected job under a single per-build annotation, so
+            // how often this still happens can be read off builds (and compared
+            // across image publishes) without grepping job logs. Info style:
+            // nothing has failed, and `bun run ci:errors` lists only error-style
+            // annotations.
+            reportAnnotationToBuildKite({
+              context: "docker-daemon-not-up-at-job-start",
+              label: "docker daemon not up at job start",
+              content: `- dockerd was not up when [${getBuildLabel()}](${getBuildUrl()}) started on \`${getHostname()}\`\n`,
+              style: "info",
+              priority: 1,
+            });
+          }
         }
       });
     }

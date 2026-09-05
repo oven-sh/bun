@@ -4096,6 +4096,11 @@ pub(crate) extern "C" fn Blob__dupe(this: &Blob) -> *mut Blob {
 }
 
 #[unsafe(no_mangle)]
+pub(crate) extern "C" fn Blob__isJSDOMFile(this: &Blob) -> bool {
+    this.is_jsdom_file.get()
+}
+
+#[unsafe(no_mangle)]
 pub(crate) extern "C" fn Blob__getFileNameString(this: &Blob) -> BunString {
     this.get_name_string()
         .map_or(BunString::EMPTY, Clone::clone)

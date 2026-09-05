@@ -1,10 +1,12 @@
 //! `Bun.Archive` — tar/tgz pack + extract over libarchive.
 
+use std::borrow::Cow;
 use std::ffi::CString;
 
 use crate::webcore::Blob;
 use crate::webcore::BlobExt as _;
 use crate::webcore::blob::Store;
+use crate::webcore::blob::store::Data as StoreData;
 use bun_core::{self, EncodedSlice, Output, Utf8Bytes, ZBox, strings};
 use bun_glob as glob;
 use bun_jsc::{
@@ -173,14 +175,17 @@ impl Archive {
         // Parse compression options
         let compress = parse_compression_options(global, options_arg)?;
 
-        // For Blob/Archive, ref the existing store (zero-copy)
+        // For a Blob that spans its in-memory store, ref the store (zero-copy).
+        // A sliced or file-backed Blob is read into a store of its own.
         if let Some(blob) = blob_from_js(data_arg) {
-            if let Some(store) = blob.store.get().as_ref() {
+            if let Some(store) = whole_in_memory_store(blob) {
                 return Ok(Box::new(Archive {
                     store: store.clone(),
                     compress,
                 }));
             }
+            let data = blob.read_bytes_sync(global)?.into_owned();
+            return Ok(create_archive(data, compress));
         }
 
         // For ArrayBuffer/TypedArray, copy the data
@@ -270,6 +275,17 @@ fn create_archive(data: Vec<u8>, compress: Compression) -> Box<Archive> {
 #[inline]
 fn blob_from_js(value: JSValue) -> Option<&'static Blob> {
     value.as_class_ref::<Blob>()
+}
+
+/// The blob's store when the blob is a full-span view of an in-memory store,
+/// so an archive can share it instead of copying the bytes. `None` for a
+/// sliced, file-backed, or S3-backed blob.
+fn whole_in_memory_store(blob: &Blob) -> Option<&RefPtr<Store>> {
+    let store = blob.store()?;
+    let is_whole = matches!(store.data, StoreData::Bytes(_))
+        && blob.offset.get() == 0
+        && blob.size.get() >= store.size();
+    is_whole.then_some(store)
 }
 
 /// Shared helper that builds tarball bytes from a JS object
@@ -391,10 +407,14 @@ fn get_entry_data<'a>(
     value: JSValue,
     array_buffer: &'a mut Option<bun_jsc::ArrayBuffer>,
 ) -> JsResult<Utf8Bytes<'a>> {
-    // For Blob, use sharedView (no copy needed). The backing store outlives
-    // the returned slice for the duration of the caller's tarball build.
+    // For an in-memory Blob this borrows the store (no copy needed); the store
+    // outlives the returned slice for the duration of the caller's tarball
+    // build. A `Bun.file()` is read from disk here.
     if let Some(blob) = blob_from_js(value) {
-        return Ok(Utf8Bytes::Borrowed(blob.shared_view()));
+        return Ok(match blob.read_bytes_sync(global)? {
+            Cow::Borrowed(bytes) => Utf8Bytes::Borrowed(bytes),
+            Cow::Owned(bytes) => Utf8Bytes::Owned(bytes),
+        });
     }
 
     // For ArrayBuffer/TypedArray, use view (no copy needed)
@@ -447,16 +467,15 @@ pub fn write(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue
         );
     }
 
-    // For Blobs, use store reference with options compression
+    // For a Blob that spans its in-memory store, use the store reference
+    // (zero-copy) with options compression. A sliced or file-backed Blob is
+    // read first.
     if let Some(blob) = blob_from_js(data_arg) {
-        if let Some(store) = blob.store.get().as_ref() {
-            return start_write_task(
-                global,
-                WriteData::Store(store.clone()),
-                path_slice.slice(),
-                options_compress,
-            );
-        }
+        let data = match whole_in_memory_store(blob) {
+            Some(store) => WriteData::Store(store.clone()),
+            None => WriteData::Owned(blob.read_bytes_sync(global)?.into_owned()),
+        };
+        return start_write_task(global, data, path_slice.slice(), options_compress);
     }
 
     // For ArrayBuffer/TypedArray, copy the data with options compression

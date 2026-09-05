@@ -7,6 +7,7 @@
 use core::cell::Cell;
 use core::ffi::{c_char, c_void};
 use core::ptr::NonNull;
+use std::borrow::Cow;
 
 use bun_jsc::JsCell;
 
@@ -292,6 +293,11 @@ pub trait BlobExt {
         Self: Sized;
     fn transfer(&self);
     fn shared_view_raw(&self) -> *mut [u8];
+    /// The blob's bytes, read on the calling thread: a borrowed view of an
+    /// in-memory store, or the blob's `offset..offset + size` window of a
+    /// `Bun.file()` read from disk. An S3 file has no synchronous read path
+    /// and throws.
+    fn read_bytes_sync(&self, global: &JSGlobalObject) -> JsResult<Cow<'_, [u8]>>;
     fn set_is_ascii_flag(&self, is_all_ascii: bool);
     /// # Safety
     /// `raw_bytes` must be valid for reads for the duration of the call; when
@@ -2468,6 +2474,45 @@ impl BlobExt for Blob {
                 core::ptr::from_mut::<[u8]>(&mut v[off..off + clamped])
             }
             _ => empty(),
+        }
+    }
+
+    fn read_bytes_sync(&self, global: &JSGlobalObject) -> JsResult<Cow<'_, [u8]>> {
+        let Some(store) = self.store() else {
+            return Ok(Cow::Borrowed(b""));
+        };
+        match &store.data {
+            store::Data::Bytes(_) => Ok(Cow::Borrowed(self.shared_view())),
+            store::Data::File(file) => {
+                let mut node_fs = node::fs::NodeFS::default();
+                // `ReadFile` has `Drop`; can't use FRU `..Default::default()`.
+                let mut args = node::fs::args::ReadFile::default();
+                args.path = file.pathlike.clone();
+                args.offset = self.offset.get();
+                // A `Bun.file()` keeps `MAX_SIZE` until something stats it;
+                // only a `.slice()` sets a window to honor.
+                let size = self.size.get();
+                args.max_size = (size != MAX_SIZE).then_some(size);
+                let result = node_fs.read_file_with_options(
+                    &args,
+                    node::fs::Flavor::Sync,
+                    node::fs::ReadFileStringType::NullTerminated,
+                );
+                match result {
+                    Ok(node::fs::ret::ReadFileWithOptions::NullTerminated(bytes)) => {
+                        let mut bytes = bytes.into_vec_with_nul();
+                        bytes.pop();
+                        Ok(Cow::Owned(bytes))
+                    }
+                    Ok(_) => unreachable!(
+                        "ReadFileStringType::NullTerminated always yields the NullTerminated variant"
+                    ),
+                    Err(err) => Err(err.throw(global)),
+                }
+            }
+            store::Data::S3(_) => Err(global.throw_invalid_arguments(format_args!(
+                "S3 files cannot be read synchronously; await file.bytes() first"
+            ))),
         }
     }
 

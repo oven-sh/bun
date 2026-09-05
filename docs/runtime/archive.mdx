@@ -58,6 +58,7 @@ File contents can be:
 
 - **Strings** - Text content
 - **Blobs** - Binary data
+- **`Bun.file()`** - Read from disk
 - **ArrayBufferViews** (such as `Uint8Array`) - Raw bytes
 - **ArrayBuffers** - Raw binary data
 
@@ -68,10 +69,13 @@ const arrayBuffer = new ArrayBuffer(8);
 const archive = new Bun.Archive({
   "text.txt": "Plain text",
   "blob.bin": new Blob([data]),
+  "file.txt": Bun.file("./file.txt"),
   "bytes.bin": new Uint8Array([1, 2, 3, 4]),
   "buffer.bin": arrayBuffer,
 });
 ```
+
+A `Bun.file()` entry is read into memory while the constructor runs. An S3 file cannot be read synchronously: pass `await file.bytes()` instead.
 
 ### Writing Archives to Disk
 

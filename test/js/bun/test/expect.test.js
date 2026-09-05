@@ -932,19 +932,21 @@ describe("expect()", () => {
       }).toThrow(/baz/),
     ).toThrow("/baz/");
 
-    // If matching the message against the RegExp throws, that error propagates
-    // instead of being read as the match result.
+    // If converting the message to a string for the RegExp throws, that error
+    // propagates instead of being read as the match result.
     for (const not of [false, true]) {
-      const re = /bar/;
-      re.test = () => {
-        throw new Error("from test()");
-      };
       expect(() => {
         const e = expect(() => {
-          throw new Error("bar");
+          throw {
+            message: {
+              toString() {
+                throw new Error("from toString()");
+              },
+            },
+          };
         });
-        (not ? e.not : e).toThrow(re);
-      }).toThrow("from test()");
+        (not ? e.not : e).toThrow(/bar/);
+      }).toThrow("from toString()");
     }
 
     expect(() => {
@@ -995,6 +997,36 @@ describe("expect()", () => {
         throw null;
       }).toThrow(err);
     }
+  });
+
+  // jest and vitest call RegExp#test here, which reads and advances lastIndex for /g and /y
+  test_skipIf(!isBun)("toThrow with a global RegExp ignores lastIndex", () => {
+    const re = /oops/g;
+    re.lastIndex = 9;
+    const fn = () => {
+      throw new Error("oops");
+    };
+    expect(fn).toThrow(re);
+    expect(fn).toThrow(re);
+    expect(re.lastIndex).toBe(9);
+    // The message matches, so not.toThrow must reject every time, not only the first.
+    expect(() => expect(fn).not.toThrow(re)).toThrow();
+    expect(() => expect(fn).not.toThrow(re)).toThrow();
+    expect(re.lastIndex).toBe(9);
+  });
+
+  test_skipIf(!isBun)("toThrow with a sticky RegExp matches from index 0", () => {
+    const re = /oops/y;
+    re.lastIndex = 6;
+    const fn = () => {
+      throw new Error("oops");
+    };
+    expect(fn).toThrow(re);
+    expect(fn).toThrow(re);
+    expect(() => {
+      throw new Error("well, oops");
+    }).not.toThrow(re);
+    expect(re.lastIndex).toBe(6);
   });
 
   test("deepEquals derived strings and strings", () => {
@@ -3497,6 +3529,23 @@ describe("expect()", () => {
       expect({ a: "hello world" }).not.toMatchObject({ a: expect.stringMatching("word") });
       expect({ a: "hello world" }).toMatchObject({ a: "hello world" });
       expect({ a: "hello world" }).toMatchObject({ a: expect.stringMatching(/wor/) });
+      // a global RegExp matches regardless of lastIndex and does not advance it
+      const sticky = /wor/g;
+      sticky.lastIndex = 9;
+      expect("hello world").toMatch(sticky);
+      expect("hello world").toMatch(sticky);
+      expect(sticky.lastIndex).toBe(9);
+      expect({ a: "hello world" }).toMatchObject({ a: expect.stringMatching(sticky) });
+      expect(sticky.lastIndex).toBe(9);
+      // a sticky RegExp is matched from index 0, as Jest's `new RegExp(regex)` copy is, whatever lastIndex says
+      const anchored = /wor/y;
+      anchored.lastIndex = 6;
+      expect("hello world").not.toMatch(anchored);
+      expect("world").toMatch(anchored);
+      expect(anchored.lastIndex).toBe(6);
+      expect({ a: "world" }).toMatchObject({ a: expect.stringMatching(anchored) });
+      expect({ a: "hello world" }).not.toMatchObject({ a: expect.stringMatching(anchored) });
+      expect(anchored.lastIndex).toBe(6);
       expect({ a: "hello world" }).not.toMatchObject({ a: expect.stringMatching(/word/) });
       expect({ a: expect.stringMatching("wor") }).toMatchObject({ a: "hello world" });
       expect({ a: expect.stringMatching("word") }).not.toMatchObject({ a: "hello world" });

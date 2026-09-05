@@ -8,6 +8,8 @@
 //! (`$crate`) injected by the `macro_rules!` wrappers in `bun_clap`. Use
 //! `bun_clap::parse_param!` / `bun_clap::param!` / `bun_clap::parse_params!` instead.
 
+#![forbid(unsafe_code)]
+
 use proc_macro::TokenStream;
 use proc_macro2::{Span, TokenStream as TokenStream2};
 use quote::quote;

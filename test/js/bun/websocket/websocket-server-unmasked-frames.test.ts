@@ -115,7 +115,7 @@ describe.concurrent("unmasked client frames", () => {
     raw.socket.write(Buffer.concat([unmaskedFrame(0x1, Buffer.alloc(0)), maskedFrame(0x1, Buffer.from("hi"))]));
     expect(await Promise.race([raw.closed, raw.firstMessage])).toBe("socket-closed-by-server");
     expect(raw.received).toEqual([]);
-    expect(await raw.serverClose).toEqual({ code: 1006, reason: "Received an incorrectly masked frame" });
+    expect(await raw.serverClose).toEqual({ code: 1002, reason: "Received an incorrectly masked frame" });
   });
 
   it("an unmasked text frame is not delivered and fails the connection", async () => {
@@ -125,14 +125,14 @@ describe.concurrent("unmasked client frames", () => {
     raw.socket.write(Buffer.concat([unmaskedFrame(0x1, Buffer.from("hello")), Buffer.from("XYZW")]));
     expect(await Promise.race([raw.closed, raw.firstMessage])).toBe("socket-closed-by-server");
     expect(raw.received).toEqual([]);
-    expect(await raw.serverClose).toEqual({ code: 1006, reason: "Received an incorrectly masked frame" });
+    expect(await raw.serverClose).toEqual({ code: 1002, reason: "Received an incorrectly masked frame" });
   });
 
   it("an unmasked close frame fails the connection instead of completing the handshake", async () => {
     using raw = await connectRaw();
     // Trailing bytes so the parser sees a full server-role header in one read.
     raw.socket.write(Buffer.concat([unmaskedFrame(0x8, Buffer.alloc(0)), Buffer.alloc(4)]));
-    expect(await raw.serverClose).toEqual({ code: 1006, reason: "Received an incorrectly masked frame" });
+    expect(await raw.serverClose).toEqual({ code: 1002, reason: "Received an incorrectly masked frame" });
   });
 
   // The mask bit is in the 2-byte base header. The server must not sit on a
@@ -142,7 +142,7 @@ describe.concurrent("unmasked client frames", () => {
     raw.socket.write(unmaskedFrame(0x1, Buffer.alloc(0)));
     expect(await raw.closed).toBe("socket-closed-by-server");
     expect(raw.received).toEqual([]);
-    expect(await raw.serverClose).toEqual({ code: 1006, reason: "Received an incorrectly masked frame" });
+    expect(await raw.serverClose).toEqual({ code: 1002, reason: "Received an incorrectly masked frame" });
   });
 
   // Control: the same raw client with correct masking is parsed and delivered,

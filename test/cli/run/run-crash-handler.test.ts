@@ -15,6 +15,10 @@ const noReportEnv = { ...bunEnv, BUN_CRASH_REPORT_URL: "", BUN_ENABLE_CRASH_REPO
 // without it the fallback printer has no Rust symbol names to assert on.
 const hasSymbolizer = !!(Bun.which("llvm-symbolizer") || Bun.which("llvm-symbolizer-21"));
 
+// The allocation the `allocError` test hook requests (`js_alloc_error` in
+// src/runtime/api/crash_handler_jsc.rs). The crash report prints it.
+const allocErrorSize = 2n ** 62n;
+
 test.if(isDebug && isLinux && hasSymbolizer)(
   "crash trace starts at the crash site, not inside the crash handler",
   async () => {
@@ -39,6 +43,38 @@ test.if(isDebug && isLinux && hasSymbolizer)(
     // ...not the capture machinery. A mismatched trim anchor used to leave
     // `capture_stack_trace` → `crash_handler` → `panic_impl` as the innermost
     // frames of every report, burying the real crash site.
+    expect(stdout).not.toContain("capture_stack_trace");
+  },
+  60_000, // symbolizing the debug binary takes several seconds
+);
+
+// A failed infallible allocation (`Vec` growth, `Box::new`, ...) reaches std's
+// alloc error handler. Without the alloc error hook std prints "memory
+// allocation of N bytes failed" and calls abort(), so the report said
+// "abort() called" and its trace was seeded inside libc, where the frame
+// pointer walk stops after one frame. The hook reports it as out of memory,
+// with the requested size, and captures the trace while the allocating
+// frame is still on the stack.
+test.if(isDebug && isLinux && hasSymbolizer)(
+  "failed Rust allocation is reported as out of memory with the allocating frame in the trace",
+  async () => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), path.join(import.meta.dir, "fixture-crash.js"), "allocError"],
+      env: noReportEnv,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    // Header on stderr, symbolized frames on stdout (see the test above).
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stderr).toContain(`panic(main thread): Bun ran out of memory (failed to allocate ${allocErrorSize} bytes)`);
+    expect(stderr).not.toContain("abort() called");
+    expect(stderr).not.toContain("memory allocation of");
+    expect(exitCode).not.toBe(0);
+
+    // The trace walks from the alloc error hook through std's handler into
+    // the test hook that made the allocation...
+    expect(stdout).toContain("js_alloc_error");
+    // ...and does not include the capture machinery.
     expect(stdout).not.toContain("capture_stack_trace");
   },
   60_000, // symbolizing the debug binary takes several seconds
@@ -99,6 +135,7 @@ describe.if(isPosix)("terminal signal reflects the crash cause", () => {
   test.each([
     ["panic", "SIGABRT"],
     ["outOfMemory", "SIGABRT"],
+    ["allocError", "SIGABRT"],
     ["segfault", "SIGSEGV"],
     ["abort", "SIGABRT"],
     ["trap", "SIGTRAP"],
@@ -119,6 +156,11 @@ describe.if(isPosix)("terminal signal reflects the crash cause", () => {
       expect(stderr).toContain("Segmentation fault at address");
     } else if (approach === "panic") {
       expect(stderr).toContain("invoked crashByPanic() handler");
+    } else if (approach === "outOfMemory") {
+      expect(stderr).toContain("Bun has run out of memory.");
+    } else if (approach === "allocError") {
+      expect(stderr).toContain(`Bun has run out of memory (failed to allocate ${allocErrorSize} bytes).`);
+      expect(stderr).not.toContain("abort() called");
     } else if (approach === "abort") {
       expect(stderr).toContain("abort() called");
     } else if (approach === "trap") {
@@ -583,52 +625,55 @@ describe.if(isPosix)("process.kill() aimed at the process itself is not reported
 });
 
 describe("automatic crash reporter", () => {
-  for (const approach of ["panic", "segfault", "outOfMemory"]) {
-    test(`${approach} should report`, async () => {
-      let sent = false;
-      const resolve_handler = Promise.withResolvers();
+  const crashed = "oh no: Bun has crashed. This indicates a bug in Bun, not your code";
+  // The uploaded URL is the trace string followed by "/ack". The trace string
+  // ends with the reason; both out-of-memory paths encode it as "9" (see
+  // encode_trace_string in src/crash_handler/lib.rs), which is what tells
+  // bun.report to classify the report as out of memory.
+  test.each([
+    ["panic", crashed, "/ack"],
+    ["segfault", crashed, "/ack"],
+    ["outOfMemory", "oh no: Bun has run out of memory.", "9/ack"],
+    ["allocError", `oh no: Bun has run out of memory (failed to allocate ${allocErrorSize} bytes).`, "9/ack"],
+  ])("%s should report", async (approach, expectedMessage, expectedUrlSuffix) => {
+    const reported = Promise.withResolvers<string>();
 
-      // Self host the crash report backend.
-      using server = Bun.serve({
-        port: 0,
-        fetch(request, server) {
-          expect(request.url).toEndWith("/ack");
-          sent = true;
-          resolve_handler.resolve();
-          return new Response("OK");
-        },
-      });
-
-      const proc = Bun.spawn({
-        cmd: [bunExe(), path.join(import.meta.dir, "fixture-crash.js"), approach],
-        env: mergeWindowEnvs([
-          bunEnv,
-          {
-            BUN_CRASH_REPORT_URL: server.url.toString(),
-            BUN_ENABLE_CRASH_REPORTING: "1",
-            GITHUB_ACTIONS: undefined,
-            CI: undefined,
-          },
-        ]),
-        stdio: ["ignore", "pipe", "pipe"],
-      });
-      const exitCode = await proc.exited;
-      const stderr = await proc.stderr.text();
-      console.log(stderr);
-
-      await resolve_handler.promise;
-
-      expect(exitCode).not.toBe(0);
-      expect(stderr).toContain(server.url.toString());
-      if (approach !== "outOfMemory") {
-        expect(stderr).toContain("oh no: Bun has crashed. This indicates a bug in Bun, not your code");
-      } else {
-        expect(stderr.toLowerCase()).toContain("out of memory");
-        expect(stderr.toLowerCase()).not.toContain("panic");
-      }
-      expect(sent).toBe(true);
+    // Self host the crash report backend.
+    using server = Bun.serve({
+      port: 0,
+      fetch(request) {
+        reported.resolve(request.url);
+        return new Response("OK");
+      },
     });
-  }
+
+    const proc = Bun.spawn({
+      cmd: [bunExe(), path.join(import.meta.dir, "fixture-crash.js"), approach],
+      env: mergeWindowEnvs([
+        bunEnv,
+        {
+          BUN_CRASH_REPORT_URL: server.url.toString(),
+          BUN_ENABLE_CRASH_REPORTING: "1",
+          GITHUB_ACTIONS: undefined,
+          CI: undefined,
+        },
+      ]),
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    const exitCode = await proc.exited;
+    const stderr = await proc.stderr.text();
+    console.log(stderr);
+
+    const reportedUrl = await reported.promise;
+
+    expect(exitCode).not.toBe(0);
+    expect(stderr).toContain(server.url.toString());
+    expect(stderr).toContain(expectedMessage);
+    if (approach === "outOfMemory" || approach === "allocError") {
+      expect(stderr.toLowerCase()).not.toContain("panic");
+    }
+    expect(reportedUrl).toEndWith(expectedUrlSuffix);
+  });
 });
 
 test.if(isWindows)(

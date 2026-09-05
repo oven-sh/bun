@@ -41,6 +41,8 @@ pub struct ExecState {
     pub(crate) error_signal: AtomicBool,
     pub(crate) output_done: AtomicUsize,
     pub(crate) output_count: AtomicUsize,
+    /// A verbose (`-v`) stdout write failed; the removals still happened.
+    pub(crate) output_err: bool,
     pub(crate) tasks_done: usize,
     pub(crate) started: bool,
 }
@@ -49,6 +51,15 @@ impl ExecState {
     #[inline]
     fn output_drained(&self) -> bool {
         self.output_done.load(Ordering::SeqCst) >= self.output_count.load(Ordering::SeqCst)
+    }
+
+    #[inline]
+    fn exit_code(&self) -> ExitCode {
+        if self.err.is_some() || self.output_err {
+            1
+        } else {
+            0
+        }
     }
 }
 
@@ -251,6 +262,7 @@ impl Rm {
                                 error_signal: AtomicBool::new(false),
                                 output_done: AtomicUsize::new(0),
                                 output_count: AtomicUsize::new(0),
+                                output_err: false,
                                 tasks_done: 0,
                                 started: false,
                             });
@@ -358,21 +370,21 @@ impl Rm {
     ) -> Yield {
         let outcome: Option<ExitCode> = match &mut Self::state_mut(interp, cmd).state {
             RmState::Exec(exec) => {
+                if e.is_some() {
+                    exec.output_err = true;
+                }
                 exec.output_done.fetch_add(1, Ordering::SeqCst);
                 if exec.tasks_done >= exec.total_tasks && exec.output_drained() {
-                    Some(if exec.err.is_some() { 1 } else { 0 })
+                    Some(exec.exit_code())
                 } else {
                     None
                 }
             }
             state => {
-                if let Some(err) = &e {
-                    let code = err.get_errno() as ExitCode;
-                    *state = RmState::Err(code);
-                    Some(code)
-                } else {
-                    Some(1)
+                if e.is_some() {
+                    *state = RmState::Err(1);
                 }
+                Some(1)
             }
         };
         drop(e);
@@ -434,13 +446,7 @@ impl Rm {
         };
         if tasks_done >= total && all_out {
             let code = match &Self::state_mut(interp, cmd).state {
-                RmState::Exec(exec) => {
-                    if exec.err.is_some() {
-                        1
-                    } else {
-                        0
-                    }
-                }
+                RmState::Exec(exec) => exec.exit_code(),
                 _ => 0,
             };
             Self::state_mut(interp, cmd).state = RmState::Done { exit_code: code };
@@ -489,13 +495,7 @@ impl Rm {
         };
         if done {
             let code = match &Self::state_mut(interp, cmd).state {
-                RmState::Exec(exec) => {
-                    if exec.err.is_some() {
-                        1
-                    } else {
-                        0
-                    }
-                }
+                RmState::Exec(exec) => exec.exit_code(),
                 _ => 0,
             };
             return Builtin::done(interp, cmd, code);

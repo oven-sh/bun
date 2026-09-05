@@ -6,9 +6,19 @@
  */
 import { $ } from "bun";
 import { afterAll, beforeAll, describe, expect, it, test } from "bun:test";
-import { chmodSync, mkdirSync } from "fs";
+import { chmodSync, mkdirSync, readdirSync } from "fs";
 import { mkdir, rm, stat } from "fs/promises";
-import { bunExe, isPosix, isWindows, rss, runWithErrorPromise, tempDir, tempDirWithFiles, tmpdirSync } from "harness";
+import {
+  bunExe,
+  isLinux,
+  isPosix,
+  isWindows,
+  rss,
+  runWithErrorPromise,
+  tempDir,
+  tempDirWithFiles,
+  tmpdirSync,
+} from "harness";
 import { join, sep } from "path";
 import { createTestBuilder, sortedShellOutput } from "./util";
 const TestBuilder = createTestBuilder(import.meta.path);
@@ -89,6 +99,83 @@ describe("bunshell", () => {
             .runAsTest(cmdstr)
         : "",
     );
+
+    // Every write to /dev/full fails with ENOSPC. Like bash, the builtin exits 1;
+    // the errno is not the exit code (it was 65508 for echo and which, 28 for rm).
+    test.skipIf(!isLinux)("builtins exit 1 when an output write fails", async () => {
+      const exitCodes = {
+        echo: (await $`echo hi > /dev/full`.nothrow()).exitCode,
+        which: (await $`which sh > /dev/full`.nothrow()).exitCode,
+        export: (await $`export FOO=bar; export > /dev/full`.nothrow()).exitCode,
+        cd: (await $`cd /nonexistent-dir 2> /dev/full`.nothrow()).exitCode,
+        rm: (await $`rm 2> /dev/full`.nothrow()).exitCode,
+      };
+      expect(exitCodes).toEqual({ echo: 1, which: 1, export: 1, cd: 1, rm: 1 });
+    });
+
+    // `rm -v` removes the file, then its verbose listing fails to write: the
+    // removal is real but the command must still report the lost output.
+    test.skipIf(!isLinux)("rm -v exits 1 when the verbose write fails", async () => {
+      using dir = tempDir("rm-verbose-dead-stdout", { "a.txt": "", "b.txt": "" });
+      const { exitCode } = await $`rm -v a.txt b.txt > /dev/full`.cwd(String(dir)).nothrow();
+      expect({ exitCode, remaining: readdirSync(String(dir)) }).toEqual({ exitCode: 1, remaining: [] });
+    });
+
+    // The substitution's own status only stands in when it yields no command
+    // name; once it names one, that command's status is $? (bash agrees).
+    test.skipIf(!isPosix)("a command named by a failing substitution reports its own status", async () => {
+      const subproc = (await $`$(echo env; exit 5)`.quiet().nothrow()).exitCode;
+      const builtin = (await $`$(echo true; exit 5)`.quiet().nothrow()).exitCode;
+      const noName = (await $`$(echo; exit 5)`.quiet().nothrow()).exitCode;
+      // The other direction: a substitution that exits 0 must not hide the named command's failure.
+      const failingSubproc = (await $`$(echo "sh -c false")`.quiet().nothrow()).exitCode;
+      expect({ subproc, builtin, noName, failingSubproc }).toEqual({
+        subproc: 0,
+        builtin: 0,
+        noName: 5,
+        failingSubproc: 1,
+      });
+    });
+
+    // `[[ ]]` takes no redirect and `cat` reads stdin, so their failing write
+    // needs the process stdio itself to be /dev/full.
+    test.skipIf(!isLinux)("builtins exit 1 when a write to the process stdio fails", async () => {
+      using dir = tempDir("dead-stdio", {
+        "stderr-dead.ts": `
+          import { $ } from "bun";
+          const glob = import.meta.dir + "/nomatch/*.zz";
+          const condexpr = (await $\`[[ -f \${{ raw: glob }} ]]\`.throws(false)).exitCode;
+          console.log(JSON.stringify({ condexpr }));
+        `,
+        "stdout-dead.ts": `
+          import { $ } from "bun";
+          const cat = (await $\`echo hi | cat\`.throws(false)).exitCode;
+          console.error(JSON.stringify({ cat }));
+        `,
+      });
+      await using stderrDead = Bun.spawn({
+        cmd: [bunExe(), join(String(dir), "stderr-dead.ts")],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: Bun.file("/dev/full"),
+      });
+      // `cat` is a builtin only on Windows unless opted in; without the flag
+      // this would run /bin/cat and never reach the builtin's writer path.
+      await using stdoutDead = Bun.spawn({
+        cmd: [bunExe(), join(String(dir), "stdout-dead.ts")],
+        env: { ...bunEnv, BUN_ENABLE_EXPERIMENTAL_SHELL_BUILTINS: "1" },
+        stdout: Bun.file("/dev/full"),
+        stderr: "pipe",
+      });
+      const [fromStdout, fromStderr, exitA, exitB] = await Promise.all([
+        stderrDead.stdout.text(),
+        stdoutDead.stderr.text(),
+        stderrDead.exited,
+        stdoutDead.exited,
+      ]);
+      expect({ ...JSON.parse(fromStdout), ...JSON.parse(fromStderr) }).toEqual({ condexpr: 1, cat: 1 });
+      expect([exitA, exitB]).toEqual([0, 0]);
+    });
   });
 
   describe("concurrency", () => {
@@ -1315,6 +1402,25 @@ booga"
       expect(exitCode).toBe(0);
     });
 
+    test("cd distinguishes ENOENT from ENOTDIR", async () => {
+      using dir = tempDir("cd-enoent-enotdir", {
+        "afile.txt": "",
+      });
+      const missing = join(String(dir), "does-not-exist");
+      const afile = join(String(dir), "afile.txt");
+
+      {
+        const { stderr, exitCode } = await $`cd ${missing}`.quiet().nothrow();
+        expect(stderr.toString()).toBe(`cd: ${missing}: No such file or directory\n`);
+        expect(exitCode).toBe(1);
+      }
+      {
+        const { stderr, exitCode } = await $`cd ${afile}`.quiet().nothrow();
+        expect(stderr.toString()).toBe(`cd: ${afile}: Not a directory\n`);
+        expect(exitCode).toBe(1);
+      }
+    });
+
     // handleChangeCwdErr's `else` arm previously returned `.failed` without writing
     // to stderr or calling done(), so any errno other than NOTDIR/NOENT/NAMETOOLONG
     // (e.g. EACCES, ELOOP) left the shell promise unresolved forever.
@@ -1325,7 +1431,7 @@ booga"
       chmodSync(noaccess, 0o000);
       try {
         const { stderr, exitCode } = await $`cd ${noaccess}`.quiet().nothrow();
-        expect(stderr.toString()).toBe(`cd: Permission denied: ${noaccess}\n`);
+        expect(stderr.toString()).toBe(`cd: ${noaccess}: Permission denied\n`);
         expect(exitCode).toBe(1);
       } finally {
         chmodSync(noaccess, 0o755);

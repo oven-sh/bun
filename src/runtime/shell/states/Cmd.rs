@@ -27,6 +27,8 @@ pub struct Cmd {
     pub(crate) redirection_fd: Option<*mut CowFd>,
     pub(crate) exec: Exec,
     pub(crate) exit_code: Option<ExitCode>,
+    /// A subprocess stdout/stderr relay read failed, so its output was lost.
+    output_relay_failed: bool,
 }
 
 #[derive(Default, strum::IntoStaticStr)]
@@ -216,6 +218,7 @@ impl Cmd {
             redirection_fd: None,
             exec: Exec::None,
             exit_code: None,
+            output_relay_failed: false,
         }))
     }
 
@@ -436,6 +439,8 @@ impl Cmd {
                 }
             }
         };
+        // The stashed substitution status would otherwise satisfy has_finished() at pipe close.
+        interp.as_cmd_mut(this).exit_code = None;
 
         if let Some(kind) = BuiltinKind::from_argv0(&first_arg) {
             log!("Cmd {} exec builtin={:?}", this, kind);
@@ -933,6 +938,11 @@ impl Cmd {
     // `PipeReader::run_yield` without aliasing `&Interpreter` against
     // `&mut self`.
 
+    #[inline]
+    pub(crate) fn is_done(&self) -> bool {
+        matches!(self.state, CmdState::Done)
+    }
+
     /// True once the command has both an exit code and (for subprocesses)
     /// all buffered stdio closed.
     pub(crate) fn has_finished(&self) -> bool {
@@ -992,8 +1002,8 @@ impl Cmd {
     fn buffered_output_close_stdout(&mut self, err: Option<bun_sys::SystemError>) {
         debug_assert!(matches!(self.exec, Exec::Subproc(_)));
         log!("cmd close buffered stdout");
-        if let Some(e) = err {
-            self.exit_code = Some(e.errno.unsigned_abs() as ExitCode);
+        if err.is_some() {
+            self.fail_output_relay();
         }
         let redirect = self.ast_node().redirect;
         let Exec::Subproc(sub) = &mut self.exec else {
@@ -1028,8 +1038,8 @@ impl Cmd {
     fn buffered_output_close_stderr(&mut self, err: Option<bun_sys::SystemError>) {
         debug_assert!(matches!(self.exec, Exec::Subproc(_)));
         log!("cmd close buffered stderr");
-        if let Some(e) = err {
-            self.exit_code = Some(e.errno.unsigned_abs() as ExitCode);
+        if err.is_some() {
+            self.fail_output_relay();
         }
         let redirect = self.ast_node().redirect;
         let Exec::Subproc(sub) = &mut self.exec else {
@@ -1059,9 +1069,21 @@ impl Cmd {
         child.close_io(StdioKind::Stderr);
     }
 
+    /// Lost relay output turns a successful exit into 1; a known nonzero child status is kept.
+    fn fail_output_relay(&mut self) {
+        self.output_relay_failed = true;
+        if matches!(self.exit_code, None | Some(0)) {
+            self.exit_code = Some(1);
+        }
+    }
+
     /// Called by `ShellSubprocess::on_process_exit`.
     pub(crate) fn on_exit(&mut self, exit_code: ExitCode) {
-        self.exit_code = Some(exit_code);
+        self.exit_code = Some(if exit_code == 0 && self.output_relay_failed {
+            1
+        } else {
+            exit_code
+        });
         let has_finished = self.has_finished();
         log!("cmd exit code={} has_finished={}", exit_code, has_finished);
         if has_finished {

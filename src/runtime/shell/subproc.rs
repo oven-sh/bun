@@ -927,7 +927,8 @@ impl ShellSubprocess {
             // `&mut self` is dead by NLL before `on_exit` re-enters interp.
             let cmd = unsafe { handle.cmd_mut() };
             cmd.base.interrupted |= interrupted;
-            if cmd.exit_code.is_none() {
+            // Already Done means a relay failure finished the Cmd first (fail fast).
+            if !cmd.is_done() {
                 cmd.on_exit(code.into());
             }
         }

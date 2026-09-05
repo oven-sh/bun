@@ -41,56 +41,60 @@ impl URLPath {
 // percent-encoded path, which is the rare case.
 
 pub fn parse(possibly_encoded_pathname_: &[u8]) -> Result<URLPath, bun_url::DecodeError> {
-    let mut decoded_pathname: &[u8] = possibly_encoded_pathname_;
-    let mut decoded_storage: Option<Box<[u8]>> = None;
-    if strings::index_of_char(decoded_pathname, b'%').is_some() {
-        // The in-place decode buffer is capped at 16384 bytes of input.
-        let capped = &possibly_encoded_pathname_[..possibly_encoded_pathname_.len().min(16384)];
+    // Split path from query on the first *literal* '?' before any decoding:
+    // an encoded '%3F' must not start the query, and `QueryStringMap` already
+    // percent-decodes each query name/value exactly once.
+    let question_mark_i = strings::index_of_char(possibly_encoded_pathname_, b'?')
+        .map_or(possibly_encoded_pathname_.len(), |i| i as usize);
+    let raw_path: &[u8] = &possibly_encoded_pathname_[..question_mark_i];
+    let raw_query: &[u8] = &possibly_encoded_pathname_[question_mark_i..];
 
+    let mut decoded_storage: Option<Box<[u8]>> = None;
+
+    // `pathname` is the decoded path followed by the untouched raw query;
+    // `path_end` is where the query begins inside it. When nothing in the path
+    // needs decoding, `pathname` borrows the input directly.
+    let (pathname, path_end): (&[u8], usize) = if strings::index_of_char(raw_path, b'%').is_some() {
+        // The in-place decode buffer is capped at 16384 bytes of input.
+        let capped = &raw_path[..raw_path.len().min(16384)];
+
+        // Validate the path before allocating for the query: a malformed
+        // escape must not allocate query-sized storage first.
         let mut buf: Vec<u8> = Vec::with_capacity(capped.len());
-        let n = PercentEncoding::decode_fault_tolerant::<_, true>(&mut buf, capped)?;
+        // `PRESERVE_STRUCTURE` keeps `%2F`/`%25` encoded so an escaped slash
+        // can't cross a route segment boundary; `QueryStringMap` decodes those
+        // two escapes per captured param value as the single applied decode.
+        let n = PercentEncoding::decode_fault_tolerant::<_, true, true>(&mut buf, capped)?;
         debug_assert!(n as usize <= buf.len());
         buf.truncate(n as usize);
-        // Freeze into a heap-stable Box and park it in `decoded_storage` before
-        // borrowing: the slice fields in the returned URLPath borrow from this
-        // allocation, and the Box is later moved into that same URLPath, so the
-        // borrow is valid for the struct's whole lifetime (Box heap address is
-        // stable across moves). NLL releases the local borrow after the last
-        // use of `decoded_pathname` in the struct-literal field initialisers,
-        // before `_decoded_storage` is moved.
+        // The slicing below assumes a non-empty path with a leading byte to
+        // skip; an input like "%PUBLIC_URL%" (consumed entirely by the
+        // fault-tolerant decoder) decodes to nothing.
+        if buf.is_empty() {
+            buf.push(b'/');
+        }
+        let path_end = buf.len();
+        buf.extend_from_slice(raw_query);
+        // Freeze into a heap-stable Box before borrowing: the URLPath slice
+        // fields borrow this allocation and the Box is moved into that same
+        // URLPath, so the borrow stays valid (Box addresses survive moves).
         decoded_storage = Some(buf.into_boxed_slice());
-        decoded_pathname = decoded_storage.as_deref().unwrap();
-    }
+        (decoded_storage.as_deref().unwrap(), path_end)
+    } else {
+        (possibly_encoded_pathname_, raw_path.len())
+    };
 
-    // The slicing below assumes a non-empty pathname with a leading byte to
-    // skip. An empty input (or an input like "%PUBLIC_URL%" that the fault-
-    // tolerant decoder consumes entirely) would otherwise index out of bounds.
-    if decoded_pathname.is_empty() {
-        decoded_pathname = b"/";
-        decoded_storage = None;
-    }
+    let path_part = &pathname[..path_end];
 
-    let mut question_mark_i: i32 = -1;
     let mut period_i: i32 = -1;
-
     let mut last_slash: i32 = -1;
 
-    let mut i: i32 = i32::try_from(decoded_pathname.len()).expect("int cast") - 1;
+    let mut i: i32 = i32::try_from(path_part.len()).expect("int cast") - 1;
 
     while i >= 0 {
-        let c = decoded_pathname[usize::try_from(i).expect("int cast")];
+        let c = path_part[usize::try_from(i).expect("int cast")];
 
         match c {
-            b'?' => {
-                question_mark_i = question_mark_i.max(i);
-                if question_mark_i < period_i {
-                    period_i = -1;
-                }
-
-                if last_slash > question_mark_i {
-                    last_slash = -1;
-                }
-            }
             b'.' => {
                 period_i = period_i.max(i);
             }
@@ -109,28 +113,16 @@ pub fn parse(possibly_encoded_pathname_: &[u8]) -> Result<URLPath, bun_url::Deco
 
     // .js.map
     //    ^
-    let extname: &[u8] = 'brk: {
-        if question_mark_i > -1 && period_i > -1 {
-            period_i += 1;
-            break 'brk &decoded_pathname[usize::try_from(period_i).expect("int cast")
-                ..usize::try_from(question_mark_i).expect("int cast")];
-        } else if period_i > -1 {
-            period_i += 1;
-            break 'brk &decoded_pathname[usize::try_from(period_i).expect("int cast")..];
-        } else {
-            break 'brk &[];
-        }
+    let extname: &[u8] = if period_i > -1 {
+        &path_part[usize::try_from(period_i + 1).expect("int cast")..]
+    } else {
+        &[]
     };
 
-    // `path` is the pathname without the leading byte and without the query
-    // string. When the input begins with '?' the end index is 0, so clamp the
-    // start to avoid a 1..0 slice.
-    let path_end: usize = if question_mark_i < 0 {
-        decoded_pathname.len()
-    } else {
-        usize::try_from(question_mark_i).expect("int cast")
-    };
-    let mut path: &[u8] = &decoded_pathname[1.min(path_end)..path_end];
+    // `path` is the path part without the leading byte and never includes the
+    // query string. When the input begins with '?' the end index is 0, so
+    // clamp the start to avoid a 1..0 slice.
+    let mut path: &[u8] = &path_part[1.min(path_end)..];
 
     // For a source map (`foo.js.map`), strip the trailing `.map` so the path
     // names the mapped file — but only when an inner extension exists.
@@ -153,18 +145,9 @@ pub fn parse(possibly_encoded_pathname_: &[u8]) -> Result<URLPath, bun_url::Deco
     }
 
     Ok(URLPath {
-        pathname: extend(decoded_pathname),
-        path: extend(if decoded_pathname.len() == 1 {
-            b"."
-        } else {
-            path
-        }),
-        query_string: extend(if question_mark_i > -1 {
-            &decoded_pathname
-                [usize::try_from(question_mark_i).expect("int cast")..decoded_pathname.len()]
-        } else {
-            b""
-        }),
+        pathname: extend(pathname),
+        path: extend(if path_end == 1 { b"." } else { path }),
+        query_string: extend(&pathname[path_end..]),
         _decoded_storage: decoded_storage,
     })
 }

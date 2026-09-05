@@ -972,12 +972,7 @@ impl UDPSocket {
         }
 
         let mut interface: sockaddr_storage = bun_core::ffi::zeroed();
-
-        let Some(socket) = this.socket.get() else {
-            return Err(global_this.throw(format_args!("Socket is closed")));
-        };
-
-        let res = if arguments.len() > 1
+        let iface = if arguments.len() > 1
             && this.parse_addr(global_this, 0, arguments[1], &mut interface)?
         {
             if addr.ss_family != interface.ss_family {
@@ -985,11 +980,17 @@ impl UDPSocket {
                     "Family mismatch between address and interface"
                 )));
             }
-            // `Socket` is an `opaque_ffi!` ZST — `opaque_mut` is the safe deref.
-            uws::udp::Socket::opaque_mut(socket).set_membership(&addr, Some(&interface), drop)
+            Some(&interface)
         } else {
-            uws::udp::Socket::opaque_mut(socket).set_membership(&addr, None, drop)
+            None
         };
+
+        // After the last `parse_addr`: its user `toString` may have closed this socket.
+        let Some(socket) = this.socket.get() else {
+            return Err(global_this.throw(format_args!("Socket is closed")));
+        };
+        // `Socket` is an `opaque_ffi!` ZST — `opaque_mut` is the safe deref.
+        let res = uws::udp::Socket::opaque_mut(socket).set_membership(&addr, iface, drop);
 
         if let Some(err) = get_us_error::<true>(res, bun_sys::Tag::setsockopt) {
             return Err(global_this.throw_value(err.to_js(global_this)));
@@ -1072,12 +1073,7 @@ impl UDPSocket {
         }
 
         let mut interface: sockaddr_storage = bun_core::ffi::zeroed();
-
-        let Some(socket) = this.socket.get() else {
-            return Err(global_this.throw(format_args!("Socket is closed")));
-        };
-
-        let res = if arguments.len() > 2
+        let iface = if arguments.len() > 2
             && this.parse_addr(global_this, 0, arguments[2], &mut interface)?
         {
             if source_addr.ss_family != interface.ss_family {
@@ -1085,21 +1081,22 @@ impl UDPSocket {
                     "Family mismatch among source, group and interface addresses"
                 )));
             }
-            // `Socket` is an `opaque_ffi!` ZST — `opaque_mut` is the safe deref.
-            uws::udp::Socket::opaque_mut(socket).set_source_specific_membership(
-                &source_addr,
-                &group_addr,
-                Some(&interface),
-                drop,
-            )
+            Some(&interface)
         } else {
-            uws::udp::Socket::opaque_mut(socket).set_source_specific_membership(
-                &source_addr,
-                &group_addr,
-                None,
-                drop,
-            )
+            None
         };
+
+        // After the last `parse_addr`: its user `toString` may have closed this socket.
+        let Some(socket) = this.socket.get() else {
+            return Err(global_this.throw(format_args!("Socket is closed")));
+        };
+        // `Socket` is an `opaque_ffi!` ZST — `opaque_mut` is the safe deref.
+        let res = uws::udp::Socket::opaque_mut(socket).set_source_specific_membership(
+            &source_addr,
+            &group_addr,
+            iface,
+            drop,
+        );
 
         if let Some(err) = get_us_error::<true>(res, bun_sys::Tag::setsockopt) {
             return Err(global_this.throw_value(err.to_js(global_this)));

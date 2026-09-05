@@ -1978,15 +1978,37 @@ test.concurrent.each([
   expect(reinstall.exitCode).toBe(0);
 });
 
-// `link:` resolves against the global link dir (same failure without --filter); the error shows the per-target spelling.
-test.concurrent("a link: path is re-spelled relative to the target before it is resolved", async () => {
+// A `link:` value that is not a package name is a path (see bun-link.test.ts): like `file:`, it is relative
+// to the cwd and re-spelled per target. A bare name still means a `bun link` registration and is left alone.
+test.concurrent.each([["link:./vendor/foo"], ["link:vendor/foo"]])(
+  "a link: path (%s) is re-spelled relative to the target",
+  async positional => {
+    const dir = await makeMonorepo();
+    await addVendorFoo(dir);
+    const before = await allPackageJsonTexts(dir);
+
+    const { stderr, exitCode } = await run(["add", positional, "--filter", "api"], dir, { linker: "hoisted" });
+    expect(stderr).not.toContain("error:");
+    expect(exitCode).toBe(0);
+
+    await expectAddedOnlyTo(dir, before, ["api"], "foo", "link:../../vendor/foo");
+    const { workspaces, packages } = await lockfileJson(dir);
+    expect(workspaces["packages/api"].dependencies).toStrictEqual({ foo: "link:../../vendor/foo" });
+    expect(packages.foo[0]).toBe("foo@link:./vendor/foo");
+    expect(await file(join(dir, "node_modules", "foo", "package.json")).json()).toStrictEqual(VENDOR_FOO);
+
+    const frozen = await run(["install", "--frozen-lockfile"], dir, { linker: "hoisted" });
+    expect(frozen.stderr).not.toContain("error:");
+    expect(frozen.exitCode).toBe(0);
+  },
+);
+
+test.concurrent("a link: path that does not exist fails with the per-target spelling and writes nothing", async () => {
   const dir = await makeMonorepo();
-  await addVendorFoo(dir);
   const before = await allPackageJsonTexts(dir);
 
   const { stderr, exitCode } = await run(["add", "link:./vendor/foo", "--filter", "api"], dir);
-  expect(stderr).toContain('error: Package "link:../../vendor/foo" is not linked');
-  expect(stderr).not.toContain('"link:./vendor/foo"');
+  expect(stderr).toContain('Could not find directory "./vendor/foo" for linked dependency "link:../../vendor/foo"');
   expect(exitCode).toBe(1);
 
   expect(await allPackageJsonTexts(dir)).toStrictEqual(before);

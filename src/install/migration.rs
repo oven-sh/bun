@@ -130,7 +130,7 @@ pub fn detect_and_load_other_lockfile<'a>(
                         }
                         MigratePnpmLockfileError::RelativeLinkDependency => {
                             bun_core::warn!(
-                                "Relative link dependencies aren't supported yet. Please follow along at <magenta>https://github.com/oven-sh/bun/issues/23026<r>",
+                                "pnpm-lock.yaml migration does not carry over relative link: dependencies; resolving fresh.",
                             );
                         }
                         MigratePnpmLockfileError::WorkspaceNameMissing => {

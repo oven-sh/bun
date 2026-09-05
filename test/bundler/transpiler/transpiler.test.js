@@ -549,6 +549,30 @@ describe("Bun.Transpiler", () => {
       // Class body "accessor": a newline makes it a field named "accessor" followed by a field.
       exp("class A { accessor\n x = 1 }\nnew A", "class A {\n  accessor;\n  x = 1;\n}\nnew A;\n");
 
+      // Class body "public"/"private"/"protected"/"readonly"/"override": same rule as tsc, a newline
+      // makes each of them a field of that name instead of a modifier of the next member.
+      exp("class A { public\n x = 1 }\nnew A", "class A {\n  public;\n  x = 1;\n}\nnew A;\n");
+      exp("class A { private\n x = 1 }\nnew A", "class A {\n  private;\n  x = 1;\n}\nnew A;\n");
+      exp("class A { protected\n x = 1 }\nnew A", "class A {\n  protected;\n  x = 1;\n}\nnew A;\n");
+      exp("class A { readonly\n x = 1 }\nnew A", "class A {\n  readonly;\n  x = 1;\n}\nnew A;\n");
+      exp("class A extends B { override\n x = 1 }\nnew A", "class A extends B {\n  override;\n  x = 1;\n}\nnew A;\n");
+      exp(
+        "class A { public\n m() { return 1 } }\nnew A().m()",
+        "class A {\n  public;\n  m() {\n    return 1;\n  }\n}\nnew A().m();\n",
+      );
+      exp("class A { readonly\n [k] = 1 }\nnew A", "class A {\n  readonly;\n  [k] = 1;\n}\nnew A;\n");
+      exp("class A { public\n #x = 1 }\nnew A", "class A {\n  public;\n  #x = 1;\n}\nnew A;\n");
+      // "static" still binds across a newline, so only the word on the other side of it is split off.
+      exp("class A { public\n static\n x = 1 }\nnew A", "class A {\n  public;\n  static x = 1;\n}\nnew A;\n");
+      exp("class A { static\n public\n x = 1 }\nnew A", "class A {\n  static public;\n  x = 1;\n}\nnew A;\n");
+      // On the same line they are still modifiers and get erased.
+      exp(
+        "class A extends B { public x = 1; private readonly y = 2; protected override z() {} }",
+        "class A extends B {\n  x = 1;\n  y = 2;\n  z() {}\n}",
+      );
+      exp("class A { public static\n x = 1 }\nnew A", "class A {\n  static x = 1;\n}\nnew A;\n");
+      exp("class A { readonly [key: string]: number }\nnew A", "class A {\n}\nnew A;\n");
+
       // Class body "get"/"set" followed by "*": the asterisk starts a generator; the prior word is a field.
       exp("class A { get\n *x() {} }\nnew A", "class A {\n  get;\n  *x() {}\n}\nnew A;\n");
       exp("class A { set\n *x() {} }\nnew A", "class A {\n  set;\n  *x() {}\n}\nnew A;\n");

@@ -42,6 +42,9 @@ export default [
       integrity: {
         getter: "getIntegrity",
       },
+      keepalive: {
+        getter: "getKeepalive",
+      },
       method: {
         getter: "getMethod",
       },

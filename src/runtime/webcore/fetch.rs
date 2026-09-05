@@ -801,7 +801,9 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
         break 'extract_redirect_type redirect_type;
     };
 
-    // keepalive: boolean | undefined;
+    // keepalive: boolean | undefined — Bun's connection-pooling option, not
+    // the spec's `Request.keepalive`. Requests are skipped so their
+    // same-named prototype accessor (default false) can't disable pooling.
     disable_keepalive = 'extract_disable_keepalive: {
         let objects_to_try = [
             options_object.unwrap_or_default(),
@@ -809,7 +811,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
         ];
 
         for obj in objects_to_try {
-            if !obj.is_empty() {
+            if !obj.is_empty() && obj.as_::<Request>().is_none() {
                 if let Some(keepalive_value) = obj.get(global_this, "keepalive")? {
                     if keepalive_value.is_boolean() {
                         break 'extract_disable_keepalive !keepalive_value.as_boolean();

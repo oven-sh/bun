@@ -78,10 +78,11 @@ export async function installBuildkiteAgent(): Promise<void> {
   await $`rm -rf ${tmp}`;
 }
 
-export async function installSelf(): Promise<void> {
+/** Copy the running tree of these scripts to `dest` (world-readable, so the CI user can run them). */
+export async function installSelf(dest: string = config.installDir): Promise<void> {
   const source = join(import.meta.dir, "..");
-  await $`sudo mkdir -p ${config.installDir}`;
-  await $`sudo rsync -a --delete --chmod=Fa+r,Da+rx ${source}/ ${config.installDir}/`;
+  await $`sudo mkdir -p ${dest}`;
+  await $`sudo rsync -a --delete --chmod=Fa+r,Da+rx ${source}/ ${dest}/`;
 }
 
 export async function bootstrapToolchain(): Promise<void> {

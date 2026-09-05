@@ -3761,7 +3761,8 @@ impl FormDataContext<'_> {
                 joiner.push_static(b"\r\n\r\n");
 
                 if blob.store.get().is_some() {
-                    if blob.size.get() == MAX_SIZE {
+                    // `resolve_size` would zero an S3 entry, which is rejected below.
+                    if blob.size.get() == MAX_SIZE && !blob.is_s3() {
                         blob.resolve_size();
                     }
                     let store = blob
@@ -3771,8 +3772,12 @@ impl FormDataContext<'_> {
                         .expect("infallible: store present");
                     match &store.data {
                         store::Data::S3(_) => {
-                            // TODO: s3
-                            // we need to make this async and use download/downloadSlice
+                            self.failed = true;
+                            let entry_name = name.to_slice();
+                            let _ = global_this.throw_type_error(format_args!(
+                                "FormData entry {} is an S3 file, which cannot be read while serializing the body. Read it first: formData.append(name, new Blob([await s3file.bytes()]), filename)",
+                                bun_core::fmt::quote(entry_name.slice()),
+                            ));
                         }
                         store::Data::File(file) => {
                             // TODO: make this async + lazy

@@ -649,6 +649,25 @@ impl Terminal {
         }
     }
 
+    /// Pump buffered PTY output into the data callback without touching
+    /// slave_fd or ref state. `Subprocess::on_process_exit` calls this for
+    /// pre-created terminals; inline ones use `drain_and_close_slave_fd`.
+    #[cfg(unix)]
+    pub(crate) fn drain_reader(&self) {
+        let flags = self.flags.get();
+        if flags.contains(Flags::CLOSED)
+            || !flags.contains(Flags::READER_STARTED)
+            || flags.contains(Flags::READER_DONE)
+        {
+            return;
+        }
+        self.ref_();
+        let guard = scopeguard::guard((), |()| self.deref_());
+        // SAFETY: single JS thread; see `drain_and_close_slave_fd`.
+        unsafe { (*self.reader.as_ptr()).read() };
+        drop(guard);
+    }
+
     /// Drain buffered pty output, close our slave_fd, then drive the reader to
     /// EOF and unref both polls so the event loop can exit. BSD kernels flush
     /// the output queue on last slave close; holding ours until

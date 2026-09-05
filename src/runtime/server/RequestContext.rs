@@ -3171,6 +3171,20 @@ where
                 if let Some(stream) = readable_stream {
                     *value = Body::Value::Used;
 
+                    if stream.is_disturbed(global_this) {
+                        this.response_body_readable_stream_ref.deinit();
+                        let js_err = global_this
+                            .err(
+                                jsc::ErrorCode::BODY_ALREADY_USED,
+                                format_args!(
+                                    "Response body already used. A Response body can only be sent once; create a new Response for each request."
+                                ),
+                            )
+                            .to_js();
+                        this.run_error_handler(js_err);
+                        return;
+                    }
+
                     if stream.is_locked(global_this) {
                         stream_log!("was locked but it shouldn't be");
                         let err = jsc::SystemError {

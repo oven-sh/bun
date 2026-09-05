@@ -1276,7 +1276,7 @@ mod draft {
             err_generic!(
                 "The current working directory was deleted, so that command didn't work. Please cd into a different directory and try again.",
             );
-        } else if name == b"SystemFdQuotaExceeded" {
+        } else if matches!(name, b"SystemFdQuotaExceeded" | b"ENFILE") {
             #[cfg(unix)]
             {
                 let limit = getrlimit_nofile().map(|l| l.rlim_cur);
@@ -1319,7 +1319,7 @@ mod draft {
                     "<r><red>error<r>: Your computer ran out of file descriptors <d>(<red>SystemFdQuotaExceeded<r><d>)<r>",
                 );
             }
-        } else if name == b"ProcessFdQuotaExceeded" {
+        } else if matches!(name, b"ProcessFdQuotaExceeded" | b"EMFILE") {
             #[cfg(unix)]
             {
                 let limit = getrlimit_nofile().map(|l| l.rlim_cur);

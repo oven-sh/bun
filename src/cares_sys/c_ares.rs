@@ -743,7 +743,12 @@ impl Channel {
             // ENOSERVER, which breaks dns.setServers() (it needs an initialized
             // channel to call ares_set_servers_ports). Letting the 127.0.0.1
             // default stand means setServers() works as the documented workaround.
-            flags: ARES_FLAG_NOCHECKRESP,
+            //
+            // Unlike Node we don't set ARES_FLAG_NOCHECKRESP, so c-ares retries
+            // SERVFAIL/NOTIMP/REFUSED on the next nameserver like glibc (#37377).
+            // flags stays explicit: omitting ARES_OPT_FLAGS would make ares_init
+            // default to ARES_FLAG_EDNS.
+            flags: 0,
             sock_state_cb: Some(on_sock_state::<C>),
             // R-2: `*mut` spelling is signature-only (c-ares stores a `void*`); the
             // callback derefs as shared (`&*const`) and the implementor mutates via
@@ -1812,7 +1817,6 @@ impl Error {
     }
 }
 
-pub(crate) const ARES_FLAG_NOCHECKRESP: c_int = 1 << 7;
 pub(crate) const ARES_OPT_FLAGS: c_int = 1 << 0;
 pub(crate) const ARES_OPT_TRIES: c_int = 1 << 2;
 pub(crate) const ARES_OPT_SOCK_STATE_CB: c_int = 1 << 9;

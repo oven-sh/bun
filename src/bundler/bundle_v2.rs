@@ -5615,6 +5615,13 @@ pub mod bv2_impl {
                                     (*parts_col.add(record.source_index.get() as usize)).len()
                                 } == 0
                                 {
+                                    // The CSS root failed to build. Disable the
+                                    // record so chunk generation treats it like a
+                                    // successful CSS import: the HTML scan removes
+                                    // the source tag (the stored HTML is reused on
+                                    // recovery, when only the CSS rebundles) and
+                                    // the HMR conversion skips the import.
+                                    record.path.is_disabled = true;
                                     record.source_index = Index::INVALID;
                                     continue;
                                 }

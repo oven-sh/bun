@@ -155,6 +155,32 @@ describe("WebSocket proxy API", () => {
     }).toThrow(expect.objectContaining({ name: "SyntaxError", message: "Invalid proxy URL: not-a-valid-url" }));
   });
 
+  // Until this threw, one bad entry made the constructor drop the whole
+  // proxy header set (Proxy-Authorization included) and send the CONNECT
+  // without it, while the same object passed as `headers` throws.
+  test.each([
+    ["a value containing CR LF", { "proxy-authorization": "Basic dXNlcjpwYXNz", "x-extra": "a\r\nx-injected: 1" }],
+    ["a value containing NUL", { "proxy-authorization": "Basic dXNlcjpwYXNz", "x-extra": "a\0b" }],
+    ["a name that is not a token", { "proxy-authorization": "Basic dXNlcjpwYXNz", "x extra": "1" }],
+  ])("rejects proxy headers with %s, with the same error as the headers option", (_, headers) => {
+    function errorFrom(options: object) {
+      let ws: WebSocket;
+      try {
+        ws = new WebSocket(`ws://127.0.0.1:${wsPort}`, options);
+      } catch (e: any) {
+        return { name: e.name, message: e.message };
+      }
+      ws.close();
+      return "constructed without throwing";
+    }
+    const viaHeadersOption = errorFrom({ headers });
+    expect(viaHeadersOption).toEqual({
+      name: "TypeError",
+      message: expect.stringMatching(/has invalid value|Invalid header name/),
+    });
+    expect(errorFrom({ proxy: { url: `http://127.0.0.1:${proxyPort}`, headers } })).toEqual(viaHeadersOption);
+  });
+
   test.each(["socks5", "socks4", "socks5h", "ftp", "ws", "gopher"])(
     "rejects unsupported proxy protocol %s://",
     scheme => {

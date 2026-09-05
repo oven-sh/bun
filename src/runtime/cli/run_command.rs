@@ -1128,8 +1128,22 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         }
         bun_ast::initialize_store();
 
-        // Load bunfig.toml unless disabled by compile flags. Config loading
-        // with execArgv is handled earlier in `Command::start` via `init()`.
+        // An explicit BUN_SYSTEM_CONFIG is honored even when
+        // DISABLE_AUTOLOAD_BUNFIG is set; default-path probing stays off for
+        // standalone binaries. The has_loaded_system_config guard makes this a
+        // no-op when load_config already ran via the execArgv branch.
+        if bun_core::env_var::BUN_SYSTEM_CONFIG
+            .get_not_empty()
+            .is_some()
+        {
+            if let Err(err) = arguments::load_system_bunfig(CommandTag::RunCommand, ctx) {
+                arguments::report_bunfig_load_failure(ctx, err);
+            }
+        }
+
+        // Load project bunfig.toml unless disabled by compile flags. Config
+        // loading with execArgv is handled earlier in `Command::start` via
+        // `init()`.
         if !ctx.debug.loaded_bunfig && !graph.flags.contains(GraphFlags::DISABLE_AUTOLOAD_BUNFIG) {
             arguments::load_config_path(
                 CommandTag::RunCommand,

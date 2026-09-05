@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
-import type { t as T } from "../../../src/codegen/bindgen-lib.ts";
 import type { TypeImpl as TypeImplClass } from "../../../src/codegen/bindgen-lib-internal.ts";
+import type { t as T } from "../../../src/codegen/bindgen-lib.ts";
 
 // `TypeImpl` records the `.bind.ts` file that created each type by walking the
 // stack for the first frame outside src/codegen. bindgen.ts loads every file

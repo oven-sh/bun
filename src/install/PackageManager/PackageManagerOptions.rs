@@ -316,49 +316,56 @@ pub use crate::config_version::ConfigVersion;
 pub use bun_install_types::DependencyGroup;
 pub use bun_install_types::NodeLinker::NodeLinker;
 
-// mkdir -p + open the dir. Callers store the raw `Fd` (`options.global_bin_dir: Fd`).
-pub fn open_global_dir(explicit_global_dir: &[u8]) -> crate::Result<bun_sys::Fd> {
+/// The global directory path by option/env precedence
+/// (`BUN_INSTALL_GLOBAL_DIR` → bunfig `install.globalDir` →
+/// `$BUN_INSTALL/install/global` → `$XDG_CACHE_HOME|$HOME/.bun/install/global`),
+/// computed without touching the filesystem. `None` mirrors
+/// `Error::NoGlobalDirectoryFound`.
+pub fn global_dir_path<'a>(
+    explicit_global_dir: &'a [u8],
+    buf: &'a mut PathBuffer,
+) -> Option<&'a [u8]> {
     use bun_paths::{platform, resolve_path::join_abs_string_buf};
-    use bun_sys::{Dir, OpenDirOptions};
 
     if let Some(home_dir) = env_var::BUN_INSTALL_GLOBAL_DIR.get() {
-        return Dir::cwd()
-            .make_open_path(home_dir, OpenDirOptions::default())
-            .map(|d| d.into_raw())
-            .map_err(Into::into);
+        return Some(home_dir);
     }
 
     if !explicit_global_dir.is_empty() {
-        return Dir::cwd()
-            .make_open_path(explicit_global_dir, OpenDirOptions::default())
-            .map(|d| d.into_raw())
-            .map_err(Into::into);
+        return Some(explicit_global_dir);
     }
 
     if let Some(home_dir) = env_var::BUN_INSTALL.get() {
-        let mut buf = PathBuffer::uninit();
         let parts: [&[u8]; 2] = [b"install", b"global"];
-        let path = join_abs_string_buf::<platform::Auto>(home_dir, &mut buf.0, &parts);
-        return Dir::cwd()
-            .make_open_path(path, OpenDirOptions::default())
-            .map(|d| d.into_raw())
-            .map_err(Into::into);
+        return Some(join_abs_string_buf::<platform::Auto>(
+            home_dir, &mut buf.0, &parts,
+        ));
     }
 
     if let Some(home_dir) = env_var::XDG_CACHE_HOME
         .get()
         .or_else(|| env_var::HOME.get())
     {
-        let mut buf = PathBuffer::uninit();
         let parts: [&[u8]; 3] = [b".bun", b"install", b"global"];
-        let path = join_abs_string_buf::<platform::Auto>(home_dir, &mut buf.0, &parts);
-        return Dir::cwd()
-            .make_open_path(path, OpenDirOptions::default())
-            .map(|d| d.into_raw())
-            .map_err(Into::into);
+        return Some(join_abs_string_buf::<platform::Auto>(
+            home_dir, &mut buf.0, &parts,
+        ));
     }
 
-    Err(crate::Error::NoGlobalDirectoryFound)
+    None
+}
+
+// mkdir -p + open the dir. Callers store the raw `Fd` (`options.global_bin_dir: Fd`).
+pub fn open_global_dir(explicit_global_dir: &[u8]) -> crate::Result<bun_sys::Fd> {
+    use bun_sys::{Dir, OpenDirOptions};
+
+    let mut buf = PathBuffer::uninit();
+    let path = global_dir_path(explicit_global_dir, &mut buf)
+        .ok_or(crate::Error::NoGlobalDirectoryFound)?;
+    Dir::cwd()
+        .make_open_path(path, OpenDirOptions::default())
+        .map(|d| d.into_raw())
+        .map_err(Into::into)
 }
 
 pub(crate) fn open_global_bin_dir(opts_: Option<&Api::BunInstall>) -> crate::Result<bun_sys::Fd> {

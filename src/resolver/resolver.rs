@@ -938,7 +938,11 @@ impl<'a> Resolver<'a> {
     }
 
     pub(crate) fn is_external_pattern(&self, import_path: &[u8]) -> bool {
-        if self.opts.packages == options::Packages::External && is_package_path(import_path) {
+        // "#" subpath imports resolve through the "imports" map first.
+        if self.opts.packages == options::Packages::External
+            && is_package_path(import_path)
+            && !import_path.starts_with(b"#")
+        {
             return true;
         }
         self.matches_user_external_pattern(import_path)
@@ -2564,6 +2568,33 @@ impl<'a> Resolver<'a> {
                     is_self_reference = true;
                 }
             }
+        }
+
+        // "import 'pkg'" when all packages are external, e.g. the target of `"#dep": "dep"`.
+        if kind != ast::ImportKind::EntryPointBuild
+            && kind != ast::ImportKind::EntryPointRun
+            && self.opts.packages == options::Packages::External
+            && is_package_path(import_path)
+        {
+            if let Some(debug) = self.debug_logs.as_mut() {
+                debug.add_note(
+                    b"Marking this path as external because it's a package path".to_vec(),
+                );
+                debug.decrease_indent();
+            }
+            let text = match self.fs_ref().dirname_store.append_slice(import_path) {
+                Ok(text) => text,
+                Err(err) => return MatchStatus::Failure(err),
+            };
+            *out = MatchResult {
+                path_pair: PathPair {
+                    primary: Path::init(text),
+                    secondary: None,
+                },
+                is_external: true,
+                ..Default::default()
+            };
+            return MatchStatus::Success;
         }
 
         let esm_ = crate::package_json::Package::parse(import_path, bufs!(esm_subpath));
@@ -4966,10 +4997,11 @@ impl<'a> Resolver<'a> {
         }
         let imports_map = package_json.imports.as_ref().unwrap();
 
-        if import_path.len() == 1 || import_path.starts_with(b"#/") {
+        // PACKAGE_IMPORTS_RESOLVE, as of nodejs/node#60864: only these two are invalid.
+        if import_path == b"#" || import_path == b"#/" {
             if let Some(debug) = self.debug_logs.as_mut() {
                 debug.add_note_fmt(format_args!(
-                    "The path \"{}\" must not equal \"#\" and must not start with \"#/\"",
+                    "The path \"{}\" must not equal \"#\" or \"#/\"",
                     bstr::BStr::new(import_path)
                 ));
             }

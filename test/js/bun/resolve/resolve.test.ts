@@ -1942,3 +1942,103 @@ describe.concurrent("dot specifiers resolve to the directory index, not a siblin
     expect(exitCode).toBe(0);
   });
 });
+
+// Specifiers that start with "#/" are valid subpath imports since Node.js 25.4
+// (nodejs/node#60864). Only exactly "#" and "#/" are invalid.
+describe.concurrent('package.json "imports" keys that start with "#/"', () => {
+  const fixture = {
+    "package.json": JSON.stringify({
+      name: "app",
+      type: "module",
+      imports: {
+        "#/*": "./src/*",
+        "#/config": "./src/config.js",
+        "#/lib/*": { import: "./src/lib/*.mjs", default: "./src/lib/*.cjs" },
+        "#plain": "./src/plain.js",
+        "#dep": "dep",
+      },
+    }),
+    "src/foo.js": `export const v = 42;`,
+    "src/config.js": `export const config = "config";`,
+    "src/lib/util.mjs": `export const util = "esm";`,
+    "src/lib/util.cjs": `exports.util = "cjs";`,
+    "src/plain.js": `export const plain = "plain";`,
+    "node_modules/dep/package.json": JSON.stringify({ name: "dep", version: "1.0.0" }),
+    "node_modules/dep/index.js": `export const d = "dep";`,
+  };
+
+  it("wildcard, exact, and conditional entries resolve with import", async () => {
+    using dir = tempDir("imports-hash-slash", {
+      ...fixture,
+      "index.js": `
+        import { v } from "#/foo.js";
+        import { config } from "#/config";
+        import { util } from "#/lib/util";
+        import { plain } from "#plain";
+        import { d } from "#dep";
+        const { config: dynamic } = await import("#/config");
+        console.log(JSON.stringify({ v, config, util, plain, d, dynamic }));
+      `,
+    });
+    expect(await runWildcardScript(String(dir), "index.js")).toEqual({
+      stdout: JSON.stringify({ v: 42, config: "config", util: "esm", plain: "plain", d: "dep", dynamic: "config" }),
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  it("wildcard, exact, and conditional entries resolve with require", async () => {
+    using dir = tempDir("imports-hash-slash-cjs", {
+      ...fixture,
+      "index.cjs": `
+        const { v } = require("#/foo.js");
+        const { config } = require("#/config");
+        const { util } = require("#/lib/util");
+        const { plain } = require("#plain");
+        console.log(JSON.stringify({ v, config, util, plain }));
+      `,
+    });
+    expect(await runWildcardScript(String(dir), "index.cjs")).toEqual({
+      stdout: JSON.stringify({ v: 42, config: "config", util: "cjs", plain: "plain" }),
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  it("import.meta.resolve and require.resolve map them to the file", async () => {
+    using dir = tempDir("imports-hash-slash-resolve", {
+      ...fixture,
+      "index.js": `
+        import { createRequire } from "node:module";
+        import { sep } from "node:path";
+        const require = createRequire(import.meta.url);
+        console.log(import.meta.resolve("#/foo.js").endsWith("/src/foo.js"));
+        console.log(require.resolve("#/config").replaceAll(sep, "/").endsWith("/src/config.js"));
+      `,
+    });
+    expect(await runWildcardScript(String(dir), "index.js")).toEqual({
+      stdout: "true\ntrue",
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  it.each(["#", "#/"])("exactly %j is rejected", async (specifier: string) => {
+    using dir = tempDir("imports-hash-slash-invalid", {
+      ...fixture,
+      "index.js": `
+        try {
+          await import(${JSON.stringify(specifier)});
+          console.log("resolved");
+        } catch (e) {
+          console.log(e.code);
+        }
+      `,
+    });
+    expect(await runWildcardScript(String(dir), "index.js")).toEqual({
+      stdout: "ERR_MODULE_NOT_FOUND",
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+});

@@ -4687,8 +4687,26 @@ impl VirtualMachine {
             }
         }
 
+        // A `file:` source (the parent URL in two-arg `import.meta.resolve`)
+        // must become a filesystem path before the resolver walks
+        // `node_modules` from it: percent escapes decode, and on Windows
+        // `file:///C:/x` becomes `C:\x`. If the URL does not parse,
+        // `normalize_source` below strips the prefix as before.
+        let decoded_source;
+        let resolve_source = if source.starts_with_ascii(b"file:/") {
+            decoded_source = bun_url::path_from_file_url(source);
+            if decoded_source.is_dead() {
+                source
+            } else {
+                &decoded_source
+            }
+        } else {
+            source
+        };
+
         let specifier_utf8 = specifier.to_utf8();
-        let source_utf8 = source.to_utf8();
+        let source_utf8 = resolve_source.to_utf8();
+        let normalized_source = normalize_source(source_utf8.slice());
 
         if jsc_vm.plugin_runner.is_some() {
             use bun_bundler::transpiler::PluginRunner;
@@ -4792,7 +4810,7 @@ impl VirtualMachine {
         let resolve_result = jsc_vm._resolve(
             &mut result,
             specifier_utf8.slice(),
-            normalize_source(source_utf8.slice()),
+            normalized_source,
             mode.is_esm(),
             IS_A_FILE_PATH,
         );
@@ -4813,7 +4831,7 @@ impl VirtualMachine {
                 .unwrap_or_else(|| {
                     let printed = crate::ResolveMessage::fmt(
                         specifier_utf8.slice(),
-                        source_utf8.slice(),
+                        normalized_source,
                         err,
                         import_kind,
                     );
@@ -4830,7 +4848,7 @@ impl VirtualMachine {
             return Ok(Err(crate::ResolveMessage::create(
                 global,
                 &msg,
-                source_utf8.slice(),
+                normalized_source,
             )?));
         }
 

@@ -792,9 +792,12 @@ function emitTestFFI(
   const obj = cxx(n, cfg, spec.source, { flags: spec.cxxflags, orderOnlyInputs: webkit.outputs });
   const exe = link(n, cfg, "testFFI", [obj, ...fromDep("WebKit"), ...fromDep("icu"), ...fromDep("mimalloc")], {
     libs: [],
+    // Debug info stripped at link: nothing symbolizes a testFFI crash, and
+    // with full DWARF it is 0.5 GB on the non-LTO lanes' artifacts. (Windows
+    // never gets /DEBUG here, so no PDB either.)
     flags: [
       ...computeTargetLinkFlags(cfg),
-      ...(cfg.darwin ? ["-Wl,-dead_strip"] : cfg.windows ? [] : ["-Wl,--gc-sections"]),
+      ...(cfg.darwin ? ["-Wl,-dead_strip", "-Wl,-S"] : cfg.windows ? [] : ["-Wl,--gc-sections", "-Wl,--strip-debug"]),
       ...spec.ldflags,
       ...systemLibs(cfg),
     ],

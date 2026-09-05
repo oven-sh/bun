@@ -3706,3 +3706,70 @@ describe.concurrent("handler GC tracing (heapStats wrapper-count)", () => {
     });
   }, 30_000);
 });
+
+// The warning is only registered when `idleTimeout` is not passed, so the test
+// has to wait for the default 10 second timeout to fire. uWS sweeps timeouts on
+// a coarse timer, so the close lands a couple of seconds after that.
+test.concurrent(
+  "development mode prints the idle timeout warning when the timeout fires, not at exit",
+  async () => {
+    using dir = tempDir("serve-idle-timeout-warn", {});
+    const stderrPath = path.join(String(dir), "stderr.txt");
+
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        import { readFileSync } from "node:fs";
+        const server = Bun.serve({
+          port: 0,
+          hostname: "127.0.0.1",
+          development: true,
+          async fetch(req) {
+            await req.text();
+            return new Response("ok");
+          },
+        });
+        await Bun.connect({
+          hostname: "127.0.0.1",
+          port: server.port,
+          socket: {
+            open(socket) {
+              // A POST whose body never completes. The server times it out
+              // after the default idleTimeout and closes the socket.
+              socket.write("POST / HTTP/1.1\\r\\nHost: x\\r\\nContent-Length: 100\\r\\n\\r\\nabc");
+            },
+            data() {},
+            error() {},
+            close() {
+              // The server runs the timeout handler before it closes the
+              // socket. Whatever the handler wrote to stderr must already be
+              // in the file by the time the client sees the close.
+              console.log(JSON.stringify({ stderrAtClose: readFileSync(process.env.STDERR_PATH, "utf8") }));
+              server.stop(true);
+            },
+          },
+        });
+      `,
+      ],
+      env: { ...bunEnv, STDERR_PATH: stderrPath },
+      stdout: "pipe",
+      stderr: Bun.file(stderrPath),
+    });
+
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    const warning = "[Bun.serve]: request timed out after 10 seconds. Pass `idleTimeout` to configure.\n";
+
+    expect({
+      out: JSON.parse(stdout.trim() || "null"),
+      stderrAtExit: await Bun.file(stderrPath).text(),
+      exitCode,
+    }).toEqual({
+      out: { stderrAtClose: warning },
+      stderrAtExit: warning,
+      exitCode: 0,
+    });
+  },
+  30_000,
+);

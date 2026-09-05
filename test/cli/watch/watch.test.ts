@@ -2,8 +2,8 @@ import type { Subprocess } from "bun";
 import { spawn } from "bun";
 import { afterEach, expect, it } from "bun:test";
 import { bunEnv, bunExe, isBroken, isLinux, isWindows, tempDir, tmpdirSync } from "harness";
-import { readdirSync, rmSync } from "node:fs";
-import { join } from "node:path";
+import { copyFileSync, readdirSync, renameSync, rmSync } from "node:fs";
+import { basename, join } from "node:path";
 
 let watchee: Subprocess;
 
@@ -258,6 +258,73 @@ int pthread_create(pthread_t *t, const pthread_attr_t *a, void *(*f)(void *), vo
   expect(stderr).toContain("Failed to start File Watcher: EAGAIN");
   expect(stdout).not.toContain("unreachable");
   expect(exitCode).not.toBe(0);
+});
+
+// A --watch reload re-execs the executable the session was started from. The
+// two tests below start the session from a private copy of the executable,
+// kept outside the watched directory, so that they can remove or replace it
+// between the first run and the reload.
+const ENTRY_FIRST = `console.log("iter first"); setInterval(() => {}, 1000);`;
+const ENTRY_SECOND = `console.log("iter second"); setInterval(() => {}, 1000);`;
+function spawnWatchFromCopiedExe(dir: string) {
+  const exe = join(dir, basename(bunExe()));
+  copyFileSync(bunExe(), exe);
+  const proc = spawn({
+    // --debug-crash-handler-use-trace-string skips the debug build's slow
+    // backtrace symbolication, so a reload that crashes fails these tests
+    // quickly instead of timing out.
+    cmd: [exe, "--debug-crash-handler-use-trace-string", "--watch", "entry.js"],
+    cwd: join(dir, "app"),
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+    stdin: "ignore",
+  });
+  watchee = proc;
+  return { exe, proc };
+}
+
+// The executable can be gone by the time a file change triggers the re-exec
+// (bun uninstalled, a version manager switched versions). execve then fails
+// with ENOENT. That is the user's environment, so it is reported as an error,
+// not as a panic with a crash report.
+it.skipIf(isWindows)("--watch reports an error when the executable it was started from is gone", async () => {
+  using dir = tempDir("watch-exe-removed", { "app/entry.js": ENTRY_FIRST });
+  const { exe, proc } = spawnWatchFromCopiedExe(String(dir));
+  const stderr = proc.stderr.text();
+
+  const { waitFor, release } = stdoutWaiter(proc);
+  await waitFor("iter first");
+  release();
+
+  rmSync(exe);
+  await Bun.write(join(String(dir), "app", "entry.js"), ENTRY_SECOND);
+
+  expect(await stderr).toContain(`error: Failed to reload "${exe}": ENOENT: No such file or directory (execve)`);
+  expect(await stderr).not.toContain("Bun has crashed");
+  expect(await proc.exited).toBe(1);
+});
+
+// `bun upgrade` and package reinstalls rename a new binary over the running
+// one. On Linux, /proc/self/exe then reads "<path> (deleted)", which no longer
+// execs; the reload has to land on the replacement at the original path.
+it.skipIf(isWindows)("--watch reloads into a binary that replaced the running one", async () => {
+  using dir = tempDir("watch-exe-replaced", { "app/entry.js": ENTRY_FIRST });
+  const { exe, proc } = spawnWatchFromCopiedExe(String(dir));
+  const stderr = proc.stderr.text();
+
+  const { waitFor, release } = stdoutWaiter(proc);
+  await waitFor("iter first");
+
+  copyFileSync(bunExe(), `${exe}.new`);
+  renameSync(`${exe}.new`, exe);
+  await Bun.write(join(String(dir), "app", "entry.js"), ENTRY_SECOND);
+  await waitFor("iter second");
+  release();
+
+  proc.kill("SIGKILL");
+  await proc.exited;
+  expect(await stderr).toBe("");
 });
 
 // A script that registers a SIGTERM handler and then spins in synchronous

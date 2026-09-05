@@ -4349,7 +4349,11 @@ pub fn maybe_handle_panic_during_process_reload() {
     }
 }
 
-/// Port of `bun.reloadProcess`. `may_return == true` → returns on failure; `false` → panics.
+/// Port of `bun.reloadProcess`. On failure the executable path and errno are printed, then
+/// `may_return == true` (the crash handler's auto-restart) returns and `false` exits with 1: the
+/// old image cannot safely carry on once `on_before_reload_process_posix` has reset the signal
+/// dispositions, and an executable that was removed or made unrunnable under a running `--watch`
+/// is not a bug, so it is not a panic either.
 /// `on_before_reload_process_posix` clears CLOEXEC on stdio/IPC and resets caught signal
 /// dispositions on all POSIX; the close_range sweep is Linux/BSD only.
 pub fn reload_process(clear_terminal: bool, may_return: bool) {
@@ -4440,20 +4444,29 @@ pub fn reload_process(clear_terminal: bool, may_return: bool) {
         let mut envp: Vec<*const core::ffi::c_char> = dupe_env.iter().map(|z| z.as_ptr()).collect();
         envp.push(core::ptr::null());
 
-        // we must clone selfExePath in case argv[0] was not an absolute path
-        let exec_path = self_exe_path().expect("unreachable").as_ptr();
+        let exec = |path: &ZStr| -> i32 {
+            libc::execve(path.as_ptr(), newargv.as_ptr().cast(), envp.as_ptr().cast());
+            // execve only returns on error.
+            std::io::Error::last_os_error().raw_os_error().unwrap_or(-1)
+        };
 
-        libc::execve(exec_path, newargv.as_ptr().cast(), envp.as_ptr().cast());
-        // execve only returns on error.
-        let errno = std::io::Error::last_os_error().raw_os_error().unwrap_or(-1);
+        // we must clone selfExePath in case argv[0] was not an absolute path
+        let exec_path = self_exe_path().expect("unreachable");
+        let (failed_path, errno) = (exec_path.as_bytes(), exec(exec_path));
+
+        // Once the running binary is unlinked, /proc/self/exe reads "<path> (deleted)". After an
+        // in-place replacement (`bun upgrade`, a reinstall) the new binary is at <path>: exec it.
+        #[cfg(any(target_os = "linux", target_os = "android"))]
+        let (failed_path, errno) = match failed_path.strip_suffix(b" (deleted)") {
+            Some(path) if errno == libc::ENOENT => (path, exec(ZBox::from_bytes(path).as_zstr())),
+            _ => (failed_path, errno),
+        };
+
+        report_reload_failure(failed_path, errno);
         if may_return {
-            crate::output::pretty_errorln(format_args!(
-                "error: Failed to reload process: errno {}",
-                errno
-            ));
             return;
         }
-        panic!("Unexpected error while reloading: errno {}", errno);
+        crate::Global::exit(1);
     }
 
     #[cfg(not(any(unix, windows)))]
@@ -4462,6 +4475,28 @@ pub fn reload_process(clear_terminal: bool, may_return: bool) {
         // is a build-time error, not a runtime panic.
         let _ = (clear_terminal, may_return);
         compile_error!("unsupported platform for reload_process");
+    }
+}
+
+#[cfg(unix)]
+#[cold]
+fn report_reload_failure(exec_path: &[u8], errno: i32) {
+    let exec_path = bstr::BStr::new(exec_path);
+    match (
+        crate::ErrnoNames::SYS.name(errno),
+        crate::coreutils_error_map::get(errno),
+    ) {
+        (Some(code), Some(message)) => crate::err_generic!(
+            "Failed to reload \"<b>{}<r>\": {}: {} <d>(execve)<r>",
+            exec_path,
+            code,
+            message
+        ),
+        _ => crate::err_generic!(
+            "Failed to reload \"<b>{}<r>\": errno {} <d>(execve)<r>",
+            exec_path,
+            errno
+        ),
     }
 }
 

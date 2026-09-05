@@ -1,3 +1,4 @@
+import * as jsc from "bun:jsc";
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 import { connect } from "node:net";
@@ -495,9 +496,119 @@ test.each(["sync", "async"])(
       await Bun.sleep(1);
       alive = streams.filter(ref => ref.deref() !== undefined).length;
     }
-    expect(alive).toBe(0);
+    // A survivor is rare and does not reproduce locally. Report what holds it
+    // instead of the bare count.
+    expect(alive === 0 ? "" : describeRetainers(streams, stash)).toBe("");
   },
 );
+
+// For each stream still alive: whether it and its Response are native roots
+// (a bun_jsc::Strong slot or a protect()), every object that points at it,
+// and the shortest path from a GC root, read from a debugging heap snapshot.
+function describeRetainers(streams: WeakRef<ReadableStream>[], stash: WeakMap<ReadableStream, Response>): string {
+  const out: string[] = [];
+  const protectedObjects: unknown[] = jsc.getProtectedObjects();
+  const tagged: number[] = [];
+  for (let i = 0; i < streams.length; i++) {
+    const stream = streams[i].deref();
+    if (!stream) continue;
+    const response = stash.get(stream);
+    // Tag each survivor with a unique property so its node can be found in the snapshot.
+    (stream as any)[`__leak_stream_${i}`] = {};
+    if (response) (response as any)[`__leak_response_${i}`] = {};
+    tagged.push(i);
+    out.push(
+      `index ${i}: stream ${protectedObjects.includes(stream) ? "IS" : "is not"} a native root; ` +
+        `response ${response ? (protectedObjects.includes(response) ? "IS" : "is not") : "(not in stash)"} a native root`,
+    );
+  }
+
+  jsc.releaseWeakRefs();
+  // GCDebugging snapshot: nodes are 7-tuples [id, size, classIndex, flags, labelIndex, cell, wrapped],
+  // edges are 4-tuples [from, to, typeIndex, data], roots are 3-tuples [id, reasonLabel, reachabilityLabel].
+  const snap = (jsc as any).generateHeapSnapshotForDebugging();
+  const nodes: Map<number, string> = new Map();
+  for (let p = 0; p < snap.nodes.length; p += 7) {
+    const label = snap.labels[snap.nodes[p + 4]];
+    const wrapped = snap.nodes[p + 6];
+    nodes.set(
+      snap.nodes[p],
+      snap.nodeClassNames[snap.nodes[p + 2]] +
+        (label ? `(${label})` : "") +
+        (wrapped && wrapped !== "0x0" ? `{wrapped ${wrapped}}` : ""),
+    );
+  }
+  const rootReason: Map<number, string> = new Map();
+  for (let p = 0; p < snap.roots.length; p += 3) {
+    const reach = snap.labels[snap.roots[p + 2]];
+    rootReason.set(snap.roots[p], snap.labels[snap.roots[p + 1]] + (reach ? ` (${reach})` : ""));
+  }
+  type Edge = { from: number; to: number; label: string };
+  const incoming: Map<number, Edge[]> = new Map();
+  const taggedNode: Map<string, number> = new Map();
+  for (let p = 0; p < snap.edges.length; p += 4) {
+    const [from, to] = [snap.edges[p], snap.edges[p + 1]];
+    const type = snap.edgeTypes[snap.edges[p + 2]];
+    const name =
+      type === "Property" || type === "Variable"
+        ? snap.edgeNames[snap.edges[p + 3]]
+        : type === "Index"
+          ? String(snap.edges[p + 3])
+          : "";
+    const edge = { from, to, label: name ? `${type}:${name}` : type };
+    let list = incoming.get(to);
+    if (!list) incoming.set(to, (list = []));
+    list.push(edge);
+    if (type === "Property" && name.startsWith("__leak_")) taggedNode.set(name, from);
+  }
+  const fmt = (id: number) => {
+    const root = rootReason.get(id);
+    return `${nodes.get(id) ?? "?"}#${id}${root ? ` [ROOT: ${root}]` : ""}`;
+  };
+  // Shortest path from a root to `id`. Weak containers only reach an object
+  // that is already alive, so they are skipped.
+  const chainToRoot = (id: number): string => {
+    const prev: Map<number, Edge | null> = new Map([[id, null]]);
+    const queue = [id];
+    let found = -1;
+    while (queue.length && found < 0) {
+      const cur = queue.shift()!;
+      for (const edge of incoming.get(cur) ?? []) {
+        if (prev.has(edge.from)) continue;
+        const cls = nodes.get(edge.from) ?? "";
+        if (cls.startsWith("WeakRef") || cls.startsWith("WeakMap") || cls.startsWith("WeakSet")) continue;
+        prev.set(edge.from, edge);
+        if (edge.from === 0 || rootReason.has(edge.from)) {
+          found = edge.from;
+          break;
+        }
+        queue.push(edge.from);
+      }
+    }
+    if (found < 0) return "  (no path from a root outside weak containers)";
+    const parts: string[] = [];
+    for (let cur = found; ; ) {
+      const edge = prev.get(cur);
+      if (!edge) break;
+      parts.push(`${fmt(cur)} -${edge.label}-> `);
+      cur = edge.to;
+    }
+    return "  " + parts.join("") + fmt(id);
+  };
+  for (const i of tagged) {
+    for (const what of ["stream", "response"]) {
+      const id = taggedNode.get(`__leak_${what}_${i}`);
+      if (id === undefined) {
+        if (what === "stream") out.push(`index ${i}: stream node not found in the snapshot`);
+        continue;
+      }
+      out.push(`index ${i}: ${what} = ${fmt(id)}`);
+      for (const edge of incoming.get(id) ?? []) out.push(`    <- ${edge.label} from ${fmt(edge.from)}`);
+      out.push(chainToRoot(id));
+    }
+  }
+  return out.join("\n");
+}
 
 // Between the abort and the late settle, the server itself goes away: stop()
 // (issued before or after the abort) plus pendingRequests reaching 0 lets the

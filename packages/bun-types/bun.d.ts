@@ -9016,6 +9016,17 @@ declare module "bun" {
       fit?: "fill" | "inside";
       /** Never upscale — if the source is already smaller, leave it. */
       withoutEnlargement?: boolean;
+      /**
+       * Color space the resample averages in. `"srgb"` averages the encoded
+       * 8-bit values — the industry default, matching Sharp and the OS
+       * resizers. `"linear"` decodes sRGB to linear light, resizes in
+       * 16-bit, and re-encodes; averaging light is physically correct and
+       * keeps downscaled fine detail from darkening. The linear path always
+       * uses Bun's portable kernel, so its output is byte-identical across
+       * platforms and `Bun.Image.backend` settings.
+       * @default "srgb"
+       */
+      colorspace?: "srgb" | "linear";
     }
 
     interface ModulateOptions {

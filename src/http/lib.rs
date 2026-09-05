@@ -4735,6 +4735,8 @@ impl<'a> HTTPClient<'a> {
         response: &mut picohttp::Response,
     ) -> crate::Result<ShouldContinue> {
         let mut location: &[u8] = b"";
+        let mut location_combined: Vec<u8> = Vec::new();
+        let mut location_count: u32 = 0;
         let mut pretend_304 = false;
         let mut is_server_sent_events = false;
         let mut content_codings: u32 = 0;
@@ -4830,7 +4832,21 @@ impl<'a> HTTPClient<'a> {
                     }
                 }
                 h if h == hash_header_const(b"Location") => {
-                    location = header.value();
+                    // A response may carry more than one Location header line.
+                    // Headers.get("location") combines them with ", " per the
+                    // Fetch header-list rules, and undici follows that combined
+                    // value. Do the same so redirect:"follow" lands on the URL
+                    // a redirect:"manual" caller observes.
+                    if location_count == 0 {
+                        location = header.value();
+                    } else {
+                        if location_count == 1 {
+                            location_combined.extend_from_slice(location);
+                        }
+                        location_combined.extend_from_slice(b", ");
+                        location_combined.extend_from_slice(header.value());
+                    }
+                    location_count += 1;
                 }
                 h if h == hash_header_const(b"Connection") => {
                     // `close` on any field line, any status, is sticky (RFC 9110 §5.3, RFC 9112 §9.6).
@@ -4865,6 +4881,10 @@ impl<'a> HTTPClient<'a> {
                 }
                 _ => {}
             }
+        }
+
+        if location_count > 1 {
+            location = &location_combined;
         }
 
         if self.verbose != HTTPVerboseLevel::None {

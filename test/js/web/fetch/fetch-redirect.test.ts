@@ -146,6 +146,55 @@ it("fetch() with redirect: 'manual' still exposes the 3xx response body", async 
   }
 });
 
+// When a 3xx response carries more than one Location header line, the
+// redirect target must be the same value Headers.get("location") exposes
+// (the header-list combine, 0x2C 0x20 separated), so a redirect:"manual"
+// inspector and redirect:"follow" agree on the destination. Matches undici.
+it("fetch() follows the combined Location value when the response has multiple Location header lines", async () => {
+  const requests: string[] = [];
+  const server = net.createServer(socket => {
+    socket.on("error", () => {});
+    socket.once("data", chunk => {
+      const path = /^GET (\S+)/.exec(chunk.toString("latin1"))?.[1] ?? "/";
+      requests.push(path);
+      if (path === "/r") {
+        socket.end(
+          "HTTP/1.1 302 Found\r\nLocation: /first\r\nLocation: /second\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+        );
+      } else {
+        const body = `hit ${path}`;
+        socket.end(`HTTP/1.1 200 OK\r\nContent-Length: ${body.length}\r\nConnection: close\r\n\r\n${body}`);
+      }
+    });
+  });
+  await once(server.listen(0, "127.0.0.1"), "listening");
+  const { port } = server.address() as net.AddressInfo;
+  const base = `http://127.0.0.1:${port}`;
+  try {
+    const manual = await fetch(`${base}/r`, { redirect: "manual" });
+    await manual.arrayBuffer();
+
+    const follow = await fetch(`${base}/r`);
+    const body = await follow.text();
+
+    expect({
+      manualLocation: manual.headers.get("location"),
+      followedUrl: follow.url,
+      followedPath: new URL(follow.url).pathname,
+      body,
+      requests,
+    }).toEqual({
+      manualLocation: "/first, /second",
+      followedUrl: `${base}/first,%20/second`,
+      followedPath: "/first,%20/second",
+      body: "hit /first,%20/second",
+      requests: ["/r", "/r", "/first,%20/second"],
+    });
+  } finally {
+    server.close();
+  }
+});
+
 // https://github.com/oven-sh/bun/issues/12701
 it("fetch() preserves body on redirect", async () => {
   using server = Bun.serve({

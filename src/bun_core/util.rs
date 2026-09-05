@@ -4614,6 +4614,54 @@ enum StdinBehavior {
     Ignore,
 }
 
+#[cfg(target_os = "macos")]
+unsafe extern "C" {
+    fn posix_spawn_file_actions_addinherit_np(
+        actions: *mut libc::posix_spawn_file_actions_t,
+        fd: core::ffi::c_int,
+    ) -> core::ffi::c_int;
+    // Implemented in src/jsc/bindings/spawn.cpp.
+    fn posix_spawnattr_reset_signals(attr: *mut libc::posix_spawnattr_t) -> core::ffi::c_int;
+}
+
+#[cfg(target_os = "macos")]
+struct DarwinSpawnSetup {
+    attr: libc::posix_spawnattr_t,
+    actions: libc::posix_spawn_file_actions_t,
+}
+
+#[cfg(target_os = "macos")]
+impl DarwinSpawnSetup {
+    fn init() -> crate::CrateResult<Self> {
+        let mut attr: libc::posix_spawnattr_t = core::ptr::null_mut();
+        // SAFETY: `attr` is a valid out-pointer; on success it holds an
+        // initialized attribute object that `Drop` destroys.
+        if unsafe { libc::posix_spawnattr_init(&raw mut attr) } != 0 {
+            return Err(crate::CrateError::Unexpected);
+        }
+        let mut actions: libc::posix_spawn_file_actions_t = core::ptr::null_mut();
+        // SAFETY: `actions` is a valid out-pointer, initialized on success.
+        if unsafe { libc::posix_spawn_file_actions_init(&raw mut actions) } != 0 {
+            // SAFETY: `attr` was initialized above and no `Self` owns it yet.
+            unsafe { libc::posix_spawnattr_destroy(&raw mut attr) };
+            return Err(crate::CrateError::Unexpected);
+        }
+        Ok(Self { attr, actions })
+    }
+}
+
+#[cfg(target_os = "macos")]
+impl Drop for DarwinSpawnSetup {
+    fn drop(&mut self) {
+        // SAFETY: both objects were initialized in `init` and are destroyed
+        // exactly once, here.
+        unsafe {
+            libc::posix_spawnattr_destroy(&raw mut self.attr);
+            libc::posix_spawn_file_actions_destroy(&raw mut self.actions);
+        }
+    }
+}
+
 /// Spawn argv, inherit stdout/stderr, **ignore stdin** (fd 0 ← /dev/null),
 /// wait.
 pub fn spawn_sync_inherit_no_stdin(argv: &[impl AsRef<[u8]>]) -> crate::CrateResult<SpawnStatus> {
@@ -4714,42 +4762,42 @@ fn spawn_sync_inherit_impl(
         // for the non-PTY inherit case. PTY spawns go through spawn_sys.
         #[cfg(target_os = "macos")]
         let pid: libc::pid_t = {
-            // StdinBehavior::Ignore → file action opening /dev/null onto fd 0;
-            // stdout/stderr stay inherited.
-            let mut actions: libc::posix_spawn_file_actions_t = core::ptr::null_mut();
-            let actions_ptr: *const libc::posix_spawn_file_actions_t =
-                if stdin == StdinBehavior::Ignore {
-                    let rc = libc::posix_spawn_file_actions_init(&raw mut actions);
-                    if rc != 0 {
-                        return Err(crate::CrateError::Unexpected);
-                    }
-                    let rc = libc::posix_spawn_file_actions_addopen(
-                        &raw mut actions,
-                        0,
-                        c"/dev/null".as_ptr(),
-                        libc::O_RDONLY,
-                        0,
-                    );
-                    if rc != 0 {
-                        libc::posix_spawn_file_actions_destroy(&raw mut actions);
-                        return Err(crate::CrateError::Unexpected);
-                    }
-                    &raw const actions
-                } else {
-                    core::ptr::null()
-                };
+            // Same child scrub as posix_spawn_bun on Linux: default signals, only fds 0-2.
+            let mut setup = DarwinSpawnSetup::init()?;
+            let flags = libc::POSIX_SPAWN_SETSIGDEF
+                | libc::POSIX_SPAWN_SETSIGMASK
+                | libc::POSIX_SPAWN_CLOEXEC_DEFAULT;
+            let stdin_rc = match stdin {
+                StdinBehavior::Inherit => {
+                    posix_spawn_file_actions_addinherit_np(&raw mut setup.actions, 0)
+                }
+                StdinBehavior::Ignore => libc::posix_spawn_file_actions_addopen(
+                    &raw mut setup.actions,
+                    0,
+                    c"/dev/null".as_ptr(),
+                    libc::O_RDONLY,
+                    0,
+                ),
+            };
+            // `flags` is 0x400c; `posix_spawnattr_setflags` takes a `short` on Darwin.
+            if libc::posix_spawnattr_setflags(&raw mut setup.attr, flags as core::ffi::c_short) != 0
+                || posix_spawnattr_reset_signals(&raw mut setup.attr) != 0
+                || stdin_rc != 0
+                || posix_spawn_file_actions_addinherit_np(&raw mut setup.actions, 1) != 0
+                || posix_spawn_file_actions_addinherit_np(&raw mut setup.actions, 2) != 0
+            {
+                return Err(crate::CrateError::Unexpected);
+            }
             let mut pid: libc::pid_t = 0;
             let rc = libc::posix_spawnp(
                 &raw mut pid,
                 ptrs[0],
-                actions_ptr,
-                core::ptr::null(),
+                &raw const setup.actions,
+                &raw const setup.attr,
                 ptrs.as_ptr().cast::<*mut core::ffi::c_char>(),
                 environ.cast::<*mut core::ffi::c_char>(),
             );
-            if !actions_ptr.is_null() {
-                libc::posix_spawn_file_actions_destroy(&raw mut actions);
-            }
+            drop(setup);
             if rc != 0 {
                 return Err(crate::CrateError::Unexpected);
             }

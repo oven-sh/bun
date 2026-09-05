@@ -64,6 +64,58 @@ describe("heapStats() mimalloc integration", () => {
     void before;
   });
 
+  // Every `new Bun.Transpiler(opts)` owns a mimalloc heap (a bun_alloc::Arena). A `define` value that
+  // goes through the JSON parser allocates into that heap, so the heap also gets its per-arena page
+  // bitmaps (`mi_arena_pages_t`, about 150 KiB). The GC finalizes the instances in one batch, so
+  // hundreds of heaps are destroyed while their meta data fills whole pages of the main heap.
+  // mimalloc abandons a page once it is full. A free into an abandoned page has to collect the page
+  // (free it, reclaim it, or re-map it), or the block is stranded: the page stays abandoned and
+  // resident forever. `mi_heap_destroy` used to free the meta data without collecting, so every
+  // destroyed heap leaked about 150 KiB of RSS and left one more abandoned page behind.
+  test("destroying many heaps at once does not strand their meta data", async () => {
+    const heapsPerRound = 200;
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `import { heapStats } from "bun:jsc";
+         const opts = { loader: "ts", define: { A: '"x"' } };
+         const rounds = [];
+         for (let round = 0; round < 4; round++) {
+           for (let i = 0; i < ${heapsPerRound}; i++) new Bun.Transpiler(opts);
+           Bun.gc(true);
+           Bun.gc(true);
+           rounds.push({ abandoned: heapStats().mimalloc.pages_abandoned.current, rss: process.memoryUsage.rss() });
+         }
+         console.log(JSON.stringify(rounds));`,
+      ],
+      env: {
+        ...bunEnv,
+        // ASAN's quarantine pins freed blocks and keeps RSS at peak.
+        ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "quarantine_size_mb=0", "thread_local_quarantine_size_kb=0"]
+          .filter(Boolean)
+          .join(":"),
+      },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    const rounds: { abandoned: number; rss: number }[] = JSON.parse(stdout.trim());
+    expect(rounds).toHaveLength(4);
+    expect(exitCode).toBe(0);
+
+    const abandoned = rounds.map(r => r.abandoned);
+    const rssMiB = rounds.map(r => r.rss / 1024 / 1024);
+    // A stranded page stays abandoned, so the count used to grow by about 29 per round: one 4 MiB
+    // page per 28 `mi_arena_pages_t` and one 64 KiB page per 9 `mi_heap_t`. A collected page is
+    // freed, or taken over by the next round's heaps, so the count stays where the first round left it.
+    expect(abandoned[3] - abandoned[0]).toBeLessThan(heapsPerRound / 10);
+    // The stranded pages were resident: about 150 KiB per heap, so a round cost about 30 MiB in a
+    // release build and more in a debug build. A round now reuses the memory the rounds before it freed.
+    expect(rssMiB[3] - rssMiB[2]).toBeLessThan(20);
+  });
+
   // mimalloc tags its arena mmaps with an app-reserved VM tag (240-255). The old default,
   // 100, is VM_MEMORY_IOACCELERATOR, so profilers reported Bun's heap as GPU memory.
   // The tags are read back from the kernel (mach_vm_region's user_tag), not from vmmap's

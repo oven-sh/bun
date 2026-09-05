@@ -23,6 +23,11 @@ export const cyan = (s: string): string => (useColor ? `\x1b[36m${s}\x1b[39m` : 
 export const green = (s: string): string => (useColor ? `\x1b[32m${s}\x1b[39m` : s);
 export const red = (s: string): string => (useColor ? `\x1b[31m${s}\x1b[39m` : s);
 
+/** "412ms" under a second, "3.2s" after — for a step's elapsed time. */
+export function formatElapsed(ms: number): string {
+  return ms < 1000 ? `${Math.round(ms)}ms` : `${(ms / 1000).toFixed(1)}s`;
+}
+
 /**
  * Hash a name to a stable 256-color. Same name → same color across runs,
  * so `[tinycc]` in stream output and `tinycc` in the done line match.
@@ -32,11 +37,6 @@ export const red = (s: string): string => (useColor ? `\x1b[31m${s}\x1b[39m` : s
  * its own — it writes to FD 3 (a terminal when set up by build.ts) while
  * its FD 2 is a ninja pipe, so the default check would wrongly disable.
  */
-/** "412ms" under a second, "3.2s" after — for a step's elapsed time. */
-export function formatElapsed(ms: number): string {
-  return ms < 1000 ? `${Math.round(ms)}ms` : `${(ms / 1000).toFixed(1)}s`;
-}
-
 export function nameColor(name: string, text: string = name, color: boolean = useColor): string {
   if (!color) return text;
   const overrides: Record<string, number> = { zig: 214 };

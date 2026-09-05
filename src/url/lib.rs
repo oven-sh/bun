@@ -485,6 +485,15 @@ impl<'a> URL<'a> {
         self.is_http() || self.is_https()
     }
 
+    /// Same scheme and host (both case-insensitive) and same effective port,
+    /// where a missing port is the scheme's default. `false` without a host.
+    pub fn has_same_origin(&self, other: &URL<'_>) -> bool {
+        !self.hostname.is_empty()
+            && strings::eql_case_insensitive_ascii(self.protocol, other.protocol, true)
+            && strings::eql_case_insensitive_ascii(self.hostname, other.hostname, true)
+            && self.get_port_auto() == other.get_port_auto()
+    }
+
     pub fn get_port(&self) -> Option<u16> {
         bun_core::fmt::parse_int::<u16>(self.port, 10).ok()
     }

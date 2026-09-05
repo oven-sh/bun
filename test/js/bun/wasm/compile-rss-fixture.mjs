@@ -60,6 +60,9 @@ const footprint =
 const rssMiB = () => footprint() / 1048576;
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 
+// Startup garbage is freed by the first collection, but mimalloc hands the
+// emptied pages back on its purge delay, not at free time. There is no event
+// for that, so give it a moment before the baseline read.
 Bun.gc(true);
 await sleep(300);
 Bun.gc(true);

@@ -133,6 +133,10 @@ pub(crate) enum ActiveHandle {
     Bundle(ptr::NonNull<crate::api::js_bundle_completion_task::JSBundleCompletionTask>),
     /// A `dns.Resolver` (or the VM-global one) with a live c-ares channel.
     DnsResolver(ptr::NonNull<crate::dns_jsc::Resolver>),
+    /// A `process.stdout`/`process.stderr` FileSink, registered only under
+    /// `bun test --isolate`, where each global dups the stdio fd anew and the
+    /// swap must close the outgoing dup and its poll registration.
+    ProcessStdioSink(ptr::NonNull<crate::webcore::FileSink>),
 }
 
 pub(crate) type ActiveHandles = bun_collections::ArrayHashMap<ActiveHandle, ()>;
@@ -1823,6 +1827,11 @@ fn stop_active_handles(vm: &mut VirtualMachine, reason: StopReason) -> SweepResu
             // SAFETY: registered ⇒ live; may free itself inside, not touched after.
             ActiveHandle::DnsResolver(r) => unsafe {
                 let _ = crate::dns_jsc::Resolver::close_channel_for_terminate(r.as_ptr());
+            },
+            // SAFETY: the registry's +1 (taken at registration) keeps it live;
+            // the call releases that ref and may free the sink.
+            ActiveHandle::ProcessStdioSink(s) => unsafe {
+                crate::webcore::FileSink::stop_tracked_stdio_sink(s.as_ptr())
             },
         }
     }

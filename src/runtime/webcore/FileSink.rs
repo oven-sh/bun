@@ -272,6 +272,48 @@ pub(crate) extern "C" fn Bun__ForceFileSinkToBeSynchronousForProcessObjectStdio(
     }
 }
 
+/// Registers a just-created `process.stdout`/`process.stderr` sink so the
+/// `--isolate` swap ends it. Each isolate global dups the stdio fd anew; an
+/// unclosed dup leaks its epoll registration (EEXIST on fd-number reuse).
+#[unsafe(no_mangle)]
+pub(crate) extern "C" fn Bun__trackProcessStdioSinkForTestIsolation(
+    global: &JSGlobalObject,
+    jsvalue: JSValue,
+) {
+    if !global.bun_vm().test_isolation_enabled {
+        return;
+    }
+    let Some(this_ptr) = JSSink::from_js(jsvalue) else {
+        return;
+    };
+    // SAFETY: `from_js` returned a live `*mut JSSink<FileSink>`; the wrapper is
+    // `repr(transparent)` over `sink: FileSink`, so this recovers the canonical
+    // `*mut FileSink`.
+    let this: *mut FileSink = unsafe { &raw mut (*this_ptr).sink };
+    // The registry's +1, released by `stop_tracked_stdio_sink`.
+    // SAFETY: `this` is live — the JS wrapper holds its own +1.
+    unsafe { (*this).ref_() };
+    crate::jsc_hooks::ActiveHandle::ProcessStdioSink(core::ptr::NonNull::new(this).expect("sink"))
+        .register();
+}
+
+impl FileSink {
+    /// Ends a sink tracked by `ActiveHandle::ProcessStdioSink` and releases
+    /// the registration's +1.
+    ///
+    /// # Safety
+    /// `this` must be the canonical live `*mut FileSink` whose registration
+    /// ref is still held; the call may free it.
+    pub(crate) unsafe fn stop_tracked_stdio_sink(this: *mut FileSink) {
+        // SAFETY: caller contract — the registry's +1 keeps `this` live until
+        // the trailing `deref`, which is its last use.
+        unsafe {
+            let _ = (*this).end(None);
+            FileSink::deref(this);
+        }
+    }
+}
+
 impl FileSink {
     /// `bun.spawn`'s subprocess exited while this `FileSink` was its stdin.
     ///

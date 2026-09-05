@@ -6536,11 +6536,37 @@ declare module "bun" {
     ref(): void;
 
     /**
-     * Set a timeout until the socket automatically closes.
+     * Arm a timeout on this socket. After approximately `seconds` have
+     * elapsed the {@link SocketHandler.timeout `timeout`} handler is called.
      *
-     * To reset the timeout, call this function again.
+     * The socket is **not** closed automatically; call {@link end `end()`} or
+     * {@link terminate `terminate()`} from the handler if that is the desired
+     * behavior.
      *
-     * When a timeout happens, the `timeout` callback is called and the socket is closed.
+     * For TCP sockets this is a one-shot timer measured from the call:
+     * reading or writing data does **not** reset it, and it is driven by a
+     * periodic sweep with roughly 4-second granularity, so the handler may
+     * fire a few seconds earlier or later than the exact value requested. To
+     * get idle-timeout semantics for TCP, call `timeout()` again from your
+     * `data` handler to re-arm on each read.
+     *
+     * Pass `0` to cancel a previously armed timeout.
+     *
+     * @param seconds Approximate time in seconds until the `timeout` handler
+     * fires. `0` disarms the timer.
+     * @example
+     * ```ts
+     * // in handlers:
+     * open(socket) {
+     *   socket.timeout(30);
+     * },
+     * data(socket, data) {
+     *   socket.timeout(30); // re-arm on activity for idle-timeout semantics
+     * },
+     * timeout(socket) {
+     *   socket.end(); // close idle connections
+     * },
+     * ```
      */
     timeout(seconds: number): void;
 
@@ -7019,7 +7045,13 @@ declare module "bun" {
     connectError?(socket: Socket<Data>, error: Error): void | Promise<void>;
 
     /**
-     * Called when a message times out.
+     * Called when a timeout armed by {@link Socket.timeout `socket.timeout()`}
+     * elapses.
+     *
+     * The socket remains open when this fires. Call
+     * {@link Socket.end `socket.end()`} or
+     * {@link Socket.terminate `socket.terminate()`} here to close it, or call
+     * `socket.timeout()` again to re-arm.
      */
     timeout?(socket: Socket<Data>): void | Promise<void>;
     /**

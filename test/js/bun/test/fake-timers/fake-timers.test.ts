@@ -1,7 +1,7 @@
 import { RedisClient, SQL } from "bun";
 import { heapStats } from "bun:jsc";
 import { setSystemTime } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, normalizeBunSnapshot, tempDir } from "harness";
 import { spawnSync as childProcessSpawnSync } from "node:child_process";
 import { afterEach, describe, expect, test, vi } from "vitest";
 
@@ -777,5 +777,95 @@ describe("useFakeTimers with options", () => {
     expect(vi.isFakeTimers()).toBe(false);
     expect(performance.timeOrigin).toBe(realTimeOrigin);
     expect(performance.toJSON().timeOrigin).toBe(realTimeOrigin);
+  });
+});
+
+// A file that activates fake timers or setSystemTime and never restores them
+// must not leak that state into the next file: the fake-timer flag and mocked
+// clock live in per-thread runner state, so without an explicit reset the next
+// file's real `await setTimeout` never fires (misattributed timeout) and
+// `Date.now()` stays pinned. Jest gives each file its own fake-timer env.
+// (`--isolate` is covered in test/cli/test/isolation.test.ts.)
+describe.concurrent("fake timers / setSystemTime do not leak across test files", () => {
+  const leakFixtures = {
+    "a_faketimers.test.ts": `
+      import { test, jest, setSystemTime } from "bun:test";
+      test("A leaks fake timers + setSystemTime", () => {
+        jest.useFakeTimers();
+        setSystemTime(new Date("1999-12-31T23:59:59Z"));
+        setTimeout(() => {}, 1000);
+      });
+    `,
+    "b_real.test.ts": `
+      import { test, expect, vi } from "bun:test";
+      test("B expects real timers and real clock", async () => {
+        // Assert the flag first so a leak fails fast instead of waiting on a
+        // real setTimeout that would never fire.
+        expect(vi.isFakeTimers()).toBe(false);
+        expect(typeof (setTimeout as any).clock).toBe("undefined");
+        expect(new Date().getFullYear()).toBeGreaterThan(2000);
+        let fired = false;
+        await new Promise<void>(r => setTimeout(() => { fired = true; r(); }, 1));
+        expect(fired).toBe(true);
+      });
+    `,
+  };
+
+  async function run(dir: string, files: string[]) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", ...files],
+      env: bunEnv,
+      cwd: dir,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  }
+
+  test("useFakeTimers() + setSystemTime() are reset before next file", async () => {
+    using dir = tempDir("fake-timers-cross-file", leakFixtures);
+    const { stderr, exitCode } = await run(String(dir), ["./a_faketimers.test.ts", "./b_real.test.ts"]);
+    const norm = normalizeBunSnapshot(stderr, dir);
+    expect(norm).toContain("2 pass");
+    expect(norm).toContain("0 fail");
+    expect(exitCode).toBe(0);
+  });
+
+  test("setSystemTime() without useFakeTimers() is reset before next file", async () => {
+    using dir = tempDir("setsystemtime-cross-file", {
+      "a_sys.test.ts": `
+        import { test, setSystemTime } from "bun:test";
+        test("A pins Date", () => { setSystemTime(new Date("1999-12-31T23:59:59Z")); });
+      `,
+      "b_real.test.ts": `
+        import { test, expect } from "bun:test";
+        test("B sees real Date", () => {
+          expect(new Date().getFullYear()).toBeGreaterThan(2000);
+        });
+      `,
+    });
+    const { stderr, exitCode } = await run(String(dir), ["./a_sys.test.ts", "./b_real.test.ts"]);
+    const norm = normalizeBunSnapshot(stderr, dir);
+    expect(norm).toContain("2 pass");
+    expect(norm).toContain("0 fail");
+    expect(exitCode).toBe(0);
+  });
+
+  test("file that calls useFakeTimers() at module scope and throws does not leak into next file", async () => {
+    using dir = tempDir("fake-timers-module-throw", {
+      "a_throws.test.ts": `
+        import { jest, setSystemTime } from "bun:test";
+        jest.useFakeTimers();
+        setSystemTime(new Date("1999-12-31T23:59:59Z"));
+        throw new Error("module-scope boom");
+      `,
+      "b_real.test.ts": leakFixtures["b_real.test.ts"],
+    });
+    const { stderr, exitCode } = await run(String(dir), ["./a_throws.test.ts", "./b_real.test.ts"]);
+    const norm = normalizeBunSnapshot(stderr, dir);
+    expect(norm).toContain("(pass) B expects real timers and real clock");
+    expect(norm).toContain("module-scope boom");
+    expect(exitCode).not.toBe(0);
   });
 });

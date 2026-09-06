@@ -312,6 +312,31 @@ impl FakeTimers {
     }
 }
 
+fn drain_to_real_timers(global: &JSGlobalObject) -> JsResult<()> {
+    // SAFETY: per-thread `timer::All`; the borrow ends before `release`.
+    let cleared = unsafe { (*timer_all()).fake_timers.deactivate(global) };
+    cleared.release(global.bun_vm_ptr());
+    set_fake_timer_marker(global, false)
+}
+
+/// Restore real timers and the real clock at a test-file boundary.
+pub(crate) fn reset_between_files(global: &JSGlobalObject) {
+    let all = timer_all();
+    if all.is_null() {
+        return;
+    }
+    // SAFETY: `timer_all()` is the live per-thread `All`; single JS thread.
+    if unsafe { (*all).fake_timers.is_active() } {
+        // Not a host_fn: nothing above us takes a thrown marker error.
+        if drain_to_real_timers(global).is_err() {
+            let _ = global.clear_exception_except_termination();
+        }
+    } else {
+        // `setSystemTime()` writes `overridenDateNow` without activating fake timers.
+        CURRENT_TIME.clear(global);
+    }
+}
+
 // ===
 // JS Functions
 // ===
@@ -396,13 +421,7 @@ fn use_fake_timers(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSVal
 
 #[bun_jsc::host_fn]
 fn use_real_timers(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-    // SAFETY: per-thread `timer::All`; the borrow ends before `release`.
-    let cleared = unsafe { (*timer_all()).fake_timers.deactivate(global) };
-    cleared.release(global.bun_vm_ptr());
-
-    // Remove the setTimeout.clock marker when switching back to real timers.
-    set_fake_timer_marker(global, false)?;
-
+    drain_to_real_timers(global)?;
     Ok(frame.this())
 }
 

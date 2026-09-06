@@ -1654,22 +1654,14 @@ fn connect_finish<const IS_SSL: bool>(
                 } else {
                     bun_sys::SystemErrno::ENOENT as c_int
                 }
+            } else if os_errno != 0 {
+                // A synchronous TCP connect failure: the local bind()
+                // (EADDRINUSE, EADDRNOTAVAIL, EACCES, EINVAL) or connect(2)
+                // itself (ENETUNREACH, EHOSTUNREACH). `handle_connect_error`
+                // names whatever errno the kernel set.
+                os_errno
             } else {
-                // A synchronous TCP connect failure is almost always the local
-                // bind() (localAddress/localPort) failing - preserve the errnos a
-                // bind() meaningfully produces (EADDRINUSE: port busy,
-                // EADDRNOTAVAIL: address not local, EACCES: privileged port,
-                // EINVAL: address family mismatch); everything else stays
-                // ECONNREFUSED. Mirrors handle_connect_error's whitelist.
-                if os_errno == bun_sys::SystemErrno::EADDRINUSE as c_int
-                    || os_errno == bun_sys::SystemErrno::EADDRNOTAVAIL as c_int
-                    || os_errno == bun_sys::SystemErrno::EACCES as c_int
-                    || os_errno == bun_sys::SystemErrno::EINVAL as c_int
-                {
-                    os_errno
-                } else {
-                    bun_sys::SystemErrno::ECONNREFUSED as c_int
-                }
+                bun_sys::SystemErrno::ECONNREFUSED as c_int
             };
             {
                 let this = socket;

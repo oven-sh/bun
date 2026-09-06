@@ -244,6 +244,42 @@ describe.skipIf(skip)("node:net under injected syscall faults", () => {
     }
   });
 
+  test.each(["ENETUNREACH", "EHOSTUNREACH", "ETIMEDOUT"])(
+    "connect → %s is reported with that code, not ECONNREFUSED",
+    async errno => {
+      const server = net.createServer();
+      server.listen(0, "127.0.0.1");
+      await once(server, "listening");
+      const port = (server.address() as net.AddressInfo).port;
+      try {
+        fault.set({ syscall: "connect", action: "errno", errno, repeat: 1 });
+        const client = net.connect({ port, host: "127.0.0.1" });
+        const [err] = (await once(client, "error")) as [NodeJS.ErrnoException];
+        expect({ code: err.code, syscall: err.syscall }).toEqual({ code: errno, syscall: "connect" });
+        expect(client.destroyed).toBe(true);
+      } finally {
+        server.close();
+      }
+    },
+  );
+
+  test("connect → every resolved address fails: the last errno is reported", async () => {
+    const server = net.createServer();
+    server.listen(0, "127.0.0.1");
+    await once(server, "listening");
+    const port = (server.address() as net.AddressInfo).port;
+    try {
+      // `localhost` takes the resolver path (one candidate per address).
+      fault.set({ syscall: "connect", action: "errno", errno: "EHOSTUNREACH", repeat: -1 });
+      const client = net.connect({ port, host: "localhost" });
+      const [err] = (await once(client, "error")) as [NodeJS.ErrnoException];
+      expect({ code: err.code, syscall: err.syscall }).toEqual({ code: "EHOSTUNREACH", syscall: "connect" });
+    } finally {
+      fault.clear();
+      server.close();
+    }
+  });
+
   test("fd targeting: rule on the server fd does not affect the client", async () => {
     using p = await connectedPair();
     // The server socket's recv should error; the client should still receive

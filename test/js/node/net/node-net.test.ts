@@ -1,7 +1,7 @@
 import { Socket as _BunSocket, TCPSocketListener } from "bun";
 import { heapStats } from "bun:jsc";
 import { describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, expectMaxObjectTypeCount, gc, isASAN, isDebug, isWindows, tmpdirSync } from "harness";
+import { bunEnv, bunExe, expectMaxObjectTypeCount, gc, isASAN, isDebug, isLinux, isWindows, tmpdirSync } from "harness";
 import { randomUUID } from "node:crypto";
 import { once } from "node:events";
 import fs from "node:fs";
@@ -2737,6 +2737,54 @@ describe.skipIf(!isWindows)("connect() error codes on Windows", () => {
 
     const missingErr = await errFor(missing);
     expect(missingErr.code).toBe("ENOENT");
+  });
+});
+
+describe.skipIf(isWindows)("connect() reports the kernel's errno", () => {
+  const errFor = (opts: Parameters<typeof connect>[0]) =>
+    new Promise<NodeJS.ErrnoException>(resolve => {
+      const c = connect(opts as any);
+      c.on("error", resolve);
+      c.on("connect", () => {
+        c.destroy();
+        resolve(Object.assign(new Error("connected"), { code: "CONNECTED" }));
+      });
+    });
+
+  it("a unix path through a regular file reports ENOTDIR", async () => {
+    const dir = tmpdirSync();
+    const file = join(dir, "file");
+    fs.writeFileSync(file, "x");
+    const err = await errFor({ path: join(file, "sock") });
+    expect({ code: err.code, errno: err.errno, syscall: err.syscall }).toEqual({
+      code: "ENOTDIR",
+      errno: -20,
+      syscall: "connect",
+    });
+  });
+
+  // connect(2) to a multicast address fails synchronously with ENETUNREACH on
+  // Linux. Other kernels report a different errno for it.
+  it.skipIf(!isLinux)("an unroutable address reports ENETUNREACH", async () => {
+    const err = await errFor({ host: "224.0.0.1", port: 80 });
+    expect({ code: err.code, errno: err.errno, syscall: err.syscall }).toEqual({
+      code: "ENETUNREACH",
+      errno: -101,
+      syscall: "connect",
+    });
+
+    const bunErr = await Bun.connect({ hostname: "224.0.0.1", port: 80, socket: { data() {} } }).then(
+      s => {
+        s.end();
+        return { code: "CONNECTED" };
+      },
+      e => e,
+    );
+    expect({ code: bunErr.code, errno: bunErr.errno, syscall: bunErr.syscall }).toEqual({
+      code: "ENETUNREACH",
+      errno: -101,
+      syscall: "connect",
+    });
   });
 });
 

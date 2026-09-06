@@ -698,6 +698,12 @@ int start_connections(struct us_connecting_socket_t *c, int count) {
         /* The deferred-DNS path does not carry a local binding. */
         LIBUS_SOCKET_DESCRIPTOR connect_socket_fd = bsd_create_connect_socket(&addr, NULL, c->options);
         if (connect_socket_fd == LIBUS_SOCKET_ERROR) {
+            /* A synchronous connect(2) failure (ENETUNREACH, EHOSTUNREACH) is
+             * what the caller sees when no other candidate succeeds. */
+            int err = LIBUS_ERR;
+            if (err) {
+                c->error = err;
+            }
             continue;
         }
         bsd_socket_nodelay(connect_socket_fd, 1);
@@ -765,7 +771,9 @@ void us_internal_socket_after_resolve(struct us_connecting_socket_t *c) {
     if (opened == 0) {
         /* Same as the exhausted path in us_internal_socket_after_open: a
          * real connect failure must not be reported as a caller abort. */
-        c->error = ECONNREFUSED;
+        if (!c->error) {
+            c->error = ECONNREFUSED;
+        }
         us_connecting_socket_close(c);
     }
 }
@@ -798,6 +806,9 @@ void us_internal_socket_after_open(struct us_socket_t *s, int error) {
                 }
             }
             us_socket_close(s, LIBUS_SOCKET_CLOSE_CODE_CONNECTION_RESET, 0);
+            /* Keep the last real failure (SO_ERROR: EHOSTUNREACH,
+             * ETIMEDOUT, ECONNREFUSED, ...) for the exhausted path below. */
+            c->error = error;
 
             if (c->connecting_head == NULL || c->connecting_head->connect_next == NULL) {
                 int opened = start_connections(c, c->connecting_head == NULL ? CONCURRENT_CONNECTIONS : 1);
@@ -806,7 +817,9 @@ void us_internal_socket_after_open(struct us_socket_t *s, int error) {
                      * us_connecting_socket_close defaults c->error to
                      * ECONNABORTED (caller abort) and never invalidates the
                      * DNS cache entry for the dead host. */
-                    c->error = ECONNREFUSED;
+                    if (!c->error) {
+                        c->error = ECONNREFUSED;
+                    }
                     us_connecting_socket_close(c);
                 }
             }

@@ -248,9 +248,10 @@ void us_connecting_socket_close(struct us_connecting_socket_t *c) {
     }
 
     if (c->addrinfo_req) {
-        /* Invalidate the cache entry for a refused connect (addresses may be
-         * stale) and for a resolver failure (never cache a negative result). */
-        Bun__addrinfo_freeRequest(c->addrinfo_req, c->error == ECONNREFUSED || c->error_is_dns);
+        /* Invalidate the cache entry when every address failed to connect
+         * (addresses may be stale; ECONNABORTED is the caller's own close)
+         * and for a resolver failure (never cache a negative result). */
+        Bun__addrinfo_freeRequest(c->addrinfo_req, c->error != ECONNABORTED || c->error_is_dns);
         c->addrinfo_req = 0;
     }
     us_dispatch_connecting_error(c, c->error);

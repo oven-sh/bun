@@ -26,7 +26,7 @@ const sourceLists = ["Sources.txt", "inspector/remote/SourcesSocket.txt"];
 /** path → whether Sources.txt forces it out of the bundles (@no-unify; the conditional @no-unify-when(bundle<=8) applies at WebKit's bundle size of 8). */
 const upstream = new Map<string, boolean>();
 for (const list of sourceLists) {
-  for (const raw of readFileSync(join(jscDir, list), "utf8").split("\n")) {
+  for (const raw of readFileSync(join(jscDir, list), "utf8").split(/\r?\n/)) {
     const line = raw.replace(/\/\/.*$/, "").trim();
     if (line === "") continue;
     const [path, ...attrs] = line.split(/\s+/);

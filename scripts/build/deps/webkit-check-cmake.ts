@@ -143,7 +143,7 @@ function extract(rootDir: string): string {
   const blocks: string[] = [];
   for (const rel of watchedFiles) {
     const path = join(rootDir, rel);
-    const invs = parseCMake(readFileSync(path, "utf8"), rel);
+    const invs = parseCMake(readFileSync(path, "utf8").replace(/\r\n/g, "\n"), rel);
 
     // Macros/functions defined here whose body declares a step: their call sites carry the real arguments.
     const wrapperNames = new Set<string>();
@@ -275,7 +275,8 @@ if (import.meta.main ?? process.argv[1] === import.meta.filename) {
     console.log(`wrote ${snapshotName} (${current.split("\n").length} lines)`);
     process.exit(0);
   }
-  const expected = existsSync(snapshotPath) ? readFileSync(snapshotPath, "utf8") : "";
+  // CRLF-insensitive: a Windows checkout with core.autocrlf rewrites the snapshot's line endings.
+  const expected = existsSync(snapshotPath) ? readFileSync(snapshotPath, "utf8").replace(/\r\n/g, "\n") : "";
   if (current !== expected) {
     console.error(
       `WebKit's CMake differs from ${snapshotName}:\n\n` +

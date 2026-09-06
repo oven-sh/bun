@@ -184,6 +184,32 @@ bun_jsc::impl_abort_handle_owner!(MultiPartUpload, abort_handle, |this, _cause| 
     }
 });
 
+/// [`MultiPartUpload::fail_writer_collected`]'s task: same pointer as the upload, its own tag.
+#[repr(transparent)]
+pub(crate) struct WriterCollected(MultiPartUpload);
+impl bun_event_loop::Taskable for WriterCollected {
+    const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::S3UploadWriterCollected;
+    /// Drops the task's +1. The context that stopped fails the upload through `abort_handle`.
+    unsafe fn release_unrun(this: *mut Self) {
+        MultiPartUpload::deref_(this.cast::<MultiPartUpload>());
+    }
+    /// The context of the script that made the writer.
+    unsafe fn context(this: *const Self) -> bun_event_loop::ContextId {
+        // SAFETY: fn contract — the live upload `fail_writer_collected` queued.
+        unsafe { (*this.cast::<MultiPartUpload>()).context }
+    }
+}
+impl WriterCollected {
+    pub(crate) fn run(this: *mut Self) -> bun_jsc::JsResult<()> {
+        // SAFETY: adopts the +1 `fail_writer_collected` took; released after `fail`.
+        let upload = unsafe { RefPtr::from_raw(this.cast::<MultiPartUpload>()) };
+        upload.fail(S3Error {
+            code: b"UnknownError",
+            message: b"S3 writer was garbage collected before end() was called",
+        })
+    }
+}
+
 #[repr(u8)]
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) enum State {
@@ -621,6 +647,16 @@ impl MultiPartUpload {
             }
         }
         Ok(())
+    }
+
+    /// `fail` from a task: the caller is a finalizer inside a GC sweep, and `fail` settles promises.
+    pub(crate) fn fail_writer_collected(&self) {
+        self.ref_();
+        self.vm
+            .event_loop_ref()
+            .enqueue_task(bun_event_loop::Task::init(
+                self.root_ptr().cast::<WriterCollected>(),
+            ));
     }
 
     fn done(&self) -> bun_jsc::JsResult<()> {

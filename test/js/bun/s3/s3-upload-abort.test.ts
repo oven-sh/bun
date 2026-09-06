@@ -123,3 +123,77 @@ test.concurrent("stream error while CreateMultipartUpload is in flight aborts th
     exited: 0,
   });
 });
+
+// An `S3File.writer()` that is dropped before `end()` can never finish its
+// upload. Once the wrapper is collected the upload is aborted and the process
+// exits. `w` stays reachable until `collectWriter`: a GC before `waitFor` holds would abort early.
+const droppedWriter = (writes: string) => `
+  let finalized = 0;
+  let w;
+  const registry = new FinalizationRegistry(() => finalized++);
+  (() => {
+    w = client.file("key").writer(opts);
+    registry.register(w, 1);
+    ${writes}
+  })();
+`;
+const collectWriter = `
+  w = undefined;
+  while (Date.now() < deadline && finalized === 0) {
+    Bun.gc(true);
+    await Bun.sleep(10);
+  }
+  console.log("finalized", finalized);
+`;
+const twoParts = droppedWriter(`w.write(new Uint8Array(6 * 1024 * 1024)); w.write(new Uint8Array(6 * 1024 * 1024));`);
+
+test.concurrent(
+  "dropped writer with uploaded parts aborts the multipart upload and lets the process exit",
+  async () => {
+    expect(await run({ body: twoParts, waitFor: `reqs.part === 2`, then: collectWriter })).toEqual({
+      stdout: `finalized 1\n{"create":1,"part":2,"complete":0,"abort":1,"put":0}\n`,
+      stderr: "",
+      exited: 0,
+    });
+  },
+);
+
+// The Create response is held until the upload has failed. The only signal script gets for that
+// is the dropped writer's pending `flush()`, which rejects.
+test.concurrent("dropped writer collected while CreateMultipartUpload is in flight still aborts it", async () => {
+  const body = `
+    const flush = (() => {
+      const w = client.file("key").writer(opts);
+      w.write(new Uint8Array(6 * 1024 * 1024));
+      w.write(new Uint8Array(6 * 1024 * 1024));
+      return w.flush();
+    })();
+    let flushed;
+    flush.then(
+      () => (flushed = "flush resolved"),
+      e => (flushed = "flush rejected: " + e.message + " (path " + e.path + ")"),
+    );
+  `;
+  const then = `
+    while (Date.now() < deadline && flushed === undefined) {
+      Bun.gc(true);
+      await Bun.sleep(10);
+    }
+    console.log(flushed);
+  `;
+  expect(await run({ body, waitFor: `reqs.create === 1`, then, gateCreate: true })).toEqual({
+    stdout: `flush rejected: S3 writer was garbage collected before end() was called (path key)\n{"create":1,"part":0,"complete":0,"abort":1,"put":0}\n`,
+    stderr: "",
+    exited: 0,
+  });
+});
+
+test.concurrent("dropped writer with only buffered bytes lets the process exit", async () => {
+  expect(
+    await run({ body: droppedWriter(`w.write(new Uint8Array(1000));`), waitFor: `true`, then: collectWriter }),
+  ).toEqual({
+    stdout: `finalized 1\n{"create":0,"part":0,"complete":0,"abort":0,"put":0}\n`,
+    stderr: "",
+    exited: 0,
+  });
+});

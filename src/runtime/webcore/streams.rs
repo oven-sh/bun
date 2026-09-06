@@ -987,12 +987,10 @@ impl SourceHandle {
 // HTTPServerWritable
 // ──────────────────────────────────────────────────────────────────────────
 
-/// `Done`, `Failed` and `Aborted` are all "done" (no further sends).
-/// `Failed` records that the source failed while bytes were still buffered
-/// here, so the response must be closed as incomplete; `Aborted` records
-/// that the peer went away. `start()` (reachable again through a
-/// `type: "direct"` stream's controller) moves `Done` back to `Writing`; it
-/// bails out first on `Failed` and `Aborted`, which nothing leaves.
+/// `Done`, `Failed` and `Aborted` are all "done" (no further sends). `Failed`:
+/// the source failed, close the response as incomplete. `Aborted`: the peer
+/// went away. `start()` moves `Done` back to `Writing`; nothing leaves the
+/// other two.
 #[derive(Copy, Clone, Eq, PartialEq)]
 pub(crate) enum HTTPServerWritableState {
     Writing,
@@ -1199,8 +1197,7 @@ impl<const SSL: bool> HTTPServerWritable<SSL> {
         self.state == HTTPServerWritableState::Failed
     }
 
-    /// `Failed` and `Aborted` are already done and keep their state; callers
-    /// still read `is_failed()` / `is_aborted()` afterwards.
+    /// `Failed` and `Aborted` keep their state.
     pub(crate) fn set_done(&mut self) {
         if self.state == HTTPServerWritableState::Writing {
             self.state = HTTPServerWritableState::Done;
@@ -1805,14 +1802,9 @@ impl<const SSL: bool> HTTPServerWritable<SSL> {
         bun_sys::Result::Ok(())
     }
 
-    /// The source failed. The bytes still buffered here are the prefix of a
-    /// body that never completes, so they must not go out: a clean `end()`
-    /// would `try_end` them with a `Content-Length`, and the client would
-    /// take the truncated body for a complete 200. Drop them and stop. The
-    /// owning `RequestContext` then closes the connection without a
-    /// terminator: through `handle_reject_stream` when the pump rejects, or
-    /// through `is_failed()` when a direct stream's `controller.close(error)`
-    /// resolves it instead.
+    /// The source failed. Drop the buffered prefix instead of ending with it
+    /// (`end()` would `try_end` it as a complete body with a `Content-Length`).
+    /// The owning `RequestContext` closes the connection without a terminator.
     pub(crate) fn fail(&mut self) {
         bun_core::scoped_log!(HTTPServerWritableLog, "fail()");
 
@@ -1827,8 +1819,8 @@ impl<const SSL: bool> HTTPServerWritable<SSL> {
                 res.clear_on_writable();
             }
         }
-        // A parked `flush(true)`/`write()` promise could only settle from the
-        // drain callback cleared above; settle it here, as `abort` does.
+        // The drain callback cleared above was the only thing left to settle a
+        // parked `flush(true)` promise.
         self.flush_promise();
         self.source.close(None);
         self.finalize();

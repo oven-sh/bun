@@ -2309,9 +2309,7 @@ where
             .response_body_readable_stream_ref
             .replace(readable_stream::Strong::default());
 
-        // A direct stream's synchronous `controller.close(error)`: the sink
-        // dropped its buffered prefix, and the stream is already errored and
-        // unlocked, so it must not fall through to `render_missing()`.
+        // A synchronous `controller.close(error)` on a direct stream.
         if response_stream.sink.is_failed() {
             stream_log!("failed");
             response_stream.sink.on_first_write = None;
@@ -2973,8 +2971,7 @@ where
             self.end_already_responded_stream();
             return;
         }
-        // A direct stream's `controller.close(error)` fails the sink but
-        // resolves the pump, so the failure is only visible on the sink.
+        // A direct stream's `controller.close(error)` resolves the pump.
         if failed {
             self.close_incomplete_stream();
             return;

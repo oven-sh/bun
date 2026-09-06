@@ -1,6 +1,6 @@
 import { spawn, spawnSync } from "bun";
 import { beforeEach, describe, expect, it } from "bun:test";
-import { chmodSync, mkdirSync } from "fs";
+import { chmodSync, mkdirSync, realpathSync } from "fs";
 import { exists, stat } from "fs/promises";
 import { bunExe, bunEnv as env, isPosix, tempDir, tls, tmpdirSync } from "harness";
 import { once } from "node:events";
@@ -565,6 +565,22 @@ describe("bun-create hooks", () => {
     expect(err).toContain("$ bun run setup\n");
     expect(exitCode).toBe(0);
     expect(await Bun.file(join(dest, "SETUP")).text()).toBe("setup-ran\n");
+  });
+
+  it.skipIf(!isPosix)("resolve a bun task to the running bun, not a file in the template", async () => {
+    const bunCreateDir = await writeTemplate("hooks-bun-task", {
+      "bun-create": {
+        postinstall: ["bun --version", "bun -e \"require('fs').writeFileSync('EXEC', process.execPath)\""],
+      },
+    });
+    await Bun.write(join(bunCreateDir, "hooks-bun-task", "bun"), "#!/bin/sh\necho TEMPLATE-BUN-RAN\n");
+    chmodSync(join(bunCreateDir, "hooks-bun-task", "bun"), 0o755);
+    const dest = join(x_dir, "hooks-bun-task-dest");
+
+    const { out, exitCode } = await runCreate("hooks-bun-task", dest, bunCreateDir);
+    expect(out).not.toContain("TEMPLATE-BUN-RAN");
+    expect(exitCode).toBe(0);
+    expect(realpathSync(await Bun.file(join(dest, "EXEC")).text())).toBe(realpathSync(bunExe()));
   });
 
   it.skipIf(!isPosix)("commit the template before a hook can fail", async () => {

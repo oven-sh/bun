@@ -106,8 +106,8 @@ fn exec_task(
     )
 }
 
-/// Puts `<destination>/node_modules/.bin` and the directory of this `bun`
-/// binary in front of `PATH`, so hooks resolve `bun` and installed bins
+/// Puts `<destination>/node_modules/.bin` and the `bun`/`node` shim dir for
+/// this binary in front of `PATH`, so hooks resolve `bun` and installed bins
 /// like a package.json script does.
 fn configure_path_for_tasks(
     env_loader: &mut DotEnv::Loader,
@@ -120,13 +120,8 @@ fn configure_path_for_tasks(
     path.extend_from_slice(b"node_modules");
     path.push(bun_paths::SEP);
     path.extend_from_slice(b".bin");
-    if let Some(bun_dir) = bun_core::self_exe_path()
-        .ok()
-        .and_then(|exe| bun_paths::dirname(exe.as_bytes()))
-    {
-        path.push(bun_paths::DELIMITER);
-        path.extend_from_slice(bun_dir);
-    }
+    let mut bun_path: &[u8] = b"";
+    RunCommand::create_fake_temporary_node_executable(&mut path, &mut bun_path)?;
     if !current.is_empty() {
         path.push(bun_paths::DELIMITER);
         path.extend_from_slice(&current);

@@ -2235,7 +2235,8 @@ describe("streamed input pacing", () => {
     const held = seen();
     expect(held).toBeLessThan(count);
     // Locked but not reading: give the loop real work to turn on and check the input did not advance meanwhile.
-    // (File reads are completions: the one already in flight when the sink pushed back still lands, nothing after it.)
+    // (File reads are completions: the one already in flight when the sink pushed back still lands, nothing after it.
+    // A sink-driven read is 256 KiB: OFFLOADED_READ_SIZE in FileReader.rs, 64 KiB on Windows.)
     expect((await Bun.file(otherFile).bytes()).length).toBe(otherPiece.length * count);
     expect(seen() - held).toBeLessThanOrEqual((256 * 1024) / piece.length);
     const second = await reader.read();

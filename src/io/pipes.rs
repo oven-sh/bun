@@ -13,7 +13,6 @@ use crate::{FilePollRef, Owner};
 /// `/dev/urandom`. `epoll_ctl` reports it as `EPERM`, kqueue as `EINVAL`.
 /// A read or write on such an fd never waits, so the caller continues
 /// without a poll.
-#[cfg(not(windows))]
 pub fn is_unpollable(err: &bun_sys::Error) -> bool {
     matches!(err.get_errno(), bun_sys::E::EPERM | bun_sys::E::EINVAL)
 }

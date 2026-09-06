@@ -1270,16 +1270,19 @@ test.skipIf(!isLinux)("Response(Bun.file(FIFO)) with no data frames an empty bod
     port: 0,
     hostname: "127.0.0.1",
     fetch() {
-      // The writer opens the FIFO, which lets the server's open proceed, and closes it at once.
-      Bun.spawn({ cmd: ["sh", "-c", `: > "${fifoPath}"`], env: bunEnv });
       return new Response(Bun.file(fifoPath));
     },
   });
+  // The writer's open(O_WRONLY) waits for the server's read end. The server
+  // opens it with O_NONBLOCK and sees no hangup until a writer has connected,
+  // so its read waits for this writer, which then closes without a byte.
+  await using writer = Bun.spawn({ cmd: ["sh", "-c", `: > "${fifoPath}"`], env: bunEnv });
   const res = await fetch(`http://127.0.0.1:${server.port}/`);
   expect({
     status: res.status,
     body: (await res.arrayBuffer()).byteLength,
-  }).toEqual({ status: 200, body: 0 });
+    writerExit: await writer.exited,
+  }).toEqual({ status: 200, body: 0, writerExit: 0 });
 });
 
 // A file route serves the window of the Bun.file() slice it was built from,

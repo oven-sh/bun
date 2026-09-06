@@ -470,10 +470,6 @@ mod json {
         };
 
         let mut json_data = &data[0..idx as usize];
-        // An empty payload (newline with no preceding data) is invalid JSON.
-        if json_data.is_empty() {
-            return Err(IPCDecodeError::InvalidFormat);
-        }
 
         #[derive(Copy, Clone, Eq, PartialEq)]
         enum Kind {
@@ -481,10 +477,15 @@ mod json {
             Internal,
         }
         let mut kind = Kind::Regular;
-        if json_data[0] == 2 {
+        if json_data.first() == Some(&2) {
             // internal message
             json_data = &json_data[1..];
             kind = Kind::Internal;
+        }
+        // An empty payload (a bare newline, or the internal tag byte alone) is
+        // invalid JSON. `create_external` below rejects an empty slice.
+        if json_data.is_empty() {
+            return Err(IPCDecodeError::InvalidFormat);
         }
 
         let is_ascii = strings::is_all_ascii(json_data);

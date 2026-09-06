@@ -3,6 +3,7 @@
 // Node ref: https://github.com/nodejs/node/blob/main/lib/internal/child_process/serialization.js
 
 const { Buffer } = require("node:buffer");
+const { isUint8Array } = require("node:util/types");
 const BufferPrototype = Buffer.prototype;
 const isBuffer = Buffer.isBuffer;
 const ObjectKeys = Object.keys;
@@ -60,10 +61,14 @@ function restoreBuffers(envelope: unknown): unknown {
     throw new Error("failed to parse serialized buffer envelope");
   }
   const buffers = (envelope as unknown[])[1] as unknown[];
+  // Fresh from deserialization, a tagged Buffer is a plain Uint8Array. Buffer
+  // methods read the backing bytes as Uint8, so any other view is rejected
+  // rather than given the Buffer prototype.
   for (let i = 0; i < buffers.length; i++) {
-    const view = buffers[i];
-    // Fresh from deserialization: plain Uint8Arrays the sender tagged.
-    if ($isTypedArrayView(view)) ObjectSetPrototypeOf(view, BufferPrototype);
+    if (!isUint8Array(buffers[i])) throw new Error("failed to parse serialized buffer envelope");
+  }
+  for (let i = 0; i < buffers.length; i++) {
+    ObjectSetPrototypeOf(buffers[i], BufferPrototype);
   }
   return (envelope as unknown[])[0];
 }

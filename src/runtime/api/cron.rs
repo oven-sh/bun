@@ -244,7 +244,6 @@ struct CronRegisterJob {
     state: Cell<RegisterState>,
     process: JsCell<Option<ProcessHandle>>,
     stdout_reader: JsCell<OutputReader>,
-    #[cfg(windows)]
     stderr_reader: JsCell<OutputReader>,
     remaining_fds: Cell<i8>,
     has_called_process_exit: Cell<bool>,
@@ -338,22 +337,14 @@ impl CronJobBase for CronRegisterJob {
         let state = self.state.get();
         match status {
             Status::Exited(exited) => {
-                if exited.code != 0
-                    && !(state == RegisterState::ReadingCrontab && exited.code == 1)
-                    && state != RegisterState::BootingOut
-                {
-                    // Materialize the trimmed stderr into an owned buffer so
-                    // no borrow of the reader outlives this statement
-                    // (Windows only; POSIX ignores stderr here).
-                    #[cfg(windows)]
-                    let stderr_owned: Vec<u8> = self.stderr_reader.with_mut(|r| {
-                        bun_core::strings::trim(r.final_buffer().as_slice(), &ASCII_WHITESPACE)
-                            .to_vec()
-                    });
-                    #[cfg(windows)]
-                    let stderr_output: &[u8] = stderr_owned.as_slice();
-                    #[cfg(not(windows))]
-                    let stderr_output: &[u8] = b"";
+                let stderr_owned: Vec<u8> = self.stderr_reader.with_mut(|r| {
+                    bun_core::strings::trim(r.final_buffer().as_slice(), &ASCII_WHITESPACE).to_vec()
+                });
+                let stderr_output: &[u8] = stderr_owned.as_slice();
+                let no_crontab = state == RegisterState::ReadingCrontab
+                    && exited.code == 1
+                    && is_no_crontab_listing(stderr_output);
+                if exited.code != 0 && !no_crontab && state != RegisterState::BootingOut {
                     // On Windows, detect the SID resolution error and provide
                     // a clear message instead of the raw schtasks output.
                     #[cfg(windows)]
@@ -858,7 +849,6 @@ pub(crate) fn cron_register(global: &JSGlobalObject, frame: &CallFrame) -> JsRes
         state: Cell::new(RegisterState::ReadingCrontab),
         process: JsCell::new(None),
         stdout_reader: JsCell::new(OutputReader::init::<CronRegisterJob>()),
-        #[cfg(windows)]
         stderr_reader: JsCell::new(OutputReader::init::<CronRegisterJob>()),
         remaining_fds: Cell::new(0),
         has_called_process_exit: Cell::new(false),
@@ -980,7 +970,6 @@ impl Drop for CronRegisterJob {
     }
 }
 
-#[cfg(windows)]
 const ASCII_WHITESPACE: [u8; 6] = *b" \t\n\r\x0b\x0c";
 
 // ============================================================================
@@ -1001,7 +990,6 @@ struct CronRemoveJob {
     state: Cell<RemoveState>,
     process: JsCell<Option<ProcessHandle>>,
     stdout_reader: JsCell<OutputReader>,
-    #[cfg(windows)]
     stderr_reader: JsCell<OutputReader>,
     remaining_fds: Cell<i8>,
     has_called_process_exit: Cell<bool>,
@@ -1090,22 +1078,18 @@ impl CronJobBase for CronRemoveJob {
         let state = self.state.get();
         match status {
             Status::Exited(exited) => {
+                let stderr_owned: Vec<u8> = self.stderr_reader.with_mut(|r| {
+                    bun_core::strings::trim(r.final_buffer().as_slice(), &ASCII_WHITESPACE).to_vec()
+                });
+                let stderr_output: &[u8] = stderr_owned.as_slice();
                 let is_acceptable_nonzero = (state == RemoveState::ReadingCrontab
-                    && exited.code == 1)
+                    && exited.code == 1
+                    && is_no_crontab_listing(stderr_output))
                     || state == RemoveState::BootingOut
                     // On Windows, schtasks /delete exits non-zero when the task doesn't exist;
                     // removal of a non-existent job should resolve without error.
                     || (cfg!(windows) && state == RemoveState::InstallingCrontab);
                 if exited.code != 0 && !is_acceptable_nonzero {
-                    #[cfg(windows)]
-                    let stderr_owned: Vec<u8> = self.stderr_reader.with_mut(|r| {
-                        bun_core::strings::trim(r.final_buffer().as_slice(), &ASCII_WHITESPACE)
-                            .to_vec()
-                    });
-                    #[cfg(windows)]
-                    let stderr_output: &[u8] = stderr_owned.as_slice();
-                    #[cfg(not(windows))]
-                    let stderr_output: &[u8] = b"";
                     if !stderr_output.is_empty() {
                         self.set_err(format_args!("{}", bstr::BStr::new(stderr_output)));
                     } else {
@@ -1203,15 +1187,16 @@ impl CronRemoveJob {
     /// May free `this`; see [`CronJobBase`] note.
     #[cfg(not(target_os = "macos"))]
     fn remove_crontab_entry(this: ThisPtr<Self>) {
-        let Ok((crontab_path, tmp_path)) = this.prepare_filtered_crontab() else {
+        let Ok(Some((crontab_path, tmp_path))) = this.prepare_filtered_crontab() else {
             return Self::finish(this);
         };
         let argv = [crontab_path.as_cstr(), tmp_path.as_cstr()];
         Self::spawn_cmd(this, &argv, spawn::Stdio::Ignore, spawn::Stdio::Ignore);
     }
 
+    /// `Ok(None)`: no entry with this title, nothing to rewrite.
     #[cfg(not(target_os = "macos"))]
-    fn prepare_filtered_crontab(&self) -> Result<(ZString, ZString), ()> {
+    fn prepare_filtered_crontab(&self) -> Result<Option<(ZString, ZString)>, ()> {
         let mut result: Vec<u8> = Vec::new();
         let filtered = self.stdout_reader.with_mut(|r| {
             filter_crontab(
@@ -1221,9 +1206,13 @@ impl CronRemoveJob {
             )
         });
 
-        if filtered.is_err() {
-            self.set_err(format_args!("Out of memory"));
-            return Err(());
+        match filtered {
+            Ok(true) => {}
+            Ok(false) => return Ok(None),
+            Err(_) => {
+                self.set_err(format_args!("Out of memory"));
+                return Err(());
+            }
         }
 
         let tmp_path = match make_temp_path("bun-cron-rm-") {
@@ -1262,7 +1251,7 @@ impl CronRemoveJob {
             self.set_err(format_args!("crontab not found in PATH"));
             return Err(());
         };
-        Ok((crontab_path, tmp_path))
+        Ok(Some((crontab_path, tmp_path)))
     }
 
     /// May free `this`; see [`CronJobBase`] note.
@@ -1304,7 +1293,6 @@ pub(crate) fn cron_remove(global: &JSGlobalObject, frame: &CallFrame) -> JsResul
         state: Cell::new(RemoveState::ReadingCrontab),
         process: JsCell::new(None),
         stdout_reader: JsCell::new(OutputReader::init::<CronRemoveJob>()),
-        #[cfg(windows)]
         stderr_reader: JsCell::new(OutputReader::init::<CronRemoveJob>()),
         remaining_fds: Cell::new(0),
         has_called_process_exit: Cell::new(false),
@@ -1899,7 +1887,6 @@ trait SpawnCmdTarget: CronJobBase + BufferedReaderParent + bun_spawn::ProcessExi
     fn process_slot(&self) -> &JsCell<Option<ProcessHandle>>;
     #[cfg(unix)]
     fn stdout_reader(&self) -> &JsCell<OutputReader>;
-    #[cfg(windows)]
     fn stderr_reader(&self) -> &JsCell<OutputReader>;
 }
 
@@ -1927,7 +1914,6 @@ impl SpawnCmdTarget for CronRegisterJob {
     fn stdout_reader(&self) -> &JsCell<OutputReader> {
         &self.stdout_reader
     }
-    #[cfg(windows)]
     fn stderr_reader(&self) -> &JsCell<OutputReader> {
         &self.stderr_reader
     }
@@ -1940,7 +1926,6 @@ impl SpawnCmdTarget for CronRemoveJob {
     fn stdout_reader(&self) -> &JsCell<OutputReader> {
         &self.stdout_reader
     }
-    #[cfg(windows)]
     fn stderr_reader(&self) -> &JsCell<OutputReader> {
         &self.stderr_reader
     }
@@ -1989,10 +1974,14 @@ fn spawn_cmd_prepare<T: SpawnCmdTarget>(
     stdin_opt: spawn::Stdio,
     stdout_opt: spawn::Stdio,
 ) -> Result<ProcessHandle, ()> {
+    #[cfg(windows)]
     let this_ptr: *mut core::ffi::c_void = this.as_ptr().cast();
     this.has_called_process_exit().set(false);
     this.exit_status().set(None);
     this.remaining_fds().set(0);
+    // A job spawns two commands. Each gets its own stderr reader.
+    #[cfg(unix)]
+    this.stderr_reader().set(OutputReader::init::<T>());
 
     #[cfg(not(windows))]
     let resolved_argv0: Option<*const core::ffi::c_char> = None;
@@ -2018,31 +2007,27 @@ fn spawn_cmd_prepare<T: SpawnCmdTarget>(
             }
         }
     }
-    #[cfg(unix)]
-    let env = spawn::SpawnEnv::Inherit;
-    #[cfg(windows)]
-    let envp_owned;
-    #[cfg(windows)]
-    let env_strings: Vec<&CStr>;
-    #[cfg(windows)]
-    let env = {
-        match vm_mut()
-            .transpiler
-            .env_mut()
-            .map
-            .create_null_delimited_env_map()
-        {
-            Ok(v) => {
-                envp_owned = v;
-                env_strings = envp_owned.iter().collect();
-                spawn::SpawnEnv::Strings(&env_strings)
-            }
-            Err(_) => {
-                this.set_err(format_args!("Failed to create environment block"));
-                return Err(());
-            }
+    let envp_owned = match vm_mut()
+        .transpiler
+        .env_mut()
+        .map
+        .create_null_delimited_env_map()
+    {
+        Ok(v) => v,
+        Err(_) => {
+            this.set_err(format_args!("Failed to create environment block"));
+            return Err(());
         }
     };
+    let env_strings: Vec<&CStr> = envp_owned.iter().collect();
+    // `is_no_crontab_listing` matches the English message.
+    #[cfg(unix)]
+    let env_strings: Vec<&CStr> = env_strings
+        .into_iter()
+        .filter(|e| !e.to_bytes().starts_with(b"LC_ALL="))
+        .chain(core::iter::once(c"LC_ALL=C"))
+        .collect();
+    let env = spawn::SpawnEnv::Strings(&env_strings);
 
     // Ownership note: BOTH
     // `Source::Pipe` and `WindowsStdioResult::Buffer` own a `Box<uv::Pipe>`,
@@ -2072,7 +2057,7 @@ fn spawn_cmd_prepare<T: SpawnCmdTarget>(
         #[cfg(windows)]
         stderr: spawn::Stdio::Buffer(stderr_pipe_ptr),
         #[cfg(not(windows))]
-        stderr: spawn::Stdio::Ignore,
+        stderr: spawn::Stdio::Buffer,
         cwd: cwd.into(),
         argv0: resolved_argv0,
         #[cfg(windows)]
@@ -2114,35 +2099,12 @@ fn spawn_cmd_prepare<T: SpawnCmdTarget>(
     #[cfg(unix)]
     {
         if let Some(stdout) = spawned.stdout {
-            if !spawned.memfds[1] {
-                this.stdout_reader().with_mut(|r| r.set_parent(this_ptr));
-                let _ = sys::set_nonblocking(stdout);
-                this.remaining_fds().set(this.remaining_fds().get() + 1);
-                let started = this.stdout_reader().with_mut(|r| {
-                    use bun_io::pipe_reader::PosixFlags;
-                    r.flags.insert(PosixFlags::NONBLOCKING | PosixFlags::SOCKET);
-                    r.flags.remove(
-                        PosixFlags::MEMFD
-                            | PosixFlags::RECEIVED_EOF
-                            | PosixFlags::CLOSED_WITHOUT_REPORTING,
-                    );
-                    r.start(stdout, true)
-                });
-                if started.is_err() {
-                    this.set_err(format_args!("Failed to start reading stdout"));
-                    return Err(());
-                }
-                this.stdout_reader().with_mut(|r| {
-                    if let Some(p) = r.handle.get_poll() {
-                        p.set_flag(bun_io::FilePollFlag::Socket);
-                    }
-                });
-            } else {
-                this.stdout_reader().with_mut(|r| {
-                    r.set_parent(this_ptr);
-                    r.start_memfd(stdout);
-                });
-            }
+            start_posix_reader(this, this.stdout_reader(), stdout, spawned.memfds[1])
+                .map_err(|_| this.set_err(format_args!("Failed to start reading stdout")))?;
+        }
+        if let Some(stderr) = spawned.stderr {
+            start_posix_reader(this, this.stderr_reader(), stderr, spawned.memfds[2])
+                .map_err(|_| this.set_err(format_args!("Failed to start reading stderr")))?;
         }
     }
     #[cfg(windows)]
@@ -2175,6 +2137,44 @@ fn spawn_cmd_prepare<T: SpawnCmdTarget>(
 
     let ev_handle = EventLoopHandle::init(vm_mut().event_loop().cast::<()>());
     Ok(spawned.to_process_handle(ev_handle))
+}
+
+/// Wires one captured stdio fd of the spawned command into `reader`.
+#[cfg(unix)]
+fn start_posix_reader<T: SpawnCmdTarget>(
+    this: ThisPtr<T>,
+    reader: &JsCell<OutputReader>,
+    fd: Fd,
+    is_memfd: bool,
+) -> Result<(), ()> {
+    let this_ptr: *mut core::ffi::c_void = this.as_ptr().cast();
+    if is_memfd {
+        reader.with_mut(|r| {
+            r.set_parent(this_ptr);
+            r.start_memfd(fd);
+        });
+        return Ok(());
+    }
+    reader.with_mut(|r| r.set_parent(this_ptr));
+    let _ = sys::set_nonblocking(fd);
+    this.remaining_fds().set(this.remaining_fds().get() + 1);
+    let started = reader.with_mut(|r| {
+        use bun_io::pipe_reader::PosixFlags;
+        r.flags.insert(PosixFlags::NONBLOCKING | PosixFlags::SOCKET);
+        r.flags.remove(
+            PosixFlags::MEMFD | PosixFlags::RECEIVED_EOF | PosixFlags::CLOSED_WITHOUT_REPORTING,
+        );
+        r.start(fd, true)
+    });
+    if started.is_err() {
+        return Err(());
+    }
+    reader.with_mut(|r| {
+        if let Some(p) = r.handle.get_poll() {
+            p.set_flag(bun_io::FilePollFlag::Socket);
+        }
+    });
+    Ok(())
 }
 
 /// Find crontab binary using bun.which (searches PATH).
@@ -2265,31 +2265,63 @@ pub(crate) fn validate_title(title: &[u8]) -> bool {
     true
 }
 
-/// Filter crontab content, removing any entry with matching title marker.
+/// `crontab -l` exits 1 for a spool error too. Only this text means empty.
+fn is_no_crontab_listing(stderr: &[u8]) -> bool {
+    strings::contains(stderr, b"no crontab")
+        || strings::contains(stderr, b"No such file or directory")
+}
+
+/// Removes the entry with this title marker. Returns whether one was removed.
 #[cfg(not(target_os = "macos"))]
 pub(crate) fn filter_crontab(
     content: &[u8],
     title: &[u8],
     result: &mut Vec<u8>,
-) -> Result<(), bun_alloc::AllocError> {
+) -> Result<bool, bun_alloc::AllocError> {
     let mut marker = Vec::new();
     let _ = write!(&mut marker, "# bun-cron: {}", bstr::BStr::new(title));
-    let mut skip_next = false;
-    for line in strings::split(content, b"\n") {
-        if skip_next {
-            skip_next = false;
-            continue;
+    let mut flag = Vec::new();
+    let _ = write!(&mut flag, "--cron-title={}", bstr::BStr::new(title));
+    let body = content.strip_suffix(b"\n").unwrap_or(content);
+    if body.is_empty() {
+        return Ok(false);
+    }
+    let mut removed = false;
+    let mut after_marker = false;
+    for line in strings::split(body, b"\n") {
+        if after_marker {
+            after_marker = false;
+            if is_bun_cron_command(line, &flag) {
+                removed = true;
+                continue;
+            }
         }
         if bun_core::trim(line, b" \t") == marker.as_slice() {
-            skip_next = true;
+            after_marker = true;
+            removed = true;
             continue;
         }
-        if !line.is_empty() {
-            result.extend_from_slice(line);
-            result.push(b'\n');
-        }
+        result
+            .try_reserve(line.len() + 1)
+            .map_err(|_| bun_alloc::AllocError)?;
+        result.extend_from_slice(line);
+        result.push(b'\n');
     }
-    Ok(())
+    Ok(removed)
+}
+
+/// True when `line` carries `flag` (`--cron-title=<title>`) as a whole word.
+#[cfg(not(target_os = "macos"))]
+fn is_bun_cron_command(line: &[u8], flag: &[u8]) -> bool {
+    let mut rest = line;
+    while let Some(i) = strings::index_of(rest, flag) {
+        let after = &rest[i + flag.len()..];
+        if after.first().is_none_or(|&c| c == b' ' || c == b'\t') {
+            return true;
+        }
+        rest = after;
+    }
+    false
 }
 
 /// XML-escape a string for safe embedding in plist XML.

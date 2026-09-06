@@ -866,11 +866,12 @@ impl FileReader {
         Vec::<u8>::move_from_list(mem::take(self.reader().buffer()))
     }
 
-    pub(crate) fn set_ref_or_unref(&self, enable: bool) {
+    /// Returns the previous ref state. A finished reader has none.
+    pub(crate) fn set_ref_or_unref(&self, enable: bool) -> bool {
         if self.done.get() {
-            return;
+            return false;
         }
-        self.reader().update_ref(enable);
+        self.reader().update_ref(enable)
     }
 
     fn consume_reader_buffer(&self) {
@@ -1091,7 +1092,7 @@ impl readable_stream::SourceContext for FileReader {
     fn finalize_detach(&mut self) -> bool {
         Self::finalize_detach(self)
     }
-    fn set_ref_unref(&mut self, e: bool) {
+    fn set_ref_unref(&mut self, e: bool) -> bool {
         Self::set_ref_or_unref(self, e)
     }
     fn drain_internal_buffer(&mut self) -> Vec<u8> {

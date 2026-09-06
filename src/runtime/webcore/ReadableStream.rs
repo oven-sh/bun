@@ -805,8 +805,10 @@ pub trait SourceContext: Sized {
     /// sweep: no JS. `ByteStream` tells a parked producer nobody can read it now.
     fn wrapper_finalized(&mut self) {}
 
-    /// `setRefUnrefFn` — default no-op.
-    fn set_ref_unref(&mut self, _enable: bool) {}
+    /// `setRefUnrefFn` — returns the previous ref state. Default no-op with no ref.
+    fn set_ref_unref(&mut self, _enable: bool) -> bool {
+        false
+    }
 
     /// `drainInternalBuffer` — default returns empty.
     fn drain_internal_buffer(&mut self) -> Vec<u8> {
@@ -1097,9 +1099,12 @@ impl<C: SourceContext> NewSource<C> {
         unsafe { &mut *Self::new(init) }
     }
 
-    pub fn set_ref(&mut self, value: bool) {
+    /// Returns the previous ref state.
+    pub fn set_ref(&mut self, value: bool) -> bool {
         if C::SUPPORTS_REF {
-            self.context.set_ref_unref(value);
+            self.context.set_ref_unref(value)
+        } else {
+            false
         }
     }
 
@@ -1502,8 +1507,8 @@ impl<C: SourceContext> NewSource<C> {
         call_frame: &CallFrame,
     ) -> JsResult<JSValue> {
         let ref_or_unref = call_frame.argument(0).to_boolean();
-        self.set_ref(ref_or_unref);
-        Ok(JSValue::UNDEFINED)
+        // The previous state, so a caller can restore only what it changed.
+        Ok(JSValue::js_boolean(self.set_ref(ref_or_unref)))
     }
 
     pub fn finalize(self: Box<Self>) {

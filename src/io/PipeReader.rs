@@ -232,14 +232,16 @@ impl PosixBufferedReader {
         }
     }
 
-    pub fn update_ref(&mut self, value: bool) {
+    /// Returns the previous ref state.
+    pub fn update_ref(&mut self, value: bool) -> bool {
+        let previous = self.flags.contains(PosixFlags::KEEP_ALIVE);
         // Remember the ref state so a poll created later (lazy start) honours
         // an unref() that preceded the first registration.
         self.flags.set(PosixFlags::KEEP_ALIVE, value);
-        let Some(poll) = self.handle.get_poll() else {
-            return;
-        };
-        poll.set_keeping_process_alive(self.vtable.event_loop(), value);
+        if let Some(poll) = self.handle.get_poll() {
+            poll.set_keeping_process_alive(self.vtable.event_loop(), value);
+        }
+        previous
     }
 
     #[inline]
@@ -1013,13 +1015,18 @@ bitflags::bitflags! {
         /// When true, wait for the file operation callback before calling done().
         /// Used to ensure proper cleanup ordering when closing during cancellation.
         const DEFER_DONE_CALLBACK      = 1 << 9;
+        const KEEP_ALIVE               = 1 << 10; // default true
     }
 }
 
 #[cfg(windows)]
 impl WindowsFlags {
     pub(crate) const fn new() -> Self {
-        Self::from_bits_truncate(WindowsFlags::CLOSE_HANDLE.bits() | WindowsFlags::IS_PAUSED.bits())
+        Self::from_bits_truncate(
+            WindowsFlags::CLOSE_HANDLE.bits()
+                | WindowsFlags::IS_PAUSED.bits()
+                | WindowsFlags::KEEP_ALIVE.bits(),
+        )
     }
 }
 
@@ -1098,7 +1105,10 @@ impl WindowsBufferedReader {
         }
     }
 
-    pub fn update_ref(&mut self, value: bool) {
+    /// Returns the previous ref state.
+    pub fn update_ref(&mut self, value: bool) -> bool {
+        let previous = self.flags.contains(WindowsFlags::KEEP_ALIVE);
+        self.flags.set(WindowsFlags::KEEP_ALIVE, value);
         if let Some(source) = self.source.as_mut() {
             if value {
                 source.ref_();
@@ -1106,6 +1116,7 @@ impl WindowsBufferedReader {
                 source.unref();
             }
         }
+        previous
     }
 
     pub fn disable_keeping_process_alive<C>(&mut self, _: C) {

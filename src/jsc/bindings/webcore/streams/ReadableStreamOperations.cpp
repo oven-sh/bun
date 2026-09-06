@@ -477,30 +477,32 @@ JSPromise* readableStreamCancel(JSGlobalObject* globalObject, JSReadableStream* 
     return result;
 }
 
-// Bun: `updateRef(value)` on a default-controller native source handle; no-op otherwise.
-static void updateNativeSourceRef(JSGlobalObject* globalObject, JSReadableStream* stream, bool value)
+// Bun: `updateRef(value)` on a default-controller native source handle. Returns whether the
+// source held a ref before the call; false when there is no such handle.
+static bool updateNativeSourceRef(JSGlobalObject* globalObject, JSReadableStream* stream, bool value)
 {
     auto& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     if (stream->m_controllerKind != ControllerKind::Default)
-        return;
+        return false;
     auto* controller = defaultControllerOf(stream);
     if (controller->m_algorithms.kind != SourceKind::Native)
-        return;
+        return false;
     const auto* adapter = uncheckedDowncast<WebCore::JSNativeStreamSourceAdapter>(controller->m_algorithms.algorithmContext.get());
     auto* handle = adapter->handle();
     if (!handle)
-        return;
+        return false;
     JSValue updateRef = handle->getIfPropertyExists(globalObject, builtinNames(vm).updateRefPublicName());
-    RETURN_IF_EXCEPTION(scope, void());
+    RETURN_IF_EXCEPTION(scope, false);
     if (!updateRef || !updateRef.isCallable())
-        return;
+        return false;
     auto callData = JSC::getCallData(updateRef);
     MarkedArgumentBuffer args;
     args.append(jsBoolean(value));
     ASSERT(!args.hasOverflowed());
-    JSC::call(globalObject, updateRef, callData, handle, args);
-    RETURN_IF_EXCEPTION(scope, void());
+    JSValue previous = JSC::call(globalObject, updateRef, callData, handle, args);
+    RETURN_IF_EXCEPTION(scope, false);
+    return previous.isTrue();
 }
 
 // ReadableStreamReaderGenericInitialize(reader, stream)
@@ -578,10 +580,11 @@ void readableStreamReaderGenericRelease(JSGlobalObject* globalObject, JSReadable
         auto* controller = defaultControllerOf(stream);
         controller->releaseSteps();
         // Bun: drop the native handle's event-loop ref when its consumer releases the lock.
+        // A source the user already unref'd has nothing to drop, so nothing gets restored later.
         if (controller->m_algorithms.kind == SourceKind::Native) {
-            stream->m_nativeRefDroppedOnRelease = true;
-            updateNativeSourceRef(globalObject, stream, false);
+            bool wasRef = updateNativeSourceRef(globalObject, stream, false);
             RETURN_IF_EXCEPTION(scope, void());
+            stream->m_nativeRefDroppedOnRelease = wasRef;
         }
         break;
     }

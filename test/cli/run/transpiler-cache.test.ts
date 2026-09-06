@@ -647,7 +647,8 @@ test("rejects a cached entry whose sourcemap section header is corrupt", () => {
   // A module large enough for the cache (>= 4 KiB) that throws. Reading the
   // error's stack forces the runtime to remap the captured frame through the
   // cached sourcemap while the process still exits 0.
-  const filler = ("// " + "x".repeat(120) + "\n").repeat(120);
+  const line = `// ${Buffer.alloc(120, "x").toString()}\n`;
+  const filler = Buffer.alloc(120 * line.length, line).toString();
   writeFileSync(
     join(temp_dir, "boom.ts"),
     `${filler}
@@ -669,8 +670,8 @@ console.log("OK");
   // still remaps the stack and prints the marker.
   const first = run();
   expect(first.stdout.toString()).toContain("OK");
-  expect(first.exitCode).toBe(0);
   expect(existsSync(cache_dir)).toBeTrue();
+  expect(first.exitCode).toBe(0);
 
   const second = run();
   expect(second.stdout.toString()).toContain("OK");

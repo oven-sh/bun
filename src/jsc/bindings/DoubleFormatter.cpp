@@ -30,8 +30,7 @@ extern "C" [[ZIG_EXPORT(nothrow)]] double Bun__parseInt(const BunString* str, in
     return JSC::parseInt(str->toWTFString(BunString::ZeroCopy), radix);
 }
 
-/// `parseFloat(string)` on an already-converted string. Mirrors the static
-/// `parseFloat` in JavaScriptCore/runtime/JSGlobalObjectFunctions.cpp.
+/// `parseFloat(string)`, as JSGlobalObjectFunctions.cpp implements it.
 template<typename CharacterType>
 static double parseFloatSpan(std::span<const CharacterType> data)
 {

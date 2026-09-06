@@ -866,12 +866,10 @@ impl PostgresSQLConnection {
         debug!("onHandshake: {} {}", success, ssl_error.error_no);
         let handshake_success = success == 1;
         if handshake_success {
-            // reject_unauthorized is the explicit `tls.rejectUnauthorized`, which
-            // shared.ts sets to true for a verify-* sslmode, or else the
-            // NODE_TLS_REJECT_UNAUTHORIZED default. Only an explicit
-            // `rejectUnauthorized: false` skips the verify-* checks.
             if self.tls_config.reject_unauthorized() != 0 {
+                // only reject the connection if reject_unauthorized == true
                 match self.ssl_mode {
+                    // https://github.com/porsager/postgres/blob/6ec85a432b17661ccacbdf7f765c651e88969d36/src/connection.js#L272-L279
                     SSLMode::VerifyCa | SSLMode::VerifyFull => {
                         if ssl_error.error_no != 0 {
                             let v = verify_error_to_js(&ssl_error, self.global());

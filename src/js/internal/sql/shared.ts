@@ -2128,11 +2128,8 @@ function parseOptions(
     }
   }
 
-  // A verify-* sslmode is an explicit request to verify the certificate. The
-  // native side only verifies when rejectUnauthorized is set, and an unset
-  // rejectUnauthorized falls back to NODE_TLS_REJECT_UNAUTHORIZED, which must
-  // not be able to silently turn the request off. Only an own
-  // `rejectUnauthorized: false` opts out.
+  // verify-ca and verify-full verify even with NODE_TLS_REJECT_UNAUTHORIZED=0.
+  // Only an own `rejectUnauthorized: false` opts out.
   if (
     sslMode >= SSLMode.verify_ca &&
     !(

@@ -404,11 +404,10 @@ impl MySQLConnection {
         self.sequence_id = self.sequence_id.wrapping_add(1);
         if handshake_success {
             self.tls_status = TLSStatus::SslOk;
-            // reject_unauthorized is the explicit `tls.rejectUnauthorized`, which
-            // shared.ts sets to true for a verify-* sslmode, or else the
-            // NODE_TLS_REJECT_UNAUTHORIZED default. Only an explicit
-            // `rejectUnauthorized: false` skips the verify-* checks.
             if self.tls_config.reject_unauthorized() != 0 {
+                // follow the same rules as postgres
+                // https://github.com/porsager/postgres/blob/6ec85a432b17661ccacbdf7f765c651e88969d36/src/connection.js#L272-L279
+                // only reject the connection if reject_unauthorized == true
                 match self.ssl_mode {
                     SSLMode::VerifyCa | SSLMode::VerifyFull => {
                         if ssl_error.error_no != 0 {

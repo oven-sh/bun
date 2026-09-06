@@ -8884,10 +8884,21 @@ pub fn exists(path: &[u8]) -> bool {
 /// [`renameat_concurrently_without_fallback`] (renameat2 NOREPLACE → EXCHANGE →
 /// delete-tree + rename); on EISDIR removes the dest dir and
 /// retries; on EXDEV falls back to the slow open+copy path. Only opens the
-/// source inside the EXDEV branch.
+/// source inside the EXDEV branch. On success nothing is left at `filename`:
+/// an EXCHANGE parks the old destination there, so it is deleted.
 pub fn move_file_z(from_dir: Fd, filename: &ZStr, to_dir: Fd, destination: &ZStr) -> Maybe<()> {
     match renameat_concurrently_without_fallback(from_dir, filename, to_dir, destination) {
-        Ok(()) => Ok(()),
+        Ok(RenameOutcome::Moved) => Ok(()),
+        Ok(RenameOutcome::Exchanged) => {
+            if unlinkat(from_dir, filename).is_err() {
+                let _ = if from_dir.is_valid() {
+                    Dir::borrow(&from_dir).delete_tree(filename.as_bytes())
+                } else {
+                    delete_tree_absolute(filename.as_bytes())
+                };
+            }
+            Ok(())
+        }
         // allow over-writing an empty directory
         Err(e) if e.get_errno() == E::EISDIR => {
             #[cfg(unix)]
@@ -8994,7 +9005,7 @@ pub fn renameat_concurrently(
     opts: RenameatConcurrentlyOptions,
 ) -> Maybe<()> {
     match renameat_concurrently_without_fallback(from_dir_fd, from, to_dir_fd, to) {
-        Ok(()) => Ok(()),
+        Ok(_) => Ok(()),
         Err(e) => {
             if opts.move_fallback && e.get_errno() == E::EXDEV {
                 bun_core::output::debug_warn(
@@ -9007,13 +9018,23 @@ pub fn renameat_concurrently(
     }
 }
 
+/// How [`renameat_concurrently_without_fallback`] published `from` at `to`.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) enum RenameOutcome {
+    /// `from` no longer exists.
+    Moved,
+    /// `from` now holds the entry that was at `to`. Never produced on Windows.
+    #[cfg_attr(windows, allow(dead_code))]
+    Exchanged,
+}
+
 /// `renameatConcurrentlyWithoutFallback`.
 pub(crate) fn renameat_concurrently_without_fallback(
     from_dir_fd: Fd,
     from: &ZStr,
     to_dir_fd: Fd,
     to: &ZStr,
-) -> Maybe<()> {
+) -> Maybe<RenameOutcome> {
     'attempt: {
         {
             // Happy path: the folder doesn't exist in the cache dir, so we can
@@ -9055,7 +9076,7 @@ pub(crate) fn renameat_concurrently_without_fallback(
                         },
                     ) {
                         Err(_) => {}
-                        Ok(()) => break 'attempt,
+                        Ok(()) => return Ok(RenameOutcome::Exchanged),
                     }
                 }
             }
@@ -9077,7 +9098,7 @@ pub(crate) fn renameat_concurrently_without_fallback(
         }
     }
 
-    Ok(())
+    Ok(RenameOutcome::Moved)
 }
 
 /// `eventfd(initval, flags)` — kernel notification fd. Linux native (Android

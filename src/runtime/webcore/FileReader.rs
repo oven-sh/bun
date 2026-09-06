@@ -66,7 +66,19 @@ pub struct FileReader {
     /// path; `pull_into_sink` is the drain-ack resume.
     pub(crate) sink: JsCell<SinkHandle>,
     pub(crate) sink_paused: Cell<bool>,
+    /// POSIX: the fd is a regular file. A read of it blocks the calling thread for as long as the
+    /// disk takes, so each read runs on the work pool and completes through the same callbacks a
+    /// libuv read completes through on Windows.
+    #[cfg(unix)]
+    pub(crate) offloaded: Cell<bool>,
+    /// How many bytes the next offloaded read asks for: the size of the last JS pull buffer.
+    #[cfg(unix)]
+    pub(crate) read_size: Cell<usize>,
 }
+
+/// The read size for an offloaded read that no JS pull sized (a native sink drains the reader).
+#[cfg(unix)]
+const OFFLOADED_READ_SIZE: usize = 256 * 1024;
 
 impl Default for FileReader {
     fn default() -> Self {
@@ -90,6 +102,10 @@ impl Default for FileReader {
             flowing: Cell::new(true),
             sink: JsCell::new(SinkHandle::None),
             sink_paused: Cell::new(false),
+            #[cfg(unix)]
+            offloaded: Cell::new(false),
+            #[cfg(unix)]
+            read_size: Cell::new(OFFLOADED_READ_SIZE),
         }
     }
 }
@@ -336,6 +352,7 @@ impl FileReader {
                             #[cfg(unix)]
                             {
                                 file_type = opened.file_type;
+                                self.offloaded.set(file_type == FileType::File && !pollable);
                             }
                             #[cfg(unix)]
                             {
@@ -380,12 +397,12 @@ impl FileReader {
         if was_lazy {
             // The across-read ref roots the JS wrapper (`increment_count`
             // upgrades `this_jsvalue` to Strong) so an event-loop callback
-            // firing with no JS on the stack never lands on a freed box. For a
-            // POSIX non-pollable regular file every read is synchronous
-            // (`read_file` → `sys::pread`), so there is no such callback —
-            // holding the Strong there would root an abandoned reader forever
-            // and leak its fd. Windows file reads are async via libuv even for
-            // regular files, so the ref is always taken there.
+            // firing with no JS on the stack never lands on a freed box. A
+            // POSIX regular file takes no such ref here: holding the Strong for
+            // the reader's whole life would root an abandoned reader forever
+            // and leak its fd. Its offloaded reads pin the source per read
+            // instead (`OffloadedRead`). Windows file reads are async via libuv
+            // even for regular files, so the ref is always taken there.
             #[cfg(unix)]
             let need_io_ref = pollable;
             #[cfg(windows)]
@@ -580,10 +597,63 @@ impl FileReader {
         }
         if !self.reader().has_pending_read() {
             self.reader().unpause();
-            // SAFETY: the reader cell is live for `self`'s lifetime; `read` is
-            // the raw re-entrancy-safe entry (its dispatch runs user JS).
-            unsafe { IOReader::read(self.reader.get()) };
+            self.read();
         }
+    }
+
+    /// A JS pull on an offloaded file that is flowing and has no read out: sizes the next read to
+    /// the pull buffer and hands it to the work pool. `false` when the pull is served inline.
+    #[cfg(unix)]
+    fn offload_pull(&self, len: usize) -> bool {
+        if !self.offloaded.get() || self.reader().has_pending_read() || !self.flowing.get() {
+            return false;
+        }
+        self.read_size.set(len);
+        self.schedule_offloaded_read();
+        true
+    }
+
+    #[cfg(not(unix))]
+    fn offload_pull(&self, _len: usize) -> bool {
+        false
+    }
+
+    /// Starts the next read: on the work pool for an offloaded file, inline otherwise.
+    fn read(&self) {
+        #[cfg(unix)]
+        if self.offloaded.get() {
+            self.schedule_offloaded_read();
+            return;
+        }
+        // SAFETY: the reader cell is live for `self`'s lifetime; `read` is
+        // the raw re-entrancy-safe entry (its dispatch runs user JS).
+        unsafe { IOReader::read(self.reader.get()) };
+    }
+
+    /// Hands one read of the file to the work pool. Nothing is scheduled when the reader has
+    /// nothing left to read (then it is done, reported through `on_reader_done`) or a read is
+    /// already out.
+    #[cfg(unix)]
+    fn schedule_offloaded_read(&self) {
+        // SAFETY: the reader cell is live for `self`'s lifetime; the `on_reader_done` dispatch
+        // settles a parked pull, which cannot free the source while the JS wrapper holds its ref.
+        let Some(request) =
+            (unsafe { IOReader::begin_async_read(self.reader.get(), self.read_size.get()) })
+        else {
+            return;
+        };
+        let global = self.parent_global();
+        // SAFETY: see `parent()`.
+        let pin = unsafe { SourcePin::new(self.parent()) };
+        bun_jsc::Job::<OffloadedRead>::schedule(
+            &global.js_thread(),
+            OffloadedRead {
+                request,
+                bytes: Vec::new(),
+                error: None,
+            },
+            OffloadedReadPin(pin),
+        );
     }
 
     pub(crate) fn on_cancel(&self) {
@@ -808,7 +878,17 @@ impl FileReader {
             return self.end_of_reader();
         }
 
-        if !self.reader().has_pending_read() && self.flowing.get() {
+        if self.offload_pull(buffer.len()) {
+            bun_core::scoped_log!(FileReader, "onPull({}) = offloaded", buffer.len());
+            // Nothing left to read: the reader ended inside `schedule_offloaded_read`.
+            if self.reader().is_done() {
+                let drained = self.drain();
+                if !drained.is_empty() {
+                    return streams::Result::OwnedAndDone(drained);
+                }
+                return self.end_of_reader();
+            }
+        } else if !self.reader().has_pending_read() && self.flowing.get() {
             // SAFETY: the reader cell is live for `self`'s lifetime; `read_into` is the raw re-entrancy-safe entry (EOF/error dispatch runs user JS).
             let (amount_read, state) = unsafe { IOReader::read_into(self.reader.get(), buffer) };
             bun_core::scoped_log!(FileReader, "onPull({}) = {}", buffer.len(), amount_read);
@@ -1017,10 +1097,7 @@ impl FileReader {
         if flag {
             self.reader().unpause();
             if !self.reader().is_done() && !self.reader().has_pending_read() {
-                // Kick off a new read if needed
-                // SAFETY: the reader cell is live for `self`'s lifetime; `read` is
-                // the raw re-entrancy-safe entry (its dispatch runs user JS).
-                unsafe { IOReader::read(self.reader.get()) };
+                self.read();
             }
         } else {
             self.reader().pause();
@@ -1054,6 +1131,86 @@ impl Drop for SourcePin {
     fn drop(&mut self) {
         // SAFETY: balances the ref taken in `new`.
         let _ = unsafe { Source::decrement_count(self.0) };
+    }
+}
+
+/// One read of a regular file on the work pool (`read`/`pread` block the thread that calls them
+/// for the disk's duration). The bytes come back to the JS thread and enter the reader through
+/// `complete_async_read`, the path a libuv read completes through on Windows.
+#[cfg(unix)]
+struct OffloadedRead {
+    request: bun_io::AsyncRead,
+    bytes: Vec<u8>,
+    error: Option<sys::Error>,
+}
+
+/// Keeps the source alive while its read is out. Dropped on the JS thread in every outcome: after
+/// the completion ran, or unrun at VM teardown (the pool is done with the fd by then, so the
+/// reader's own drop can close it).
+#[cfg(unix)]
+struct OffloadedReadPin(SourcePin);
+
+// SAFETY: a ref on a JS-thread-owned box, taken and released on that thread.
+#[cfg(unix)]
+unsafe impl bun_jsc::job::JsAffine for OffloadedReadPin {}
+
+#[cfg(unix)]
+impl bun_jsc::JobContext for OffloadedRead {
+    type OffThread = Self;
+    type Js = OffloadedReadPin;
+
+    fn run(this: &mut Self, done: bun_jsc::Completion<Self>) -> Option<bun_jsc::Completion<Self>> {
+        let request = this.request;
+        if this.bytes.try_reserve_exact(request.len).is_err() {
+            this.error = Some(sys::Error::from_code(sys::E::ENOMEM, sys::Tag::read));
+            return Some(done);
+        }
+        // SAFETY: the syscall writes only initialized bytes into the prefix it reports, and
+        // only that prefix is committed.
+        let result = unsafe {
+            bun_core::vec::fill_spare(&mut this.bytes, 0, |spare| {
+                let buf = &mut spare[..request.len];
+                let result = match request.offset {
+                    Some(offset) => {
+                        sys::pread(request.fd, buf, i64::try_from(offset).expect("int cast"))
+                    }
+                    None => sys::read(request.fd, buf),
+                };
+                match result {
+                    sys::Result::Ok(n) => (n, sys::Result::Ok(())),
+                    sys::Result::Err(err) => (0, sys::Result::Err(err)),
+                }
+            })
+        };
+        if let sys::Result::Err(err) = result {
+            this.error = Some(err);
+        }
+        Some(done)
+    }
+
+    fn then(
+        this: Self,
+        js: OffloadedReadPin,
+        _cx: &bun_jsc::JsThread<'_>,
+    ) -> bun_jsc::JsResult<()> {
+        let result = match this.error {
+            Some(err) => sys::Result::Err(err),
+            None => sys::Result::Ok(this.bytes),
+        };
+        // SAFETY: `js` pins the source for the whole call; `context` is reached as a field
+        // place, the way the vtable shims reach it.
+        let file_reader: &FileReader = unsafe { &(*js.0.0).context };
+        // SAFETY: the reader cell is live while the source is; the pin holds the source across
+        // the (user JS running) dispatches inside.
+        let wants_more = unsafe { IOReader::complete_async_read(file_reader.reader.get(), result) };
+        // A native sink is drained by the reader itself. A JS consumer sizes each read with its
+        // pull: a read issued ahead of the pull would be sized to the previous slab and make the
+        // stream shrink its slab back on every drain (`nativeAdjustChunkSize`).
+        if wants_more && file_reader.sink.get().is_some() {
+            file_reader.schedule_offloaded_read();
+        }
+        drop(js);
+        Ok(())
     }
 }
 

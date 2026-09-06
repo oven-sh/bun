@@ -16,11 +16,13 @@ beforeEach(async () => {
 });
 
 describe("should not crash", async () => {
+  // A missing template is a usage error and exits 1. Only --help exits 0.
   const args = [
     [bunExe(), "create"],
     [bunExe(), "create", ""],
     [bunExe(), "create", "--"],
     [bunExe(), "create", "--", ""],
+    [bunExe(), "create", "--x"],
     [bunExe(), "create", "--help"],
   ];
   for (let cmd of args) {
@@ -33,9 +35,27 @@ describe("should not crash", async () => {
         stderr: "inherit",
         env,
       });
-      expect(exitCode).toBe(cmd.length === 2 ? 1 : 0);
+      expect(exitCode).toBe(cmd.includes("--help") ? 0 : 1);
     });
   }
+});
+
+it("rejects a template name that does not fit the path buffer instead of crashing", async () => {
+  // cwd + "/" + template must exceed PATH_MAX (4096). The local-folder lookup
+  // joins the two into a fixed path buffer.
+  const template = Buffer.alloc(5000, "A").toString();
+  const { stderr, exited } = spawn({
+    cmd: [bunExe(), "create", template, "dst"],
+    cwd: x_dir,
+    stdout: "pipe",
+    stdin: "ignore",
+    stderr: "pipe",
+    env,
+  });
+  const err = await stderr.text();
+  expect(err).toContain(`error: unrecognised dependency format: create-${template}`);
+  expect(await exited).toBe(1);
+  expect(await exists(join(x_dir, "dst"))).toBe(false);
 });
 
 it("should create selected template with @ prefix", async () => {

@@ -504,6 +504,16 @@ it.concurrent("bun remove -r is rejected and leaves package.json untouched", asy
   expect(exitCode).toBe(1);
 });
 
+it.concurrent("bun remove with no package exits 1", async () => {
+  const pkg = JSON.stringify({ name: "root", dependencies: { foo: "file:./foo" } });
+  using dir = tempDir("bun-remove-no-package", { ...local("foo"), "package.json": pkg });
+
+  const { stderr, exitCode } = await remove(String(dir));
+  expect(stderr).toContain("error: no package specified to remove");
+  expect(await file(join(String(dir), "package.json")).text()).toBe(pkg);
+  expect(exitCode).toBe(1);
+});
+
 const MONOREPO_ROOT = `{
   "name": "root",
   "workspaces": ["packages/*"],

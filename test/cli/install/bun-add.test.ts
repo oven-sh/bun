@@ -95,6 +95,29 @@ it("should add existing package", async () => {
   );
 });
 
+it("exits 1 when no package is given", async () => {
+  await writeFile(
+    join(package_dir, "package.json"),
+    JSON.stringify({
+      name: "bar",
+      version: "0.0.2",
+    }),
+  );
+  for (const args of [["add"], ["add", "--dev"]]) {
+    const { stderr, exited } = spawn({
+      cmd: [bunExe(), ...args],
+      cwd: package_dir,
+      stdout: "pipe",
+      stdin: "pipe",
+      stderr: "pipe",
+      env,
+    });
+    const err = await stderr.text();
+    expect(err).toContain("error: no package specified to add");
+    expect(await exited).toBe(1);
+  }
+});
+
 it("should reject missing package", async () => {
   await writeFile(
     join(package_dir, "package.json"),

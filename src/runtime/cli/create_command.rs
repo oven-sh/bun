@@ -1302,12 +1302,20 @@ impl CreateCommand {
         // var unsupported_packages = UnsupportedPackages{};
         // SAFETY: single-threaded CLI access to module-level static path buffer
         let home_dir_buf = unsafe { &mut *HOME_DIR_BUF.get() };
+        // Leave one byte for the NUL written after each join. The positional
+        // is argv of any length: a join that does not fit is not a local
+        // template, so that lookup is skipped.
+        let join_buf_len = home_dir_buf.len() - 1;
         let template: &[u8] = 'brk: {
             let positional = positionals[0];
 
             'outer: {
                 let parts = [filesystem.top_level_dir, positional];
-                let outdir_path = filesystem.abs_buf(&parts, home_dir_buf);
+                let Some(outdir_path) =
+                    filesystem.abs_buf_checked(&parts, &mut home_dir_buf[..join_buf_len])
+                else {
+                    break 'outer;
+                };
                 let len = outdir_path.len();
                 home_dir_buf[len] = 0;
                 // SAFETY: home_dir_buf[len] == 0 written above
@@ -1340,7 +1348,11 @@ impl CreateCommand {
                 'outer: {
                     if let Some(home_dir) = env_loader.map.get(b"BUN_CREATE_DIR") {
                         let parts = [home_dir, positional];
-                        let outdir_path = filesystem.abs_buf(&parts, home_dir_buf);
+                        let Some(outdir_path) = filesystem
+                            .abs_buf_checked(&parts, &mut home_dir_buf[..join_buf_len])
+                        else {
+                            break 'outer;
+                        };
                         let len = outdir_path.len();
                         home_dir_buf[len] = 0;
                         // SAFETY: home_dir_buf[len] == 0 written above
@@ -1359,7 +1371,11 @@ impl CreateCommand {
 
                 'outer: {
                     let parts = [filesystem.top_level_dir, BUN_CREATE_DIR, positional];
-                    let outdir_path = filesystem.abs_buf(&parts, home_dir_buf);
+                    let Some(outdir_path) =
+                        filesystem.abs_buf_checked(&parts, &mut home_dir_buf[..join_buf_len])
+                    else {
+                        break 'outer;
+                    };
                     let len = outdir_path.len();
                     home_dir_buf[len] = 0;
                     // SAFETY: home_dir_buf[len] == 0 written above
@@ -1378,7 +1394,11 @@ impl CreateCommand {
                 'outer: {
                     if let Some(home_dir) = env_loader.map.get(b"HOME") {
                         let parts = [home_dir, BUN_CREATE_DIR, positional];
-                        let outdir_path = filesystem.abs_buf(&parts, home_dir_buf);
+                        let Some(outdir_path) = filesystem
+                            .abs_buf_checked(&parts, &mut home_dir_buf[..join_buf_len])
+                        else {
+                            break 'outer;
+                        };
                         let len = outdir_path.len();
                         home_dir_buf[len] = 0;
                         // SAFETY: home_dir_buf[len] == 0 written above

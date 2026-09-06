@@ -1645,11 +1645,16 @@ impl FileSink {
         }
     }
 
+    /// Pump `stream` into this sink. `Ok(UNDEFINED)` when the native fast-path took the stream,
+    /// `Ok(promise)` for a JS pump still in flight (the sink settles itself through `then`).
+    /// `Err` when the pump cannot start: the stream is already cancelled and the writer closed, and
+    /// the pump's rejection reason is the pending exception, so the caller throws it instead of the
+    /// reason escaping as an unhandled rejection nothing can catch.
     pub fn assign_to_stream(
         &mut self,
         stream: &mut ReadableStream,
         global_this: &JSGlobalObject,
-    ) -> JSValue {
+    ) -> JsResult<JSValue> {
         // SAFETY: `&mut self` carries write+dealloc provenance over the allocation.
         let _guard = unsafe { RefPtr::init_ref(std::ptr::from_mut::<FileSink>(self)) };
 
@@ -1675,7 +1680,7 @@ impl FileSink {
                         self.ref_();
                     }
                 }
-                return JSValue::UNDEFINED;
+                return Ok(JSValue::UNDEFINED);
             }
             readable_stream::NativeWireResult::EndedInline(err) => {
                 self.source.set(streams::SourceHandle::None);
@@ -1685,7 +1690,7 @@ impl FileSink {
                         let _ = self.end(None);
                     }
                 }
-                return JSValue::UNDEFINED;
+                return Ok(JSValue::UNDEFINED);
             }
             readable_stream::NativeWireResult::NotNative => {}
         }
@@ -1702,7 +1707,7 @@ impl FileSink {
 
         if let Some(err) = promise_result.to_error() {
             self.readable_stream.set(readable_stream::Strong::default());
-            return err;
+            return Err(global_this.throw_value(err));
         }
 
         if !promise_result.is_empty_or_undefined_or_null() {
@@ -1737,16 +1742,22 @@ impl FileSink {
                         self.handle_resolve_stream();
                     }
                     bun_jsc::js_promise::Status::Rejected => {
+                        // The pump failed before it returned (the source errored in start(), or
+                        // the first chunk was not bytes). Nothing holds this promise, so take its
+                        // rejection here: mark it handled and hand the reason to the caller.
                         // These don't ref().
                         // SAFETY: `js_promise` is non-null (`as_any_promise`).
                         let result = unsafe { (*js_promise).result(global_this.vm()) };
-                        crate::dispatch::fold(self.handle_reject_stream(global_this, result));
+                        // SAFETY: same cell as above.
+                        unsafe { (*js_promise).set_handled() };
+                        self.handle_reject_stream(global_this, result)?;
+                        return Err(global_this.throw_value(result));
                     }
                 }
             }
         }
 
-        promise_result
+        Ok(promise_result)
     }
 }
 

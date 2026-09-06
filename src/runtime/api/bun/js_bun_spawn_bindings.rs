@@ -1475,12 +1475,6 @@ fn spawn_maybe_sync(
         )
     });
 
-    if promise_for_stream != JSValue::ZERO && !global_this.has_exception() {
-        if let Some(err) = promise_for_stream.to_error() {
-            let _ = global_this.throw_value(err);
-        }
-    }
-
     if global_this.has_exception() {
         let err = global_this.take_exception(JsError::Thrown);
         // Ensure we kill the process so we don't leave things in an unexpected state.

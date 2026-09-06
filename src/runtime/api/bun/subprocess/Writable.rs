@@ -171,17 +171,17 @@ impl<'a> Writable<'a> {
                         });
 
                         if let Stdio::ReadableStream(rs) = stdio {
-                            let assign_result = pipe.assign_to_stream(rs, global);
-                            if let Some(err_val) = assign_result.to_error() {
-                                subprocess.weak_file_sink_stdin_ptr.set(None);
-                                subprocess.update_flags(|f| {
-                                    f.set(Flags::DEREF_ON_STDIN_DESTROYED, false)
-                                });
-                                subprocess.deref();
-                                let _ = global.throw_value(err_val);
-                                return Err(crate::Error::JSError);
+                            match pipe.assign_to_stream(rs, global) {
+                                Ok(assign_result) => *promise_for_stream = assign_result,
+                                Err(_) => {
+                                    subprocess.weak_file_sink_stdin_ptr.set(None);
+                                    subprocess.update_flags(|f| {
+                                        f.set(Flags::DEREF_ON_STDIN_DESTROYED, false)
+                                    });
+                                    subprocess.deref();
+                                    return Err(crate::Error::JSError);
+                                }
                             }
-                            *promise_for_stream = assign_result;
                         }
 
                         return Ok(Writable::Pipe(pipe_ref));
@@ -271,15 +271,16 @@ impl<'a> Writable<'a> {
                 });
 
                 if let Stdio::ReadableStream(rs) = stdio {
-                    let assign_result = pipe.assign_to_stream(rs, global);
-                    if let Some(err_val) = assign_result.to_error() {
-                        subprocess.weak_file_sink_stdin_ptr.set(None);
-                        subprocess.update_flags(|f| f.set(Flags::DEREF_ON_STDIN_DESTROYED, false));
-                        subprocess.deref();
-                        let _ = global.throw_value(err_val);
-                        return Err(crate::Error::JSError);
+                    match pipe.assign_to_stream(rs, global) {
+                        Ok(assign_result) => *promise_for_stream = assign_result,
+                        Err(_) => {
+                            subprocess.weak_file_sink_stdin_ptr.set(None);
+                            subprocess
+                                .update_flags(|f| f.set(Flags::DEREF_ON_STDIN_DESTROYED, false));
+                            subprocess.deref();
+                            return Err(crate::Error::JSError);
+                        }
                     }
-                    *promise_for_stream = assign_result;
                 }
 
                 Ok(Writable::Pipe(pipe_ref))

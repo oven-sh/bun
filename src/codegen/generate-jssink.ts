@@ -699,6 +699,7 @@ void JS${controllerName}::detach() {
 
     auto* sinkPtr = std::exchange(m_sinkPtr, nullptr);
     auto destroy = std::exchange(m_onDestroy, 0);
+    m_memoryCostForGC = 0;
 
     m_onPull.clear();
     m_onClose.clear();

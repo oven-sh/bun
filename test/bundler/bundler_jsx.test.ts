@@ -1374,7 +1374,7 @@ describe.concurrent("jsx/bunfigRuntimeSpelling", () => {
     "node_modules/react/jsx-runtime.js": `export function jsx() { return "jsx"; }`,
     "index.tsx": `import React from "react";\nconsole.log(<a />);`,
   };
-  for (const [spelling, expected] of [
+  test.each([
     ["react", "createElement"],
     ["React", "createElement"],
     ["react-jsxdev", "jsxDEV"],
@@ -1382,20 +1382,18 @@ describe.concurrent("jsx/bunfigRuntimeSpelling", () => {
     ["REACT-JSXDEV", "jsxDEV"],
     ["react-jsx", "jsx"],
     ["React-JSX", "jsx"],
-  ]) {
-    test(`jsx = "${spelling}"`, async () => {
-      using dir = tempDir("bunfig-jsx-spelling", { ...stubs, "bunfig.toml": `jsx = "${spelling}"\n` });
-      await using proc = Bun.spawn({
-        cmd: [bunExe(), "index.tsx"],
-        env: { ...bunEnv, NODE_ENV: "development" },
-        cwd: String(dir),
-        stdout: "pipe",
-        stderr: "pipe",
-      });
-      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-      expect(stderr).toBe("");
-      expect(stdout).toBe(`${expected}\n`);
-      expect(exitCode).toBe(0);
+  ])('jsx = "%s"', async (spelling, expected) => {
+    using dir = tempDir("bunfig-jsx-spelling", { ...stubs, "bunfig.toml": `jsx = "${spelling}"\n` });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "index.tsx"],
+      env: { ...bunEnv, NODE_ENV: "development" },
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
     });
-  }
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toBe(`${expected}\n`);
+    expect(exitCode).toBe(0);
+  });
 });

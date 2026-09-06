@@ -863,7 +863,9 @@ export function resolveDep(
     // out of lsqpack's) — come out of a fetch; build-dir products and repo
     // files do not.
     const inSrcTree = (p: string): string[] => {
-      const abs = isAbsolute(p) ? p : resolve(srcDir, p);
+      // resolve() either way: an absolute path a dep spelled with "/" must
+      // compare equal to the native spelling other edges use (Windows hosts).
+      const abs = resolve(srcDir, p);
       const fetched =
         abs.startsWith(srcDir + sep) || (abs.startsWith(cfg.vendorDir + sep) && !abs.startsWith(cfg.buildDir + sep));
       return fetched ? [abs] : [];

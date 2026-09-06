@@ -247,7 +247,10 @@ services:
     extra_hosts:
       - "host.docker.internal:host-gateway"
     healthcheck:
-      test: ["CMD-SHELL", "pgrep squid > /dev/null"]
+      # The squid process exists seconds before it listens on 3128. Until it
+      # listens, docker-proxy accepts connections on the published port and
+      # drops them, which a client sees as "Connection ended".
+      test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/127.0.0.1/3128"]
       interval: 5s
       timeout: 5s
       retries: 30

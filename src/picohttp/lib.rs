@@ -154,16 +154,12 @@ impl Header {
         HeaderCurlFormatter { header: self }
     }
 
-    /// The value as verbose logging prints it. A credential header keeps only
-    /// its auth scheme: `Bearer [redacted]`, `[redacted]`.
+    /// The value for the `BUN_CONFIG_VERBOSE_FETCH` trace: credentials print as `[redacted]`.
     pub fn logged_value(&self) -> LoggedHeaderValue<'_> {
         LoggedHeaderValue { header: self }
     }
 }
 
-/// The value of a credential header is never logged. The `Display` impls
-/// below (the `> name: value` lines and the `curl` line of
-/// `BUN_CONFIG_VERBOSE_FETCH`) all go through `logged_value`.
 pub struct LoggedHeaderValue<'a> {
     header: &'a Header,
 }

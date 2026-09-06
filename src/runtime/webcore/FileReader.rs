@@ -67,9 +67,9 @@ pub struct FileReader {
     pub(crate) sink: JsCell<SinkHandle>,
     pub(crate) sink_paused: Cell<bool>,
     /// POSIX: a non-pollable fd (regular file, character device) is read on
-    /// the thread pool (`file_read`), one read at a time; this is set while
-    /// one is out. Its completion delivers through `on_read_chunk` like a
-    /// poll-driven read does.
+    /// the thread pool (`schedule_file_read`), one read at a time; this is set
+    /// while one is out. Its completion delivers through `on_read_chunk` like
+    /// a poll-driven read does.
     #[cfg(unix)]
     pub(crate) file_read_in_flight: Cell<bool>,
     /// POSIX: the fd is a regular file, so a short read means EOF.
@@ -1126,6 +1126,7 @@ impl FileReader {
             fd: reader.get_fd(),
             offset: reader.pread_offset(),
             regular_file: self.regular_file.get(),
+            len,
             buf: Vec::with_capacity(len),
             result: Ok(false),
         };
@@ -1202,7 +1203,8 @@ struct FileRead {
     /// `pread` at this offset, or `read` at the fd's own.
     offset: Option<u64>,
     regular_file: bool,
-    /// Filled up to its capacity.
+    /// At most this many bytes (already cut to the reader's limit).
+    len: usize,
     buf: Vec<u8>,
     /// Whether the source is at EOF after this read.
     result: sys::Result<bool>,
@@ -1210,17 +1212,16 @@ struct FileRead {
 
 #[cfg(unix)]
 impl FileRead {
-    /// Pool thread. A regular file is read until the buffer is full or a read
+    /// Pool thread. A regular file is read until `len` bytes are in or a read
     /// returns 0, so its EOF arrives with the last bytes instead of one round
     /// trip later. Anything else gets one `read`, which may block.
     fn fill(&mut self) -> sys::Result<bool> {
-        let cap = self.buf.capacity();
         loop {
             let filled = self.buf.len();
             // SAFETY: the syscall writes only into the spare capacity and
             // reports how many bytes it wrote; exactly those are committed.
             let read = unsafe {
-                let spare = bun_core::vec::spare_bytes_mut(&mut self.buf);
+                let spare = &mut bun_core::vec::spare_bytes_mut(&mut self.buf)[..self.len - filled];
                 let read = match self.offset {
                     Some(offset) => sys::pread(
                         self.fd,
@@ -1236,7 +1237,7 @@ impl FileRead {
             };
             match read {
                 Ok(0) => return Ok(true),
-                Ok(_) if self.buf.len() < cap && self.regular_file => continue,
+                Ok(_) if self.buf.len() < self.len && self.regular_file => continue,
                 Ok(_) => return Ok(false),
                 // The bytes already read are delivered; the error comes back on the next read.
                 Err(_) if filled > 0 => return Ok(false),

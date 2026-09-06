@@ -254,13 +254,16 @@ pub(crate) fn on_create(
                 )));
             }
 
+            // `None` is an absent direction, `Some(0)` is one the user turned
+            // off with `false` or `"disable"`.
+            let mut compress: Option<i32> = None;
             if let Some(compression) = per_message_deflate.get_truthy(global_object, "compress")? {
                 if compression.is_boolean() {
-                    server.compression |= if compression.to_boolean() {
+                    compress = Some(if compression.to_boolean() {
                         uws::SHARED_COMPRESSOR
                     } else {
                         0
-                    };
+                    });
                 } else if compression.is_string() {
                     let key = compression.to_js_string_view(global_object)?;
                     let Some(&v) = COMPRESS_TABLE.lookup(key.to_utf8().slice()) else {
@@ -268,7 +271,7 @@ pub(crate) fn on_create(
                             "WebSocketServerContext expects a valid compress option, either disable \"shared\" \"dedicated\" \"3KB\" \"4KB\" \"8KB\" \"16KB\" \"32KB\" \"64KB\" \"128KB\" or \"256KB\""
                         )));
                     };
-                    server.compression |= v;
+                    compress = Some(v);
                 } else {
                     return Err(global_object.throw_invalid_arguments(format_args!(
                         "websocket expects a valid compress option, either disable \"shared\" \"dedicated\" \"3KB\" \"4KB\" \"8KB\" \"16KB\" \"32KB\" \"64KB\" \"128KB\" or \"256KB\""
@@ -276,15 +279,16 @@ pub(crate) fn on_create(
                 }
             }
 
+            let mut decompress: Option<i32> = None;
             if let Some(compression) =
                 per_message_deflate.get_truthy(global_object, "decompress")?
             {
                 if compression.is_boolean() {
-                    server.compression |= if compression.to_boolean() {
+                    decompress = Some(if compression.to_boolean() {
                         uws::SHARED_DECOMPRESSOR
                     } else {
                         0
-                    };
+                    });
                 } else if compression.is_string() {
                     let key = compression.to_js_string_view(global_object)?;
                     let Some(&v) = DECOMPRESS_TABLE.lookup(key.to_utf8().slice()) else {
@@ -292,13 +296,26 @@ pub(crate) fn on_create(
                             "websocket expects a valid decompress option, either \"disable\" \"shared\" \"dedicated\" \"3KB\" \"4KB\" \"8KB\" \"16KB\" \"32KB\" \"64KB\" \"128KB\" or \"256KB\""
                         )));
                     };
-                    server.compression |= v;
+                    decompress = Some(v);
                 } else {
                     return Err(global_object.throw_invalid_arguments(format_args!(
                         "websocket expects a valid decompress option, either \"disable\" \"shared\" \"dedicated\" \"3KB\" \"4KB\" \"8KB\" \"16KB\" \"32KB\" \"64KB\" \"128KB\" or \"256KB\""
                     )));
                 }
             }
+
+            // uWS negotiates permessage-deflate whenever `compression` is
+            // nonzero, and RFC 7692 has no way to accept inbound compression
+            // without inflating it, so `decompress` off turns the extension off.
+            // `compress` off leaves the compressor bits zero: `WebSocket::send`
+            // then never sets RSV1.
+            server.compression = match (compress, decompress) {
+                (None, None) | (Some(0), None) | (_, Some(0)) => 0,
+                (compress, decompress) => {
+                    compress.unwrap_or(uws::SHARED_COMPRESSOR)
+                        | decompress.unwrap_or(uws::SHARED_DECOMPRESSOR)
+                }
+            };
         }
     }
 

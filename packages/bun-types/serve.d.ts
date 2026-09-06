@@ -521,11 +521,23 @@ declare module "bun" {
       | boolean
       | {
           /**
-           * Sets the compression level.
+           * The compressor for messages the server sends.
+           *
+           * `false` or `"disable"` keeps the extension negotiated (so inbound
+           * messages are still inflated) but the server never compresses an
+           * outbound message, even when `send()` asks for it.
+           *
+           * @default "shared" when `decompress` is set
            */
           compress?: WebSocketCompressor | boolean;
           /**
-           * Sets the decompression level.
+           * The decompressor for messages the server receives.
+           *
+           * `false` or `"disable"` turns the extension off for the connection:
+           * permessage-deflate (RFC 7692) cannot be negotiated for one
+           * direction only, so outbound messages are not compressed either.
+           *
+           * @default "shared" when `compress` is set
            */
           decompress?: WebSocketCompressor | boolean;
         };

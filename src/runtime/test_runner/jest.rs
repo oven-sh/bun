@@ -825,9 +825,7 @@ pub(crate) fn format_label(
                     global_this,
                     bun_string_jsc::create_utf8_for_js(global_this, var_path)?,
                 )?;
-                // An empty value means the property does not exist: the
-                // placeholder stays literal. An existing null/undefined is
-                // rendered, as in Jest.
+                // Empty means the property does not exist; null/undefined render.
                 if value.is_empty() {
                     list.extend_from_slice(&label[idx..var_end]);
                 } else {
@@ -855,8 +853,6 @@ pub(crate) fn format_label(
                     args_idx += 1;
                     write_placeholder_arg(global_this, spec, arg, &mut list)?;
                 }
-                // Not a placeholder (or no argument left for it): the text
-                // stays as written.
                 _ => {
                     list.push(b'%');
                     idx += 1;

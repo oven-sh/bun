@@ -906,10 +906,8 @@ impl JunitReporter {
         Ok(())
     }
 
-    /// A regular file, or a path that does not exist yet, is written through a
-    /// sibling temp file and a rename, like `lcov.info`, so a failed write never
-    /// leaves a partial report. A symlink (`/dev/stdout`), a device or a FIFO
-    /// is written in place.
+    /// Temp file plus rename, like `lcov.info`, so a failed write leaves no
+    /// partial report. A non-regular target (`/dev/stdout`, a FIFO) is written in place.
     fn write_report(path: &[u8], contents: &[u8]) -> bun_sys::Result<()> {
         let flags =
             bun_sys::O::WRONLY | bun_sys::O::CREAT | bun_sys::O::TRUNC | bun_sys::O::CLOEXEC;

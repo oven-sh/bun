@@ -13,9 +13,9 @@ use bun_dotenv as DotEnv;
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{self as jsc};
 use bun_options_types::code_coverage_options::CodeCoverageOptions;
+use bun_paths as bun_path;
 use bun_paths::resolve_path;
 use bun_paths::string_paths::without_leading_path_separator;
-use bun_paths::{self as bun_path, PathBuffer};
 use bun_ptr::Interned;
 use bun_resolver::fs::FileSystem;
 use bun_sys::{self, Fd, File};
@@ -895,7 +895,7 @@ impl JunitReporter {
             self.contents.extend_from_slice(b"</testsuites>\n");
         }
 
-        let mut junit_path_buf = PathBuffer::uninit();
+        let mut junit_path_buf = bun_paths::path_buffer_pool::get();
 
         junit_path_buf[..path.len()].copy_from_slice(path);
         junit_path_buf[path.len()] = 0;
@@ -1653,7 +1653,7 @@ fn write_lcov_report(
         ".lcov.info.{}.tmp",
         bun_core::fmt::hex_lower(&rand)
     );
-    let mut buf = PathBuffer::uninit();
+    let mut buf = bun_paths::path_buffer_pool::get();
     let tmp_path = resolve_path::join_abs_string_buf_z::<bun_path::platform::Auto>(
         relative_dir,
         &mut buf,

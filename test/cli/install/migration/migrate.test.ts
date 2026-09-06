@@ -1452,6 +1452,52 @@ describe("package-lock.json migration fixes", () => {
     },
   );
 
+  // A workspace whose ranges link to sibling workspaces (`^1.0.0` on a versioned one, `*` on a
+  // versionless one) is unchanged by the migration, so its registry pins survive the install that
+  // migrates and every install after it. A changed workspace would re-resolve `no-deps@^1.0.0` to 1.1.0.
+  test.concurrent("workspace ranges that link to sibling workspaces keep the migrated pins", async () => {
+    using registry = localRegistry();
+    const a = { name: "a", version: "1.0.0", dependencies: { b: "^1.0.0", c: "*", "no-deps": "^1.0.0" } };
+    using dir = synthetic(
+      "npm-migrate-ws-links",
+      {
+        "package.json": JSON.stringify({ name: "ws-links", workspaces: ["packages/*"] }),
+        "packages/a/package.json": JSON.stringify(a),
+        "packages/b/package.json": JSON.stringify({ name: "b", version: "1.0.0" }),
+        "packages/c/package.json": JSON.stringify({ name: "c" }),
+        "package-lock.json": npmLock("ws-links", {
+          "": { name: "ws-links", workspaces: ["packages/*"] },
+          "node_modules/a": { resolved: "packages/a", link: true },
+          "node_modules/b": { resolved: "packages/b", link: true },
+          "node_modules/c": { resolved: "packages/c", link: true },
+          "node_modules/no-deps": {
+            version: "1.0.0",
+            resolved: registry.tarball("no-deps", "1.0.0"),
+            integrity: registry.integrity("no-deps", "1.0.0"),
+          },
+          "packages/a": a,
+          "packages/b": { name: "b", version: "1.0.0" },
+          "packages/c": { name: "c" },
+        }),
+      },
+      registry.url,
+    );
+
+    const { stderr, exitCode } = await run(dir, "install");
+    expect(stderr).toContain("migrated lockfile from package-lock.json");
+    expect(exitCode).toBe(0);
+    expect(await Bun.file(join(String(dir), "node_modules", "no-deps", "package.json")).json()).toStrictEqual({
+      name: "no-deps",
+      version: "1.0.0",
+    });
+    expect(registry.requests).toStrictEqual(["/no-deps/-/no-deps-1.0.0.tgz"]);
+
+    const second = await run(dir, "install");
+    expect(second.stdout).toContain("(no changes)");
+    expect(second.exitCode).toBe(0);
+    expect(registry.requests).toStrictEqual(["/no-deps/-/no-deps-1.0.0.tgz"]);
+  });
+
   test.concurrent(
     "a registry entry naming a dep in dependencies and peerDependencies keeps one edge; the root keeps both",
     async () => {

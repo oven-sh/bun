@@ -12,7 +12,7 @@ use bun_collections::{
 };
 use bun_core::fmt::PathSep;
 use bun_core::{Global, Output};
-use bun_paths::{MAX_PATH_BYTES, PathBuffer, SEP, SEP_STR, platform, resolve_path};
+use bun_paths::{MAX_PATH_BYTES, SEP, SEP_STR, platform, resolve_path};
 // `bun_install` sits above `bun_resolver` in the crate graph (no cycle), so use
 // the real resolver `FileSystem` directly — same as `PackageManager.rs`.
 use crate::bun_json as JSON;
@@ -691,6 +691,9 @@ impl Lockfile {
         self.catalogs = CatalogMap::default();
         self.patched_dependencies = PatchedDependenciesMap::default();
 
+        let link_workspace_packages = pm
+            .as_deref()
+            .is_none_or(|pm| pm.options.link_workspace_packages);
         let load_result = match Serializer::load(self, &mut stream, log, pm) {
             Ok(r) => r,
             Err(e) => {
@@ -706,6 +709,8 @@ impl Lockfile {
         if cfg!(debug_assertions) {
             self.verify_data().expect("lockfile data is corrupt");
         }
+
+        self.tag_workspace_links(link_workspace_packages);
 
         LoadResult::Ok(LoadResultOk {
             lockfile: self,
@@ -1600,8 +1605,8 @@ impl<'a> Printer<'a> {
         // We truncate longer than allowed paths. We should probably throw an error instead.
         let path = &input_lockfile_path[..input_lockfile_path.len().min(MAX_PATH_BYTES)];
 
-        let mut lockfile_path_buf1 = PathBuffer::uninit();
-        let mut lockfile_path_buf2 = PathBuffer::uninit();
+        let mut lockfile_path_buf1 = bun_paths::path_buffer_pool::get();
+        let mut lockfile_path_buf2 = bun_paths::path_buffer_pool::get();
 
         let mut lockfile_path: &ZStr = ZStr::EMPTY;
         // Track which buffer backs `lockfile_path` so the chdir NUL-terminate
@@ -2025,6 +2030,28 @@ impl Default for Lockfile {
     }
 }
 
+/// The workspace an npm range on `name_hash`'s package links to instead of the registry: the
+/// workspace of that name, when the range satisfies its version or is a `*` range (which links even
+/// a workspace without a version, https://github.com/oven-sh/bun/pull/10899#issuecomment-2099609419).
+pub(crate) fn linked_workspace_path(
+    link_workspace_packages: bool,
+    workspace_paths: &NameHashMap,
+    workspace_versions: &VersionHashMap,
+    name_hash: PackageNameHash,
+    range: &Semver::query::Group,
+    buf: &[u8],
+) -> Option<SemverString> {
+    if !link_workspace_packages {
+        return None;
+    }
+    let path = *workspace_paths.get(&name_hash)?;
+    if range.is_star() {
+        return Some(path);
+    }
+    let version = *workspace_versions.get(&name_hash)?;
+    range.satisfies(version, buf, buf).then_some(path)
+}
+
 impl Lockfile {
     pub(crate) fn init_empty_value() -> Self {
         Lockfile {
@@ -2059,6 +2086,59 @@ impl Lockfile {
     #[inline]
     pub(crate) fn mark_loaded_packages(&mut self) {
         self.loaded_package_count = self.packages.len() as PackageID;
+    }
+
+    /// Loaders (bun.lock, bun.lockb, migrated foreign lockfiles) rebuild a dependency from its
+    /// literal, so every loader finishes with this to give edges resolved to a workspace package the
+    /// shape `Package::parse` gives them: a `workspace:` edge's value becomes the workspace's path,
+    /// and an npm range becomes a workspace edge when `linked_workspace_path`, asked with the
+    /// workspaces this lockfile records, links it. Ranges bound to a workspace any other way (a peer
+    /// that took a sibling's version, an override) stay ranges, as they do in a reparse.
+    pub(crate) fn tag_workspace_links(&mut self, link_workspace_packages: bool) {
+        let pkg_resolutions = self.packages.items_resolution();
+        let buf = self.buffers.string_bytes.as_slice();
+        for (dep, &pkg_id) in self
+            .buffers
+            .dependencies
+            .iter_mut()
+            .zip(self.buffers.resolutions.iter())
+        {
+            if pkg_id as usize >= pkg_resolutions.len() {
+                continue;
+            }
+            let res = &pkg_resolutions[pkg_id as usize];
+            if res.tag != ResolutionTag::Workspace {
+                continue;
+            }
+            let linked = match dep.version.tag {
+                dependency::Tag::Workspace => true,
+                dependency::Tag::Npm => {
+                    let npm = dep.version.npm();
+                    linked_workspace_path(
+                        link_workspace_packages,
+                        &self.workspace_paths,
+                        &self.workspace_versions,
+                        Semver::string::Builder::string_hash(npm.name.slice(buf)),
+                        &npm.version,
+                        buf,
+                    )
+                    .is_some()
+                }
+                _ => false,
+            };
+            if !linked {
+                continue;
+            }
+            // Whole-struct move so `Drop` frees the old npm chain; keep the existing `literal`.
+            let literal = dep.version.literal;
+            dep.version = DependencyVersion {
+                tag: dependency::Tag::Workspace,
+                literal,
+                value: dependency::Value {
+                    workspace: *res.workspace(),
+                },
+            };
+        }
     }
 
     /// Record that package `id` was appended via an exact-version dependency
@@ -2553,12 +2633,9 @@ impl<'a> StringBuilder<'a> {
         Ok(())
     }
 
-    #[inline]
+    /// Keys the pool by the hash of `slice`, as `count` does, so it never writes uncounted bytes.
     pub(crate) fn append<T: StringBuilderType>(&mut self, slice: &[u8]) -> T {
-        self.append_with_hash::<T>(slice, SemverStringBuilder::string_hash(slice))
-    }
-
-    pub(crate) fn append_with_hash<T: StringBuilderType>(&mut self, slice: &[u8], hash: u64) -> T {
+        let hash = SemverStringBuilder::string_hash(slice);
         if SemverString::can_inline(slice) {
             return T::from_init(self.string_bytes.as_slice(), slice, hash);
         }
@@ -2746,7 +2823,7 @@ impl Lockfile {
 
         let mut sort_buf: Vec<PathToId> = Vec::with_capacity(l_len + r_len);
 
-        let mut path_buf = PathBuffer::uninit();
+        let mut path_buf = bun_paths::path_buffer_pool::get();
         let mut depth_buf: tree::DepthBuf = tree::depth_buf_uninit();
 
         // Track owned tree-path allocations so they outlive the sort and are freed at scope end.

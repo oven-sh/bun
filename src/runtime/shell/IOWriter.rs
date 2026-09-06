@@ -369,12 +369,6 @@ impl IOWriter {
                     s.flags.pollable = false;
                     s.flags.nonblock = false;
                     s.flags.is_socket = false;
-                    if matches!(s.writer.handle, bun_io::pipes::PollOrFd::Poll(_)) {
-                        s.writer
-                            .handle
-                            .close_impl(None, None::<fn(*mut c_void)>, false);
-                    }
-                    s.writer.handle = bun_io::pipes::PollOrFd::Closed;
                     return self.__start();
                 }
                 #[cfg(any(target_os = "linux", target_os = "android"))]
@@ -385,12 +379,6 @@ impl IOWriter {
                         s.flags.pollable = false;
                         s.flags.nonblock = false;
                         s.flags.is_socket = false;
-                        if matches!(s.writer.handle, bun_io::pipes::PollOrFd::Poll(_)) {
-                            s.writer
-                                .handle
-                                .close_impl(None, None::<fn(*mut c_void)>, false);
-                        }
-                        s.writer.handle = bun_io::pipes::PollOrFd::Closed;
                         return self.__start();
                     }
                 }

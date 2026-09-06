@@ -604,7 +604,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             );
                         }
                         let open_parens_loc = func.func.open_parens_loc;
-                        func.func = p.visit_func(core::mem::take(&mut func.func), open_parens_loc);
+                        func.func =
+                            p.visit_func(core::mem::take(&mut func.func), open_parens_loc, false);
                         p.react_compiler_candidate_name = None;
 
                         if p.is_control_flow_dead {
@@ -774,7 +775,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     }
                     StmtData::SClass(mut class_ref) => {
                         let class: &mut S::Class = &mut *class_ref;
-                        let _ = p.visit_class(s2_loc, &mut class.class, data.default_name.ref_);
+                        let _ =
+                            p.visit_class(s2_loc, &mut class.class, data.default_name.ref_, false);
 
                         if p.is_control_flow_dead {
                             restore_dead!();
@@ -907,7 +909,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
         let open_parens_loc = data.func.open_parens_loc;
         let this_expr_count_before = p.this_expr_count;
-        data.func = p.visit_func(core::mem::take(&mut data.func), open_parens_loc);
+        data.func = p.visit_func(core::mem::take(&mut data.func), open_parens_loc, false);
         p.react_compiler_candidate_name = None;
 
         let name_ref = data.func.name.expect("infallible: name checked").ref_;
@@ -1058,7 +1060,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             p.is_control_flow_dead = true;
         }
 
-        let _ = p.visit_class(stmt.loc, &mut data.class, Ref::NONE);
+        let _ = p.visit_class(stmt.loc, &mut data.class, Ref::NONE, false);
 
         // Remove the export flag inside a namespace
         let was_export_inside_namespace = data.is_export && p.enclosing_namespace_arg_ref.is_some();

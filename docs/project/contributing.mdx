@@ -25,23 +25,23 @@ Using your system's package manager, install Bun's dependencies:
 <CodeGroup>
 
 ```bash macOS (Homebrew)
-brew install automake ccache cmake coreutils gnu-sed go icu4c libiconv libtool ninja pkg-config rustup-init ruby
+brew install automake ccache cmake coreutils gnu-sed go icu4c libiconv libtool ninja pkg-config rustup-init ruby zstd
 ```
 
 ```bash Ubuntu/Debian
-sudo apt install curl wget lsb-release software-properties-common cmake git golang libtool ninja-build pkg-config ruby-full xz-utils
+sudo apt install curl wget lsb-release software-properties-common cmake git golang libtool ninja-build pkg-config ruby-full python3 perl zstd xz-utils
 ```
 
 ```bash Arch
-sudo pacman -S base-devel cmake git go libiconv libtool make ninja pkg-config python rustup sed unzip ruby
+sudo pacman -S base-devel cmake git go libiconv libtool make ninja pkg-config python rustup sed unzip ruby perl zstd
 ```
 
 ```bash Fedora
-sudo dnf install clang21 llvm21 lld21 cmake git golang libtool ninja-build pkg-config ruby libatomic-static libstdc++-static sed unzip which libicu-devel 'perl(Math::BigInt)'
+sudo dnf install clang21 llvm21 lld21 cmake git golang libtool ninja-build pkg-config ruby python3 perl zstd libatomic-static libstdc++-static sed unzip which libicu-devel 'perl(Math::BigInt)'
 ```
 
 ```bash openSUSE Tumbleweed
-sudo zypper install go cmake ninja automake git icu rustup
+sudo zypper install go cmake ninja automake git icu rustup ruby perl python3 zstd
 ```
 
 </CodeGroup>
@@ -271,21 +271,27 @@ CI runs the test suite with at least one target built with AddressSanitizer.
 
 ## Building WebKit locally + Debug mode of JSC
 
-WebKit is not cloned by default (to save time and disk space). To clone and build WebKit locally, run:
+JavaScriptCore (with WTF, bmalloc and, off macOS, ICU) is compiled from source as part of the normal build, like every other dependency: the build fetches just `Source/{bmalloc,WTF,JavaScriptCore}` of the pinned `WEBKIT_VERSION` (a sparse fetch of ~35 MB, seconds — not a 12 GB clone) into `vendor/WebKit` and compiles it in its own ninja graph. It needs `ruby`, `python3` and `perl` for JSC's code generators, `zstd` for packing the ICU data (targets other than macOS), and, when cross-compiling a macOS target from Linux, `flex` and `bison` for the MIG host tool (on a Mac, Xcode's `mig` is used). `--webkit=prebuilt` opts into downloading oven-sh/WebKit's release tarball for that commit instead of compiling it:
 
 ```bash
-# Clone WebKit into ./vendor/WebKit
-git clone https://github.com/oven-sh/WebKit vendor/WebKit
+bun run build --webkit=prebuilt
+```
 
-# Check out the version pinned in WEBKIT_VERSION in scripts/build/deps/webkit.ts
-# (a commit sha or an autobuild-* release tag; this handles both)
-bun sync-webkit-source
+To work on JSC itself you want a full clone with history instead. Clone it anywhere outside `vendor/` (that directory is the build's own fetch of the pinned commit), point `$BUN_WEBKIT_PATH` at it, and build with `bun run build:local` — the same build with `--local-deps=WebKit=$BUN_WEBKIT_PATH`, compiling whatever is checked out in your clone instead of the pinned commit, into `build/debug-local` (any profile takes `--local-deps=WebKit=<path>` directly, like every other dep):
 
-# Build bun with the local JSC build — this automatically configures and builds JSC
+```bash
+# Clone WebKit next to bun (anywhere outside vendor/) and tell the build where it is
+git clone https://github.com/oven-sh/WebKit ../WebKit
+export BUN_WEBKIT_PATH=$PWD/../WebKit
+
+# Check out the version pinned in WEBKIT_VERSION (scripts/build/deps/webkit.ts)
+git -C ../WebKit checkout <WEBKIT_VERSION>
+
+# Build bun with JSC compiled from that clone
 bun run build:local
 ```
 
-`bun run build:local` handles everything: configuring JSC, building JSC, and building Bun. On subsequent runs, JSC rebuilds incrementally if any WebKit sources changed. `ninja -Cbuild/debug-local` also works after the first build, and builds both Bun and JSC.
+`bun run build:local` builds JSC and Bun in one ninja graph; on subsequent runs only the WebKit files you changed (and what includes them) recompile. `ninja -Cbuild/debug-local` also works after the first build. `bun run build:local --target=jsc` (or `--target=jsc` on any build) additionally links JSC's `jsc` shell into the build directory; it is not built by default.
 
 The build output goes to `./build/debug-local` (instead of `./build/debug`), so you'll need to update a couple of places:
 
@@ -293,7 +299,7 @@ The build output goes to `./build/debug-local` (instead of `./build/debug`), so 
 - The `CompilationDatabase` line in `.clangd` config should be `CompilationDatabase: build/debug-local`
 - In `.vscode/launch.json`, many configurations use `./build/debug/`, change them as you see fit
 
-The WebKit folder, including build artifacts, is 8GB+ in size.
+A full WebKit clone is ~12 GB (its build artifacts go into `build/*-local`, not the clone).
 
 If you are using a JSC debug build with VSCode, run the `C/C++: Select a Configuration` command so IntelliSense finds the debug headers.
 

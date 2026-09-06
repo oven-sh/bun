@@ -50,7 +50,9 @@ function readEdges(buildDir: string, sinceLine: number): Edge[] {
 type Phase =
   | "deps + fetch"
   | "codegen"
-  | "c/c++ objects"
+  | "jsc objects"
+  | "dep objects"
+  | "bun c/c++ objects"
   | "cargo"
   | "archive"
   | "link"
@@ -61,12 +63,16 @@ function classify(cfg: Config, output: BunOutput, edge: Edge): Phase {
   const rel = (p: string | undefined) =>
     p === undefined ? undefined : relative(cfg.buildDir, resolve(cfg.buildDir, p));
   const o = edge.output;
-  if (o === rel(output.exe) || o.endsWith(".linker-map")) return "link";
-  if (o === rel(output.strippedExe) || o === rel(output.dsym) || (output.uploadStamps ?? []).map(rel).includes(o))
+  if (o === rel(output.exe) || o === rel(output.testFFI) || o.endsWith(".linker-map")) return "link";
+  // strip/dsymutil, and the post-link validations + artifact uploads keyed off the executable
+  // (bun-profile.binary-verified, .smoke-test-passed, .duplicate-symbols-checked, …).
+  if (o === rel(output.strippedExe) || o === rel(output.dsym) || (output.exe !== undefined && o.startsWith(rel(output.exe) + ".")))
     return "strip + post-link";
   if (o === rel(output.archive) || /^lib[^/]*\.(a|lib)$/.test(o)) return "archive";
   if (o.startsWith("rust-target/") || output.rustObjects.map(rel).includes(o)) return "cargo";
-  if (o.startsWith("obj/") || o.startsWith("pch/")) return "c/c++ objects";
+  if (o.startsWith("obj/vendor/WebKit/") || o.startsWith("obj/deps/WebKit/")) return "jsc objects";
+  if (o.startsWith("obj/vendor/") || o.startsWith("obj/deps/")) return "dep objects";
+  if (o.startsWith("obj/") || o.startsWith("pch/")) return "bun c/c++ objects";
   if (o.startsWith("codegen/")) return "codegen";
   if (o.startsWith("cache/") || o.startsWith("deps/") || o.startsWith("stamps/") || o.startsWith("../"))
     return "deps + fetch";
@@ -96,7 +102,9 @@ export function printBuildTimings(cfg: Config, output: BunOutput, sinceLine: num
   const order: Phase[] = [
     "deps + fetch",
     "codegen",
-    "c/c++ objects",
+    "jsc objects",
+    "dep objects",
+    "bun c/c++ objects",
     "cargo",
     "archive",
     "link",

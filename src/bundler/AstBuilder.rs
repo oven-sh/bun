@@ -275,7 +275,7 @@ impl<'a, 'bump> AstBuilder<'a, 'bump> {
                             self.source_index,
                             RefTag::Symbol,
                         ),
-                        symbol::Use { count_estimate: 1 },
+                        symbol::Use::unscoped(1),
                     );
                 }
                 break 'uses map;
@@ -399,7 +399,7 @@ impl<'a, 'bump> AstBuilder<'a, 'bump> {
                         })?;
                         parts[1]
                             .symbol_uses
-                            .put(temp_id, symbol::Use { count_estimate: 1 })?;
+                            .put(temp_id, symbol::Use::unscoped(1))?;
                         VecExt::append(&mut self.current_scope_mut().generated, temp_id);
                         export_props.push(G::Property {
                             key: Some(Expr::init(E::String::init(b"default"), stmt.loc)),
@@ -456,7 +456,7 @@ impl<'a, 'bump> AstBuilder<'a, 'bump> {
                 // mark a dependency on module_ref so it is renamed
                 parts[1]
                     .symbol_uses
-                    .put(self.module_ref, symbol::Use { count_estimate: 1 })?;
+                    .put(self.module_ref, symbol::Use::unscoped(1))?;
                 parts[1].declared_symbols.append(DeclaredSymbol {
                     ref_: self.module_ref,
                     is_top_level: true,
@@ -550,7 +550,8 @@ impl<'a, 'bump> AstBuilder<'a, 'bump> {
             named_exports: core::mem::take(&mut self.named_exports),
             dynamic_import_aliases: Default::default(),
             top_level_symbols_to_parts,
-            char_freq: bun_ast::CharFreq { freqs: [0; 64] },
+            scope_uses: Default::default(),
+            char_freq: None,
             flags: Default::default(),
             target,
             top_level_await_keyword: Range::NONE,

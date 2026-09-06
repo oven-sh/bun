@@ -1914,6 +1914,22 @@ describe("workspace integration", () => {
     expect(r.exitCode).toBe(0);
   });
 
+  test("--parallel --filter distinguishes an unmatched filter from a missing script", async () => {
+    using dir = makeWorkspace("mr-ws-missing", {
+      "pkg-a": { build: `echo a` },
+      "pkg-b": { build: `echo b` },
+    });
+    const noPkg = await runMulti(["run", "--parallel", "--filter", "nope", "build"], String(dir));
+    expect(noPkg.stderr.trim()).toBe(`error: No workspace packages matched the filter "nope"`);
+    const negated = await runMulti(["run", "--parallel", "--filter", "*", "--filter", "!*", "build"], String(dir));
+    expect(negated.stderr.trim()).toBe(`error: No workspace packages matched the filters "*", "!*"`);
+    const noScript = await runMulti(["run", "--parallel", "--filter", "pkg-*", "lint", "test"], String(dir));
+    expect(noScript.stderr.trim()).toBe(`error: Script "lint", "test" not found in 2 packages matching "pkg-*"`);
+    expect(noPkg.exitCode).toBe(1);
+    expect(negated.exitCode).toBe(1);
+    expect(noScript.exitCode).toBe(1);
+  });
+
   test("--parallel --filter='pkg-a' runs only in matching package", async () => {
     using dir = makeWorkspace("mr-ws-single", {
       "pkg-a": { build: `echo a-only` },

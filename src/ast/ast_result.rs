@@ -63,7 +63,8 @@ pub struct Ast<'a> {
     // This list may be mutated later, so we should store the capacity
     pub symbols: SymbolList<'a>,
     pub module_scope: Scope,
-    pub char_freq: Option<CharFreq>,
+    pub char_freq: Option<bun_alloc::AstBox<CharFreq>>,
+    pub scope_uses: ScopeUseList,
     pub exports_ref: Ref,
     pub module_ref: Ref,
     /// When using format .bake_internal_dev, this is the HMR variable instead
@@ -129,6 +130,7 @@ impl<'a> Ast<'a> {
             symbols: SymbolList::new_in(arena),
             module_scope: Scope::default(),
             char_freq: None,
+            scope_uses: ScopeUseList::default(),
             exports_ref: Ref::NONE,
             module_ref: Ref::NONE,
             wrapper_ref: Ref::NONE,
@@ -179,6 +181,60 @@ pub enum CommonJSExportValue {
 pub type CommonJSNamedExports = StringArrayHashMap<CommonJSNamedExport, StringContext, AstAlloc>;
 
 pub type NamedImports = ArrayHashMap<Ref, NamedImport, AutoContext, AstAlloc>;
+/// This file's symbol `symbol` (inner index) is referenced directly in the
+/// scope whose `Scope::visit_span` starts at `scope`.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub struct ScopeUse {
+    pub scope: u32,
+    pub symbol: u32,
+}
+
+/// The symbol may be referenced from any scope in `first..=last`.
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub struct ScopeUseSpan {
+    pub symbol: u32,
+    pub first: u32,
+    pub last: u32,
+}
+
+impl ScopeUseSpan {
+    pub const fn whole_file(symbol: u32) -> ScopeUseSpan {
+        ScopeUseSpan {
+            symbol,
+            first: 0,
+            last: u32::MAX,
+        }
+    }
+}
+
+/// Where the file references each symbol, for the bundler's number renamer:
+/// a nested binding may keep a name an enclosing binding also has when the
+/// enclosing one is never referenced beneath it. Filled only when bundling
+/// without identifier minification. References to unbound globals are left
+/// out (every scope avoids their names anyway).
+pub struct ScopeUseList {
+    /// `false`: nothing was recorded; every symbol must count as referenced
+    /// everywhere.
+    pub tracked: bool,
+    /// In visit order, adjacent repeats dropped.
+    pub points: AstVec<ScopeUse>,
+    /// Sorted, no repeats. Class field initializers (may be printed inside
+    /// the constructor: the span is the class body), the parser's generated
+    /// temporaries and helpers (may be printed deeper than recorded) and
+    /// `module`/`exports` (printed for one another): the span is the file.
+    pub spans: AstVec<ScopeUseSpan>,
+}
+
+impl Default for ScopeUseList {
+    fn default() -> Self {
+        ScopeUseList {
+            tracked: false,
+            points: AstAlloc::vec(),
+            spans: AstAlloc::vec(),
+        }
+    }
+}
+
 /// One `import()` / `require()` whose every use the parser accounted for.
 #[derive(Clone, Copy, Default)]
 pub struct DynamicImportUse {

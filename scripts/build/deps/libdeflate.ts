@@ -16,7 +16,7 @@ export const libdeflate: Dependency = {
   versionMacro: "LIBDEFLATE_HASH",
 
   source: () => ({
-    kind: "github-archive",
+    kind: "github",
     repo: "ebiggers/libdeflate",
     commit: LIBDEFLATE_COMMIT,
   }),

@@ -468,8 +468,8 @@ impl ShellCpTask {
         }
         #[cfg(windows)]
         {
-            let mut buf = bun_paths::PathBuffer::uninit();
-            let mut buf2 = bun_paths::PathBuffer::uninit();
+            let mut buf = bun_paths::path_buffer_pool::get();
+            let mut buf2 = bun_paths::path_buffer_pool::get();
             let src8 = bun_paths::strings::from_wpath(&mut buf, src);
             let dest8 = bun_paths::strings::from_wpath(&mut buf2, dest);
             self.on_copy_impl(src8, dest8);
@@ -607,8 +607,8 @@ impl ShellCpTask {
     ) -> Option<ShellErr> {
         use resolve_path::{Platform, platform};
 
-        let mut buf2 = bun_paths::PathBuffer::uninit();
-        let mut buf3 = bun_paths::PathBuffer::uninit();
+        let mut buf2 = bun_paths::path_buffer_pool::get();
+        let mut buf3 = bun_paths::path_buffer_pool::get();
         // We have to give an absolute path to our cp implementation for it to
         // work with cwd.
         let src: &bun_core::ZStr = if Platform::AUTO.is_absolute(&self.src) {

@@ -1,5 +1,5 @@
 #!/bin/sh
-# Version: 47
+# Version: 48
 
 # A script that installs the dependencies needed to build and test Bun.
 # This should work on macOS and Linux with a POSIX shell.
@@ -15,7 +15,7 @@
 #   2. Once green, change the subject to `[publish images]` and push again to
 #      bake the real `-vN` image tag.
 #   3. Merge after the publish run finishes so main never waits on a bake.
-# See "CI image lifecycle" above getBuildImageSteps in .buildkite/ci.mjs.
+# See "CI image lifecycle" above getBuildImageStep in .buildkite/ci.mjs.
 
 pid="$$"
 
@@ -1139,6 +1139,11 @@ install_build_essentials() {
 
 	case "$os" in
 		linux)
+			# ruby/perl/python3: JavaScriptCore's code generators (offlineasm,
+			# create_hash_table, builtins/inspector scripts). zstd: trains the
+			# dictionary for the ICU data package (scripts/build/icu-data.ts).
+			# flex/bison: build Apple's migcom (host tool) for the macOS lanes,
+			# which generates WTF's Mach exception stubs.
 			install_packages \
 				make \
 				nasm \
@@ -1146,6 +1151,9 @@ install_build_essentials() {
 				libtool \
 				ruby \
 				perl \
+				zstd \
+				flex \
+				bison \
 			;;
 	esac
 
@@ -1168,6 +1176,19 @@ install_build_essentials() {
 	fi
 	install_ccache
 	install_docker
+}
+
+is_ci_build_host() {
+	# Must match buildHostPlatform in .buildkite/ci.mjs.
+	[ "$os-$distro-$arch-$ci" = "linux-debian-aarch64-1" ]
+}
+
+llvm_version_exact() {
+	print "21.1.8"
+}
+
+llvm_version() {
+	print "$(llvm_version_exact)" | cut -d. -f1
 }
 
 install_bun_toolchain() {
@@ -1223,19 +1244,6 @@ install_bun_toolchain() {
 	execute "$toolchain_root/ci-linux-aarch64/bin/clang" --version
 	execute "$toolchain_root/ci-linux-aarch64/bin/rustc" -vV
 	grant_to_user "$toolchain_root"
-}
-
-is_ci_build_host() {
-	# Must match buildHostPlatform in .buildkite/ci.mjs.
-	[ "$os-$distro-$arch-$ci" = "linux-debian-aarch64-1" ]
-}
-
-llvm_version_exact() {
-	print "21.1.8"
-}
-
-llvm_version() {
-	print "$(llvm_version_exact)" | cut -d. -f1
 }
 
 install_llvm() {
@@ -1645,8 +1653,8 @@ install_linux_musl_sysroot() {
 		execute_sudo rm -rf "$sysroot"
 		execute_sudo mkdir -p "$sysroot"
 		execute_sudo "$apk" --arch "$ml_arch" --root "$sysroot" \
-			--repository "$cdn/main" --allow-untrusted --no-cache \
-			add --initdb musl-dev libc-dev linux-headers g++ libstdc++-dev
+			--repository "$cdn/main" --allow-untrusted --no-cache --initdb \
+			add musl-dev libc-dev linux-headers g++ libstdc++-dev
 		if ! [ -f "$sysroot/usr/lib/libc.so" ]; then
 			error "$sysroot not populated (required for linux-musl cross-arch builds)"
 		fi
@@ -2206,10 +2214,10 @@ prefetch_build_deps() {
 	bun_path="$(require bun)"
 	git_path="$(require git)"
 
-	# bootstrap.sh is also run by hand outside a repo checkout, so the
-	# prefetch script + scripts/build/deps/*.ts version pins are cloned rather
-	# than assumed to be beside it. BUN_BOOTSTRAP_REPO_REF lets the CI bake
-	# step pin to the branch it was triggered from.
+	# Only bootstrap.sh is uploaded to the bake VM, so the repo (and the
+	# prefetch script + scripts/build/deps/*.ts version pins) has to be cloned.
+	# BUN_BOOTSTRAP_REPO_REF lets the image-build orchestrator pin to the
+	# commit it was triggered from; default to main.
 	repo_ref="${BUN_BOOTSTRAP_REPO_REF:-main}"
 	clone_dir="$(create_tmp_directory)"
 	# Best-effort: a fork-PR branch that doesn't exist on the upstream remote,

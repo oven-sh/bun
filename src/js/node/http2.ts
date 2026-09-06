@@ -4391,10 +4391,8 @@ class ServerHttp2Session extends Http2Session {
       // be invalid.
       if (typeof origin !== "string") {
         throw $ERR_INVALID_ARG_TYPE("originOrStream", ["string", "number", "URL", "object"], originOrStream);
-      } else if (!origin) {
+      } else if (origin === "null" || origin === "") {
         throw $ERR_HTTP2_ALTSVC_INVALID_ORIGIN();
-      } else {
-        origin = getOrigin(origin, true);
       }
     }
 

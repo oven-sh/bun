@@ -492,12 +492,58 @@ pub mod defines {
     pub struct Define {
         pub identifiers: StringHashMap<IdentifierDefine>,
         pub dots: StringHashMap<Vec<DotDefine>>,
+        /// Which `DotFilter::bit`s the keys of `dots` set. The visitor asks
+        /// about every property access; nearly all miss, and this says so
+        /// without hashing the name.
+        pub dots_filter: DotFilter,
         pub drop_debugger: bool,
         /// `hash_user_inputs` of this table's inputs, for the runtime transpiler cache key.
         pub user_hash: Option<u64>,
     }
 
+    #[derive(Clone)]
+    pub struct DotFilter([u64; 64]);
+
+    impl Default for DotFilter {
+        fn default() -> Self {
+            DotFilter([0; 64])
+        }
+    }
+
+    impl DotFilter {
+        #[inline]
+        fn bit(name: &[u8]) -> usize {
+            let (first, last) = match name {
+                [] => (0, 0),
+                [first, .., last] | [first @ last] => (*first as usize, *last as usize),
+            };
+            (name.len().wrapping_mul(131) ^ first.wrapping_mul(31) ^ last.wrapping_mul(7)) & 4095
+        }
+
+        #[inline]
+        pub fn insert(&mut self, name: &[u8]) {
+            let bit = Self::bit(name);
+            self.0[bit / 64] |= 1 << (bit % 64);
+        }
+
+        #[inline]
+        pub fn may_contain(&self, name: &[u8]) -> bool {
+            let bit = Self::bit(name);
+            self.0[bit / 64] & (1 << (bit % 64)) != 0
+        }
+    }
+
     impl Define {
+        /// The dot defines whose last part is `name` (`NODE_ENV` for
+        /// `process.env.NODE_ENV`).
+        #[inline]
+        pub fn dots_for(&self, name: &[u8]) -> Option<&Vec<DotDefine>> {
+            if !self.dots_filter.may_contain(name) {
+                return None;
+            }
+            self.dots.get(name)
+        }
+
         /// Order-independent, length-prefixed hash of the three inputs. `None` when all are empty.
         pub fn hash_user_inputs<'i>(
             defines: impl IntoIterator<Item = (&'i [u8], &'i [u8])>,
@@ -568,6 +614,7 @@ pub mod defines {
                 }
                 parts.push(Box::from(tail));
 
+                self.dots_filter.insert(tail);
                 if let Some(existing) = self.dots.get_mut(tail) {
                     for part in existing.iter_mut() {
                         if are_parts_equal(&part.parts, &parts) {

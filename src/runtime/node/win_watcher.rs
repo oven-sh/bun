@@ -10,7 +10,6 @@ use bun_collections::{ArrayHashMap, StringArrayHashMap};
 use bun_core::{String as BunString, ZStr};
 use bun_jsc as jsc;
 use bun_jsc::JsCell;
-use bun_paths::PathBuffer;
 use bun_sys as sys;
 use bun_sys::ReturnCodeExt as _;
 use bun_sys::windows::libuv as uv;
@@ -339,7 +338,7 @@ impl PathWatcher {
         path: &ZStr,
         recursive: bool,
     ) -> sys::Result<*mut PathWatcher> {
-        let mut outbuf = PathBuffer::uninit();
+        let mut outbuf = bun_paths::path_buffer_pool::get();
         // Windows `sys::readlink` returns the byte length; the link target is
         // written into `outbuf[..len]` with `outbuf[len] == 0` (sys_uv NUL-terminates). Reconstruct
         // the NUL-terminated string via `ZStr::from_buf`.

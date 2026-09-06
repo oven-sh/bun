@@ -4,9 +4,9 @@
     // baseUrl needed until resolver fix propagates to system Bun used during build
     "ignoreDeprecations": "6.0",
     "baseUrl": ".",
+    "types": ["../packages/bun-types"],
     "paths": {
-      "bindgen": ["./codegen/bindgen-lib.ts"],
-      "bindgenv2": ["./codegen/bindgenv2/lib.ts"]
+      "bindgen": ["./codegen/bindgen-lib.ts"]
     }
   },
   "include": ["**/*.ts", "**/*.tsx"],

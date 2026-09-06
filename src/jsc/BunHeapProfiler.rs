@@ -47,7 +47,7 @@ pub(crate) fn generate_and_write_profile(
 
     // Convert to OS-specific path (UTF-16 on Windows, UTF-8 elsewhere)
     #[cfg(windows)]
-    let mut path_buf_os = bun_paths::OSPathBuffer::uninit();
+    let mut path_buf_os = bun_paths::os_path_buffer_pool::get();
     #[cfg(windows)]
     let output_path_os: &bun_core::WStr = bun_core::strings::convert_utf8_to_utf16_in_buffer_z(
         &mut path_buf_os,
@@ -104,7 +104,7 @@ fn build_output_path(
     config: &HeapProfilerConfig,
 ) -> Result<(), Error> {
     // Generate filename
-    let mut filename_buf = PathBuffer::uninit();
+    let mut filename_buf = bun_paths::path_buffer_pool::get();
     let filename: &[u8] = if !config.name.is_empty() {
         config.name
     } else {

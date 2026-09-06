@@ -754,6 +754,53 @@ test.concurrent("workspace package edge is re-pointed when run from the workspac
   await runBunInstall(installEnv(packageDir), packageDir, { frozenLockfile: true });
 });
 
+// https://github.com/oven-sh/bun/issues/40393: each spec resolves to the sibling workspace;
+// reloading bun.lock and reparsing package.json must yield the same edge, or bun dedupe refuses.
+test.concurrent.each([
+  {
+    spec: "* on a versionless workspace",
+    app1: { dependencies: { package1: "*" } },
+    pkg1: {},
+  },
+  {
+    spec: "* on a prerelease workspace",
+    app1: { dependencies: { package1: "*" } },
+    pkg1: { version: "1.0.0-alpha" },
+  },
+  {
+    spec: "npm:@* on a versionless workspace",
+    app1: { dependencies: { aliased: "npm:package1@*" } },
+    pkg1: {},
+  },
+  {
+    spec: "catalog: on a workspace",
+    app1: { dependencies: { package1: "catalog:" } },
+    pkg1: { version: "1.0.0" },
+  },
+  {
+    spec: "workspace: alias of a workspace",
+    app1: { dependencies: { aliased: "workspace:package1@*" } },
+    pkg1: {},
+  },
+  {
+    spec: "workspace:* in dev and ^1 in peer",
+    app1: { devDependencies: { package1: "workspace:*" }, peerDependencies: { package1: "^1.0.0" } },
+    pkg1: { version: "1.0.0" },
+  },
+])("$spec is in sync", async ({ app1, pkg1 }) => {
+  const { packageDir, packageJson } = await registry.createTestDir();
+  await Promise.all([
+    write(
+      packageJson,
+      JSON.stringify({ name: "root", workspaces: { packages: ["app1", "package1"], catalog: { package1: "^1.0.0" } } }),
+    ),
+    write(join(packageDir, "app1", "package.json"), JSON.stringify({ name: "app1", ...app1 })),
+    write(join(packageDir, "package1", "package.json"), JSON.stringify({ name: "package1", ...pkg1 })),
+  ]);
+  await runBunInstall(installEnv(packageDir), packageDir);
+  await expectAlreadyDeduplicated(packageDir, 3);
+});
+
 test.concurrent("corrupt bun.lock fails without rewriting it", async () => {
   const { packageDir, packageJson } = await registry.createTestDir();
   await write(packageJson, JSON.stringify({ name: "foo", dependencies: { "no-deps": "1.0.0" } }));

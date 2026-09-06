@@ -168,7 +168,8 @@ const buildPlatforms = [
   // only runs tests, signing, and baseline verification, against these
   // artifacts (see testPlatforms), and these are the Windows artifacts the
   // release ships. x64 uses ThinLTO + cross-language LTO by default; arm64
-  // stays non-LTO (no windows-arm64-lto WebKit prebuilt, see config.ts).
+  // stays non-LTO (LLVM's CodeView emitter aborts on ARM64 NEON tuple
+  // registers under LTO, see config.ts).
   { os: "windows", arch: "x64", crossCompile: true, distro: "debian", release: "13" },
   { os: "windows", arch: "aarch64", crossCompile: true, distro: "debian", release: "13" },
 ];
@@ -510,7 +511,7 @@ function getBuildCommand(target, options, mode) {
 }
 
 /**
- * deps + C++ + cargo + link on one agent; also uploads libbun-*.a, libbun_runtime.a and the dep libs.
+ * deps + C++ + cargo + link on one agent, then package + upload the zips.
  *
  * @param {Platform} platform
  * @param {PipelineOptions} options
@@ -945,7 +946,7 @@ function getWindowsBuildImageStep(platform, options) {
     },
     retry: getRetry(),
     cancel_on_build_failing: isMergeQueue(),
-    command: `node ./scripts/machine.mjs ${action} --os=${os} --arch=${arch} --release=${release} --ci`,
+    command: `node ./scripts/machine.mjs ${action} --os=${os} --arch=${arch} --release=${release} --cloud=azure --ci --authorized-org=oven-sh`,
     timeout_in_minutes: 3 * 60,
   };
 }
@@ -1669,31 +1670,85 @@ async function getPipeline(options = {}) {
 
   const includeASAN = !isMainBranch();
 
+  // verify-baseline / trace-order: checks that run on a built binary on a
+  // test-fleet host. They are drawn in that host's test group (or a
+  // lane-style group of their own when the target has no test lane, e.g.
+  // android) rather than in
+  // the build group — Buildkite's canvas draws every edge into a group as
+  // leaving after the whole group, so nesting them with build-bun made
+  // test-bun look like it waited on them — and rather than top-level, where
+  // a step still waiting on its depends_on renders greyed out like a skipped
+  // one. Emitted after the test groups so the same-label merge below folds
+  // them into the test group and that group keeps its own depends_on.
+  // Scheduling is by step key either way: each depends on <target>-build-bun.
+  /** @type {Step[]} */
+  const binaryCheckSteps = [];
+  /**
+   * The group a binary check is drawn in: the host's test group when the
+   * target has a test lane there (returned via binaryCheckSteps, emitted after
+   * the test groups), else a lane-style group of its own for that target on
+   * that host — `<host distro> <release> <arch>-<abi>` — returned for the
+   * caller to emit next to the build group.
+   * @param {Target} target
+   * @param {Platform} host
+   * @param {Step} step
+   * @returns {Step[]}
+   */
+  const placeBinaryCheck = (target, host, step) => {
+    const inTestLane = testPlatforms.some(
+      p => getPlatformKey(p) === getPlatformKey(host) && (p.abi ?? null) === (target.abi ?? null),
+    );
+    if (inTestLane) {
+      binaryCheckSteps.push({ key: getPlatformKey(host), group: getPlatformLabel(host), steps: [step] });
+      return [];
+    }
+    const lane = { ...host, abi: target.abi, baseline: target.baseline, profile: target.profile };
+    return [
+      {
+        key: getPlatformKey(lane),
+        group: getPlatformLabel({ ...lane, arch: `${lane.arch}-${target.abi}` }),
+        steps: [step],
+      },
+    ];
+  };
+
   if (!buildId) {
     let relevantBuildPlatforms = includeASAN
       ? buildPlatforms
       : buildPlatforms.filter(({ profile }) => profile !== "asan");
 
     steps.push(
-      ...relevantBuildPlatforms.map(target => {
+      ...relevantBuildPlatforms.flatMap(target => {
         // build-bun always runs on buildHostPlatform regardless of
         // target, so the only build-image dependency is the host's.
         const imageKey = getImageKey(buildHostPlatform);
-        const dependsOn = [];
-        if (imagePlatforms.has(imageKey)) {
-          dependsOn.push(`${imageKey}-build-image`);
-        }
+        const dependsOn = imagePlatforms.has(imageKey) ? [`${imageKey}-build-image`] : [];
 
-        const steps = [getBuildBunStep(target, options)];
+        /** @type {Step[]} */
+        const steps = [
+          getStepWithDependsOn(
+            {
+              key: getTargetKey(target),
+              group: getTargetLabel(target),
+              steps: [getBuildBunStep(target, options)],
+            },
+            ...dependsOn,
+          ),
+        ];
 
         if (needsBaselineVerification(target)) {
           // verify-baseline runs on a per-target-arch native host (see
-          // getVerifyBaselineHost), not buildHostPlatform; its image dep goes
-          // on the step itself so build-bun doesn't wait for it.
-          const verifyImageKey = getImageKey(getVerifyBaselineHost(target));
-          const verifyDeps =
-            verifyImageKey !== imageKey && imagePlatforms.has(verifyImageKey) ? [`${verifyImageKey}-build-image`] : [];
-          steps.push(getStepWithDependsOn(getVerifyBaselineStep(target, options), ...verifyDeps));
+          // getVerifyBaselineHost), not buildHostPlatform.
+          const verifyHost = getVerifyBaselineHost(target);
+          const verifyImageKey = getImageKey(verifyHost);
+          const verifyDeps = imagePlatforms.has(verifyImageKey) ? [`${verifyImageKey}-build-image`] : [];
+          steps.push(
+            ...placeBinaryCheck(
+              target,
+              verifyHost,
+              getStepWithDependsOn(getVerifyBaselineStep(target, options), ...verifyDeps),
+            ),
+          );
         }
 
         // Seed the symbol order file for a cross-compiled target on its native
@@ -1707,22 +1762,19 @@ async function getPipeline(options = {}) {
             t.os === target.os && t.arch === target.arch && !target.abi && (target.profile ?? "release") === "release",
         );
         if (traceOn && (isMainBranch() || /\[generate symbol order\]/i.test(getCommitMessage()))) {
-          // The trace host's image, same as verify-baseline: on the step, so
-          // build-bun doesn't wait for it. Darwin has no cloud image.
+          // Darwin has no cloud image.
           const traceImageKey = getImageKey(traceOn.on);
-          const traceDeps =
-            traceImageKey !== imageKey && imagePlatforms.has(traceImageKey) ? [`${traceImageKey}-build-image`] : [];
-          steps.push(getStepWithDependsOn(getTraceOrderStep(target, traceOn.on, options), ...traceDeps));
+          const traceDeps = imagePlatforms.has(traceImageKey) ? [`${traceImageKey}-build-image`] : [];
+          steps.push(
+            ...placeBinaryCheck(
+              target,
+              traceOn.on,
+              getStepWithDependsOn(getTraceOrderStep(target, traceOn.on, options), ...traceDeps),
+            ),
+          );
         }
 
-        return getStepWithDependsOn(
-          {
-            key: getTargetKey(target),
-            group: getTargetLabel(target),
-            steps,
-          },
-          ...dependsOn,
-        );
+        return steps;
       }),
     );
   }
@@ -1779,6 +1831,8 @@ async function getPipeline(options = {}) {
     }
   }
 
+  steps.push(...binaryCheckSteps);
+
   // Binary-size tracking: main records the baseline, PRs enforce the threshold.
   const strippedPlatforms = buildPlatforms.filter(p => (p.profile ?? "release") === "release");
   if (!buildId && strippedPlatforms.length) {
@@ -1807,29 +1861,27 @@ async function getPipeline(options = {}) {
     steps.push(getReleaseStep(buildPlatforms, options, { signed: shouldSignWindows, testStepKeys }));
   }
 
+  // Merge same-label groups into their first occurrence, keeping every
+  // step's position so the sidebar reads in pipeline order.
   /** @type {Map<string, GroupStep>} */
   const stepsByGroup = new Map();
-
-  for (let i = 0; i < steps.length; i++) {
-    const step = steps[i];
+  /** @type {Step[]} */
+  const mergedSteps = [];
+  for (const step of steps) {
     if (!("group" in step)) {
+      mergedSteps.push(step);
       continue;
     }
-
-    const { group, steps: groupSteps } = step;
-    if (stepsByGroup.has(group)) {
-      stepsByGroup.get(group).steps.push(...groupSteps);
+    const existing = stepsByGroup.get(step.group);
+    if (existing) {
+      existing.steps.push(...step.steps);
     } else {
-      stepsByGroup.set(group, step);
+      stepsByGroup.set(step.group, step);
+      mergedSteps.push(step);
     }
-
-    steps[i] = undefined;
   }
 
-  return {
-    priority,
-    steps: [...steps.filter(step => typeof step !== "undefined"), ...Array.from(stepsByGroup.values())],
-  };
+  return { priority, steps: mergedSteps };
 }
 
 async function main() {

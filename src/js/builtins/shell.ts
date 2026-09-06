@@ -170,9 +170,15 @@ export function createBunShellTemplateFunction(createShellInterpreter_, createPa
       if (!this.#hasRun) {
         this.#hasRun = true;
 
-        let interp = createShellInterpreter(this.#resolve, this.#reject, this.#args!);
-        this.#args = undefined;
-        interp.run();
+        // `then()` calls this, so a setup failure must reject, not throw.
+        try {
+          let interp = createShellInterpreter(this.#resolve, this.#reject, this.#args!);
+          this.#args = undefined;
+          interp.run();
+        } catch (e) {
+          this.#args = undefined;
+          this.#reject(e);
+        }
       }
     }
 

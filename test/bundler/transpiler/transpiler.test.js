@@ -1586,7 +1586,10 @@ function foo() {}
       //   jsxErrorArrow +
       //     'Unexpected end of file before a closing "const" tag\n<stdin>: NOTE: The opening "const" tag is here:\n',
       // );
-      err("async <const T>() => {}", "Unexpected const");
+      // `async <const T>() => {}` is valid in the `ts` loader. The
+      // "Unexpected const" error for it is TSX-only.
+      exp("x = async <const T>() => {}", "x = async () => {};\n");
+      exp("x = async <const const T>() => {}", "x = async () => {};\n");
       err("async <const const>() => {}", "Unexpected const");
 
       // TODO: why doesn't this one fail?

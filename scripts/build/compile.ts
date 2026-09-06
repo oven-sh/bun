@@ -15,7 +15,6 @@ import { writeIfChanged } from "./fs.ts";
 import type { BuildNode, Ninja, Rule } from "./ninja.ts";
 import { quote } from "./shell.ts";
 import { elfDebugCompressPostlinkCommand, machoPostlinkCommand } from "./shims.ts";
-import { streamPath } from "./stream.ts";
 
 // ---------------------------------------------------------------------------
 // Rule registration — call once per Ninja instance
@@ -150,11 +149,11 @@ export function registerCompileRules(n: Ninja, cfg: Config): void {
   });
 
   // ─── Link executable ───
-  // Uses response file because object lists get long (>32k args breaks on windows).
-  // console pool: link is inherently serial (one exe), takes 30s+ on large
-  // binaries, and lld prints useful progress (undefined symbol errors,
-  // --verbose timing). Streaming beats sitting at [N/N] wondering if it hung.
-  // stream.ts --console: passthrough + ninja Windows buffering fix — see stream.ts.
+  // Uses response file because object lists get long (>32k args breaks on
+  // windows). Not in the console pool: that pool has depth 1, and the graph
+  // links several executables (bun, testFFI, JSC's LLInt extractors) whose
+  // links should overlap; lld's only output is diagnostics, which ninja
+  // shows when the edge finishes.
   //
   // Windows: -fuse-ld=lld forces lld-link (VS dev shell puts link.exe
   // first in PATH, clang-cl would default to it). /link separator —
@@ -171,19 +170,24 @@ export function registerCompileRules(n: Ninja, cfg: Config): void {
   // --ld-path= spelling, and `-fuse-ld=<abs path>` mangles the path with the
   // target triple.
   //
+  // $lazy (Windows): LinkOpts.lazyObjects as `/clang:-Wl,@<rsp>`. The rsp
+  // holds `/start-lib <objects> /end-lib`, which must reach lld-link as one
+  // positional group: behind /link the driver would expand the file itself
+  // and keep only its first token there; as a -Wl, value it is a linker
+  // *input*, rendered in order after the object inputs and left for
+  // lld-link to expand in place.
+  //
   // Darwin cross links append `&& macho-postlink $out ...` (the suffix is
   // empty everywhere else): ninja runs the whole command through `sh -c`,
   // so the fixup runs after the link succeeds and the declared output is
   // already the final, patched, re-signed artifact. See shims.ts.
-  const wrap = `${cfg.jsRuntime} ${q(streamPath)} link --console`;
   n.rule("link", {
     command: cfg.windows
-      ? `${wrap} ${cxx} /nologo -fuse-ld=lld ${q(`/clang:-B${dirname(cfg.ld)}`)} @$out.rsp /Fe$out /link $ldflags`
-      : `${wrap} ${cxx} @$out.rsp $ldflags -o $out${elfDebugCompressPostlinkCommand(cfg)}${machoPostlinkCommand(cfg)}`,
+      ? `${cxx} /nologo -fuse-ld=lld ${q(`/clang:-B${dirname(cfg.ld)}`)} @$out.rsp $lazy /Fe$out /link $ldflags`
+      : `${cxx} @$out.rsp $ldflags -o $out${elfDebugCompressPostlinkCommand(cfg)}${machoPostlinkCommand(cfg)}`,
     description: "link $out",
     rspfile: "$out.rsp",
     rspfile_content: "$in_newline",
-    pool: "console",
   });
 
   // ─── Static library archive ───
@@ -236,10 +240,9 @@ export interface CompileOpts {
  * E.g. src/jsc/bindings/foo.cpp → obj/src_jsc_bindings_foo.cpp.o
  */
 export function cxx(n: Ninja, cfg: Config, src: string, opts: CompileOpts): string {
-  assert(
-    extname(src) === ".cpp" || extname(src) === ".cc" || extname(src) === ".cxx",
-    `cxx() expects .cpp/.cc/.cxx source, got: ${src}`,
-  );
+  // .mm: Objective-C++ (WTF's darwin/OSLogPrintStream.mm); clang picks the
+  // language from the extension, the flags are the C++ ones.
+  assert([".cpp", ".cc", ".cxx", ".mm"].includes(extname(src)), `cxx() expects .cpp/.cc/.cxx/.mm source, got: ${src}`);
   return compile(n, cfg, src, opts, "cxx");
 }
 
@@ -362,8 +365,8 @@ export function pch(
      * libs (libJavaScriptCore.a etc.).
      *
      * Can't be order-only: the depfile tracks headers, but ninja stats at
-     * startup. Local WebKit headers live in buildDir and get regenerated
-     * by dep_build MID-RUN. At startup ninja sees old headers → thinks
+     * startup, and a prebuilt/cargo dep rewrites its headers MID-RUN as an
+     * undeclared side effect. At startup ninja sees old headers → thinks
      * PCH is fresh → cxx fails with "file modified since PCH was built"
      * → needs a second build. With these implicit, restat propagates the
      * lib change to PCH and it rebuilds in the same run.
@@ -443,6 +446,18 @@ export function pch(
 export interface LinkOpts {
   /** Static libraries to link (absolute paths). Included in $in. */
   libs: string[];
+  /**
+   * Objects the link may take or leave: each is pulled in only if it defines
+   * a symbol something else references — a static library's semantics, minus
+   * the archive (lld's `--start-lib … --end-lib` / `/start-lib … /end-lib`).
+   * bun.ts passes dependency objects here (lazyDepObjects). It matters on
+   * COFF, whose linkers discard unreferenced code only at COMDAT granularity:
+   * an assembler-produced object nothing calls (BoringSSL's AES-GCM-SIV asm,
+   * unused on Windows by design) would otherwise be linked whole. ELF and
+   * Mach-O dead-strip per section, so there these simply follow `objects` in
+   * `$in`.
+   */
+  lazyObjects?: string[];
   /** Linker flags. */
   flags: string[];
   /**
@@ -453,6 +468,8 @@ export interface LinkOpts {
   implicitInputs?: string[];
   /** Map files the link's flags make it write alongside the executable (flags.ts linkerMapOutputs). */
   linkerMapOutputs?: string[];
+  /** Checks to run on the executable whenever it is linked (ninja validations): stamp paths of edges emitted elsewhere. */
+  validations?: string[];
 }
 
 /**
@@ -465,36 +482,52 @@ export function link(n: Ninja, cfg: Config, out: string, objects: string[], opts
   // Linker maps are implicit outputs (ninja tracks them but they're not in $out)
   const implicitOutputs = (opts.linkerMapOutputs ?? []).map(map => resolve(cfg.buildDir, map));
 
+  const lazy = opts.lazyObjects ?? [];
+  const implicitInputs = [...(opts.implicitInputs ?? [])];
+  const vars: Record<string, string> = { ldflags: opts.flags.join(" ") };
+  let inputs = [...objects, ...lazy, ...opts.libs];
+  if (cfg.windows && lazy.length > 0) {
+    // The group rides in a response file of its own (written now — the list
+    // is a configure-time constant); its objects stay ninja inputs of the
+    // edge as implicit inputs. See the link rule for why -Wl.
+    const rsp = absOut + ".lazy.rsp";
+    writeIfChanged(rsp, ["/start-lib", ...lazy.map(o => quote(n.rel(o), true)), "/end-lib"].join("\n") + "\n");
+    vars.lazy = quote(`/clang:-Wl,@${n.rel(rsp)}`, cfg.host.os === "windows");
+    inputs = [...objects, ...opts.libs];
+    // The rsp itself too: a member dropped from the group changes neither $in
+    // nor $lazy, only this file (writeIfChanged keeps its mtime otherwise).
+    implicitInputs.push(rsp, ...lazy);
+  }
+
   const node: BuildNode = {
     outputs: [absOut],
     rule: "link",
-    inputs: [...objects, ...opts.libs],
-    vars: {
-      ldflags: opts.flags.join(" "),
-    },
+    inputs,
+    vars,
   };
   if (implicitOutputs.length > 0) node.implicitOutputs = implicitOutputs;
-  if (opts.implicitInputs !== undefined && opts.implicitInputs.length > 0) {
-    node.implicitInputs = opts.implicitInputs;
+  if (implicitInputs.length > 0) {
+    node.implicitInputs = implicitInputs;
   }
+  if (opts.validations !== undefined && opts.validations.length > 0) node.validations = opts.validations;
   n.build(node);
 
   return absOut;
 }
 
 /**
- * Create a static library. Returns absolute path to output. `implicitInputs`
- * are waited for but not archived (the forbidUndefined stamps of the dep
- * objects going in).
+ * Create a static library. Returns absolute path to output. `validations`:
+ * checks on the objects going in (forbidUndefined stamps) — run whenever the
+ * archive is made, without holding it up.
  */
-export function ar(n: Ninja, cfg: Config, out: string, objects: string[], implicitInputs: string[] = []): string {
+export function ar(n: Ninja, cfg: Config, out: string, objects: string[], validations: string[] = []): string {
   const absOut = resolve(cfg.buildDir, out);
 
   n.build({
     outputs: [absOut],
     rule: "ar",
     inputs: objects,
-    ...(implicitInputs.length > 0 ? { implicitInputs } : {}),
+    ...(validations.length > 0 ? { validations } : {}),
   });
 
   return absOut;
@@ -511,10 +544,11 @@ export function ar(n: Ninja, cfg: Config, out: string, objects: string[], implic
  * `obj/src/jsc/bindings/foo.cpp.o`. Generated sources (codegen .cpp
  * files under buildDir) go under `obj/codegen/` to keep a single tree.
  *
- * Ninja does NOT auto-create parent directories of outputs. Directories
- * are created at configure time — each `cxx()`/`cc()` call tracks its
- * object's parent dir, and `createObjectDirs()` is called once at the end
- * of configure to mkdir the whole tree. Same approach as CMake, which
+ * Ninja creates the parent directory of every declared output before it
+ * runs an edge; configure additionally pre-creates the whole object tree
+ * (`mkdirAll()` at the end of configure) so the directories exist for
+ * tools that look before any edge ran (clangd reading
+ * compile_commands.json, for one). Same approach as CMake, which
  * pre-creates `CMakeFiles/<target>.dir/` during its generate step.
  */
 function objectPath(cfg: Config, src: string): string {

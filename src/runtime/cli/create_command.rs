@@ -294,7 +294,9 @@ impl CreateCommand {
             let mut destination_buf = bun_paths::path_buffer_pool::get();
             let Some(joined) = bun_paths::resolve_path::join_abs_string_buf_checked::<
                 bun_paths::platform::Loose,
-            >(filesystem.top_level_dir, &mut *destination_buf, &[dirname]) else {
+            >(
+                filesystem.top_level_dir, &mut *destination_buf, &[dirname]
+            ) else {
                 Output::err_generic(
                     "destination path too long: \"{}\"",
                     format_args!("{}", bstr::BStr::new(dirname)),

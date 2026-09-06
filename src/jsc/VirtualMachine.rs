@@ -5833,8 +5833,7 @@ impl VirtualMachine {
         }
 
         let already_remapped = frames[top].remapped;
-        // A frame parsed from an `error.stack` string names whatever the thrown
-        // code chose (`//# sourceURL`). Read it from disk only if the loader loaded it.
+        // A frame parsed from `error.stack` names whatever the thrown code chose.
         let allow_source_from_disk = if already_remapped {
             let url = frames[top].source_url.to_utf8();
             self.source_mappings.has_mapping(url.slice())

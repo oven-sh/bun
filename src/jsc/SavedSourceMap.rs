@@ -16,8 +16,7 @@ use bun_wyhash::hash;
 pub struct SavedSourceMap {
     /// Only accessed between [`Self::lock`] and [`Self::unlock`].
     map: HashTable,
-    /// Every path ever inserted into `map`, by bytes. `map` keys are hashes,
-    /// so a membership test for an untrusted path must not go through it.
+    /// Every path inserted into `map`, by bytes (`map` keys are only hashes).
     paths: StringArrayHashMap<()>,
     mutex: Mutex,
 }

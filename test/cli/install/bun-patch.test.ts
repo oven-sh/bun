@@ -1,7 +1,19 @@
 import { $, ShellOutput } from "bun";
 import { afterAll, beforeAll, describe, expect, setDefaultTimeout, test } from "bun:test";
-import { lstatSync, readFileSync } from "fs";
-import { bunEnv, bunExe, isASAN, tempDir, VerdaccioRegistry } from "harness";
+import {
+  accessSync,
+  constants,
+  lstatSync,
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  statfsSync,
+  statSync,
+  writeFileSync,
+} from "fs";
+import { bunEnv, bunExe, isASAN, isLinux, tempDir, VerdaccioRegistry } from "harness";
+import { tmpdir } from "os";
 import { isAbsolute, join, sep } from "path";
 
 const expectNoError = (o: ShellOutput) => expect(o.stderr.toString()).not.toContain("error");
@@ -1230,5 +1242,151 @@ describe.concurrent("bun patch --commit for non-registry dependencies", () => {
     // name-only argument exercises the name-and-version lookup path
     const patchKey = await expectPatchFlowWorks(String(dir), env, "pkg-to-patch");
     expect(patchKey).toBe("pkg-to-patch@./dep.tgz");
+  });
+});
+
+// `bun patch --commit` writes the patch into the install cache's temp dir and
+// renames it into patches/. With the project on another filesystem that rename
+// fails with EXDEV and bun copies instead. The copy goes to a temp file next
+// to the destination that is renamed into place, so a copy that fails part way
+// (here: the disk fills up) leaves the previous patch file as it was.
+describe("bun patch --commit with the project and the cache on different filesystems", () => {
+  // The project goes on a small dedicated tmpfs that the test fills for a
+  // moment: Debian's 5 MB /run/lock, or the 64 MB /dev/shm of a container. It
+  // must not be the filesystem that holds the temp dir, where the cache goes.
+  const smallFsLimit = 128 * 1024 * 1024;
+  function findSmallFilesystem(): string | undefined {
+    if (!isLinux) return undefined;
+    const cacheDev = statSync(tmpdir()).dev;
+    for (const candidate of ["/run/lock", "/dev/shm"]) {
+      try {
+        const dev = statSync(candidate).dev;
+        // a mount of its own, so that filling it fills nothing else
+        if (dev === cacheDev || dev === statSync(join(candidate, "..")).dev) continue;
+        accessSync(candidate, constants.W_OK | constants.X_OK);
+        const fsStat = statfsSync(candidate);
+        if (fsStat.blocks * fsStat.bsize > smallFsLimit) continue;
+        if (fsStat.bavail * fsStat.bsize < 3 * 1024 * 1024) continue;
+        return candidate;
+      } catch {}
+    }
+    return undefined;
+  }
+  const smallFs = findSmallFilesystem();
+
+  async function run(cwd: string, env: Record<string, string | undefined>, ...args: string[]) {
+    await using proc = Bun.spawn({ cmd: [bunExe(), ...args], env, cwd, stdout: "pipe", stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  }
+
+  // Fills the filesystem `dir` is on until `leaveFree` bytes are left.
+  function fillFilesystem(dir: string, leaveFree: number) {
+    writeFileSync(join(dir, "reserve"), Buffer.alloc(leaveFree, 1));
+    const chunk = Buffer.alloc(1024 * 1024, 1);
+    let written = 0;
+    for (let size = chunk.length; size >= 4096; size = size / 16) {
+      try {
+        while (written < smallFsLimit) {
+          writeFileSync(join(dir, "filler"), chunk.subarray(0, size), { flag: "a" });
+          written += size;
+        }
+      } catch (e) {
+        if ((e as NodeJS.ErrnoException).code !== "ENOSPC") throw e;
+      }
+    }
+    rmSync(join(dir, "reserve"));
+  }
+
+  test.skipIf(!smallFs)("a copy that runs out of space keeps the previous patch", async () => {
+    using cacheDir = tempDir("patch-xdev-cache", {});
+    const env = { ...bunEnv, BUN_INSTALL_CACHE_DIR: String(cacheDir) };
+    const proj = join(smallFs!, `bun-patch-xdev-${process.pid}`);
+    rmSync(proj, { recursive: true, force: true });
+    mkdirSync(proj);
+    try {
+      expect(statSync(proj).dev).not.toBe(statSync(String(cacheDir)).dev);
+
+      // ~400 KB of source, so that a patch that touches every line is far
+      // larger than the space the test leaves free.
+      const lines = Array.from({ length: 8000 }, (_, i) => `exports.v${i} = ${i}; // padding padding padding`);
+      mkdirSync(join(proj, "tarball-src", "package", "lib"), { recursive: true });
+      writeFileSync(
+        join(proj, "tarball-src", "package", "package.json"),
+        JSON.stringify({ name: "big-pkg", version: "1.0.0", main: "lib/big.js" }),
+      );
+      writeFileSync(join(proj, "tarball-src", "package", "lib", "big.js"), lines.join("\n") + "\n");
+      {
+        await using tar = Bun.spawn({
+          cmd: ["tar", "-czf", join(proj, "big-pkg-1.0.0.tgz"), "-C", join(proj, "tarball-src"), "package"],
+          env: bunEnv,
+          stdout: "inherit",
+          stderr: "inherit",
+        });
+        expect(await tar.exited).toBe(0);
+      }
+      rmSync(join(proj, "tarball-src"), { recursive: true });
+      writeFileSync(
+        join(proj, "package.json"),
+        JSON.stringify({ name: "proj", dependencies: { "big-pkg": "file:./big-pkg-1.0.0.tgz" } }),
+      );
+
+      // Commit a small patch first. This is the file that has to survive.
+      {
+        const { stderr, exitCode } = await run(proj, env, "install");
+        expect(exitCode, stderr).toBe(0);
+      }
+      {
+        const { stderr, exitCode } = await run(proj, env, "patch", "big-pkg");
+        expect(exitCode, stderr).toBe(0);
+      }
+      writeFileSync(join(proj, "node_modules", "big-pkg", "lib", "big.js"), lines.join("\n") + "\n// small change\n");
+      {
+        const { stderr, exitCode } = await run(proj, env, "patch", "--commit", "node_modules/big-pkg");
+        expect(exitCode, stderr).toBe(0);
+      }
+      const patchFiles = readdirSync(join(proj, "patches"));
+      expect(patchFiles).toHaveLength(1);
+      const patchFile = join(proj, "patches", patchFiles[0]);
+      const firstPatch = readFileSync(patchFile, "utf8");
+      expect(firstPatch).toContain("+// small change");
+
+      // Now prepare a patch that changes every line, and take away the space
+      // it would need.
+      {
+        const { stderr, exitCode } = await run(proj, env, "patch", "big-pkg");
+        expect(exitCode, stderr).toBe(0);
+      }
+      writeFileSync(
+        join(proj, "node_modules", "big-pkg", "lib", "big.js"),
+        lines.map(line => line.replace("padding", "PATCHED")).join("\n") + "\n",
+      );
+      let result: Awaited<ReturnType<typeof run>>;
+      fillFilesystem(proj, 128 * 1024);
+      try {
+        result = await run(proj, env, "patch", "--commit", "node_modules/big-pkg");
+      } finally {
+        rmSync(join(proj, "filler"), { force: true });
+      }
+      expect(result.stderr).toContain("ENOSPC");
+      expect(result.exitCode).toBe(1);
+      // The previous patch is untouched and nothing else is left in patches/.
+      expect(statSync(patchFile).size).toBe(Buffer.byteLength(firstPatch));
+      expect(readFileSync(patchFile, "utf8")).toBe(firstPatch);
+      expect(readdirSync(join(proj, "patches"))).toEqual(patchFiles);
+
+      // And it still applies.
+      rmSync(join(proj, "node_modules"), { recursive: true, force: true });
+      {
+        const { stderr, exitCode } = await run(proj, env, "install");
+        expect(stderr).not.toContain("failed to apply patchfile");
+        expect(exitCode, stderr).toBe(0);
+      }
+      expect(readFileSync(join(proj, "node_modules", "big-pkg", "lib", "big.js"), "utf8")).toEndWith(
+        "// small change\n",
+      );
+    } finally {
+      rmSync(proj, { recursive: true, force: true });
+    }
   });
 });

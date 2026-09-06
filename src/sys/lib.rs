@@ -7674,34 +7674,7 @@ pub fn move_file_z_with_handle(
             renameat(from_dir, filename, to_dir, destination)
         }
         Err(e) if e.get_errno() == E::EXDEV => {
-            // Cross-device: full `copyFileZSlowWithHandle`.
-            #[cfg(unix)]
-            let st = fstat(from_handle)?;
-            // Unlink dest first — fixes ETXTBUSY on Linux.
-            let _ = unlinkat(to_dir, destination);
-            let dst = openat(
-                to_dir,
-                destination,
-                O::WRONLY | O::CREAT | O::CLOEXEC | O::TRUNC,
-                0o644,
-            )?;
-            #[cfg(any(target_os = "linux", target_os = "android"))]
-            {
-                // Preallocation is best-effort.
-                let _ = safe_libc::fallocate(dst.native(), 0, 0, st.st_size);
-            }
-            // Seek input to 0 — caller may have left offset at EOF after writing.
-            let _ = lseek(from_handle, 0, libc::SEEK_SET);
-            let r = copy_file(from_handle, dst);
-            // Only stamp mode/owner on success; on copy error
-            // the partially-written dest keeps its openat() defaults.
-            #[cfg(unix)]
-            if r.is_ok() {
-                let _ = safe_libc::fchmod(dst.native(), st.st_mode);
-                let _ = safe_libc::fchown(dst.native(), st.st_uid, st.st_gid);
-            }
-            let _ = close(dst);
-            r?;
+            copy_file_z_slow_with_handle(from_handle, to_dir, destination)?;
             let _ = unlinkat(from_dir, filename);
             Ok(())
         }
@@ -8921,7 +8894,11 @@ pub(crate) fn move_file_z_slow(
     let _ = close(in_handle);
     r
 }
-/// `copyFileZSlowWithHandle` (POSIX read/write fallback arm).
+/// The EXDEV arm of the `move_file_z*` family. Copies `in_handle` into a
+/// temp file beside `destination`, then renames it over `destination`, so
+/// `destination` names the previous file or the complete copy at every
+/// moment. A failed copy removes the temp file and leaves `destination` as
+/// it was.
 pub(crate) fn copy_file_z_slow_with_handle(
     in_handle: Fd,
     to_dir: Fd,
@@ -8929,12 +8906,12 @@ pub(crate) fn copy_file_z_slow_with_handle(
 ) -> Maybe<()> {
     #[cfg(unix)]
     let st = fstat(in_handle)?;
-    // Unlink dest first — fixes ETXTBUSY on Linux.
-    let _ = unlinkat(to_dir, destination);
+    let mut tmp_buf = bun_paths::path_buffer_pool::get();
+    let tmp = tmpname_beside(&mut tmp_buf.0, destination.as_bytes())?;
     let dst = openat(
         to_dir,
-        destination,
-        O::WRONLY | O::CREAT | O::CLOEXEC | O::TRUNC,
+        tmp,
+        O::WRONLY | O::CREAT | O::EXCL | O::CLOEXEC,
         0o644,
     )?;
     #[cfg(any(target_os = "linux", target_os = "android"))]
@@ -8943,16 +8920,52 @@ pub(crate) fn copy_file_z_slow_with_handle(
         let _ = safe_libc::fallocate(dst.native(), 0, 0, st.st_size);
     }
     let _ = lseek(in_handle, 0, libc::SEEK_SET);
-    let r = copy_file(in_handle, dst);
-    // Only stamp mode/owner on success; on copy error the
-    // partially-written dest keeps its openat() defaults.
+    let mut r = copy_file(in_handle, dst);
     #[cfg(unix)]
     if r.is_ok() {
         let _ = safe_libc::fchmod(dst.native(), st.st_mode);
         let _ = safe_libc::fchown(dst.native(), st.st_uid, st.st_gid);
     }
     let _ = close(dst);
+    if r.is_ok() {
+        r = renameat(to_dir, tmp, to_dir, destination);
+    }
+    if r.is_err() {
+        let _ = unlinkat(to_dir, tmp);
+    }
     r
+}
+
+/// Writes `dir/.base.<16 hex digits>.tmp` into `buf` for a `dest` of
+/// `dir/base`. The result is in the same directory as `dest`, so a rename
+/// from it onto `dest` never crosses a filesystem.
+fn tmpname_beside<'a>(buf: &'a mut [u8], dest: &[u8]) -> Maybe<&'a ZStr> {
+    let split = if cfg!(windows) {
+        bun_core::strings::last_index_of_any(dest, b"/\\:")
+    } else {
+        bun_core::strings::last_index_of_char(dest, b'/')
+    }
+    .map_or(0, |i| i + 1);
+    let (dir, base) = dest.split_at(split);
+    // Keep the new component well under NAME_MAX. Cut at a UTF-8 boundary.
+    let mut keep = base.len().min(128);
+    while keep < base.len() && keep > 0 && (base[keep] & 0xC0) == 0x80 {
+        keep -= 1;
+    }
+    let mut rand = [0u8; 16];
+    bun_core::fmt::bytes_to_hex_lower(&bun_core::fast_random().to_ne_bytes(), &mut rand);
+    let parts: [&[u8]; 6] = [dir, b".", &base[..keep], b".", &rand, b".tmp"];
+    let len: usize = parts.iter().map(|p| p.len()).sum();
+    if len >= buf.len() {
+        return Err(Error::from_code_int(libc::ENAMETOOLONG, Tag::open).with_path(dest));
+    }
+    let mut at = 0;
+    for part in parts {
+        buf[at..at + part.len()].copy_from_slice(part);
+        at += part.len();
+    }
+    buf[len] = 0;
+    Ok(ZStr::from_buf(buf, len))
 }
 /// `renameatZ` alias (bun_install reaches for it as the NUL-terminated form).
 #[inline]
@@ -9028,9 +9041,11 @@ pub(crate) fn renameat_concurrently_without_fallback(
                     ..Default::default()
                 },
             ) {
-                // if ENOENT don't retry
+                // ENOENT: there is nothing to move. EXDEV: no rename of this
+                // pair can succeed, so the delete-tree below would remove `to`
+                // for nothing. The caller decides whether to copy instead.
                 Err(err) => {
-                    if err.get_errno() == E::ENOENT {
+                    if matches!(err.get_errno(), E::ENOENT | E::EXDEV) {
                         return Err(err);
                     }
                     err

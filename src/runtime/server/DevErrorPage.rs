@@ -126,8 +126,7 @@ fn write_stack_trace(w: &mut Vec<u8>, stack: &StackTrace) {
     w.extend_from_slice(b"]}");
 }
 
-/// Same cap as the terminal error printer in `VirtualMachine.rs`. A minified
-/// bundle is one line, so without it the page carries the whole bundle.
+/// Same cap as `MAX_LINE_LENGTH` in the terminal error printer (`VirtualMachine.rs`).
 const MAX_SOURCE_LINE_LENGTH: usize = 1024;
 
 fn write_source_line_text(w: &mut Vec<u8>, text: &[u8]) {

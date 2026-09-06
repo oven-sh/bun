@@ -1,4 +1,5 @@
 // Hardcoded module "node:timers"
+import * as promises from "node:timers/promises";
 export const setTimeout = globalThis.setTimeout;
 export const clearTimeout = globalThis.clearTimeout;
 export const setInterval = globalThis.setInterval;
@@ -11,8 +12,9 @@ export const setImmediate =
   };
 export const clearImmediate = globalThis.clearImmediate ?? globalThis.clearTimeout;
 export const _unrefActive = () => {};
-export * as promises from "node:timers/promises";
+export { promises };
 export default {
+  promises,
   setTimeout,
   clearTimeout,
   setInterval,

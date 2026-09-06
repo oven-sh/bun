@@ -1,5 +1,5 @@
 // Measure stripped binary sizes for every release platform and compare them
-// against the latest finished `main` build ("canary").
+// against the `main` build of the commit this build branched from ("canary").
 //
 // CI mode (invoked from .buildkite/ci.mjs after all *-build-bun jobs finish):
 //   bun scripts/binary-size.ts \
@@ -134,12 +134,26 @@ async function baselineFromCommit(sha: string, label: (n: number) => string): Pr
   return { label: label(n), href: `https://buildkite.com/${org}/${pipeline}/builds/${n}`, sizes: record.sizes };
 }
 
-// Canary: walk recent main commits until one whose build has a matching
-// (canary vs release) binary-sizes.json.
+// The main commit this build branched from. Walking main from its tip instead
+// would charge a PR for every size change main picked up after the PR
+// branched (or hide the PR's own growth behind a shrink on main).
+async function mainBaseCommit(): Promise<string> {
+  const head = process.env.BUILDKITE_COMMIT;
+  if (!head || branch === "main") return "main";
+  const { merge_base_commit } = await githubJson<{ merge_base_commit: { sha: string } }>(
+    `compare/main...${head}?per_page=1`,
+  );
+  return merge_base_commit.sha;
+}
+
+// Canary: walk main commits back from the merge-base until one whose build has
+// a matching (canary vs release) binary-sizes.json.
 console.log(`--- Fetching ${buildKind} baseline`);
 let canaryNote = "";
 const canary: Baseline | undefined = await (async () => {
-  const commits = await githubJson<{ sha: string }[]>("commits?sha=main&per_page=15");
+  const base = await mainBaseCommit();
+  if (base !== "main") console.log(`  merge-base with main: ${base}`);
+  const commits = await githubJson<{ sha: string }[]>(`commits?sha=${base}&per_page=15`);
   for (const { sha } of commits) {
     const b = await baselineFromCommit(sha, n => `main #${n}`);
     if (b) return b;

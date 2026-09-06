@@ -6252,8 +6252,7 @@ class ClientHttp2Session extends Http2Session {
       process.nextTick(emitEventNT, req, "ready");
       return req;
     } catch (e: any) {
-      // A throw from the native request() happens before any header reaches the wire or the
-      // HPACK table, so the session stays usable. Like node, the throw is the only error channel.
+      // Nothing reached the wire, so the session stays usable and the throw is the only error channel.
       if (connectionsCounted) {
         this.#connections--;
       }

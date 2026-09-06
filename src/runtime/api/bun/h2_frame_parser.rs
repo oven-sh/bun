@@ -1960,14 +1960,9 @@ impl AbortListener for SignalRef {
     }
 }
 
-/// Outbound header fields collected from JS before any of them reach the HPACK encoder.
-///
-/// The HPACK dynamic table is shared by every stream on the connection and the peer mirrors
-/// each insertion. A field that fails validation must throw before the first `encode()`:
-/// an entry inserted for an earlier field and never sent leaves the peer's table one step
-/// behind, and every later header block on the connection decodes against the wrong entries.
-/// Node validates the whole object in JS before nghttp2 encodes. Bun validates while it walks
-/// the JS object, so the walk copies the validated fields here and the encode runs afterwards.
+/// Validated outbound header fields, collected before any of them reach the HPACK encoder.
+/// An encoded field that is never sent desyncs the peer's dynamic table for the rest of the
+/// connection, so a validation throw must happen before the first `encode()`.
 #[derive(Default)]
 struct HeaderList {
     bytes: Vec<u8>,
@@ -2003,9 +1998,7 @@ impl HeaderList {
         Ok(())
     }
 
-    /// Upper bound of the encoded size, computed the way nghttp2_hd_deflate_bound does it: up
-    /// to two table size updates (6 bytes each), then per field the literal form with two
-    /// 6-byte length integers. The compressor never produces more than the literal bytes.
+    /// Same formula as nghttp2_hd_deflate_bound.
     fn deflate_bound(&self) -> usize {
         12 + self.fields.len() * 12 + self.bytes.len()
     }
@@ -5783,8 +5776,6 @@ impl H2FrameParser {
 
         let mut single_value_headers = [false; SINGLE_VALUE_HEADERS_LEN];
 
-        // Validate and collect the trailers. Nothing reaches the HPACK table until the whole
-        // object has been walked (see HeaderList).
         while let Some((header_name, js_value)) = iter.next()? {
             if header_name.length() == 0 {
                 continue;
@@ -5924,9 +5915,7 @@ impl H2FrameParser {
                 return Err(global_object.throw(format_args!("Failed to allocate header buffer")));
             }
             Err(_) => {
-                // nghttp2 checks maxSendHeaderBlockLength pre-deflation and fires
-                // on_frame_not_send_callback(NGHTTP2_ERR_FRAME_SIZE_ERROR); Node surfaces
-                // 'frameError' + ERR_HTTP2_STREAM_ERROR (test-http2-exceeds-server-trailer-size.js).
+                // node: 'frameError' + ERR_HTTP2_STREAM_ERROR (test-http2-exceeds-server-trailer-size.js).
                 let identifier = stream.get_identifier();
                 identifier.ensure_still_alive();
                 this.dispatch_with_2_extra(
@@ -6235,8 +6224,7 @@ impl H2FrameParser {
         let mut single_value_headers = [false; SINGLE_VALUE_HEADERS_LEN];
 
         // A PUSH_PROMISE carries a REQUEST, so request pseudo-headers are valid even on the server.
-        // Pseudo-headers must be encoded first, so iterate twice. The fields are collected and
-        // encoded only after both passes validated the whole object (see HeaderList).
+        // Pseudo-headers must be encoded first, so iterate twice.
         for ignore_pseudo_headers in 0..2usize {
             let iter = bun_jsc::JSPropertyIterator::init(
                 global_object,
@@ -6373,8 +6361,7 @@ impl H2FrameParser {
             .encode_header_list(&mut encoded_headers, &pending)
             .is_err()
         {
-            // Same as the request/respond encode failures: nghttp2 fails the whole
-            // session, and node never surfaces this through the pushStream callback.
+            // node never surfaces this through the pushStream callback.
             this.schedule_header_compression_session_error();
             return Ok(JSValue::js_number(-1.0));
         }
@@ -6661,7 +6648,6 @@ impl H2FrameParser {
                 global_object.throw(format_args!("Expected sensitiveHeaders to be an object"))
             );
         }
-        // Every field is validated and collected before the first HPACK encode (see HeaderList).
         let mut pending = HeaderList::default();
         // max header name length for lshpack
         let mut name_buffer = [0u8; 4096];
@@ -7182,9 +7168,7 @@ impl H2FrameParser {
             0
         };
 
-        // maxSendHeaderBlockLength is checked against the pre-compression bound, as nghttp2
-        // does (session_estimate_headers_payload): a block refused here must not have touched
-        // the HPACK table, since the session and its encoder state stay in use.
+        // Checked against the pre-compression bound like nghttp2, before the encoder is touched.
         if this.max_send_header_block_length.get() != 0
             && pending.deflate_bound() + priority_overhead
                 > this.max_send_header_block_length.get() as usize
@@ -7207,8 +7191,6 @@ impl H2FrameParser {
             return Ok(JSValue::js_number(stream_id as f64));
         }
 
-        // Every check that can refuse the block without sending it ran above. From here on the
-        // encoded block goes on the wire, or the whole session fails.
         let mut encoded_headers: Vec<u8> = Vec::new();
         if let Err(err) = this.encode_header_list(&mut encoded_headers, &pending) {
             if matches!(err, crate::Error::Alloc(_)) {

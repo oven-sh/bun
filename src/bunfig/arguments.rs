@@ -12,6 +12,7 @@ use bun_options_types::context::Context;
 use bun_paths::PathBuffer;
 use bun_paths::resolve_path::{self, platform};
 use bun_standalone_graph::StandaloneModuleGraph::StandaloneModuleGraph;
+use bun_sys::E;
 
 use crate::bunfig::Bunfig;
 
@@ -35,9 +36,23 @@ fn get_home_config_path(buf: &mut PathBuffer) -> Option<&ZStr> {
     None
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum BunfigSource {
+    /// `--config <path>`: every read error is fatal.
+    Explicit,
+    /// `bunfig.toml` in the working directory: a missing file is fine, but a
+    /// file that exists and cannot be read (EACCES, EISDIR, ELOOP) is a config
+    /// the user expects to apply.
+    Project,
+    /// `~/.bunfig.toml`: any read error skips it. `$HOME` itself is often not
+    /// traversable after a uid switch (sudo, containers), and that must not
+    /// break every command.
+    Global,
+}
+
 fn load_bunfig(
     cmd: CommandTag,
-    auto_loaded: bool,
+    source_kind: BunfigSource,
     config_path: &ZStr,
     ctx: Context<'_>,
 ) -> Result<(), crate::Error> {
@@ -45,7 +60,12 @@ fn load_bunfig(
         match bun_ast::to_source(config_path, bun_ast::ToSourceOptions { convert_bom: true }) {
             Ok(s) => s,
             Err(err) => {
-                if auto_loaded {
+                let skip = match source_kind {
+                    BunfigSource::Explicit => false,
+                    BunfigSource::Project => matches!(err.get_errno(), E::ENOENT | E::ENOTDIR),
+                    BunfigSource::Global => true,
+                };
+                if skip {
                     return Ok(());
                 }
                 bun_core::pretty_errorln!(
@@ -88,7 +108,7 @@ fn load_global_bunfig(cmd: CommandTag, ctx: Context<'_>) -> Result<(), crate::Er
 
     let mut config_buf = bun_paths::path_buffer_pool::get();
     if let Some(path) = get_home_config_path(&mut config_buf) {
-        load_bunfig(cmd, true, path, ctx)?;
+        load_bunfig(cmd, BunfigSource::Global, path, ctx)?;
     }
     Ok(())
 }
@@ -118,7 +138,12 @@ pub fn load_config_path(
         }
     }
 
-    load_bunfig(cmd, auto_loaded, config_path, ctx)
+    load_bunfig(
+        cmd,
+        if auto_loaded { BunfigSource::Project } else { BunfigSource::Explicit },
+        config_path,
+        ctx,
+    )
 }
 
 #[cold]
@@ -156,7 +181,7 @@ pub fn load_config(
             ctx.has_loaded_global_config = true;
 
             if let Some(path) = get_home_config_path(&mut config_buf) {
-                if let Err(err) = load_config_path(cmd, true, path, ctx) {
+                if let Err(err) = load_bunfig(cmd, BunfigSource::Global, path, ctx) {
                     report_bunfig_load_failure(ctx.log, err);
                 }
             }

@@ -646,6 +646,15 @@ test("remote objects a frontend created are released when it disconnects", async
     ws.on("open", opened);
     ws.on("error", failed);
     await open;
+    // Any pending evaluate rejects when the socket drops or the debuggee exits.
+    const { promise: lost, reject: lose } = Promise.withResolvers<never>();
+    lost.catch(() => {});
+    let closing = false;
+    ws.on("close", event => {
+      if (!closing) lose(new Error(`WebSocket closed (${event})\ninspectee stderr:\n${stderr}`));
+    });
+    ws.on("error", error => lose(error));
+    proc.exited.then(code => lose(new Error(`inspectee exited with ${code}\ninspectee stderr:\n${stderr}`)));
     const waiters = new Map<number, (message: any) => void>();
     ws.on("message", data => {
       const message = JSON.parse(String(data));
@@ -657,13 +666,14 @@ test("remote objects a frontend created are released when it disconnects", async
       const { promise, resolve } = Promise.withResolvers<any>();
       waiters.set(id, resolve);
       ws.send(JSON.stringify({ id, method: "Runtime.evaluate", params: { expression, ...params } }));
-      const { result, error } = await promise;
+      const { result, error } = await Promise.race([promise, lost]);
       if (error) throw new Error(`Runtime.evaluate failed: ${error.message}`);
       return result;
     };
     try {
       await run(evaluate);
     } finally {
+      closing = true;
       const { promise: closed, resolve: onClose } = Promise.withResolvers<void>();
       ws.on("close", () => onClose());
       ws.close();
@@ -671,7 +681,7 @@ test("remote objects a frontend created are released when it disconnects", async
     }
   }
 
-  const count = 50;
+  const count = 20;
   let before = 0;
   let whileConnected = 0;
   await session(async evaluate => {

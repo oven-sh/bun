@@ -446,14 +446,7 @@ impl DefineDataExt for DefineData {
         let data: ExprData = match expr.data.deep_clone(bump) {
             Ok(data) => data,
             Err(bun_ast::DeepCloneError::StackOverflow) => {
-                log.add_error_fmt_opts(
-                    format_args!("JSON document is too deeply nested"),
-                    bun_ast::AddErrorOptions {
-                        source: Some(&source),
-                        loc: expr.loc,
-                        ..Default::default()
-                    },
-                );
+                bun_parsers::json::add_too_deeply_nested_error(log, &source, expr.loc);
                 return Err(bun_parsers::Error::StackOverflow.into());
             }
             Err(bun_ast::DeepCloneError::Alloc(err)) => return Err(err.into()),

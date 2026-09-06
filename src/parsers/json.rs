@@ -340,19 +340,31 @@ fn parse_classic(
     out.root = match materialize_impl(&out.root, source, bump, opts.was_originally_macro) {
         Ok(root) => root,
         Err(e) => {
-            log.add_error_fmt_opts(
-                format_args!("JSON document is too deeply nested"),
-                bun_ast::AddErrorOptions {
-                    source: Some(source),
-                    loc: out.root.loc,
-                    ..Default::default()
-                },
-            );
+            add_too_deeply_nested_error(log, source, out.root.loc);
             return Err(e);
         }
     };
     out.tape = None;
     Ok(out)
+}
+
+/// Logs the depth-limit error for a JSON document at `loc`. Callers that walk
+/// a parsed tree again (`Expr::deep_clone`) report their own overflow with
+/// the same message.
+#[cold]
+pub fn add_too_deeply_nested_error(
+    log: &mut bun_ast::Log,
+    source: &bun_ast::Source,
+    loc: bun_ast::Loc,
+) {
+    log.add_error_fmt_opts(
+        format_args!("JSON document is too deeply nested"),
+        bun_ast::AddErrorOptions {
+            source: Some(source),
+            loc,
+            ..Default::default()
+        },
+    );
 }
 
 impl ParsedJson {

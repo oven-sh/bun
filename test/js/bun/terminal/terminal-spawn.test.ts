@@ -1,6 +1,6 @@
 import { dlopen, FFIType } from "bun:ffi";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isMusl, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, isMacOS, isMusl, isWindows, tempDir } from "harness";
 import fs from "node:fs";
 
 // Cross-platform Bun.Terminal + Bun.spawn integration tests that don't rely
@@ -609,6 +609,52 @@ describe("Bun.Terminal subprocess integration", () => {
     if (exitCode === 0 || exitCode === 42) await probeReported.promise;
     expect(output).toContain("PROBE-CLEAN");
     expect(output).not.toContain("PROBE-CORRUPTED");
+    expect(exitCode).toBe(0);
+  });
+
+  // macOS: an inline-terminal child is the session leader of its pty. The
+  // kernel finishes its exit only after the pty output drains, which needs
+  // the parent to read the master. If the child gets that far before the
+  // parent registers the kqueue exit watch (kevent returns ESRCH), the parent
+  // used to block in wait4() on the event-loop thread and the two deadlocked.
+  // A worker that churns the allocator slows the parent enough to hit the
+  // window on every run.
+  test.skipIf(!isMacOS)("a pty child that exits before the parent watches it is still reaped", async () => {
+    using dir = tempDir("pty-early-exit", {
+      "churn.js": `
+        let keep = [];
+        function churn() {
+          for (let i = 0; i < 2000; i++) {
+            keep.push(new Uint8Array(1 + ((i * 7919) % 65536)), { a: i, s: Buffer.alloc(i % 300, "x").toString() }, new Array(i % 100).fill(i));
+            if (keep.length > 4000) keep = [];
+          }
+          setTimeout(churn, 0);
+        }
+        churn();
+      `,
+      "main-fixture.js": `
+        const worker = new Worker(new URL("./churn.js", import.meta.url).href);
+        for (let i = 0; i < 25; i++) {
+          const proc = Bun.spawn({ cmd: ["sh", "-c", "echo hi"], terminal: { data() {} } });
+          const code = await proc.exited;
+          if (code !== 0) throw new Error("exit code " + code + " at iteration " + i);
+        }
+        console.log("done");
+        worker.terminate();
+        process.exit(0);
+      `,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "main-fixture.js"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toBe("done\n");
     expect(exitCode).toBe(0);
   });
 });

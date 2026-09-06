@@ -370,34 +370,14 @@ impl Process {
     #[cfg(unix)]
     fn on_wait_pid(&mut self, waitpid_result: &bun_sys::Result<WaitPidResult>, rusage: &Rusage) {
         let pid = self.pid;
-        // Mutated only on the macOS ESRCH retry path below.
-        #[cfg(target_os = "macos")]
-        let mut rusage_result = *rusage;
-        #[cfg(not(target_os = "macos"))]
-        let rusage_result = *rusage;
 
         let status: Option<Status> = Status::from(pid, waitpid_result).or_else(|| 'brk: {
             match self.rewatch_posix() {
                 Ok(()) => {}
                 Err(err_) => {
                     #[cfg(target_os = "macos")]
-                    if err_.get_errno() == bun_sys::E::ESRCH {
-                        break 'brk Status::from(
-                            pid,
-                            &posix_spawn::wait4(
-                                pid,
-                                // Normally we would use WNOHANG to avoid blocking the event loop.
-                                // However, there seems to be a race condition where the operating system
-                                // tells us that the process has already exited (ESRCH) but the waitpid
-                                // call with WNOHANG doesn't return the status yet.
-                                // As a workaround, we use 0 to block the event loop until the status is available.
-                                // This should be fine because the process has already exited, so the data
-                                // should become available basically immediately. Also, testing has shown that this
-                                // occurs extremely rarely and only under high load.
-                                0,
-                                Some(&mut rusage_result),
-                            ),
-                        );
+                    if err_.get_errno() == bun_sys::E::ESRCH && self.reap_on_thread().is_ok() {
+                        break 'brk None;
                     }
                     break 'brk Some(Status::Err(err_));
                 }
@@ -406,7 +386,36 @@ impl Process {
         });
 
         let Some(status) = status else { return };
-        self.on_exit(status, &rusage_result);
+        self.on_exit(status, rusage);
+    }
+
+    /// kqueue refuses `EVFILT_PROC` with ESRCH for a child that has started
+    /// to exit, while `wait4(WNOHANG)` still returns 0 until the exit
+    /// completes. The kernel finishes a pty session leader's exit only once
+    /// its terminal output drains, and the master is read by this event
+    /// loop. A blocking `wait4` here therefore deadlocks. Block on a thread
+    /// of its own instead. The result arrives through
+    /// [`Process::on_wait_pid_from_waiter_thread`].
+    #[cfg(target_os = "macos")]
+    fn reap_on_thread(&mut self) -> Result<(), std::io::Error> {
+        let ctx = self.event_loop_ctx();
+        if let Some(poll) = self.poller.fd_poll_mut() {
+            poll.deinit();
+        }
+        self.poller = Poller::WaiterThread(KeepAlive::default());
+        if let Poller::WaiterThread(w) = &mut self.poller {
+            w.ref_(ctx);
+        }
+        self.ref_();
+        // SAFETY: `self` is live and now carries the ref the delivery releases.
+        if let Err(err) = unsafe { waiter_thread_posix::reap_on_thread(self) } {
+            self.poller.disable_keeping_event_loop_alive(ctx);
+            self.poller = Poller::Detached;
+            // SAFETY: the caller holds its own ref; this drops the one taken above.
+            unsafe { Self::deref(std::ptr::from_mut(self)) };
+            return Err(err);
+        }
+        Ok(())
     }
 
     pub fn watch_or_reap(&mut self) -> bun_sys::Result<bool> {
@@ -418,7 +427,14 @@ impl Process {
 
         match self.watch() {
             Err(err) => {
-                #[cfg(unix)]
+                #[cfg(target_os = "macos")]
+                if err.get_errno() == bun_sys::E::ESRCH {
+                    // The child is mid-exit: reap it now, or from a thread
+                    // when the exit has not completed (see `reap_on_thread`).
+                    self.wait(false);
+                    return Ok(self.has_exited());
+                }
+                #[cfg(all(unix, not(target_os = "macos")))]
                 if err.get_errno() == bun_sys::E::ESRCH {
                     self.wait(true);
                     return Ok(self.has_exited());
@@ -1233,50 +1249,8 @@ pub mod waiter_thread_posix {
                     };
                     if matched {
                         remove = true;
-
-                        match T::event_loop(process_ref) {
-                            EventLoopHandle::Js { .. } => {
-                                let rt = ResultTask::<T>::new(ResultTask {
-                                    result,
-                                    subprocess: process,
-                                    rusage,
-                                });
-                                let ct = ConcurrentTask::create(Task::init(rt));
-                                let poster = T::js_poster(process_ref)
-                                    .expect("JS-owned process has a poster");
-                                if let bun_event_loop::Posted::Refused(ct) = poster.post(ct) {
-                                    // VM torn down: nobody will observe this exit. Free the
-                                    // task and drop the ref its delivery would have released.
-                                    // SAFETY: refused ⇒ we own both boxes; `process` is strong-ref'd.
-                                    unsafe {
-                                        drop(bun_core::heap::take(ct.as_ptr()));
-                                        drop(bun_core::heap::take(rt));
-                                        T::release_ref_from_waiter_thread(process);
-                                    }
-                                }
-                            }
-                            EventLoopHandle::Mini(mut mini) => {
-                                let out = ResultTaskMini::<T>::new(ResultTaskMini {
-                                    result,
-                                    subprocess: process,
-                                    task: AnyTaskWithExtraContext::default(),
-                                });
-                                // SAFETY: `out` just produced by heap::alloc — non-null.
-                                unsafe {
-                                    (*out).task = AnyTaskNew::<ResultTaskMini<T>, ()>::init(
-                                        out,
-                                        ResultTaskMini::<T>::run_from_main_thread_mini,
-                                    );
-                                    mini.get_mut().enqueue_task_concurrent(
-                                        core::ptr::NonNull::new_unchecked(core::ptr::addr_of_mut!(
-                                            (*out).task
-                                        )),
-                                    );
-                                }
-                                // `out` is now owned by the mini queue;
-                                // freed in `run_from_main_thread_mini`.
-                            }
-                        }
+                        // SAFETY: see `process_ref` above.
+                        unsafe { post_wait_result(process, result, rusage) };
                     }
                 }
 
@@ -1292,6 +1266,109 @@ pub mod waiter_thread_posix {
             // SAFETY: sole accessor per the comment at the top of this fn.
             unsafe { *self.active.get() = active };
         }
+    }
+
+    /// Hand a `wait4` result to the loop that owns `process`, which runs
+    /// `T::on_wait_pid_from_waiter_thread` there.
+    ///
+    /// # Safety
+    /// `process` is live and carries a +1 ref that the delivery (or this
+    /// function, when the loop refuses the task) releases.
+    pub(crate) unsafe fn post_wait_result<T: ProcessLike>(
+        process: *mut T,
+        result: bun_sys::Result<WaitPidResult>,
+        rusage: Rusage,
+    ) {
+        // SAFETY: caller contract — the +1 ref keeps the pointee live.
+        let process_ref = unsafe { &*process };
+        match T::event_loop(process_ref) {
+            EventLoopHandle::Js { .. } => {
+                let rt = ResultTask::<T>::new(ResultTask {
+                    result,
+                    subprocess: process,
+                    rusage,
+                });
+                let ct = ConcurrentTask::create(Task::init(rt));
+                let poster = T::js_poster(process_ref).expect("JS-owned process has a poster");
+                if let bun_event_loop::Posted::Refused(ct) = poster.post(ct) {
+                    // VM torn down: nobody will observe this exit. Free the
+                    // task and drop the ref its delivery would have released.
+                    // SAFETY: refused ⇒ we own both boxes; `process` is strong-ref'd.
+                    unsafe {
+                        drop(bun_core::heap::take(ct.as_ptr()));
+                        drop(bun_core::heap::take(rt));
+                        T::release_ref_from_waiter_thread(process);
+                    }
+                }
+            }
+            EventLoopHandle::Mini(mut mini) => {
+                let out = ResultTaskMini::<T>::new(ResultTaskMini {
+                    result,
+                    subprocess: process,
+                    task: AnyTaskWithExtraContext::default(),
+                });
+                // SAFETY: `out` just produced by heap::alloc — non-null.
+                unsafe {
+                    (*out).task = AnyTaskNew::<ResultTaskMini<T>, ()>::init(
+                        out,
+                        ResultTaskMini::<T>::run_from_main_thread_mini,
+                    );
+                    mini.get_mut().enqueue_task_concurrent(core::ptr::NonNull::new_unchecked(
+                        core::ptr::addr_of_mut!((*out).task),
+                    ));
+                }
+                // `out` is now owned by the mini queue;
+                // freed in `run_from_main_thread_mini`.
+            }
+        }
+    }
+
+    /// Send-wrapper for the one `*mut Process` [`reap_on_thread`] hands to its
+    /// thread. The pointee is refcounted (`ThreadSafeRefCount`) and the thread
+    /// reads only `pid`, `event_loop` and `js_poster`, exactly as the shared
+    /// waiter thread does with the pointers in its queue.
+    #[cfg(target_os = "macos")]
+    #[repr(transparent)]
+    struct SendPtr(*mut Process);
+    // SAFETY: see type doc.
+    #[cfg(target_os = "macos")]
+    unsafe impl Send for SendPtr {}
+
+    #[cfg(target_os = "macos")]
+    impl SendPtr {
+        /// Takes `self` by value so the closure below captures the whole
+        /// wrapper (which is `Send`) and not the `*mut Process` field.
+        #[inline]
+        fn get(self) -> *mut Process {
+            self.0
+        }
+    }
+
+    /// Block in `wait4(pid, 0)` on a thread of its own and post the result to
+    /// the owning loop. For one child whose exit kqueue can no longer observe
+    /// (`EVFILT_PROC` returned ESRCH); see [`Process::reap_on_thread`].
+    ///
+    /// The caller took the +1 ref the delivery releases. On error the thread
+    /// did not start and the caller still owns that ref.
+    ///
+    /// # Safety
+    /// `process` must be a live, strong-ref'd `Process`.
+    #[cfg(target_os = "macos")]
+    pub(crate) unsafe fn reap_on_thread(process: *mut Process) -> Result<(), std::io::Error> {
+        // SAFETY: caller contract — `process` is live; raw read of a POD field.
+        let pid = unsafe { (*process).pid };
+        let process = SendPtr(process);
+        let thread = std::thread::Builder::new()
+            .stack_size(STACK_SIZE)
+            .spawn(move || {
+                Output::Source::configure_named_thread(bun_core::ZStr::from_static(b"Waitpid\0"));
+                let mut rusage = rusage_zeroed();
+                let result = posix_spawn::wait4(pid, 0, Some(&mut rusage));
+                // SAFETY: the +1 ref taken before the spawn keeps the pointee live.
+                unsafe { post_wait_result(process.get(), result, rusage) };
+            })?;
+        drop(thread); // detached: the thread outlives the handle
+        Ok(())
     }
 
     const STACK_SIZE: usize = 512 * 1024;

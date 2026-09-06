@@ -1371,12 +1371,11 @@ impl BlobExt for Blob {
     ) -> JsResult<JSValue> {
         let extra_options = options.extra_options;
         let Some(store) = self.store.get().clone() else {
-            return Ok(
-                JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
-                    global_this,
-                    global_this.create_error_instance(format_args!("Blob is detached")),
-                ),
-            );
+            return Ok(JSPromise::rejected_promise(
+                global_this,
+                global_this.create_error_instance(format_args!("Blob is detached")),
+            )
+            .to_js());
         };
 
         if self.is_s3() {
@@ -1386,12 +1385,11 @@ impl BlobExt for Blob {
             let aws_options = match s3.get_credentials_with_options(extra_options, global_this) {
                 Ok(o) => o,
                 Err(err) => {
-                    return Ok(
-                        JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
-                            global_this,
-                            global_this.take_exception(err),
-                        ),
-                    );
+                    return Ok(JSPromise::rejected_promise_with_caught_exception(
+                        global_this,
+                        err,
+                    )?
+                    .to_js());
                 }
             };
 
@@ -1430,12 +1428,11 @@ impl BlobExt for Blob {
         }
 
         if !matches!(store.data, store::Data::File(_)) {
-            return Ok(
-                JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
-                    global_this,
-                    global_this.create_error_instance(format_args!("Blob is read-only")),
-                ),
-            );
+            return Ok(JSPromise::rejected_promise(
+                global_this,
+                global_this.create_error_instance(format_args!("Blob is read-only")),
+            )
+            .to_js());
         }
 
         let file_sink: RefPtr<webcore::FileSink> = 'brk_sink: {
@@ -1466,10 +1463,11 @@ impl BlobExt for Blob {
                     match result {
                         bun_sys::Result::Ok(result) => result,
                         bun_sys::Result::Err(err) => {
-                            return Ok(JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
+                            return Ok(JSPromise::rejected_promise(
                                 global_this,
                                 err.with_path(path).to_js(global_this),
-                            ));
+                            )
+                            .to_js());
                         }
                     }
                 };
@@ -1522,10 +1520,7 @@ impl BlobExt for Blob {
                 });
                 if let bun_sys::Result::Err(err) = started {
                     return Ok(
-                        JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
-                            global_this,
-                            err.to_js(global_this),
-                        ),
+                        JSPromise::rejected_promise(global_this, err.to_js(global_this)).to_js(),
                     );
                 }
 
@@ -1564,10 +1559,7 @@ impl BlobExt for Blob {
 
                 if let bun_sys::Result::Err(err) = sink.start(&stream_start) {
                     return Ok(
-                        JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
-                            global_this,
-                            err.to_js(global_this),
-                        ),
+                        JSPromise::rejected_promise(global_this, err.to_js(global_this)).to_js(),
                     );
                 }
                 break 'brk_sink sink;
@@ -1591,12 +1583,7 @@ impl BlobExt for Blob {
         assignment_result.ensure_still_alive();
 
         if let Some(err) = assignment_result.to_error() {
-            return Ok(
-                JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
-                    global_this,
-                    err,
-                ),
-            );
+            return Ok(JSPromise::rejected_promise(global_this, err).to_js());
         }
 
         if !assignment_result.is_empty_or_undefined_or_null() {
@@ -1637,20 +1624,16 @@ impl BlobExt for Blob {
                     jsc::js_promise::Status::Rejected => {
                         readable_stream.cancel(global_this)?;
                         promise.set_handled(global_this.vm());
-                        return Ok(JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
+                        return Ok(JSPromise::rejected_promise(
                             global_this,
                             promise.result(global_this.vm()),
-                        ));
+                        )
+                        .to_js());
                     }
                 }
             } else {
                 readable_stream.cancel(global_this)?;
-                return Ok(
-                    JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
-                        global_this,
-                        assignment_result,
-                    ),
-                );
+                return Ok(JSPromise::rejected_promise(global_this, assignment_result).to_js());
             }
         }
         let written = file_sink.stream_bytes.get().unwrap_or(0);
@@ -4208,7 +4191,7 @@ pub trait MkdirpTarget {
 // ──────────────────────────────────────────────────────────────────────────
 
 fn body_used_rejection(global: &JSGlobalObject) -> JSValue {
-    JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
+    JSPromise::rejected_promise(
         global,
         global
             .err(
@@ -4217,6 +4200,7 @@ fn body_used_rejection(global: &JSGlobalObject) -> JSValue {
             )
             .to_js(),
     )
+    .to_js()
 }
 
 #[derive(Default, Clone, Copy)]
@@ -4341,12 +4325,7 @@ fn write_file_with_empty_source_to_destination(
                 }
 
                 *err = sys_error_with_path_like(err, &file.pathlike);
-                return Ok(
-                    JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
-                        ctx,
-                        err.to_js(ctx),
-                    ),
-                );
+                return Ok(JSPromise::rejected_promise(ctx, err.to_js(ctx)).to_js());
             }
         }
         store::Data::S3(s3) => {
@@ -4354,12 +4333,7 @@ fn write_file_with_empty_source_to_destination(
             let aws_options = match s3.get_credentials_with_options(options.extra_options, ctx) {
                 Ok(o) => o,
                 Err(err) => {
-                    return Ok(
-                        JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
-                            ctx,
-                            ctx.take_exception(err),
-                        ),
-                    );
+                    return Ok(JSPromise::rejected_promise_with_caught_exception(ctx, err)?.to_js());
                 }
             };
 
@@ -4538,14 +4512,11 @@ pub(crate) fn write_file_with_source_destination(
         )? {
             return destination_blob.pipe_readable_stream_to_blob(ctx, stream, options);
         } else {
-            return Ok(
-                JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
-                    ctx,
-                    ctx.create_error_instance(format_args!(
-                        "Failed to stream bytes from s3 bucket"
-                    )),
-                ),
-            );
+            return Ok(JSPromise::rejected_promise(
+                ctx,
+                ctx.create_error_instance(format_args!("Failed to stream bytes from s3 bucket")),
+            )
+            .to_js());
         }
     } else if destination_type == store::DataTag::Bytes && source_type == store::DataTag::Bytes {
         // If this is bytes <> bytes, we can just duplicate it
@@ -4568,12 +4539,7 @@ pub(crate) fn write_file_with_source_destination(
         let aws_options = match s3.get_credentials_with_options(options.extra_options, ctx) {
             Ok(o) => o,
             Err(err) => {
-                return Ok(
-                    JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
-                        ctx,
-                        ctx.take_exception(err),
-                    ),
-                );
+                return Ok(JSPromise::rejected_promise_with_caught_exception(ctx, err)?.to_js());
             }
         };
         let proxy_owned = http_proxy_href(ctx);
@@ -4610,10 +4576,13 @@ pub(crate) fn write_file_with_source_destination(
                             core::ptr::null_mut(),
                         );
                     } else {
-                        return Ok(JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
+                        return Ok(JSPromise::rejected_promise(
                             ctx,
-                            ctx.create_error_instance(format_args!("Failed to stream bytes to s3 bucket")),
-                        ));
+                            ctx.create_error_instance(format_args!(
+                                "Failed to stream bytes to s3 bucket"
+                            )),
+                        )
+                        .to_js());
                     }
                 } else {
                     struct Wrapper {
@@ -4706,14 +4675,13 @@ pub(crate) fn write_file_with_source_destination(
                         core::ptr::null_mut(),
                     );
                 } else {
-                    return Ok(
-                        JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
-                            ctx,
-                            ctx.create_error_instance(format_args!(
-                                "Failed to stream bytes to s3 bucket"
-                            )),
-                        ),
-                    );
+                    return Ok(JSPromise::rejected_promise(
+                        ctx,
+                        ctx.create_error_instance(format_args!(
+                            "Failed to stream bytes to s3 bucket"
+                        )),
+                    )
+                    .to_js());
                 }
             }
         }
@@ -4939,10 +4907,7 @@ pub(crate) fn write_file_internal(
                     // borrow of the body value is live.
                     let _ = unsafe { (*body_value).use_() };
                     Ok(ControlFlow::Break(
-                        JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
-                            global_this,
-                            err_js,
-                        ),
+                        JSPromise::rejected_promise(global_this, err_js).to_js(),
                     ))
                 }
                 BodyTag::Locked => {
@@ -5048,10 +5013,7 @@ pub(crate) fn write_file_internal(
                                 // live borrow of the value.
                                 let _ = unsafe { (*body_value).use_() };
                                 return Ok(ControlFlow::Break(
-                                    JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
-                                        global_this,
-                                        err_js,
-                                    ),
+                                    JSPromise::rejected_promise(global_this, err_js).to_js(),
                                 ));
                             }
                             // SAFETY: the match borrow ended with the pattern; no other borrow is live.
@@ -5281,10 +5243,11 @@ fn write_string_to_file_fast<const NEEDS_OPEN: bool>(
                     *needs_async = true;
                     return JSValue::ZERO;
                 }
-                return JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
+                return JSPromise::rejected_promise(
                     global_this,
                     err.with_path(pathlike.path().slice()).to_js(global_this),
-                );
+                )
+                .to_js();
             }
         }
     };
@@ -5329,10 +5292,7 @@ fn write_string_to_file_fast<const NEEDS_OPEN: bool>(
                     } else {
                         err.with_path(pathlike.path().slice()).to_js(global_this)
                     };
-                    return JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
-                        global_this,
-                        err_js,
-                    );
+                    return JSPromise::rejected_promise(global_this, err_js).to_js();
                 }
             }
         }
@@ -5369,10 +5329,11 @@ fn write_bytes_to_file_fast<const NEEDS_OPEN: bool>(
                     *_needs_async = true;
                     return JSValue::ZERO;
                 }
-                return JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
+                return JSPromise::rejected_promise(
                     global_this,
                     err.with_path(pathlike.path().slice()).to_js(global_this),
-                );
+                )
+                .to_js();
             }
         }
     };
@@ -5404,10 +5365,7 @@ fn write_bytes_to_file_fast<const NEEDS_OPEN: bool>(
                 } else {
                     err.with_path(pathlike.path().slice()).to_js(global_this)
                 };
-                return JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
-                    global_this,
-                    err_js,
-                );
+                return JSPromise::rejected_promise(global_this, err_js).to_js();
             }
         }
     }

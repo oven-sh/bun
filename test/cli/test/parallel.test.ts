@@ -1397,29 +1397,22 @@ test.skipIf(isWindows)(
   "--parallel: a worker that dies mid-file takes the processes its test spawned with it",
   async () => {
     // The grandchild is orphaned when the worker dies, so a zombie could still
-    // answer kill(pid, 0). It records its own termination instead.
-    const grandchild = `
-    const { appendFileSync } = require("fs");
-    process.on("SIGTERM", () => {
-      appendFileSync(process.env.PIDS, "terminated=" + process.pid + "\\n");
-      process.exit(0);
-    });
-    appendFileSync(process.env.PIDS, "grandchild=" + process.pid + "\\n");
-    setTimeout(() => {}, 60000);
-  `;
+    // answer kill(pid, 0). It records its own termination instead. A shell
+    // keeps its startup out of the timing; the trap is armed before the pid
+    // is logged.
+    const grandchild = `trap 'echo terminated=$$ >> "$PIDS"; exit 0' TERM; echo grandchild=$$ >> "$PIDS"; while :; do sleep 60; done`;
     const crasher = (how: string) => `
     import { test } from "bun:test";
-    import { appendFileSync } from "fs";
     test("spawn then die", async () => {
       const child = Bun.spawn({
-        cmd: [process.execPath, "grandchild.cjs"],
+        cmd: ["sh", "-c", ${JSON.stringify(grandchild)}],
         env: process.env,
         stdout: "ignore",
         stderr: "ignore",
       });
       child.unref();
       // Wait until the grandchild has logged its pid.
-      while (!(await Bun.file(process.env.PIDS).text().catch(() => "")).includes("grandchild=" + child.pid)) {
+      while (!(await Bun.file(process.env.PIDS).text().catch(() => "")).includes("grandchild=" + child.pid + "\\n")) {
         await Bun.sleep(10);
       }
       ${how};
@@ -1429,7 +1422,6 @@ test.skipIf(isWindows)(
       "a.test.ts": crasher(`process.kill(process.pid, "SIGKILL")`),
       "b.test.ts": crasher(`process.exit(0)`),
       "c.test.ts": `import { test } from "bun:test"; test("ok", () => {});`,
-      "grandchild.cjs": grandchild,
     });
     const pids = String(dir) + "/pids.txt";
 
@@ -1442,25 +1434,28 @@ test.skipIf(isWindows)(
     });
     const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
 
-    const grandchildren = [...(await Bun.file(pids).text()).matchAll(/^grandchild=(\d+)/gm)].map(m => Number(m[1]));
-    expect(grandchildren).toHaveLength(2);
-
-    // The coordinator signals the group when it reaps the worker. The
-    // grandchildren need a moment to handle SIGTERM and log it.
+    const read = async (re: RegExp) => [...(await Bun.file(pids).text()).matchAll(re)].map(m => Number(m[1]));
+    const grandchildren = await read(/^grandchild=(\d+)$/gm);
     let terminated: number[] = [];
-    for (let i = 0; i < 80; i++) {
-      terminated = [...(await Bun.file(pids).text()).matchAll(/^terminated=(\d+)/gm)].map(m => Number(m[1]));
-      if (terminated.length >= grandchildren.length) break;
-      await Bun.sleep(25);
+    try {
+      // The coordinator signals the group when it reaps the worker. The
+      // grandchildren need a moment to handle SIGTERM and log it.
+      for (let i = 0; i < 120; i++) {
+        terminated = await read(/^terminated=(\d+)$/gm);
+        if (terminated.length >= grandchildren.length) break;
+        await Bun.sleep(25);
+      }
+    } finally {
+      // Clean up survivors so a failing run does not leak processes.
+      for (const pid of grandchildren)
+        try {
+          process.kill(pid, "SIGKILL");
+        } catch {}
     }
-    // Clean up survivors so a failing run does not leak processes.
-    for (const pid of grandchildren)
-      try {
-        process.kill(pid, "SIGKILL");
-      } catch {}
 
     expect(stderr).toContain("worker crashed");
     expect(stderr).toContain(" 2 fail");
+    expect(grandchildren).toHaveLength(2);
     expect(terminated.sort()).toEqual(grandchildren.sort());
     expect(exitCode).toBe(1);
   },

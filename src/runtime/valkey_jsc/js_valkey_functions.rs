@@ -270,6 +270,10 @@ macro_rules! cmd_key_varargs {
             let mut args: Vec<JSArgument> = Vec::with_capacity(arguments.len());
 
             for arg in arguments {
+                if arg.is_undefined_or_null() {
+                    continue;
+                }
+
                 let Some(another) = from_js(global, *arg)? else {
                     return Err(global.throw_invalid_argument_type(
                         bname($name),
@@ -432,6 +436,10 @@ macro_rules! cmd_key_value_varargs {
             let mut args: Vec<JSArgument> = Vec::with_capacity(frame.arguments().len());
 
             for arg in frame.arguments() {
+                if arg.is_undefined_or_null() {
+                    continue;
+                }
+
                 let Some(another) = from_js(global, *arg)? else {
                     return Err(global.throw_invalid_argument_type(
                         bname($name),

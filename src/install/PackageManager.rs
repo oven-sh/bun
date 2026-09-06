@@ -1933,8 +1933,8 @@ pub fn init(
         let parts = [b"./.npmrc" as &[u8]];
 
         // npm reads `$HOME/.npmrc` and ignores XDG_CONFIG_HOME; keep
-        // `$XDG_CONFIG_HOME/.npmrc` only when that entry exists. `lstat`, so
-        // that a dangling symlink is kept and reported by `load_npmrc_config`.
+        // `$XDG_CONFIG_HOME/.npmrc` only when that entry exists (a dangling
+        // symlink counts, `load_npmrc_config` reports it).
         let mut global_len: usize = 0;
         if let Some(xdg_dir) = bun_core::env_var::XDG_CONFIG_HOME.get_not_empty() {
             let p =

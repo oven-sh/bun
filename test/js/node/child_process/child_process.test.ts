@@ -1658,12 +1658,27 @@ it("probe2: darwin backpressure growth", async () => {
     await new Promise(r => setImmediate(r));
     const len = s.readableLength;
     if (len !== last || c.exitCode !== null) {
-      samples.push([Math.round(performance.now() - start), len, s._readableState.reading, s.readableFlowing, c.exitCode]);
+      samples.push([
+        Math.round(performance.now() - start),
+        len,
+        s._readableState.reading,
+        s.readableFlowing,
+        c.exitCode,
+      ]);
       last = len;
       if (samples.length > 40) break;
     }
     if (c.exitCode !== null && samples.length > 3) break;
   }
-  console.log("PROBE2", JSON.stringify({ platform: process.platform, hwm: s.readableHighWaterMark, final: s.readableLength, exitCode: c.exitCode, samples }));
+  console.log(
+    "PROBE2",
+    JSON.stringify({
+      platform: process.platform,
+      hwm: s.readableHighWaterMark,
+      final: s.readableLength,
+      exitCode: c.exitCode,
+      samples,
+    }),
+  );
   c.kill();
 });

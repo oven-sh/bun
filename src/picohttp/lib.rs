@@ -173,21 +173,16 @@ impl LoggedHeaderValue<'_> {
     const SCHEME_HEADERS: [&[u8]; 2] = [b"authorization", b"proxy-authorization"];
     /// The whole value is a secret.
     const SECRET_HEADERS: [&[u8]; 3] = [b"cookie", b"set-cookie", b"x-amz-security-token"];
-
-    fn matches(name: &[u8], list: &[&[u8]]) -> bool {
-        list.iter()
-            .any(|n| strings::eql_case_insensitive_ascii(name, n, true))
-    }
 }
 
 impl fmt::Display for LoggedHeaderValue<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let name = self.header.name();
         let value = self.header.value();
-        if Self::matches(name, &Self::SCHEME_HEADERS) {
+        if strings::eql_any_case_insensitive_ascii(name, &Self::SCHEME_HEADERS) {
             let scheme_len = strings::index_of_char_usize(value, b' ').map_or(0, |i| i + 1);
             write!(f, "{}[redacted]", BStr::new(&value[..scheme_len]))
-        } else if Self::matches(name, &Self::SECRET_HEADERS) {
+        } else if strings::eql_any_case_insensitive_ascii(name, &Self::SECRET_HEADERS) {
             f.write_str("[redacted]")
         } else {
             write!(f, "{}", BStr::new(value))

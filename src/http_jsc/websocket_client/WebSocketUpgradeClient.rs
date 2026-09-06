@@ -1505,10 +1505,8 @@ impl<const SSL: bool> Drop for HTTPClient<SSL> {
     }
 }
 
-/// Header name/value pairs isomorphic-encoded up front (one byte per code
-/// unit, per <https://fetch.spec.whatwg.org/#concept-header-value>), stored
-/// flat (names at even indices, values at odd) and yielded as pairs via
-/// `iter()`.
+/// Header name/value pairs as wire bytes, stored flat (names at even indices,
+/// values at odd).
 struct Headers8Bit<'a> {
     slices: Vec<Cow<'a, [u8]>>,
 }
@@ -1525,9 +1523,8 @@ impl<'a> Headers8Bit<'a> {
         Self { slices }
     }
 
-    /// An 8-bit (Latin-1) string is already one byte per code unit. A 16-bit
-    /// string only reaches here after `FetchHeaders` validation rejected every
-    /// code unit above 0xFF, so each unit narrows to one byte.
+    /// One byte per code unit (<https://fetch.spec.whatwg.org/#concept-header-value>).
+    /// `FetchHeaders` validation already rejected code units above 0xFF.
     fn isomorphic_encode(s: &'a BunString) -> Cow<'a, [u8]> {
         if s.is_utf16() {
             let units = s.utf16();
@@ -1558,8 +1555,7 @@ impl<'a> Headers8Bit<'a> {
     }
 }
 
-/// Append `name: value\r\n` byte-for-byte. `bstr::BStr`'s `Display` replaces
-/// non-UTF-8 bytes with U+FFFD, which would mangle a Latin-1 header value.
+/// Append `name: value\r\n` byte-for-byte (`bstr::BStr`'s `Display` is lossy).
 fn write_header_line(buf: &mut Vec<u8>, name: &[u8], value: &[u8]) {
     buf.extend_from_slice(name);
     buf.extend_from_slice(b": ");

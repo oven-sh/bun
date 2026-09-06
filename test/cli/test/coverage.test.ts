@@ -3,6 +3,25 @@ import { bunEnv, bunExe, normalizeBunSnapshot, tempDir } from "harness";
 import { readFileSync } from "node:fs";
 import path from "path";
 
+/// Runs `bun test --coverage <args>` in `dir` and returns the normalized
+/// output plus the lcov report, if one was written.
+async function runCoverage(dir: string, args: string[] = []) {
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "test", "--coverage", ...args],
+    cwd: dir,
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  let lcov: string | null = null;
+  const lcovFile = Bun.file(path.join(dir, "coverage", "lcov.info"));
+  if (await lcovFile.exists()) {
+    lcov = normalizeBunSnapshot(await lcovFile.text(), dir);
+  }
+  return { stdout, stderr: normalizeBunSnapshot(stderr, dir), exitCode, lcov };
+}
+
 test("coverage crash", () => {
   using dir = tempDir("cov", {
     "demo.test.ts": `class Y {
@@ -537,6 +556,146 @@ All files      |  100.00 |  100.00 |
 Ran 1 test across 1 file."
 `);
   expect(result.exitCode).toBe(0);
+});
+
+// math.ts covers 1 of 2 functions: `add` runs, `neverCalled` never does.
+const thresholdFixture = {
+  "math.ts": `export function add(a: number, b: number) {
+  return a + b;
+}
+export function neverCalled() {
+  return 42;
+}
+`,
+  "math.test.ts": `import { test, expect } from "bun:test";
+import { add } from "./math";
+test("add", () => {
+  expect(add(1, 2)).toBe(3);
+});
+`,
+};
+
+test.concurrent("coverageThreshold is enforced for every reporter, not only text", async () => {
+  using dir = tempDir("cov-threshold-reporters", {
+    "bunfig.toml": `
+[test]
+coverageThreshold = { lines = 0.9, functions = 0.9 }
+coverageSkipTestFiles = true
+`,
+    ...thresholdFixture,
+  });
+
+  for (const reporter of ["lcov", "text"] as const) {
+    const { stderr, exitCode } = await runCoverage(dir, [`--coverage-reporter=${reporter}`]);
+    expect({
+      reporter,
+      error: stderr.includes(
+        "error: Coverage is below the configured test.coverageThreshold (functions: 90.00%, lines: 90.00%)",
+      ),
+      exitCode,
+    }).toEqual({ reporter, error: true, exitCode: 1 });
+  }
+});
+
+test.concurrent("coverageThreshold is enforced with coverageReporter = []", async () => {
+  // https://github.com/oven-sh/bun/issues/32118
+  using dir = tempDir("cov-threshold-no-reporters", {
+    "bunfig.toml": `
+[test]
+coverageReporter = []
+coverageThreshold = { functions = 0.9 }
+coverageSkipTestFiles = true
+`,
+    ...thresholdFixture,
+  });
+
+  const { stderr, exitCode } = await runCoverage(dir);
+  expect({
+    error: stderr.includes("error: Function coverage is below the configured test.coverageThreshold of 90.00%"),
+    exitCode,
+  }).toEqual({ error: true, exitCode: 1 });
+});
+
+test.concurrent("coverageThreshold that is met exits 0 with the lcov reporter", async () => {
+  using dir = tempDir("cov-threshold-met", {
+    "bunfig.toml": `
+[test]
+coverageThreshold = { lines = 0.25, functions = 0.25 }
+coverageSkipTestFiles = true
+`,
+    ...thresholdFixture,
+  });
+
+  const { stderr, exitCode } = await runCoverage(dir, ["--coverage-reporter=lcov"]);
+  expect({ stderr: stderr.includes("test.coverageThreshold"), exitCode }).toEqual({ stderr: false, exitCode: 0 });
+});
+
+test.concurrent("coverageThreshold accepts the singular key spellings", async () => {
+  using dir = tempDir("cov-threshold-singular", {
+    "bunfig.toml": `
+[test]
+coverageThreshold = { line = 0.9, function = 0.9 }
+coverageSkipTestFiles = true
+`,
+    ...thresholdFixture,
+  });
+
+  const { stderr, exitCode } = await runCoverage(dir);
+  expect({
+    error: stderr.includes(
+      "error: Coverage is below the configured test.coverageThreshold (functions: 90.00%, lines: 90.00%)",
+    ),
+    exitCode,
+  }).toEqual({ error: true, exitCode: 1 });
+});
+
+test.concurrent("coverageThreshold only enforces the metrics it names", async () => {
+  // 1/2 functions are covered. A lines-only threshold must not enforce a
+  // hidden default functions threshold.
+  using dir = tempDir("cov-threshold-lines-only", {
+    "bunfig.toml": `
+[test]
+coverageThreshold = { lines = 0.25 }
+coverageSkipTestFiles = true
+`,
+    ...thresholdFixture,
+  });
+
+  const { stderr, exitCode } = await runCoverage(dir);
+  expect({ stderr: stderr.includes("test.coverageThreshold"), exitCode }).toEqual({ stderr: false, exitCode: 0 });
+});
+
+test.concurrent("a lines-only coverageThreshold failure names line coverage", async () => {
+  using dir = tempDir("cov-threshold-lines-only-fail", {
+    "bunfig.toml": `
+[test]
+coverageThreshold = { lines = 0.99 }
+coverageSkipTestFiles = true
+`,
+    ...thresholdFixture,
+  });
+
+  const { stderr, exitCode } = await runCoverage(dir);
+  expect({
+    error: stderr.includes("error: Line coverage is below the configured test.coverageThreshold of 99.00%"),
+    exitCode,
+  }).toEqual({ error: true, exitCode: 1 });
+});
+
+test.concurrent("coverageThreshold rejects unknown keys", async () => {
+  using dir = tempDir("cov-threshold-unknown-key", {
+    "bunfig.toml": `
+[test]
+coverageThreshold = { branches = 0.9 }
+`,
+    ...thresholdFixture,
+  });
+
+  const { stderr, exitCode } = await runCoverage(dir);
+  expect({
+    error: stderr.includes('coverageThreshold keys must be "lines", "functions", or "statements"'),
+    exitCode,
+  }).toEqual({ error: true, exitCode: 1 });
 });
 
 test("coveragePathIgnorePatterns - ignore all files", () => {

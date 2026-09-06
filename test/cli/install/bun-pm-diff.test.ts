@@ -490,7 +490,9 @@ diffme@1.0.0 → diffme@2.0.0
       stderr: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([p.stdout.text(), p.stderr.text(), p.exited]);
-    expect(stderr).toBe(`error: Registry URL must be http:// or https://\nReceived: "htps://localhost:${mock.port}/"\n`);
+    expect(stderr).toBe(
+      `error: Registry URL must be http:// or https://\nReceived: "htps://localhost:${mock.port}/"\n`,
+    );
     expect(stdout).toBe("");
     expect(requests).toEqual([]);
     expect(exitCode).toBe(1);

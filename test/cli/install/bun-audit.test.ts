@@ -634,7 +634,9 @@ describe("`bun audit`", () => {
         env: bunEnv,
       });
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-      expect(stderr).toBe(`error: Registry URL must be http:// or https://\nReceived: "htps://localhost:${mock.port}/"\n`);
+      expect(stderr).toBe(
+        `error: Registry URL must be http:// or https://\nReceived: "htps://localhost:${mock.port}/"\n`,
+      );
       expect(normalizeBunSnapshot(stdout)).toBe("bun audit <version> (<revision>)");
       expect(requests).toEqual([]);
       expect(exitCode).toBe(1);

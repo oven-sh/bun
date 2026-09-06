@@ -91,8 +91,6 @@ fn parse_package_json(
     )?)
 }
 
-/// Clone the parsed root out of the thread-local AST store into `bump`, so
-/// the entry survives the next `initialize_store()` reset.
 fn clone_root(
     root: &Expr,
     source: &Source,

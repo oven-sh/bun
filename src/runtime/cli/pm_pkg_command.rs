@@ -535,8 +535,7 @@ impl PmPkgCommand {
         Ok(current)
     }
 
-    /// Splits `a.b[0][c.d]` into `[Key("a"), Key("b"), Key("0"), Key("c.d")]`.
-    /// Segments borrow from `key` because `E::Object::put` stores keys by reference.
+    /// Splits `a.b[0][c.d]` into `[Key("a"), Key("b"), Key("0"), Key("c.d")]`, borrowing from `key`.
     fn parse_key_path(key: &[u8]) -> Result<Vec<Segment<'_>>, Error> {
         let mut segments: Vec<Segment<'_>> = Vec::new();
         let mut rest = key;

@@ -2,10 +2,26 @@ import { spawn } from "bun";
 import { upgrade_test_helpers } from "bun:internal-for-testing";
 import { describe, expect, it } from "bun:test";
 import { bunExe, bunEnv as env, isMusl, isWindows, tempDir, tls, tmpdirSync } from "harness";
-import { existsSync, statSync } from "node:fs";
+import { accessSync, constants, existsSync, linkSync, mkdtempSync, readdirSync, rmSync, statSync } from "node:fs";
 import { copyFile, writeFile } from "node:fs/promises";
 import { basename, join } from "path";
 const { openTempDirWithoutSharingDelete, closeTempDirHandle } = upgrade_test_helpers;
+
+// A writable directory on a different filesystem than the test temp dir. With
+// BUN_TMPDIR pointed at it, the rename of the staged binary into place fails
+// with EXDEV and `bun upgrade` takes the copy fallback.
+const crossDeviceRoot: string | null = (() => {
+  if (isWindows) return null;
+  const tmpDev = statSync(tmpdirSync()).dev;
+  for (const candidate of ["/dev/shm", "/tmp", "/var/tmp", `/run/user/${process.getuid?.()}`]) {
+    try {
+      if (statSync(candidate).dev === tmpDev) continue;
+      accessSync(candidate, constants.W_OK);
+      return candidate;
+    } catch {}
+  }
+  return null;
+})();
 
 // Cover every platform/arch/abi/cpu combination so the asset list matches
 // whichever target this test runs on. Non-matching names are ignored.
@@ -24,9 +40,11 @@ function allAssetNames(profile = false) {
 }
 
 // Build a minimal ZIP archive with a single stored (uncompressed) entry.
-// `unzip -o` on POSIX restores the mode from the Unix external-attrs field;
-// Expand-Archive on Windows ignores it.
+// `unzip -o` on POSIX restores the mode from the Unix external-attrs field
+// (file-type bits included: 0o120000 makes the entry a symlink whose target is
+// `data`); Expand-Archive on Windows ignores it.
 function makeZipStored(entryName: string, data: Buffer, unixMode: number): Buffer {
+  if ((unixMode & 0o170000) === 0) unixMode |= 0o100000;
   const nameBytes = Buffer.from(entryName, "utf8");
   const crc = Bun.hash.crc32(data);
   const size = data.length;
@@ -81,7 +99,7 @@ function makeZipStored(entryName: string, data: Buffer, unixMode: number): Buffe
   u16(0);
   u16(0);
   u16(0);
-  u32((0o100000 | unixMode) << 16);
+  u32(unixMode << 16);
   u32(0); // LFH offset
   raw(nameBytes);
 
@@ -100,9 +118,10 @@ function makeZipStored(entryName: string, data: Buffer, unixMode: number): Buffe
 
 // Write a release zip for the current target that, once unpacked, yields an
 // executable at the path `bun upgrade` verifies. On POSIX a shell script is
-// enough because `unzip` preserves the mode bits; on Windows the verify step
-// spawns `bun.exe` directly, so the archive has to carry a real PE image.
-async function writeFakeReleaseZip(outPath: string, version: string): Promise<void> {
+// enough because `unzip` preserves the mode bits (or, with `symlinkTo`, a
+// symlink to an executable elsewhere); on Windows the verify step spawns
+// `bun.exe` directly, so the archive has to carry a real PE image.
+async function writeFakeReleaseZip(outPath: string, version: string, symlinkTo?: string): Promise<void> {
   const os = process.platform === "win32" ? "windows" : process.platform === "darwin" ? "darwin" : "linux";
   const arch = process.arch === "arm64" ? "aarch64" : "x64";
   const abi = isMusl ? "-musl" : "";
@@ -110,6 +129,8 @@ async function writeFakeReleaseZip(outPath: string, version: string): Promise<vo
   if (isWindows) {
     const exe = Buffer.from(await Bun.file(bunExe()).arrayBuffer());
     await writeFile(outPath, makeZipStored(`${folder}/bun.exe`, exe, 0o755));
+  } else if (symlinkTo !== undefined) {
+    await writeFile(outPath, makeZipStored(`${folder}/bun`, Buffer.from(symlinkTo), 0o120755));
   } else {
     const script = Buffer.from(`#!/bin/sh\nprintf '%s\\n' '${version}'\n`);
     await writeFile(outPath, makeZipStored(`${folder}/bun`, script, 0o755));
@@ -295,6 +316,70 @@ it("completes against a locally-served release with the system temp dir held ope
   // takes the "already on the latest" exit instead.
   expect(stderr).toMatch(/Upgraded\.|already on the latest/);
   expect(exitCode).toBe(0);
+});
+
+describe.concurrent("with the staging directory on another filesystem", () => {
+  // Runs `bun upgrade --stable` with BUN_TMPDIR on the other filesystem, so the
+  // rename of the verified binary into place fails with EXDEV and the copy
+  // fallback runs. The staged `bun` is a symlink to the `newBun` script in
+  // `cwd`: the verify step can then execute it even when the other filesystem
+  // is mounted noexec (Docker's /dev/shm is), and the copy reads through it.
+  async function upgradeAcrossDevices(newBun: string) {
+    const cwd = tmpdirSync();
+    const execPath = join(cwd, basename(bunExe()));
+    try {
+      linkSync(bunExe(), execPath);
+    } catch {
+      await copyFile(bunExe(), execPath);
+    }
+    await writeFile(join(cwd, "new-bun"), newBun, { mode: 0o755 });
+    const zipPath = join(cwd, "release.zip");
+    await writeFakeReleaseZip(zipPath, "9.9.9", join(cwd, "new-bun"));
+    // Not under the harness temp dir on purpose: it has to be the other filesystem.
+    const stagingRoot = mkdtempSync(join(crossDeviceRoot!, "bun-upgrade-xdev-"));
+    try {
+      using server = startReleaseServer({ tagName: "bun-v9.9.9", zipPath });
+      await using proc = Bun.spawn({
+        cmd: [execPath, "upgrade", "--stable"],
+        cwd,
+        stdout: null,
+        stdin: "pipe",
+        stderr: "pipe",
+        env: { ...server.env, BUN_TMPDIR: stagingRoot },
+      });
+      const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+      // Whatever happened, the directory that holds the binary has no leftover
+      // temporary file, and the path of the binary names something executable.
+      expect(readdirSync(cwd).sort()).toEqual([basename(execPath), "new-bun", "release.zip"].sort());
+      expect(statSync(execPath).mode & 0o111).not.toBe(0);
+      return { stderr, exitCode, execPath };
+    } finally {
+      rmSync(stagingRoot, { recursive: true, force: true });
+    }
+  }
+
+  it.skipIf(!crossDeviceRoot)("installs the new binary", async () => {
+    const { stderr, exitCode, execPath } = await upgradeAcrossDevices(`#!/bin/sh\nprintf '%s\\n' '9.9.9'\n`);
+    expect(stderr).not.toContain("error:");
+    expect(stderr).toContain("Upgraded.");
+    expect(await Bun.file(execPath).text()).toStartWith("#!/bin/sh\n");
+    expect(exitCode).toBe(0);
+  });
+
+  it.skipIf(!crossDeviceRoot)("keeps the current binary when copying the new one into place fails", async () => {
+    // `bun upgrade` runs the staged binary once to verify it, then moves it
+    // into place. This one swaps the staged path ($0, relative to the staging
+    // directory it runs in) for a directory, so the copy that follows the EXDEV
+    // rename failure gets EISDIR on its first read, after the destination side
+    // is set up. A disk that fills up fails at the same point.
+    const { stderr, exitCode, execPath } = await upgradeAcrossDevices(
+      `#!/bin/sh\nrm -f -- "$0" && mkdir -- "$0" || exit 1\nprintf '%s\\n' '9.9.9'\n`,
+    );
+    expect(stderr).toContain("Failed to move new version of Bun");
+    // The binary that ran the upgrade is still there, complete.
+    expect(statSync(execPath).size).toBe(statSync(bunExe()).size);
+    expect(exitCode).toBe(1);
+  });
 });
 
 it("recreates the staging directory in the temp dir instead of reusing a pre-existing one", async () => {

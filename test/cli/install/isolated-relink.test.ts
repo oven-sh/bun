@@ -1,7 +1,7 @@
 import { file, write } from "bun";
 import { afterAll, beforeAll, expect, test } from "bun:test";
 import { existsSync, readFileSync } from "fs";
-import { lstat, mkdir, realpath, unlink } from "fs/promises";
+import { lstat, mkdir, readlink, realpath, unlink } from "fs/promises";
 import { VerdaccioRegistry, bunEnv, bunExe, isWindows, normalizeBunSnapshot } from "harness";
 import { dirname, join } from "path";
 
@@ -204,6 +204,93 @@ test.concurrent("an empty real directory in a store entry's dependency slot is r
   expect(await nestedNoDepsPackageJson(link)).toStrictEqual({ name: "no-deps", version: "1.1.0" });
 
   expect(await installOk(packageDir)).toContain("(no changes)");
+});
+
+test.concurrent("a regular file in a root dependency's slot is replaced with the link", async () => {
+  const { packageDir, packageJson } = await registry.createTestDir({ bunfigOpts: { linker: "isolated" } });
+
+  await write(packageJson, oneRangeDep());
+  await installOk(packageDir);
+  const link = join(packageDir, "node_modules", "one-range-dep");
+
+  await unlink(link);
+  await write(link, "not a package");
+
+  await installOk(packageDir);
+  expect((await lstat(link)).isSymbolicLink()).toBeTrue();
+  expect(await file(join(link, "package.json")).json()).toMatchObject({ name: "one-range-dep", version: "1.0.0" });
+});
+
+// ninja creates the directory of every declared output before it runs the command, so bun's own build
+// runs `bun install` with an empty `node_modules/<new dep>/` already in place.
+test.concurrent("a new dependency is linked over an empty directory created before the install", async () => {
+  const { packageDir, packageJson } = await registry.createTestDir({ bunfigOpts: { linker: "isolated" } });
+
+  await write(packageJson, oneRangeDep());
+  await installOk(packageDir);
+
+  const nm = join(packageDir, "node_modules");
+  await write(
+    packageJson,
+    JSON.stringify({ name: "foo", dependencies: { "one-range-dep": "1.0.0", "what-bin": "1.0.0" } }),
+  );
+  await mkdir(join(nm, "what-bin"));
+
+  const out = await installOk(packageDir);
+  expect(out).toContain("what-bin@1.0.0");
+  expect((await lstat(join(nm, "what-bin"))).isSymbolicLink()).toBeTrue();
+  expect(await file(join(nm, "what-bin", "package.json")).json()).toMatchObject({ name: "what-bin", version: "1.0.0" });
+  expect(binFiles(nm, "what-bin").map(bin => existsSync(bin))).toStrictEqual(binFiles(nm, "what-bin").map(() => true));
+  expect(await binTargetContents(nm, "what-bin")).toContain("what-bin@1.0.0");
+});
+
+test.concurrent("empty directories in the .bun/node_modules and scoped slots are replaced with links", async () => {
+  const { packageDir, packageJson } = await registry.createTestDir({ bunfigOpts: { linker: "isolated" } });
+
+  await write(
+    packageJson,
+    JSON.stringify({ name: "foo", dependencies: { "no-deps": "1.0.0", "@types/is-number": "1.0.0" } }),
+  );
+  await installOk(packageDir);
+
+  const nm = join(packageDir, "node_modules");
+  const links = [
+    join(nm, "no-deps"),
+    join(nm, "@types", "is-number"),
+    join(nm, ".bun", "node_modules", "no-deps"),
+    join(nm, ".bun", "node_modules", "@types", "is-number"),
+  ];
+  const expected = await Promise.all(links.map(link => readlink(link)));
+  for (const link of links) {
+    await unlink(link);
+    await mkdir(link);
+  }
+
+  await installOk(packageDir);
+  expect(await Promise.all(links.map(link => readlink(link)))).toStrictEqual(expected);
+});
+
+test.concurrent("an empty directory in a workspace package's dependency slot is replaced with the link", async () => {
+  const { packageDir } = await registry.createTestDir({
+    bunfigOpts: { linker: "isolated" },
+    files: {
+      "package.json": JSON.stringify({ name: "foo", workspaces: ["packages/*"] }),
+      "packages/pkg-1/package.json": JSON.stringify({
+        name: "pkg-1",
+        version: "1.0.0",
+        dependencies: { "a-dep": "1.0.1" },
+      }),
+    },
+  });
+  await installOk(packageDir);
+
+  const link = join(packageDir, "packages", "pkg-1", "node_modules", "a-dep");
+  const expected = await readlink(link);
+  await unlink(link);
+  await mkdir(link);
+
+  await installOk(packageDir);
+  expect(await readlink(link)).toBe(expected);
 });
 
 test.concurrent.skipIf(!isWindows)("junction-mode warm install reports no changes", async () => {

@@ -2509,14 +2509,28 @@ pub mod bv2_impl {
                                 [import_record.importer_source_index as usize],
                         );
 
-                        if err == _resolver::Error::ModuleNotFound {
+                        if err == _resolver::Error::ModuleNotFound
+                            || err == _resolver::Error::InvalidDataURL
+                        {
                             let add_error = bun_ast::Log::add_resolve_error_with_text_dupe;
                             let path_to_use = &import_record.specifier;
 
                             if !handles_import_errors
                                 && !self.transpiler.options.ignore_module_resolution_errors
                             {
-                                if is_package_path(&import_record.specifier) {
+                                if err == _resolver::Error::InvalidDataURL {
+                                    add_error(
+                                        log,
+                                        source,
+                                        import_record.range,
+                                        format_args!(
+                                            "Could not resolve invalid data URL: \"{}\"",
+                                            bstr::BStr::new(path_to_use)
+                                        ),
+                                        path_to_use,
+                                        import_record.kind,
+                                    );
+                                } else if is_package_path(&import_record.specifier) {
                                     if target == Target::Browser
                                         && options::is_node_builtin(path_to_use)
                                     {
@@ -6536,7 +6550,9 @@ pub mod bv2_impl {
                                 .flags
                                 .insert(bun_ast::ImportRecordFlags::WAS_UNRESOLVED);
 
-                            if err == _resolver::Error::ModuleNotFound {
+                            if err == _resolver::Error::ModuleNotFound
+                                || err == _resolver::Error::InvalidDataURL
+                            {
                                 let add_error = bun_ast::Log::add_resolve_error_with_text_dupe;
 
                                 if !import_record
@@ -6545,7 +6561,19 @@ pub mod bv2_impl {
                                     && !self.transpiler.options.ignore_module_resolution_errors
                                 {
                                     last_error = Some(err.into());
-                                    if is_package_path(import_record.path.text) {
+                                    if err == _resolver::Error::InvalidDataURL {
+                                        add_error(
+                                            log,
+                                            Some(source),
+                                            import_record.range,
+                                            format_args!(
+                                                "Could not resolve invalid data URL: \"{}\"",
+                                                bstr::BStr::new(&import_record.path.text)
+                                            ),
+                                            import_record.path.text,
+                                            import_record.kind,
+                                        );
+                                    } else if is_package_path(import_record.path.text) {
                                         if ctx.target == Target::Browser
                                             && options::is_node_builtin(import_record.path.text)
                                         {

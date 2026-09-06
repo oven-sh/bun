@@ -2708,6 +2708,42 @@ describe("bundler", () => {
     },
   });
 
+  // A data: URL with no comma used to reach the linker as an empty file and panic.
+  itBundled("edgecase/InvalidDataURLImportJS", {
+    files: {
+      "/entry.js": /* js */ `import u from "data:x"; console.log(u);`,
+    },
+    bundleErrors: {
+      "/entry.js": ['Could not resolve invalid data URL: "data:x"'],
+    },
+  });
+  itBundled("edgecase/InvalidDataURLImportCSS", {
+    files: {
+      "/entry.css": /* css */ `@import "data:text/css"; .a { c: d }`,
+    },
+    bundleErrors: {
+      "/entry.css": ['Could not resolve invalid data URL: "data:text/css"'],
+    },
+  });
+  itBundled("edgecase/InvalidDataURLInCSSUrl", {
+    files: {
+      "/entry.css": /* css */ `.a { b: url(data:image/svg+xml;charset=utf8) }`,
+    },
+    bundleErrors: {
+      "/entry.css": ['Could not resolve invalid data URL: "data:image/svg+xml;charset=utf8"'],
+    },
+  });
+  itBundled("edgecase/InvalidDataURLRequireInTryCatch", {
+    files: {
+      "/entry.js": /* js */ `
+        let v = "missing";
+        try { v = require("data:x"); } catch { v = "caught"; }
+        console.log(v);
+      `,
+    },
+    run: { stdout: "caught" },
+  });
+
   itBundled("edgecase/TSConfigPathsConfigDirBackslash", {
     files: {
       "/entry.ts": /* ts */ `

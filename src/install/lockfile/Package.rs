@@ -1574,8 +1574,7 @@ impl Diff {
                 }
             }
 
-            // Changed literal: keep the locked resolution while it is still the package the edge names and
-            // still satisfies the new range (npm's sticky rule), unless this row is being updated.
+            // Changed literal: keep the locked package while it still matches the new spec (npm's sticky rule), unless this row is being updated.
             let is_explicit_update_target = matches!(update_requests, Some(updates)
             if updates.is_empty()
                 || (named_update_here

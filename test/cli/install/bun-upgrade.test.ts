@@ -391,37 +391,39 @@ it("verifies the downloaded release archive against the digest reported by the r
   expect(matched.exitCode).toBe(1);
 });
 
-it.skipIf(isWindows)("runs the unpacked release from the staging directory it created, not from a re-resolved path", async () => {
-  const folder = releaseFolderName();
-  // The version each binary reports. Both differ from the served tag, so the
-  // upgrade stops at the version check: it neither replaces this build nor
-  // runs `bun completions`.
-  const unpackedVersion = "6.6.6";
-  const lookAlikeVersion = "7.7.7";
+it.skipIf(isWindows)(
+  "runs the unpacked release from the staging directory it created, not from a re-resolved path",
+  async () => {
+    const folder = releaseFolderName();
+    // The version each binary reports. Both differ from the served tag, so the
+    // upgrade stops at the version check: it neither replaces this build nor
+    // runs `bun completions`.
+    const unpackedVersion = "6.6.6";
+    const lookAlikeVersion = "7.7.7";
 
-  // $TMPDIR for the upgrade. Another user of this directory may rename the
-  // entries in it, so the path of the staging directory is not stable.
-  using tmpRoot = tempDir("bun-upgrade-hostile-tmpdir", {});
-  const tmpRootPath = String(tmpRoot);
-  const ranMarker = join(tmpRootPath, "look-alike-ran.txt");
+    // $TMPDIR for the upgrade. Another user of this directory may rename the
+    // entries in it, so the path of the staging directory is not stable.
+    using tmpRoot = tempDir("bun-upgrade-hostile-tmpdir", {});
+    const tmpRootPath = String(tmpRoot);
+    const ranMarker = join(tmpRootPath, "look-alike-ran.txt");
 
-  // A look-alike staging directory, ready to be renamed into place.
-  await mkdir(join(tmpRootPath, "look-alike", folder), { recursive: true });
-  await writeFile(
-    join(tmpRootPath, "look-alike", folder, "bun"),
-    `#!/bin/sh\nprintf 'ran\\n' > '${ranMarker}'\nprintf '%s\\n' '${lookAlikeVersion}'\n`,
-    { mode: 0o755 },
-  );
+    // A look-alike staging directory, ready to be renamed into place.
+    await mkdir(join(tmpRootPath, "look-alike", folder), { recursive: true });
+    await writeFile(
+      join(tmpRootPath, "look-alike", folder, "bun"),
+      `#!/bin/sh\nprintf 'ran\\n' > '${ranMarker}'\nprintf '%s\\n' '${lookAlikeVersion}'\n`,
+      { mode: 0o755 },
+    );
 
-  // `bun upgrade` looks up `unzip` in PATH and runs it in the staging
-  // directory. This stand-in writes what the real unzip would produce, then
-  // renames the staging directory away and puts the look-alike at the path
-  // that bun created.
-  const binDir = join(tmpRootPath, "bin");
-  await mkdir(binDir, { recursive: true });
-  await writeFile(
-    join(binDir, "unzip"),
-    `#!/bin/sh
+    // `bun upgrade` looks up `unzip` in PATH and runs it in the staging
+    // directory. This stand-in writes what the real unzip would produce, then
+    // renames the staging directory away and puts the look-alike at the path
+    // that bun created.
+    const binDir = join(tmpRootPath, "bin");
+    await mkdir(binDir, { recursive: true });
+    await writeFile(
+      join(binDir, "unzip"),
+      `#!/bin/sh
 set -e
 staging=$(pwd -P)
 parent=$(dirname "$staging")
@@ -434,31 +436,32 @@ chmod 755 '${folder}/bun'
 mv "$staging" "$parent/renamed-away"
 mv "$parent/look-alike" "$staging"
 `,
-    { mode: 0o755 },
-  );
+      { mode: 0o755 },
+    );
 
-  using server = startReleaseServer({ tagName: "bun-v9.9.9" });
+    using server = startReleaseServer({ tagName: "bun-v9.9.9" });
 
-  await using proc = Bun.spawn({
-    // --stable forces the GitHub-release code path even on a canary build.
-    cmd: [bunExe(), "upgrade", "--stable"],
-    cwd: tmpdirSync(),
-    stdout: null,
-    stdin: "pipe",
-    stderr: "pipe",
-    env: {
-      ...server.env,
-      BUN_TMPDIR: tmpRootPath,
-      PATH: `${binDir}:${server.env.PATH}`,
-    },
-  });
+    await using proc = Bun.spawn({
+      // --stable forces the GitHub-release code path even on a canary build.
+      cmd: [bunExe(), "upgrade", "--stable"],
+      cwd: tmpdirSync(),
+      stdout: null,
+      stdin: "pipe",
+      stderr: "pipe",
+      env: {
+        ...server.env,
+        BUN_TMPDIR: tmpRootPath,
+        PATH: `${binDir}:${server.env.PATH}`,
+      },
+    });
 
-  const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
 
-  // bun must verify the binary it unpacked itself. The look-alike binary at
-  // the old path belongs to whoever renamed the directory.
-  expect(existsSync(ranMarker)).toBe(false);
-  // The reported version keeps the trailing newline the binary printed.
-  expect(stderr).toMatch(new RegExp(`The downloaded version of Bun \\(${unpackedVersion}\\s*\\) doesn't match`));
-  expect(exitCode).toBe(1);
-});
+    // bun must verify the binary it unpacked itself. The look-alike binary at
+    // the old path belongs to whoever renamed the directory.
+    expect(existsSync(ranMarker)).toBe(false);
+    // The reported version keeps the trailing newline the binary printed.
+    expect(stderr).toMatch(new RegExp(`The downloaded version of Bun \\(${unpackedVersion}\\s*\\) doesn't match`));
+    expect(exitCode).toBe(1);
+  },
+);

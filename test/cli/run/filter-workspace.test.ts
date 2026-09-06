@@ -1327,7 +1327,7 @@ describe.skipIf(isWindows)("signals", () => {
     setTimeout(() => {}, 30_000);
   `;
 
-  async function runFilterAndSignal(signal: "SIGINT" | "SIGTERM") {
+  async function runFilterAndSignal(signal: "SIGINT" | "SIGTERM", extraArgs: string[] = []) {
     using dir = tempDir("filter-signal", {
       "trap.js": trapFixture,
       packages: {
@@ -1341,7 +1341,7 @@ describe.skipIf(isWindows)("signals", () => {
       "package.json": JSON.stringify({ name: "ws", workspaces: ["packages/*"] }),
     });
     await using proc = Bun.spawn({
-      cmd: [bunExe(), "run", "--filter", "*", "wait"],
+      cmd: [bunExe(), "run", ...extraArgs, "--filter", "*", "wait"],
       cwd: String(dir),
       env: { ...bunEnv, NO_COLOR: "1" },
       stdout: "pipe",
@@ -1373,6 +1373,15 @@ describe.skipIf(isWindows)("signals", () => {
 
   test("SIGTERM to the runner is forwarded to every package and exits 143", async () => {
     const r = await runFilterAndSignal("SIGTERM");
+    expect(r.stdout).toContain("pkga wait: got SIGTERM");
+    expect(r.stdout).toContain("pkgb wait: got SIGTERM");
+    expect(r.exitCode).toBe(143);
+  });
+
+  // With --no-orphans the packages get SIGKILL when the runner dies. The
+  // forwarded SIGTERM must reach them before that.
+  test("--no-orphans: SIGTERM reaches every package before the runner exits", async () => {
+    const r = await runFilterAndSignal("SIGTERM", ["--no-orphans"]);
     expect(r.stdout).toContain("pkga wait: got SIGTERM");
     expect(r.stdout).toContain("pkgb wait: got SIGTERM");
     expect(r.exitCode).toBe(143);

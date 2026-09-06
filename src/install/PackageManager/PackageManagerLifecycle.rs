@@ -138,10 +138,7 @@ impl PackageManager {
                             name,
                             pkg.resolution.npm().version,
                             patch_hash,
-                            directories::NpmCacheKey {
-                                url: self.lockfile.str(&pkg.resolution.npm().url),
-                                integrity: &pkg.meta.integrity,
-                            },
+                            self.lockfile.str(&pkg.resolution.npm().url),
                         )
                     }
                     ResolutionTag::LocalTarball => directories::cached_tarball_folder_name(

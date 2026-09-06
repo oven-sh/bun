@@ -9829,27 +9829,24 @@ describe.concurrent("bun-install", () => {
       });
     });
 
-    // The extraction cache slot of an npm package is named by the integrity the
-    // registry advertised (or the tarball URL when it gave none), not by the
-    // hostname of the configured registry. Two registries on one host (a
-    // repository path on Nexus or Artifactory, two Verdaccio ports) serving
-    // different bytes for the same name@version must not share a slot.
+    // The extraction cache slot of an npm package is named by its tarball URL,
+    // not by the hostname of the configured registry. Two registries on one
+    // host (a repository path on Nexus or Artifactory, two Verdaccio ports)
+    // serving different bytes for the same name@version must not share a slot.
     describe.concurrent("registries that share a hostname", () => {
       type Registry = {
         url: string;
         integrity: string;
-        /** 16 hex digits of the slot name: the first 8 bytes of the sha512 digest */
-        slot: string;
         requests: string[];
       };
+
+      const slotPattern = /^no-deps@1\.0\.0@@127\.0\.0\.1__[0-9a-f]{16}@@@1$/;
 
       // One server, one registry per directory, each serving its own bytes
       // for no-deps@1.0.0. `index.js` exports `variant`.
       async function startRegistries(
         registries: Record<string, string>,
-        opts: { withIntegrity?: boolean } = {},
       ): Promise<{ server: Bun.Server } & Record<string, Registry>> {
-        const { withIntegrity = true } = opts;
         const byDirectory: Record<string, Registry & { tarball: Uint8Array }> = {};
         for (const [directory, variant] of Object.entries(registries)) {
           const tarball = await new Bun.Archive({
@@ -9857,13 +9854,7 @@ describe.concurrent("bun-install", () => {
             "package/index.js": `module.exports = ${JSON.stringify(variant)};`,
           }).bytes({ compress: "gzip" });
           const digest = new Bun.CryptoHasher("sha512").update(tarball).digest();
-          byDirectory[directory] = {
-            url: "",
-            tarball,
-            integrity: `sha512-${digest.toBase64()}`,
-            slot: digest.subarray(0, 8).toHex(),
-            requests: [],
-          };
+          byDirectory[directory] = { url: "", tarball, integrity: `sha512-${digest.toBase64()}`, requests: [] };
         }
         const server = Bun.serve({
           port: 0,
@@ -9886,7 +9877,7 @@ describe.concurrent("bun-install", () => {
                   version: "1.0.0",
                   dist: {
                     tarball: `http://127.0.0.1:${server.port}${directory}no-deps/-/no-deps-1.0.0.tgz`,
-                    ...(withIntegrity ? { integrity: registry.integrity } : {}),
+                    integrity: registry.integrity,
                   },
                 },
               },
@@ -9922,7 +9913,10 @@ describe.concurrent("bun-install", () => {
           stdout: "pipe",
           stderr: "pipe",
         });
-        return (await proc.stdout.text()).trim();
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect(stderr).toBe("");
+        expect(exitCode).toBe(0);
+        return stdout.trim();
       }
 
       function project(name: string, registry: string) {
@@ -9953,9 +9947,9 @@ describe.concurrent("bun-install", () => {
         await install(join(String(dir), "b"), cacheDir);
         expect(priv.requests).toContain("/npm-private/no-deps/-/no-deps-1.0.0.tgz");
         expect(await installedVariant(join(String(dir), "b"))).toBe("private");
-        expect(await cacheSlots(cacheDir)).toEqual(
-          [`no-deps@1.0.0@@127.0.0.1__${pub.slot}@@@1`, `no-deps@1.0.0@@127.0.0.1__${priv.slot}@@@1`].sort(),
-        );
+        const slots = await cacheSlots(cacheDir);
+        expect(slots).toEqual([expect.stringMatching(slotPattern), expect.stringMatching(slotPattern)]);
+        expect(slots[0]).not.toBe(slots[1]);
         expect(await file(join(String(dir), "b", "bun.lock")).text()).toContain(priv.integrity);
 
         // A reinstall from b's lockfile keeps linking the private bytes.
@@ -9981,42 +9975,15 @@ describe.concurrent("bun-install", () => {
         expect(priv.private.requests).toContain("/no-deps/-/no-deps-1.0.0.tgz");
         expect(await installedVariant(join(String(dir), "a"))).toBe("public");
         expect(await installedVariant(join(String(dir), "b"))).toBe("private");
-        expect(await cacheSlots(cacheDir)).toEqual(
-          [
-            `no-deps@1.0.0@@127.0.0.1__${pub.public.slot}@@@1`,
-            `no-deps@1.0.0@@127.0.0.1__${priv.private.slot}@@@1`,
-          ].sort(),
-        );
-      });
-
-      it("falls back to the tarball URL when the registry gives no integrity", async () => {
-        const registries = await startRegistries(
-          { "/npm-public/": "public", "/npm-private/": "private" },
-          { withIntegrity: false },
-        );
-        await using _server = registries.server;
-
-        using dir = tempDir("registry-same-host-no-integrity", {
-          ...project("a", registries.public.url),
-          ...project("b", registries.private.url),
-        });
-        const cacheDir = join(String(dir), ".bun-cache");
-
-        await install(join(String(dir), "a"), cacheDir);
-        await install(join(String(dir), "b"), cacheDir);
-        expect(await installedVariant(join(String(dir), "a"))).toBe("public");
-        expect(await installedVariant(join(String(dir), "b"))).toBe("private");
         const slots = await cacheSlots(cacheDir);
-        expect(slots).toHaveLength(2);
-        for (const slot of slots) {
-          expect(slot).toMatch(/^no-deps@1\.0\.0@@127\.0\.0\.1__[0-9a-f]{16}@@@1$/);
-        }
+        expect(slots).toEqual([expect.stringMatching(slotPattern), expect.stringMatching(slotPattern)]);
+        expect(slots[0]).not.toBe(slots[1]);
       });
 
       // A lockfile records the tarball URL of the registry it was written
       // against, and an install honors that URL even when bunfig.toml now names
-      // another registry. The slot is named by what was downloaded, so a later
-      // project configured for the other registry does not link it.
+      // another registry. The slot is named by that URL, so a later project
+      // configured for the other registry does not link it.
       it("names the slot by the tarball the lockfile pointed at, not the configured registry", async () => {
         const pub = await startRegistries({ "/": "public" });
         const priv = await startRegistries({ "/": "private" });
@@ -10032,15 +9999,17 @@ describe.concurrent("bun-install", () => {
         // a's lockfile is written against the public registry.
         await install(join(String(dir), "a"), cacheDir);
         expect(await file(join(String(dir), "a", "bun.lock")).text()).toContain(pub.public.integrity);
+        const [publicSlot] = await cacheSlots(cacheDir);
+        expect(publicSlot).toMatch(slotPattern);
 
         // a switches to the private registry, but its lockfile still pins the
-        // public tarball, which is what gets downloaded.
+        // public tarball, which is what gets downloaded, into the same slot.
         await rm(cacheDir, { recursive: true });
         await rm(join(String(dir), "a", "node_modules"), { recursive: true });
         await writeFile(join(String(dir), "a", "bunfig.toml"), `[install]\nregistry = "${priv.private.url}"\n`);
         await install(join(String(dir), "a"), cacheDir);
         expect(await installedVariant(join(String(dir), "a"))).toBe("public");
-        expect(await cacheSlots(cacheDir)).toEqual([`no-deps@1.0.0@@127.0.0.1__${pub.public.slot}@@@1`]);
+        expect(await cacheSlots(cacheDir)).toEqual([publicSlot]);
 
         // b, configured for the private registry, fetches the private tarball
         // instead of linking the slot a just filled.

@@ -1992,7 +1992,6 @@ pub(crate) fn install_isolated_packages(
         let pkg_names = pkgs.items_name();
         let pkg_name_hashes = pkgs.items_name_hash();
         let pkg_resolutions = pkgs.items_resolution();
-        let pkg_metas = pkgs.items_meta();
 
         let mut seen_entry_ids: HashMap<store::entry::Id, ()> = HashMap::default();
         seen_entry_ids.reserve(store.entries.len());
@@ -2339,10 +2338,7 @@ pub(crate) fn install_isolated_packages(
                             pkg_name.slice(string_buf),
                             pkg_res.npm().version,
                             None,
-                            package_manager::NpmCacheKey {
-                                url: pkg_res.npm().url.slice(string_buf),
-                                integrity: &pkg_metas[pkg_id as usize].integrity,
-                            },
+                            pkg_res.npm().url.slice(string_buf),
                         ),
                         ResolutionTag::Git => package_manager::cached_git_folder_name(
                             installer.manager(),

@@ -765,14 +765,12 @@ impl PatchTask {
         // before `compute_cache_dir_and_subpath` reborrows `pkg_manager` mutably.
         let resolution_clone: Resolution =
             pkg_manager.lockfile.packages.items_resolution()[pkg_id as usize];
-        let integrity = pkg_manager.lockfile.packages.items_meta()[pkg_id as usize].integrity;
 
         let mut folder_path_buf = bun_paths::path_buffer_pool::get();
         let stuff = package_manager::compute_cache_dir_and_subpath(
             pkg_manager,
             &pkg_name_slice,
             &resolution_clone,
-            &integrity,
             &mut folder_path_buf,
             Some(patch_hash),
         );

@@ -1971,16 +1971,19 @@ export class VerdaccioRegistry {
   }
 
   /**
-   * The extraction cache folder of a package served by this registry:
-   * `<name>@<version>@@localhost__<hex>@@@1`, where `hex` is the first 8
-   * bytes of the sha512 digest of `<packagesPath>/<name>/<name>-<version>.tgz`.
-   * Packages from registry.npmjs.org use `<name>@<version>@@@1` instead.
+   * The extraction cache folder of a package served by this registry, found
+   * in `cacheDir`: `<name>@<version>@@localhost__<16 hex>@@@1`, where the hex
+   * is the hash of the tarball URL. Packages from registry.npmjs.org use
+   * `<name>@<version>@@@1` instead. Throws unless exactly one folder matches.
    */
-  cacheFolderName(name: string, version: string) {
-    const basename = name.startsWith("@") ? name.slice(name.indexOf("/") + 1) : name;
-    const tarball = fs.readFileSync(join(this.packagesPath, name, `${basename}-${version}.tgz`));
-    const digest = new Bun.CryptoHasher("sha512").update(tarball).digest();
-    return `${name}@${version}@@localhost__${digest.subarray(0, 8).toHex()}@@@1`;
+  cacheFolderName(cacheDir: string, name: string, version: string) {
+    const prefix = `${name}@${version}@@localhost__`;
+    const pattern = new RegExp(`^${prefix.replace(/[.@]/g, "\\$&")}[0-9a-f]{16}@@@1$`);
+    const folders = fs.readdirSync(cacheDir).filter(folder => pattern.test(folder));
+    if (folders.length !== 1) {
+      throw new Error(`expected one cache folder for ${name}@${version} in ${cacheDir}, found ${folders.join(", ")}`);
+    }
+    return folders[0];
   }
 
   stop() {

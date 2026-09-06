@@ -1,6 +1,6 @@
 import { createSocketPair, fileSinkInternals } from "bun:internal-for-testing";
 import { describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, fileDescriptorLeakChecker, isLinux, isPosix, isWindows, tmpdirSync } from "harness";
+import { bunEnv, bunExe, fileDescriptorLeakChecker, isLinux, isPosix, isWindows, tempDir, tmpdirSync } from "harness";
 import { mkfifo } from "mkfifo";
 import { join } from "node:path";
 
@@ -486,11 +486,13 @@ describe("FileSink end() after a failed flush counts only bytes that reached the
   });
 
   // A regular file that runs out of space part-way: RLIMIT_FSIZE makes write(2)
-  // fail with EFBIG once the file is 64 * 512 bytes long (bun ignores SIGXFSZ).
-  // 32 KiB is a whole number of flushes for both buffer sizes (4 KiB, 16 KiB
-  // on macOS arm64), so the limit is hit exactly at a flush boundary.
+  // fail with EFBIG once the file is `ulimit -f 32` long (bun ignores SIGXFSZ).
+  // That is 16 KiB where sh counts 512-byte blocks (dash, bash in POSIX mode)
+  // and 32 KiB where it counts KiB (macOS /bin/sh). Both are a whole number of
+  // flushes for either buffer size (4 KiB, 16 KiB on macOS arm64), so the limit
+  // is hit exactly at a flush boundary, and 64 KiB of writes pass it either way.
   it.skipIf(!isPosix)("some bytes written (RLIMIT_FSIZE)", async () => {
-    const dir = tmpdirSync();
+    using dir = tempDir("filesink-rlimit", {});
     const script = /* js */ `
       const { statSync } = require("node:fs");
       const path = process.argv[1];
@@ -510,14 +512,17 @@ describe("FileSink end() after a failed flush counts only bytes that reached the
       console.log(JSON.stringify({ end, size: statSync(path).size, codes }));
     `;
     await using proc = Bun.spawn({
-      cmd: ["sh", "-c", `ulimit -f 64 && exec "$@"`, "sh", bunExe(), "-e", script, join(dir, "out.bin")],
+      cmd: ["sh", "-c", `ulimit -f 32 && exec "$@"`, "sh", bunExe(), "-e", script, join(String(dir), "out.bin")],
       env: bunEnv,
       stdout: "pipe",
       stderr: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stderr).toBe("");
-    expect(JSON.parse(stdout)).toEqual({ end: 64 * 512, size: 64 * 512, codes: ["EFBIG"] });
+    const { end, size, codes } = JSON.parse(stdout);
+    expect(codes).toEqual(["EFBIG"]);
+    expect([16 * 1024, 32 * 1024]).toContain(size);
+    expect(end).toBe(size);
     expect(exitCode).toBe(0);
   });
 });

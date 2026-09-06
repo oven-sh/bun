@@ -13,12 +13,10 @@ pub struct SendFile {
     pub content_size: usize,
 }
 
-/// Handed to the JS thread when `sendfile(2)` refused the fd after the request
-/// head went out. The JS thread streams the rest of the file from `offset`
-/// into `buffer`, which the HTTP thread drains as a `HTTPRequestBody::Stream`.
+/// The rest of a refused sendfile body: the JS thread streams the file from
+/// `offset` for `remain` bytes into `buffer`.
 pub struct SendfileFallback {
-    /// The JS side's ref. The HTTP thread holds the other one in
-    /// `http_request_body::Stream::buffer`.
+    /// The JS side's ref; the HTTP thread holds the other one.
     pub buffer: bun_ptr::RefPtr<crate::ThreadSafeStreamBuffer>,
     pub offset: usize,
     pub remain: usize,
@@ -73,8 +71,7 @@ impl SendFile {
                     }
                 }
                 bun_sys::E::EAGAIN => {}
-                // Same set as the statx and copy_file_range fallbacks: the
-                // syscall is refused for this fd, not failing on it.
+                // Same set as the statx and copy_file_range fallbacks.
                 bun_sys::E::EINVAL
                 | bun_sys::E::ENOSYS
                 | bun_sys::E::EOPNOTSUPP
@@ -158,9 +155,7 @@ pub(crate) enum Status {
     Done,
     #[cfg(not(windows))]
     Err(crate::Error),
-    /// The kernel, a seccomp policy, or the filesystem refused `sendfile(2)`
-    /// for this fd. Nothing was sent by this call. The caller hands the rest
-    /// of the body to the JS thread as a `SendfileFallback`.
+    /// `sendfile(2)` is refused for this fd. Nothing was sent by this call.
     #[cfg(any(target_os = "linux", target_os = "android"))]
     Refused,
     Again,

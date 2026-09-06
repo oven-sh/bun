@@ -462,9 +462,7 @@ pub struct HTTPClientResult<'a> {
     /// If is not chunked encoded and Content-Length is not provided this will be unknown
     pub body_size: BodySize,
     pub certificate_info: Option<CertificateInfo>,
-    /// Set once per request, when `sendfile(2)` refused the body fd after the
-    /// head went out. The JS side streams the rest of the file into
-    /// `SendfileFallback::buffer`. Unused on other platforms.
+    /// Set once, when `sendfile(2)` refused the body fd after the head went out.
     pub sendfile_fallback: Option<SendfileFallback>,
 }
 
@@ -3230,10 +3228,8 @@ impl<'a> HTTPClient<'a> {
         }
     }
 
-    /// `sendfile(2)` refused the body fd after the head (with its
-    /// Content-Length) went out. Turn the rest of the request into a stream
-    /// body and ask the JS thread to feed it from `offset` for `remain` bytes.
-    /// The JS side writes raw bytes: the framing is already fixed by the head.
+    /// Turn the rest of a refused sendfile body into a stream body that the
+    /// JS thread feeds from `offset` for `remain` bytes.
     #[cfg(any(target_os = "linux", target_os = "android"))]
     fn switch_sendfile_to_stream<const IS_SSL: bool>(
         &mut self,
@@ -3247,8 +3243,7 @@ impl<'a> HTTPClient<'a> {
             offset,
             remain
         );
-        // Intrusive `ref_count` starts at 2: one for this thread's
-        // `Stream::buffer`, one for the JS thread via the progress update.
+        // Two initial refs: one for `Stream::buffer`, one for the JS thread.
         let buffer = core::ptr::NonNull::new(ThreadSafeStreamBuffer::new(
             ThreadSafeStreamBuffer::default(),
         ))

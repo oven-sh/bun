@@ -147,8 +147,7 @@ pub struct FetchTasklet {
     pub(crate) is_waiting_body: bool,
     pub(crate) is_waiting_abort: bool,
     pub(crate) is_waiting_request_stream_start: bool,
-    /// The request body started as sendfile and its head carries a
-    /// Content-Length. The stream that replaced it writes raw bytes.
+    /// The head already carries a Content-Length, so the stream writes raw bytes.
     pub(crate) sendfile_fallback_active: bool,
     pub(crate) mutex: Mutex,
 
@@ -590,12 +589,9 @@ impl FetchTasklet {
         self.get_current_response().map(|r| unsafe { &mut *r })
     }
 
-    /// The HTTP thread reports that `sendfile(2)` refused the body fd after
-    /// the head went out. Replace the sendfile body with a `FileReader`
-    /// stream over the same file from `fallback.offset`, limited to
-    /// `fallback.remain` bytes, so the next `can_stream` starts it like a
-    /// `Bun.file().stream()` body. Returns the sendfile body: the reader dups
-    /// the fd when it starts, so the caller closes this one afterwards.
+    /// Replace a refused sendfile body with a `FileReader` stream over the same
+    /// fd from `fallback.offset`, limited to `fallback.remain` bytes. Returns
+    /// the sendfile body; the caller closes its fd once the reader dup'd it.
     fn adopt_sendfile_fallback(
         &mut self,
         fallback: http::SendfileFallback,

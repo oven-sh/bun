@@ -30,7 +30,7 @@ const {
 
 const cmds = ["", "INSERT", "DELETE", "UPDATE", "MERGE", "SELECT", "MOVE", "FETCH", "COPY"];
 
-const CANCEL_REQUEST_TIMEOUT_SECONDS = 5;
+const CANCEL_REQUEST_TIMEOUT_MS = 5_000;
 
 const escapeBackslash = /\\/g;
 const escapeQuote = /"/g;
@@ -425,26 +425,18 @@ class PostgresAdapter
    */
   sendCancelRequest(request: Uint8Array): void {
     const { path, hostname, port } = this.connectionInfo;
-    const address = path ? { unix: path } : { hostname, port };
+    const net = require("node:net");
 
-    Bun.connect({
-      ...address,
-      socket: {
-        open(socket) {
-          socket.write(request);
-          socket.flush();
-          socket.timeout(CANCEL_REQUEST_TIMEOUT_SECONDS);
-        },
-        timeout(socket) {
-          socket.end();
-        },
-        // Bun.connect requires a data handler; the backend never replies.
-        data() {},
-        // Best effort: a cancel that never arrives leaves the query running.
-        connectError() {},
-        error() {},
-      },
-    });
+    // net.connect hands back the socket before the handshake completes, so
+    // the timeout also bounds a connect attempt that never gets a SYN-ACK.
+    const socket = net.connect(path ? { path } : { host: hostname, port });
+    socket.setTimeout(CANCEL_REQUEST_TIMEOUT_MS);
+    socket.on("timeout", () => socket.destroy());
+    // Best effort: a cancel that never arrives leaves the query running.
+    socket.on("error", () => {});
+    // Write only once connected: a write queued before that counts as pending
+    // data and net.Socket suppresses its timeout while any is outstanding.
+    socket.on("connect", () => socket.end(request));
   }
 
   connectionClosedError() {

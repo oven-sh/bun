@@ -276,6 +276,11 @@ pub struct LifecycleScriptSubprocess<'a> {
 
     pub(crate) foreground: bool,
     pub(crate) optional: bool,
+    /// Delete `scripts.cwd` when a script fails so the next install extracts
+    /// the package again and reruns its scripts. Only set for packages bun
+    /// copied out of its cache; never for workspaces, `bun link` targets, or
+    /// the root package, whose `cwd` is the user's own directory.
+    pub(crate) remove_on_failure: bool,
     pub(crate) started_at: u64,
 
     pub(crate) ctx: Option<InstallCtx<'a>>,
@@ -863,6 +868,7 @@ impl<'a> LifecycleScriptSubprocess<'a> {
                         bstr::BStr::new(&self.package_name),
                         exit.code,
                     );
+                    self.remove_failed_package();
                     // SAFETY: `self` was created by `Self::new` (heap::alloc); uniquely owned here.
                     unsafe { Self::destroy(std::ptr::from_mut::<Self>(self)) };
                     Output::flush();
@@ -969,6 +975,8 @@ impl<'a> LifecycleScriptSubprocess<'a> {
                     bstr::BStr::new(&self.package_name),
                     signal_code.fmt(Output::enable_ansi_colors_stderr()),
                 );
+                self.remove_failed_package();
+                Output::flush();
 
                 // `Status::signal_code()` range-checks 1..=31 (`bun_core::SignalCode` is
                 // exhaustive); RT signals (>31) fall back to SIGTERM so the diverging
@@ -998,6 +1006,7 @@ impl<'a> LifecycleScriptSubprocess<'a> {
                     bstr::BStr::new(&self.package_name),
                     err,
                 );
+                self.remove_failed_package();
                 // SAFETY: `self` was created by `Self::new` (heap::alloc); uniquely owned here.
                 unsafe { Self::destroy(std::ptr::from_mut::<Self>(self)) };
                 Output::flush();
@@ -1051,29 +1060,37 @@ impl<'a> LifecycleScriptSubprocess<'a> {
     }
 
     pub(crate) fn deinit_and_delete_package(&mut self) {
+        self.remove_failed_package();
+
+        // SAFETY: `self` was created by `Self::new` (heap::alloc); uniquely owned here.
+        unsafe { Self::destroy(std::ptr::from_mut::<Self>(self)) };
+    }
+
+    /// See [`Self::remove_on_failure`]. A package left in place after a failed
+    /// script passes the next install's "already installed" check, so its
+    /// scripts would never run again.
+    fn remove_failed_package(&self) {
+        if !self.remove_on_failure {
+            return;
+        }
         if self.manager().options.log_level.is_verbose() {
             bun_core::warn!(
-                "deleting optional dependency '{}' due to failed '{}' script",
+                "deleting {}dependency '{}' due to failed '{}' script",
+                if self.optional { "optional " } else { "" },
                 bstr::BStr::new(&self.package_name),
                 bstr::BStr::new(self.script_name()),
             );
         }
-        'try_delete_dir: {
-            let Some(dirname) = bun_core::dirname(self.scripts.cwd.as_bytes()) else {
-                break 'try_delete_dir;
-            };
-            let basename = bun_paths::basename(self.scripts.cwd.as_bytes());
-            // Close this fd: this path returns to the install loop without
-            // exiting, so the HANDLE/fd would otherwise persist for the rest of
-            // the install on every failed optional-dependency lifecycle script.
-            let Ok(dir) = bun_sys::Dir::open(dirname) else {
-                break 'try_delete_dir;
-            };
-            let _ = dir.delete_tree(basename);
-        }
-
-        // SAFETY: `self` was created by `Self::new` (heap::alloc); uniquely owned here.
-        unsafe { Self::destroy(std::ptr::from_mut::<Self>(self)) };
+        let cwd = self.scripts.cwd.as_bytes();
+        let Some(dirname) = bun_core::dirname(cwd) else {
+            return;
+        };
+        // `Dir` closes on drop: the optional-dependency path returns to the
+        // install loop, so the fd must not stay open for the rest of it.
+        let Ok(dir) = bun_sys::Dir::open(dirname) else {
+            return;
+        };
+        let _ = dir.delete_tree(bun_paths::basename(cwd));
     }
 
     pub(crate) fn spawn_package_scripts(
@@ -1082,6 +1099,7 @@ impl<'a> LifecycleScriptSubprocess<'a> {
         envp: bun_dotenv::NullDelimitedEnvMap,
         shell_bin: Option<&'a ZStr>,
         optional: bool,
+        remove_on_failure: bool,
         log_level: crate::LogLevel,
         foreground: bool,
         ctx: Option<InstallCtx<'a>>,
@@ -1095,6 +1113,7 @@ impl<'a> LifecycleScriptSubprocess<'a> {
             scripts: list,
             foreground,
             optional,
+            remove_on_failure,
             ctx,
             // defaults:
             current_script_index: 0,

@@ -46,6 +46,8 @@ pub struct PendingLifecycleScript {
     pub(crate) list: lockfile::package::scripts::List,
     pub(crate) tree_id: lockfile::tree::Id,
     pub(crate) optional: bool,
+    /// See `LifecycleScriptSubprocess::remove_on_failure`.
+    pub(crate) remove_on_failure: bool,
 }
 
 pub struct PackageInstaller<'a> {
@@ -798,6 +800,7 @@ impl<'a> PackageInstaller<'a> {
                     self.command_ctx,
                     entry.list,
                     optional,
+                    entry.remove_on_failure,
                     output_in_foreground,
                     None,
                 ) {
@@ -929,6 +932,7 @@ impl<'a> PackageInstaller<'a> {
                 self.command_ctx,
                 entry.list,
                 optional,
+                entry.remove_on_failure,
                 output_in_foreground,
                 None,
             ) {
@@ -2459,6 +2463,10 @@ impl<'a> PackageInstaller<'a> {
                 list: scripts_list,
                 tree_id: self.current_tree_id,
                 optional,
+                // Only these tags name a directory bun extracted from its cache.
+                // Workspace and `bun link` packages are symlinks to the user's
+                // own directories.
+                remove_on_failure: resolution.tag.can_enqueue_install_task(),
             });
 
             return true;

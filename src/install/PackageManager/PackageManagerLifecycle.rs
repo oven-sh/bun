@@ -341,6 +341,7 @@ impl PackageManager {
         ctx: Command::Context<'_>,
         list: ScriptsList,
         optional: bool,
+        remove_on_failure: bool,
         foreground: bool,
         install_ctx: Option<InstallCtx<'_>>,
     ) -> Result<(), crate::Error> {
@@ -428,6 +429,7 @@ impl PackageManager {
             envp,
             shell_bin,
             optional,
+            remove_on_failure,
             log_level,
             foreground,
             install_ctx,

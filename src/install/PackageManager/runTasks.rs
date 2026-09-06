@@ -381,8 +381,16 @@ fn run_tasks_erased(
                     let entry_id = task.entry_id;
                     let node_id = installer.store.entries.items_node_id()[entry_id.get() as usize];
                     let dep_id = installer.store.nodes.items_dep_id()[node_id.get() as usize];
+                    let pkg_id = installer.store.nodes.items_pkg_id()[node_id.get() as usize];
                     let dep = &installer.lockfile().buffers.dependencies[dep_id as usize];
                     let optional = dep.behavior.contains(Behavior::OPTIONAL);
+                    // Only these tags name a store directory bun extracted from
+                    // its cache; workspace and `bun link` scripts run in the
+                    // user's own directories.
+                    let remove_on_failure = installer.lockfile().packages.items_resolution()
+                        [pkg_id as usize]
+                        .tag
+                        .can_enqueue_install_task();
                     // SAFETY: `list` is the per-entry scripts slot owned by
                     // `store.entries.items_scripts()[entry_id]`; this Task is
                     // its sole consumer (see Installer.rs Yield::RunScripts).
@@ -398,6 +406,7 @@ fn run_tasks_erased(
                         command_ctx,
                         list_val,
                         optional,
+                        remove_on_failure,
                         false,
                         Some(InstallCtx {
                             entry_id,

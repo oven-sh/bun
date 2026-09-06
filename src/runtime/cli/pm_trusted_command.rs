@@ -488,12 +488,16 @@ impl TrustCommand {
 
                 let output_in_foreground = false;
                 let optional = false;
+                // A failed script leaves the package untrusted and in place, the
+                // same state as before `bun pm trust`, so it can be retried.
+                let remove_on_failure = false;
                 // SAFETY: `pm_raw` singleton; `ctx` is the CLI `&mut ContextData`.
                 unsafe {
                     (*pm_raw).spawn_package_lifecycle_scripts(
                         &mut *ctx,
                         info.scripts_list.clone(),
                         optional,
+                        remove_on_failure,
                         output_in_foreground,
                         None,
                     )?;

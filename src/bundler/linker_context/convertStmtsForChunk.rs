@@ -278,8 +278,6 @@ pub(crate) fn convert_stmts_for_chunk(
                                 && wrapper_ref.is_valid()
                                 && c.graph.files_live.is_set(other_source_index)
                             {
-                                // The same dependency as `import "path"`: it runs in
-                                // source order, and a module with top-level await is awaited.
                                 stmts.inside_wrapper_prefix.append_dependency(
                                     Expr::init(
                                         E::Call {

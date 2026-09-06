@@ -3534,8 +3534,6 @@ impl<'a> LinkerContext<'a> {
                 // This depends on the "__esm" symbol and declares the "init_foo" symbol
                 // for similar reasons to the CommonJS closure above.
 
-                // The `__promiseAll` that joins the dependencies is a use of the
-                // parts that hold the import statements (`scan_imports_and_exports`).
                 let esm_parts: &[u32] = if wrapper_ref.is_valid()
                     && self.options.output_format != Format::InternalBakeDev
                 {
@@ -5103,17 +5101,10 @@ pub struct StmtList {
     pub(crate) all_stmts: Vec<Stmt>,
 }
 
-/// The statements that run inside a wrapper before the module body: the
-/// `init_x()` calls of its wrapped ESM dependencies, the `require_x()` calls
-/// of its CommonJS dependencies, and the `__reExport(...)` calls of its
-/// `export *` statements. They stay in source order, because that is the
-/// order in which the modules evaluate.
-///
-/// An async dependency returns a promise. The first one becomes
-/// `await init_a()`. Everything that follows it joins that statement as
-/// `await __promiseAll([init_a(), init_b(), ns = require_c()])`, so every
-/// dependency starts before the wrapper suspends, the way the module graph
-/// would evaluate them, and the body runs once all of them have settled.
+/// The dependency statements that run inside a wrapper before the module
+/// body, in source order. From the first async dependency on they share one
+/// `await __promiseAll([init_a(), init_b(), ns = require_c()])`, so each one
+/// starts before the wrapper suspends.
 pub struct InsideWrapperPrefix {
     pub(crate) stmts: Vec<Stmt>,
     /// Index in `stmts` of the `await` statement, once one exists.
@@ -5194,8 +5185,6 @@ impl InsideWrapperPrefix {
         Ok(())
     }
 
-    /// `init_call` is the `init_x()` of a wrapped ESM dependency. `is_async`
-    /// is that dependency's `is_async_or_has_async_dependency`.
     pub(crate) fn append_dependency(
         &mut self,
         init_call: Expr,
@@ -5226,9 +5215,7 @@ impl InsideWrapperPrefix {
         Ok(())
     }
 
-    /// Appends `expr` to the list the statement at `await_index` awaits:
-    /// `await init_a()` becomes `await __promiseAll([init_a(), expr])`, and an
-    /// existing `__promiseAll` list grows by one element.
+    /// `await init_a()` becomes `await __promiseAll([init_a(), expr])`.
     fn join_awaited(&mut self, await_index: usize, expr: Expr) {
         let awaited: &mut Expr = &mut self.stmts[await_index]
             .data

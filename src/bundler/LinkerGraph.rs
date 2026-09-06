@@ -910,20 +910,15 @@ impl<'a> LinkerGraph<'a> {
     }
 
     /// Marks every module that reaches an async module through `import`
-    /// statements as async. `validate_tla` marks a module async from the
-    /// dependencies it visits in depth-first order, so a dependency on a
-    /// cycle that is still being visited does not report its own flag yet.
-    /// This pass walks the edges backwards, from each async module to its
-    /// importers, until no flag changes.
+    /// statements as async. A worklist over the reverse edges reaches the
+    /// fixpoint that the depth-first walk in `validate_tla` misses on a cycle.
     pub(crate) fn propagate_async_dependencies(&mut self) -> Result<(), crate::Error> {
         let import_records = self.ast.items_import_records();
         let flags = self.meta.items_flags_mut();
         let len = import_records.len();
 
-        // Only `import` statements propagate. `import()` can appear in a
-        // non-top-level context, and when it makes the parent async the parent
-        // uses top-level await itself, which `validate_tla` already recorded.
-        // `require()` cannot import an async module.
+        // Only `import` statements propagate: an `import()` that makes its
+        // parent async does so through a top-level await `validate_tla` saw.
         let statement_imports = |index: usize| {
             import_records[index]
                 .as_slice()

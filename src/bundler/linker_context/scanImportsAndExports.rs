@@ -1067,9 +1067,8 @@ pub(crate) fn scan_imports_and_exports(
                 id
             );
 
-            // `InsideWrapperPrefix` joins every dependency that follows an async
-            // one into `await __promiseAll([...])`. Import records are in source
-            // order.
+            // `InsideWrapperPrefix` joins the dependencies after the first async
+            // one into `await __promiseAll([...])`.
             let first_async_import: Option<u32> = col_ref!(import_records_list)[id]
                 .as_slice()
                 .iter()

@@ -2773,10 +2773,8 @@ pub(crate) mod __gated_printer {
 
                 // Internal "import()" of async ESM:
                 // `Promise.resolve().then(() => init_foo()).then(() => exports_foo)`.
-                // The wrapper is called in a later job, like `import()` evaluates
-                // its target, so the caller's own module body finishes first. A
-                // direct `init_foo()` from inside that body, while `init_foo` runs
-                // its first synchronous segment, would return `undefined`.
+                // Called from inside its own first synchronous segment,
+                // `init_foo()` would return `undefined`.
                 if record.kind == ImportKind::Dynamic && meta.is_wrapper_async {
                     self.print_space_before_identifier();
                     self.print(b"Promise.resolve()");

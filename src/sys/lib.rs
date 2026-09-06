@@ -1897,8 +1897,7 @@ mod posix_impl {
         // Linux/FreeBSD, `openat$NOCANCEL(AT_FDCWD, ..)` on Darwin.
         openat(Fd::cwd(), path, flags, mode)
     }
-    /// Every descriptor is close-on-exec. A child that must inherit one gets
-    /// it through `dup2` (or an explicit `FD_CLOEXEC` clear) in the spawn path.
+    /// Always `O_CLOEXEC`. A child gets a descriptor only through the spawn path.
     pub fn openat(dir: impl AsFd, path: &ZStr, flags: i32, mode: Mode) -> Maybe<Fd> {
         let dir = dir.as_fd();
         let flags = flags | O::CLOEXEC;

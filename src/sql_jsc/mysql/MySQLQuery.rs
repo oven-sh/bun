@@ -44,12 +44,14 @@ impl Flags {
     const SIMPLE: u8 = 1 << 1;
     const PIPELINED: u8 = 1 << 2;
     const RESULT_MODE_SHIFT: u8 = 3;
-    const RESULT_MODE_MASK: u8 = 0b11 << Self::RESULT_MODE_SHIFT; // SQLQueryResultMode is 2 bits (4 bool + 2 + 2 pad = 8)
+    const RESULT_MODE_MASK: u8 = 0b11 << Self::RESULT_MODE_SHIFT; // SQLQueryResultMode is 2 bits (5 bool + 2 + 1 pad = 8)
     /// Set by [`MySQLQuery::discard_response`]: the query is already rejected,
     /// but the server is still answering it. It stays in flight at the queue
     /// head, and the rest of its response is skipped, until the terminator of
     /// its last result set.
     const DISCARD_RESPONSE: u8 = 1 << 5;
+    /// Its COM_STMT_PREPARE is on the wire while the status is still `Pending`: it is no longer unsent.
+    const PREPARE_SENT: u8 = 1 << 6;
 
     #[inline]
     fn bigint(self) -> bool {
@@ -78,6 +80,14 @@ impl Flags {
     #[inline]
     fn set_discard_response(&mut self) {
         self.0 |= Self::DISCARD_RESPONSE;
+    }
+    #[inline]
+    fn prepare_sent(self) -> bool {
+        self.0 & Self::PREPARE_SENT != 0
+    }
+    #[inline]
+    fn set_prepare_sent(&mut self) {
+        self.0 |= Self::PREPARE_SENT;
     }
     #[inline]
     fn result_mode(self) -> SQLQueryResultMode {
@@ -392,6 +402,7 @@ impl MySQLQuery {
                             global_object.throw_sql_error(err.into(), "failed to prepare query");
                         return Err(crate::Error::JSError);
                     }
+                    self.flags.set_prepare_sent();
                     // `self.statement` was set in both branches above; route
                     // through the single-unsafe accessor instead of a raw
                     // `(*stmt)` deref so the write goes via the same audited
@@ -495,6 +506,18 @@ impl MySQLQuery {
         self.flags.set_discard_response();
 
         true
+    }
+
+    /// No byte of this query was written, so the server cannot have seen it.
+    #[inline]
+    pub(crate) fn is_unsent(&self) -> bool {
+        self.status == Status::Pending && !self.flags.prepare_sent()
+    }
+
+    /// Drops the statement of the closed connection: the next `run_query` looks it up again.
+    pub(crate) fn reset_for_requeue(&mut self) {
+        debug_assert!(self.is_unsent());
+        self.statement = None;
     }
 
     #[inline]

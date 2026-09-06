@@ -275,7 +275,10 @@ impl MySQLRequestQueue {
 
         for req in requests {
             if !req.is_completed() {
-                if let Some(r) = reason {
+                if req.is_unsent() {
+                    // The server never saw it: JS runs it on another connection.
+                    req.requeue(reason);
+                } else if let Some(r) = reason {
                     req.reject_with_js_value(queries_array, r);
                 } else {
                     req.reject(queries_array, AnyMySQLError::ConnectionClosed);

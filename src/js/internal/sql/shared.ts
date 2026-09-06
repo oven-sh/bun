@@ -4,7 +4,7 @@ const PublicArray = globalThis.Array;
 const {
   Query,
   SQLQueryFlags,
-  symbols: { _strings, _values },
+  symbols: { _strings, _values, _slot },
 } = require("internal/sql/query");
 const AsyncContextFrame = require("internal/async_context_frame");
 const { isStoppedModuleGraphRunning } = require("internal/shared");
@@ -597,9 +597,8 @@ const enum PooledConnectionFlags {
 }
 export type { BasePooledConnection, PooledConnectionState };
 
-function onQueryFinish(this: BasePooledConnection, onClose: (err: Error) => void) {
-  this.queries.delete(onClose);
-  this.adapter.release(this);
+function onQueryFinish(this: BasePooledConnection, query: QueryType<any, any>) {
+  this.unbindQuery(query);
 }
 
 abstract class BasePooledConnection<ConnectionHandle extends { close(): void; flush(): void } = any> {
@@ -607,7 +606,8 @@ abstract class BasePooledConnection<ConnectionHandle extends { close(): void; fl
   connection: ConnectionHandle | null = null;
   state: PooledConnectionState = PooledConnectionState.pending;
   storedError: Error | null = null;
-  queries: Set<(err: Error) => void> = new Set();
+  /// reservations holding this connection (sql.reserve(), sql.begin()); its queries are settled by the driver
+  closeHandlers: Set<(err: Error) => void> = new Set();
   onFinish: ((err: Error | null) => void) | null = null;
   connectionInfo: Bun.SQL.__internal.DefinedPostgresOrMySQLOptions;
   flags: number = 0;
@@ -701,6 +701,7 @@ abstract class BasePooledConnection<ConnectionHandle extends { close(): void; fl
     if (err) {
       err = this.wrapError(err);
     }
+    const dropped = this.state === PooledConnectionState.connected;
     this.connection = null;
     this.storedError = err;
     if (this.#shouldRetryConnecting(err)) {
@@ -715,7 +716,7 @@ abstract class BasePooledConnection<ConnectionHandle extends { close(): void; fl
     }
     // this connect cycle is over; a later retry() starts a fresh one
     this.connectStartedAt = 0;
-    this.#finishClose(err);
+    this.#finishClose(err, dropped);
   }
 
   static #retryTimerFired(self: BasePooledConnection) {
@@ -766,7 +767,9 @@ abstract class BasePooledConnection<ConnectionHandle extends { close(): void; fl
     return false;
   }
 
-  #finishClose(err: any) {
+  /// `dropped`: the connection was established and then lost, as opposed to a
+  /// connect attempt that failed.
+  #finishClose(err: any, dropped: boolean = false) {
     const connectionInfo = this.connectionInfo;
     const poolClosedSlotBeforeOnconnect =
       this.onFinish !== null && !(this.flags & PooledConnectionFlags.onConnectFired);
@@ -781,12 +784,11 @@ abstract class BasePooledConnection<ConnectionHandle extends { close(): void; fl
 
       // remove from ready connections if its there
       this.adapter.readyConnections.delete(this);
-      const queries = new Set(this.queries);
-      this.queries?.clear?.();
+      const closeHandlers = new Set(this.closeHandlers);
+      this.closeHandlers.clear();
       this.flags &= ~PooledConnectionFlags.reserved;
 
-      // notify all queries that the connection is closed
-      for (const onClose of queries) {
+      for (const onClose of closeHandlers) {
         onClose(err);
       }
       const onFinish = this.onFinish;
@@ -794,17 +796,37 @@ abstract class BasePooledConnection<ConnectionHandle extends { close(): void; fl
         onFinish(err);
       }
 
-      this.adapter.release(this, true);
+      const adapter = this.adapter;
+      // Work still waiting on the pool never reached the server. With no other
+      // connection left to take it, dial again so release() does not fail it
+      // with this one. It fails if that dial fails.
+      if (
+        dropped &&
+        (adapter.waitingQueue.length > 0 || adapter.reservedQueue.length > 0) &&
+        !adapter.hasConnectionsAvailable()
+      ) {
+        this.retry();
+      }
+      adapter.release(this, true);
     }
   }
 
   onClose(onClose: (err: Error) => void) {
-    this.queries.add(onClose);
+    this.closeHandlers.add(onClose);
   }
 
-  bindQuery(query: QueryType<any, any>, onClose: (err: Error) => void) {
-    this.queries.add(onClose);
-    query.finally(onQueryFinish.bind(this, onClose));
+  /// The query counts against this slot until it settles, or until the
+  /// connection hands it back unsent.
+  bindQuery(query: QueryType<any, any>) {
+    query[_slot] = this;
+    query.finally(onQueryFinish.bind(this, query));
+  }
+
+  unbindQuery(query: QueryType<any, any>) {
+    if (query[_slot] === this) {
+      query[_slot] = null;
+      this.adapter.release(this);
+    }
   }
 
   protected doRetry() {
@@ -1094,10 +1116,7 @@ abstract class BaseSQLAdapter<PooledConnection extends BasePooledConnection, Con
   }
 
   detachConnectionCloseHandler(connection: PooledConnection, handler: (err: Error) => void): void {
-    const queries = connection.queries;
-    if (queries) {
-      queries.delete(handler);
-    }
+    connection.closeHandlers?.delete(handler);
   }
 
   validateTransactionOptions(options: string): { valid: boolean; error?: string } {

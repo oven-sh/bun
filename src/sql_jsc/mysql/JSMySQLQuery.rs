@@ -403,6 +403,39 @@ impl JSMySQLQuery {
         );
     }
 
+    /// The connection closed with this request unsent: JS runs it elsewhere or rejects it with `reason`.
+    pub(crate) fn requeue(&self, reason: Option<JSValue>) {
+        let _guard = self.ref_guard();
+        debug_assert!(self.is_unsent());
+        self.query.with_mut(|q| q.reset_for_requeue());
+        let Some(this_value) = self.this_value.get().try_get() else {
+            return;
+        };
+        let Some(target_value) = self.get_target() else {
+            return;
+        };
+        // The next `run()` upgrades it again, and that can be inside the callback.
+        self.this_value.with_mut(|v| v.downgrade());
+        let reason =
+            reason.unwrap_or_else(|| self.error_to_js(AnyMySQLError::Error::ConnectionClosed));
+        let Some(function) = self
+            .vm_mut()
+            .sql_state()
+            .mysql_context
+            .on_query_requeue_fn
+            .get()
+        else {
+            return;
+        };
+        self.event_loop().run_callback(
+            bun_event_loop::ContextId::NONE,
+            function,
+            self.global_object(),
+            this_value,
+            &[target_value, reason.to_error().unwrap_or(reason)],
+        );
+    }
+
     pub(crate) fn run(&self, connection: &MySQLConnection) -> Result<(), AnyMySQLError::Error> {
         {
             let q = self.query.get();
@@ -463,6 +496,10 @@ impl JSMySQLQuery {
     #[inline]
     pub(crate) fn is_pending(&self) -> bool {
         self.query.get().is_pending()
+    }
+    #[inline]
+    pub(crate) fn is_unsent(&self) -> bool {
+        self.query.get().is_unsent()
     }
     #[inline]
     pub(crate) fn is_being_prepared(&self) -> bool {

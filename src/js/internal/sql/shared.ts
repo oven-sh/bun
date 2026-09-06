@@ -354,8 +354,7 @@ function hasKeywordAt(query: string, start: number, keyword: string): boolean {
   return true;
 }
 
-// Index of the first character at or after `start` that is not space, \t,
-// \n, \v, \f or \r: the whitespace the Postgres and MySQL lexers skip.
+// Skips the whitespace the Postgres and MySQL lexers skip: space, \t, \n, \v, \f, \r.
 function skipWhitespace(query: string, start: number): number {
   const len = query.length;
   let i = start;
@@ -367,9 +366,7 @@ function skipWhitespace(query: string, start: number): number {
   return i;
 }
 
-// True when the query starts a transaction (BEGIN or START TRANSACTION, any
-// case, after leading whitespace). Only reads the prefix: this runs on every
-// pooled query, and ORM generated queries are long.
+// Reads only the prefix: this runs on every pooled query, and ORM generated queries are long.
 function startsTransaction(query: string): boolean {
   const i = skipWhitespace(query, 0);
   if (hasKeywordAt(query, i, "BEGIN")) return true;

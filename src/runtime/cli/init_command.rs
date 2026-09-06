@@ -936,14 +936,12 @@ impl Assets {
     pub(crate) const README_MD: &'static [u8] = include_bytes!("init/README.default.md");
     pub(crate) const README2_MD: &'static [u8] = include_bytes!("init/README2.default.md");
 
-    /// Create an asset file, replacing anything that already exists. With
-    /// `args`, `asset` is a template and `{[name]s}` placeholders are substituted.
+    /// Create or replace an asset file. With `args`, `{[name]s}` placeholders in `asset` are substituted.
     fn create(filename: &[u8], asset: &[u8], args: &[(&[u8], &[u8])]) -> bun_sys::Result<()> {
         Self::create_full(asset, filename, "", args)
     }
 
-    /// Like [`create`](Self::create), but fails with `EEXIST` instead of
-    /// replacing an existing file, and creates missing parent directories.
+    /// Like [`create`](Self::create), but fails with `EEXIST` for an existing file; creates parent dirs.
     fn create_new(filename: &[u8], contents: &[u8]) -> bun_sys::Result<()> {
         if let Some(dir) = bun_core::dirname(filename) {
             if !dir.is_empty() && dir != b"." {
@@ -983,9 +981,7 @@ impl Assets {
         Ok(())
     }
 
-    /// Open `filename` with `flags` and write all of `contents` to it. When the
-    /// write fails the file is removed again, so that nothing half-written is
-    /// left under its name and a rerun (which skips existing files) creates it.
+    /// A file whose write fails is removed again, so a rerun (which skips existing files) creates it.
     fn write_new_file(filename: &[u8], flags: i32, contents: &[u8]) -> bun_sys::Result<()> {
         let file = bun_sys::File::openat(Fd::cwd(), filename, flags, 0o666)
             .map_err(|err| err.with_path(filename))?;

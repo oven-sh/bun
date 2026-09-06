@@ -31,8 +31,9 @@ check — together they catch most things; neither alone is bulletproof.
 **In scope but may miss:**
 
 - x64 linear-sweep may desync on data-in-`.text` and skip real instructions
-  that follow. Variable-length x86 encoding makes perfect code/data
-  separation undecidable (`README.md:53-59`). aarch64 is more reliable
+  that follow, up to the next symbol start (where the decoder resyncs).
+  Variable-length x86 encoding makes perfect code/data separation
+  undecidable (`README.md:53-62`). aarch64 is more reliable
   (fixed-width words, `$d` mapping symbols mark data), but a missing mapping
   symbol can still hide a hit.
 - Instructions deliberately ignored (TZCNT/XGETBV on x64, hint-space PAC/BTI

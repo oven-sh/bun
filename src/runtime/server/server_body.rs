@@ -2237,8 +2237,7 @@ where
         ctx: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
-        // Like fetch(): an exception raised while reading the arguments
-        // rejects the returned promise instead of escaping the call.
+        // Like fetch(): an argument error rejects the promise instead of throwing.
         let result = self.on_fetch_impl(ctx, callframe);
         Fetch::reject_on_exception(ctx, result)
     }

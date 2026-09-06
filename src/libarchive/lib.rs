@@ -90,6 +90,7 @@ pub mod lib {
             offset: *mut la_int64_t,
         ) -> Result;
         fn archive_error_string(a: *mut Archive) -> *const c_char;
+        fn archive_errno(a: *mut Archive) -> c_int;
         // streaming-read setup (used by TarballStream's resumable extractor)
         pub fn archive_read_set_format(a: *mut Archive, code: c_int) -> c_int;
         pub fn archive_read_append_filter(a: *mut Archive, code: c_int) -> c_int;
@@ -363,6 +364,13 @@ pub mod lib {
             // `'static` here is a lifetime erasure — the caller must not let
             // the slice outlive the archive.
             unsafe { ZStr::from_c_ptr(p) }.as_bytes()
+        }
+
+        /// The platform `errno` recorded with the last error, or 0 (none) /
+        /// -1 (`ARCHIVE_ERRNO_MISC`) when the failure did not come from the OS.
+        pub fn errno(&self) -> c_int {
+            // SAFETY: `self` is a live archive handle.
+            unsafe { archive_errno(self.as_mut_ptr()) }
         }
 
         // ── write side ─────────────────────────────────────────────────────

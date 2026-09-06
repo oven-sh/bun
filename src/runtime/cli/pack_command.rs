@@ -2611,6 +2611,7 @@ pub(crate) fn pack<const FOR_PUBLISH: bool>(
             entry,
             &root_dir,
             &edited_package_json,
+            abs_tarball_dest,
         )?;
         if log_level.show_progress() {
             node.as_mut()
@@ -2691,6 +2692,7 @@ pub(crate) fn pack<const FOR_PUBLISH: bool>(
                 entry,
                 &mut print_buf,
                 &bins,
+                abs_tarball_dest,
             )?;
 
             if log_level.show_progress() {
@@ -2746,6 +2748,7 @@ pub(crate) fn pack<const FOR_PUBLISH: bool>(
                 entry,
                 &mut print_buf,
                 &bins,
+                abs_tarball_dest,
             )?;
 
             if log_level.show_progress() {
@@ -2764,13 +2767,10 @@ pub(crate) fn pack<const FOR_PUBLISH: bool>(
 
     ArchiveEntry::opaque_ref(entry).free();
 
+    // Flushes the compressor and the last blocks, so a full disk often shows up here.
     match archive.write_close() {
         ArchiveResult::Failed | ArchiveResult::Fatal | ArchiveResult::Warn => {
-            Output::err_generic(
-                "failed to close archive: {}",
-                format_args!("{}", bstr::BStr::new(archive.error_string())),
-            );
-            Global::crash();
+            tarball_write_failed(Archive::opaque_ref(archive), abs_tarball_dest);
         }
         _ => {}
     }
@@ -3145,12 +3145,45 @@ impl<'a> fmt::Display for TarballNameFormatter<'a> {
     }
 }
 
+/// Reports the error that libarchive recorded for a failed write to the
+/// tarball at `tarball_path`, then exits.
+#[cold]
+fn tarball_write_failed(archive: &Archive, tarball_path: &ZStr) -> ! {
+    let errno = archive.errno();
+    if errno > 0 {
+        Output::err(
+            bun_sys::Error::from_code_int(errno, bun_sys::Tag::write),
+            "failed to write tarball \"{}\"",
+            format_args!("{}", bstr::BStr::new(tarball_path.as_bytes())),
+        );
+    } else {
+        Output::err_generic(
+            "failed to write tarball \"{}\": {}",
+            (
+                bstr::BStr::new(tarball_path.as_bytes()),
+                bstr::BStr::new(archive.error_string()),
+            ),
+        );
+    }
+    Global::crash();
+}
+
+/// `archive_write_data` returns the number of bytes it took, or a negative
+/// status once a write to the destination fails (ENOSPC, EIO, ...).
+fn write_archive_data(archive: &Archive, data: &[u8], tarball_path: &ZStr) -> usize {
+    match usize::try_from(archive.write_data(data)) {
+        Ok(written) => written,
+        Err(_) => tarball_write_failed(archive, tarball_path),
+    }
+}
+
 fn archive_package_json(
     ctx: &mut Context<'_>,
     archive: &mut Archive,
     entry: *mut ArchiveEntry,
     root_dir: &Dir,
     edited_package_json: &[u8],
+    tarball_path: &ZStr,
 ) -> Result<*mut ArchiveEntry, AllocError> {
     // `entry` is the same pointer after `.clear()`.
     let entry = ArchiveEntry::opaque_ref(entry);
@@ -3189,8 +3222,7 @@ fn archive_package_json(
         _ => {}
     }
 
-    ctx.stats.unpacked_size +=
-        usize::try_from(archive.write_data(edited_package_json)).expect("int cast");
+    ctx.stats.unpacked_size += write_archive_data(archive, edited_package_json, tarball_path);
 
     Ok(entry.clear())
 }
@@ -3206,6 +3238,7 @@ fn add_archive_entry(
     entry: *mut ArchiveEntry,
     print_buf: &mut Vec<u8>,
     bins: &[BinInfo],
+    tarball_path: &ZStr,
 ) -> Result<*mut ArchiveEntry, AllocError> {
     // `entry` is the same pointer after `.clear()`.
     let entry = ArchiveEntry::opaque_ref(entry);
@@ -3269,8 +3302,7 @@ fn add_archive_entry(
         }
     };
     while read > 0 {
-        ctx.stats.unpacked_size +=
-            usize::try_from(archive.write_data(&read_buf[..read])).expect("int cast");
+        ctx.stats.unpacked_size += write_archive_data(archive, &read_buf[..read], tarball_path);
         read = match buffered_file_reader_read(file_reader, read_buf) {
             Ok(n) => n,
             Err(err) => {

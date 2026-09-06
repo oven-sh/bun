@@ -6811,7 +6811,7 @@ impl NodeFS {
 
                 match sys::open(
                     path,
-                    args.flag.as_int() | sys::O::NOCTTY,
+                    args.flag.as_int() | sys::O::NOCTTY | sys::O::CLOEXEC,
                     DEFAULT_PERMISSION,
                 ) {
                     Err(err) => return Err(err.with_path(p.slice())),
@@ -7148,7 +7148,7 @@ impl NodeFS {
                 if (flags & sys::O::APPEND) == 0 {
                     flags &= !sys::O::TRUNC;
                 }
-                match sys::openat(args.dirfd, path, flags, args.mode) {
+                match sys::openat(args.dirfd, path, flags | sys::O::CLOEXEC, args.mode) {
                     Err(err) => return Err(err.with_path(p.slice())),
                     Ok(fd) => fd,
                 }
@@ -7411,9 +7411,9 @@ impl NodeFS {
             let path = ZStr::from_buf(&inbuf[..], path_len);
 
             #[cfg(any(target_os = "linux", target_os = "android"))]
-            let flags = sys::O::PATH; // O_PATH is faster
+            let flags = sys::O::PATH | sys::O::CLOEXEC; // O_PATH is faster
             #[cfg(not(any(target_os = "linux", target_os = "android")))]
-            let flags = sys::O::RDONLY | sys::O::NONBLOCK | sys::O::NOCTTY;
+            let flags = sys::O::RDONLY | sys::O::NONBLOCK | sys::O::NOCTTY | sys::O::CLOEXEC;
 
             let fd = match sys::open(path, flags, 0) {
                 Err(err) => return Err(err.with_path(path)),

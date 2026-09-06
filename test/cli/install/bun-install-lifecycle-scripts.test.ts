@@ -3816,6 +3816,51 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
       expect(await file(join(packageDir, "bun.lock")).text()).toBe(lockfileBefore);
     });
 
+    test("bun pm trust --ignore-scripts records the trust and the next install runs the scripts", async () => {
+      using ctx = await setupTest();
+      const { packageDir, packageJson, env } = ctx;
+      const testEnv = forceWaiterThread ? { ...env, BUN_FEATURE_FLAG_FORCE_WAITER_THREAD: "1" } : env;
+
+      await writeFile(
+        packageJson,
+        JSON.stringify({
+          name: "foo",
+          dependencies: {
+            "uses-what-bin": "1.0.0",
+          },
+        }),
+      );
+      const whatBinTxt = join(packageDir, "node_modules", "uses-what-bin", "what-bin.txt");
+
+      await runBunInstall(testEnv, packageDir);
+      expect(await exists(whatBinTxt)).toBeFalse();
+
+      {
+        await using proc = spawn({
+          cmd: [bunExe(), "pm", "trust", "uses-what-bin", "--ignore-scripts"],
+          cwd: packageDir,
+          stdout: "pipe",
+          stderr: "pipe",
+          env: testEnv,
+        });
+        const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect(err).not.toContain("error:");
+        expect(out).toContain("- [install]: what-bin");
+        expect(out).toContain("1 script skipped across 1 package (--ignore-scripts)");
+        expect(out).not.toContain("ran across");
+        expect(exitCode).toBe(0);
+      }
+      expect(await exists(whatBinTxt)).toBeFalse();
+      expect((await file(packageJson).json()).trustedDependencies).toEqual(["uses-what-bin"]);
+      // Only package.json records the trust, so that the next install sees a
+      // newly trusted package and runs its scripts.
+      expect(await file(join(packageDir, "bun.lock")).text()).not.toContain("trustedDependencies");
+
+      await runBunInstall(testEnv, packageDir);
+      expect(await exists(whatBinTxt)).toBeTrue();
+      expect(await file(join(packageDir, "bun.lock")).text()).toContain("trustedDependencies");
+    });
+
     test("bun pm trust and untrusted on missing package", async () => {
       using ctx = await setupTest();
       const { packageDir, packageJson, env } = ctx;

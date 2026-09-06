@@ -860,6 +860,9 @@ impl PmPkgCommand {
         let content = writer.ctx.written_without_trailing_zero();
         if dry_run {
             let _ = Output::writer().write_all(content);
+            if !preserve_newline {
+                let _ = Output::writer().write_all(b"\n");
+            }
             Output::flush();
             return Ok(());
         }

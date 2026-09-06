@@ -220,7 +220,9 @@ impl PackageManagerCommand {
   <b><green>bun pm<r> <blue>migrate<r>              migrate another package manager's lockfile without installing anything\n\
   <b><green>bun pm<r> <blue>untrusted<r>            print current untrusted dependencies with scripts\n\
   <b><green>bun pm<r> <blue>trust<r> <d>names ...<r>      run scripts for untrusted dependencies and add to `trustedDependencies`\n\
-  <d>└<r>  <cyan>--all<r>                    trust all untrusted dependencies\n\
+  <d>├<r>  <cyan>--all<r>                    trust all untrusted dependencies\n\
+  <d>├<r>  <cyan>--dry-run<r>                print the scripts that would run, without running them or saving\n\
+  <d>└<r>  <cyan>--ignore-scripts<r>         add to `trustedDependencies` without running the scripts\n\
   <b><green>bun pm<r> <blue>default-trusted<r>      print the default trusted dependencies list\n\
 \n\
 Learn more about these at <magenta>https://bun.com/docs/cli/pm<r>.\n";
@@ -762,9 +764,14 @@ Learn more about these at <magenta>https://bun.com/docs/cli/pm<r>.\n";
                 Global::exit(1);
             }
             Self::handle_load_lockfile_errors(&load_lockfile, log_level);
-            if pm.options.dry_run {
+            // SAFETY: `pm_raw` singleton; `options` is CLI config set at init.
+            let options = unsafe { &(*pm_raw).options };
+            if options.dry_run {
                 if log_level != LogLevel::Silent {
-                    bun_core::prettyln!("<r><d>dry run:<r> would write bun.lock");
+                    bun_core::prettyln!(
+                        "<r><d>dry run:<r> would write {}",
+                        bstr::BStr::new(load_lockfile.save_format(options).filename().as_bytes()),
+                    );
                 }
                 Output::flush();
                 Global::exit(0);

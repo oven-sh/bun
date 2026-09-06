@@ -403,6 +403,8 @@ impl Scripts {
 pub enum PrintFormat {
     Completed,
     Untrusted,
+    /// Trusted by `bun pm trust --ignore-scripts` but not run.
+    Skipped,
 }
 
 // `Clone` — `List` owns `cwd`/`package_name`/`items`, but
@@ -455,6 +457,11 @@ impl List {
                     ),
                     PrintFormat::Untrusted => bun_core::pretty!(
                         " <yellow>»<r> [{s}]<d>:<r> <cyan>{s}<r>\n",
+                        BStr::new(name),
+                        BStr::new(script),
+                    ),
+                    PrintFormat::Skipped => bun_core::pretty!(
+                        " <d>-<r> [{s}]<d>:<r> <cyan>{s}<r>\n",
                         BStr::new(name),
                         BStr::new(script),
                     ),

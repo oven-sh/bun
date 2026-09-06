@@ -1117,3 +1117,46 @@ test("bun pm cache rm --dry-run prints the cache directory and deletes nothing",
   expect(exitCode).toBe(0);
   expect(await exists(join(realCacheDir, "cached-package.txt"))).toBeTrue();
 });
+
+test("bun pm trust runs the scripts when only .npmrc sets ignore-scripts", async () => {
+  using dir = tempDir("pm-trust-npmrc-ignore-scripts", {
+    "package.json": JSON.stringify({ name: "app", dependencies: { dep: "file:./dep" } }),
+    "dep/package.json": JSON.stringify({
+      name: "dep",
+      version: "1.0.0",
+      scripts: { postinstall: "echo ran > postinstall-ran.txt" },
+    }),
+    ".npmrc": "ignore-scripts=true\n",
+  });
+  const dirStr = String(dir);
+  const ranTxt = join(dirStr, "node_modules", "dep", "postinstall-ran.txt");
+
+  {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "install"],
+      cwd: dirStr,
+      stdout: "pipe",
+      stderr: "pipe",
+      env,
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).not.toContain("error:");
+    expect(stdout).toContain("Blocked 1 postinstall");
+    expect(exitCode).toBe(0);
+    expect(await exists(ranTxt)).toBeFalse();
+  }
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "pm", "trust", "dep"],
+    cwd: dirStr,
+    stdout: "pipe",
+    stderr: "pipe",
+    env,
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stderr).not.toContain("error:");
+  expect(stdout).toContain("1 script ran across 1 package");
+  expect(await exists(ranTxt)).toBeTrue();
+  expect(exitCode).toBe(0);
+});

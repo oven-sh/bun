@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { isBroken, isWindows, tempDir, withoutAggressiveGC } from "harness";
+import { isBroken, isLinux, isWindows, tempDir, withoutAggressiveGC } from "harness";
+import { readFileSync, statSync } from "node:fs";
 import { tmpdir } from "os";
 import { join } from "path";
 
@@ -238,4 +239,33 @@ test("missing file throws the expected error", async () => {
     }
   });
   Bun.gc(true);
+});
+
+// procfs files are regular files whose st_size is 0. Below 32 KiB of st_size
+// the upload reads the file on the JS thread. That read must go to EOF, not
+// stop at the 256 KiB scratch buffer plus the stat size.
+test.skipIf(!isLinux)("uploads the whole procfs file, not the stat size", async () => {
+  const path = ["/proc/kallsyms", "/proc/self/smaps", "/proc/cpuinfo"].find(p => {
+    try {
+      return readFileSync(p).length > 300 * 1024;
+    } catch {
+      return false;
+    }
+  });
+  if (!path) return;
+  expect(statSync(path).size).toBe(0);
+  const expected = readFileSync(path).length;
+
+  using server = Bun.serve({
+    port: 0,
+    async fetch(req) {
+      return Response.json({
+        contentLength: req.headers.get("content-length"),
+        received: (await req.bytes()).length,
+      });
+    },
+  });
+
+  const res = await fetch(server.url, { method: "POST", body: Bun.file(path) });
+  expect(await res.json()).toEqual({ contentLength: String(expected), received: expected });
 });

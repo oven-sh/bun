@@ -3761,9 +3761,6 @@ impl FormDataContext<'_> {
                 joiner.push_static(b"\r\n\r\n");
 
                 if blob.store.get().is_some() {
-                    if blob.size.get() == MAX_SIZE {
-                        blob.resolve_size();
-                    }
                     let store = blob
                         .store
                         .get()

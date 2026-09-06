@@ -1,5 +1,6 @@
 import { describe, expect, it, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, isDebug } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, isLinux, tempDir } from "harness";
+import { readFileSync } from "node:fs";
 import { join } from "path";
 
 describe("FormData", () => {
@@ -1002,5 +1003,44 @@ describe("USVString conversion of lone surrogates", () => {
     expect(formData.get("\u{1F600}")).toBe("emoji");
     expect(formData.getAll("\u{1F600}")).toEqual(["emoji"]);
     expect(formData.get("\uFFFD")).toBeNull();
+  });
+});
+
+describe("FormData with Bun.file() parts", () => {
+  async function roundTrip(formData: FormData): Promise<FormData> {
+    const res = new Response(formData);
+    const contentType = res.headers.get("content-type")!;
+    const wire = await res.bytes();
+    return new Response(wire, { headers: { "content-type": contentType } }).formData();
+  }
+
+  // procfs files are regular files whose st_size is 0 but that have content.
+  it.skipIf(!isLinux)("serializes a procfs Bun.file() part with its content", async () => {
+    const path = "/proc/version";
+    const expected = readFileSync(path, "utf8");
+    expect(expected.length).toBeGreaterThan(0);
+
+    const formData = new FormData();
+    formData.append("f", Bun.file(path), "version.txt");
+    formData.append("mem", new Blob(["in-memory"]), "mem.txt");
+
+    const back = await roundTrip(formData);
+    expect(await (back.get("f") as File).text()).toBe(expected);
+    expect(await (back.get("mem") as File).text()).toBe("in-memory");
+  });
+
+  it("serializes a sliced Bun.file() part with only the slice", async () => {
+    using dir = tempDir("formdata-slice", { "a.txt": "0123456789" });
+    const file = Bun.file(join(String(dir), "a.txt"));
+
+    const formData = new FormData();
+    formData.append("mid", file.slice(2, 5), "mid.txt");
+    formData.append("tail", file.slice(7), "tail.txt");
+    formData.append("all", file, "all.txt");
+
+    const back = await roundTrip(formData);
+    expect(await (back.get("mid") as File).text()).toBe("234");
+    expect(await (back.get("tail") as File).text()).toBe("789");
+    expect(await (back.get("all") as File).text()).toBe("0123456789");
   });
 });

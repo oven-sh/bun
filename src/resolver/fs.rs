@@ -761,6 +761,13 @@ pub fn read_file_contents_in_arena(
     let size = file.get_end_pos()?;
     debug!("stat({}) = {}", file.handle(), size);
 
+    if stat_size_is_a_hint(file, size, initial_len)? {
+        let contents = read_rest_to_end(file, &initial_buf[..initial_len])?;
+        let buf = arena_alloc_uninit_bytes(arena, contents.len() + 1);
+        buf[..contents.len()].copy_from_slice(&contents);
+        return Ok(finish_arena_contents(arena, buf, contents.len()));
+    }
+
     if size == 0 {
         return Ok((core::ptr::NonNull::dangling(), 0));
     }
@@ -788,6 +795,31 @@ pub fn read_file_contents_in_arena(
     debug!("read({}, {}) = {}", file.handle(), size, read_count);
 
     Ok(finish_arena_contents(arena, buf, total))
+}
+
+/// A regular file whose `st_size` is smaller than the bytes the probe already
+/// read. procfs, sysfs and cgroupfs report 0 for files with content, so the
+/// stat size cannot bound the read. Devices and FIFOs are excluded: reading
+/// `/dev/zero` to EOF never ends.
+fn stat_size_is_a_hint(
+    file: &bun_sys::File,
+    size: usize,
+    bytes_read: usize,
+) -> crate::CrateResult<bool> {
+    if size >= bytes_read {
+        return Ok(false);
+    }
+    Ok(bun_sys::S::ISREG(file.stat()?.st_mode as _))
+}
+
+/// Keep reading from the cursor until EOF, starting from the probed bytes.
+fn read_rest_to_end(file: &bun_sys::File, initial: &[u8]) -> crate::CrateResult<Vec<u8>> {
+    let mut buf: Vec<u8> = Vec::new();
+    buf.try_reserve(initial.len() * 2)
+        .map_err(|_| crate::Error::Sys(bun_errno::SystemErrno::ENOMEM))?;
+    buf.extend_from_slice(initial);
+    file.read_to_end_into(&mut buf)?;
+    Ok(buf)
 }
 
 /// Allocate `len` bytes from `arena` left **uninitialized** (no zero-fill),
@@ -997,18 +1029,29 @@ pub fn read_file_with_handle_impl<'buf, const USE_SHARED_BUFFER: bool, const STR
         };
         debug!("stat({}) = {}", file.handle(), size);
 
-        // Allocate UNINITIALIZED (no zero-fill):
-        // `extend_from_slice` writes the prefix, `read_all` writes
-        // the tail, then `set_len` exposes only the initialized `..total`.
-        let cap = size.max(initial_read.len());
-        let mut buf: Vec<u8> = Vec::with_capacity(cap + 1);
-        buf.extend_from_slice(initial_read);
+        if stat_size_is_a_hint(file, size, initial_read.len())? {
+            let mut buf = read_rest_to_end(file, initial_read)?;
+            if let Some(bom) = BOM::detect(&buf) {
+                debug!("Convert {} BOM", bom.tag_name());
+                buf = bom.remove_and_convert_to_utf8_and_free(buf);
+            }
+            return Ok(PathContentsPair {
+                contents: Cow::Owned(buf),
+            });
+        }
 
         if size == 0 {
             return Ok(PathContentsPair {
                 contents: Cow::Borrowed(b""),
             });
         }
+
+        // Allocate UNINITIALIZED (no zero-fill):
+        // `extend_from_slice` writes the prefix, `read_all` writes
+        // the tail, then `set_len` exposes only the initialized `..total`.
+        let cap = size.max(initial_read.len());
+        let mut buf: Vec<u8> = Vec::with_capacity(cap + 1);
+        buf.extend_from_slice(initial_read);
 
         let tail_len = cap + 1 - initial_read.len();
         let tail = &mut buf.spare_capacity_mut()[..tail_len];

@@ -322,6 +322,71 @@ describe.skipIf(isWindows)("Bun.file(fifo) upload", () => {
     expect(await writer.exited).toBe(0);
   });
 
+  // The writer sends 1 KB (less than the smallest pipe buffer, so it never
+  // blocks) and then stays alive without writing more. With the bug, fetch()
+  // blocks the JS thread in a read that never returns, so the abort never
+  // fires. With the fix, the abort rejects the fetch while the writer is still
+  // alive, and the FIFO fd is closed afterwards. It runs in a child process so
+  // the hang cannot take the test runner with it.
+  test.concurrent.todoIf(isMacOS)("abort during a trickling FIFO body rejects and closes the fd", async () => {
+    using dir = tempDir("fetch-fifo-upload-abort", {
+      "fixture.ts": `
+        import { readdirSync, readlinkSync, realpathSync } from "node:fs";
+        const fifo = realpathSync("fifo");
+        const writer = Bun.spawn({
+          cmd: ["sh", "-c", "exec 3<>fifo; head -c 1024 /dev/zero >&3; read x"],
+          stdin: "pipe",
+          stdout: "ignore",
+          stderr: "inherit",
+        });
+        const firstChunk = Promise.withResolvers();
+        using server = Bun.serve({
+          port: 0,
+          development: false,
+          async fetch(req) {
+            try {
+              for await (const chunk of req.body) firstChunk.resolve(chunk.byteLength);
+            } catch {}
+            return new Response("ok");
+          },
+        });
+        const ac = new AbortController();
+        const pending = fetch(server.url, { method: "POST", body: Bun.file(fifo), signal: ac.signal });
+        await firstChunk.promise;
+        ac.abort();
+        let outcome = "resolved";
+        try {
+          await pending;
+        } catch (e) {
+          outcome = e.name;
+        }
+        const fdsOnFifo = () =>
+          readdirSync("/proc/self/fd").filter(fd => {
+            try {
+              return readlinkSync("/proc/self/fd/" + fd) === fifo;
+            } catch {
+              return false;
+            }
+          }).length;
+        while (fdsOnFifo() > 0) await Bun.sleep(1);
+        console.log(JSON.stringify({ outcome, writerAlive: writer.exitCode === null, fdsOnFifo: fdsOnFifo() }));
+        writer.kill();
+      `,
+    });
+    mkfifo(join(String(dir), "fifo"));
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "fixture.ts"],
+      cwd: String(dir),
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toBe(JSON.stringify({ outcome: "AbortError", writerAlive: true, fdsOnFifo: 0 }) + "\n");
+    expect(exitCode).toBe(0);
+  });
+
   // The writer opens the FIFO only after it reads a line from stdin, and the
   // fixture writes that line after fetch() returns. With the bug, fetch()
   // blocks the JS thread inside a read of the FIFO, so the line is never

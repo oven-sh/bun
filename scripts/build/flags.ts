@@ -1092,6 +1092,22 @@ export const linkerFlags: Flag[] = [
     desc: "18MB stack reserve (JSC uses deep recursion), no error limit",
   },
   {
+    // WTF/JSC reference bun's hooks (WTFTimer__*, Bun__errorInstance__finalize,
+    // Bun__reportUnhandledError) as `extern "C" __attribute__((weak))`. COFF
+    // has no weak undefined symbol: clang emits a weak external whose default
+    // is a per-TU absolute-0 symbol, and lld-link (MSVC mode) calls two
+    // objects giving the same weak external different defaults a duplicate
+    // symbol — even though bun's strong Rust definition wins either way. One
+    // TU per hook references them in source; ThinLTO importing
+    // RunLoop::TimerBase::start() into a JSC module makes it two. This is
+    // lld-link's own switch for exactly that check (its MinGW-mode default):
+    // duplicate *strong* definitions still error. workarounds.ts:
+    // lld-coff-duplicate-weak.
+    flag: "/lld-allow-duplicate-weak",
+    when: c => c.windows,
+    desc: "Several TUs may weak-reference the same bun hook (COFF weak externals)",
+  },
+  {
     flag: "/DEBUG:FULL",
     when: c => c.windows && c.debug,
     desc: "Emit PDB so the crash handler can symbolize stack traces",

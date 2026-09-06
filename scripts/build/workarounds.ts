@@ -66,6 +66,22 @@ export interface Workaround {
 
 export const workarounds: Workaround[] = [
   {
+    id: "lld-coff-duplicate-weak",
+    issue: "oven-sh/llvm-project 0752b400213e ([LLD][COFF] Accept several weak references to the same symbol)",
+    description:
+      "lld-link rejects two objects that weak-reference the same symbol (their per-TU absolute-0 defaults differ by name); " +
+      "/lld-allow-duplicate-weak on every Windows link (flags.ts, deps/webkit.ts standaloneExeLinkFlags)",
+    applies: cfg => cfg.windows,
+    expectedToBeFixed: cfg => {
+      // Fixed in bun's LLVM toolchain fork; not upstream as of LLVM 22. Best
+      // guess for an upstream release carrying it.
+      const FIXED_IN_LLVM = "23.1.0";
+      return cfg.clangVersion !== undefined && satisfiesRange(cfg.clangVersion, `>=${FIXED_IN_LLVM}`);
+    },
+    cleanup:
+      "Drop the /lld-allow-duplicate-weak entries from flags.ts (linkFlags, Windows) and deps/webkit.ts, and this workaround",
+  },
+  {
     id: "asan-dyld-shim",
     issue: "https://github.com/llvm/llvm-project/issues/182943",
     description:

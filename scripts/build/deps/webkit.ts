@@ -1291,17 +1291,15 @@ function standaloneExeLinkFlags(cfg: Config): string[] {
     "Bun__reportUnhandledError",
   ];
   // Windows: WTF's registry/shell/token calls (LanguageWin, FileSystemWin,
-  // OSAllocatorWin) — bun's own link gets these through its delay-load set.
-  // COFF has no weak undefined symbols: each TU referencing a hook carries a
-  // weak external plus an absolute-0 default, and once ThinLTO imports the
-  // referencing function into a second module lld-link sees two defaults
-  // ("duplicate symbol"). /force:multiple picks one — the hook-absent value a
-  // standalone test binary wants (the fork's Dockerfile.windows does the
-  // same for jsc.exe). bun.exe defines every hook, so its link is unaffected.
+  // OSAllocatorWin) — bun's own link gets these through its delay-load set —
+  // and /lld-allow-duplicate-weak for the hooks' COFF weak externals, same
+  // as bun's own link (flags.ts has the explanation); with no definition at
+  // all they resolve to the absolute-0 default, the hook-absent value a
+  // standalone test binary wants.
   return cfg.darwin
     ? bunHooks.map(sym => `-Wl,-U,_${sym}`)
     : cfg.windows
-      ? ["advapi32.lib", "shell32.lib", "user32.lib", ...(cfg.lto ? ["/force:multiple"] : [])]
+      ? ["advapi32.lib", "shell32.lib", "user32.lib", "/lld-allow-duplicate-weak"]
       : [];
 }
 

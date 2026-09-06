@@ -77,7 +77,7 @@ test("err.line and err.column are set", async () => {
         line: 3,
         column: 17,
         originalLine: 1,
-        originalColumn: 18,
+        originalColumn: 22,
       },
       null,
       2,

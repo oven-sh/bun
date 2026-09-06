@@ -21,9 +21,9 @@ test("reportError", () => {
   expect(output.replaceAll("\\", "/").replaceAll("/reportError.ts", "[file]")).toMatchInlineSnapshot(
     `
 "1 | reportError(new Error("reportError Test!"));
-                    ^
+                ^
 error: reportError Test!
-      at [file]:1:17
+      at [file]:1:13
 error: true
 true
 error: false

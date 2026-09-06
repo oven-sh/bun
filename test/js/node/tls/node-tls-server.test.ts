@@ -2717,6 +2717,15 @@ it("a bad record after the handshake surfaces as ERR_SSL_* on both peers", async
   server.listen(0, "127.0.0.1");
   await once(server, "listening");
   const { proxy, inject } = injectingProxy((server.address() as AddressInfo).port);
+  try {
+    await runBadRecordExchange(server, proxy, inject);
+  } finally {
+    proxy.close();
+    server.close();
+  }
+});
+
+async function runBadRecordExchange(server: Server, proxy: net.Server, inject: (bytes: Buffer) => void) {
   proxy.listen(0, "127.0.0.1");
   await once(proxy, "listening");
 
@@ -2743,8 +2752,4 @@ it("a bad record after the handshake surfaces as ERR_SSL_* on both peers", async
   const [clientErr] = await clientError;
   expect(clientErr.code).toBe("ERR_SSL_SSLV3_ALERT_BAD_RECORD_MAC");
   expect(await clientClose).toBe(true);
-
-  proxy.close();
-  server.close();
-  await once(server, "close");
-});
+}

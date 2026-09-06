@@ -4742,10 +4742,11 @@ it("a TLS record that fails to decrypt after the handshake closes both peers wit
     c.on("error", () => {});
     upstream.on("error", () => {});
   });
+  using _proxy = { [Symbol.dispose]: () => proxy.close() };
   proxy.listen(0, "127.0.0.1");
   await new Promise<void>(resolve => proxy.once("listening", resolve));
 
-  const client = await Bun.connect({
+  using client = await Bun.connect({
     hostname: "127.0.0.1",
     port: (proxy.address() as net.AddressInfo).port,
     tls: { rejectUnauthorized: false },
@@ -4774,7 +4775,4 @@ it("a TLS record that fails to decrypt after the handshake closes both peers wit
     code: "EPROTO",
     message: expect.stringMatching(/^error:[0-9a-f]+:SSL routines:[^:]*:SSLV3_ALERT_BAD_RECORD_MAC$/),
   });
-
-  client.end();
-  proxy.close();
 });

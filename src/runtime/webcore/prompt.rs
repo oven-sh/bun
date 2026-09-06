@@ -6,43 +6,33 @@ use bun_core::EncodedSlice;
 use bun_core::Output;
 use bun_jsc::EncodedSliceJsc as _;
 
-/// Waits for stdin with `pselect(2)` (interruptible, unlike `read(2)` under SA_RESTART handlers) and runs queued JS signal listeners on EINTR.
+/// Waits until stdin is readable and runs the JS listeners of every signal that arrives meanwhile
+/// (a blocking `read(2)` cannot: the handlers are SA_RESTART and only queue the signal).
 #[cfg(unix)]
 fn wait_for_stdin(global: &JSGlobalObject) {
     use bun_jsc::PosixSignalHandle;
+    use bun_sys::posix::{POLL_IN, PollFd, poll};
 
-    let fd = bun_sys::Fd::stdin().native();
+    let Some(signals) = PosixSignalHandle::blocking_wait_fd(global) else {
+        return;
+    };
+    let mut fds = [
+        PollFd {
+            fd: bun_sys::Fd::stdin().native(),
+            events: POLL_IN,
+            revents: 0,
+        },
+        PollFd {
+            fd: signals.native(),
+            events: POLL_IN,
+            revents: 0,
+        },
+    ];
     loop {
         PosixSignalHandle::run_queued_from_js_thread(global);
-
-        // SAFETY: zeroed `sigset_t` and `fd_set` are valid inputs to
-        // `sigfillset` and `FD_SET`, which fill them; `fd` is stdin, below
-        // FD_SETSIZE; `previous` is written by `pthread_sigmask` before
-        // `pselect` reads it.
-        let interrupted = unsafe {
-            let mut all: libc::sigset_t = core::mem::zeroed();
-            let mut previous: libc::sigset_t = core::mem::zeroed();
-            libc::sigfillset(&mut all);
-            libc::pthread_sigmask(libc::SIG_BLOCK, &all, &mut previous);
-
-            let interrupted = PosixSignalHandle::has_queued() || {
-                let mut readable: libc::fd_set = core::mem::zeroed();
-                libc::FD_SET(fd, &mut readable);
-                let rc = libc::pselect(
-                    fd + 1,
-                    &mut readable,
-                    core::ptr::null_mut(),
-                    core::ptr::null_mut(),
-                    core::ptr::null(),
-                    &previous,
-                );
-                rc < 0 && bun_sys::last_errno() == libc::EINTR
-            };
-
-            libc::pthread_sigmask(libc::SIG_SETMASK, &previous, core::ptr::null_mut());
-            interrupted
-        };
-        if !interrupted {
+        fds[0].revents = 0;
+        fds[1].revents = 0;
+        if poll(&mut fds, -1).is_err() || fds[1].revents == 0 {
             return;
         }
     }
@@ -237,17 +227,18 @@ pub mod prompt {
     /// The process-global `BufferedStdin`; calls [`wait_for_stdin`] before each refill.
     pub(crate) struct InterruptibleStdin<'a> {
         global: &'a JSGlobalObject,
-        reader: &'a mut bun_core::output::BufferedStdin,
     }
 
     impl ReadByte for InterruptibleStdin<'_> {
         type Error = bun_core::Error;
         #[inline]
         fn read_byte(&mut self) -> Result<u8, Self::Error> {
-            if !self.reader.has_buffered() {
+            // SAFETY: process-global static, JS thread only. Each `&mut` ends before
+            // `wait_for_stdin`, which can run a JS listener that calls `prompt()` again.
+            if !unsafe { &*Output::buffered_stdin_reader() }.has_buffered() {
                 wait_for_stdin(self.global);
             }
-            self.reader.read_byte()
+            unsafe { &mut *Output::buffered_stdin_reader() }.read_byte()
         }
     }
 
@@ -368,13 +359,7 @@ pub mod prompt {
             });
 
         // 7. Pause while waiting for the user's response.
-        // `bun.Output.buffered_stdin.reader()` — process-global 4 KiB buffered stdin.
-        // SAFETY: process-global static; prompt() runs single-threaded on the JS
-        // main thread, so the exclusive borrow is sound for this scope.
-        let mut reader = InterruptibleStdin {
-            global,
-            reader: unsafe { &mut *Output::buffered_stdin_reader() },
-        };
+        let mut reader = InterruptibleStdin { global };
         let mut second_byte: Option<u8> = None;
         let Ok(first_byte) = reader.read_byte() else {
             // 8. Let result be null if the user aborts, or otherwise the string

@@ -72,12 +72,6 @@ impl<const CAPACITY: usize> SignalRing<CAPACITY> {
         }
     }
 
-    /// `true` when no producer has claimed a slot since the last `dequeue`.
-    pub fn is_empty(&self) -> bool {
-        let (head, tail) = unpack(self.state.load(Ordering::Acquire));
-        head == tail
-    }
-
     /// Consumer side, one thread only. Returns the oldest published signal.
     /// `None` means empty, or that the oldest claimed slot is still 0 because
     /// its producer has not stored yet: come back after that producer's

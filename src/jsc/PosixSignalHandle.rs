@@ -6,6 +6,8 @@ use crate::event_loop::EventLoop;
 use crate::{JSGlobalObject, Task};
 use bun_event_loop::{Taskable, task_tag};
 use bun_threading::SignalRing;
+#[cfg(unix)]
+use bun_sys::FdExt as _;
 
 const BUFFER_SIZE: usize = 8192;
 
@@ -44,31 +46,68 @@ impl PosixSignalHandle {
         }
     }
 
+    /// The main thread's handle, and only when `global_object` is the main thread's: workers get
+    /// no POSIX signals, and the ring has a single consumer.
     #[cfg(unix)]
-    fn main_thread() -> Option<bun_ptr::BackRef<Self>> {
+    fn for_main_thread(global_object: &JSGlobalObject) -> Option<bun_ptr::BackRef<Self>> {
+        if !global_object.bun_vm().is_main_thread() {
+            return None;
+        }
         let vm = VirtualMachine::get_main_thread_vm()?;
-        // SAFETY: `vm` and its event loop are process-lifetime; only the
-        // `signal_handler` slot is read.
+        // SAFETY: `vm` and its event loop are process-lifetime; only the `signal_handler` slot is read.
         unsafe { (*(*vm).event_loop()).signal_handler }
     }
 
-    /// `true` when a signal handler has queued a signal the main thread has not consumed.
+    /// A pipe the signal handler writes one byte to per queued signal, for a host function that
+    /// blocks the JS thread outside the event loop (`prompt()`) to poll next to stdin. Returns the
+    /// read end, or `None` off the main thread or when no JS signal listener was ever installed.
     #[cfg(unix)]
-    pub fn has_queued() -> bool {
-        Self::main_thread().is_some_and(|handler| !handler.ring.is_empty())
+    pub fn blocking_wait_fd(global_object: &JSGlobalObject) -> Option<bun_sys::Fd> {
+        Self::for_main_thread(global_object)?;
+        let existing = BLOCKING_WAIT_PIPE[0].load(Ordering::Acquire);
+        if existing >= 0 {
+            return Some(bun_sys::Fd::from_native(existing));
+        }
+        let [read, write] = bun_sys::pipe().ok()?;
+        for fd in [read, write] {
+            if bun_sys::set_close_on_exec(fd).is_err() || bun_sys::set_nonblocking(fd).is_err() {
+                read.close();
+                write.close();
+                return None;
+            }
+        }
+        BLOCKING_WAIT_PIPE[0].store(read.native(), Ordering::Release);
+        BLOCKING_WAIT_PIPE[1].store(write.native(), Ordering::Release);
+        Some(read)
     }
 
-    /// Runs the JS listeners for every queued signal now (for a host function that blocks the JS thread). Main thread only.
+    /// Runs the JS listeners for every queued signal now. Main thread only (a no-op elsewhere).
     #[cfg(unix)]
     pub fn run_queued_from_js_thread(global_object: &JSGlobalObject) {
-        let Some(handler) = Self::main_thread() else {
+        let Some(handler) = Self::for_main_thread(global_object) else {
             return;
         };
+        // Empty the pipe before the ring: a signal that lands in between leaves a byte behind
+        // (a spurious wakeup), never a queued signal with no byte.
+        let read = BLOCKING_WAIT_PIPE[0].load(Ordering::Acquire);
+        if read >= 0 {
+            let mut buf = [0u8; 64];
+            while matches!(bun_sys::read(bun_sys::Fd::from_native(read), &mut buf), Ok(n) if n == buf.len())
+            {
+            }
+        }
         while let Some(signal) = handler.ring.dequeue() {
             PosixSignalTask::run_from_js_thread(signal, global_object);
         }
     }
 }
+
+/// `[read, write]` ends of the pipe behind [`PosixSignalHandle::blocking_wait_fd`]; -1 until created.
+#[cfg(unix)]
+static BLOCKING_WAIT_PIPE: [core::sync::atomic::AtomicI32; 2] = [
+    core::sync::atomic::AtomicI32::new(-1),
+    core::sync::atomic::AtomicI32::new(-1),
+];
 
 /// This is the signal handler entry point. Calls enqueue on the ring buffer.
 /// Note: Must be minimal logic here. Only do atomics & signal-safe calls.
@@ -102,6 +141,12 @@ extern "C" fn Bun__onPosixSignal(number: i32) {
                 return;
             };
             if handler.enqueue(signal) {
+                let wait_fd = BLOCKING_WAIT_PIPE[1].load(Ordering::Acquire);
+                if wait_fd >= 0 {
+                    // SAFETY: write(2) is async-signal-safe; the fd is O_NONBLOCK, a full pipe is
+                    // already readable so the lost byte does not matter.
+                    let _ = unsafe { libc::write(wait_fd, (&raw const signal).cast(), 1) };
+                }
                 // SAFETY: same process-lifetime event loop as above; `wakeup`
                 // is one async-signal-safe write to the loop's wakeup fd.
                 unsafe { (*(*vm).event_loop()).wakeup() };

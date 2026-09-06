@@ -438,16 +438,9 @@ describe.skipIf(isWindows)("dialogs run JS signal listeners while they wait for 
       if (done) break;
       shown += Buffer.from(value).toString();
     }
+    // No input follows: the listener alone must end the process. Stdin stays
+    // open, so a dialog that ignores the signal keeps waiting and times out.
     proc.kill(signal);
-    // Then answer the dialog. Without the fix the answer is consumed first and
-    // the code after the dialog runs. With it the child may already be gone,
-    // so a closed pipe (EPIPE) is the expected outcome, not a failure.
-    try {
-      proc.stdin.write("bob\n");
-      await proc.stdin.end();
-    } catch (e) {
-      if (e?.code !== "EPIPE") throw e;
-    }
 
     const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
     return { shown, stderr, exitCode };

@@ -101,19 +101,16 @@ describe("url.domainToUnicode", () => {
   }
 });
 
-// UTS #46 4.1 criterion 5: a label must not begin with "xn--" once it is Punycode-decoded.
+// UTS #46 4.1 criterion 4: a label must not begin with "xn--" once it is Punycode-decoded.
 // Node rejects the host, so both functions return "". ICU's ToUnicode would otherwise hand back
 // the label with a U+FFFD marker appended.
-const nestedACE = [
-  "xn--xn--zca-hia", // "xn--zca£"
-  "xn--xn---epa", // "xn--é"
-  "a.xn--xn--ab-gva.b", // "xn--abé"
-  "xn--xn--zca-7pj", // "xn--zcaا" (RTL, full ICU check)
-];
 describe("nested xn-- labels", () => {
-  for (const input of nestedACE) {
-    test(`'${input}' is rejected`, () => {
-      expect([url.domainToASCII(input), url.domainToUnicode(input)]).toEqual(["", ""]);
-    });
-  }
+  test.each([
+    ["xn--xn--zca-hia", "xn--zca£"],
+    ["xn--xn---epa", "xn--é"],
+    ["a.xn--xn--ab-gva.b", "xn--abé"],
+    ["xn--xn--zca-7pj", "xn--zcaا (RTL, full ICU check)"],
+  ])("'%s' (decodes to %s) is rejected", input => {
+    expect([url.domainToASCII(input), url.domainToUnicode(input)]).toEqual(["", ""]);
+  });
 });

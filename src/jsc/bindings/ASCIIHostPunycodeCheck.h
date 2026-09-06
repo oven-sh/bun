@@ -152,7 +152,7 @@ inline ASCIIHostPunycodeVerdict checkLabel(const CharacterType* label, size_t le
         return count == -2 ? ASCIIHostPunycodeVerdict::NeedsFullCheck : ASCIIHostPunycodeVerdict::Invalid;
     if (!count)
         return ASCIIHostPunycodeVerdict::NeedsFullCheck;
-    // UTS #46 4.1 criterion 5 (Unicode 15.1): the decoded label must not begin with "xn--" either.
+    // UTS #46 4.1 criterion 4 (Unicode 15.1): the decoded label must not begin with "xn--" either.
     if (count >= 4 && codePoints[0] == 'x' && codePoints[1] == 'n' && codePoints[2] == '-' && codePoints[3] == '-')
         return ASCIIHostPunycodeVerdict::Invalid;
 

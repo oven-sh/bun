@@ -1067,12 +1067,31 @@ pub(crate) fn scan_imports_and_exports(
                 id
             );
 
+            // `InsideWrapperPrefix` joins every dependency that follows an async
+            // one into `await __promiseAll([...])`. Import records are in source
+            // order.
+            let first_async_import: Option<u32> = col_ref!(import_records_list)[id]
+                .as_slice()
+                .iter()
+                .position(|record| {
+                    record.kind == ImportKind::Stmt
+                        && record.source_index.is_valid()
+                        && col_ref!(flags)[record.source_index.get() as usize]
+                            .is_async_or_has_async_dependency
+                })
+                .map(|index| index as u32);
+            let follows_async_import = |kind: ImportKind, import_record_index: u32| {
+                kind == ImportKind::Stmt
+                    && first_async_import.is_some_and(|first| import_record_index > first)
+            };
+
             let parts_len = col_ref!(parts_list)[id].len() as usize;
             for part_index in 0..parts_len {
                 let mut to_esm_uses: u32 = 0;
                 let mut to_common_js_uses: u32 = 0;
                 let mut runtime_require_uses: u32 = 0;
                 let mut preload_uses: u32 = 0;
+                let mut promise_all_uses: u32 = 0;
 
                 // Imports of wrapped files must depend on the wrapper
                 // Iterate by index so each iteration re-borrows
@@ -1121,6 +1140,11 @@ pub(crate) fn scan_imports_and_exports(
                                 && should_call_runtime_require(output_format)
                             {
                                 runtime_require_uses += 1;
+                            }
+
+                            // `var ns = require("path")` joins the awaited list.
+                            if !is_external_dyn && follows_async_import(kind, import_record_index) {
+                                promise_all_uses += 1;
                             }
 
                             // A split `require()` whose target is CommonJS at link
@@ -1205,6 +1229,11 @@ pub(crate) fn scan_imports_and_exports(
                                 1,
                                 Index::source(other_source_index),
                             )?;
+                        }
+
+                        // `init_x()` or `var ns = require_x()` joins the awaited list.
+                        if follows_async_import(kind, import_record_index) {
+                            promise_all_uses += 1;
                         }
 
                         // This is an ES6 import of a CommonJS module, so it needs the
@@ -1405,6 +1434,13 @@ pub(crate) fn scan_imports_and_exports(
                         Index::part(part_index as u32),
                         b"__preload",
                         preload_uses,
+                    )?;
+
+                    this.graph.generate_runtime_symbol_import_and_use(
+                        source_index,
+                        Index::part(part_index as u32),
+                        b"__promiseAll",
+                        promise_all_uses,
                     )?;
                 }
             }

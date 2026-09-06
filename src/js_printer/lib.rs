@@ -2771,11 +2771,20 @@ pub(crate) mod __gated_printer {
                 // namespace object may not exist: the result is `{}`.
                 let namespace_unused = record.flags.contains(ImportRecordFlags::NAMESPACE_UNUSED);
 
-                // Internal "import()" of async ESM
+                // Internal "import()" of async ESM:
+                // `Promise.resolve().then(() => init_foo()).then(() => exports_foo)`.
+                // The wrapper is called in a later job, like `import()` evaluates
+                // its target, so the caller's own module body finishes first. A
+                // direct `init_foo()` from inside that body, while `init_foo` runs
+                // its first synchronous segment, would return `undefined`.
                 if record.kind == ImportKind::Dynamic && meta.is_wrapper_async {
+                    self.print_space_before_identifier();
+                    self.print(b"Promise.resolve()");
+                    let _ = self.print_dot_then_prefix();
                     self.print_space_before_identifier();
                     self.print_symbol(meta.wrapper_ref);
                     self.print(b"()");
+                    self.print_dot_then_suffix();
                     if meta.exports_ref.is_valid() {
                         let _ = self.print_dot_then_prefix();
                         self.print_space_before_identifier();

@@ -3333,14 +3333,17 @@ describe("bundler", () => {
     run: { stdout: "patched orig" },
   });
 
-  // Importee that statically imports the importer: the cycle completes at
-  // the `await`, after `value` is initialized.
+  // Importee that statically imports the importer: the importee waits for the
+  // importer's top-level await, then reads the initialized `value`. (Awaiting
+  // the `import()` at top level instead would be a deadlock: the importer would
+  // wait for the importee and the importee for the importer. Node reports an
+  // unsettled top-level await for that program.)
   itBundled("dynamic_import_dce/NoSplitCycleThroughImporter", {
     files: {
       "/entry.js": /* js */ `
         export const value = "V";
-        const { helper } = await import("./b.js");
-        console.log(helper);
+        await 0;
+        import("./b.js").then(({ helper }) => console.log(helper));
       `,
       "/b.js": /* js */ `
         import { value } from "./entry.js";
@@ -3767,7 +3770,9 @@ describe("bundler", () => {
   });
 
   // `init_x()` of an importee with top-level await is a promise: the object
-  // is built after it settles. (CJS output has no top-level await.)
+  // is built after it settles. The wrapper is called from a microtask, so the
+  // importee starts after the importer's own job, as `import()` evaluates it.
+  // (CJS output has no top-level await.)
   itElides("TopLevelAwaitInImportee", {
     variants: ["esm", "esmMinify"],
     files: {
@@ -3790,7 +3795,7 @@ describe("bundler", () => {
     },
     stdout: "before\nt start\nt end\ngot u late\nthen late",
     output(out) {
-      expect(out).toContain("await init_t().then(() => ({}))");
+      expect(out).toContain("await Promise.resolve().then(() => init_t()).then(() => ({}))");
     },
   });
 

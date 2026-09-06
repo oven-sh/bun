@@ -158,7 +158,7 @@ test("cyclic imports with async dependencies should generate async wrappers", as
 
     // src/RecursiveDependencies/AsyncEntryPoint.ts
     async function AsyncEntryPoint() {
-      await init_BaseElement();
+      await Promise.resolve().then(() => init_BaseElement());
       console.log("Launching AsyncEntryPoint", BaseElement());
     }
 
@@ -166,7 +166,7 @@ test("cyclic imports with async dependencies should generate async wrappers", as
     await Promise.resolve();
     AsyncEntryPoint();
 
-    //# debugId=5B573DC06E466ACE64756E2164756E21
+    //# debugId=BDA13B7994541A1464756E2164756E21
     //# sourceMappingURL=entryBuild.js.map
     "
   `);

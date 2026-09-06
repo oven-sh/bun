@@ -2298,15 +2298,11 @@ impl<'a> LinkerContext<'a> {
                     loc,
                 );
 
-                if other_flags.is_async_or_has_async_dependency {
-                    stmts
-                        .inside_wrapper_prefix
-                        .append_async_dependency(init_call, self.promise_all_runtime_ref)?;
-                } else {
-                    stmts
-                        .inside_wrapper_prefix
-                        .append_sync_dependency(init_call)?;
-                }
+                stmts.inside_wrapper_prefix.append_dependency(
+                    init_call,
+                    other_flags.is_async_or_has_async_dependency,
+                    self.promise_all_runtime_ref,
+                )?;
             }
         }
 
@@ -3538,29 +3534,8 @@ impl<'a> LinkerContext<'a> {
                 // This depends on the "__esm" symbol and declares the "init_foo" symbol
                 // for similar reasons to the CommonJS closure above.
 
-                // Count async dependencies to determine if we need __promiseAll
-                let mut async_import_count: usize = 0;
-                {
-                    let import_records =
-                        self.graph.ast.items_import_records()[source_index as usize].as_slice();
-                    let meta_flags = self.graph.meta.items_flags();
-
-                    for record in import_records {
-                        if !record.source_index.is_valid() {
-                            continue;
-                        }
-                        let other_flags = meta_flags[record.source_index.get() as usize];
-                        if other_flags.is_async_or_has_async_dependency {
-                            async_import_count += 1;
-                            if async_import_count >= 2 {
-                                break;
-                            }
-                        }
-                    }
-                }
-
-                let needs_promise_all = async_import_count >= 2;
-
+                // The `__promiseAll` that joins the dependencies is a use of the
+                // parts that hold the import statements (`scan_imports_and_exports`).
                 let esm_parts: &[u32] = if wrapper_ref.is_valid()
                     && self.options.output_format != Format::InternalBakeDev
                 {
@@ -3569,25 +3544,9 @@ impl<'a> LinkerContext<'a> {
                     &[]
                 };
 
-                let promise_all_parts: &[u32] = if needs_promise_all
-                    && wrapper_ref.is_valid()
-                    && self.options.output_format != Format::InternalBakeDev
-                {
-                    self.top_level_symbols_to_parts_for_runtime(self.promise_all_runtime_ref)
-                } else {
-                    &[]
-                };
-
-                // generate a dummy part that depends on the "__esm" and optionally "__promiseAll" symbols
-                let mut dependencies =
-                    DependencyList::init_capacity(esm_parts.len() + promise_all_parts.len());
+                // generate a dummy part that depends on the "__esm" symbol
+                let mut dependencies = DependencyList::init_capacity(esm_parts.len());
                 for &part in esm_parts {
-                    dependencies.append_assume_capacity(Dependency {
-                        part_index: part,
-                        source_index: bun_ast::Index::RUNTIME,
-                    });
-                }
-                for &part in promise_all_parts {
                     dependencies.append_assume_capacity(Dependency {
                         part_index: part,
                         source_index: bun_ast::Index::RUNTIME,
@@ -3626,19 +3585,6 @@ impl<'a> LinkerContext<'a> {
                             crate::Index::RUNTIME,
                         )
                         .expect("OOM");
-
-                    // Only mark __promiseAll as used if we have multiple async dependencies
-                    if needs_promise_all {
-                        self.graph
-                            .generate_symbol_import_and_use(
-                                source_index,
-                                part_index,
-                                self.promise_all_runtime_ref,
-                                1,
-                                crate::Index::RUNTIME,
-                            )
-                            .expect("OOM");
-                    }
                 }
             }
             WrapKind::None => {}
@@ -5157,157 +5103,183 @@ pub struct StmtList {
     pub(crate) all_stmts: Vec<Stmt>,
 }
 
+/// The statements that run inside a wrapper before the module body: the
+/// `init_x()` calls of its wrapped ESM dependencies, the `require_x()` calls
+/// of its CommonJS dependencies, and the `__reExport(...)` calls of its
+/// `export *` statements. They stay in source order, because that is the
+/// order in which the modules evaluate.
+///
+/// An async dependency returns a promise. The first one becomes
+/// `await init_a()`. Everything that follows it joins that statement as
+/// `await __promiseAll([init_a(), init_b(), ns = require_c()])`, so every
+/// dependency starts before the wrapper suspends, the way the module graph
+/// would evaluate them, and the body runs once all of them have settled.
 pub struct InsideWrapperPrefix {
     pub(crate) stmts: Vec<Stmt>,
-    pub(crate) sync_dependencies_end: usize,
-    // if true it will exist at `sync_dependencies_end`
-    pub(crate) has_async_dependency: bool,
+    /// Index in `stmts` of the `await` statement, once one exists.
+    await_index: Option<usize>,
+    promise_all_ref: Ref,
 }
 
 impl InsideWrapperPrefix {
     fn init() -> Self {
         Self {
             stmts: Vec::new(),
-            sync_dependencies_end: 0,
-            has_async_dependency: false,
+            await_index: None,
+            promise_all_ref: Ref::NONE,
         }
     }
 
-    // deinit → Drop (Vec frees automatically); reset is explicit
-
     pub(crate) fn reset(&mut self) {
         self.stmts.clear();
-        self.sync_dependencies_end = 0;
-        self.has_async_dependency = false;
+        self.await_index = None;
     }
 }
 
 impl InsideWrapperPrefix {
     pub(crate) fn append_non_dependency(&mut self, stmt: Stmt) -> Result<(), AllocError> {
-        self.stmts.push(stmt);
+        let Some(await_index) = self.await_index else {
+            self.stmts.push(stmt);
+            return Ok(());
+        };
+
+        match stmt.data {
+            bun_ast::StmtData::SExpr(s) => self.join_awaited(await_index, s.value),
+            bun_ast::StmtData::SLocal(local)
+                if local.decls.iter().all(|decl| {
+                    decl.value.is_some()
+                        && matches!(decl.binding.data, bun_ast::binding::Data::BIdentifier(_))
+                }) =>
+            {
+                // `var ns = require_x();` becomes `var ns;` before the await and
+                // `ns = require_x()` in the awaited list.
+                let mut hoisted = G::DeclList::init_capacity(local.decls.len());
+                for decl in local.decls.iter() {
+                    let bun_ast::binding::Data::BIdentifier(id) = decl.binding.data else {
+                        unreachable!()
+                    };
+                    hoisted.push(G::Decl {
+                        binding: decl.binding,
+                        value: None,
+                    });
+                    self.join_awaited(
+                        await_index,
+                        Expr::assign(
+                            Expr::init_identifier(id.get().r#ref, decl.binding.loc),
+                            decl.value.expect("infallible: checked above"),
+                        ),
+                    );
+                }
+                self.stmts.insert(
+                    await_index,
+                    Stmt::alloc(
+                        S::Local {
+                            decls: hoisted,
+                            ..Default::default()
+                        },
+                        stmt.loc,
+                    ),
+                );
+                self.await_index = Some(await_index + 1);
+            }
+            _ => self.stmts.push(stmt),
+        }
         Ok(())
     }
 
     pub(crate) fn append_non_dependency_slice(&mut self, stmts: &[Stmt]) -> Result<(), AllocError> {
-        self.stmts.extend_from_slice(stmts);
+        for &stmt in stmts {
+            self.append_non_dependency(stmt)?;
+        }
         Ok(())
     }
 
-    fn append_sync_dependency(&mut self, call_expr: Expr) -> Result<(), AllocError> {
-        self.stmts.insert(
-            self.sync_dependencies_end,
-            Stmt::alloc(
-                S::SExpr {
-                    value: call_expr,
-                    ..Default::default()
-                },
-                call_expr.loc,
-            ),
-        );
-        self.sync_dependencies_end += 1;
-        Ok(())
-    }
-
-    fn append_async_dependency(
+    /// `init_call` is the `init_x()` of a wrapped ESM dependency. `is_async`
+    /// is that dependency's `is_async_or_has_async_dependency`.
+    pub(crate) fn append_dependency(
         &mut self,
-        call_expr: Expr,
+        init_call: Expr,
+        is_async: bool,
         promise_all_ref: Ref,
     ) -> Result<(), AllocError> {
-        if !self.has_async_dependency {
-            self.has_async_dependency = true;
-            self.stmts.insert(
-                self.sync_dependencies_end,
-                Stmt::alloc(
+        match self.await_index {
+            Some(await_index) => self.join_awaited(await_index, init_call),
+            None if is_async => {
+                self.promise_all_ref = promise_all_ref;
+                self.await_index = Some(self.stmts.len());
+                self.stmts.push(Stmt::alloc(
                     S::SExpr {
-                        value: Expr::init(E::Await { value: call_expr }, Loc::EMPTY),
+                        value: Expr::init(E::Await { value: init_call }, Loc::EMPTY),
                         ..Default::default()
                     },
                     Loc::EMPTY,
-                ),
-            );
-            return Ok(());
+                ));
+            }
+            None => self.stmts.push(Stmt::alloc(
+                S::SExpr {
+                    value: init_call,
+                    ..Default::default()
+                },
+                init_call.loc,
+            )),
         }
+        Ok(())
+    }
 
-        // Note: deep AST mutation chain — `s_expr_mut`/`e_await_mut`/
-        // `e_call_mut`/`e_array_mut` return `Option`; `.unwrap()` panics on
-        // shape mismatch.
-        let mut first_dep_call_expr = self.stmts[self.sync_dependencies_end]
+    /// Appends `expr` to the list the statement at `await_index` awaits:
+    /// `await init_a()` becomes `await __promiseAll([init_a(), expr])`, and an
+    /// existing `__promiseAll` list grows by one element.
+    fn join_awaited(&mut self, await_index: usize, expr: Expr) {
+        let awaited: &mut Expr = &mut self.stmts[await_index]
             .data
             .s_expr_mut()
-            .unwrap()
+            .expect("infallible: the await statement is an expression statement")
             .value
             .data
             .e_await_mut()
-            .expect("infallible: variant checked")
+            .expect("infallible: the statement awaits its dependencies")
             .value;
-        let call = first_dep_call_expr
+
+        let call = awaited
             .data
             .e_call_mut()
-            .expect("infallible: variant checked");
-
+            .expect("infallible: the awaited expression is a call");
         if call
             .target
             .data
             .e_identifier()
-            .expect("infallible: variant checked")
-            .ref_
-            .eql(promise_all_ref)
+            .is_some_and(|id| id.ref_.eql(self.promise_all_ref))
         {
-            // `await __promiseAll` already in place, append to the array argument
             call.args
                 .mut_(0)
                 .data
                 .e_array_mut()
-                .expect("infallible: variant checked")
+                .expect("infallible: __promiseAll takes an array")
                 .items
-                .push(call_expr);
-        } else {
-            // convert single `await init_` to `await __promiseAll([init_1(), init_2()])`
-
-            let promise_all = Expr::init(
-                E::Identifier {
-                    ref_: promise_all_ref,
-                    ..Default::default()
-                },
-                Loc::EMPTY,
-            );
-
-            let mut items = bun_ast::ExprNodeList::init_capacity(2);
-            items.append_slice_assume_capacity(&[first_dep_call_expr, call_expr]);
-
-            let mut args = bun_ast::ExprNodeList::init_capacity(1);
-            args.append_assume_capacity(Expr::init(
-                E::Array {
-                    items,
-                    ..Default::default()
-                },
-                Loc::EMPTY,
-            ));
-
-            let promise_all_call = Expr::init(
-                E::Call {
-                    target: promise_all,
-                    args,
-                    ..Default::default()
-                },
-                Loc::EMPTY,
-            );
-
-            // replace the `await init_` expr with `await __promiseAll`
-            self.stmts[self.sync_dependencies_end] = Stmt::alloc(
-                S::SExpr {
-                    value: Expr::init(
-                        E::Await {
-                            value: promise_all_call,
-                        },
-                        Loc::EMPTY,
-                    ),
-                    ..Default::default()
-                },
-                Loc::EMPTY,
-            );
+                .push(expr);
+            return;
         }
-        Ok(())
+
+        let mut items = bun_ast::ExprNodeList::init_capacity(2);
+        items.append_slice_assume_capacity(&[*awaited, expr]);
+
+        let mut args = bun_ast::ExprNodeList::init_capacity(1);
+        args.append_assume_capacity(Expr::init(
+            E::Array {
+                items,
+                ..Default::default()
+            },
+            Loc::EMPTY,
+        ));
+
+        *awaited = Expr::init(
+            E::Call {
+                target: Expr::init_identifier(self.promise_all_ref, Loc::EMPTY),
+                args,
+                ..Default::default()
+            },
+            Loc::EMPTY,
+        );
     }
 }
 

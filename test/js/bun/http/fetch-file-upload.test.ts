@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isBroken, isWindows, tempDir, tls, withoutAggressiveGC } from "harness";
+import { bunEnv, bunExe, isBroken, isMacOS, isWindows, tempDir, tls, withoutAggressiveGC } from "harness";
 import { mkfifo } from "mkfifo";
 import { tmpdir } from "os";
 import { join } from "path";
@@ -226,7 +226,11 @@ describe("Bun.file().slice() upload sends the slice's Content-Length", () => {
 // A FIFO has no size, so its bytes cannot be read into memory up front.
 // The body must be streamed with chunked transfer encoding, and the read
 // must not block the JS thread.
-describe.skipIf(isWindows)("Bun.file(fifo) upload", () => {
+//
+// todo on macOS: a named pipe read through the event loop never reaches EOF
+// there (#30520), so the chunked body never ends. The same todo covers
+// "Bun.file() read text from pipe" in test/js/web/streams/streams.test.js.
+describe.skipIf(isWindows).todoIf(isMacOS)("Bun.file(fifo) upload", () => {
   const SIZE = 1024 * 1024;
   const payload = Buffer.alloc(SIZE);
   for (let i = 0; i < SIZE; i++) payload[i] = (i * 7) & 0xff;

@@ -1340,6 +1340,8 @@ describe("bundler", () => {
       { env: { NODE_ENV: "production" }, stdout: serveProduction },
       { env: { NODE_ENV: "development" }, stdout: serveDevelopment },
       { env: { BUN_ENV: "development" }, stdout: serveDevelopment },
+      { env: { NODE_ENV: "test" }, stdout: serveDevelopment },
+      { env: { NODE_ENV: "staging" }, stdout: serveProduction },
     ],
   });
   itBundled("compile/ServeExplicitDevelopment", {

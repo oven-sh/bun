@@ -364,7 +364,7 @@ Standalone executables can automatically load configuration files from the direc
 - **`tsconfig.json`** and **`package.json`** loading is **disabled** — these are typically only needed at development time, and the bundler already uses them when compiling
 - **`.env`** and **`bunfig.toml`** loading is **enabled** — these often contain runtime configuration that may vary per deployment
 
-A standalone executable treats an unset `NODE_ENV` (or `BUN_ENV`) as `production`. It loads `.env.production`, not `.env.development`, and `Bun.serve()` defaults to `development: false`. Set `NODE_ENV=development` in the environment to get the development behavior.
+A standalone executable runs as `production` unless `NODE_ENV` (or `BUN_ENV`) is `development` or `test`. An unset variable, or any other value, counts as production. It loads `.env.production`, not `.env.development`, and `Bun.serve()` defaults to `development: false`. Set `NODE_ENV=development` in the environment to get the development behavior.
 
 <Note>
   In a future version of Bun, `.env` and `bunfig.toml` may also be disabled by default for more deterministic behavior.

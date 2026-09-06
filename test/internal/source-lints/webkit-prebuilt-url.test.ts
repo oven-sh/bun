@@ -16,7 +16,6 @@ function mockToolchain(): Toolchain {
     clangVersion: "21.1.8",
     clangResourceDir: "/fake/llvm/lib/clang/21",
     ar: "/fake/llvm/bin/llvm-ar",
-    ranlib: "/fake/llvm/bin/llvm-ranlib",
     ld: "/fake/llvm/bin/ld.lld",
     ld64Lld: "/fake/llvm/bin/ld64.lld",
     rustLld: undefined,
@@ -24,9 +23,13 @@ function mockToolchain(): Toolchain {
     strip: "/fake/bin/strip",
     llvmStrip: "/fake/llvm/bin/llvm-strip",
     nm: "/fake/llvm/bin/llvm-nm",
+    readobj: "/fake/llvm/bin/llvm-readobj",
+    objdump: "/fake/llvm/bin/llvm-objdump",
+    cxxfilt: "/fake/llvm/bin/llvm-cxxfilt",
     dsymutil: "/fake/llvm/bin/dsymutil",
     bun: "/fake/bin/bun",
     jsRuntime: "/fake/bin/bun",
+    jsRuntimeArgv: ["/fake/bin/bun"],
     esbuild: "/fake/bin/esbuild",
     ccache: undefined,
     cmake: "/fake/bin/cmake",
@@ -35,7 +38,6 @@ function mockToolchain(): Toolchain {
     rustupHome: undefined,
     msvcLinker: undefined,
     rc: undefined,
-    mt: undefined,
     nasm: undefined,
   };
 }
@@ -49,6 +51,7 @@ function resolveLinuxRelease(partial: PartialConfig = {}): Config {
       arch: "x64",
       abi: "gnu",
       buildType: "Release",
+      webkit: "prebuilt",
       lto: false,
       baseline: false,
       linuxSysroot: "/fake/linux-sysroot",
@@ -86,7 +89,16 @@ describe("WebKit prebuilt URL", () => {
 
   test("debug picks the -debug artifact from the same release tag", () => {
     const cfg = resolveConfig(
-      { os: "linux", arch: "x64", abi: "gnu", buildType: "Debug", asan: false, baseline: false, linuxSysroot: "/fake" },
+      {
+        os: "linux",
+        arch: "x64",
+        abi: "gnu",
+        buildType: "Debug",
+        webkit: "prebuilt",
+        asan: false,
+        baseline: false,
+        linuxSysroot: "/fake",
+      },
       mockToolchain(),
     );
     expect(prebuiltUrlOf(cfg)).toBe(

@@ -11,11 +11,13 @@
  */
 
 import type { Dependency } from "../source.ts";
+import { bootstrapCmds } from "./bootstrap-cmds.ts";
 import { boringssl } from "./boringssl.ts";
 import { brotli } from "./brotli.ts";
 import { cares } from "./cares.ts";
 import { hdrhistogram } from "./hdrhistogram.ts";
 import { highway } from "./highway.ts";
+import { icu } from "./icu.ts";
 import { libarchive } from "./libarchive.ts";
 import { libdeflate } from "./libdeflate.ts";
 import { libjpegTurbo } from "./libjpeg-turbo.ts";
@@ -73,6 +75,13 @@ export const allDeps: readonly Dependency[] = [
   // a DirectBuild dep its .o files go straight on the link line so static
   // link order doesn't apply.
   lsquic,
+  // icu before WebKit: --webkit=source compiles WTF/JSC against its headers
+  // (fetchDeps). Disabled otherwise (prebuilt WebKit bundles ICU; macOS uses
+  // the SDK's).
+  icu,
+  // bootstrap_cmds before WebKit: source of the migcom host tool the macOS
+  // direct build runs (fetchDeps). macOS + --webkit=source only.
+  bootstrapCmds,
   // WebKit LAST in link order — WTF/JSC provide symbols that everything
   // above might reference (via JavaScriptCore types in headers).
   webkit,
@@ -80,11 +89,13 @@ export const allDeps: readonly Dependency[] = [
 
 // Re-export individuals for direct import when needed.
 export {
+  bootstrapCmds,
   boringssl,
   brotli,
   cares,
   hdrhistogram,
   highway,
+  icu,
   libarchive,
   libdeflate,
   libjpegTurbo,

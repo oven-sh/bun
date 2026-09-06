@@ -15,7 +15,6 @@ import { writeIfChanged } from "./fs.ts";
 import type { BuildNode, Ninja, Rule } from "./ninja.ts";
 import { quote } from "./shell.ts";
 import { elfDebugCompressPostlinkCommand, machoPostlinkCommand } from "./shims.ts";
-import { streamPath } from "./stream.ts";
 
 // ---------------------------------------------------------------------------
 // Rule registration — call once per Ninja instance
@@ -150,11 +149,11 @@ export function registerCompileRules(n: Ninja, cfg: Config): void {
   });
 
   // ─── Link executable ───
-  // Uses response file because object lists get long (>32k args breaks on windows).
-  // console pool: link is inherently serial (one exe), takes 30s+ on large
-  // binaries, and lld prints useful progress (undefined symbol errors,
-  // --verbose timing). Streaming beats sitting at [N/N] wondering if it hung.
-  // stream.ts --console: passthrough + ninja Windows buffering fix — see stream.ts.
+  // Uses response file because object lists get long (>32k args breaks on
+  // windows). Not in the console pool: that pool has depth 1, and the graph
+  // links several executables (bun, testFFI, JSC's LLInt extractors) whose
+  // links should overlap; lld's only output is diagnostics, which ninja
+  // shows when the edge finishes.
   //
   // Windows: -fuse-ld=lld forces lld-link (VS dev shell puts link.exe
   // first in PATH, clang-cl would default to it). /link separator —
@@ -175,15 +174,13 @@ export function registerCompileRules(n: Ninja, cfg: Config): void {
   // empty everywhere else): ninja runs the whole command through `sh -c`,
   // so the fixup runs after the link succeeds and the declared output is
   // already the final, patched, re-signed artifact. See shims.ts.
-  const wrap = `${cfg.jsRuntime} ${q(streamPath)} link --console`;
   n.rule("link", {
     command: cfg.windows
-      ? `${wrap} ${cxx} /nologo -fuse-ld=lld ${q(`/clang:-B${dirname(cfg.ld)}`)} @$out.rsp /Fe$out /link $ldflags`
-      : `${wrap} ${cxx} @$out.rsp $ldflags -o $out${elfDebugCompressPostlinkCommand(cfg)}${machoPostlinkCommand(cfg)}`,
+      ? `${cxx} /nologo -fuse-ld=lld ${q(`/clang:-B${dirname(cfg.ld)}`)} @$out.rsp /Fe$out /link $ldflags`
+      : `${cxx} @$out.rsp $ldflags -o $out${elfDebugCompressPostlinkCommand(cfg)}${machoPostlinkCommand(cfg)}`,
     description: "link $out",
     rspfile: "$out.rsp",
     rspfile_content: "$in_newline",
-    pool: "console",
   });
 
   // ─── Static library archive ───
@@ -236,10 +233,9 @@ export interface CompileOpts {
  * E.g. src/jsc/bindings/foo.cpp → obj/src_jsc_bindings_foo.cpp.o
  */
 export function cxx(n: Ninja, cfg: Config, src: string, opts: CompileOpts): string {
-  assert(
-    extname(src) === ".cpp" || extname(src) === ".cc" || extname(src) === ".cxx",
-    `cxx() expects .cpp/.cc/.cxx source, got: ${src}`,
-  );
+  // .mm: Objective-C++ (WTF's darwin/OSLogPrintStream.mm); clang picks the
+  // language from the extension, the flags are the C++ ones.
+  assert([".cpp", ".cc", ".cxx", ".mm"].includes(extname(src)), `cxx() expects .cpp/.cc/.cxx/.mm source, got: ${src}`);
   return compile(n, cfg, src, opts, "cxx");
 }
 
@@ -362,8 +358,8 @@ export function pch(
      * libs (libJavaScriptCore.a etc.).
      *
      * Can't be order-only: the depfile tracks headers, but ninja stats at
-     * startup. Local WebKit headers live in buildDir and get regenerated
-     * by dep_build MID-RUN. At startup ninja sees old headers → thinks
+     * startup, and a prebuilt/cargo dep rewrites its headers MID-RUN as an
+     * undeclared side effect. At startup ninja sees old headers → thinks
      * PCH is fresh → cxx fails with "file modified since PCH was built"
      * → needs a second build. With these implicit, restat propagates the
      * lib change to PCH and it rebuilds in the same run.
@@ -453,6 +449,8 @@ export interface LinkOpts {
   implicitInputs?: string[];
   /** Map files the link's flags make it write alongside the executable (flags.ts linkerMapOutputs). */
   linkerMapOutputs?: string[];
+  /** Checks to run on the executable whenever it is linked (ninja validations): stamp paths of edges emitted elsewhere. */
+  validations?: string[];
 }
 
 /**
@@ -477,24 +475,25 @@ export function link(n: Ninja, cfg: Config, out: string, objects: string[], opts
   if (opts.implicitInputs !== undefined && opts.implicitInputs.length > 0) {
     node.implicitInputs = opts.implicitInputs;
   }
+  if (opts.validations !== undefined && opts.validations.length > 0) node.validations = opts.validations;
   n.build(node);
 
   return absOut;
 }
 
 /**
- * Create a static library. Returns absolute path to output. `implicitInputs`
- * are waited for but not archived (the forbidUndefined stamps of the dep
- * objects going in).
+ * Create a static library. Returns absolute path to output. `validations`:
+ * checks on the objects going in (forbidUndefined stamps) — run whenever the
+ * archive is made, without holding it up.
  */
-export function ar(n: Ninja, cfg: Config, out: string, objects: string[], implicitInputs: string[] = []): string {
+export function ar(n: Ninja, cfg: Config, out: string, objects: string[], validations: string[] = []): string {
   const absOut = resolve(cfg.buildDir, out);
 
   n.build({
     outputs: [absOut],
     rule: "ar",
     inputs: objects,
-    ...(implicitInputs.length > 0 ? { implicitInputs } : {}),
+    ...(validations.length > 0 ? { validations } : {}),
   });
 
   return absOut;

@@ -63,9 +63,12 @@ export const cpuTargetFlags: Flag[] = [
     desc: "ARM64 Android: ARMv8-A base + CRC, tuned for Cortex-A78 (common big core)",
   },
   {
-    flag: ["/clang:-march=armv8-a+crc", "/clang:-mtune=ampere1"],
+    // No -mtune: Windows-on-ARM hardware is Snapdragon (Oryon / Cortex-X), and
+    // generic tuning is what MSVC, Chromium and Rust ship there. (ampere1's
+    // tuning pads every function and loop to 64 bytes.)
+    flag: "/clang:-march=armv8-a+crc",
     when: c => c.windows && c.arm64,
-    desc: "ARM64 Windows: clang-cl prefix required (/clang: passes to clang)",
+    desc: "ARM64 Windows: ARMv8-A base + CRC, generic tuning (clang-cl prefix required)",
   },
   {
     flag: "-march=nehalem",
@@ -233,11 +236,8 @@ export const globalFlags: Flag[] = [
 
   // ─── Optimization ───
   {
-    // cmake's Release/RelWithDebInfo build types append this to
-    // CMAKE_<LANG>_FLAGS_<TYPE> automatically; nested-cmake deps got it
-    // from there. Direct deps only see globalFlags, so it must be here
-    // too — otherwise every assert() in zstd/boringssl/mimalloc/etc.
-    // stays live in release. (bun's own NDEBUG in `defines` below is
+    // Deps only see globalFlags, so it must be here — otherwise every
+    // assert() in zstd/boringssl/mimalloc/etc. stays live in release. (bun's own NDEBUG in `defines` below is
     // redundant after this, but harmless.)
     flag: "-DNDEBUG",
     when: c => c.release,
@@ -369,6 +369,7 @@ export const globalFlags: Flag[] = [
   {
     flag: "-fno-rtti",
     when: c => c.unix,
+    lang: "cxx",
     desc: "Disable RTTI (no dynamic_cast/typeid)",
   },
   {
@@ -383,6 +384,17 @@ export const globalFlags: Flag[] = [
     when: c => c.unix,
     desc: "Keep frame pointers (for profiling and backtraces)",
   },
+
+  // ─── Hardening policy (stated, so a distro clang's vendor defaults don't decide) ───
+  {
+    // Arch/Alpine/Fedora/Ubuntu package clang with -fstack-protector-strong on
+    // by default; apt.llvm.org (CI) and upstream builds don't. Off: what bun
+    // has always shipped, and a canary load+check in most JSC frames is not
+    // free.
+    flag: "-fno-stack-protector",
+    when: c => c.unix,
+    desc: "No stack protector (pin the toolchain-independent default)",
+  },
   {
     // clang-cl drops /Oy- on x64 and keeps only non-leaf frames on arm64
     flag: ["/clang:-fno-omit-frame-pointer", "/clang:-mno-omit-leaf-frame-pointer"],
@@ -392,9 +404,15 @@ export const globalFlags: Flag[] = [
 
   // ─── Visibility ───
   {
-    flag: ["-fvisibility=hidden", "-fvisibility-inlines-hidden"],
+    flag: "-fvisibility=hidden",
     when: c => c.unix,
     desc: "Hidden symbol visibility (explicit exports only)",
+  },
+  {
+    flag: "-fvisibility-inlines-hidden",
+    when: c => c.unix,
+    lang: "cxx",
+    desc: "Hidden visibility for inline C++ member functions",
   },
 
   // ─── Unwinding / exception tables ───
@@ -587,14 +605,14 @@ export const bunOnlyFlags: Flag[] = [
   },
 
   // ─── Language standard ───
-  // WebKit uses gnu++ extensions on Linux; if we don't match, the first
-  // memory allocation crashes (ABI mismatch in sized delete).
-  // Not in globalFlags because deps set their own standard.
+  // Not in globalFlags because deps set their own standard (WebKit itself is
+  // -std=c++23, as its cmake builds it; the GNU-extensions dialect differs in
+  // accepted syntax and predefined macros, not ABI).
   {
     flag: "-std=gnu++23",
     when: c => c.linux || c.freebsd,
     lang: "cxx",
-    desc: "C++23 with GNU extensions (required to match WebKit's ABI on Linux/FreeBSD)",
+    desc: "C++23 with GNU extensions",
   },
   {
     flag: "-std=c++23",
@@ -793,7 +811,8 @@ export const defines: Flag[] = [
     desc: "Use non-cancelable POSIX calls on Darwin",
   },
   {
-    flag: ["WIN32", "_WINDOWS", "WIN32_LEAN_AND_MEAN=1", "_CRT_SECURE_NO_WARNINGS", "BORINGSSL_NO_CXX=1"],
+    // BEXPORT=: see deps/webkit.ts — bun's TUs include bmalloc headers too.
+    flag: ["WIN32", "_WINDOWS", "WIN32_LEAN_AND_MEAN=1", "_CRT_SECURE_NO_WARNINGS", "BORINGSSL_NO_CXX=1", "BEXPORT="],
     when: c => c.windows,
     desc: "Standard Windows defines + disable CRT security warnings",
   },
@@ -826,13 +845,147 @@ export const defines: Flag[] = [
 //   For the final bun executable link step only.
 // ═══════════════════════════════════════════════════════════════════════════
 
-export const linkerFlags: Flag[] = [
-  // ─── Sanitizers ───
+/**
+ * The toolchain half of the link line for a unix target: triple + sysroot,
+ * which linker, C++ runtime, PIE policy, deployment target, sanitizer
+ * runtime. Everything an
+ * executable for the target needs regardless of what it is — bun itself, and
+ * the JSC LLInt offset extractors WebKit's build links (deps/webkit.ts,
+ * via computeTargetLinkFlags). Bun-specific link policy (symbol lists, ICF,
+ * stack size, wraps) stays in `linkerFlags`, which includes this table.
+ * Windows links go through lld-link's own argument shape and stay there too.
+ */
+export const targetLinkFlags: Flag[] = [
+  // ─── Windows (lld-link, after /link) ───
   {
+    // Explicit machine type — clang-cl's driver does not reliably forward
+    // its default target to lld-link when invoked as a pure link driver
+    // (no source inputs, /link separator), so on arm64 lld-link would
+    // autodetect x64 and reject every arm64 input. CMake's Windows-MSVC
+    // platform module always set /machine: from CMAKE_SYSTEM_PROCESSOR,
+    // which is why the pre-ninja build never needed this in BuildBun.cmake.
+    flag: c => `/machine:${c.arm64 ? "arm64" : "x64"}`,
+    when: c => c.windows,
+    desc: "Target machine type for lld-link (required on arm64; x64 hosts default correctly but explicit is harmless)",
+  },
+  {
+    // Serviced UCRT overlay: an explicit /libpath: is searched before the
+    // /winsysroot-derived paths, so its libucrt.lib/ucrt.lib win over the
+    // splat's stale copies (see UCRT_SERVICING_VERSION in winsysroot.ts —
+    // the VS-manifest payload xwin downloads carries an ancient arm64 UCRT
+    // with broken printf formatting).
+    flag: c => quote(`/libpath:${ucrtServicingLibDir(c)!}`, false),
+    when: c => c.windows && c.host.os !== "windows",
+    desc: "Windows cross-compile: serviced Universal CRT static libs (SDK NuGet) override the splat's",
+  },
+  {
+    // Windows cross-compile: these ldflags go after /link, straight to
+    // lld-link, which doesn't see the compile-side `/winsysroot` from
+    // globalFlags — repeat it in lld-link's own spelling so the MSVC CRT
+    // and Windows SDK import libraries (libcmt, kernel32, ...) are found
+    // without a VS dev shell's LIB env.
+    flag: c => quote(`/winsysroot:${c.winsysroot!}`, false),
+    when: c => c.windows && c.winsysroot !== undefined,
+    desc: "Windows cross-compile: MSVC CRT + Windows SDK library search root (xwin splat)",
+  },
+  // ─── macOS ───
+  {
+    // Cross-link from a non-darwin host: same pattern as Android/FreeBSD —
+    // target triple + explicit linker. -isysroot is added by the deployment-
+    // target flag below; the clang driver forwards it to ld64.lld as
+    // -syslibroot. -mlinker-version≥520 makes the driver emit the modern
+    // -platform_version argument ld64.lld requires (without it the driver
+    // assumes an ancient host ld64 and emits nothing usable); the exact
+    // value only gates driver behavior, so track a recent ld64 release.
+    flag: c => [`--target=${c.crossTarget!}`, "-mlinker-version=705", `--ld-path=${c.ld}`],
+    when: c => c.darwin && c.crossTarget !== undefined,
+    desc: "macOS cross-link: target triple + ld64.lld + modern linker arg style",
+  },
+  {
+    // Must also be passed at link: ld64 reads this to write LC_BUILD_VERSION.minos.
+    // Without it, ld64 defaults to the SDK version (15.0 on CI) → binary refuses
+    // to launch on macOS 13/14. globalFlags doesn't flow to ldflags, so repeat here.
+    flag: c => [`-mmacosx-version-min=${c.osxDeploymentTarget!}`, "-isysroot", c.osxSysroot!],
+    when: c => c.darwin && c.osxDeploymentTarget !== undefined && c.osxSysroot !== undefined,
+    desc: "macOS deployment target at link (sets LC_BUILD_VERSION minos)",
+  },
+
+  // ─── Linux ───
+  {
+    flag: c => [`--target=${c.crossTarget!}`, `--sysroot=${c.sysroot!}`],
+    when: c => c.linux && c.abi !== "android" && c.crossTarget !== undefined && c.sysroot !== undefined,
+    desc: "linux sysroot link (gnu: ubuntu:20.04+gcc-13; musl: alpine)",
+  },
+  {
+    flag: ["-static-libstdc++", "-static-libgcc"],
+    when: c => c.linux && c.abi === "gnu",
+    desc: "Static C++ runtime (don't depend on host libstdc++)",
+  },
+  {
+    flag: ["-lstdc++", "-lgcc"],
+    when: c => c.linux && c.abi === "musl",
+    desc: "Dynamic C++ runtime on musl (static unavailable)",
+  },
+  {
+    flag: c => [
+      `--target=${c.crossTarget!}`,
+      `--sysroot=${c.sysroot!}`,
+      "--rtlib=compiler-rt",
+      "--unwindlib=libunwind",
+      "-stdlib=libc++",
+      "-static-libstdc++",
+      // -l:libunwind.a (driver-emitted) searches -L paths; point at the NDK's
+      // own per-arch runtime dir so it resolves regardless of resource-dir layout.
+      `-L${join(c.androidNdkRuntimeDir!, c.arm64 ? "aarch64" : "x86_64")}`,
+    ],
+    when: c => c.linux && c.abi === "android",
+    desc: "Android link: target/sysroot + compiler-rt/libunwind + static libc++",
+  },
+  {
+    flag: c => `--ld-path=${c.ld}`,
+    when: c => c.linux,
+    desc: "Use lld instead of system ld",
+  },
+  {
+    flag: ["-fno-pic", "-Wl,-no-pie"],
+    when: c => c.linux && c.abi !== "android",
+    desc: "No PIE (we don't need ASLR; simpler codegen)",
+  },
+  {
+    flag: ["-fPIC", "-pie"],
+    when: c => c.abi === "android",
+    desc: "Android: bionic loader requires PIE",
+  },
+
+  // ─── FreeBSD ───
+  {
+    flag: c => [`--target=${c.crossTarget!}`, `--sysroot=${c.sysroot!}`, "-stdlib=libc++"],
+    when: c => c.freebsd && c.crossTarget !== undefined,
+    desc: "FreeBSD cross-link: target/sysroot + libc++ (FreeBSD base ships libc++)",
+  },
+  {
+    flag: c => `--ld-path=${c.ld}`,
+    when: c => c.freebsd,
+    desc: "Use lld instead of system ld",
+  },
+  {
+    flag: ["-fno-pic", "-Wl,-no-pie"],
+    when: c => c.freebsd,
+    desc: "FreeBSD 13+ clang defaults to PIE; opt out (matches Linux, avoids -fPIC rebuild of WebKit/deps)",
+  },
+  // ─── Sanitizer runtime ───
+  {
+    // Objects are compiled -fsanitize=address (globalFlags); anything linked
+    // from them needs the runtime.
     flag: "-fsanitize=address",
     when: c => c.unix && c.asan,
     desc: "Link ASAN runtime",
   },
+];
+
+export const linkerFlags: Flag[] = [
+  ...targetLinkFlags,
+  // ─── Sanitizers (bun policy) ───
   {
     flag: "-fsanitize=null",
     when: c =>
@@ -932,37 +1085,6 @@ export const linkerFlags: Flag[] = [
   },
 
   // ─── Windows ───
-  {
-    // Explicit machine type — clang-cl's driver does not reliably forward
-    // its default target to lld-link when invoked as a pure link driver
-    // (no source inputs, /link separator), so on arm64 lld-link would
-    // autodetect x64 and reject every arm64 input. CMake's Windows-MSVC
-    // platform module always set /machine: from CMAKE_SYSTEM_PROCESSOR,
-    // which is why the pre-ninja build never needed this in BuildBun.cmake.
-    flag: c => `/machine:${c.arm64 ? "arm64" : "x64"}`,
-    when: c => c.windows,
-    desc: "Target machine type for lld-link (required on arm64; x64 hosts default correctly but explicit is harmless)",
-  },
-  {
-    // Serviced UCRT overlay: an explicit /libpath: is searched before the
-    // /winsysroot-derived paths, so its libucrt.lib/ucrt.lib win over the
-    // splat's stale copies (see UCRT_SERVICING_VERSION in winsysroot.ts —
-    // the VS-manifest payload xwin downloads carries an ancient arm64 UCRT
-    // with broken printf formatting).
-    flag: c => quote(`/libpath:${ucrtServicingLibDir(c)!}`, false),
-    when: c => c.windows && c.host.os !== "windows",
-    desc: "Windows cross-compile: serviced Universal CRT static libs (SDK NuGet) override the splat's",
-  },
-  {
-    // Windows cross-compile: these ldflags go after /link, straight to
-    // lld-link, which doesn't see the compile-side `/winsysroot` from
-    // globalFlags — repeat it in lld-link's own spelling so the MSVC CRT
-    // and Windows SDK import libraries (libcmt, kernel32, ...) are found
-    // without a VS dev shell's LIB env.
-    flag: c => quote(`/winsysroot:${c.winsysroot!}`, false),
-    when: c => c.windows && c.winsysroot !== undefined,
-    desc: "Windows cross-compile: MSVC CRT + Windows SDK library search root (xwin splat)",
-  },
   {
     flag: ["/STACK:0x1200000,0x200000", "/errorlimit:0"],
     when: c => c.windows,
@@ -1095,18 +1217,6 @@ export const linkerFlags: Flag[] = [
     desc: "Use new Apple linker (native darwin links only)",
   },
   {
-    // Cross-link from a non-darwin host: same pattern as Android/FreeBSD —
-    // target triple + explicit linker. -isysroot is added by the deployment-
-    // target flag below; the clang driver forwards it to ld64.lld as
-    // -syslibroot. -mlinker-version≥520 makes the driver emit the modern
-    // -platform_version argument ld64.lld requires (without it the driver
-    // assumes an ancient host ld64 and emits nothing usable); the exact
-    // value only gates driver behavior, so track a recent ld64 release.
-    flag: c => [`--target=${c.crossTarget!}`, "-mlinker-version=705", `--ld-path=${c.ld}`],
-    when: c => c.darwin && c.crossTarget !== undefined,
-    desc: "macOS cross-link: target triple + ld64.lld + modern linker arg style",
-  },
-  {
     // The `__BUN,__bun` standalone-graph placeholder (c-bindings.cpp) is a
     // 16 KB-aligned section. On x86_64, ld64.lld 16K-aligns its FILE offset
     // inside a 4K-aligned segment but not its VM span, producing
@@ -1119,14 +1229,6 @@ export const linkerFlags: Flag[] = [
     flag: ["-Wl,-sectalign,__BUN,__bun,0x1000"],
     when: c => c.darwin && c.crossTarget !== undefined && c.x64,
     desc: "macOS x64 cross-link: keep the __BUN segment's filesize ≤ vmsize under ld64.lld",
-  },
-  {
-    // Must also be passed at link: ld64 reads this to write LC_BUILD_VERSION.minos.
-    // Without it, ld64 defaults to the SDK version (15.0 on CI) → binary refuses
-    // to launch on macOS 13/14. globalFlags doesn't flow to ldflags, so repeat here.
-    flag: c => [`-mmacosx-version-min=${c.osxDeploymentTarget!}`, "-isysroot", c.osxSysroot!],
-    when: c => c.darwin && c.osxDeploymentTarget !== undefined && c.osxSysroot !== undefined,
-    desc: "macOS deployment target at link (sets LC_BUILD_VERSION minos)",
   },
   {
     flag: "-Wl,-w",
@@ -1164,11 +1266,6 @@ export const linkerFlags: Flag[] = [
   },
 
   // ─── Linux ───
-  {
-    flag: c => [`--target=${c.crossTarget!}`, `--sysroot=${c.sysroot!}`],
-    when: c => c.linux && c.abi !== "android" && c.crossTarget !== undefined && c.sysroot !== undefined,
-    desc: "linux sysroot link (gnu: ubuntu:20.04+gcc-13; musl: alpine)",
-  },
   {
     // Wrap glibc symbols whose default version on the sysroot's glibc (2.31)
     // is > 2.17. Each __wrap_X in workaround-missing-symbols.cpp pins to the
@@ -1239,31 +1336,6 @@ export const linkerFlags: Flag[] = [
     desc: "Retry pthread_create EAGAIN caused by an in-flight execve",
   },
   {
-    flag: ["-static-libstdc++", "-static-libgcc"],
-    when: c => c.linux && c.abi === "gnu",
-    desc: "Static C++ runtime (don't depend on host libstdc++)",
-  },
-  {
-    flag: ["-lstdc++", "-lgcc"],
-    when: c => c.linux && c.abi === "musl",
-    desc: "Dynamic C++ runtime on musl (static unavailable)",
-  },
-  {
-    flag: c => [
-      `--target=${c.crossTarget!}`,
-      `--sysroot=${c.sysroot!}`,
-      "--rtlib=compiler-rt",
-      "--unwindlib=libunwind",
-      "-stdlib=libc++",
-      "-static-libstdc++",
-      // -l:libunwind.a (driver-emitted) searches -L paths; point at the NDK's
-      // own per-arch runtime dir so it resolves regardless of resource-dir layout.
-      `-L${join(c.androidNdkRuntimeDir!, c.arm64 ? "aarch64" : "x86_64")}`,
-    ],
-    when: c => c.linux && c.abi === "android",
-    desc: "Android link: target/sysroot + compiler-rt/libunwind + static libc++",
-  },
-  {
     // Paired with compile-side -fno-unwind-tables above.
     // Gated on release (not LTO): the workspace is `panic = "abort"` and
     // C++ is `-fno-exceptions`/`-fno-unwind-tables`, so nothing unwinds at
@@ -1277,21 +1349,6 @@ export const linkerFlags: Flag[] = [
     flag: "-Wl,--eh-frame-hdr",
     when: c => c.linux && !(c.abi === "gnu" && c.release),
     desc: "Keep eh_frame header (debug/musl/android; needed for DWARF backtraces)",
-  },
-  {
-    flag: c => `--ld-path=${c.ld}`,
-    when: c => c.linux,
-    desc: "Use lld instead of system ld",
-  },
-  {
-    flag: ["-fno-pic", "-Wl,-no-pie"],
-    when: c => c.linux && c.abi !== "android",
-    desc: "No PIE (we don't need ASLR; simpler codegen)",
-  },
-  {
-    flag: ["-fPIC", "-pie"],
-    when: c => c.abi === "android",
-    desc: "Android: bionic loader requires PIE",
   },
   {
     flag: [
@@ -1334,7 +1391,7 @@ export const linkerFlags: Flag[] = [
     desc: "Identical-code-folding (safe; perf symbolication uses the linker-map)",
   },
   {
-    // When a PGO profile is loaded (`--pgo-use`, e.g. the two-stage `btg`
+    // When a PGO profile is loaded (`--pgo-use`, e.g. the two-stage
     // build driven by scripts/build-pgo.ts) clang AND rustc emit `.text.hot` /
     // `.text.unlikely` section prefixes from *measured* execution counts.
     // Tell lld to keep those prefixes (it merges them into one `.text` by
@@ -1382,6 +1439,16 @@ export const linkerFlags: Flag[] = [
     desc: "Exported symbol definition (.def format)",
   },
   {
+    // The exe exports symbols (the .def above), so lld-link also writes an
+    // import library — by default `<output basename>.lib`, which is the very
+    // name of the object archive the link reads (and that CI uploads while
+    // the link runs) in cpp-only/archive-link mode. Nothing consumes it;
+    // park it under obj/.
+    flag: c => `/IMPLIB:${slash(join(c.buildDir, "obj", `${bunExeName(c)}.import.lib`))}`,
+    when: c => c.windows,
+    desc: "Keep the exe's import library from overwriting <exe>.lib (the object archive)",
+  },
+  {
     flag: c => ["-exported_symbols_list", `${c.cwd}/src/symbols.txt`],
     when: c => c.darwin,
     desc: "Exported symbol list",
@@ -1397,21 +1464,6 @@ export const linkerFlags: Flag[] = [
     desc: "Dynamic symbol list + version script",
   },
   // ─── FreeBSD ───
-  {
-    flag: c => [`--target=${c.crossTarget!}`, `--sysroot=${c.sysroot!}`, "-stdlib=libc++"],
-    when: c => c.freebsd && c.crossTarget !== undefined,
-    desc: "FreeBSD cross-link: target/sysroot + libc++ (FreeBSD base ships libc++)",
-  },
-  {
-    flag: c => `--ld-path=${c.ld}`,
-    when: c => c.freebsd,
-    desc: "Use lld instead of system ld",
-  },
-  {
-    flag: ["-fno-pic", "-Wl,-no-pie"],
-    when: c => c.freebsd,
-    desc: "FreeBSD 13+ clang defaults to PIE; opt out (matches Linux, avoids -fPIC rebuild of WebKit/deps)",
-  },
   {
     flag: [
       "-Wl,-O2",
@@ -1792,9 +1844,79 @@ export function computeDepFlags(cfg: Config): { cflags: string[]; cxxflags: stri
 }
 
 /**
- * Just the -march/-mcpu/-mtune flags. For deps (WebKit) whose own build system
- * sets -O/-g/sanitizer flags but never sets a CPU target, so without this they
- * end up targeting generic x86-64 while the rest of bun targets nehalem.
+ * System libraries to link. Platform-dependent.
+ */
+export function systemLibs(cfg: Config): string[] {
+  const libs: string[] = [];
+
+  if (cfg.linux) {
+    if (cfg.abi === "android") {
+      // bionic: pthread/dl/rt are folded into libc; no separate libatomic
+      // (compiler-rt builtins). -llog for __android_log_*.
+      libs.push("-lc", "-lm", "-llog");
+    } else {
+      libs.push("-lc", "-lpthread", "-ldl");
+      // libatomic: static by default (CI distros ship it), dynamic on Arch-like.
+      // The static path needs to be the actual file path for lld to find it;
+      // dynamic uses -l syntax. We emit what CMake does: bare libatomic.a gets
+      // found in lib search paths, -latomic.so doesn't exist so we use -latomic.
+      if (cfg.staticLibatomic) {
+        libs.push("-l:libatomic.a");
+      } else {
+        libs.push("-latomic");
+      }
+    }
+  }
+
+  if (cfg.darwin) {
+    // icucore: system ICU framework.
+    // resolv: DNS resolution (getaddrinfo et al).
+    libs.push("-licucore", "-lresolv");
+  }
+
+  if (cfg.freebsd) {
+    // pthread/m: explicit on FreeBSD (not folded into libc).
+    // execinfo: backtrace() — separate library on FreeBSD.
+    // kvm/procstat/elf: process introspection for node:os and crash handler.
+    // libutil (openpty) is linked statically: its soname bumped .so.9 → .so.10
+    // between 14.x and 15.0, so a dynamic NEEDED entry from the 14.3 sysroot
+    // fails to load on 15.x (#40530). Every other lib here kept its soname.
+    libs.push("-lc", "-lpthread", "-lm", "-lexecinfo", "-lkvm", "-lprocstat", "-lelf", "-l:libutil.a");
+  }
+
+  if (cfg.windows) {
+    // Explicit .lib: these go after /link so no auto-suffixing by the
+    // clang-cl driver. lld-link auto-appends .lib but link.exe doesn't;
+    // explicit is portable.
+    libs.push(
+      "winmm.lib",
+      "bcrypt.lib",
+      "ntdll.lib",
+      "userenv.lib",
+      "dbghelp.lib",
+      "crypt32.lib",
+      "wsock32.lib", // ws2_32 + wsock32 — wsock32 has TransmitFile (sendfile equiv)
+      "ws2_32.lib",
+      "delayimp.lib", // required for /delayload: in release
+    );
+  }
+
+  return libs;
+}
+
+/** `targetLinkFlags` resolved for cfg — the link line's toolchain half (see the table). */
+export function computeTargetLinkFlags(cfg: Config): string[] {
+  const out: string[] = [];
+  for (const f of targetLinkFlags) {
+    if (f.when && !f.when(cfg)) continue;
+    out.push(...resolveFlagValue(f.flag, cfg));
+  }
+  return out;
+}
+
+/**
+ * Just the -march/-mcpu/-mtune flags — rust.ts translates them into rustc's
+ * -Ctarget-cpu so Rust code targets the same CPU as the C++.
  */
 export function computeCpuTargetFlags(cfg: Config): string[] {
   const out: string[] = [];

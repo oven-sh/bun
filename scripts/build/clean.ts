@@ -29,14 +29,14 @@ if (args.includes("--help") || args.includes("-h")) {
 presets:
   debug (default)  build/debug/
   release          build/release/
-  debug-local      build/debug-local/
-  release-local    build/release-local/
+  debug-local      build/debug-local/   (bun run build:local)
+  release-local    build/release-local/ (bun run build:release:local)
   rust             cargo target dirs across all profiles + ~/.bun/build-cache/cargo
   cpp              C++ obj/ + pch/ across all profiles
   cache            machine-shared build cache (~/.bun/build-cache: ccache, cargo,
                    tarballs, prebuilt webkit) — affects ALL checkouts
-  deep             build/, target/, vendor/* (except manually managed deps
-                   like WebKit)
+  deep             build/, target/, vendor/* (a directory holding a .git —
+                   somebody's clone — is never removed)
 
 flags:
   --dry-run        list what would be removed without deleting
@@ -55,10 +55,9 @@ function buildProfiles(): string[] {
 
 const profile = (name: string) => () => [resolve(cwd, "build", name)];
 
-// Deps whose vendor/<name>/ dir is user-managed (manual clone, not fetched
-// by the build system). `deep` skips these; everything else in allDeps gets
-// its vendor dir nuked.
-const userManagedDeps = new Set(["WebKit"]);
+// A vendor/<name>/ holding a `.git` is somebody's clone (an older setup put
+// the WebKit clone there), never a tree the build fetched; `deep` leaves it.
+const isClone = (dir: string): boolean => existsSync(resolve(dir, ".git"));
 
 const presets: Record<string, () => string[]> = {
   "debug": profile("debug"),
@@ -81,7 +80,7 @@ const presets: Record<string, () => string[]> = {
   deep: () => [
     resolve(cwd, "build"),
     resolve(cwd, "target"),
-    ...allDeps.filter(d => !userManagedDeps.has(d.name)).map(d => resolve(cwd, "vendor", d.name)),
+    ...allDeps.map(d => resolve(cwd, "vendor", d.name)).filter(dir => !isClone(dir)),
   ],
 };
 

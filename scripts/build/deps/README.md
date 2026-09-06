@@ -11,10 +11,15 @@ libraries/headers it provides.
 3. Add `import { <name> } from "./<name>.ts"` + entry in `allDeps` array in `index.ts`
 4. `bun run scripts/build/phase3-test.ts` to verify it builds
 
-That's it. For most deps you're done. If the dep's build is too entangled
-to list sources by hand (zlib-ng's per-file SIMD flags are about the
-limit), use `kind: "nested-cmake"` instead — see `NestedCmakeBuild` in
-`../source.ts` for the fields.
+That's it. For most deps you're done. A dep that needs more than one source
+list says so in the same spec: `groups` (further source sets with their own
+flags/includes/PCH — cmake's "targets"), `steps` (generators run at build
+time, host tools built with the host compiler, target executables linked
+from groups), `headers` (config headers written at configure, `.h.in`
+substitution). `deps/tinycc.ts` (one host tool + one generated header),
+`deps/icu.ts` (two groups, host `icupkg`, data steps) and `deps/webkit.ts`
+(bmalloc/WTF/JSC groups, ~120 generators, the LLInt extractor executables,
+testFFI) are the examples, small to large.
 
 **`name` must match the directory on disk** (`vendor/<name>/`). If your repo
 is `oven-sh/WebKit`, name it `"WebKit"` — that's what `git clone` creates.
@@ -58,7 +63,7 @@ git clone https://github.com/oven-sh/mimalloc ~/code/mimalloc
 bun bd --local-deps=mimalloc=~/code/mimalloc test foo.test.ts
 ```
 
-Any `github-archive` dep the graph compiles or includes can be redirected
+Any `github` dep the graph compiles or includes can be redirected
 (so not lolhtml or rust-argon2, which cargo reads from `vendor/` via the workspace
 `Cargo.toml` — point that path at your checkout instead); several at once
 with `name=path,name=path`. Cross-dep references (`depSourceDir()`, e.g.
@@ -69,10 +74,11 @@ commit if you want an identical baseline. Switching a dep between pinned and
 local moves its `-I` path, so the first build after the switch recompiles
 every TU that sees the dep's headers; after that, edits are picked up
 incrementally: `direct` deps through the compiler depfiles,
-`nested-cmake`/`cargo` deps by re-invoking their inner build every run. The
-build banner shows `local:<name>` while this is on. Don't edit
-`vendor/<name>/` in place instead — it is wiped whenever the pin or patches
-change. WebKit has its own switch (`--webkit=local`).
+`cargo` deps by re-invoking cargo every run. The build banner shows
+`local:<name>` while this is on. Don't edit `vendor/<name>/` in place
+instead — it is wiped whenever the pin or patches change. For WebKit this is
+what `bun run build:local` does (`--local-deps=WebKit`, shorthand for
+`--local-deps=WebKit=$BUN_WEBKIT_PATH`).
 
 ## Common fields
 
@@ -80,14 +86,17 @@ change. WebKit has its own switch (`--webkit=local`).
 export const mydep: Dependency = {
   name: "mydep",
 
-  // Source tarball. Fetched from GitHub's archive endpoint (no git history,
-  // just the files at `commit`). Most deps use this.
+  // A GitHub commit (no git history, just the files at `commit`). Fetched
+  // from GitHub's archive endpoint, or — with `sparse: ["/dir/", ...]` —
+  // as a sparse git fetch of only those paths (WebKit `--webkit=source`:
+  // GitHub won't serve archives of a repo that size, and JSC is ~3% of it).
+  // Most deps use this.
   //
-  // Other kinds: `prebuilt` (download pre-compiled .a, e.g. WebKit default),
-  // `local` (user-managed checkout — WebKit declares it because its clone is
-  // too slow to automate; any github-archive dep becomes one via
-  // `--local-deps`, see below), `in-tree` (source in src/).
-  source: () => ({ kind: "github-archive", repo: "owner/repo", commit: "..." }),
+  // Other kinds: `tarball` (a release tarball by URL, e.g. ICU), `prebuilt`
+  // (download pre-compiled .a, e.g. nodejs-headers or --webkit=prebuilt), `local` (any
+  // fetched dep becomes one via `--local-deps`, see below), `in-tree` (source
+  // in src/).
+  source: () => ({ kind: "github", repo: "owner/repo", commit: "..." }),
 
   // Optional: macro name for bun_dependency_versions.h (process.versions).
   // Omit if this dep shouldn't appear there.
@@ -131,13 +140,11 @@ export const mydep: Dependency = {
 ## Build types
 
 - **`direct`**: Sources compiled as first-class `cc` edges in our ninja
-  graph — no sub-process. Best for deps with a stable, small file list and
-  no configure-time codegen we can't replicate. See `DirectBuild` in
-  `../source.ts`. Prefer this over `nested-cmake` when feasible: it skips a
-  cmake configure (often 5–20s of try_compile probes) and lets LTO see
-  across the dep boundary into bun's call sites.
-- **`nested-cmake`**: Runs `cmake --fresh -B ...` then `cmake --build`.
-  See `NestedCmakeBuild` in `../source.ts` for all fields.
+  graph — no sub-process; `groups` for further source sets with their own
+  flags, `steps` for generators / host tools / target executables, `headers`
+  for configure-time config headers. See `DirectBuild` in `../source.ts`.
+  Every C/C++ dep, ICU and WebKit included. No sub-process configure, and
+  LTO sees across the dep boundary into bun's call sites.
 - **`cargo`**: Rust deps (currently lolhtml and rust-argon2). See `CargoBuild` in `../source.ts`.
 - **`none`**: Header-only or prebuilt. No build step; `.ref` stamp is the output.
 
@@ -152,23 +159,24 @@ export const mydep: Dependency = {
 - **sqlite.ts** — direct build, in-tree source (lives in `src/`, not `vendor/`)
 - **libuv.ts** — `enabled: cfg => cfg.windows` for a platform-only dep
 - **lolhtml.ts** — cargo build with rustflags
-- **webkit.ts** — `nested-cmake` (`sourceSubdir`, `preBuild`) and `prebuilt`
+- **icu.ts** — direct build with two source groups, a host tool (`icupkg`) and generator steps for the data object; tarball source
+- **webkit.ts** — direct build at full stretch: sparse github source read at configure time, three groups (bmalloc/WTF/JSC) with a PCH, ~120 generator steps, target executables (LLInt extractors, testFFI); also the `prebuilt` opt-in
 
-## How the three-step build works
+## How the fetch works
 
-Each dep becomes three ninja build statements, each with `restat = 1`:
+Each fetched dep gets one ninja build statement with `restat = 1`:
 
-1. **fetch** → `vendor/<name>/.ref` stamp
-   - Downloads tarball, extracts, applies patches
-   - `.ref` contains `sha256(commit + patches)[:16]`
-   - restat: if identity unchanged, no write, downstream pruned
-2. **configure** → `buildDir/deps/<name>/CMakeCache.txt`
-   - `cmake --fresh -B <dir> -D...`
-   - `--fresh` drops the cache so stale -D values don't persist
-   - restat: inner cmake might not touch cache
-3. **build** → `.a` files
-   - `cmake --build <dir> --target ...`
-   - restat: inner ninja no-ops if nothing changed
+- **fetch** → `vendor/<name>/.ref` stamp
+  - Downloads the tarball (or sparse git fetch), extracts, applies patches
+  - `.ref` contains `sha256(commit + sparse + patches)[:16]`
+  - restat: if identity unchanged, no write, downstream pruned
 
-`restat` is what makes incremental builds fast — if step N was a no-op,
-ninja prunes everything after it.
+The dep's sources are declared as implicit outputs of that edge, so the
+compile edges that follow wait for it; from there they are ordinary
+`cc`/`cxx` edges with depfiles.
+
+No dep is described by reading its tree at configure time. Where upstream
+derives file sets from the tree (JSC's unified bundles from `Sources.txt`,
+its framework header directories, ICU's `sources.txt`), the derived lists
+are checked in — `deps/webkit-sources.ts`, `deps/icu-sources.ts` — and
+regenerated on a version bump with `deps/generate-dep-sources.ts`.

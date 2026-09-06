@@ -25,9 +25,9 @@
 #include <unordered_set>
 #include <variant>
 
-extern "C" void napi_internal_register_cleanup_zig(napi_env env);
-extern "C" void napi_internal_threadsafe_function_env_teardown(void* tsfn);
-extern "C" void napi_internal_suppress_crash_on_abort_if_desired();
+extern "C" void Bun__napi_register_cleanup_zig(napi_env env);
+extern "C" void Bun__napi_threadsafe_function_env_teardown(void* tsfn);
+extern "C" void Bun__napi_suppress_crash_on_abort_if_desired();
 extern "C" void Bun__crashHandler(const char* message, size_t message_len);
 
 namespace Zig {
@@ -137,7 +137,7 @@ struct napi_async_cleanup_hook_handle__ {
 
 #define NAPI_ABORT(message)                                    \
     do {                                                       \
-        napi_internal_suppress_crash_on_abort_if_desired();    \
+        Bun__napi_suppress_crash_on_abort_if_desired();        \
         Bun__crashHandler(message "", sizeof(message "") - 1); \
     } while (0)
 
@@ -161,7 +161,7 @@ public:
         , m_vm(JSC::getVM(globalObject))
         , m_vmHandle(Bun__VmHandle__retainRef(WebCore::clientData(JSC::getVM(globalObject))->vmHandle))
     {
-        napi_internal_register_cleanup_zig(this);
+        Bun__napi_register_cleanup_zig(this);
     }
 
     static Ref<NapiEnv> create(Zig::GlobalObject* globalObject, const napi_module& napiModule)
@@ -287,7 +287,7 @@ public:
             tsfns = std::exchange(m_threadSafeFunctions, WTF::HashSet<void*> {});
         }
         for (void* tsfn : tsfns) {
-            napi_internal_threadsafe_function_env_teardown(tsfn);
+            Bun__napi_threadsafe_function_env_teardown(tsfn);
         }
     }
 
@@ -321,7 +321,7 @@ public:
         bool wasEmpty = m_pendingRefFinalizers.isEmpty();
         m_pendingRefFinalizers.add(ref);
         if (wasEmpty)
-            napi_internal_enqueue_finalizer(this, drainOneRefFinalizer, this, nullptr);
+            Bun__napi_enqueue_finalizer(this, drainOneRefFinalizer, this, nullptr);
     }
 
     void dequeueRefFinalizer(Zig::NapiRef* ref)
@@ -421,7 +421,7 @@ public:
         }
 
         if (mustDeferFinalizers() && inGC()) {
-            napi_internal_enqueue_finalizer(this, finalize_cb, data, finalize_hint);
+            Bun__napi_enqueue_finalizer(this, finalize_cb, data, finalize_hint);
         } else {
             finalize_cb(this, data, finalize_hint);
             throwPendingException();
@@ -645,8 +645,8 @@ private:
     }
 };
 
-extern "C" void napi_internal_cleanup_env_cpp(napi_env);
-extern "C" void napi_internal_remove_finalizer(napi_env, napi_finalize callback, void* hint, void* data);
+extern "C" void Bun__napi_cleanup_env_cpp(napi_env);
+extern "C" void Bun__napi_remove_finalizer(napi_env, napi_finalize callback, void* hint, void* data);
 
 namespace Napi {
 

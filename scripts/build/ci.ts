@@ -219,8 +219,8 @@ export async function spawnWithAnnotations(
 //
 // Paths are uploaded RELATIVE TO buildDir. buildkite-agent recreates the
 // directory structure on download. The link-only ninja graph expects files
-// at the SAME relative paths cpp-only produced them at — computeDepLibs()
-// and emitNestedCmake() share the same path formula.
+// at the SAME relative paths cpp-only produced them at (computeDepLibs()
+// is the one formula both sides use).
 // ───────────────────────────────────────────────────────────────────────────
 
 /**

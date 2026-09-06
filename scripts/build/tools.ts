@@ -421,7 +421,6 @@ export function resolveLlvmToolchain(
   | "hostCc"
   | "hostCxx"
   | "ar"
-  | "ranlib"
   | "ld"
   | "ld64Lld"
   | "rustLld"
@@ -429,10 +428,12 @@ export function resolveLlvmToolchain(
   | "strip"
   | "llvmStrip"
   | "nm"
+  | "readobj"
+  | "objdump"
+  | "cxxfilt"
   | "dsymutil"
   | "ccache"
   | "rc"
-  | "mt"
   | "nasm"
   | "clangVersion"
   | "clangResourceDir"
@@ -478,15 +479,15 @@ export function resolveLlvmToolchain(
     }
   }
 
-  // Host compiler for build-time codegen tools (dep_host_cc) and host-side
+  // Host compiler for build-time host tools (`host-exe` steps) and host-side
   // cargo artifacts (.cargo/config.toml linker for the host triple). Normally
-  // the same as cc/cxx, but when cross-compiling for windows from a unix
-  // host, cc/cxx are clang-cl (which defaults to a *-windows-msvc triple,
-  // emits COFF, and can't drive an ELF link) — host tools must stay on plain
-  // clang/clang++.
+  // the same as cc/cxx, but for a windows target cc/cxx are clang-cl, whose
+  // command line the host-tool rules (GNU-style -o/-MMD/-c, .S input) don't
+  // speak and which, on a unix host, can't drive an ELF link — host tools
+  // use the plain clang/clang++ drivers from the same LLVM install.
   let hostCc: string | undefined;
   let hostCxx: string | undefined;
-  if (msvcTarget && os !== "windows") {
+  if (msvcTarget) {
     hostCc = findLlvmTool("clang", paths, os, { checkVersion: false, required: true })?.path;
     hostCxx = findLlvmTool("clang++", paths, os, { checkVersion: false, required: true })?.path;
   }
@@ -498,17 +499,6 @@ export function resolveLlvmToolchain(
     checkVersion: false,
     required: true,
   })?.path;
-
-  // ranlib: llvm-ranlib (unix hosts only — llvm-lib targets don't need it).
-  // Needed for nested cmake builds (CMAKE_RANLIB). llvm-ar's `s` flag does the
-  // same thing for our direct archives, but deps may call ranlib explicitly.
-  let ranlib: string | undefined;
-  if (os !== "windows") {
-    ranlib = findLlvmTool("llvm-ranlib", paths, os, {
-      checkVersion: false,
-      required: true,
-    })?.path;
-  }
 
   // ld: lld-link for windows targets, ld.lld on Linux (passed as --ld-path=).
   // On Darwin clang drives the system linker directly.
@@ -548,6 +538,11 @@ export function resolveLlvmToolchain(
   // so it is only ever missing from a partial LLVM install; then the checks
   // are skipped rather than the build refused.
   const nm = findLlvmTool("llvm-nm", paths, os, { checkVersion: false, required: false })?.path;
+  // The post-link binary checks (verify-binary.ts) read the executable with
+  // these; a partial install skips the checks rather than the build.
+  const readobj = findLlvmTool("llvm-readobj", paths, os, { checkVersion: false, required: false })?.path;
+  const objdump = findLlvmTool("llvm-objdump", paths, os, { checkVersion: false, required: false })?.path;
+  const cxxfilt = findLlvmTool("llvm-cxxfilt", paths, os, { checkVersion: false, required: false })?.path;
 
   // dsymutil: required on darwin; optional elsewhere (needed only when
   // cross-compiling a darwin release from a non-darwin host).
@@ -558,18 +553,11 @@ export function resolveLlvmToolchain(
     dsymutil = findLlvmTool("dsymutil", paths, os, { checkVersion: false, required: false })?.path;
   }
 
-  // rc/mt: windows targets only. Passed to nested cmake — when
-  // CMAKE_C_COMPILER is an explicit path, cmake's find_program for these
-  // may not search the compiler's directory, so we resolve them here and
-  // pass explicitly. rc is required (cmake's try_compile on windows uses
-  // it, and the final link embeds windows-app-info.res); mt is optional
-  // (not all LLVM distros ship it — source.ts sets
-  // CMAKE_TRY_COMPILE_TARGET_TYPE=STATIC_LIBRARY as fallback).
+  // rc: windows targets only — compiles windows-app-info.rc into the .res the
+  // final link embeds.
   let rc: string | undefined;
-  let mt: string | undefined;
   if (msvcTarget) {
     rc = findLlvmTool("llvm-rc", paths, os, { checkVersion: false, required: true })?.path;
-    mt = findLlvmTool("llvm-mt", paths, os, { checkVersion: false, required: false })?.path;
   }
 
   // nasm: BoringSSL win-x64 and libjpeg-turbo x86_64 SIMD; compile.ts:nasm() asserts at the use site.
@@ -606,7 +594,6 @@ export function resolveLlvmToolchain(
     hostCc,
     hostCxx,
     ar,
-    ranlib,
     ld,
     ld64Lld,
     rustLld,
@@ -614,10 +601,12 @@ export function resolveLlvmToolchain(
     strip,
     llvmStrip,
     nm,
+    readobj,
+    objdump,
+    cxxfilt,
     dsymutil,
     ccache,
     rc,
-    mt,
     nasm,
   };
 }

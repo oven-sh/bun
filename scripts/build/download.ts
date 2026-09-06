@@ -53,6 +53,7 @@ import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import type { ReadableStream as NodeWebReadable } from "node:stream/web";
 import { BuildError, assert, describeError } from "./error.ts";
+import { formatElapsed } from "./tty.ts";
 
 // On Windows, prefer the OS-shipped bsdtar. Git-for-Windows / MSYS put GNU tar
 // earlier in PATH, and GNU tar parses `C:\...` as an rsh `host:path` spec
@@ -100,6 +101,22 @@ export function prefetchPathForUrl(url: string, dir = prefetchDir): string | und
   if (dir === undefined) return undefined;
   const key = createHash("sha256").update(url).digest("hex").slice(0, 32);
   return resolve(dir, "by-url", key);
+}
+
+/**
+ * If `prefetchDir/by-url/` holds `url`, copy it to `dest` and return true.
+ * Temp-then-rename, same as the network path: an interrupted copy must not
+ * leave a partial file claiming to be complete.
+ */
+async function tryPrefetchFile(url: string, dest: string): Promise<boolean> {
+  const prefetched = prefetchPathForUrl(url);
+  if (prefetched === undefined || !existsSync(prefetched)) return false;
+  console.log(`using prefetch cache: ${prefetched}`);
+  await mkdir(resolve(dest, ".."), { recursive: true });
+  const tmp = `${dest}.${process.pid}.partial`;
+  await copyFile(prefetched, tmp);
+  await rename(tmp, dest);
+  return true;
 }
 
 /**
@@ -177,17 +194,7 @@ export async function downloadWithRetry(
   logPrefix: string,
   retry: RetryPolicy = downloadRetry,
 ): Promise<void> {
-  const prefetched = prefetchPathForUrl(url);
-  if (prefetched !== undefined && existsSync(prefetched)) {
-    console.log(`using prefetch cache: ${prefetched}`);
-    await mkdir(resolve(dest, ".."), { recursive: true });
-    // Same temp-then-rename atomicity as the network path below — an
-    // interrupted copy must not leave a partial file claiming to be complete.
-    const tmp = `${dest}.${process.pid}.partial`;
-    await copyFile(prefetched, tmp);
-    await rename(tmp, dest);
-    return;
-  }
+  if (await tryPrefetchFile(url, dest)) return;
 
   const maxAttempts = retry.attempts;
   let lastError: unknown;
@@ -235,6 +242,150 @@ export async function downloadWithRetry(
     cause: lastError,
     hint: "Check network connectivity, or place the file manually at the destination path",
   });
+}
+
+/** The tarball GitHub serves for a commit (or tag) of `repo`. */
+export function githubArchiveUrl(repo: string, commit: string): string {
+  return `https://github.com/${repo}/archive/${commit}.tar.gz`;
+}
+
+/**
+ * Cache/prefetch key for a source tree produced by `gitArchive()`. Shaped as a
+ * URL so it shares `by-url/` (and `prefetchPathForUrl`) with real downloads;
+ * nothing ever requests it over HTTP.
+ */
+export function gitArchiveUrl(repo: string, commit: string, sparse: string[]): string {
+  return `git+https://github.com/${repo}@${commit}?sparse=${sparse.join(",")}`;
+}
+
+/** Inverse of gitArchiveUrl; undefined for a plain download URL. */
+export function parseGitArchiveUrl(url: string): { repo: string; commit: string; sparse: string[] } | undefined {
+  const m = /^git\+https:\/\/github\.com\/([^@]+)@([^?]+)\?sparse=(.*)$/.exec(url);
+  if (m === null) return undefined;
+  return { repo: m[1]!, commit: m[2]!, sparse: m[3]!.split(",").filter(p => p.length > 0) };
+}
+
+/**
+ * Produce a `.tar.gz` shaped like a GitHub source archive (one top-level dir)
+ * from a shallow, blobless, sparse git fetch of `commit`: only the paths in
+ * `sparse` (git sparse-checkout non-cone patterns) are downloaded. This is the
+ * road for repositories GitHub refuses to serve `/archive/` tarballs for
+ * (WebKit: HTTP 422) — the same repositories where a build wants a few
+ * percent of the tree. GitHub serves any reachable commit by sha this way,
+ * branch tip or not.
+ *
+ * Same prefetch lookup, retry schedule and temp-then-rename discipline as
+ * `downloadWithRetry`. The tree is archived without `.git`, so what lands in
+ * vendor/ is indistinguishable from an extracted GitHub archive.
+ */
+export async function gitArchive(
+  repo: string,
+  commit: string,
+  sparse: string[],
+  dest: string,
+  retry: RetryPolicy = downloadRetry,
+): Promise<void> {
+  assert(sparse.length > 0, `gitArchive ${repo}: empty sparse set`);
+  if (await tryPrefetchFile(gitArchiveUrl(repo, commit, sparse), dest)) return;
+
+  const work = `${dest}.${process.pid}.git`;
+  const top = `${basename(repo)}-${commit}`;
+  const tree = resolve(work, top);
+  await rm(work, { recursive: true, force: true });
+  await mkdir(tree, { recursive: true });
+
+  // http.lowSpeed*: a transfer that moves under 1 KB/s for 60 s is a stalled
+  // connection — git aborts it with an error and the retry loop below takes
+  // over, instead of the build hanging on a dead socket.
+  const git = (args: string[], what: string, input?: string): { ok: boolean; stderr: string } => {
+    const result = spawnSync(
+      "git",
+      [
+        "-c",
+        "protocol.version=2",
+        "-c",
+        "advice.detachedHead=false",
+        "-c",
+        "http.lowSpeedLimit=1000",
+        "-c",
+        "http.lowSpeedTime=60",
+        ...args,
+      ],
+      {
+        cwd: tree,
+        input,
+        stdio: [input === undefined ? "ignore" : "pipe", "ignore", "pipe"],
+        encoding: "utf8",
+        env: { ...process.env, GIT_TERMINAL_PROMPT: "0" },
+      },
+    );
+    if (result.error) {
+      throw new BuildError(`Failed to spawn git ${what}`, { hint: "Is `git` in your PATH?", cause: result.error });
+    }
+    return { ok: result.status === 0, stderr: result.stderr };
+  };
+  const mustGit = (args: string[], what: string, input?: string): void => {
+    const { ok, stderr } = git(args, what, input);
+    if (!ok) throw new BuildError(`git ${what} failed in ${tree}:\n${stderr}`);
+  };
+
+  try {
+    // autocrlf/longpaths: a Windows host must produce the same bytes as a
+    // posix one (patches are authored against LF) and WebKit paths run deep.
+    mustGit(["init", "-q"], "init");
+    mustGit(["config", "core.autocrlf", "false"], "config");
+    mustGit(["config", "core.longpaths", "true"], "config");
+    mustGit(["remote", "add", "origin", `https://github.com/${repo}.git`], "remote add");
+    mustGit(["sparse-checkout", "set", "--no-cone", "--stdin"], "sparse-checkout", sparse.join("\n") + "\n");
+
+    // fetch brings the commit and its trees; checkout then asks origin for
+    // exactly the blobs the sparse set selects. Both touch the network, so
+    // both sit inside the retry loop; both are idempotent.
+    let lastError = "";
+    let done = false;
+    for (let attempt = 1; attempt <= retry.attempts && !done; attempt++) {
+      if (attempt > 1) {
+        const backoffMs = retry.backoffMs(attempt);
+        console.log(`retry ${attempt}/${retry.attempts} in ${backoffMs}ms (${lastError.trim().split("\n").pop()})`);
+        await new Promise(r => setTimeout(r, backoffMs));
+      }
+      const fetched = git(["fetch", "-q", "--depth=1", "--filter=blob:none", "--no-tags", "origin", commit], "fetch");
+      if (!fetched.ok) {
+        lastError = fetched.stderr;
+        // A ref the server doesn't have is a bad pin, not a network blip.
+        if (/couldn't find remote ref|not our ref|no such remote ref/i.test(lastError)) {
+          throw new BuildError(`git fetch: ${repo} has no commit ${commit}\n${lastError}`, {
+            hint: `Check the commit pinned in scripts/build/deps/ — it must be pushed to github.com/${repo}`,
+          });
+        }
+        continue;
+      }
+      const checkedOut = git(["checkout", "-q", "--detach", "FETCH_HEAD"], "checkout");
+      if (!checkedOut.ok) {
+        lastError = checkedOut.stderr;
+        continue;
+      }
+      done = true;
+    }
+    if (!done) {
+      throw new BuildError(`Failed to fetch ${repo}@${commit} after ${retry.attempts} attempts:\n${lastError}`, {
+        hint: "Check network connectivity to github.com",
+      });
+    }
+
+    await rm(resolve(tree, ".git"), { recursive: true, force: true });
+    const tmp = `${dest}.${process.pid}.partial`;
+    await mkdir(resolve(dest, ".."), { recursive: true });
+    const tarred = spawnSync(tarExe, ["-czf", tmp, "-C", work, top], {
+      stdio: ["ignore", "ignore", "pipe"],
+      encoding: "utf8",
+    });
+    if (tarred.error) throw new BuildError(`Failed to spawn tar`, { cause: tarred.error });
+    if (tarred.status !== 0) throw new BuildError(`tar failed (exit ${tarred.status}): ${tarred.stderr}`);
+    await rename(tmp, dest);
+  } finally {
+    await rm(work, { recursive: true, force: true }).catch(() => {});
+  }
 }
 
 /**
@@ -381,6 +532,7 @@ export async function fetchPrebuilt(
   if (await tryPrefetchExtracted(dest, ".identity", identity)) return;
 
   console.log(`fetching ${url}`);
+  const started = performance.now();
 
   // Process-unique temp paths so concurrent builds (shared cacheDir across
   // checkouts) can't stomp each other's download/extraction.
@@ -438,7 +590,7 @@ export async function fetchPrebuilt(
       throw err;
     }
 
-    console.log(`extracted to ${dest}`);
+    console.log(`extracted to ${dest} (${formatElapsed(performance.now() - started)})`);
   } finally {
     await rm(stagingDir, { recursive: true, force: true });
     await rm(tarballPath, { force: true });

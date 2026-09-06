@@ -168,7 +168,8 @@ const buildPlatforms = [
   // only runs tests, signing, and baseline verification, against these
   // artifacts (see testPlatforms), and these are the Windows artifacts the
   // release ships. x64 uses ThinLTO + cross-language LTO by default; arm64
-  // stays non-LTO (no windows-arm64-lto WebKit prebuilt, see config.ts).
+  // stays non-LTO (LLVM's CodeView emitter aborts on ARM64 NEON tuple
+  // registers under LTO, see config.ts).
   { os: "windows", arch: "x64", crossCompile: true, distro: "debian", release: "13" },
   { os: "windows", arch: "aarch64", crossCompile: true, distro: "debian", release: "13" },
 ];
@@ -287,6 +288,14 @@ function getImageName(platform, options) {
   // "[build linux images]" run, and pick up bootstrap.ps1's version for a
   // linux image tag that doesn't exist.
   const hostOs = os === "freebsd" || crossCompile ? "linux" : os;
+
+  // TEMPORARY (this PR only): reuse the Linux images baked by build 110089
+  // (bootstrap v42) so later commits neither re-bake nor look for an
+  // unpublished -v42 image. Removed together with a [publish images] run
+  // before merge.
+  if (hostOs === "linux" && !publishImages) {
+    return `${name}-build-110089`;
+  }
 
   if (buildImages && !publishImages && (!imageFilter || hostOs === imageFilter || distro === imageFilter)) {
     return `${name}-build-${getBuildNumber()}`;
@@ -905,30 +914,25 @@ function getTestBunStep(platform, options, testOptions = {}) {
  *
  * @param {Platform} platform
  * @param {PipelineOptions} options
+ * @returns {Step[]} steps for the `build-images` group; the last one's key is
+ *   `${getImageKey(platform)}-build-image`, which is what dependents wait on.
+ */
+function getBuildImageSteps(platform, options) {
+  return platform.os === "windows"
+    ? [getWindowsBuildImageStep(platform, options)]
+    : getLinuxBuildImageSteps(platform, options);
+}
+
+/**
+ * Windows images bake on Azure through Packer (WinRM) from the hosted queue.
+ * @param {Platform} platform
+ * @param {PipelineOptions} options
  * @returns {Step}
  */
-function getBuildImageStep(platform, options) {
-  const { os, arch, distro, release, features } = platform;
+function getWindowsBuildImageStep(platform, options) {
+  const { os, arch, release } = platform;
   const { publishImages } = options;
   const action = publishImages ? "publish-image" : "create-image";
-
-  const cloud = os === "windows" ? "azure" : "aws";
-  const command = [
-    "node",
-    "./scripts/machine.mjs",
-    action,
-    `--os=${os}`,
-    `--arch=${arch}`,
-    distro && `--distro=${distro}`,
-    `--release=${release}`,
-    `--cloud=${cloud}`,
-    "--ci",
-    "--authorized-org=oven-sh",
-  ];
-  for (const feature of features || []) {
-    command.push(`--feature=${feature}`);
-  }
-
   return {
     key: `${getImageKey(platform)}-build-image`,
     label: `${getImageLabel(platform)} - build-image`,
@@ -945,9 +949,71 @@ function getBuildImageStep(platform, options) {
     },
     retry: getRetry(),
     cancel_on_build_failing: isMergeQueue(),
-    command: command.filter(Boolean).join(" "),
+    command: `node ./scripts/machine.mjs ${action} --os=${os} --arch=${arch} --release=${release} --cloud=azure --ci --authorized-org=oven-sh`,
     timeout_in_minutes: 3 * 60,
   };
+}
+
+/**
+ * Linux images bake in two steps:
+ *
+ *  1. `…-bake-image` runs ON a fresh machine of the target distro (requested
+ *     with the `bake` agent tag): bootstrap.sh provisions it — so this step's
+ *     log is the bootstrap log — and agent.mjs installs the agent service.
+ *     The machine is imaged as `image-name` once the step passes.
+ *  2. `…-build-image` (labelled wait-for-image) waits for that image to be
+ *     available. It keeps the key the rest of the pipeline depends on.
+ *
+ * @param {Platform} platform
+ * @param {PipelineOptions} options
+ * @returns {Step[]}
+ */
+function getLinuxBuildImageSteps(platform, options) {
+  const { arch, features } = platform;
+  const imageKey = getImageKey(platform);
+  const imageName = getImageName(platform, options);
+  const bootstrapArgs = ["--ci", ...(features || []).map(feature => `--${feature}`)];
+  // prefetch_build_deps shallow-clones the repo at this ref for the dep pins
+  // in scripts/build/deps/; bake from the branch that changed them.
+  const branch = getEnv("BUILDKITE_BRANCH", false);
+  const repoRef = branch && /^[\w./-]+$/.test(branch) ? branch : "main";
+
+  const bakeStep = {
+    key: `${imageKey}-bake-image`,
+    label: `${getImageLabel(platform)} - bake-image`,
+    agents: {
+      ...getEc2Agent(platform, options, { instanceType: arch === "aarch64" ? "t4g.large" : "t3.large" }),
+      bake: true,
+    },
+    env: {
+      BUN_BOOTSTRAP_REPO_REF: repoRef,
+    },
+    retry: getRetry(),
+    cancel_on_build_failing: isMergeQueue(),
+    // Install the service from the machine's own copy of agent.mjs rather
+    // than this checkout's, so the unit outlives the build directory.
+    // ($$ is a literal $ after pipeline-upload interpolation.)
+    command: [
+      `sh ./scripts/bootstrap.sh ${bootstrapArgs.join(" ")}`,
+      `$$([ "$$(id -u)" = 0 ] || echo sudo -n) node /var/lib/buildkite-agent/agent.mjs install`,
+    ],
+    timeout_in_minutes: 3 * 60,
+  };
+
+  const waitStep = {
+    key: `${imageKey}-build-image`,
+    label: `${getImageLabel(platform)} - wait-for-image`,
+    depends_on: [bakeStep.key],
+    agents: {
+      queue: "build-image",
+    },
+    retry: getRetry(),
+    cancel_on_build_failing: isMergeQueue(),
+    command: `node ./scripts/machine.mjs wait-image --name=${imageName} --build=${getBuildNumber()}`,
+    timeout_in_minutes: 120,
+  };
+
+  return [bakeStep, waitStep];
 }
 
 /**
@@ -1586,7 +1652,7 @@ async function getPipeline(options = {}) {
     steps.push({
       key: "build-images",
       group: getBuildkiteEmoji("aws"),
-      steps: [...imagePlatforms.values()].map(platform => getBuildImageStep(platform, options)),
+      steps: [...imagePlatforms.values()].flatMap(platform => getBuildImageSteps(platform, options)),
     });
   }
 

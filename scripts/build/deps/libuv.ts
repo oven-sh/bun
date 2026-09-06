@@ -47,7 +47,7 @@ export const libuv: Dependency = {
   enabled: cfg => cfg.windows,
 
   source: () => ({
-    kind: "github-archive",
+    kind: "github",
     repo: "oven-sh/libuv",
     commit: LIBUV_COMMIT,
   }),

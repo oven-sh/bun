@@ -17,9 +17,9 @@
  * Usage:
  *   bun scripts/prefetch-deps.ts <prefetchDir>
  *
- * Enumerates variants on the dimensions that affect download URLs (asan, lto,
- * baseline, musl) for the current host os/arch. Variants without a published
- * artifact are skipped — better to over-enumerate and 404 than to miss one.
+ * Enumerates the current host target plus the cross targets CI builds from
+ * it (only target-only source deps differ between them). Variants without a
+ * published artifact are skipped.
  */
 
 import { existsSync, readFileSync } from "node:fs";
@@ -28,7 +28,15 @@ import { basename, resolve } from "node:path";
 import { resolveConfig, type Config, type PartialConfig } from "./build/config.ts";
 import { resolveToolchain } from "./build/configure.ts";
 import { allDeps } from "./build/deps/index.ts";
-import { downloadWithRetry, extractTarGz, extractZip, prefetchPathForUrl } from "./build/download.ts";
+import {
+  downloadWithRetry,
+  extractTarGz,
+  extractZip,
+  gitArchive,
+  gitArchiveUrl,
+  githubArchiveUrl,
+  prefetchPathForUrl,
+} from "./build/download.ts";
 
 const dest = process.argv[2];
 if (dest === undefined) {
@@ -41,28 +49,24 @@ const extractedDir = resolve(dest, "extracted");
 // ───────────────────────────────────────────────────────────────────────────
 // Enumerate URL-affecting config variants for the current host.
 //
-// github-archive sources are config-independent, so one base config covers
-// them. WebKit prebuilt URL varies by (musl, baseline, debug|lto, asan).
-// Iterate the cross-product, dedupe URLs.
+// github/tarball sources are config-independent, so one base config covers
+// them; the cross targets CI builds from this host add their target-only
+// source deps (bootstrap_cmds for darwin).
 // ───────────────────────────────────────────────────────────────────────────
 
 const toolchain = resolveToolchain();
-const base: PartialConfig = { buildType: "Release", ci: true, webkit: "prebuilt" };
-const baseCfg = resolveConfig(base, toolchain);
+const base: PartialConfig = { buildType: "Release", ci: true };
 
-const variants: PartialConfig[] = [];
-for (const asan of [false, true]) {
-  for (const lto of [false, true]) {
-    for (const baseline of baseCfg.x64 ? [false, true] : [false]) {
-      for (const abi of baseCfg.linux ? (["gnu", "musl"] as const) : [undefined]) {
-        variants.push({ ...base, asan, lto, baseline, ...(abi !== undefined && { abi }) });
-      }
-    }
-  }
-}
+const variants: PartialConfig[] = [
+  base,
+  { ...base, os: "darwin", arch: "aarch64" },
+  { ...base, os: "windows", arch: "x64" },
+];
 
 interface Item {
   url: string;
+  /** If set, `url` is a gitArchiveUrl key and the bytes come from a sparse git fetch, not HTTP. */
+  git?: { repo: string; commit: string; sparse: string[] };
   /** If set, also extract into `<extractedDir>/<name>/` and write `<stamp>`. */
   extract?: {
     name: string;
@@ -101,8 +105,15 @@ for (const partial of variants) {
   for (const dep of allDeps) {
     if (dep.enabled !== undefined && !dep.enabled(cfg)) continue;
     const src = dep.source(cfg);
-    if (src.kind === "github-archive") {
-      add({ url: `https://github.com/${src.repo}/archive/${src.commit}.tar.gz` });
+    if (src.kind === "github") {
+      if (src.sparse === undefined) add({ url: githubArchiveUrl(src.repo, src.commit) });
+      else
+        add({
+          url: gitArchiveUrl(src.repo, src.commit, src.sparse),
+          git: { repo: src.repo, commit: src.commit, sparse: src.sparse },
+        });
+    } else if (src.kind === "tarball") {
+      add({ url: src.url });
     } else if (src.kind === "prebuilt") {
       const destDir = src.destDir ?? resolve(cfg.vendorDir, dep.name);
       add({
@@ -112,7 +123,7 @@ for (const partial of variants) {
           stamp: ".identity",
           value: src.identity,
           kind: "tar.gz",
-          rm: src.rmAfterExtract,
+          ...(src.rmAfterExtract !== undefined && { rm: src.rmAfterExtract }),
         },
       });
     }
@@ -139,6 +150,8 @@ async function fetchOne(item: Item): Promise<void> {
 
   if (existsSync(path)) {
     skipped++;
+  } else if (item.git !== undefined) {
+    await gitArchive(item.git.repo, item.git.commit, item.git.sparse, path);
   } else {
     try {
       await downloadWithRetry(item.url, path, basename(new URL(item.url).pathname));

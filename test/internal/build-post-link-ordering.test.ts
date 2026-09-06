@@ -29,7 +29,6 @@ function mockToolchain(overrides: Partial<Toolchain> = {}): Toolchain {
     clangVersion: "21.1.8",
     clangResourceDir: "/fake/llvm/lib/clang/21",
     ar: "/fake/llvm/bin/llvm-ar",
-    ranlib: "/fake/llvm/bin/llvm-ranlib",
     ld: "/fake/llvm/bin/ld.lld",
     ld64Lld: "/fake/llvm/bin/ld64.lld",
     rustLld: undefined,
@@ -37,9 +36,13 @@ function mockToolchain(overrides: Partial<Toolchain> = {}): Toolchain {
     strip: "/fake/bin/strip",
     llvmStrip: "/fake/llvm/bin/llvm-strip",
     nm: "/fake/llvm/bin/llvm-nm",
+    readobj: "/fake/llvm/bin/llvm-readobj",
+    objdump: "/fake/llvm/bin/llvm-objdump",
+    cxxfilt: "/fake/llvm/bin/llvm-cxxfilt",
     dsymutil: "/fake/llvm/bin/dsymutil",
     bun: "/fake/bin/bun",
     jsRuntime: "/fake/bin/bun",
+    jsRuntimeArgv: ["/fake/bin/bun"],
     esbuild: "/fake/bin/esbuild",
     ccache: undefined,
     cmake: "/fake/bin/cmake",
@@ -48,7 +51,6 @@ function mockToolchain(overrides: Partial<Toolchain> = {}): Toolchain {
     rustupHome: undefined,
     msvcLinker: undefined,
     rc: undefined,
-    mt: undefined,
     nasm: undefined,
     ...overrides,
   };
@@ -68,11 +70,16 @@ function hostConfig(partial: PartialConfig, buildDir: string): Config {
 }
 
 /** Find one build-edge line in the generated ninja text (continuations unwrapped). */
+/**
+ * The `build` line for `rule`, with the absolute-path alias Ninja.build()
+ * declares for every build-dir output (`| /abs/build/<out>`) folded away so
+ * the expectations read as `build <out>: <rule> <ins>`.
+ */
 function buildEdge(ninja: string, rule: string): string {
   const flat = ninja.replace(/ \$\n +/g, " ");
   const line = flat.split("\n").find(l => l.startsWith("build ") && l.includes(`: ${rule} `));
   if (line === undefined) throw new Error(`no '${rule}' edge in ninja output:\n${ninja}`);
-  return line;
+  return line.replace(new RegExp(` \\| \\S+(?=: ${rule} )`), "");
 }
 
 describe("emitPostLink ninja ordering", () => {
@@ -84,7 +91,7 @@ describe("emitPostLink ninja ordering", () => {
 
     const n = new Ninja({ buildDir });
     const exe = resolve(buildDir, `bun-profile${cfg.exeSuffix}`);
-    const { strippedExe } = emitPostLink(n, cfg, exe, "bun-profile", []);
+    const { strippedExe } = emitPostLink(n, cfg, exe, "bun-profile", [], [exe + ".o"]);
     const out = n.toString();
 
     expect(strippedExe).toBe(resolve(buildDir, `bun${cfg.exeSuffix}`));
@@ -104,7 +111,7 @@ describe("emitPostLink ninja ordering", () => {
 
     const n = new Ninja({ buildDir });
     const exe = resolve(buildDir, `bun-debug${cfg.exeSuffix}`);
-    const { strippedExe, dsym } = emitPostLink(n, cfg, exe, "bun-debug", []);
+    const { strippedExe, dsym } = emitPostLink(n, cfg, exe, "bun-debug", [], [exe + ".o"]);
     const out = n.toString();
 
     expect({ strippedExe, dsym }).toEqual({ strippedExe: undefined, dsym: undefined });
@@ -125,13 +132,17 @@ describe("emitPostLink ninja ordering", () => {
 
     const n = new Ninja({ buildDir });
     const exe = resolve(buildDir, "bun-profile");
-    const { dsym } = emitPostLink(n, cfg, exe, "bun-profile", []);
+    const { dsym } = emitPostLink(n, cfg, exe, "bun-profile", [], [exe + ".o"]);
     const out = n.toString();
 
     expect(dsym).toBe(resolve(buildDir, "bun-profile.dSYM"));
     expect(buildEdge(out, "dsymutil")).toBe("build bun-profile.dSYM: dsymutil bun-profile || bun");
     // Cross-compile: smoke_test short-circuits to a `check` phony (the
-    // binary can't run on this host), so the strip race can't happen there.
-    expect(buildEdge(out, "phony")).toBe("build check: phony bun-profile");
+    // binary can't run on this host), so the strip race can't happen there;
+    // the static scans (ClassInfo canary, verify-binary, duplicate
+    // definitions) run on any host.
+    expect(buildEdge(out, "phony")).toBe(
+      "build check: phony bun-profile bun-profile.classinfo-unique bun-profile.binary-verified bun-profile.duplicate-symbols.txt",
+    );
   });
 });

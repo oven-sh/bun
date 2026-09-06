@@ -22,7 +22,12 @@ export type Arch = "x64" | "aarch64";
 export type Abi = "gnu" | "musl" | "android";
 export type BuildType = "Debug" | "Release" | "RelWithDebInfo" | "MinSizeRel";
 export type BuildMode = "full" | "cpp-only" | "rust-only" | "link-only" | "rust-and-link" | "archive-link";
-export type WebKitMode = "prebuilt" | "local";
+/** Modes that compile C/C++ (and therefore resolve, fetch and build the deps); the others only run cargo and/or link downloaded artifacts. */
+export function modeCompilesCpp(mode: BuildMode): boolean {
+  return mode === "full" || mode === "cpp-only" || mode === "archive-link";
+}
+/** How WebKit (JavaScriptCore) is obtained — see deps/webkit.ts. */
+export type WebKitMode = "prebuilt" | "source";
 /** The package manager for the package.json files the build installs. */
 export type PackageManager = "bun" | "npm";
 
@@ -198,15 +203,15 @@ export interface Config {
   cc: string;
   cxx: string;
   /**
-   * Compiler for build-time host tools (dep_host_cc codegen helpers).
-   * Same as `cc` except when cross-compiling for windows from a unix host,
-   * where `cc` is clang-cl (emits COFF) and host tools need plain clang.
+   * Compiler for build-time host tools (`host-exe` steps: tinycc's c2str, ICU's
+   * icupkg, the ICU data .S). Same as `cc` except for windows targets, where
+   * `cc` is clang-cl and host tools need the plain clang driver.
    */
   hostCc: string;
   /**
    * C++ driver for host-side links (cargo's host-triple linker in
    * `.cargo/config.toml` — build scripts, proc-macros). Same as `cxx`
-   * except when cross-compiling for windows from a unix host.
+   * except for windows targets.
    */
   hostCxx: string;
   /** Parsed X.Y.Z from clang --version. Captured once at resolve time. */
@@ -218,8 +223,6 @@ export interface Config {
    */
   clangResourceDir: string | undefined;
   ar: string;
-  /** llvm-ranlib. undefined on windows (llvm-lib indexes itself). */
-  ranlib: string | undefined;
   /**
    * ld.lld on linux, lld-link on windows, ld64.lld when cross-compiling for
    * darwin from a non-darwin host. May be empty on native darwin (clang
@@ -238,6 +241,10 @@ export interface Config {
   strip: string;
   /** llvm-nm, for `DirectBuild.forbidUndefined`; undefined skips those checks. */
   nm: string | undefined;
+  /** llvm-readobj / llvm-objdump / llvm-cxxfilt, for verify-binary.ts; any one missing skips those checks. */
+  readobj: string | undefined;
+  objdump: string | undefined;
+  cxxfilt: string | undefined;
   /** Set when the target is darwin. Undefined on non-darwin targets. */
   dsymutil: string | undefined;
   /** Self-host bun for codegen (bun install, bun build). */
@@ -251,10 +258,12 @@ export interface Config {
    * into rule commands.
    */
   jsRuntime: string;
+  /** The same as an argv, for edges whose command is assembled from an argument list. */
+  jsRuntimeArgv: string[];
   esbuild: string;
   /** Optional — compiler launcher prefix. */
   ccache: string | undefined;
-  /** cmake executable. Required for nested dep builds. */
+  /** cmake executable — ci.ts packages artifacts with `cmake -E tar` (a zip writer present on every agent). */
   cmake: string;
   /** cargo executable. undefined when no rust toolchain is available. */
   cargo: string | undefined;
@@ -274,20 +283,18 @@ export interface Config {
   rustc: string | undefined;
   /** Windows: MSVC link.exe path (to avoid Git's /usr/bin/link shadowing). */
   msvcLinker: string | undefined;
-  /** Windows: llvm-rc for nested cmake (CMAKE_RC_COMPILER). */
+  /** Windows: llvm-rc, compiles windows-app-info.rc. */
   rc: string | undefined;
-  /** Windows: llvm-mt for nested cmake (CMAKE_MT). May be absent in some LLVM distros. */
-  mt: string | undefined;
   /** x64: nasm for BoringSSL's win-x64 assembly and libjpeg-turbo's x86_64 SIMD. */
   nasm: string | undefined;
 
   // ─── macOS SDK (darwin only, undefined elsewhere) ───
-  /** e.g. "13.0". Passed to deps as -DCMAKE_OSX_DEPLOYMENT_TARGET. */
+  /** e.g. "13.0" — the `-mmacosx-version-min` every object is compiled with. */
   osxDeploymentTarget: string | undefined;
   /**
    * SDK path. Native darwin: from `xcrun --show-sdk-path`. Darwin
    * cross-compile from a non-darwin host: an extracted MacOSX*.sdk (see
-   * macos-sdk.ts). Passed to deps as -DCMAKE_OSX_SYSROOT / `-isysroot`.
+   * macos-sdk.ts). The `-isysroot` for every compile and link.
    */
   osxSysroot: string | undefined;
 
@@ -406,8 +413,8 @@ export interface Toolchain {
   /**
    * Host compiler / C++ driver for build-time host tools and host-side
    * cargo links. Only set when they differ from `cc`/`cxx` (windows
-   * cross-compile from a unix host, where cc/cxx are clang-cl);
-   * resolveConfig() falls back to `cc`/`cxx` otherwise.
+   * targets, where cc/cxx are clang-cl); resolveConfig() falls back to
+   * `cc`/`cxx` otherwise.
    */
   hostCc: string | undefined;
   hostCxx: string | undefined;
@@ -420,7 +427,6 @@ export interface Toolchain {
   /** `clang -print-resource-dir`. undefined on Windows. */
   clangResourceDir: string | undefined;
   ar: string;
-  ranlib: string | undefined;
   ld: string;
   /**
    * lld's Mach-O port (`ld64.lld`), resolved on non-darwin unix hosts.
@@ -447,11 +453,16 @@ export interface Toolchain {
   llvmStrip: string | undefined;
   /** llvm-nm; undefined skips the per-dep undefined-symbol checks (source.ts). */
   nm: string | undefined;
+  /** For the post-link binary checks (bun.ts / verify-binary.ts); undefined skips them. */
+  readobj: string | undefined;
+  objdump: string | undefined;
+  cxxfilt: string | undefined;
   dsymutil: string | undefined;
   bun: string;
   /** Found only when the build installs with npm. */
   npm?: string | undefined;
   jsRuntime: string;
+  jsRuntimeArgv: string[];
   esbuild: string;
   ccache: string | undefined;
   cmake: string;
@@ -467,19 +478,8 @@ export interface Toolchain {
    * (the GNU hard-link utility) from shadowing the real linker in PATH.
    */
   msvcLinker: string | undefined;
-  /**
-   * Windows only: llvm-rc (resource compiler). Passed to nested cmake
-   * as CMAKE_RC_COMPILER. cmake's own detection usually finds it, but
-   * that depends on PATH and cmake version — explicit is safer.
-   */
+  /** Windows only: llvm-rc (resource compiler) for windows-app-info.rc. */
   rc: string | undefined;
-  /**
-   * Windows only: llvm-mt (manifest tool). Passed to nested cmake as
-   * CMAKE_MT. Optional — some LLVM distributions don't ship llvm-mt;
-   * when absent, cmake's STATIC_LIBRARY try-compile mode (set in
-   * source.ts) sidesteps the need.
-   */
-  mt: string | undefined;
   /** x64 targets: nasm for BoringSSL's win-x64 assembly and libjpeg-turbo's x86_64 SIMD. */
   nasm: string | undefined;
 }
@@ -769,7 +769,7 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
   // Android: force off. NDK ASAN deployment needs wrap.sh + runtime .so
   // shipping alongside the binary; UBSan likewise. Not worth the matrix.
   // FreeBSD: force off. Cross-compiled — we'd need to ship FreeBSD's
-  // libclang_rt.asan, and there's no -asan WebKit prebuilt for it.
+  // libclang_rt.asan (and there's no -asan WebKit prebuilt for it).
   // Darwin cross: force off. The Linux LLVM toolchain doesn't ship the
   // darwin ASAN/UBSan runtime dylibs (libclang_rt.*_osx_dynamic.dylib).
   // Windows cross: force off. The host clang doesn't ship the windows
@@ -786,18 +786,16 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
   // build:asan always set ENABLE_ASSERTIONS=ON for this reason.
   const assertions = partial.assertions ?? (debug || asan);
 
-  // LTO: default on for CI release non-asan non-assertions builds across
-  // linux, darwin-cross, and windows-cross. All three use ThinLTO (the JSC
-  // ThinLTO miscompile was fixed upstream). The -lto WebKit prebuilts only
-  // exist for the cross toolchain, so native windows/darwin stay non-LTO.
-  const windowsCross = windows && host.os !== "windows";
-  const ltoDefault = release && (linux || darwinCross || windowsCross) && ci && !assertions && !asan;
+  // LTO (ThinLTO across bun, JSC and the Rust side): on for every release
+  // build without assertions or ASAN, locally as in CI, so a local release
+  // binary has the codegen CI ships. `--lto=off` for faster relinks.
+  const ltoDefault = release && !assertions && !asan;
   let lto = partial.lto ?? ltoDefault;
   // ASAN and LTO don't mix — ASAN wins (silently, no warn — config is explicit).
-  // Android: no LTO prebuilt WebKit exists; force off so the right tarball is fetched.
-  // Windows arm64: oven-sh/WebKit ships no bun-webkit-windows-arm64-lto
-  // (LLVM's CodeView emitter aborts on ARM64 NEON tuple registers).
-  if ((asan && lto) || abi === "android" || (windows && arm64)) {
+  // Android, FreeBSD: not enabled (never built that way; untested).
+  // Windows arm64: off — LLVM's CodeView emitter aborts on ARM64 NEON tuple
+  // registers when JSC goes through LTO.
+  if ((asan && lto) || abi === "android" || freebsd || (windows && arm64)) {
     lto = false;
   }
 
@@ -827,8 +825,8 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
   // files ("Unknown attribute kind"). rust-lld is built against rustc's
   // LLVM, so it reads both rustc's bitcode (same version) and clang's
   // (older, hence readable). Swap it in as `ld` for the whole build —
-  // it's a stock lld, just newer, so non-LTO objects and nested cmake
-  // deps link the same as before.
+  // it's a stock lld, just newer, so non-LTO objects link the same as
+  // before.
   //
   // Tracked in workarounds.ts ("rust-lld-for-crosslang-lto") so this
   // branch self-obsoletes once clang's LLVM catches up to rustc's.
@@ -838,8 +836,14 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
   // Shared with the darwin-cross ld64 swap below: for darwin targets
   // findRustLld() resolves rustc's `gcc-ld/ld64.lld` (the Mach-O flavor of
   // the same rust-lld), so the swap composes with the cross toolchain.
+  // Not on a native macOS host: that link goes through Apple's ld, which
+  // runs LTO with the libLTO the clang driver hands it and takes no
+  // --ld-path, so there is nothing to swap (and libLTO has read rustc's
+  // newer bitcode in practice); the configure-time skew check in bun.ts
+  // exempts it for the same reason.
   const wantRustLld =
     crossLangLto &&
+    !(darwin && !darwinCross) &&
     toolchain.rustLld !== undefined &&
     clangMajor !== undefined &&
     rustLlvmMajor !== undefined &&
@@ -1078,11 +1082,6 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
         });
       }
     }
-    if (partial.webkit === "local") {
-      throw new BuildError("Cross-compiling for Windows requires the prebuilt WebKit (webkit=local needs msbuild)", {
-        hint: "Drop --webkit=local or build on a Windows host.",
-      });
-    }
     const llvmArch = arch === "x64" ? "x86_64" : "aarch64";
     crossTarget = `${llvmArch}-pc-windows-msvc`;
   }
@@ -1099,6 +1098,15 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
   const nodejsAbiVersion = partial.nodejsAbiVersion ?? versionDefaults.nodejsAbiVersion;
   const nodejsV8Version = partial.nodejsV8Version ?? versionDefaults.nodejsV8Version;
   const webkitVersion = partial.webkitVersion ?? versionDefaults.webkitVersion;
+  // JSC is compiled in this build like every other dep. `prebuilt` (download
+  // oven-sh/WebKit's release tarball for WEBKIT_VERSION instead) is an
+  // explicit opt-in only; no profile selects it.
+  const webkit = partial.webkit ?? "source";
+  if (webkit !== "prebuilt" && webkit !== "source") {
+    throw new BuildError(`Unknown --webkit=${webkit}`, {
+      hint: "Use source (the default; add --local-deps=WebKit=<path> for your own clone) or prebuilt (download the release tarball)",
+    });
+  }
 
   const packageManager = partial.packageManager ?? "bun";
   if (packageManager !== "bun" && packageManager !== "npm") {
@@ -1107,7 +1115,6 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
   assert(packageManager === "bun" || toolchain.npm !== undefined, "packageManager=npm needs toolchain.npm");
 
   // ─── macOS SDK ───
-  // Must be passed to nested cmake builds or they'll pick the wrong SDK.
   // Native darwin: ask xcode-select/xcrun. Cross-compiling from a non-darwin
   // host: an extracted MacOSX*.sdk — explicit path, well-known install, or
   // auto-downloaded into the cache dir (see macos-sdk.ts / ensureMacosSdk()).
@@ -1212,7 +1219,7 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
     timeTrace: partial.timeTrace ?? false,
     ci,
     buildkite,
-    webkit: partial.webkit ?? "prebuilt",
+    webkit,
     localDeps: parseLocalDeps(partial.localDeps, cwd),
     packageManager,
     cwd,
@@ -1227,7 +1234,6 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
     clangVersion: toolchain.clangVersion,
     clangResourceDir: toolchain.clangResourceDir,
     ar: toolchain.ar,
-    ranlib: toolchain.ranlib,
     ld: ld64StripSwap?.ld ?? ld,
     rustLld: toolchain.rustLld,
     rustLlvmVersion: toolchain.rustLlvmVersion,
@@ -1242,10 +1248,14 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
           : (toolchain.llvmStrip ?? toolchain.strip)
         : toolchain.strip),
     nm: toolchain.nm,
+    readobj: toolchain.readobj,
+    objdump: toolchain.objdump,
+    cxxfilt: toolchain.cxxfilt,
     dsymutil: toolchain.dsymutil,
     bun: toolchain.bun,
     npm: packageManager === "npm" ? toolchain.npm : undefined,
     jsRuntime: toolchain.jsRuntime,
+    jsRuntimeArgv: toolchain.jsRuntimeArgv,
     esbuild: toolchain.esbuild,
     ccache: toolchain.ccache,
     cmake: toolchain.cmake,
@@ -1266,7 +1276,6 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
     // newer rust-lld (and reaches it via the link rule's /clang:-B).
     msvcLinker: toolchain.msvcLinker ?? (windows && ld !== toolchain.ld ? toolchain.ld : undefined),
     rc: toolchain.rc,
-    mt: toolchain.mt,
     nasm: toolchain.nasm,
     osxDeploymentTarget,
     osxSysroot,

@@ -13,7 +13,7 @@ export const lsqpack: Dependency = {
   name: "lsqpack",
 
   source: () => ({
-    kind: "github-archive",
+    kind: "github",
     repo: "litespeedtech/ls-qpack",
     commit: LSQPACK_COMMIT,
   }),

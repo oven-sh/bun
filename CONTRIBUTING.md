@@ -269,21 +269,28 @@ In CI, we run our test suite with at least one target that is built with Address
 
 ## Building WebKit locally + Debug mode of JSC
 
-WebKit is not cloned by default (to save time and disk space). To clone and build WebKit locally, run:
+JavaScriptCore (with WTF, bmalloc and, off macOS, ICU) is compiled from source as part of the normal build, like every other dependency: the build fetches just `Source/{bmalloc,WTF,JavaScriptCore}` of the pinned `WEBKIT_VERSION` (a sparse fetch of ~35 MB, seconds — not a 12 GB clone) into `vendor/WebKit` and compiles it in its own ninja graph. It needs `ruby`, `python3` and `perl` for JSC's code generators, `zstd` for packing the ICU data (targets other than macOS), and, when cross-compiling a macOS target from Linux, `flex` and `bison` for the MIG host tool (on a Mac, Xcode's `mig` is used). `--webkit=prebuilt` opts into downloading oven-sh/WebKit's release tarball for that commit instead of compiling it:
 
 ```bash
-# Clone WebKit into ./vendor/WebKit
-$ git clone https://github.com/oven-sh/WebKit vendor/WebKit
+$ bun run build --webkit=prebuilt
+```
+
+To work on JSC itself you want a full clone with history instead. Clone it anywhere outside `vendor/` (that directory is the build's own fetch of the pinned commit), point `$BUN_WEBKIT_PATH` at it, and build with `bun run build:local` — the same build with `--local-deps=WebKit=$BUN_WEBKIT_PATH`, compiling whatever is checked out in your clone instead of the pinned commit, into `build/debug-local` (any profile takes `--local-deps=WebKit=<path>` directly, like every other dep):
+
+```bash
+# Clone WebKit next to bun (anywhere outside vendor/) and tell the build where it is
+$ git clone https://github.com/oven-sh/WebKit ../WebKit
+$ export BUN_WEBKIT_PATH=$PWD/../WebKit
 
 # Check out the version pinned in WEBKIT_VERSION in scripts/build/deps/webkit.ts
 # (a commit sha or an autobuild-* release tag; this handles both)
 $ bun sync-webkit-source
 
-# Build bun with the local JSC build — this automatically configures and builds JSC
+# Build bun with JSC compiled from that clone
 $ bun run build:local
 ```
 
-`bun run build:local` handles everything: configuring JSC, building JSC, and building Bun. On subsequent runs, JSC will incrementally rebuild if any WebKit sources changed. `ninja -Cbuild/debug-local` also works after the first build, and will build Bun+JSC.
+`bun run build:local` builds JSC and Bun in one ninja graph; on subsequent runs only the WebKit files you changed (and what includes them) recompile. `ninja -Cbuild/debug-local` also works after the first build.
 
 The build output goes to `./build/debug-local` (instead of `./build/debug`), so you'll need to update a couple of places:
 

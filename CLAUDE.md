@@ -21,7 +21,7 @@ Tip: Bun is already installed and in $PATH. The `bd` subcommand is a package.jso
 bun bd test foo.test.ts                    # debug build + quiet debug logs
 bun run build test foo.test.ts             # debug build
 bun run build:release -p 'Bun.version'     # release build
-bun run build:local run script.ts          # debug build with local WebKit
+bun run build:local run script.ts          # debug build, JSC compiled from your own WebKit clone ($BUN_WEBKIT_PATH)
 ```
 
 When exec args are present, build output is suppressed unless the build fails — you see only the binary's output. Build flags (e.g. `--asan=off`) go before the exec args; see `scripts/build.ts` header for the full arg routing rules.

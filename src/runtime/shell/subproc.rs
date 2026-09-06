@@ -1,4 +1,5 @@
 use core::ffi::{c_char, c_void};
+use core::ptr::NonNull;
 use std::sync::Arc;
 
 #[cfg(unix)]
@@ -193,6 +194,8 @@ pub struct ShellSubprocess {
 
     pub closed: EnumSet<StdioKind>,
 
+    event_loop: EventLoopHandle,
+
     ctrl_c_child: Option<bun_spawn::ctrl_c::Child>,
 }
 
@@ -234,9 +237,11 @@ impl JscSubprocess::static_pipe_writer::StaticPipeWriterProcess for ShellSubproc
 
 bun_spawn::link_impl_ProcessExit! {
     Shell for ShellSubprocess => |this| {
-        // Forwarded raw, not autoref'd: the callee may free `*this`.
-        on_process_exit(_process, status, _rusage) =>
-            ShellSubprocess::on_process_exit(this, &status),
+        // Forwarded raw, not autoref'd: the callee may free `*this`. `process`
+        // stays raw too so `VirtualMachine::on_subprocess_exit` gets its
+        // mutable provenance.
+        on_process_exit(process, status, _rusage) =>
+            ShellSubprocess::on_process_exit(this, process, &status),
     }
 }
 
@@ -787,6 +792,7 @@ impl ShellSubprocess {
                 stderr,
                 cmd_parent,
                 closed: EnumSet::empty(),
+                event_loop,
                 ctrl_c_child,
             });
         }
@@ -843,7 +849,10 @@ impl ShellSubprocess {
 
         // SAFETY: scoped access; `watch` does not re-enter the subprocess.
         match unsafe { (*subprocess).proc().watch() } {
-            bun_sys::Result::Ok(()) => {}
+            bun_sys::Result::Ok(()) => {
+                // SAFETY: `subprocess` is live; scoped access.
+                unsafe { (*subprocess).register_with_auto_killer() };
+            }
             bun_sys::Result::Err(_) => {
                 *notify_caller_process_already_exited = true;
                 spawn_args.lazy = false;
@@ -903,10 +912,37 @@ impl ShellSubprocess {
         Ok(())
     }
 
+    /// The owning VM when the shell runs on a JS event loop, `None` on a mini
+    /// event loop (`bun run` scripts, lifecycle scripts).
+    fn js_vm(&self) -> Option<NonNull<jsc::virtual_machine::VirtualMachine>> {
+        NonNull::new(self.event_loop.bun_vm().cast())
+    }
+
+    /// `bun test` kills the subprocesses that a timed-out test or a finished
+    /// `--isolate` file left running. This puts a shell command on that list,
+    /// next to `Bun.spawn` children; `on_process_exit` takes it off again.
+    fn register_with_auto_killer(&self) {
+        let Some(vm) = self.js_vm() else { return };
+        let Some(handle) = self.process.as_ref() else { return };
+        if handle.has_exited() {
+            return;
+        }
+        let Some(process) = NonNull::new(handle.as_ptr()) else { return };
+        // SAFETY: `vm` is the live VM that owns `event_loop`; JS thread only.
+        unsafe { (*vm.as_ptr()).on_subprocess_spawn(process) };
+    }
+
     /// # Safety
     /// `this` must be live and unborrowed; the Yield run here may free it.
-    unsafe fn on_process_exit(this: *mut Self, status: &Status) {
+    /// `process` is the live `*mut Process` threaded from the
+    /// `link_impl_ProcessExit!` vtable thunk.
+    unsafe fn on_process_exit(this: *mut Self, process: *mut Process, status: &Status) {
         log!("onProcessExit({:x})", this as usize);
+        // SAFETY: caller contract; the borrow ends at the `;`.
+        if let (Some(vm), Some(process)) = (unsafe { (*this).js_vm() }, NonNull::new(process)) {
+            // SAFETY: `vm` is the live VM that owns `event_loop`; JS thread only.
+            unsafe { (*vm.as_ptr()).on_subprocess_exit(process) };
+        }
         // SAFETY: caller contract; the borrow ends at the `;`.
         let interrupted = unsafe { (*this).ctrl_c_child.take() }.is_some()
             && bun_spawn::ctrl_c::child_died_of_it(status);

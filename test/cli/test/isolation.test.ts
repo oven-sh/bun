@@ -1,5 +1,5 @@
 import { describe, expect, setDefaultTimeout, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, normalizeBunSnapshot, tempDir, tls } from "harness";
+import { bunEnv, bunExe, isASAN, isWindows, normalizeBunSnapshot, tempDir, tls } from "harness";
 import fs from "node:fs";
 import net from "node:net";
 import { join } from "node:path";
@@ -695,6 +695,99 @@ describe.concurrent("bun test --isolate", () => {
       }
     }
   });
+
+  test("with --isolate, a leaked Bun.$ subprocess is killed before the next file", async () => {
+    using dir = tempDir("isolate-shell-subprocess", {
+      "sleeper.js": `
+        const fs = require("fs");
+        fs.writeFileSync(process.env.PID_FILE + ".tmp", String(process.pid));
+        fs.renameSync(process.env.PID_FILE + ".tmp", process.env.PID_FILE);
+        setInterval(() => {}, 1e6);
+      `,
+      "a-shell.test.ts": `
+        import { test, expect } from "bun:test";
+        import { $ } from "bun";
+        import fs from "node:fs";
+        test("leak a sleeper through Bun.$", async () => {
+          // Not awaited: the shell, and the sleeper under it, are still running when this file ends.
+          $\`\${process.execPath} sleeper.js\`.quiet().then(() => {}, () => {});
+          while (!fs.existsSync(process.env.PID_FILE!)) await Bun.sleep(10);
+          expect(Number(fs.readFileSync(process.env.PID_FILE!, "utf8"))).toBeGreaterThan(0);
+        });
+      `,
+      "b-check.test.ts": `
+        import { test, expect } from "bun:test";
+        import fs from "node:fs";
+        const isAlive = (pid: number) => { try { process.kill(pid, 0); return true; } catch { return false; } };
+        test("the previous file's Bun.$ sleeper was killed by isolation", async () => {
+          const pid = Number(fs.readFileSync(process.env.PID_FILE!, "utf8"));
+          expect(pid).toBeGreaterThan(0);
+          // The swap sends SIGTERM; the sleeper may still be getting reaped.
+          const deadline = Date.now() + 3_000;
+          while (isAlive(pid) && Date.now() < deadline) await Bun.sleep(10);
+          expect(isAlive(pid)).toBe(false);
+        });
+      `,
+    });
+    const pidFile = join(String(dir), "pid.txt");
+    try {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "test", "--isolate", "./a-shell.test.ts", "./b-check.test.ts"],
+        env: { ...bunEnv, PID_FILE: pidFile },
+        cwd: String(dir),
+        stderr: "pipe",
+        stdout: "pipe",
+      });
+      const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(normalizeBunSnapshot(stderr, dir)).toContain("2 pass");
+      expect(normalizeBunSnapshot(stderr, dir)).toContain("0 fail");
+      expect(exitCode).toBe(0);
+    } finally {
+      try {
+        process.kill(Number(fs.readFileSync(pidFile, "utf8")));
+      } catch {}
+    }
+  });
+
+  // process.on(<signal>) installs one process-wide handler. The listener goes
+  // away with the finished file's global, so the handler has to go too, or the
+  // next file inherits a caught signal that no JS code observes.
+  test.skipIf(isWindows)(
+    "with --isolate, a leaked process.on('SIGTERM') listener does not leave SIGTERM caught for the next file",
+    async () => {
+      using dir = tempDir("isolate-signal-listener", {
+        "a-signal.test.ts": `
+          import { test, expect } from "bun:test";
+          test("leak a SIGTERM listener", () => {
+            process.on("SIGTERM", () => console.error("[A listener] got SIGTERM"));
+            expect(process.listenerCount("SIGTERM")).toBe(1);
+          });
+        `,
+        "b-signal.test.ts": `
+          import { test, expect } from "bun:test";
+          test("SIGTERM with no listener ends the run", () => {
+            console.error("[B] listenerCount=" + process.listenerCount("SIGTERM"));
+            // Default disposition: the kernel terminates the process inside this call.
+            process.kill(process.pid, "SIGTERM");
+            console.error("[B] survived SIGTERM");
+            expect.unreachable();
+          });
+        `,
+      });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "test", "--isolate", "./a-signal.test.ts", "./b-signal.test.ts"],
+        env: bunEnv,
+        cwd: String(dir),
+        stderr: "pipe",
+        stdout: "pipe",
+      });
+      const [, stderr] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toContain("[B] listenerCount=0");
+      expect(stderr).not.toContain("[A listener] got SIGTERM");
+      expect(stderr).not.toContain("[B] survived SIGTERM");
+      expect(proc.signalCode).toBe("SIGTERM");
+    },
+  );
 });
 
 // --isolate raises JSC's FTL warm-up threshold. JSC options are set once per

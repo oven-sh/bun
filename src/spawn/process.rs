@@ -1313,9 +1313,10 @@ pub mod waiter_thread_posix {
                         out,
                         ResultTaskMini::<T>::run_from_main_thread_mini,
                     );
-                    mini.get_mut().enqueue_task_concurrent(core::ptr::NonNull::new_unchecked(
-                        core::ptr::addr_of_mut!((*out).task),
-                    ));
+                    mini.get_mut()
+                        .enqueue_task_concurrent(core::ptr::NonNull::new_unchecked(
+                            core::ptr::addr_of_mut!((*out).task),
+                        ));
                 }
                 // `out` is now owned by the mini queue;
                 // freed in `run_from_main_thread_mini`.

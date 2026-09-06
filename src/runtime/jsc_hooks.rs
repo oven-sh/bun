@@ -1735,11 +1735,12 @@ fn stop_dns_for_vm_teardown() -> SweepResult {
 /// prepareForDestruction discards the pre-exit queues.)
 pub(crate) fn stop_active_handles_for_test_isolation(vm: &mut VirtualMachine) {
     let _ = vm.event_loop_mut().drain_microtasks();
-    let _ = stop_active_handles(vm, StopReason::TestIsolation);
+    let _ = stop_active_handles(StopReason::TestIsolation);
 }
 
-pub(crate) fn stop_active_handles_for_vm_teardown(vm: &mut VirtualMachine) -> SweepResult {
-    stop_active_handles(vm, StopReason::VmTeardown)
+/// `_vm`: the caller holds this thread's VM exclusively, on the JS thread.
+pub(crate) fn stop_active_handles_for_vm_teardown(_vm: &mut VirtualMachine) -> SweepResult {
+    stop_active_handles(StopReason::VmTeardown)
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -1749,7 +1750,7 @@ enum StopReason {
     TestIsolation,
 }
 
-fn stop_active_handles(vm: &mut VirtualMachine, reason: StopReason) -> SweepResult {
+fn stop_active_handles(reason: StopReason) -> SweepResult {
     let state = runtime_state();
     if state.is_null() {
         return SweepResult::Idle;

@@ -129,29 +129,36 @@ extern "C" JSC::EncodedJSValue functionImportMeta__resolveSync(JSC::JSGlobalObje
             }
         }
 
-        if (!fromValue.isUndefinedOrNull() && fromValue.isObject()) {
-
-            auto pathsObject = fromValue.getObject()->getIfPropertyExists(globalObject, builtinNames(vm).pathsPublicName());
-            RETURN_IF_EXCEPTION(scope, {});
-            if (pathsObject) {
-                if (pathsObject.isCell() && pathsObject.asCell()->type() == JSC::JSType::ArrayType) {
-                    auto pathsArray = uncheckedDowncast<JSC::JSArray>(pathsObject);
-                    if (pathsArray->length() > 0) {
-                        fromValue = pathsArray->getIndex(globalObject, 0);
-                        RETURN_IF_EXCEPTION(scope, {});
+        if (!fromValue.isUndefinedOrNull()) {
+            if (WebCore::DOMURL* url = WebCoreCast<WebCore::JSDOMURL, WebCore::DOMURL>(JSValue::encode(fromValue))) {
+                from = JSC::JSValue::encode(jsString(vm, url->href().string()));
+            } else if (fromValue.isObject()) {
+                auto pathsObject = fromValue.getObject()->getIfPropertyExists(globalObject, builtinNames(vm).pathsPublicName());
+                RETURN_IF_EXCEPTION(scope, {});
+                if (pathsObject) {
+                    if (pathsObject.isCell() && pathsObject.asCell()->type() == JSC::JSType::ArrayType) {
+                        auto pathsArray = uncheckedDowncast<JSC::JSArray>(pathsObject);
+                        if (pathsArray->length() > 0) {
+                            fromValue = pathsArray->getIndex(globalObject, 0);
+                            RETURN_IF_EXCEPTION(scope, {});
+                            if (WebCore::DOMURL* pathUrl = WebCoreCast<WebCore::JSDOMURL, WebCore::DOMURL>(JSValue::encode(fromValue))) {
+                                from = JSC::JSValue::encode(jsString(vm, pathUrl->href().string()));
+                            }
+                        }
                     }
                 }
+            } else if (fromValue.isBoolean()) {
+                isESM = fromValue.toBoolean(globalObject);
+                fromValue = JSC::jsUndefined();
             }
-
-        } else if (fromValue.isBoolean()) {
-            isESM = fromValue.toBoolean(globalObject);
-            fromValue = JSC::jsUndefined();
         }
 
-        if (fromValue.isString()) {
-            from = JSC::JSValue::encode(fromValue);
-        } else if (thisValue.isString()) {
-            from = JSC::JSValue::encode(thisValue);
+        if (JSValue::decode(from).isUndefined()) {
+            if (fromValue.isString()) {
+                from = JSC::JSValue::encode(fromValue);
+            } else if (thisValue.isString()) {
+                from = JSC::JSValue::encode(thisValue);
+            }
         }
 
     } else if (thisValue.isString()) {
@@ -351,22 +358,39 @@ JSC_DEFINE_HOST_FUNCTION(functionImportMeta__resolve,
     if (callFrame->argumentCount() >= 2) {
         JSValue fromValue = callFrame->uncheckedArgument(1);
 
-        if (!fromValue.isUndefinedOrNull() && fromValue.isObject()) {
-            auto pathsObject = fromValue.getObject()->getIfPropertyExists(globalObject, builtinNames(vm).pathsPublicName());
-            RETURN_IF_EXCEPTION(scope, {});
-            if (pathsObject) {
-                if (pathsObject.isCell() && pathsObject.asCell()->type() == JSC::JSType::ArrayType) {
+        if (!fromValue.isUndefined()) {
+            if (fromValue.isString()) {
+                from = fromValue;
+            } else if (WebCore::DOMURL* url = WebCoreCast<WebCore::JSDOMURL, WebCore::DOMURL>(JSValue::encode(fromValue))) {
+                from = jsString(vm, url->href().string());
+            } else if (fromValue.isObject()) {
+                auto pathsObject = fromValue.getObject()->getIfPropertyExists(globalObject, builtinNames(vm).pathsPublicName());
+                RETURN_IF_EXCEPTION(scope, {});
+                if (pathsObject && pathsObject.isCell() && pathsObject.asCell()->type() == JSC::JSType::ArrayType) {
                     auto* pathsArray = uncheckedDowncast<JSC::JSArray>(pathsObject);
                     if (pathsArray->length() > 0) {
-                        fromValue = pathsArray->getIndex(globalObject, 0);
+                        JSValue firstPath = pathsArray->getIndex(globalObject, 0);
                         RETURN_IF_EXCEPTION(scope, {});
+                        if (firstPath.isString()) {
+                            from = firstPath;
+                        } else if (WebCore::DOMURL* pathUrl = WebCoreCast<WebCore::JSDOMURL, WebCore::DOMURL>(JSValue::encode(firstPath))) {
+                            from = jsString(vm, pathUrl->href().string());
+                        } else {
+                            Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, "parentURL"_s, "string or an instance of URL"_s, fromValue);
+                            return {};
+                        }
+                    } else {
+                        Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, "parentURL"_s, "string or an instance of URL"_s, fromValue);
+                        return {};
                     }
+                } else {
+                    Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, "parentURL"_s, "string or an instance of URL"_s, fromValue);
+                    return {};
                 }
+            } else {
+                Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, "parentURL"_s, "string or an instance of URL"_s, fromValue);
+                return {};
             }
-        }
-
-        if (fromValue.isString()) {
-            from = fromValue;
         }
     }
 

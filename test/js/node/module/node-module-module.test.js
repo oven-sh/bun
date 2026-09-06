@@ -190,14 +190,13 @@ describe.concurrent("node-module-module", () => {
   });
 
   // A relative cache dir is joined onto cwd. A value that does not fit the
-  // path buffer after the join used to abort the process.
-  const longRelativeDir = Buffer.alloc(8000, "A").toString();
-
+  // path buffer after the join used to abort the process. The env var form
+  // stays under the Windows per-variable limit of 32767 characters.
   test("NODE_COMPILE_CACHE with an over-long relative path does not crash startup", async () => {
     using dir = tempDir("compile-cache-long-env", {});
     await using proc = Bun.spawn({
       cmd: [bunExe(), "-e", `console.log("user code ran")`],
-      env: { ...bunEnv, NODE_COMPILE_CACHE: longRelativeDir },
+      env: { ...bunEnv, NODE_COMPILE_CACHE: Buffer.alloc(8000, "A").toString() },
       cwd: String(dir),
       stderr: "pipe",
     });
@@ -209,9 +208,11 @@ describe.concurrent("node-module-module", () => {
 
   test("module.enableCompileCache reports FAILED for an over-long relative path", async () => {
     using dir = tempDir("compile-cache-long-api", {});
+    // 100000 bytes exceeds the path buffer on every platform (the Windows
+    // buffer holds 32767 * 3 + 1 bytes).
     const code = `
       const Module = require("module");
-      const dir = Buffer.alloc(8000, "A").toString();
+      const dir = Buffer.alloc(100000, "A").toString();
       const r = Module.enableCompileCache(dir);
       console.log(JSON.stringify({ status: r.status, message: r.message }));
     `;
@@ -224,11 +225,7 @@ describe.concurrent("node-module-module", () => {
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(JSON.parse(stdout)).toEqual({
       status: Module.constants.compileCacheStatus.FAILED,
-      // The Windows path buffer holds 32767 UTF-16 units, so an 8000 byte
-      // value fits and the failure comes from mkdir with an errno name.
-      message: isWindows
-        ? expect.stringContaining("Cannot create cache directory: ")
-        : "Cannot create cache directory: path too long",
+      message: "Cannot create cache directory: path too long",
     });
     expect(stderr).toBe("");
     expect(exitCode).toBe(0);

@@ -1259,7 +1259,36 @@ b {
     minifyWhitespace: true,
     outdir: "/out",
     onAfterBundle(api) {
-      api.expectFile("/out/entry.css").toEqualIgnoringWhitespace(/* css */ `.a{mask:url(./sprites-mrrzcz3w.svg#icon)}`);
+      api.expectFile("/out/entry.css").toEqualIgnoringWhitespace(/* css */ `.a{mask:url("./sprites-mrrzcz3w.svg#icon")}`);
+    },
+  });
+
+  // The printer only sees a placeholder for a copied asset. The bundler splices
+  // the final path in afterwards, so the placeholder has to stay quoted: an
+  // unquoted url() with a space or a parenthesis is a bad-url token.
+  itBundled("css/FileLoaderURLWithSpecialCharsMinified", {
+    files: {
+      "/entry.css": /* css */ `
+        .a { background: url("./my image.png") }
+        .b { background: url("./a(b).png") }
+        .c { --bg: url("./my image.png") }
+        .d { background: url("./plain.png") }
+      `,
+      "/my image.png": Buffer.alloc(128 * 1024 + 1, "Z").toString(),
+      "/a(b).png": Buffer.alloc(128 * 1024 + 1, "Y").toString(),
+      "/plain.png": Buffer.alloc(128 * 1024 + 1, "X").toString(),
+    },
+    loader: {
+      ".png": "file",
+    },
+    minifyWhitespace: true,
+    outdir: "/out",
+    onAfterBundle(api) {
+      api
+        .expectFile("/out/entry.css")
+        .toEqualIgnoringWhitespace(
+          '.a{background:url("./my image-mrrzcz3w.png")}.b{background:url("./a(b)-nkpagkva.png")}.c{--bg:url("./my image-mrrzcz3w.png")}.d{background:url("./plain-w49ecq2a.png")}',
+        );
     },
   });
 

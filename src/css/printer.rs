@@ -333,6 +333,19 @@ impl<'a> Printer<'a> {
 
     #[inline]
     pub(crate) fn get_import_record_url(&mut self, import_record_idx: u32) -> PrintResult<&[u8]> {
+        self.resolve_import_record_url(import_record_idx)
+            .map(|resolved| resolved.url)
+    }
+
+    /// The url to print for an import record, and whether it is a bundler
+    /// placeholder (a unique key) that the bundler replaces with the final
+    /// output path after printing. A placeholder has to be printed inside a
+    /// quoted string: the final path is spliced in verbatim, and an unquoted
+    /// `url()` cannot hold a space, a quote or a parenthesis.
+    pub(crate) fn resolve_import_record_url(
+        &mut self,
+        import_record_idx: u32,
+    ) -> PrintResult<ResolvedImportRecordUrl<'_>> {
         let Some(import_info) = &self.import_info else {
             return Err(self.add_no_import_record_error());
         };
@@ -367,22 +380,37 @@ impl<'a> Printer<'a> {
                     Some(i) => &suffix[i as usize..],
                     None => b"",
                 };
-                return Ok(with_suffix(urls_for_css, fragment));
+                return Ok(ResolvedImportRecordUrl {
+                    url: with_suffix(urls_for_css, fragment),
+                    is_placeholder: false,
+                });
             }
             // It is a chunk URL (copied asset): keep the full `?query#fragment`.
             let unique_key_for_additional_file =
                 import_info.ast_unique_key_for_additional_file[record.source_index.get() as usize];
             if !unique_key_for_additional_file.is_empty() {
-                return Ok(with_suffix(unique_key_for_additional_file, suffix));
+                return Ok(ResolvedImportRecordUrl {
+                    url: with_suffix(unique_key_for_additional_file, suffix),
+                    is_placeholder: true,
+                });
             }
         }
         // External URL stays as-is
-        Ok(record.path.text)
+        Ok(ResolvedImportRecordUrl {
+            url: record.path.text,
+            is_placeholder: false,
+        })
     }
 
     pub(crate) fn context(&self) -> Option<&css::StyleContext<'a>> {
         self.ctx
     }
+}
+
+/// See [`Printer::resolve_import_record_url`].
+pub(crate) struct ResolvedImportRecordUrl<'u> {
+    pub(crate) url: &'u [u8],
+    pub(crate) is_placeholder: bool,
 }
 
 /// `Printer` participates in `serializer::serialize_*<W: bun_io::Write>` so

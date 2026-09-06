@@ -26,13 +26,13 @@ describe.concurrent("RedisClient: empty URL environment variables", () => {
   });
 
   test("REDIS_URL='' falls back to VALKEY_URL", async () => {
-    const { promise: connected, resolve } = Promise.withResolvers<void>();
+    let connections = 0;
     using server = Bun.listen({
       hostname: "127.0.0.1",
       port: 0,
       socket: {
         open(socket) {
-          resolve();
+          connections++;
           socket.end();
         },
         data() {},
@@ -57,6 +57,6 @@ describe.concurrent("RedisClient: empty URL environment variables", () => {
     expect(stderr).toBe("");
     expect(stdout).toBe("done\n");
     expect(exitCode).toBe(0);
-    await connected;
+    expect(connections).toBe(1);
   });
 });

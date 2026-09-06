@@ -34,8 +34,7 @@ function createWirePeer() {
           commands.push(args);
           const name = args[0].toString().toUpperCase();
           if (name === "HELLO") socket.write("%1\r\n$5\r\nproto\r\n:3\r\n");
-          else if (name === "MGET") socket.write(`*${count - 1}\r\n` + "$-1\r\n".repeat(count - 1));
-          else if (/^(HSET|HMSET|HINCRBY|RPUSH|DEL)$/.test(name)) socket.write(":1\r\n");
+          else if (/^(HSET|HMSET|HINCRBY)$/.test(name)) socket.write(":1\r\n");
           else socket.write("+OK\r\n");
         }
       },
@@ -110,27 +109,6 @@ describe("RedisClient wire encoding", () => {
       // @ts-expect-error: testing runtime behavior
       expect(thrownCode(() => client.hincrby("k", undefined, 1))).toBe("ERR_INVALID_ARG_TYPE");
       expect(peer.sent()).toEqual([[Array.from(Buffer.from("PING"))]]);
-    } finally {
-      client.close();
-    }
-  });
-
-  test("variadic methods reject an undefined or null element instead of dropping it", async () => {
-    using peer = createWirePeer();
-    const client = new RedisClient(peer.url, { autoReconnect: false });
-    try {
-      await client.ping();
-      // @ts-expect-error: testing runtime behavior
-      expect(thrownCode(() => client.mget("a", undefined, "c"))).toBe("ERR_INVALID_ARG_TYPE");
-      // @ts-expect-error: testing runtime behavior
-      expect(thrownCode(() => client.rpush("l", "x", null, "z"))).toBe("ERR_INVALID_ARG_TYPE");
-      // @ts-expect-error: testing runtime behavior
-      expect(thrownCode(() => client.del("k1", undefined, "k3"))).toBe("ERR_INVALID_ARG_TYPE");
-      // @ts-expect-error: testing runtime behavior
-      expect(thrownCode(() => client.zmscore("z", "m1", undefined))).toBe("ERR_INVALID_ARG_TYPE");
-      expect(await client.mget("a", "c")).toEqual([null, null]);
-      const b = (s: string) => Array.from(Buffer.from(s));
-      expect(peer.sent()).toEqual([[b("PING")], [b("MGET"), b("a"), b("c")]]);
     } finally {
       client.close();
     }

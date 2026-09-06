@@ -308,7 +308,19 @@ const isFreeBSD = process.platform === 'freebsd';
 const isOpenBSD = process.platform === 'openbsd';
 const isLinux = process.platform === 'linux';
 const isMacOS = process.platform === 'darwin';
-const isASan = process.config.variables.asan === 1;
+// Bun: process.config.variables.asan is always 0 (node-gyp would otherwise
+// build addons with -fsanitize=address), so ask the runtime directly. The
+// binding is expose-internals-gated; fall back to the CI binary name.
+const isASan = process.config.variables.asan === 1 || bunIsASan();
+function bunIsASan() {
+  try {
+    const { isASANEnabled } = require('bun:internal-for-testing');
+    if (typeof isASANEnabled === 'function') return isASANEnabled();
+  } catch {
+    // gated in release builds without BUN_FEATURE_FLAG_INTERNAL_FOR_TESTING=1
+  }
+  return path.basename(process.execPath).includes('bun-asan');
+}
 const isRiscv64 = process.arch === 'riscv64';
 const isDebug = process.features.debug;
 function isPi() {

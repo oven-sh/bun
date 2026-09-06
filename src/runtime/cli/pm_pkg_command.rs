@@ -699,6 +699,9 @@ impl PmPkgCommand {
                     "Invalid JSON value for <b>\"{s}\"<r>: {s}",
                     (bstr::BStr::new(key), bstr::BStr::new(reason)),
                 );
+                bun_core::pretty_errorln!(
+                    "<blue>note<r><d>:<r> --json parses each value as JSON. To store the text as a string, drop --json."
+                );
                 Global::exit(1);
             }
         }

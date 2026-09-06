@@ -20,9 +20,14 @@ const tlsOptions = {
   key: readFileSync(path.join(keysDir, "agent1-key.pem")),
 };
 
-// Large enough that part of a single res.write() is still queued in the
-// native send buffer when the handler returns, on every platform's loopback.
-const BODY = 8 * 1024 * 1024;
+// Larger than the most the kernel can take from a single res.write() on a
+// fresh loopback connection, so the rest is queued in userspace when the
+// handler returns. No TCP socket API sets SO_SNDBUF/SO_RCVBUF, so the size is
+// chosen above the platform ceilings: Linux defaults allow tcp_wmem max (4 MiB)
+// plus tcp_rmem max (6 MiB) per socket pair, macOS caps both buffers together
+// at kern.ipc.maxsockbuf (8 MiB). Measured on Linux, the kernel takes 2.5 MiB
+// of one write and the rest waits for on_writable.
+const BODY = 16 * 1024 * 1024;
 const payload = Buffer.alloc(BODY, "a");
 
 // Streaming decoder for a `Transfer-Encoding: chunked` body. It counts the

@@ -5465,9 +5465,8 @@ pub mod bv2_impl {
             }
         }
 
-        /// `bun build --watch` watches every file it parses, so a file whose
-        /// import failed to resolve still schedules its other imports. The dev
-        /// server links failed files and tracks the failure itself.
+        /// Under `bun build --watch` the imports that did resolve are still
+        /// parsed, so they are watched. The dev server tracks failures itself.
         fn keeps_scanning_after_resolve_error(&self) -> bool {
             self.bun_watcher.is_some() && self.dev_server.is_none()
         }
@@ -6118,10 +6117,6 @@ pub mod bv2_impl {
 
             if let Some(err) = resolve_result.last_error {
                 bun_core::scoped_log!(Bundle, "failed with error: {}", err.name());
-                // Under `bun build --watch` the imports that did resolve are
-                // still parsed, so an edit to any of them rebuilds while the
-                // failed one is missing. The build aborts before link time
-                // either way (`transpiler.log.errors > 0`).
                 if !this.keeps_scanning_after_resolve_error() {
                     resolve_result.resolve_queue.clear();
                 }

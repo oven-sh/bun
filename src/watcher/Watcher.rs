@@ -80,19 +80,15 @@ impl AnyResolveWatcher {
         (self.callback)(self.context, dir_path, dir_fd)
     }
 
-    /// A relative or absolute import resolved to nothing: the resolver looked
-    /// for `base` in `dir_path`, with every extension and index probe, and
-    /// found no file and no directory.
+    /// A relative or absolute import of `base` in `dir_path` resolved to nothing.
     #[inline]
     pub fn unresolved(self, dir_path: &[u8], base: &[u8]) {
         (self.on_unresolved)(self.context, dir_path, base)
     }
 }
 
-/// One import the resolver could not find: the directory it searched and the
-/// stem of the basename it tried. A new entry in that directory whose name is
-/// the stem, or starts with the stem followed by a dot, can satisfy the import
-/// (`a`, `a.js`, `a.ts`, `a.js.ts`, or a directory `a`).
+/// An import the resolver could not find: the directory it searched and the
+/// stem of the name it tried (`a` for `a.js`).
 struct UnresolvedImport {
     dir_hash: HashType,
     stem: Box<[u8]>,
@@ -103,7 +99,6 @@ impl UnresolvedImport {
         if base.len() < 2 {
             return base;
         }
-        // Skip a leading dot so `.env` keeps its name.
         match strings::index_of_char_usize(&base[1..], b'.') {
             Some(i) => &base[..i + 1],
             None => base,
@@ -161,9 +156,7 @@ pub struct Watcher {
     pub(crate) evict_list: [WatchItemIndex; MAX_EVICTION_COUNT],
     pub(crate) evict_list_i: WatchItemIndex,
 
-    /// Imports the resolver could not find. A file that appears for one of
-    /// them must trigger a reload even though the file itself is not in the
-    /// watchlist. Guarded by `mutex`.
+    /// Imports the resolver could not find. Guarded by `mutex`.
     unresolved_imports: Vec<UnresolvedImport>,
 
     /// Scratch snapshot of `watchlist.eventlist_index` used by
@@ -1015,9 +1008,7 @@ impl Watcher {
         }
     }
 
-    /// The directory watch itself comes from `on_maybe_watch_directory`, which
-    /// `load_as_file` calls for every miss, including the misses that go on to
-    /// resolve as a directory. Only a miss of the whole resolution is recorded.
+    /// Called once the whole resolution missed, not on every `load_as_file` miss.
     pub(crate) fn on_unresolved_import(&mut self, dir_path: &[u8], base: &[u8]) {
         if !self.is_watchable_directory(dir_path) {
             return;
@@ -1040,20 +1031,15 @@ impl Watcher {
         }
     }
 
-    /// The resolver and the parent-directory autowatch spell the same directory
-    /// with and without a trailing slash, so `unresolved_imports` keys on the
-    /// stripped form.
+    /// Callers spell the same directory with and without a trailing slash.
     #[inline]
     fn unresolved_dir_hash(dir_path: &[u8]) -> HashType {
         Self::get_hash(strings::without_trailing_slash(dir_path))
     }
 
-    /// Whether an entry that appeared in `dir_path` can satisfy an import the
-    /// resolver failed to find since the last `clear_unresolved_imports`.
-    /// With `Some(name)` the entry name from the event is checked. With
-    /// `None` (kqueue and Windows report no entry name) the directory is
-    /// listed and every entry is checked. The caller must hold `mutex` (the
-    /// platform watcher holds it around `on_file_update`).
+    /// Whether an entry in `dir_path` can satisfy a recorded unresolved import.
+    /// `None` lists the directory (kqueue and Windows report no entry name).
+    /// The caller must hold `mutex`.
     pub fn unresolved_import_matches(&self, dir_path: &[u8], name: Option<&[u8]>) -> bool {
         debug_assert!(self.mutex.is_held_by_current_thread());
         let dir_hash = Self::unresolved_dir_hash(dir_path);

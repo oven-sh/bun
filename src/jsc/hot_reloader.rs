@@ -945,10 +945,6 @@ where
                     }
                 }
                 bun_watcher::Kind::Directory => {
-                    // A file the resolver could not find is not in the watchlist, so
-                    // its creation only shows up as an event on the directory the
-                    // resolver searched. The Windows watcher passes no entry name, so
-                    // the watcher lists the directory instead.
                     #[cfg(windows)]
                     {
                         // on windows we receive file events for all items affected by a directory change
@@ -1085,11 +1081,8 @@ where
                             strings::paths::without_trailing_slash_windows_path(file_path),
                         );
 
-                        // A file the resolver could not find is not in the watchlist,
-                        // so its creation only shows up as an event on the directory
-                        // the resolver searched. A kqueue directory write means an
-                        // entry was added, removed, or renamed, with no name; inotify
-                        // names each entry and tells a create from a write.
+                        // A missing import is not in the watchlist. Its creation is
+                        // only visible as an event on the directory it belongs in.
                         let satisfies_unresolved_import = if IS_KQUEUE {
                             event.op.contains(WatchOp::WRITE)
                                 // SAFETY: the Watcher outlives this call (it owns the

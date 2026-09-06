@@ -1500,8 +1500,9 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
             // JS thread until the writer closes, and one buffer's worth would
             // ship as the Content-Length. So stat before open, and stream a
             // non-regular file with chunked transfer encoding instead: the
-            // stream reader opens the fd itself and polls it. A stat error is
-            // left for the open below, which reports it.
+            // stream reader opens the fd itself and polls it. A stat error and
+            // a directory are left for the open and read below, which reject
+            // before any request goes on the wire.
             //
             // On macOS a named pipe read through the event loop never sees
             // EOF (#40099 fixes that), so a FIFO keeps the buffered read there
@@ -1518,6 +1519,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                     Ok(stat) => {
                         let mode = stat.st_mode as u32;
                         !bun_sys::S::ISREG(mode)
+                            && !bun_sys::S::ISDIR(mode)
                             && !(cfg!(target_os = "macos") && bun_sys::S::ISFIFO(mode))
                     }
                     Err(_) => false,

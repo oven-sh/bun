@@ -383,6 +383,24 @@ describe.skipIf(isWindows)("Bun.file(fifo) upload", () => {
   });
 });
 
+test("a directory body rejects before any request reaches the origin", async () => {
+  using dir = tempDir("fetch-dir-body", {});
+  let requests = 0;
+  await using server = Bun.serve({
+    port: 0,
+    development: false,
+    fetch() {
+      requests++;
+      return new Response("ok");
+    },
+  });
+
+  await expect(fetch(server.url, { method: "POST", body: Bun.file(String(dir)) })).rejects.toThrow("EISDIR");
+  // A second request on the same origin proves the first never arrived.
+  expect(await (await fetch(server.url, { method: "POST", body: "x" })).text()).toBe("ok");
+  expect(requests).toBe(1);
+});
+
 test("missing file throws the expected error", async () => {
   Bun.gc(true);
   // Run this 1000 times to check for GC bugs

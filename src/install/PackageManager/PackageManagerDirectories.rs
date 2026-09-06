@@ -613,14 +613,9 @@ pub fn cached_github_folder_name_print_auto(
     ZStr::EMPTY
 }
 
-/// `tarball_url` is the URL the package's bytes come from (`resolution.npm().url`:
-/// the lockfile row, or the manifest's `dist.tarball`). A package from
-/// registry.npmjs.org lives in `<name>@<version>@@@<ver>`. Any other tarball lives
-/// in `<name>@<version>@@<host>__<16 hex>@@@<ver>`, keyed by the whole URL, so two
-/// registries on one host (a Nexus or Artifactory repository path, two Verdaccio
-/// ports) and a lockfile that pins another registry's tarball each get their own
-/// slot. An empty URL (a lockfile written before bun stored it, a disk-cache
-/// resolution) keeps the older `@@<configured hostname>` name.
+/// `<name>@<version>@@@<ver>` for a tarball on registry.npmjs.org, else
+/// `<name>@<version>@@<host>__<hash of tarball_url>@@@<ver>`. An empty
+/// `tarball_url` (a lockfile row without one) keeps the `@@<configured host>` name.
 // TODO: normalize to alphanumeric
 pub fn cached_npm_package_folder_name_print<'a>(
     this: &PackageManager,

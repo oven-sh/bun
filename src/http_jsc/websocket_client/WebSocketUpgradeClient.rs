@@ -682,8 +682,6 @@ where
             return !hostname.is_empty() && boringssl::check_server_identity(ssl, hostname);
         };
         let vm = VirtualMachineRef::get();
-        // Bracket like the `CppWebSocket::did_*` dispatches so microtasks the
-        // callback queues drain before the next socket event.
         let event_loop = vm.event_loop_mut();
         event_loop.enter();
         let verdict = call_check_server_identity(vm.global(), callback, ssl, hostname);

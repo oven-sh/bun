@@ -27,10 +27,8 @@ use super::frame;
 pub struct PendingLine {
     pub(crate) file_idx: u32,
     pub(crate) line: Box<[u8]>,
-    /// The worker wrote `line` to its stderr before it sent the frame, so it
-    /// prints when its copy is found in `captured`. A dot or the agent
-    /// status is not in the stream and prints right behind the entry
-    /// before it.
+    /// The worker wrote `line` to its stderr before it sent the frame. A
+    /// dot or the agent status is not in the stream.
     pub(crate) in_stream: bool,
 }
 

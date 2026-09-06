@@ -447,33 +447,32 @@ impl<'a> Coordinator<'a> {
         self.print_pending_lines(w);
     }
 
-    /// Prints pending results in frame order: a stream line once its copy is
-    /// in `captured`, a dot right away behind the complete lines before it.
+    /// Prints pending results in frame order. A stream line prints with the
+    /// captured output before it once its copy is in `captured`. A dot has
+    /// no copy in the stream, so it takes nothing from `captured`: what the
+    /// test wrote prints with the next stream line or at file end.
     fn print_pending_lines(&mut self, w: &mut Worker) {
         while let Some(p) = w.pending_lines.front() {
-            let (file_idx, end) = if p.in_stream {
+            if p.in_stream {
                 let Some(pos) = strings::index_of(&w.captured, &p.line) else {
                     break;
                 };
-                (p.file_idx, pos + p.line.len())
-            } else {
-                (
-                    p.file_idx,
-                    strings::last_index_of_char(&w.captured, b'\n').map_or(0, |nl| nl + 1),
-                )
-            };
-            let p = w.pending_lines.pop_front().expect("front was Some");
-            self.print_captured(w, end, Some(file_idx));
-            if !p.in_stream && !p.line.is_empty() {
-                let is_dot = self.dots;
-                if !is_dot {
-                    self.break_dots();
-                    self.ensure_header(file_idx);
-                }
-                let _ = Output::error_writer().write_all(&p.line);
-                self.last_printed_dot = is_dot;
-                Output::flush();
+                let (file_idx, end) = (p.file_idx, pos + p.line.len());
+                w.pending_lines.pop_front();
+                self.print_captured(w, end, Some(file_idx));
+                continue;
             }
+            let p = w.pending_lines.pop_front().expect("front was Some");
+            if p.line.is_empty() {
+                continue;
+            }
+            if !self.dots {
+                self.break_dots();
+                self.ensure_header(p.file_idx);
+            }
+            let _ = Output::error_writer().write_all(&p.line);
+            self.last_printed_dot = self.dots;
+            Output::flush();
         }
     }
 

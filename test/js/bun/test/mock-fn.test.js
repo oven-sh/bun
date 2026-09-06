@@ -725,6 +725,23 @@ describe("mock()", () => {
     );
     expect(fn()).toBe("1");
   });
+  if (isBun) {
+    // Bun wraps the value in a promise when mockResolvedValue is called, not when the mock is.
+    test("mockResolvedValue propagates an error thrown while wrapping the value in a promise", () => {
+      const boom = new Error("boom");
+      const value = Promise.resolve(1);
+      Object.defineProperty(value, "constructor", {
+        get() {
+          throw boom;
+        },
+      });
+      const fn = jest.fn();
+      expect(() => fn.mockResolvedValue(value)).toThrow(boom);
+      expect(() => fn.mockResolvedValueOnce(value)).toThrow(boom);
+      // nothing was queued
+      expect(fn()).toBeUndefined();
+    });
+  }
   test("withImplementation (callback throws)", () => {
     const fn = jest.fn(() => "1");
     expect(() =>

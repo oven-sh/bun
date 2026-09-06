@@ -23,7 +23,8 @@ pub enum State {
     #[default]
     Pending,
     Done(Vec<u8>),
-    Err(bun_sys::Error),
+    /// The read failed. The bytes read before the error come first.
+    Err(Vec<u8>, bun_sys::Error),
 }
 
 // Intrusive, single-thread ref-count; `deinit` runs when the last ref drops.
@@ -208,7 +209,7 @@ impl PipeReader {
 
             #[cfg(unix)]
             {
-                if matches!(self.state, State::Err(_)) {
+                if matches!(self.state, State::Err(..)) {
                     // onReaderError already ran; `_guard`'s Drop on return
                     // will drop the last ref and deinit() closes the handle.
                     return;
@@ -317,13 +318,13 @@ impl PipeReader {
                 };
                 ReadableStream::from_owned_slice(global_object, bytes, 0)
             }
-            State::Err(_err) => {
-                let empty = ReadableStream::empty(global_object)?;
-                ReadableStream::cancel(
-                    &ReadableStream::from_js(empty, global_object)?.unwrap(),
-                    global_object,
-                )?;
-                Ok(empty)
+            State::Err(..) => {
+                let State::Err(bytes, err) =
+                    core::mem::replace(&mut self.state, State::Err(Vec::new(), Default::default()))
+                else {
+                    unreachable!()
+                };
+                ReadableStream::from_bytes_then_error(global_object, bytes, err)
             }
         }
     }
@@ -339,8 +340,10 @@ impl PipeReader {
     }
 
     fn on_reader_error(&mut self, err: bun_sys::Error) {
-        // A previous `State::Done` buffer is freed by Drop of the replaced Vec.
-        self.state = State::Err(err);
+        let owned = self.to_owned_slice();
+        // Release the fd now, as EOF does, so a child still writing gets EPIPE.
+        self.reader.deinit();
+        self.state = State::Err(owned, err);
         if let Some(process) = self.process.take() {
             // `process` backref is valid while set; cleared before deref.
             let kind = self.kind(process.get());
@@ -356,7 +359,7 @@ impl PipeReader {
                 self.reader.close();
             }
             State::Done(_) => {}
-            State::Err(_) => {}
+            State::Err(..) => {}
         }
     }
 
@@ -385,7 +388,7 @@ impl PipeReader {
 impl Drop for PipeReader {
     fn drop(&mut self) {
         #[cfg(unix)]
-        debug_assert!(self.reader.is_done() || matches!(self.state, State::Err(_)));
+        debug_assert!(self.reader.is_done() || matches!(self.state, State::Err(..)));
     }
 }
 

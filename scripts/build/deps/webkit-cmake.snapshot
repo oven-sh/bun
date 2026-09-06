@@ -1,0 +1,1872 @@
+# WebKit CMake statements that scripts/build/deps/webkit.ts transcribes by hand:
+# code generators (add_custom_command → gen()), options (WEBKIT_OPTION_* /
+# SET_AND_EXPOSE_TO_BUILD → the cmakeconfig.h rows), compiler flags
+# (WEBKIT_*_COMPILER_FLAGS, add_compile_options … → webkitFlags()), the macros
+# wrapping them and the variables they use — rendered canonically by
+# webkit-check-cmake.ts from the fetched tree and compared on every build.
+# When this changes upstream, carry the change into webkit.ts, then refresh:
+#   bun scripts/build/deps/webkit-check-cmake.ts vendor/WebKit --update
+
+#### Source/cmake/WebKitFeatures.cmake
+
+# in macro(WEBKIT_OPTION_DEFINE _name _description _public _initial_value)
+expose_variable_to_build(${_name})
+
+option(
+    USE_64KB_PAGE_BLOCK "Support 64 KB userspace page size (reduces security and performance)" OFF
+)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+# in if(USE_64KB_PAGE_BLOCK)
+set(ENABLE_JIT_DEFAULT OFF)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+# in if(USE_64KB_PAGE_BLOCK)
+set(ENABLE_FTL_DEFAULT OFF)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+# in if(USE_64KB_PAGE_BLOCK)
+set(USE_SYSTEM_MALLOC_DEFAULT OFF)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+# in if(USE_64KB_PAGE_BLOCK)
+set(USE_MIMALLOC_DEFAULT ON)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+# in if(USE_64KB_PAGE_BLOCK)
+# in if(WTF_CPU_ARM64)
+set(ENABLE_C_LOOP_DEFAULT OFF)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+# in if(USE_64KB_PAGE_BLOCK)
+# in if(WTF_CPU_ARM64)
+set(ENABLE_SAMPLING_PROFILER_DEFAULT ON)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+# in if(USE_64KB_PAGE_BLOCK)
+# in else() # if(WTF_CPU_ARM64)
+set(ENABLE_C_LOOP_DEFAULT ON)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+# in if(USE_64KB_PAGE_BLOCK)
+# in else() # if(WTF_CPU_ARM64)
+set(ENABLE_SAMPLING_PROFILER_DEFAULT OFF)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+# in elseif(WTF_CPU_ARM64 OR WTF_CPU_X86_64) # if(USE_64KB_PAGE_BLOCK)
+set(ENABLE_JIT_DEFAULT ON)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+# in elseif(WTF_CPU_ARM64 OR WTF_CPU_X86_64) # if(USE_64KB_PAGE_BLOCK)
+set(ENABLE_FTL_DEFAULT ON)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+# in elseif(WTF_CPU_ARM64 OR WTF_CPU_X86_64) # if(USE_64KB_PAGE_BLOCK)
+set(USE_SYSTEM_MALLOC_DEFAULT OFF)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+# in elseif(WTF_CPU_ARM64 OR WTF_CPU_X86_64) # if(USE_64KB_PAGE_BLOCK)
+set(USE_MIMALLOC_DEFAULT OFF)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+# in elseif(WTF_CPU_ARM64 OR WTF_CPU_X86_64) # if(USE_64KB_PAGE_BLOCK)
+set(ENABLE_C_LOOP_DEFAULT OFF)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+# in elseif(WTF_CPU_ARM64 OR WTF_CPU_X86_64) # if(USE_64KB_PAGE_BLOCK)
+set(ENABLE_SAMPLING_PROFILER_DEFAULT ON)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+# in elseif(WTF_CPU_RISCV64) # if(USE_64KB_PAGE_BLOCK)
+set(ENABLE_JIT_DEFAULT ON)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+# in elseif(WTF_CPU_RISCV64) # if(USE_64KB_PAGE_BLOCK)
+set(ENABLE_FTL_DEFAULT ON)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+# in elseif(WTF_CPU_RISCV64) # if(USE_64KB_PAGE_BLOCK)
+set(USE_SYSTEM_MALLOC_DEFAULT OFF)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+# in elseif(WTF_CPU_RISCV64) # if(USE_64KB_PAGE_BLOCK)
+set(USE_MIMALLOC_DEFAULT ON)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+# in elseif(WTF_CPU_RISCV64) # if(USE_64KB_PAGE_BLOCK)
+set(ENABLE_C_LOOP_DEFAULT OFF)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+# in elseif(WTF_CPU_RISCV64) # if(USE_64KB_PAGE_BLOCK)
+set(ENABLE_SAMPLING_PROFILER_DEFAULT OFF)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+# in else() # if(USE_64KB_PAGE_BLOCK)
+set(ENABLE_JIT_DEFAULT OFF)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+# in else() # if(USE_64KB_PAGE_BLOCK)
+set(ENABLE_FTL_DEFAULT OFF)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+# in else() # if(USE_64KB_PAGE_BLOCK)
+set(USE_SYSTEM_MALLOC_DEFAULT ON)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+# in else() # if(USE_64KB_PAGE_BLOCK)
+set(USE_MIMALLOC_DEFAULT OFF)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+# in else() # if(USE_64KB_PAGE_BLOCK)
+set(ENABLE_C_LOOP_DEFAULT ON)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+# in else() # if(USE_64KB_PAGE_BLOCK)
+set(ENABLE_SAMPLING_PROFILER_DEFAULT OFF)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+# in if(ENABLE_C_LOOP_DEFAULT)
+set(ENABLE_WEBASSEMBLY_DEFAULT OFF)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+# in else() # if(ENABLE_C_LOOP_DEFAULT)
+set(ENABLE_WEBASSEMBLY_DEFAULT ON)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+# in if(APPLE)
+set(USE_ISO_MALLOC_DEFAULT OFF)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+# in else() # if(APPLE)
+set(USE_ISO_MALLOC_DEFAULT ON)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+# in if(DEFINED ClangTidy_EXE OR DEFINED IWYU_EXE)
+set(ENABLE_UNIFIED_BUILDS_DEFAULT OFF)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+# in else() # if(DEFINED ClangTidy_EXE OR DEFINED IWYU_EXE)
+set(ENABLE_UNIFIED_BUILDS_DEFAULT ON)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+# in if(NOT DEFINED ENABLE_SWIFT_DEMO_URI_SCHEME_DEFAULT OR NOT DEFINED ENABLE_BACK_FORWARD_LIST_SWIFT_DEFAULT)
+# in if(CMAKE_CROSSCOMPILING)
+set(_swift_features_default OFF)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+# in if(NOT DEFINED ENABLE_SWIFT_DEMO_URI_SCHEME_DEFAULT OR NOT DEFINED ENABLE_BACK_FORWARD_LIST_SWIFT_DEFAULT)
+# in elseif(COMPILER_IS_CLANG) # if(CMAKE_CROSSCOMPILING)
+# in if(_swift_interop_ok)
+set(_swift_features_default ON)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+# in if(NOT DEFINED ENABLE_SWIFT_DEMO_URI_SCHEME_DEFAULT OR NOT DEFINED ENABLE_BACK_FORWARD_LIST_SWIFT_DEFAULT)
+# in elseif(COMPILER_IS_CLANG) # if(CMAKE_CROSSCOMPILING)
+# in else() # if(_swift_interop_ok)
+set(_swift_features_default OFF)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+# in if(NOT DEFINED ENABLE_SWIFT_DEMO_URI_SCHEME_DEFAULT OR NOT DEFINED ENABLE_BACK_FORWARD_LIST_SWIFT_DEFAULT)
+# in else() # if(CMAKE_CROSSCOMPILING)
+set(_swift_features_default OFF)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+# in if(NOT DEFINED ENABLE_SWIFT_DEMO_URI_SCHEME_DEFAULT OR NOT DEFINED ENABLE_BACK_FORWARD_LIST_SWIFT_DEFAULT)
+# in if(NOT DEFINED ENABLE_SWIFT_DEMO_URI_SCHEME_DEFAULT)
+set(ENABLE_SWIFT_DEMO_URI_SCHEME_DEFAULT ${_swift_features_default})
+
+# in macro(WEBKIT_OPTION_BEGIN)
+# in if(NOT DEFINED ENABLE_SWIFT_DEMO_URI_SCHEME_DEFAULT OR NOT DEFINED ENABLE_BACK_FORWARD_LIST_SWIFT_DEFAULT)
+# in if(NOT DEFINED ENABLE_BACK_FORWARD_LIST_SWIFT_DEFAULT)
+set(ENABLE_BACK_FORWARD_LIST_SWIFT_DEFAULT ${_swift_features_default})
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_define(ENABLE_ACCESSIBILITY_ISOLATED_TREE PRIVATE OFF)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_define(ENABLE_API_TESTS PRIVATE OFF)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_define(ENABLE_APPLE_PAY PRIVATE OFF)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_define(ENABLE_APPLE_PAY_AUTOMATIC_RELOAD_LINE_ITEM PRIVATE OFF)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_define(ENABLE_APPLE_PAY_AUTOMATIC_RELOAD_PAYMENTS PRIVATE OFF)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_define(ENABLE_APPLE_PAY_COUPON_CODE PRIVATE OFF)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_define(ENABLE_APPLE_PAY_DEFERRED_LINE_ITEM PRIVATE OFF)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_define(ENABLE_APPLE_PAY_DEFERRED_PAYMENTS PRIVATE OFF)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_define(ENABLE_APPLE_PAY_DELEGATED_REQUEST PRIVATE OFF)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_define(ENABLE_APPLE_PAY_DISBURSEMENTS PRIVATE OFF)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_define(ENABLE_APPLE_PAY_INSTALLMENTS PRIVATE OFF)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_define(ENABLE_APPLE_PAY_LATER PRIVATE OFF)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_define(ENABLE_APPLE_PAY_LATER_AVAILABILITY PRIVATE OFF)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_define(ENABLE_APPLE_PAY_MERCHANT_CATEGORY_CODE PRIVATE OFF)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_define(ENABLE_APPLE_PAY_MULTI_MERCHANT_PAYMENTS PRIVATE OFF)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_define(ENABLE_APPLE_PAY_PAYMENT_ORDER_DETAILS PRIVATE OFF)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_define(ENABLE_APPLE_PAY_RECURRING_LINE_ITEM PRIVATE OFF)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_define(ENABLE_APPLE_PAY_RECURRING_PAYMENTS PRIVATE OFF)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_define(ENABLE_APPLE_PAY_SELECTED_SHIPPING_METHOD PRIVATE OFF)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_define(ENABLE_APPLE_PAY_SHIPPING_CONTACT_EDITING_MODE PRIVATE OFF)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_define(ENABLE_APPLE_PAY_SHIPPING_METHOD_DATE_COMPONENTS_RANGE PRIVATE OFF)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_define(ENABLE_APPLICATION_MANIFEST PRIVATE OFF)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_define(ENABLE_ASYNC_SCROLLING PRIVATE OFF)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_define(ENABLE_ATTACHMENT_ELEMENT PRIVATE OFF)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_define(ENABLE_AUTOCAPITALIZE PRIVATE OFF)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_define(ENABLE_AV1 PRIVATE OFF)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_define(ENABLE_AVF_CAPTIONS PRIVATE OFF)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_define(
+    ENABLE_BACK_FORWARD_LIST_SWIFT PRIVATE ${ENABLE_BACK_FORWARD_LIST_SWIFT_DEFAULT}
+)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_define(ENABLE_BREAKPAD PRIVATE OFF)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_define(ENABLE_BUBBLEWRAP_SANDBOX PRIVATE OFF)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_define(ENABLE_CACHE_PARTITIONING PRIVATE OFF)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_define(ENABLE_CONTENT_EXTENSIONS PRIVATE OFF)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_define(ENABLE_CONTENT_FILTERING PRIVATE OFF)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_define(ENABLE_CONTEXT_MENUS PRIVATE ON)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_define(ENABLE_CSS_TAP_HIGHLIGHT_COLOR PRIVATE OFF)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_define(ENABLE_CURSOR_VISIBILITY PRIVATE OFF)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_define(ENABLE_C_LOOP PRIVATE ${ENABLE_C_LOOP_DEFAULT})
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_define(ENABLE_DARK_MODE_CSS PRIVATE OFF)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_define(ENABLE_DATACUE_VALUE PRIVATE OFF)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_define(ENABLE_DEVICE_ORIENTATION PRIVATE OFF)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_define(ENABLE_DFG_JIT PRIVATE ${ENABLE_JIT_DEFAULT})
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_define(ENABLE_DRAG_SUPPORT PRIVATE OFF)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_define(ENABLE_ENCRYPTED_MEDIA PRIVATE OFF)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_define(ENABLE_EXPERIMENTAL_FEATURES PRIVATE OFF)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_define(ENABLE_FTL_JIT PRIVATE ${ENABLE_FTL_DEFAULT})
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_define(ENABLE_FULLSCREEN_API PRIVATE ON)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_define(ENABLE_GAMEPAD PRIVATE OFF)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_define(ENABLE_GEOLOCATION PRIVATE ON)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_define(ENABLE_GPU_PROCESS PRIVATE OFF)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_define(ENABLE_IMAGE_DIFF PRIVATE ON)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_define(ENABLE_INSPECTOR_ALTERNATE_DISPATCHERS PRIVATE OFF)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_define(ENABLE_INSPECTOR_EXTENSIONS PRIVATE OFF)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_define(ENABLE_INSPECTOR_TELEMETRY PRIVATE OFF)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_define(ENABLE_IOS_GESTURE_EVENTS PRIVATE OFF)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_define(ENABLE_IOS_TOUCH_EVENTS PRIVATE OFF)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_define(ENABLE_IPC_TESTING_SWIFT PRIVATE OFF)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_define(ENABLE_JAVASCRIPT_SHELL PRIVATE ON)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_define(ENABLE_JIT PRIVATE ${ENABLE_JIT_DEFAULT})
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_define(ENABLE_LAYOUT_TESTS PRIVATE OFF)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_define(ENABLE_LEGACY_CUSTOM_PROTOCOL_MANAGER PRIVATE OFF)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_define(ENABLE_LEGACY_ENCRYPTED_MEDIA PRIVATE OFF)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_define(ENABLE_LLVM_PROFILE_GENERATION PRIVATE OFF)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_define(ENABLE_MALLOC_HEAP_BREAKDOWN PRIVATE OFF)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_define(ENABLE_MATHML PRIVATE ON)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_define(ENABLE_MEDIA_CAPTURE PRIVATE OFF)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_define(ENABLE_MEDIA_CONTROLS_CONTEXT_MENUS PRIVATE OFF)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_define(ENABLE_MEDIA_RECORDER PRIVATE OFF)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_define(ENABLE_MEDIA_SESSION PRIVATE OFF)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_define(ENABLE_MEDIA_SESSION_COORDINATOR PRIVATE OFF)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_define(ENABLE_MEDIA_SESSION_PLAYLIST PRIVATE OFF)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_define(ENABLE_MEDIA_SOURCE PRIVATE OFF)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_define(ENABLE_MEDIA_SOURCE_IN_WORKERS PRIVATE OFF)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_define(ENABLE_MEDIA_STATISTICS PRIVATE OFF)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_define(ENABLE_MEDIA_STREAM PRIVATE OFF)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_define(ENABLE_MEMORY_SAMPLER PRIVATE OFF)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_define(ENABLE_MHTML PRIVATE OFF)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_define(ENABLE_MINIBROWSER PRIVATE OFF)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_define(ENABLE_MODEL_ELEMENT PRIVATE OFF)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_define(ENABLE_MOUSE_CURSOR_SCALE PRIVATE OFF)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_define(ENABLE_NAVIGATOR_STANDALONE PRIVATE OFF)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_define(ENABLE_NOTIFICATIONS PRIVATE ON)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_define(ENABLE_OFFSCREEN_CANVAS PRIVATE OFF)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_define(ENABLE_OFFSCREEN_CANVAS_IN_WORKERS PRIVATE OFF)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_define(ENABLE_ORIENTATION_EVENTS PRIVATE OFF)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_define(ENABLE_PAYMENT_REQUEST PRIVATE OFF)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_define(ENABLE_PDFJS PRIVATE OFF)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_define(ENABLE_PDF_HUD PRIVATE OFF)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_define(ENABLE_PDF_PLUGIN PRIVATE OFF)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_define(ENABLE_PDFKIT_PLUGIN PRIVATE OFF)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_define(ENABLE_UNIFIED_PDF PRIVATE OFF)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_define(ENABLE_PERIODIC_MEMORY_MONITOR PRIVATE OFF)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_define(ENABLE_PICTURE_IN_PICTURE_API PRIVATE OFF)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_define(ENABLE_POINTER_LOCK PRIVATE OFF)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_define(ENABLE_PREDEFINED_COLOR_SPACE_DISPLAY_P3 PRIVATE OFF)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_define(ENABLE_REFTRACKER PRIVATE OFF)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_define(ENABLE_RELEASE_LOG PRIVATE OFF)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_define(ENABLE_REMOTE_INSPECTOR PRIVATE ON)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_define(ENABLE_RESOURCE_USAGE PRIVATE OFF)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_define(ENABLE_SAMPLING_PROFILER PRIVATE ${ENABLE_SAMPLING_PROFILER_DEFAULT})
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_define(ENABLE_SANDBOX_EXTENSIONS PRIVATE OFF)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_define(ENABLE_SERVICE_CONTROLS PRIVATE OFF)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_define(ENABLE_SHAREABLE_RESOURCE PRIVATE OFF)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_define(ENABLE_SMOOTH_SCROLLING PRIVATE ON)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_define(ENABLE_SPATIAL_PORTAL PRIVATE OFF)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_define(ENABLE_SPEECH_SYNTHESIS PRIVATE OFF)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_define(ENABLE_SPELLCHECK PRIVATE OFF)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_define(ENABLE_STREAMING_IPC_IN_LOG_FORWARDING PRIVATE OFF)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_define(ENABLE_SWIFT_DEMO_URI_SCHEME PRIVATE ${ENABLE_SWIFT_DEMO_URI_SCHEME_DEFAULT})
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_define(ENABLE_TELEPHONE_NUMBER_DETECTION PRIVATE OFF)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_define(ENABLE_TEXT_AUTOSIZING PRIVATE OFF)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_define(ENABLE_THUNDER PRIVATE OFF)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_define(ENABLE_TOUCH_EVENTS PRIVATE OFF)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_define(ENABLE_UNIFIED_BUILDS PRIVATE ${ENABLE_UNIFIED_BUILDS_DEFAULT})
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_define(ENABLE_USER_MESSAGE_HANDLERS PRIVATE ON)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_define(ENABLE_VARIATION_FONTS PRIVATE OFF)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_define(ENABLE_VIDEO PRIVATE ON)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_define(ENABLE_VIDEO_PRESENTATION_MODE PRIVATE OFF)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_define(ENABLE_VIDEO_USES_ELEMENT_FULLSCREEN PRIVATE ON)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_define(ENABLE_WEBASSEMBLY PRIVATE ${ENABLE_WEBASSEMBLY_DEFAULT})
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_define(ENABLE_WEBASSEMBLY_BBQJIT PRIVATE ${ENABLE_FTL_DEFAULT})
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_define(ENABLE_WEBASSEMBLY_OMGJIT PRIVATE ${ENABLE_FTL_DEFAULT})
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_define(ENABLE_WEBDRIVER PRIVATE OFF)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_define(ENABLE_WEBDRIVER_BIDI PRIVATE OFF)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_define(ENABLE_WEBDRIVER_KEYBOARD_GRAPHEME_CLUSTERS PRIVATE OFF)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_define(ENABLE_WEBDRIVER_KEYBOARD_INTERACTIONS PRIVATE OFF)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_define(ENABLE_WEBDRIVER_MOUSE_INTERACTIONS PRIVATE OFF)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_define(ENABLE_WEBDRIVER_TOUCH_INTERACTIONS PRIVATE OFF)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_define(ENABLE_WEBDRIVER_WHEEL_INTERACTIONS PRIVATE OFF)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_define(ENABLE_WEBGL PRIVATE ON)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_define(ENABLE_WEBGPU PRIVATE OFF)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_define(ENABLE_WEBKIT_OVERFLOW_SCROLLING_CSS_PROPERTY PRIVATE OFF)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_define(ENABLE_WEBKIT_TOUCH_CALLOUT_CSS_PROPERTY PRIVATE OFF)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_define(ENABLE_WEBXR PRIVATE OFF)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_define(ENABLE_WEBXR_HIT_TEST PRIVATE OFF)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_define(ENABLE_WEBXR_LAYERS PRIVATE OFF)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_define(ENABLE_WEB_API_STATISTICS PRIVATE OFF)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_define(ENABLE_WEB_AUDIO PRIVATE ON)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_define(ENABLE_WEB_AUTHN PRIVATE OFF)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_define(ENABLE_WEB_CODECS PRIVATE OFF)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_define(ENABLE_WEB_RTC PRIVATE OFF)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_define(ENABLE_WIRELESS_PLAYBACK_TARGET PRIVATE OFF)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_define(ENABLE_WK_WEB_EXTENSIONS PRIVATE OFF)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_define(ENABLE_WRITING_TOOLS PRIVATE OFF)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_define(ENABLE_XSLT PRIVATE ON)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_define(USE_AVIF PRIVATE ON)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_define(USE_LCMS PRIVATE ON)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_define(USE_ISO_MALLOC PRIVATE ${USE_ISO_MALLOC_DEFAULT})
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_define(USE_JPEGXL PRIVATE ON)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_define(USE_SKIA PRIVATE OFF)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_define(USE_SKIA_ENCODERS PRIVATE ON)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_define(USE_SYSTEM_MALLOC PRIVATE ${USE_SYSTEM_MALLOC_DEFAULT})
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_define(USE_MIMALLOC PRIVATE ${USE_MIMALLOC_DEFAULT})
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_define(USE_EXTERNAL_MIMALLOC PRIVATE OFF)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_define(USE_PGO_PROFILE PRIVATE OFF)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_define(USE_WOFF2 PRIVATE ON)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_conflict(ENABLE_JIT ENABLE_C_LOOP)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_conflict(ENABLE_LLVM_PROFILE_GENERATION USE_PGO_PROFILE)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_conflict(ENABLE_SAMPLING_PROFILER ENABLE_C_LOOP)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_conflict(ENABLE_WEBASSEMBLY ENABLE_C_LOOP)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_depend(ENABLE_WEB_RTC ENABLE_MEDIA_STREAM)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_depend(ENABLE_ENCRYPTED_MEDIA ENABLE_VIDEO)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_depend(ENABLE_LEGACY_ENCRYPTED_MEDIA ENABLE_VIDEO)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_depend(ENABLE_DFG_JIT ENABLE_JIT)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_depend(ENABLE_FTL_JIT ENABLE_DFG_JIT)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_depend(ENABLE_WEBASSEMBLY_BBQJIT ENABLE_FTL_JIT)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_depend(ENABLE_WEBASSEMBLY_OMGJIT ENABLE_FTL_JIT)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_depend(ENABLE_INSPECTOR_ALTERNATE_DISPATCHERS ENABLE_REMOTE_INSPECTOR)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_depend(ENABLE_MEDIA_CONTROLS_CONTEXT_MENUS ENABLE_VIDEO)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_depend(ENABLE_MEDIA_RECORDER ENABLE_MEDIA_STREAM)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_depend(ENABLE_MEDIA_SESSION ENABLE_VIDEO)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_depend(ENABLE_MEDIA_SOURCE ENABLE_VIDEO)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_depend(ENABLE_MEDIA_STREAM ENABLE_VIDEO)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_depend(ENABLE_THUNDER ENABLE_ENCRYPTED_MEDIA)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_depend(ENABLE_VIDEO_PRESENTATION_MODE ENABLE_VIDEO)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_depend(ENABLE_VIDEO_USES_ELEMENT_FULLSCREEN ENABLE_VIDEO)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_depend(ENABLE_WEBXR ENABLE_WEBGL)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_depend(ENABLE_WEBXR_HIT_TEST ENABLE_WEBXR)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_depend(ENABLE_WEBXR_LAYERS ENABLE_WEBXR)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_depend(USE_SKIA_ENCODERS USE_SKIA)
+
+# in macro(WEBKIT_OPTION_BEGIN)
+webkit_option_depend(USE_EXTERNAL_MIMALLOC USE_MIMALLOC)
+
+# in macro(SET_AND_EXPOSE_TO_BUILD _variable_name)
+expose_variable_to_build(${_variable_name})
+
+# in macro(WEBKIT_CHECK_HAVE_INCLUDE _variable _header)
+set_and_expose_to_build(${_variable} ${${_variable}_value})
+
+# in macro(WEBKIT_CHECK_HAVE_FUNCTION _variable _function _header)
+set_and_expose_to_build(${_variable} ${${_variable}_value})
+
+# in macro(WEBKIT_CHECK_HAVE_SYMBOL _variable _symbol _header)
+set_and_expose_to_build(${_variable} ${${_variable}_value})
+
+# in macro(WEBKIT_CHECK_HAVE_STRUCT _variable _struct _member _header)
+set_and_expose_to_build(${_variable} ${${_variable}_value})
+
+option(ENABLE_EXPERIMENTAL_FEATURES "Enable experimental features" OFF)
+
+set_and_expose_to_build(ENABLE_EXPERIMENTAL_FEATURES ${ENABLE_EXPERIMENTAL_FEATURES})
+
+set_and_expose_to_build(USE_64KB_PAGE_BLOCK ${USE_64KB_PAGE_BLOCK})
+
+#### Source/cmake/OptionsCommon.cmake
+
+# in if(USE_LD_LLD)
+# in if(LD_VERSION MATCHES "(^|[ \t])LLD ")
+add_link_options(
+    "$<$<NOT:$<LINK_LANGUAGE:Swift>>:-fuse-ld=lld>" "$<$<LINK_LANGUAGE:Swift>:-use-ld=lld>"
+)
+
+# in if(LD_SUPPORTS_GC_SECTIONS)
+webkit_append_global_compiler_flags(-ffunction-sections -fdata-sections)
+
+# in if(LD_SUPPORTS_GC_SECTIONS)
+add_link_options("LINKER:--gc-sections")
+
+# in if(LD_SUPPORTS_DISABLE_NEW_DTAGS)
+add_link_options("LINKER:--disable-new-dtags")
+
+# in if(DEBUG_FISSION)
+# in if(LD_SUPPORTS_GDB_INDEX)
+add_link_options("LINKER:--gdb-index")
+
+# in if(SWIFT_NINJA_TRACE)
+set(SWIFT_JOBS_LOG "${CMAKE_BINARY_DIR}/swift-jobs.jsonl")
+
+# in if(SWIFT_NINJA_TRACE)
+set(SWIFT_STATS_DIR "${CMAKE_BINARY_DIR}/swift-stats")
+
+# in if(SWIFT_NINJA_TRACE)
+add_compile_options($<$<COMPILE_LANGUAGE:Swift>:--jobs-log=${SWIFT_JOBS_LOG}>)
+
+# in if(SWIFT_NINJA_TRACE)
+add_compile_options("$<$<COMPILE_LANGUAGE:Swift>:SHELL:-stats-output-dir ${SWIFT_STATS_DIR}>")
+
+# in elseif(ENABLE_ASSERTS) # if(ENABLE_ASSERTS STREQUAL "AUTO")
+webkit_prepend_global_compiler_flags(-DASSERT_ENABLED=1)
+
+# in elseif(NOT ENABLE_ASSERTS) # if(ENABLE_ASSERTS STREQUAL "AUTO")
+webkit_prepend_global_compiler_flags(-DASSERT_ENABLED=0)
+
+# in if(NOT APPLE)
+# in if(INT128_IS_USABLE)
+set_and_expose_to_build(HAVE_INT128_T TRUE)
+
+# in if(NOT APPLE)
+# in if(STD_FILESYSTEM_IS_AVAILABLE)
+set_and_expose_to_build(HAVE_STD_FILESYSTEM TRUE)
+
+# in if(NOT APPLE)
+# in elseif(STD_EXPERIMENTAL_FILESYSTEM_IS_AVAILABLE) # if(STD_FILESYSTEM_IS_AVAILABLE)
+set_and_expose_to_build(HAVE_STD_EXPERIMENTAL_FILESYSTEM TRUE)
+
+#### Source/cmake/OptionsJSCOnly.cmake
+
+add_definitions(-DBUILDING_JSCONLY__)
+
+webkit_option_define(USE_BUN_JSC_ADDITIONS PUBLIC OFF)
+
+webkit_option_define(ENABLE_MALLOC_HEAP_BREAKDOWN PUBLIC OFF)
+
+webkit_option_define(ENABLE_STATIC_JSC PUBLIC OFF)
+
+webkit_option_define(USE_LIBBACKTRACE PUBLIC OFF)
+
+webkit_option_default_port_value(ENABLE_REMOTE_INSPECTOR PRIVATE OFF)
+
+# in if(NOT WIN32)
+webkit_option_define(ENABLE_FUZZILLI PUBLIC OFF)
+
+webkit_option_define(ENABLE_JSC_GLIB_API PUBLIC OFF)
+
+webkit_option_define(USE_SYSTEM_UNIFDEF PRIVATE OFF)
+
+webkit_option_define(ALLOW_LINE_AND_COLUMN_NUMBER_IN_BUILTINS PUBLIC OFF)
+
+webkit_option_define(ENABLE_REMOTE_INSPECTOR PUBLIC OFF)
+
+webkit_option_define(ENABLE_BUN_SKIP_FAILING_ASSERTIONS PUBLIC OFF)
+
+# in if(USE_BUN_JSC_ADDITIONS)
+set_and_expose_to_build(USE_BUN_JSC_ADDITIONS 1)
+
+# in if(USE_BUN_JSC_ADDITIONS)
+# in if(WIN32)
+set_and_expose_to_build(JS_NO_EXPORT 1)
+
+# in if(USE_BUN_JSC_ADDITIONS)
+set_and_expose_to_build(BUSE_TZONE 0)
+
+# in if(USE_BUN_JSC_ADDITIONS)
+set_and_expose_to_build(USE_TZONE_MALLOC 0)
+
+# in if(ENABLE_MALLOC_HEAP_BREAKDOWN)
+set_and_expose_to_build(ENABLE_MALLOC_HEAP_BREAKDOWN 1)
+
+# in if(ENABLE_MALLOC_HEAP_BREAKDOWN)
+set_and_expose_to_build(BENABLE_MALLOC_HEAP_BREAKDOWN 1)
+
+# in if(ENABLE_MALLOC_HEAP_BREAKDOWN)
+set_and_expose_to_build(USE_SYSTEM_MALLOC 1)
+
+# in if(ENABLE_MALLOC_HEAP_BREAKDOWN)
+set_and_expose_to_build(ENABLE_LIBPAS 0)
+
+# in if(ALLOW_LINE_AND_COLUMN_NUMBER_IN_BUILTINS)
+set_and_expose_to_build(USE_ALLOW_LINE_AND_COLUMN_NUMBER_IN_BUILTINS 1)
+
+set_and_expose_to_build(ENABLE_RESOURCE_USAGE ON)
+
+# in if(ENABLE_REMOTE_INSPECTOR)
+set_and_expose_to_build(ENABLE_INSPECTOR_ALTERNATE_DISPATCHERS 1)
+
+# in if(ENABLE_REMOTE_INSPECTOR)
+set_and_expose_to_build(USE_INSPECTOR_SOCKET_SERVER 1)
+
+# in if(ENABLE_REMOTE_INSPECTOR)
+set_and_expose_to_build(USE_UNIX_DOMAIN_SOCKETS 1)
+
+# in if(ENABLE_BUN_SKIP_FAILING_ASSERTIONS)
+set_and_expose_to_build(BUN_SKIP_FAILING_ASSERTIONS 1)
+
+# in if(WIN32)
+add_definitions(-D_WINDOWS -DNTDDI_VERSION=0x0A000006 -D_WIN32_WINNT=0x0A00)
+
+# in if(WIN32)
+add_definitions(-DNOMINMAX)
+
+# in if(WIN32)
+add_definitions(-DUNICODE -D_UNICODE)
+
+# in if(WIN32)
+add_definitions(-DNOCRYPT)
+
+# in if(WIN32)
+add_definitions(-D_CRT_NONSTDC_NO_DEPRECATE)
+
+# in if(WIN32)
+add_definitions(-D_SILENCE_CXX23_DENORM_DEPRECATION_WARNING)
+
+# in if(WIN32)
+add_definitions(-D_WINSOCKAPI_=)
+
+# in if(ENABLE_JSC_GLIB_API)
+set_and_expose_to_build(ENABLE_2022_GLIB_API TRUE)
+
+# in if(ENABLE_JSC_GLIB_API)
+add_definitions(-DJSC_GLIB_API_ENABLED)
+
+# in if(ENABLE_JSC_GLIB_API)
+add_definitions(-DGETTEXT_PACKAGE="JSCGlib")
+
+# in if(LOWERCASE_EVENT_LOOP_TYPE STREQUAL "glib")
+set_and_expose_to_build(USE_GLIB 1)
+
+# in if(LOWERCASE_EVENT_LOOP_TYPE STREQUAL "glib")
+set_and_expose_to_build(USE_GLIB_EVENT_LOOP 1)
+
+# in if(LOWERCASE_EVENT_LOOP_TYPE STREQUAL "glib")
+set_and_expose_to_build(WTF_DEFAULT_EVENT_LOOP 0)
+
+# in elseif(LOWERCASE_EVENT_LOOP_TYPE STREQUAL "bun") # if(LOWERCASE_EVENT_LOOP_TYPE STREQUAL "glib")
+set_and_expose_to_build(USE_BUN_EVENT_LOOP 1)
+
+# in elseif(LOWERCASE_EVENT_LOOP_TYPE STREQUAL "bun") # if(LOWERCASE_EVENT_LOOP_TYPE STREQUAL "glib")
+set_and_expose_to_build(WTF_DEFAULT_EVENT_LOOP 0)
+
+# in else() # if(LOWERCASE_EVENT_LOOP_TYPE STREQUAL "glib")
+set_and_expose_to_build(USE_GENERIC_EVENT_LOOP 1)
+
+# in else() # if(LOWERCASE_EVENT_LOOP_TYPE STREQUAL "glib")
+set_and_expose_to_build(WTF_DEFAULT_EVENT_LOOP 0)
+
+# in if(APPLE)
+add_definitions(-DU_DISABLE_RENAMING=1)
+
+#### Source/cmake/OptionsMSVC.cmake
+
+# in function(MSVC_ADD_COMPILE_OPTIONS)
+# in foreach(_option ${ARGV})
+add_compile_options($<$<COMPILE_LANGUAGE:C,CXX>:${_option}>)
+
+msvc_add_compile_options(/clang:-masm=att)
+
+msvc_add_compile_options(/Zi /GS)
+
+add_link_options(/DEBUG /OPT:NOICF /OPT:REF)
+
+add_definitions(-D_HAS_EXCEPTIONS=0)
+
+msvc_add_compile_options(/EHa- /EHc- /EHs- /fp:except-)
+
+msvc_add_compile_options(/GR-)
+
+msvc_add_compile_options(/analyze- /bigobj)
+
+add_definitions(-D_CRT_SECURE_NO_WARNINGS)
+
+add_definitions(-D_ENABLE_EXTENDED_ALIGNED_STORAGE)
+
+msvc_add_compile_options(/utf-8 /validate-charset)
+
+# in if(NOT ${CMAKE_GENERATOR} MATCHES "Ninja")
+msvc_add_compile_options(/MP)
+
+# in if(${CMAKE_BUILD_TYPE} MATCHES "Release")
+# in if(COMPILER_IS_CLANG_CL)
+add_compile_options(/clang:-fno-omit-frame-pointer /clang:-mno-omit-leaf-frame-pointer /Gw /Gy /GF)
+
+# in if(${CMAKE_BUILD_TYPE} MATCHES "Release")
+# in else() # if(COMPILER_IS_CLANG_CL)
+add_compile_options(/Oy- /Gw /Gy /GF)
+
+webkit_append_global_compiler_flags(/Wmicrosoft-include)
+
+webkit_prepend_global_compiler_flags(/W4)
+
+webkit_prepend_global_compiler_flags(/Zc:dllexportInlines-)
+
+add_link_options(/INCREMENTAL:NO)
+
+#### Source/cmake/WebKitCompilerFlags.cmake
+
+# in macro(WEBKIT_ADD_TARGET_C_FLAGS _target)
+webkit_add_compiler_flags(C TARGET ${_target} ${ARGN})
+
+# in macro(WEBKIT_ADD_TARGET_CXX_FLAGS _target)
+webkit_add_compiler_flags(CXX TARGET ${_target} ${ARGN})
+
+# in if(DEVELOPER_MODE AND DEVELOPER_MODE_FATAL_WARNINGS)
+# in if(MSVC)
+webkit_prepend_global_compiler_flags(/WX)
+
+# in if(DEVELOPER_MODE AND DEVELOPER_MODE_FATAL_WARNINGS)
+# in elseif(COMPILER_IS_GCC_OR_CLANG) # if(MSVC)
+webkit_prepend_global_compiler_flags(-Werror)
+
+# in if(DEVELOPER_MODE OR ARM)
+webkit_prepend_global_compiler_flags(-fno-omit-frame-pointer)
+
+# in if(COMPILER_IS_GCC_OR_CLANG)
+# in if(NOT APPLE AND ( COMPILER_IS_CLANG OR ( DEVELOPER_MODE AND NOT ARM ) ))
+webkit_prepend_global_compiler_flags(-fdebug-types-section)
+
+# in if(COMPILER_IS_GCC_OR_CLANG)
+webkit_prepend_global_compiler_flags(-gsimple-template-names)
+
+# in if(COMPILER_IS_GCC_OR_CLANG)
+webkit_prepend_global_compiler_flags("-mllvm -dwarf-linkage-names=Abstract")
+
+# in if(COMPILER_IS_GCC_OR_CLANG)
+webkit_append_global_compiler_flags(-fno-strict-aliasing)
+
+# in if(COMPILER_IS_GCC_OR_CLANG)
+# in if(NOT COMPILER_IS_CLANG_CL)
+webkit_append_global_compiler_flags(-fno-exceptions)
+
+# in if(COMPILER_IS_GCC_OR_CLANG)
+# in if(NOT COMPILER_IS_CLANG_CL)
+webkit_append_global_cxx_flags(-fno-rtti)
+
+# in if(COMPILER_IS_GCC_OR_CLANG)
+# in if(NOT COMPILER_IS_CLANG_CL)
+webkit_append_global_cxx_flags(-fcoroutines)
+
+# in if(COMPILER_IS_GCC_OR_CLANG)
+# in if(NOT COMPILER_IS_CLANG_CL)
+# in if(NOT APPLE)
+webkit_prepend_global_cxx_flags(-fasynchronous-unwind-tables)
+
+# in if(COMPILER_IS_GCC_OR_CLANG)
+# in if(NOT COMPILER_IS_CLANG_CL)
+webkit_prepend_global_compiler_flags(-Wno-tautological-compare)
+
+# in if(COMPILER_IS_GCC_OR_CLANG)
+# in if(NOT COMPILER_IS_CLANG_CL)
+# in if(WIN32)
+webkit_append_global_compiler_flags(-mno-ms-bitfields)
+
+# in if(COMPILER_IS_GCC_OR_CLANG)
+# in if(NOT COMPILER_IS_CLANG_CL)
+# in if(WIN32)
+webkit_prepend_global_compiler_flags(-Wno-unknown-pragmas)
+
+# in if(COMPILER_IS_GCC_OR_CLANG)
+# in if(NOT COMPILER_IS_CLANG_CL)
+# in if(WIN32)
+add_definitions(-D__USE_MINGW_ANSI_STDIO=1)
+
+# in if(COMPILER_IS_GCC_OR_CLANG)
+# in if(NOT WTF_CPU_ARM)
+webkit_prepend_global_compiler_flags(-Wcast-align)
+
+# in if(COMPILER_IS_GCC_OR_CLANG)
+webkit_prepend_global_compiler_flags(
+    -Wformat-security -Wmissing-format-attribute -Wpointer-arith -Wundef
+)
+
+# in if(COMPILER_IS_GCC_OR_CLANG)
+webkit_prepend_global_compiler_flags(
+    -Qunused-arguments -Wno-parentheses-equality -Wno-misleading-indentation -Wno-psabi
+       -Wno-nullability-completeness
+)
+
+# in if(COMPILER_IS_GCC_OR_CLANG)
+# in if(CMAKE_CXX_COMPILER_ID MATCHES "GNU")
+webkit_prepend_global_compiler_flags(-Wno-maybe-uninitialized)
+
+# in if(COMPILER_IS_GCC_OR_CLANG)
+# in if(( CMAKE_CXX_COMPILER_ID STREQUAL Clang ) AND ( CMAKE_CXX_COMPILER_VERSION VERSION_LESS 19 ))
+webkit_prepend_global_cxx_flags(-frelaxed-template-template-args)
+
+# in if(COMPILER_IS_GCC_OR_CLANG)
+# in if(( CMAKE_CXX_COMPILER_ID STREQUAL Clang ) AND ( CMAKE_CXX_COMPILER_VERSION VERSION_LESS 19 ))
+add_compile_options(
+    $<$<COMPILE_LANGUAGE:CXX>:-D__cpp_concepts=202002>
+       $<$<COMPILE_LANGUAGE:CXX>:-Wno-builtin-macro-redefined>
+)
+
+# in if(COMPILER_IS_GCC_OR_CLANG)
+# in if(CMAKE_CXX_COMPILER_ID MATCHES "GNU")
+webkit_prepend_global_compiler_flags(-Wno-subobject-linkage)
+
+# in if(COMPILER_IS_GCC_OR_CLANG)
+# in if(CMAKE_CXX_COMPILER_ID MATCHES "GNU")
+# in if(${CMAKE_CXX_COMPILER_VERSION} VERSION_LESS "14.0.1")
+webkit_prepend_global_compiler_flags(-fno-unswitch-loops)
+
+# in if(COMPILER_IS_GCC_OR_CLANG)
+webkit_prepend_global_cxx_flags(-Wno-noexcept-type)
+
+# in if(COMPILER_IS_GCC_OR_CLANG)
+# in if(CMAKE_CXX_COMPILER_ID MATCHES "GNU")
+webkit_prepend_global_compiler_flags(-Wno-expansion-to-defined)
+
+# in if(COMPILER_IS_GCC_OR_CLANG)
+# in if(CMAKE_CXX_COMPILER_ID MATCHES "GNU")
+webkit_prepend_global_cxx_flags(-Wno-array-bounds)
+
+# in if(COMPILER_IS_GCC_OR_CLANG)
+# in if(CMAKE_CXX_COMPILER_ID MATCHES "GNU")
+webkit_prepend_global_cxx_flags(-Wno-nonnull)
+
+# in if(COMPILER_IS_GCC_OR_CLANG)
+# in if(CMAKE_CXX_COMPILER_ID MATCHES "GNU")
+webkit_prepend_global_compiler_flags(-Wno-stringop-overflow)
+
+# in if(COMPILER_IS_GCC_OR_CLANG)
+# in if(CMAKE_CXX_COMPILER_ID MATCHES "GNU")
+webkit_prepend_global_cxx_flags(-Wno-stringop-overread)
+
+# in if(COMPILER_IS_GCC_OR_CLANG)
+# in if(CMAKE_CXX_COMPILER_ID MATCHES "GNU")
+webkit_prepend_global_cxx_flags(-Wno-odr)
+
+# in if(COMPILER_IS_GCC_OR_CLANG)
+# in if(CMAKE_CXX_COMPILER_ID MATCHES "GNU")
+webkit_prepend_global_cxx_flags(-Wno-invalid-offsetof)
+
+# in if(COMPILER_IS_GCC_OR_CLANG)
+# in if(CMAKE_CXX_COMPILER_ID MATCHES "GNU")
+webkit_prepend_global_cxx_flags(-Wno-dangling-pointer)
+
+# in if(COMPILER_IS_GCC_OR_CLANG)
+# in if(CMAKE_CXX_COMPILER_ID MATCHES "GNU")
+webkit_prepend_global_compiler_flags(-fmax-errors=20)
+
+# in if(COMPILER_IS_GCC_OR_CLANG)
+# in if(WTF_CPU_X86 AND NOT CMAKE_CROSSCOMPILING)
+webkit_prepend_global_compiler_flags(-msse2 -mfpmath=sse)
+
+# in if(COMPILER_IS_GCC_OR_CLANG)
+webkit_prepend_global_compiler_flags(-pipe)
+
+# in if(COMPILER_IS_GCC_OR_CLANG)
+# in if(USE_BUN_EVENT_LOOP)
+# in if(APPLE)
+webkit_prepend_global_compiler_flags(
+    -Wl,-U,_WTFTimer__create -Wl,-U,_WTFTimer__update -Wl,-U,_WTFTimer__deinit -Wl,-U,_WTFTimer__isActive
+       -Wl,-U,_WTFTimer__secondsUntilTimer -Wl,-U,_WTFTimer__cancel -Wl,-U,_Bun__errorInstance__finalize
+       -Wl,-U,_Bun__reportUnhandledError
+)
+
+# in if(COMPILER_IS_GCC_OR_CLANG)
+# in if(USE_BUN_EVENT_LOOP)
+# in else() # if(APPLE)
+webkit_prepend_global_compiler_flags(
+    -Wl,-u,_WTFTimer__create -Wl,-u,_WTFTimer__update -Wl,-u,_WTFTimer__deinit -Wl,-u,_WTFTimer__isActive
+       -Wl,-u,_WTFTimer__secondsUntilTimer -Wl,-u,_WTFTimer__cancel -Wl,-u,_Bun__errorInstance__finalize
+       -Wl,-u,_Bun__reportUnhandledError
+)
+
+# in if(COMPILER_IS_GCC_OR_CLANG)
+webkit_prepend_global_compiler_flags(-Werror=undefined-inline -Werror=undefined-internal)
+
+# in if(COMPILER_IS_GCC_OR_CLANG)
+webkit_prepend_global_compiler_flags(-Wno-character-conversion)
+
+# in if(COMPILER_IS_GCC_OR_CLANG AND NOT MSVC)
+webkit_prepend_global_compiler_flags(-Wall -Wextra)
+
+# in if(CMAKE_GENERATOR STREQUAL "Ninja")
+webkit_prepend_global_compiler_flags(-fcolor-diagnostics -fdiagnostics-color=always)
+
+# in if("${CMAKE_CXX_COMPILER_ID}" STREQUAL "GNU" AND NOT "${LOWERCASE_CMAKE_HOST_SYSTEM_PROCESSOR}" MATCHES "x86_64")
+add_link_options("$<$<CONFIG:Debug>:LINKER:--no-keep-memory>")
+
+# in if(LTO_MODE AND COMPILER_IS_CLANG AND NOT MSVC)
+add_link_options("$<$<NOT:$<LINK_LANGUAGE:Swift>>:-flto=${LTO_MODE}>")
+
+# in if(COMPILER_IS_GCC_OR_CLANG)
+# in if(ENABLE_SANITIZERS)
+# in if(MSVC AND WTF_CPU_X86_64)
+add_link_options("/WHOLEARCHIVE:${CLANG_ASAN_LIBRARY}" ${CLANG_ASAN_RT_LIBRARY})
+
+# in if(COMPILER_IS_GCC_OR_CLANG)
+# in if(ENABLE_SANITIZERS)
+# in else() # if(MSVC AND WTF_CPU_X86_64)
+add_link_options(-lpthread)
+
+# in if(COMPILER_IS_GCC_OR_CLANG)
+# in if(ENABLE_SANITIZERS)
+set(_ld_sanitize "$<IF:$<LINK_LANGUAGE:Swift>,-sanitize,-fsanitize>")
+
+# in if(COMPILER_IS_GCC_OR_CLANG)
+# in if(ENABLE_SANITIZERS)
+set(_cc_sanitize "$<IF:$<COMPILE_LANGUAGE:Swift>,-sanitize,-fsanitize>")
+
+# in if(COMPILER_IS_GCC_OR_CLANG)
+# in if(ENABLE_SANITIZERS)
+# in foreach(SANITIZER ${ENABLE_SANITIZERS})
+# in if(${SANITIZER} MATCHES "address")
+webkit_prepend_global_compiler_flags("-fno-omit-frame-pointer -fno-optimize-sibling-calls")
+
+# in if(COMPILER_IS_GCC_OR_CLANG)
+# in if(ENABLE_SANITIZERS)
+# in foreach(SANITIZER ${ENABLE_SANITIZERS})
+# in if(${SANITIZER} MATCHES "address")
+add_compile_options("${_cc_sanitize}=address")
+
+# in if(COMPILER_IS_GCC_OR_CLANG)
+# in if(ENABLE_SANITIZERS)
+# in foreach(SANITIZER ${ENABLE_SANITIZERS})
+# in if(${SANITIZER} MATCHES "address")
+add_link_options("${_ld_sanitize}=address")
+
+# in if(COMPILER_IS_GCC_OR_CLANG)
+# in if(ENABLE_SANITIZERS)
+# in foreach(SANITIZER ${ENABLE_SANITIZERS})
+# in elseif(${SANITIZER} MATCHES "undefined") # if(${SANITIZER} MATCHES "address")
+webkit_prepend_global_compiler_flags(
+    "-fno-omit-frame-pointer -fno-delete-null-pointer-checks -fno-optimize-sibling-calls"
+)
+
+# in if(COMPILER_IS_GCC_OR_CLANG)
+# in if(ENABLE_SANITIZERS)
+# in foreach(SANITIZER ${ENABLE_SANITIZERS})
+# in elseif(${SANITIZER} MATCHES "undefined") # if(${SANITIZER} MATCHES "address")
+add_compile_options(
+    "${_cc_sanitize}=undefined" "$<$<NOT:$<COMPILE_LANGUAGE:Swift>>:-fno-sanitize=vptr>"
+)
+
+# in if(COMPILER_IS_GCC_OR_CLANG)
+# in if(ENABLE_SANITIZERS)
+# in foreach(SANITIZER ${ENABLE_SANITIZERS})
+# in elseif(${SANITIZER} MATCHES "undefined") # if(${SANITIZER} MATCHES "address")
+add_link_options("${_ld_sanitize}=undefined")
+
+# in if(COMPILER_IS_GCC_OR_CLANG)
+# in if(ENABLE_SANITIZERS)
+# in foreach(SANITIZER ${ENABLE_SANITIZERS})
+# in elseif(${SANITIZER} MATCHES "thread" AND NOT MSVC) # if(${SANITIZER} MATCHES "address")
+add_compile_options("${_cc_sanitize}=thread")
+
+# in if(COMPILER_IS_GCC_OR_CLANG)
+# in if(ENABLE_SANITIZERS)
+# in foreach(SANITIZER ${ENABLE_SANITIZERS})
+# in elseif(${SANITIZER} MATCHES "thread" AND NOT MSVC) # if(${SANITIZER} MATCHES "address")
+add_link_options("${_ld_sanitize}=thread")
+
+# in if(COMPILER_IS_GCC_OR_CLANG)
+# in if(ENABLE_SANITIZERS)
+# in foreach(SANITIZER ${ENABLE_SANITIZERS})
+# in elseif(${SANITIZER} MATCHES "memory" AND COMPILER_IS_CLANG AND NOT MSVC) # if(${SANITIZER} MATCHES "address")
+add_compile_options("${_cc_sanitize}=memory")
+
+# in if(COMPILER_IS_GCC_OR_CLANG)
+# in if(ENABLE_SANITIZERS)
+# in foreach(SANITIZER ${ENABLE_SANITIZERS})
+# in elseif(${SANITIZER} MATCHES "memory" AND COMPILER_IS_CLANG AND NOT MSVC) # if(${SANITIZER} MATCHES "address")
+add_link_options("${_ld_sanitize}=memory")
+
+# in if(COMPILER_IS_GCC_OR_CLANG)
+# in if(ENABLE_SANITIZERS)
+# in foreach(SANITIZER ${ENABLE_SANITIZERS})
+# in elseif(${SANITIZER} MATCHES "leak" AND NOT MSVC) # if(${SANITIZER} MATCHES "address")
+add_compile_options("${_cc_sanitize}=leak")
+
+# in if(COMPILER_IS_GCC_OR_CLANG)
+# in if(ENABLE_SANITIZERS)
+# in foreach(SANITIZER ${ENABLE_SANITIZERS})
+# in elseif(${SANITIZER} MATCHES "leak" AND NOT MSVC) # if(${SANITIZER} MATCHES "address")
+add_link_options("${_ld_sanitize}=leak")
+
+# in if(COMPILER_IS_GCC_OR_CLANG)
+# in if(ENABLE_SANITIZERS)
+unset(_ld_sanitize)
+
+# in if(COMPILER_IS_GCC_OR_CLANG)
+# in if(ENABLE_SANITIZERS)
+unset(_cc_sanitize)
+
+# in if(UNIX AND NOT APPLE AND NOT ENABLED_COMPILER_SANITIZERS)
+add_link_options(
+    "$<$<OR:$<STREQUAL:$<TARGET_PROPERTY:TYPE>,SHARED_LIBRARY>,$<STREQUAL:$<TARGET_PROPERTY:TYPE>,MODULE_LIBRARY>>:LINKER:--no-undefined>"
+)
+
+# in if(CMAKE_CXX_COMPILER_ID MATCHES "GNU" AND WTF_CPU_MIPS)
+webkit_prepend_global_compiler_flags(-mno-lxc1-sxc1)
+
+#### Source/bmalloc/CMakeLists.txt
+
+set_source_files_properties(
+    libpas/src/libpas/bmalloc_heap.c libpas/src/libpas/bmalloc_heap_config.c
+       libpas/src/libpas/bmalloc_heap_flex.c libpas/src/libpas/bmalloc_heap_iso.c
+       libpas/src/libpas/bmalloc_heap_utils.c libpas/src/libpas/jit_heap.c
+       libpas/src/libpas/pas_bitfit_page_config_kind.c libpas/src/libpas/pas_heap_config_kind.c
+       libpas/src/libpas/pas_segregated_page_config_kind.c libpas/src/libpas/tagged_bmalloc_heap.c
+       libpas/src/libpas/tagged_bmalloc_heap_config.c libpas/src/libpas/tagged_bmalloc_heap_utils.c
+       PROPERTIES LANGUAGE CXX
+)
+
+# in if(CMAKE_C_COMPILER_ID STREQUAL "GNU")
+# in if(_all_c_flags MATCHES "-O1")
+set_source_files_properties(
+    libpas/src/libpas/pas_fast_large_free_heap.c libpas/src/libpas/pas_simple_large_free_heap.c
+       PROPERTIES COMPILE_OPTIONS "-O2"
+)
+
+add_definitions(-D_GNU_SOURCE)
+
+add_definitions(-DPAS_BMALLOC=1)
+
+# in if(USE_MIMALLOC)
+add_definitions(-DUSE_MIMALLOC=1)
+
+# in if(USE_SYSTEM_MALLOC)
+add_definitions(-DUSE_SYSTEM_MALLOC=1)
+
+# in if(MSVC)
+add_compile_options(/wd4206)
+
+# in if(MSVC)
+# in if(WTF_CPU_X86_64)
+add_compile_options(-mcx16)
+
+# in if(DEVELOPER_MODE AND ( APPLE OR HAVE_MALLOC_TRIM ))
+webkit_add_target_cxx_flags(mbmalloc -Wno-missing-field-initializers)
+
+#### Source/WTF/wtf/CMakeLists.txt
+
+# in elseif(APPLE) # if(WIN32)
+set_source_files_properties(darwin/OSLogPrintStream.mm PROPERTIES COMPILE_OPTIONS -fobjc-arc)
+
+# in else() # if(MSVC)
+set_source_files_properties(
+    SIMDUTF.cpp text/Base64.cpp text/StringImpl.cpp unicode/UTF8Conversion.cpp text/StringCommon.cpp
+       PROPERTIES COMPILE_FLAGS "-Wno-error=undef -Wno-undef"
+)
+
+#### Source/WTF/wtf/PlatformJSCOnly.cmake
+
+# in elseif(APPLE) # if(WIN32)
+add_custom_command(
+    OUTPUT ${WTF_DERIVED_SOURCES_DIR}/MachExceptionsServer.h ${WTF_DERIVED_SOURCES_DIR}/mach_exc.h
+       ${WTF_DERIVED_SOURCES_DIR}/mach_excServer.c ${WTF_DERIVED_SOURCES_DIR}/mach_excUser.c
+    MAIN_DEPENDENCY mac/MachExceptions.defs
+    WORKING_DIRECTORY ${WTF_DERIVED_SOURCES_DIR}
+    COMMAND ${Mig_EXECUTABLE} -header mach_exc.h -user mach_excUser.c
+       -sheader MachExceptionsServer.h -server mach_excServer.c -DMACH_EXC_SERVER_TASKIDTOKEN_STATE
+       -isysroot ${CMAKE_OSX_SYSROOT} MachExceptions.defs
+    VERBATIM
+)
+
+#### Source/JavaScriptCore/CMakeLists.txt
+
+set(
+    JavaScriptCore_OBJECT_LUT_SOURCES runtime/ArrayConstructor.cpp
+       runtime/AsyncFromSyncIteratorPrototype.cpp runtime/AsyncGeneratorPrototype.cpp
+       runtime/BigIntConstructor.cpp runtime/BigIntPrototype.cpp runtime/BooleanPrototype.cpp
+       runtime/DateConstructor.cpp runtime/DatePrototype.cpp runtime/ErrorPrototype.cpp
+       runtime/GeneratorPrototype.cpp runtime/IntlCollatorConstructor.cpp
+       runtime/IntlCollatorPrototype.cpp runtime/IntlDateTimeFormatConstructor.cpp
+       runtime/IntlDateTimeFormatPrototype.cpp runtime/IntlDisplayNamesConstructor.cpp
+       runtime/IntlDisplayNamesPrototype.cpp runtime/IntlDurationFormatConstructor.cpp
+       runtime/IntlDurationFormatPrototype.cpp runtime/IntlListFormatConstructor.cpp
+       runtime/IntlListFormatPrototype.cpp runtime/IntlLocalePrototype.cpp
+       runtime/IntlNumberFormatConstructor.cpp runtime/IntlNumberFormatPrototype.cpp
+       runtime/IntlObject.cpp runtime/IntlPluralRulesConstructor.cpp runtime/IntlPluralRulesPrototype.cpp
+       runtime/IntlRelativeTimeFormatConstructor.cpp runtime/IntlRelativeTimeFormatPrototype.cpp
+       runtime/IntlSegmentIteratorPrototype.cpp runtime/IntlSegmenterConstructor.cpp
+       runtime/IntlSegmenterPrototype.cpp runtime/IntlSegmentsPrototype.cpp
+       runtime/JSDataViewPrototype.cpp runtime/JSGlobalObject.cpp runtime/JSIterator.cpp
+       runtime/JSIteratorConstructor.cpp runtime/JSIteratorHelperPrototype.cpp runtime/JSONObject.cpp
+       runtime/JSPromiseConstructor.cpp runtime/JSPromisePrototype.cpp runtime/MapConstructor.cpp
+       runtime/MapPrototype.cpp runtime/NumberConstructor.cpp runtime/NumberPrototype.cpp
+       runtime/ObjectConstructor.cpp runtime/ReflectObject.cpp runtime/RegExpConstructor.cpp
+       runtime/RegExpPrototype.cpp runtime/RegExpStringIteratorPrototype.cpp runtime/SetPrototype.cpp
+       runtime/ShadowRealmObject.cpp runtime/ShadowRealmPrototype.cpp runtime/StringConstructor.cpp
+       runtime/StringPrototype.cpp runtime/SymbolConstructor.cpp runtime/SymbolPrototype.cpp
+       runtime/TemporalDurationConstructor.cpp runtime/TemporalDurationPrototype.cpp
+       runtime/TemporalInstantConstructor.cpp runtime/TemporalInstantPrototype.cpp
+       runtime/TemporalNow.cpp runtime/TemporalObject.cpp runtime/TemporalPlainDateConstructor.cpp
+       runtime/TemporalPlainDatePrototype.cpp runtime/TemporalPlainDateTimeConstructor.cpp
+       runtime/TemporalPlainDateTimePrototype.cpp runtime/TemporalPlainMonthDayConstructor.cpp
+       runtime/TemporalPlainMonthDayPrototype.cpp runtime/TemporalPlainTimeConstructor.cpp
+       runtime/TemporalPlainTimePrototype.cpp runtime/TemporalPlainYearMonthConstructor.cpp
+       runtime/TemporalPlainYearMonthPrototype.cpp runtime/TemporalZonedDateTimeConstructor.cpp
+       runtime/TemporalZonedDateTimePrototype.cpp wasm/js/JSWebAssembly.cpp
+       wasm/js/WebAssemblyArrayConstructor.cpp wasm/js/WebAssemblyArrayPrototype.cpp
+       wasm/js/WebAssemblyCompileErrorConstructor.cpp wasm/js/WebAssemblyCompileErrorPrototype.cpp
+       wasm/js/WebAssemblyExceptionConstructor.cpp wasm/js/WebAssemblyExceptionPrototype.cpp
+       wasm/js/WebAssemblyGlobalConstructor.cpp wasm/js/WebAssemblyGlobalPrototype.cpp
+       wasm/js/WebAssemblyInstanceConstructor.cpp wasm/js/WebAssemblyInstancePrototype.cpp
+       wasm/js/WebAssemblyLinkErrorConstructor.cpp wasm/js/WebAssemblyLinkErrorPrototype.cpp
+       wasm/js/WebAssemblyMemoryConstructor.cpp wasm/js/WebAssemblyMemoryPrototype.cpp
+       wasm/js/WebAssemblyModuleConstructor.cpp wasm/js/WebAssemblyModulePrototype.cpp
+       wasm/js/WebAssemblyRuntimeErrorConstructor.cpp wasm/js/WebAssemblyRuntimeErrorPrototype.cpp
+       wasm/js/WebAssemblySuspendErrorConstructor.cpp wasm/js/WebAssemblySuspendErrorPrototype.cpp
+       wasm/js/WebAssemblyStructConstructor.cpp wasm/js/WebAssemblyStructPrototype.cpp
+       wasm/js/WebAssemblyTableConstructor.cpp wasm/js/WebAssemblyTablePrototype.cpp
+       wasm/js/WebAssemblyTagConstructor.cpp wasm/js/WebAssemblyTagPrototype.cpp
+)
+
+set(JavaScriptCore_SCRIPTS_SOURCES_DIR "${JAVASCRIPTCORE_DIR}/Scripts")
+
+set(
+    JavaScriptCore_SCRIPTS_SOURCES_PATHS ${JavaScriptCore_SCRIPTS_SOURCES_DIR}/*.pl
+       ${JavaScriptCore_SCRIPTS_SOURCES_DIR}/*.py
+       ${JavaScriptCore_SCRIPTS_SOURCES_DIR}/wkbuiltins/builtins*.py
+       ${JavaScriptCore_SCRIPTS_SOURCES_DIR}/wkbuiltins/wkbuiltins.py
+)
+
+# in if(USE_FRAMEWORK_BUNDLES)
+list(
+    APPEND JavaScriptCore_SCRIPTS_SOURCES_PATHS ${JAVASCRIPTCORE_DIR}/inspector/scripts/generate*.py
+       ${JAVASCRIPTCORE_DIR}/inspector/scripts/codegen/generate*.py
+       ${JAVASCRIPTCORE_DIR}/inspector/scripts/codegen/*generator*.py
+       ${JAVASCRIPTCORE_DIR}/inspector/scripts/codegen/models.py
+)
+
+file(GLOB JavaScriptCore_SCRIPTS_SOURCES ${JavaScriptCore_SCRIPTS_SOURCES_PATHS})
+
+# in foreach(_file ${JavaScriptCore_SCRIPTS_SOURCES})
+get_filename_component(_script "${_file}" NAME)
+
+# in foreach(_file ${JavaScriptCore_SCRIPTS_SOURCES})
+add_custom_command(
+    OUTPUT ${JavaScriptCore_SCRIPTS_DIR}/${_script}
+    MAIN_DEPENDENCY ${_file}
+    WORKING_DIRECTORY ${JavaScriptCore_DERIVED_SOURCES_DIR}
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different ${_file} ${JavaScriptCore_SCRIPTS_DIR}/${_script}
+    VERBATIM
+)
+
+# in foreach(_file ${JavaScriptCore_SCRIPTS_SOURCES})
+list(
+    APPEND JavaScriptCore_SCRIPTS ${JavaScriptCore_SCRIPTS_DIR}/${_script}
+)
+
+set(BUILD_VARIANTS "normal")
+
+set(OFFLINE_ASM_INCLUDE_DIRS "")
+
+set(OFFLINE_ASM_ARGS "")
+
+set(OFFLINE_ASM_FORMAT_ARGS "")
+
+# in if(CMAKE_SYSTEM_NAME MATCHES "Linux")
+list(
+    APPEND OFFLINE_ASM_FORMAT_ARGS --binary-format=ELF
+)
+
+# in if(MSVC AND NOT ENABLE_C_LOOP)
+list(
+    APPEND OFFLINE_ASM_FORMAT_ARGS --platform=Windows
+)
+
+# in if(USE_APPLE_INTERNAL_SDK)
+list(
+    APPEND OFFLINE_ASM_ARGS "--webkit-additions-path=${WebKitAdditions_HEADERS_DIR}"
+)
+
+# in if(USE_APPLE_INTERNAL_SDK)
+list(
+    APPEND OFFLINE_ASM_INCLUDE_DIRS "-I${WebKitAdditions_HEADERS_DIR}"
+)
+
+set(
+    LLINT_ASM llint/InPlaceInterpreter.asm llint/InPlaceInterpreter64.asm llint/LowLevelInterpreter.asm
+       llint/LowLevelInterpreter64.asm
+)
+
+set(
+    OFFLINE_ASM offlineasm/arm64.rb offlineasm/arm64e.rb offlineasm/asm.rb offlineasm/ast.rb
+       offlineasm/backends.rb offlineasm/cloop.rb offlineasm/config.rb offlineasm/instructions.rb
+       offlineasm/offsets.rb offlineasm/opt.rb offlineasm/parser.rb offlineasm/registers.rb
+       offlineasm/risc.rb offlineasm/riscv64.rb offlineasm/self_hash.rb offlineasm/settings.rb
+       offlineasm/transform.rb offlineasm/x86.rb
+)
+
+set(
+    GENERATOR generator/Argument.rb generator/Assertion.rb generator/Checkpoints.rb generator/DSL.rb
+       generator/Fits.rb generator/GeneratedFile.rb generator/Metadata.rb generator/Opcode.rb
+       generator/OpcodeGroup.rb generator/Options.rb generator/Section.rb generator/Template.rb
+       generator/Type.rb generator/Wasm.rb generator/main.rb
+)
+
+add_custom_command(
+    OUTPUT ${JavaScriptCore_DERIVED_SOURCES_DIR}/Bytecodes.h
+       ${JavaScriptCore_DERIVED_SOURCES_DIR}/InitBytecodes.asm
+       ${JavaScriptCore_DERIVED_SOURCES_DIR}/BytecodeStructs.h
+       ${JavaScriptCore_DERIVED_SOURCES_DIR}/BytecodeIndices.h
+       ${JavaScriptCore_DERIVED_SOURCES_DIR}/BytecodeDumperGenerated.cpp
+    MAIN_DEPENDENCY ${JAVASCRIPTCORE_DIR}/generator/main.rb
+    DEPENDS ${GENERATOR} bytecode/BytecodeList.rb ${JAVASCRIPTCORE_DIR}/wasm/wasm.json
+    COMMAND ${Ruby_EXECUTABLE} ${JAVASCRIPTCORE_DIR}/generator/main.rb --bytecodes_h
+       ${JavaScriptCore_DERIVED_SOURCES_DIR}/Bytecodes.h --init_bytecodes_asm
+       ${JavaScriptCore_DERIVED_SOURCES_DIR}/InitBytecodes.asm --bytecode_structs_h
+       ${JavaScriptCore_DERIVED_SOURCES_DIR}/BytecodeStructs.h --bytecode_indices_h
+       ${JavaScriptCore_DERIVED_SOURCES_DIR}/BytecodeIndices.h
+       ${JAVASCRIPTCORE_DIR}/bytecode/BytecodeList.rb --wasm_json ${JAVASCRIPTCORE_DIR}/wasm/wasm.json
+       --bytecode_dumper ${JavaScriptCore_DERIVED_SOURCES_DIR}/BytecodeDumperGenerated.cpp
+    VERBATIM
+)
+
+add_custom_target(
+    Bytecodes
+    DEPENDS "${JavaScriptCore_DERIVED_SOURCES_DIR}/Bytecodes.h"
+)
+
+add_custom_command(
+    OUTPUT ${JavaScriptCore_DERIVED_SOURCES_DIR}/JSCWebPreferenceOptions.h
+    MAIN_DEPENDENCY ${JAVASCRIPTCORE_DIR}/Scripts/PreferencesTemplates/JSCWebPreferenceOptions.h.erb
+    DEPENDS ${WTF_SCRIPTS_DIR}/GeneratePreferences.rb
+       ${WTF_SCRIPTS_DIR}/Preferences/UnifiedWebPreferences.yaml WTF_CopyPreferences
+    COMMAND ${Ruby_EXECUTABLE} ${WTF_SCRIPTS_DIR}/GeneratePreferences.rb --frontend JavaScriptCore
+       --outputDir "${JavaScriptCore_DERIVED_SOURCES_DIR}" --template
+       ${JAVASCRIPTCORE_DIR}/Scripts/PreferencesTemplates/JSCWebPreferenceOptions.h.erb
+       ${WTF_SCRIPTS_DIR}/Preferences/UnifiedWebPreferences.yaml
+    VERBATIM
+)
+
+add_custom_target(
+    JSCWebPreferenceOptions
+    DEPENDS "${JavaScriptCore_DERIVED_SOURCES_DIR}/JSCWebPreferenceOptions.h"
+)
+
+# in if(WTF_CPU_X86_64)
+set(OFFLINE_ASM_BACKEND "X86_64")
+
+# in elseif(WTF_CPU_ARM64) # if(WTF_CPU_X86_64)
+# in if(CMAKE_OSX_ARCHITECTURES STREQUAL "arm64e")
+set(OFFLINE_ASM_BACKEND "ARM64E")
+
+# in elseif(WTF_CPU_ARM64) # if(WTF_CPU_X86_64)
+# in else() # if(CMAKE_OSX_ARCHITECTURES STREQUAL "arm64e")
+set(OFFLINE_ASM_BACKEND "ARM64")
+
+# in elseif(WTF_CPU_RISCV64) # if(WTF_CPU_X86_64)
+set(OFFLINE_ASM_BACKEND "RISCV64")
+
+# in if(NOT ENABLE_JIT)
+# in if(ENABLE_C_LOOP)
+set(OFFLINE_ASM_BACKEND "C_LOOP")
+
+add_custom_command(
+    OUTPUT ${JavaScriptCore_DERIVED_SOURCES_DIR}/AirOpcode.h
+       ${JavaScriptCore_DERIVED_SOURCES_DIR}/AirOpcodeGenerated.h
+    MAIN_DEPENDENCY ${JAVASCRIPTCORE_DIR}/b3/air/AirOpcode.opcodes
+    DEPENDS ${JAVASCRIPTCORE_DIR}/b3/air/opcode_generator.rb
+    COMMAND ${Ruby_EXECUTABLE} ${JAVASCRIPTCORE_DIR}/b3/air/opcode_generator.rb
+       ${JAVASCRIPTCORE_DIR}/b3/air/AirOpcode.opcodes
+    VERBATIM
+    WORKING_DIRECTORY ${JavaScriptCore_DERIVED_SOURCES_DIR}
+)
+
+add_custom_command(
+    OUTPUT ${JavaScriptCore_DERIVED_SOURCES_DIR}/LLIntDesiredSettings.h
+    MAIN_DEPENDENCY ${JAVASCRIPTCORE_DIR}/offlineasm/generate_settings_extractor.rb
+    DEPENDS ${LLINT_ASM} ${OFFLINE_ASM} ${JavaScriptCore_DERIVED_SOURCES_DIR}/InitBytecodes.asm
+    COMMAND ${Ruby_EXECUTABLE} ${JAVASCRIPTCORE_DIR}/offlineasm/generate_settings_extractor.rb
+       -I${JavaScriptCore_DERIVED_SOURCES_DIR}/ ${OFFLINE_ASM_INCLUDE_DIRS}
+       ${JAVASCRIPTCORE_DIR}/llint/LowLevelInterpreter.asm
+       ${JavaScriptCore_DERIVED_SOURCES_DIR}/LLIntDesiredSettings.h ${OFFLINE_ASM_BACKEND}
+       ${OFFLINE_ASM_ARGS}
+    VERBATIM
+)
+
+add_custom_command(
+    OUTPUT ${JavaScriptCore_DERIVED_SOURCES_DIR}/LLIntDesiredOffsets.h
+    MAIN_DEPENDENCY ${JAVASCRIPTCORE_DIR}/offlineasm/generate_offset_extractor.rb
+    DEPENDS LLIntSettingsExtractor ${LLINT_ASM} ${OFFLINE_ASM}
+       ${JavaScriptCore_DERIVED_SOURCES_DIR}/InitBytecodes.asm
+       ${JavaScriptCore_DERIVED_SOURCES_DIR}/AirOpcode.h ${JavaScriptCore_DERIVED_SOURCES_DIR}/WasmOps.h
+    COMMAND ${Ruby_EXECUTABLE} ${JAVASCRIPTCORE_DIR}/offlineasm/generate_offset_extractor.rb
+       -I${JavaScriptCore_DERIVED_SOURCES_DIR}/ ${OFFLINE_ASM_INCLUDE_DIRS}
+       ${JAVASCRIPTCORE_DIR}/llint/LowLevelInterpreter.asm $<TARGET_FILE:LLIntSettingsExtractor>
+       ${JavaScriptCore_DERIVED_SOURCES_DIR}/LLIntDesiredOffsets.h ${OFFLINE_ASM_BACKEND}
+       ${BUILD_VARIANTS} ${OFFLINE_ASM_ARGS}
+    VERBATIM
+)
+
+set(
+    BUILTINS_GENERATOR_SCRIPTS ${JavaScriptCore_SCRIPTS_DIR}/wkbuiltins.py
+       ${JavaScriptCore_SCRIPTS_DIR}/builtins_generator.py
+       ${JavaScriptCore_SCRIPTS_DIR}/builtins_model.py
+       ${JavaScriptCore_SCRIPTS_DIR}/builtins_templates.py
+       ${JavaScriptCore_SCRIPTS_DIR}/builtins_generate_combined_header.py
+       ${JavaScriptCore_SCRIPTS_DIR}/builtins_generate_combined_implementation.py
+       ${JavaScriptCore_SCRIPTS_DIR}/builtins_generate_separate_header.py
+       ${JavaScriptCore_SCRIPTS_DIR}/builtins_generate_separate_implementation.py
+       ${JavaScriptCore_SCRIPTS_DIR}/builtins_generate_wrapper_header.py
+       ${JavaScriptCore_SCRIPTS_DIR}/builtins_generate_wrapper_implementation.py
+       ${JavaScriptCore_SCRIPTS_DIR}/builtins_generate_internals_wrapper_header.py
+       ${JavaScriptCore_SCRIPTS_DIR}/builtins_generate_internals_wrapper_implementation.py
+       ${JavaScriptCore_SCRIPTS_DIR}/generate-js-builtins.py ${JavaScriptCore_SCRIPTS_DIR}/lazywriter.py
+)
+
+set(
+    JavaScriptCore_BUILTINS_SOURCES ${JAVASCRIPTCORE_DIR}/builtins/ArrayConstructor.js
+       ${JAVASCRIPTCORE_DIR}/builtins/ArrayIteratorPrototype.js
+       ${JAVASCRIPTCORE_DIR}/builtins/ArrayPrototype.js
+       ${JAVASCRIPTCORE_DIR}/builtins/AsyncDisposableStackPrototype.js
+       ${JAVASCRIPTCORE_DIR}/builtins/AsyncIteratorPrototype.js
+       ${JAVASCRIPTCORE_DIR}/builtins/DisposableStackPrototype.js
+       ${JAVASCRIPTCORE_DIR}/builtins/FunctionPrototype.js
+       ${JAVASCRIPTCORE_DIR}/builtins/GeneratorPrototype.js
+       ${JAVASCRIPTCORE_DIR}/builtins/IteratorHelpers.js
+       ${JAVASCRIPTCORE_DIR}/builtins/JSIteratorConstructor.js
+       ${JAVASCRIPTCORE_DIR}/builtins/JSIteratorHelperPrototype.js
+       ${JAVASCRIPTCORE_DIR}/builtins/JSIteratorPrototype.js
+       ${JAVASCRIPTCORE_DIR}/builtins/MapConstructor.js ${JAVASCRIPTCORE_DIR}/builtins/MapPrototype.js
+       ${JAVASCRIPTCORE_DIR}/builtins/ObjectConstructor.js
+       ${JAVASCRIPTCORE_DIR}/builtins/PromiseConstructor.js
+       ${JAVASCRIPTCORE_DIR}/builtins/ProxyHelpers.js ${JAVASCRIPTCORE_DIR}/builtins/ReflectObject.js
+       ${JAVASCRIPTCORE_DIR}/builtins/SetPrototype.js
+       ${JAVASCRIPTCORE_DIR}/builtins/ShadowRealmPrototype.js
+       ${JAVASCRIPTCORE_DIR}/builtins/TypedArrayConstructor.js
+       ${JAVASCRIPTCORE_DIR}/builtins/TypedArrayPrototype.js
+       ${JAVASCRIPTCORE_DIR}/builtins/WrapForValidIteratorPrototype.js
+       ${JAVASCRIPTCORE_DIR}/inspector/InjectedScriptSource.js
+)
+
+add_custom_command(
+    OUTPUT ${JavaScriptCore_DERIVED_SOURCES_DIR}/JSCBuiltins.cpp
+       ${JavaScriptCore_DERIVED_SOURCES_DIR}/JSCBuiltins.h
+    MAIN_DEPENDENCY ${JavaScriptCore_SCRIPTS_DIR}/generate-js-builtins.py
+    DEPENDS ${JavaScriptCore_BUILTINS_SOURCES} ${BUILTINS_GENERATOR_SCRIPTS}
+    COMMAND ${PYTHON_EXECUTABLE} ${JavaScriptCore_SCRIPTS_DIR}/generate-js-builtins.py --framework
+       JavaScriptCore --output-directory ${JavaScriptCore_DERIVED_SOURCES_DIR} --combined
+       ${JavaScriptCore_BUILTINS_SOURCES}
+    VERBATIM
+)
+
+add_custom_target(
+    JSCBuiltins
+    DEPENDS "${JavaScriptCore_DERIVED_SOURCES_DIR}/JSCBuiltins.h"
+)
+
+set(LLIntOutput LLIntAssembly.h)
+
+# in if(CMAKE_SYSTEM_NAME MATCHES "Linux")
+set(OFFLINE_ASM_ARGS --binary-format=ELF)
+
+# in if(MSVC AND NOT ENABLE_C_LOOP)
+set(OFFLINE_ASM_ARGS --platform=Windows)
+
+add_custom_command(
+    OUTPUT ${JavaScriptCore_DERIVED_SOURCES_DIR}/${LLIntOutput}
+    MAIN_DEPENDENCY ${JAVASCRIPTCORE_DIR}/offlineasm/asm.rb
+    DEPENDS LLIntOffsetsExtractor ${LLINT_ASM} ${OFFLINE_ASM}
+       ${JavaScriptCore_DERIVED_SOURCES_DIR}/InitBytecodes.asm
+    COMMAND ${CMAKE_COMMAND} -E env CMAKE_CXX_COMPILER_ID=${CMAKE_CXX_COMPILER_ID}
+       GCC_OFFLINEASM_SOURCE_MAP=${GCC_OFFLINEASM_SOURCE_MAP} ${Ruby_EXECUTABLE}
+       ${JAVASCRIPTCORE_DIR}/offlineasm/asm.rb -I${JavaScriptCore_DERIVED_SOURCES_DIR}/
+       ${OFFLINE_ASM_INCLUDE_DIRS} ${JAVASCRIPTCORE_DIR}/llint/LowLevelInterpreter.asm
+       $<TARGET_FILE:LLIntOffsetsExtractor> ${JavaScriptCore_DERIVED_SOURCES_DIR}/${LLIntOutput}
+       ${BUILD_VARIANTS} ${OFFLINE_ASM_ARGS} ${OFFLINE_ASM_FORMAT_ARGS}
+    COMMAND ${CMAKE_COMMAND} -E touch_nocreate ${JavaScriptCore_DERIVED_SOURCES_DIR}/${LLIntOutput}
+    WORKING_DIRECTORY ${JavaScriptCore_DERIVED_SOURCES_DIR}
+    VERBATIM
+)
+
+# in macro(GENERATE_PYTHON _generator _additional_deps _input _output)
+add_custom_command(
+    OUTPUT ${_output}
+    MAIN_DEPENDENCY ${_generator}
+    DEPENDS ${_input} ${_additional_deps}
+    COMMAND ${PYTHON_EXECUTABLE} ${_generator} ${_input} ${_output}
+    VERBATIM
+)
+
+generate_python(
+    ${CMAKE_CURRENT_SOURCE_DIR}/wasm/generateWasmOpsHeader.py
+       ${CMAKE_CURRENT_SOURCE_DIR}/wasm/generateWasm.py ${CMAKE_CURRENT_SOURCE_DIR}/wasm/wasm.json
+       ${JavaScriptCore_DERIVED_SOURCES_DIR}/WasmOps.h
+)
+
+generate_python(
+    ${CMAKE_CURRENT_SOURCE_DIR}/wasm/generateWasmOMGIRGeneratorInlinesHeader.py
+       ${CMAKE_CURRENT_SOURCE_DIR}/wasm/generateWasm.py ${CMAKE_CURRENT_SOURCE_DIR}/wasm/wasm.json
+       ${JavaScriptCore_DERIVED_SOURCES_DIR}/WasmOMGIRGeneratorInlines.h
+)
+
+set(HASH_LUT_GENERATOR ${CMAKE_CURRENT_SOURCE_DIR}/create_hash_table)
+
+# in macro(GENERATE_HASH_LUT _input _output)
+add_custom_command(
+    OUTPUT ${_output}
+    MAIN_DEPENDENCY ${HASH_LUT_GENERATOR}
+    DEPENDS ${_input}
+    COMMAND ${PERL_EXECUTABLE} ${HASH_LUT_GENERATOR} ${_input} > ${_output}
+    VERBATIM
+)
+
+# in foreach(_file ${JavaScriptCore_OBJECT_LUT_SOURCES})
+get_filename_component(_name ${_file} NAME_WE)
+
+# in foreach(_file ${JavaScriptCore_OBJECT_LUT_SOURCES})
+generate_hash_lut(
+    ${CMAKE_CURRENT_SOURCE_DIR}/${_file} ${JavaScriptCore_DERIVED_SOURCES_DIR}/${_name}.lut.h
+)
+
+set(
+    JavaScriptCore_PRIVATE_FRAMEWORK_HEADERS ${JavaScriptCore_DERIVED_SOURCES_DIR}/Bytecodes.h
+       ${JavaScriptCore_DERIVED_SOURCES_DIR}/JSCBuiltins.h
+       ${JavaScriptCore_DERIVED_SOURCES_DIR}/JSCWebPreferenceOptions.h
+       ${JavaScriptCore_DERIVED_SOURCES_DIR}/WasmOps.h
+       ${JavaScriptCore_DERIVED_SOURCES_DIR}/inspector/InspectorAlternateBackendDispatchers.h
+       ${JavaScriptCore_DERIVED_SOURCES_DIR}/inspector/InspectorBackendDispatchers.h
+       ${JavaScriptCore_DERIVED_SOURCES_DIR}/inspector/InspectorFrontendDispatchers.h
+       ${JavaScriptCore_DERIVED_SOURCES_DIR}/inspector/InspectorProtocolObjects.h
+)
+
+generate_hash_lut(
+    ${CMAKE_CURRENT_SOURCE_DIR}/parser/Keywords.table ${JavaScriptCore_DERIVED_SOURCES_DIR}/Lexer.lut.h
+)
+
+add_custom_command(
+    OUTPUT ${JavaScriptCore_DERIVED_SOURCES_DIR}/yarr/RegExpJitTables.h
+    MAIN_DEPENDENCY ${CMAKE_CURRENT_SOURCE_DIR}/yarr/create_regex_tables
+    COMMAND ${PYTHON_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/yarr/create_regex_tables
+       ${JavaScriptCore_DERIVED_SOURCES_DIR}/yarr/RegExpJitTables.h
+    VERBATIM
+)
+
+add_custom_command(
+    OUTPUT ${JavaScriptCore_DERIVED_SOURCES_DIR}/LexerUnicodePropertyTables.h
+    MAIN_DEPENDENCY ${JAVASCRIPTCORE_DIR}/parser/generateLexerUnicodePropertyTables.py
+    DEPENDS ${JAVASCRIPTCORE_DIR}/ucd/UnicodeData.txt
+    COMMAND ${PYTHON_EXECUTABLE} ${JAVASCRIPTCORE_DIR}/parser/generateLexerUnicodePropertyTables.py
+       ${JAVASCRIPTCORE_DIR}/ucd/UnicodeData.txt
+       ${JavaScriptCore_DERIVED_SOURCES_DIR}/LexerUnicodePropertyTables.h
+    VERBATIM
+)
+
+add_custom_command(
+    OUTPUT ${JavaScriptCore_DERIVED_SOURCES_DIR}/yarr/UnicodePatternTables.h
+    MAIN_DEPENDENCY ${JAVASCRIPTCORE_DIR}/yarr/generateYarrUnicodePropertyTables.py
+    DEPENDS ${JAVASCRIPTCORE_DIR}/yarr/hasher.py ${JAVASCRIPTCORE_DIR}/ucd/DerivedBinaryProperties.txt
+       ${JAVASCRIPTCORE_DIR}/ucd/DerivedCoreProperties.txt
+       ${JAVASCRIPTCORE_DIR}/ucd/DerivedNormalizationProps.txt ${JAVASCRIPTCORE_DIR}/ucd/PropList.txt
+       ${JAVASCRIPTCORE_DIR}/ucd/PropertyAliases.txt ${JAVASCRIPTCORE_DIR}/ucd/PropertyValueAliases.txt
+       ${JAVASCRIPTCORE_DIR}/ucd/ScriptExtensions.txt ${JAVASCRIPTCORE_DIR}/ucd/Scripts.txt
+       ${JAVASCRIPTCORE_DIR}/ucd/UnicodeData.txt ${JAVASCRIPTCORE_DIR}/ucd/emoji-data.txt
+    COMMAND ${PYTHON_EXECUTABLE} ${JAVASCRIPTCORE_DIR}/yarr/generateYarrUnicodePropertyTables.py
+       ${JAVASCRIPTCORE_DIR}/ucd ${JavaScriptCore_DERIVED_SOURCES_DIR}/yarr/UnicodePatternTables.h
+    VERBATIM
+)
+
+add_custom_command(
+    OUTPUT ${JavaScriptCore_DERIVED_SOURCES_DIR}/yarr/YarrCanonicalizeUnicode.cpp
+    MAIN_DEPENDENCY ${JAVASCRIPTCORE_DIR}/yarr/generateYarrCanonicalizeUnicode
+    DEPENDS ${JAVASCRIPTCORE_DIR}/ucd/CaseFolding.txt
+    COMMAND ${PYTHON_EXECUTABLE} ${JAVASCRIPTCORE_DIR}/yarr/generateYarrCanonicalizeUnicode
+       ${JAVASCRIPTCORE_DIR}/ucd/CaseFolding.txt
+       ${JavaScriptCore_DERIVED_SOURCES_DIR}/yarr/YarrCanonicalizeUnicode.cpp
+    VERBATIM
+)
+
+add_custom_command(
+    OUTPUT ${JavaScriptCore_DERIVED_SOURCES_DIR}/KeywordLookup.h
+    MAIN_DEPENDENCY ${CMAKE_CURRENT_SOURCE_DIR}/KeywordLookupGenerator.py
+    DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/parser/Keywords.table
+    COMMAND ${PYTHON_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/KeywordLookupGenerator.py
+       ${CMAKE_CURRENT_SOURCE_DIR}/parser/Keywords.table >
+       ${JavaScriptCore_DERIVED_SOURCES_DIR}/KeywordLookup.h
+    VERBATIM
+)
+
+set(JavaScriptCore_INSPECTOR_SCRIPTS_DIR "${JAVASCRIPTCORE_DIR}/inspector/scripts")
+
+set(
+    JavaScriptCore_INSPECTOR_PROTOCOL_SCRIPTS
+       ${JavaScriptCore_INSPECTOR_SCRIPTS_DIR}/generate-inspector-protocol-bindings.py
+       ${JavaScriptCore_INSPECTOR_SCRIPTS_DIR}/codegen/cpp_generator.py
+       ${JavaScriptCore_INSPECTOR_SCRIPTS_DIR}/codegen/cpp_generator_templates.py
+       ${JavaScriptCore_INSPECTOR_SCRIPTS_DIR}/codegen/generate_js_backend_commands.py
+       ${JavaScriptCore_INSPECTOR_SCRIPTS_DIR}/codegen/generate_cpp_backend_dispatcher_header.py
+       ${JavaScriptCore_INSPECTOR_SCRIPTS_DIR}/codegen/generate_cpp_backend_dispatcher_implementation.py
+       ${JavaScriptCore_INSPECTOR_SCRIPTS_DIR}/codegen/generate_cpp_frontend_dispatcher_header.py
+       ${JavaScriptCore_INSPECTOR_SCRIPTS_DIR}/codegen/generate_cpp_frontend_dispatcher_implementation.py
+       ${JavaScriptCore_INSPECTOR_SCRIPTS_DIR}/codegen/generate_cpp_protocol_types_header.py
+       ${JavaScriptCore_INSPECTOR_SCRIPTS_DIR}/codegen/generate_cpp_protocol_types_implementation.py
+       ${JavaScriptCore_INSPECTOR_SCRIPTS_DIR}/codegen/generator.py
+       ${JavaScriptCore_INSPECTOR_SCRIPTS_DIR}/codegen/generator_templates.py
+       ${JavaScriptCore_INSPECTOR_SCRIPTS_DIR}/codegen/__init__.py
+       ${JavaScriptCore_INSPECTOR_SCRIPTS_DIR}/codegen/models.py
+)
+
+set(
+    JavaScriptCore_INSPECTOR_DOMAINS ${JAVASCRIPTCORE_DIR}/inspector/protocol/Animation.json
+       ${JAVASCRIPTCORE_DIR}/inspector/protocol/Audit.json
+       ${JAVASCRIPTCORE_DIR}/inspector/protocol/Browser.json
+       ${JAVASCRIPTCORE_DIR}/inspector/protocol/CPUProfiler.json
+       ${JAVASCRIPTCORE_DIR}/inspector/protocol/CSS.json
+       ${JAVASCRIPTCORE_DIR}/inspector/protocol/Canvas.json
+       ${JAVASCRIPTCORE_DIR}/inspector/protocol/Console.json
+       ${JAVASCRIPTCORE_DIR}/inspector/protocol/DOM.json
+       ${JAVASCRIPTCORE_DIR}/inspector/protocol/DOMDebugger.json
+       ${JAVASCRIPTCORE_DIR}/inspector/protocol/DOMStorage.json
+       ${JAVASCRIPTCORE_DIR}/inspector/protocol/Debugger.json
+       ${JAVASCRIPTCORE_DIR}/inspector/protocol/GenericTypes.json
+       ${JAVASCRIPTCORE_DIR}/inspector/protocol/Heap.json
+       ${JAVASCRIPTCORE_DIR}/inspector/protocol/IndexedDB.json
+       ${JAVASCRIPTCORE_DIR}/inspector/protocol/Inspector.json
+       ${JAVASCRIPTCORE_DIR}/inspector/protocol/LayerTree.json
+       ${JAVASCRIPTCORE_DIR}/inspector/protocol/Memory.json
+       ${JAVASCRIPTCORE_DIR}/inspector/protocol/Network.json
+       ${JAVASCRIPTCORE_DIR}/inspector/protocol/Page.json
+       ${JAVASCRIPTCORE_DIR}/inspector/protocol/Recording.json
+       ${JAVASCRIPTCORE_DIR}/inspector/protocol/Runtime.json
+       ${JAVASCRIPTCORE_DIR}/inspector/protocol/ScriptProfiler.json
+       ${JAVASCRIPTCORE_DIR}/inspector/protocol/Security.json
+       ${JAVASCRIPTCORE_DIR}/inspector/protocol/ServiceWorker.json
+       ${JAVASCRIPTCORE_DIR}/inspector/protocol/Storage.json
+       ${JAVASCRIPTCORE_DIR}/inspector/protocol/Target.json
+       ${JAVASCRIPTCORE_DIR}/inspector/protocol/Timeline.json
+       ${JAVASCRIPTCORE_DIR}/inspector/protocol/Worker.json
+       ${JAVASCRIPTCORE_DIR}/inspector/protocol/LifecycleReporter.json
+       ${JAVASCRIPTCORE_DIR}/inspector/protocol/TestReporter.json
+       ${JAVASCRIPTCORE_DIR}/inspector/protocol/BunFrontendDevServer.json
+       ${JAVASCRIPTCORE_DIR}/inspector/protocol/HTTPServer.json
+       ${JAVASCRIPTCORE_DIR}/inspector/protocol/File.json
+       ${JAVASCRIPTCORE_DIR}/inspector/protocol/Process.json
+)
+
+add_custom_command(
+    OUTPUT ${JavaScriptCore_DERIVED_SOURCES_DIR}/CombinedDomains.json
+    MAIN_DEPENDENCY ${JavaScriptCore_SCRIPTS_DIR}/generate-combined-inspector-json.py
+    DEPENDS ${JavaScriptCore_INSPECTOR_DOMAINS}
+    COMMAND ${PYTHON_EXECUTABLE} ${JavaScriptCore_SCRIPTS_DIR}/generate-combined-inspector-json.py
+       ${JavaScriptCore_INSPECTOR_DOMAINS} "${FEATURE_DEFINES_WITH_SPACE_SEPARATOR}"
+       ${JavaScriptCore_DERIVED_SOURCES_DIR}/CombinedDomains.json
+    VERBATIM
+)
+
+add_custom_command(
+    OUTPUT ${JavaScriptCore_DERIVED_SOURCES_DIR}/inspector/InspectorAlternateBackendDispatchers.h
+       ${JavaScriptCore_DERIVED_SOURCES_DIR}/inspector/InspectorBackendDispatchers.cpp
+       ${JavaScriptCore_DERIVED_SOURCES_DIR}/inspector/InspectorBackendDispatchers.h
+       ${JavaScriptCore_DERIVED_SOURCES_DIR}/inspector/InspectorFrontendDispatchers.cpp
+       ${JavaScriptCore_DERIVED_SOURCES_DIR}/inspector/InspectorFrontendDispatchers.h
+       ${JavaScriptCore_DERIVED_SOURCES_DIR}/inspector/InspectorProtocolObjects.cpp
+       ${JavaScriptCore_DERIVED_SOURCES_DIR}/inspector/InspectorProtocolObjects.h
+       ${JavaScriptCore_DERIVED_SOURCES_DIR}/inspector/InspectorBackendCommands.js
+    MAIN_DEPENDENCY ${JavaScriptCore_DERIVED_SOURCES_DIR}/CombinedDomains.json
+    DEPENDS ${JavaScriptCore_INSPECTOR_PROTOCOL_SCRIPTS}
+    COMMAND ${PYTHON_EXECUTABLE}
+       ${JavaScriptCore_INSPECTOR_SCRIPTS_DIR}/generate-inspector-protocol-bindings.py --outputDir
+       "${JavaScriptCore_DERIVED_SOURCES_DIR}/inspector" --framework JavaScriptCore
+       ${JavaScriptCore_DERIVED_SOURCES_DIR}/CombinedDomains.json
+    VERBATIM
+)
+
+# in if(COMPILER_IS_GCC_OR_CLANG)
+# in if(WTF_CPU_LOONGARCH64)
+webkit_add_target_cxx_flags(JavaScriptCore -ffp-contract=off)
+
+# in if(COMPILER_IS_GCC_OR_CLANG)
+# in else() # if(WTF_CPU_LOONGARCH64)
+webkit_add_target_cxx_flags(JavaScriptCore -ffp-contract=off -fno-slp-vectorize)
+
+# in if(COMPILER_IS_GCC_OR_CLANG)
+# in if(WTF_CPU_MIPS)
+webkit_add_target_cxx_flags(JavaScriptCore -mno-madd4)
+
+# in if(WIN32 AND WTF_CPU_ARM64)
+target_compile_options(LowLevelInterpreterLib PRIVATE -fno-unwind-tables)
+
+# in if(WIN32 AND WTF_CPU_ARM64)
+set_source_files_properties(
+    assembler/MacroAssemblerARM64.cpp jit/ThunkGenerators.cpp PROPERTIES COMPILE_FLAGS
+       "-fno-unwind-tables"
+)
+
+# in if(CMAKE_COMPILER_IS_GNUCXX AND GCC_OFFLINEASM_SOURCE_MAP)
+set_source_files_properties(
+    "llint/LowLevelInterpreter.cpp" PROPERTIES COMPILE_DEFINITIONS
+       "POSTPROCESS_ASM=llint/LowLevelInterpreter.cpp" COMPILE_FLAGS "-fno-lto"
+)
+
+# in if(COMPILER_IS_GCC_OR_CLANG AND CMAKE_BUILD_TYPE STREQUAL "Debug")
+set_source_files_properties("llint/LowLevelInterpreter.cpp" PROPERTIES COMPILE_OPTIONS "-O")
+
+# in if(WIN32 AND WTF_CPU_ARM64)
+target_compile_options(LowLevelInterpreterLib PRIVATE /clang:-fno-unwind-tables)
+
+# in if(WIN32 AND WTF_CPU_ARM64)
+set_source_files_properties(
+    assembler/MacroAssemblerARM64.cpp jit/ThunkGenerators.cpp PROPERTIES COMPILE_FLAGS
+       "/clang:-fno-unwind-tables"
+)
+
+add_custom_target(
+    JavaScriptCoreSharedScripts
+    DEPENDS ${JavaScriptCore_SCRIPTS}
+)

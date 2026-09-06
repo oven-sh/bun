@@ -279,8 +279,8 @@ JSC_DEFINE_HOST_FUNCTION(jsJSBunRequestClone, (JSC::JSGlobalObject * globalObjec
 
     auto* request = dynamicDowncast<JSBunRequest>(callFrame->thisValue());
     if (!request) {
-        throwScope.throwException(globalObject, Bun::createInvalidThisError(globalObject, request, "BunRequest"));
-        RETURN_IF_EXCEPTION(throwScope, {});
+        Bun::throwInvalidThisError(globalObject, throwScope, callFrame->thisValue(), "BunRequest"_s);
+        return {};
     }
 
     auto clone = request->clone(vm, globalObject);

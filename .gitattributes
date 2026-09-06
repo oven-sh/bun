@@ -62,3 +62,4 @@ test/js/bun/css/files linguist-vendored
 
 .vscode/*.json linguist-language=JSON-with-Comments
 src/cli/init/tsconfig.default.json linguist-language=JSON-with-Comments
+scripts/build/deps/*.snapshot text eol=lf

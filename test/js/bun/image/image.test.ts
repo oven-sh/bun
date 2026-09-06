@@ -85,6 +85,20 @@ const gradientPng = makePng(16, 16, (x, y) => {
   return [v, v, v, 255];
 });
 
+// 64×64 4-component JPEGs (q95 4:4:4, Adobe-inverted CMYK): quadrants TL cyan, TR magenta, BL C128/M64/K64, BR black.
+const cmykJpeg = Buffer.from(
+  "/9j/7gAOQWRvYmUAZAAAAAAA/9sAQwACAQEBAQECAQEBAgICAgIEAwICAgIFBAQDBAYFBgYGBQYGBgcJCAYHCQcGBggLCAkKCgoKCgYICwwLCgwJCgoK/8AAFAgAQABABEMRAE0RAFkRAEsRAP/EAB8AAAEFAQEBAQEBAAAAAAAAAAABAgMEBQYHCAkKC//EALUQAAIBAwMCBAMFBQQEAAABfQECAwAEEQUSITFBBhNRYQcicRQygZGhCCNCscEVUtHwJDNicoIJChYXGBkaJSYnKCkqNDU2Nzg5OkNERUZHSElKU1RVVldYWVpjZGVmZ2hpanN0dXZ3eHl6g4SFhoeIiYqSk5SVlpeYmZqio6Slpqeoqaqys7S1tre4ubrCw8TFxsfIycrS09TV1tfY2drh4uPk5ebn6Onq8fLz9PX29/j5+v/aAA4EQwBNAFkASwAAPwD+f+v38r9/K/fyiiiiiiiiiiiiv7/K/gDoooooooooooooor+AOv7/ACiiiiiiiiiiiiiiv7/K/gDoooooooooooooor+AOv7/ACiiiiiiiiiiiiiiv7/K/gDoooooooooooooor+AOv7/ACiiiiiiiiiiiiiiv7/K/gDoooooooooooooor+f+v6/KK/P+iiiiiiiiiiiiv6AK/QCiv5A6KKKKKKKKKKKK/n/AK/P+iv6/KKKKKKKKKKKKK/oAr9AKK/kDoooooooooooor+f+vz/AKK/r8oooooooooooor+gCv0Aor+QOiiiiiiiiiiiiv5/wCvz/or+vyiiiiiiiiiiiiv6AK/QCiv5A6KKKKKKKKKKKK//9k=",
+  "base64",
+);
+const ycckJpeg = Buffer.from(
+  "/9j/7gAOQWRvYmUAZAAAAAAC/9sAQwACAQEBAQECAQEBAgICAgIEAwICAgIFBAQDBAYFBgYGBQYGBgcJCAYHCQcGBggLCAkKCgoKCgYICwwLCgwJCgoK/9sAQwECAgICAgIFAwMFCgcGBwoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoK/8AAFAgAQABABAERAAIRAQMRAQQRAP/EAB8AAAEFAQEBAQEBAAAAAAAAAAABAgMEBQYHCAkKC//EALUQAAIBAwMCBAMFBQQEAAABfQECAwAEEQUSITFBBhNRYQcicRQygZGhCCNCscEVUtHwJDNicoIJChYXGBkaJSYnKCkqNDU2Nzg5OkNERUZHSElKU1RVVldYWVpjZGVmZ2hpanN0dXZ3eHl6g4SFhoeIiYqSk5SVlpeYmZqio6Slpqeoqaqys7S1tre4ubrCw8TFxsfIycrS09TV1tfY2drh4uPk5ebn6Onq8fLz9PX29/j5+v/EAB8BAAMBAQEBAQEBAQEAAAAAAAABAgMEBQYHCAkKC//EALURAAIBAgQEAwQHBQQEAAECdwABAgMRBAUhMQYSQVEHYXETIjKBCBRCkaGxwQkjM1LwFWJy0QoWJDThJfEXGBkaJicoKSo1Njc4OTpDREVGR0hJSlNUVVZXWFlaY2RlZmdoaWpzdHV2d3h5eoKDhIWGh4iJipKTlJWWl5iZmqKjpKWmp6ipqrKztLW2t7i5usLDxMXGx8jJytLT1NXW19jZ2uLj5OXm5+jp6vLz9PX29/j5+v/aAA4EAQACEQMRBAAAPwD4vr+Uz/fw/fyigAooAKKACv0or+Wz/hXCigAooAKKACvzXr+pD/uoCigAooAKKACv0or+Wz/hXCigAooAKKACvzXr+pD/ALqAooAKKACigAr9KK/ls/4VwooAKKACigAr816/qQ/7qAooAKKACigAr9KK/ls/4VwooAKKACigAr816/qQ/wCkA/P+igAooAKKACvzPr+rD+az+QOigAooAKKACv0wr+Uz+lD+vyigAooAKKACvzPr+rD+az+QOigAooAKKACv0wr+Uz+lD+vyigAooAKKACvzPr+rD+az+QOigAooAKKACv0wr+Uz+lD+vyigAooAKKACvzPr+rD+az+QOigAooAKKACv/9k=",
+  "base64",
+);
+const cmykIccJpeg = Buffer.from(
+  "/9j/7gAOQWRvYmUAZAAAAAAA/+IANklDQ19QUk9GSUxFAAEBRkFLRS1DTVlLLUlDQy1QUk9GSUxFLVBBWUxPQUQtRk9SLVRFU1T/2wBDAAIBAQEBAQIBAQECAgICAgQDAgICAgUEBAMEBgUGBgYFBgYGBwkIBgcJBwYGCAsICQoKCgoKBggLDAsKDAkKCgr/wAAUCABAAEAEQxEATREAWREASxEA/8QAHwAAAQUBAQEBAQEAAAAAAAAAAAECAwQFBgcICQoL/8QAtRAAAgEDAwIEAwUFBAQAAAF9AQIDAAQRBRIhMUEGE1FhByJxFDKBkaEII0KxwRVS0fAkM2JyggkKFhcYGRolJicoKSo0NTY3ODk6Q0RFRkdISUpTVFVWV1hZWmNkZWZnaGlqc3R1dnd4eXqDhIWGh4iJipKTlJWWl5iZmqKjpKWmp6ipqrKztLW2t7i5usLDxMXGx8jJytLT1NXW19jZ2uHi4+Tl5ufo6erx8vP09fb3+Pn6/9oADgRDAE0AWQBLAAA/AP5/6/fyv38r9/KKKKKKKKKKKKK/v8r+AOiiiiiiiiiiiiiiv4A6/v8AKKKKKKKKKKKKKKK/v8r+AOiiiiiiiiiiiiiiv4A6/v8AKKKKKKKKKKKKKKK/v8r+AOiiiiiiiiiiiiiiv4A6/v8AKKKKKKKKKKKKKKK/v8r+AOiiiiiiiiiiiiiiv5/6/r8or8/6KKKKKKKKKKKK/oAr9AKK/kDoooooooooooor+f8Ar8/6K/r8oooooooooooor+gCv0Aor+QOiiiiiiiiiiiiv5/6/P8Aor+vyiiiiiiiiiiiiv6AK/QCiv5A6KKKKKKKKKKKK/n/AK/P+iv6/KKKKKKKKKKKKK/oAr9AKK/kDoooooooooooor//2Q==",
+  "base64",
+);
+
 function rgbaAt(buf: Uint8Array, w: number, x: number, y: number): [number, number, number, number] {
   const i = (y * w + x) * 4;
   return [buf[i], buf[i + 1], buf[i + 2], buf[i + 3]];
@@ -778,6 +792,58 @@ describe("Bun.Image", () => {
       expect(String.fromCharCode(...lossless.subarray(12, 16))).toBe("VP8L");
       expect(extractWebpIccp(lossless)).toBeNull();
     });
+
+    test("CMYK JPEG's ink-channel ICC profile is dropped on re-encode", async () => {
+      expect(extractJpegIcc(cmykIccJpeg)).not.toBeNull();
+      const jpg = await new Bun.Image(cmykIccJpeg).jpeg({ quality: 90 }).bytes();
+      expect(extractJpegIcc(jpg)).toBeNull();
+      const png = await new Bun.Image(cmykIccJpeg).png().bytes();
+      expect(extractPngIccp(png)).toBeNull();
+    });
+  });
+
+  describe("CMYK / YCCK JPEG decode", () => {
+    // Expected RGB = CMY·K/255 on the stored bytes; the mixed and black quadrants only match if the conversion ran.
+    const quadrants: [string, number, number, [number, number, number]][] = [
+      ["top-left cyan", 16, 16, [0, 255, 255]],
+      ["top-right magenta", 48, 16, [255, 0, 255]],
+      ["bottom-left mixed ink", 16, 48, [95, 143, 191]],
+      ["bottom-right black", 48, 48, [0, 0, 0]],
+    ];
+    function expectQuadrants(data: Uint8Array, w: number, scale = 1) {
+      const got = quadrants.map(([name, x, y, [r, g, b]]) => {
+        const px = rgbaAt(data, w, x * scale, y * scale);
+        const err = Math.max(Math.abs(px[0] - r), Math.abs(px[1] - g), Math.abs(px[2] - b));
+        return { name, alpha: px[3], rgb: err <= 8 ? "within tolerance" : `got [${px}], off by ${err}` };
+      });
+      expect(got).toStrictEqual(quadrants.map(([name]) => ({ name, alpha: 255, rgb: "within tolerance" })));
+    }
+
+    test.each([
+      ["CMYK (Adobe transform=0)", cmykJpeg],
+      ["YCCK (Adobe transform=2)", ycckJpeg],
+    ])("%s decodes to sRGB", async (_name, fixture) => {
+      expect(await new Bun.Image(fixture).metadata()).toEqual({ width: 64, height: 64, format: "jpeg" });
+      const { w, h, data } = decodePngRaw(await new Bun.Image(fixture).png().bytes());
+      expect([w, h]).toEqual([64, 64]);
+      expectQuadrants(data, w);
+    });
+
+    test("4-component JPEG without an Adobe APP14 marker decodes as CMYK", async () => {
+      expect([cmykJpeg[2], cmykJpeg[3]]).toEqual([0xff, 0xee]);
+      const seglen = (cmykJpeg[4] << 8) | cmykJpeg[5];
+      const bare = Buffer.concat([cmykJpeg.subarray(0, 2), cmykJpeg.subarray(2 + 2 + seglen)]);
+      const { w, data } = decodePngRaw(await new Bun.Image(bare).png().bytes());
+      expectQuadrants(data, w);
+    });
+
+    test("resize + JPEG re-encode runs the conversion on the DCT-scaled buffer", async () => {
+      const out = await new Bun.Image(cmykJpeg).resize(32, 32).jpeg().bytes();
+      expect([out[0], out[1]]).toEqual([0xff, 0xd8]);
+      const { w, h, data } = decodePngRaw(await new Bun.Image(out).png().bytes());
+      expect([w, h]).toEqual([32, 32]);
+      expectQuadrants(data, w, 0.5);
+    });
   });
 
   // EXIF: build a minimal JPEG via Bun.Image, then splice in an APP1 segment
@@ -887,6 +953,52 @@ describe("Bun.Image", () => {
         expect((await new Bun.Image(out).metadata()).format).toBe(fmt);
       });
     }
+  });
+
+  // Fixtures are 64×48 gradients whose pixel formula is asserted below.
+  describe.skipIf(!isMacOS)("HEIC decode via ImageIO", () => {
+    const fixture = (name: string) => join(import.meta.dir, "fixtures", name);
+    async function gradientError(name: string, pixelOf: (x: number, y: number) => [number, number, number]) {
+      const { w, h, data } = decodePngRaw(await new Bun.Image(fixture(name)).png().bytes());
+      expect([w, h]).toEqual([64, 48]);
+      let sum = 0;
+      for (let y = 0; y < h; y++)
+        for (let x = 0; x < w; x++) {
+          const i = (y * w + x) * 4;
+          const [r, g, b] = pixelOf(x, y);
+          sum += Math.abs(data[i] - r) + Math.abs(data[i + 1] - g) + Math.abs(data[i + 2] - b);
+        }
+      return sum / (w * h * 3);
+    }
+
+    test("8-bit HEIC decodes to the source gradient", async () => {
+      expect(await new Bun.Image(fixture("gradient-8bit.heic")).metadata()).toMatchObject({
+        width: 64,
+        height: 48,
+        format: "heic",
+      });
+      expect(await gradientError("gradient-8bit.heic", (x, y) => [x * 4, y * 5, 128])).toBeLessThan(4);
+    });
+
+    test("10-bit HEIC decodes to the source gradient", async () => {
+      // Encoded from a 16-bit source, so ImageIO hands back a packed 10-bit CGImage that vImage cannot convert.
+      expect(
+        await gradientError("gradient-10bit.heic", (x, y) => [
+          Math.floor((x * 255) / 64),
+          Math.floor((y * 255) / 48),
+          128,
+        ]),
+      ).toBeLessThan(4);
+    });
+
+    test("HEIC with an undecodable HEVC payload rejects instead of returning black pixels", async () => {
+      // The 8-bit fixture with its mdat scrambled: the container parses, the HEVC decode fails.
+      const img = new Bun.Image(fixture("gradient-corrupt-hevc.heic"));
+      expect(await img.metadata()).toMatchObject({ width: 64, height: 48, format: "heic" });
+      await expect(new Bun.Image(fixture("gradient-corrupt-hevc.heic")).png().bytes()).rejects.toMatchObject({
+        code: "ERR_IMAGE_DECODE_FAILED",
+      });
+    });
   });
 
   // @intFromFloat on NaN/Inf is UB; these used to abort the process.

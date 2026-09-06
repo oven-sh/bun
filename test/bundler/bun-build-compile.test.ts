@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isArm64, isLinux, isMacOS, isMusl, isPosix, isWindows, tempDir } from "harness";
-import { chmodSync, closeSync, cpSync, existsSync, openSync, readSync } from "node:fs";
+import { bunEnv, bunExe, isArm64, isDebug, isLinux, isMacOS, isMusl, isPosix, isWindows, tempDir } from "harness";
+import { chmodSync, closeSync, cpSync, existsSync, openSync, readdirSync, readSync } from "node:fs";
 import { join } from "path";
 
 describe("Bun.build compile", () => {
@@ -953,6 +953,70 @@ describe("compiled binary in a deleted cwd", () => {
     },
     60_000,
   );
+});
+
+// Every region of the embedded module graph (file contents, names, bytecode, the
+// module table) is addressed by a 32-bit offset and length. `to_bytes` used to cast
+// every offset with `as u32`, so a graph past 4 GiB was written with wrapped
+// offsets: the build succeeded and the executable failed at startup
+// (`Module not found ''`) or read the wrong bytes. The build has to fail instead.
+//
+// Debug builds lower the limit through BUN_DEBUG_TEST_STANDALONE_GRAPH_MAX_BYTES
+// so the test does not need a 4 GiB input. The message still names the real limit.
+describe.concurrent("embedded module graph size limit", () => {
+  const asset = Buffer.alloc(8 * 1024 * 1024, "x");
+  const files = {
+    "app.js": `import big from "./big.bin" with { type: "file" };
+console.log(require("fs").statSync(big).size);`,
+    "big.bin": asset,
+  };
+
+  test.skipIf(!isDebug)("build --compile fails when the graph is larger than the offsets can address", async () => {
+    using dir = tempDir("build-compile-graph-too-large", files);
+
+    await using build = Bun.spawn({
+      cmd: [bunExe(), "build", "--compile", "app.js", "--outfile", "app"],
+      env: { ...bunEnv, BUN_DEBUG_TEST_STANDALONE_GRAPH_MAX_BYTES: String(4 * 1024 * 1024) },
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [, stderr, exitCode] = await Promise.all([build.stdout.text(), build.stderr.text(), build.exited]);
+
+    expect(stderr).toContain(
+      "failed to generate module graph bytes: embedded module graph would exceed 4 GiB (its offsets are 32-bit)",
+    );
+    expect(exitCode).toBe(1);
+    // No executable, not even a partial one.
+    expect(readdirSync(String(dir)).sort()).toEqual(["app.js", "big.bin"]);
+  });
+
+  test.skipIf(!isDebug)("build --compile still succeeds when the graph fits under the limit", async () => {
+    using dir = tempDir("build-compile-graph-fits", files);
+    const outfile = join(String(dir), isWindows ? "app.exe" : "app");
+
+    await using build = Bun.spawn({
+      cmd: [bunExe(), "build", "--compile", "app.js", "--outfile", outfile],
+      env: { ...bunEnv, BUN_DEBUG_TEST_STANDALONE_GRAPH_MAX_BYTES: String(256 * 1024 * 1024) },
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [, buildStderr, buildExit] = await Promise.all([build.stdout.text(), build.stderr.text(), build.exited]);
+    expect(buildStderr).not.toContain("error");
+    expect(buildExit).toBe(0);
+
+    await using proc = Bun.spawn({
+      cmd: [outfile],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toBe(`${asset.byteLength}\n`);
+    expect(exitCode).toBe(0);
+  });
 });
 
 // file command test works well

@@ -1,39 +1,118 @@
-[bun_ast]
-
 [bun_bundler]
-"defaulted_failure:src/bundler/bundle_v2.rs" = 2
+"defaulted_failure:src/bundler/bundle_v2.rs" = 1
+"generic_body_not_generic:src/bundler/Chunk.rs" = 3
+"generic_body_not_generic:src/bundler/ParseTask.rs" = 1
+"generic_body_not_generic:src/bundler/linker_context/generateChunksInParallel.rs" = 1
 "narrowed_two_ways:src/bundler/bundle_v2.rs" = 1
 
 [bun_core]
 "defaulted_failure:src/bun_core/string/immutable.rs" = 1
+"generic_body_not_generic:src/bun_core/fmt.rs" = 1
+"generic_body_not_generic:src/bun_core/string/mod.rs" = 1
 
 [bun_css]
 "derived_field:src/css/properties/margin_padding.rs" = 105
+"generic_body_not_generic:src/css/media_query.rs" = 2
+"generic_body_not_generic:src/css/values/color.rs" = 3
+
+[bun_dotenv]
+"generic_body_not_generic:src/dotenv/env_loader.rs" = 1
+
+[bun_http]
+"generic_body_not_generic:src/http/HTTPContext.rs" = 1
+"generic_body_not_generic:src/http/lib.rs" = 2
+
+[bun_http_jsc]
+"generic_body_not_generic:src/http_jsc/websocket_client.rs" = 2
+"generic_body_not_generic:src/http_jsc/websocket_client/WebSocketUpgradeClient.rs" = 1
 
 [bun_install]
 "defaulted_failure:src/install/npm.rs" = 1
+"generic_body_not_generic:src/install/bin.rs" = 1
+"generic_body_not_generic:src/install/extract_tarball.rs" = 1
+"generic_body_not_generic:src/install/isolated_install/Installer.rs" = 2
+"generic_body_not_generic:src/install/lockfile.rs" = 2
+"generic_body_not_generic:src/install/lockfile/Tree.rs" = 1
+"generic_body_not_generic:src/install/lockfile/printer/Yarn.rs" = 1
+"generic_body_not_generic:src/install/lockfile/printer/tree_printer.rs" = 4
 "interchangeable_aliases:src/install/lockfile/Tree.rs" = 1
+
+[bun_io]
+"generic_body_not_generic:src/io/pipes.rs" = 1
+
+[bun_js_parser]
+"generic_body_not_generic:src/js_parser/fold.rs" = 1
+"generic_body_not_generic:src/js_parser/lower/lower_decorators.rs" = 1
+"generic_body_not_generic:src/js_parser/lower/lower_esm_exports_hmr.rs" = 2
+"generic_body_not_generic:src/js_parser/p.rs" = 12
+"generic_body_not_generic:src/js_parser/parse/parse_entry.rs" = 1
+"generic_body_not_generic:src/js_parser/parse/parse_typescript.rs" = 1
+"generic_body_not_generic:src/js_parser/repl_transforms.rs" = 2
+"generic_body_not_generic:src/js_parser/scan/scan_side_effects.rs" = 1
+"generic_body_not_generic:src/js_parser/visit/mod.rs" = 1
+"generic_body_not_generic:src/js_parser/visit/visit_expr.rs" = 1
+"generic_body_not_generic:src/js_parser/visit/visit_stmt.rs" = 2
 
 [bun_js_printer]
 "parallel_vecs:src/js_printer/lib.rs" = 1
 
 [bun_jsc]
 "defaulted_failure:src/jsc/ConsoleObject.rs" = 4
+"generic_body_not_generic:src/jsc/ConsoleObject.rs" = 6
+"generic_body_not_generic:src/jsc/JSPropertyIterator.rs" = 1
 
 [bun_parsers]
+"generic_body_not_generic:src/parsers/xml.rs" = 1
 "parallel_vecs:src/parsers/xml.rs" = 1
 
+[bun_paths]
+"generic_body_not_generic:src/paths/resolve_path.rs" = 1
+
 [bun_react_compiler]
-"reimplemented_helper:src/react_compiler/reactive_scopes/propagate_early_returns.rs" = 1
+"generic_body_not_generic:src/react_compiler/inference/analyse_functions.rs" = 2
+
+[bun_resolver]
+"generic_body_not_generic:src/resolver/data_url.rs" = 1
+"generic_body_not_generic:src/resolver/fs.rs" = 1
+"generic_body_not_generic:src/resolver/package_json.rs" = 2
+
+[bun_router]
+"generic_body_not_generic:src/router/lib.rs" = 1
 
 [bun_runtime]
-"defaulted_failure:src/runtime/server/RequestContext.rs" = 1
 "defaulted_failure:src/runtime/test_runner/pretty_format.rs" = 4
 "error_collapsed_to_bool:src/runtime/api/bun/Terminal.rs" = 1
-"error_collapsed_to_bool:src/runtime/api/bun/h2_frame_parser.rs" = 32
+"error_collapsed_to_bool:src/runtime/api/bun/h2_frame_parser.rs" = 31
 "error_collapsed_to_bool:src/runtime/ffi/ffi_body.rs" = 1
 "field_valid_only_when:src/runtime/shell/builtin/rm.rs" = 1
-"reimplemented_helper:src/runtime/api/bun/Terminal.rs" = 1
+"generic_body_not_generic:src/runtime/api/bun/h2_frame_parser.rs" = 2
+"generic_body_not_generic:src/runtime/api/cron.rs" = 1
+"generic_body_not_generic:src/runtime/bake/dev_server/incremental_graph.rs" = 2
+"generic_body_not_generic:src/runtime/cli/create_command.rs" = 1
+"generic_body_not_generic:src/runtime/cli/multi_run.rs" = 1
+"generic_body_not_generic:src/runtime/cli/outdated_command.rs" = 1
+"generic_body_not_generic:src/runtime/cli/pack_command.rs" = 1
+"generic_body_not_generic:src/runtime/cli/pm_diff_normalize.rs" = 1
+"generic_body_not_generic:src/runtime/cli/publish_command.rs" = 2
+"generic_body_not_generic:src/runtime/cli/test_command.rs" = 3
+"generic_body_not_generic:src/runtime/jsc_hooks.rs" = 1
+"generic_body_not_generic:src/runtime/node/assert/myers_diff.rs" = 1
+"generic_body_not_generic:src/runtime/node/node_fs.rs" = 3
+"generic_body_not_generic:src/runtime/node/node_net_binding.rs" = 1
+"generic_body_not_generic:src/runtime/server/NodeHTTPResponse.rs" = 1
+"generic_body_not_generic:src/runtime/server/RequestContext.rs" = 7
+"generic_body_not_generic:src/runtime/server/mod.rs" = 2
+"generic_body_not_generic:src/runtime/server/server_body.rs" = 2
+"generic_body_not_generic:src/runtime/shell/Builtin.rs" = 1
+"generic_body_not_generic:src/runtime/socket/Listener.rs" = 1
+"generic_body_not_generic:src/runtime/socket/socket_body.rs" = 6
+"generic_body_not_generic:src/runtime/test_runner/diff/text_diff.rs" = 3
+"generic_body_not_generic:src/runtime/test_runner/expect.rs" = 1
+"generic_body_not_generic:src/runtime/test_runner/pretty_format.rs" = 1
+"generic_body_not_generic:src/runtime/webcore/Blob.rs" = 2
+"generic_body_not_generic:src/runtime/webcore/ReadableStream.rs" = 2
+"generic_body_not_generic:src/runtime/webcore/Sink.rs" = 1
+"generic_body_not_generic:src/runtime/webcore/TextDecoder.rs" = 1
 "reimplemented_helper:src/runtime/hw_exports.rs" = 1
 "same_match_twice:src/runtime/cli/pack_command.rs" = 1
 "same_match_twice:src/runtime/cli/update_interactive_command.rs" = 2
@@ -44,6 +123,13 @@
 "unchecked_construction:src/runtime/server/server_body.rs" = 5
 
 [bun_sql_jsc]
+"generic_body_not_generic:src/sql_jsc/mysql/JSMySQLConnection.rs" = 1
+"generic_body_not_generic:src/sql_jsc/mysql/MySQLConnection.rs" = 4
+"generic_body_not_generic:src/sql_jsc/mysql/protocol/DecodeBinaryValue.rs" = 1
+"generic_body_not_generic:src/sql_jsc/postgres/PostgresSQLConnection.rs" = 1
 
 [bun_sys]
 "error_collapsed_to_bool:src/sys/lib.rs" = 4
+
+[bun_watcher]
+"generic_body_not_generic:src/watcher/Watcher.rs" = 1

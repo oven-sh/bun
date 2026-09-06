@@ -1222,7 +1222,7 @@ impl<'a> SelectorParser<'a> {
         // `::View-Transition-Group(..)` fall through to `CustomFunction`,
         // so look up `name` verbatim with no case folding.
         //
-        // PERF: 6 entries with near-unique lengths (3/10/19/19/21/26) —
+        // PERF: 7 entries with near-unique lengths (3/6/10/19/19/21/26) —
         // a length-gated `match` rejects the overwhelmingly-common miss path
         // (unknown `::-webkit-foo(...)` etc.) on a single `usize` compare,
         // versus a hash lookup's hash + table load + slice compare. Only
@@ -1234,6 +1234,11 @@ impl<'a> SelectorParser<'a> {
             3 if name == b"cue" => {
                 return Ok(PseudoElement::CueFunction {
                     selector: Box::new(Selector::parse(self, input)?),
+                });
+            }
+            6 if name == b"picker" => {
+                return Ok(PseudoElement::PickerFunction {
+                    identifier: Ident::parse(input)?,
                 });
             }
             10 if name == b"cue-region" => {
@@ -1552,6 +1557,9 @@ fn lookup_pseudo_element(name: &[u8]) -> Option<PseudoElement> {
         b"-webkit-scrollbar-corner" => PE::WebkitScrollbar(WS::Corner),
         b"-webkit-resizer" => PE::WebkitScrollbar(WS::Resizer),
         b"view-transition" => PE::ViewTransition,
+        b"details-content" => PE::DetailsContent,
+        b"picker-icon" => PE::PickerIcon,
+        b"checkmark" => PE::Checkmark,
         _ => return None,
     } })
 }
@@ -2959,6 +2967,17 @@ pub enum PseudoElement {
         /// A part name selector.
         part_name: ViewTransitionPartName,
     },
+    /// The [::details-content](https://drafts.csswg.org/css-pseudo-4/#details-content-pseudo) pseudo element.
+    DetailsContent,
+    /// The [::picker-icon](https://drafts.csswg.org/css-forms-1/#picker-icon-pseudo) pseudo element.
+    PickerIcon,
+    /// The [::checkmark](https://drafts.csswg.org/css-forms-1/#checkmark-pseudo) pseudo element.
+    Checkmark,
+    /// The [::picker()](https://drafts.csswg.org/css-forms-1/#picker-pseudo) functional pseudo element.
+    PickerFunction {
+        /// The identifier argument, e.g. `select` in `::picker(select)`.
+        identifier: Ident,
+    },
     /// An unknown pseudo element.
     Custom {
         /// The name of the pseudo element.
@@ -3088,6 +3107,10 @@ impl fmt::Display for PseudoElement {
             Self::ViewTransitionImagePair { .. } => "view_transition_image_pair",
             Self::ViewTransitionOld { .. } => "view_transition_old",
             Self::ViewTransitionNew { .. } => "view_transition_new",
+            Self::DetailsContent => "details_content",
+            Self::PickerIcon => "picker_icon",
+            Self::Checkmark => "checkmark",
+            Self::PickerFunction { .. } => "picker_function",
             Self::Custom { .. } => "custom",
             Self::CustomFunction { .. } => "custom_function",
         })

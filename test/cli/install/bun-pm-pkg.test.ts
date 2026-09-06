@@ -296,6 +296,38 @@ describe.concurrent("bun pm pkg", () => {
       expect(JSON.parse(modifiedContent).version).toBe("1.0.1");
     });
 
+    it("should write integers as plain digits, never in exponent notation", async () => {
+      // The JS printer shortens 10000 to 1e4. JSON.stringify never does that
+      // for integers below 1e21, and neither should package.json.
+      const original = {
+        name: "test-package",
+        version: "1.0.0",
+        port: 10000,
+        timeout: 1000,
+        big: 160000,
+        negative: -100000,
+        float: 1.5,
+        list: [10000, 1000000000, 123456789],
+      };
+      using dir = tempDir("pm-pkg-integers", {
+        "package.json": JSON.stringify(original, null, 2),
+      });
+
+      const { error, code } = await runPmPkg(["set", "config.limit=1000000", "--json"], dir);
+      expect(error).toBe("");
+      expect(code).toBe(0);
+
+      const content = await Bun.file(join(dir, "package.json")).text();
+      expect(content).toContain('"port": 10000');
+      expect(content).toContain('"timeout": 1000');
+      expect(content).toContain('"big": 160000');
+      expect(content).toContain('"negative": -100000');
+      expect(content).toContain('"limit": 1000000');
+      expect(content).toMatch(/\[\s*10000,\s*1000000000,\s*123456789\s*\]/);
+      expect(content).not.toMatch(/\d[eE][-+]?\d/);
+      expect(JSON.parse(content)).toEqual({ ...original, config: { limit: 1000000 } });
+    });
+
     it("should write literal keys when setting with bracket notation", async () => {
       // Key-path segments parsed from a bracket path must stay alive until
       // the file is written; otherwise the printer serializes freed bytes.

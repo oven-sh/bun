@@ -64,9 +64,7 @@ pub struct FileSink {
     /// Bytes accepted since `pipe_stream` (`written` counts buffered bytes again when flushed).
     pub(crate) stream_bytes: Cell<Option<u64>>,
 
-    /// A write failure that arrived while no `write()`/`flush()`/`end()` promise was pending
-    /// to carry it (the writer dropped buffered bytes on an async error) and no stream drives
-    /// the sink. The next `write`/`flush`/`end` from JS takes it.
+    /// An async write error with no pending promise to reject; the next JS call takes it.
     undelivered_error: JsCell<Option<sys::Error>>,
 
     /// Strong reference to the JS wrapper object to prevent GC from collecting it
@@ -1098,8 +1096,7 @@ impl FileSink {
         }
     }
 
-    /// A stream that drives the sink reports the failure through its own pump; only a sink
-    /// written from JS has nobody else to tell.
+    /// A stream driving the sink reports failures through its pump, not here.
     fn latch_undelivered_error(&self, err: sys::Error) {
         // SAFETY(JsCell): `Strong::has` only reads the GC root.
         if !unsafe { self.readable_stream.get_mut() }.has() {

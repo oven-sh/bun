@@ -620,13 +620,10 @@ function newNativeSecureContext(options, cached = false) {
   return ctx;
 }
 
-// Internal construction paths pass this marker as the second argument to
-// share the memoised native SSL_CTX. User code (`new tls.SecureContext(opts)`)
-// cannot produce it, so a user context always owns its handle.
+// Module-private: only internal paths can opt into the shared memoised SSL_CTX.
 const kCachedContext = Symbol("kCachedContext");
 
-// A function, not a class: Node's SecureContext returns a new instance when it
-// is called without `new`.
+// Not a `class`: like Node, a call without `new` returns an instance.
 function SecureContext(options, cachedMarker?): void {
   if (!(this instanceof SecureContext)) {
     return new SecureContext(options) as never;
@@ -1643,8 +1640,7 @@ function connect(...args) {
   return tlssock.connect(normal);
 }
 
-// Node: cachedResult(() => filterDuplicateStrings(getSSLCiphers(), true)),
-// the supported cipher names lower-cased, de-duplicated and sorted.
+// Node: the supported cipher names, lower-cased, de-duplicated, sorted, cached.
 let cachedCipherList: string[] | undefined;
 function getCiphers() {
   if (cachedCipherList === undefined) {

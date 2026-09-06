@@ -313,9 +313,7 @@ JSC_DEFINE_HOST_FUNCTION(setDefaultCiphers, (JSC::JSGlobalObject * globalObject,
     return Bun__setTLSDefaultCiphers(globalObject, callFrame);
 }
 
-// Backs tls.getCiphers(): every cipher a fresh SSL_CTX ("ALL") can negotiate.
-// BoringSSL keeps the TLS 1.3 suites out of the cipher list, so they are
-// appended by hand, the way Node does.
+// tls.getCiphers(). SSL_CTX_get_ciphers omits the TLS 1.3 suites, so append them like Node does.
 JSC_DEFINE_HOST_FUNCTION(getSSLCiphers, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     VM& vm = globalObject->vm();

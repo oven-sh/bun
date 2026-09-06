@@ -444,6 +444,14 @@ const result = await sql.file("query.sql", [1, 2, 3]);
 
 With the SQLite adapter, parameters can also be an object of named parameters (`:name`, `$name`, or `@name` placeholders), the same form `sql.unsafe` accepts below.
 
+<Note>
+  A file or string with more than one statement is atomic only on PostgreSQL, which runs a multi-statement query as
+  one implicit transaction. MySQL and SQLite run the statements one at a time, so the statements before a failing one
+  stay applied. To apply a multi-statement file atomically on SQLite, run it inside a transaction:
+  `await sql.begin(tx => tx.file("migration.sql"))`. On MySQL this only covers DML: DDL statements such as
+  `CREATE TABLE` commit implicitly and cannot be rolled back.
+</Note>
+
 ### Unsafe Queries
 
 `sql.unsafe` executes raw SQL strings. Use it with caution: it does not escape user input. Without parameters, the string can contain more than one command.

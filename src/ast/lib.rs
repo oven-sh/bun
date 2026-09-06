@@ -1105,7 +1105,12 @@ impl BabyString {
         if substring.is_empty() {
             return BabyString::new(0, 0);
         }
-        let off = bun_core::strings::index_of(container, substring).expect("unreachable");
+        // `container` is a formatted diagnostic that should embed `substring`
+        // verbatim. If a formatter rendered it lossily, report the error with
+        // no specifier rather than abort while reporting it.
+        let Some(off) = bun_core::strings::index_of(container, substring) else {
+            return BabyString::new(0, 0);
+        };
         BabyString::new(off as u16, substring.len() as u16) // @truncate
     }
 

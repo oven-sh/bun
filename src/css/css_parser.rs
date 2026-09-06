@@ -4119,6 +4119,12 @@ pub(crate) unsafe fn src_str(s: &[u8]) -> &'static [u8] {
 
 impl<'a> Tokenizer<'a> {
     pub(crate) fn init_with_arena(src: &'a [u8], arena: &'a Bump) -> Tokenizer<'a> {
+        // Token values are raw sub-slices of `src` and `consume_char` steps by
+        // decoded width; callers decode with `strings::replace_invalid_utf8`.
+        debug_assert!(
+            strings::is_valid_utf8(src),
+            "CSS tokenizer input must be well-formed UTF-8"
+        );
         Tokenizer {
             src,
             position: 0,

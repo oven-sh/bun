@@ -1207,6 +1207,12 @@ impl ValkeyClient {
             }
         }
 
+        if let Some(db) = pair.promise.selected_db
+            && matches!(value, RESPValue::SimpleString(ok) if ok.as_ref() == b"OK")
+        {
+            self.database = db;
+        }
+
         // Resolve the promise with the potentially transformed value
         let promise_ptr = &mut pair.promise;
         let global_this = self.global_object();
@@ -1441,7 +1447,7 @@ impl ValkeyClient {
         let mut checked_command = *command;
         checked_command.meta = command.meta.check(command);
 
-        let mut promise = command::Promise::create(global_this, checked_command.meta);
+        let mut promise = command::Promise::create(global_this, &checked_command);
 
         let js_promise: *mut JSPromise = std::ptr::from_mut::<JSPromise>(promise.promise.get());
         if let Some(message) = self.send_rejection() {

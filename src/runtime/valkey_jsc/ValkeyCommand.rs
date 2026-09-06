@@ -34,6 +34,14 @@ impl<'a> Args<'a> {
             Args::Raw(args) => args.len(),
         }
     }
+
+    fn get(&self, index: usize) -> Option<&[u8]> {
+        match self {
+            Args::Slices(args) => args.get(index).map(|arg| arg.slice()),
+            Args::Args(args) => args.get(index).map(|arg| arg.slice()),
+            Args::Raw(args) => args.get(index).copied(),
+        }
+    }
 }
 
 impl<'a> Command<'a> {
@@ -82,6 +90,18 @@ impl<'a> Command<'a> {
         let mut buf: Vec<u8> = Vec::with_capacity(self.byte_length());
         self.write(&mut buf)?;
         Ok(buf.into_boxed_slice())
+    }
+
+    /// The database index this command selects, when it is a `SELECT <n>`.
+    /// The index is remembered once the server replies `OK`, so a reconnect
+    /// and `duplicate()` land on the same database.
+    pub(crate) fn selected_db(&self) -> Option<u32> {
+        if !bun_core::strings::eql_case_insensitive_ascii(self.command, b"SELECT", true)
+            || self.args.len() != 1
+        {
+            return None;
+        }
+        core::str::from_utf8(self.args.get(0)?).ok()?.parse().ok()
     }
 }
 
@@ -182,13 +202,19 @@ fn is_subscription_command(name: &[u8]) -> bool {
 /// Promise for a Valkey command
 pub struct Promise {
     pub(crate) meta: Meta,
+    /// See [`Command::selected_db`].
+    pub(crate) selected_db: Option<u32>,
     pub(crate) promise: jsc::JSPromiseStrong,
 }
 
 impl Promise {
-    pub(crate) fn create(global_object: &JSGlobalObject, meta: Meta) -> Promise {
+    pub(crate) fn create(global_object: &JSGlobalObject, command: &Command<'_>) -> Promise {
         let promise = jsc::JSPromiseStrong::init(global_object);
-        Promise { meta, promise }
+        Promise {
+            meta: command.meta,
+            selected_db: command.selected_db(),
+            promise,
+        }
     }
 
     pub(crate) fn resolve(

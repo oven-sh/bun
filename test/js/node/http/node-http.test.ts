@@ -1338,6 +1338,23 @@ describe("node:http", () => {
     await promise;
   });
 
+  // Node binds the TCP port and ignores `path` whenever the options carry a
+  // `port` key, including `port: undefined`, `port: null` and a string port.
+  test.each([0, "0", undefined, null])("listen({ port: %p, path }) binds the port and ignores the path", async port => {
+    const socketPath = `${tmpdir()}/bun-server-${Math.random().toString(32)}.sock`;
+    await using server = createServer((req, res) => {
+      res.end("ok");
+    });
+    server.listen({ port, path: socketPath });
+    await once(server, "listening");
+    const address = server.address() as AddressInfo;
+    expect(typeof address).toBe("object");
+    expect(address.port).toBeGreaterThan(0);
+    expect(nodefs.existsSync(socketPath)).toBe(false);
+    const response = await fetch(`http://127.0.0.1:${address.port}/`);
+    expect(await response.text()).toBe("ok");
+  });
+
   test("should not decompress gzip, issue#4397", async () => {
     using server = Bun.serve({
       port: 0,

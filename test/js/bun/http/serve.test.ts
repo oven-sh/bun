@@ -1,6 +1,6 @@
 import { file, gc, Serve, serve, Server } from "bun";
 import { afterAll, afterEach, describe, expect, it, mock } from "bun:test";
-import { readFileSync, writeFileSync } from "fs";
+import { existsSync, readFileSync, writeFileSync } from "fs";
 import {
   bunEnv,
   bunExe,
@@ -2491,6 +2491,32 @@ it("unix socket connection throws an error on a bad domain without crashing", as
       },
     });
   }).toThrow();
+});
+
+it("Bun.serve throws when both port and unix are given", () => {
+  using dir = tempDir("port-and-unix", {});
+  const unix = join(String(dir), "port-and-unix.sock");
+  expect(() => {
+    using server = Bun.serve({
+      port: 1,
+      unix,
+      fetch() {
+        return new Response("hey");
+      },
+    });
+  }).toThrow("Cannot specify both port and unix");
+  expect(existsSync(unix)).toBe(false);
+
+  // port 0 asks for no specific port, so it does not conflict with unix.
+  using server = Bun.serve({
+    port: 0,
+    unix,
+    fetch() {
+      return new Response("hey");
+    },
+  });
+  expect(String(server.url)).toBe(`unix://${unix}`);
+  expect(server.port).toBeUndefined();
 });
 
 it("#5859 text", async () => {

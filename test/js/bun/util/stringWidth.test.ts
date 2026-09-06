@@ -2028,22 +2028,22 @@ describe("grapheme cluster width rules", () => {
   });
 
   test("sliceAnsi measures clusters exactly like stringWidth", () => {
-    const cases = [
-      "\u{1F1E6}x",
-      "\u{1F1E6}\u{1F1E7}\u{1F1E8}",
-      "1\u20E3a\u20E3\u20E3",
-      "A\u{1F3FB}\u{1F600}\u{1F3FB}",
-      "\u00A9\u200D\u{1F600}z",
-      "\u2605\u200D\u{1F600}",
-      "\n\u{1F3FB}",
-      "\u{1F600}\u{1F3FB}\u200D\u{1F600}!",
+    // Each case lists the width of its grapheme clusters (Unicode 17: U+2605
+    // is no longer Extended_Pictographic, so it does not join a ZWJ sequence).
+    const cases: [string, number[]][] = [
+      ["\u{1F1E6}x", [1, 1]],
+      ["\u{1F1E6}\u{1F1E7}\u{1F1E8}", [2, 1]],
+      ["1\u20E3a\u20E3\u20E3", [2, 1]],
+      ["A\u{1F3FB}\u{1F600}\u{1F3FB}", [1, 2]],
+      ["\u00A9\u200D\u{1F600}z", [2, 1]],
+      ["\u2605\u200D\u{1F600}", [1, 2]],
+      ["\n\u{1F3FB}", [0, 2]],
+      ["\u{1F600}\u{1F3FB}\u200D\u{1F600}!", [2, 1]],
     ];
-    const segmenter = new Intl.Segmenter("en", { granularity: "grapheme" });
-    for (const s of cases) {
+    for (const [s, clusters] of cases) {
       const width = Bun.stringWidth(s);
       // sliceAnsi(s, 0, k) keeps every cluster that starts before column k.
-      const clusters = [...segmenter.segment(s)].map(({ segment }) => Bun.stringWidth(segment));
-      expect(clusters.reduce((a, b) => a + b, 0)).toBe(width);
+      expect({ s, width }).toEqual({ s, width: clusters.reduce((a, b) => a + b, 0) });
       const expected: number[] = [];
       for (let k = 0; k <= width; k++) {
         let start = 0;

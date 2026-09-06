@@ -49,6 +49,11 @@ pub struct JSTranspiler {
     // address is stable across the move into `Box<JSTranspiler>` —
     // `transpiler.arena` holds a `&'static Arena` pointing into it.
     pub arena: Box<Arena>,
+    /// Native bytes this instance retains, computed once at the end of
+    /// construction (everything sized here is fixed after that) and reported
+    /// to the GC through the `estimatedSize` class hook. A plain field because
+    /// the GC reads it from its own thread, concurrently with the mutator.
+    estimated_size: usize,
     pub(crate) ref_count: bun_ptr::RefCount<JSTranspiler>,
 }
 
@@ -996,6 +1001,7 @@ impl JSTranspiler {
             transpiler: JsCell::new(transpiler),
             scan_pass_result: JsCell::new(ScanPassResult::init()),
             buffer_writer: JsCell::new(None),
+            estimated_size: 0,
             ref_count: bun_ptr::RefCount::init(),
         });
         // errdefer past this point → `this: Box<_>` drops and runs Drop for JSTranspiler.
@@ -1054,7 +1060,41 @@ impl JSTranspiler {
         transpiler.options.react_fast_refresh = false;
         transpiler.options.repl_mode = config.repl_mode;
 
+        let mut this = this;
+        this.estimated_size = this.compute_estimated_size();
         Ok(bun_core::heap::into_raw(this))
+    }
+
+    /// `Transpiler__estimatedSize` (JSBundler.classes.ts `estimatedSize: true`).
+    pub(crate) fn estimated_size(&self) -> usize {
+        self.estimated_size
+    }
+
+    /// The inline struct, the config arena, the config buffers and the define
+    /// tables `configure_defines` filled. Mutator thread only: it reads the
+    /// hash maps.
+    fn compute_estimated_size(&self) -> usize {
+        use bun_js_parser::defines::{DotDefine, IdentifierDefine};
+        use core::mem::size_of;
+
+        let config = self.config.get();
+        let define = &self.transpiler.get().options.define;
+        let identifiers = define.identifiers.capacity()
+            * (size_of::<bun_collections::StringHashMapKey>() + size_of::<IdentifierDefine>() + 1);
+        let dots = define.dots.capacity()
+            * (size_of::<bun_collections::StringHashMapKey>() + size_of::<Vec<DotDefine>>() + 1)
+            + define
+                .dots
+                .values()
+                .map(|v| v.capacity() * size_of::<DotDefine>())
+                .sum::<usize>();
+        size_of::<Self>()
+            + self.arena.allocated_bytes()
+            + config.tsconfig_buf.len()
+            + config.macros_buf.len()
+            + size_of::<bun_js_parser::defines::Define>()
+            + identifiers
+            + dots
     }
 }
 

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, hideFromStackTrace, tempDir } from "harness";
+import { bunEnv, bunExe, expectNativeMemoryReportedToGC, hideFromStackTrace, tempDir } from "harness";
 import { join } from "path";
 
 describe("Bun.Transpiler", () => {
@@ -6115,5 +6115,19 @@ describe("same-target destructuring with an unstable target", () => {
       stable: "a1b1",
     });
     expect(exitCode).toBe(0);
+  });
+});
+
+// Each instance keeps tens of KiB outside the JS heap: the inline transpiler
+// struct, the define tables and the options arena. The class reports that as
+// its estimated size, so a loop that drops transpilers still triggers
+// collections (30000 instances reached 1.4 GiB RSS before).
+describe("Bun.Transpiler GC accounting", () => {
+  it("reports its native size to the GC", async () => {
+    await expectNativeMemoryReportedToGC("", `new Bun.Transpiler({ loader: "ts" })`, {
+      drop: 600,
+      live: 100,
+      minBytesEach: 8 * 1024,
+    });
   });
 });

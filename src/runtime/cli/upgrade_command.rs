@@ -756,11 +756,8 @@ impl UpgradeCommand {
                 };
             let save_dir: sys::Dir = save_dir_it;
 
-            // The staging directory lives in $TMPDIR, which another user may own.
-            // `mkdirat` above gave it our uid and mode 0700, so a different owner
-            // or any group/other write bit means this is not the directory we
-            // created: someone renamed theirs over it, and they can write the
-            // files that get unpacked and executed below.
+            // `mkdirat` made it 0700 and ours; anything else was renamed over
+            // the name by another user of $TMPDIR before the open.
             #[cfg(unix)]
             {
                 let staging = match sys::fstat(save_dir.fd()) {
@@ -779,8 +776,7 @@ impl UpgradeCommand {
                 let ours = (staging.st_mode & libc::S_IFMT) == libc::S_IFDIR
                     && staging.st_uid == euid
                     && (staging.st_mode & (libc::S_IWGRP | libc::S_IWOTH)) == 0;
-                // The directory at this name belongs to someone else, so leave
-                // it alone instead of deleting it.
+                // Not ours, so not ours to delete either.
                 if !ours {
                     Output::err_generic(
                         "Refusing to unpack the upgrade: another user can write to the staging directory {} in {}.\n\nSet $TMPDIR to a directory that only you can write to, then run `bun upgrade` again.",
@@ -793,11 +789,8 @@ impl UpgradeCommand {
                 }
             }
 
-            // Enter the staging directory through its file descriptor, and give
-            // the child processes below no cwd of their own so they inherit it.
-            // A path resolved again after this point can name a different
-            // directory: whoever may rename entries in $TMPDIR can swap the
-            // staging directory for one they control.
+            // The children below inherit this cwd. Never hand them the path:
+            // another user of $TMPDIR can rename a different directory onto it.
             if let Err(err) = sys::fchdir(save_dir.fd()) {
                 let _ = save_dir_.delete_tree(&version_name);
                 Output::err_generic(
@@ -918,9 +911,7 @@ impl UpgradeCommand {
                 }
                 #[cfg(windows)]
                 {
-                    // Run a powershell script to unzip the file
-                    // Both paths are relative to the inherited cwd, which is the
-                    // staging directory this process entered by file descriptor.
+                    // Run a powershell script to unzip the file into the inherited cwd.
                     let mut unzip_script = Vec::new();
                     write!(
                         &mut unzip_script,

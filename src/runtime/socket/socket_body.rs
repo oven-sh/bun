@@ -81,10 +81,8 @@ fn read_error_from_close_code(code: c_int) -> sys::Error {
     }
 }
 
-/// The OpenSSL reason string uSockets attaches to the close of a TLS socket
-/// that hit a fatal SSL error after its handshake (`us_internal_ssl_on_data`).
-/// Only the SSL data path ever passes a close reason, and it is a stack
-/// buffer that lives for the duration of the close dispatch.
+/// The OpenSSL reason `us_internal_ssl_on_data` attaches to the close of a TLS
+/// socket whose `SSL_read` failed after the handshake. Valid for the dispatch.
 fn tls_close_reason<'a, const SSL: bool>(reason: Option<*mut c_void>) -> Option<&'a [u8]> {
     if !SSL {
         return None;
@@ -2142,8 +2140,8 @@ impl<const SSL: bool> NewSocket<SSL> {
             // hand over the raw pointer rather than letting `RefPtr::drop`
             // release it a second time. This frame is the twin's trampoline for
             // the event, so what its handlers left pending is folded here and
-            // this socket's own close proceeds regardless. A TLS reason is the
-            // encrypted half's to report: the raw half sees a plain close.
+            // this socket's own close proceeds regardless. The TLS reason is
+            // the encrypted half's to report.
             crate::dispatch::fold(Self::on_close(raw.into_this_ptr(), socket, err, None));
         }
         let cleanup = CloseTeardown {
@@ -2197,10 +2195,7 @@ impl<const SSL: bool> NewSocket<SSL> {
             js_error =
                 <sys::Error as jsc::SysErrorJsc>::to_js(&read_error_from_close_code(err), &global);
         } else if let Some(reason) = tls_close_reason::<SSL>(reason) {
-            // uSockets closed a TLS socket on a fatal post-handshake SSL
-            // error (bad record, peer alert) and passed the OpenSSL reason
-            // string. Same shape as the handshake-failure EPROTO verdict, so
-            // node:tls decomposes both into ERR_SSL_<REASON> the same way.
+            // Same shape as the handshake-failure EPROTO verdict.
             js_error = SystemError {
                 errno: -(sys::SystemErrno::EPROTO as c_int),
                 code: BunString::static_("EPROTO"),

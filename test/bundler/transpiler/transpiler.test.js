@@ -3714,7 +3714,10 @@ class Foo {
     // Every label in `a: b: for (...)` belongs to the loop, so `continue a` is valid.
     expectPrinted_("a: b: for (;;) { continue a }", "a:\n  b:\n    for (;; ) {\n      continue a;\n    }");
     expectPrinted_("a: b: for (;;) { continue b }", "a:\n  b:\n    for (;; ) {\n      continue b;\n    }");
-    expectPrinted_("a: b: c: while (x) { continue a }", "a:\n  b:\n    c:\n      while (x) {\n        continue a;\n      }");
+    expectPrinted_(
+      "a: b: c: while (x) { continue a }",
+      "a:\n  b:\n    c:\n      while (x) {\n        continue a;\n      }",
+    );
     expectPrinted_(
       "a: b: for (;;) { for (;;) { continue a } }",
       "a:\n  b:\n    for (;; ) {\n      for (;; ) {\n        continue a;\n      }\n    }",

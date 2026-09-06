@@ -2150,10 +2150,7 @@ where
             dev_server.html_router.fallback = None;
         }
 
-        // The old static route list goes away below, with the chunk routes
-        // each built html route appended to it. A new html route for the same
-        // file takes the chunks from the old one, so the chunk urls stay
-        // served until its own build replaces them.
+        // Carry the chunk routes of each built html route into the new list.
         let mut adopted_assets = Vec::new();
         for new_entry in new_config.static_routes.iter() {
             let AnyRoute::Html(new_route) = &new_entry.route else {

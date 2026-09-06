@@ -158,10 +158,8 @@ pub struct Route {
     pub(crate) dev_server_id: Cell<Option<route_bundle::Index>>,
     /// When state == .pending, incomplete responses are stored here.
     pending_responses: JsCell<Vec<PendingResponse>>,
-    /// The static routes the last successful bundle appended to the server:
-    /// the js and css chunks, and the page at its output path. They live on
-    /// the server's static route list, which `server.reload()` replaces, so
-    /// the route keeps its own copy for `adopt_built_state`.
+    /// The static routes the last successful bundle appended to the server.
+    /// `server.reload()` replaces that list; `adopt_assets` carries these over.
     assets: JsCell<Vec<(Box<[u8]>, RefPtr<StaticRoute>)>>,
 }
 
@@ -209,16 +207,10 @@ impl Route {
         })
     }
 
-    /// `server.reload()` builds a fresh `Route` for every html import in the
-    /// new config and drops the old static route list with the chunk routes
-    /// the old route's bundle appended. A fresh route for the same
-    /// `HTMLBundle` takes those chunk routes from the old route here, so the
-    /// chunk urls in a document a client already holds stay served until the
-    /// next build replaces them. The page itself is not taken: the next
-    /// request to it bundles again, as before. Returns the chunk routes for
-    /// the caller to append to the new config. Empty when the routes are for
-    /// different files, the old route never finished a build, or this route
-    /// already adopted.
+    /// Takes the chunk routes of `old`, the route for the same `HTMLBundle`
+    /// in the config that `server.reload()` replaces, so the chunk urls in a
+    /// document a client already holds stay served until the next build.
+    /// Returns them for the caller to append to the new config.
     pub(crate) fn adopt_assets(&self, old: &Route) -> Vec<(Box<[u8]>, RefPtr<StaticRoute>)> {
         if !std::ptr::eq(self.bundle.as_ptr(), old.bundle.as_ptr()) || !self.assets.get().is_empty()
         {

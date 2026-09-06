@@ -1,7 +1,7 @@
 import { spawn, spawnSync } from "bun";
 import { install_test_helpers } from "bun:internal-for-testing";
 import { beforeEach, describe, expect, setDefaultTimeout, test } from "bun:test";
-import { chownSync, existsSync, mkdirSync, writeFileSync } from "fs";
+import { chmodSync, chownSync, existsSync, lchownSync, mkdirSync, renameSync, symlinkSync, writeFileSync } from "fs";
 import { bunEnv, bunExe, isLinux, isWindows, tempDir, tmpdirSync } from "harness";
 import { dirname, join } from "path";
 
@@ -319,11 +319,12 @@ describe.concurrent("workspaces entries longer than the path buffer", () => {
 // lifecycle scripts are trusted, where the dependencies come from and which registry
 // serves them. A directory that other local users can write to, `/tmp` above a
 // `mktemp -d` build directory for example, lets one of them plant such a manifest above a
-// project that is not theirs. So bun uses an ancestor manifest only when the current user
-// owns it, or when its owner also owns the directory the command ran in.
+// project that is not theirs. So bun uses an ancestor manifest only when it is not in a
+// shared directory, and the current user owns it, or its owner also owns the directory the
+// command ran in.
 //
-// Every case needs a second uid, so these tests run as root only.
-describe("ancestor package.json owned by another user", () => {
+// Most cases need a second uid, so they run as root only.
+describe("untrusted ancestor package.json", () => {
   // "nobody" on Linux and macOS.
   const OTHER_UID = 65534;
   const notRoot = isWindows || process.getuid?.() !== 0;
@@ -402,6 +403,44 @@ describe("ancestor package.json owned by another user", () => {
     expect(existsSync(join(root, "bun.lock"))).toBe(false);
     expect(existsSync(join(root, "node_modules"))).toBe(false);
     expect(exitCode).toBe(1);
+  });
+
+  // `fstat` on the descriptor the walk holds reports the owner of a symlink's target, so
+  // the entry that names the file is checked too. Here it is a link the other user owns to
+  // a manifest this one owns.
+  test.skipIf(notRoot)("is not the project when a link another user owns names it", async () => {
+    using dir = tempDir("bad-workspace-project-other-user-link", noWorkspacesFiles);
+    const root = String(dir);
+    renameSync(join(root, "package.json"), join(root, "real.json"));
+    symlinkSync("real.json", join(root, "package.json"));
+    lchownSync(join(root, "package.json"), OTHER_UID, OTHER_UID);
+
+    const { stderr, exitCode } = await installIn(root, "sub");
+
+    expect(stderr).toContain(`another user owns ${root}/package.json`);
+    expect(stderr).toContain("could not find a package.json file to install from");
+    expect(existsSync(marker(root))).toBe(false);
+    expect(existsSync(join(root, "bun.lock"))).toBe(false);
+    expect(existsSync(join(root, "node_modules"))).toBe(false);
+    expect(exitCode).toBe(1);
+  });
+
+  // Owning the manifest is not enough in a directory with the mode `/tmp` has: any user
+  // may add a name there, including a hard link to a file this user owns. No second uid is
+  // needed for this one.
+  test.skipIf(isWindows)("in a directory every user may write to is not the workspace root", async () => {
+    using dir = tempDir("bad-workspace-root-shared-dir", workspaceFiles);
+    const root = String(dir);
+    chmodSync(root, 0o1777);
+
+    const { stdout, stderr, exitCode } = await installIn(root, "proj");
+
+    expect(stderr).toContain(`other local users can add files to ${root}`);
+    expect(stdout).toContain("Blocked 1 postinstall");
+    expect(existsSync(marker(root))).toBe(false);
+    expect(existsSync(join(root, "proj", "bun.lock"))).toBe(true);
+    expect(existsSync(join(root, "bun.lock"))).toBe(false);
+    expect(exitCode).toBe(0);
   });
 
   test.skipIf(notRoot)("is adopted when the current user owns it", async () => {

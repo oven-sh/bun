@@ -1481,13 +1481,62 @@ fn overlay_bunfig_install(install: &mut Api::BunInstall, bunfig: Api::BunInstall
 /// a directory other local users can write to, `/tmp` for example, any of them
 /// can plant one above a project that is not theirs.
 ///
-/// Trusted owners: this user, and the owner of the directory the command ran in
+/// Two things have to hold. `directory` is not a shared drop point: other write
+/// plus the sticky bit, what `/tmp` and `/dev/shm` carry, where anyone may add
+/// a name, including a hard link to a file this user owns. And a trusted user
+/// owns both the file bun opened and the directory entry that named it, so that
+/// a symlink another user planted cannot stand in for it (`fstat` reports the
+/// owner of a link's target).
+///
+/// Trusted: this user, and the owner of the directory the command ran in
 /// (`cwd_uid`, `None` when it cannot be read). The second keeps `sudo bun
 /// install` and images where one other user owns the checkout working.
 #[cfg(unix)]
-fn ancestor_package_json_is_trusted(package_json: &bun_sys::File, cwd_uid: Option<u32>) -> bool {
-    bun_sys::fstat(package_json.handle)
-        .is_ok_and(|st| st.st_uid == bun_sys::c::geteuid() || Some(st.st_uid) == cwd_uid)
+fn ancestor_package_json_trust(
+    package_json: &bun_sys::File,
+    path: &ZStr,
+    directory: &[u8],
+    cwd_uid: Option<u32>,
+) -> Option<Untrusted> {
+    const SHARED: bun_sys::Mode = bun_sys::S::IWOTH | bun_sys::S::ISVTX;
+    let is_trusted = |uid: u32| uid == bun_sys::c::geteuid() || Some(uid) == cwd_uid;
+
+    let mut directory_buf = bun_paths::path_buffer_pool::get();
+    directory_buf[..directory.len()].copy_from_slice(directory);
+    directory_buf[directory.len()] = 0;
+    // SAFETY: NUL written above
+    let directory = ZStr::from_buf(&directory_buf[..], directory.len());
+
+    if !bun_sys::stat(directory).is_ok_and(|st| st.st_mode as bun_sys::Mode & SHARED != SHARED) {
+        return Some(Untrusted::SharedDirectory);
+    }
+    if !bun_sys::lstat(path).is_ok_and(|st| is_trusted(st.st_uid))
+        || !bun_sys::fstat(package_json.handle).is_ok_and(|st| is_trusted(st.st_uid))
+    {
+        return Some(Untrusted::OtherUser);
+    }
+    None
+}
+
+/// Why [`ancestor_package_json_trust`] refused a `package.json`.
+#[cfg(unix)]
+enum Untrusted {
+    SharedDirectory,
+    OtherUser,
+}
+
+#[cfg(unix)]
+fn warn_untrusted_ancestor(reason: Untrusted, directory: &[u8]) {
+    match reason {
+        Untrusted::SharedDirectory => bun_core::warn!(
+            "other local users can add files to <b>{}<r>, so bun ignored the package.json in it",
+            bstr::BStr::new(directory),
+        ),
+        Untrusted::OtherUser => bun_core::warn!(
+            "another user owns <b>{}/package.json<r>, so bun ignored it",
+            bstr::BStr::new(directory),
+        ),
+    }
 }
 
 /// Returns `&'static mut PackageManager` — the process-singleton (held in
@@ -1634,21 +1683,23 @@ pub fn init(
                     0,
                 ) {
                     Ok(f) => {
-                        // Above the cwd this is also the install root, so check its owner.
+                        // Above the cwd this is also the install root, so check it.
                         #[cfg(unix)]
-                        if !strings::eql_long(this_cwd, original_cwd, true)
-                            && !ancestor_package_json_is_trusted(&f, cwd_uid)
-                        {
-                            bun_core::warn!(
-                                "another user owns <b>{}/package.json<r>, so bun ignored it",
-                                bstr::BStr::new(this_cwd),
-                            );
-                            let _ = f.close();
-                            if let Some(parent) = bun_core::dirname(this_cwd) {
-                                this_cwd = strings::without_trailing_slash(parent);
-                                continue;
+                        if !strings::eql_long(this_cwd, original_cwd, true) {
+                            if let Some(reason) = ancestor_package_json_trust(
+                                &f,
+                                package_json_path,
+                                this_cwd,
+                                cwd_uid,
+                            ) {
+                                warn_untrusted_ancestor(reason, this_cwd);
+                                let _ = f.close();
+                                if let Some(parent) = bun_core::dirname(this_cwd) {
+                                    this_cwd = strings::without_trailing_slash(parent);
+                                    continue;
+                                }
+                                break;
                             }
-                            break;
                         }
                         break 'child f;
                     }
@@ -1749,6 +1800,21 @@ pub fn init(
                             this_cwd = parent;
                             continue;
                         }
+                    };
+                    // Decided here, where `parent_path_buf` still holds this path.
+                    #[cfg(unix)]
+                    let parent_trust = {
+                        // SAFETY: NUL written above
+                        let path = ZStr::from_buf(
+                            &parent_path_buf[..],
+                            parent_without_trailing_slash.len() + b"/package.json".len(),
+                        );
+                        ancestor_package_json_trust(
+                            &json_file,
+                            path,
+                            parent_without_trailing_slash,
+                            cwd_uid,
+                        )
                     };
                     let json_stat_size = json_file.get_end_pos()?;
                     let mut json_buf = vec![0u8; (json_stat_size + 64) as usize];
@@ -1862,11 +1928,8 @@ pub fn init(
 
                             if strings::eql_long(maybe_workspace_path, path_, true) {
                                 #[cfg(unix)]
-                                if !ancestor_package_json_is_trusted(&json_file, cwd_uid) {
-                                    bun_core::warn!(
-                                        "another user owns <b>{}/package.json<r>, so bun ignored it as the workspace root",
-                                        bstr::BStr::new(parent_without_trailing_slash),
-                                    );
+                                if let Some(reason) = parent_trust {
+                                    warn_untrusted_ancestor(reason, parent_without_trailing_slash);
                                     bun_core::note!(
                                         "bun installs <b>{}<r> as a standalone project",
                                         bstr::BStr::new(child_cwd),

@@ -1658,6 +1658,9 @@ pub(crate) mod __gated_printer {
         pub(crate) export_default_start: i32,
         pub(crate) arrow_expr_start: i32,
         pub(crate) for_of_init_start: i32,
+        /// Start of the expression in a for, for-in, or for-of head. No such
+        /// expression may begin with the tokens `let [`.
+        pub(crate) for_init_start: i32,
         pub(crate) prev_op: Op::Code,
         pub(crate) prev_op_end: i32,
         pub(crate) prev_num_end: i32,
@@ -3753,7 +3756,25 @@ pub(crate) mod __gated_printer {
 
                     // The index target is not directly followed by `of`.
                     flags.remove(ExprFlag::IsFollowedByOf);
+
+                    // An expression statement or a for loop head must not start
+                    // with the tokens "let [", so "let[0] = 1" prints as "(let)[0] = 1".
+                    let wrap_let = {
+                        let n = self.writer.written();
+                        (n == self.stmt_start || n == self.for_init_start)
+                            && !matches!(e.index.data, ExprData::EPrivateIdentifier(_))
+                            && match &e.target.data {
+                                ExprData::EIdentifier(id) => self.name_for_symbol(id.ref_) == b"let",
+                                _ => false,
+                            }
+                    };
+                    if wrap_let {
+                        self.print(b"(");
+                    }
                     self.print_expr(e.target, Level::Postfix, flags);
+                    if wrap_let {
+                        self.print(b")");
+                    }
 
                     let is_optional_chain_start =
                         e.optional_chain == Some(js_ast::OptionalChain::Start);
@@ -6529,6 +6550,7 @@ pub(crate) mod __gated_printer {
         pub(crate) fn print_for_loop_init(&mut self, init_st: Stmt, extra_flags: ExprFlagSet) {
             match &init_st.data {
                 StmtData::SExpr(s) => {
+                    self.for_init_start = self.writer.written();
                     self.print_expr(
                         s.value,
                         Level::Lowest,
@@ -7012,6 +7034,7 @@ pub(crate) mod __gated_printer {
                 export_default_start: -1,
                 arrow_expr_start: -1,
                 for_of_init_start: -1,
+                for_init_start: -1,
                 prev_op: Op::Code::BinAdd,
                 prev_op_end: -1,
                 prev_num_end: -1,

@@ -1069,23 +1069,77 @@ fn normalize_entry_path<'a>(pathname: &[u8], buf: &'a mut bun_paths::PathBuffer)
     }
 }
 
+/// Where the data of an entry seen so far lives, keyed by normalized path, so
+/// that a later hard link to it can be resolved.
+enum SeenEntry {
+    /// Index into the collected entries.
+    Collected(usize),
+    /// A regular file the glob skipped: the 1-based position of its header,
+    /// to read its data again if a matching hard link needs it.
+    Skipped(u32),
+}
+
+/// Opens `data` the way every `Bun.Archive` read does.
+fn open_reader(data: &[u8]) -> Result<libarchive::lib::ReadArchive, TaskError> {
+    let archive = libarchive::lib::ReadArchive::new();
+    configure_archive_reader(&archive);
+    if archive.read_open_memory(data) != libarchive::lib::Result::Ok {
+        return Err(TaskError::read_error(&archive, "failed to open archive"));
+    }
+    Ok(archive)
+}
+
+/// Reads the current entry's body. Grows the buffer as data arrives so an
+/// untrusted size field does not drive the allocation.
+fn read_entry_body(archive: &libarchive::lib::Archive, size: i64) -> Result<Vec<u8>, TaskError> {
+    let size = usize::try_from(size.max(0)).expect("int cast");
+    let mut data: Vec<u8> = Vec::new();
+    while data.len() < size {
+        let to_read = (size - data.len()).min(64 * 1024);
+        data.try_reserve(to_read)
+            .map_err(|_| bun_alloc::AllocError)?;
+        // SAFETY: `archive_read_data` only stores into the slice; the written prefix is committed below.
+        let dest = unsafe { &mut bun_core::vec::spare_bytes_mut(&mut data)[..to_read] };
+        let read = archive.read_data(dest);
+        if read < 0 {
+            return Err(TaskError::read_error(archive, "failed to read entry data"));
+        }
+        if read == 0 {
+            break;
+        }
+        let bytes_read = usize::try_from(read).expect("int cast");
+        // SAFETY: `archive_read_data` returns exactly the byte count it wrote (`<= to_read`).
+        unsafe { bun_core::vec::commit_spare(&mut data, bytes_read) };
+    }
+    Ok(data)
+}
+
+/// Reads the body of the entry whose header is the `ordinal`-th one in `data`.
+fn read_entry_body_at(data: &[u8], ordinal: u32) -> Result<Vec<u8>, TaskError> {
+    use libarchive::lib;
+    let archive = open_reader(data)?;
+    let mut entry: *mut lib::Entry = core::ptr::null_mut();
+    for _ in 0..ordinal {
+        if !archive.read_next_header(&mut entry).succeeded() {
+            return Err(TaskError::read_error(&archive, "failed to read archive header"));
+        }
+    }
+    read_entry_body(&archive, lib::Entry::opaque_ref(entry).size())
+}
+
 impl FilesContext {
     fn do_run(&mut self) -> Result<FileEntryList, TaskError> {
         use libarchive::lib;
-        let archive = lib::ReadArchive::new();
-        configure_archive_reader(&archive);
-
-        if archive.read_open_memory(self.store.shared_view()) != lib::Result::Ok {
-            return Err(TaskError::read_error(&archive, "failed to open archive"));
-        }
+        let data = self.store.shared_view();
+        let archive = open_reader(data)?;
 
         let mut entries: FileEntryList = Vec::new();
-        // Normalized path of each collected entry -> its index, to resolve hard links.
-        let mut index_by_path: bun_collections::StringHashMap<usize> = Default::default();
+        let mut seen: bun_collections::StringHashMap<SeenEntry> = Default::default();
         let mut normalized_buf = bun_paths::path_buffer_pool::get();
         let mut target_buf = bun_paths::path_buffer_pool::get();
 
         let mut entry: *mut lib::Entry = core::ptr::null_mut();
+        let mut ordinal: u32 = 0;
         loop {
             match archive.read_next_header(&mut entry) {
                 lib::Result::Eof => break,
@@ -1097,6 +1151,7 @@ impl FilesContext {
                     ));
                 }
             }
+            ordinal += 1;
             let entry_ref = lib::Entry::opaque_ref(entry);
 
             #[cfg(not(windows))]
@@ -1125,61 +1180,50 @@ impl FilesContext {
             }
 
             // Apply glob pattern filtering (supports both positive and negative patterns)
-            if let Some(patterns) = &self.glob_patterns {
-                if !match_glob_patterns(patterns, &[pathname, normalized]) {
-                    continue;
-                }
-            }
+            let selected = match &self.glob_patterns {
+                Some(patterns) => match_glob_patterns(patterns, &[pathname, normalized]),
+                None => true,
+            };
 
-            let mtime: i64 = entry_ref.mtime();
-
-            if let Some(target) = hardlink_target {
+            let data = if let Some(target) = hardlink_target {
                 let target = normalize_entry_path(target, &mut target_buf);
-                let Some(&index) = index_by_path.get(target) else {
-                    let mut msg = Vec::new();
-                    msg.extend_from_slice(b"Cannot hard link ");
-                    msg.extend_from_slice(pathname);
-                    msg.extend_from_slice(b" to ");
-                    msg.extend_from_slice(target);
-                    msg.extend_from_slice(b": no such file earlier in the archive");
-                    return Err(TaskError::Archive(msg.into_boxed_slice()));
-                };
-                index_by_path.put(normalized, entries.len())?;
-                entries.push(FileEntry {
-                    path: Box::from(pathname),
-                    data: FileData::SameAs(index),
-                    mtime,
-                });
+                match (seen.get(target), selected) {
+                    (Some(&SeenEntry::Collected(index)), true) => FileData::SameAs(index),
+                    // The glob skipped the target, but its bytes are still in `data`.
+                    (Some(&SeenEntry::Skipped(target_ordinal)), true) => {
+                        FileData::Bytes(read_entry_body_at(data, target_ordinal)?)
+                    }
+                    (Some(&SeenEntry::Collected(index)), false) => {
+                        seen.put(normalized, SeenEntry::Collected(index))?;
+                        continue;
+                    }
+                    (Some(&SeenEntry::Skipped(target_ordinal)), false) => {
+                        seen.put(normalized, SeenEntry::Skipped(target_ordinal))?;
+                        continue;
+                    }
+                    (None, false) => continue,
+                    (None, true) => {
+                        let mut msg = Vec::new();
+                        msg.extend_from_slice(b"Cannot hard link ");
+                        msg.extend_from_slice(pathname);
+                        msg.extend_from_slice(b" to ");
+                        msg.extend_from_slice(target);
+                        msg.extend_from_slice(b": no such file earlier in the archive");
+                        return Err(TaskError::Archive(msg.into_boxed_slice()));
+                    }
+                }
+            } else if selected {
+                FileData::Bytes(read_entry_body(&archive, entry_ref.size())?)
+            } else {
+                seen.put(normalized, SeenEntry::Skipped(ordinal))?;
                 continue;
-            }
+            };
 
-            let size: usize = usize::try_from(entry_ref.size().max(0)).expect("int cast");
-
-            // Read data incrementally so untrusted entry sizes don't drive allocation.
-            let mut data: Vec<u8> = Vec::new();
-            while data.len() < size {
-                let to_read = (size - data.len()).min(64 * 1024);
-                data.try_reserve(to_read)
-                    .map_err(|_| bun_alloc::AllocError)?;
-                // SAFETY: `archive_read_data` only stores into the slice; the written prefix is committed below.
-                let dest = unsafe { &mut bun_core::vec::spare_bytes_mut(&mut data)[..to_read] };
-                let read = archive.read_data(dest);
-                if read < 0 {
-                    return Err(TaskError::read_error(&archive, "failed to read entry data"));
-                }
-                if read == 0 {
-                    break;
-                }
-                let bytes_read = usize::try_from(read).expect("int cast");
-                // SAFETY: `archive_read_data` returns exactly the byte count it wrote (`<= to_read`).
-                unsafe { bun_core::vec::commit_spare(&mut data, bytes_read) };
-            }
-
-            index_by_path.put(normalized, entries.len())?;
+            seen.put(normalized, SeenEntry::Collected(entries.len()))?;
             entries.push(FileEntry {
                 path: Box::from(pathname),
-                data: FileData::Bytes(data),
-                mtime,
+                data,
+                mtime: entry_ref.mtime(),
             });
         }
 

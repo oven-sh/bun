@@ -242,14 +242,17 @@ describe.concurrent("long import path overflow", () => {
   });
 
   // The other direction: a short import with a tsconfig whose `baseUrl` is
-  // itself longer than a PathBuffer (parse_tsconfig for a relative one,
-  // match_tsconfig_paths for an absolute one). Every component is a valid name.
+  // itself longer than a PathBuffer. A relative one is joined with the tsconfig
+  // directory in parse_tsconfig; an absolute one is joined with an exact `paths`
+  // target in match_tsconfig_paths. Every component is a valid name.
   it.each(["./", "/"])("tsconfig baseUrl longer than PATH_MAX (prefix %s)", async prefix => {
     const baseUrl = prefix + Array(21).fill(Buffer.alloc(200, "a").toString()).join("/");
     using dir = tempDir("resolve-long-baseurl", {
       "package.json": `{"name": "test", "version": "0.0.0"}`,
       "node_modules/.keep": "",
-      "tsconfig.json": JSON.stringify({ compilerOptions: { baseUrl, paths: { "somebare/*": ["./lib/*"] } } }),
+      "tsconfig.json": JSON.stringify({
+        compilerOptions: { baseUrl, paths: { "somebare/y": ["./lib/y.ts"], "somebare/*": ["./lib/*"] } },
+      }),
       "e.ts": `import x from "somebare/y"; console.log(x);`,
     });
     await using proc = Bun.spawn({

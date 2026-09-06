@@ -771,6 +771,11 @@ pub mod ssl_wrapper {
             if self.flags.sent_ssl_shutdown() {
                 return Err(WriteDataError::ConnectionClosed);
             }
+            // A fatal read is mid-dispatch (its data callback wrote back):
+            // the close that follows carries the reason. Do not close here.
+            if self.flags.fatal_error() {
+                return Err(WriteDataError::ConnectionClosed);
+            }
 
             if data.is_empty() {
                 // just cycle through internal openssl's state

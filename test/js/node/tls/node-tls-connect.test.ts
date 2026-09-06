@@ -597,7 +597,16 @@ describe("tls.connect over a Duplex reports a fatal post-handshake SSL error", (
   // bad_record_mac.
   const BAD_RECORD = Buffer.concat([Buffer.from([0x17, 0x03, 0x03, 0x00, 0x20]), Buffer.alloc(32, 0x42)]);
 
-  async function run(inject: (toClient: net.Socket, toServer: net.Socket) => void) {
+  type Scenario = {
+    toClient: net.Socket;
+    toServer: net.Socket;
+    serverSocket: TLSSocket;
+    client: TLSSocket;
+    // Append `bytes` to the next chunk the proxy forwards from the server.
+    appendToNextServerChunk(bytes: Buffer): void;
+  };
+
+  async function run(inject: (s: Scenario) => void | Promise<void>) {
     await using server = tls.createServer(COMMON_CERT_);
     server.on("secureConnection", s => s.on("error", () => {}));
     await once(server.listen(0, "127.0.0.1"), "listening");
@@ -605,11 +614,19 @@ describe("tls.connect over a Duplex reports a fatal post-handshake SSL error", (
 
     let toClient: net.Socket | undefined;
     let toServer: net.Socket | undefined;
+    let appendOnce: Buffer | undefined;
     await using proxy = net.createServer(c => {
       toClient = c;
       toServer = net.connect((server.address() as AddressInfo).port, "127.0.0.1");
       c.pipe(toServer);
-      toServer.pipe(c);
+      toServer.on("data", chunk => {
+        if (appendOnce) {
+          chunk = Buffer.concat([chunk, appendOnce]);
+          appendOnce = undefined;
+        }
+        c.write(chunk);
+      });
+      toServer.on("end", () => c.end());
       c.on("error", () => {});
       toServer.on("error", () => {});
     });
@@ -625,9 +642,15 @@ describe("tls.connect over a Duplex reports a fatal post-handshake SSL error", (
     client.once("error", e => (err = e));
     const clientClose = new Promise<boolean>(resolve => client.once("close", resolve));
     await once(client, "secureConnect");
-    await serverSecure;
+    const [serverSocket] = await serverSecure;
 
-    inject(toClient!, toServer!);
+    await inject({
+      toClient: toClient!,
+      toServer: toServer!,
+      serverSocket,
+      client,
+      appendToNextServerChunk: bytes => (appendOnce = bytes),
+    });
 
     const hadError = await clientClose;
     return {
@@ -640,7 +663,7 @@ describe("tls.connect over a Duplex reports a fatal post-handshake SSL error", (
   }
 
   it("a record that fails to decrypt surfaces as ERR_SSL_DECRYPTION_FAILED_OR_BAD_RECORD_MAC", async () => {
-    const result = await run(toClient => toClient.write(BAD_RECORD));
+    const result = await run(({ toClient }) => toClient.write(BAD_RECORD));
     expect(result).toEqual({
       code: "ERR_SSL_DECRYPTION_FAILED_OR_BAD_RECORD_MAC",
       library: "SSL routines",
@@ -653,12 +676,29 @@ describe("tls.connect over a Duplex reports a fatal post-handshake SSL error", (
   it("the peer's fatal alert surfaces as ERR_SSL_SSLV3_ALERT_BAD_RECORD_MAC", async () => {
     // The bad record goes to the server, whose SSL_read fails and sends a
     // bad_record_mac alert back. The client's SSL_read fails on that alert.
-    const result = await run((_toClient, toServer) => toServer.write(BAD_RECORD));
+    const result = await run(({ toServer }) => toServer.write(BAD_RECORD));
     expect(result).toEqual({
       code: "ERR_SSL_SSLV3_ALERT_BAD_RECORD_MAC",
       library: "SSL routines",
       reason: "SSLV3_ALERT_BAD_RECORD_MAC",
       message: expect.stringMatching(/^error:[0-9a-f]+:SSL routines:[^:]*:SSLV3_ALERT_BAD_RECORD_MAC$/),
+      hadError: true,
+    });
+  });
+
+  it("a 'data' listener that writes back does not hide the error", async () => {
+    // Good data and the bad record arrive in one chunk. The engine delivers
+    // the data first, the listener's write hits the now-fatal SSL, and the
+    // close that follows must still carry the read's reason.
+    const result = await run(async ({ serverSocket, client, appendToNextServerChunk }) => {
+      client.on("data", () => client.write("back"));
+      serverSocket.write("first");
+      await once(client, "data");
+      appendToNextServerChunk(BAD_RECORD);
+      serverSocket.write("second");
+    });
+    expect(result).toMatchObject({
+      code: "ERR_SSL_DECRYPTION_FAILED_OR_BAD_RECORD_MAC",
       hadError: true,
     });
   });

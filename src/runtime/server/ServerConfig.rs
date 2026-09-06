@@ -1478,10 +1478,10 @@ pub struct FromJSOptions {
     pub(crate) is_fetch_required: bool,
     /// What the running server keeps answering with when a `reload()` config
     /// names no handler, as `on_reload_from_zig` applies it: `fetch` stays
-    /// unless the new config replaces it, and callback routes stay as long as
-    /// the new config has no `routes` object at all (`routes: {}` replaces
-    /// them). Static routes and the node:http handler are replaced on every
-    /// reload, so they count for nothing here. Both are false for `Bun.serve()`.
+    /// unless the new config replaces it, and routes (callback and static)
+    /// stay as long as the new config has no `routes` object at all
+    /// (`routes: {}` replaces them). The node:http handler is cleared on every
+    /// reload, so it counts for nothing here. Both are false for `Bun.serve()`.
     pub(crate) previous_fetch: bool,
     pub(crate) previous_routes: bool,
 }

@@ -1,6 +1,7 @@
 import type { Query as QueryType } from "./query";
 
 const PublicArray = globalThis.Array;
+const ObjectPrototypeHasOwnProperty = Object.prototype.hasOwnProperty;
 const {
   Query,
   SQLQueryFlags,
@@ -2130,8 +2131,16 @@ function parseOptions(
   // A verify-* sslmode is an explicit request to verify the certificate. The
   // native side only verifies when rejectUnauthorized is set, and an unset
   // rejectUnauthorized falls back to NODE_TLS_REJECT_UNAUTHORIZED, which must
-  // not be able to silently turn the request off.
-  if (sslMode >= SSLMode.verify_ca && (!$isObject(tls) || tls.rejectUnauthorized !== false)) {
+  // not be able to silently turn the request off. Only an own
+  // `rejectUnauthorized: false` opts out.
+  if (
+    sslMode >= SSLMode.verify_ca &&
+    !(
+      $isObject(tls) &&
+      ObjectPrototypeHasOwnProperty.$call(tls, "rejectUnauthorized") &&
+      tls.rejectUnauthorized === false
+    )
+  ) {
     tls = { ...($isObject(tls) ? tls : {}), rejectUnauthorized: true };
   }
 

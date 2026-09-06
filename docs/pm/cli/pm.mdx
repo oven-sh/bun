@@ -371,7 +371,7 @@ Options for the `trust` command:
 
 - `--all`: Trust all untrusted dependencies.
 - `--dry-run`: Print the scripts that would run. Run nothing and write nothing.
-- `--ignore-scripts`: Add the packages to `trustedDependencies` without running their scripts. The next `bun install` runs them.
+- `--ignore-scripts`: Add the packages to `trustedDependencies` in `package.json` without running their scripts. The next `bun install` runs them and updates the lockfile.
 
 ## default-trusted
 

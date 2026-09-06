@@ -1220,7 +1220,8 @@ test("bun pm trust --ignore-scripts records the trust without running the script
     expect(stdout).toContain("1 script skipped across 1 package (--ignore-scripts)");
     expect(await exists(join(dirStr, "node_modules", "dep", "postinstall-ran.txt"))).toBeFalse();
     expect((await Bun.file(join(dirStr, "package.json")).json()).trustedDependencies).toEqual(["dep"]);
-    expect(await Bun.file(join(dirStr, "bun.lock")).text()).toContain('"trustedDependencies"');
+    // Only package.json records the trust. The next install diffs it against the lockfile.
+    expect(await Bun.file(join(dirStr, "bun.lock")).text()).not.toContain("trustedDependencies");
     expect(exitCode).toBe(0);
   }
 
@@ -1237,6 +1238,7 @@ test("bun pm trust --ignore-scripts records the trust without running the script
     expect(stderr).not.toContain("error:");
     expect(stdout).not.toContain("Blocked");
     expect(await exists(join(dirStr, "node_modules", "dep", "postinstall-ran.txt"))).toBeTrue();
+    expect(await Bun.file(join(dirStr, "bun.lock")).text()).toContain("trustedDependencies");
     expect(exitCode).toBe(0);
   }
 });

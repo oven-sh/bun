@@ -577,9 +577,7 @@ impl TrustCommand {
         }
 
         if !dry_run {
-            // The next install runs the scripts of a package that package.json
-            // trusts and the lockfile does not. So when the scripts were
-            // skipped, only package.json records the trust.
+            // Skipped scripts run on the next install only if the lockfile does not trust the package yet.
             Self::write_trusted_dependencies(
                 ctx,
                 pm_raw,

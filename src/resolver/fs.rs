@@ -165,6 +165,13 @@ impl Entry {
         self.cache.set(c);
     }
 
+    /// The real path a resolution followed this symlink to. Empty when the
+    /// entry is not a symlink or was never stat'd. No I/O.
+    #[inline]
+    pub fn followed_symlink(&self) -> &'static [u8] {
+        self.cache().symlink.as_bytes()
+    }
+
     #[inline(always)]
     pub(crate) fn set_cache_symlink(&self, symlink: Interned) {
         let mut c = self.cache.get();

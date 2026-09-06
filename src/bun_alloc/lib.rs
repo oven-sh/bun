@@ -2343,6 +2343,34 @@ impl<ValueType, const COUNT: usize, const REMOVE_TRAILING_SLASHES: bool>
         let _key = Self::key_hash(denormalized_key);
         self.index.remove(&_key).is_some()
     }
+
+    /// Removes every present entry whose value satisfies `pred`. Not-found
+    /// markers carry no value and stay. Returns how many were removed. The
+    /// values stay allocated: the map never frees a slot.
+    pub fn remove_where(&mut self, mut pred: impl FnMut(&ValueType) -> bool) -> usize {
+        let _guard = self.mutex.lock();
+        let mut doomed: Vec<HashKeyType> = Vec::new();
+        for (&hash, &index) in &self.index {
+            if index.index() == NOT_FOUND.index() || index.index() == UNASSIGNED.index() {
+                continue;
+            }
+            let value: &ValueType = if index.is_overflow() {
+                self.overflow_list.at_index_mut(index)
+            } else {
+                // SAFETY: a non-sentinel, non-overflow index was assigned by
+                // `put`, which initialized this slot via `.write()`.
+                unsafe { self.backing_buf[index.index() as usize].assume_init_ref() }
+            };
+            if pred(value) {
+                doomed.try_reserve(1).unwrap_or_else(|_| out_of_memory());
+                doomed.push(hash);
+            }
+        }
+        for hash in &doomed {
+            self.index.remove(hash);
+        }
+        doomed.len()
+    }
 }
 
 // ──────────────────────────────────────────────────────────────────────────

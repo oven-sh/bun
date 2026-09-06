@@ -1598,6 +1598,19 @@ impl<'a> Resolver<'a> {
                             bstr::BStr::new(symlink_path)
                         ));
                     }
+
+                    // The watcher watches the real path's directory. Watch
+                    // the link's own directory so a retarget of the link is
+                    // seen.
+                    if FeatureFlags::WATCH_DIRECTORIES {
+                        if let Some(watcher) = self.watcher.as_ref() {
+                            if let Some((link_dir, fd)) =
+                                dir.get_entries_const().map(|e| (e.dir, e.fd))
+                            {
+                                watcher.watch(link_dir, fd);
+                            }
+                        }
+                    }
                 } else if !dir.abs_real_path.is_empty() {
                     // When the directory is a symlink, we don't need to call getFdPath.
                     let parts = [dir.abs_real_path, query.entry().base()];
@@ -2426,6 +2439,33 @@ impl<'a> Resolver<'a> {
             second_bust
         );
         first_bust || second_bust
+    }
+
+    /// `bust_dir_cache` for `path` and for every cached directory below it.
+    /// A retargeted directory symlink makes the real path cached by each of
+    /// them stale at once. Returns whether anything was busted.
+    pub fn bust_dir_cache_tree(&mut self, path: &[u8]) -> bool {
+        let exact = self.bust_dir_cache(path);
+        let mut buf = bun_paths::path_buffer_pool::get();
+        let path = strings::without_trailing_slash_windows_path(path);
+        if path.len() + 1 >= buf.len() {
+            return exact;
+        }
+        buf[..path.len()].copy_from_slice(path);
+        buf[path.len()] = SEP;
+        let dir_with_slash: &[u8] = &buf[..path.len() + 1];
+        let entries_below = self.fs_mut().fs.bust_entries_cache_below(dir_with_slash);
+        let dirs_below = self.dir_cache_mut().remove_where(|info| {
+            info.abs_path.len() > dir_with_slash.len() && info.abs_path.starts_with(dir_with_slash)
+        });
+        bun_core::scoped_log!(
+            ResolverDev,
+            "Bust below {} = {}, {}",
+            bstr::BStr::new(dir_with_slash),
+            entries_below,
+            dirs_below
+        );
+        exact || entries_below > 0 || dirs_below > 0
     }
 
     /// bust both the named file and a parent directory, because `./hello` can resolve
@@ -6270,6 +6310,14 @@ impl<'a> Resolver<'a> {
                                 logs.add_note(buf);
                             }
                             info.abs_real_path = symlink;
+                            // Only the real path gets watched through the
+                            // files under it. Watch the link's own directory
+                            // so a retarget of the link is seen.
+                            if FeatureFlags::WATCH_DIRECTORIES {
+                                if let Some(watcher) = self.watcher.as_ref() {
+                                    watcher.watch(parent_entries.dir, parent_entries.fd);
+                                }
+                            }
                         } else if !parent_.abs_real_path.is_empty() {
                             // this might leak a little i'm not sure
                             let parts = [parent_.abs_real_path, base];

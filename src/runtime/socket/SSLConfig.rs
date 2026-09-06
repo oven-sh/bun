@@ -13,12 +13,15 @@
 
 use core::ffi::c_char;
 
+use bun_core::fmt as bun_fmt;
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{self as jsc, JSGlobalObject, JSValue, JsError, JsResult, SysErrorJsc};
 
 use crate::node::fs as node_fs;
+use crate::node::types::PathLikeExt;
 use crate::webcore::Blob;
 use crate::webcore::blob::store::Data as StoreData;
+use crate::webcore::node_types::PathOrFileDescriptor;
 
 // ──────────────────────────────────────────────────────────────────────────
 // Canonical re-exports (struct + registry live in bun_http now)
@@ -38,6 +41,11 @@ pub(crate) enum ReadFromBlobError {
     NullStore,
     NotAFile,
     EmptyFile,
+    /// The `BunFile`'s path is not a regular file. `kind` names what it is.
+    NotRegularFile {
+        path: Box<[u8]>,
+        kind: &'static str,
+    },
 }
 
 impl From<JsError> for ReadFromBlobError {
@@ -72,6 +80,44 @@ fn dupe_z(bytes: &[u8]) -> *const c_char {
 
 type CStrSlice = Option<Box<[*const c_char]>>;
 
+// ──────────────────────────────────────────────────────────────────────────
+// A path-valued option must name a regular file
+//
+// Every path here is opened on the JS thread: `ca`/`cert`/`key`/`crl` by
+// `read_from_blob` below, and `keyFile`/`certFile`/`caFile`/`dhParamsFile` by
+// BoringSSL when the socket context is built. `open(2)` on a FIFO with no
+// writer never returns, so one such path stops the event loop with no error
+// and no timer. Reject every kind but a regular file, as the system CA loader
+// (`system_certs.rs`) and the `.env` loader (`bun_dotenv::env_loader`) do.
+// ──────────────────────────────────────────────────────────────────────────
+
+/// The noun for a mode that is not `S_IFREG`, or `None` for a regular file.
+fn non_regular_kind(mode: bun_sys::Mode) -> Option<&'static str> {
+    match bun_sys::kind_from_mode(mode) {
+        bun_sys::FileKind::File => None,
+        bun_sys::FileKind::NamedPipe => Some("a FIFO"),
+        bun_sys::FileKind::Directory => Some("a directory"),
+        bun_sys::FileKind::CharacterDevice => Some("a character device"),
+        bun_sys::FileKind::BlockDevice => Some("a block device"),
+        bun_sys::FileKind::UnixDomainSocket => Some("a socket"),
+        _ => Some("not a regular file"),
+    }
+}
+
+fn non_regular_error(
+    global: &JSGlobalObject,
+    field: &'static str,
+    path: &[u8],
+    kind: &'static str,
+) -> JsError {
+    global.throw_invalid_arguments(format_args!(
+        "TLSOptions.{} must be a regular file, but {} is {}",
+        field,
+        bun_fmt::quote(path),
+        kind
+    ))
+}
+
 fn read_from_blob(
     global: &JSGlobalObject,
     blob: &Blob,
@@ -85,6 +131,21 @@ fn read_from_blob(
         StoreData::File(f) => f,
         _ => return Err(ReadFromBlobError::NotAFile),
     };
+    // Before the open, not after: the open is what blocks. A `Bun.file(fd)`
+    // store has no path to open, so it keeps today's read.
+    if let PathOrFileDescriptor::Path(path) = &file.pathlike {
+        let mut buffer = bun_paths::path_buffer_pool::get();
+        // A `stat` failure is not this check's business. The read below
+        // reports it with its own errno.
+        if let Ok(stat) = bun_sys::stat(path.slice_z(&mut buffer))
+            && let Some(kind) = non_regular_kind(stat.st_mode as bun_sys::Mode)
+        {
+            return Err(ReadFromBlobError::NotRegularFile {
+                path: path.slice().into(),
+                kind,
+            });
+        }
+    }
     let mut fs = node_fs::NodeFS::default();
     // `ReadFile` has a `Drop` impl (releases its `signal` ref), so functional
     // record update from `..Default::default()` would partially move out of a
@@ -297,16 +358,22 @@ fn handle_path(
     string: &bun_core::String,
 ) -> JsResult<*const c_char> {
     let name = string.to_owned_slice_z();
-    // `bun_sys::access` routes to `access(2)` on POSIX and
-    // `GetFileAttributesW` on Windows (via `sys_uv`), so this is the
-    // cross-platform existence probe.
-    if bun_sys::access(&name, bun_sys::posix::F_OK).is_err() {
+    // `bun_sys::stat` routes to `stat(2)` on POSIX and to libuv on Windows, so
+    // one call is both the cross-platform existence probe and the kind check.
+    let failure = match bun_sys::stat(&name) {
+        Err(_) => {
+            Some(global.throw_invalid_arguments(format_args!("Unable to access {} path", field)))
+        }
+        Ok(stat) => non_regular_kind(stat.st_mode as bun_sys::Mode)
+            .map(|kind| non_regular_error(global, field, name.as_bytes(), kind)),
+    };
+    if let Some(err) = failure {
         // Error path: free_sensitive(name) — zero before drop. Route through
         // the canonical helper so the secure-zero core stays single-sourced.
         // SAFETY: `zbox_into_raw` yields a `default_alloc::malloc`-backed,
         // NUL-terminated buffer whose ownership we now hold exclusively.
         unsafe { bun_core::free_sensitive(zbox_into_raw(&name)) };
-        return Err(global.throw_invalid_arguments(format_args!("Unable to access {} path", field)));
+        return Err(err);
     }
     Ok(zbox_into_raw(&name))
 }
@@ -322,6 +389,9 @@ fn handle_file_for_field(
         Err(ReadFromBlobError::EmptyFile) => {
             Err(global
                 .throw_invalid_arguments(format_args!("TLSOptions.{} is an empty file", field)))
+        }
+        Err(ReadFromBlobError::NotRegularFile { path, kind }) => {
+            Err(non_regular_error(global, field, &path, kind))
         }
         Err(ReadFromBlobError::NullStore) | Err(ReadFromBlobError::NotAFile) => Err(global
             .throw_invalid_arguments(format_args!(

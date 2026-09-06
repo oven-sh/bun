@@ -1206,3 +1206,25 @@ it.skipIf(isWindows)("Bun.write(Bun.stdout, ...) to a full nonblocking pipe comp
     signalCode: null,
   });
 });
+
+// The sync fast path used to re-enter the async path with the whole payload after a partial
+// write, so the bytes already in the pipe were sent twice. It must also not block the thread
+// while the pipe is full: here the only reader runs on the same event loop.
+it.skipIf(isWindows)("Bun.write to a full pipe resumes async after a partial write", async () => {
+  using dir = tempDir("bun-write-fifo", {});
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), join(import.meta.dir, "bun-write-fifo-fixture.js"), join(String(dir), "fifo")],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+    timeout: 20_000,
+    killSignal: "SIGKILL",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr, exitCode, signalCode: proc.signalCode }).toEqual({
+    stdout: JSON.stringify({ n: 200 * 1024, got: 200 * 1024 }) + "\n",
+    stderr: "",
+    exitCode: 0,
+    signalCode: null,
+  });
+});

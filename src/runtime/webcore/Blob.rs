@@ -4427,11 +4427,14 @@ fn write_file_with_empty_source_to_destination(
     ))
 }
 
+/// `already_written` is the byte count the synchronous fast path committed to
+/// the destination before it fell back; the bytes source resumes after it.
 pub(crate) fn write_file_with_source_destination(
     ctx: &JSGlobalObject,
     source_blob: &mut Blob,
     destination_blob: &mut Blob,
     options: &WriteFileOptions,
+    already_written: usize,
 ) -> JsResult<JSValue> {
     let destination_store = destination_blob
         .store
@@ -4461,6 +4464,8 @@ pub(crate) fn write_file_with_source_destination(
         // `WriteFile::create` takes its own ref.
         #[cfg(windows)]
         {
+            // Windows has no synchronous fast path, so nothing was written yet.
+            debug_assert_eq!(already_written, 0);
             let promise = JSPromise::create(ctx);
             let promise_value = promise.as_value(ctx);
             promise_value.ensure_still_alive();
@@ -4483,7 +4488,7 @@ pub(crate) fn write_file_with_source_destination(
 
         #[cfg(not(windows))]
         {
-            let file_copier = write_file_mod::WriteFile::create(
+            let mut file_copier = write_file_mod::WriteFile::create(
                 destination_blob.borrowed_view(),
                 source_blob.borrowed_view(),
                 write_file_promise,
@@ -4491,6 +4496,7 @@ pub(crate) fn write_file_with_source_destination(
                 options.mkdirp_if_not_exists.unwrap_or(true),
             )
             .expect("unreachable");
+            file_copier.total_written = already_written;
             // Defer promise creation until we're just about to schedule the task.
             // SAFETY: write_file_promise was just produced by heap::alloc above; sole owner.
             unsafe { (*write_file_promise).promise = jsc::JSPromiseStrong::init(ctx) };
@@ -4781,9 +4787,15 @@ pub(crate) fn write_file_internal(
     // This is a heuristic, but it's a good one.
     //
     // except if you're on Windows. Windows I/O is slower. Let's not even try.
+    //
+    // When the fast path hits EAGAIN after a partial write it hands off to the
+    // async `WriteFile`, which resumes at `already_written` instead of
+    // re-sending the prefix.
+    #[cfg(windows)]
+    let already_written: usize = 0;
     #[cfg(not(windows))]
-    {
-        let mut needs_async = false;
+    let already_written: usize = {
+        let mut resume_async_at: Option<usize> = None;
         let fast_path_ok = matches!(*path_or_blob, PathOrBlob::Path(_))
             || (matches!(*path_or_blob, PathOrBlob::Blob(ref b)
                 if b.offset.get() == 0 && !b.is_s3()
@@ -4810,17 +4822,17 @@ pub(crate) fn write_file_internal(
                             global_this,
                             pathlike,
                             &str,
-                            &mut needs_async,
+                            &mut resume_async_at,
                         )
                     } else {
                         write_string_to_file_fast::<false>(
                             global_this,
                             pathlike,
                             &str,
-                            &mut needs_async,
+                            &mut resume_async_at,
                         )
                     };
-                    if !needs_async {
+                    if resume_async_at.is_none() {
                         return Ok(result);
                     }
                 }
@@ -4841,23 +4853,24 @@ pub(crate) fn write_file_internal(
                             global_this,
                             pathlike,
                             buffer_view.byte_slice(),
-                            &mut needs_async,
+                            &mut resume_async_at,
                         )
                     } else {
                         write_bytes_to_file_fast::<false>(
                             global_this,
                             pathlike,
                             buffer_view.byte_slice(),
-                            &mut needs_async,
+                            &mut resume_async_at,
                         )
                     };
-                    if !needs_async {
+                    if resume_async_at.is_none() {
                         return Ok(result);
                     }
                 }
             }
         }
-    }
+        resume_async_at.unwrap_or(0)
+    };
 
     // if path_or_blob is a path, convert it into a file blob
     let mut destination_blob: Blob = match path_or_blob {
@@ -5134,6 +5147,7 @@ pub(crate) fn write_file_internal(
         &mut *source_blob,
         &mut destination_blob,
         &options,
+        already_written,
     )
 }
 
@@ -5262,7 +5276,7 @@ fn write_string_to_file_fast<const NEEDS_OPEN: bool>(
     global_this: &JSGlobalObject,
     pathlike: &PathOrFileDescriptor,
     str: &BunString,
-    needs_async: &mut bool,
+    resume_async_at: &mut Option<usize>,
 ) -> JSValue {
     let fd: Fd = if !NEEDS_OPEN {
         pathlike.fd()
@@ -5278,7 +5292,7 @@ fn write_string_to_file_fast<const NEEDS_OPEN: bool>(
             bun_sys::Result::Ok(result) => result,
             bun_sys::Result::Err(err) => {
                 if err.get_errno() == bun_sys::E::ENOENT {
-                    *needs_async = true;
+                    *resume_async_at = Some(0);
                     return JSValue::ZERO;
                 }
                 return JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
@@ -5321,19 +5335,8 @@ fn write_string_to_file_fast<const NEEDS_OPEN: bool>(
                 bun_sys::Result::Err(err) => {
                     truncate.set(false);
                     if err.get_errno() == bun_sys::E::EAGAIN {
-                        if written.get() == 0 {
-                            *needs_async = true;
-                            return JSValue::ZERO;
-                        }
-                        // The async path re-sends the whole input, so after a partial
-                        // write finish synchronously via poll(POLLOUT).
-                        let mut pfd = [bun_sys::posix::PollFd {
-                            fd: fd.native(),
-                            events: bun_sys::posix::POLL_OUT,
-                            revents: 0,
-                        }];
-                        let _ = bun_sys::posix::poll(&mut pfd, -1);
-                        continue;
+                        *resume_async_at = Some(written.get());
+                        return JSValue::ZERO;
                     }
                     let err_js = if !NEEDS_OPEN {
                         err.to_js(global_this)
@@ -5357,7 +5360,7 @@ fn write_bytes_to_file_fast<const NEEDS_OPEN: bool>(
     global_this: &JSGlobalObject,
     pathlike: &PathOrFileDescriptor,
     bytes: &[u8],
-    _needs_async: &mut bool,
+    _resume_async_at: &mut Option<usize>,
 ) -> JSValue {
     let fd: Fd = if !NEEDS_OPEN {
         pathlike.fd()
@@ -5377,7 +5380,7 @@ fn write_bytes_to_file_fast<const NEEDS_OPEN: bool>(
             bun_sys::Result::Err(err) => {
                 #[cfg(not(windows))]
                 if err.get_errno() == bun_sys::E::ENOENT {
-                    *_needs_async = true;
+                    *_resume_async_at = Some(0);
                     return JSValue::ZERO;
                 }
                 return JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
@@ -5407,17 +5410,8 @@ fn write_bytes_to_file_fast<const NEEDS_OPEN: bool>(
             bun_sys::Result::Err(err) => {
                 #[cfg(not(windows))]
                 if err.get_errno() == bun_sys::E::EAGAIN {
-                    if written == 0 {
-                        *_needs_async = true;
-                        return JSValue::ZERO;
-                    }
-                    let mut pfd = [bun_sys::posix::PollFd {
-                        fd: fd.native(),
-                        events: bun_sys::posix::POLL_OUT,
-                        revents: 0,
-                    }];
-                    let _ = bun_sys::posix::poll(&mut pfd, -1);
-                    continue;
+                    *_resume_async_at = Some(written);
+                    return JSValue::ZERO;
                 }
                 let err_js = if !NEEDS_OPEN {
                     err.to_js(global_this)

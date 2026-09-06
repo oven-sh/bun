@@ -7479,7 +7479,8 @@ impl NodeFS {
         }
 
         let dest = args.path.slice_z(&mut self.sync_error_buf);
-        if let Err(err1) = rm_with_retries(args, || sys::unlink(dest)) {
+        // Node ignores maxRetries and retryDelay when recursive is not true.
+        if let Err(err1) = sys::unlink(dest) {
             let e1 = err1.get_errno();
             if e1 == E::ENOENT {
                 if args.force {

@@ -408,12 +408,7 @@ pub(crate) fn open_global_bin_dir(opts_: Option<&Api::BunInstall>) -> crate::Res
     Err(crate::Error::MissingGlobalBinDirectoryTrySettingBUNINSTALL)
 }
 
-// `BunInstall` owns `Box<[u8]>`; Options stores `&'static [u8]`
-// (no struct lifetime params). Park a clone for the
-// lifetime of the install command via the named hand-off helper.
-#[inline]
-/// Whether `Scope::set_url(registry_url)` keeps `scope` on its host, with no downgrade from
-/// https. The URL is read as `set_url` reads it (WTF::URL, the string itself when it rejects it).
+/// Whether `Scope::set_url(registry_url)` keeps `scope` on its host with no downgrade from https.
 fn keeps_origin(scope: &Npm::registry::Scope, registry_url: &[u8]) -> bool {
     let normalized = bun_url::URL::from_string(&bun_core::String::borrow_utf8(registry_url))
         .unwrap_or_else(|_| bun_url::OwnedURL::from_href(Box::from(registry_url)));
@@ -424,6 +419,10 @@ fn keeps_origin(scope: &Npm::registry::Scope, registry_url: &[u8]) -> bool {
         && (new_url.is_https() || !prev_url.is_https())
 }
 
+// `BunInstall` owns `Box<[u8]>`; Options stores `&'static [u8]`
+// (no struct lifetime params). Park a clone for the
+// lifetime of the install command via the named hand-off helper.
+#[inline]
 fn leak_static(s: &[u8]) -> &'static [u8] {
     bun_core::heap::release(s.to_vec().into_boxed_slice())
 }

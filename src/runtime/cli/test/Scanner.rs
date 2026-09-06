@@ -32,11 +32,9 @@ pub struct Scanner<'a> {
     pub(crate) options: &'a BundleOptions<'a>,
     pub(crate) has_iterated: bool,
     pub(crate) search_count: usize,
-    /// Directories that could not be opened or read. Each one is reported as
-    /// it happens; the count makes the run exit non-zero.
+    /// Directories that could not be opened or read; non-zero fails the run.
     pub(crate) unreadable_dirs: usize,
-    /// `(st_dev, st_ino)` of every directory scanned so far. A symlink that
-    /// points back into the tree is skipped instead of walked again.
+    /// `(st_dev, st_ino)` of every directory scanned so far.
     visited_dirs: HashSet<(u64, u64)>,
     /// The directory being iterated; its fd closes once every child `ScanEntry` has been opened.
     current_dir: Option<Rc<Dir>>,
@@ -109,8 +107,7 @@ impl<'a> Scanner<'a> {
         );
     }
 
-    /// Records `fd`'s directory identity. Returns `false` when that directory
-    /// was scanned before (reached again through a symlink).
+    /// Returns `false` when `fd`'s directory was scanned before.
     fn mark_visited(&mut self, fd: Fd) -> bool {
         match bun_sys::fstat(fd) {
             Ok(st) => self

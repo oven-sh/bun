@@ -7159,6 +7159,10 @@ declare module "bun" {
   /**
    * Create a TCP client that connects to a server
    *
+   * The promise resolves when `open` fires. For a TLS socket with no
+   * `handshake` handler that is after the handshake, and a failed
+   * handshake rejects the promise instead.
+   *
    * @category HTTP & Networking
    */
   function connect<Data = undefined>(options: TCPSocketConnectOptions<Data>): Promise<Socket<Data>>;

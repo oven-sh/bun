@@ -1730,6 +1730,30 @@ fn spawn_maybe_sync(
 
     **should_close_memfd = false;
 
+    // The stdin pump already failed: throw its reason. The child is watched, so the kill is reaped.
+    if let Some(promise) = promise_for_stream.as_promise() {
+        // SAFETY: `as_promise` returned a live cell held by `promise_for_stream`.
+        let promise = unsafe { &mut *promise };
+        if promise.status() == jsc::js_promise::Status::Rejected {
+            debug_assert!(!is_sync);
+            let reason = promise.result(global_this.vm());
+            // The caller never receives this Subprocess, so none of its callbacks may run.
+            let _ = Subprocess::js::on_exit_callback_take_cached(out, global_this);
+            let _ = Subprocess::js::on_disconnect_callback_take_cached(out, global_this);
+            let _ = Subprocess::js::ipc_callback_take_cached(out, global_this);
+            if !subprocess.has_exited() {
+                // SAFETY: jsc_vm_ptr points to the live thread VM; `subprocess.process`
+                // is a `BackRef` (wraps `NonNull`), so its pointer is non-null.
+                unsafe {
+                    (*jsc_vm_ptr)
+                        .on_subprocess_spawn(NonNull::new_unchecked(subprocess.process.as_ptr()))
+                };
+            }
+            let _ = subprocess.try_kill(subprocess.kill_signal);
+            return Err(global_this.throw_value(reason));
+        }
+    }
+
     // Every `return Err` above is past; the Subprocess will be returned to
     // JS. Downgrade 'socket-fd' slots from OwnedFd to UnownedFd so
     // finalize_streams (on later GC) skips them and the caller is the sole
@@ -1777,21 +1801,6 @@ fn spawn_maybe_sync(
                 (*jsc_vm_ptr)
                     .on_subprocess_spawn(NonNull::new_unchecked(subprocess.process.as_ptr()))
             };
-        }
-
-        // The stdin pump already failed: throw its reason. The child is watched, so the kill is reaped.
-        if let Some(promise) = promise_for_stream.as_promise() {
-            // SAFETY: `as_promise` returned a live cell held by `promise_for_stream`.
-            let promise = unsafe { &mut *promise };
-            if promise.status() == jsc::js_promise::Status::Rejected {
-                let reason = promise.result(global_this.vm());
-                // The caller never receives this Subprocess, so none of its callbacks may run.
-                let _ = Subprocess::js::on_exit_callback_take_cached(out, global_this);
-                let _ = Subprocess::js::on_disconnect_callback_take_cached(out, global_this);
-                let _ = Subprocess::js::ipc_callback_take_cached(out, global_this);
-                let _ = subprocess.try_kill(subprocess.kill_signal);
-                return Err(global_this.throw_value(reason));
-            }
         }
         return Ok(out);
     }

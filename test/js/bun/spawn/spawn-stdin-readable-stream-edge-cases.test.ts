@@ -11,7 +11,8 @@
 
 import { spawn } from "bun";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isWindows } from "harness";
+import { bunEnv, bunExe, isLinux, isWindows } from "harness";
+import { readdirSync } from "node:fs";
 
 describe("spawn stdin ReadableStream edge cases", () => {
   test("ReadableStream with exception in pull", async () => {
@@ -500,6 +501,30 @@ describe("spawn stdin ReadableStream edge cases", () => {
       expect(onExitCalls).toBe(0);
     },
   );
+
+  test.skipIf(!isLinux)("a spawn that throws on its stdin stream does not leak 'socket-fd' descriptors", async () => {
+    const countFds = () => readdirSync("/proc/self/fd").length;
+    const before = countFds();
+
+    for (let i = 0; i < 8; i++) {
+      expect(() => {
+        spawn({
+          cmd: ["sleep", "5"],
+          stdio: [failingStdinStreams["non-byte chunk"].make(), "ignore", "ignore", "socket-fd"],
+        });
+      }).toThrow("write() expects a string, ArrayBufferView, or ArrayBuffer");
+    }
+
+    // The parent-side socket closes when the unreachable Subprocess is collected after the child exits.
+    const deadline = Date.now() + 5000;
+    let after = countFds();
+    while (after > before && Date.now() < deadline) {
+      Bun.gc(true);
+      await Bun.sleep(20);
+      after = countFds();
+    }
+    expect(after).toBeLessThanOrEqual(before);
+  });
 
   test("ReadableStream with byte stream", async () => {
     const data = new Uint8Array(256);

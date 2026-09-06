@@ -88,6 +88,29 @@ test.each(["synchronously", "in a microtask", "in a setTimeout"])(
   },
 );
 
+test("An uncaught error in a Worker previews the original source after its object URL is revoked", async () => {
+  const file = new File(
+    [
+      `const x: number = 1;
+function boom(): never {
+  throw new Error("boom from blob");
+}
+boom();
+`,
+    ],
+    "worker.ts",
+  );
+  const url = URL.createObjectURL(file);
+  const worker = new Worker(url);
+  URL.revokeObjectURL(url);
+  const { promise, resolve } = Promise.withResolvers<string>();
+  worker.onerror = e => resolve(e.message);
+  const message = await promise;
+  // The preview is remapped to the TypeScript source, not the transpiled output.
+  expect(message).toContain("function boom(): never {");
+  expect(message).toContain('throw new Error("boom from blob");');
+});
+
 test("Revoking an object URL before a Worker is created errors", async () => {
   const blob = new Blob([`self.postMessage("should not run");`], { type: "application/javascript" });
   const url = URL.createObjectURL(blob);

@@ -4463,6 +4463,17 @@ impl VirtualMachine {
             .matches(blob_id)
     }
 
+    /// A dupe of the Blob the module loader sees for `blob:<blob_id>` (same
+    /// lookup order as [`Self::has_blob_url`]), bound to this VM's global.
+    pub fn resolve_blob_url(&self, blob_id: &[u8]) -> Option<crate::webcore_types::Blob> {
+        let blob = match self.worker_entry_blob(blob_id) {
+            Some(entry) => entry.dupe_with_content_type(true),
+            None => (runtime_hooks()?.dupe_blob_url)(blob_id)?,
+        };
+        blob.global_this.set(self.global());
+        Some(blob)
+    }
+
     /// Note: `is_a_file_path` is a runtime
     /// arg to avoid duplicating the body for both monomorphizations.
     pub(crate) fn _resolve(

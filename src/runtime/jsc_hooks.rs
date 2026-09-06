@@ -1455,9 +1455,9 @@ mod vm_loader_ctx {
     // simple field reads. This matters because `read_dir_info_package_json`
     // holds a live `&mut transpiler.resolver` across a re-entrant `read_dir_info`
     // that can call back into these hooks; a `&VirtualMachine` formed here would
-    // alias that `&mut` (SB/TB UB). The two accessors that call `&self` methods
-    // (`main`, `blob_loader`) form a transient `&VirtualMachine` scoped to the
-    // single call, which never spans the re-entrant path.
+    // alias that `&mut` (SB/TB UB). The accessors that call `&self` methods
+    // (`main`, `resolve_blob`, `blob_loader`) form a transient `&VirtualMachine`
+    // scoped to the single call, which never spans the re-entrant path.
     bun_bundler::link_impl_VmLoaderCtx! {
         Runtime for extern VirtualMachine => |this| {
             origin_host() => (*this).origin.host,
@@ -1483,11 +1483,9 @@ mod vm_loader_ctx {
                 }
             },
             is_blob_url(spec) => crate::webcore::object_url_registry::is_blob_url(spec),
-            resolve_blob(spec) => {
-                crate::webcore::object_url_registry::ObjectURLRegistry::singleton()
-                    .resolve_and_dupe(spec, &*(*this).global)
-                    .map(|b| bun_core::heap::into_raw(Box::new(b)).cast::<()>())
-            },
+            resolve_blob(spec) => (*this)
+                .resolve_blob_url(spec)
+                .map(|b| bun_core::heap::into_raw(Box::new(b)).cast::<()>()),
             blob_loader(b) => blob(b).get_loader(&*this),
             // Returned slices borrow blob heap storage that lives until
             // `blob_deinit`; erased to `'static` per the interface signature —
@@ -3995,19 +3993,8 @@ unsafe fn get_loader_and_virtual_source<'a>(
 
     // `blob:` ObjectURL → in-memory virtual source.
     if crate::webcore::object_url_registry::is_blob_url(specifier) {
-        let blob_id = &specifier[b"blob:".len()..];
         // SAFETY: per fn contract — `jsc_vm` is the live per-thread VM.
-        let vm = unsafe { &*jsc_vm };
-        // A worker's captured entry point outlives a revoke of its URL.
-        let captured = vm.worker_entry_blob(blob_id).map(|entry| {
-            let blob = entry.dupe_with_content_type(true);
-            blob.global_this.set(vm.global());
-            blob
-        });
-        match captured.or_else(|| {
-            crate::webcore::object_url_registry::ObjectURLRegistry::singleton()
-                .resolve_and_dupe(blob_id, vm.global())
-        }) {
+        match unsafe { &*jsc_vm }.resolve_blob_url(&specifier[b"blob:".len()..]) {
             Some(blob) => {
                 *blob_to_deinit = Some(blob);
                 // SAFETY: `blob_to_deinit` is `Some` (just written); we hold

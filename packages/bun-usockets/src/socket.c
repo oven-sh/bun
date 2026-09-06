@@ -429,6 +429,25 @@ int us_socket_send_progress_mark(struct us_socket_t *s, uint64_t *mark) {
     return bsd_socket_send_progress_mark(us_poll_fd(&s->p), mark);
 }
 
+int us_socket_send_progressed(struct us_socket_t *s, uint64_t *mark, uint64_t min_bytes) {
+    uint64_t now;
+    if (us_socket_send_progress_mark(s, &now) != 0) {
+        return 0;
+    }
+#ifdef _WIN32
+    /* Cumulative sent bytes: the mark grows. */
+    uint64_t delivered = now > *mark ? now - *mark : 0;
+#else
+    /* Unsent queue: the mark shrinks. */
+    uint64_t delivered = *mark > now ? *mark - now : 0;
+#endif
+    if (delivered == 0 || delivered < min_bytes) {
+        return 0;
+    }
+    *mark = now;
+    return 1;
+}
+
 int us_socket_write2(struct us_socket_t *s, const char *header, int header_length, const char *payload, int payload_length) {
     if (us_socket_is_closed(s) || us_socket_is_shut_down(s)) {
         return 0;

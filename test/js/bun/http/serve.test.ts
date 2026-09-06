@@ -3130,73 +3130,108 @@ it.concurrent(
 // the condition under test, not a wait for one. The timer has a 4 second
 // granularity, so the idle period is 8 to 12 seconds and the client reads at
 // least once in every period.
-describe.concurrent("idleTimeout keeps a slow reader alive", () => {
+describe.concurrent("idleTimeout and a slow reader", () => {
   const TOTAL = 16 << 20;
   const PACED_MS = 16_000;
   const PAUSE_MS = 5_000;
-  for (const kind of ["bytes", "stream"] as const) {
-    it(kind, async () => {
-      let aborted = false;
-      using server = Bun.serve({
-        hostname: "127.0.0.1",
-        port: 0,
-        idleTimeout: 10,
-        fetch(req) {
-          req.signal.addEventListener("abort", () => (aborted = true));
-          if (kind === "bytes") return new Response(new Uint8Array(TOTAL));
-          const chunk = new Uint8Array(16 * 1024);
-          let sent = 0;
-          return new Response(
-            new ReadableStream({
-              pull(c) {
-                if (sent >= TOTAL) return c.close();
-                c.enqueue(chunk);
-                sent += chunk.byteLength;
-              },
-            }),
-          );
-        },
-      });
 
-      const { promise, resolve } = Promise.withResolvers<void>();
-      let head = Buffer.alloc(0);
-      let headerDone = false;
-      let contentLength = -1;
-      let body = 0;
-      let tail = Buffer.alloc(0);
+  function serveBody(kind: "bytes" | "stream" | "file", onAbort: () => void) {
+    return Bun.serve({
+      hostname: "127.0.0.1",
+      port: 0,
+      idleTimeout: 10,
+      fetch(req) {
+        req.signal.addEventListener("abort", onAbort);
+        if (kind === "bytes") return new Response(new Uint8Array(TOTAL));
+        if (kind === "file") return new Response(Bun.file(bigFile));
+        const chunk = new Uint8Array(16 * 1024);
+        let sent = 0;
+        return new Response(
+          new ReadableStream({
+            pull(c) {
+              if (sent >= TOTAL) return c.close();
+              c.enqueue(chunk);
+              sent += chunk.byteLength;
+            },
+          }),
+        );
+      },
+    });
+  }
+
+  // Sends a GET and reads the response at `pace` until the socket closes.
+  // Resolves with the body byte count, the Content-Length (-1 when chunked)
+  // and the last 8 bytes on the wire.
+  function readResponse(port: number, pace: (sock: net.Socket) => void) {
+    const { promise, resolve } = Promise.withResolvers<{ body: number; contentLength: number; tail: string }>();
+    let head = Buffer.alloc(0);
+    let headerDone = false;
+    let contentLength = -1;
+    let body = 0;
+    let tail = Buffer.alloc(0);
+    const sock = net.connect(port, "127.0.0.1", () => {
+      sock.write("GET / HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n");
+    });
+    sock.on("data", (d: Buffer) => {
+      if (!headerDone) {
+        head = Buffer.concat([head, d]);
+        const i = head.indexOf("\r\n\r\n");
+        if (i < 0) return;
+        headerDone = true;
+        const m = /content-length: (\d+)/i.exec(head.subarray(0, i).toString());
+        if (m) contentLength = Number(m[1]);
+        d = head.subarray(i + 4);
+      }
+      body += d.length;
+      tail = Buffer.concat([tail, d]).subarray(-8);
+      pace(sock);
+    });
+    const done = () => resolve({ body, contentLength, tail: tail.toString() });
+    sock.on("error", done);
+    sock.on("close", done);
+    return promise;
+  }
+
+  const dir = tempDir("serve-slow-reader", { "big.bin": Buffer.alloc(TOTAL) });
+  const bigFile = join(String(dir), "big.bin");
+  afterAll(() => dir[Symbol.dispose]());
+
+  for (const kind of ["bytes", "stream", "file"] as const) {
+    it(`keeps a slow ${kind} reader alive`, async () => {
+      let aborted = false;
+      using server = serveBody(kind, () => (aborted = true));
       const start = performance.now();
-      const sock = net.connect(server.port, "127.0.0.1", () => {
-        sock.write("GET / HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n");
-      });
-      sock.on("data", (d: Buffer) => {
-        if (!headerDone) {
-          head = Buffer.concat([head, d]);
-          const i = head.indexOf("\r\n\r\n");
-          if (i < 0) return;
-          headerDone = true;
-          const m = /content-length: (\d+)/i.exec(head.subarray(0, i).toString());
-          if (m) contentLength = Number(m[1]);
-          d = head.subarray(i + 4);
-        }
-        body += d.length;
-        tail = Buffer.concat([tail, d]).subarray(-8);
+      const res = await readResponse(server.port, sock => {
         if (performance.now() - start < PACED_MS) {
           sock.pause();
           setTimeout(() => sock.resume(), PAUSE_MS);
         }
       });
-      sock.on("error", () => resolve());
-      sock.on("close", () => resolve());
-      await promise;
-
       expect(aborted).toBe(false);
-      if (kind === "bytes") {
-        expect(body).toBe(contentLength);
+      if (kind === "stream") {
+        expect(res.tail).toEndWith("0\r\n\r\n");
       } else {
-        expect(tail.toString()).toEndWith("0\r\n\r\n");
+        expect(res.body).toBe(res.contentLength);
       }
     }, 30_000);
   }
+
+  // A peer that takes no bytes at all is still idle: the request aborts within
+  // the usual period.
+  it("still times out a reader that stops", async () => {
+    const { promise: abortedAt, resolve } = Promise.withResolvers<number>();
+    const start = performance.now();
+    using server = serveBody("bytes", () => resolve(performance.now() - start));
+    let stalled: net.Socket | undefined;
+    const response = readResponse(server.port, sock => {
+      stalled = sock;
+      sock.pause();
+    });
+    expect(await abortedAt).toBeLessThan(20_000);
+    // A paused socket never sees the close, so tear it down by hand.
+    stalled!.destroy();
+    expect((await response).body).toBeLessThan(TOTAL);
+  }, 30_000);
 });
 
 it.concurrent("allow requestIP after async operation", async () => {

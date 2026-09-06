@@ -1541,6 +1541,9 @@ size_t uws_req_get_header(uws_req_t *res, const char *lower_case_header,
      * half-open socket. */
     us_poll_change(&s->p, s->group->loop,
                    LIBUS_SOCKET_WRITABLE | ((s->flags.is_paused || s->read_eof) ? 0 : LIBUS_SOCKET_READABLE));
+    /* The sendfile that ran before this left bytes pending; re-arm the idle
+     * timer so it records that (HttpResponse::resetTimeout). */
+    ((uWS::HttpResponse<false> *)res)->resetTimeout();
   }
 
 __attribute__((callback (corker, ctx)))

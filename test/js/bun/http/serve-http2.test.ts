@@ -855,4 +855,49 @@ describe("Bun.serve http2 in-process", () => {
     expect(aborted).toBe(1);
     await new Promise<void>(r => session.close(() => r()));
   });
+
+  // The peer opens a window far larger than the kernel send buffer, so the
+  // TCP send buffer is what throttles the response, like an HTTP/1.1 client
+  // reading slowly. No write and no writable event re-arms the idle timer for
+  // longer than idleTimeout (8 to 12 seconds with the 4 second timer
+  // granularity), yet the peer keeps taking bytes and must not be aborted.
+  // The pacing is the condition under test, not a wait for one.
+  test("idleTimeout keeps a slow reader alive", async () => {
+    const TOTAL = 16 << 20;
+    let aborted = false;
+    await using server = Bun.serve({
+      hostname: "127.0.0.1",
+      port: 0,
+      http2: true,
+      idleTimeout: 10,
+      fetch(req) {
+        req.signal.addEventListener("abort", () => (aborted = true));
+        return new Response(new Uint8Array(TOTAL));
+      },
+    });
+    const settings = Buffer.alloc(6);
+    settings.writeUInt16BE(4, 0); // INITIAL_WINDOW_SIZE
+    settings.writeUInt32BE(64 << 20, 2);
+    const raw = await RawH2.connect(server.port, false, { settings });
+    const inc = Buffer.alloc(4);
+    inc.writeUInt32BE(64 << 20, 0);
+    raw.write(frame(T.WINDOW_UPDATE, 0, 0, inc));
+    const start = performance.now();
+    raw.socket.on("data", () => {
+      if (performance.now() - start < 16_000) {
+        raw.socket.pause();
+        setTimeout(() => raw.socket.resume(), 5_000);
+      }
+    });
+    raw.headers(1, baseHeaders("/"));
+    const ended = await raw
+      .waitFor(f => f.type === T.DATA && f.streamId === 1 && (f.flags & F.END_STREAM) !== 0)
+      .then(
+        () => true,
+        () => false,
+      );
+    const received = raw.frames.filter(f => f.type === T.DATA).reduce((n, f) => n + f.payload.length, 0);
+    expect({ aborted, ended, received }).toEqual({ aborted: false, ended: true, received: TOTAL });
+    raw.close();
+  }, 30_000);
 });

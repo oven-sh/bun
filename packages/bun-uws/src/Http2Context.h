@@ -427,6 +427,10 @@ struct Http2Connection {
     /* Seconds of silence before onTimeout; recomputed when a stream sets a
      * timeout or retires (see Http2Response::timeoutS). */
     unsigned idleTimeoutS = 0;
+    /* The idle timer was armed (touch) with outgoing bytes pending, and
+     * sendProgressMark holds the kernel's delivery mark from that moment. */
+    bool sendProgressMarked = false;
+    uint64_t sendProgressMark = 0;
     int drainDepth = 0;
 
     Http2Connection(us_socket_t *socket, Http2Context *context) : s(socket), ctx(context) {
@@ -959,6 +963,14 @@ private:
      * connection): streams in flight are aborted through onClose. */
     static us_socket_t *onTimeout(us_socket_t *s) {
         Http2Connection *conn = connection(s);
+        /* Same rule as HttpContext::onTimeout: a peer that took the pending
+         * response bytes at the minimum receive rate is slow, not idle. */
+        if (conn->sendProgressMarked
+            && us_socket_send_progressed(s, &conn->sendProgressMark,
+                                         (uint64_t) HttpContext<false>::HTTP_RECEIVE_THROUGHPUT_BYTES * conn->idleTimeoutS)) {
+            us_socket_timeout(s, conn->idleTimeoutS);
+            return s;
+        }
         conn->busy++;
         std::vector<Http2Response *> open = conn->streams;
         for (Http2Response *stream : open) {
@@ -1034,6 +1046,9 @@ inline void Http2Connection::writeSettings() {
 
 inline void Http2Connection::touch() {
     us_socket_timeout(s, idleTimeoutS);
+    /* See HttpResponse::resetTimeout. */
+    sendProgressMarked = (out->length() > 0 || us_socket_is_awaiting_writable(s))
+        && us_socket_send_progress_mark(s, &sendProgressMark) == 0;
 }
 
 inline void Http2Connection::recomputeIdleTimeout() {

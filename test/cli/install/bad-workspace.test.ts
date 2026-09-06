@@ -1,7 +1,7 @@
 import { spawn, spawnSync } from "bun";
 import { install_test_helpers } from "bun:internal-for-testing";
 import { beforeEach, describe, expect, setDefaultTimeout, test } from "bun:test";
-import { mkdirSync, writeFileSync } from "fs";
+import { chownSync, existsSync, mkdirSync, writeFileSync } from "fs";
 import { bunEnv, bunExe, isLinux, isWindows, tempDir, tmpdirSync } from "harness";
 import { dirname, join } from "path";
 
@@ -174,11 +174,11 @@ function rootPackageJson(workspaces: string[]) {
   return JSON.stringify({ name: "root", workspaces });
 }
 
-async function runInstall(cwd: string) {
+async function runInstall(cwd: string, env: Record<string, string | undefined> = bunEnv) {
   await using proc = spawn({
     cmd: [bunExe(), "install"],
     cwd,
-    env: bunEnv,
+    env,
     stdout: "pipe",
     stderr: "pipe",
   });
@@ -311,4 +311,91 @@ describe.concurrent("workspaces entries longer than the path buffer", () => {
       expect(exitCode).toBe(1);
     },
   );
+});
+
+// An ancestor package.json whose `workspaces` match the project directory becomes the root
+// of the install. That manifest decides which lifecycle scripts are trusted, where the
+// dependencies come from and which registry serves them. A directory that other local
+// users can write to, `/tmp` above a `mktemp -d` build directory for example, lets one of
+// them plant such a manifest above a project that is not theirs. So the root manifest is
+// adopted only when the current user owns it, or when its owner also owns the project's
+// own package.json.
+//
+// Every case needs a second uid, so the tests run as root only.
+describe("ancestor workspace root owned by another user", () => {
+  // "nobody" on Linux and macOS.
+  const OTHER_UID = 65534;
+  const notRoot = isWindows || process.getuid?.() !== 0;
+
+  // A planted root whose `workspaces` match `proj`, and a project whose own dependency is
+  // a folder with a postinstall script. That script runs only if the root manifest trusts
+  // the dependency by name.
+  const files = {
+    "package.json": JSON.stringify({ name: "planted-root", workspaces: ["proj"], trustedDependencies: ["dep"] }),
+    "proj/package.json": JSON.stringify({ name: "proj", version: "1.0.0", dependencies: { dep: "file:./dep" } }),
+    "proj/dep/package.json": JSON.stringify({
+      name: "dep",
+      version: "1.0.0",
+      scripts: { postinstall: `echo ran > "$POSTINSTALL_MARKER"` },
+    }),
+  };
+
+  function marker(root: string) {
+    return join(root, "postinstall-ran");
+  }
+
+  function installInProject(root: string) {
+    return runInstall(join(root, "proj"), { ...bunEnv, POSTINSTALL_MARKER: marker(root) });
+  }
+
+  function chownToOtherUser(path: string) {
+    chownSync(path, OTHER_UID, OTHER_UID);
+  }
+
+  test.skipIf(notRoot)("is ignored, and its trustedDependencies do not run a script", async () => {
+    using dir = tempDir("bad-workspace-root-other-user", files);
+    const root = String(dir);
+    chownToOtherUser(join(root, "package.json"));
+
+    const { stdout, stderr, exitCode } = await installInProject(root);
+
+    expect(stderr).toContain(`another user owns ${root}/package.json`);
+    expect(stdout).toContain("Blocked 1 postinstall");
+    expect(existsSync(marker(root))).toBe(false);
+    // The project is installed on its own, so nothing is written to the planted root.
+    expect(existsSync(join(root, "proj", "bun.lock"))).toBe(true);
+    expect(existsSync(join(root, "bun.lock"))).toBe(false);
+    expect(existsSync(join(root, "node_modules"))).toBe(false);
+    expect(exitCode).toBe(0);
+  });
+
+  test.skipIf(notRoot)("is adopted when the current user owns it", async () => {
+    using dir = tempDir("bad-workspace-root-same-user", files);
+    const root = String(dir);
+
+    const { stdout, stderr, exitCode } = await installInProject(root);
+
+    expect(stderr).not.toContain("another user owns");
+    expect(stdout).not.toContain("Blocked");
+    expect(existsSync(marker(root))).toBe(true);
+    expect(existsSync(join(root, "bun.lock"))).toBe(true);
+    expect(exitCode).toBe(0);
+  });
+
+  // `sudo bun install`, and container images where one other user owns the whole checkout:
+  // the root manifest and the project's own manifest have the same owner.
+  test.skipIf(notRoot)("is adopted when its owner also owns the project's package.json", async () => {
+    using dir = tempDir("bad-workspace-root-one-other-user", files);
+    const root = String(dir);
+    chownToOtherUser(join(root, "package.json"));
+    chownToOtherUser(join(root, "proj", "package.json"));
+
+    const { stdout, stderr, exitCode } = await installInProject(root);
+
+    expect(stderr).not.toContain("another user owns");
+    expect(stdout).not.toContain("Blocked");
+    expect(existsSync(marker(root))).toBe(true);
+    expect(existsSync(join(root, "bun.lock"))).toBe(true);
+    expect(exitCode).toBe(0);
+  });
 });

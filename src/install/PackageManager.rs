@@ -1472,6 +1472,28 @@ fn overlay_bunfig_install(install: &mut Api::BunInstall, bunfig: Api::BunInstall
     );
 }
 
+/// Is an ancestor `package.json` allowed to become the root of this install?
+///
+/// The root manifest decides which lifecycle scripts run
+/// (`trustedDependencies`), where every dependency comes from (`overrides`,
+/// `resolutions`, `patchedDependencies`, its `bun.lock`) and which registry
+/// serves them (its `.npmrc` and `bunfig.toml`). A directory that other local
+/// users can write to, `/tmp` above a `mktemp -d` build directory for example,
+/// lets one of them plant such a manifest above a project that is not theirs.
+///
+/// So adopt an ancestor root only when the current user owns it, or when its
+/// owner also owns the project's own `package.json`. The second case keeps
+/// `sudo bun install` and container images, where one other user owns the whole
+/// checkout, working.
+#[cfg(unix)]
+fn ancestor_workspace_root_is_trusted(
+    root_package_json: &bun_sys::File,
+    project_package_json_uid: u32,
+) -> bool {
+    bun_sys::fstat(root_package_json.handle)
+        .is_ok_and(|st| st.st_uid == bun_sys::c::geteuid() || st.st_uid == project_package_json_uid)
+}
+
 /// Returns `&'static mut PackageManager` — the process-singleton (held in
 /// `holder::RAW_PTR`) is leaked for the process lifetime and `init()` is called
 /// exactly once on the single CLI dispatch thread. Every
@@ -1679,6 +1701,9 @@ pub fn init(
         // Check if this is a workspace; if so, use root package
         if subcommand.should_chdir_to_root() {
             if !created_package_json && !no_project {
+                #[cfg(unix)]
+                let project_package_json_uid = bun_sys::fstat(child_json.handle)
+                    .map_or_else(|_| bun_sys::c::geteuid(), |st| st.st_uid);
                 while let Some(parent) = bun_core::dirname(this_cwd) {
                     let parent_without_trailing_slash = strings::without_trailing_slash(parent);
                     let mut parent_path_buf = bun_paths::path_buffer_pool::get();
@@ -1814,6 +1839,21 @@ pub fn init(
                             let maybe_workspace_path = child_path;
 
                             if strings::eql_long(maybe_workspace_path, path_, true) {
+                                #[cfg(unix)]
+                                if !ancestor_workspace_root_is_trusted(
+                                    &json_file,
+                                    project_package_json_uid,
+                                ) {
+                                    bun_core::warn!(
+                                        "another user owns <b>{}/package.json<r>, so bun ignored it as the workspace root",
+                                        bstr::BStr::new(parent_without_trailing_slash),
+                                    );
+                                    bun_core::note!(
+                                        "bun installs <b>{}<r> as a standalone project",
+                                        bstr::BStr::new(child_cwd),
+                                    );
+                                    break;
+                                }
                                 // Intern via the resolver's DirnameStore so the slice is
                                 // process-lifetime (`set_top_level_dir` requires `'static`).
                                 fs.set_top_level_dir(fs.dirname_store().append(parent)?);

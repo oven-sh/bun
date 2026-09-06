@@ -24,6 +24,9 @@ pub struct BuildResult {
     pub output_files: Vec<crate::options::OutputFile>,
     pub metafile: Option<Box<[u8]>>,
     pub metafile_markdown: Option<Box<[u8]>>,
+    /// Every on-disk input, so a caller that writes `output_files` itself can
+    /// refuse to write over one of them.
+    pub input_paths: crate::input_path_set::InputPathSet,
 }
 
 pub enum BundleV2Result {

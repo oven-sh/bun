@@ -73,6 +73,8 @@ pub mod mal_prelude {
 pub mod DeferredBatchTask;
 pub mod Graph;
 pub mod IndexStringMap;
+#[path = "InputPathSet.rs"]
+pub mod input_path_set;
 pub mod PathToSourceIndexMap;
 
 pub mod BundleThread;

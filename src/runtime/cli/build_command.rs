@@ -2,6 +2,7 @@ use std::io::Write as _;
 
 use crate::cli::command::{Context, HotReload};
 use bun_bundler::bundle_v2::{self, BundleV2};
+use bun_bundler::input_path_set::{InputPathSet, resolve_output_root};
 use bun_bundler::linker_context::metafile_builder as MetafileBuilder;
 use bun_bundler::options;
 use bun_bundler::transpiler;
@@ -619,7 +620,7 @@ impl BuildCommand {
         let opt_transform_only = this_transpiler.options.transform_only;
         let env_ptr = this_transpiler.env;
 
-        let mut output_files: Vec<options::OutputFile> = 'brk: {
+        let (mut output_files, input_paths): (Vec<options::OutputFile>, InputPathSet) = 'brk: {
             if ctx.bundler_options.transform_only {
                 this_transpiler.options.import_path_format = options::ImportPathFormat::Relative;
                 this_transpiler.options.allow_runtime = false;
@@ -639,7 +640,10 @@ impl BuildCommand {
                     }
                 }
 
-                break 'brk result.output_files.into_vec();
+                let output_files = result.output_files.into_vec();
+                let input_paths =
+                    InputPathSet::from_paths(output_files.iter().map(|f| f.src_path.text));
+                break 'brk (output_files, input_paths);
             }
 
             if ctx.bundler_options.outdir.is_empty()
@@ -768,7 +772,7 @@ impl BuildCommand {
                 }
             }
 
-            break 'brk build_result.output_files;
+            break 'brk (build_result.output_files, build_result.input_paths);
         };
 
         if ctx.bundler_options.compile && !ctx.bundler_options.compile_assets.is_empty() {
@@ -861,6 +865,20 @@ impl BuildCommand {
                     "{}",
                     bun_fmt::size(f.size, Default::default())
                 )));
+            }
+
+            if !ctx.bundler_options.compile {
+                let root = resolve_output_root(root_path);
+                for f in output_files.iter() {
+                    if let Some(input) = input_paths.overwritten_by(&root, &f.dest_path) {
+                        Output::err_generic(
+                            "Refusing to overwrite input file {}",
+                            (bun_fmt::quote(&input),),
+                        );
+                        Output::flush();
+                        exit_or_watch(1, ctx.debug.hot_reload == HotReload::Watch);
+                    }
+                }
             }
 
             if ctx.bundler_options.compile {

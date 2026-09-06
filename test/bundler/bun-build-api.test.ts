@@ -693,7 +693,7 @@ describe("Bun.build", () => {
         const result = await Bun.build({
           entrypoints: ["./index.js"],
           sourcemap: "external",
-          outdir: ".",
+          outdir: "./out",
         });
         const entry = result.outputs[0];
         const map = result.outputs[1];
@@ -2101,7 +2101,7 @@ test("sourcemap sourcesContent is valid JSON when source contains C0 control cha
   const res = await Bun.build({
     entrypoints: [join(String(dir), "in.js")],
     sourcemap: "external",
-    outdir: String(dir),
+    outdir: join(String(dir), "out"),
   });
   expect(res.success).toBe(true);
 

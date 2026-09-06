@@ -11,6 +11,7 @@ use bun_wyhash::hash;
 
 use crate::LinkerContext;
 use crate::chunk::{Content, Flags as ChunkFlags, ReferencePathStyle, SourceMapShiftTracking};
+use crate::input_path_set::{InputPathSet, resolve_output_root};
 use crate::linker_context::output_file_list_builder::OutputFileList;
 use crate::linker_context_mod::debug;
 use crate::options::{self, Loader, OutputFile, SourceMapOption};
@@ -66,6 +67,15 @@ pub(crate) fn write_output_files_to_disk(
             return Err(e.into());
         }
     };
+
+    refuse_to_overwrite_inputs(
+        c,
+        root_path,
+        chunks,
+        standalone_chunk_contents.is_some(),
+        standalone_sourcemaps,
+    )?;
+
     // Optimization: when writing to disk, we can re-use the memory
     // between iterations: MaxHeapAllocator retains the largest allocation.
     // DynAlloc is currently `()` so the arena
@@ -665,4 +675,87 @@ pub(crate) fn write_output_files_to_disk(
     }
 
     Ok(())
+}
+
+/// Fails the build before the first write when any output path is one of the
+/// build's input files. The set of paths mirrors the writes above: every
+/// chunk, its `.map` when the sourcemap is a separate file, its `.jsc` when a
+/// bytecode cache is generated, and every additional output file.
+fn refuse_to_overwrite_inputs(
+    c: &mut LinkerContext,
+    root_path: &[u8],
+    chunks: &[Chunk],
+    is_standalone: bool,
+    standalone_sourcemaps: &[Option<Box<[u8]>>],
+) -> Result<(), Error> {
+    let Some(input) = overwritten_input(c, root_path, chunks, is_standalone, standalone_sourcemaps)
+    else {
+        return Ok(());
+    };
+    c.log_mut().add_error_fmt(
+        None,
+        Loc::EMPTY,
+        format_args!("Refusing to overwrite input file {}", quote(&input)),
+    );
+    Err(crate::Error::OutputOverwritesInput)
+}
+
+fn overwritten_input(
+    c: &LinkerContext,
+    root_path: &[u8],
+    chunks: &[Chunk],
+    is_standalone: bool,
+    standalone_sourcemaps: &[Option<Box<[u8]>>],
+) -> Option<Box<[u8]>> {
+    let inputs = InputPathSet::from_graph(c.parse_graph());
+    let root = resolve_output_root(root_path);
+    let check = |dest_path: &[u8]| inputs.overwritten_by(&root, dest_path);
+
+    for (i, chunk) in chunks.iter().enumerate() {
+        let inlined_into_html = is_standalone && !matches!(chunk.content, Content::Html);
+        let writes_sourcemap = if is_standalone {
+            standalone_sourcemaps.get(i).is_some_and(Option::is_some)
+        } else {
+            matches!(
+                chunk.content.sourcemap(c.options.source_maps),
+                SourceMapOption::External | SourceMapOption::Linked
+            )
+        };
+        if !inlined_into_html {
+            if let Some(input) = check(&chunk.final_rel_path) {
+                return Some(input);
+            }
+        }
+        if writes_sourcemap {
+            if let Some(input) = check(&strings::concat(&[&chunk.final_rel_path, b".map"])) {
+                return Some(input);
+            }
+        }
+        if !inlined_into_html && c.options.generate_bytecode_cache {
+            let loader: Loader = if chunk.entry_point.is_entry_point() {
+                c.parse_graph().input_files.items_loader()
+                    [chunk.entry_point.source_index() as usize]
+            } else {
+                Loader::Js
+            };
+            if loader.is_javascript_like() {
+                if let Some(input) = check(&strings::concat(&[
+                    &chunk.final_rel_path,
+                    BYTECODE_EXTENSION.as_bytes(),
+                ])) {
+                    return Some(input);
+                }
+            }
+        }
+    }
+
+    if !is_standalone {
+        for file in c.parse_graph().additional_output_files.iter() {
+            if let Some(input) = check(&file.dest_path) {
+                return Some(input);
+            }
+        }
+    }
+
+    None
 }

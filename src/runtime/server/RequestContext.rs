@@ -2658,6 +2658,16 @@ where
                     ); // TODO: properly propagate exception upwards
                     return;
                 }
+                // A file body resolves exactly like GET (open + fstat), so a
+                // missing file or a directory reaches `error()` with the same
+                // status, and Content-Length is the fstat size rather than a
+                // bare stat. `do_sendfile` ends a HEAD response after the headers.
+                if shim::blob_needs_to_read_file(blob) {
+                    this.blob
+                        .set(body_value.use_as_any_blob_allow_non_utf8_string());
+                    this.render_with_blob_from_body_value();
+                    return;
+                }
                 // Size the blob *before* `render_metadata()`: it re-fetches the
                 // Response from `response_weakref`, so no borrow of the Response
                 // (here, `blob`) may still be live across it. Nothing is written

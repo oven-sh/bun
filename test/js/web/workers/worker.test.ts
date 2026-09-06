@@ -56,13 +56,19 @@ describe("web worker", () => {
       expect(result).toEqual("hello world");
     });
 
-    test("preload that does not resolve throws with the specifier in the message", () => {
-      const entry = new URL("worker-fixture-preload-entry.js", import.meta.url).href;
-      expect(() => new Worker(entry, { preload: ["./this-preload-does-not-exist.js"] })).toThrow(
-        'ModuleNotFound resolving preload "./this-preload-does-not-exist.js"',
-      );
-      expect(() => new Worker(entry, { preload: "./this-preload-does-not-exist.js" })).toThrow(
-        'ModuleNotFound resolving preload "./this-preload-does-not-exist.js"',
+    describe.each([
+      ["string", (specifier: string) => specifier],
+      ["array", (specifier: string) => [specifier]],
+    ])("preload that does not resolve (%s)", (_, shape) => {
+      test.each(["./this-preload-does-not-exist.js", './has a "quote".js'])(
+        "throws a TypeError that names %s",
+        specifier => {
+          const entry = new URL("worker-fixture-preload-entry.js", import.meta.url).href;
+          expect(() => new Worker(entry, { preload: shape(specifier) })).toThrow(
+            new TypeError(`ModuleNotFound resolving preload ${JSON.stringify(specifier)}`),
+          );
+          expect(() => new Worker(entry, { preload: shape(specifier) })).toThrow(TypeError);
+        },
       );
     });
 

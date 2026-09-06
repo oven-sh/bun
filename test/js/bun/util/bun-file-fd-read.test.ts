@@ -53,17 +53,22 @@ describe.skipIf(isWindows)("Bun.file(fd) read", () => {
   // A tty fd other than stdin used to be read like a regular file: the stream
   // returned nothing and held nothing, so the process exited before any input.
   // It now gets the same polled, privately reopened terminal as Bun.stdin.
-  test("stream() on a /dev/tty fd polls the terminal and cancel() releases it", async () => {
+  //
+  // macOS resolves a /dev/tty fd back to /dev/tty, the controlling-terminal
+  // alias, and kqueue rejects that device with EINVAL. Open the pty slave
+  // itself there. Linux resolves both to a device epoll accepts.
+  const ttyPath = process.platform === "darwin" ? "/dev/fd/0" : "/dev/tty";
+  test("stream() on a tty fd other than stdin polls the terminal and cancel() releases it", async () => {
     let output = "";
     let wrote = false;
     const decoder = new TextDecoder();
-    const proc = Bun.spawn({
+    await using proc = Bun.spawn({
       cmd: [
         bunExe(),
         "-e",
         `
           const fs = require("fs");
-          const fd = fs.openSync("/dev/tty", "r");
+          const fd = fs.openSync(${JSON.stringify(ttyPath)}, "r");
           const reader = Bun.file(fd).stream().getReader();
           const first = reader.read();
           console.log("ready");

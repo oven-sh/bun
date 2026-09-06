@@ -2,6 +2,7 @@ import { Socket as _BunSocket, TCPSocketListener } from "bun";
 import { heapStats } from "bun:jsc";
 import { describe, expect, it } from "bun:test";
 import { bunEnv, bunExe, expectMaxObjectTypeCount, gc, isASAN, isDebug, isWindows, tmpdirSync } from "harness";
+import { execFileSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { once } from "node:events";
 import fs from "node:fs";
@@ -1268,6 +1269,58 @@ describe("Socket fd adoption", () => {
     // The adopted fd must be released on destroy (node closes the wrapping
     // libuv handle in the equivalent path).
     expect(() => fs.fstatSync(fd)).toThrow();
+  });
+
+  // An adopted fd can be O_NONBLOCK (a FIFO or pipe opened that way). A full
+  // kernel buffer then makes write(2) fail with EAGAIN. Node's pipe handle
+  // polls and writes the rest, so EAGAIN is never an error and no byte is lost.
+  it.skipIf(isWindows)("queues the rest of a write when a non-blocking fd reports EAGAIN", async () => {
+    const fifo = join(tmpdirSync(), "adopted.fifo");
+    execFileSync("mkfifo", [fifo]);
+    const { O_RDONLY, O_WRONLY, O_NONBLOCK } = fs.constants;
+    const rfd = fs.openSync(fifo, O_RDONLY | O_NONBLOCK);
+    try {
+      const wfd = fs.openSync(fifo, O_WRONLY | O_NONBLOCK);
+      // Larger than a pipe buffer (64 KiB on Linux and macOS): the first
+      // write(2) loop hits EAGAIN before the reader below gets a turn.
+      const payload = Buffer.alloc(512 * 1024, "x");
+      const socket = new Socket({ fd: wfd, readable: false, writable: true });
+      const events: string[] = [];
+      socket.on("error", err => events.push(`error:${(err as NodeJS.ErrnoException).code}`));
+      const closed = new Promise<void>(resolve => socket.on("close", () => resolve()));
+      const returned = socket.write(payload, err =>
+        events.push(`cb:${err ? (err as NodeJS.ErrnoException).code : "ok"}`),
+      );
+      events.push(`write()=${returned}`);
+      socket.end();
+
+      // Drain the read end once per loop turn until EOF, which arrives when
+      // the socket has closed the write end after its last byte.
+      const received = await new Promise<number>((resolve, reject) => {
+        const chunk = Buffer.alloc(64 * 1024);
+        let total = 0;
+        const pump = () => {
+          try {
+            for (;;) {
+              const n = fs.readSync(rfd, chunk);
+              if (n === 0) return resolve(total);
+              total += n;
+            }
+          } catch (e) {
+            if ((e as NodeJS.ErrnoException).code !== "EAGAIN") return reject(e);
+          }
+          setImmediate(pump);
+        };
+        pump();
+      });
+      await closed;
+
+      expect(events).toEqual(["write()=false", "cb:ok"]);
+      expect(received).toBe(payload.length);
+      expect(socket.bytesWritten).toBe(payload.length);
+    } finally {
+      fs.closeSync(rfd);
+    }
   });
 
   it("throws ERR_INVALID_FD_TYPE for a writable fd that cannot be fstat'ed", () => {

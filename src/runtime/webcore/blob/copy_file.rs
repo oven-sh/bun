@@ -19,8 +19,6 @@ use bun_sys::windows::libuv;
 use bun_sys::{self, Fd, FdExt, Mode, SystemError};
 #[cfg(windows)]
 use bun_sys_jsc::ErrorJsc as _;
-#[cfg(any(target_os = "linux", target_os = "android"))]
-use core::ffi::c_int;
 #[cfg(windows)]
 use core::ffi::c_void;
 use core::marker::ConstParamTy;
@@ -340,9 +338,7 @@ impl CopyFile {
     }
 
     #[cfg(any(target_os = "linux", target_os = "android"))]
-    pub(crate) fn do_copy_file_range<const USE: TryWith, const CLEAR_APPEND_IF_INVALID: bool>(
-        &mut self,
-    ) -> Result<(), crate::Error> {
+    pub(crate) fn do_copy_file_range<const USE: TryWith>(&mut self) -> Result<(), crate::Error> {
         use bun_sys::linux;
 
         let mut remain: usize = self.max_length as usize;
@@ -367,11 +363,23 @@ impl CopyFile {
             unsafe { *read_len_slot = *total_written_slot as SizeType };
         }
 
-        let mut has_unset_append = false;
-
         // If they can't use copy_file_range, they probably also can't
         // use sendfile() or splice()
         if !bun_sys::copy_file::can_use_copy_file_range_syscall() {
+            return self.fallback_read_write(remain, unknown_size, &mut total_written);
+        }
+
+        // copy_file_range(2), sendfile(2) and splice(2) refuse a destination
+        // whose open file description has O_APPEND (EBADF or EINVAL). Bun
+        // never opens its own destination that way, but an inherited fd can
+        // carry it: `bun x.js >> log`, a GNU make recipe, `fs.openSync(p, "a")`.
+        // The description is shared with the parent, so the flag must stay.
+        if matches!(
+            self.destination_file_store.pathlike,
+            PathOrFileDescriptor::Fd(_)
+        ) && bun_sys::get_fcntl_flags(dest_fd)
+            .is_ok_and(|flags| flags as i32 & bun_sys::O::APPEND != 0)
+        {
             return self.fallback_read_write(remain, unknown_size, &mut total_written);
         }
 
@@ -431,29 +439,6 @@ impl CopyFile {
                 // EINVAL: eCryptfs and other filesystems may not support copy_file_range.
                 // Also returned when the file descriptor is incompatible with the syscall.
                 bun_sys::E::EINVAL => {
-                    if CLEAR_APPEND_IF_INVALID {
-                        if !has_unset_append {
-                            // https://kylelaker.com/2018/08/31/stdout-oappend.html
-                            // make() can set STDOUT / STDERR to O_APPEND
-                            // this messes up sendfile()
-                            has_unset_append = true;
-                            // SAFETY: dest_fd is a valid open fd; raw fcntl(2).
-                            let flags =
-                                unsafe { libc::fcntl(dest_fd.native(), libc::F_GETFL, 0 as c_int) };
-                            if (flags & bun_sys::O::APPEND) != 0 {
-                                // SAFETY: dest_fd is a valid open fd; raw fcntl(2).
-                                let _ = unsafe {
-                                    libc::fcntl(
-                                        dest_fd.native(),
-                                        libc::F_SETFL,
-                                        flags ^ bun_sys::O::APPEND,
-                                    )
-                                };
-                                continue;
-                            }
-                        }
-                    }
-
                     // If the Linux machine doesn't support
                     // copy_file_range or the file descriptor is
                     // incompatible with the chosen syscall, fall back
@@ -820,12 +805,7 @@ impl CopyFile {
                     && (bun_sys::S::ISREG(self.destination_file_store.mode as _)
                         || self.destination_file_store.mode == 0)
                 {
-                    if self.destination_file_store.is_atty.unwrap_or(false) {
-                        let _ = self.do_copy_file_range::<{ TryWith::CopyFileRange }, true>();
-                    } else {
-                        let _ = self.do_copy_file_range::<{ TryWith::CopyFileRange }, false>();
-                    }
-
+                    let _ = self.do_copy_file_range::<{ TryWith::CopyFileRange }>();
                     self.do_close();
                     return;
                 }
@@ -834,12 +814,7 @@ impl CopyFile {
                 if bun_sys::S::ISFIFO(stat.st_mode as _)
                     && bun_sys::S::ISFIFO(self.destination_file_store.mode as _)
                 {
-                    if self.destination_file_store.is_atty.unwrap_or(false) {
-                        let _ = self.do_copy_file_range::<{ TryWith::Splice }, true>();
-                    } else {
-                        let _ = self.do_copy_file_range::<{ TryWith::Splice }, false>();
-                    }
-
+                    let _ = self.do_copy_file_range::<{ TryWith::Splice }>();
                     self.do_close();
                     return;
                 }
@@ -848,12 +823,7 @@ impl CopyFile {
                     || bun_sys::S::ISCHR(stat.st_mode as _)
                     || bun_sys::S::ISSOCK(stat.st_mode as _)
                 {
-                    if self.destination_file_store.is_atty.unwrap_or(false) {
-                        let _ = self.do_copy_file_range::<{ TryWith::Sendfile }, true>();
-                    } else {
-                        let _ = self.do_copy_file_range::<{ TryWith::Sendfile }, false>();
-                    }
-
+                    let _ = self.do_copy_file_range::<{ TryWith::Sendfile }>();
                     self.do_close();
                     return;
                 }

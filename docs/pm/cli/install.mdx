@@ -518,7 +518,7 @@ node --preserve-symlinks ./my-file.js # https://nodejs.org/api/cli.html#--preser
 Bun uses a binary format for caching npm registry responses. This loads much faster than JSON and tends to be smaller on disk.
 These files live in `~/.bun/install/cache/*.npm`. The filename pattern is `${hash(packageName)}.npm`. It’s a hash so that Bun doesn’t need to create extra directories for scoped packages.
 
-Bun's usage of `Cache-Control` ignores `Age`. This improves performance, but means Bun may be about 5 minutes behind the latest package version metadata from npm.
+A cached manifest is trusted for as long as the registry's `Cache-Control: max-age` says, up to 5 minutes. After that, Bun revalidates it with `If-None-Match`. A registry that sends `no-cache`, `no-store`, or no `Cache-Control` header at all is revalidated on every install. Bun ignores `Age`. This improves performance, but means Bun may be about 5 minutes behind the latest package version metadata from npm, which sends `max-age=300`.
 
 ## pnpm migration
 

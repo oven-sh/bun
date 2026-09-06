@@ -305,10 +305,16 @@ describe.concurrent("bun-install", () => {
       'invalid package name "@latest" in dependency "npm:@latest"',
     ],
     ["an npm alias with an empty version", { "x": "npm:@" }, 'invalid package name "@" in dependency "npm:@"'],
+    ["a bare npm alias", { "x": "npm:" }, 'invalid package name "" in dependency "npm:"'],
     [
       "an npm alias scope with no name",
       { "x": "npm:@scope/@1" },
       'invalid package name "@scope/" in dependency "npm:@scope/@1"',
+    ],
+    [
+      "an npm alias scope with no name and a dist-tag",
+      { "x": "npm:@scope@latest" },
+      'invalid package name "@scope" in dependency "npm:@scope@latest"',
     ],
   ])("rejects %s without a registry request", async (_, dependencies, message) => {
     await withContext(defaultOpts, async ctx => {

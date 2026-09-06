@@ -1049,7 +1049,7 @@ it("should throw on a tls array instead of starting a plaintext socket", async (
   const socket = { data() {}, open() {}, close() {} };
   // An array has none of the TLSOptions fields. Without the check it parses as
   // an empty config and the listener comes up as plain TCP.
-  const message = 'Expected "tls" to be an object or a boolean, not an array';
+  const message = "TLSOptions must be an object";
   for (const tlsOption of [[tls], [tls, { serverName: "a.test", ...tls }], []]) {
     expect(() => Bun.listen({ hostname: "127.0.0.1", port: 0, tls: tlsOption as any, socket })).toThrow(message);
     expect(() => Bun.connect({ hostname: "127.0.0.1", port: 1, tls: tlsOption as any, socket })).toThrow(message);

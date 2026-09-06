@@ -217,7 +217,8 @@ export function dictionary(
           auto throwScope = DECLARE_THROW_SCOPE(vm);
           auto ctx = Bun::Bindgen::LiteralConversionContext { ${toASCIILiteral(userFacingName)} };
           auto* object = value.getObject();
-          if (!object) [[unlikely]] {
+          // An array has none of the named members, so it is never a valid options bag.
+          if (!object || JSC::isJSArray(object)) [[unlikely]] {
             ctx.throwNotObject(globalObject, throwScope);
             return {};
           }

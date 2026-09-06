@@ -253,8 +253,8 @@ describe.skipIf(isWindows)("Bun.file(fifo) upload", () => {
     });
   }
 
-  for (const scheme of ["http", "https"] as const) {
-    test.concurrent(`${scheme}: every byte arrives, chunked`, async () => {
+  describe.each(["http", "https"] as const)("%s", scheme => {
+    test.concurrent("every byte arrives, chunked", async () => {
       using dir = tempDir("fetch-fifo-upload", { "payload.bin": payload });
       const fifo = join(String(dir), "fifo");
       mkfifo(fifo);
@@ -277,7 +277,7 @@ describe.skipIf(isWindows)("Bun.file(fifo) upload", () => {
       expect(seen).toEqual({ contentLength: null, transferEncoding: "chunked", hash: payloadHash });
       expect(await writer.exited).toBe(0);
     });
-  }
+  });
 
   // The writer opens the FIFO only after it reads a line from stdin, and the
   // fixture writes that line after fetch() returns. With the bug, fetch()

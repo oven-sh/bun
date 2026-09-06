@@ -1394,8 +1394,6 @@ class ChildProcess extends EventEmitter {
 
     const detachedOption = options.detached;
     this.#stdioOptions = bunStdio;
-    const stdioCount = stdio.length;
-    const hasSocketsToEagerlyLoad = stdioCount >= 3;
 
     validateString(options.file, "options.file");
     var file;
@@ -1428,12 +1426,10 @@ class ChildProcess extends EventEmitter {
           this.pid = this.#handle.pid;
           $debug("ChildProcess: onExit", exitCode, signalCode, err, this.pid);
 
-          if (hasSocketsToEagerlyLoad) {
-            process.nextTick(() => {
-              void this.stdio;
-              $debug("ChildProcess: onExit", exitCode, signalCode, err, this.pid);
-            });
-          }
+          process.nextTick(() => {
+            void this.stdio;
+            $debug("ChildProcess: onExit", exitCode, signalCode, err, this.pid);
+          });
 
           process.nextTick(
             (exitCode, signalCode, err) => this.#handleOnExit(exitCode, signalCode, err),
@@ -1473,10 +1469,11 @@ class ChildProcess extends EventEmitter {
         if (options[kFromNode]) this.#closesNeeded += 1;
       }
 
-      if (hasSocketsToEagerlyLoad) {
-        for (let item of this.stdio) {
-          item?.ref?.();
-        }
+      // Node creates every stdio stream at spawn. Do the same so a piped
+      // stdout/stderr is read (and keeps the loop alive) from the start, for
+      // every stdio shape normalizeStdio pads to three entries.
+      for (let item of this.stdio) {
+        item?.ref?.();
       }
     } catch (ex) {
       const exCode = ex != null && typeof ex === "object" && Object.hasOwn(ex, "code") ? ex.code : undefined;

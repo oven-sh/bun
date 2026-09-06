@@ -1568,23 +1568,25 @@ describe("spawn().unref() with piped stdio", () => {
     return { stdout, stderr, exitCode, marker: result };
   }
 
-  it.concurrent("keeps the parent alive until an un-read stdout pipe closes", async () => {
-    expect(await run(`["pipe", "pipe", "ignore"]`)).toEqual({
-      stdout: "",
-      stderr: "",
-      exitCode: 0,
-      marker: { input: "go", write: "ok" },
+  // Short arrays are padded with "pipe" by normalizeStdio, so they pipe
+  // stdout/stderr too and must behave like the explicit three-entry shapes.
+  for (const stdio of [
+    `["pipe", "pipe", "ignore"]`,
+    `["pipe", "ignore", "pipe"]`,
+    `undefined`,
+    `"pipe"`,
+    `["pipe"]`,
+    `["pipe", "pipe"]`,
+  ]) {
+    it.concurrent(`keeps the parent alive until an un-read pipe closes (stdio: ${stdio})`, async () => {
+      expect(await run(stdio)).toEqual({
+        stdout: "",
+        stderr: "",
+        exitCode: 0,
+        marker: { input: "go", write: "ok" },
+      });
     });
-  });
-
-  it.concurrent("keeps the parent alive until an un-read stderr pipe closes", async () => {
-    expect(await run(`["pipe", "ignore", "pipe"]`)).toEqual({
-      stdout: "",
-      stderr: "",
-      exitCode: 0,
-      marker: { input: "go", write: "ok" },
-    });
-  });
+  }
 
   async function runAndKill(stdio: string, childScript: string) {
     await using proc = Bun.spawn({

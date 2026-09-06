@@ -1001,6 +1001,25 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
     it("propagates exceptions", async () => {
       await checkSameOutput("test_napi_run_script", ["(()=>{ throw new TypeError('oops'); })()"]);
     });
+    it("hands the thrown value to napi_get_and_clear_last_exception", async () => {
+      const result = await checkSameOutput("test_napi_run_script_exception_value", ['throw new RangeError("boom")']);
+      expect(result).toContain("run status=9 pending=1");
+      expect(result).toContain("typeof status=0 type=6 is_error=1");
+      expect(result).toContain("message=boom");
+    });
+    it("hands a syntax error to napi_get_and_clear_last_exception", async () => {
+      // V8 and JSC word the SyntaxError message differently, so only bun's output is checked
+      const result = await runOn(bunExe(), "test_napi_run_script_exception_value", ["1+"]);
+      expect(result).toContain("run status=9 pending=1");
+      expect(result).toContain("typeof status=0 type=6 is_error=1");
+      expect(result).toContain("synchronously threw Error: message \"SyntaxError:");
+    });
+    it("hands a thrown primitive to napi_get_and_clear_last_exception", async () => {
+      const result = await checkSameOutput("test_napi_run_script_exception_value", ["throw 42"]);
+      expect(result).toContain("run status=9 pending=1");
+      expect(result).toContain("typeof status=0 type=3 is_error=0");
+      expect(result).toContain('synchronously threw Error: message "42"');
+    });
     it("cannot see locals from around its invocation", async () => {
       // variable should_not_exist is declared on main.js:18, but it should not be in scope for the eval'd code
       // this doesn't use await checkSameOutput because V8 and JSC use different error messages for a missing variable

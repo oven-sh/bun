@@ -3058,7 +3058,7 @@ extern "C" napi_status napi_run_script(napi_env env, napi_value script,
     JSValue value = JSC::evaluate(globalObject, sourceCode, globalObject->globalThis(), returnedException);
 
     if (returnedException) {
-        env->scheduleException(returnedException.get());
+        env->scheduleException(returnedException->value());
         return napi_set_last_error(env, napi_generic_failure);
     }
 

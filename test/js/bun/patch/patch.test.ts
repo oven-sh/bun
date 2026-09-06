@@ -748,7 +748,11 @@ describe("apply", () => {
         "line 1\nline 2\n",
         "@@ -1,2 +1,3 @@\n+X\n\\ No newline at end of file\n line 1\n line 2\n",
       ],
-      ["context after a deletion with it", "line 1\nline 2", "@@ -1,2 +1,1 @@\n-line 1\n\\ No newline at end of file\n line 2\n"],
+      [
+        "context after a deletion with it",
+        "line 1\nline 2",
+        "@@ -1,2 +1,1 @@\n-line 1\n\\ No newline at end of file\n line 2\n",
+      ],
     ])("a no-newline pragma with %s does not apply", async (_name, before, hunk) => {
       await using dir = tempDir("patch-pragma", { "index.js": before });
       const patchfile = `diff --git a/index.js b/index.js\n--- a/index.js\n+++ b/index.js\n${hunk}`;
@@ -757,15 +761,30 @@ describe("apply", () => {
     });
 
     test.each([
-      ["old side had no newline", "a\nb", "@@ -1,2 +1,3 @@\n a\n-b\n\\ No newline at end of file\n+b\n+c\n", "a\nb\nc\n"],
-      ["new side has no newline", "a\nb\nc\n", "@@ -1,3 +1,2 @@\n a\n-b\n-c\n+b\n\\ No newline at end of file\n", "a\nb"],
+      [
+        "old side had no newline",
+        "a\nb",
+        "@@ -1,2 +1,3 @@\n a\n-b\n\\ No newline at end of file\n+b\n+c\n",
+        "a\nb\nc\n",
+      ],
+      [
+        "new side has no newline",
+        "a\nb\nc\n",
+        "@@ -1,3 +1,2 @@\n a\n-b\n-c\n+b\n\\ No newline at end of file\n",
+        "a\nb",
+      ],
       [
         "neither side has a newline",
         "a\nb",
         "@@ -1,2 +1,2 @@\n a\n-b\n\\ No newline at end of file\n+B\n\\ No newline at end of file\n",
         "a\nB",
       ],
-      ["unchanged last line without newline", "a\nb", "@@ -1,2 +1,3 @@\n+X\n a\n b\n\\ No newline at end of file\n", "X\na\nb"],
+      [
+        "unchanged last line without newline",
+        "a\nb",
+        "@@ -1,2 +1,3 @@\n+X\n a\n b\n\\ No newline at end of file\n",
+        "X\na\nb",
+      ],
     ])("a no-newline pragma where git puts it applies: %s", async (_name, before, hunk, after) => {
       await using dir = tempDir("patch-pragma", { "index.js": before });
       const patchfile = `diff --git a/index.js b/index.js\n--- a/index.js\n+++ b/index.js\n${hunk}`;

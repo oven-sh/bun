@@ -7,7 +7,16 @@
 import { $ } from "bun";
 import { beforeAll, describe, expect, setDefaultTimeout, test } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
-import { existsSync, mkdirSync, renameSync, symlinkSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  readdirSync,
+  renameSync,
+  rmSync,
+  symlinkSync,
+  unlinkSync,
+  writeFileSync,
+} from "node:fs";
 import path from "path";
 import { createTestBuilder, sortedShellOutput } from "../util";
 const TestBuilder = createTestBuilder(import.meta.path);
@@ -288,16 +297,143 @@ test.skipIf(process.platform === "win32")(
       expect(existsSync(victimDir)).toBeTrue();
     }
   },
+  60_000,
 );
 
-// The recursive walk joined every entry onto its directory's path inside a
-// fixed-size path buffer on the worker thread, so a tree deeper than PATH_MAX
-// aborted the whole process instead of failing that entry. Files and
-// directories take different joins, so one tree of each. Runs in a child
-// process so the abort shows up as a failed assertion. Windows has a
-// different path limit, and its shell rm is bounded differently.
+// Recursive `rm -rf` opens each directory with O_NOFOLLOW, but it used to
+// remove the entries inside by re-resolving the full multi-component path
+// from the shell cwd (`unlinkat(cwd, "T/a/f0", 0)`). If an intermediate
+// component ("T/a") was swapped to a symlink between the open and those
+// unlinks, the kernel followed the symlink and the delete escaped the operand
+// tree into an unrelated directory. The fix resolves every entry relative to
+// the directory fd the walker already holds, using the bare entry name, so a
+// swapped ancestor cannot redirect it. A separate process swaps "T/a" between
+// a real directory and a symlink to `victim/` while `rm -rf T` runs; the files
+// in `victim/` must survive every iteration.
+test.skipIf(isWindows)(
+  "recursive rm does not follow an ancestor component swapped to a symlink",
+  async () => {
+    const FILES = 200;
+    const ITERATIONS = 150;
+    // Cap the wall-clock time so the fixed build (which runs every iteration)
+    // stays fast. The unfixed build breaks out on the first escaped delete.
+    const deadline = Date.now() + 15_000;
+
+    using dir = tempDir("rm-ancestor-swap", {});
+    const root = String(dir);
+    const victim = path.join(root, "victim");
+    const target = path.join(root, "T");
+    const inner = path.join(target, "a");
+    const goFlag = path.join(root, "go");
+    const stopFlag = path.join(root, "stop");
+
+    const victimNames: string[] = [];
+    for (let i = 0; i < FILES; i++) victimNames.push(`f${i}`);
+    const fillVictim = () => {
+      mkdirSync(victim, { recursive: true });
+      for (const name of victimNames) writeFileSync(path.join(victim, name), "precious");
+    };
+    fillVictim();
+
+    // The swapper only acts while the `go` flag exists, so it never disturbs
+    // the per-iteration setup. It renames "T/a" out of the way, drops a
+    // symlink to `victim/` in its place, then restores the real directory.
+    const swapper = /* ts */ `
+      import { existsSync, renameSync, symlinkSync, unlinkSync } from "node:fs";
+      const root = process.env.ROOT!;
+      const victim = process.env.VICTIM!;
+      const a = root + "/T/a";
+      const real = a + ".real";
+      while (!existsSync(root + "/stop")) {
+        if (!existsSync(root + "/go")) { Bun.sleepSync(0); continue; }
+        try { renameSync(a, real); } catch { continue; }
+        try { symlinkSync(victim, a); } catch {}
+        try { unlinkSync(a); } catch {}
+        try { renameSync(real, a); } catch {}
+      }
+    `;
+    await using swap = Bun.spawn({
+      cmd: [bunExe(), "-e", swapper],
+      env: { ...bunEnv, ROOT: root, VICTIM: victim },
+      stdout: "ignore",
+      stderr: "ignore",
+    });
+
+    let deleted = 0;
+    try {
+      for (let iter = 0; iter < ITERATIONS && deleted === 0 && Date.now() < deadline; iter++) {
+        rmSync(target, { recursive: true, force: true });
+        mkdirSync(inner, { recursive: true });
+        for (let i = 0; i < FILES; i++) writeFileSync(path.join(inner, `f${i}`), "t");
+
+        writeFileSync(goFlag, "");
+        await $`rm -rf ${target}`.nothrow().quiet();
+        try {
+          unlinkSync(goFlag);
+        } catch {}
+
+        const survivors = existsSync(victim) ? readdirSync(victim).length : 0;
+        if (survivors < FILES) {
+          deleted += FILES - survivors;
+          fillVictim();
+        }
+      }
+    } finally {
+      writeFileSync(stopFlag, "");
+      await swap.exited;
+    }
+
+    expect(deleted).toBe(0);
+    expect(existsSync(victim)).toBeTrue();
+  },
+  60_000,
+);
+
+// A directory in the recursive walk keeps its fd open until the child
+// directories queued from it have run, because they resolve their entries
+// relative to that fd. The walk bounds how many directories wait like that
+// (the rest are removed depth-first on the spot), so a tree far wider than
+// the fd limit is still removed in full under a small RLIMIT_NOFILE.
+test.skipIf(isWindows)(
+  "recursive rm of a wide tree stays within a small fd limit",
+  async () => {
+    using dir = tempDir("rm-fd-bound", {});
+    const base = String(dir);
+    const fixture = /* ts */ `
+      import { $ } from "bun";
+      import { existsSync, mkdirSync } from "node:fs";
+      import { join } from "node:path";
+      const target = join(process.env.BASE!, "wide");
+      for (let i = 0; i < 1200; i++) mkdirSync(join(target, "d" + i, "sub"), { recursive: true });
+      const { exitCode, stderr } = await $\`rm -rf \${target}\`.quiet().nothrow();
+      console.log(JSON.stringify({ exitCode, stderr: stderr.toString(), removed: !existsSync(target) }));
+    `;
+    // The hard limit is lowered before exec, so bun cannot raise it back.
+    await using proc = Bun.spawn({
+      cmd: ["sh", "-c", `ulimit -n 256 && exec "$0" -e "$1"`, bunExe(), fixture],
+      env: { ...bunEnv, BASE: base },
+      cwd: base,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual({ exitCode: 0, stderr: "", removed: true });
+    expect(exitCode).toBe(0);
+  },
+  30_000,
+);
+
+// The recursive walk now removes each entry relative to the directory fd it
+// holds, using the bare entry name, so the total path length no longer
+// matters. A tree whose entries are deeper than PATH_MAX is removed in full,
+// the same as GNU rm. (An earlier version joined the full path from the cwd
+// for each unlink, which failed these entries with ENAMETOOLONG.) Files and
+// directories take different code paths, so one tree of each. Runs in a child
+// process. Windows has a different path limit, and its shell rm is bounded
+// differently.
 test.skipIf(process.platform === "win32")(
-  "recursive rm reports an entry deeper than PATH_MAX instead of crashing",
+  "recursive rm removes entries deeper than PATH_MAX instead of failing them",
   async () => {
     // Linux PATH_MAX is 4096, every other POSIX platform Bun runs on has 1024.
     const PATH_MAX = process.platform === "linux" ? 4096 : 1024;
@@ -344,8 +480,8 @@ test.skipIf(process.platform === "win32")(
       };
       console.log(
         JSON.stringify({
-          file: { ...(await run(join(base, "file"))), entry: join(fileDir, fileName), dirKept: existsSync(fileDir) },
-          dir: { ...(await run(join(base, "dir"))), entry: join(dirDir, dirName), dirKept: existsSync(dirDir) },
+          file: { ...(await run(join(base, "file"))), entry: join(fileDir, fileName), removed: !existsSync(join(base, "file")) },
+          dir: { ...(await run(join(base, "dir"))), entry: join(dirDir, dirName), removed: !existsSync(join(base, "dir")) },
           plain: { ...(await run(join(base, "plain"))), removed: !existsSync(join(base, "plain")) },
         }),
       );
@@ -360,22 +496,22 @@ test.skipIf(process.platform === "win32")(
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stderr).toBe("");
     const results = JSON.parse(stdout);
-    // The entries are what rm could not remove, and this is why: a path of
-    // PATH_MAX bytes has no room left for its NUL.
+    // The entries whose full path exceeds PATH_MAX are still removed, because
+    // the walk unlinks them relative to their directory fd with a bare name.
     expect(Buffer.byteLength(results.file.entry)).toBeGreaterThanOrEqual(PATH_MAX);
     expect(Buffer.byteLength(results.dir.entry)).toBeGreaterThanOrEqual(PATH_MAX);
     expect(results).toEqual({
       file: {
-        exitCode: 1,
-        stderr: `rm: ${results.file.entry}: File name too long\n`,
+        exitCode: 0,
+        stderr: "",
         entry: expect.stringMatching(/\/f{100}$/),
-        dirKept: true,
+        removed: true,
       },
       dir: {
-        exitCode: 1,
-        stderr: `rm: ${results.dir.entry}: File name too long\n`,
+        exitCode: 0,
+        stderr: "",
         entry: expect.stringMatching(/\/s{100}$/),
-        dirKept: true,
+        removed: true,
       },
       plain: { exitCode: 0, stderr: "", removed: true },
     });

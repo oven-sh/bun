@@ -1662,8 +1662,6 @@ pub(crate) mod __gated_printer {
         pub(crate) prev_op_end: i32,
         pub(crate) prev_num_end: i32,
         pub(crate) prev_reg_exp_end: i32,
-        /// End of the last identifier whose final byte is not an ASCII identifier byte
-        /// (raw UTF-8 or a `\u{...}` escape), so `prev_char()` cannot tell.
         pub(crate) prev_identifier_end: i32,
         pub(crate) call_target: Option<ExprData>,
         pub(crate) writer: W,

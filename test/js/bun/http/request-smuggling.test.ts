@@ -1806,7 +1806,11 @@ describe("Host header field values in request.url", () => {
     const { promise, resolve, reject } = Promise.withResolvers<string>();
     const client = net.connect(server.port, "127.0.0.1", () => client.write(payload));
     client.on("error", reject);
-    client.on("data", chunk => resolve(chunk.toString()));
+    let received = "";
+    client.on("data", chunk => {
+      received += chunk.toString();
+      if (received.includes("\r\n")) resolve(received);
+    });
     try {
       const response = await promise;
       expect(response).toStartWith("HTTP/1.1 400");

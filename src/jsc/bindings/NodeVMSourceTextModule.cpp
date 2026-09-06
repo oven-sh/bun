@@ -153,8 +153,7 @@ static ScriptFetchParameters::Type importAttributesType(VM& vm, ImportAttributes
     return ScriptFetchParameters::Type::JavaScript;
 }
 
-// The AST node keeps its phase private; the record stores it per imported binding.
-// `import 'm'` (no bindings) cannot be `import defer`, so it is evaluation phase.
+// The AST node keeps its phase private; the record stores it per imported binding. A bare `import 'm'` is never deferred.
 static AbstractModuleRecord::ModulePhase importPhase(JSModuleRecord& moduleRecord, ImportDeclarationNode& importDeclaration)
 {
     const auto& specifiers = importDeclaration.specifierList()->specifiers();
@@ -166,8 +165,7 @@ static AbstractModuleRecord::ModulePhase importPhase(JSModuleRecord& moduleRecor
     return entry->value.phase;
 }
 
-// `requestedModules()` is deduplicated by (specifier, type, phase), first occurrence wins.
-// The first import statement with that key produced `request`. Null for `export ... from`.
+// `requestedModules()` is deduplicated by (specifier, type, phase), first wins. Null for `export ... from`.
 static ImportAttributesListNode* findImportAttributesList(VM& vm, JSModuleRecord& moduleRecord, ModuleProgramNode& node, const AbstractModuleRecord::ModuleRequest& request)
 {
     ScriptFetchParameters::Type requestType = request.m_attributes ? request.m_attributes->type() : ScriptFetchParameters::Type::JavaScript;

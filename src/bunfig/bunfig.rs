@@ -1192,8 +1192,6 @@ impl<'a> Parser<'a> {
         .parse_registry_url_string_impl(url)?)
     }
 
-    /// An empty scope url would inherit the default registry with the scope's
-    /// credentials (`PackageManagerOptions::load`).
     fn check_scope_url(
         &mut self,
         scope: Option<&[u8]>,

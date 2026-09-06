@@ -251,13 +251,15 @@ describe.skipIf(isWindows)("tty.ReadStream is a net.Socket over a native TTY han
         const tty = require("node:tty");
         const { Duplex } = require("node:stream");
         const { TTY } = process.binding("tty_wrap");
+        // Before any ReadStream exists: Node's test-net-access-byteswritten reads this.
+        const readStreamExtendsSocket = Object.getPrototypeOf(tty.ReadStream) === net.Socket;
         const s = process.stdin;
         const out = {
           isReadStream: s instanceof tty.ReadStream,
           isSocket: s instanceof net.Socket,
           isDuplex: s instanceof Duplex,
           constructor: s.constructor === tty.ReadStream,
-          readStreamExtendsSocket: Object.getPrototypeOf(tty.ReadStream) === net.Socket,
+          readStreamExtendsSocket,
           protoChain: Object.getPrototypeOf(tty.ReadStream.prototype) === net.Socket.prototype,
           handleIsTTY: s._handle instanceof TTY,
           handleMethods: ["readStart", "readStop", "setRawMode", "getWindowSize", "ref", "unref", "close"].every(

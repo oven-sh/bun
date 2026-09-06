@@ -1,10 +1,8 @@
 // Hardcoded module "node:tty"
 
-const { isatty, getWindowSize: _getWindowSize } = $cpp("ProcessBindingTTYWrap.cpp", "createBunTTYFunctions");
-
-const { validateInteger } = require("internal/validators");
 const { ErrnoException } = require("internal/shared");
-const fs = require("internal/fs/streams");
+const { WriteStream, isatty } = require("internal/tty/write_stream");
+const net = require("node:net");
 const { TTY } = process.binding("tty_wrap");
 
 // https://github.com/nodejs/node/blob/v26.3.0/lib/tty.js#L50
@@ -25,7 +23,7 @@ function ReadStream(fd, options): void {
     throw $ERR_TTY_INIT_FAILED(`${ctx.syscall} returned ${code} (${ctx.message})`);
   }
 
-  require("node:net").Socket.$call(this, {
+  net.Socket.$call(this, {
     readableHighWaterMark: 0,
     handle: tty,
     manualStart: true,
@@ -36,124 +34,18 @@ function ReadStream(fd, options): void {
   this.isRaw = false;
   this.isTTY = true;
 }
+$toClass(ReadStream, "ReadStream", net.Socket);
 
-// net.Socket is loaded on first use: a TTY stdout must not pay for node:net.
-Object.defineProperty(ReadStream, "prototype", {
-  get() {
-    const { Socket } = require("node:net");
-    const Real = Object.create(Socket.prototype, {
-      constructor: { value: ReadStream, writable: true, configurable: true },
-    });
-    Object.defineProperty(ReadStream, "prototype", { value: Real });
-    Object.setPrototypeOf(ReadStream, Socket);
-
-    Real.setRawMode = function (flag) {
-      flag = !!flag;
-      // Node does not throw when setting the mode fails: an error event is emitted.
-      const err = this._handle?.setRawMode(flag);
-      if (err) {
-        this.emit("error", new ErrnoException(err, "setRawMode"));
-        return this;
-      }
-      this.isRaw = flag;
-      return this;
-    };
-
-    return Real;
-  },
-  enumerable: true,
-  configurable: true,
-});
-
-function WriteStream(fd): void {
-  if (!(this instanceof WriteStream)) return new WriteStream(fd);
-
-  const stream = fs.WriteStream.$call(this, null, { fd, $fastPath: true, autoClose: false });
-  stream.columns = undefined;
-  stream.rows = undefined;
-  stream.isTTY = isatty(stream.fd);
-
-  if (stream.isTTY) {
-    const windowSizeArray = [0, 0];
-    if (_getWindowSize(fd, windowSizeArray) === true) {
-      stream.columns = windowSizeArray[0];
-      stream.rows = windowSizeArray[1];
-    }
+ReadStream.prototype.setRawMode = function (flag) {
+  flag = !!flag;
+  // Node does not throw when setting the mode fails: an error event is emitted.
+  const err = this._handle?.setRawMode(flag);
+  if (err) {
+    this.emit("error", new ErrnoException(err, "setRawMode"));
+    return this;
   }
-
-  return stream;
-}
-
-Object.defineProperty(WriteStream, "prototype", {
-  get() {
-    const Real = fs.WriteStream.prototype;
-    Object.defineProperty(WriteStream, "prototype", { value: Real });
-
-    WriteStream.prototype._refreshSize = function () {
-      const oldCols = this.columns;
-      const oldRows = this.rows;
-      const windowSizeArray = [0, 0];
-      if (_getWindowSize(this.fd, windowSizeArray) === true) {
-        if (oldCols !== windowSizeArray[0] || oldRows !== windowSizeArray[1]) {
-          this.columns = windowSizeArray[0];
-          this.rows = windowSizeArray[1];
-          this.emit("resize");
-        }
-      }
-    };
-
-    WriteStream.prototype.clearLine = function (dir, cb) {
-      return require("node:readline").clearLine(this, dir, cb);
-    };
-
-    WriteStream.prototype.clearScreenDown = function (cb) {
-      return require("node:readline").clearScreenDown(this, cb);
-    };
-
-    WriteStream.prototype.cursorTo = function (x, y, cb) {
-      return require("node:readline").cursorTo(this, x, y, cb);
-    };
-
-    // The `getColorDepth` API got inspired by multiple sources such as
-    // https://github.com/chalk/supports-color,
-    // https://github.com/isaacs/color-support.
-    WriteStream.prototype.getColorDepth = function (env = process.env) {
-      return require("internal/tty").getColorDepth(env);
-    };
-
-    WriteStream.prototype.getWindowSize = function () {
-      return [this.columns, this.rows];
-    };
-
-    WriteStream.prototype.hasColors = function (count, env) {
-      if (env === undefined && (count === undefined || (typeof count === "object" && count !== null))) {
-        env = count;
-        count = 16;
-      } else {
-        validateInteger(count, "count", 2);
-      }
-
-      return count <= 2 ** this.getColorDepth(env);
-    };
-
-    WriteStream.prototype.moveCursor = function (dx, dy, cb) {
-      return require("node:readline").moveCursor(this, dx, dy, cb);
-    };
-
-    // Add Symbol.asyncIterator to make tty.WriteStream compatible with code
-    // that expects stdout/stderr to be async iterable (like in Node.js where they're Duplex)
-    WriteStream.prototype[Symbol.asyncIterator] = function () {
-      // Since WriteStream is write-only, we return an empty async iterator
-      // This matches the behavior of Node.js Duplex streams used for stdout/stderr
-      return (async function* () {
-        // stdout/stderr don't produce readable data, so yield nothing
-      })();
-    };
-
-    return Real;
-  },
-  enumerable: true,
-  configurable: true,
-});
+  this.isRaw = flag;
+  return this;
+};
 
 export default { ReadStream, WriteStream, isatty };

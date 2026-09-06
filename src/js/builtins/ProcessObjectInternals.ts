@@ -40,7 +40,7 @@ export function getStdioWriteStream(
 
   let stream;
   if (isTTY) {
-    const tty = require("node:tty");
+    const tty = require("internal/tty/write_stream");
     stream = new tty.WriteStream(fd);
     // TODO: this is the wrong place for this property.
     // but the TTY is technically duplex

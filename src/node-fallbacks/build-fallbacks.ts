@@ -6,8 +6,6 @@ const allFiles = fs.readdirSync(".").filter(f => f.endsWith(".js"));
 const outdir = process.argv[2];
 const builtins = new Set(Module.builtinModules);
 
-// A plugin, not `external`: with the browser target the resolver picks the
-// polyfill before it reads the externals list.
 const keepBuiltinsExternal: Bun.BunPlugin = {
   name: "keep node builtins external",
   setup(build) {

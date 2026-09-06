@@ -679,30 +679,54 @@ describe("apply", () => {
       });
     });
 
-    test("a zero-context deletion removes the line the - side names", async () => {
-      const afile = Array.from({ length: 12 }, (_, i) => `line${String(i + 1).padStart(2, "0")}`).join("\n") + "\n";
-      await using tempdir = tempDir("patch-test", {
-        "a/hello.txt": afile,
-      });
-      const afolder = join(tempdir, "a");
+    // `git diff -U0` emits hunks with no context lines. A zero-length range
+    // (`-3,0`, `+5,0`) names the line the gap sits after, and `0` is the top
+    // of the file. Every case below is what `git apply --unidiff-zero` produces.
+    const numbered = (n: number) => Array.from({ length: n }, (_, i) => `line ${i + 1}`).join("\n") + "\n";
+    test.each([
+      ["delete one line", numbered(8), "@@ -6 +5,0 @@\n-line 6\n", "line 1\nline 2\nline 3\nline 4\nline 5\nline 7\nline 8\n"],
+      [
+        "delete a run of lines",
+        numbered(8),
+        "@@ -3,3 +2,0 @@\n-line 3\n-line 4\n-line 5\n",
+        "line 1\nline 2\nline 6\nline 7\nline 8\n",
+      ],
+      ["delete the first line", numbered(3), "@@ -1 +0,0 @@\n-line 1\n", "line 2\nline 3\n"],
+      ["delete the last line", numbered(3), "@@ -3 +2,0 @@\n-line 3\n", "line 1\nline 2\n"],
+      [
+        "two deletions",
+        numbered(8),
+        "@@ -2 +1,0 @@\n-line 2\n@@ -6 +4,0 @@\n-line 6\n",
+        "line 1\nline 3\nline 4\nline 5\nline 7\nline 8\n",
+      ],
+      ["insert after a line", numbered(4), "@@ -3,0 +4,2 @@\n+X\n+Y\n", "line 1\nline 2\nline 3\nX\nY\nline 4\n"],
+      ["insert at the top", numbered(2), "@@ -0,0 +1 @@\n+X\n", "X\nline 1\nline 2\n"],
+      ["insert at the end", numbered(2), "@@ -2,0 +3 @@\n+X\n", "line 1\nline 2\nX\n"],
+      ["replace a line", numbered(3), "@@ -2 +2 @@\n-line 2\n+TWO\n", "line 1\nTWO\nline 3\n"],
+      [
+        "delete then insert",
+        numbered(6),
+        "@@ -2 +1,0 @@\n-line 2\n@@ -5,0 +5 @@\n+X\n",
+        "line 1\nline 3\nline 4\nline 5\nX\nline 6\n",
+      ],
+      [
+        "insert then insert",
+        numbered(4),
+        "@@ -1,0 +2,2 @@\n+A\n+B\n@@ -3,0 +6 @@\n+C\n",
+        "line 1\nA\nB\nline 2\nline 3\nC\nline 4\n",
+      ],
+    ])("zero-context hunk: %s", async (_name, before, hunks, after) => {
+      await using dir = tempDir("patch-u0", { "index.js": before });
+      const patchfile = `diff --git a/index.js b/index.js\n--- a/index.js\n+++ b/index.js\n${hunks}`;
+      await apply(patchfile, String(dir));
+      expect(await fs.readFile(join(String(dir), "index.js"), "utf8")).toBe(after);
+    });
 
-      // `diff -U0` output: delete line 6 of the original.
-      const patchfile = [
-        "diff --git a/hello.txt b/hello.txt",
-        "--- a/hello.txt",
-        "+++ b/hello.txt",
-        "@@ -6 +5,0 @@",
-        "-line06",
-        "",
-      ].join("\n");
-
-      await apply(patchfile, afolder);
-
-      expect(await fs.readFile(join(afolder, "hello.txt"), "utf8")).toBe(
-        ["line01", "line02", "line03", "line04", "line05", "line07", "line08", "line09", "line10", "line11", "line12", ""].join(
-          "\n",
-        ),
-      );
+    test("a pure insertion past the end of the file does not apply", async () => {
+      await using dir = tempDir("patch-u0", { "index.js": "line 1\nline 2\n" });
+      const patchfile = "diff --git a/index.js b/index.js\n--- a/index.js\n+++ b/index.js\n@@ -9,0 +10 @@\n+X\n";
+      expect(() => apply(patchfile, String(dir))).toThrow("hunk #1 does not apply to index.js (expected at line 9)");
+      expect(await fs.readFile(join(String(dir), "index.js"), "utf8")).toBe("line 1\nline 2\n");
     });
   });
 
@@ -890,7 +914,7 @@ describe("parse", () => {
               "path": "banana.ts",
               "mode": "non_executable",
               "hunk": {
-                "header": { "original": { "start": 1, "len": 0 }, "patched": { "start": 1, "len": 1 } },
+                "header": { "original": { "start": 0, "len": 0 }, "patched": { "start": 1, "len": 1 } },
                 "parts": {
                   "items": [
                     {

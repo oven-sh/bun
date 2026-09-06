@@ -732,7 +732,8 @@ extern "C" void bun_initialize_process()
             err = dup2(devNullFd_, target_fd);
         } while (err < 0 && errno == EINTR);
 
-        if (err != 0) [[unlikely]] {
+        // dup2 returns target_fd on success, which is nonzero for 1 and 2.
+        if (err < 0) [[unlikely]] {
             abort();
         }
     };

@@ -1719,3 +1719,30 @@ it.if(parentThp() === "1")("spawned children keep the system THP policy", async 
   expect(thpEnabled(readFileSync("/proc/self/status", "utf8"))).toBe("1");
   expect(exitCode).toBe(0);
 });
+
+// isatty() reports EBADF for an O_PATH descriptor. Startup takes that as a
+// closed fd and replaces it with /dev/null. That must not abort the process.
+describe.if(isLinux)("startup with an O_PATH descriptor on", () => {
+  const O_PATH = 0o10000000;
+  for (const slot of ["stdout", "stderr"] as const) {
+    it(slot, async () => {
+      const fd = openSync("/", O_PATH);
+      try {
+        await using proc = spawn({
+          cmd: [bunExe(), "-e", "console.log('ok'); console.error('err')"],
+          env: bunEnv,
+          [slot]: fd,
+          [slot === "stdout" ? "stderr" : "stdout"]: "pipe",
+        });
+        const [out, exitCode] = await Promise.all([
+          (slot === "stdout" ? proc.stderr : proc.stdout).text(),
+          proc.exited,
+        ]);
+        expect(out).toBe(slot === "stdout" ? "err\n" : "ok\n");
+        expect(exitCode).toBe(0);
+      } finally {
+        closeSync(fd);
+      }
+    });
+  }
+});

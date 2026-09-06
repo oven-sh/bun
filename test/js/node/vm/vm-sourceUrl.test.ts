@@ -88,11 +88,7 @@ describe.concurrent("error printer does not read attacker-named source files", (
             stdout: "pipe",
             stderr: "pipe",
           });
-          const [stdout, stderr, exitCode] = await Promise.all([
-            proc.stdout.text(),
-            proc.stderr.text(),
-            proc.exited,
-          ]);
+          const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
           const output = stdout + stderr;
 
           // The error is still reported.

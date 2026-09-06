@@ -8894,8 +8894,7 @@ pub(crate) fn move_file_z_slow(
     let _ = close(in_handle);
     r
 }
-/// EXDEV arm of the `move_file_z*` family: copy into a temp file beside
-/// `destination`, then rename it into place. `destination` is never partial.
+/// EXDEV fallback: copy into a temp file beside `destination`, then rename over it.
 pub(crate) fn copy_file_z_slow_with_handle(
     in_handle: Fd,
     to_dir: Fd,
@@ -8937,8 +8936,7 @@ pub(crate) fn copy_file_z_slow_with_handle(
     r
 }
 
-/// `dir/.base.<16 hex digits>.tmp` for a `dest` of `dir/base`. Same
-/// directory, so the rename onto `dest` cannot cross a filesystem.
+/// `dir/.base.<hex>.tmp` for a `dest` of `dir/base`, so the final rename stays in one directory.
 fn tmpname_beside<'a>(buf: &'a mut [u8], dest: &[u8]) -> Maybe<&'a ZStr> {
     let split = if cfg!(windows) {
         bun_core::strings::last_index_of_any(dest, b"/\\:")
@@ -9041,8 +9039,7 @@ pub(crate) fn renameat_concurrently_without_fallback(
                     ..Default::default()
                 },
             ) {
-                // ENOENT: nothing to move. EXDEV: no rename of this pair can
-                // succeed, so do not delete `to` for it below.
+                // ENOENT: nothing to move. EXDEV: cannot succeed, so do not delete `to` for it.
                 Err(err) => {
                     if matches!(err.get_errno(), E::ENOENT | E::EXDEV) {
                         return Err(err);
@@ -9079,8 +9076,7 @@ pub(crate) fn renameat_concurrently_without_fallback(
             }
         }
 
-        // Sad path (no NOREPLACE/EXCHANGE support, or the exchange failed).
-        // A plain rename replaces a file; delete `to` only if it is in the way.
+        // A plain rename still replaces a file atomically; delete `to` only if it is in the way.
         let err = match renameat(from_dir_fd, from, to_dir_fd, to) {
             Ok(()) => break 'attempt,
             Err(err) => err,

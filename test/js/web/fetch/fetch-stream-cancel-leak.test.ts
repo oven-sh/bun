@@ -269,11 +269,9 @@ describe("an abandoned fetch body stream is collected and its fetch is aborted",
         }
         for (let i = 0; i < N; i++) await abandonOne();
 
-        // The native frames under this function (the microtask that ran the last stream's read)
-        // still hold that stream's controller in a stale slot, and the conservative stack scan
-        // keeps the stream alive through every collection below. Only the same code path writes
-        // that slot again: read one chunk of a throwaway body and cancel it, so the slot holds a
-        // stream nobody cares about before each collection.
+        // The JSC::runInternalMicrotask frame under this function keeps the last stream's
+        // controller in a stale slot (heap snapshot and lldb evidence in #41607), which the stack
+        // scan marks. Reading another body through the same path writes that slot again.
         async function scrub() {
           const reader = (await fetch(new URL("/scrub", server.url))).body!.getReader();
           await reader.read();

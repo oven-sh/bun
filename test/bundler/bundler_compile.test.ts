@@ -1332,22 +1332,24 @@ describe("bundler", () => {
     contentType: "text/html;charset=utf-8",
     leaks: true,
   });
+  // bunEnv clears NODE_ENV but not BUN_ENV. Clear both so the shell cannot leak in.
+  const nodeEnv = (env: Record<string, string> = {}) => ({ NODE_ENV: undefined, BUN_ENV: undefined, ...env });
   itBundled("compile/ServeDefaultsToProduction", {
     compile: true,
     files: { "/entry.ts": serveDevelopmentEntry("") },
     run: [
-      { stdout: serveProduction },
-      { env: { NODE_ENV: "production" }, stdout: serveProduction },
-      { env: { NODE_ENV: "development" }, stdout: serveDevelopment },
-      { env: { BUN_ENV: "development" }, stdout: serveDevelopment },
-      { env: { NODE_ENV: "test" }, stdout: serveDevelopment },
-      { env: { NODE_ENV: "staging" }, stdout: serveProduction },
+      { env: nodeEnv(), stdout: serveProduction },
+      { env: nodeEnv({ NODE_ENV: "production" }), stdout: serveProduction },
+      { env: nodeEnv({ NODE_ENV: "development" }), stdout: serveDevelopment },
+      { env: nodeEnv({ BUN_ENV: "development" }), stdout: serveDevelopment },
+      { env: nodeEnv({ NODE_ENV: "test" }), stdout: serveDevelopment },
+      { env: nodeEnv({ NODE_ENV: "staging" }), stdout: serveProduction },
     ],
   });
   itBundled("compile/ServeExplicitDevelopment", {
     compile: true,
     files: { "/entry.ts": serveDevelopmentEntry("development: true,") },
-    run: { stdout: serveDevelopment },
+    run: { env: nodeEnv(), stdout: serveDevelopment },
   });
   itBundled("compile/Utf8", {
     compile: true,

@@ -95,8 +95,8 @@ describe("bundler", () => {
       "/.env.production": `TEST_VAR=from_production`,
     },
     run: [
-      { stdout: "from_production", setCwd: true },
-      { stdout: "from_development", setCwd: true, env: { NODE_ENV: "development" } },
+      { stdout: "from_production", setCwd: true, env: { NODE_ENV: undefined, BUN_ENV: undefined } },
+      { stdout: "from_development", setCwd: true, env: { NODE_ENV: "development", BUN_ENV: undefined } },
     ],
   });
 

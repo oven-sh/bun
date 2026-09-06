@@ -424,7 +424,8 @@ export interface BundlerTestRunOptions {
    */
   errorLineMatch?: RegExp;
 
-  env?: Record<string, string>;
+  /** An `undefined` value removes the variable inherited from `bunEnv`. */
+  env?: Record<string, string | undefined>;
 
   runtime?: "bun" | "node";
 

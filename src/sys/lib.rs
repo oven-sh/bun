@@ -8896,9 +8896,7 @@ pub(crate) fn move_file_z_slow(
     }
     r
 }
-/// `copyFileZSlowWithHandle`, the cross-device arm of the move helpers: copy
-/// into a temporary file beside `destination`, then rename it over
-/// `destination`, so a failed copy leaves `destination` as it was.
+/// `copyFileZSlowWithHandle`: copy to a temp file beside `destination`, then rename over it.
 pub(crate) fn copy_file_z_slow_with_handle(
     in_handle: Fd,
     to_dir: Fd,
@@ -9079,8 +9077,7 @@ pub(crate) fn renameat_concurrently_without_fallback(
             }
         }
 
-        // Replaces a file or empty dir atomically, and sees EXDEV before the
-        // delete when the flagged renames are unsupported (ENOSYS, EINVAL).
+        // Sees EXDEV before the delete when renameat2 is unsupported (ENOSYS, EINVAL).
         #[cfg(not(windows))]
         match renameat(from_dir_fd, from, to_dir_fd, to) {
             Ok(()) => break 'attempt,

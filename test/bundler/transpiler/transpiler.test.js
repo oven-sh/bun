@@ -3049,6 +3049,10 @@ console.log(<div {...obj} key="after" />);`),
       expectParseError("([(a = 1)]) => 0", arrowMessage);
       expectParseError("([(a = 1)] = []) => 0", message);
       expectParseError("async ((a = 1)) => 0", arrowMessage);
+      expectPrinted_("x = ({ ...a }) => a", "x = ({ ...a }) => a");
+      expectParseError("({ ...a = 1 }) => 0", "A rest argument cannot have a default initializer");
+      expectParseError("({ ...[a] }) => 0", "Invalid binding pattern");
+      expectParseError("({ ...{ a } }) => 0", "Invalid binding pattern");
     });
 
     it("import assert", () => {

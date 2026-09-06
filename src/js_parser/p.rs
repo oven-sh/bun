@@ -4043,11 +4043,24 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         continue;
                     }
                     let value = item.value.as_mut().unwrap();
-                    let tup =
-                        self.convert_expr_to_binding_and_initializer(value, invalid_loc, false);
-                    let initializer = tup.expr.or(item.initializer);
                     let is_spread = item.kind == js_ast::g::PropertyKind::Spread
                         || item.flags.contains(Flags::Property::IsSpread);
+                    let tup = self.convert_expr_to_binding_and_initializer(
+                        value,
+                        invalid_loc,
+                        is_spread,
+                    );
+                    // An object rest binding must be an identifier: "({ ...[a] }) => 0"
+                    if is_spread
+                        && let Some(binding) = &tup.binding
+                        && matches!(binding.data, js_ast::b::B::BArray(_) | js_ast::b::B::BObject(_))
+                    {
+                        invalid_loc.push(InvalidLoc {
+                            loc: binding.loc,
+                            kind: crate::parser::InvalidLocTag::Unknown,
+                        });
+                    }
+                    let initializer = tup.expr.or(item.initializer);
                     let mut flags = Flags::PropertySet::empty();
                     if is_spread {
                         flags |= Flags::Property::IsSpread;

@@ -612,10 +612,11 @@ interface Server extends Disposable {
   reload(options: Serve.Options<undefined>): Server;
 
   /**
-   * Make a request to the running server.
-   * Useful for testing or internal routing.
+   * Call the server's fetch handler in-process, without a socket.
+   * The handler receives (request, server). Does not go through `routes`.
    */
-  fetch(request: Request | string): Response | Promise<Response>;
+  fetch(request: Request): Promise<Response>;
+  fetch(url: string | URL, init?: RequestInit): Promise<Response>;
 
   /**
    * Upgrade an HTTP request to a WebSocket connection.

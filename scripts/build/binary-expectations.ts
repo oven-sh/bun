@@ -260,7 +260,7 @@ export function binaryExpectations(cfg: Config): BinaryExpectations {
   // the initializer audit is skipped there. Debug and release are held to
   // the same list: an initializer that only -O2 folds away is still one we
   // wrote (make it constexpr/constinit instead).
-  const sanitizerLibs = cfg.asan ? ["*libclang_rt.asan*", "*asan-dyld-shim*", "libgcc_s.so.1"] : [];
+  const sanitizerLibs = cfg.asan ? ["*clang_rt.asan*", "*asan-dyld-shim*", "libgcc_s.so.1"] : [];
   const staticInitializers = cfg.asan ? undefined : runtimeInitializers(cfg);
 
   switch (format) {

@@ -340,12 +340,8 @@ impl<'a, const DIRECTORY_PUBLISH: bool> Context<'a, DIRECTORY_PUBLISH> {
                 }
             };
 
-            if let Some(private) = json.get(b"private") {
-                if let Some(is_private) = private.as_bool() {
-                    if is_private {
-                        return Err(FromTarballError::PrivatePackage);
-                    }
-                }
+            if pack::is_private_package(&json) {
+                return Err(FromTarballError::PrivatePackage);
             }
 
             if let Some(config) = json.get(b"publishConfig") {

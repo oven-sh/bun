@@ -1079,6 +1079,70 @@ test("attempting to publish a private package should fail", async () => {
   expect(await exists(join(packageDir, "publish-pkg-6-6.6.6.tgz"))).toBeTrue();
 });
 
+// npm checks `manifest.private` with JS truthiness, so every non-empty
+// string and non-zero number refuses the publish, including "false".
+describe.concurrent("non-boolean `private` values", () => {
+  // Verdaccio cannot create users concurrently, so share one token.
+  let bunfig: string;
+  beforeAll(async () => {
+    bunfig = await registry.authBunfig("privatetruthiness");
+  });
+
+  const truthy: [string, unknown][] = [
+    ["string-true", "true"],
+    ["string-yes", "yes"],
+    ["string-false", "false"],
+    ["number-one", 1],
+    ["object", {}],
+    ["array", []],
+  ];
+  for (const [label, value] of truthy) {
+    test(`private: ${JSON.stringify(value)} refuses publish`, async () => {
+      const { packageDir, packageJson } = await registry.createTestDir();
+      const name = `publish-private-truthy-${label}`;
+      await Promise.all([
+        rm(join(registry.packagesPath, name), { recursive: true, force: true }),
+        write(packageJson, JSON.stringify({ name, version: "1.0.0", private: value })),
+        write(join(packageDir, "bunfig.toml"), bunfig),
+      ]);
+
+      let { err, exitCode } = await publish(env, packageDir);
+      expect(err).toContain("error: attempted to publish a private package");
+      expect(exitCode).toBe(1);
+      expect(await exists(join(registry.packagesPath, name, `${name}-1.0.0.tgz`))).toBeFalse();
+
+      await pack(packageDir, env);
+      ({ err, exitCode } = await publish(env, packageDir, `./${name}-1.0.0.tgz`));
+      expect(err).toContain("error: attempted to publish a private package");
+      expect(exitCode).toBe(1);
+      expect(await exists(join(registry.packagesPath, name, `${name}-1.0.0.tgz`))).toBeFalse();
+    });
+  }
+
+  const falsy: [string, unknown][] = [
+    ["false", false],
+    ["null", null],
+    ["zero", 0],
+    ["empty-string", ""],
+  ];
+  for (const [label, value] of falsy) {
+    test(`private: ${JSON.stringify(value)} allows publish`, async () => {
+      const { packageDir, packageJson } = await registry.createTestDir();
+      const name = `publish-private-falsy-${label}`;
+      await Promise.all([
+        rm(join(registry.packagesPath, name), { recursive: true, force: true }),
+        write(packageJson, JSON.stringify({ name, version: "1.0.0", private: value })),
+        write(join(packageDir, "bunfig.toml"), bunfig),
+      ]);
+
+      const { err, exitCode } = await publish(env, packageDir);
+      expect(err).not.toContain("error:");
+      expect(exitCode).toBe(0);
+      expect(await exists(join(registry.packagesPath, name, `${name}-1.0.0.tgz`))).toBeTrue();
+    });
+  }
+});
+
 describe("access", async () => {
   test("--access", async () => {
     const { packageDir, packageJson } = await registry.createTestDir();

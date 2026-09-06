@@ -1665,6 +1665,34 @@ async function getPipeline(options = {}) {
 
   const includeASAN = !isMainBranch();
 
+  // verify-baseline / trace-order: checks that run on a built binary on a
+  // test-fleet host. They are drawn in that host's test group (or a group of
+  // their own when the target has no test lane, e.g. android) rather than in
+  // the build group — Buildkite's canvas draws every edge into a group as
+  // leaving after the whole group, so nesting them with build-bun made
+  // test-bun look like it waited on them — and rather than top-level, where
+  // a step still waiting on its depends_on renders greyed out like a skipped
+  // one. Emitted after the test groups so the same-label merge below folds
+  // them into the test group and that group keeps its own depends_on.
+  // Scheduling is by step key either way: each depends on <target>-build-bun.
+  /** @type {Step[]} */
+  const binaryCheckSteps = [];
+  /**
+   * @param {Target} target
+   * @param {Platform} host
+   * @param {Step} step
+   */
+  const pushBinaryCheck = (target, host, step) => {
+    const inTestLane = testPlatforms.some(
+      p => getPlatformKey(p) === getPlatformKey(host) && (p.abi ?? null) === (target.abi ?? null),
+    );
+    binaryCheckSteps.push(
+      inTestLane
+        ? { key: `${getPlatformKey(host)}`, group: getPlatformLabel(host), steps: [step] }
+        : { key: `${getTargetKey(target)}-checks`, group: `${getTargetLabel(target)} checks`, steps: [step] },
+    );
+  };
+
   if (!buildId) {
     let relevantBuildPlatforms = includeASAN
       ? buildPlatforms
@@ -1677,10 +1705,6 @@ async function getPipeline(options = {}) {
         const imageKey = getImageKey(buildHostPlatform);
         const dependsOn = imagePlatforms.has(imageKey) ? [`${imageKey}-build-image`] : [];
 
-        // verify-baseline and trace-order are siblings of the build group,
-        // not members: Buildkite's canvas draws every edge into a group as
-        // leaving after the whole group, so nesting them made test-bun look
-        // like it waited on them. Scheduling is by step key either way.
         /** @type {Step[]} */
         const steps = [
           getStepWithDependsOn(
@@ -1696,9 +1720,14 @@ async function getPipeline(options = {}) {
         if (needsBaselineVerification(target)) {
           // verify-baseline runs on a per-target-arch native host (see
           // getVerifyBaselineHost), not buildHostPlatform.
-          const verifyImageKey = getImageKey(getVerifyBaselineHost(target));
+          const verifyHost = getVerifyBaselineHost(target);
+          const verifyImageKey = getImageKey(verifyHost);
           const verifyDeps = imagePlatforms.has(verifyImageKey) ? [`${verifyImageKey}-build-image`] : [];
-          steps.push(getStepWithDependsOn(getVerifyBaselineStep(target, options), ...verifyDeps));
+          pushBinaryCheck(
+            target,
+            verifyHost,
+            getStepWithDependsOn(getVerifyBaselineStep(target, options), ...verifyDeps),
+          );
         }
 
         // Seed the symbol order file for a cross-compiled target on its native
@@ -1715,7 +1744,11 @@ async function getPipeline(options = {}) {
           // Darwin has no cloud image.
           const traceImageKey = getImageKey(traceOn.on);
           const traceDeps = imagePlatforms.has(traceImageKey) ? [`${traceImageKey}-build-image`] : [];
-          steps.push(getStepWithDependsOn(getTraceOrderStep(target, traceOn.on, options), ...traceDeps));
+          pushBinaryCheck(
+            target,
+            traceOn.on,
+            getStepWithDependsOn(getTraceOrderStep(target, traceOn.on, options), ...traceDeps),
+          );
         }
 
         return steps;
@@ -1774,6 +1807,8 @@ async function getPipeline(options = {}) {
       );
     }
   }
+
+  steps.push(...binaryCheckSteps);
 
   // Binary-size tracking: main records the baseline, PRs enforce the threshold.
   const strippedPlatforms = buildPlatforms.filter(p => (p.profile ?? "release") === "release");

@@ -319,6 +319,9 @@ describe("FormData", () => {
       'multipart/form-data; x="a;b"; boundary=abc',
       'multipart/form-data; charset=x"y; boundary=abc',
       "multipart/form-data; x; boundary=abc",
+      // A value with a control character is not recorded. The next one wins.
+      "multipart/form-data; boundary=abc\x0b; boundary=abc",
+      'multipart/form-data; boundary="ab\x01c"; boundary=abc',
     ];
     const noBoundary = "incorrect MIME type/boundary";
     const rejects = [

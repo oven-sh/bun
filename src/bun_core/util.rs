@@ -5392,7 +5392,7 @@ pub mod form_data {
                     }
                     i += 1;
                 }
-                if is_boundary {
+                if is_boundary && value.iter().all(is_quoted_string_token_byte) {
                     return (!value.is_empty()).then_some(Cow::Owned(value));
                 }
                 rest = &rest[i.min(rest.len())..];
@@ -5400,13 +5400,19 @@ pub mod form_data {
                 let end = crate::strings::index_of_char_usize(rest, b';').unwrap_or(rest.len());
                 let value = crate::strings_impl::trim_right(&rest[..end], HTTP_WHITESPACE);
                 // An empty unquoted value leaves the parameter unset.
-                if is_boundary && !value.is_empty() {
+                if is_boundary && !value.is_empty() && value.iter().all(is_quoted_string_token_byte)
+                {
                     return Some(Cow::Borrowed(value));
                 }
                 rest = &rest[end..];
             }
             rest = &rest[crate::strings::index_of_char_usize(rest, b';')? + 1..];
         }
+    }
+
+    /// WHATWG "HTTP quoted-string token code point": HTAB, 0x20..=0x7E, 0x80..=0xFF.
+    fn is_quoted_string_token_byte(b: &u8) -> bool {
+        matches!(b, b'\t' | 0x20..=0x7E | 0x80..=0xFF)
     }
 
     /// `FormData.AsyncFormData` — heap-allocated, owns its `Encoding`.

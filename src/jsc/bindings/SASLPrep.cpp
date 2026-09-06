@@ -1,21 +1,9 @@
-// SASLprep (RFC 4013), the StringPrep profile SCRAM (RFC 5802) applies to a
-// password before PBKDF2. PostgreSQL builds the stored SCRAM verifier from
-// pg_saslprep(password), so the client must send the same bytes through the
-// same steps. This file follows PostgreSQL's src/common/saslprep.c step by
-// step, including two places where it departs from RFC 3454:
-//
-//   1. map: RFC 3454 C.1.2 (non-ASCII spaces) to U+0020, then B.1 to
-//      nothing. A password that maps to nothing is rejected.
-//   2. prohibit: RFC 3454 C.1.2, C.2.1, C.2.2, C.3 to C.9, and A.1 (code
-//      points unassigned in Unicode 3.2). pg_saslprep checks the mapped
-//      input, not the NFKC output.
-//   3. bidi: RFC 3454 section 6 with tables D.1 and D.2, also on the mapped
-//      input.
-//   4. normalize: NFKC.
-//
-// As in libpq, a password that SASLprep rejects is used raw: the server did
-// the same when it stored the verifier. The range tables are copied from
-// saslprep.c.
+// SASLprep (RFC 4013) for SCRAM-SHA-256 passwords, as PostgreSQL's
+// src/common/saslprep.c implements it. The stored verifier comes from
+// pg_saslprep(password), so this follows pg_saslprep where it departs from
+// RFC 3454: the prohibit and bidi checks run on the mapped input, not on the
+// NFKC output, a password that maps to nothing is rejected, and "unassigned"
+// means Unicode 3.2 (table A.1). The range tables are copied from saslprep.c.
 
 #include "root.h"
 #include "headers-handwritten.h"

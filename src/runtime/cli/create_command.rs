@@ -60,14 +60,11 @@ const NEVER_CONFLICT: &[&[u8]] = &[b"README.md", b"gitignore", b".gitignore", b"
 
 /// Erases the local borrow on a string that lives in the JSON arena.
 fn arena_str(s: &[u8]) -> &'static [u8] {
-    // SAFETY: `s` points into the JSON arena (`initialize_store()`), which
-    // lives for the rest of the process.
+    // SAFETY: the JSON arena (`initialize_store()`) lives for the rest of the process.
     unsafe { &*std::ptr::from_ref::<[u8]>(s) }
 }
 
-/// Runs one `bun-create` hook the way `bun run` runs a package.json script:
-/// through the shell, in `cwd`, with `npm_lifecycle_event` set to `name`.
-/// A non-zero exit stops `bun create` with that exit code.
+/// Runs one `bun-create` hook like a package.json script. A non-zero exit ends the process.
 fn exec_task(
     ctx: Command::Context<'_>,
     task_: &[u8],
@@ -81,8 +78,7 @@ fn exec_task(
         return Ok(());
     }
 
-    // A task that is only the name of a package.json script runs that
-    // script, as it did when every task went through `bun run`.
+    // A bare package.json script name still runs as `bun run <name>`.
     let run_script: Box<[u8]>;
     let task: &[u8] = if script_names.contains(&task) {
         run_script = strings::concat(&[b"bun run ", task]);
@@ -106,9 +102,7 @@ fn exec_task(
     )
 }
 
-/// Puts `<destination>/node_modules/.bin` and the `bun`/`node` shim dir for
-/// this binary in front of `PATH`, so hooks resolve `bun` and installed bins
-/// like a package.json script does.
+/// Puts `<destination>/node_modules/.bin` and the `bun`/`node` shim dir in front of `PATH`.
 fn configure_path_for_tasks(
     env_loader: &mut DotEnv::Loader,
     destination: &[u8],
@@ -282,13 +276,11 @@ impl CreateCommand {
 
         // SAFETY: `fs::FileSystem::init` returns a process-global singleton pointer.
         let filesystem: &mut fs::FileSystem = unsafe { &mut *fs::FileSystem::init(None)? };
-        // The loader is the process `dotenv::INSTANCE` so every mini event
-        // loop this command creates (git, install, hooks) sees the same env.
+        // The process `dotenv::INSTANCE`, so every mini event loop here shares one env.
         let env_loader_ptr: *mut DotEnv::Loader =
             bun_core::heap::into_raw(Box::new(DotEnv::Loader::init()));
         DotEnv::set_instance(env_loader_ptr);
-        // SAFETY: just allocated, process-lifetime, and only this thread
-        // dereferences it.
+        // SAFETY: just allocated, never freed, and only this thread dereferences it.
         let env_loader: &'static mut DotEnv::Loader = unsafe { &mut *env_loader_ptr };
 
         env_loader.load_process()?;
@@ -1069,8 +1061,7 @@ impl CreateCommand {
 
         let mut npm_client_: Option<NPMClient> = None;
 
-        // `--no-install` skips node_modules and the hooks. A template with no
-        // dependencies skips only `bun install`: its hooks still run.
+        // `--no-install` skips the hooks too. No dependencies skips only `bun install`.
         let run_tasks = !create_options.skip_install
             && !(preinstall_tasks.is_empty() && postinstall_tasks.is_empty());
         create_options.skip_install = create_options.skip_install || !has_dependencies;
@@ -1082,8 +1073,7 @@ impl CreateCommand {
                 .put(b"npm_package_name", bun_paths::basename(destination))?;
         }
 
-        // Git runs on its own thread next to `bun install`, unless a hook
-        // could end the process while that thread still writes.
+        // A failing hook ends the process, so git does not run on a thread when hooks exist.
         let mut git_thread_pending = false;
         if !create_options.skip_git {
             if !create_options.skip_install && !run_tasks {

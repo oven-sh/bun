@@ -785,8 +785,7 @@ static constexpr DeepEqualsMode deepEqualsMode {
     checkPrototypes ? &nonIndexOwnPropertiesEqual<isStrict, enableAsymmetricMatchers, checkPrototypes, skipPrototypeIdentity> : nullptr,
 };
 
-// A non-enumerable match counts as absent. `ownOnly` skips the prototype chain.
-// The getter runs only when `value` is given.
+// A non-enumerable match counts as absent. The getter runs only when `value` is given.
 static bool findEnumerableProperty(JSC::JSGlobalObject* globalObject, JSC::JSObject* object, JSC::PropertyName propertyName, bool ownOnly, JSValue* value)
 {
     VM& vm = globalObject->vm();
@@ -812,8 +811,7 @@ static bool findEnumerableProperty(JSC::JSGlobalObject* globalObject, JSC::JSObj
     return true;
 }
 
-// Compares o1 and o2 by the enumerable names in a1 and a2. Loose mode treats an
-// undefined value as absent. `ownOnly` must match how the name lists were built.
+// Compares o1 and o2 by the enumerable names in a1 and a2. `ownOnly` must match how the lists were built.
 static bool enumerablePropertiesEqual(const DeepEqualsMode& mode, JSC::JSGlobalObject* globalObject, MarkedArgumentBuffer& gcBuffer, Vector<std::pair<JSC::JSValue, JSC::JSValue>, 16>& stack, ThrowScope& scope, JSC::JSObject* o1, JSC::JSObject* o2, const JSC::PropertyNameArrayBuilder& a1, const JSC::PropertyNameArrayBuilder& a2, bool ownOnly, const Identifier* skipName = nullptr)
 {
     const size_t propertyArrayLength1 = a1.size();

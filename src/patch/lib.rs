@@ -4,7 +4,7 @@
 #![warn(unused_must_use)]
 
 pub mod error;
-pub use error::{Error, Result};
+pub use error::{ApplyError, Error, Result};
 
 use core::mem;
 
@@ -82,26 +82,26 @@ impl ApplyState {
 }
 
 impl<'a> PatchFile<'a> {
-    pub fn apply(&self, patch_dir: Fd) -> Option<sys::Error> {
+    pub fn apply(&self, patch_dir: Fd) -> Option<ApplyError> {
         let mut state = ApplyState::new();
 
         for part in &self.parts {
             match part {
                 PatchFilePart::FileDeletion(file_deletion) => {
                     if !is_safe_patch_path(file_deletion.path) {
-                        return Some(sys::Error::from_code(sys::E::EINVAL, sys::Tag::unlink));
+                        return Some(sys::Error::from_code(sys::E::EINVAL, sys::Tag::unlink).into());
                     }
                     let pathz = ZBox::from_vec_with_nul(file_deletion.path.to_vec());
 
                     if let sys::Result::Err(e) = sys::unlinkat(patch_dir, &pathz) {
-                        return Some(e.without_path());
+                        return Some(e.without_path().into());
                     }
                 }
                 PatchFilePart::FileRename(file_rename) => {
                     if !is_safe_patch_path(file_rename.from_path)
                         || !is_safe_patch_path(file_rename.to_path)
                     {
-                        return Some(sys::Error::from_code(sys::E::EINVAL, sys::Tag::rename));
+                        return Some(sys::Error::from_code(sys::E::EINVAL, sys::Tag::rename).into());
                     }
                     let from_path = ZBox::from_vec_with_nul(file_rename.from_path.to_vec());
                     let to_path = ZBox::from_vec_with_nul(file_rename.to_path.to_vec());
@@ -111,19 +111,19 @@ impl<'a> PatchFile<'a> {
                         if let sys::Result::Err(e) =
                             sys::mkdir_recursive_at_mode(patch_dir, todir, 0o755)
                         {
-                            return Some(e.without_path());
+                            return Some(e.without_path().into());
                         }
                     }
 
                     if let sys::Result::Err(e) =
                         sys::renameat(patch_dir, &from_path, patch_dir, &to_path)
                     {
-                        return Some(e.without_path());
+                        return Some(e.without_path().into());
                     }
                 }
                 PatchFilePart::FileCreation(file_creation) => {
                     if !is_safe_patch_path(file_creation.path) {
-                        return Some(sys::Error::from_code(sys::E::EINVAL, sys::Tag::open));
+                        return Some(sys::Error::from_code(sys::E::EINVAL, sys::Tag::open).into());
                     }
                     let filepath_z = ZBox::from_vec_with_nul(file_creation.path.to_vec());
                     let filedir = paths::dirname_simple(filepath_z.as_bytes());
@@ -137,7 +137,7 @@ impl<'a> PatchFile<'a> {
                         if let sys::Result::Err(e) =
                             sys::mkdir_recursive_at_mode(patch_dir, filedir, mode.to_bun_mode())
                         {
-                            return Some(e.without_path());
+                            return Some(e.without_path().into());
                         }
                     }
 
@@ -148,7 +148,7 @@ impl<'a> PatchFile<'a> {
                         mode.to_bun_mode(),
                     ) {
                         sys::Result::Ok(fd) => fd,
-                        sys::Result::Err(e) => return Some(e.without_path()),
+                        sys::Result::Err(e) => return Some(e.without_path().into()),
                     };
                     let _close_newfile = scopeguard::guard(newfile_fd, |fd| fd.close());
 
@@ -194,22 +194,23 @@ impl<'a> PatchFile<'a> {
                     while written < file_contents.len() {
                         match sys::write(newfile_fd, &file_contents[written..]) {
                             sys::Result::Ok(bytes) => written += bytes,
-                            sys::Result::Err(e) => return Some(e.without_path()),
+                            sys::Result::Err(e) => return Some(e.without_path().into()),
                         }
                     }
                 }
                 PatchFilePart::FilePatch(file_patch) => {
                     if !is_safe_patch_path(file_patch.path) {
-                        return Some(sys::Error::from_code(sys::E::EINVAL, sys::Tag::open));
+                        return Some(sys::Error::from_code(sys::E::EINVAL, sys::Tag::open).into());
                     }
-                    // TODO: should we compute the hash of the original file and check it against the on in the patch?
-                    if let sys::Result::Err(e) = apply_patch(file_patch, patch_dir, &mut state) {
-                        return Some(e.without_path());
+                    match apply_patch(file_patch, patch_dir, &mut state) {
+                        Ok(()) => {}
+                        Err(ApplyError::Sys(e)) => return Some(e.without_path().into()),
+                        Err(e) => return Some(e),
                     }
                 }
                 PatchFilePart::FileModeChange(file_mode_change) => {
                     if !is_safe_patch_path(file_mode_change.path) {
-                        return Some(sys::Error::from_code(sys::E::EINVAL, sys::Tag::fchmodat));
+                        return Some(sys::Error::from_code(sys::E::EINVAL, sys::Tag::fchmodat).into());
                     }
                     let newmode = file_mode_change.new_mode;
                     let filepath = ZBox::from_vec_with_nul(file_mode_change.path.to_vec());
@@ -218,7 +219,7 @@ impl<'a> PatchFile<'a> {
                         if let sys::Result::Err(e) =
                             sys::fchmodat(patch_dir, &filepath, newmode.to_bun_mode(), 0)
                         {
-                            return Some(e.without_path());
+                            return Some(e.without_path().into());
                         }
                     }
 
@@ -226,7 +227,7 @@ impl<'a> PatchFile<'a> {
                     {
                         let absfilepath = match state.patch_dir_abs_path(patch_dir) {
                             sys::Result::Ok(p) => p,
-                            sys::Result::Err(e) => return Some(e.without_path()),
+                            sys::Result::Err(e) => return Some(e.without_path().into()),
                         };
                         let mut buf = bun_paths::path_buffer_pool::get();
                         let joined_absfilepath =
@@ -235,12 +236,12 @@ impl<'a> PatchFile<'a> {
                                 &[absfilepath.as_bytes(), filepath.as_bytes()],
                             );
                         let fd = match sys::open(&joined_absfilepath, sys::O::RDWR, 0) {
-                            sys::Result::Err(e) => return Some(e.without_path()),
+                            sys::Result::Err(e) => return Some(e.without_path().into()),
                             sys::Result::Ok(f) => f,
                         };
                         let _close = scopeguard::guard(fd, |fd| fd.close());
                         if let sys::Result::Err(e) = sys::fchmod(fd, newmode.to_bun_mode()) {
-                            return Some(e.without_path());
+                            return Some(e.without_path().into());
                         }
                     }
                 }
@@ -251,15 +252,20 @@ impl<'a> PatchFile<'a> {
     }
 }
 
-/// Invariants:
-/// - Hunk parts are ordered by first to last in file
-/// - The original starting line and the patched starting line are equal in the first hunk part
+/// Rebuilds `patch.path` under `patch_dir` with every hunk applied.
 ///
-/// TODO: this is a very naive and slow implementation which works by creating a list of lines
-/// we can speed it up by:
-/// - If file size <= PAGE_SIZE, read the whole file into memory. memcpy/memmove the file contents around will be fast
-/// - If file size > PAGE_SIZE, rather than making a list of lines, make a list of chunks
-fn apply_patch(patch: &FilePatch<'_>, patch_dir: Fd, state: &mut ApplyState) -> sys::Result<()> {
+/// A hunk is located by its `-` side: the context and deleted lines are
+/// matched against the file, starting at the header's `-` start adjusted by
+/// the line delta of the hunks already applied, then at the nearest offsets
+/// in both directions (`git apply` does the same). The `+` start is not
+/// trusted: `yarn patch-commit` emits `+` starts that ignore the lines earlier
+/// hunks added. A hunk that matches nowhere fails the apply. The file is
+/// written only after every hunk has been placed.
+fn apply_patch(
+    patch: &FilePatch<'_>,
+    patch_dir: Fd,
+    state: &mut ApplyState,
+) -> core::result::Result<(), ApplyError> {
     let file_path = ZBox::from_vec_with_nul(patch.path.to_vec());
 
     // Need to get the mode of the original file
@@ -274,12 +280,12 @@ fn apply_patch(patch: &FilePatch<'_>, patch_dir: Fd, state: &mut ApplyState) -> 
                     p.as_bytes(),
                     file_path.as_bytes(),
                 ]),
-                sys::Result::Err(e) => return sys::Result::Err(e),
+                sys::Result::Err(e) => return Err(e.into()),
             };
             sys::stat(p)
         };
         match r {
-            sys::Result::Err(e) => return sys::Result::Err(e.with_path(file_path.as_bytes())),
+            sys::Result::Err(e) => return Err(e.with_path(file_path.as_bytes()).into()),
             sys::Result::Ok(stat) => stat,
         }
     };
@@ -289,144 +295,57 @@ fn apply_patch(patch: &FilePatch<'_>, patch_dir: Fd, state: &mut ApplyState) -> 
     let filebuf: Vec<u8> = match read_file_alloc(patch_dir, &file_path, 1024 * 1024 * 1024 * 4) {
         Ok(b) => b,
         Err(_) => {
-            return sys::Result::Err(
-                sys::Error::from_code(sys::E::EINVAL, sys::Tag::read)
-                    .with_path(file_path.as_bytes()),
-            );
+            return Err(sys::Error::from_code(sys::E::EINVAL, sys::Tag::read)
+                .with_path(file_path.as_bytes())
+                .into());
         }
     };
 
-    let file_line_count: usize;
-    let lines_count: usize = {
-        let mut count: usize = 0;
-        for _ in strings::split(&filebuf, b"\n") {
-            count += 1;
-        }
-        file_line_count = count;
+    let mut lines: Vec<&[u8]> = strings::split(&filebuf, b"\n").collect();
 
-        // Adjust to account for the changes. This is only a capacity hint for
-        // `lines` below; saturate so a header that claims more deletions than
-        // the file has cannot panic (bounds are enforced during the splice).
-        for hunk in &patch.hunks {
-            count = count
-                .saturating_add(hunk.header.patched.len as usize)
-                .saturating_sub(hunk.header.original.len as usize);
-            for part in &hunk.parts {
-                let part: &PatchMutationPart = part;
-                match part.ty {
-                    PartType::Deletion => {
-                        // deleting the no newline pragma so we are actually adding a line
-                        count = count.saturating_add(part.no_newline_at_end_of_file as usize);
-                    }
-                    PartType::Insertion => {
-                        count = count.saturating_sub(part.no_newline_at_end_of_file as usize);
-                    }
-                    PartType::Context => {}
-                }
-            }
-        }
-
-        count
+    let does_not_apply = |hunk_index: usize, hunk: &Hunk<'_>| ApplyError::HunkDoesNotApply {
+        path: Box::from(patch.path),
+        hunk: hunk_index + 1,
+        line: hunk.header.original.start,
     };
 
-    // TODO: i hate this
-    let mut lines: Vec<&[u8]> = Vec::with_capacity(lines_count);
-    {
-        let mut i: usize = 0;
-        for line in strings::split(&filebuf, b"\n") {
-            lines.push(line);
-            i += 1;
-        }
-        debug_assert!(i == file_line_count);
-    }
-
-    // Hunks are located by matching their context/deletion lines against the
-    // file (like `git apply` and `patch(1)`), not by trusting the stated `+`
-    // start: `yarn patch-commit` emits headers whose `+` starts don't account
-    // for lines added by earlier hunks, which used to silently land hunks at
-    // the wrong offset. The expected position is the `-` side start adjusted
-    // by the line delta of the hunks already applied, fuzz-searched nearby
-    // (same ±20 bound as patch-package). A hunk that matches nowhere fails
-    // the apply instead of corrupting the file.
-    let mut diff_offset: isize = 0;
-    for hunk in &patch.hunks {
+    // Net lines added by the hunks applied so far. Shifts every later hunk's
+    // expected position, since `-` side line numbers refer to the original file.
+    let mut line_delta: isize = 0;
+    for (hunk_index, hunk) in patch.hunks.iter().enumerate() {
         let mut line_cursor = if hunk.header.original.len == 0 {
-            // Pure insertion with no context or deletions to anchor on; the
+            // Pure insertion: no context or deleted lines to anchor on, so the
             // header offset is all there is.
             (hunk.header.patched.start - 1) as usize
         } else {
-            let base = hunk.header.original.start as isize - 1 + diff_offset;
-            const MAX_FUZZ: isize = 20;
-            let mut found: Option<usize> = None;
-            let mut fuzz: isize = 0;
-            while fuzz.abs() <= MAX_FUZZ {
-                let candidate = base + fuzz;
-                if candidate >= 0 && hunk_matches_at(hunk, &lines, candidate as usize) {
-                    found = Some(candidate as usize);
-                    break;
-                }
-                fuzz = if fuzz < 0 { -fuzz } else { -fuzz - 1 };
-            }
-            match found {
+            let expected = hunk.header.original.start as isize - 1 + line_delta;
+            match find_hunk_position(hunk, &lines, expected) {
                 Some(idx) => idx,
-                None => {
-                    return sys::Result::Err(
-                        sys::Error::from_code(sys::E::EINVAL, sys::Tag::fstatat)
-                            .with_path(file_path.as_bytes()),
-                    );
-                }
+                None => return Err(does_not_apply(hunk_index, hunk)),
             }
         };
 
-        // Validate hunk start position is within bounds
         if line_cursor > lines.len() {
-            return sys::Result::Err(
-                sys::Error::from_code(sys::E::EINVAL, sys::Tag::fstatat)
-                    .with_path(file_path.as_bytes()),
-            );
+            return Err(does_not_apply(hunk_index, hunk));
         }
 
         for part in &hunk.parts {
             let part: &PatchMutationPart = part;
             match part.ty {
                 PartType::Context => {
-                    // Validate context lines exist
-                    if line_cursor + part.lines.len() > lines.len() {
-                        return sys::Result::Err(
-                            sys::Error::from_code(sys::E::EINVAL, sys::Tag::fstatat)
-                                .with_path(file_path.as_bytes()),
-                        );
-                    }
-
                     line_cursor += part.lines.len();
                 }
                 PartType::Insertion => {
-                    // Validate insertion position is within bounds
-                    if line_cursor > lines.len() {
-                        return sys::Result::Err(
-                            sys::Error::from_code(sys::E::EINVAL, sys::Tag::fstatat)
-                                .with_path(file_path.as_bytes()),
-                        );
-                    }
-
                     lines.splice(line_cursor..line_cursor, part.lines.iter().copied());
                     line_cursor += part.lines.len();
-                    diff_offset += part.lines.len() as isize;
+                    line_delta += part.lines.len() as isize;
                     if part.no_newline_at_end_of_file {
                         let _ = lines.pop();
                     }
                 }
                 PartType::Deletion => {
-                    // Validate deletion range is within bounds
-                    if line_cursor + part.lines.len() > lines.len() {
-                        return sys::Result::Err(
-                            sys::Error::from_code(sys::E::EINVAL, sys::Tag::fstatat)
-                                .with_path(file_path.as_bytes()),
-                        );
-                    }
-
                     lines.drain(line_cursor..line_cursor + part.lines.len());
-                    diff_offset -= part.lines.len() as isize;
+                    line_delta -= part.lines.len() as isize;
                     if part.no_newline_at_end_of_file {
                         lines.push(b"");
                     }
@@ -441,7 +360,7 @@ fn apply_patch(patch: &FilePatch<'_>, patch_dir: Fd, state: &mut ApplyState) -> 
         sys::O::CREAT | sys::O::WRONLY | sys::O::TRUNC,
         stat.st_mode as sys::Mode,
     ) {
-        sys::Result::Err(e) => return sys::Result::Err(e.with_path(file_path.as_bytes())),
+        sys::Result::Err(e) => return Err(e.with_path(file_path.as_bytes()).into()),
         sys::Result::Ok(fd) => fd,
     };
     let _close_file = scopeguard::guard(file_fd, |fd| fd.close());
@@ -452,11 +371,36 @@ fn apply_patch(patch: &FilePatch<'_>, patch_dir: Fd, state: &mut ApplyState) -> 
     while written < contents.len() {
         match sys::write(file_fd, &contents[written..]) {
             sys::Result::Ok(w) => written += w,
-            sys::Result::Err(e) => return sys::Result::Err(e.with_path(file_path.as_bytes())),
+            sys::Result::Err(e) => return Err(e.with_path(file_path.as_bytes()).into()),
         }
     }
 
-    sys::Result::Ok(())
+    Ok(())
+}
+
+/// The line index where `hunk`'s `-` side matches `lines`, nearest to
+/// `expected` first (the forward candidate wins a tie), or `None` when it
+/// matches nowhere.
+fn find_hunk_position(hunk: &Hunk<'_>, lines: &[&[u8]], expected: isize) -> Option<usize> {
+    let last = lines.len() as isize;
+    let mut offset: isize = 0;
+    loop {
+        let forward = expected + offset;
+        let backward = expected - offset;
+        if forward > last && backward < 0 {
+            return None;
+        }
+        if (0..=last).contains(&forward) && hunk_matches_at(hunk, lines, forward as usize) {
+            return Some(forward as usize);
+        }
+        if offset != 0
+            && (0..=last).contains(&backward)
+            && hunk_matches_at(hunk, lines, backward as usize)
+        {
+            return Some(backward as usize);
+        }
+        offset += 1;
+    }
 }
 
 /// Whether `hunk`'s context and deletion lines match `lines` starting at

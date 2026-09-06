@@ -1427,26 +1427,14 @@ fn open_output_file(
 }
 
 fn make_directory(entry: &mut lib::Entry, dest_fd: Fd, path: OSPathZ, path_slice: &[OSPathChar]) {
-    let mut mode = i32::try_from(entry.perm()).expect("int cast");
-    // if dirs are readable, then they should be listable
-    // https://github.com/npm/node-tar/blob/main/lib/mode-fix.js
-    if (mode & 0o400) != 0 {
-        mode |= 0o100;
-    }
-    if (mode & 0o40) != 0 {
-        mode |= 0o10;
-    }
-    if (mode & 0o4) != 0 {
-        mode |= 0o1;
-    }
     #[cfg(windows)]
     {
         let _ = bun_sys::make_path::make_path::<u16>(Dir::borrow(&dest_fd), &path[..]);
-        let _ = (path_slice, mode);
+        let _ = (entry, path_slice);
     }
     #[cfg(not(windows))]
     {
-        match bun_sys::mkdirat_z(dest_fd, path, Mode::try_from(mode).expect("int cast")) {
+        match bun_sys::mkdirat_z(dest_fd, path, bun_libarchive::directory_mode(entry.perm())) {
             Ok(()) => {}
             Err(e) => match e.get_errno() {
                 bun_sys::E::EEXIST | bun_sys::E::ENOTDIR => {}

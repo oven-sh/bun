@@ -1301,10 +1301,8 @@ pub struct FnOnlyDataVisit {
     /// has been shadowed and is now inaccessible.
     pub(crate) is_this_nested: bool,
 
-    /// "this" belongs to the `constructor` of a class with an `extends` clause.
-    /// It is in its temporal dead zone until `super()` returns, so generated
-    /// code must not read it. Arrow functions share the constructor's "this",
-    /// so they inherit this flag.
+    /// "this" is the `constructor` of a class with an `extends` clause, so it
+    /// is in its temporal dead zone until `super()` returns.
     pub(crate) is_derived_class_ctor: bool,
 }
 

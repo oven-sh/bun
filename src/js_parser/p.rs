@@ -258,8 +258,7 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     pub(crate) fn_or_arrow_data_parse: FnOrArrowDataParse,
     pub(crate) fn_or_arrow_data_visit: FnOrArrowDataVisit,
     pub(crate) fn_only_data_visit: FnOnlyDataVisit,
-    /// Set by `visit_class` just before it visits the `constructor` of a class
-    /// with an `extends` clause. `visit_func` takes it.
+    /// Handoff from `visit_class` to `visit_func` for a derived `constructor`.
     pub(crate) next_fn_is_derived_class_ctor: bool,
     pub(crate) allocated_names: List<'a, &'a [u8]>,
     // allocated_names: ListManaged(string) = ListManaged(string).init(bun.default_allocator),
